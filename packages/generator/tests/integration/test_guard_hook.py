@@ -5452,3 +5452,230 @@ def test_states_brace_token_cap_when_constant_read(
     code = "import json\nimport guard\nprint(json.dumps(guard.BLOCKED_BRACE_TOKEN_CAP))\n"
 
     assert run_python(hook_python, code, path=blocked_hub / HOOKS) == 4096
+
+
+# AGH-354 (P-25, AC-350.44): the env_file rule. ``W`` with ``staging``'s env file at
+# ``demo-api/environment/.env.test`` (and one on ``live``'s ``api`` endpoint): a file tool on it (by
+# real path), a Grep or Glob that can reach it, and a Bash command or WebFetch URL naming it are
+# denied in every session, naming the environment and never the file's contents.
+ENV_FILE = "demo-api/environment/.env.test"
+ENV_FILE_REASON = "env file: {} names the env file of {}"
+# A value built at run time, so the repo holds no secret-looking literal.
+ENV_FILE_VALUE = "x-" + "secret" + "-y"
+
+
+def env_file_denial(tool: str, environment: str = "staging") -> tuple[str, str]:
+    return ("deny", ENV_FILE_REASON.format(tool, environment))
+
+
+@pytest.fixture
+def env_file_hub(blocked_hub: Path) -> Path:
+    """``blocked_hub`` whose ``W`` declares the env files, with ``staging``'s on disk."""
+    document = builders.an_environments_document()
+    document["environments"]["staging"]["credentials"]["env_file"] = ENV_FILE
+    endpoint = document["repos"][0]["services"]["api"]["endpoints"]["live"]
+    endpoint["credentials"] = {"env_file": "demo-api/.env.live"}
+    write_hub_json(blocked_hub, document)
+    put(blocked_hub.parent, ENV_FILE, f"DEMO_DB_URL={ENV_FILE_VALUE}\n")
+    put(blocked_hub.parent, "demo-api/.env.live", f"DEMO_LIVE_DB_URL={ENV_FILE_VALUE}\n")
+    put(blocked_hub.parent, "demo-api/src/app.py", "print(1)\n")
+    return blocked_hub
+
+
+FILE_TOOL_FIELDS: dict[str, tuple[str, dict[str, Any]]] = {
+    "Read": ("file_path", {}),
+    "Edit": ("file_path", {"old_string": "a", "new_string": "b"}),
+    "Write": ("file_path", {"content": "x"}),
+    "MultiEdit": ("file_path", {"edits": [{"old_string": "a", "new_string": "b"}]}),
+    "NotebookEdit": ("notebook_path", {"new_source": "x"}),
+}
+
+
+def test_denies_file_tools_when_env_file_targeted(decide: Decide, env_file_hub: Path) -> None:
+    ws = env_file_hub.parent
+    api = ws / "demo-api"
+    calls = [
+        (at(tool_call(tool, **{field: path}, **rest), cwd), None)
+        for tool, (field, rest) in FILE_TOOL_FIELDS.items()
+        for path, cwd in ((str(ws / ENV_FILE), ws), ("environment/.env.test", api))
+    ]
+
+    verdicts = decide(calls)
+
+    assert verdicts == [
+        env_file_denial(tool) for tool in FILE_TOOL_FIELDS for _ in ("absolute", "relative")
+    ]
+
+
+def test_denies_read_when_env_file_reached_by_symlink(decide: Decide, env_file_hub: Path) -> None:
+    api = env_file_hub.parent / "demo-api"
+    (api / "notes.txt").symlink_to(api / "environment" / ".env.test")
+    (api / "settings").symlink_to(api / "environment")
+    paths = [
+        "notes.txt",
+        "settings/.env.test",
+        "src/../environment/.env.test",
+        "./environment//.env.test",
+    ]
+
+    verdicts = decide([(at(read_call(path), api), None) for path in paths])
+
+    assert verdicts == [env_file_denial("Read")] * len(paths)
+
+
+def test_denies_grep_glob_when_env_file_under_root(decide: Decide, env_file_hub: Path) -> None:
+    ws = env_file_hub.parent
+    api = ws / "demo-api"
+    denied = [
+        (tool_call("Grep", pattern="DB"), api),
+        (tool_call("Grep", pattern="DB", path="environment"), api),
+        (tool_call("Grep", pattern="DB", path="demo-api"), ws),
+        (tool_call("Grep", pattern="DB", path=str(api), glob="*.test"), ws),
+        (tool_call("Grep", pattern="DB", path="environment/.env.test"), api),
+        (tool_call("Glob", pattern="**/*"), api),
+        (tool_call("Glob", pattern="environment/.env*"), api),
+        (tool_call("Glob", pattern="*", path=str(api / "environment")), ws),
+        (tool_call("Glob", pattern="demo-api/**/.env.*"), ws),
+    ]
+    passed = [
+        (tool_call("Grep", pattern="DB", path="src"), api),
+        (tool_call("Grep", pattern="DB", glob="*.py"), api),
+        (tool_call("Glob", pattern="src/**/*.py"), api),
+        (tool_call("Glob", pattern="*.md"), api),
+    ]
+
+    verdicts = decide([(at(event, cwd), None) for event, cwd in (*denied, *passed)])
+
+    assert verdicts == [env_file_denial(event["tool_name"]) for event, _ in denied] + [None] * len(
+        passed
+    )
+
+
+def test_denies_bash_when_env_file_named(decide: Decide, env_file_hub: Path) -> None:
+    ws = env_file_hub.parent
+    api = ws / "demo-api"
+    (api / "notes.txt").symlink_to(api / "environment" / ".env.test")
+    commands = [
+        ("cat demo-api/environment/.env.test", ws),
+        ("source environment/.env.test", api),
+        ("cat .env.test", ws),
+        (f"grep DB {api}/environment/.env.test", ws),
+        ("cat 'environment/.env.test'", api),
+        ('cat environment/".env".test', api),
+        ("cat environment/.env.t*", api),
+        ("cat environment/.env.{test,x}", api),
+        ("cat notes.txt", api),
+        ("ls environment/.env.test", api),
+    ]
+
+    verdicts = decide([(at(bash_call(command), cwd), None) for command, cwd in commands])
+
+    assert verdicts == [env_file_denial("Bash")] * len(commands)
+
+
+def test_denies_webfetch_when_env_file_url(decide: Decide, env_file_hub: Path) -> None:
+    ws = env_file_hub.parent
+    urls = [
+        f"file://{ws}/{ENV_FILE}",
+        f"file://{ws}/demo-api/environment/%2Eenv.test",
+        f"file://{ws}/demo-api/src/../environment/.env.test",
+    ]
+
+    verdicts = decide([(at(tool_call("WebFetch", url=url, prompt="x"), ws), None) for url in urls])
+
+    assert verdicts == [env_file_denial("WebFetch")] * len(urls)
+
+
+def test_denies_without_run_environment_when_env_file_targeted(
+    decide: Decide, env_file_hub: Path
+) -> None:
+    api = env_file_hub.parent / "demo-api"
+    sessions: list[dict[str, str] | None] = [
+        None,
+        {},
+        {"HUB_RUN_ENVIRONMENT": "local"},
+        {"HUB_RUN_ENVIRONMENT": "staging"},
+        {"HUB_RUN_ENVIRONMENT": "live"},
+    ]
+    events = [read_call("environment/.env.test"), bash_call("cat environment/.env.test")]
+
+    verdicts = decide([(at(event, api), environ) for environ in sessions for event in events])
+
+    assert verdicts == [env_file_denial("Read"), env_file_denial("Bash")] * len(sessions)
+
+
+def test_names_environment_not_contents_when_env_file_denied(
+    decide: Decide, env_file_hub: Path
+) -> None:
+    api = env_file_hub.parent / "demo-api"
+
+    verdicts = decide(
+        [
+            (at(read_call("environment/.env.test"), api), None),
+            (at(read_call(".env.live"), api), None),
+            (at(bash_call("cat .env.live"), api), None),
+        ]
+    )
+
+    assert verdicts == [
+        env_file_denial("Read"),
+        env_file_denial("Read", "live"),
+        env_file_denial("Bash", "live"),
+    ]
+    for verdict in verdicts:
+        assert verdict is not None
+        assert ENV_FILE_VALUE not in verdict[1]
+        assert ".env" not in verdict[1]
+
+
+def test_passes_when_env_file_not_declared(decide: Decide, blocked_hub: Path) -> None:
+    ws = blocked_hub.parent
+    api = ws / "demo-api"
+    put(ws, ENV_FILE, f"DEMO_DB_URL={ENV_FILE_VALUE}\n")
+    events = [
+        read_call("environment/.env.test"),
+        tool_call("Edit", file_path="environment/.env.test", old_string="a", new_string="b"),
+        tool_call("Grep", pattern="DB", path="environment"),
+        tool_call("Glob", pattern="**/*"),
+        bash_call("cat environment/.env.test"),
+        tool_call("WebFetch", url=f"file://{ws}/{ENV_FILE}", prompt="x"),
+    ]
+
+    verdicts = decide([(at(event, api), {"HUB_RUN_ENVIRONMENT": "staging"}) for event in events])
+
+    assert verdicts == [None] * len(events)
+
+
+# AGH-354: with no blocked words, an event the guard cannot read asks while an env file is
+# declared (the env-file rule cannot check it), and gets no verdict otherwise.
+def test_asks_when_event_unreadable_and_env_file_declared(
+    blocked_hub: Path,
+    *,
+    hook_python: str,
+    run_hook_file: Callable[..., subprocess.CompletedProcess[bytes]],
+    tmp_path: Path,
+) -> None:
+    document = builders.an_environments_document()
+    document["guard"]["blocked_words"] = []
+    write_hub_json(blocked_hub, document)
+
+    def run() -> subprocess.CompletedProcess[bytes]:
+        return run_hook_file(
+            hook_python,
+            blocked_hub / HOOKS / "guard.py",
+            stdin=b"[]",
+            cwd=blocked_hub,
+            env={"HOME": str(tmp_path)},
+        )
+
+    without = run()
+    document["environments"]["staging"]["credentials"]["env_file"] = ENV_FILE
+    write_hub_json(blocked_hub, document)
+    declared = run()
+
+    assert (without.returncode, without.stdout, without.stderr) == (0, b"", b"")
+    assert asked_once(declared) == (
+        "ask",
+        "[hub guard] env file: this call not checked against the env files: the tool input could"
+        " not be read (not a JSON object); confirm this call",
+    )

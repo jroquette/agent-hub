@@ -16,6 +16,12 @@ deny  = hard block (secrets (guard.secret_env_files added, guard.readable_env_fi
         Grep (its path or the cwd walked, no links, BLOCKED_WALK_SKIPPED and .claude/worktrees skipped) or a
         Bash token (braces and globs expanded; not after ls, test, [, stat) reads; a secret file, by any case
         or link, is never opened, so it keeps the secret-file reason)
+      right after it, a declared env file (credentials.env_file of an environment or an endpoint, in
+        hub.json, hub.local.json or $HUB_CONFIG; in every session, HUB_RUN_ENVIRONMENT or not): a file tool
+        on it (its path from the event's cwd, by real path, so a link or `..` is caught), a Grep or Glob
+        whose root holds one and whose glob or pattern can reach it, or a Bash command or WebFetch URL
+        naming it (its file name as a whole word, in the command's views; a Bash token, braces and globs
+        expanded, or a file:// URL whose real path is it); the reason names the environment only
 ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an allowed environment, anywhere
         after the tool (aws's s3 … rm and cloudformation … deploy too, quoted or not); with guard.infra, a
         command it would let through that holds a character other than ASCII letters, digits, space, tab,
@@ -34,7 +40,9 @@ ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an a
         1 MiB, over 64 listed files or 4 MiB of them in one call, a listed file that is not regular, the
         rule's 300 ms spent, a blocked list of any layer unusable, or a hub.local.json that exists but is
         unusable; an unreadable listed file gets no verdict), and a hook event that is not a JSON object
-        while blocked words (or a blocked-list problem) are in effect
+        while blocked words (or a blocked-list problem) are in effect; a call the env-file rule cannot
+        check (the command over 1 MiB, too many words, its 300 ms spent; an unreadable event while an
+        env file is declared)
 Project values (default branch, tracker team, guard lists) come from hub.json. The branch prefix of a deny's
 hint is the developer's: hub.local.json, else hub.json, else the local part of git config user.email plus `/`
 (git runs only on that deny); with none, the hint has no prefix. A list entry `@hub/<path>` is <path> in the hub that holds this file; with no such hub (plugin cache) it is skipped.
@@ -70,6 +78,7 @@ import tempfile
 import time
 from fnmatch import fnmatch, fnmatchcase
 from typing import IO, Callable, Optional
+from urllib.parse import unquote, urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
@@ -1667,6 +1676,165 @@ def check_blocked(tool: str, ti: dict, cfg: Config, environ: dict | None = None,
     return None
 
 
+# Env files (docs/design/scenarios.md § Credentials, P-25): a file only actions read. Every session
+# is denied any call that reaches one through a guarded tool; the guard is not a sandbox (a process
+# outside these tools can still read it). The reason names the environment, never the path or the
+# file's contents.
+ENV_FILE_REASON = "env file: {} names the env file of {}"
+ENV_FILE_UNCHECKED_REASON = "env file: {} not checked against the env files: {}; confirm this call"
+ENV_FILE_PATH_TOOLS = {"Read": "file_path", "Edit": "file_path", "Write": "file_path", "MultiEdit": "file_path",
+                       "NotebookEdit": "notebook_path"}
+# A file name as a whole word: no file-name character just before or after it.
+ENV_FILE_WORD = r"(?<![A-Za-z0-9_.-])(?:{})(?![A-Za-z0-9_.-])"
+GLOB_CHARS = "*?[{"
+
+
+def _path_forms(path: str) -> set[str]:
+    """An absolute path as written (normalised) and as its real path (links and `..` resolved; an
+    unresolvable one stays literal), each also without a worktree segment, lowercased (macOS
+    ignores case)."""
+    forms = {os.path.normpath(path), _realpath(path)}
+    return {form.lower() for form in forms} | {WORKTREE_SEG.sub("", form).lower() for form in forms}
+
+
+def _segments_reach(segments: list[str], parts: list[str]) -> bool:
+    """Whether glob segments match all of parts, anchored at the first: `*` within a segment, `**`
+    any run of parts; a segment with braces or `..` counts as reaching (stricter, never looser).
+    One pass per segment, so many `**` stay linear."""
+    if any(segment == ".." for segment in segments):
+        return True
+    reach = [True] + [False] * len(parts)
+    for segment in segments:
+        if segment == "**":
+            for j in range(1, len(reach)):
+                reach[j] = reach[j] or reach[j - 1]
+        else:
+            pattern = "*" if "{" in segment else segment
+            reach = [False] + [reach[j] and fnmatchcase(parts[j], pattern) for j in range(len(parts))]
+    return reach[-1]
+
+
+class _EnvFiles:
+    """The declared env files of cfg: each one's environment, the forms of its path in the
+    workspace (none without a workspace) and its file name, and one pattern for the names."""
+
+    def __init__(self, cfg: Config) -> None:
+        self.entries: list[tuple[str, set[str]]] = []
+        self.by_name: dict[str, str] = {}
+        for entry in cfg.env_files:
+            path = entry.path.rstrip("/")
+            forms = _path_forms(os.path.join(str(cfg.workspace), path)) if cfg.workspace else set()
+            self.entries.append((entry.environment, forms))
+            self.by_name.setdefault(os.path.basename(path).lower(), entry.environment)
+        names = sorted((name for name in self.by_name if name), key=lambda n: (-len(n), n))
+        self.names = re.compile(ENV_FILE_WORD.format("|".join(re.escape(n) for n in names)), re.I) if names else None
+
+    def named(self, text: str) -> str | None:
+        """The environment of the first env file whose name is a whole word in text."""
+        found = self.names.search(text) if self.names else None
+        return self.by_name[found.group(0).lower()] if found else None
+
+    def at(self, path: str) -> str | None:
+        """The environment of the env file an absolute path is (any of its forms)."""
+        forms = _path_forms(path)
+        for environment, own in self.entries:
+            if forms & own:
+                return environment
+        return None
+
+    def under(self, root: str, reaches: Callable[[str], bool]) -> str | None:
+        """The environment of the first env file under the folder root (any of its forms) whose
+        path from root (lowercase, `/`-separated) reaches tells true for."""
+        bases = [form.rstrip("/") + "/" for form in _path_forms(root)]
+        for environment, own in self.entries:
+            for form in own:
+                for base in bases:
+                    if form.startswith(base) and reaches(form[len(base):]):
+                        return environment
+        return None
+
+
+def _env_file_grep(env_files: _EnvFiles, ti: dict, cwd: str) -> str | None:
+    """A Grep on an env file, or over a folder holding one that its glob filter lets through."""
+    root = os.path.join(cwd, os.path.expanduser(_str(ti.get("path"))))
+    if not os.path.isdir(root):
+        return env_files.at(root)
+    grep_glob = _str(ti.get("glob"))
+    return env_files.under(root, lambda rel: _grep_glob_passes((rel,), grep_glob))
+
+
+def _env_file_glob(env_files: _EnvFiles, ti: dict, cwd: str) -> str | None:
+    """A Glob whose pattern, from its root, can match an env file."""
+    root = os.path.join(cwd, os.path.expanduser(_str(ti.get("path"))))
+    full = os.path.join(root, os.path.expanduser(_str(ti.get("pattern"))))
+    parts = full.split("/")
+    first = next((i for i, part in enumerate(parts) if any(c in part for c in GLOB_CHARS)), None)
+    if first is None:
+        return env_files.at(full)
+    rest = [part for part in parts[first:] if part]
+    base = "/".join(parts[:first]) or "/"
+    return env_files.under(base, lambda rel: _segments_reach(rest, rel.split("/")))
+
+
+def _env_file_bash(env_files: _EnvFiles, cmd: str, scan: _BlockedScan) -> str | None:
+    """A Bash command naming an env file: its name as a whole word in a view of the command, else a
+    token (braces and globs expanded, from the event's cwd) whose real path is one."""
+    for view in _command_views(cmd):
+        environment = env_files.named(view)
+        if environment:
+            return environment
+    for seg in _segments(cmd.replace("\\\n", "")):
+        for tok in (word for token in _tokens(seg) for word in _braces(token)):
+            scan.tick()
+            path = scan.resolve(tok)
+            matches = _expanded(scan, path) if any(c in tok for c in "*?[") else [(path, None)]
+            for match, _real in matches:
+                scan.tick()
+                environment = env_files.at(match)
+                if environment:
+                    return environment
+    return None
+
+
+def _env_file_webfetch(env_files: _EnvFiles, url: str) -> str | None:
+    """A WebFetch URL naming an env file (raw or percent-decoded), or a file:// URL to one."""
+    decoded = unquote(url)
+    environment = env_files.named(url) or env_files.named(decoded)
+    if environment or not url.lower().startswith("file:"):
+        return environment
+    return env_files.at(unquote(urlsplit(url).path) or "/")
+
+
+def check_env_file(tool: str, ti: dict, cfg: Config, *, cwd: str | None = None) -> Verdict:
+    """The env-file rule (P-25), right after the blocked-word rule: a deny when the call reaches a
+    declared env file, an ask when it cannot be checked; else None."""
+    if not cfg.env_files:
+        return None
+    env_files = _EnvFiles(cfg)
+    scan = _BlockedScan(cfg, cwd)
+    environment = None
+    try:
+        if tool in ENV_FILE_PATH_TOOLS:
+            path = _str(ti.get(ENV_FILE_PATH_TOOLS[tool]))
+            environment = env_files.at(scan.resolve(path)) if path else None
+        elif tool == "Grep":
+            environment = _env_file_grep(env_files, ti, scan.cwd)
+        elif tool == "Glob":
+            environment = _env_file_glob(env_files, ti, scan.cwd)
+        elif tool == "WebFetch":
+            environment = _env_file_webfetch(env_files, _str(ti.get("url")))
+        elif tool == "Bash":
+            cmd = _str(ti.get("command"))
+            if len(cmd) > BLOCKED_TEXT_CAP:
+                return "ask", ENV_FILE_UNCHECKED_REASON.format(tool, BLOCKED_TOO_LARGE)
+            environment = _env_file_bash(env_files, cmd, scan)
+    except BlockedScanBudgetSpent:
+        return "ask", ENV_FILE_UNCHECKED_REASON.format(tool, BLOCKED_OUT_OF_TIME)
+    except BlockedScanUnchecked as error:
+        return "ask", ENV_FILE_UNCHECKED_REASON.format(tool, str(error))
+    return ("deny", ENV_FILE_REASON.format(tool, environment)) if environment else None
+
+
 FILE_TOOLS = ("Read", "Grep", "Glob", "Edit", "Write", "MultiEdit", "NotebookEdit", "WebFetch")
 EXTENSION_TIMEOUT = 3  # seconds, inside the guard's own 10 s hook timeout (spec Q-5)
 RUNNER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "project_guard_runner.py")
@@ -1678,16 +1846,22 @@ STDERR_TAIL = 4096  # bytes of the runner's stderr that are read back
 
 
 def decide(data: dict, cfg: Config, environ: dict | None = None) -> Verdict:
-    """The base verdict for one PreToolUse event: no output. The blocked-word rule runs first and
-    its deny is final; environ holds the session variables it scans (None: none, as in tests)."""
+    """The base verdict for one PreToolUse event: no output. The blocked-word rule runs first, then
+    the env-file rule; a deny of either is final; environ holds the session variables the first
+    scans (None: none, as in tests)."""
     tool, ti = _str(data.get("tool_name")), data.get("tool_input")
     if not isinstance(ti, dict):
         ti = {}
     if tool != "Bash" and tool not in FILE_TOOLS:
         return None
-    blocked = check_blocked(tool, ti, cfg, environ, cwd=_str(data.get("cwd")) or None)
+    cwd = _str(data.get("cwd")) or None
+    blocked = check_blocked(tool, ti, cfg, environ, cwd=cwd)
     if blocked and blocked[0] == "deny":
         return blocked
+    env_file = check_env_file(tool, ti, cfg, cwd=cwd)
+    if env_file and env_file[0] == "deny":
+        return env_file
+    blocked = tighten(blocked, env_file)
     if tool == "Bash":
         return tighten(blocked, check_bash(_str(ti.get("command")), cfg))
     return tighten(blocked, check_file(tool, ti, cfg))
@@ -1834,6 +2008,7 @@ RULE_IDS = (
     ("project_guard", re.compile(r"^project guard: ")),
     # before the unanchored patterns below, which a path in a blocked-word reason could hold
     ("blocked_word", re.compile(r"^blocked words? ")),
+    ("env_file", re.compile(r"^env file: ")),
     ("deny_hosts", re.compile(r" is in guard\.deny_hosts \(hub\.json\)")),
     ("deny_paths", re.compile(r" is under guard\.deny_paths `")),
     ("guard_files", re.compile(r" is the hub's own guard or config \(")),
@@ -1876,6 +2051,8 @@ def main() -> None:
         cfg = load_config(None)
         if cfg.blocked_words or cfg.blocked_problem:
             _print_verdict({}, ("ask", BLOCKED_UNCHECKED_REASON.format(BLOCKED_UNREADABLE)))
+        elif cfg.env_files:
+            _print_verdict({}, ("ask", ENV_FILE_UNCHECKED_REASON.format("this call", BLOCKED_UNREADABLE)))
         return
     tool = data.get("tool_name")
     if tool != "Bash" and tool not in FILE_TOOLS:
