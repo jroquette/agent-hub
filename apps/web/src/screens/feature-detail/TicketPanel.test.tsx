@@ -1,0 +1,226 @@
+import { screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { createRef } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { seriousViolations } from "../../testing/axe";
+import {
+  aFeatureDetail,
+  aFeatureTickets,
+  aPage,
+  aSession,
+  aTicketFlow,
+  anEvalRecord,
+  renderWithApi,
+  type FeatureTickets,
+} from "../../testing/builders";
+import { FeatureDetailScreen } from "./index";
+import { TicketsTab } from "./TicketsTab";
+
+type EvalRecord = ReturnType<typeof anEvalRecord>;
+
+/** The three tickets of `control-plane`, each with its own steps (AGH-202 at Review). */
+function tickets(): FeatureTickets {
+  const data = aFeatureTickets();
+  return {
+    ...data,
+    tickets: data.tickets.map((row) => ({
+      ...row,
+      flow: aTicketFlow(
+        row.ref === "AGH-202"
+          ? {
+              steps: aTicketFlow().steps.map((step) =>
+                step.name === "review"
+                  ? { ...step, state: "current", meta: "Changes requested" }
+                  : step,
+              ),
+            }
+          : {},
+      ),
+    })),
+  };
+}
+
+function show(path: string, evals: EvalRecord[] = []) {
+  return renderWithApi(
+    <TicketsTab
+      project="agent-hub"
+      slug="control-plane"
+      data={tickets()}
+      error={null}
+      onRefresh={() => undefined}
+      acPasses={{ "AC-200.4": true }}
+      evals={evals}
+      opener={createRef()}
+    />,
+    {
+      routes: {
+        "/api/v1/sessions": aPage([aSession({ issue: "AGH-202" })]),
+      },
+      path,
+    },
+  );
+}
+
+function panel(): HTMLElement {
+  return screen.getByRole("complementary", { name: /^Ticket AGH-/ });
+}
+
+afterEach(() => {
+  delete document.documentElement.dataset.theme;
+});
+
+describe("TicketPanel", () => {
+  it("opens with ?ticket=<id> (replace) from a card title", async () => {
+    const { router } = show("/?doc=tickets");
+
+    const title = screen.getByRole("link", { name: "Serve the ticket summaries" });
+    expect(title).toHaveAttribute("href", "/?doc=tickets&ticket=AGH-202");
+    await userEvent.click(title);
+
+    expect(router.state.location.search).toBe("?doc=tickets&ticket=AGH-202");
+    expect(router.state.historyAction).toBe("REPLACE");
+    expect(panel()).toHaveAccessibleName("Ticket AGH-202 · Serve the ticket summaries");
+    expect(within(panel()).getByRole("heading", { level: 2 })).toHaveFocus();
+  });
+
+  it("opens from a table row on Enter and o, the body one tab stop moved by j and k", async () => {
+    const { router } = show("/?doc=tickets&tickets=table");
+
+    const rows = screen.getAllByRole("row").slice(1);
+    expect(rows.map((row) => row.tabIndex)).toEqual([0, -1, -1]);
+    rows[0]?.focus();
+    await userEvent.keyboard("j");
+    expect(rows[1]).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    expect(router.state.location.search).toBe("?doc=tickets&tickets=table&ticket=AGH-202");
+    expect(panel()).toHaveAccessibleName("Ticket AGH-202 · Serve the ticket summaries");
+
+    rows[1]?.focus();
+    await userEvent.keyboard("j");
+    await userEvent.keyboard("o");
+    expect(panel()).toHaveAccessibleName("Ticket AGH-203 · Show the planning view");
+    rows[2]?.focus();
+    await userEvent.keyboard("k");
+    expect(rows[1]).toHaveFocus();
+  });
+
+  it("opens from a header ticket chip, on the Tickets tab", async () => {
+    const API = "/api/v1/features/agent-hub/control-plane";
+    const { router } = renderWithApi(<FeatureDetailScreen />, {
+      routes: {
+        [API]: aFeatureDetail({ issues: ["AGH-201", "AGH-202", "AGH-203"] }),
+        [`${API}/tickets`]: tickets(),
+        "/api/v1/sessions": aPage([]),
+      },
+      path: "/features/agent-hub/control-plane?doc=acs",
+      route: "features/:project/:slug",
+    });
+
+    const chips = await screen.findByRole("group", { name: "Tickets of this feature" });
+    const chip = within(chips).getByRole("link", { name: "AGH-202" });
+    expect(chip).toHaveAttribute("title", expect.stringMatching(/AGH-202 · .*show its steps$/));
+    await userEvent.click(chip);
+
+    expect(router.state.location.search).toBe("?doc=tickets&ticket=AGH-202");
+    expect(await screen.findByRole("complementary", { name: /^Ticket AGH-202/ })).toBeVisible();
+    expect(screen.getByRole("tab", { name: /Tickets/ })).toHaveAttribute("aria-selected", "true");
+
+    // Switching tab closes the panel and drops ticket=.
+    await userEvent.click(screen.getByRole("tab", { name: "Eval" }));
+    expect(screen.queryByRole("complementary", { name: /^Ticket/ })).toBeNull();
+    expect(router.state.location.search).not.toContain("ticket=");
+  });
+
+  it("shows the seven steps with the current one disclosed, its ACs, blockers and sessions", async () => {
+    show("/?doc=tickets&ticket=AGH-202");
+
+    const steps = within(panel()).getByRole("list", { name: "Steps" });
+    expect(within(steps).getAllByRole("listitem")).toHaveLength(7);
+    expect(
+      within(steps).getByRole("button", { name: /^Review, in progress, changes requested/ }),
+    ).toHaveAttribute("aria-expanded", "true");
+    expect(within(steps).getByRole("button", { name: /^Context, not recorded/ })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(steps).toHaveTextContent("Open the review record in Brain");
+    expect(panel()).toHaveTextContent("1/1 ACs passing");
+    expect(within(panel()).getByRole("link", { name: "AGH-201" })).toBeInTheDocument();
+    expect(within(panel()).getByRole("link", { name: "AGH-203" })).toBeInTheDocument();
+    expect(await within(panel()).findByTitle(/^Open the session/)).toBeVisible();
+    // Start stays on the card or row, once per view (A15).
+    expect(within(panel()).queryByRole("button", { name: /Start/ })).toBeNull();
+  });
+
+  it("Esc closes it and returns focus to the opener", async () => {
+    const { router } = show("/?doc=tickets");
+    const title = screen.getByRole("link", { name: "Serve the ticket summaries" });
+    await userEvent.click(title);
+
+    await userEvent.keyboard("{Escape}");
+
+    expect(screen.queryByRole("complementary")).toBeNull();
+    expect(router.state.location.search).toBe("?doc=tickets");
+    expect(screen.getByRole("link", { name: "Serve the ticket summaries" })).toHaveFocus();
+  });
+
+  it("?ticket= naming no ticket shows '<id> is not a ticket of this feature.'", () => {
+    show("/?doc=tickets&ticket=AGH-999");
+
+    expect(
+      within(screen.getByRole("complementary")).getByText(
+        "AGH-999 is not a ticket of this feature.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close panel" })).toBeInTheDocument();
+  });
+
+  it("switches ticket in place when another card or a blocker is activated", async () => {
+    const { router } = show("/?doc=tickets&ticket=AGH-202");
+
+    await userEvent.click(screen.getByRole("link", { name: "Show the planning view" }));
+    expect(panel()).toHaveAccessibleName("Ticket AGH-203 · Show the planning view");
+    await userEvent.click(within(panel()).getByRole("link", { name: "AGH-202" }));
+    expect(panel()).toHaveAccessibleName("Ticket AGH-202 · Serve the ticket summaries");
+    expect(router.state.location.search).toBe("?doc=tickets&ticket=AGH-202");
+    expect(screen.getAllByRole("complementary")).toHaveLength(1);
+  });
+
+  it("points to the Eval tab when a ticket eval waits on owner steps (its one signal)", () => {
+    show("/?doc=tickets&ticket=AGH-202", [
+      anEvalRecord({
+        delivery: "agh-202",
+        path: "features/control-plane/evals/agh-202.md",
+        verdict: "SHIP-WITH-OWNER-STEPS",
+        tickets: ["AGH-202"],
+      }),
+    ]);
+
+    expect(panel()).toHaveTextContent("Waiting on you: Eval 1 passed with owner steps");
+    expect(
+      within(panel()).getByRole("link", { name: "Settle them in the Eval tab" }),
+    ).toHaveAttribute("href", "/?doc=eval&eval=agh-202");
+  });
+
+  it.each(["light", "dark"])(
+    "has no serious axe violation, overlaid and docked, Flow and Table, in the %s theme (a11y)",
+    async (theme) => {
+      document.documentElement.dataset.theme = theme;
+      for (const width of [1280, 1600]) {
+        vi.stubGlobal("matchMedia", (query: string) => ({
+          matches: width >= 1600 && query === "(min-width: 1600px)",
+          media: query,
+          addEventListener: () => undefined,
+          removeEventListener: () => undefined,
+        }));
+        for (const view of ["", "&tickets=table"]) {
+          const { container, unmount } = show(`/?doc=tickets${view}&ticket=AGH-202`);
+          expect(await seriousViolations(container)).toEqual([]);
+          unmount();
+        }
+      }
+      vi.unstubAllGlobals();
+    },
+  );
+});

@@ -224,13 +224,114 @@ describe("FeatureDetailScreen", () => {
     });
     const { router } = open({ [API]: { ...detail, evals: [waiting] } });
 
-    const banner = (
-      await screen.findByText(/1 eval passed with owner steps: AGH-48 · Eval 1/)
-    ).closest('[role="status"]');
+    const banner = (await screen.findByText("AGH-48: Eval 1 passed with owner steps")).closest(
+      '[role="status"]',
+    );
     expect(banner).not.toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: "Review owner steps" }));
+    await userEvent.click(screen.getByRole("button", { name: "Review owner steps of Eval 1" }));
     expect(router.state.location.search).toContain("doc=eval");
     expect(router.state.location.search).toContain("eval=agh-48");
+  });
+
+  // AGH-330 (ux-change-waiting-prompts.md, A15): one prompt per wait, the banner its signpost.
+  describe("owner waits", () => {
+    const whole = (delivery: string, evaluated_at: string) =>
+      anEvalRecord({
+        delivery,
+        path: `features/layered-memory/evals/${delivery}.md`,
+        verdict: "SHIP-WITH-OWNER-STEPS",
+        tickets: [],
+        acs: "all",
+        evaluated_at,
+      });
+    const waiting = {
+      ...detail,
+      evals: [
+        whole("feature", "2026-10-10T10:00:00Z"),
+        whole("feature-r2", "2026-10-12T10:00:00Z"),
+        anEvalRecord({
+          delivery: "agh-48",
+          path: "features/layered-memory/evals/agh-48.md",
+          verdict: "SHIP-WITH-OWNER-STEPS",
+          tickets: ["AGH-48"],
+          acs: ["AC-48.1"],
+          evaluated_at: "2026-10-11T10:00:00Z",
+        }),
+      ],
+      acceptance_eval: {
+        delivery: "feature-r2",
+        verdict: "SHIP-WITH-OWNER-STEPS" as const,
+        owner_wait: {
+          state: "sign_off" as const,
+          acs: ["AC-48.11", "AC-48.12", "AC-48.13"],
+          reopened: [],
+        },
+      },
+      golden_path: aGoldenPath({
+        phase: "acceptance",
+        steps: detail.golden_path.steps.map((step) =>
+          step.name === "acceptance"
+            ? { ...step, state: "current", meta: "Waiting on you: sign off 3 ACs", reason: null }
+            : step,
+        ),
+      }),
+    };
+
+    it("signposts every wait in one banner, the Acceptance wait first, and no sign-off banner", async () => {
+      const { router } = open({ [API]: waiting });
+
+      const banner = (await screen.findByText("Acceptance: sign off 3 ACs (Eval 2)")).closest(
+        '[role="status"]',
+      );
+      if (!(banner instanceof HTMLElement)) throw new Error("no banner");
+      expect(
+        within(banner).getByRole("link", { name: "AGH-48: Eval 1 passed with owner steps" }),
+      ).toHaveAttribute("href", "/features/agent-hub/layered-memory?doc=eval&eval=agh-48");
+      expect(screen.getAllByText("Waiting on you")).toHaveLength(1);
+      expect(screen.queryByRole("region", { name: "Owner steps" })).toBeNull();
+      expect(screen.queryByText(/owner steps? left/)).toBeNull();
+      await userEvent.click(
+        within(banner).getByRole("button", { name: "Review owner steps of Eval 2" }),
+      );
+      expect(router.state.location.search).toBe("?doc=eval&eval=feature-r2");
+    });
+
+    it("opens the acceptance eval from the Acceptance step", async () => {
+      const { router } = open({ [API]: waiting });
+
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Open the eval of acceptance" }),
+      );
+
+      expect(router.state.location.search).toBe("?doc=eval&eval=feature-r2");
+    });
+
+    it("drops the Acceptance line while no sign-off can be recorded (undated)", async () => {
+      open({
+        [API]: {
+          ...waiting,
+          acceptance_eval: {
+            ...waiting.acceptance_eval,
+            owner_wait: { ...waiting.acceptance_eval.owner_wait, state: "undated" as const },
+          },
+        },
+      });
+
+      expect(await screen.findByText("AGH-48: Eval 1 passed with owner steps")).toBeInTheDocument();
+      expect(screen.queryByText(/^Acceptance: sign off/)).toBeNull();
+    });
+
+    it.each(["light", "dark"])(
+      "has no serious a11y violations with the banner, in the %s theme (a11y)",
+      async (theme) => {
+        document.documentElement.dataset.theme = theme;
+        const { container } = open({ [API]: waiting });
+        await screen.findByText("Acceptance: sign off 3 ACs (Eval 2)");
+
+        expect(await seriousViolations(container)).toEqual([]);
+        delete document.documentElement.dataset.theme;
+      },
+    );
   });
 
   it("shows every AC row at once, with no Show all fold (AC-269.12)", async () => {
@@ -883,11 +984,13 @@ describe("FeatureDetailScreen", () => {
       await screen.findByRole("region", { name: "Ticket flow" });
 
       const header = screen.getByRole("group", { name: "Tickets of this feature" });
-      const link = within(header).getByRole("link", { name: /AGH-48/ });
-      expect(link).toHaveAttribute("href", "https://linear.app/demo/issue/AGH-48");
-      expect(link).toHaveAttribute("title", "AGH-48 · Load the memory layers · opens in Linear");
+      const link = within(header).getByRole("link", { name: "AGH-48" });
+      expect(link).toHaveAttribute(
+        "href",
+        "/features/agent-hub/layered-memory?doc=tickets&ticket=AGH-48",
+      );
+      expect(link).toHaveAttribute("title", "AGH-48 · Load the memory layers · show its steps");
       expect(header).not.toHaveTextContent("Load the memory layers");
-      expect(within(header).queryByRole("link", { name: /AGH-49/ })).toBeNull();
       expect(within(header).getAllByText("In Progress")).toHaveLength(2);
       expect(screen.queryByText("PR —")).toBeNull();
     });
@@ -920,7 +1023,10 @@ describe("FeatureDetailScreen", () => {
 
       const header = screen.getByRole("group", { name: "Tickets of this feature" });
       expect(header).toHaveTextContent("AGH-48AGH-49");
-      expect(within(header).queryByRole("link")).toBeNull();
+      expect(within(header).getByRole("link", { name: "AGH-49" })).toHaveAttribute(
+        "title",
+        "AGH-49 · show its steps",
+      );
     });
 
     it("refetches the tickets route on Refresh (notice)", async () => {
@@ -1071,10 +1177,15 @@ describe("FeatureDetailScreen", () => {
     });
   });
 
-  it("has no serious a11y violations (a11y)", async () => {
-    const { container } = open();
-    await screen.findByRole("table", { name: "Acceptance criteria" });
+  it.each(["light", "dark"])(
+    "has no serious a11y violations in the %s theme (a11y)",
+    async (theme) => {
+      document.documentElement.dataset.theme = theme;
+      const { container } = open();
+      await screen.findByRole("table", { name: "Acceptance criteria" });
 
-    expect(await seriousViolations(container)).toEqual([]);
-  });
+      expect(await seriousViolations(container)).toEqual([]);
+      delete document.documentElement.dataset.theme;
+    },
+  );
 });
