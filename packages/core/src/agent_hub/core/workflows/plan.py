@@ -21,10 +21,11 @@ it, outer nodes upstream of the group, and ``$LOOP_PREV.<body id>``; ``until_whe
 
 Scenario nodes (``action``, ``expect``): their ``with`` texts, ``until_when`` and ``capture``
 refs are checked as above; a path into their output is not (the action's own ``output_format``
-is not core's to read). ``$self.output`` reads only in an expect's ``until_when`` and in a
-``capture``; ``$CTX.<name>`` needs one node upstream that captures ``<name>``, and no name is
-captured twice; a ``capture`` reads no ``$CTX``. ``WorkflowPlan.captures`` names each capture's
-node, as recorded. A scenario's includes may bring only the node types a scenario takes.
+is not the planner's to read: ``scenarios.scenario_plan`` checks it). ``$self.output`` reads only
+in an expect's ``until_when`` and in a ``capture``; ``$CTX.<name>`` needs one node upstream that
+captures ``<name>``, and no name is captured twice; a ``capture`` reads no ``$CTX``.
+``WorkflowPlan.captures`` names each capture's node, as recorded. A scenario's includes may bring
+only the node types a scenario takes.
 """
 
 from collections.abc import Iterator, Mapping, Sequence
@@ -658,6 +659,12 @@ def _is_whole_ref(text: str, *, scenario: bool = False) -> bool:
     return True
 
 
+def node_texts(node: Node) -> Iterator[tuple[Loc, str]]:
+    """Each text of ``node`` outside argv lists that may hold a reference, with its key path
+    (a scenario's nodes have no argv list)."""
+    return _texts(node)
+
+
 def _texts(node: Node) -> Iterator[tuple[Loc, str]]:
     """Each text of ``node`` outside argv lists that may hold a reference, with its key path."""
     if node.when is not None:
@@ -742,10 +749,12 @@ def _has_path(producer: Node, segments: Sequence[str]) -> bool:
         # The output maps body id → that body node's output.
         body = {node.id: node for node in producer.nodes}
         return segments[0] in body and _has_path(body[segments[0]], segments[1:])
-    return _schema_has_path(getattr(producer, "output_format", None), segments)
+    return schema_has_path(getattr(producer, "output_format", None), segments)
 
 
-def _schema_has_path(schema: object, segments: Sequence[str]) -> bool:
+def schema_has_path(schema: object, segments: Sequence[str]) -> bool:
+    """Whether the JSON Schema ``schema`` names ``segments`` (properties, ``items`` for an
+    index): what a reference's path into an output may read."""
     for segment in segments:
         if not isinstance(schema, Mapping):
             return False
