@@ -110,6 +110,10 @@
   display: block;
   max-width: 240px;
   height: auto;
+  /* A long screenshot shows its top; the lightbox shows it whole. */
+  max-height: 320px;
+  object-fit: cover;
+  object-position: top;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
 }
