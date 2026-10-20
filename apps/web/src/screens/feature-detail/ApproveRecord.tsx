@@ -1,19 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 
 import type { components } from "../../api/schema";
 import { Button, Icon, MenuItem, Popover } from "../../components";
 import { ApiProblem, apiPost, useApi } from "../../lib/api";
-import { useBrainNote } from "../brain/queries";
 import { agentSessionHref } from "../sessions-list/control";
-import { OpenQuestions } from "./QuestionsBlock";
-import {
-  approvalMessage,
-  countLine,
-  openQuestions,
-  outcomeOf,
-  type Answers,
-} from "./openQuestions";
+import { OpenQuestions, useOpenQuestions } from "./QuestionsBlock";
+import { approvalMessage, countLine, outcomeOf, type Answers } from "./openQuestions";
 import { ANSWERS_MAX_BYTES, useAnswerDrafts } from "./useAnswerDrafts";
 
 export { approvalMessage } from "./openQuestions";
@@ -127,9 +120,7 @@ export function ApproveRecord({
   const [error, setError] = useState<string | null>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const [sentAnswers, setSentAnswers] = useState<Answers>({});
-  const note = useBrainNote(project, path.replace(/^brain\//, ""));
-  const markdown = note.data?.markdown;
-  const questions = useMemo(() => (markdown ? openQuestions(markdown) : []), [markdown]);
+  const questions = useOpenQuestions(project, path.replace(/^brain\//, ""));
   const drafts = useAnswerDrafts(project, slug, record, questions);
 
   useEffect(() => {

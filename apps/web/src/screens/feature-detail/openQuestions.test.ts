@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { approvalMessage, countLine, openQuestions, outcomeOf } from "./openQuestions";
+import {
+  approvalMessage,
+  countLine,
+  openQuestions,
+  outcomeOf,
+  questionsToShow,
+} from "./openQuestions";
 
 const SPEC = `# A spec
 
@@ -129,5 +135,34 @@ describe("approvalMessage", () => {
     expect(countLine(questions, { Q9: "7420." })).toBe(
       "1 answered · 1 takes the recommendation · 1 left to Claude",
     );
+  });
+});
+
+describe("questionsToShow", () => {
+  const record = openQuestions(
+    "## Open questions\n\n- Q1. **Re-check timing (AC-9).** See D5.\n- Q2. **Field name.** Use `x`.\n",
+  );
+
+  it("shows the summary's plain-words questions when they name every question of the record", () => {
+    const summary = openQuestions(
+      "## Open questions\n\n- Q1. **When businesses are re-checked.** Context.\n- Q2. **Which field.** Context.\n",
+    );
+
+    expect(questionsToShow(record, summary).map((q) => q.title)).toEqual([
+      "When businesses are re-checked",
+      "Which field",
+    ]);
+  });
+
+  it("keeps the record's questions when the summary misses one, so none goes unanswered", () => {
+    const summary = openQuestions(
+      "## Open questions\n\n- Q1. **When businesses are re-checked.**\n",
+    );
+
+    expect(questionsToShow(record, summary)).toBe(record);
+  });
+
+  it("keeps the record's questions without a summary", () => {
+    expect(questionsToShow(record, null)).toBe(record);
   });
 });
