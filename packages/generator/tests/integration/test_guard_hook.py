@@ -4403,7 +4403,7 @@ def test_asks_when_event_nested_too_deep(
     if nesting.raises:
         assert asked_once(completed) == ("ask", UNREADABLE_ASK)
     else:
-        # AC-293.4 (D-deep): the parsed event is walked, and its 100,001 values ask
+        # AC-293.4 (D-deep): the parsed event is walked, and its 100,002 values ask
         assert asked_once(completed) == (
             "ask",
             "[hub guard] " + UNCHECKED_REASON.format(INPUT_TOO_MANY),
@@ -4858,6 +4858,10 @@ def test_reads_blocked_word_rule_when_input_tool_decided(
     ]
     assert all("\n" not in reason for reason in reasons)
     assert rules == ["blocked_word"] * 7
+    # a backtick in the tool name is escaped, so it cannot close the reason's code span
+    [ticked] = decide([(tool_call("mcp__a`b", q="prod"), None)])
+    assert ticked == blocked_word("prod", input_where("mcp__a\\u0060b"))
+    assert ticked[1].count("`") == 4
 
 
 def test_asks_when_input_over_budget_or_cap(decide: Decide) -> None:
@@ -4884,6 +4888,15 @@ def test_asks_when_input_over_budget_or_cap(decide: Decide) -> None:
         None,
         blocked_word("prod", input_where(mcp)),
     ]
+    # the per-value clock: an input with no string at all still spends the budget
+    bare = decide(
+        [(tool_call(mcp, n=[1, 2]), None), ({"tool_name": mcp, "tool_input": {}}, None)],
+        seams={"BLOCKED_SCAN_BUDGET": -1},
+    )
+    assert bare == [unchecked("out of time (300 ms)")] * 2
+    # the character cap ends the walk: a word after it is never reached
+    capped = decide([(tool_call(mcp, a="x" * INPUT_CHARS_CAP, b="prod"), None)])
+    assert capped == [unchecked(INPUT_TOO_LARGE)]
 
 
 # argv: hub. Builds a tool input nested 100,000 lists deep in Python (no JSON parse, so every
