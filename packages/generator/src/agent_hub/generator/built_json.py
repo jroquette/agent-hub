@@ -113,7 +113,9 @@ HOOK_EVENTS: Final = (
     HookEvent("SessionStart", "startup|resume|clear|compact", "session_start.py", 20),
     HookEvent(
         "PreToolUse",
-        "Bash|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit|WebFetch",
+        # anchored: only these names and MCP tools start the guard (AGH-293)
+        "^(Bash|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit|WebFetch|WebSearch|Task|Agent"
+        "|SendMessage)$|^mcp__",
         "guard.py",
         10,
     ),
