@@ -10,6 +10,7 @@ test reads; no value may reach the run's folder or the events database.
 import json
 import os
 import shutil
+import subprocess
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any
@@ -123,3 +124,70 @@ def test_hides_credentials_from_workflow_nodes_when_credential_injection_workflo
         assert seen["PATH"] == str(tmp_path / "bin")
     assert SECRET not in result.output
     assert stored_anywhere(SECRET, hub / ".agent-runs", tmp_path / "events.db") == []
+
+
+ACTION = """\
+version: 1
+name: show-env
+description: Show what the action sees
+effect: read
+runtime: sh
+script: scripts/show-env.sh
+output_format:
+  type: object
+  required: [seen, token]
+"""
+ACTION_SCRIPT = """\
+cat > /dev/null
+env > "$DUMP/action.env"
+printf '{"seen": "%s", "token": "%s"}' "$DEMO_DB_URL" "$DEMO_TOKEN"
+"""
+ENV_FILE = "demo-api/environment/.env.staging"
+
+
+def an_action_hub(root: Path) -> Path:
+    """``a_credentials_hub`` whose ``staging`` also names an env file, with the committed read
+    action ``ops/show-env``."""
+    hub = a_credentials_hub(root)
+    document = json.loads((hub / "hub.json").read_text())
+    document["environments"]["staging"]["credentials"]["env_file"] = ENV_FILE
+    (hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
+    env_file = hub.parent / ENV_FILE
+    env_file.parent.mkdir(parents=True)
+    env_file.write_text(f"# staging\nexport DEMO_TOKEN='{SECRET}-file'\n")
+    pack = hub / "actions" / "ops"
+    (pack / "scripts").mkdir(parents=True)
+    (pack / "show-env.yaml").write_text(ACTION)
+    (pack / "scripts" / "show-env.sh").write_text(ACTION_SCRIPT)
+    git = shutil.which("git")
+    assert git is not None
+    for tool in ("git", "cat"):
+        found = shutil.which(tool)
+        assert found is not None
+        (root / "bin" / tool).symlink_to(os.path.realpath(found))
+    identity = ("-c", "user.name=Demo Dev", "-c", "user.email=dev@example.com")
+    for args in (("init", "-q", "-b", "main"), ("add", "-A"), ("commit", "-q", "-m", "hub")):
+        command = [git, *identity, *args]
+        subprocess.run(command, cwd=hub, check=True, capture_output=True)  # noqa: S603 - absolute git, fixed arguments
+    return hub
+
+
+def test_injects_credentials_only_into_action_when_credential_injection_runs(
+    tmp_path: Path, credentials_env: dict[str, str]
+) -> None:
+    hub = an_action_hub(tmp_path)
+
+    result = run_hub(hub, "action", "run", "ops/show-env", "--env", "staging", env=credentials_env)
+
+    assert result.exit_code == 0, result.output
+    seen = variables(tmp_path / "dump" / "action.env")
+    assert seen["AWS_PROFILE"] == "demo-staging"
+    assert seen["DEMO_DB_URL"] == SECRET
+    assert seen["DEMO_TOKEN"] == SECRET + "-file"
+    assert json.loads(result.stdout) == {
+        "seen": "<credential DEMO_DB_URL>",
+        "token": "<credential DEMO_TOKEN>",
+    }
+    assert SECRET not in result.output
+    assert stored_anywhere(SECRET, hub / ".agent-runs", tmp_path / "events.db") == []
+    assert (tmp_path / "events.db").exists()

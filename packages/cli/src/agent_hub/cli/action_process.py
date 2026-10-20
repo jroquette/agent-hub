@@ -7,7 +7,10 @@ working folder is the pinned pack's. It reads one JSON object on stdin, ``{"mode
 "endpoint"}``, and prints one JSON value.
 
 - ``run_action``: the output must match the action's ``output_format``, else ``output_contract``;
-  the process gets ``untrusted_env`` without the hub's credential names (``hidden``).
+  the process gets ``untrusted_env`` without the hub's credential names (``hidden``), plus the
+  ``credentials`` injected for it alone. Every injected value of at least
+  ``MIN_REDACTED_CHARS`` is replaced by ``<credential NAME>`` in its stdout and in a failure's
+  detail before anything reads them (a shorter one cannot be told from ordinary output).
 - ``plan_action``: ``mode: "plan"``, at most ``PLAN_TIMEOUT`` seconds, no credential (it takes
   none); its row is the ``summary`` (one string of at most ``MAX_SUMMARY_CHARS``) or ``plan
   failed: <kind>``.
@@ -41,6 +44,7 @@ from agent_hub.generator.workflow_outputs import JsonSchemaOutputs
 PLAN_TIMEOUT: Final = 60.0
 MAX_SUMMARY_CHARS: Final = 200
 PLAN_FAILED: Final = "plan failed: {kind}"
+MIN_REDACTED_CHARS: Final = 4
 
 type Mode = Literal["plan", "run"]
 
@@ -62,14 +66,26 @@ def run_action(
     *,
     environ: Mapping[str, str],
     hidden: CredentialNames = NO_CREDENTIALS,
+    credentials: Mapping[str, str] | None = None,
     timeout: float | None = None,
 ) -> JsonValue:
-    """The action's output in ``run`` mode; raises ``NodeFailedError`` (``output_contract``
-    when it is not one JSON value matching ``output_format``)."""
+    """The action's output in ``run`` mode, injected values redacted; raises
+    ``NodeFailedError`` (``output_contract`` when it is not one JSON value matching
+    ``output_format``), its detail redacted too."""
     document = call.entry.document
+    injected = dict(credentials or {})
     seconds = timeout if timeout is not None else float(duration_seconds(document.timeout))
-    result = _spawn(call, "run", env=untrusted_env(environ, hidden=hidden), timeout=seconds)
-    value = _one_value(result.stdout)
+    env = {**untrusted_env(environ, hidden=hidden), **injected}
+    try:
+        result = _spawn(call, "run", env=env, timeout=seconds)
+    except NodeFailedError as error:
+        raise NodeFailedError(error.kind, redacted(str(error), injected)) from None
+    stdout = result.stdout
+    for secret, name in _by_length(injected):
+        stdout = stdout.replace(
+            secret.encode(errors="surrogatepass"), f"<credential {name}>".encode()
+        )
+    value = _one_value(stdout)
     JsonSchemaOutputs().check(document.output_format, value)
     return value
 
@@ -89,6 +105,21 @@ def plan_action(
     if not isinstance(summary, str) or len(summary) > MAX_SUMMARY_CHARS:
         return PLAN_FAILED.format(kind="output_contract")
     return summary
+
+
+def redacted(text: str, credentials: Mapping[str, str]) -> str:
+    """``text`` with each value of ``credentials`` of at least ``MIN_REDACTED_CHARS`` replaced
+    by ``<credential NAME>``, the longest first (so a value holding another goes whole)."""
+    for value, name in _by_length(credentials):
+        text = text.replace(value, f"<credential {name}>")
+    return text
+
+
+def _by_length(credentials: Mapping[str, str]) -> list[tuple[str, str]]:
+    """``(value, name)`` of each value long enough to redact, the longest first."""
+    pairs = [(value, name) for name, value in credentials.items()]
+    eligible = [pair for pair in pairs if len(pair[0]) >= MIN_REDACTED_CHARS]
+    return sorted(eligible, key=lambda pair: -len(pair[0]))
 
 
 def _spawn(call: ActionCall, mode: Mode, *, env: Mapping[str, str], timeout: float) -> ChildResult:
