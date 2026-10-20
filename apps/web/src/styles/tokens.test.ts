@@ -8,7 +8,7 @@ const css = readFileSync(join(process.cwd(), "src/styles/tokens.css"), "utf8");
 
 describe("tokens.css", () => {
   it("emits light and dark theme variables", () => {
-    expect(css).toContain(':root, [data-theme="light"] {\n  --gray-50: #f7f8fa;');
+    expect(css).toContain(':root, [data-theme="light"] {\n  --gray-50: #f1ede4;');
     expect(css).toContain('[data-theme="dark"] {\n  --gray-50: #0b0d10;');
   });
 
