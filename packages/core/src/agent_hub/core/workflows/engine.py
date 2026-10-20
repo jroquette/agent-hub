@@ -38,9 +38,9 @@ the group's id) end it, with an output mapping each body id to its output; past
 An ``action`` node is one runner call with its ``with`` values as ``NodeCall.inputs``; its output
 must be one JSON value (else ``output_contract``). An ``expect`` node polls its action every
 ``every`` (``Clock.sleep``) until ``until_when`` holds over ``$self.output``, at most
-``MAX_EXPECT_POLLS`` times, then fails ``timeout`` (detail ``expect_timeout: …``) once its window
-has passed. Each poll and each ``capture:`` value goes to ``EnginePorts.trace``; without an
-explicit ``retry`` neither node is retried.
+``MAX_EXPECT_POLLS`` times in a run (its attempts together), then fails ``timeout`` (detail
+``expect_timeout: …``) once its window has passed. Each poll and each ``capture:`` value goes to
+``EnginePorts.trace``; without an explicit ``retry`` neither node is retried.
 """
 
 import dataclasses
@@ -223,6 +223,8 @@ class _Run:
         self.loop_prevs: dict[str, dict[str, NodeResult]] = {}
         self.lock = threading.Lock()
         self.trace_lock = threading.Lock()
+        # Each expect node's polls in this run, all its attempts together.
+        self.polls: dict[str, int] = {}
         # Concurrent nodes record through one lock, as they end; at most ``max_parallel``
         # attempts run at once across the run, nested group layers included.
         self.recorder: RunRecorder = _LockedRecorder(ports.recorder)
@@ -451,13 +453,16 @@ class _Run:
 
     def _expect_once(self, node: ExpectNode) -> Turn:
         """Polls of one attempt, ``every`` apart, until ``until_when`` holds over the output;
-        past the window (or ``MAX_EXPECT_POLLS``) the node fails ``timeout``."""
+        past the window, or once the node's polls in this run reach ``MAX_EXPECT_POLLS`` (its
+        attempts together), the node fails ``timeout``."""
         every = timedelta(seconds=duration_seconds(node.every))
 
         def run(attempt: int) -> tuple[Turn, bool]:
             clock = self.ports.clock
             deadline = clock.now() + timedelta(seconds=duration_seconds(node.timeout))
-            for poll in range(1, MAX_EXPECT_POLLS + 1):
+            poll = 0
+            while self._take_poll(node):
+                poll += 1
                 reply = self.ports.runner.run(self._action_call(node, attempt, poll))
                 output = _json_value(reply.text)
                 held = self._holds(node, output)
@@ -465,7 +470,7 @@ class _Run:
                 if held:
                     self._capture(node, attempt, output)
                     return Turn(output, reply.text, None), True
-                if poll == MAX_EXPECT_POLLS or clock.now() + every > deadline:
+                if clock.now() + every > deadline or self.polls[node.id] >= MAX_EXPECT_POLLS:
                     break
                 clock.sleep(every, self.stopped)
                 self._check_stop()
@@ -473,6 +478,15 @@ class _Run:
             raise NodeFailedError("timeout", detail)
 
         return self._step(node, run)[0]
+
+    def _take_poll(self, node: ExpectNode) -> bool:
+        """Count one more poll of ``node``, unless its run-wide budget is spent."""
+        with self.lock:
+            done = self.polls.get(node.id, 0)
+            if done >= MAX_EXPECT_POLLS:
+                return False
+            self.polls[node.id] = done + 1
+            return True
 
     def _holds(self, node: ExpectNode, output: JsonValue) -> bool:
         when = evaluate_when(node.until_when, self._own_context(node, output))
