@@ -261,16 +261,18 @@ test("Feature detail Tickets tab shows the plan's tickets, planning and the not-
       page.getByText(/^From the plan \(features\.json\); Linear is not connected/),
     ).toBeVisible();
     await expect(page.getByText("No status read from Linear yet.")).toBeVisible();
+    // Flow opens first; Table is the other view of the same list (two-level-flows AC-1.11).
+    const flow = page.getByRole("region", { name: "Ticket flow" });
+    await expect(flow.getByRole("heading", { name: "Ticket flow" })).toBeVisible();
+    await expect(flow.getByRole("listitem", { name: /^Group 1 · / })).toBeVisible();
+    await expect(flow.getByRole("listitem", { name: /^Group 2 · / })).toBeVisible();
+    await page.getByRole("button", { name: "Table" }).click();
     const table = page.getByRole("table", { name: "Tickets" });
     await expect(table.getByRole("row")).toHaveCount(3);
     await expect(table.getByText("Add the export route")).toBeVisible();
     await expect(table.getByText("Add the button")).toBeVisible();
     await expect(table.getByText("not created")).toBeVisible();
     await expect(page.getByText(/2 tickets · from the plan \(features\.json\)/)).toBeVisible();
-    const flow = page.getByRole("region", { name: "Ticket flow" });
-    await expect(flow.getByRole("heading", { name: "Ticket flow" })).toBeVisible();
-    await expect(flow.getByRole("listitem", { name: /^Step 1 · / })).toBeVisible();
-    await expect(flow.getByRole("listitem", { name: /^Step 2 · / })).toBeVisible();
   });
 });
 

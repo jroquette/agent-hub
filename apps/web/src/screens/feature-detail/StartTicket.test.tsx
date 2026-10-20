@@ -126,7 +126,7 @@ describe("StartTicket", () => {
         })}
         onRefresh={() => undefined}
       />,
-      { routes: { ...driving, [`POST ${AGENT}`]: created } },
+      { routes: { ...driving, [`POST ${AGENT}`]: created }, path: "/?tickets=table" },
     );
 
     const row = within(rowOf("T3"));
@@ -216,7 +216,7 @@ describe("StartTicket", () => {
         })}
         onRefresh={() => undefined}
       />,
-      { routes: { ...driving, [`POST ${AGENT}`]: created } },
+      { routes: { ...driving, [`POST ${AGENT}`]: created }, path: "/?tickets=table" },
     );
 
     const row = within(rowOf("T2"));
@@ -225,7 +225,8 @@ describe("StartTicket", () => {
     await waitFor(() => {
       expect(start).toBeEnabled();
     });
-    expect(screen.getAllByRole("button", { name: "Start AGH-2" })).toHaveLength(2);
+    // One Start per view (two-level-flows AC-1.11): the table shows it, the flow is not shown.
+    expect(screen.getAllByRole("button", { name: "Start AGH-2" })).toHaveLength(1);
     await userEvent.click(start);
 
     await waitFor(() => {
