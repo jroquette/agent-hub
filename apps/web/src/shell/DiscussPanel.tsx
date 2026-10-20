@@ -1,8 +1,19 @@
 import "./discuss.css";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router";
 
-import { AppLink, Banner, Button, EmptyState, Icon, IconButton } from "../components";
+import {
+  Banner,
+  Button,
+  copyText,
+  EmptyState,
+  Icon,
+  IconButton,
+  MenuItem,
+  PathText,
+  Popover,
+} from "../components";
 import { usePanelDismiss } from "../components/usePanelDismiss";
 import { ApiProblem } from "../lib/api";
 import { captureScreen } from "../lib/screenCapture";
@@ -105,12 +116,7 @@ function OpenPanel({ resize }: { resize: DrawerWidth | undefined }) {
       {resize && <div {...resize.handle} aria-controls="ah-discuss" />}
       <header className="ah-discuss-head">
         <Icon name="message-square" size="sm" />
-        <div className="ah-discuss-title">
-          <b>Discuss with Claude</b>
-          <span className="ah-small ah-muted">
-            {target ? `${target.kind} · ${target.title}` : "Nothing on this screen yet"}
-          </span>
-        </div>
+        <b className="ah-discuss-title">Discuss with Claude</b>
         <span className="ah-grow" />
         {resize && (
           <IconButton
@@ -175,6 +181,103 @@ function ReferenceChips({
   );
 }
 
+/**
+ * The conversation's own actions, behind one "…" at the end of the panel's second row: the full
+ * chat, a new conversation, back to the feature's session, and the file under discussion.
+ */
+function ConversationMenu({
+  sessionId,
+  path,
+  onNew,
+  onOwner,
+}: {
+  sessionId: string | null;
+  path: string | null | undefined;
+  onNew: (() => void) | null;
+  onOwner: (() => void) | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLSpanElement>(null);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointer = (event: PointerEvent) => {
+      if (!wrap.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setOpen(false);
+      wrap.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    };
+    document.addEventListener("pointerdown", onPointer);
+    // Capture: the menu spends Escape before the panel sees it.
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [open]);
+
+  if (!sessionId && !path && !onOwner) return null;
+  const run = (action: () => void) => () => {
+    setOpen(false);
+    action();
+  };
+  return (
+    <span ref={wrap} style={{ position: "relative" }}>
+      <IconButton
+        icon="ellipsis"
+        label="More for this conversation"
+        size="sm"
+        aria-haspopup="true"
+        aria-expanded={open}
+        onClick={() => {
+          setOpen(!open);
+        }}
+      />
+      <Popover
+        open={open}
+        label="More for this conversation"
+        style={{ top: 30, right: 0, minWidth: 240, maxWidth: 360 }}
+      >
+        {sessionId && (
+          <MenuItem
+            icon="external-link"
+            onClick={run(() => {
+              void navigate(`/agent-sessions/${encodeURIComponent(sessionId)}`);
+            })}
+          >
+            Open the full chat
+          </MenuItem>
+        )}
+        {onNew && (
+          <MenuItem icon="plus" onClick={run(onNew)}>
+            New conversation
+          </MenuItem>
+        )}
+        {onOwner && (
+          <MenuItem icon="undo-2" onClick={run(onOwner)}>
+            Back to the feature session
+          </MenuItem>
+        )}
+        {path && (
+          <MenuItem
+            icon="file-text"
+            onClick={run(() => {
+              copyText(path);
+            })}
+            hint={<span className="ah-small ah-subtle">Copy</span>}
+          >
+            <PathText path={path} max={40} dimDir />
+          </MenuItem>
+        )}
+      </Popover>
+    </span>
+  );
+}
+
 function DiscussBody({ target }: { target: DiscussTarget }) {
   const { references, removeReference, clearReferences } = useDiscuss();
   const owner = target.ownerSession ?? null;
@@ -182,46 +285,41 @@ function DiscussBody({ target }: { target: DiscussTarget }) {
   const [sessionId, setSessionId] = useState<string | null>(
     () => owner?.id ?? readDiscussSession(target),
   );
+  const [statusSlot, setStatusSlot] = useState<HTMLSpanElement | null>(null);
   const onOwner = owner !== null && sessionId === owner.id;
   const forget = useCallback(() => {
     if (!onOwner) rememberDiscussSession(target, null);
     setSessionId(null);
   }, [target, onOwner]);
+  const what = `${target.kind} · ${target.title}`;
 
   return (
     <div className="ah-discuss-body">
-      {owner && (
-        <div className="ah-row ah-small ah-discuss-meta">
-          <Icon name="square-terminal" size="sm" />
-          {onOwner ? (
-            <span className="ah-discuss-path" title={owner.name}>
-              <span className="ah-muted">Feature session: </span>
-              {owner.name}
-            </span>
-          ) : (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                setSessionId(owner.id);
-              }}
-            >
-              Back to the feature session
-            </Button>
-          )}
-        </div>
-      )}
-      <div className="ah-row ah-small ah-discuss-meta">
-        {target.path && <span className="ah-mono ah-muted ah-discuss-path">{target.path}</span>}
-        <span className="ah-grow" />
-        {sessionId && (
-          <>
-            <AppLink href={`/agent-sessions/${encodeURIComponent(sessionId)}`}>Full chat</AppLink>
-            <Button size="sm" variant="ghost" icon="plus" onClick={forget}>
-              New conversation
-            </Button>
-          </>
+      <div className="ah-row ah-small ah-discuss-sub">
+        {onOwner ? (
+          <span className="ah-discuss-what" title={`Feature session · ${owner.name}`}>
+            <Icon name="square-terminal" size="sm" />
+            <span className="ah-muted">Feature session ·</span> {owner.name}
+          </span>
+        ) : (
+          <span className="ah-discuss-what ah-muted" title={what}>
+            {what}
+          </span>
         )}
+        <span ref={setStatusSlot} className="ah-row ah-discuss-status" />
+        <span className="ah-grow" />
+        <ConversationMenu
+          sessionId={sessionId}
+          path={target.path}
+          onNew={sessionId ? forget : null}
+          onOwner={
+            owner && !onOwner
+              ? () => {
+                  setSessionId(owner.id);
+                }
+              : null
+          }
+        />
       </div>
       <ReferenceChips references={references} onRemove={removeReference} />
       {sessionId ? (
@@ -230,6 +328,7 @@ function DiscussBody({ target }: { target: DiscussTarget }) {
           onGone={forget}
           prepareMessage={(text) => referencedMessage(references, text)}
           onSent={clearReferences}
+          metaSlot={statusSlot}
         />
       ) : (
         <StartDiscussion

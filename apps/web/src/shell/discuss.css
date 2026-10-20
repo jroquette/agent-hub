@@ -9,7 +9,8 @@
   display: flex;
   flex-direction: column;
   border-left: 1px solid var(--border);
-  background: var(--bg);
+  background: var(--surface);
+  container-type: inline-size;
 }
 /*
  * Its width is the one the owner chose (--discuss-chosen, set while dragging its edge), clamped
@@ -60,23 +61,54 @@
     display: none;
   }
 }
+/* Row 1: what the panel is, and its window controls. */
 .ah-discuss-head {
   flex: none;
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--border);
+  height: 40px;
+  padding: 0 var(--space-2) 0 var(--space-4);
+  background: var(--surface);
 }
 .ah-discuss-title {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
+  font-weight: 600;
 }
-.ah-discuss-title > span {
+/* Row 2: what is discussed, the session's state, its actions; the panel's only divider under it. */
+.ah-discuss-sub {
+  flex: none;
+  gap: var(--space-2);
+  min-height: 32px;
+  padding: 0 var(--space-2) var(--space-1) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-wrap: nowrap;
+}
+.ah-discuss-what {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.ah-discuss-status {
+  flex: none;
+  gap: var(--space-2);
+}
+.ah-discuss-status:empty {
+  display: none;
+}
+/* Below 400 px the cost gives way to what is discussed; the status stays. */
+@container (max-width: 400px) {
+  .ah-discuss-status .as-meter {
+    display: none;
+  }
+}
+/* In the panel the cost says enough; the tokens stay on the full chat. */
+.ah-discuss-status .as-meter > .ah-muted {
+  display: none;
 }
 .ah-discuss-body {
   flex: 1 1 auto;
@@ -148,4 +180,11 @@
   flex-wrap: wrap;
   gap: 6px;
   padding: 0 16px 12px;
+}
+
+/* The top bar's Discuss toggle while the panel is open: pressed, not an accent fill. */
+.ah-btn[data-discuss-toggle][aria-pressed="true"] {
+  background: var(--surface-sunken);
+  border-color: var(--border-strong);
+  color: var(--text);
 }

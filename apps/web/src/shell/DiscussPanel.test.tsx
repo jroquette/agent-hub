@@ -125,20 +125,20 @@ describe("DiscussPanel", () => {
     expect(body.prompt).toBe(
       discussPrompt(feature, referencedMessage([AC], "Is this still right?")),
     );
-    expect(await screen.findByRole("link", { name: "Full chat" })).toHaveAttribute(
-      "href",
-      `/agent-sessions/${ID}`,
-    );
+    const fullChat = async () => {
+      await userEvent.click(
+        await screen.findByRole("button", { name: "More for this conversation" }),
+      );
+      return screen.findByRole("button", { name: "Open the full chat" });
+    };
+    expect(await fullChat()).toBeInTheDocument();
     expect(window.localStorage.getItem(`ah.discuss.session.${feature.key}`)).toBe(ID);
 
     await userEvent.click(screen.getByRole("button", { name: "switch" }));
-    expect(screen.queryByRole("link", { name: "Full chat" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "More for this conversation" })).toBeNull();
 
     await userEvent.click(screen.getByRole("button", { name: "switch" }));
-    expect(await screen.findByRole("link", { name: "Full chat" })).toHaveAttribute(
-      "href",
-      `/agent-sessions/${ID}`,
-    );
+    expect(await fullChat()).toBeInTheDocument();
   });
 
   it("sends a file attached to the first message with the new session", async () => {

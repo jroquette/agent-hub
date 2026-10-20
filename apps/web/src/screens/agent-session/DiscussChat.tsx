@@ -1,6 +1,7 @@
 import "./agent-session.css";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { Skeleton } from "../../components";
 import { ApiProblem } from "../../lib/api";
@@ -32,6 +33,8 @@ export interface DiscussChatProps {
   prepareMessage?: ((text: string) => string) | undefined;
   /** The message was accepted: the Discuss panel drops the references it carried. */
   onSent?: (() => void) | undefined;
+  /** Where the session's status and cost show, when the caller has a header for them. */
+  metaSlot?: HTMLElement | null | undefined;
 }
 
 export interface DiscussChatViewProps extends DiscussChatProps {
@@ -55,6 +58,7 @@ export function DiscussChatView({
   transcript,
   prepareMessage,
   onSent,
+  metaSlot,
 }: DiscussChatViewProps) {
   const snapshot = useAgentSession(agentSessionId);
   const capabilities = useCapabilities();
@@ -92,12 +96,19 @@ export function DiscussChatView({
   const pending = pendingPermissions(state).filter(
     (id) => state.permissions[id]?.requestKind === "tool",
   );
+  const meta = (
+    <>
+      <AgentStatusBadge status={status} endReason={endReason} />
+      <CostMeter meter={state.meter} />
+    </>
+  );
   return (
     <div className="as-page">
-      <div className="ah-row ah-wrap ah-small ah-discuss-meta">
-        <AgentStatusBadge status={status} endReason={endReason} />
-        <CostMeter meter={state.meter} />
-      </div>
+      {metaSlot === undefined ? (
+        <div className="ah-row ah-wrap ah-small ah-discuss-meta">{meta}</div>
+      ) : (
+        metaSlot && createPortal(meta, metaSlot)
+      )}
       {transcript.streaming && (
         <ReconnectBanner connected={transcript.health.closedSince === null} />
       )}
