@@ -131,11 +131,11 @@ class SignOffOwnerSteps:
         sources = (accepted,)
         delivery = signoff_name(found.delivery for found in evals if not found.legacy)
         name = f"{delivery}{NOTE_SUFFIX}"
-        at = self._clock()
+        at = self._clock().replace(microsecond=0)
         if not ranks_newer(waiting.acceptance, delivery=delivery, at=at):
             raise OwnerSignOffError(
                 f"a sign-off would not be newer than {accepted}: "
-                "it has no evaluated_at, or one in the future"
+                "it has no evaluated_at, or one at or after now"
             )
         text = signoff_note(
             slug=folder.slug, delivery=delivery, acs=waiting.acs, sources=sources, at=at

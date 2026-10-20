@@ -248,6 +248,25 @@ def test_refuses_when_signoff_would_not_be_newer_than_acceptance_eval(dated: str
     assert writer.written == {}
 
 
+# two-level-flows A9 (AGH-325 R3-Q1): the note keeps evaluated_at to the second, so a clock a
+# fraction of a second past the acceptance eval would write a sign-off dated the same second.
+def test_refuses_when_signoff_would_be_dated_the_same_second_as_acceptance_eval() -> None:
+    whole = a_head("feature", "SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-10-17T10:00:00Z")
+    half_past = datetime(2026, 10, 17, 10, 0, 0, 500_000, tzinfo=UTC)
+    writer = Writer()
+    sign_off = SignOffOwnerSteps(
+        Hubs(), Folders(a_planned_folder(whole)), writer, clock=lambda: half_past
+    )
+
+    with pytest.raises(OwnerSignOffError) as refused:
+        sign_off("demo", SLUG)
+
+    assert refused.value.reason == (
+        "a sign-off would not be newer than feature: it has no evaluated_at, or one at or after now"
+    )
+    assert writer.written == {}
+
+
 # two-level-flows A9 (AGH-325 R2-m2): an AC whose latest eval is NO-SHIP is not signed off over.
 def test_refuses_naming_acs_when_their_latest_eval_is_no_ship() -> None:
     whole = a_head("feature", "SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-10-10")
