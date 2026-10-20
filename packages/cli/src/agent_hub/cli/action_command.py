@@ -25,6 +25,7 @@ import getpass
 import os
 import sys
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Final
@@ -45,6 +46,7 @@ from agent_hub.core.hub_config.effective_environments import (
     SourcedEnvironment,
     effective_environments,
 )
+from agent_hub.core.hub_config.environments import Endpoint
 from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.json_form import JsonValue, dump_json
 from agent_hub.core.scenarios.access_policy import (
@@ -212,23 +214,35 @@ def run_command(name: Name, *, environment: Environment, given: Inputs = None) -
 
 
 def credentials(resolved: ResolvedCall) -> dict[str, str]:
-    """What the call's process gets on top of its plain environment: its env file's variables
-    (read now, the only read), ``AWS_PROFILE`` and the declared names from this environment;
-    raises ``NodeFailedError`` (``config``) when they cannot be had, before any process."""
+    """What the call's process gets on top of its plain environment (``call_credentials``)."""
     if resolved.environment is None:
         return {}
+    return call_credentials(
+        resolved.hub,
+        resolved.environment,
+        endpoints=resolved.plan.endpoints,
+        roots=resolved.roots,
+    )
+
+
+def call_credentials(
+    hub: Path,
+    environment: SourcedEnvironment,
+    *,
+    endpoints: Sequence[Endpoint],
+    roots: Sequence[str],
+) -> dict[str, str]:
+    """What an action call's process gets on top of its plain environment, for ``hub action
+    run`` and a scenario run's steps alike: its env file's variables (read now, through the one
+    loader), ``AWS_PROFILE`` and the declared names from this environment; raises
+    ``NodeFailedError`` (``config``) when they cannot be had, before any process."""
     try:
-        chosen = credentials_for(resolved.environment, resolved.plan.endpoints)
+        chosen = credentials_for(environment, endpoints)
         env_file = chosen.env_file if chosen is not None else None
         values = (
             {}
             if env_file is None
-            else load_env_file(
-                resolved.hub.parent,
-                env_file,
-                roots=resolved.roots,
-                environment=resolved.environment_name,
-            )
+            else load_env_file(hub.parent, env_file, roots=roots, environment=environment.name)
         )
     except (CredentialsError, EnvFileLoadError) as error:
         raise NodeFailedError("config", str(error)) from None
