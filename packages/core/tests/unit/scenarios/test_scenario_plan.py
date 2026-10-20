@@ -242,3 +242,24 @@ def test_reports_action_and_service_when_scenario_plan_cannot_resolve_them() -> 
         "step order-held: input target: service orders has no endpoint in environment local",
     )
     assert [row.step for row in plan.rows] == ["order-held", "check-order"]
+
+
+def test_reports_nothing_when_unordered_gates_check_long_reverse_chain() -> None:
+    # 1500 asking steps declared in reverse dependency order: a0 depends on a1, ... a1499.
+    count = 1500
+    nodes = [
+        {
+            "id": f"a{index}",
+            "type": "action",
+            "action": "send-order",
+            "with": {"target": "api"},
+            **({"depends_on": [f"a{index + 1}"]} if index + 1 < count else {}),
+        }
+        for index in range(count)
+    ]
+
+    plan = planned(nodes, environment="staging")
+
+    assert plan.problems == ()
+    assert len(plan.rows) == count
+    assert {row.decision for row in plan.rows} == {"ask"}

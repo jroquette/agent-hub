@@ -47,7 +47,7 @@ from agent_hub.core.workflows.nodes import (
     Node,
     WaitNode,
 )
-from agent_hub.core.workflows.plan import WorkflowPlan, node_texts, schema_has_path
+from agent_hub.core.workflows.plan import Upstream, WorkflowPlan, node_texts, schema_has_path
 from agent_hub.core.workflows.substitution import (
     CtxRef,
     InputRef,
@@ -305,7 +305,7 @@ def _path_problems(plan: WorkflowPlan, entries: Mapping[str, ActionEntry]) -> It
 
 def _unordered_gates(nodes: Sequence[Node], asks: frozenset[str]) -> Iterator[str]:
     """Two gate-needing steps with no order between them, among ``nodes`` and in each body."""
-    ancestors = _ancestors(nodes)
+    upstream = Upstream.of(nodes)
     seen: list[str] = []
     for node in nodes:
         if isinstance(node, LoopGroupNode):
@@ -313,7 +313,7 @@ def _unordered_gates(nodes: Sequence[Node], asks: frozenset[str]) -> Iterator[st
         if not _needs_gate(node, asks):
             continue
         for earlier in seen:
-            if earlier not in ancestors[node.id] and node.id not in ancestors[earlier]:
+            if not (upstream.contains(earlier, node.id) or upstream.contains(node.id, earlier)):
                 yield UNORDERED_GATES.format(first=earlier, second=node.id)
                 break
         seen.append(node.id)
@@ -323,20 +323,6 @@ def _needs_gate(node: Node, asks: frozenset[str]) -> bool:
     if isinstance(node, LoopGroupNode):
         return any(_needs_gate(body, asks) for body in node.nodes)
     return isinstance(node, ApprovalNode | WaitNode) or node.id in asks
-
-
-def _ancestors(nodes: Sequence[Node]) -> dict[str, frozenset[str]]:
-    """Each node's ``depends_on`` closure among ``nodes`` (planned: no cycle)."""
-    direct = {node.id: tuple(node.depends_on) for node in nodes}
-    found: dict[str, frozenset[str]] = {}
-
-    def of(node_id: str) -> frozenset[str]:
-        if node_id not in found:
-            parents = direct.get(node_id, ())
-            found[node_id] = frozenset(parents).union(*(of(parent) for parent in parents))
-        return found[node_id]
-
-    return {node.id: of(node.id) for node in nodes}
 
 
 def _strings(value: JsonValue) -> Iterator[str]:

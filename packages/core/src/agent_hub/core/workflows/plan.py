@@ -153,7 +153,7 @@ def _plan(document: WorkflowDocument) -> WorkflowPlan:
     if leftover:
         raise WorkflowLoadError([_cycle_problem(nodes, leftover)])
     captures, problems = _captures(nodes)
-    graph = _Graph(document, _Upstream(nodes, layers), {node.id: node for node in nodes}, captures)
+    graph = _Graph(document, Upstream(nodes, layers), {node.id: node for node in nodes}, captures)
     problems += [
         *_reference_problems(graph, nodes),
         *_resume_problems(graph, nodes),
@@ -224,7 +224,7 @@ def _cycle_problem(nodes: Sequence[Node], leftover: set[str]) -> WorkflowProblem
     return WorkflowProblem(loc, f"a cycle runs through the nodes {names}")
 
 
-class _Upstream:
+class Upstream:
     """Which nodes are upstream of which: one bitset over declaration indexes per node.
 
     Built in layer order, so each node's dependencies are complete before it: no recursion,
@@ -242,6 +242,11 @@ class _Upstream:
                     bits |= self.ancestors[target] | (1 << self.index[target])
                 self.ancestors[node_id] = bits
 
+    @classmethod
+    def of(cls, nodes: Sequence[Node]) -> Upstream:
+        """The order of ``nodes``, a graph already planned (no cycle, no unknown id)."""
+        return cls(nodes, _kahn_layers(nodes)[0])
+
     def contains(self, producer: str, node: str) -> bool:
         """Whether ``producer`` is a transitive dependency of ``node``."""
         return bool(self.ancestors[node] >> self.index[producer] & 1)
@@ -250,7 +255,7 @@ class _Upstream:
 @dataclass(frozen=True)
 class _Graph:
     document: WorkflowDocument
-    upstream: _Upstream
+    upstream: Upstream
     producers: Mapping[str, Node]
     captures: Mapping[str, _Captured]
 
@@ -383,7 +388,7 @@ def _group_problems(graph: _Graph) -> Iterator[WorkflowProblem]:
             yield from (WorkflowProblem((*where, *p.loc), p.message) for p in problems)
             continue
         producers = {node.id: node for node in body}
-        upstream = _Upstream(body, layers)
+        upstream = Upstream(body, layers)
         inside = _BodyGraph(graph.document, upstream, producers, graph.captures, graph, group)
         yield from _reference_problems(inside, body, (*where, "nodes"))
         yield from _resume_problems(inside, body, (*where, "nodes"))
@@ -399,7 +404,7 @@ def _suspendable(node: Node) -> bool:
 
 
 def _unordered_gates(
-    nodes: Sequence[Node], upstream: _Upstream, where: Loc = ()
+    nodes: Sequence[Node], upstream: Upstream, where: Loc = ()
 ) -> Iterator[WorkflowProblem]:
     """Two suspendable nodes with no order between them: a run holds one open gate at most."""
     seen: list[str] = []
