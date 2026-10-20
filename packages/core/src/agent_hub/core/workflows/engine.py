@@ -224,7 +224,7 @@ class _Run:
         self.lock = threading.Lock()
         self.trace_lock = threading.Lock()
         # Each expect node's polls in this run, all its attempts together.
-        self.polls: dict[str, int] = {}
+        self.polls: dict[str, int] = dict(prior.polls)
         # Concurrent nodes record through one lock, as they end; at most ``max_parallel``
         # attempts run at once across the run, nested group layers included.
         self.recorder: RunRecorder = _LockedRecorder(ports.recorder)
@@ -283,13 +283,16 @@ class _Run:
         document = self.plan.document
         outcome = authored_outcome(document.returns, document.outcome_field, self.ends)
         self.ports.recorder.run_ended(RunEnd(status, self.ports.clock.now(), outcome, reason))
-        state = RunState({**self.prior.nodes, **self.results}, self.attempts, self.sessions)
+        nodes = {**self.prior.nodes, **self.results}
+        state = RunState(nodes, self.attempts, self.sessions, polls=dict(self.polls))
         return RunReport(status, outcome, reason, state)
 
     def _pause(self, node: str, gate: OpenGate) -> RunReport:
         """The report of a run stopped on an open gate: no end is recorded."""
         nodes = {**self.prior.nodes, **self.results}
-        state = RunState(nodes, self.attempts, self.sessions, {node: gate}, dict(self.held))
+        state = RunState(
+            nodes, self.attempts, self.sessions, {node: gate}, dict(self.held), dict(self.polls)
+        )
         return RunReport("paused", None, node, state)
 
     def _end(self, node: Node, end: NodeEnd) -> None:
