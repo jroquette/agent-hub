@@ -54,7 +54,8 @@ export function DiscussPanel() {
         />
       </header>
       {target ? (
-        <DiscussBody key={target.key} target={target} />
+        // The owner session is read after the target: the body starts over once it is known.
+        <DiscussBody key={`${target.key}:${target.ownerSession?.id ?? ""}`} target={target} />
       ) : (
         <EmptyState icon="message-square" title="Open something to discuss">
           Register a project to talk with Claude about any screen. The conversation follows what is
@@ -100,14 +101,40 @@ function ReferenceChips({
 
 function DiscussBody({ target }: { target: DiscussTarget }) {
   const { references, removeReference, clearReferences } = useDiscuss();
-  const [sessionId, setSessionId] = useState<string | null>(() => readDiscussSession(target));
+  const owner = target.ownerSession ?? null;
+  // The owner's session comes first; the panel's own conversation is one click away.
+  const [sessionId, setSessionId] = useState<string | null>(
+    () => owner?.id ?? readDiscussSession(target),
+  );
+  const onOwner = owner !== null && sessionId === owner.id;
   const forget = useCallback(() => {
-    rememberDiscussSession(target, null);
+    if (!onOwner) rememberDiscussSession(target, null);
     setSessionId(null);
-  }, [target]);
+  }, [target, onOwner]);
 
   return (
     <div className="ah-discuss-body">
+      {owner && (
+        <div className="ah-row ah-small ah-discuss-meta">
+          <Icon name="square-terminal" size="sm" />
+          {onOwner ? (
+            <span className="ah-discuss-path" title={owner.name}>
+              <span className="ah-muted">Feature session: </span>
+              {owner.name}
+            </span>
+          ) : (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setSessionId(owner.id);
+              }}
+            >
+              Back to the feature session
+            </Button>
+          )}
+        </div>
+      )}
       <div className="ah-row ah-small ah-discuss-meta">
         {target.path && <span className="ah-mono ah-muted ah-discuss-path">{target.path}</span>}
         <span className="ah-grow" />

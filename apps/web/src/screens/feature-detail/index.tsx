@@ -22,10 +22,15 @@ import { fmtClock } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
 import { linearHref } from "../../lib/safeHref";
 import { useCollectorState } from "../../shell/GlobalStream";
-import { DiscussButton, useDiscussTarget, type DiscussTarget } from "../../shell/discuss";
+import {
+  DiscussButton,
+  useDiscuss,
+  useDiscussTarget,
+  type DiscussTarget,
+} from "../../shell/discuss";
 import { FeatureNameField, RenameButton, useFeatureNames } from "../features/names";
 import { AcBar, PHASES, VERDICT_STATUS } from "../features/parts";
-import { ApproveRecord } from "./ApproveRecord";
+import { ApproveRecord, sessionName } from "./ApproveRecord";
 import { QuestionsLink } from "./QuestionsBlock";
 import { NoteView } from "../brain/NoteView";
 import { NotFoundBody } from "../not-found";
@@ -34,9 +39,10 @@ import { EvalTab, OwnerSignOff, ownerStepsWaiting, pickEval } from "./EvalTab";
 import { RecordSummary, summaryRequest } from "./RecordSummary";
 import { StateBadge } from "./PlanningView";
 import { TicketsTab } from "./TicketsTab";
-import { useFeature, useFeatureTickets } from "./queries";
+import { useFeature, useFeatureSession, useFeatureTickets } from "./queries";
 
 type Detail = components["schemas"]["FeatureDetail"];
+type AgentSession = components["schemas"]["AgentSession"];
 type AcRow = components["schemas"]["AcRow"];
 
 export { acReference, allCommands } from "./CriteriaTab";
@@ -296,6 +302,7 @@ function featureDiscussTarget(
   detail: Detail | undefined,
   tab: string,
   evalPath: string | undefined,
+  owner: AgentSession | null,
 ): DiscussTarget | null {
   if (!detail) return null;
   const folder = `brain/features/${detail.slug}`;
@@ -321,6 +328,7 @@ function featureDiscussTarget(
     title: detail.slug,
     path,
     openOnArrive: true,
+    ownerSession: owner ? { id: owner.id, name: sessionName(owner) } : null,
     starters: record
       ? [
           {
@@ -353,6 +361,31 @@ function ownerWait(steps: readonly { name: string; meta: string | null; reason: 
 }
 
 /** Feature detail (spec 17, D23): golden path, owner steps, acceptance criteria. */
+/**
+ * The session responsible for the feature (the one that wrote its spec, research and plan): one
+ * click talks with it in the side panel.
+ */
+function FeatureSessionChip({ session }: { session: AgentSession }) {
+  const { setOpen } = useDiscuss();
+  const name = sessionName(session);
+  return (
+    <span className="ah-row" style={{ gap: 6 }}>
+      <Icon name="square-terminal" size="sm" />
+      <span className="ah-muted">Session</span>
+      <Button
+        size="sm"
+        variant="ghost"
+        title={`Talk with the session that wrote this feature's records: ${name}`}
+        onClick={() => {
+          setOpen(true);
+        }}
+      >
+        {name}
+      </Button>
+    </span>
+  );
+}
+
 /** The feature's nickname as the title, the slug beside it; the pencil renames it. */
 function FeatureHeading({ project, slug }: { project: string; slug: string }) {
   const nameOf = useFeatureNames();
@@ -399,7 +432,8 @@ export function FeatureDetailScreen() {
     (tab === "tickets" || tab === "eval") && feature.isSuccess,
   );
   const selectedEval = pickEval(feature.data?.evals ?? [], params.get("eval"));
-  useDiscussTarget(featureDiscussTarget(feature.data, tab, selectedEval?.path));
+  const owner = useFeatureSession(project, slug);
+  useDiscussTarget(featureDiscussTarget(feature.data, tab, selectedEval?.path, owner));
 
   if (feature.isError) {
     if (feature.error.status === 404) {
@@ -536,6 +570,7 @@ export function FeatureDetailScreen() {
           {state === "offline" && <AsOfStamp stale time={fmtClock(asOf, tz)} />}
         </div>
         <div className="ah-row ah-wrap ah-small" style={{ gap: 14 }}>
+          {owner && <FeatureSessionChip session={owner} />}
           <TicketChips ids={issueIds} rows={tickets.data?.tickets ?? []} />
           {detail.acs && (
             <>
