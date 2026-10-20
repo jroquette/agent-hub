@@ -33,11 +33,11 @@ An action declares `version`, `name` (its file stem), `description`, `effect` (`
 Schema). An input is `string`, `integer`, `number`, `boolean` or `service`; a `service` value names a service in
 `repos[].services`, resolved to its endpoint in the bound environment (none: `plan` fails naming both). The script reads
 one JSON object on stdin, `{"mode": "plan" | "run", "inputs": {…}, "endpoint": {"<input>": {"url": …, "resource": …}}}`,
-and prints one JSON value: in `run` mode the output, matching `output_format` (else the step fails `output_contract`);
-in `plan` mode `{"summary": "<one line>"}`, changing nothing, with no credential. An action is **committed** when its
-document, script and its pack's other `scripts/` files (not other actions' scripts or `__pycache__`) each match the
-hub's `HEAD` (a local commit suffices); else it is a **draft**, listed but never run (outside a git checkout, all are).
-A run pins each action's `content_hash` (`sha256:` over each file's path, length and bytes) and runs its snapshot copy.
+and prints one JSON value: in `run` mode the output matching `output_format` (else the step fails `output_contract`); in
+`plan` mode `{"summary": "<one line>"}`, changing nothing, with no credential. An action is **committed** when its
+document, script and its pack's other `scripts/` files (no other action's script, `__pycache__` or dot name) each match
+the hub's `HEAD` (a local commit suffices); else it is a **draft**, listed but never run (outside a git checkout, all
+are). A run pins each action's `content_hash` (`sha256:` over each file's path, length, bytes) and runs that snapshot.
 
 ### Policy
 

@@ -2,16 +2,17 @@
 docs/design/scenarios.md § Actions and the script contract).
 
 Each document is read through ``workflow_yaml`` (strict YAML, 256 KiB, the line of each key) and
-parsed by core's ``parse_action``; a problem names the file (relative to the hub), the line and
-the key, and never stops the scan. On top of the model's rules: the name is the file's stem, the
+parsed by core's ``parse_action``; a problem names the file (relative to the hub), the line and the
+key, and never stops the scan. On top of the model's rules: the name is the file's stem, the
 document is not a link, the script is a regular file under the pack's ``scripts/`` whose real path
 is the path itself (no link, so it never leaves the pack), and ``output_format`` is a valid JSON
-Schema. Every other file under the pack's ``scripts/`` (``__pycache__`` aside, and not another
-action's own script) is a helper the script may source: it is read once per pack, never through a
-link, and joins each action's content hash and draft check. At most ``MAX_HUB_ACTIONS`` files are
-read; past that the root gets one problem. An action is committed only when ``HEAD`` holds, as a
-regular file's blob (``git ls-tree``), exactly the bytes read of each of its files; anything else
-(no git, no ``HEAD``, a change the index hides, a submodule pack, a later edit) is a draft.
+Schema. Every other file under the pack's ``scripts/`` (``__pycache__`` and dot names aside, not
+another action's own script) is a helper the script may source: it is read once per pack, never
+through a link, and joins each action's content hash and draft check. At most ``MAX_HUB_ACTIONS``
+files are read; past that the root gets one problem. An action is committed only when ``HEAD``
+holds, as a regular file's blob (``git ls-tree``), exactly the bytes read of each of its files;
+anything else (no git, no ``HEAD``, a change the index hides, a submodule pack, a later edit) is a
+draft.
 
 Limit: as for workflows, a path is checked, then read; a link swapped in between could be followed.
 The packs are the hub owner's own files.
@@ -233,7 +234,12 @@ class _Scan:
         script_path = self._shown(pack_root / document.script)
         script = dict(scripts).get(script_path)
         if script is None:
-            reason = f"{document.script} is in a folder an action's scripts never use"
+            hidden = any(part.startswith(".") for part in document.script.split("/"))
+            reason = (
+                f"{document.script} is a dot file; an action's script is never hidden"
+                if hidden
+                else f"{document.script} is in a folder an action's scripts never use"
+            )
             self._at(path, loaded, WorkflowProblem(("script",), reason))
             return
         helpers = [file for file in scripts if file[0] not in declared]
@@ -310,10 +316,15 @@ class _ScriptsError(Exception):
 
 
 def _script_files(folder: Path, pack_root: Path) -> Iterator[Path]:
-    """Every regular file under ``folder``, ``__pycache__`` aside; raises ``_ScriptsError`` at a
-    link or a special file (a link is never followed, so nothing leaves the pack)."""
+    """Every regular file under ``folder``, ``__pycache__`` and dot names aside; raises
+    ``_ScriptsError`` at a link or a special file (a link is never followed, so nothing leaves
+    the pack)."""
     with os.scandir(folder) as listing:
-        entries = sorted(listing, key=lambda entry: entry.name)
+        # Dot files and folders (.DS_Store, swap files) are no helper, as no pack entry is.
+        entries = sorted(
+            (entry for entry in listing if not entry.name.startswith(".")),
+            key=lambda entry: entry.name,
+        )
     for entry in entries:
         path = Path(entry.path)
         shown = path.relative_to(pack_root).as_posix()
