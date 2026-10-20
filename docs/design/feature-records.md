@@ -137,7 +137,12 @@ States: the first step that does not hold is `current` (or `unknown` when its ev
 "Ticket evals cover 6 of 23 ACs"). After it, a step whose own condition holds is `blocked` with a `reason` naming that
 earlier step; one with evidence for part of the feature (created or merged tickets, ticket evals covering some ACs, a
 design written) is `partial`; one that cannot be read is `unknown`; the rest are `pending`. A SHIP-WITH-OWNER-STEPS
-acceptance eval not signed off reads "Waiting on you: n owner steps". Without a Linear snapshot, ticket states are
+acceptance eval not signed off reads "Waiting on you: n owner steps". One rule decides which ACs wait
+(`feature_evals.owner_wait`), for the step and the sign-off alike: the acceptance eval is whole-feature, so every
+non-withdrawn AC is an owner step (a legacy `eval.md` without scope too, failing ACs included) until a later SHIP with
+`provenance: owner` names it; the sign-off lists exactly those. With no AC to list (no `features.json`), the step is
+not done, "Waiting on owner steps · no ACs listed", until a later owner SHIP of any scope exists; the app cannot
+write that one. Without a Linear snapshot, ticket states are
 unknown: Build and Shipped are `unknown` with "Linear not connected" (or "Linear not loaded yet" when a key is set but
 the cache is cold). Canceled (and duplicate) tickets and withdrawn ACs are left out of every count; a ticket with
 children (an epic) counts under Tickets only.

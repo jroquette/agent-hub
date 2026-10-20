@@ -49,7 +49,7 @@ def sign_off_owner_steps(
     project: NamePath, slug: NamePath, sign_off: OwnerSignOffDep
 ) -> EvalRecord:
     """The owner confirms the owner steps are done: writes an ``owner-signoff`` SHIP eval over
-    the ACs that waited on them (409 when no AC waits, or one is not covered by a SHIP)."""
+    the ACs the Acceptance step waits on (409 when none waits, or the feature lists no AC)."""
     return sign_off(project, slug)
 
 

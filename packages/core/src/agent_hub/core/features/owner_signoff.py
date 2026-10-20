@@ -5,8 +5,9 @@ signs off from the app: a new eval ``brain/features/<slug>/evals/owner-signoff.m
 ``owner-signoff-r2``, ``-r3``...) with ``verdict: SHIP``, ``provenance: owner`` and the AC ids
 that waited on owner steps as its scope. Being dated now, it is the latest eval of those ACs, so
 the Acceptance step turns done (two-level-flows A3; ``feature_evals``' order). It is never a
-whole-feature eval, so it never sets the header verdict. A sign-off is refused while any AC is
-not covered by a SHIP (an agent must evaluate it first) or when no AC waits on owner steps.
+whole-feature eval, so it never sets the header verdict. The ACs it lists are exactly those the
+Acceptance step waits on (``feature_evals.owner_wait``, the rule both share). A sign-off is
+refused when no AC waits on owner steps, or when the feature lists no AC to sign off.
 """
 
 from collections.abc import Callable, Iterable
@@ -17,8 +18,8 @@ from agent_hub.core.errors import AgentHubError
 from agent_hub.core.features.feature_evals import (
     EVALS_FOLDER,
     NOTE_SUFFIX,
-    eval_coverage,
     eval_records,
+    owner_wait,
 )
 from agent_hub.core.features.feature_record import FeatureRecordFile, record_from_bytes
 from agent_hub.core.features.feature_status import FeatureFolder
@@ -125,23 +126,17 @@ class SignOffOwnerSteps:
         if not isinstance(record, FeatureRecordFile):
             raise OwnerSignOffError("features.json is missing or invalid")
         evals = eval_records(folder.evals, folder.eval_head, slug=folder.slug)
-        coverage = eval_coverage(evals, record.acs, tickets=record.tickets)
-        if coverage.uncovered:
-            raise OwnerSignOffError(
-                f"{len(coverage.uncovered)} ACs are not covered by a SHIP; evaluate them first"
-            )
-        if not coverage.owner_steps:
+        waiting = owner_wait(evals, record.acs, tickets=record.tickets)
+        if waiting is None:
             raise OwnerSignOffError("no AC waits on owner steps")
-        sources = tuple(
-            found.delivery
-            for found in evals
-            if found.verdict == "SHIP-WITH-OWNER-STEPS" and found.problem is None
-        )
+        if not waiting.acs:
+            raise OwnerSignOffError("features.json lists no AC to sign off")
+        sources = (waiting.acceptance.delivery,)
         delivery = signoff_name(found.delivery for found in evals if not found.legacy)
         name = f"{delivery}{NOTE_SUFFIX}"
         at = self._clock()
         text = signoff_note(
-            slug=folder.slug, delivery=delivery, acs=coverage.owner_steps, sources=sources, at=at
+            slug=folder.slug, delivery=delivery, acs=waiting.acs, sources=sources, at=at
         )
         try:
             self._writer.create_eval(hub_path, slug=folder.slug, name=name, text=text)
@@ -152,7 +147,7 @@ class SignOffOwnerSteps:
             path=f"features/{folder.slug}/{EVALS_FOLDER}/{name}",
             verdict="SHIP",
             tickets=(),
-            acs=coverage.owner_steps,
+            acs=waiting.acs,
             prs=(),
             commit=None,
             evaluated_at=at.isoformat(timespec="seconds"),
