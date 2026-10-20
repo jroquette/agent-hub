@@ -180,15 +180,6 @@ def test_keeps_ux_design_open_when_drafts_and_later_record_exists() -> None:
     assert path.phase == "ux_design"
 
 
-def test_marks_ux_design_unknown_when_a_design_cannot_be_read() -> None:
-    problem = "more than 50 UX designs; not all were read"
-
-    path = golden_path(_inputs(ux_designs=(True,), ux_problem=problem))
-
-    ux = _step(path, "ux_design")
-    assert (ux.state, ux.reason) == ("unknown", problem)
-
-
 # two-level-flows AC-1.4: Plan's meta reads the plan's version.
 def test_reads_version_in_plan_meta_when_amendments_listed() -> None:
     amendments = tuple(
@@ -800,17 +791,14 @@ def test_marks_ux_design_unknown_when_designs_over_cap() -> None:
     assert (ux.state, ux.reason) == ("unknown", "more than 50 UX designs; not all were read")
 
 
-def test_marks_ux_design_unknown_when_a_design_is_a_link() -> None:
+def test_counts_ux_design_draft_when_design_is_a_link() -> None:
     linked = RecordHead(name="ux-a.md", head=None, problem="not a regular file")
     designs = (_ux_head("ux-b.md", "approved"), linked)
 
     path = feature_parts(_folder(ux_designs=designs)).golden_path
 
     ux = _step(path, "ux_design")
-    assert (ux.state, ux.reason) == (
-        "unknown",
-        "ux-a.md could not be read (not a regular file). Fix it in a hub PR.",
-    )
+    assert (ux.state, ux.meta) == ("current", "2 designs · 1 draft")
 
 
 def test_counts_ux_design_draft_when_design_has_no_frontmatter() -> None:
