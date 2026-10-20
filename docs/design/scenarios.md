@@ -19,10 +19,10 @@ one example action (`effect: read`) and scenario; `hub sync` never adds them and
 
 - `kind`: `workflow` (the default, so today's documents are unchanged) or `scenario`. A scenario holds only `action`,
   `expect`, `approval`, `wait`, `loop_group` and `include` nodes; any other type is a load error naming the node.
-- `action` node: the common keys, `action` (`<name>` in the same pack, or `<pack>/<name>`), `with`, `capture`, `retry`,
-  `timeout`. `expect` node: the same, plus `every` and `timeout` (both required) and `until_when` (the `when:` grammar).
-- `capture: {<name>: <ref>}` gives `$CTX.<name>` to downstream nodes; a name not captured upstream, or captured twice on
-  one path, is a load error. `$self.output[.path]` is the node's own output, legal only in `until_when` and `capture`.
+- `action` node: the common keys, `action` (`<name>` in its pack, or `<pack>/<name>`), `with`, `capture`, `retry`,
+  `timeout`; one JSON value out. `expect`: the same, plus `every`, `timeout` (both required), `until_when`.
+- `capture: {<name>: <ref>}` gives `$CTX.<name>` to downstream nodes; a name not captured upstream, or by two nodes, is
+  a load error. `$self.output[.path]` is the node's own output, legal only in `until_when` and `capture`.
 - A process workflow may declare `environment: <name>` (`hub workflow run --env` overrides it); its `shell` and `script`
   nodes then take `effect` (default `write`). Ids ending `__ask` or `__investigation`, and `self`, are reserved.
 
