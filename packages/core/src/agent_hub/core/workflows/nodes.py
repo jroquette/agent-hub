@@ -46,7 +46,19 @@ def _not_blank(value: str) -> str:
     return value
 
 
+# The engine's own gate ids: a policy ask before a step, an investigation after a divergence.
+RESERVED_SUFFIXES: Final = ("__ask", "__investigation")
+# ``$self.output`` reads the node's own output: no node may be named ``self``.
+SELF_ID: Final = "self"
+
+
 def _node_id(value: str) -> str:
+    if value == SELF_ID:
+        msg = "the id self is reserved: $self reads a node's own output"
+        raise ValueError(msg)
+    if value.endswith(RESERVED_SUFFIXES):
+        msg = "an id ending __ask or __investigation is reserved for the engine's gates"
+        raise ValueError(msg)
     if "__" in value:
         msg = "an id never contains '__' (kept for include namespacing)"
         raise ValueError(msg)
@@ -101,6 +113,33 @@ def _within_a_week(value: str) -> str:
     return value
 
 
+# Scenario bounds (docs/design/scenarios.md § Events and bounds).
+MIN_EXPECT_EVERY_SECONDS: Final = 5
+MAX_EXPECT_TIMEOUT_SECONDS: Final = 24 * 3600
+MAX_ACTION_TIMEOUT_SECONDS: Final = 3600
+
+
+def _at_least_five_seconds(value: str) -> str:
+    if duration_seconds(value) < MIN_EXPECT_EVERY_SECONDS:
+        msg = f"must be at least {MIN_EXPECT_EVERY_SECONDS}s"
+        raise ValueError(msg)
+    return value
+
+
+def _within_a_day(value: str) -> str:
+    if duration_seconds(value) > MAX_EXPECT_TIMEOUT_SECONDS:
+        msg = "must be at most 24h"
+        raise ValueError(msg)
+    return value
+
+
+def _within_an_hour(value: str) -> str:
+    if duration_seconds(value) > MAX_ACTION_TIMEOUT_SECONDS:
+        msg = "must be at most 1h"
+        raise ValueError(msg)
+    return value
+
+
 def read_only[Key, Value](value: Mapping[Key, Value]) -> Mapping[Key, Value]:
     """A read-only copy of ``value``: a frozen document's mappings cannot be changed either."""
     return MappingProxyType(dict(value))
@@ -137,6 +176,9 @@ Duration = Annotated[
     StrictStr, Field(pattern=r"^[1-9][0-9]*(s|m|h|d)$"), AfterValidator(_within_a_week)
 ]
 PackPath = Annotated[Text, AfterValidator(_pack_path)]
+ActionTimeout = Annotated[Duration, AfterValidator(_within_an_hour)]
+ExpectEvery = Annotated[Duration, AfterValidator(_at_least_five_seconds)]
+ExpectTimeout = Annotated[Duration, AfterValidator(_within_a_day)]
 Argv = Annotated[tuple[Text, ...], Field(min_length=1)]
 OutputRef = Annotated[StrictStr, AfterValidator(_output_ref)]
 PositiveNumber = Annotated[float, BeforeValidator(_json_number), AfterValidator(_positive_finite)]
@@ -406,7 +448,7 @@ class ActionNode(_ActionKeys):
     """Runs one action once, through the engine's runner."""
 
     type: Literal["action"]
-    timeout: Duration | None = None
+    timeout: ActionTimeout | None = None
 
 
 class ExpectNode(_ActionKeys):
@@ -414,8 +456,8 @@ class ExpectNode(_ActionKeys):
     (``$self.output``), or fails ``timeout`` once ``timeout`` has passed."""
 
     type: Literal["expect"]
-    every: Duration
-    timeout: Duration
+    every: ExpectEvery
+    timeout: ExpectTimeout
     until_when: Text
 
 
