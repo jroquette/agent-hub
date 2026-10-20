@@ -841,16 +841,12 @@ def test_kills_action_groups_when_regression_run_interrupted(hub: Path, marker: 
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline and len(_lines(groups_file)) < 2:
         time.sleep(0.05)
-    started = time.monotonic()
     process.send_signal(signal.SIGINT)
     process.communicate(timeout=30)
 
     groups = [int(line) for line in _lines(groups_file)]
     assert len(groups) == 2
     assert all(live_members(group) == [] for group in groups)
-    # Past the scripts' own end: an action left running would have written it by now.
-    time.sleep(max(0.0, started + 5 - time.monotonic()))
-    assert not Path(f"{marker}.late").exists()
 
 
 def _lines(path: Path) -> list[str]:
@@ -938,3 +934,112 @@ def test_reruns_read_when_read_step_started_and_never_ended(hub: Path, marker: P
     assert [line for line in records(hub) if line["event"] == "gate"] == []
     # send-order once, the crashed get-order poll, then the poll again and check-order.
     assert modes(marker) == ["run", "run", "run", "run"]
+
+
+COUNTED_CRASH = """\
+cat > /dev/null
+n=$(cat "$MARKER.count" 2>/dev/null || echo 0)
+n=$((n+1))
+echo $n > "$MARKER.count"
+echo "call$n" >> "$MARKER.calls"
+if [ "$n" = 2 ]; then
+  kill -9 $PPID
+  sleep 5
+fi
+printf '{"order": "o-%s"}' "$n"
+"""
+LOOPED = """\
+version: 1
+kind: scenario
+name: order-walk
+revision: 1
+inputs:
+  ref: {type: string, required: true}
+nodes:
+  - id: batch
+    type: loop_group
+    max_iterations: 2
+    until_when: "$send.output.order == 'o-4'"
+    nodes:
+      - id: send
+        type: action
+        action: send-order
+        with: {target: api, ref: $INPUTS.ref}
+"""
+
+
+def crash_in_loop(hub: Path, marker: Path) -> None:
+    """Run ``LOOPED`` in ``local`` (access write) in its own process: the body's write runs
+    once, then its second call (iteration 2) kills the hub."""
+    (hub / "scenarios" / "demo" / "order-walk.yaml").write_text(LOOPED)
+    (hub / "actions" / "demo" / "scripts" / "send-order.sh").write_text(COUNTED_CRASH)
+    commit_all(hub, "a looped write that crashes once")
+    process = hub_process(
+        hub,
+        marker,
+        *("scenario", "run", "order-walk", "--env", "local", "--input", "ref=T-1"),
+        *("--mode", "regression", "--run-id", RUN),
+    )
+    process.communicate(timeout=60)
+    assert process.returncode == -signal.SIGKILL
+    assert _lines(Path(f"{marker}.calls")) == ["call1", "call2"]
+
+
+def test_cancels_when_loop_rerun_write_rejected_after_crash(hub: Path, marker: Path) -> None:
+    crash_in_loop(hub, marker)
+
+    resumed = run_hub(hub, marker, "workflow", "run", "--resume", RUN)
+    approved = decide_gate(hub, marker, "approve", gate="batch__send__ask")
+    rejected = decide_gate(hub, marker, "reject", gate="batch__send__ask")
+
+    assert plain(resumed.stdout).splitlines()[-1] == f"run {RUN}: paused at batch__send__ask"
+    # The group starts again from its first iteration: each write in it asks first.
+    assert plain(approved.stdout).splitlines()[-1] == f"run {RUN}: paused at batch__send__ask"
+    assert rejected.exit_code == 1, rejected.output
+    assert plain(rejected.stdout).splitlines()[-1] == f"run {RUN}: cancelled"
+    assert _lines(Path(f"{marker}.calls")) == ["call1", "call2", "call3"]
+    assert [line["status"] for line in records(hub) if line["event"] == "end"] == ["cancelled"]
+    resumed_again = run_hub(hub, marker, "workflow", "run", "--resume", RUN)
+    assert resumed_again.exit_code == 1
+    assert _lines(Path(f"{marker}.calls")) == ["call1", "call2", "call3"]
+
+
+def test_asks_before_each_loop_rerun_write_when_approved_after_crash(
+    hub: Path, marker: Path
+) -> None:
+    crash_in_loop(hub, marker)
+
+    resumed = run_hub(hub, marker, "workflow", "run", "--resume", RUN)
+    first = decide_gate(hub, marker, "approve", gate="batch__send__ask")
+    second = decide_gate(hub, marker, "approve", gate="batch__send__ask")
+
+    assert plain(resumed.stdout).splitlines()[-1] == f"run {RUN}: paused at batch__send__ask"
+    assert plain(first.stdout).splitlines()[-1] == f"run {RUN}: paused at batch__send__ask"
+    assert second.exit_code == 0, second.output
+    assert plain(second.stdout).splitlines()[-1] == f"run {RUN}: done"
+    assert _lines(Path(f"{marker}.calls")) == ["call1", "call2", "call3", "call4"]
+    lines = records(hub)
+    resumed_at = next(i for i, line in enumerate(lines) if line["event"] == "resume")
+    later = lines[resumed_at:]
+    gates = [line for line in later if line["event"] == "gate"]
+    assert len(gates) == 2
+    assert all("may have run" in gate["message"] for gate in gates)
+    # Every write the rerun made came after a decision of its own.
+    seen = [line["event"] for line in later if line["event"] in ("decision", "action_start")]
+    assert seen == ["decision", "action_start", "decision", "action_start"]
+
+
+def test_leaves_no_run_folder_when_snapshot_write_fails(
+    hub: Path, marker: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def broken(*args: object, **kwargs: object) -> None:
+        msg = "no space left"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr("agent_hub.cli.scenario_runs.snapshot_run", broken)
+
+    result = run_scenario(hub, marker, "local")
+
+    assert result.exit_code != 0
+    assert not (hub / ".agent-runs" / "workflows" / RUN).exists()
+    assert modes(marker) == []

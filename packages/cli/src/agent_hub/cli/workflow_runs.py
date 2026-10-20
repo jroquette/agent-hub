@@ -274,11 +274,16 @@ def drop_torn_tail(folder: Path) -> None:
         raise WorkflowRunError(f"cannot repair the run {folder.name}: {error}") from None
 
 
-def append_record(folder: Path, record: Record) -> None:
+def append_record(folder: Path, record: Record, *, durable: bool = False) -> None:
+    """Append one line; ``durable`` syncs it to disk before returning (a line that must
+    survive the machine stopping right after, such as the start of a write)."""
     line = {"ts": now().isoformat(timespec="seconds"), **record}
     try:
         with (folder / RECORDS).open("a", encoding="utf-8") as file:
             file.write(json.dumps(line, sort_keys=True) + "\n")
+            if durable:
+                file.flush()
+                os.fsync(file.fileno())
     except OSError as error:
         raise WorkflowRunError(f"cannot write the run {folder.name}: {error}") from None
 
