@@ -235,7 +235,7 @@ describe("FeaturesScreen", () => {
     await screen.findByRole("link", { name: "unread" });
     expect(rowOf("unread").querySelector(".ft-row-line")).toHaveTextContent(/^Build$/);
     expect(screen.getByRole("note")).toHaveTextContent(
-      "Ticket status is not read from Linear on this list, so Build and Shipped show as unknown.",
+      "Ticket status is not read from Linear on this list, so Build shows as unknown, and so does Shipped once Acceptance is done.",
     );
   });
 
