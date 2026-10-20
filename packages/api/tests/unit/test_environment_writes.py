@@ -158,7 +158,7 @@ def test_removes_local_file_when_last_entry_removed(tmp_path: Path) -> None:
     assert not (hub / "hub.local.json").exists()
 
 
-def test_replaces_endpoint_and_keeps_service_kind(tmp_path: Path) -> None:
+def test_keeps_service_kind_when_endpoint_replaced(tmp_path: Path) -> None:
     document = a_hub_document()
     document["environments"] = {"staging": {"access": "ask"}}
     document["repos"][0]["services"] = {
