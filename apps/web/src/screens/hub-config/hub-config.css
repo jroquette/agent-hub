@@ -462,21 +462,48 @@
 }
 
 /* ---------- Setup flows: one question at a time ---------- */
-.ah-flow-layout {
-  display: grid;
-  grid-template-columns: 220px minmax(0, 1fr) 280px;
-  align-items: start;
-  gap: var(--space-5);
+.ah-setup {
+  container-type: inline-size;
 }
-@media (max-width: 1279px) {
-  .ah-flow-layout {
-    grid-template-columns: 200px minmax(0, 1fr);
+.ah-setup-layout {
+  display: grid;
+  grid-template-columns: 184px minmax(0, 640px) 264px;
+  justify-content: start;
+  align-items: start;
+  gap: var(--space-6);
+}
+@container (max-width: 1135px) {
+  .ah-setup-layout {
+    grid-template-columns: 184px minmax(0, 640px);
   }
-  .ah-flow-preview {
+  .ah-setup-preview {
+    position: static;
     grid-column: 2;
   }
 }
-.ah-flow-steps {
+@container (max-width: 879px) {
+  .ah-setup-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ah-setup-steps {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+  .ah-setup-step::after,
+  .ah-setup-step-summary {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow-wrap: anywhere;
+  }
+  .ah-setup-preview {
+    grid-column: 1;
+  }
+}
+.ah-setup-steps {
   position: sticky;
   top: var(--space-4);
   display: flex;
@@ -485,11 +512,11 @@
   padding: 0;
   list-style: none;
 }
-.ah-flow-step {
+.ah-setup-step {
   position: relative;
 }
 /* The line joining one step's circle to the next. */
-.ah-flow-step:not(:last-child)::after {
+.ah-setup-step:not(:last-child)::after {
   content: "";
   position: absolute;
   left: 15px;
@@ -498,10 +525,10 @@
   width: 2px;
   background: var(--border);
 }
-.ah-flow-step[data-state="done"]:not(:last-child)::after {
+.ah-setup-step[data-state="done"]:not(:last-child)::after {
   background: var(--done);
 }
-.ah-flow-step-button {
+.ah-setup-step-button {
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
@@ -514,17 +541,17 @@
   font: inherit;
   text-align: left;
 }
-button.ah-flow-step-button {
+button.ah-setup-step-button {
   cursor: pointer;
 }
-button.ah-flow-step-button:hover .ah-flow-step-title {
+button.ah-setup-step-button:hover .ah-setup-step-title {
   text-decoration: underline;
 }
-button.ah-flow-step-button:focus-visible {
+button.ah-setup-step-button:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
-.ah-flow-dot {
+.ah-setup-dot {
   display: grid;
   flex-shrink: 0;
   place-items: center;
@@ -536,49 +563,52 @@ button.ah-flow-step-button:focus-visible {
   font-size: 13px;
   font-weight: 600;
 }
-.ah-flow-dot[data-state="open"] {
+.ah-setup-dot[data-state="open"] {
   background: var(--accent-soft);
   color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent);
 }
-.ah-flow-dot[data-state="done"] {
+.ah-setup-dot[data-state="done"] {
   background: var(--done-soft);
   color: var(--done);
 }
-.ah-flow-step-title {
+.ah-setup-step-title {
   padding-top: 4px;
   font-weight: 500;
 }
-.ah-flow-step[data-state="future"] .ah-flow-step-title {
+.ah-setup-step[data-state="future"] .ah-setup-step-title {
   color: var(--text-muted);
 }
-.ah-flow-step-summary {
+.ah-setup-step-summary {
   overflow-wrap: anywhere;
 }
-.ah-flow-card {
+.ah-setup-card {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
   padding: var(--space-6);
-  min-height: 420px;
 }
-.ah-flow-question {
+.ah-setup-question {
   margin: 0;
 }
-.ah-flow-question:focus {
+.ah-setup-question:focus {
   outline: none;
 }
-.ah-flow-help {
-  max-width: 64ch;
-  margin: 0 0 var(--space-3);
+.ah-setup-help {
+  max-width: 60ch;
+  margin: 0 0 var(--space-4);
 }
-.ah-flow-body {
+.ah-setup-body {
   flex: 1;
 }
-.ah-flow-input {
-  max-width: 520px;
+.ah-setup-input {
+  width: 100%;
 }
-.ah-flow-footer {
+/* Short answers (a name, a profile) stay short; paths and addresses take the card's width. */
+.ah-setup-input-short {
+  max-width: 360px;
+}
+.ah-setup-footer {
   display: flex;
   align-items: center;
   gap: var(--space-3);
@@ -586,116 +616,62 @@ button.ah-flow-step-button:focus-visible {
   padding-top: var(--space-4);
   border-top: 1px solid var(--border);
 }
-.ah-flow-tiles {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-  gap: var(--space-3);
-}
-.ah-flow-tiles-2 {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-.ah-flow-tile {
-  position: relative;
+/* One bordered list: per environment, its name and access on the left, the address on the right. */
+.ah-setup-addresses {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: var(--space-4);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  cursor: pointer;
-  transition:
-    border-color var(--dur-fast) var(--ease-out),
-    background var(--dur-fast) var(--ease-out);
-}
-.ah-flow-tile:hover {
-  border-color: var(--border-control);
-  background: var(--surface-hover);
-}
-.ah-flow-tile-checked,
-.ah-flow-tile-checked:hover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  box-shadow: 0 0 0 1px var(--accent);
-}
-.ah-flow-tile:has(.ah-flow-tile-input:focus-visible) {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-.ah-flow-tile-input {
-  position: absolute;
-  opacity: 0;
-  pointer-events: none;
-}
-.ah-flow-tile-icon {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-md);
-  background: var(--surface-sunken);
-  color: var(--text-subtle);
-}
-.ah-flow-tile-checked .ah-flow-tile-icon {
-  background: var(--accent);
-  color: var(--surface);
-}
-.ah-flow-tile-label {
-  font-weight: 600;
-}
-.ah-flow-addresses {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-.ah-flow-address {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
 }
-.ah-flow-address-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+.ah-setup-address {
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
+  align-items: start;
   gap: var(--space-3);
+  padding: var(--space-3);
 }
-.ah-flow-review {
+.ah-setup-address + .ah-setup-address {
+  border-top: 1px solid var(--border);
+}
+/* A field shown inside the choice that asks for it. */
+.ah-setup-inline {
+  margin-top: var(--space-3);
+  cursor: auto;
+}
+.ah-setup-review {
   display: flex;
   flex-direction: column;
   margin: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
 }
-.ah-flow-review-row {
+.ah-setup-review-row {
   display: grid;
   grid-template-columns: 160px minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
 }
-.ah-flow-review-row + .ah-flow-review-row {
+.ah-setup-review-row + .ah-setup-review-row {
   border-top: 1px solid var(--border);
 }
-.ah-flow-review-row dt {
+.ah-setup-review-row dt {
   color: var(--text-muted);
 }
-.ah-flow-review-row dd {
+.ah-setup-review-row dd {
   margin: 0;
   overflow-wrap: anywhere;
 }
-.ah-flow-next {
+.ah-setup-next {
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-lg);
   background: var(--surface-sunken);
 }
-.ah-flow-next ol {
+.ah-setup-next ol {
   margin: 6px 0 0;
   padding-left: 18px;
 }
-.ah-flow-preview {
+.ah-setup-preview {
   position: sticky;
   top: var(--space-4);
   display: flex;
@@ -703,7 +679,7 @@ button.ah-flow-step-button:focus-visible {
   gap: var(--space-3);
   padding: var(--space-4);
 }
-.ah-flow-preview-title {
+.ah-setup-preview-title {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -713,7 +689,7 @@ button.ah-flow-step-button:focus-visible {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
-.ah-flow-preview-line {
+.ah-setup-preview-line {
   display: block;
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
@@ -722,7 +698,7 @@ button.ah-flow-step-button:focus-visible {
   font-size: 12px;
   overflow-wrap: anywhere;
 }
-.ah-flow-preview-list {
+.ah-setup-preview-list {
   display: flex;
   flex-direction: column;
   gap: 4px;

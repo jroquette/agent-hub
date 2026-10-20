@@ -116,3 +116,20 @@ fieldset:disabled .ah-option {
   border-color: var(--border);
   background: var(--surface);
 }
+/* The icon box of a row that has one (a list of kinds). */
+.ah-option-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-top: -5px;
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text-subtle);
+}
+/* The checked row is accent-soft already: its icon box turns to surface with an accent icon. */
+.ah-option-checked .ah-option-icon {
+  background: var(--surface);
+  color: var(--accent);
+}

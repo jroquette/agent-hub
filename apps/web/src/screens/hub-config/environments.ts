@@ -65,7 +65,8 @@ export function hubConfigOrigin(project: string): FlowOrigin {
   return { returnTo: environmentsHome(project), returnLabel: "Hub configuration" };
 }
 
-/** The origin a flow was handed, when it is one of this project's pages; else Hub config's. */
+/** The origin a flow was handed, when it is one of this project's pages; else the Environments
+ * page. */
 export function flowOrigin(state: unknown, project: string): FlowOrigin {
   const handed = state as Partial<FlowOrigin> | null;
   const prefix = `/projects/${encodeURIComponent(project)}/`;
@@ -75,7 +76,7 @@ export function flowOrigin(state: unknown, project: string): FlowOrigin {
     handed.returnTo.startsWith(prefix)
   )
     return { returnTo: handed.returnTo, returnLabel: handed.returnLabel };
-  return hubConfigOrigin(project);
+  return { returnTo: environmentsPage(project), returnLabel: "Environments" };
 }
 
 /** What a flow hands back to the config screen after a save: its toast and whether hub.json
@@ -275,7 +276,7 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     icon: "plug",
     name: "api",
     local: "http://localhost:8000",
-    remote: "https://api.staging.example.com",
+    remote: "https://api.example.com",
   },
   {
     id: "web",
@@ -284,7 +285,7 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     icon: "globe",
     name: "web",
     local: "http://localhost:3000",
-    remote: "https://app.staging.example.com",
+    remote: "https://app.example.com",
   },
   {
     id: "database",
@@ -293,7 +294,7 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     icon: "database",
     name: "db",
     local: "postgres://localhost:5432/app",
-    remote: "orders-table-staging",
+    remote: "orders-table",
   },
   {
     id: "queue",
@@ -302,7 +303,7 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     icon: "layers",
     name: "queue",
     local: "orders-queue-local",
-    remote: "orders-queue-staging",
+    remote: "orders-queue",
   },
   {
     id: "storage",
@@ -311,7 +312,7 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     icon: "package",
     name: "bucket",
     local: "uploads-local",
-    remote: "uploads-staging",
+    remote: "uploads-bucket",
   },
   {
     id: "function",
@@ -320,13 +321,13 @@ export const SERVICE_KINDS: readonly ServiceKind[] = [
     icon: "cpu",
     name: "worker",
     local: "orders-worker-local",
-    remote: "orders-worker-staging",
+    remote: "orders-worker",
   },
   {
     id: "other",
     label: "Something else",
     hint: "Name it and give its address.",
-    icon: "box",
+    icon: "circle-dashed",
     name: "",
     local: "http://localhost:9000",
     remote: "my-resource-name",
@@ -410,7 +411,7 @@ export const ENVIRONMENT_PRESETS: readonly EnvironmentPreset[] = [
   {
     id: "other",
     label: "Something else",
-    hint: "Start from a blank form.",
+    hint: "Start from blank answers.",
     icon: "circle-dashed",
     name: "",
     access: "read",

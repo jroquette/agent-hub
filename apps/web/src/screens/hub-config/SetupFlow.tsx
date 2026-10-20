@@ -1,14 +1,14 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Link } from "react-router";
+import { useNavigate } from "react-router";
 
-import { Button, Icon } from "../../components";
-import { cx } from "../../lib/cx";
+import { Button, ConfirmDialog, Icon } from "../../components";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import type { FlowOrigin } from "./environments";
 
-/* A setup flow: one question at a time, the steps on the left with what was answered, a live
-   preview of the result on the right. The step circles mirror the first-run screen's. */
+/* A setup flow: one question at a time in a card of fixed width, the steps on the left with what
+   was answered, a live preview of the result on the right. The step circles mirror the first-run
+   screen's. Every choice is a one-column list of OptionRows, so no count of answers leaves a gap. */
 
 export interface FlowStep {
   title: string;
@@ -23,6 +23,8 @@ export interface SetupFlowProps {
   /** The page title and the last breadcrumb, e.g. "Add environment". */
   title: string;
   intro: ReactNode;
+  /** What is being made, for the discard question: "environment" or "service". */
+  noun: string;
   steps: readonly FlowStep[];
   index: number;
   onIndex: (index: number) => void;
@@ -39,6 +41,8 @@ export interface SetupFlowProps {
   pending?: boolean;
   /** A failed save, in words. */
   failure?: string | null;
+  /** Where the preview's line lands, e.g. "In AGENTS.md". */
+  previewWhere?: string;
   preview?: ReactNode;
 }
 
@@ -47,6 +51,7 @@ export function SetupFlow({
   origin,
   title,
   intro,
+  noun,
   steps,
   index,
   onIndex,
@@ -60,9 +65,12 @@ export function SetupFlow({
   finishLabel,
   pending = false,
   failure,
+  previewWhere,
   preview,
 }: SetupFlowProps) {
   const heading = useRef<HTMLHeadingElement>(null);
+  const navigate = useNavigate();
+  const [discarding, setDiscarding] = useState(false);
   const last = index === steps.length - 1;
   const back = origin.returnTo;
 
@@ -75,9 +83,14 @@ export function SetupFlow({
     if (last) onFinish();
     else onIndex(index + 1);
   };
+  // Past the first step there are answers to lose: ask before leaving.
+  const cancel = () => {
+    if (index === 0) void navigate(back);
+    else setDiscarding(true);
+  };
 
   return (
-    <div className="ah-page ah-flow" style={{ gap: 16 }}>
+    <div className="ah-page ah-setup" style={{ gap: 16 }}>
       <Breadcrumbs
         items={[
           { label: "Portfolio", href: "/" },
@@ -93,19 +106,19 @@ export function SetupFlow({
         </p>
       </header>
 
-      <div className="ah-flow-layout">
-        <ol className="ah-flow-steps" aria-label="Steps">
+      <div className="ah-setup-layout">
+        <ol className="ah-setup-steps" aria-label="Steps">
           {steps.map((step, position) => {
             const state = position < index ? "done" : position === index ? "open" : "future";
             const label = (
               <>
-                <span className="ah-flow-dot" data-state={state} aria-hidden="true">
+                <span className="ah-setup-dot" data-state={state} aria-hidden="true">
                   {state === "done" ? <Icon name="check" /> : position + 1}
                 </span>
                 <span className="ah-stack" style={{ gap: 2, minWidth: 0 }}>
-                  <span className="ah-flow-step-title">{step.title}</span>
+                  <span className="ah-setup-step-title">{step.title}</span>
                   {state === "done" && step.summary && (
-                    <span className="ah-small ah-muted ah-flow-step-summary">{step.summary}</span>
+                    <span className="ah-small ah-muted ah-setup-step-summary">{step.summary}</span>
                   )}
                 </span>
               </>
@@ -113,14 +126,14 @@ export function SetupFlow({
             return (
               <li
                 key={step.title}
-                className="ah-flow-step"
+                className="ah-setup-step"
                 data-state={state}
                 aria-current={state === "open" ? "step" : undefined}
               >
                 {state === "done" ? (
                   <button
                     type="button"
-                    className="ah-flow-step-button"
+                    className="ah-setup-step-button"
                     aria-label={`Back to step ${String(position + 1)}: ${step.title}`}
                     onClick={() => {
                       onIndex(position);
@@ -129,7 +142,7 @@ export function SetupFlow({
                     {label}
                   </button>
                 ) : (
-                  <div className="ah-flow-step-button">{label}</div>
+                  <div className="ah-setup-step-button">{label}</div>
                 )}
               </li>
             );
@@ -137,27 +150,32 @@ export function SetupFlow({
         </ol>
 
         <form
-          className="ah-card ah-flow-card"
-          aria-labelledby="ah-flow-question"
+          className="ah-card ah-setup-card"
+          aria-labelledby="ah-setup-question"
           onSubmit={(event) => {
             event.preventDefault();
             next();
           }}
         >
-          <div className="ah-small ah-muted">
-            Step {index + 1} of {steps.length}
-          </div>
-          <h2 id="ah-flow-question" className="ah-h2 ah-flow-question" tabIndex={-1} ref={heading}>
+          <h2
+            id="ah-setup-question"
+            className="ah-h2 ah-setup-question"
+            tabIndex={-1}
+            ref={heading}
+          >
+            <span className="ah-sr">
+              Step {index + 1} of {steps.length}:{" "}
+            </span>
             {question}
           </h2>
-          {help && <p className="ah-muted ah-flow-help">{help}</p>}
-          <div className="ah-flow-body">{children}</div>
+          {help && <p className="ah-muted ah-setup-help">{help}</p>}
+          <div className="ah-setup-body">{children}</div>
           {failure && (
             <p role="alert" className="ah-config-error">
               {failure}
             </p>
           )}
-          <footer className="ah-flow-footer">
+          <footer className="ah-setup-footer">
             {index > 0 ? (
               <Button
                 icon="chevron-left"
@@ -173,63 +191,40 @@ export function SetupFlow({
             )}
             <span className="ah-grow" />
             {!canContinue && blocked && <span className="ah-small ah-muted">{blocked}</span>}
-            <Link to={back} className="ah-btn ah-btn-ghost">
+            <Button variant="ghost" disabled={pending} onClick={cancel}>
               Cancel
-            </Link>
-            <Button
-              type="submit"
-              variant="primary"
-              disabled={!canContinue || pending}
-              className={cx(last && "ah-flow-finish")}
-            >
+            </Button>
+            <Button type="submit" variant="primary" disabled={!canContinue || pending}>
               {pending ? "Saving…" : last ? finishLabel : nextLabel}
             </Button>
           </footer>
         </form>
 
         {preview && (
-          <aside className="ah-card ah-flow-preview" aria-label="What agents will read">
-            <div className="ah-flow-preview-title">
+          <aside className="ah-card ah-setup-preview" aria-label="What agents will read">
+            <div className="ah-setup-preview-title">
               <Icon name="scan-eye" /> What agents will read
             </div>
+            {previewWhere && <div className="ah-small ah-muted">{previewWhere}</div>}
             {preview}
           </aside>
         )}
       </div>
-    </div>
-  );
-}
 
-/** A big choice tile: icon, label and one line; a radio underneath for keyboards and readers. */
-export function ChoiceTile({
-  name,
-  icon,
-  label,
-  hint,
-  checked,
-  onPick,
-}: {
-  name: string;
-  icon: Parameters<typeof Icon>[0]["name"];
-  label: string;
-  hint: ReactNode;
-  checked: boolean;
-  onPick: () => void;
-}) {
-  return (
-    <label className={cx("ah-flow-tile", checked && "ah-flow-tile-checked")}>
-      <input
-        type="radio"
-        name={name}
-        className="ah-flow-tile-input"
-        checked={checked}
-        onChange={onPick}
-      />
-      <span className="ah-flow-tile-icon">
-        <Icon name={icon} />
-      </span>
-      <span className="ah-flow-tile-label">{label}</span>
-      <span className="ah-small ah-muted">{hint}</span>
-    </label>
+      {discarding && (
+        <ConfirmDialog
+          title={`Discard this ${noun}?`}
+          confirmLabel="Discard answers"
+          cancelLabel="Keep editing"
+          consequences={["Your answers are not saved."]}
+          onCancel={() => {
+            setDiscarding(false);
+          }}
+          onConfirm={() => {
+            void navigate(back);
+          }}
+        />
+      )}
+    </div>
   );
 }

@@ -71,13 +71,13 @@ describe("AddEnvironmentScreen", () => {
     const { requests, router } = openEnvironment({ [CONFIG]: aConfig(), [WRITE]: aConfig() });
 
     expect(
-      await screen.findByRole("heading", { name: "What kind of environment is it?" }),
+      await screen.findByRole("heading", { name: /What kind of environment is it\?$/ }),
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
     await userEvent.click(screen.getByRole("radio", { name: /Production/ }));
     await next();
 
-    expect(screen.getByRole("heading", { name: "What do you call it?" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: /What do you call it\?$/ })).toBeVisible();
     expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("production");
     await next();
 
@@ -88,7 +88,7 @@ describe("AddEnvironmentScreen", () => {
     await next();
     await next();
 
-    expect(screen.getByRole("heading", { name: "Add production?" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: /Add production\?$/ })).toBeVisible();
     expect(screen.getByText(/Run/)).toHaveTextContent("./hub sync");
     await userEvent.click(screen.getByRole("button", { name: "Add environment for the team" }));
 
@@ -100,7 +100,7 @@ describe("AddEnvironmentScreen", () => {
       access: "read",
       production: true,
     });
-    expect(router.state.location.pathname).toBe("/projects/demo/config");
+    expect(router.state.location.pathname).toBe("/projects/demo/environments");
     expect(router.state.location.state).toEqual({
       saved: "Added production for the team",
       team: true,
@@ -192,13 +192,15 @@ describe("AddEnvironmentScreen", () => {
     const steps = screen.getByRole("list", { name: "Steps" });
     await userEvent.click(within(steps).getByRole("button", { name: "Back to step 1: Kind" }));
 
-    expect(screen.getByRole("heading", { name: "What kind of environment is it?" })).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: /What kind of environment is it\?$/ }),
+    ).toBeVisible();
     expect(screen.getByRole("radio", { name: /Test or staging/ })).toBeChecked();
   });
 
   it("has no serious a11y violations", async () => {
     const { container } = openEnvironment();
-    await screen.findByRole("heading", { name: "What kind of environment is it?" });
+    await screen.findByRole("heading", { name: /What kind of environment is it\?$/ });
 
     expect(await seriousViolations(container)).toEqual([]);
   });
@@ -217,11 +219,17 @@ describe("AddServiceScreen", () => {
     expect(screen.getByRole("textbox", { name: "Service name" })).toHaveValue("web");
     await next();
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
-    await userEvent.type(screen.getByRole("textbox", { name: "local" }), "http://localhost:3000");
-    await userEvent.type(screen.getByRole("textbox", { name: /live/ }), "https://app.example.com");
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "Address in local" }),
+      "http://localhost:3000",
+    );
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "Address in live" }),
+      "https://app.example.com",
+    );
     await next();
 
-    expect(screen.getByRole("heading", { name: "Add demo-web › web?" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: /Add demo-web › web\?$/ })).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Add service" }));
 
     const post = requests.find((r) => r.method === "POST");
@@ -250,7 +258,7 @@ describe("AddServiceScreen", () => {
 
   it("has no serious a11y violations", async () => {
     const { container } = openService();
-    await screen.findByRole("heading", { name: "What runs?" });
+    await screen.findByRole("heading", { name: /What runs\?$/ });
 
     expect(await seriousViolations(container)).toEqual([]);
   });
@@ -260,8 +268,8 @@ describe("flowOrigin", () => {
   it("returns to the page that opened the flow, only within the project", () => {
     const page = { returnTo: "/projects/demo/environments", returnLabel: "Environments" };
     const config = {
-      returnTo: "/projects/demo/config#environments",
-      returnLabel: "Hub configuration",
+      returnTo: "/projects/demo/environments",
+      returnLabel: "Environments",
     };
 
     expect(flowOrigin(page, "demo")).toEqual(page);
