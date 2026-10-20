@@ -81,6 +81,9 @@ tightens); the brief, `hub env list`, doctor and setup show it.
   names listed in [SPEC.md](../SPEC.md) (`AWS_PROFILE`, `STAGE`, `DATABASE_URL`, …), every declared `credentials.env`
   and every `guard.blocked_words_env` name (no other value, no name). A match denies every Bash call of the session.
 - **Paths:** `file_path`, `notebook_path`, `path`, Grep's `glob`, Glob's `pattern` and WebFetch's `url`.
+- **Tool inputs:** every key and string value of the input of the input tools: MCP tools (`mcp__*`), WebSearch, Task,
+  Agent and SendMessage, walked in document order, each string as it is (no joins or quote removal); numbers, booleans
+  and null are counted, not scanned; the tool name is not scanned.
 - **Contents** of files whose last component (as named or linked to) starts with `.env` or matches a
   `blocked_words_files` glob (no `/`: the last component; with `/`: a trailing run of segments, so `config/*.json`
   matches any repo's copy), read through Read, Grep (its `path`, or the cwd, walked without following links) and Bash
@@ -88,15 +91,18 @@ tightens); the brief, `hub env list`, doctor and setup show it.
 - **Order:** the rule runs first on every surface; a deny is final (the project extension does not run) and wins over
   any `access` and any `guard.infra.allow` match. It never opens a secret file, by any case or link: it keeps the
   secret-file reason (this rule gives it then), unless its path or the command holds a word. `prod_markers` is unchanged.
+  On the input tools the blocked-word rule is the only rule, and the project extension does not run.
 - **Bounds:** regular files only (`O_NONBLOCK`, `S_ISREG`), as latin-1; 1 MiB per command or file, 64 listed files
-  and 4 MiB per call, 300 ms (checked per folder entry) in all. Over one, or not regular: **ask** `blocked words not
-  checked: <cause>` (`too large`, `too many files`, `out of time`, `not a regular file`); a listed name that is a
-  folder, or unreadable: no verdict. Walks skip heavy vendored and cache trees: `.git`, `node_modules`,
+  and 4 MiB per call, 1 MiB of keys and strings and 50,000 values (objects, arrays, keys and scalars) per tool input,
+  300 ms (checked per folder entry and per value) in all. Over one, or not regular: **ask** `blocked words not
+  checked: <cause>` (`too large`, `too many files`, `too many values`, `out of time`, `not a regular file`); a listed
+  name that is a folder, or unreadable: no verdict. In a tool input, a word found before a bound is crossed denies;
+  "before" means earlier in walk order, so a string over the cap asks even when a word sits at its start. Walks skip heavy vendored and cache trees: `.git`, `node_modules`,
   `.claude/worktrees`, `.venv`, `__pycache__`, `.tox`, `.mypy_cache`, `.pytest_cache`, `.ruff_cache`, `.terraform`, `.next`.
 - **Layers:** the CLI, doctor and the brief union `hub.json` and `hub.local.json`; the hooks also add a `hub.json`
   named by `$HUB_CONFIG`. No layer removes an entry; an empty list adds nothing.
 - **Fail closed:** a list that is not a list, a bad item or an unknown `guard` key in any layer makes the guard ask on
-  every Bash and file-tool call, naming the layer and key. So does a `hub.local.json` that exists but is unusable (not
+  every call the guard checks (Bash, the file tools and the input tools), naming the layer and key. So does a `hub.local.json` that exists but is unusable (not
   JSON, not an object, not a regular file, over 64 KiB), until it is fixed (doctor's `config.schema` reports it); an
   absent one changes nothing. A hook event that is not a JSON object (bad UTF-8, invalid or truncated JSON, nested too
   deep for the parser, a list) makes the guard ask
@@ -104,7 +110,7 @@ tightens); the brief, `hub env list`, doctor and setup show it.
   with the blocked-word list, are in effect; without them, nothing changes.
 - **Reason:** ``blocked word `<w>` (guard.blocked_words, <first layer listing it>) in <where>: agents do not reach what
   a blocked word names``, `<where>` one of `the command`, `the session variable <NAME>`, `the path <path>`, `the
-  contents of <path>` (the path escaped, ≤ 100 characters). Never the command, a value or a line. Rule id
+  contents of <path>`, ``the input of `<tool>` `` (the path or tool name escaped, ≤ 100 characters). Never the command, a value or a line. Rule id
   `blocked_word` (asks too), so the recorded event carries `rule: blocked_word`. `access` is **not** enforced by the
   guard (it cannot tell a read from a write in `psql`, `curl`, `aws` or a script), nor is "only listed environments exist".
 
@@ -123,16 +129,26 @@ environment; a committed write prints `run ./hub sync to update AGENTS.md`. The 
 ### Known limits
 
 Blocked words are a best-effort text tripwire, not a security boundary: the boundary is which credentials the
-agent's machine holds. The guard runs only on Bash, Read, Grep, Glob, Edit, Write, MultiEdit, NotebookEdit and WebFetch.
+agent's machine holds. The guard runs only on Bash, Read, Grep, Glob, Edit, Write, MultiEdit, NotebookEdit, WebFetch
+and the input tools: MCP tools (`mcp__*`), WebSearch, Task, Agent and SendMessage (matcher `^(…)$|^mcp__`).
 
 1. **`hub run`'s implement step** runs `claude -p` in the app repo's worktree, where the hub's SessionStart brief and
    guard do not load: no Environments block and no blocked-word guard there (older than this contract; AGH-278).
 2. **`CLAUDE_ENV_FILE`:** variables a SessionStart hook exports through `$CLAUDE_ENV_FILE` reach Bash only; the guard
    hook sees neither them nor the variable, so they are not scanned. Shell and settings `env` variables are.
 3. **Plugin-cache mode with `$HUB_CONFIG`** has no identity home, so it reads no `hub.local.json`.
-4. Not checked: MCP tools, WebSearch, Task prompts; files a program opens without the command naming them from the
+4. Not checked: files a program opens without the command naming them from the
    cwd (`python sync.py` reading `config/app.json`, `find … -exec cat`, `cd dir && cat file`, `$PWD` or a variable in
    a path, `git show REV:path`); tool output; obfuscation (`$'\x70rod'`); Grep's search regex and edit contents.
+5. On the input tools only the blocked-word rule runs: `deny_hosts` (a listed host in an MCP input passes),
+   `deny_paths`, `guard.infra` and the secret-file rule do not; a path in an MCP input is text, never opened (AGH-372).
+6. Skill, TodoWrite, ExitPlanMode and AskUserQuestion are not checked (AGH-373).
+7. The tool name is not scanned, nor the MCP server's name: `mcp__prod-db__query` with a clean input passes (AGH-373).
+8. A hub synced by an older release keeps the old matcher, so the input tools are unchecked there until
+   `hub sync` (doctor's `settings.weakening` reports `hooks.PreToolUse`).
+9. A recorded event of a guard deny or ask, like the sensor's own `PreToolUse`, carries these tools' input whole (up
+   to the 64 KiB per-string omission) to the loopback control plane (AGH-371).
+10. The event is parsed whole before the walk's caps apply: there is no byte cap on the guard's stdin (AGH-375).
 
 ## Invariants
 
