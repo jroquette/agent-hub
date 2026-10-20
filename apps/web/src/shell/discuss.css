@@ -171,11 +171,58 @@
   box-shadow: var(--shadow-popover);
 }
 
+/* The start state: what the panel is for, in two lines, then the starters as rows. */
+.ah-discuss-intro {
+  padding-top: var(--space-6);
+}
+.ah-discuss-intro-title {
+  margin: 0 0 var(--space-1);
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+}
+.ah-discuss-intro p {
+  margin: 0;
+}
 .ah-discuss-starters {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 0 16px 12px;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-top: var(--space-4);
+}
+.ah-discuss-starters-label {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-subtle);
+}
+.ah-discuss-starter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 40px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ah-discuss-starter:hover {
+  background: var(--surface-hover);
+}
+.ah-discuss-starter:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.ah-discuss-starter:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.ah-discuss-starter > .ah-icon:last-child {
+  color: var(--text-subtle);
 }
 
 /* The top bar's Discuss toggle while the panel is open: pressed, not an accent fill. */

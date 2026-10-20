@@ -328,7 +328,7 @@ describe("DiscussPanel on a whole screen (AGH-273)", () => {
     const view = renderScreen(runs);
     await userEvent.click(screen.getByRole("button", { name: "name screen" }));
     expect(
-      await screen.findByText(/Your first message takes its text and a screenshot along/),
+      await screen.findByText(/Your first message takes this screen's text and a screenshot/),
     ).toBeInTheDocument();
 
     const body = await sendFirst(view, "Why did these fail?");

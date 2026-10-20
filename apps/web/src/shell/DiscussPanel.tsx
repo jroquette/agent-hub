@@ -5,7 +5,6 @@ import { useNavigate } from "react-router";
 
 import {
   Banner,
-  Button,
   copyText,
   EmptyState,
   Icon,
@@ -434,37 +433,41 @@ function StartDiscussion({
 
   return (
     <div className="as-page">
-      <div className="ah-discuss-note ah-small ah-muted">
-        {target.screen ? (
-          <>
-            Ask about what this screen shows. Your first message takes its text and a screenshot
-            along; select text on the page and press Discuss selection to point at one part.
-          </>
-        ) : (
-          <>
-            Ask about this {target.kind.toLowerCase()}, challenge it, or ask Claude to change it.
-            Point at one part with its Discuss button, or select text on the page and press Discuss
-            selection.
-          </>
-        )}{" "}
-        Claude works in the hub folder of <b>{target.project}</b>; every file edit asks you first
-        unless you switch the mode to accept edits.
+      <div className="ah-discuss-intro as-column">
+        <h2 className="ah-discuss-intro-title">
+          {target.screen ? "Ask about this screen" : `Ask about this ${target.kind.toLowerCase()}`}
+        </h2>
+        <p className="ah-small ah-muted">
+          {target.screen
+            ? "Your first message takes this screen's text and a screenshot. Edits ask you first."
+            : `Claude works in the hub folder of ${target.project}. Edits ask you first.`}
+        </p>
       </div>
       {target.starters && target.starters.length > 0 && (
-        <div className="ah-discuss-starters" role="group" aria-label="Start with">
+        <div
+          className="ah-discuss-starters as-column"
+          role="group"
+          aria-labelledby="ah-discuss-starters-label"
+        >
+          <span id="ah-discuss-starters-label" className="ah-discuss-starters-label">
+            Start with
+          </span>
           {target.starters.map((starter) => (
-            <Button
+            <button
               key={starter.label}
-              size="sm"
-              icon="message-square"
+              type="button"
+              className="ah-discuss-starter"
+              title="Sends this message now"
               disabled={reason !== null || pending}
               onClick={() => {
                 // A failure shows below the composer (create.error); nothing else to do here.
                 start(starter.message).catch(() => undefined);
               }}
             >
-              {starter.label}
-            </Button>
+              <Icon name="message-square" size="sm" />
+              <span className="ah-grow">{starter.label}</span>
+              <Icon name="arrow-right" size="sm" />
+            </button>
           ))}
         </div>
       )}
