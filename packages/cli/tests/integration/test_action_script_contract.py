@@ -178,3 +178,18 @@ def _alive(pid: int) -> bool:
     except ProcessLookupError:
         return False
     return True
+
+
+def test_redacts_credentials_when_action_script_contract_fails(
+    tmp_path: Path, environ: dict[str, str]
+) -> None:
+    script = 'echo "cannot reach $DEMO_TOKEN with key $DEMO_KEY" >&2\nexit 3\n'
+    call = an_action_call(tmp_path / "hub", script)
+    injected = {"DEMO_TOKEN": SECRET, "DEMO_KEY": "abc"}
+
+    with pytest.raises(NodeFailedError) as raised:
+        run_action(call, environ=environ, credentials=injected)
+
+    assert raised.value.kind == "exec_failed"
+    assert "cannot reach <credential DEMO_TOKEN> with key abc" in str(raised.value)
+    assert SECRET not in str(raised.value)

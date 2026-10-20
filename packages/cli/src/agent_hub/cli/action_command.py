@@ -191,8 +191,10 @@ def run_command(name: Name, *, environment: Environment, given: Inputs = None) -
         facts = facts.model_copy(update={"approver": getpass.getuser()})
     events.action_started(facts, at=now())
     try:
-        credentials(resolved)
-        output = run_action(resolved.call, environ=os.environ, hidden=resolved.hidden)
+        injected = credentials(resolved)
+        output = run_action(
+            resolved.call, environ=os.environ, hidden=resolved.hidden, credentials=injected
+        )
     except NodeFailedError as error:
         events.action_ended(facts, status="failed", failure_kind=error.kind, at=now())
         _send(events)
