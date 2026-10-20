@@ -16,18 +16,16 @@ from agent_hub.core.scenarios.access_policy import Effect
 from agent_hub.core.workflows.document import load_error
 from agent_hub.core.workflows.nodes import (
     READ_ONLY,
-    Duration,
+    ActionTimeout,
     JsonObject,
     KebabId,
     PackPath,
     Text,
     VariableName,
     WorkflowObject,
-    duration_seconds,
     empty,
 )
 
-MAX_ACTION_TIMEOUT_SECONDS: Final = 3600
 DEFAULT_ACTION_TIMEOUT: Final = "5m"
 SCRIPTS_FOLDER: Final = "scripts"
 
@@ -42,13 +40,6 @@ _INPUT_TYPES: Final[Mapping[ActionInputType, tuple[type, ...]]] = {
 }
 
 
-def _within_an_hour(value: str) -> str:
-    if duration_seconds(value) > MAX_ACTION_TIMEOUT_SECONDS:
-        msg = "must be at most 1h"
-        raise ValueError(msg)
-    return value
-
-
 def _in_scripts_folder(value: str) -> str:
     if not value.startswith(f"{SCRIPTS_FOLDER}/"):
         msg = f"must be a file under the pack's {SCRIPTS_FOLDER}/ folder"
@@ -56,7 +47,6 @@ def _in_scripts_folder(value: str) -> str:
     return value
 
 
-ActionTimeout = Annotated[Duration, AfterValidator(_within_an_hour)]
 ScriptPath = Annotated[PackPath, AfterValidator(_in_scripts_folder)]
 
 
