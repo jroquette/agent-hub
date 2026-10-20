@@ -299,7 +299,7 @@ export function AttachmentList({
           <span className="as-composer-file-name" title={file.name}>
             {file.name}
           </span>
-          <span className="ah-small ah-muted">{fileSize(file.bytes)}</span>
+          <span className="ah-small ah-muted as-composer-file-size">{fileSize(file.bytes)}</span>
           {onRemoveFile && (
             <button
               type="button"

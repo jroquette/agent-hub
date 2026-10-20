@@ -63,18 +63,25 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  max-width: 260px;
+  width: 240px;
   height: 40px;
-  padding: 0 var(--space-3);
+  padding: 0 var(--space-4) 0 var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface-sunken);
   color: var(--text-muted);
 }
 .as-composer-file-name {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   color: var(--text);
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The size stays on one line; a long name is the part that gives way. */
+.as-composer-file-size {
+  flex: none;
   white-space: nowrap;
 }
 /* The 20 px circle keeps a 24 x 24 target (WCAG 2.5.8). */
