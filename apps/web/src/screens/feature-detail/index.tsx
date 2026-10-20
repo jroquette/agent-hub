@@ -475,17 +475,16 @@ export function FeatureDetailScreen() {
       { replace: true },
     );
   };
-  const records = Object.entries(RECORDS).map(([id, meta]) => ({ id, label: meta?.label ?? id }));
-  // The criteria sit right after the spec that defines them; the rest follow the golden path.
+  // In the order the workflow writes them: the planner writes the criteria and the ticket plan
+  // (features.json) once the plan is approved, and the eval comes last.
   const tabs = [
-    ...records.slice(0, 1),
+    ...Object.entries(RECORDS).map(([id, meta]) => ({ id, label: meta?.label ?? id })),
     {
       id: "acs",
       label: "Acceptance criteria",
       icon: "list-checks" as const,
       count: detail.acs?.total,
     },
-    ...records.slice(1),
     {
       id: "tickets",
       label: "Tickets",

@@ -354,15 +354,15 @@ describe("FeatureDetailScreen", () => {
   });
 
   describe("records", () => {
-    it("has the Spec, Acceptance criteria, Research, Plan, Tickets and Eval tabs, in that order (AC-269.9, records)", async () => {
+    it("has the Spec, Research, Plan, Acceptance criteria, Tickets and Eval tabs, in the order they are written (AC-269.9, records)", async () => {
       open();
 
       const tabs = within(await screen.findByRole("tablist", { name: "Feature record" }));
       expect(tabs.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
         "Spec",
-        "Acceptance criteria13",
         "Research",
         "Plan",
+        "Acceptance criteria13",
         "Tickets2",
         "Eval",
       ]);
