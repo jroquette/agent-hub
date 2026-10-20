@@ -291,10 +291,20 @@ def test_waits_on_owner_in_acceptance_when_owner_steps_unsigned() -> None:
     path = golden_path(_all_done(coverage=gate))
 
     acceptance = _step(path, "acceptance")
-    assert (acceptance.state, acceptance.meta) == ("current", "Waiting on you: 2 owner steps")
+    assert (acceptance.state, acceptance.meta) == ("current", "Waiting on you: sign off 2 ACs")
     assert acceptance.reason == "2 ACs wait on owner steps (SHIP-WITH-OWNER-STEPS)"
     assert (_step(path, "shipped").state, path.phase) == ("pending", "acceptance")
     assert _step(path, "shipped").reason == "Acceptance is not done"
+
+
+# two-level-flows A9 (AGH-325 R2-m1): the meta names what is counted, singular for one AC.
+def test_waits_on_one_ac_in_singular_when_one_owner_step_unsigned() -> None:
+    gate = EvalGate(evals=1, covered=6, owner_steps=1, acceptance="SHIP-WITH-OWNER-STEPS")
+
+    acceptance = _step(golden_path(_all_done(coverage=gate)), "acceptance")
+
+    assert acceptance.meta == "Waiting on you: sign off 1 AC"
+    assert acceptance.reason == "1 AC waits on owner steps (SHIP-WITH-OWNER-STEPS)"
 
 
 def test_never_marks_acceptance_done_when_only_ticket_evals_cover_every_ac() -> None:
@@ -674,7 +684,7 @@ def test_marks_acceptance_done_when_owner_signoff_follows_whole_feature_eval() -
     signed = feature_parts(_folder(_WHOLE_OWNER, _SIGNOFF), _MERGED).golden_path
 
     waiting = _step(unsigned, "acceptance")
-    assert (waiting.state, waiting.meta) == ("current", "Waiting on you: 3 owner steps")
+    assert (waiting.state, waiting.meta) == ("current", "Waiting on you: sign off 3 ACs")
     done = _step(signed, "acceptance")
     assert (done.state, done.meta) == ("done", "Owner steps signed off")
     assert signed.phase == "shipped"
@@ -691,7 +701,7 @@ def test_keeps_acceptance_waiting_when_owner_signoff_predates_whole_feature_eval
 
     path = feature_parts(_folder(_WHOLE_OWNER, early), _MERGED).golden_path
 
-    assert _step(path, "acceptance").meta == "Waiting on you: 3 owner steps"
+    assert _step(path, "acceptance").meta == "Waiting on you: sign off 3 ACs"
 
 
 # two-level-flows AC-1.6: ticket evals never sign the owner steps off.
@@ -703,7 +713,7 @@ def test_keeps_acceptance_waiting_when_ticket_evals_ship_after_whole_feature_eva
     path = feature_parts(_folder(_WHOLE_OWNER, ticket_ship), _MERGED).golden_path
 
     acceptance = _step(path, "acceptance")
-    assert (acceptance.state, acceptance.meta) == ("current", "Waiting on you: 3 owner steps")
+    assert (acceptance.state, acceptance.meta) == ("current", "Waiting on you: sign off 3 ACs")
 
 
 # two-level-flows A6: a legacy eval.md without scope is whole-feature; it needs a sign-off too.
@@ -713,7 +723,7 @@ def test_keeps_acceptance_waiting_when_legacy_eval_ships_with_owner_steps() -> N
     path = feature_parts(_folder(files=(*_folder().files, "eval.md"), eval_head=legacy), _MERGED)
 
     acceptance = _step(path.golden_path, "acceptance")
-    assert (acceptance.state, acceptance.meta) == ("current", "Waiting on you: 3 owner steps")
+    assert (acceptance.state, acceptance.meta) == ("current", "Waiting on you: sign off 3 ACs")
 
 
 # two-level-flows A3 (AGH-325 Q2): no AC to count is no sign-off, so the owner steps still wait.

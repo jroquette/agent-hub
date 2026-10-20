@@ -111,7 +111,7 @@ const waiting = aFeature({
   golden_path: aGoldenPath({
     phase: "acceptance",
     steps: [
-      aGoldenStep({ name: "acceptance", state: "current", meta: "Waiting on you: 2 owner steps" }),
+      aGoldenStep({ name: "acceptance", state: "current", meta: "Waiting on you: sign off 2 ACs" }),
     ],
   }),
   phase: "acceptance",
@@ -195,7 +195,7 @@ describe("FeaturesScreen", () => {
           aGoldenStep({
             name: "acceptance",
             state: "current",
-            meta: "Waiting on you: 3 owner steps",
+            meta: "Waiting on you: sign off 3 ACs",
             reason: "3 ACs wait on owner steps (SHIP-WITH-OWNER-STEPS)",
           }),
         ],
