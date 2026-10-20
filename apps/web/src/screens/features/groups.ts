@@ -200,10 +200,8 @@ export function reasonOf(f: Feature, wait: SessionWait | null = null): Reason {
       doc: null,
     };
   }
-  const steps = f.golden_path.steps;
-  const at = steps.findIndex((s) => s.name === f.phase);
-  const step = steps[at];
-  // The Golden path column shows where the step sits; the line says what happens in it.
+  const step = f.golden_path.steps.find((s) => s.name === f.phase);
+  // The Golden path column shows where the step sits; the line says only what happens in it.
   const parts = [GOLDEN_STEP_LABEL[f.phase]];
   // Build's meta says when Linear was not read: the page says it once, not every row.
   const meta = step?.meta && !isLinearGap(step.meta) ? step.meta : null;
@@ -211,7 +209,6 @@ export function reasonOf(f: Feature, wait: SessionWait | null = null): Reason {
   const why = step?.reason && step.state !== "done" ? shortReason(step.reason) : null;
   if (why) parts.push(why);
   if (f.verdict) parts.push(VERDICT_WORDS[f.verdict]);
-  if (parts.length === 1) parts.push(`step ${String(at + 1)} of ${String(steps.length)}`);
   return {
     group: "progress",
     needs: null,
