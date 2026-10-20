@@ -260,7 +260,7 @@ def test_finds_no_pending_before_evidence_when_records_generated_property(
 
     states = [step.state for step in flow.steps]
     last = max((i for i, state in enumerate(states) if state in _EVIDENCE), default=-1)
-    assert "pending" not in states[:last]
+    assert "pending" not in states[: max(last, 0)]
     assert "unrecorded" not in states[last + 1 :]
     assert flow.current in _SEVEN
 

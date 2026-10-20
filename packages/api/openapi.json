@@ -9421,6 +9421,28 @@
         "title": "TicketEdge",
         "type": "object"
       },
+      "TicketFlow": {
+        "additionalProperties": false,
+        "description": "A ticket's seven steps in their fixed order (``ticket_flow.py``); ``current`` is where the\nticket is: the first step neither done nor unrecorded, the last when every step is.",
+        "properties": {
+          "current": {
+            "$ref": "#/components/schemas/TicketStepName"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/TicketStep"
+            },
+            "title": "Steps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "steps",
+          "current"
+        ],
+        "title": "TicketFlow",
+        "type": "object"
+      },
       "TicketPlan": {
         "additionalProperties": false,
         "description": "The planning of the feature's tickets, every ticket named by its row's ``ref``.\n\n``layers`` are the parallel groups (Kahn's layers over tickets not done or canceled);\n``can_start`` the first layer's tickets that wait on nothing and are not started yet;\n``order`` the recommended order; ``waiting`` the tickets with a blocker not done;\n``cycles`` each dependency cycle (left out of the layers); ``critical_path`` the longest\nchain of tickets not done; ``epics`` the rows that are a parent of other rows: they track\nthe work, are left out of the layers and never block.",
@@ -9511,7 +9533,7 @@
       },
       "TicketRow": {
         "additionalProperties": false,
-        "description": "One ticket of the feature.\n\n``key`` is the plan's draft key (None for a ticket only Linear or ``linear`` lists), ``id``\nthe tracker identifier (None until created). ``title``, ``state``, ``assignee`` and ``url``\ncome from Linear when read, else ``title`` from the plan and the others None. ``acs`` are the\nAC ids whose ``ticket`` names it; ``blocks`` the refs it blocks; ``waiting_on`` the refs of\nits blockers not done yet. ``reviewed`` is None when unknown (no snapshot and no record).\n``parent`` is the ref of the epic it belongs to (the plan's ``parent`` or Linear's parent\nissue), ``children`` the refs of the rows whose parent it is: a row with children is an epic.\n``pr_url`` is the ticket's pull request on GitHub, from its review record, None when unknown.",
+        "description": "One ticket of the feature.\n\n``key`` is the plan's draft key (None for a ticket only Linear or ``linear`` lists), ``id``\nthe tracker identifier (None until created). ``title``, ``state``, ``assignee`` and ``url``\ncome from Linear when read, else ``title`` from the plan and the others None. ``acs`` are the\nAC ids whose ``ticket`` names it; ``blocks`` the refs it blocks; ``waiting_on`` the refs of\nits blockers not done yet. ``reviewed`` is None when unknown (no snapshot and no record).\n``parent`` is the ref of the epic it belongs to (the plan's ``parent`` or Linear's parent\nissue), ``children`` the refs of the rows whose parent it is: a row with children is an epic.\n``pr_url`` is the ticket's pull request on GitHub, from its review record, None when unknown.\n``flow`` is the ticket's own steps, served by the tickets route (None for an epic).",
         "properties": {
           "acs": {
             "items": {
@@ -9563,6 +9585,16 @@
               }
             ],
             "title": "Estimate"
+          },
+          "flow": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TicketFlow"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "id": {
             "anyOf": [
@@ -9720,6 +9752,48 @@
         ],
         "title": "TicketRow",
         "type": "object"
+      },
+      "TicketStep": {
+        "additionalProperties": false,
+        "description": "One step of a ticket's flow, in the golden path's state vocabulary, with a short ``meta``.",
+        "properties": {
+          "meta": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Meta"
+          },
+          "name": {
+            "$ref": "#/components/schemas/TicketStepName"
+          },
+          "state": {
+            "$ref": "#/components/schemas/StepState"
+          }
+        },
+        "required": [
+          "name",
+          "state",
+          "meta"
+        ],
+        "title": "TicketStep",
+        "type": "object"
+      },
+      "TicketStepName": {
+        "enum": [
+          "context",
+          "preflight",
+          "implement",
+          "review",
+          "eval",
+          "pr",
+          "merged"
+        ],
+        "type": "string"
       },
       "TicketsSource": {
         "enum": [

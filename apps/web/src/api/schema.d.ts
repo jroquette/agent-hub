@@ -5056,6 +5056,16 @@ export interface components {
       source: components["schemas"]["EdgeSource"];
     };
     /**
+     * TicketFlow
+     * @description A ticket's seven steps in their fixed order (``ticket_flow.py``); ``current`` is where the
+     *     ticket is: the first step neither done nor unrecorded, the last when every step is.
+     */
+    TicketFlow: {
+      current: components["schemas"]["TicketStepName"];
+      /** Steps */
+      steps: components["schemas"]["TicketStep"][];
+    };
+    /**
      * TicketPlan
      * @description The planning of the feature's tickets, every ticket named by its row's ``ref``.
      *
@@ -5101,6 +5111,7 @@ export interface components {
      *     ``parent`` is the ref of the epic it belongs to (the plan's ``parent`` or Linear's parent
      *     issue), ``children`` the refs of the rows whose parent it is: a row with children is an epic.
      *     ``pr_url`` is the ticket's pull request on GitHub, from its review record, None when unknown.
+     *     ``flow`` is the ticket's own steps, served by the tickets route (None for an epic).
      */
     TicketRow: {
       /** Acs */
@@ -5118,6 +5129,7 @@ export interface components {
       children: string[];
       /** Estimate */
       estimate: number | null;
+      flow?: components["schemas"]["TicketFlow"] | null;
       /** Id */
       id: string | null;
       /** Key */
@@ -5145,6 +5157,18 @@ export interface components {
       /** Waiting On */
       waiting_on: string[];
     };
+    /**
+     * TicketStep
+     * @description One step of a ticket's flow, in the golden path's state vocabulary, with a short ``meta``.
+     */
+    TicketStep: {
+      /** Meta */
+      meta: string | null;
+      name: components["schemas"]["TicketStepName"];
+      state: components["schemas"]["StepState"];
+    };
+    /** @enum {string} */
+    TicketStepName: "context" | "preflight" | "implement" | "review" | "eval" | "pr" | "merged";
     /** @enum {string} */
     TicketsSource: "linear" | "plan";
     /** @enum {string} */

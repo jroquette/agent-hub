@@ -6,15 +6,22 @@ with a notice saying why. ``tracker_problem`` names a failed read as RFC 9457 me
 ``type`` ``urn:agent-hub:problem:tracker-<kind>``, ``status`` Linear's HTTP error status, else
 502 for an answer of another shape, 504 for a timeout and 503 when Linear gave no answer. The
 failure's detail is redacted (r1) and clipped: the key never shows. The MCP transport is never
-connected for hub web, whatever the read says.
+connected for hub web, whatever the read says. Each row carries its ticket flow
+(``ticket_flow.py``) from the folder's review rounds, review records and evals.
 """
 
 from collections.abc import Mapping
 from typing import Final
 
 from agent_hub.core.errors import TrackerFailure
+from agent_hub.core.features.feature_reviews import review_records
 from agent_hub.core.features.feature_status import FeatureFolder, feature_parts
-from agent_hub.core.features.golden_path import LINEAR_NOT_LOADED_REASON
+from agent_hub.core.features.golden_path import (
+    LINEAR_NOT_CONNECTED,
+    LINEAR_NOT_LOADED,
+    LINEAR_NOT_LOADED_REASON,
+)
+from agent_hub.core.features.ticket_flow import TicketEvidence, ticket_flow
 from agent_hub.core.features.ticket_snapshots import SnapshotRead
 from agent_hub.core.features.ticket_view import FeatureTickets, TrackerProblem
 from agent_hub.core.hub_config.model import Tracker
@@ -68,6 +75,13 @@ def feature_tickets(
     if tracker.transport == "mcp":
         read = NOT_CONNECTED_READ
     parts = feature_parts(folder, read, repos=repos)
+    unread = LINEAR_NOT_LOADED if read.failure is None else LINEAR_NOT_CONNECTED
+    evidence = TicketEvidence(
+        rounds=frozenset(name.partition("/")[0].upper() for name in folder.review_rounds),
+        reviews=review_records(folder.reviews, slug=folder.slug),
+        evals=parts.evals,
+        unread=None if parts.source == "linear" else unread,
+    )
     return FeatureTickets(
         project=project,
         slug=folder.slug,
@@ -76,7 +90,9 @@ def feature_tickets(
         as_of=read.as_of if parts.source == "linear" else None,
         notice=_notice(read),
         tracker_problem=_problem(read),
-        tickets=parts.board.rows,
+        tickets=tuple(
+            row.model_copy(update={"flow": ticket_flow(row, evidence)}) for row in parts.board.rows
+        ),
         planning=parts.board.plan,
         golden_path=parts.golden_path,
     )

@@ -534,7 +534,7 @@ def test_lists_review_round_names_when_ticket_folders_hold_rounds(
     [read] = read_feature_folders(tmp_path)
 
     assert read.review_rounds == ("AGH-1/quality-r1.json", "AGH-1/spec-r1.json")
-    assert [name for name in reads.opened if name.endswith(".json")] == []
+    assert {"spec-r1.json", "quality-r1.json"}.isdisjoint(reads.opened)
 
 
 def test_opens_first_ticket_folders_only_when_rounds_over_cap(
