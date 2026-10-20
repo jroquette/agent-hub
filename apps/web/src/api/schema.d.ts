@@ -1794,6 +1794,11 @@ export interface components {
        * @enum {string}
        */
       op: "add_endpoint";
+      /**
+       * Replace
+       * @default false
+       */
+      replace: boolean;
       /** Repo */
       repo: string;
       /** Resource */
@@ -5160,6 +5165,8 @@ export interface components {
       production: boolean;
       /** Source */
       source: string;
+      /** Team Access */
+      team_access?: ("read" | "write" | "ask") | null;
     };
     /**
      * SourcedService

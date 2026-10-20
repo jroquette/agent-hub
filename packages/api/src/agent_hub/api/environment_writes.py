@@ -106,6 +106,8 @@ class AddEndpoint(_Edit):
     resource: Text | None = None
     kind: Text | None = None
     note: Text | None = None
+    # Replace the endpoint this service has in that environment (an edit), in the same write.
+    replace: bool = False
 
 
 class RemoveEndpoint(_Edit):
@@ -156,7 +158,7 @@ def write_environment_edit(hub_path: str, edit: EnvironmentEdit) -> None:
         path, read = files.local_path, files.local_content
     else:
         config = _checked_hub(edited)
-        _check_across(config, files.local, prefix=f"{LOCAL_FILE} would no longer be valid: ")
+        _check_across(config, files.local, lead=f"{LOCAL_FILE} would no longer be valid: ")
         path, read = files.hub_path, files.hub_content
     content = (json.dumps(edited, indent=2, ensure_ascii=False) + "\n").encode()
     if is_local and len(content) > LOCAL_FILE_MAX_BYTES:
@@ -273,6 +275,17 @@ def _add_endpoint(
     endpoint: Document = {"url": url} if url else {"resource": resource}
     if edit.note and edit.note.strip():
         endpoint["note"] = edit.note.strip()
+    if edit.replace:
+        removed = remove_endpoint(
+            document,
+            repo=edit.repo,
+            service=edit.service.strip(),
+            environment=edit.environment,
+            file=file,
+        )
+        if isinstance(removed, EditRefusal):
+            return removed
+        document = removed
     return add_endpoint(
         document,
         repo=edit.repo,
@@ -291,27 +304,27 @@ def _checked_hub(document: Document) -> HubConfig:
     try:
         return HubConfig.model_validate(copy.deepcopy(document))
     except ValidationError as error:
-        raise _problems(validation_problems(error, document), prefix=f"{HUB_FILE}: ") from error
+        raise _problems(validation_problems(error, document), lead=f"{HUB_FILE}: ") from error
 
 
 def _checked_local(document: Document) -> LocalConfig:
     checked = check_local_document(copy.deepcopy(document))
     if not isinstance(checked, LocalConfig):
-        raise _problems(checked, prefix=f"{LOCAL_FILE}: ")
+        raise _problems(checked, lead=f"{LOCAL_FILE}: ")
     return checked
 
 
-def _check_across(config: HubConfig, local: LocalConfig, *, prefix: str = "") -> None:
+def _check_across(config: HubConfig, local: LocalConfig, *, lead: str = "") -> None:
     across = local_environment_problems(config, local)
     if across:
-        raise _problems(across, prefix=prefix or f"{LOCAL_FILE}: ")
+        raise _problems(across, lead=lead or f"{LOCAL_FILE}: ")
 
 
-def _problems(problems: tuple[ConfigProblem, ...], *, prefix: str) -> HubInvalidError:
+def _problems(problems: tuple[ConfigProblem, ...], *, lead: str) -> HubInvalidError:
     return HubInvalidError(
         INVALID_TITLE,
         problems=tuple(
-            ValidationProblem(pointer=problem.path, message=f"{prefix}{problem.message}")
+            ValidationProblem(pointer=problem.path, message=f"{lead}{problem.message}")
             for problem in problems
         ),
     )

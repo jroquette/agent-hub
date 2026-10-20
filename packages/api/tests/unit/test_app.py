@@ -52,6 +52,11 @@ BODIES: dict[tuple[str, str], object] = {
         "/api/v1/projects/{project}/skills/{kind}/{source}/{name}/versions/{version_id}/restore",
     ): {},
     ("post", "/api/v1/workflows/{project}/{name}/versions/{version_id}/restore"): {},
+    ("post", "/api/v1/projects/{project}/config/environments"): {
+        "op": "remove_environment",
+        "scope": "local",
+        "name": "staging",
+    },
 }
 OWN_ORIGIN = {"Origin": "http://127.0.0.1:7420"}
 QUERIES = {

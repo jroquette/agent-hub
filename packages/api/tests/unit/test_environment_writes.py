@@ -58,7 +58,7 @@ def test_creates_local_file_when_own_environment_added(tmp_path: Path) -> None:
     assert _read(hub / "hub.local.json") == {"environments": {"mine": {"access": "write"}}}
 
 
-def test_refuses_local_access_looser_than_team(tmp_path: Path) -> None:
+def test_refuses_local_access_when_looser_than_team(tmp_path: Path) -> None:
     hub = _hub(tmp_path, environments={"staging": {"access": "read"}})
 
     with pytest.raises(HubInvalidError) as raised:
@@ -68,7 +68,7 @@ def test_refuses_local_access_looser_than_team(tmp_path: Path) -> None:
     assert not (hub / "hub.local.json").exists()
 
 
-def test_tightens_team_environment_in_local_file(tmp_path: Path) -> None:
+def test_tightens_team_environment_when_local_file_sets_it(tmp_path: Path) -> None:
     hub = _hub(tmp_path, environments={"staging": {"access": "write"}})
 
     _edit(hub, op="set_environment", scope="local", name="staging", access="read")
@@ -76,7 +76,7 @@ def test_tightens_team_environment_in_local_file(tmp_path: Path) -> None:
     assert _read(hub / "hub.local.json") == {"environments": {"staging": {"access": "read"}}}
 
 
-def test_adds_and_removes_endpoint_on_team_repo(tmp_path: Path) -> None:
+def test_adds_and_removes_endpoint_when_repo_is_team(tmp_path: Path) -> None:
     hub = _hub(tmp_path, environments={"staging": {"access": "ask"}})
     before = (hub / "hub.json").read_text()
 
@@ -99,7 +99,7 @@ def test_adds_and_removes_endpoint_on_team_repo(tmp_path: Path) -> None:
     assert (hub / "hub.json").read_text() == before
 
 
-def test_refuses_removing_environment_while_endpoint_uses_it(tmp_path: Path) -> None:
+def test_refuses_removing_environment_when_endpoint_uses_it(tmp_path: Path) -> None:
     document = a_hub_document()
     document["environments"] = {"staging": {"access": "ask"}}
     document["repos"][0]["services"] = {
@@ -113,7 +113,7 @@ def test_refuses_removing_environment_while_endpoint_uses_it(tmp_path: Path) -> 
     assert "still has endpoints" in raised.value.problems[0].message
 
 
-def test_refuses_endpoint_with_url_and_resource(tmp_path: Path) -> None:
+def test_refuses_endpoint_when_it_has_url_and_resource(tmp_path: Path) -> None:
     hub = _hub(tmp_path, environments={"staging": {"access": "ask"}})
 
     with pytest.raises(HubInvalidError) as raised:
@@ -131,7 +131,7 @@ def test_refuses_endpoint_with_url_and_resource(tmp_path: Path) -> None:
     assert raised.value.problems[0].message == "give either a URL or a resource name"
 
 
-def test_refuses_url_with_user_info(tmp_path: Path) -> None:
+def test_refuses_url_when_it_has_user_info(tmp_path: Path) -> None:
     hub = _hub(tmp_path, environments={"staging": {"access": "ask"}})
     before = (hub / "hub.json").read_bytes()
 
@@ -156,3 +156,27 @@ def test_removes_local_file_when_last_entry_removed(tmp_path: Path) -> None:
     _edit(hub, op="remove_environment", scope="local", name="mine")
 
     assert not (hub / "hub.local.json").exists()
+
+
+def test_replaces_endpoint_and_keeps_service_kind(tmp_path: Path) -> None:
+    document = a_hub_document()
+    document["environments"] = {"staging": {"access": "ask"}}
+    document["repos"][0]["services"] = {
+        "api": {"kind": "api", "endpoints": {"staging": {"url": "https://old.example.com"}}}
+    }
+    (tmp_path / "hub.json").write_text(json.dumps(document))
+
+    _edit(
+        tmp_path,
+        op="add_endpoint",
+        scope="team",
+        repo="demo-api",
+        service="api",
+        environment="staging",
+        resource="orders-staging",
+        replace=True,
+    )
+
+    assert _read(tmp_path / "hub.json")["repos"][0]["services"] == {
+        "api": {"kind": "api", "endpoints": {"staging": {"resource": "orders-staging"}}}
+    }

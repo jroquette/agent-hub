@@ -403,6 +403,11 @@
             "title": "Op",
             "type": "string"
           },
+          "replace": {
+            "default": false,
+            "title": "Replace",
+            "type": "boolean"
+          },
           "repo": {
             "maxLength": 200,
             "minLength": 1,
@@ -9697,6 +9702,22 @@
           "source": {
             "title": "Source",
             "type": "string"
+          },
+          "team_access": {
+            "anyOf": [
+              {
+                "enum": [
+                  "read",
+                  "write",
+                  "ask"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team Access"
           }
         },
         "required": [

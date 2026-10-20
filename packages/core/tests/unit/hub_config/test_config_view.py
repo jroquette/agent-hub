@@ -216,7 +216,7 @@ def test_names_blocked_label_and_started_state_when_hub_sets_them() -> None:
     assert _view(document).tracker.team_set == ("blocked_label", "started_state")
 
 
-def test_lists_team_and_own_environments_with_their_source() -> None:
+def test_lists_environments_with_source_when_team_and_own_set() -> None:
     document = a_hub_document()
     document["environments"] = {"staging": {"access": "write"}}
     document["repos"][0]["services"] = {
