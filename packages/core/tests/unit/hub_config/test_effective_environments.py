@@ -4,6 +4,7 @@ import pytest
 
 from agent_hub.core.hub_config.effective_environments import (
     effective_environments,
+    env_file_for,
     local_environment_problems,
 )
 from agent_hub.core.hub_config.local_config import LocalConfig, check_local_document
@@ -252,3 +253,37 @@ def test_rejects_committed_name_when_local_entry_sets_nothing(name: str, committ
     assert local_problems(document) == [
         (f"environments.{name}.access", f"may only tighten hub.json's {committed}")
     ]
+
+
+def test_accepts_env_file_when_local_environment_declares_it() -> None:
+    # AC-350.43: hub.local.json declares an env file on its own environment and endpoint.
+    document = a_local_environments_document()
+    document["environments"]["jane-cloud"]["credentials"]["env_file"] = "demo-api/.env.jane"
+    endpoint = document["repos"][0]["services"]["api"]["endpoints"]["jane-cloud"]
+    endpoint["credentials"] = {"env_file": "demo-api/.env.jane-api"}
+    local = local_config(document)
+
+    view = effective_environments(hub_config(), local)
+
+    assert local_problems(document) == []
+    [jane] = [row for row in view.environments if row.name == "jane-cloud"]
+    assert jane.credentials is not None
+    assert jane.credentials.env_file == "demo-api/.env.jane"
+    assert env_file_for(view, "jane-cloud", service=("demo-api", "api")) == (
+        "demo-api/.env.jane-api"
+    )
+
+
+def test_prefers_endpoint_env_file_when_both_declared() -> None:
+    # AC-350.43: an endpoint's env file wins over its environment's.
+    document = an_environments_document()
+    document["environments"]["staging"]["credentials"]["env_file"] = "demo-api/.env.staging"
+    endpoints = document["repos"][0]["services"]["orders"]["endpoints"]
+    endpoints["staging"]["credentials"] = {"env_file": "demo-api/.env.orders"}
+    view = effective_environments(HubConfig.model_validate(document), LocalConfig())
+
+    assert env_file_for(view, "staging", service=("demo-api", "orders")) == ("demo-api/.env.orders")
+    assert env_file_for(view, "staging", service=("demo-api", "api")) == "demo-api/.env.staging"
+    assert env_file_for(view, "staging") == "demo-api/.env.staging"
+    assert env_file_for(view, "live") is None
+    assert env_file_for(view, "qa") is None

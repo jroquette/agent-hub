@@ -19,11 +19,8 @@ made is its ``problem`` (plan E36): a listed file that cannot be read stays list
 content, so the repo rules skip that file, never the whole checkout.
 """
 
-import contextlib
 import os
 import shutil
-import signal
-import subprocess
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,32 +30,16 @@ from agent_hub.core.doctor.snapshot import HubFiles
 from agent_hub.core.hub_config.problems import one_line
 from agent_hub.core.hub_files.tree_snapshot import FileEntry, LinkEntry, TreeEntry
 from agent_hub.generator.errors import GeneratorError
+from agent_hub.generator.git_answers import (
+    GIT_TIMEOUT_SECONDS,
+    GitRunError,
+    run_git,
+)
 from agent_hub.generator.hub_tree import (
     list_every_file,
     read_every_file,
     read_listed_files,
     read_planned_tree,
-)
-
-GIT_TIMEOUT_SECONDS = 10.0
-# Git's repository-local variables (``git rev-parse --local-env-vars``, git 2.43): each makes
-# git read another repository, index, config or work tree than the tree's own.
-SCRUBBED_VARIABLES: Final = (
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_COMMON_DIR",
-    "GIT_CONFIG",
-    "GIT_CONFIG_COUNT",
-    "GIT_CONFIG_PARAMETERS",
-    "GIT_DIR",
-    "GIT_GRAFT_FILE",
-    "GIT_IMPLICIT_WORK_TREE",
-    "GIT_INDEX_FILE",
-    "GIT_NO_REPLACE_OBJECTS",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_PREFIX",
-    "GIT_REPLACE_REF_BASE",
-    "GIT_SHALLOW_FILE",
-    "GIT_WORK_TREE",
 )
 
 _LISTING_FAILED: Final = "could not list the files: "
@@ -214,33 +195,13 @@ def _has_git_entry(root: Path) -> bool:
 
 def _git(executable: str, arguments: Collection[str], *, cwd: Path) -> bytes:
     """Git's stdout; raises ``_GitError`` when it cannot start, fails or runs too long."""
-    timeout = GIT_TIMEOUT_SECONDS
     try:
-        with subprocess.Popen(  # noqa: S603 - absolute git, fixed argv, no shell
-            [executable, "-c", "core.fsmonitor=false", *arguments],
-            cwd=cwd,
-            env=_git_environment(),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            start_new_session=True,
-        ) as child:
-            try:
-                output, errors = child.communicate(timeout=timeout)
-            finally:
-                # Whatever happened, no child git started is left running or holding the pipes.
-                with contextlib.suppress(ProcessLookupError, PermissionError):
-                    os.killpg(child.pid, signal.SIGKILL)
-    except subprocess.TimeoutExpired as error:
-        raise _GitError(f"git timed out after {timeout:g} s") from error
-    except OSError as error:
-        raise _GitError(f"git could not run: {error.strerror or error}") from error
-    if child.returncode != 0:
+        returncode, output, errors = run_git(
+            executable, tuple(arguments), cwd=cwd, timeout=GIT_TIMEOUT_SECONDS
+        )
+    except GitRunError as error:
+        raise _GitError(str(error)) from error
+    if returncode != 0:
         first_line = next(iter(errors.decode("utf-8", "replace").splitlines()), "")
-        raise _GitError(f"git exited with {child.returncode}: {first_line}".removesuffix(": "))
+        raise _GitError(f"git exited with {returncode}: {first_line}".removesuffix(": "))
     return output
-
-
-def _git_environment() -> dict[str, str]:
-    kept = {name: value for name, value in os.environ.items() if name not in SCRUBBED_VARIABLES}
-    return {**kept, "GIT_OPTIONAL_LOCKS": "0"}

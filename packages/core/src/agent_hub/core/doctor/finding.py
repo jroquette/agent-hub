@@ -53,6 +53,8 @@ class Read(StrEnum):
     WORKFLOWS = "workflows"
     # The temp-named entries directly in the item folders, scanned by name (AGH-297).
     ITEM_FOLDERS = "item_folders"
+    # Each declared env file: whether it exists, which checkout holds it, whether git ignores it.
+    ENV_FILES = "env_files"
 
 
 # The reads the hub listing serves: the listing itself, and the file sets that come from it.

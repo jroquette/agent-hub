@@ -1,5 +1,10 @@
 from collections.abc import Callable
+from dataclasses import replace
 
+import pytest
+
+import agent_hub.core.doctor.finding as doctor_finding
+import agent_hub.core.doctor.snapshot as doctor_snapshot
 from agent_hub.core.doctor import environments_rule
 from agent_hub.core.doctor.finding import Finding
 from agent_hub.core.doctor.run_rules import Selection, run_rules, select_rules
@@ -33,7 +38,8 @@ JANE_WARNING: Shown = (
     Severity.WARNING,
     "hub.local.json",
     None,
-    "production environment: jane-cloud (access write, hub.local.json)",
+    "production environment: jane-cloud (access write, hub.local.json); actions: writes and"
+    " destroys are denied there",
     FIX,
 )
 
@@ -102,7 +108,8 @@ def test_warns_at_local_file_when_local_tightens_to_ask(snapshot_of: SnapshotFac
             Severity.WARNING,
             "hub.local.json",
             None,
-            "production environment: live (access ask, hub.local.json)",
+            "production environment: live (access ask, hub.local.json); actions: writes and"
+            " destroys are denied there",
             FIX,
         )
     ]
@@ -159,3 +166,123 @@ def test_retunes_every_finding_when_severity_set(snapshot_of: SnapshotFactory) -
         (Severity.ERROR, "hub.json"),
         (Severity.ERROR, "hub.local.json"),
     ]
+
+
+def production_config(access: str) -> HubConfig:
+    document = an_environments_document()
+    document["environments"]["live"]["access"] = access
+    return HubConfig.model_validate(document)
+
+
+@pytest.mark.parametrize("access", ["write", "ask"])
+def test_says_writes_denied_when_environments_production_has_write_access(
+    snapshot_of: SnapshotFactory, access: str
+) -> None:
+    # AC-350.3 (P-22): actions never write or destroy on production, whatever the access says.
+    findings = environments_rule.ENVIRONMENTS_PRODUCTION.check(
+        snapshot_of(config=production_config(access))
+    )
+
+    assert shown(list(findings)) == [
+        (
+            "environments.production",
+            Severity.WARNING,
+            "hub.json",
+            None,
+            f"production environment: live (access {access}, hub.json); actions: writes and"
+            " destroys are denied there",
+            FIX,
+        )
+    ]
+
+
+def test_keeps_info_when_environments_production_has_read_access(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    # AC-350.3: reads only, so nothing is denied that the access allows.
+    findings = environments_rule.ENVIRONMENTS_PRODUCTION.check(
+        snapshot_of(config=production_config("read"))
+    )
+
+    assert shown(list(findings)) == [LIVE_INFO]
+
+
+ENV_FILE_FIX = (
+    "keep each declared env file present, git-ignored and inside the hub or a declared repo"
+    " (docs/design/scenarios.md)"
+)
+
+
+def an_env_file(**changes: object) -> doctor_snapshot.EnvFileFacts:
+    facts = doctor_snapshot.EnvFileFacts(
+        path="demo-api/environment/.env.staging",
+        environment="staging",
+        source="hub.json",
+        exists=True,
+        holder="demo-api",
+        ignored=True,
+    )
+    return replace(facts, **changes)
+
+
+def env_file_findings(
+    snapshot_of: SnapshotFactory, *facts: doctor_snapshot.EnvFileFacts
+) -> list[Shown]:
+    snapshot = replace(snapshot_of(), env_files=facts)
+    return shown(list(environments_rule.ENVIRONMENTS_ENV_FILE.check(snapshot)))
+
+
+def an_env_file_warning(message: str, path: str = "hub.json") -> Shown:
+    return ("environments.env_file", Severity.WARNING, path, None, message, ENV_FILE_FIX)
+
+
+def test_warns_when_environments_env_file_not_ignored(snapshot_of: SnapshotFactory) -> None:
+    # AC-350.45: a committed env file would publish its credentials.
+    findings = env_file_findings(snapshot_of, an_env_file(ignored=False))
+
+    assert findings == [
+        an_env_file_warning(
+            "env file demo-api/environment/.env.staging of staging is not ignored by git in"
+            " demo-api"
+        )
+    ]
+
+
+def test_warns_when_environments_env_file_missing(snapshot_of: SnapshotFactory) -> None:
+    # AC-350.45: at the file that declares it, here the developer's own.
+    findings = env_file_findings(
+        snapshot_of, an_env_file(exists=False, environment="jane-cloud", source="hub.local.json")
+    )
+
+    assert findings == [
+        an_env_file_warning(
+            "env file demo-api/environment/.env.staging of jane-cloud is missing",
+            path="hub.local.json",
+        )
+    ]
+
+
+def test_warns_when_environments_env_file_outside_repo(snapshot_of: SnapshotFactory) -> None:
+    # AC-350.45: no declared repo and not the hub holds it, so no git ignores it for sure.
+    findings = env_file_findings(
+        snapshot_of, an_env_file(path="secrets/.env.staging", holder=None, ignored=None)
+    )
+
+    assert findings == [
+        an_env_file_warning(
+            "env file secrets/.env.staging of staging is outside the hub and every declared repo"
+        )
+    ]
+
+
+def test_finds_nothing_when_environments_env_file_ignored_and_present(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    # AC-350.45: an ignored, present file, no env file, or facts not read: no finding.
+    assert env_file_findings(snapshot_of, an_env_file()) == []
+    assert env_file_findings(snapshot_of) == []
+    assert list(environments_rule.ENVIRONMENTS_ENV_FILE.check(snapshot_of())) == []
+    assert environments_rule.ENVIRONMENTS_ENV_FILE.id == "environments.env_file"
+    assert environments_rule.ENVIRONMENTS_ENV_FILE.reads == frozenset(
+        {doctor_finding.Read.ENV_FILES}
+    )
