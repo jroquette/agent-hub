@@ -5797,3 +5797,38 @@ def test_denies_glob_when_mixed_case_env_file_matched(
     verdicts = decide([(at(tool_call("Glob", pattern=p), api), None) for p in patterns])
 
     assert verdicts == [env_file_denial("Glob")] * len(patterns)
+
+
+# AGH-354 review F2: a Bash glob token is matched by its last segment against the declared env
+# files' names (ignoring case), so a `cd` in the same call does not hide it; a leading `*` or `?`
+# does not match a leading `.`, as in bash.
+def test_denies_bash_glob_when_env_file_name_matched_after_cd(
+    decide: Decide, env_file_hub: Path
+) -> None:
+    ws = env_file_hub.parent
+    denied = [
+        "cd demo-api/environment && cat .env.t*",
+        "cd demo-api/environment; cat .env.*",
+        "cd demo-api/environment && cat .ENV.T?ST",
+        "cd demo-api && cat environment/.env.[st]est",
+    ]
+    passed = [
+        "cd demo-api/environment && cat *.test",
+        "cd demo-api && cat ?env.test",
+        "ls src/*.py",
+    ]
+
+    verdicts = decide([(at(bash_call(command), ws), None) for command in (*denied, *passed)])
+
+    assert verdicts == [env_file_denial("Bash")] * len(denied) + [None] * len(passed)
+
+
+def test_denies_bash_glob_when_mixed_case_env_file_matched_after_cd(
+    decide: Decide, mixed_case_env_file_hub: Path
+) -> None:
+    ws = mixed_case_env_file_hub.parent
+    commands = ["cd demo-api/environment && cat Sta*", "cd demo-api/environment && cat sTAGING.e?v"]
+
+    verdicts = decide([(at(bash_call(command), ws), None) for command in commands])
+
+    assert verdicts == [env_file_denial("Bash")] * len(commands)
