@@ -438,11 +438,16 @@ def test_runs_claude_in_worktree_as_hub_run_does_when_agent_node_has_cwd(
     )
 
 
-def test_gives_effort_only_settings_when_agent_runs_in_hub(tmp_path: Path, pack: Path) -> None:
+@pytest.mark.parametrize("cwd", [None, ".", "./", "link"], ids=["none", "dot", "dot-slash", "link"])
+def test_gives_effort_only_settings_when_agent_runs_in_hub(
+    tmp_path: Path, pack: Path, cwd: str | None
+) -> None:
+    (tmp_path / "hub" / "inside").mkdir(parents=True)
+    (tmp_path / "hub" / "link").symlink_to(tmp_path / "hub" / "inside")
     child = FakeChild([claude_result("ok")])
     spec = {**AGENT, "model": "medium"}
 
-    executors(tmp_path, pack, child).run(call(spec, prompt="Go."))
+    executors(tmp_path, pack, child).run(call(spec, prompt="Go.", cwd=cwd))
 
     argv = child.calls[0]["argv"]
     assert argv.count("--settings") == 1
@@ -489,6 +494,27 @@ def test_gives_hub_hooks_settings_file_when_agent_runs_in_repo(tmp_path: Path, p
     (guard,) = written["hooks"]["PreToolUse"][0]["hooks"]
     assert guard["command"].startswith(f'python3 "{tmp_path}/hub/plugin/hub-workflow/hooks/')
     assert stale.stat().st_mode & 0o777 == 0o600
+
+
+def test_rewrites_settings_file_when_attempt_repeats_or_resumes(tmp_path: Path, pack: Path) -> None:
+    worktree = tmp_path / "demo-api" / ".claude" / "worktrees" / "dem-1"
+    worktree.mkdir(parents=True)
+    hub_hooks(tmp_path / "hub")
+    written = tmp_path / "hub" / ".agent-runs" / "session-settings" / "medium.json"
+    child = FakeChild([claude_result("ok"), claude_result("ok"), claude_result("ok")])
+    spec = {**AGENT, "model": "medium", "cwd": "../demo-api"}
+    runner = executors(tmp_path, pack, child)
+
+    runner.run(call(spec, prompt="Go.", cwd=str(worktree)))
+    written.unlink()
+    runner.run(call(spec, prompt="Go.", cwd=str(worktree), attempt=2))
+    second = written.exists()
+    written.unlink()
+    runner.run(call(spec, prompt="Go.", cwd=str(worktree), resume_session="s-9"))
+
+    assert second
+    assert written.exists()
+    assert child.calls[2]["argv"][-2:] == ["--resume", "s-9"]
 
 
 def test_fails_config_without_claude_when_repo_cwd_hub_hooks_missing(
