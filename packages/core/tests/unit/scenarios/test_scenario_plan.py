@@ -263,3 +263,108 @@ def test_reports_nothing_when_unordered_gates_check_long_reverse_chain() -> None
     assert plan.problems == ()
     assert len(plan.rows) == count
     assert {row.decision for row in plan.rows} == {"ask"}
+
+
+def test_reports_nothing_when_unordered_gates_ordered_through_middle_step() -> None:
+    nodes = [
+        {"id": "send-a", "type": "action", "action": "send-order", "with": {"target": "api"}},
+        {
+            "id": "middle",
+            "type": "action",
+            "depends_on": ["send-a"],
+            "action": "get-order",
+            "with": {"target": "api"},
+        },
+        {
+            "id": "send-b",
+            "type": "action",
+            "depends_on": ["middle"],
+            "action": "send-order",
+            "with": {"target": "api"},
+        },
+    ]
+
+    plan = planned(nodes, environment="staging")
+
+    assert [row.decision for row in plan.rows] == ["ask", "allow", "ask"]
+    assert plan.problems == ()
+
+
+def a_group(*, depends_on: list[str] | None = None) -> dict[str, Any]:
+    return {
+        "id": "resend",
+        "type": "loop_group",
+        "max_iterations": 3,
+        "until_when": "$send.output.status == 'SENT'",
+        **({"depends_on": depends_on} if depends_on else {}),
+        "nodes": [
+            {"id": "send", "type": "action", "action": "send-order", "with": {"target": "api"}},
+        ],
+    }
+
+
+def test_reports_group_when_unordered_gates_body_asks_beside_outer_gate() -> None:
+    approval = {"id": "confirm", "type": "approval", "message": "Go on?"}
+    outer_ask = {
+        "id": "send-a",
+        "type": "action",
+        "action": "send-order",
+        "with": {"target": "api"},
+    }
+
+    beside_approval = planned([approval, a_group()], environment="staging")
+    beside_ask = planned([outer_ask, a_group()], environment="staging")
+    ordered = planned([outer_ask, a_group(depends_on=["send-a"])], environment="staging")
+
+    assert [(row.step, row.decision) for row in beside_ask.rows] == [
+        ("send-a", "ask"),
+        ("resend__send", "ask"),
+    ]
+    assert beside_approval.problems == (
+        "steps confirm and resend both need a gate and have no order between them:"
+        " one must depend on the other",
+    )
+    assert beside_ask.problems == (
+        "steps send-a and resend both need a gate and have no order between them:"
+        " one must depend on the other",
+    )
+    assert ordered.problems == ()
+
+
+def test_reports_nothing_when_scenario_plan_reads_nested_and_array_paths() -> None:
+    nested = an_entry("list-orders", "read")
+    schema = {
+        "type": "object",
+        "properties": {
+            "meta": {"type": "object", "properties": {"ref": {"type": "string"}}},
+            "lines": {
+                "type": "array",
+                "items": {"type": "object", "properties": {"id": {"type": "string"}}},
+            },
+        },
+    }
+    nested = nested.model_copy(
+        update={"document": nested.document.model_copy(update={"output_format": schema})}
+    )
+    nodes = [
+        {
+            "id": "list",
+            "type": "action",
+            "action": "list-orders",
+            "with": {"target": "api"},
+            "capture": {"first_line": "$self.output.lines.0.id"},
+        },
+        {
+            "id": "check",
+            "type": "action",
+            "depends_on": ["list"],
+            "action": "get-order",
+            "with": {"target": "api", "ref": "$list.output.meta.ref"},
+            "when": "$list.output.lines.0.id != ''",
+        },
+    ]
+
+    plan = planned(nodes, actions=(*ACTIONS, nested))
+
+    assert plan.problems == ()
+    assert plan.rows[1].args["ref"] == "<$list.output.meta.ref from list>"
