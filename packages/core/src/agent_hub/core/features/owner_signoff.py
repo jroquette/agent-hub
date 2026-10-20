@@ -7,7 +7,9 @@ that waited on owner steps as its scope. Being dated now, it is the latest eval 
 the Acceptance step turns done (two-level-flows A3; ``feature_evals``' order). It is never a
 whole-feature eval, so it never sets the header verdict. The ACs it lists are exactly those the
 Acceptance step waits on (``feature_evals.owner_wait``, the rule both share). A sign-off is
-refused when no AC waits on owner steps, or when the feature lists no AC to sign off.
+refused, writing nothing (A9): when not every eval was read, when no AC waits on owner steps or
+the feature lists no AC to sign off (A10), when the latest eval of a waiting AC is NO-SHIP, and
+when the note would not rank newer than the acceptance eval (undated, or dated in the future).
 """
 
 from collections.abc import Callable, Iterable
@@ -17,9 +19,12 @@ from typing import Final, Protocol
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.features.feature_evals import (
     EVALS_FOLDER,
+    MAX_EVAL_FILES,
     NOTE_SUFFIX,
+    OwnerWait,
     eval_records,
     owner_wait,
+    ranks_newer,
 )
 from agent_hub.core.features.feature_record import FeatureRecordFile, record_from_bytes
 from agent_hub.core.features.feature_status import FeatureFolder
@@ -121,20 +126,17 @@ class SignOffOwnerSteps:
         folder = self._folders.feature_folder(hub_path, slug)
         if folder is None:
             raise missing
-        raw = folder.features_json
-        record = record_from_bytes(raw) if isinstance(raw, bytes) else None
-        if not isinstance(record, FeatureRecordFile):
-            raise OwnerSignOffError("features.json is missing or invalid")
-        evals = eval_records(folder.evals, folder.eval_head, slug=folder.slug)
-        waiting = owner_wait(evals, record.acs, tickets=record.tickets)
-        if waiting is None:
-            raise OwnerSignOffError("no AC waits on owner steps")
-        if not waiting.acs:
-            raise OwnerSignOffError("features.json lists no AC to sign off")
-        sources = (waiting.acceptance.delivery,)
+        waiting, evals = _owner_wait(folder)
+        accepted = waiting.acceptance.delivery
+        sources = (accepted,)
         delivery = signoff_name(found.delivery for found in evals if not found.legacy)
         name = f"{delivery}{NOTE_SUFFIX}"
         at = self._clock()
+        if not ranks_newer(waiting.acceptance, delivery=delivery, at=at):
+            raise OwnerSignOffError(
+                f"a sign-off would not be newer than {accepted}: "
+                "it has no evaluated_at, or one in the future"
+            )
         text = signoff_note(
             slug=folder.slug, delivery=delivery, acs=waiting.acs, sources=sources, at=at
         )
@@ -154,3 +156,26 @@ class SignOffOwnerSteps:
             legacy=False,
             problem=None,
         )
+
+
+def _owner_wait(folder: FeatureFolder) -> tuple[OwnerWait, tuple[EvalRecord, ...]]:
+    """What ``folder``'s sign-off covers, and its evals; ``OwnerSignOffError`` when it has
+    nothing it can sign off (A9, A10)."""
+    raw = folder.features_json
+    record = record_from_bytes(raw) if isinstance(raw, bytes) else None
+    if not isinstance(record, FeatureRecordFile):
+        raise OwnerSignOffError("features.json is missing or invalid")
+    if folder.evals_skipped:
+        raise OwnerSignOffError(f"more than {MAX_EVAL_FILES} evals; not all were read")
+    evals = eval_records(folder.evals, folder.eval_head, slug=folder.slug)
+    waiting = owner_wait(evals, record.acs, tickets=record.tickets)
+    if waiting is None:
+        raise OwnerSignOffError("no AC waits on owner steps")
+    if not waiting.acs:
+        raise OwnerSignOffError("features.json lists no AC to sign off")
+    if waiting.reopened:
+        reopened = ", ".join(waiting.reopened)
+        raise OwnerSignOffError(
+            f"the latest eval of {reopened} is NO-SHIP; fix or re-evaluate them first"
+        )
+    return waiting, evals

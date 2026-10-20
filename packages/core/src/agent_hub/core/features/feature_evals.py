@@ -176,21 +176,23 @@ class OwnerWait:
     ``acceptance`` is that eval; ``acs`` the non-withdrawn ACs it leaves as owner steps that no
     later owner sign-off covers, in ``features.json`` order: what a sign-off must cover. Empty
     when the feature lists no such AC (no ``features.json``, or every AC withdrawn): there is
-    nothing the app can sign off, and the eval still waits.
+    nothing the app can sign off, and the eval still waits (A10). ``reopened`` are those of
+    ``acs`` whose latest eval of any scope is NO-SHIP: a sign-off is refused over them (A9).
     """
 
     acceptance: EvalRecord
     acs: tuple[str, ...]
+    reopened: tuple[str, ...] = ()
 
 
 def owner_wait(
     records: Iterable[EvalRecord],
     acs: Iterable[RecordAc],
     *,
-    tickets: Iterable[PlannedTicket] = (),
+    tickets: Iterable[PlannedTicket],
 ) -> OwnerWait | None:
-    """What the owner must still sign off (A3, the one rule the Acceptance step and the sign-off
-    share); None when nothing waits: no acceptance eval, one that is not
+    """What the owner must still sign off (A3, A9, A10: the one rule the Acceptance step and the
+    sign-off share); None when nothing waits: no acceptance eval, one that is not
     SHIP-WITH-OWNER-STEPS, or one the owner signed off.
 
     The acceptance eval is whole-feature (``acs: all``, or a legacy ``eval.md`` with no scope,
@@ -213,9 +215,22 @@ def owner_wait(
         if any(_newer(_order_key(signoff), since) for signoff in signoffs):
             return None
         return OwnerWait(acceptance=accepted, acs=())
+    tickets = tuple(tickets)
     whole = accepted.model_copy(update={"acs": ALL_ACS})
     left = eval_coverage((whole, *signoffs), live, tickets=tickets).owner_steps
-    return OwnerWait(acceptance=accepted, acs=left) if left else None
+    if not left:
+        return None
+    # The acceptance eval read as whole-feature names every live AC, so uncovered is NO-SHIP.
+    named = tuple(whole if record is accepted else record for record in records)
+    uncovered = set(eval_coverage(named, live, tickets=tickets).uncovered)
+    reopened = tuple(ac_id for ac_id in left if ac_id in uncovered)
+    return OwnerWait(acceptance=accepted, acs=left, reopened=reopened)
+
+
+def ranks_newer(record: EvalRecord, *, delivery: str, at: datetime) -> bool:
+    """Whether a new eval ``delivery`` dated ``at`` is known to be newer than ``record`` (the
+    module's order): False when ``record`` has no usable date or one later than ``at`` (A9)."""
+    return _newer(_key(delivery, at.astimezone(UTC), legacy=False), _order_key(record))
 
 
 def _whole_feature(record: EvalRecord) -> bool:
@@ -400,12 +415,15 @@ class _OrderKey:
 
 
 def _order_key(record: EvalRecord) -> _OrderKey:
-    found = RERUN_PATTERN.search(record.delivery)
-    stem = record.delivery[: found.start()] if found else record.delivery
+    return _key(record.delivery, _instant(record.evaluated_at), legacy=record.legacy)
+
+
+def _key(delivery: str, instant: datetime | None, *, legacy: bool) -> _OrderKey:
+    found = RERUN_PATTERN.search(delivery)
     return _OrderKey(
-        instant=_instant(record.evaluated_at),
-        legacy=record.legacy,
-        stem=stem,
+        instant=instant,
+        legacy=legacy,
+        stem=delivery[: found.start()] if found else delivery,
         rerun=int(found.group(1)) if found else 1,
     )
 

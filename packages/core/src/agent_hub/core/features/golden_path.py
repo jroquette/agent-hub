@@ -322,11 +322,12 @@ def _acceptance(facts: _Facts) -> _Own:
                 reason="the whole-feature eval leaves owner steps and lists no AC to sign off",
                 started=True,
             )
-        steps = f"{gate.owner_steps} owner step{'' if gate.owner_steps == 1 else 's'}"
+        one = gate.owner_steps == 1
+        acs = f"{gate.owner_steps} AC{'' if one else 's'}"
         return _Own(
             holds=False,
-            meta=f"Waiting on you: {steps}",
-            reason=f"{gate.owner_steps} ACs wait on owner steps (SHIP-WITH-OWNER-STEPS)",
+            meta=f"Waiting on you: sign off {acs}",
+            reason=f"{acs} wait{'s' if one else ''} on owner steps (SHIP-WITH-OWNER-STEPS)",
             started=True,
         )
     total = len(facts.acs)
