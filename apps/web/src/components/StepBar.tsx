@@ -47,8 +47,9 @@ export function StepBar({
     <Tooltip
       label={
         <span className="ah-stack" style={{ gap: 2 }}>
-          {summaries.map((line) => (
-            <span key={line}>{line}</span>
+          {summaries.map((line, index) => (
+            // The steps are a fixed, ordered list; two can share a summary.
+            <span key={index}>{line}</span>
           ))}
         </span>
       }
@@ -59,9 +60,9 @@ export function StepBar({
           role="img"
           aria-label={`${name}: ${label}. ${summaries.join("; ")}`}
         >
-          {steps.map((step) => (
+          {steps.map((step, index) => (
             <span
-              key={step.summary}
+              key={index}
               data-state={step.state}
               style={{
                 width: 12,
@@ -75,7 +76,7 @@ export function StepBar({
         </span>
         <span className="ah-step-label" aria-hidden="true">
           {label}
-          {current < steps.length - 1 && (
+          {current >= 0 && current < steps.length - 1 && (
             <span className="ah-subtle">
               {" "}
               · {current + 1}/{steps.length}

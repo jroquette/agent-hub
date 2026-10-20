@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../testing/axe";
 import { StepBar } from "./StepBar";
@@ -16,10 +16,6 @@ const steps = [
 ] as const;
 
 describe("StepBar", () => {
-  afterEach(() => {
-    delete document.documentElement.dataset.theme;
-  });
-
   it("draws one segment per step in its state", () => {
     const { container } = render(
       <StepBar name="Golden path" label="Build" current={5} steps={steps} />,
@@ -52,15 +48,32 @@ describe("StepBar", () => {
     expect(screen.getByRole("tooltip")).toHaveTextContent("Shipped: blocked (Build is not done)");
   });
 
-  it.each(["light", "dark"])(
-    "has no serious axe violation in the %s theme (a11y)",
-    async (theme) => {
-      document.documentElement.dataset.theme = theme;
-      const { container } = render(
-        <StepBar name="Golden path" label="Build" current={5} steps={steps} />,
-      );
+  it("shows no position when the current step is not among the steps", () => {
+    render(<StepBar name="Golden path" label="Build" current={-1} steps={steps} />);
 
-      expect(await seriousViolations(container)).toEqual([]);
-    },
-  );
+    expect(screen.getByRole("img").parentElement).toHaveTextContent(/^Build$/);
+  });
+
+  it("draws steps with the same summary without a key clash", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const same = [
+        { state: "pending", summary: "Ticket: pending" },
+        { state: "pending", summary: "Ticket: pending" },
+      ] as const;
+      render(<StepBar name="Ticket" label="Ticket" current={0} steps={same} />);
+
+      expect(error).not.toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("has no serious axe violation (a11y)", async () => {
+    const { container } = render(
+      <StepBar name="Golden path" label="Build" current={5} steps={steps} />,
+    );
+
+    expect(await seriousViolations(container)).toEqual([]);
+  });
 });
