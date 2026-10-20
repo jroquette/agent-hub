@@ -11,7 +11,9 @@ developer identity and the local file is valid. The remote probes (AGH-134) run 
 network, also the caller's: it passes ``remote_probes`` only from a Claude Code session, called
 only when a rule reads the remotes. The workflows are the hub's and the built-ins, read as
 ``hub workflow`` reads them, when a rule reads them (AGH-227). The item folders (AGH-297) are
-scanned by name only for temp-shaped entries an interrupted item write left beside a unit.
+scanned by name only for temp-shaped entries an interrupted item write left beside a unit. The
+declared env files are looked up in the workspace (the hub's parent), with ``git check-ignore`` in
+the checkout that holds each, only when a rule reads them.
 """
 
 import os
@@ -24,10 +26,16 @@ from agent_hub.core.doctor.lock_rules import lock_paths, lock_state
 from agent_hub.core.doctor.run_rules import Selection
 from agent_hub.core.doctor.snapshot import (
     DoctorSnapshot,
+    EnvFileFacts,
     LockState,
     RemoteProbe,
     RepoFiles,
     hub_paths,
+)
+from agent_hub.core.hub_config.effective_environments import (
+    declared_env_files,
+    effective_environments,
+    local_environment_problems,
 )
 from agent_hub.core.hub_config.effective_identity import Sourced
 from agent_hub.core.hub_config.local_config import LocalConfig
@@ -39,6 +47,7 @@ from agent_hub.core.skills.skill_sources import DEFAULT_LIMITS
 from agent_hub.generator.built_json import base_hooks_block
 from agent_hub.generator.doctor_tree import read_checkout, read_doctor_tree
 from agent_hub.generator.errors import GeneratorError
+from agent_hub.generator.git_answers import git_answer
 from agent_hub.generator.hub_tree import read_root_entry
 from agent_hub.generator.workflow_discovery import HUB_WORKFLOWS
 from agent_hub.generator.workflow_source import DiscoveredWorkflowSource
@@ -73,6 +82,7 @@ def build_doctor_snapshot(
     workflows = DiscoveredWorkflowSource(Path(root)) if Read.WORKFLOWS in reads else None
     packs = pack_folders(root) if workflows is not None else ()
     leftovers, item_folders = item_leftovers(root) if Read.ITEM_FOLDERS in reads else (None, ())
+    env_files = env_file_facts(root, config, local) if Read.ENV_FILES in reads else None
     return DoctorSnapshot(
         config=config,
         running_version=running,
@@ -87,7 +97,57 @@ def build_doctor_snapshot(
         workflow_folders=packs,
         item_leftovers=leftovers,
         item_folders=item_folders,
+        env_files=env_files,
     )
+
+
+def env_file_facts(
+    root: str, config: HubConfig, local: LocalConfig | tuple[ConfigProblem, ...]
+) -> tuple[EnvFileFacts, ...]:
+    """Each env file ``hub.json`` and a usable ``hub.local.json`` declare, as found in the
+    workspace (the hub's parent folder): whether it exists, which of the hub and the declared
+    repos holds it by real path (a link that leads out of them is outside), and whether git
+    ignores it there (``git check-ignore``)."""
+    if not isinstance(local, LocalConfig) or local_environment_problems(config, local):
+        local = LocalConfig()
+    workspace = Path(root).parent
+    holders = {
+        name: Path(os.path.realpath(workspace / name))
+        for name in (Path(root).name, *(repo.dir for repo in config.repos))
+    }
+    facts = []
+    for declared in declared_env_files(effective_environments(config, local)):
+        real = Path(os.path.realpath(workspace / declared.path))
+        held = next(
+            (
+                (name, top)
+                for name, top in holders.items()
+                if real != top and real.is_relative_to(top)
+            ),
+            None,
+        )
+        facts.append(
+            EnvFileFacts(
+                path=declared.path,
+                environment=declared.environment,
+                source=declared.source,
+                exists=real.exists(),
+                holder=held[0] if held else None,
+                ignored=_is_ignored(held[1], real.relative_to(held[1]).as_posix())
+                if held
+                else None,
+            )
+        )
+    return tuple(facts)
+
+
+def _is_ignored(checkout: Path, path: str) -> bool | None:
+    """Whether git ignores ``path`` in ``checkout`` (a tracked file never is); ``None`` when git
+    cannot answer. Any failure, such as a folder that is no git checkout, is "not ignored"."""
+    if not _is_folder(str(checkout)):
+        return False
+    answer = git_answer(("check-ignore", "-q", "--", path), cwd=checkout)
+    return None if answer is None else answer[0] == 0
 
 
 # The folders a unit's temp entries sit in: ``.claude`` (its hook files), its skills and agents,
