@@ -15,7 +15,7 @@ All optional and additive under `schema_version: 1`; a hub without them behaves,
 | Key | Shape |
 |---|---|
 | `environments.<name>` | `access` (required: `read`, `write` or `ask`), `production` (bool, `false`), `description` (≤ 80, rendered as plain text), `credentials` |
-| `…credentials` | `aws_profile` (`^[A-Za-z0-9_.-]{1,64}$`) and `env` (≤ 10 names `^[A-Z_][A-Z0-9_]{0,63}$`): names, never values |
+| `…credentials` | `aws_profile` (`^[A-Za-z0-9_.-]{1,64}$`), `env` (≤ 10 names `^[A-Z_][A-Z0-9_]{0,63}$`) and `env_file` (a dotenv path relative to the workspace, ≤ 200, no `..`, no leading `/` or `~`, read only by actions: [scenarios.md](scenarios.md)): names and paths, never values |
 | `repos[].services.<name>` | `kind` (`^[a-z0-9]+(-[a-z0-9]+)*$`, ≤ 32, informational), `description`, `endpoints` |
 | `…endpoints.<env>` | `url` or `resource` (one required), `note`, `credentials`; `<env>` must be declared |
 | `guard.blocked_words` | ≤ 200 words `^[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*$`, 2-64 characters, matched literally, never a secret's shape |

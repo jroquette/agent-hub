@@ -92,6 +92,24 @@ class LockNotRegular:
     """``hub.lock`` is a link, folder, FIFO or other non-regular file, so it was never opened."""
 
 
+@dataclass(frozen=True, kw_only=True, slots=True)
+class EnvFileFacts:
+    """A declared env file as found (docs/design/scenarios.md § Credentials).
+
+    ``path`` is as declared, relative to the workspace; ``environment`` and ``source`` are the
+    first environment that declares it and its file. ``holder`` is the hub's or a declared repo's
+    dir holding it, ``None`` for none; ``ignored`` is whether git ignores it there, ``None`` when
+    there is no holder or git could not answer.
+    """
+
+    path: str
+    environment: str
+    source: str
+    exists: bool
+    holder: str | None
+    ignored: bool | None
+
+
 # What ``hub.lock`` holds: the lock, no lock, something that is no file, or its problems.
 type LockState = HubLock | LockAbsent | LockNotRegular | tuple[ConfigProblem, ...]
 
@@ -117,6 +135,8 @@ class DoctorSnapshot:
     every temp-named entry directly in the item folders, in path order, when a selected rule
     reads them; else ``None``. ``item_folders`` then holds the folders to watch for them: the
     ones scanned, plus ``plugin`` and each ``plugin/<p>``, where an item folder can be made.
+    ``env_files`` holds each declared env file as found when a selected rule reads them; else
+    ``None``.
     """
 
     config: HubConfig | ConfigFailure
@@ -133,6 +153,7 @@ class DoctorSnapshot:
     workflow_folders: tuple[str, ...] = ()
     item_leftovers: tuple[str, ...] | None = None
     item_folders: tuple[str, ...] = ()
+    env_files: tuple[EnvFileFacts, ...] | None = None
 
     @property
     def hub_config(self) -> HubConfig:
