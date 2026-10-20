@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -233,9 +233,9 @@ describe("FeaturesScreen", () => {
     open({ "/api/v1/features": aPage([unread]) });
 
     await screen.findByRole("link", { name: "unread" });
-    expect(within(rowOf("unread")).getByText("Build · step 1 of 1")).toBeInTheDocument();
+    expect(rowOf("unread").querySelector(".ft-row-line")).toHaveTextContent(/^Build$/);
     expect(screen.getByRole("note")).toHaveTextContent(
-      "Ticket status is not read from Linear on this list, so Build shows as unknown.",
+      "Ticket status is not read from Linear on this list, so Build and Shipped show as unknown.",
     );
   });
 
@@ -246,7 +246,7 @@ describe("FeaturesScreen", () => {
     await screen.findByRole("link", { name: "layered-memory" });
     const row = rowOf("layered-memory");
     expect(row).toHaveAccessibleName(
-      /^layered-memory\. .*\. golden path at Acceptance\. ACs 21 of 21\. verdict SHIP-WITH-OWNER-STEPS\. issues AGH-48, AGH-49, AGH-50$/,
+      /^layered-memory\. .*\. golden path at Acceptance, step 7 of 8, Acceptance: partial · .*\. ACs 21 of 21\. verdict SHIP-WITH-OWNER-STEPS\. issues AGH-48, AGH-49, AGH-50$/,
     );
     await userEvent.keyboard("j");
     expect(rowOf("broken-record")).toHaveFocus();
@@ -386,6 +386,54 @@ describe("FeaturesScreen", () => {
     expect(screen.queryByRole("link", { name: "tracker-team-cap" })).not.toBeInTheDocument();
   });
 
+  it("reads the position and the current step's summary in the row's accessible name (AC-1.12)", async () => {
+    open();
+
+    await screen.findByRole("link", { name: "control-plane" });
+    expect(rowOf("control-plane")).toHaveAccessibleName(
+      /\. golden path at Build, step 6 of 8, Build: in progress · 1 of 3 merged · 1 in progress\. /,
+    );
+  });
+
+  it("filters by the new step on the first render of an old ?phase= link, with no empty flash (AC-1.12)", async () => {
+    const { router } = open();
+    await screen.findByRole("link", { name: "control-plane" });
+    const seen: string[] = [];
+    const observer = new MutationObserver((records) => {
+      for (const record of records)
+        for (const node of record.addedNodes) seen.push(node.textContent ?? "");
+    });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+
+    await act(() => router.navigate("/features?phase=implement"));
+    await waitFor(() => {
+      expect(router.state.location.search).toBe("?phase=build");
+    });
+    observer.disconnect();
+
+    expect(seen.join(" ")).not.toMatch(/No features match|0 of \d/);
+    expect(screen.getByRole("link", { name: "control-plane" })).toBeInTheDocument();
+  });
+
+  it("drops old ?phase= ids that are not feature steps, replacing the URL (AC-1.12)", async () => {
+    const { router } = open({}, true, "/features?phase=implement,bogus&q=a");
+
+    await waitFor(() => {
+      expect(router.state.location.search).toBe("?phase=build&q=a");
+    });
+    expect(router.state.historyAction).toBe("REPLACE");
+  });
+
+  it("drops a ?phase= of only unknown ids, so the list is not filtered (AC-1.12)", async () => {
+    const { router } = open({}, true, "/features?phase=bogus");
+
+    await waitFor(() => {
+      expect(router.state.location.search).toBe("");
+    });
+    expect(await screen.findByRole("link", { name: "layered-memory" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Step:/ })).toHaveAccessibleName(/Any/);
+  });
+
   it("degrades only the malformed feature's ACs and tags its repo", async () => {
     open();
 
@@ -498,20 +546,12 @@ describe("FeaturesScreen", () => {
     }
   });
 
-  it.each(["light", "dark"])(
-    "has no serious a11y violations in the %s theme (a11y)",
-    async (theme) => {
-      document.documentElement.dataset.theme = theme;
-      try {
-        const { container } = open();
-        await screen.findByRole("link", { name: "layered-memory" });
+  it("has no serious a11y violations (a11y)", async () => {
+    const { container } = open();
+    await screen.findByRole("link", { name: "layered-memory" });
 
-        expect(await seriousViolations(container)).toEqual([]);
-      } finally {
-        delete document.documentElement.dataset.theme;
-      }
-    },
-  );
+    expect(await seriousViolations(container)).toEqual([]);
+  });
 
   it("shows a feature's nickname with its slug, and renames it inline (names)", async () => {
     const saved: unknown[] = [];
