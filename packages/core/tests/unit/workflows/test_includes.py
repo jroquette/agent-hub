@@ -6,6 +6,8 @@ from typing import Any
 
 import pytest
 
+import agent_hub.core.workflows.nodes as workflow_nodes
+import agent_hub.core.workflows.plan as planning
 from agent_hub.core.testing.workflow_fakes import (
     FakeClock,
     KeysOutputs,
@@ -477,3 +479,40 @@ def test_rewrites_stdin_and_agent_cwd_when_an_included_node_reads_its_block() ->
 
     assert nodes["p__read"].stdin == "$p__prep.output"
     assert nodes["p__work"].cwd == "$p__prep.output"
+
+
+def test_namespaces_action_refs_when_scenario_included() -> None:
+    send = {"id": "send", "type": "action", "action": "aws/send-queue-message"}
+    send["with"] = {"ref": "$INPUTS.ref", "refs": ["$INPUTS.ref", {"at": "$INPUTS.ref"}]}
+    wait = {"id": "wait", "type": "expect", "action": "get-order", "depends_on": ["send"]}
+    wait |= {"every": "10s", "timeout": "1m", "with": {"id": "$send.output.id"}}
+    wait["until_when"] = "$send.output.id == 'x' && $self.output.status == 'OK'"
+    wait["capture"] = {"order_id": "$self.output.order_id", "sent": "$send.output.id"}
+    walk = document("walk", send, wait, inputs={"ref": {"required": True}}, kind="scenario")
+    body = [
+        {"id": "a", "type": "action", "action": "x"},
+        {"id": "b", "type": "action", "action": "x", "depends_on": ["a"]}
+        | {"with": {"v": "$a.output"}},
+    ]
+    group = {"id": "g", "type": "loop_group", "max_iterations": 2, "until_when": "$b.output == 'y'"}
+    after = {"id": "after", "type": "action", "action": "x", "depends_on": ["first"]}
+
+    plan = plan_of(
+        include("first", "walk", **{"with": {"ref": "T-1"}}),
+        after | {"with": {"id": "$CTX.order_id", "sent": "$first.output"}},
+        group | {"nodes": body},
+        library=(walk,),
+        kind="scenario",
+    )
+
+    nodes = {node.id: node for node in plan.all_nodes()}
+    sent, waited, read = nodes["first__send"], nodes["first__wait"], nodes["g__b"]
+    assert isinstance(sent, workflow_nodes.ActionNode)
+    assert sent.with_ == {"ref": "T-1", "refs": ["T-1", {"at": "T-1"}]}
+    assert isinstance(waited, workflow_nodes.ExpectNode)
+    assert waited.with_ == {"id": "$first__send.output.id"}
+    assert waited.until_when == "$first__send.output.id == 'x' && $self.output.status == 'OK'"
+    assert waited.capture == {"order_id": "$self.output.order_id", "sent": "$first__send.output.id"}
+    assert isinstance(read, workflow_nodes.ActionNode)
+    assert read.with_ == {"v": "$g__a.output"}
+    assert plan.captures["order_id"] == planning.Capture("first__wait", "$self.output.order_id")
