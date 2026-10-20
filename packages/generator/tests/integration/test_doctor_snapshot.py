@@ -390,3 +390,45 @@ def test_reads_outside_when_environments_env_file_links_out(hub_root: Path, tmp_
         # A link from the hub into a repo is held, by its real path, by that repo.
         (f"{hub_root.name}/.env.hub", True, "demo-api", False),
     ]
+
+
+@pytest.mark.usefixtures("isolated_git")
+def test_reads_link_when_environments_env_file_behind_linked_folder(hub_root: Path) -> None:
+    # A link below the repo's folder, even one that stays in the repo, is one hub action run
+    # refuses to follow; the file itself, the plain one, is not linked.
+    assert REAL_GIT is not None, "git is needed for the env file cases"
+    checkout = hub_root.parent / "demo-api"
+    (checkout / "real-env").mkdir(parents=True)
+    subprocess.run(  # noqa: S603 - absolute git, fixed arguments, a tmp_path folder
+        [REAL_GIT, "init", "-q"], cwd=checkout, check=True, capture_output=True
+    )
+    (checkout / ".gitignore").write_text(".env.*\n", encoding="utf-8")
+    (checkout / "real-env" / ".env.staging").write_text("DEMO_TOKEN=x\n", encoding="utf-8")
+    os.symlink(checkout / "real-env", checkout / "environment")
+    document = a_hub_document()
+    document["platform"]["version"] = RUNNING
+    document["environments"] = {
+        "staging": {
+            "access": "ask",
+            "credentials": {"env_file": "demo-api/environment/.env.staging"},
+        },
+        "qa": {"access": "read", "credentials": {"env_file": "demo-api/real-env/.env.staging"}},
+    }
+    config = HubConfig.model_validate(document)
+    selection = select_rules(REGISTRY, config=config, only=("environments.env_file",))
+    assert isinstance(selection, Selection)
+
+    snapshot = build_doctor_snapshot(
+        str(hub_root),
+        config=config,
+        running=RUNNING,
+        selection=selection,
+        local=LocalConfig(),
+        branch_prefix=None,
+    )
+
+    assert snapshot.env_files is not None
+    assert [(facts.path, facts.holder, facts.linked) for facts in snapshot.env_files] == [
+        ("demo-api/environment/.env.staging", "demo-api", True),
+        ("demo-api/real-env/.env.staging", "demo-api", False),
+    ]

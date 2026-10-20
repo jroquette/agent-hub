@@ -19,7 +19,7 @@ the checkout that holds each, only when a rule reads them.
 import os
 import stat
 from collections.abc import Callable
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from agent_hub.core.doctor.finding import LISTING_READS, Read
 from agent_hub.core.doctor.lock_rules import lock_paths, lock_state
@@ -136,9 +136,26 @@ def env_file_facts(
                 ignored=_is_ignored(held[1], real.relative_to(held[1]).as_posix())
                 if held
                 else None,
+                linked=_is_linked(workspace, declared.path, roots=tuple(holders)),
             )
         )
     return tuple(facts)
+
+
+def _is_linked(workspace: Path, path: str, *, roots: tuple[str, ...]) -> bool:
+    """Whether a link lies on ``path`` below the root (the hub's or a repo's folder) it names
+    as its leading folders, the deepest root first; ``False`` when it names none."""
+    parts = PurePosixPath(path).parts
+    named = [PurePosixPath(root).parts for root in roots]
+    prefixes = [prefix for prefix in named if prefix and parts[: len(prefix)] == prefix]
+    if not prefixes:
+        return False
+    folder = workspace.joinpath(*max(prefixes, key=len))
+    for part in parts[len(max(prefixes, key=len)) :]:
+        folder = folder / part
+        if folder.is_symlink():
+            return True
+    return False
 
 
 def _is_ignored(checkout: Path, path: str) -> bool | None:

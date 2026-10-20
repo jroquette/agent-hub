@@ -745,8 +745,10 @@ default); `repo`, `agent`, `workflow` and `step` are optional. Unknown fields ar
 - `type` is a closed list: `session.start`, `session.end`, `tool.call`, `tool.result`, `message`, `reasoning`, `decision`,
   `gate.request`, `gate.result`, `learning.proposed`, `learning.accepted`, `learning.rejected`, `step.start`,
   `step.end`, `run.end`, `session.summary` (the last five added in Phase 2 for runs, rejected learnings and stored
-  summaries), `session.title` ([ADR 0035](adr/0035-session-titles.md)), and a scenario run's `expect.poll` and
-  `context.capture` ([ADR 0041](adr/0041-scenarios-actions-and-enforced-access.md)).
+  summaries), `session.title` ([ADR 0035](adr/0035-session-titles.md)), and a scenario run's `expect.poll`,
+  `context.capture`, `action.start`, `action.end`, `policy.decision`, `finding`, `workaround.start` and
+  `workaround.end` ([ADR 0041](adr/0041-scenarios-actions-and-enforced-access.md); a standalone `hub action run`
+  emits its `policy.decision` and `action.*` events under the session `action:<uuid>`).
 - `source` is a closed list: `claude_code`, `transcript`, `otel`, `executor`, `github`, `linear` and `control_plane`
   (an action the user took in `hub web`, added by AGH-201: a learning decision). Widening either list later is a
   compatible change.
@@ -804,7 +806,7 @@ before anything is appended, and the data stays on the machine in v1:
 | `decision` | `text`, `turn` |
 | `tool.call` | `tool`, `tool_use_id`, `turn`, repo-relative `path`, `lines_added`, `lines_removed`, `new_file`, `command` (Bash, 500 chars), `pattern` (Grep/Glob, 200), `url` (WebFetch, no query), `mcp_server`, `mcp_tool`, `arg_keys`, `subagent_type` and `description` (80), `skill` (the Skill tool's skill, 80), `to` (SendMessage's recipient, 80) |
 | `tool.result` | `tool`, `tool_use_id`, `turn`, `status`, `exit_code`, `duration_ms`, `output_bytes`, `error_line` (first line, 200), `error_message` (failed tools only, 300), `rule`, `hook` |
-| `gate.request`, `gate.result` | `gate_id`, `kind`, `name`, `command`, `path`, `rule`, `feature`, `result`, `exit_code`, `duration_ms`, `approver`, `where`, `issue`, `repo`, `mode` |
+| `gate.request`, `gate.result` | `gate_id`, `kind`, `name`, `command`, `path`, `rule`, `feature`, `result`, `exit_code`, `duration_ms`, `approver`, `where`, `issue`, `repo`, `mode`, `reason` (`investigation` for a scenario run's divergence) |
 | `learning.proposed`, `.accepted`, `.rejected` | `text` (title, 120), `target`, `author`, `proposal`, `brain_path`, `commit`, `reason`, `provenance`; an app decision adds `pr_url`, `branch` and `state` |
 | `step.start`, `step.end`, `run.end` | `issue`, `repo`, `status`, `stage`, `reason`, `caps` (`budget`, `max_turns`, `model`, `transport`), `pr_url`, `cost_usd`, `mode`, `outcome` (`run.end`: `delivered`, `no_changes`, `blocked` or `failed`, AGH-140) |
 | `step.end` from the workflow engine ([ADR 0032](adr/0032-workflow-engine.md)) | `failure_kind` (`transient`, `timeout`, `rate_limited`, `overloaded`, `exec_failed`, `output_contract`, `max_iterations`, `unknown`, `config`, `auth`, `cancelled`, `fatal`), `skip_cause` (`upstream_failed`, `upstream_skipped`, `condition`, `condition_parse_error`, `prior_success`) |
@@ -814,6 +816,10 @@ before anything is appended, and the data stays on the machine in v1:
 | `session.summary` | `text`, `lines` |
 | `session.title` | `text` (the transcript's `ai-title` or `custom-title`, 80 chars), `origin` (`ai` or `custom`; ADR 0035) |
 | `expect.poll`, `context.capture` (a scenario run) | `poll` (count) and `held` (boolean); `name` (the captured name, never its value) |
+| `action.start`, `action.end` | `action`, `content_hash`, `environment`, `service` (the `<repo>/<service>` names), `effect`, `origin`, `decision`, `approver`, `status`, `failure_kind`; never an arg, an output or a credential |
+| `policy.decision` | `action` or `node`, `environment`, `effect`, `origin`, `decision`, `reason_kind` |
+| `finding` | `finding_id`, `step` (its title, text and evidence stay in the run's record) |
+| `workaround.start`, `workaround.end` | `workaround_id`, `option` (its id), `steps` (count), `status` |
 
 Note, spec, plan and brain text is read from the hub on request and never stored or logged; a learning's summary
 (its note's first paragraph) is computed on read.
