@@ -28,7 +28,7 @@ entry. An unusable list in any layer, or a hub.local.json that exists but cannot
 blocked_problem, on which the guard asks. The environments are the config's, with a stricter
 access from hub.local.json, then hub.local.json's own.
 A hook never errors the session: run_hook turns any exception into exit 0 and one stderr line
-(the guard: one ask).
+(the guard: one ask). The guard alone reads the unreadable flag (read_event).
 """
 
 from __future__ import annotations
@@ -67,13 +67,29 @@ HUB_CONFIG_LAYER = "$HUB_CONFIG"
 ACCESS_STRICTNESS = {"write": 0, "ask": 1, "read": 2}
 
 
+def read_event() -> tuple[dict, bool]:
+    """The event on stdin, and whether stdin was not empty but not a JSON object either.
+
+    An OSError or ValueError (a closed stdin) while reading, bad UTF-8, invalid or truncated JSON, a
+    RecursionError, a list or a string give ({}, True); empty or blank stdin gives ({}, False)."""
+    try:
+        raw = sys.stdin.buffer.read()
+    except (OSError, ValueError):
+        return {}, True
+    if not raw.strip():
+        return {}, False
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (ValueError, RecursionError):
+        return {}, True
+    if not isinstance(data, dict):
+        return {}, True
+    return data, False
+
+
 def read_input() -> dict:
     """The event on stdin; {} for anything that is not a JSON object (empty, bad UTF-8, a list)."""
-    try:
-        data = json.loads(sys.stdin.buffer.read().decode("utf-8"))
-    except (OSError, ValueError, RecursionError):
-        return {}
-    return data if isinstance(data, dict) else {}
+    return read_event()[0]
 
 
 def emit(obj: dict) -> None:
