@@ -18,7 +18,7 @@ SHIP-WITH-OWNER-STEPS over SHIP), so an undated eval never lets an older SHIP co
 NO-SHIP may have reopened. An eval naming only ``tickets`` covers the ACs whose
 ``ticket`` is one of them (a plan key and its tracker id are the same ticket). A legacy eval
 without scope covers every AC only when every AC passes in ``features.json``; otherwise it covers
-none and the coverage is ``unscoped``. Withdrawn ACs are left out of every count.
+none. Withdrawn ACs are left out of every count.
 """
 
 import re
@@ -80,15 +80,13 @@ class EvalCoverage:
 
     ``covered`` (SHIP or SHIP-WITH-OWNER-STEPS), ``owner_steps`` (the covered ones whose deciding
     verdict is SHIP-WITH-OWNER-STEPS) and ``uncovered`` (NO-SHIP, or no eval names it) hold AC ids
-    in ``features.json`` order; ``total`` counts them. ``unscoped`` is True when a legacy
-    ``eval.md`` without scope could not count ("partial: scope not recorded").
+    in ``features.json`` order; ``total`` counts them.
     """
 
     covered: tuple[str, ...]
     owner_steps: tuple[str, ...]
     uncovered: tuple[str, ...]
     total: int
-    unscoped: bool
 
 
 def eval_records(
@@ -119,13 +117,11 @@ def eval_coverage(
     aliases = ticket_aliases(tickets)
     naming: dict[str, list[int]] = {}
     scoped: list[EvalRecord] = []
-    unscoped = False
     for record in records:
         if record.problem is not None or record.verdict is None:
             continue
         named = _scope(record, live, aliases)
         if named is None:
-            unscoped = True
             continue
         for ac_id in dict.fromkeys(named):
             naming.setdefault(ac_id, []).append(len(scoped))
@@ -144,7 +140,6 @@ def eval_coverage(
         owner_steps=tuple(ac.id for ac in live if verdicts.get(ac.id) == "SHIP-WITH-OWNER-STEPS"),
         uncovered=tuple(ac.id for ac in live if ac.id not in covered),
         total=len(live),
-        unscoped=unscoped,
     )
 
 

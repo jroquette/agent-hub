@@ -252,7 +252,6 @@ def test_plans_blocked_tickets_with_evals_and_reviews_when_feature_files_built()
         ("legacy", "SHIP-WITH-OWNER-STEPS", None),
         ("agh-7", "SHIP-WITH-OWNER-STEPS", None),
     ]
-    assert coverage.unscoped is False
     assert coverage.covered == ("AC-7.1", "AC-7.2", "AC-7.3")
     assert [(r.ticket, r.outcome, r.problem) for r in reviews] == [(ISSUE, "approved", None)]
 
