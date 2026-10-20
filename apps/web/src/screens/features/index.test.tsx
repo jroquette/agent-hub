@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -233,8 +233,10 @@ describe("FeaturesScreen", () => {
     open({ "/api/v1/features": aPage([unread]) });
 
     await screen.findByRole("link", { name: "unread" });
-    expect(within(rowOf("unread")).getByText("Build · step 1 of 1")).toBeInTheDocument();
-    expect(screen.getByRole("note")).toHaveTextContent("not read from Linear on this list");
+    expect(rowOf("unread").querySelector(".ft-row-line")).toHaveTextContent(/^Build$/);
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "Ticket status is not read from Linear on this list, so Build shows as unknown, and so does Shipped once Acceptance is done.",
+    );
   });
 
   it("names every cell in the row's accessible name and moves with j and k (keyboard)", async () => {
@@ -244,7 +246,7 @@ describe("FeaturesScreen", () => {
     await screen.findByRole("link", { name: "layered-memory" });
     const row = rowOf("layered-memory");
     expect(row).toHaveAccessibleName(
-      /^layered-memory\. .*\. golden path at Acceptance\. ACs 21 of 21\. verdict SHIP-WITH-OWNER-STEPS\. issues AGH-48, AGH-49, AGH-50$/,
+      /^layered-memory\. .*\. golden path at Acceptance, step 7 of 8, Acceptance: partial · .*\. ACs 21 of 21\. verdict SHIP-WITH-OWNER-STEPS\. issues AGH-48, AGH-49, AGH-50$/,
     );
     await userEvent.keyboard("j");
     expect(rowOf("broken-record")).toHaveFocus();
@@ -328,6 +330,108 @@ describe("FeaturesScreen", () => {
       "partial",
       "blocked",
     ]);
+  });
+
+  it("draws the eight feature steps on each row's bar, labelled 'Build · 6/8', and 'Shipped' alone once shipped (AC-1.12)", async () => {
+    const shipped = aFeature({
+      slug: "shipped-one",
+      phase: "shipped",
+      golden_path: aGoldenPath({ phase: "shipped" }),
+    });
+    open({ "/api/v1/features": aPage([shipped, ...features]) });
+
+    await screen.findByRole("link", { name: "control-plane" });
+    const bar = within(rowOf("control-plane")).getByRole("img", { name: /^Golden path: Build\./ });
+    expect(bar.querySelectorAll("[data-state]")).toHaveLength(8);
+    expect(bar.getAttribute("aria-label")).toMatch(
+      /Spec: .*; UX design: .*; Research: .*; Plan: .*; Tickets: .*; Build: .*; Acceptance: .*; Shipped: /,
+    );
+    expect(bar.parentElement).toHaveTextContent(/^Build · 6\/8$/);
+    const done = within(rowOf("shipped-one")).getByRole("img", { name: /^Golden path: Shipped\./ });
+    expect(done.parentElement).toHaveTextContent(/^Shipped$/);
+  });
+
+  it("offers the eight feature steps in the Step filter (AC-1.12)", async () => {
+    open();
+
+    await userEvent.click(await screen.findByRole("button", { name: /^Step:/ }));
+    expect(
+      screen
+        .getAllByRole("checkbox")
+        .map((box) => box.closest("label")?.querySelector("span:not(.ah-count)")?.textContent),
+    ).toEqual([
+      "Spec",
+      "UX design",
+      "Research",
+      "Plan",
+      "Tickets",
+      "Build",
+      "Acceptance",
+      "Shipped",
+    ]);
+  });
+
+  it("turns old ?phase=implement and review into build and evaluate into acceptance, replacing the URL (AC-1.12)", async () => {
+    const { router } = open({}, true, "/features?phase=implement,review,evaluate&q=a");
+
+    await waitFor(() => {
+      expect(new URLSearchParams(router.state.location.search).get("phase")).toBe(
+        "build,acceptance",
+      );
+    });
+    expect(new URLSearchParams(router.state.location.search).get("q")).toBe("a");
+    expect(router.state.historyAction).toBe("REPLACE");
+    expect(await screen.findByRole("link", { name: "layered-memory" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "control-plane" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "tracker-team-cap" })).not.toBeInTheDocument();
+  });
+
+  it("reads the position and the current step's summary in the row's accessible name (AC-1.12)", async () => {
+    open();
+
+    await screen.findByRole("link", { name: "control-plane" });
+    expect(rowOf("control-plane")).toHaveAccessibleName(
+      /\. golden path at Build, step 6 of 8, Build: in progress · 1 of 3 merged · 1 in progress\. /,
+    );
+  });
+
+  it("filters by the new step on the first render of an old ?phase= link, with no empty flash (AC-1.12)", async () => {
+    const { router } = open();
+    await screen.findByRole("link", { name: "control-plane" });
+    const seen: string[] = [];
+    const observer = new MutationObserver((records) => {
+      for (const record of records)
+        for (const node of record.addedNodes) seen.push(node.textContent ?? "");
+    });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+
+    await act(() => router.navigate("/features?phase=implement"));
+    await waitFor(() => {
+      expect(router.state.location.search).toBe("?phase=build");
+    });
+    observer.disconnect();
+
+    expect(seen.join(" ")).not.toMatch(/No features match|0 of \d/);
+    expect(screen.getByRole("link", { name: "control-plane" })).toBeInTheDocument();
+  });
+
+  it("drops old ?phase= ids that are not feature steps, replacing the URL (AC-1.12)", async () => {
+    const { router } = open({}, true, "/features?phase=implement,bogus&q=a");
+
+    await waitFor(() => {
+      expect(router.state.location.search).toBe("?phase=build&q=a");
+    });
+    expect(router.state.historyAction).toBe("REPLACE");
+  });
+
+  it("drops a ?phase= of only unknown ids, so the list is not filtered (AC-1.12)", async () => {
+    const { router } = open({}, true, "/features?phase=bogus");
+
+    await waitFor(() => {
+      expect(router.state.location.search).toBe("");
+    });
+    expect(await screen.findByRole("link", { name: "layered-memory" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Step:/ })).toHaveAccessibleName(/Any/);
   });
 
   it("degrades only the malformed feature's ACs and tags its repo", async () => {
@@ -497,20 +601,46 @@ describe("FeaturesScreen", () => {
     expect(screen.queryByRole("link", { name: "control-plane" })).not.toBeInTheDocument();
   });
 
-  it("puts a ship verdict with every AC passing under Evaluated, with the eval's own words (evaluated)", async () => {
+  it("lists a ship verdict whose tickets are not read as done under In progress: no Evaluated group (AC-1.15)", async () => {
     const evaluated = aFeature({
       slug: "evaluated-one",
       verdict: "SHIP",
       verdict_line: "**Verdict: SHIP.** All 9 ACs pass on main.",
       acs: { owner_steps: 0, passing: 9, total: 9 },
     });
-    open({ "/api/v1/features": aPage([evaluated, ...features]) });
+    const { container } = open({ "/api/v1/features": aPage([evaluated, waiting, ...features]) });
 
     await screen.findByRole("link", { name: "evaluated-one" });
-    expect(slugsIn(groupOf(/^Evaluated · 1$/))).toEqual(["evaluated-one"]);
-    expect(rowOf("evaluated-one")).toHaveTextContent(
-      "Evaluator says ship · All 9 ACs pass on main.",
+    expect(
+      [...container.querySelectorAll("section[data-group]")].map((s) =>
+        s.getAttribute("data-group"),
+      ),
+    ).toEqual(["progress", "shipped"]);
+    expect(screen.queryByRole("button", { name: /^Evaluated/ })).not.toBeInTheDocument();
+    expect(slugsIn(groupOf(/^In progress · 6$/))).toContain("evaluated-one");
+    expect(rowOf("evaluated-one")).not.toHaveAttribute("data-tone");
+    expect(rowOf("evaluated-one")).toHaveTextContent("Build · 1 of 3 merged · 1 in progress");
+    expect(rowOf("evaluated-one")).toHaveTextContent("evaluator says ship");
+    expect(container.querySelector(".ft-summary")).toHaveTextContent(
+      /^2 need you\s*6 in progress\s*0 shipped/,
     );
+  });
+
+  it("drops a stored 'evaluated' id from the collapsed groups (AC-1.15)", async () => {
+    window.localStorage.setItem("ah.features.collapsed", JSON.stringify(["evaluated", "shipped"]));
+    try {
+      open();
+
+      await screen.findByRole("link", { name: "control-plane" });
+      expect(screen.getByRole("button", { name: /^Shipped/ })).toHaveAttribute(
+        "aria-expanded",
+        "false",
+      );
+      await userEvent.click(screen.getByRole("button", { name: /^Shipped/ }));
+      expect(JSON.parse(window.localStorage.getItem("ah.features.collapsed") ?? "")).toEqual([]);
+    } finally {
+      window.localStorage.removeItem("ah.features.collapsed");
+    }
   });
 
   it("puts a feature whose session waits on you at the top of In progress and opens the feature, not the chat (session)", async () => {

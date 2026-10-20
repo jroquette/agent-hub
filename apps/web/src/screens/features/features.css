@@ -246,13 +246,6 @@
   }
 }
 
-/* The golden path names its step under the segments, so the column reads without a hover. */
-.ft-gp-label {
-  font-size: 12px;
-  line-height: 16px;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
 /* Said once for the page: the ticket status the rows cannot show. */
 .ft-notice {
   display: flex;

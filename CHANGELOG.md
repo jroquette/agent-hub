@@ -23,6 +23,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   NO-SHIP as its latest eval (named), when the eval is undated or future-dated, or when not every eval was read. With
   no AC listed it keeps waiting until the owner writes the sign-off by hand. The API's `phase` values change to
   match; ADR 0043 records the two levels.
+- `hub web` Features list: rows draw the feature steps with the shared step bar ("Build · 6/8"), the Step filter
+  offers the eight steps and old `?phase=implement`, `review` and `evaluate` links open Build and Acceptance; the
+  Evaluated group is gone, so a feature the evaluator says ship for is listed in In progress until it ships
+  (AGH-327).
 
 ## [0.18.0] - 2026-10-20
 
