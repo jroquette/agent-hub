@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useId, useState } from "react";
+import { Fragment, useEffect, useId, useState } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 
@@ -20,7 +20,7 @@ import {
   Tooltip,
   type Status,
 } from "../../components";
-import { ApiProblem, apiCommand, apiKey, apiPost, useApi } from "../../lib/api";
+import { ApiProblem, apiKey, apiPost, useApi } from "../../lib/api";
 import { brainRoute } from "../../lib/brainLinks";
 import { useNow } from "../../lib/clock";
 import { fmtAgo, fmtDateTime } from "../../lib/format";
@@ -40,6 +40,8 @@ type TicketRow = components["schemas"]["TicketRow"];
 type AcRow = components["schemas"]["AcRow"];
 type OwnerDecision = NonNullable<components["schemas"]["OwnerSignOffBody"]["decision"]>;
 type AgentSessionStatus = components["schemas"]["AgentSessionStatus"];
+type AcceptanceEval = components["schemas"]["AcceptanceEval"];
+type OwnerWaitView = components["schemas"]["OwnerWaitView"];
 
 function Scope({ acs }: { acs: EvalRecord["acs"] }) {
   if (acs === "all") return <span>All ACs</span>;
@@ -253,17 +255,25 @@ const scopeLabel = (scope: string) => (scope === FEATURE_SCOPE ? "whole feature"
 const featureName = (epics: readonly string[]) =>
   epics.length > 0 ? `Whole feature · ${epics.join(", ")} epic` : "Whole feature";
 
-/** The first message of an evaluator run: the hub-workflow evaluator, one scope, nothing else. */
-export function evalPrompt(project: string, slug: string, scope: string): string {
+/**
+ * The first message of an evaluator run: the hub-workflow evaluator, one scope, nothing else.
+ * `rerun` names an undated acceptance eval: only its re-run `<rerun>-r<N>` ranks after it (A15).
+ */
+export function evalPrompt(project: string, slug: string, scope: string, rerun?: string): string {
   const what = scope === FEATURE_SCOPE ? "the whole feature" : `ticket ${scope}`;
   return [
     `I am the owner of the agent-hub project "${project}", writing from the agent-hub web app.`,
     `Use the hub-workflow evaluator subagent to evaluate feature \`${slug}\` (its record is in \`brain/features/${slug}/\`). Scope: ${what}.`,
     `It re-runs every verification in scope, the repo gates and the hub doctor, against the spec and the plan, and writes the next free \`brain/features/${slug}/evals/<delivery>.md\` and \`.json\`; never edit an existing eval.`,
+    rerun && scope === FEATURE_SCOPE
+      ? `The whole-feature eval \`${rerun}\` has no evaluated_at: name the new one \`${rerun}-r<N>\` (the next free N) and date it, so it ranks after it.`
+      : "",
     "Then run `./hub validate-output eval <the new .json>` from the hub; when it is missing or fails, re-dispatch the evaluator once with the same scope and every line the command printed.",
     "Do not merge, push, open pull requests or change tickets.",
     "When it hands back, give me the verdict, any AC that does not pass and the owner steps left, in a few lines.",
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 const RUN_LOOK: Record<AgentSessionStatus, { status: Status; label: string; note?: string }> = {
@@ -293,6 +303,7 @@ function EvalRunStrip({
   primary,
   epics,
   caption,
+  rerun,
 }: {
   project: string;
   slug: string;
@@ -305,6 +316,8 @@ function EvalRunStrip({
   primary: boolean;
   /** The feature's epics: not a scope of their own, they are the whole feature. */
   epics: readonly string[];
+  /** The undated acceptance eval a whole-feature run re-runs (`evalPrompt`). */
+  rerun?: string | undefined;
 }) {
   const key = runKey(project, slug);
   const { tz } = usePreferences();
@@ -357,7 +370,7 @@ function EvalRunStrip({
       workdir_id: start.hubWorkdirId,
       mode: "acceptEdits",
       fork: false,
-      prompt: evalPrompt(project, slug, scope),
+      prompt: evalPrompt(project, slug, scope, rerun),
     });
     const next: StoredRun = {
       id: created.id,
@@ -467,110 +480,6 @@ function EvalRunStrip({
   );
 }
 
-/* ---------- The owner's sign-off ---------- */
-
-/**
- * The owner confirms the owner steps of a SHIP-WITH-OWNER-STEPS eval are done: the server writes
- * an `owner-signoff` SHIP eval over the ACs that waited, and the Acceptance step turns done. It is
- * the page's one "waiting on you" place, above the tabs.
- */
-export function OwnerSignOff({
-  project,
-  slug,
-  reason,
-  onShow,
-}: {
-  project: string;
-  slug: string;
-  reason: string;
-  onShow: (delivery: string) => void;
-}) {
-  const client = useQueryClient();
-  const [confirming, setConfirming] = useState(false);
-  const path = { path: { project, slug } };
-  const signOff = useMutation<EvalRecord, ApiProblem>({
-    mutationFn: () => apiCommand("/api/v1/features/{project}/{slug}/owner-signoff", path),
-    onSuccess: (written) => {
-      setConfirming(false);
-      onShow(written.delivery);
-      for (const key of [
-        apiKey("/api/v1/features"),
-        apiKey("/api/v1/features/{project}/{slug}", path),
-        apiKey("/api/v1/features/{project}/{slug}/tickets", path),
-      ]) {
-        void client.invalidateQueries({ queryKey: key });
-      }
-    },
-  });
-  const action = confirming ? (
-    <span className="ah-row" style={{ gap: 8 }}>
-      <Button
-        size="sm"
-        variant="ghost"
-        onClick={() => {
-          setConfirming(false);
-        }}
-      >
-        Cancel
-      </Button>
-      <Button
-        size="sm"
-        variant="primary"
-        icon="check"
-        disabled={signOff.isPending}
-        onClick={() => {
-          signOff.mutate();
-        }}
-      >
-        {signOff.isPending ? "Signing off…" : "Yes, I did them"}
-      </Button>
-    </span>
-  ) : (
-    <Button
-      size="sm"
-      variant="primary"
-      icon="check"
-      onClick={() => {
-        setConfirming(true);
-      }}
-    >
-      Mark owner steps done
-    </Button>
-  );
-  return (
-    <section aria-label="Owner steps">
-      <Banner tone="warning" boxed icon="hand" action={action}>
-        <span className="ah-stack" style={{ gap: 2 }}>
-          <span>
-            <b>Waiting on you</b>
-            <span className="ah-muted">
-              {" "}
-              · {reason.replace(/\s*\(SHIP-WITH-OWNER-STEPS\)/, "")}
-            </span>
-          </span>
-          {confirming && (
-            <span className="ah-small ah-muted">
-              Confirm you did every owner step the eval lists. This writes evals/owner-signoff.md
-              with verdict SHIP, signed by you; existing evals are kept.
-            </span>
-          )}
-          {signOff.error && (
-            <ProblemError
-              compact
-              title="Could not sign off the owner steps"
-              detail={signOff.error.detail ?? signOff.error.title}
-              status={signOff.error.status || undefined}
-              onRetry={() => {
-                signOff.mutate();
-              }}
-            />
-          )}
-        </span>
-      </Banner>
-    </section>
-  );
-}
-
 /* ---------- The owner's decision on one eval ---------- */
 
 const DECISION: Record<OwnerDecision, { action: string; title: string; detail: string }> = {
@@ -588,9 +497,9 @@ const DECISION: Record<OwnerDecision, { action: string; title: string; detail: s
 };
 
 /**
- * The latest eval of a scope waits on owner steps no one settled: a "Waiting on you" callout
- * under its row (principle 2), where the owner says the steps are done or that more work is
- * needed, with an optional note. The same banner as the page's owner sign-off.
+ * An eval waits on the owner: a callout under its row (principle 2), where the owner says the
+ * steps are done or that more work is needed, with an optional note. It offers only `decisions`
+ * (the ones the server would record, A11); without Done it is not a "Waiting on you" (info tone).
  */
 function OwnerStepsCallout({
   project,
@@ -598,7 +507,8 @@ function OwnerStepsCallout({
   record,
   scope,
   label,
-  ownerAcs,
+  decisions,
+  children,
   onShow,
 }: {
   project: string;
@@ -608,8 +518,9 @@ function OwnerStepsCallout({
   scope: string;
   /** How the eval reads in the table ("Eval 1"). */
   label: string;
-  /** The eval's ACs that are manual owner steps, to name them. */
-  ownerAcs: readonly string[];
+  decisions: readonly OwnerDecision[];
+  /** What the callout says before a decision is chosen. */
+  children: ReactNode;
   onShow: (delivery: string) => void;
 }) {
   const client = useQueryClient();
@@ -672,12 +583,19 @@ function OwnerStepsCallout({
     </span>
   ) : (
     <span className="ah-row" style={{ gap: 8 }}>
-      {choose("more_work")}
-      {choose("done")}
+      {decisions.map((chosen) => (
+        <Fragment key={chosen}>{choose(chosen)}</Fragment>
+      ))}
     </span>
   );
+  const waiting = decisions.includes("done");
   return (
-    <Banner tone="warning" boxed icon="hand" action={action}>
+    <Banner
+      tone={waiting ? "warning" : "info"}
+      boxed
+      icon={waiting ? "hand" : undefined}
+      action={action}
+    >
       {decision ? (
         <form
           id={formId}
@@ -715,24 +633,120 @@ function OwnerStepsCallout({
           )}
         </form>
       ) : (
-        <span className="ah-stack" style={{ gap: 2 }}>
-          <span>
-            <b>Waiting on you</b>
-            <span className="ah-muted">
-              {" "}
-              · {scope} {label} passed with owner steps. Did you do them?
-            </span>
-          </span>
-          {ownerAcs.length > 0 && (
-            <span className="ah-small ah-muted">
-              Owner step{ownerAcs.length === 1 ? "" : "s"}:{" "}
-              <span className="ah-mono">{ownerAcs.join(", ")}</span>
-            </span>
-          )}
-        </span>
+        children
       )}
     </Banner>
   );
+}
+
+/** "Owner steps: AC-4, AC-7", or nothing without one. */
+function OwnerAcs({ ids }: { ids: readonly string[] }) {
+  if (ids.length === 0) return null;
+  return (
+    <span className="ah-small ah-muted">
+      Owner step{ids.length === 1 ? "" : "s"}: <span className="ah-mono">{ids.join(", ")}</span>
+    </span>
+  );
+}
+
+const acCount = (n: number) => `${String(n)} AC${n === 1 ? "" : "s"}`;
+
+/**
+ * The Acceptance wait's one prompt (ux-change-waiting-prompts.md, A15), under the Whole feature
+ * group: its state is the server's rule (A9-A11), so it offers only the decision the server would
+ * record: both while it waits on a sign-off, Needs more work once ACs are reopened, none while no
+ * sign-off can follow the eval (undated, dated in the future) or no AC is listed.
+ */
+function AcceptancePrompt({
+  project,
+  slug,
+  record,
+  wait,
+  label,
+  onShow,
+}: {
+  project: string;
+  slug: string;
+  record: EvalRecord;
+  wait: OwnerWaitView;
+  label: string;
+  onShow: (delivery: string) => void;
+}) {
+  const { tz } = usePreferences();
+  const lines = (title: string, ...rest: ReactNode[]) => (
+    <span className="ah-stack" style={{ gap: 2 }}>
+      <b>{title}</b>
+      {rest.map((line, i) => (
+        <span key={i} className="ah-small ah-muted">
+          {line}
+        </span>
+      ))}
+    </span>
+  );
+  const callout = (decisions: readonly OwnerDecision[], body: ReactNode) => (
+    <OwnerStepsCallout
+      project={project}
+      slug={slug}
+      record={record}
+      scope="Acceptance"
+      label={label}
+      decisions={decisions}
+      onShow={onShow}
+    >
+      {body}
+    </OwnerStepsCallout>
+  );
+  const above = "Evaluate whole feature is above.";
+  switch (wait.state) {
+    case "sign_off":
+      return callout(
+        ["more_work", "done"],
+        lines(
+          `Waiting on you · Acceptance: sign off ${acCount(wait.acs.length)}`,
+          `${label} passed the whole feature with owner steps. Did you do them?`,
+          <OwnerAcs ids={wait.acs} />,
+        ),
+      );
+    case "reopened":
+      return callout(
+        ["more_work"],
+        lines(
+          `Acceptance: ${acCount(wait.reopened.length)} reopened · evaluate again`,
+          `A later eval says NO-SHIP for ${wait.reopened.join(", ")}, which ${label} left as owner steps.`,
+          `You can sign off again once a new eval passes them. ${above}`,
+        ),
+      );
+    case "undated":
+      return (
+        <Banner tone="info" boxed>
+          {lines(
+            "Acceptance eval undated · evaluate again",
+            `${label} has no evaluated_at, so a sign-off cannot be recorded after it.`,
+            `Evaluate the whole feature again to record a dated eval. ${above}`,
+          )}
+        </Banner>
+      );
+    case "future": {
+      const when = record.evaluated_at ? fmtDateTime(record.evaluated_at, tz) : "";
+      return (
+        <Banner tone="info" boxed>
+          {lines(
+            `Sign-off possible after ${when}`,
+            `${label} says it ran on ${when}, after now, so a sign-off cannot be recorded after it yet.`,
+          )}
+        </Banner>
+      );
+    }
+    case "no_acs":
+      return (
+        <Banner tone="info" boxed>
+          {lines(
+            "Acceptance: waiting on owner steps · no ACs listed",
+            "features.json lists no live AC, so the app has nothing to sign off. Write the sign-off by hand: evals/owner-signoff.md with verdict SHIP and provenance owner, in a hub PR.",
+          )}
+        </Banner>
+      );
+  }
 }
 
 /* ---------- The selected eval ---------- */
@@ -838,6 +852,8 @@ export interface EvalTabProps {
   ticketRows?: readonly TicketRow[] | undefined;
   /** The feature's ACs, for each AC's text and status in an eval's AC list. */
   acRows?: readonly AcRow[] | undefined;
+  /** The acceptance eval, with what it waits on from the owner (the server's rule, A15). */
+  acceptance?: AcceptanceEval | null | undefined;
 }
 
 /** What a table row shows besides the eval itself. */
@@ -953,8 +969,10 @@ export function EvalTab({
   onSelect,
   ticketRows = [],
   acRows = [],
+  acceptance,
 }: EvalTabProps) {
   const [listOpen, setListOpen] = useState(readListOpen);
+  const wait = acceptance?.owner_wait;
   const history = evalHistory(evals, tickets, epics);
   const selectedScope = history.find((g) => g.evals.some((e) => e.path === selected?.path))?.scope;
   // A group the owner opened or closed stays so; any other is open when it holds the selected
@@ -973,8 +991,9 @@ export function EvalTab({
       tickets={tickets}
       evals={evals}
       onShow={onSelect}
-      primary={evals.length === 0}
+      primary={evals.length === 0 || wait?.state === "reopened" || wait?.state === "undated"}
       epics={epics}
+      rerun={wait?.state === "undated" ? acceptance?.delivery : undefined}
       caption={
         evals.length > 0 && (
           <span className="ah-row" style={{ gap: 8 }}>
@@ -1131,6 +1150,13 @@ export function EvalTab({
               });
               const summary = current ?? latest;
               const summaryFacts: RowFacts = { label: "", current: false, supersededBy: undefined };
+              // The acceptance eval's wait is the server's (A15): its own prompt, never this one.
+              const accepted =
+                wait && group.scope === FEATURE_SCOPE
+                  ? group.evals.find((e) => e.delivery === acceptance.delivery)
+                  : undefined;
+              const other =
+                waiting && waiting.delivery !== acceptance?.delivery ? waiting : undefined;
               return (
                 <tbody key={group.scope} className="ah-eval-tbody">
                   <tr
@@ -1166,21 +1192,53 @@ export function EvalTab({
                         </td>
                       ))}
                   </tr>
-                  {waiting && (
+                  {accepted && wait && (
+                    <tr className="ah-eval-owner-row">
+                      <td colSpan={columns.length}>
+                        <AcceptancePrompt
+                          project={project}
+                          slug={slug}
+                          record={accepted}
+                          wait={wait}
+                          label={labels.get(accepted.path) ?? accepted.delivery}
+                          onShow={onSelect}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                  {other && (
                     <tr className="ah-eval-owner-row">
                       <td colSpan={columns.length}>
                         <OwnerStepsCallout
                           project={project}
                           slug={slug}
-                          record={waiting}
+                          record={other}
                           scope={group.scope === FEATURE_SCOPE ? "The whole feature" : group.scope}
-                          label={labels.get(waiting.path) ?? waiting.delivery}
-                          ownerAcs={evalAcs(waiting, allAcs).filter((id) => {
-                            const ac = acById.get(id);
-                            return ac ? passOf(ac) === "owner" : false;
-                          })}
+                          label={labels.get(other.path) ?? other.delivery}
+                          decisions={["more_work", "done"]}
                           onShow={onSelect}
-                        />
+                        >
+                          <span className="ah-stack" style={{ gap: 2 }}>
+                            <span>
+                              <b>Waiting on you</b>
+                              <span className="ah-muted">
+                                {" "}
+                                ·{" "}
+                                {group.scope === FEATURE_SCOPE
+                                  ? "The whole feature"
+                                  : group.scope}{" "}
+                                {labels.get(other.path) ?? other.delivery} passed with owner steps.
+                                Did you do them?
+                              </span>
+                            </span>
+                            <OwnerAcs
+                              ids={evalAcs(other, allAcs).filter((id) => {
+                                const ac = acById.get(id);
+                                return ac ? passOf(ac) === "owner" : false;
+                              })}
+                            />
+                          </span>
+                        </OwnerStepsCallout>
                       </td>
                     </tr>
                   )}

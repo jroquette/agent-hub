@@ -2,6 +2,7 @@ import "./ticket-flow.css";
 
 import { Fragment, useRef } from "react";
 import type { ReactNode } from "react";
+import { Link, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
 import {
@@ -202,6 +203,57 @@ export function readinessRepeatsState(row: TicketRow): boolean {
 /** The element id of a ticket's row, the target of every in-page ticket link. */
 export function ticketAnchor(ref: string): string {
   return `ticket-${ref.replace(/[^A-Za-z0-9_-]/g, "-")}`;
+}
+
+/** Records the element that opened a ticket's panel, so closing it returns focus there. */
+export type TicketOpener = (opener: HTMLElement) => void;
+
+/** The panel's id of a ticket: its tracker id once created, else its plan key (AC-1.10). */
+export function ticketParam(row: TicketRow): string {
+  return row.id ?? row.key ?? row.ref;
+}
+
+/** The search that opens `row`'s panel on the Tickets tab, the rest of the URL kept. */
+export function ticketSearch(params: URLSearchParams, row: TicketRow): string {
+  const next = new URLSearchParams(params);
+  next.set("doc", "tickets");
+  next.set("ticket", ticketParam(row));
+  next.delete("step");
+  return `?${next.toString()}`;
+}
+
+/**
+ * A link that opens `row`'s ticket panel in place (replace; two-level-flows AC-1.10); its href is
+ * the stable URL, so a middle-click opens it in a new tab.
+ */
+export function TicketOpenLink({
+  row,
+  onOpen,
+  children,
+  className,
+  title,
+}: {
+  row: TicketRow;
+  onOpen: TicketOpener;
+  children: ReactNode;
+  className?: string | undefined;
+  title?: string | undefined;
+}) {
+  const [params] = useSearchParams();
+  return (
+    <Link
+      className={className}
+      to={{ search: ticketSearch(params, row) }}
+      replace
+      title={title}
+      data-ticket-open={row.ref}
+      onClick={(event) => {
+        onOpen(event.currentTarget);
+      }}
+    >
+      {children}
+    </Link>
+  );
 }
 
 /** A link that opens a Linear issue in a new tab (AC-136.29); plain text when the url is unsafe. */
@@ -467,7 +519,7 @@ export function TicketIdLine({ row }: { row: TicketRow }) {
   );
 }
 
-const TICKET_STEP_LABEL: Record<TicketStepName, string> = {
+export const TICKET_STEP_LABEL: Record<TicketStepName, string> = {
   context: "Context",
   preflight: "Preflight",
   implement: "Implement",
@@ -476,6 +528,20 @@ const TICKET_STEP_LABEL: Record<TicketStepName, string> = {
   pr: "PR",
   merged: "Merged",
 };
+
+/**
+ * A ticket's current step in words, as its step bar reads it (A13, A14): "Review · 4/7 · Changes
+ * requested", the last step's bare label once it is done.
+ */
+export function ticketStepLine(flow: TicketFlow): string {
+  const at = flow.steps.findIndex((step) => step.name === flow.current);
+  const step = flow.steps[at];
+  const label = TICKET_STEP_LABEL[flow.current];
+  const done = at === flow.steps.length - 1 && step?.state === "done";
+  const note = step?.meta ?? (step?.state === "blocked" ? GOLDEN_STATE_TEXT.blocked : null);
+  const head = done ? label : `${label} · ${String(at + 1)}/${String(flow.steps.length)}`;
+  return note ? `${head} · ${note}` : head;
+}
 
 /**
  * A ticket's seven steps as one bar (two-level-flows AC-1.11), labelled with its current step,
@@ -506,6 +572,7 @@ function FlowCard({
   inFlow,
   acPasses,
   ticketAction,
+  onOpenTicket,
 }: {
   row: TicketRow;
   rows: readonly TicketRow[];
@@ -515,6 +582,7 @@ function FlowCard({
   inFlow: ReadonlySet<string>;
   acPasses?: Readonly<Record<string, boolean>> | undefined;
   ticketAction?: TicketAction | undefined;
+  onOpenTicket?: TicketOpener | undefined;
 }) {
   const action = ticketAction?.(row);
   const note = !readinessRepeatsState(row);
@@ -534,7 +602,9 @@ function FlowCard({
       data-node-id={row.ref}
       data-readiness={row.readiness}
       data-critical={critical || undefined}
-      aria-label={`${row.ref}${row.title ? ` · ${row.title}` : ""}`}
+      aria-label={[row.ref, row.title, row.flow && ticketStepLine(row.flow)]
+        .filter(Boolean)
+        .join(" · ")}
     >
       <div className="ah-flow-card-head">
         <TicketIdLine row={row} />
@@ -550,7 +620,13 @@ function FlowCard({
         )}
       </div>
       <span className="ah-flow-card-title" title={row.title ?? undefined}>
-        <span>{row.title ? splitTitle(row.title).text : row.ref}</span>
+        {onOpenTicket ? (
+          <TicketOpenLink row={row} onOpen={onOpenTicket}>
+            {row.title ? splitTitle(row.title).text : row.ref}
+          </TicketOpenLink>
+        ) : (
+          <span>{row.title ? splitTitle(row.title).text : row.ref}</span>
+        )}
       </span>
       {row.flow && <TicketStepBar flow={row.flow} />}
       <div className="ah-flow-card-foot">
@@ -834,6 +910,7 @@ function FlowGraph({
   criticalPath,
   acPasses,
   ticketAction,
+  onOpenTicket,
 }: {
   columns: readonly FlowColumn[];
   byRef: ReadonlyMap<string, TicketRow>;
@@ -843,6 +920,7 @@ function FlowGraph({
   criticalPath: readonly string[];
   acPasses?: Readonly<Record<string, boolean>> | undefined;
   ticketAction?: TicketAction | undefined;
+  onOpenTicket?: TicketOpener | undefined;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const inFlow = new Set(columns.flatMap((c) => c.refs));
@@ -912,6 +990,7 @@ function FlowGraph({
                   inFlow={inFlow}
                   acPasses={acPasses}
                   ticketAction={ticketAction}
+                  onOpenTicket={onOpenTicket}
                 />
               );
             })}
@@ -977,6 +1056,8 @@ export interface PlanningViewProps {
   acPasses?: Readonly<Record<string, boolean>> | undefined;
   /** What a ticket's card offers to do now (Start), or nothing; omitted shows no action. */
   ticketAction?: TicketAction | undefined;
+  /** Given, each card's title opens the ticket's panel (two-level-flows AC-1.10). */
+  onOpenTicket?: TicketOpener | undefined;
 }
 
 /** The control a ticket's card or row shows next to its readiness, or null for none. */
@@ -989,7 +1070,13 @@ export type TicketAction = (row: TicketRow) => ReactNode;
  * An epic (a parent of other tickets) heads the flow with its children's progress, not as a step.
  * Banners name dependency cycles, blockers outside the feature and the server's warnings.
  */
-export function PlanningView({ tickets, planning, acPasses, ticketAction }: PlanningViewProps) {
+export function PlanningView({
+  tickets,
+  planning,
+  acPasses,
+  ticketAction,
+  onOpenTicket,
+}: PlanningViewProps) {
   const external = planning.external_blockers;
   const byRef = new Map(tickets.map((t) => [t.ref, t]));
   const critical = new Set(planning.critical_path.length > 1 ? planning.critical_path : []);
@@ -1067,6 +1154,7 @@ export function PlanningView({ tickets, planning, acPasses, ticketAction }: Plan
           criticalPath={planning.critical_path}
           acPasses={acPasses}
           ticketAction={ticketAction}
+          onOpenTicket={onOpenTicket}
         />
       )}
     </section>

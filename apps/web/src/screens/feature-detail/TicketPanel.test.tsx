@@ -1,6 +1,5 @@
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { createRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
@@ -51,7 +50,7 @@ function show(path: string, evals: EvalRecord[] = []) {
       onRefresh={() => undefined}
       acPasses={{ "AC-200.4": true }}
       evals={evals}
-      opener={createRef()}
+      openerRef={{ current: null }}
     />,
     {
       routes: {
@@ -181,7 +180,12 @@ describe("TicketPanel", () => {
 
     await userEvent.click(screen.getByRole("link", { name: "Show the planning view" }));
     expect(panel()).toHaveAccessibleName("Ticket AGH-203 · Show the planning view");
-    await userEvent.click(within(panel()).getByRole("link", { name: "AGH-202" }));
+    // Its "Blocked by" link (the readiness line's link points at the card instead).
+    const blocker = within(panel())
+      .getAllByRole("link", { name: "AGH-202" })
+      .find((link) => link.dataset.ticketOpen === "AGH-202");
+    if (!blocker) throw new Error("no Blocked by link");
+    await userEvent.click(blocker);
     expect(panel()).toHaveAccessibleName("Ticket AGH-202 · Serve the ticket summaries");
     expect(router.state.location.search).toBe("?doc=tickets&ticket=AGH-202");
     expect(screen.getAllByRole("complementary")).toHaveLength(1);

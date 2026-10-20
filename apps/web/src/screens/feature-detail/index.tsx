@@ -1,4 +1,4 @@
-import { Fragment, useState, type ReactNode } from "react";
+import { Fragment, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
@@ -10,19 +10,15 @@ import {
   EmptyState,
   GoldenPathStepper,
   Icon,
-  IssueLink,
   ProblemError,
   SegmentedControl,
   Skeleton,
   StatusBadge,
   Tabs,
-  ownerWaitStep,
-  type GoldenStep,
 } from "../../components";
 import { brainRoute } from "../../lib/brainLinks";
 import { fmtClock } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
-import { linearHref } from "../../lib/safeHref";
 import { useCollectorState } from "../../shell/GlobalStream";
 import { DiscussButton, useDiscussTarget, type DiscussTarget } from "../../shell/discuss";
 import { FeatureNameField, RenameButton, useFeatureNames } from "../features/names";
@@ -32,7 +28,7 @@ import { QuestionsLink } from "./QuestionsBlock";
 import { NoteView } from "../brain/NoteView";
 import { NotFoundBody } from "../not-found";
 import { CriteriaTab, passOf } from "./CriteriaTab";
-import { EvalTab, OwnerSignOff, ownerStepsWaiting, pickEval } from "./EvalTab";
+import { EvalTab, evalHistory, ownerStepsWaiting, pickEval, runLabels } from "./EvalTab";
 import { RecordSummary, summaryRequest } from "./RecordSummary";
 import { StateBadge } from "./PlanningView";
 import { TicketsTab } from "./TicketsTab";
@@ -235,10 +231,20 @@ function PlanVersionLine({ plan }: { plan: PlanView }) {
 }
 
 /**
- * The feature's tickets as header chips: each id links to Linear, with its title on hover and its
- * status in Linear once the tickets route answered (its cached answer); until then the ids alone.
+ * The feature's tickets as header chips: each id opens the Tickets tab with its ticket panel
+ * (two-level-flows AC-1.10; the Linear link is in the panel), its title on hover and its status in
+ * Linear once the tickets route answered (its cached answer).
  */
-function TicketChips({ ids, rows }: { ids: readonly string[]; rows: readonly TicketRow[] }) {
+function TicketChips({
+  ids,
+  rows,
+  openerRef,
+}: {
+  ids: readonly string[];
+  rows: readonly TicketRow[];
+  openerRef: MutableRefObject<HTMLElement | null>;
+}) {
+  const [params] = useSearchParams();
   if (ids.length === 0) return null;
   return (
     <span
@@ -249,9 +255,23 @@ function TicketChips({ ids, rows }: { ids: readonly string[]; rows: readonly Tic
     >
       {ids.map((id) => {
         const row = rows.find((r) => r.id === id || r.ref === id);
+        const next = new URLSearchParams(params);
+        next.set("doc", "tickets");
+        next.set("ticket", id);
+        next.delete("step");
         return (
           <span key={id} className="ah-row" style={{ gap: 6 }}>
-            <IssueLink id={id} title={row?.title} href={linearHref(row?.url)} />
+            <Link
+              className="ah-issue"
+              to={{ search: `?${next.toString()}` }}
+              replace
+              title={`${id}${row?.title ? ` · ${row.title}` : ""} · show its steps`}
+              onClick={(event) => {
+                openerRef.current = event.currentTarget;
+              }}
+            >
+              {id}
+            </Link>
             {row?.state && <StateBadge row={row} />}
           </span>
         );
@@ -347,13 +367,6 @@ function featureDiscussTarget(
   };
 }
 
-/** Why the Acceptance step waits on the owner's steps (SHIP-WITH-OWNER-STEPS); null otherwise. */
-function ownerWait(steps: readonly GoldenStep[]) {
-  const step = ownerWaitStep(steps);
-  if (!step) return null;
-  return step.reason ?? "Some ACs wait on owner steps.";
-}
-
 /** Feature detail (spec 17, D23): golden path, owner steps, acceptance criteria. */
 /** The feature's nickname as the title, the slug beside it; the pencil renames it. */
 function FeatureHeading({ project, slug }: { project: string; slug: string }) {
@@ -387,6 +400,114 @@ function FeatureHeading({ project, slug }: { project: string; slug: string }) {
   );
 }
 
+/** The search of the Eval tab at `delivery`, the ticket panel closed. */
+function evalParams(current: URLSearchParams, delivery: string): URLSearchParams {
+  const next = new URLSearchParams(current);
+  next.delete("ticket");
+  next.delete("step");
+  next.set("doc", "eval");
+  next.set("eval", delivery);
+  return next;
+}
+
+/** One thing only the owner can settle, as the page banner signposts it. */
+interface OwnerWait {
+  delivery: string;
+  /** The eval's label in its group ("Eval 2"). */
+  label: string;
+  text: string;
+}
+
+/**
+ * Every wait on the owner, the Acceptance wait first (the server's rule, only while a sign-off can
+ * be recorded, A15), then each other eval waiting on owner steps (AGH-384) in plan order.
+ */
+function ownerWaits(
+  detail: Detail,
+  tickets: readonly string[],
+  epics: readonly string[],
+): OwnerWait[] {
+  const acceptance = detail.acceptance_eval;
+  const first: OwnerWait[] = [];
+  if (acceptance?.owner_wait?.state === "sign_off") {
+    const group = evalHistory(detail.evals, tickets, epics).find((g) =>
+      g.evals.some((e) => e.delivery === acceptance.delivery),
+    );
+    const record = group?.evals.find((e) => e.delivery === acceptance.delivery);
+    const label =
+      (record && group && runLabels(group.evals).get(record.path)) ?? acceptance.delivery;
+    const n = acceptance.owner_wait.acs.length;
+    first.push({
+      delivery: acceptance.delivery,
+      label,
+      text: `Acceptance: sign off ${String(n)} AC${n === 1 ? "" : "s"} (${label})`,
+    });
+  }
+  const others = ownerStepsWaiting(detail.evals, tickets, epics)
+    .filter((w) => w.record.delivery !== acceptance?.delivery)
+    .map((w) => ({
+      delivery: w.record.delivery,
+      label: w.label,
+      text: `${w.scope === "feature" ? "Whole feature" : w.scope}: ${w.label} passed with owner steps`,
+    }));
+  return [...first, ...others];
+}
+
+/**
+ * The page's one "Waiting on you" banner: a signpost for every wait, one line each, each line
+ * after the first a link to its eval; the button opens the first. The decisions are on the Eval
+ * tab's prompts (ux-change-waiting-prompts.md).
+ */
+function WaitingBanner({
+  waits,
+  onEval,
+  onOpen,
+}: {
+  waits: readonly OwnerWait[];
+  /** The Eval tab is shown: its prompts are below, so no button. */
+  onEval: boolean;
+  onOpen: (delivery: string) => void;
+}) {
+  const [params] = useSearchParams();
+  const [first, ...rest] = waits;
+  if (!first) return null;
+  return (
+    <Banner
+      tone="warning"
+      boxed
+      icon="hand"
+      action={
+        !onEval && (
+          <Button
+            size="sm"
+            variant="primary"
+            icon="arrow-right"
+            aria-label={`Review owner steps of ${first.label}`}
+            onClick={() => {
+              onOpen(first.delivery);
+            }}
+          >
+            Review owner steps
+          </Button>
+        )
+      }
+    >
+      <b>Waiting on you</b>
+      {onEval && <span className="ah-muted"> · Settle each one below.</span>}
+      <ul className="ah-small" style={{ margin: "2px 0 0", paddingLeft: 18 }}>
+        <li>{first.text}</li>
+        {rest.map((wait) => (
+          <li key={wait.delivery}>
+            <Link to={{ search: `?${evalParams(params, wait.delivery).toString()}` }} replace>
+              {wait.text}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </Banner>
+  );
+}
+
 export function FeatureDetailScreen() {
   const { project = "", slug = "" } = useParams();
   const feature = useFeature(project, slug);
@@ -395,6 +516,8 @@ export function FeatureDetailScreen() {
   const { state, asOf } = useCollectorState();
   const { tz } = usePreferences();
   const tab = tabOf(params.get("doc"), feature.data?.phase);
+  // The element that opened the ticket panel (a header chip, a card title, a row): focus returns there.
+  const openerRef = useRef<HTMLElement | null>(null);
   const tickets = useFeatureTickets(
     project,
     slug,
@@ -425,23 +548,25 @@ export function FeatureDetailScreen() {
 
   const detail = feature.data;
   const owners = detail.ac_rows.filter((ac) => passOf(ac) === "owner");
-  const waitReason = ownerWait(detail.golden_path.steps);
   const issueIds = ticketIds(detail.issues);
-  const waitingEvals = ownerStepsWaiting(
-    detail.evals,
-    issueIds,
-    tickets.data?.planning.epics ?? [],
-  );
+  const epics = tickets.data?.planning.epics ?? [];
+  const waits = ownerWaits(detail, issueIds, epics);
   const setTab = (id: string) => {
     setParams(
       (current) => {
         const next = new URLSearchParams(current);
         if (id === PHASE_TAB[detail.phase]) next.delete("doc");
         else next.set("doc", id);
+        // The ticket panel belongs to the Tickets tab: another tab closes it.
+        next.delete("ticket");
+        next.delete("step");
         return next;
       },
       { replace: true },
     );
+  };
+  const openEval = (delivery: string) => {
+    setParams((current) => evalParams(current, delivery), { replace: true });
   };
   const tabs = [
     ...Object.entries(RECORDS).map(([id, meta]) => ({ id, label: meta?.label ?? id })),
@@ -470,6 +595,8 @@ export function FeatureDetailScreen() {
         refreshing={tickets.isFetching}
         acPasses={Object.fromEntries(detail.ac_rows.map((ac) => [ac.id, ac.passes]))}
         acRows={detail.ac_rows}
+        evals={detail.evals}
+        openerRef={openerRef}
       />
     );
   } else if (tab === "eval") {
@@ -482,6 +609,7 @@ export function FeatureDetailScreen() {
         evals={detail.evals}
         ticketRows={tickets.data?.tickets}
         acRows={detail.ac_rows}
+        acceptance={detail.acceptance_eval}
         selected={selectedEval}
         onSelect={(delivery) => {
           setParams(
@@ -538,7 +666,7 @@ export function FeatureDetailScreen() {
           {state === "offline" && <AsOfStamp stale time={fmtClock(asOf, tz)} />}
         </div>
         <div className="ah-row ah-wrap ah-small" style={{ gap: 14 }}>
-          <TicketChips ids={issueIds} rows={tickets.data?.tickets ?? []} />
+          <TicketChips ids={issueIds} rows={tickets.data?.tickets ?? []} openerRef={openerRef} />
           {detail.acs && (
             <>
               {issueIds.length > 0 && (
@@ -561,65 +689,18 @@ export function FeatureDetailScreen() {
         <GoldenPathStepper
           steps={detail.golden_path.steps}
           onSelect={(step) => {
-            setTab(STEP_TAB[step]);
+            // Acceptance opens its own eval, where its prompt is (A15).
+            if (step === "acceptance" && detail.acceptance_eval) {
+              openEval(detail.acceptance_eval.delivery);
+            } else setTab(STEP_TAB[step]);
           }}
           selectLabel={(step) => `Open the ${TAB_LABEL[STEP_TAB[step]] ?? step} of ${step}`}
         />
       </section>
-      {waitingEvals.length > 0 ? (
-        <Banner
-          tone="warning"
-          boxed
-          icon="hand"
-          action={
-            tab !== "eval" && (
-              <Button
-                size="sm"
-                variant="primary"
-                icon="arrow-right"
-                onClick={() => {
-                  setParams(
-                    (current) => {
-                      const next = new URLSearchParams(current);
-                      next.set("doc", "eval");
-                      next.set("eval", waitingEvals[0]?.record.delivery ?? "");
-                      return next;
-                    },
-                    { replace: true },
-                  );
-                }}
-              >
-                Review owner steps
-              </Button>
-            )
-          }
-        >
-          <b>Waiting on you</b>
-          <span className="ah-muted">
-            {" "}
-            · {waitingEvals.length === 1 ? "1 eval" : `${String(waitingEvals.length)} evals`} passed
-            with owner steps: {waitingEvals.map((w) => `${w.scope} · ${w.label}`).join(", ")}.
-            {tab === "eval" && " Settle each one below."}
-          </span>
-        </Banner>
-      ) : waitReason ? (
-        <OwnerSignOff
-          project={detail.project}
-          slug={detail.slug}
-          reason={waitReason}
-          onShow={(delivery) => {
-            setParams(
-              (current) => {
-                const next = new URLSearchParams(current);
-                next.set("doc", "eval");
-                next.set("eval", delivery);
-                return next;
-              },
-              { replace: true },
-            );
-          }}
-        />
+      {waits.length > 0 ? (
+        <WaitingBanner waits={waits} onEval={tab === "eval"} onOpen={openEval} />
       ) : (
+        !detail.acceptance_eval &&
         owners.length > 0 && (
           <Banner tone="warning" boxed icon="hand">
             <b>
