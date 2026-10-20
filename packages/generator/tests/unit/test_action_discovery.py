@@ -189,3 +189,28 @@ def test_refuses_script_when_folder_not_read(hub: Path) -> None:
             "scripts/__pycache__/cached.sh is in a folder an action's scripts never use",
         )
     ]
+
+
+def test_skips_dot_files_when_pack_scripts_read(hub: Path) -> None:
+    # Editor and system files (.DS_Store, swap files) are no helper: they change no hash.
+    _action(hub, "orders", "get-order")
+    before = {entry.ref: entry.content_hash for entry in discover_actions(hub).actions}
+    _write(hub / "actions" / "orders" / "scripts" / ".DS_Store", "finder\n")
+    _write(hub / "actions" / "orders" / "scripts" / ".swap" / "get-order.sh.swp", "swap\n")
+    hidden = ACTION.format(name="hidden", effect="read", output_type="object").replace(
+        "scripts/hidden.sh", "scripts/.hidden.sh"
+    )
+    _write(hub / "actions" / "orders" / "hidden.yaml", hidden)
+    _write(hub / "actions" / "orders" / "scripts" / ".hidden.sh", "#!/bin/sh\n")
+
+    found = discover_actions(hub)
+
+    assert {entry.ref: entry.content_hash for entry in found.actions} == before
+    assert _shown(found) == [
+        (
+            "actions/orders/hidden.yaml",
+            6,
+            "script",
+            "scripts/.hidden.sh is a dot file; an action's script is never hidden",
+        )
+    ]
