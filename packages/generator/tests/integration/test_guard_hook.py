@@ -5804,6 +5804,28 @@ def test_denies_glob_when_mixed_case_env_file_matched(
 # AGH-354 review F2: a Bash glob token is matched by its last segment against the declared env
 # files' names (ignoring case), so a `cd` in the same call does not hide it; a leading `*` or `?`
 # does not match a leading `.`, as in bash.
+# Review round 2: glob tokens that are not env file names, before or after a cd: a bare `*`, `.*`
+# or `*.*` holds no literal character of a name, and a glob before any cd only counts when it
+# expands to an env file from the cwd.
+GLOBS_NOT_NAMING_ENV_FILES = (
+    "ls *",
+    "rm -rf dist/*",
+    "cp src/* out/",
+    'git commit -m "* item"',
+    'gh pr create --title x --body "* one\n* two"',
+    "sed 's/.*//' f",
+    "awk '/.*/' f",
+    "find . -name '.*'",
+    "ls *.*",
+    "cd demo-api && ls *",
+    "cd demo-api && rm -rf dist/*",
+    "cd demo-api && sed 's/.*//' f",
+    "cd demo-api && find . -name '.*'",
+    "cd demo-api && ls *.*",
+    "cat Sta* && cd demo-api/environment",
+)
+
+
 def test_denies_bash_glob_when_env_file_name_matched_after_cd(
     decide: Decide, env_file_hub: Path
 ) -> None:
@@ -5818,6 +5840,8 @@ def test_denies_bash_glob_when_env_file_name_matched_after_cd(
         "cd demo-api/environment && cat *.test",
         "cd demo-api && cat ?env.test",
         "ls src/*.py",
+        "cat .env.t*",
+        *GLOBS_NOT_NAMING_ENV_FILES,
     ]
 
     verdicts = decide([(at(bash_call(command), ws), None) for command in (*denied, *passed)])
@@ -5829,11 +5853,16 @@ def test_denies_bash_glob_when_mixed_case_env_file_matched_after_cd(
     decide: Decide, mixed_case_env_file_hub: Path
 ) -> None:
     ws = mixed_case_env_file_hub.parent
-    commands = ["cd demo-api/environment && cat Sta*", "cd demo-api/environment && cat sTAGING.e?v"]
+    commands = [
+        "cd demo-api/environment && cat Sta*",
+        "cd demo-api/environment && cat sTAGING.e?v",
+        "pushd demo-api/environment && cat *ing.env",
+    ]
+    passed = ["cat Sta*", *GLOBS_NOT_NAMING_ENV_FILES]
 
-    verdicts = decide([(at(bash_call(command), ws), None) for command in commands])
+    verdicts = decide([(at(bash_call(command), ws), None) for command in (*commands, *passed)])
 
-    assert verdicts == [env_file_denial("Bash")] * len(commands)
+    assert verdicts == [env_file_denial("Bash")] * len(commands) + [None] * len(passed)
 
 
 # AGH-354 review F3 (plan erratum E-5): a Grep is denied only when its path is a declared env file
