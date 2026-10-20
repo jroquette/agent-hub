@@ -721,8 +721,8 @@ export function FeaturesScreen() {
                 <p className="ft-notice" role="note">
                   <Icon name="info" size="sm" />
                   <span>
-                    Ticket status is not read from Linear on this list, so Review and Shipped show
-                    as unknown. A feature&apos;s Tickets tab reads it.
+                    Ticket status is not read from Linear on this list, so Build shows as unknown. A
+                    feature&apos;s Tickets tab reads it.
                   </span>
                 </p>
               )}
