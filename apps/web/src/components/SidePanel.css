@@ -1,0 +1,50 @@
+/* SidePanel (two-level-flows AC-1.10, 31-responsive.md): non-modal, no scrim. It overlays the
+   page below 1600 px and docks beside the content from there. */
+.ah-side-panel {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-overlay);
+  border-left: 1px solid var(--border);
+  overflow: hidden;
+}
+.ah-side-panel[data-layout="overlay"] {
+  position: fixed;
+  top: var(--topbar);
+  right: 0;
+  bottom: 0;
+  width: min(var(--panel), 100vw);
+  box-shadow: var(--shadow-overlay);
+  z-index: var(--z-popover);
+}
+.ah-side-panel[data-layout="docked"] {
+  position: sticky;
+  top: 0;
+  flex: 0 0 640px;
+  max-height: calc(100vh - var(--topbar) - var(--space-8));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.ah-side-panel-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+.ah-side-panel-head h2 {
+  flex: 1;
+  margin: 0;
+  min-width: 0;
+}
+.ah-side-panel-head h2:focus {
+  outline: none;
+}
+.ah-side-panel-head h2:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.ah-side-panel-body {
+  flex: 1;
+  overflow: auto;
+  padding: var(--space-4);
+}

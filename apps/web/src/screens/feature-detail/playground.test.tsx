@@ -256,6 +256,8 @@ describe("the tickets table", () => {
   it("AC-PG-21.1 sets the fixed column widths and keeps Title at least 280 px in a scrolling wrap", () => {
     renderWithApi(
       <TicketsTab
+        evals={[]}
+        openerRef={{ current: null }}
         project="agent-hub"
         slug="control-plane"
         data={aFeatureTickets()}

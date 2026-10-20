@@ -11,6 +11,7 @@ export * from "./Markdown";
 export * from "./OptionRow";
 export * from "./ScreenshotLightbox";
 export * from "./SessionLabel";
+export * from "./SidePanel";
 export * from "./status";
 export * from "./StepBar";
 export * from "./trace";

@@ -1,6 +1,5 @@
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { createRef } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { ApiProblem } from "../../lib/api";
@@ -41,7 +40,7 @@ function show(
       acPasses={extra.acPasses}
       acRows={extra.acRows}
       evals={[]}
-      opener={createRef()}
+      openerRef={{ current: null }}
     />,
     {
       routes: { "/api/v1/sessions": aPage([]), ...extra.routes },
@@ -596,7 +595,7 @@ describe("TicketsTab", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeps the step bar out of the tab order: one tab stop per card (keys)", async () => {
+  it("keeps the step bar out of the tab order: one tab stop per card (keys)", () => {
     const data = aFeatureTickets();
     show(
       { ...data, tickets: data.tickets.map((t) => ({ ...t, flow: aTicketFlow() })) },

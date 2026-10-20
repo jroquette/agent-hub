@@ -621,8 +621,10 @@ describe("GoldenPathStepper", () => {
     // A step left without a record before later evidence is no gate: Implement stays done.
     expect(steps.map((li) => li.dataset.state)).toEqual(["unrecorded", "done", "current"]);
     // Vertically, every step says its state and meta.
-    expect(steps[0]).toHaveTextContent("ContextNot recorded");
-    expect(steps[2]).toHaveTextContent("ReviewIn progressChanges requested");
+    const metaOf = (li: HTMLElement | undefined) =>
+      [...(li?.querySelectorAll(".ah-golden-meta") ?? [])].map((m) => m.textContent);
+    expect(metaOf(steps[0])).toEqual(["Not recorded"]);
+    expect(metaOf(steps[2])).toEqual(["In progress", "Changes requested"]);
     const review = screen.getByRole("button", { name: "review, show details" });
     expect(review).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByRole("button", { name: "context, show details" })).toHaveAttribute(
