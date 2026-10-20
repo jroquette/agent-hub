@@ -132,8 +132,8 @@
 }
 /* The chat's column is narrower here than on its page. */
 .ah-discuss .as-column {
+  --as-gutter: var(--space-4);
   max-width: none;
-  padding-inline: var(--space-3);
 }
 .ah-discuss .as-page {
   flex: 1 1 auto;
