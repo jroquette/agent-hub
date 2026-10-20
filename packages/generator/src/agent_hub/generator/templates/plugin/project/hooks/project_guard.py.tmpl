@@ -1,7 +1,9 @@
 """This project's guard extension: the project's own rules on top of the base guard.
 
-The base guard (``plugin/hub-workflow/hooks/guard.py``) calls ``check(event, cfg)`` for each
-tool call it does not deny itself. It runs this file in a child ``python3`` with a timeout:
+The base guard (``plugin/hub-workflow/hooks/guard.py``) calls ``check(event, cfg)`` for each Bash
+and file-tool call (Read, Grep, Glob, Edit, Write, MultiEdit, NotebookEdit, WebFetch) it does not
+deny itself; never for an MCP, WebSearch, Task, Agent or SendMessage call. It runs this file in a
+child ``python3`` with a timeout:
 
 - ``event`` is the PreToolUse hook input, a dict with ``tool_name`` and ``tool_input``;
 - ``cfg`` is this hub's ``hub.json`` as the hooks' reader loads it: a ``HubFile`` object read by
