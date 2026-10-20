@@ -288,6 +288,7 @@ def _to_row(session: AgentSession) -> dict[str, Any]:
         "last_prompt": session.last_prompt,
         "last_reply": session.last_reply,
         "changed_files": [item.model_dump(mode="json") for item in session.changed_files],
+        "review_targets": [item.model_dump(mode="json") for item in session.review_targets],
     }
 
 

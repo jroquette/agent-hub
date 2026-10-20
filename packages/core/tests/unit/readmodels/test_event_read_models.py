@@ -913,6 +913,28 @@ def test_takes_issue_from_first_prompt_when_branch_and_worktree_name_none() -> N
     assert other_team == ()
 
 
+def test_lists_session_under_prompt_issue_when_branch_names_another_ticket() -> None:
+    # Started from the hub folder, whose checkout is on the previous ticket's records branch.
+    links = {("demo", "s-hub"): AgentSessionLink(agent_session_id="a-1", prompt_issue="DEM-306")}
+    store = InMemoryEventStore()
+    store.append(a_session_events("s-hub", ended=False, git_branch="DEM-305-records"))
+    service = FoldedEventReadModels(
+        store,
+        now=Clock(SCENARIO_START + timedelta(minutes=8)),
+        agent_session_link_of=lambda project, session_id: links.get((project, session_id)),
+        label_rules_of={"demo": LabelRules(teams=("DEM",))}.get,
+    )
+
+    prompted = service.list_sessions(SessionFilter(issue="DEM-306")).items
+    branch = service.list_sessions(SessionFilter(issue="DEM-305")).items
+    label = service.get_session("s-hub").label
+
+    assert [s.id for s in prompted] == ["s-hub"]
+    assert branch == ()
+    assert label is not None
+    assert label.issue == "DEM-306"
+
+
 def test_carries_agent_session_id_when_link_known_agent_session_link() -> None:
     service = _linked_service({("demo", "s-web"): AgentSessionLink(agent_session_id="a-1")})
 

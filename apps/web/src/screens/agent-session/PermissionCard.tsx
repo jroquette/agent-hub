@@ -6,11 +6,17 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
-  type ReactNode,
 } from "react";
 
 import type { components } from "../../api/schema";
-import { Button, Icon, Markdown, type IconName } from "../../components";
+import {
+  Button,
+  Icon,
+  Markdown,
+  OptionRow,
+  RECOMMENDED_MARK,
+  type IconName,
+} from "../../components";
 import { ApiProblem } from "../../lib/api";
 import { cx } from "../../lib/cx";
 import { goSequencePending } from "../../shell/goSequence";
@@ -146,7 +152,7 @@ function AnswerRecap({
               {question.question}
             </dt>
             <dd className={cx(!answer && "ah-subtle")}>
-              {answer ? answer.replace(RECOMMENDED, "") : "Not answered"}
+              {answer ? answer.replace(RECOMMENDED_MARK, "") : "Not answered"}
             </dd>
           </div>
         );
@@ -180,57 +186,6 @@ function KeyHint({ letter }: { letter: string }) {
     <kbd className="ah-kbd as-perm-kbd" aria-hidden="true">
       {letter}
     </kbd>
-  );
-}
-
-/** Claude marks its preferred option with a trailing "(Recommended)" in the label. */
-const RECOMMENDED = /\s*\(recommended\)\s*$/i;
-
-/** One choice of a question: a radio or checkbox row with its label and, below it, its description. */
-function OptionRow({
-  type,
-  name,
-  label,
-  description,
-  checked,
-  onToggle,
-  children,
-}: {
-  type: "radio" | "checkbox";
-  name: string;
-  label: string;
-  description: string | null;
-  checked: boolean;
-  onToggle: () => void;
-  children?: ReactNode;
-}) {
-  const labelId = useId();
-  const descriptionId = useId();
-  const recommended = RECOMMENDED.test(label);
-  return (
-    <label className={cx("as-option", checked && "as-option-checked")}>
-      <input
-        type={type}
-        name={name}
-        className="ah-check"
-        checked={checked}
-        aria-labelledby={labelId}
-        aria-describedby={description ? descriptionId : undefined}
-        onChange={onToggle}
-      />
-      <span className="as-option-body">
-        <span className="as-option-label">
-          <span id={labelId}>{label.replace(RECOMMENDED, "")}</span>
-          {recommended && <span className="as-option-tag">Recommended</span>}
-        </span>
-        {description && (
-          <span id={descriptionId} className="ah-small ah-muted">
-            {description}
-          </span>
-        )}
-        {children}
-      </span>
-    </label>
   );
 }
 
@@ -282,7 +237,7 @@ function QuestionField({
         <span className="as-question-text">{question.question}</span>
       </legend>
       {question.multiSelect && <p className="ah-small ah-muted as-question-hint">Choose any</p>}
-      <div className="as-options">
+      <div className="ah-options">
         {question.options.map((option) => (
           <OptionRow
             key={option.label}

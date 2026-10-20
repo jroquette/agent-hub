@@ -16,6 +16,8 @@ import {
 import { fmtAgo, fmtClock, fmtDuration, fmtInt, fmtMoney } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
+import { FeatureChip } from "../features/FeatureChip";
+import { useTicketLookup, useTicketTitles } from "../features/queries";
 import { agentSessionHref } from "../sessions-list/control";
 import { ContinueInChat } from "./ContinueInChat";
 import type { Session } from "./queries";
@@ -53,8 +55,11 @@ export function Header({ session, now, staleSince }: HeaderProps) {
   const open = isOpen(session);
   const subagent = Boolean(session.parent_session_id);
   const segments = session.segments.length;
-  const { title } = sessionIdentity(session);
+  const tickets = useTicketLookup(session.project);
   const label = session.label ?? null;
+  const feature = label?.issue ? tickets.get(label.issue.toUpperCase()) : undefined;
+  useTicketTitles(feature);
+  const { title } = sessionIdentity(session, tickets);
   const where = [label?.repo ?? session.repo, label?.branch].filter(Boolean).join(" · ") || "—";
   const actors = actorsLine(session.actors);
   const crumbs = [
@@ -97,6 +102,7 @@ export function Header({ session, now, staleSince }: HeaderProps) {
         <h1 className="ah-h1 ah-mono" style={{ fontSize: 20 }}>
           {title}
         </h1>
+        {feature && <FeatureChip project={feature.project} slug={feature.slug} />}
         <StatusBadge status={status.status} label={status.label} title={status.title} />
         {open && (
           <span className="ah-small ah-subtle">

@@ -17,10 +17,12 @@ import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
 import { CountCell, KnowledgeProjectIndex } from "../knowledge-index";
 import { HistoryPanel } from "../item-history";
 import { NotFoundBody } from "../not-found";
+import { useWorkflows } from "../workflows/queries";
 import { AboutRail } from "./AboutRail";
 import { BodyView, scrollToAnchor, type BodyMode } from "./BodyView";
 import { BundledFiles } from "./BundledFiles";
 import { Catalog } from "./Catalog";
+import { skillsHome } from "./routes";
 import { DetailHeader } from "./DetailHeader";
 import { Diagnostics } from "./Diagnostics";
 import { KINDS, type ItemKind } from "./filters";
@@ -36,10 +38,7 @@ type SkillDetail = components["schemas"]["SkillDetail"];
 /** The usage window the server counts over (P2, `USAGE_DAYS`); the detail does not carry it. */
 export const USAGE_DAYS = 30;
 
-/** The in-app route of a project's Skills catalog. */
-export function skillsHome(project: string): string {
-  return `/projects/${encodeURIComponent(project)}/skills`;
-}
+export { skillsHome } from "./routes";
 
 function isKind(value: string): value is ItemKind {
   return KINDS.some((kind) => kind === value);
@@ -49,6 +48,7 @@ function isKind(value: string): value is ItemKind {
 export function SkillsScreen() {
   const { project = "" } = useParams();
   const catalog = useSkillCatalog(project);
+  const workflows = useWorkflows(project);
   let body;
   if (catalog.isError) {
     body =
@@ -73,7 +73,14 @@ export function SkillsScreen() {
       </div>
     );
   } else {
-    body = <Catalog catalog={catalog.data} />;
+    body = (
+      <Catalog
+        catalog={catalog.data}
+        workflows={workflows.data}
+        workflowsError={workflows.isError ? workflows.error : null}
+        onRetryWorkflows={() => void workflows.refetch()}
+      />
+    );
   }
   return (
     <div className="ah-page" style={{ gap: 16 }}>
@@ -88,8 +95,8 @@ export function SkillsScreen() {
         <div className="ah-stack ah-grow" style={{ gap: 4 }}>
           <h1 className="ah-h1">Toolkit</h1>
           <p className="ah-muted" style={{ margin: 0 }}>
-            The agents, skills and hooks {project}&apos;s agents work with, read from its hub&apos;s
-            files. Nothing here runs them.
+            What {project}&apos;s agents can do, read from its hub&apos;s files. Nothing here runs
+            them.
           </p>
         </div>
         <CreateMenu project={project} />
@@ -352,8 +359,8 @@ export function SkillsPickerScreen() {
       title="Toolkit"
       intro="What each project's agents can do: the skills, agents and hooks its hub installs. Open a project to browse them."
       caption="Projects and their skills, agents and hooks"
-      emptyLine="Register a hub to see its skills."
-      tip="Tip: pick a project in the scope switcher to open its skills directly."
+      emptyLine="Register a hub to see its toolkit."
+      tip="Tip: pick a project in the scope switcher to open its toolkit directly."
       href={skillsHome}
       columns={[
         {

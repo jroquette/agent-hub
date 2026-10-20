@@ -1825,6 +1825,33 @@ def test_names_superpowers_steps_when_feature_rendered(
     assert finish.index("otherwise") < finish.index("Either way")
 
 
+# /feature tells each implementer to change files with Edit or Write, never by a shell script, so
+# the session's review shows each change; the rule lives in /feature only, not in AGENTS.md.
+EDIT_OR_WRITE_RULE = (
+    "Each implementer changes files with the Edit or Write tool, never by a shell script, so the"
+    " session's review shows each change."
+)
+
+
+@pytest.mark.parametrize(
+    "document",
+    [builders.a_hub_document, builders.a_two_team_document],
+    ids=["demo", "two_teams"],
+)
+def test_names_edit_or_write_in_implement_step_only_when_feature_rendered(
+    document: Callable[[], dict[str, Any]],
+) -> None:
+    render = {file.path: file for file in render_hub(HubConfig.model_validate(document())).files}
+    lines = skill_text(render, "feature").splitlines()
+    [implement] = [line for line in lines if line.startswith("6. **Implement**")]
+    agents = render["AGENTS.md"].content.decode("utf-8")
+
+    assert implement.count(EDIT_OR_WRITE_RULE) == 1
+    assert [line for line in lines if "Edit or Write" in line] == [implement]
+    assert "Edit or Write" not in agents
+    assert "shell script" not in agents
+
+
 def test_names_superpowers_line_when_create_plan_rendered(
     demo_render: dict[str, RenderedFile],
 ) -> None:
@@ -5034,7 +5061,7 @@ AGENT_FILES_SHA256 = {
         "06346ed2d9948f63b1a2b5ac850ef73e698326316e8cabe95de39dba9f1fb2ae"
     ),
     f"{AGENTS_FOLDER}/requirements-analyst.md": (
-        "d5702ea0391a96d356ebd9e1b83195cd1828efb509dfb56cfcc611560484d063"
+        "a89674148648b6e5d17365d6e0d997e9a921c7d9f54a47fd99b63494aecc3353"
     ),
     f"{AGENTS_FOLDER}/researcher.md": (
         "f4859e0b694dff6cea2a69d29074d111c9374971f544289b134a8f0a620da9cf"
