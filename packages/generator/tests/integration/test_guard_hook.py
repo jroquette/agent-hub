@@ -5916,3 +5916,25 @@ def test_denies_grep_when_glob_reaches_env_file(decide: Decide, env_file_hub: Pa
     verdicts = decide([(at(event, cwd), None) for event, cwd in calls])
 
     assert verdicts == [env_file_denial("Grep")] * len(calls)
+
+
+# Review round 2, finding 2: a Grep glob with braces is expanded before it is matched against the
+# env files, so `{*.py,*.ts}` from above them passes and a list holding one alternative that
+# reaches an env file is denied.
+def test_matches_each_brace_alternative_when_grep_glob_has_braces(
+    decide: Decide, env_file_hub: Path
+) -> None:
+    ws = env_file_hub.parent
+    api = ws / "demo-api"
+    passed = [
+        (tool_call("Grep", pattern="DB", glob="{*.py,*.ts}"), api),
+        (tool_call("Grep", pattern="DB", path="demo-api", glob="src/{a,b}/*.{py,ts}"), ws),
+    ]
+    denied = [
+        (tool_call("Grep", pattern="DB", glob="{*.py,*.test}"), api),
+        (tool_call("Grep", pattern="DB", path="demo-api", glob="{x,.env.*}"), ws),
+    ]
+
+    verdicts = decide([(at(event, cwd), None) for event, cwd in (*passed, *denied)])
+
+    assert verdicts == [None] * len(passed) + [env_file_denial("Grep")] * len(denied)
