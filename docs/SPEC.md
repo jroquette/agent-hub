@@ -737,7 +737,8 @@ default); `repo`, `agent`, `workflow` and `step` are optional. Unknown fields ar
 - `type` is a closed list: `session.start`, `session.end`, `tool.call`, `tool.result`, `message`, `reasoning`, `decision`,
   `gate.request`, `gate.result`, `learning.proposed`, `learning.accepted`, `learning.rejected`, `step.start`,
   `step.end`, `run.end`, `session.summary` (the last five added in Phase 2 for runs, rejected learnings and stored
-  summaries) and `session.title` ([ADR 0035](adr/0035-session-titles.md)).
+  summaries), `session.title` ([ADR 0035](adr/0035-session-titles.md)), and a scenario run's `expect.poll` and
+  `context.capture` ([ADR 0041](adr/0041-scenarios-actions-and-enforced-access.md)).
 - `source` is a closed list: `claude_code`, `transcript`, `otel`, `executor`, `github`, `linear` and `control_plane`
   (an action the user took in `hub web`, added by AGH-201: a learning decision). Widening either list later is a
   compatible change.
@@ -804,6 +805,7 @@ before anything is appended, and the data stays on the machine in v1:
 | `step.start`, `step.end`, `run.end` from the workflow engine | `issue` (the run's `issue` input, when it is a tracker key such as `DEM-7`), so hub web keeps one live run per issue (AGH-232) |
 | `session.summary` | `text`, `lines` |
 | `session.title` | `text` (the transcript's `ai-title` or `custom-title`, 80 chars), `origin` (`ai` or `custom`; ADR 0035) |
+| `expect.poll`, `context.capture` (a scenario run) | `poll` (count) and `held` (boolean); `name` (the captured name, never its value) |
 
 Note, spec, plan and brain text is read from the hub on request and never stored or logged; a learning's summary
 (its note's first paragraph) is computed on read.
