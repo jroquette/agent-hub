@@ -549,9 +549,10 @@ describe("HubConfigScreen", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: "Add environment" }));
     const dialog = screen.getByRole("dialog", { name: "Add environment" });
-    await userEvent.type(within(dialog).getByRole("textbox", { name: "Name" }), "staging");
+    await userEvent.type(within(dialog).getByRole("textbox", { name: "2. Name" }), "staging");
     await userEvent.click(within(dialog).getByRole("radio", { name: "The whole team" }));
     await userEvent.click(within(dialog).getByRole("radio", { name: "Ask first" }));
+    await userEvent.click(within(dialog).getByText("Connection details (optional)"));
     await userEvent.type(
       within(dialog).getByRole("textbox", { name: "AWS profile name" }),
       "demo-staging",
@@ -577,7 +578,8 @@ describe("HubConfigScreen", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: "Add environment" }));
     const dialog = screen.getByRole("dialog", { name: "Add environment" });
-    await userEvent.type(within(dialog).getByRole("textbox", { name: "Name" }), "mine");
+    await userEvent.type(within(dialog).getByRole("textbox", { name: "2. Name" }), "mine");
+    await userEvent.click(within(dialog).getByText("Connection details (optional)"));
     await userEvent.type(
       within(dialog).getByRole("textbox", { name: "Variable names" }),
       "DB_URL=postgres://x",
@@ -667,6 +669,67 @@ describe("HubConfigScreen", () => {
     });
     expect(within(dialog).getByText(/hub.json changes/)).toBeVisible();
     expect(requests.some((r) => r.method === "POST")).toBe(false);
+  });
+
+  it("fills a production environment from its kind: read only, flagged, for the team", async () => {
+    const { requests } = open("/projects/demo/config", {
+      [CONFIG]: aConfig(),
+      [ENV_WRITE]: withEnvironments(),
+    });
+
+    await userEvent.click(await screen.findByRole("button", { name: "Add environment" }));
+    const dialog = screen.getByRole("dialog", { name: "Add environment" });
+    await userEvent.click(within(dialog).getByRole("radio", { name: /Production/ }));
+
+    expect(within(dialog).getByRole("textbox", { name: "2. Name" })).toHaveValue("production");
+    expect(within(dialog).getByRole("radio", { name: "Read only" })).toBeChecked();
+    expect(within(dialog).getByRole("radio", { name: "The whole team" })).toBeChecked();
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Add environment for the team" }),
+    );
+
+    const post = requests.find((r) => r.method === "POST");
+    expect(await post?.json()).toMatchObject({
+      op: "add_environment",
+      scope: "team",
+      name: "production",
+      access: "read",
+      production: true,
+    });
+  });
+
+  it("adds a service from what runs, with one address per environment", async () => {
+    const { requests } = open("/projects/demo/config", {
+      [CONFIG]: withEnvironments(),
+      [ENV_WRITE]: withEnvironments(),
+    });
+
+    await userEvent.click(await screen.findByRole("button", { name: "Add service" }));
+    const dialog = screen.getByRole("dialog", { name: "Add service" });
+    await userEvent.click(within(dialog).getByRole("radio", { name: /Frontend or portal/ }));
+    expect(within(dialog).getByRole("textbox", { name: "Service name" })).toHaveValue("web");
+    await userEvent.type(
+      within(dialog).getByRole("textbox", { name: "local" }),
+      "http://localhost:3000",
+    );
+    await userEvent.type(
+      within(dialog).getByRole("textbox", { name: /live/ }),
+      "https://app.example.com",
+    );
+    await userEvent.click(within(dialog).getByRole("button", { name: "Add service" }));
+
+    expect(await screen.findByText("Added demo-api › web")).toBeVisible();
+    const post = requests.find((r) => r.method === "POST");
+    expect(await post?.json()).toEqual({
+      op: "add_service",
+      repo: "demo-api",
+      service: "web",
+      kind: "web",
+      addresses: [
+        { environment: "local", address: "http://localhost:3000" },
+        { environment: "live", address: "https://app.example.com" },
+      ],
+    });
   });
 
   it("has no serious a11y violations with environments", async () => {

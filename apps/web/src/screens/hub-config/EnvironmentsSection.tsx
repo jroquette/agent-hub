@@ -2,7 +2,6 @@ import { Fragment, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import {
-  Banner,
   Button,
   ConfirmDialog,
   Dialog,
@@ -16,6 +15,7 @@ import { ConfigRow, ConfigSource, Mono, NoneText, Section, useAttach } from "./p
 import { EndpointDialog } from "./EndpointDialog";
 import type { EndpointTarget } from "./EndpointDialog";
 import { EnvironmentDialog } from "./EnvironmentDialog";
+import { ServiceDialog } from "./ServiceDialog";
 import {
   ACCESS_LOOK,
   LOCAL_FILE,
@@ -135,6 +135,7 @@ export function EnvironmentsSection({
   const services = view.environments.services;
   const [editing, setEditing] = useState<SourcedEnvironment | "new" | null>(null);
   const [endpoint, setEndpoint] = useState<EndpointTarget | null>(null);
+  const [addingService, setAddingService] = useState<{ repo?: string } | null>(null);
   const [removal, setRemoval] = useState<Removal | null>(null);
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -212,7 +213,7 @@ export function EnvironmentsSection({
       title="Environments"
       askName="the environments"
       icon="server"
-      purpose="Where your systems run and what agents may do in each. Agents get this in AGENTS.md and their brief."
+      purpose="Tell agents where your systems run and how to reach them: first the environments, then the services each repo runs there. Agents read it in AGENTS.md and their brief."
       onAsk={() => {
         attach({
           id: "config:section:environments",
@@ -245,11 +246,15 @@ export function EnvironmentsSection({
         </EmptyState>
       ) : (
         <>
-          <div className="ah-env-toolbar">
-            <Banner tone="info" boxed>
-              Actions follow access strictly. Free commands (aws, psql, curl) follow it as an
-              instruction, plus blocked words: best effort.
-            </Banner>
+          <div className="ah-env-subhead" style={{ marginTop: 0 }}>
+            <div>
+              <h3 className="ah-env-subtitle">
+                <span className="ah-env-step">1</span> Environments
+              </h3>
+              <p className="ah-small ah-muted" style={{ margin: 0 }}>
+                Where your systems run, and what agents may do in each.
+              </p>
+            </div>
             <Button
               id={ADD_ENVIRONMENT_ID}
               icon="plus"
@@ -341,135 +346,167 @@ export function EnvironmentsSection({
             })}
           </div>
 
+          <p className="ah-small ah-muted ah-env-honesty">
+            <Icon name="info" /> Scripted actions follow this access strictly. Free commands (aws,
+            psql, curl) follow it as an instruction, plus blocked words: best effort.
+          </p>
+
           <div className="ah-env-subhead">
             <div>
-              <h3 className="ah-env-subtitle">Services and endpoints</h3>
+              <h3 className="ah-env-subtitle">
+                <span className="ah-env-step">2</span> Services
+              </h3>
               <p className="ah-small ah-muted" style={{ margin: 0 }}>
-                Where each repo&apos;s API, database or queue lives in each environment.{" "}
-                <Icon name="laptop" /> marks the ones set by you.
+                What each repo runs (an API, a portal, a database) and its address in each
+                environment. <Icon name="laptop" /> marks the ones set by you.
               </p>
             </div>
             <Button
               icon="plus"
               onClick={() => {
-                setEndpoint({});
+                setAddingService({});
               }}
             >
-              Add endpoint
+              Add service
             </Button>
           </div>
-          <div className="ah-table-wrap ah-env-matrix-wrap">
-            <table className="ah-table ah-env-matrix">
-              <caption className="ah-env-caption">Endpoints per service and environment</caption>
-              <thead>
-                <tr>
-                  <th scope="col">Service</th>
-                  {environments.map((environment) => (
-                    <th key={environment.name} scope="col">
-                      <span className="ah-env-name">
-                        {environment.name}
-                        {environment.production && <ProductionBadge />}
-                      </span>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {view.repos.map((repo) => {
-                  const own = servicesOf(repo.dir);
-                  return (
-                    <Fragment key={repo.dir}>
-                      <tr className="ah-env-repo">
-                        <th scope="rowgroup" colSpan={environments.length + 1}>
-                          <span className="ah-env-name">
-                            <Icon name="book" />
-                            {repo.dir}
-                            {own.length === 0 && (
-                              <>
-                                <span className="ah-muted">· No services yet</span>
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  icon="plus"
-                                  onClick={() => {
-                                    setEndpoint({ repo: repo.dir });
-                                  }}
-                                >
-                                  Add endpoint here
-                                </Button>
-                              </>
-                            )}
-                          </span>
-                        </th>
-                      </tr>
-                      {own.map((service) => (
-                        <tr key={service.name}>
-                          <th scope="row" className="ah-env-service">
-                            <Mono>{service.name}</Mono>
-                            {service.kind && <span className="ah-muted"> · {service.kind}</span>}
-                          </th>
-                          {environments.map((environment) => {
-                            const found = service.endpoints.find(
-                              (item) => item.environment === environment.name,
-                            );
-                            const where = serviceLabel(repo.dir, service.name);
-                            if (!found)
-                              return (
-                                <td key={environment.name}>
+          {services.length === 0 && (
+            <div className="ah-env-services-empty">
+              <Icon name="server" />
+              <div className="ah-stack" style={{ gap: 4 }}>
+                <strong>No services yet</strong>
+                <span className="ah-small ah-muted">
+                  Add the API, portal or database each repo runs, with its address in{" "}
+                  {environments.map((environment) => environment.name).join(", ")}. Agents then know
+                  where to point instead of guessing hosts.
+                </span>
+              </div>
+              <Button
+                variant="primary"
+                icon="plus"
+                onClick={() => {
+                  setAddingService({});
+                }}
+              >
+                Add service
+              </Button>
+            </div>
+          )}
+          {services.length > 0 && (
+            <div className="ah-table-wrap ah-env-matrix-wrap">
+              <table className="ah-table ah-env-matrix">
+                <caption className="ah-env-caption">Endpoints per service and environment</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Service</th>
+                    {environments.map((environment) => (
+                      <th key={environment.name} scope="col">
+                        <span className="ah-env-name">
+                          {environment.name}
+                          {environment.production && <ProductionBadge />}
+                        </span>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {view.repos.map((repo) => {
+                    const own = servicesOf(repo.dir);
+                    return (
+                      <Fragment key={repo.dir}>
+                        <tr className="ah-env-repo">
+                          <th scope="rowgroup" colSpan={environments.length + 1}>
+                            <span className="ah-env-name">
+                              <Icon name="book" />
+                              {repo.dir}
+                              {own.length === 0 && (
+                                <>
+                                  <span className="ah-muted">· No services yet</span>
                                   <Button
                                     size="sm"
                                     variant="ghost"
                                     icon="plus"
-                                    className="ah-env-add"
-                                    aria-label={`Add endpoint for ${where} in ${environment.name}`}
+                                    aria-label={`Add a service to ${repo.dir}`}
+                                    onClick={() => {
+                                      setAddingService({ repo: repo.dir });
+                                    }}
+                                  >
+                                    Add service
+                                  </Button>
+                                </>
+                              )}
+                            </span>
+                          </th>
+                        </tr>
+                        {own.map((service) => (
+                          <tr key={service.name}>
+                            <th scope="row" className="ah-env-service">
+                              <Mono>{service.name}</Mono>
+                              {service.kind && <span className="ah-muted"> · {service.kind}</span>}
+                            </th>
+                            {environments.map((environment) => {
+                              const found = service.endpoints.find(
+                                (item) => item.environment === environment.name,
+                              );
+                              const where = serviceLabel(repo.dir, service.name);
+                              if (!found)
+                                return (
+                                  <td key={environment.name}>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      icon="plus"
+                                      className="ah-env-add"
+                                      aria-label={`Add endpoint for ${where} in ${environment.name}`}
+                                      onClick={() => {
+                                        setEndpoint({
+                                          repo: repo.dir,
+                                          service: service.name,
+                                          environment: environment.name,
+                                        });
+                                      }}
+                                    >
+                                      Add
+                                    </Button>
+                                  </td>
+                                );
+                              const shown = endpointText(found);
+                              const note = endpointValues(found).note;
+                              return (
+                                <td key={environment.name}>
+                                  <button
+                                    type="button"
+                                    className="ah-env-cell"
+                                    aria-label={`Edit endpoint of ${where} in ${environment.name}: ${shown}${found.source === LOCAL_FILE ? " · set by you" : ""}${note ? ` · note: ${note}` : ""}`}
                                     onClick={() => {
                                       setEndpoint({
                                         repo: repo.dir,
                                         service: service.name,
                                         environment: environment.name,
+                                        endpoint: found,
                                       });
                                     }}
                                   >
-                                    Add
-                                  </Button>
+                                    <span className="ah-mono">
+                                      <PathText path={shown} max={34} />
+                                    </span>
+                                    {found.source === LOCAL_FILE && (
+                                      <Icon name="laptop" title="Set by you" />
+                                    )}
+                                    {note && <Icon name="info" title={note} />}
+                                  </button>
                                 </td>
                               );
-                            const shown = endpointText(found);
-                            const note = endpointValues(found).note;
-                            return (
-                              <td key={environment.name}>
-                                <button
-                                  type="button"
-                                  className="ah-env-cell"
-                                  aria-label={`Edit endpoint of ${where} in ${environment.name}: ${shown}${found.source === LOCAL_FILE ? " · set by you" : ""}${note ? ` · note: ${note}` : ""}`}
-                                  onClick={() => {
-                                    setEndpoint({
-                                      repo: repo.dir,
-                                      service: service.name,
-                                      environment: environment.name,
-                                      endpoint: found,
-                                    });
-                                  }}
-                                >
-                                  <span className="ah-mono">
-                                    <PathText path={shown} max={34} />
-                                  </span>
-                                  {found.source === LOCAL_FILE && (
-                                    <Icon name="laptop" title="Set by you" />
-                                  )}
-                                  {note && <Icon name="info" title={note} />}
-                                </button>
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                            })}
+                          </tr>
+                        ))}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </>
       )}
 
@@ -479,6 +516,16 @@ export function EnvironmentsSection({
           editing={editing === "new" ? null : editing}
           onClose={() => {
             setEditing(null);
+          }}
+          onSaved={onSaved}
+        />
+      )}
+      {addingService !== null && (
+        <ServiceDialog
+          view={view}
+          repo={addingService.repo}
+          onClose={() => {
+            setAddingService(null);
           }}
           onSaved={onSaved}
         />

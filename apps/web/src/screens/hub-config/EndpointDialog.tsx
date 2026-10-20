@@ -1,9 +1,12 @@
 import { useId, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { Button, ConfirmDialog, Dialog, SegmentedControl } from "../../components";
+import { Button, ConfirmDialog, Dialog } from "../../components";
 import {
+  addressKind,
   endpointValues,
+  exampleAddress,
+  serviceKind,
   isTeams,
   postEnvironmentEdit,
   refusalOf,
@@ -51,7 +54,6 @@ export function EndpointDialog({
   const [newService, setNewService] = useState("");
   const [kind, setKind] = useState("");
   const [environment, setEnvironment] = useState(target.environment ?? environments[0]?.name ?? "");
-  const [where, setWhere] = useState<"url" | "resource">(values?.resource ? "resource" : "url");
   const [value, setValue] = useState(values?.url ?? values?.resource ?? "");
   const [note, setNote] = useState(values?.note ?? "");
   const [pending, setPending] = useState(false);
@@ -59,6 +61,11 @@ export function EndpointDialog({
   const [confirming, setConfirming] = useState(false);
 
   const chosen = environments.find((item) => item.name === environment);
+  const kindOfService = serviceKind(
+    view.environments.services.find((item) => item.repo === repo && item.name === service)?.kind,
+  );
+  const example =
+    kindOfService && chosen ? exampleAddress(kindOfService, chosen) : "http://localhost:8000";
   const team = chosen !== undefined && isTeams(chosen);
   const serviceName = service === NEW_SERVICE ? newService.trim() : service;
   const fieldId = (key: string) => `${id}-${key}`;
@@ -71,9 +78,7 @@ export function EndpointDialog({
         summary: "Nothing was saved: fix the fields marked below.",
         fields: {
           ...(serviceName === "" ? { service: "Name the service." } : {}),
-          ...(value.trim() === ""
-            ? { [where]: where === "url" ? "Give the URL." : "Give the resource name." }
-            : {}),
+          ...(value.trim() === "" ? { url: "Give the address." } : {}),
         },
       });
       return;
@@ -96,8 +101,8 @@ export function EndpointDialog({
           repo,
           service: serviceName,
           environment,
-          url: where === "url" ? value.trim() : null,
-          resource: where === "resource" ? value.trim() : null,
+          url: addressKind(value.trim()) === "url" ? value.trim() : null,
+          resource: addressKind(value.trim()) === "resource" ? value.trim() : null,
           kind: service === NEW_SERVICE ? kind.trim() || null : null,
           note: note.trim() || null,
           replace: editing !== null,
@@ -145,7 +150,7 @@ export function EndpointDialog({
 
   const title = fixed
     ? `Edit endpoint · ${serviceLabel(repo, serviceName)} · ${environment}`
-    : "Add endpoint";
+    : "Add address";
 
   return (
     <Dialog
@@ -181,7 +186,7 @@ export function EndpointDialog({
               send(false);
             }}
           >
-            {pending ? "Saving…" : fixed ? "Save endpoint" : "Add endpoint"}
+            {pending ? "Saving…" : fixed ? "Save address" : "Add address"}
           </Button>
         </>
       }
@@ -314,28 +319,18 @@ export function EndpointDialog({
             </span>
           )}
         </div>
-        <div className="ah-stack" style={{ gap: 6 }}>
-          <span className="ah-config-field-label">Where</span>
-          <SegmentedControl
-            label="Where"
-            options={[
-              { id: "url", label: "URL" },
-              { id: "resource", label: "Resource" },
-            ]}
-            value={where}
-            onChange={(next) => {
-              setWhere(next === "resource" ? "resource" : "url");
-            }}
-          />
+        <div className="ah-stack" style={{ gap: 4 }}>
+          <label htmlFor={fieldId("value")} className="ah-config-field-label">
+            Address
+          </label>
           <input
             id={fieldId("value")}
-            aria-label={where === "url" ? "URL" : "Resource name"}
             className="ah-input ah-mono"
             value={value}
             autoComplete="off"
             spellCheck={false}
-            placeholder={where === "url" ? "https://api.example.com" : "demo-orders-staging"}
-            aria-invalid={shownError(where) ? true : undefined}
+            placeholder={example}
+            aria-invalid={shownError("url") || shownError("resource") ? true : undefined}
             aria-describedby={`${fieldId("value")}-help`}
             onChange={(event) => {
               setValue(event.target.value);
@@ -343,12 +338,15 @@ export function EndpointDialog({
           />
           <span
             id={`${fieldId("value")}-help`}
-            className={shownError(where) ? "ah-small ah-config-error" : "ah-small ah-muted"}
+            className={
+              shownError("url") || shownError("resource")
+                ? "ah-small ah-config-error"
+                : "ah-small ah-muted"
+            }
           >
-            {shownError(where) ??
-              (where === "url"
-                ? "scheme://host[:port][/path], e.g. https://api.example.com. No user, ? or #."
-                : "A name, e.g. a table, queue or bucket: demo-orders-staging.")}
+            {shownError("url") ??
+              shownError("resource") ??
+              "A URL like http://localhost:8000 (no user, ? or #), or a name like orders-table."}
           </span>
         </div>
         <div className="ah-stack" style={{ gap: 4 }}>

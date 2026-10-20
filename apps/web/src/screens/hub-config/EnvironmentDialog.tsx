@@ -1,10 +1,12 @@
 import { useId, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { Banner, Button, Dialog, OptionRow } from "../../components";
+import { Banner, Button, Dialog, Icon, OptionRow } from "../../components";
+import { cx } from "../../lib/cx";
 import {
   ACCESSES,
   ACCESS_LOOK,
+  ENVIRONMENT_PRESETS,
   NAME_PATTERN,
   STRICTNESS,
   isMine,
@@ -57,6 +59,13 @@ export function EnvironmentDialog({
   const [awsProfile, setAwsProfile] = useState(editing?.credentials?.aws_profile ?? "");
   const [variables, setVariables] = useState((editing?.credentials?.env ?? []).join("\n"));
   const [envFile, setEnvFile] = useState(editing?.credentials?.env_file ?? "");
+  const [presetId, setPresetId] = useState<string | null>(null);
+  const [nameTouched, setNameTouched] = useState(false);
+  const credentials = editing?.credentials;
+  const hasCredentials =
+    Boolean(credentials?.aws_profile) ||
+    (credentials?.env ?? []).length > 0 ||
+    Boolean(credentials?.env_file);
   const [pending, setPending] = useState(false);
   const [refusal, setRefusal] = useState<Refusal | null>(null);
 
@@ -64,6 +73,17 @@ export function EnvironmentDialog({
   // "Only me" on a team environment: only a stricter access, every other field is the team's.
   const tightening = teams && scope === "local";
   const fieldId = (key: string) => `${id}-${key}`;
+  const pickPreset = (next: string) => {
+    const preset = ENVIRONMENT_PRESETS.find((candidate) => candidate.id === next);
+    if (!preset) return;
+    setPresetId(next);
+    if (!nameTouched) setName(preset.name);
+    setAccess(preset.access);
+    setProduction(preset.production);
+    if (!description || ENVIRONMENT_PRESETS.some((other) => other.description === description))
+      setDescription(preset.description);
+    if (!localBroken) setScope(preset.scope);
+  };
   const nameTaken =
     editing === null &&
     name.trim() !== "" &&
@@ -182,6 +202,102 @@ export function EnvironmentDialog({
           </p>
         )}
 
+        {editing === null && (
+          <fieldset className="ah-env-fieldset">
+            <legend className="ah-config-field-label">1. What kind of environment is it?</legend>
+            <div className="ah-env-kinds">
+              {ENVIRONMENT_PRESETS.map((candidate) => (
+                <label
+                  key={candidate.id}
+                  className={cx("ah-env-kind", presetId === candidate.id && "ah-env-kind-checked")}
+                >
+                  <input
+                    type="radio"
+                    name={fieldId("preset")}
+                    className="ah-env-kind-input"
+                    checked={presetId === candidate.id}
+                    onChange={() => {
+                      pickPreset(candidate.id);
+                    }}
+                  />
+                  <Icon name={candidate.icon} />
+                  <span className="ah-stack" style={{ gap: 2 }}>
+                    <span className="ah-env-kind-label">{candidate.label}</span>
+                    <span className="ah-small ah-muted">{candidate.hint}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        )}
+
+        <div className="ah-stack" style={{ gap: 4 }}>
+          <label htmlFor={fieldId("name")} className="ah-config-field-label">
+            {editing === null ? "2. Name" : "Name"}
+          </label>
+          <input
+            id={fieldId("name")}
+            className="ah-input ah-mono"
+            value={name}
+            readOnly={editing !== null}
+            autoComplete="off"
+            spellCheck={false}
+            maxLength={40}
+            placeholder="staging"
+            aria-invalid={nameProblem || shownError("name") ? true : undefined}
+            aria-describedby={`${fieldId("name")}-help`}
+            onChange={(event) => {
+              setNameTouched(true);
+              setName(event.target.value);
+            }}
+          />
+          <span
+            id={`${fieldId("name")}-help`}
+            className={
+              nameProblem || shownError("name") ? "ah-small ah-config-error" : "ah-small ah-muted"
+            }
+          >
+            {nameProblem ??
+              shownError("name") ??
+              (editing === null
+                ? "Letters, digits, - and _, up to 40. Not used by another environment, in any case."
+                : "Rename it with Ask Claude.")}
+          </span>
+        </div>
+
+        <fieldset className="ah-env-fieldset">
+          <legend className="ah-config-field-label">
+            {editing === null ? "3. What may agents do there?" : "What may agents do there?"}
+          </legend>
+          <div className="ah-options">
+            {ACCESSES.map((candidate) => (
+              <OptionRow
+                key={candidate}
+                type="radio"
+                name={fieldId("access")}
+                label={ACCESS_LOOK[candidate].card}
+                recommended={production && candidate === "read"}
+                disabled={looser(candidate)}
+                description={
+                  looser(candidate)
+                    ? `Looser than the team's (${ACCESS_LOOK[teamAccess ?? "write"].short}): you can only tighten.`
+                    : tightening && candidate === teamAccess
+                      ? `${ACCESS_LOOK[candidate].help} The team's access.`
+                      : ACCESS_LOOK[candidate].help
+                }
+                checked={access === candidate}
+                onToggle={() => {
+                  setAccess(candidate);
+                }}
+              />
+            ))}
+          </div>
+          <span className={shownError("access") ? "ah-small ah-config-error" : "ah-small ah-muted"}>
+            {shownError("access") ??
+              "Actions follow this strictly. Free commands follow it as an instruction, plus blocked words."}
+          </span>
+        </fieldset>
+
         {editing !== null && !teams ? (
           <p className="ah-small ah-muted" style={{ margin: 0 }}>
             Saved in hub.local.json: {editing.name} is yours. To share it with the team, ask Claude
@@ -189,7 +305,9 @@ export function EnvironmentDialog({
           </p>
         ) : (
           <fieldset className="ah-env-fieldset">
-            <legend className="ah-config-field-label">Who is this for</legend>
+            <legend className="ah-config-field-label">
+              {editing === null ? "4. Who is it for?" : "Who is it for?"}
+            </legend>
             <div className="ah-options">
               <OptionRow
                 type="radio"
@@ -228,70 +346,6 @@ export function EnvironmentDialog({
             </div>
           </fieldset>
         )}
-
-        <div className="ah-stack" style={{ gap: 4 }}>
-          <label htmlFor={fieldId("name")} className="ah-config-field-label">
-            Name
-          </label>
-          <input
-            id={fieldId("name")}
-            className="ah-input ah-mono"
-            value={name}
-            readOnly={editing !== null}
-            autoComplete="off"
-            spellCheck={false}
-            maxLength={40}
-            placeholder="staging"
-            aria-invalid={nameProblem || shownError("name") ? true : undefined}
-            aria-describedby={`${fieldId("name")}-help`}
-            onChange={(event) => {
-              setName(event.target.value);
-            }}
-          />
-          <span
-            id={`${fieldId("name")}-help`}
-            className={
-              nameProblem || shownError("name") ? "ah-small ah-config-error" : "ah-small ah-muted"
-            }
-          >
-            {nameProblem ??
-              shownError("name") ??
-              (editing === null
-                ? "Letters, digits, - and _, up to 40. Not used by another environment, in any case."
-                : "Rename it with Ask Claude.")}
-          </span>
-        </div>
-
-        <fieldset className="ah-env-fieldset">
-          <legend className="ah-config-field-label">Access</legend>
-          <div className="ah-options">
-            {ACCESSES.map((candidate) => (
-              <OptionRow
-                key={candidate}
-                type="radio"
-                name={fieldId("access")}
-                label={ACCESS_LOOK[candidate].card}
-                recommended={production && candidate === "read"}
-                disabled={looser(candidate)}
-                description={
-                  looser(candidate)
-                    ? `Looser than the team's (${ACCESS_LOOK[teamAccess ?? "write"].short}): you can only tighten.`
-                    : tightening && candidate === teamAccess
-                      ? `${ACCESS_LOOK[candidate].help} The team's access.`
-                      : ACCESS_LOOK[candidate].help
-                }
-                checked={access === candidate}
-                onToggle={() => {
-                  setAccess(candidate);
-                }}
-              />
-            ))}
-          </div>
-          <span className={shownError("access") ? "ah-small ah-config-error" : "ah-small ah-muted"}>
-            {shownError("access") ??
-              "Actions follow this strictly. Free commands follow it as an instruction, plus blocked words."}
-          </span>
-        </fieldset>
 
         {!tightening && (
           <>
@@ -341,101 +395,104 @@ export function EnvironmentDialog({
               </span>
             </div>
 
-            <fieldset
-              className="ah-env-fieldset"
-              aria-describedby={`${fieldId("credentials")}-help`}
-            >
-              <legend className="ah-config-field-label">Credentials</legend>
-              <span id={`${fieldId("credentials")}-help`} className="ah-small ah-muted">
-                Names only. Never paste a password, key or token: agent-hub refuses values that look
-                like a secret.
-              </span>
-              <div className="ah-stack" style={{ gap: 4 }}>
-                <label htmlFor={fieldId("aws_profile")} className="ah-small">
-                  AWS profile name
-                </label>
-                <input
-                  id={fieldId("aws_profile")}
-                  className="ah-input ah-mono"
-                  value={awsProfile}
-                  readOnly={editing !== null}
-                  autoComplete="off"
-                  spellCheck={false}
-                  placeholder="demo-staging"
-                  aria-invalid={shownError("aws_profile") ? true : undefined}
-                  onChange={(event) => {
-                    setAwsProfile(event.target.value);
-                  }}
-                />
-                {shownError("aws_profile") && (
-                  <span className="ah-small ah-config-error">{shownError("aws_profile")}</span>
+            <details className="ah-env-details" open={hasCredentials || undefined}>
+              <summary className="ah-config-field-label">Connection details (optional)</summary>
+              <fieldset
+                className="ah-env-fieldset"
+                aria-describedby={`${fieldId("credentials")}-help`}
+              >
+                <legend className="ah-env-caption">Credentials</legend>
+                <span id={`${fieldId("credentials")}-help`} className="ah-small ah-muted">
+                  How actions log in here. Names only: never paste a password, key or token,
+                  agent-hub refuses values that look like a secret. Skip it if you are not sure.
+                </span>
+                <div className="ah-stack" style={{ gap: 4 }}>
+                  <label htmlFor={fieldId("aws_profile")} className="ah-small">
+                    AWS profile name
+                  </label>
+                  <input
+                    id={fieldId("aws_profile")}
+                    className="ah-input ah-mono"
+                    value={awsProfile}
+                    readOnly={editing !== null}
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="demo-staging"
+                    aria-invalid={shownError("aws_profile") ? true : undefined}
+                    onChange={(event) => {
+                      setAwsProfile(event.target.value);
+                    }}
+                  />
+                  {shownError("aws_profile") && (
+                    <span className="ah-small ah-config-error">{shownError("aws_profile")}</span>
+                  )}
+                </div>
+                <div className="ah-stack" style={{ gap: 4 }}>
+                  <label htmlFor={fieldId("variables")} className="ah-small">
+                    Variable names
+                  </label>
+                  <textarea
+                    id={fieldId("variables")}
+                    className="ah-input ah-mono ah-config-textarea"
+                    rows={2}
+                    value={variables}
+                    readOnly={editing !== null}
+                    spellCheck={false}
+                    autoComplete="off"
+                    placeholder="DEMO_DB_URL"
+                    aria-invalid={
+                      valueLine !== null || shownError("credential_env") ? true : undefined
+                    }
+                    onChange={(event) => {
+                      setVariables(event.target.value);
+                    }}
+                  />
+                  <span
+                    aria-live="polite"
+                    className={
+                      valueLine !== null || shownError("credential_env")
+                        ? "ah-small ah-config-error"
+                        : "ah-small ah-muted"
+                    }
+                  >
+                    {valueLine !== null
+                      ? `Line ${String(valueLine)}: only the name. Remove = and what follows.`
+                      : (shownError("credential_env") ??
+                        "One per line: the variables that hold this environment's secrets.")}
+                  </span>
+                </div>
+                <div className="ah-stack" style={{ gap: 4 }}>
+                  <label htmlFor={fieldId("env_file")} className="ah-small">
+                    Env file path
+                  </label>
+                  <input
+                    id={fieldId("env_file")}
+                    className="ah-input ah-mono"
+                    value={envFile}
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="demo-api/.env.staging"
+                    aria-invalid={shownError("env_file") ? true : undefined}
+                    onChange={(event) => {
+                      setEnvFile(event.target.value);
+                    }}
+                  />
+                  <span
+                    className={
+                      shownError("env_file") ? "ah-small ah-config-error" : "ah-small ah-muted"
+                    }
+                  >
+                    {shownError("env_file") ??
+                      "Relative to the workspace. Only actions read it; agents never do."}
+                  </span>
+                </div>
+                {editing !== null && (
+                  <span className="ah-small ah-muted">
+                    To change the AWS profile or variable names, ask Claude.
+                  </span>
                 )}
-              </div>
-              <div className="ah-stack" style={{ gap: 4 }}>
-                <label htmlFor={fieldId("variables")} className="ah-small">
-                  Variable names
-                </label>
-                <textarea
-                  id={fieldId("variables")}
-                  className="ah-input ah-mono ah-config-textarea"
-                  rows={2}
-                  value={variables}
-                  readOnly={editing !== null}
-                  spellCheck={false}
-                  autoComplete="off"
-                  placeholder="DEMO_DB_URL"
-                  aria-invalid={
-                    valueLine !== null || shownError("credential_env") ? true : undefined
-                  }
-                  onChange={(event) => {
-                    setVariables(event.target.value);
-                  }}
-                />
-                <span
-                  aria-live="polite"
-                  className={
-                    valueLine !== null || shownError("credential_env")
-                      ? "ah-small ah-config-error"
-                      : "ah-small ah-muted"
-                  }
-                >
-                  {valueLine !== null
-                    ? `Line ${String(valueLine)}: only the name. Remove = and what follows.`
-                    : (shownError("credential_env") ??
-                      "One per line: the variables that hold this environment's secrets.")}
-                </span>
-              </div>
-              <div className="ah-stack" style={{ gap: 4 }}>
-                <label htmlFor={fieldId("env_file")} className="ah-small">
-                  Env file path
-                </label>
-                <input
-                  id={fieldId("env_file")}
-                  className="ah-input ah-mono"
-                  value={envFile}
-                  autoComplete="off"
-                  spellCheck={false}
-                  placeholder="demo-api/.env.staging"
-                  aria-invalid={shownError("env_file") ? true : undefined}
-                  onChange={(event) => {
-                    setEnvFile(event.target.value);
-                  }}
-                />
-                <span
-                  className={
-                    shownError("env_file") ? "ah-small ah-config-error" : "ah-small ah-muted"
-                  }
-                >
-                  {shownError("env_file") ??
-                    "Relative to the workspace. Only actions read it; agents never do."}
-                </span>
-              </div>
-              {editing !== null && (
-                <span className="ah-small ah-muted">
-                  To change the AWS profile or variable names, ask Claude.
-                </span>
-              )}
-            </fieldset>
+              </fieldset>
+            </details>
           </>
         )}
         {tightening && (

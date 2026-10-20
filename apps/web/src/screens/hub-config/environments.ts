@@ -18,7 +18,8 @@ export type EnvironmentEdit =
   | components["schemas"]["SetEnvironment"]
   | components["schemas"]["RemoveEnvironment"]
   | components["schemas"]["AddEndpoint"]
-  | components["schemas"]["RemoveEndpoint"];
+  | components["schemas"]["RemoveEndpoint"]
+  | components["schemas"]["AddService"];
 
 /** An endpoint's values: the generated type is ``unknown`` (its schema is an ``anyOf``). */
 export interface EndpointValues {
@@ -205,3 +206,169 @@ export function lineWithValue(text: string): number | null {
   const index = text.split("\n").findIndex((line) => line.includes("="));
   return index === -1 ? null : index + 1;
 }
+
+/** What kind of thing a service is: the word people use, a default name and example addresses. */
+export interface ServiceKind {
+  id: string;
+  label: string;
+  hint: string;
+  icon: IconName;
+  /** The service name offered first; empty: the person names it. */
+  name: string;
+  /** An example address on this machine, and on a shared or cloud environment. */
+  local: string;
+  remote: string;
+}
+
+export const SERVICE_KINDS: readonly ServiceKind[] = [
+  {
+    id: "api",
+    label: "API or backend",
+    hint: "A server agents call over HTTP.",
+    icon: "plug",
+    name: "api",
+    local: "http://localhost:8000",
+    remote: "https://api.staging.example.com",
+  },
+  {
+    id: "web",
+    label: "Frontend or portal",
+    hint: "A site or admin portal in the browser.",
+    icon: "globe",
+    name: "web",
+    local: "http://localhost:3000",
+    remote: "https://app.staging.example.com",
+  },
+  {
+    id: "database",
+    label: "Database",
+    hint: "Postgres, MySQL, DynamoDB, Redis…",
+    icon: "database",
+    name: "db",
+    local: "postgres://localhost:5432/app",
+    remote: "orders-table-staging",
+  },
+  {
+    id: "queue",
+    label: "Queue or topic",
+    hint: "SQS, SNS, Kafka, RabbitMQ…",
+    icon: "layers",
+    name: "queue",
+    local: "orders-queue-local",
+    remote: "orders-queue-staging",
+  },
+  {
+    id: "storage",
+    label: "Storage bucket",
+    hint: "S3 or another file store.",
+    icon: "package",
+    name: "bucket",
+    local: "uploads-local",
+    remote: "uploads-staging",
+  },
+  {
+    id: "function",
+    label: "Function or job",
+    hint: "A Lambda, cron job or worker.",
+    icon: "cpu",
+    name: "worker",
+    local: "orders-worker-local",
+    remote: "orders-worker-staging",
+  },
+  {
+    id: "other",
+    label: "Something else",
+    hint: "Name it and give its address.",
+    icon: "box",
+    name: "",
+    local: "http://localhost:9000",
+    remote: "my-resource-name",
+  },
+];
+
+export function serviceKind(id: string | null | undefined): ServiceKind | undefined {
+  return SERVICE_KINDS.find((kind) => kind.id === id);
+}
+
+/** The example address of a kind in an environment: local-looking ones get the local example. */
+export function exampleAddress(kind: ServiceKind, environment: SourcedEnvironment): string {
+  return /local|dev|mine|laptop/i.test(environment.name) && !environment.production
+    ? kind.local
+    : kind.remote;
+}
+
+/** Whether an address is a URL (it holds ://) or a resource name. */
+export function addressKind(address: string): "url" | "resource" {
+  return address.includes("://") ? "url" : "resource";
+}
+
+/** The usual environments, so a person picks one and gets sensible values. */
+export interface EnvironmentPreset {
+  id: string;
+  label: string;
+  hint: string;
+  icon: IconName;
+  name: string;
+  access: Access;
+  production: boolean;
+  description: string;
+  scope: "local" | "team";
+}
+
+export const ENVIRONMENT_PRESETS: readonly EnvironmentPreset[] = [
+  {
+    id: "local",
+    label: "This machine",
+    hint: "Docker compose, dev servers and local databases on each developer's laptop.",
+    icon: "laptop",
+    name: "local",
+    access: "write",
+    production: false,
+    description: "Runs on the developer's machine",
+    scope: "team",
+  },
+  {
+    id: "staging",
+    label: "Test or staging",
+    hint: "A shared environment the team tests on.",
+    icon: "flask-conical",
+    name: "staging",
+    access: "ask",
+    production: false,
+    description: "Shared test environment",
+    scope: "team",
+  },
+  {
+    id: "production",
+    label: "Production",
+    hint: "Real customers and real data. Agents only read.",
+    icon: "shield-x",
+    name: "production",
+    access: "read",
+    production: true,
+    description: "Live system with real customer data",
+    scope: "team",
+  },
+  {
+    id: "mine",
+    label: "My own copy",
+    hint: "A personal cloud or sandbox only you use.",
+    icon: "user",
+    name: "personal",
+    access: "write",
+    production: false,
+    description: "My personal sandbox",
+    scope: "local",
+  },
+  {
+    id: "other",
+    label: "Something else",
+    hint: "Start from a blank form.",
+    icon: "circle-dashed",
+    name: "",
+    access: "read",
+    production: false,
+    description: "",
+    scope: "local",
+  },
+];

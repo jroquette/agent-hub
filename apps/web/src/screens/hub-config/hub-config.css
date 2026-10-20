@@ -318,16 +318,6 @@
 }
 
 /* ---------- Environments ---------- */
-.ah-env-toolbar {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
-  margin-bottom: var(--space-3);
-}
-.ah-env-toolbar > :first-child {
-  flex: 1;
-  min-width: 0;
-}
 .ah-env-name {
   display: inline-flex;
   align-items: center;
@@ -431,4 +421,100 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--space-3);
+}
+.ah-env-step {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  vertical-align: 1px;
+}
+.ah-env-honesty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: var(--space-2) 0 0;
+}
+.ah-env-services-empty {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px dashed var(--border-control);
+  border-radius: var(--radius-lg);
+}
+.ah-env-services-empty > .ah-icon {
+  flex-shrink: 0;
+  color: var(--text-subtle);
+}
+.ah-env-services-empty > .ah-stack {
+  flex: 1;
+}
+/* Picker tiles: what kind of environment, what kind of service. */
+.ah-env-kinds {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+.ah-env-kind {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  cursor: pointer;
+}
+.ah-env-kind > .ah-icon {
+  margin-top: 2px;
+  flex-shrink: 0;
+  color: var(--text-subtle);
+}
+.ah-env-kind:hover {
+  border-color: var(--border-control);
+  background: var(--surface-hover);
+}
+.ah-env-kind-checked,
+.ah-env-kind-checked:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.ah-env-kind-checked > .ah-icon {
+  color: var(--accent);
+}
+.ah-env-kind-input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.ah-env-kind:has(.ah-env-kind-input:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.ah-env-kind-label {
+  font-weight: 500;
+}
+.ah-env-addresses {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ah-env-address {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+}
+.ah-env-details > summary {
+  cursor: pointer;
+  margin-bottom: var(--space-2);
 }
