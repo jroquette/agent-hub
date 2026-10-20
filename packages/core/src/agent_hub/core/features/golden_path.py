@@ -69,12 +69,15 @@ class EvalGate:
     verdict of the acceptance eval (the latest whole-feature one), None without one;
     ``owner_steps`` the ACs a SHIP-WITH-OWNER-STEPS acceptance eval leaves as owner steps that
     the owner has not signed off yet (``feature_evals.owner_wait``): None when nothing waits,
-    0 when it waits with no AC to count; ``skipped`` the eval files over the cap, left unread.
+    0 when it waits with no AC to count; ``reopened`` those of them whose latest eval is NO-SHIP
+    (a sign-off would be refused until an agent evaluates them again, A9, A11); ``skipped`` the
+    eval files over the cap, left unread.
     """
 
     evals: int
     covered: int
     owner_steps: int | None = None
+    reopened: int = 0
     skipped: int = 0
     acceptance: Verdict | None = None
 
@@ -320,6 +323,15 @@ def _acceptance(facts: _Facts) -> _Own:
                 holds=False,
                 meta="Waiting on owner steps · no ACs listed",
                 reason="the whole-feature eval leaves owner steps and lists no AC to sign off",
+                started=True,
+            )
+        if gate.reopened:
+            one = gate.reopened == 1
+            acs = f"{gate.reopened} AC{'' if one else 's'}"
+            return _Own(
+                holds=False,
+                meta=f"{acs} reopened · evaluate again",
+                reason=f"the latest eval of {acs} waiting on owner steps is NO-SHIP",
                 started=True,
             )
         one = gate.owner_steps == 1
