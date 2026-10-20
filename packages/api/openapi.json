@@ -541,6 +541,58 @@
         "title": "AddEnvironment",
         "type": "object"
       },
+      "AddService": {
+        "additionalProperties": false,
+        "description": "A new service of a repo with its address in one or more environments, in one step.\n\nEach address goes to the file of its environment: a team environment's to ``hub.json``, the\ndeveloper's own to ``hub.local.json``; both files are checked before either is written.",
+        "properties": {
+          "addresses": {
+            "items": {
+              "$ref": "#/components/schemas/ServiceAddress"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Addresses",
+            "type": "array"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "op": {
+            "const": "add_service",
+            "title": "Op",
+            "type": "string"
+          },
+          "repo": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Repo",
+            "type": "string"
+          },
+          "service": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Service",
+            "type": "string"
+          }
+        },
+        "required": [
+          "op",
+          "repo",
+          "service",
+          "addresses"
+        ],
+        "title": "AddService",
+        "type": "object"
+      },
       "AgentModelView": {
         "additionalProperties": false,
         "description": "A plugin agent's tier, when ``models.agents`` moves it off its template's.",
@@ -2068,6 +2120,7 @@
           "mapping": {
             "add_endpoint": "#/components/schemas/AddEndpoint",
             "add_environment": "#/components/schemas/AddEnvironment",
+            "add_service": "#/components/schemas/AddService",
             "remove_endpoint": "#/components/schemas/RemoveEndpoint",
             "remove_environment": "#/components/schemas/RemoveEnvironment",
             "set_environment": "#/components/schemas/SetEnvironment"
@@ -2089,6 +2142,9 @@
           },
           {
             "$ref": "#/components/schemas/RemoveEndpoint"
+          },
+          {
+            "$ref": "#/components/schemas/AddService"
           }
         ]
       },
@@ -8203,6 +8259,42 @@
           "text"
         ],
         "title": "SendMessage",
+        "type": "object"
+      },
+      "ServiceAddress": {
+        "additionalProperties": false,
+        "description": "Where a service is reached in one environment: a URL (holds ``://``) or a resource name.",
+        "properties": {
+          "address": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Address",
+            "type": "string"
+          },
+          "environment": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Environment",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "required": [
+          "environment",
+          "address"
+        ],
+        "title": "ServiceAddress",
         "type": "object"
       },
       "Session": {

@@ -1841,6 +1841,28 @@ export interface components {
       scope: components["schemas"]["Scope"];
     };
     /**
+     * AddService
+     * @description A new service of a repo with its address in one or more environments, in one step.
+     *
+     *     Each address goes to the file of its environment: a team environment's to ``hub.json``, the
+     *     developer's own to ``hub.local.json``; both files are checked before either is written.
+     */
+    AddService: {
+      /** Addresses */
+      addresses: components["schemas"]["ServiceAddress"][];
+      /** Kind */
+      kind?: string | null;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "add_service";
+      /** Repo */
+      repo: string;
+      /** Service */
+      service: string;
+    };
+    /**
      * AgentModelView
      * @description A plugin agent's tier, when ``models.agents`` moves it off its template's.
      */
@@ -2473,7 +2495,8 @@ export interface components {
       | components["schemas"]["SetEnvironment"]
       | components["schemas"]["RemoveEnvironment"]
       | components["schemas"]["AddEndpoint"]
-      | components["schemas"]["RemoveEndpoint"];
+      | components["schemas"]["RemoveEndpoint"]
+      | components["schemas"]["AddService"];
     /**
      * EvalRecord
      * @description One evaluation of a delivery: ``evals/<delivery>.md``, or the legacy ``eval.md``.
@@ -4597,6 +4620,18 @@ export interface components {
       screenshots?: components["schemas"]["Screenshot"][] | null;
       /** Text */
       text: string;
+    };
+    /**
+     * ServiceAddress
+     * @description Where a service is reached in one environment: a URL (holds ``://``) or a resource name.
+     */
+    ServiceAddress: {
+      /** Address */
+      address: string;
+      /** Environment */
+      environment: string;
+      /** Note */
+      note?: string | null;
     };
     /**
      * Session

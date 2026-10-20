@@ -180,3 +180,69 @@ def test_keeps_service_kind_when_endpoint_replaced(tmp_path: Path) -> None:
     assert _read(tmp_path / "hub.json")["repos"][0]["services"] == {
         "api": {"kind": "api", "endpoints": {"staging": {"resource": "orders-staging"}}}
     }
+
+
+def test_splits_service_addresses_by_environment_file(tmp_path: Path) -> None:
+    hub = _hub(tmp_path, environments={"staging": {"access": "ask"}})
+    (hub / "hub.local.json").write_text(json.dumps({"environments": {"mine": {"access": "write"}}}))
+
+    _edit(
+        hub,
+        op="add_service",
+        repo="demo-api",
+        service="api",
+        kind="api",
+        addresses=[
+            {"environment": "staging", "address": "https://staging.example.com"},
+            {"environment": "mine", "address": "http://localhost:8000"},
+        ],
+    )
+
+    assert _read(hub / "hub.json")["repos"][0]["services"] == {
+        "api": {"kind": "api", "endpoints": {"staging": {"url": "https://staging.example.com"}}}
+    }
+    assert _read(hub / "hub.local.json")["repos"] == [
+        {
+            "dir": "demo-api",
+            "services": {"api": {"endpoints": {"mine": {"url": "http://localhost:8000"}}}},
+        }
+    ]
+
+
+def test_keeps_resource_and_kind_in_local_file_when_only_own_addresses(tmp_path: Path) -> None:
+    hub = _hub(tmp_path)
+    (hub / "hub.local.json").write_text(json.dumps({"environments": {"mine": {"access": "write"}}}))
+
+    _edit(
+        hub,
+        op="add_service",
+        repo="demo-api",
+        service="orders",
+        kind="database",
+        addresses=[{"environment": "mine", "address": "orders-table"}],
+    )
+
+    assert _read(hub / "hub.local.json")["repos"][0]["services"] == {
+        "orders": {"kind": "database", "endpoints": {"mine": {"resource": "orders-table"}}}
+    }
+    assert "services" not in _read(hub / "hub.json")["repos"][0]
+
+
+def test_writes_neither_file_when_one_address_is_invalid(tmp_path: Path) -> None:
+    hub = _hub(tmp_path, environments={"staging": {"access": "ask"}})
+    (hub / "hub.local.json").write_text(json.dumps({"environments": {"mine": {"access": "write"}}}))
+    before = ((hub / "hub.json").read_bytes(), (hub / "hub.local.json").read_bytes())
+
+    with pytest.raises(HubInvalidError):
+        _edit(
+            hub,
+            op="add_service",
+            repo="demo-api",
+            service="api",
+            addresses=[
+                {"environment": "staging", "address": "https://staging.example.com"},
+                {"environment": "mine", "address": "http://user:pw@localhost"},
+            ],
+        )
+
+    assert ((hub / "hub.json").read_bytes(), (hub / "hub.local.json").read_bytes()) == before

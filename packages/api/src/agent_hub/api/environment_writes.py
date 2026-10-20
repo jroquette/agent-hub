@@ -32,6 +32,7 @@ from agent_hub.core.hub_config.environment_edits import (
     remove_endpoint,
     remove_environment,
     set_environment,
+    shown_name,
 )
 from agent_hub.core.hub_config.local_config import (
     LOCAL_FILE,
@@ -119,8 +120,34 @@ class RemoveEndpoint(_Edit):
     environment: Name | None = None
 
 
+class ServiceAddress(BaseModel):
+    """Where a service is reached in one environment: a URL (holds ``://``) or a resource name."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    environment: Name
+    address: Name
+    note: Text | None = None
+
+
+class AddService(BaseModel):
+    """A new service of a repo with its address in one or more environments, in one step.
+
+    Each address goes to the file of its environment: a team environment's to ``hub.json``, the
+    developer's own to ``hub.local.json``; both files are checked before either is written.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    op: Literal["add_service"]
+    repo: Name
+    service: Name
+    kind: Text | None = None
+    addresses: tuple[ServiceAddress, ...] = Field(min_length=1, max_length=50)
+
+
 type EnvironmentEdit = Annotated[
-    AddEnvironment | SetEnvironment | RemoveEnvironment | AddEndpoint | RemoveEndpoint,
+    AddEnvironment | SetEnvironment | RemoveEnvironment | AddEndpoint | RemoveEndpoint | AddService,
     Field(discriminator="op"),
 ]
 
@@ -145,30 +172,104 @@ class _Files:
 
 
 def write_environment_edit(hub_path: str, edit: EnvironmentEdit) -> None:
-    """Make ``edit`` in the file its scope names; ``HubInvalidError`` (422) when refused."""
+    """Make ``edit`` in the file its scope names (an ``AddService``: in the file of each
+    address's environment); ``HubInvalidError`` (422) when refused."""
     files = _Files(hub_path)
-    is_local = edit.scope == "local"
-    document = files.local_document if is_local else files.hub_document
-    edited = _apply(edit, document, files, is_local=is_local)
-    if isinstance(edited, EditRefusal):
-        raise _invalid("$", edited.message)
-    if is_local:
-        local = _checked_local(edited)
-        _check_across(files.config, local)
-        path, read = files.local_path, files.local_content
+    if isinstance(edit, AddService):
+        hub_document, local_document = _add_service(edit, files)
     else:
-        config = _checked_hub(edited)
-        _check_across(config, files.local, lead=f"{LOCAL_FILE} would no longer be valid: ")
-        path, read = files.hub_path, files.hub_content
-    content = (json.dumps(edited, indent=2, ensure_ascii=False) + "\n").encode()
-    if is_local and len(content) > LOCAL_FILE_MAX_BYTES:
-        raise _invalid("$", "the file would be too large")
-    if _read_bytes(path) != read:
-        raise _invalid("$", CHANGED_MESSAGE.format(file=path.name))
-    if is_local and not edited:
-        path.unlink(missing_ok=True)
-        return
-    _replace(path, content)
+        is_local = edit.scope == "local"
+        document = files.local_document if is_local else files.hub_document
+        edited = _apply(edit, document, files, is_local=is_local)
+        if isinstance(edited, EditRefusal):
+            raise _invalid("$", edited.message)
+        hub_document, local_document = (None, edited) if is_local else (edited, None)
+    _write(files, hub_document=hub_document, local_document=local_document)
+
+
+def _write(
+    files: _Files, *, hub_document: Document | None, local_document: Document | None
+) -> None:
+    """Check the changed documents as a read checks them, then write them, ``hub.json`` first.
+
+    Nothing is written unless both are valid and neither file changed since it was read.
+    """
+    config = files.config if hub_document is None else _checked_hub(hub_document)
+    local = files.local if local_document is None else _checked_local(local_document)
+    only_hub = local_document is None
+    _check_across(
+        config, local, lead=f"{LOCAL_FILE} would no longer be valid: " if only_hub else ""
+    )
+    writes: list[tuple[Path, bytes | None, Document]] = []
+    if hub_document is not None:
+        writes.append((files.hub_path, files.hub_content, hub_document))
+    if local_document is not None:
+        writes.append((files.local_path, files.local_content, local_document))
+    contents = []
+    for path, read, document in writes:
+        content = (json.dumps(document, indent=2, ensure_ascii=False) + "\n").encode()
+        if path == files.local_path and len(content) > LOCAL_FILE_MAX_BYTES:
+            raise _invalid("$", "the file would be too large")
+        if _read_bytes(path) != read:
+            raise _invalid("$", CHANGED_MESSAGE.format(file=path.name))
+        contents.append((path, document, content))
+    for path, document, content in contents:
+        if path == files.local_path and not document:
+            path.unlink(missing_ok=True)
+        else:
+            _replace(path, content)
+
+
+def _add_service(edit: AddService, files: _Files) -> tuple[Document | None, Document | None]:
+    """Both documents with the service's addresses, each in its environment's file; ``None``
+    for a file no address goes to."""
+    service = edit.service.strip()
+    kind = (edit.kind or "").strip() or None
+    team = [item for item in edit.addresses if item.environment in files.config.environments]
+    own = [item for item in edit.addresses if item not in team]
+    for item in own:
+        if item.environment not in files.local.environments:
+            raise _invalid("$", f"no environment {shown_name(item.environment)}")
+    committed = any(
+        repo.dir == edit.repo and service in repo.services for repo in files.config.repos
+    )
+    # The kind goes with the service's first declaration: hub.json's when it gets an address.
+    team_kind = None if committed else kind
+    own_kind = None if committed or team else kind
+    documents: list[Document | None] = []
+    for items, document, is_local, item_kind in (
+        (team, files.hub_document, False, team_kind),
+        (own, files.local_document, True, own_kind),
+    ):
+        if not items:
+            documents.append(None)
+            continue
+        edited: Document = document
+        for item in items:
+            result = add_endpoint(
+                edited,
+                repo=edit.repo,
+                service=service,
+                environment=item.environment,
+                endpoint=_endpoint(item),
+                kind=item_kind,
+                file=LOCAL_FILE if is_local else HUB_FILE,
+                creates_repo=is_local,
+                known_repos=[repo.dir for repo in files.config.repos],
+            )
+            if isinstance(result, EditRefusal):
+                raise _invalid("$", result.message)
+            edited = result
+        documents.append(edited)
+    return documents[0], documents[1]
+
+
+def _endpoint(item: ServiceAddress) -> Document:
+    address = item.address.strip()
+    endpoint: Document = {"url": address} if "://" in address else {"resource": address}
+    if item.note and item.note.strip():
+        endpoint["note"] = item.note.strip()
+    return endpoint
 
 
 def _apply(
@@ -192,6 +293,9 @@ def _apply(
                 environment=edit.environment,
                 file=file,
             )
+        case AddService():
+            # Written to both files by ``_add_service``, never through one scope.
+            return EditRefusal("a new service is added through add_service")
 
 
 def _add_environment(
