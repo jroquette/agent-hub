@@ -5,6 +5,7 @@ from typing import Annotated
 
 import typer
 
+from agent_hub.cli.action_command import action_app
 from agent_hub.cli.agent_command import PassThroughCommand, agent
 from agent_hub.cli.bench_command import bench
 from agent_hub.cli.brief_command import brief
@@ -67,3 +68,4 @@ app.command("validate-output")(validate_output)
 app.add_typer(workflow_app, name="workflow")
 app.add_typer(step_app, name="step")
 app.add_typer(env_app, name="env")
+app.add_typer(action_app, name="action")

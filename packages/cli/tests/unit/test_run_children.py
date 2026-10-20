@@ -4,10 +4,12 @@ from typing import Any
 
 import pytest
 
+import agent_hub.cli.run_children as children
 from agent_hub.cli.child_process import ChildResult
 from agent_hub.cli.run_children import RunChildren, RunOptions, push_env, session_env
 from agent_hub.cli.worktree_steps import worktree_task
 from agent_hub.core.hub_config.model import HubConfig
+from agent_hub.core.scenarios.credentials import CredentialNames
 from agent_hub.core.testing.builders import (
     a_conventions_document,
     a_hub_document,
@@ -351,3 +353,20 @@ def test_sets_given_step_when_session_env_built_for_workflow_node() -> None:
     env = session_env({}, repo="", issue_id="", run_id="1a2b3c4d", attempt=3, step="lint__fix")
 
     assert (env["AGENT_HUB_STEP"], env["AGENT_HUB_ATTEMPT"]) == ("lint__fix", "3")
+
+
+def test_drops_declared_credentials_when_untrusted_env_given_names() -> None:
+    secret = "x-" + "secret" + "-y"
+    environ = {"PATH": "/bin", "DEMO_DB_URL": secret, "AWS_PROFILE": "demo-staging"}
+    names = CredentialNames(
+        env=frozenset({"DEMO_DB_URL"}), aws_profiles=frozenset({"demo-staging"})
+    )
+
+    untrusted = children.untrusted_env(environ, hidden=names)
+    session = session_env(environ, repo="", issue_id="", run_id="1a2b3c4d", hidden=names)
+
+    for env in (untrusted, session):
+        assert "DEMO_DB_URL" not in env
+        assert "AWS_PROFILE" not in env
+        assert env["PATH"] == "/bin"
+    assert children.untrusted_env(environ)["DEMO_DB_URL"] == secret

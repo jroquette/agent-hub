@@ -54,11 +54,12 @@ from typer._click.exceptions import ClickException
 
 from agent_hub.cli.collect import hub_project_name
 from agent_hub.cli.command_exits import FAILURE, fail
+from agent_hub.cli.effective_config import EffectiveConfig, effective_or_problems
 from agent_hub.cli.errors import RunLogError
-from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
-from agent_hub.cli.hub_root import hub_checkout, hub_root_or_exit
+from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit, local_lines
+from agent_hub.cli.hub_root import hub_checkout, hub_root_or_exit, local_home
 from agent_hub.cli.init_report import shown_path, shown_text
-from agent_hub.cli.run_children import CHILD_HIDDEN, shown_command, without
+from agent_hub.cli.run_children import CHILD_HIDDEN, SESSION_HIDDEN, shown_command, without
 from agent_hub.cli.run_log import new_run_id, now, open_default_event_store
 from agent_hub.cli.workflow_checkout import GitCheckoutProbe
 from agent_hub.cli.workflow_delivery import (
@@ -100,9 +101,11 @@ from agent_hub.core.approvals.decide_gate import (
     GateDecisionError,
     RequestedGate,
 )
+from agent_hub.core.hub_config.effective_environments import effective_environments
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.json_form import JsonValue
+from agent_hub.core.scenarios.credentials import CredentialNames
 from agent_hub.core.workflows.catalog import (
     LoadProblem,
     WorkflowCatalog,
@@ -514,8 +517,21 @@ def _executors(
         pack_root=pack,
         environ=os.environ,
         hub_program=own_hub_program(),
+        hidden=credential_names(hub, config),
         **({} if parent is None else parent.executor_options()),
     )
+
+
+def credential_names(hub: Path, config: HubConfig) -> CredentialNames:
+    """The credential names ``hub.json`` and the developer's ``hub.local.json`` declare, which no
+    node's child gets; exit 1 with the local file's lines when it is unusable (the names it may
+    declare cannot be known)."""
+    # No token reaches git, which only looks for the main checkout.
+    home = local_home(hub, environ=without(os.environ, SESSION_HIDDEN))
+    loaded = effective_or_problems(config, home=home)
+    if not isinstance(loaded, EffectiveConfig):
+        fail(*local_lines(loaded))
+    return CredentialNames.of(effective_environments(loaded.config, loaded.local))
 
 
 def _begin(

@@ -20,7 +20,7 @@ The packs are the hub owner's own files.
 
 import hashlib
 import os
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
@@ -73,10 +73,13 @@ class ActionProblem:
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ActionDiscovery:
-    """The actions that loaded, by pack then name, and the problems found."""
+    """The actions that loaded, by pack then name, and the problems found; ``files`` holds,
+    by document path, each action's files as read (its document, script and pack helpers, the
+    content its hash pins): exactly what its process gets (E-4)."""
 
     actions: tuple[ActionEntry, ...]
     problems: tuple[ActionProblem, ...]
+    files: Mapping[str, tuple[tuple[str, bytes], ...]] = field(default_factory=dict)
 
 
 def discover_actions(hub_root: Path) -> ActionDiscovery:
@@ -92,7 +95,7 @@ def discover_actions(hub_root: Path) -> ActionDiscovery:
         entry.model_copy(update={"draft": _is_draft(scan.files[entry.document_path], committed)})
         for entry in scan.found
     )
-    return ActionDiscovery(actions=actions, problems=tuple(scan.problems))
+    return ActionDiscovery(actions=actions, problems=tuple(scan.problems), files=dict(scan.files))
 
 
 def _committed_blobs(hub_root: Path) -> _CommittedBlobs | None:

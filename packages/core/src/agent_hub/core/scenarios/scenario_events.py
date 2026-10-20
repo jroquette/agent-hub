@@ -1,5 +1,11 @@
 """A scenario run's own events (docs/design/scenarios.md § Events and bounds): metadata only.
 
+Each action call is a ``policy.decision`` (every decision, a deny too) and, when it runs,
+``action.start`` and ``action.end``, built from its ``ActionFacts``: names, its pinned hash, its
+effect, origin, decision and approver; never an arg, an output or a credential. A standalone
+``hub action run`` has no run: its events carry the session ``action:<uuid>``, no ``run`` key
+and no ``workflow``.
+
 ``ScenarioEvents`` is the engine's ``RunTrace`` for a scenario run: each ``expect`` poll is an
 ``expect.poll`` (``poll`` count, ``held``), each ``capture:`` value a ``context.capture``
 (``name``). Source ``executor``, session ``run:<run>``, ``workflow`` the run's label
@@ -10,19 +16,86 @@
 
 from datetime import datetime
 
+from pydantic import BaseModel, ConfigDict
+
 from agent_hub.core.events.event import Event, EventSource, EventType
 from agent_hub.core.json_form import JsonValue
+from agent_hub.core.scenarios.access_policy import Decision, Effect, Origin, ReasonKind
 from agent_hub.core.workflows.ports import ContextCapture, ExpectPoll
 
 
+class ActionFacts(BaseModel):
+    """What the events of one action call say: ``step`` is the node id as recorded (a
+    standalone call's action reference), ``services`` the ``<repo>/<service>`` names its
+    ``service`` inputs resolved to, ``approver`` who answered an ask."""
+
+    model_config = ConfigDict(frozen=True)
+
+    step: str
+    attempt: int
+    action: str
+    content_hash: str
+    environment: str
+    services: tuple[str, ...]
+    effect: Effect
+    origin: Origin
+    decision: Decision
+    approver: str | None = None
+
+    def decided(self) -> dict[str, JsonValue]:
+        return {
+            "action": self.action,
+            "environment": self.environment,
+            "effect": self.effect,
+            "origin": self.origin,
+            "decision": self.decision,
+        }
+
+    def called(self) -> dict[str, JsonValue]:
+        called: dict[str, JsonValue] = {
+            **self.decided(),
+            "content_hash": self.content_hash,
+            "service": list(self.services),
+        }
+        return called if self.approver is None else {**called, "approver": self.approver}
+
+
 class ScenarioEvents:
-    """The polls and captures of one scenario run, as events, in the order they came."""
+    """The events of one scenario run (or one standalone action call: ``run_id`` ``None`` and
+    its own ``session``), in the order they came."""
 
     def __init__(
-        self, *, project: str, run_id: str, workflow: str, repo: str | None = None
+        self,
+        *,
+        project: str,
+        run_id: str | None,
+        workflow: str | None,
+        repo: str | None = None,
+        session: str | None = None,
     ) -> None:
         self.project, self.run_id, self.workflow, self.repo = project, run_id, workflow, repo
+        self.session = session if session is not None else f"run:{run_id}"
         self.events: list[Event] = []
+
+    def policy_decided(self, facts: ActionFacts, *, reason_kind: ReasonKind, at: datetime) -> None:
+        payload = {**facts.decided(), "reason_kind": reason_kind}
+        self._add(
+            EventType.POLICY_DECISION, facts.step, facts.attempt, item="", at=at, payload=payload
+        )
+
+    def action_started(self, facts: ActionFacts, *, at: datetime) -> None:
+        payload = facts.called()
+        self._add(
+            EventType.ACTION_START, facts.step, facts.attempt, item="", at=at, payload=payload
+        )
+
+    def action_ended(
+        self, facts: ActionFacts, *, status: str, failure_kind: str | None, at: datetime
+    ) -> None:
+        payload: dict[str, JsonValue] = {**facts.called(), "status": status}
+        if failure_kind is not None:
+            payload["failure_kind"] = failure_kind
+        self._add(EventType.ACTION_END, facts.step, facts.attempt, item="", at=at, payload=payload)
 
     def expect_polled(self, poll: ExpectPoll) -> None:
         payload: dict[str, JsonValue] = {"poll": poll.poll, "held": poll.held}
@@ -56,15 +129,17 @@ class ScenarioEvents:
         at: datetime,
         payload: dict[str, JsonValue],
     ) -> None:
+        run: dict[str, JsonValue] = {} if self.run_id is None else {"run": self.run_id}
+        origin = self.run_id if self.run_id is not None else self.session
         self.events.append(
             Event(
                 project=self.project,
-                session=f"run:{self.run_id}",
+                session=self.session,
                 type=kind,
                 timestamp=at,
                 source=EventSource.EXECUTOR,
-                source_id=f"{self.run_id}:{step}:{attempt}:{kind}:{item}",
-                payload={"run": self.run_id, "attempt": attempt, **payload},
+                source_id=f"{origin}:{step}:{attempt}:{kind}:{item}",
+                payload={**run, "attempt": attempt, **payload},
                 repo=self.repo,
                 workflow=self.workflow,
                 step=step,
