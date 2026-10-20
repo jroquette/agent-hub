@@ -363,7 +363,7 @@ def _input_texts(include: IncludeNode, block: _Block, parent: _Parent) -> dict[s
             continue
         value: JsonValue = include.with_[name]
         if isinstance(value, str):
-            _check_with_refs(("with", name), value)
+            _check_with_refs(("with", name), value, scenario=parent.scenario)
             texts[name] = parent.text(("with", name), value)
         else:
             texts[name] = _literal(value)
@@ -375,9 +375,9 @@ def _literal(value: JsonValue) -> str:
     return canonical_text(value).replace("$", "$$")
 
 
-def _check_with_refs(loc: Loc, value: str) -> None:
+def _check_with_refs(loc: Loc, value: str, *, scenario: bool) -> None:
     try:
-        refs = find_refs(value)
+        refs = find_refs(value, scenario=scenario)
     except SubstitutionError as error:
         raise RewriteError(loc, str(error)) from None
     if any(not isinstance(ref, InputRef | NodeRef) for ref in refs):
