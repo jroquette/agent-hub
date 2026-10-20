@@ -307,6 +307,24 @@ def test_waits_on_one_ac_in_singular_when_one_owner_step_unsigned() -> None:
     assert acceptance.reason == "1 AC waits on owner steps (SHIP-WITH-OWNER-STEPS)"
 
 
+# two-level-flows A11 (AGH-325 R4-F6): reopened ACs need a new evaluation, not a sign-off.
+@pytest.mark.parametrize(
+    ("reopened", "meta"),
+    [(2, "2 ACs reopened · evaluate again"), (1, "1 AC reopened · evaluate again")],
+)
+def test_asks_for_new_evaluation_in_acceptance_when_waiting_acs_reopened(
+    reopened: int, meta: str
+) -> None:
+    gate = EvalGate(
+        evals=2, covered=4, owner_steps=3, reopened=reopened, acceptance="SHIP-WITH-OWNER-STEPS"
+    )
+
+    acceptance = _step(golden_path(_all_done(coverage=gate)), "acceptance")
+
+    assert (acceptance.state, acceptance.meta) == ("current", meta)
+    assert not acceptance.meta.startswith("Waiting on you")
+
+
 def test_never_marks_acceptance_done_when_only_ticket_evals_cover_every_ac() -> None:
     gate = EvalGate(evals=4, covered=6)
 

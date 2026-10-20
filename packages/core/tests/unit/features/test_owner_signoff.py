@@ -10,6 +10,7 @@ from agent_hub.core.features.feature_record import record_from_bytes
 from agent_hub.core.features.feature_status import FeatureFolder, RecordHead, feature_parts
 from agent_hub.core.features.feature_view import GoldenStep
 from agent_hub.core.features.owner_signoff import (
+    OwnerDecision,
     OwnerSignOffError,
     SignOffOwnerSteps,
     signoff_name,
@@ -382,9 +383,14 @@ def test_refuses_more_work_when_no_eval_named() -> None:
 
 
 # AGH-325 x AGH-384: settling the acceptance eval itself is the whole-feature sign-off (A9).
+# A later agent ticket SHIP of T1 leaves AC-7.1 out of the scoped path's owner steps, while the
+# Acceptance step still waits on it (only an owner SHIP signs one off): the A9 routing shows.
+LATER_TICKET_SHIP = a_head("acme-1520", "SHIP", scope="tickets: [T1]", at="2026-10-11")
+
+
 def test_signs_off_what_acceptance_waits_on_when_acceptance_eval_named() -> None:
     whole = a_head("feature", "SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-10-10")
-    sign_off, writer = a_sign_off_of(a_planned_folder(whole))
+    sign_off, writer = a_sign_off_of(a_planned_folder(whole, LATER_TICKET_SHIP))
 
     written = sign_off("demo", SLUG, delivery="feature", note="Done by hand.")
 
@@ -412,11 +418,84 @@ def test_refuses_naming_reopened_acs_when_acceptance_eval_named() -> None:
 
 def test_reopens_what_acceptance_waits_on_when_more_work_on_acceptance_eval() -> None:
     whole = a_head("feature", "SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-10-10")
-    sign_off, _ = a_sign_off_of(a_planned_folder(whole))
+    sign_off, _ = a_sign_off_of(a_planned_folder(whole, LATER_TICKET_SHIP))
 
     written = sign_off("demo", SLUG, delivery="feature", decision="more_work")
 
     assert (written.verdict, written.acs) == ("NO-SHIP", ("AC-7.1", "AC-7.2", "AC-7.3"))
+
+
+# A11: "more work" is not refused over ACs an agent's eval already reopened.
+def test_reopens_every_waiting_ac_when_more_work_follows_agent_no_ship() -> None:
+    whole = a_head("feature", "SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-10-10")
+    reopened = a_head("acme-1521", "NO-SHIP", scope="acs: [AC-7.2]", at="2026-10-11")
+    sign_off, writer = a_sign_off_of(a_planned_folder(whole, reopened))
+
+    written = sign_off("demo", SLUG, delivery="feature", decision="more_work")
+
+    assert (written.verdict, written.acs) == ("NO-SHIP", ("AC-7.1", "AC-7.2", "AC-7.3"))
+    assert "acs: [AC-7.1, AC-7.2, AC-7.3]\n" in writer.written["owner-signoff.md"]
+
+
+def a_later_sign_off(folder: FeatureFolder, *, day: int = 18) -> tuple[SignOffOwnerSteps, Writer]:
+    writer = Writer()
+    later = datetime(2026, 10, day, 12, 0, tzinfo=UTC)
+    return SignOffOwnerSteps(Hubs(), Folders(folder), writer, clock=lambda: later), writer
+
+
+# A11: once an owner decision newer than the acceptance eval settled it, either decision on the
+# acceptance eval is refused, writing nothing (the same request twice writes once).
+@pytest.mark.parametrize("first", ["done", "more_work"])
+@pytest.mark.parametrize("second", ["done", "more_work"])
+def test_refuses_writing_nothing_when_owner_already_settled_acceptance_eval(
+    first: OwnerDecision, second: OwnerDecision
+) -> None:
+    whole = a_head("feature", "SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-10-10")
+    folder = a_planned_folder(whole)
+    sign_off, writer = a_sign_off_of(folder)
+    sign_off("demo", SLUG, delivery="feature", decision=first)
+    again, rewriter = a_later_sign_off(signed(folder, writer))
+
+    with pytest.raises(OwnerSignOffError) as refused:
+        again("demo", SLUG, delivery="feature", decision=second)
+
+    assert refused.value.reason.startswith("the owner already settled feature")
+    assert rewriter.written == {}
+
+
+def test_signs_off_again_when_agent_evaluated_after_owner_more_work() -> None:
+    whole = a_head("feature", "SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-10-10")
+    folder = a_planned_folder(whole)
+    sign_off, writer = a_sign_off_of(folder)
+    sign_off("demo", SLUG, delivery="feature", decision="more_work")
+    redone = a_head("acme-1522", "SHIP", scope="acs: [AC-7.1, AC-7.2, AC-7.3]", at="2026-10-18")
+    reevaluated = signed(folder, writer)
+    again, rewriter = a_later_sign_off(
+        FeatureFolder(
+            slug=SLUG,
+            files=reevaluated.files,
+            features_json=PLANNED,
+            evals=(*reevaluated.evals, redone),
+        ),
+        day=19,
+    )
+
+    written = again("demo", SLUG, delivery="feature")
+
+    assert (written.verdict, written.acs) == ("SHIP", ("AC-7.1", "AC-7.2", "AC-7.3"))
+    assert list(rewriter.written) == ["owner-signoff-r2.md"]
+
+
+# A11: while an owner's NO-SHIP reopened ACs, Acceptance asks for a new evaluation, not a sign-off.
+def test_reads_reopened_in_acceptance_when_owner_more_work_on_acceptance_eval() -> None:
+    whole = a_head("feature", "SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-10-10")
+    folder = a_planned_folder(whole)
+    sign_off, writer = a_sign_off_of(folder)
+    sign_off("demo", SLUG, delivery="feature", decision="more_work")
+
+    acceptance = acceptance_of(signed(folder, writer))
+
+    assert (acceptance.state, acceptance.meta) == ("current", "3 ACs reopened · evaluate again")
 
 
 def test_signs_off_only_the_rest_when_a_ticket_eval_was_settled() -> None:
