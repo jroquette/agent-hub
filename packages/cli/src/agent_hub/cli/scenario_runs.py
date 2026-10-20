@@ -17,7 +17,9 @@ the snapshot alone: the document with a ``<step>__ask`` approval before each gat
 an action edited during the run changes neither what runs nor its hash, and a resume takes up
 the gates as recorded.
 
-``ScenarioExecutors`` is the engine's ``NodeRunner``: an ``action`` or ``expect`` call decides
+``ScenarioExecutors`` is the engine's ``NodeRunner``. Each ``action`` or ``expect`` call first
+writes an ``action_start`` line (before any process: an expect's polls are counted from these
+on resume, failed ones too, E-7). Then the call decides
 the policy again (the effective config as it is now; origin ``author``): a ``deny``, or an
 ``ask`` the run has no gate for (the config tightened since the start), fails the step
 ``config`` before any process. It then resolves the call (each ``service`` input to its
@@ -27,17 +29,29 @@ is a ``policy.decision`` and, when it runs, ``action.start`` and ``action.end`` 
 approved its gate), metadata only, and one ``action`` line in the record with its inputs. The
 engine's trace (each ``expect`` poll, each ``capture:`` value) goes to the record
 (``expect.poll``, ``context.capture``, with the output or value) and to the events (metadata
-only). ``prior_state`` counts the ``expect.poll`` lines on resume (E-7).
+only). Each action runs in a process group of its own; an interrupted layer kills those groups
+too (``stop_children``), and no action starts after it.
+
+A write or destroy step whose call started and whose step never ended (the hub died while it
+ran) may have run: its resume asks again, through a ``<step>__ask`` gate whose message says so
+(the earlier answer is not reused), whether or not the step had a gate before. A read step
+simply runs again.
+
+The run's folder is removed when anything fails before its start record is written; the
+snapshot keeps the includes the plan resolved, not a second read.
 
 Only ``regression`` mode runs here: no agent starts, and a divergence (a failed action, an
 ``expect`` timeout, an output contract failure) fails the scenario run, printing ``step <id>:
 <kind>: <detail>``; a policy ask or an ``approval`` still pauses it.
 """
 
+import contextlib
+import dataclasses
 import json
 import os
 import random
 import shutil
+import signal
 import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -54,6 +68,7 @@ from agent_hub.cli.init_report import shown_text
 from agent_hub.cli.workflow_command import own_hub_program
 from agent_hub.cli.workflow_executors import WorkflowExecutors
 from agent_hub.cli.workflow_runs import (
+    ACTION_START,
     DOCUMENT,
     EXPECT_POLL,
     SNAPSHOT,
@@ -102,6 +117,7 @@ from agent_hub.core.workflows.failures import NodeFailedError
 from agent_hub.core.workflows.nodes import ActionNode, ExpectNode
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
 from agent_hub.core.workflows.ports import ContextCapture, ExpectPoll, NodeCall, NodeReply
+from agent_hub.core.workflows.run_state import RunState
 from agent_hub.generator.action_discovery import ActionDiscovery, discover_actions
 from agent_hub.generator.scenario_discovery import discover_scenarios
 from agent_hub.generator.workflow_discovery import DiscoveredWorkflow, pack_resolver
@@ -138,6 +154,26 @@ class ScenarioStart:
     actions: ActionDiscovery
     inputs: dict[str, JsonValue]
     mode: str
+    # Each scenario the plan included, as resolved while planning: the snapshot keeps them.
+    included: Mapping[str, WorkflowMapping]
+
+
+def load_scenario(
+    hub: Path, name: str
+) -> tuple[WorkflowPlan, DiscoveredWorkflow, dict[str, WorkflowMapping]] | None:
+    """The scenario ``name`` planned from one read of ``scenarios/``, with the includes that
+    plan resolved (what a scenario run snapshots); ``None`` when there is no such scenario."""
+    discovery = discover_scenarios(hub)
+    found = next((item for item in discovery.workflows if item.name == name), None)
+    if found is None:
+        return None
+    included: dict[str, WorkflowMapping] = {}
+    resolver = pack_resolver(discovery, found.pack_root, used=included)
+    try:
+        plan = plan_workflow(parse_workflow(found.document), includes=resolver)
+    except WorkflowLoadError as error:
+        raise WorkflowRunError(f"cannot plan the scenario {name}: {error}") from None
+    return plan, found, included
 
 
 def start(hub: Path, run_id: str, begin: ScenarioStart) -> int:
@@ -145,32 +181,41 @@ def start(hub: Path, run_id: str, begin: ScenarioStart) -> int:
     code (0 done or paused, 1 otherwise). A snapshot that cannot be written leaves no run."""
     folder = run_folder(hub, run_id)
     make_run(folder)
-    with run_lock(folder):
-        try:
-            content_hash = _snapshot(hub, folder, begin)
-        except WorkflowRunError:
+    begun = False
+    try:
+        with run_lock(folder):
+            header = _begin(folder, begin)
+            begun = True
+            inputs: dict[str, JsonValue] = {"event": "inputs", "inputs": begin.inputs}
+            append_record(folder, inputs)
+            return execute(hub, folder, [header, inputs], resumed=False)
+    except BaseException:
+        if not begun:
             # Nothing ran: a half-made run is not left to resume.
             shutil.rmtree(folder, ignore_errors=True)
-            raise
-        planned, document = begin.planned, begin.plan.document
-        header: dict[str, JsonValue] = {
-            "event": "start",
-            "run": run_id,
-            "workflow": scenario_label(document.name),
-            "kind": KIND,
-            "scenario": document.name,
-            "pack": begin.found.pack,
-            "revision": document.revision,
-            "content_hash": content_hash,
-            "environment": planned.environment,
-            "mode": begin.mode,
-            "actions": {row.action: row.content_hash for row in planned.rows},
-            "policy_gates": list[JsonValue](sorted(_asks(planned))),
-        }
-        append_record(folder, header)
-        inputs: dict[str, JsonValue] = {"event": "inputs", "inputs": begin.inputs}
-        append_record(folder, inputs)
-        return execute(hub, folder, [header, inputs], resumed=False)
+        raise
+
+
+def _begin(folder: Path, begin: ScenarioStart) -> dict[str, JsonValue]:
+    """Write the snapshot, then the start record; the start record."""
+    content_hash = _snapshot(folder, begin)
+    planned, document = begin.planned, begin.plan.document
+    header: dict[str, JsonValue] = {
+        "event": "start",
+        "run": folder.name,
+        "workflow": scenario_label(document.name),
+        "kind": KIND,
+        "scenario": document.name,
+        "pack": begin.found.pack,
+        "revision": document.revision,
+        "content_hash": content_hash,
+        "environment": planned.environment,
+        "mode": begin.mode,
+        "actions": {row.action: row.content_hash for row in planned.rows},
+        "policy_gates": list[JsonValue](sorted(_asks(planned))),
+    }
+    append_record(folder, header)
+    return header
 
 
 def resume(hub: Path, folder: Path, records: list[dict[str, JsonValue]]) -> int:
@@ -183,7 +228,9 @@ def resume(hub: Path, folder: Path, records: list[dict[str, JsonValue]]) -> int:
 def execute(hub: Path, folder: Path, records: list[dict[str, JsonValue]], *, resumed: bool) -> int:
     """Run the scenario run in ``folder`` on the engine, as its snapshot pins it."""
     header, snapshot = records[0], folder / SNAPSHOT
-    plan, asks = _gated(snapshot)
+    environment = str(header.get("environment"))
+    again = _unfinished_writes(records, environment) if resumed else {}
+    plan, asks = _gated(snapshot, again)
     effective = load_effective_config_or_exit(hub)
     view = effective_environments(effective.config, effective.local)
     hidden = CredentialNames.of(view)
@@ -214,7 +261,7 @@ def execute(hub: Path, folder: Path, records: list[dict[str, JsonValue]], *, res
     )
     runner = ScenarioExecutors(
         hub=hub,
-        environment=str(header.get("environment")),
+        environment=environment,
         view=view,
         roots=(hub.name, *(repo.dir for repo in effective.config.repos)),
         pack=str(header.get("pack")),
@@ -223,6 +270,7 @@ def execute(hub: Path, folder: Path, records: list[dict[str, JsonValue]], *, res
         approvers=_approvers(records),
         log=log,
         inner=inner,
+        environ=os.environ,
     )
     ports = EnginePorts(
         runner,
@@ -232,7 +280,7 @@ def execute(hub: Path, folder: Path, records: list[dict[str, JsonValue]], *, res
         _JITTER.random,
         None,
         max_parallel=inner.max_parallel,
-        interrupt=inner.stop_children,
+        interrupt=runner.stop_children,
         gates=RecordedAnswers(records),
         trace=log,
     )
@@ -241,7 +289,7 @@ def execute(hub: Path, folder: Path, records: list[dict[str, JsonValue]], *, res
         plan,
         inputs if isinstance(inputs, dict) else {},
         ports,
-        prior=prior_state(records) if resumed else None,
+        prior=_prior(records, again) if resumed else None,
     )
     append_record(folder, {"event": "sessions", "sessions": dict(report.state.sessions)})
     if report.status == "paused":
@@ -278,7 +326,7 @@ def _asks(planned: ScenarioPlan) -> dict[str, PolicyAsk]:
     }
 
 
-def _snapshot(hub: Path, folder: Path, begin: ScenarioStart) -> str:
+def _snapshot(folder: Path, begin: ScenarioStart) -> str:
     """Write the snapshot (document, includes, gates and the pinned action files); its hash."""
     used = {row.action for row in begin.planned.rows}
     pinned: dict[str, bytes] = {}
@@ -295,25 +343,57 @@ def _snapshot(hub: Path, folder: Path, begin: ScenarioStart) -> str:
         document=dict(begin.found.document),
         plan=begin.plan,
         pack_root=begin.found.pack_root,
-        includes=_included(hub, begin.found),
+        includes=dict(begin.included),
         pinned=pinned,
     )
     return content_hash
 
 
-def _included(hub: Path, found: DiscoveredWorkflow) -> dict[str, WorkflowMapping]:
-    """Each scenario ``found`` includes, as read: the snapshot keeps them for a resume."""
-    included: dict[str, WorkflowMapping] = {}
-    resolver = pack_resolver(discover_scenarios(hub), found.pack_root, used=included)
-    plan_workflow(parse_workflow(found.document), includes=resolver)
-    return included
+def _unfinished_writes(
+    records: list[dict[str, JsonValue]], environment: str
+) -> dict[str, PolicyAsk]:
+    """Each write or destroy step whose action call started (``action_start``) and whose step
+    never ended at that attempt or later: the call may have run, so it is asked again."""
+    ended: dict[str, int] = {}
+    started: dict[str, tuple[int, PolicyAsk]] = {}
+    for record in records:
+        node, attempt = record.get("node"), record.get("attempt")
+        if not isinstance(node, str) or not isinstance(attempt, int):
+            continue
+        if record.get("event") == "step_end":
+            ended[node] = max(ended.get(node, 0), attempt)
+        effect = next((item for item in _EFFECTS if item == record.get("effect")), None)
+        if record.get("event") == ACTION_START and effect not in (None, "read"):
+            action = str(record.get("action"))
+            again = PolicyAsk(action=action, effect=effect or "write", environment=environment)
+            started[node] = (attempt, again)
+    return {
+        node: PolicyAsk(
+            action=ask.action, effect=ask.effect, environment=ask.environment, again=True
+        )
+        for node, (attempt, ask) in started.items()
+        if ended.get(node, 0) < attempt
+    }
 
 
-def _gated(snapshot: Path) -> tuple[WorkflowPlan, dict[str, PolicyAsk]]:
-    """The run's plan from its snapshot, a gate before each step ``policy_gates.json`` names."""
+def _prior(records: list[dict[str, JsonValue]], again: Mapping[str, PolicyAsk]) -> RunState:
+    """The run's state for a resume, without the answer of each gate asked ``again``."""
+    prior = prior_state(records)
+    if not again:
+        return prior
+    dropped = {ask_gate(step) for step in again}
+    nodes = {node: result for node, result in prior.nodes.items() if node not in dropped}
+    return dataclasses.replace(prior, nodes=nodes)
+
+
+def _gated(
+    snapshot: Path, again: Mapping[str, PolicyAsk]
+) -> tuple[WorkflowPlan, dict[str, PolicyAsk]]:
+    """The run's plan from its snapshot, a gate before each step ``policy_gates.json`` names
+    and before each step asked ``again``."""
     try:
         document = parse_workflow(json.loads((snapshot / DOCUMENT).read_bytes()))
-        asks = _read_asks(json.loads((snapshot / GATES).read_bytes()))
+        asks = _read_asks(json.loads((snapshot / GATES).read_bytes())) | dict(again)
         includes = snapshot_includes(snapshot)
         return gated_plan(document, includes=includes, asks=asks), asks
     except (OSError, ValueError, WorkflowLoadError, PolicyGateError) as error:
@@ -397,6 +477,16 @@ class ScenarioLog:
             self.events.context_captured(capture)
             self.sink.flush(self.events)
 
+    def begun(self, call: NodeCall, entry: ActionEntry | None) -> None:
+        """The call's ``action_start`` line, before anything else of it: one per call (an
+        expect's polls are counted from them) and the mark of a call that may have run."""
+        line: dict[str, JsonValue] = {"event": ACTION_START, "node": call.node.id}
+        line |= {"attempt": call.attempt, "poll": call.poll}
+        if entry is not None:
+            line |= {"action": entry.ref, "effect": entry.document.effect}
+        with self.lock:
+            append_record(self.folder, line)
+
     def decided(self, facts: ActionFacts, decision: PolicyDecision, *, poll: int) -> None:
         with self.lock:
             now = SystemClock().now()
@@ -453,13 +543,27 @@ class ScenarioExecutors:
     approvers: Mapping[str, str]
     log: ScenarioLog
     inner: WorkflowExecutors
-    environ: Mapping[str, str] = field(default_factory=lambda: os.environ)
+    environ: Mapping[str, str]
+    # The process groups of the actions running now: ``stop_children`` kills them.
+    running: set[int] = field(default_factory=set)
+    # Set by ``stop_children``: no action starts after it, and one starting as it lands is killed.
+    stop: threading.Event = field(default_factory=threading.Event)
+
+    def stop_children(self) -> None:
+        """Kill every running action's group and the other children (an interrupted layer)."""
+        self.stop.set()
+        for group in list(self.running):
+            _kill(group)
+        self.inner.stop_children()
 
     def run(self, call: NodeCall) -> NodeReply:
         node = call.node
         if not isinstance(node, ActionNode | ExpectNode):
             raise NodeFailedError("config", f"{node.type} nodes do not run in a scenario run")
         entry = self._entry(node)
+        self.log.begun(call, entry)
+        if entry is None:
+            raise NodeFailedError("config", f"the scenario run pinned no action {node.action}")
         declared = find_environment(self.view, self.environment)
         decision = decide(declared, entry.document.effect, "author")
         facts = ActionFacts(
@@ -488,13 +592,17 @@ class ScenarioExecutors:
     def until_exit(self, argv: Sequence[str], call: NodeCall) -> int:
         return self.inner.until_exit(argv, call)
 
-    def _entry(self, node: ActionNode | ExpectNode) -> ActionEntry:
+    def _entry(self, node: ActionNode | ExpectNode) -> ActionEntry | None:
         try:
             return resolve_action(self.pinned.entries, node.action, pack=self.pack)
-        except ActionRefError as error:
-            raise NodeFailedError(
-                "config", f"the scenario run pinned no such action: {error}"
-            ) from None
+        except ActionRefError:
+            return None
+
+    def _started(self, group: int) -> None:
+        self.running.add(group)
+        if self.stop.is_set():
+            # The stop came between the check before the start and this start.
+            _kill(group)
 
     def _checked(
         self, entry: ActionEntry, decision: PolicyDecision, line: CallLine
@@ -542,14 +650,26 @@ class ScenarioExecutors:
         )
         self.log.started(facts, poll=line.poll)
         declared = find_environment(self.view, self.environment)
+        groups: list[int] = []
+
+        def started(group: int) -> None:
+            groups.append(group)
+            self._started(group)
+
         try:
             injected = (
                 {}
                 if declared is None
                 else call_credentials(
-                    self.hub, declared, endpoints=planned.endpoints, roots=self.roots
+                    self.hub,
+                    declared,
+                    endpoints=planned.endpoints,
+                    roots=self.roots,
+                    environ=self.environ,
                 )
             )
+            if self.stop.is_set():
+                raise NodeFailedError("cancelled", "the scenario run was interrupted")
             output = run_action(
                 ActionCall(
                     entry=entry,
@@ -560,9 +680,17 @@ class ScenarioExecutors:
                 environ=self.environ,
                 hidden=CredentialNames.of(self.view),
                 credentials=injected,
+                on_start=started,
             )
         except NodeFailedError as error:
             self.log.ended(line, status="failed", failure_kind=error.kind)
             raise
+        finally:
+            self.running.difference_update(groups)
         self.log.ended(line, status="ok", failure_kind=None)
         return NodeReply(json.dumps(output))
+
+
+def _kill(group: int) -> None:
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(group, signal.SIGKILL)

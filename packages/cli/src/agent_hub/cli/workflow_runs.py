@@ -70,8 +70,10 @@ DOCUMENT: Final = "workflow.json"
 INCLUDES: Final = "includes"
 INCLUDE_NAME: Final = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
 RECORDS: Final = "records.jsonl"
-# A scenario run's poll line (``scenario_runs``): ``prior_state`` counts them.
+# A scenario run's lines (``scenario_runs``): a poll that held, and each action call, written
+# before its process starts; ``prior_state`` counts an expect's polls from the calls.
 EXPECT_POLL: Final = "expect.poll"
+ACTION_START: Final = "action_start"
 LOCK: Final = "lock"
 MAX_SNAPSHOT_FILE_BYTES: Final = 1 << 20
 MAX_RECORDS_BYTES: Final = 64 << 20
@@ -284,7 +286,7 @@ def append_record(folder: Path, record: Record) -> None:
 def prior_state(records: list[Record]) -> RunState:
     """The state a run left: each node's last result (a reuse keeps the one reused), the last
     attempt of each node, the sessions it recorded last, the gates no step end closed, and each
-    expect node's polls (one ``expect.poll`` line each), so its bound spans retries and resumes."""
+    expect node's polls (``_polls``), so its bound spans retries and resumes."""
     nodes: dict[str, NodeResult] = {}
     attempts: dict[str, int] = {}
     sessions: dict[str, str] = {}
@@ -312,11 +314,13 @@ def prior_state(records: list[Record]) -> RunState:
 
 
 def _polls(records: list[Record]) -> dict[str, int]:
-    """Each expect node's polls in the run: one ``expect.poll`` line each."""
+    """Each expect node's polls in the run: one ``action_start`` line with a ``poll`` each,
+    written before the call, so a poll whose action failed or never ended counts too."""
     polls: dict[str, int] = {}
     for record in records:
-        node = record.get("node")
-        if record.get("event") == EXPECT_POLL and isinstance(node, str):
+        node, poll = record.get("node"), record.get("poll")
+        polled = isinstance(poll, int) and poll > 0
+        if record.get("event") == ACTION_START and isinstance(node, str) and polled:
             polls[node] = polls.get(node, 0) + 1
     return polls
 

@@ -39,21 +39,29 @@ def test_refuses_node_when_snapshot_meets_unknown_type(
 
 
 def test_restores_polls_when_expect_poll_recorded() -> None:
+    def started(node: str, attempt: int, poll: int) -> dict[str, JsonValue]:
+        return {"event": "action_start", "node": node, "attempt": attempt, "poll": poll}
+
     def polled(attempt: int, poll: int) -> dict[str, JsonValue]:
         return {"event": "expect.poll", "node": "wait", "attempt": attempt, "poll": poll}
 
     records: list[dict[str, JsonValue]] = [
         {"event": "start", "run": "walk-1"},
+        started("send", 1, 0),
+        started("wait", 1, 1),
         polled(1, 1),
-        polled(1, 2),
+        # A poll whose action failed: no expect.poll line, but the poll was taken.
+        started("wait", 1, 2),
         {"event": "step_end", "node": "wait", "attempt": 1, "status": "failed"},
         {"event": "resume"},
+        started("wait", 2, 1),
         polled(2, 1),
-        {"event": "expect.poll", "node": "other", "attempt": 1, "poll": 1},
+        started("other", 1, 1),
     ]
 
     state = workflow_runs.prior_state(records)
 
-    # The 1000-poll bound counts every poll of a node in the run, retries and resumes too (E-7).
+    # The 1000-poll bound counts every poll of a node in the run, failed ones, retries and
+    # resumes too, each once (E-7); a plain action call is no poll.
     assert state.polls == {"wait": 3, "other": 1}
     assert state.attempts["wait"] == 2
