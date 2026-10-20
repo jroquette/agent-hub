@@ -117,6 +117,7 @@ class FeatureFolder:
     ``plan`` holds ``plan.md`` whole, None when absent or larger than ``MAX_PLAN_BYTES``
     (``plan_too_large`` then says so). ``ux_designs`` holds the heads of the folder's own
     ``ux-*.md`` sorted by name; ``ux_skipped`` counts those left unread over ``MAX_UX_FILES``.
+    ``review_rounds`` names the review rounds (``<ticket>/<reviewer>-r<N>.json``), never read.
     """
 
     slug: str
@@ -131,6 +132,7 @@ class FeatureFolder:
     plan_too_large: bool = False
     ux_designs: tuple[RecordHead, ...] = ()
     ux_skipped: int = 0
+    review_rounds: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)

@@ -79,6 +79,11 @@ in fenced code blocks do not count (`agent_hub.core.features.plan_version`).
 Written by `/feature` step 7 once both reviewers pass: `type: review`, `ticket`, `outcome` (`approved` or
 `changes-requested`), `pr`, `reviewed_at`. At most 500 are read (first by name), heads of 8 KiB.
 
+Beside them, `reviews/<ticket>/` holds the review rounds (below, "Agent outputs"). Only their names are listed, never
+their bytes: the first 500 ticket folders by name (not hidden, UTF-8 names, no link followed), and in them the regular
+files named as the review check names a round (`<reviewer>-r<N>.json`), at most 2,000 names in all. Each ticket folder
+opened counts 4 KiB against the feature list's read budget.
+
 ### `summaries/<record>.md`
 
 The human summary of `spec.md`, `research.md` or `plan.md`, written by the hub's `/summarize` skill each time the
@@ -156,6 +161,25 @@ unknown: Build and Shipped are `unknown` with "Linear not connected" (or "Linear
 the cache is cold). Canceled (and duplicate) tickets and withdrawn ACs are left out of every count; a ticket with
 children (an epic) counts under Tickets only.
 
+### Ticket flow
+
+Each ticket's own steps (`agent_hub.core.features.ticket_flow`, AC-1.8), served as each row's `flow` on the tickets
+route; an epic has none. A ticket is named by its plan key and its tracker id, in any case; a malformed record counts
+for nothing.
+
+| Step | Evidence |
+|---|---|
+| Context, Preflight | none yet: their records arrive with the `implement` workflow (S2) |
+| Implement | `done` when a review round of the ticket exists (`reviews/<ticket>/<reviewer>-r<N>.json`) |
+| Review | `done` when a review record of the ticket is `approved`; `current`, "Changes requested", while its records only request changes |
+| Eval | the latest eval whose `tickets` name the ticket (the order of "Decisions" below, conservative when unordered): SHIP or SHIP-WITH-OWNER-STEPS `done`, NO-SHIP `blocked`; the meta is the verdict |
+| PR | `done` when its review record's `pr` or an eval naming it lists a pull request (`<repo>#<n>` or a GitHub pull request URL; `#pending` is none) |
+| Merged | `done` when Linear has the ticket `completed`, the rule Build counts by; `unknown` with Build's meta when Linear was not read |
+
+A step with no evidence reads `unrecorded` ("Not recorded") when a later step has some, else `pending` ("Not
+reached"): a ticket Done in Linear with no review record reads Context, Preflight and Review "Not recorded" and Merged
+done. `current` is the first step neither `done` nor `unrecorded` (`merged` when every step is).
+
 ### Planning
 
 `agent_hub.core.features.ticket_planning`: one row per planned ticket and per `linear` id. Edges are the union of the
@@ -178,7 +202,8 @@ above the flow with its children's progress. Linear titles, assignees and state 
 - An approved spec (`status: approved`) is never rewritten: changes go in `## Amendments` (`A1 (date, who): …`); new
   ACs take the next free number; withdrawn ACs stay listed; AC ids are never renumbered.
 - No golden-path step is `done` while an earlier step is not.
-- Planning and the golden path are pure folds: the same records and snapshot give the same answer, whatever the order.
+- Planning, the golden path and the ticket flows are pure folds: the same records and snapshot give the same answer,
+  whatever the order. No ticket step is `pending` while a later step of the same ticket has evidence.
 - Linear's text is untrusted: titles and assignees are redacted and clipped, and a `url` outside `https://linear.app/`
   is dropped.
 - `hub doctor`'s `features.tracker` rule checks the shapes above: an unknown `blocked_by`, a duplicate key, an AC

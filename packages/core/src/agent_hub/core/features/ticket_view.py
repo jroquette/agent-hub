@@ -7,7 +7,7 @@ uses it. Everything here is derived: planning is a recommendation, never an acti
 
 from typing import Literal
 
-from agent_hub.core.features.feature_view import GoldenPath, TicketsSource
+from agent_hub.core.features.feature_view import GoldenPath, StepState, TicketsSource
 from agent_hub.core.readmodels.view_types import ApiTimestamp, DerivedView, ViewModel
 from agent_hub.core.tracker.tracker_reader import IssueState
 
@@ -20,6 +20,26 @@ type Readiness = Literal[
 ]
 # Where a "blocked by" edge comes from: the plan's ``blocked_by``, Linear's relations, or both.
 type EdgeSource = Literal["plan", "linear", "both"]
+
+
+# A ticket's own steps, in order (two-level-flows AC-1.8).
+type TicketStepName = Literal["context", "preflight", "implement", "review", "eval", "pr", "merged"]
+
+
+class TicketStep(ViewModel):
+    """One step of a ticket's flow, in the golden path's state vocabulary, with a short ``meta``."""
+
+    name: TicketStepName
+    state: StepState
+    meta: str | None
+
+
+class TicketFlow(ViewModel):
+    """A ticket's seven steps in their fixed order (``ticket_flow.py``); ``current`` is where the
+    ticket is: the first step neither done nor unrecorded, the last when every step is."""
+
+    steps: tuple[TicketStep, ...]
+    current: TicketStepName
 
 
 class TicketEdge(ViewModel):
@@ -40,6 +60,7 @@ class TicketRow(ViewModel):
     ``parent`` is the ref of the epic it belongs to (the plan's ``parent`` or Linear's parent
     issue), ``children`` the refs of the rows whose parent it is: a row with children is an epic.
     ``pr_url`` is the ticket's pull request on GitHub, from its review record, None when unknown.
+    ``flow`` is the ticket's own steps, served by the tickets route (None for an epic).
     """
 
     ref: str
@@ -62,6 +83,7 @@ class TicketRow(ViewModel):
     parent: str | None = None
     children: tuple[str, ...] = ()
     pr_url: str | None = None
+    flow: TicketFlow | None = None
 
 
 class ExternalBlocker(ViewModel):

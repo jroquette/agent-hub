@@ -153,6 +153,16 @@ def acceptance_eval(records: Iterable[EvalRecord]) -> EvalRecord | None:
     return max((whole[i] for i in latest if whole[i].verdict == verdict), key=_listing_key)
 
 
+def latest_verdict(records: Iterable[EvalRecord]) -> Verdict | None:
+    """The verdict of the latest readable evals of ``records`` (the module's partial order; the
+    conservative one when they disagree), None without one."""
+    readable = [r for r in records if r.problem is None and r.verdict is not None]
+    if not readable:
+        return None
+    keys = [_order_key(record) for record in readable]
+    return _latest_verdict(tuple(range(len(readable))), readable, keys)
+
+
 @dataclass(frozen=True, kw_only=True, slots=True)
 class OwnerWait:
     """A SHIP-WITH-OWNER-STEPS acceptance eval still waiting on the owner (two-level-flows A3).
