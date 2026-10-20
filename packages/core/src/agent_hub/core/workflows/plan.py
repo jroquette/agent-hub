@@ -50,10 +50,12 @@ from agent_hub.core.workflows.nodes import (
 from agent_hub.core.workflows.rewrite import SEPARATOR
 from agent_hub.core.workflows.scope import RefScope, ScopeStep
 from agent_hub.core.workflows.substitution import (
+    CtxRef,
     InputRef,
     LoopPrevRef,
     NodeRef,
     Ref,
+    SelfRef,
     SubstitutionError,
     WithRef,
     check_argv,
@@ -238,6 +240,10 @@ class _Graph:
             return None if ref.name in names else f"no 'with' value is named {echo(ref.name)}"
         if isinstance(ref, LoopPrevRef):
             return "$LOOP_PREV reads only inside a loop_group body"
+        if isinstance(ref, CtxRef):
+            return f"$CTX.{ref.name} is not captured upstream"
+        if isinstance(ref, SelfRef):
+            return "$self reads only in an expect's until_when or a capture"
         return self._node_ref_problem(node, ref)
 
     def _node_ref_problem(self, node: Node, ref: NodeRef) -> str | None:

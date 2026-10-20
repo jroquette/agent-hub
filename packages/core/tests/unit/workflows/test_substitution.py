@@ -2,6 +2,7 @@
 
 import pytest
 
+import agent_hub.core.workflows.substitution as substitution
 from agent_hub.core.workflows.substitution import (
     InputRef,
     LoopPrevRef,
@@ -334,3 +335,39 @@ def test_checks_in_linear_time_when_argv_repeats_c_clusters() -> None:
 def test_classifies_in_linear_time_when_cluster_is_long_and_not_a_flag() -> None:
     assert check_argv(["sh", "-" + "c" * 200_000 + "1", "$INPUTS.issue"]) == []
     assert check_argv(["sh", "--" + "c" * 200_000, "$INPUTS.issue"]) == []
+
+
+def test_resolves_ctx_when_run_context_captured_upstream() -> None:
+    ctx = {
+        "order_id": NodeResult("completed", "o-7"),
+        "count": NodeResult("completed", 3),
+        "skipped": NodeResult("skipped"),
+    }
+
+    assert find_refs("$CTX.order_id") == [substitution.CtxRef("order_id")]
+    assert render("id $CTX.order_id, $CTX.count, [$CTX.skipped]", context(ctx=ctx)) == (
+        "id o-7, 3, []"
+    )
+    assert error_code("$CTX.missing", context(ctx=ctx)) == "unknown_ctx"
+    assert error_code("$CTX.failed", context(ctx={"failed": NodeResult("failed")})) == (
+        "producer_failed"
+    )
+
+
+@pytest.mark.parametrize("template", ["$CTX", "$CTX.", "$CTX.Order", "$CTX.order.id", "$CTX[0]"])
+def test_refuses_ctx_when_run_context_token_malformed(template: str) -> None:
+    assert error_code(template) == "malformed"
+    with pytest.raises(SubstitutionError):
+        parse_ref(template)
+
+
+def test_resolves_self_when_run_context_self_output_given() -> None:
+    own = NodeResult("completed", {"status": "ON_HOLD", "ids": ["a", "b"]})
+
+    assert parse_ref("$self.output.status") == substitution.SelfRef(("status",))
+    assert parse_ref("$self.output") == substitution.SelfRef(())
+    assert render("$self.output.status $self.output.ids.1", context(self_output=own)) == (
+        "ON_HOLD b"
+    )
+    assert error_code("$self.output.status") == "not_self"
+    assert parse_ref("$selfie.output") == NodeRef("selfie", ())
