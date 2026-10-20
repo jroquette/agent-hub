@@ -15,7 +15,9 @@ deny  = hard block (secrets (guard.secret_env_files added, guard.readable_env_fi
         or in the contents of a .env* or guard.blocked_words_files file (as named or linked to) that a Read, a
         Grep (its path or the cwd walked, no links, BLOCKED_WALK_SKIPPED and .claude/worktrees skipped) or a
         Bash token (braces and globs expanded; not after ls, test, [, stat) reads; a secret file, by any case
-        or link, is never opened, so it keeps the secret-file reason)
+        or link, is never opened, so it keeps the secret-file reason), or in any key or string value of the
+        input of an input tool (WebSearch, Task, Agent, SendMessage, mcp__*; walked in order, the tool name
+        not scanned; the only rule these tools get)
 ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an allowed environment, anywhere
         after the tool (aws's s3 … rm and cloudformation … deploy too, quoted or not); with guard.infra, a
         command it would let through that holds a character other than ASCII letters, digits, space, tab,
@@ -33,12 +35,13 @@ ask   = needs the user's confirmation (infra deploy/destroy/delete verbs on an a
         and any Bash or file-tool call while blocked words cannot be checked: a command or a listed file over
         1 MiB, over 64 listed files or 4 MiB of them in one call, a listed file that is not regular, the
         rule's 300 ms spent, a blocked list of any layer unusable, or a hub.local.json that exists but is
-        unusable; an unreadable listed file gets no verdict), and a hook event that is not a JSON object
+        unusable; an unreadable listed file gets no verdict; an input tool's input over 1 MiB or 50000
+        values), and a hook event that is not a JSON object
         while blocked words (or a blocked-list problem) are in effect
 Project values (default branch, tracker team, guard lists) come from hub.json. The branch prefix of a deny's
 hint is the developer's: hub.local.json, else hub.json, else the local part of git config user.email plus `/`
 (git runs only on that deny); with none, the hint has no prefix. A list entry `@hub/<path>` is <path> in the hub that holds this file; with no such hub (plugin cache) it is skipped.
-Then, unless the verdict is deny (final), the project's extension plugin/<project>/hooks/project_guard.py
+Then, for Bash and the file tools (EXTENSION_TOOLS) and unless the verdict is deny (final), the project's extension plugin/<project>/hooks/project_guard.py
 of the hub that holds this file (never one found from $CLAUDE_PROJECT_DIR, the cwd or the tool input;
 none in the plugin cache) runs in a child, project_guard_runner.py, with a 3 s timeout that kills its
 whole process group. When that hub.json names no project (unreadable, or no project.name), the one
@@ -1931,12 +1934,13 @@ def main() -> None:
         if cfg.blocked_words or cfg.blocked_problem:
             _print_verdict({}, ("ask", BLOCKED_UNCHECKED_REASON.format(BLOCKED_UNREADABLE)))
         return
-    tool = data.get("tool_name")
-    if tool != "Bash" and tool not in FILE_TOOLS:
+    tool = _str(data.get("tool_name"))
+    if tool not in EXTENSION_TOOLS and not _input_tool(tool):
         return
     cfg = load_config(data.get("cwd"))
     verdict = decide(data, cfg, dict(os.environ))
-    if verdict is None or verdict[0] != "deny":  # a deny is final: the extension never runs
+    # a deny is final, and an input tool gets the blocked-word rule only: no extension for either
+    if tool in EXTENSION_TOOLS and (verdict is None or verdict[0] != "deny"):
         path = extension_file(cfg)
         if path:
             extra, failed = run_extension(path, data, cfg)
