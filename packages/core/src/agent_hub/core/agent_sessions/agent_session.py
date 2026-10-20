@@ -231,7 +231,7 @@ class Screenshot(ViewModel):
 
 # The most files one message carries: each is a PDF or a UTF-8 text of at most
 # ``MAX_MESSAGE_FILE_BYTES``.
-MAX_MESSAGE_FILES: Final = 5
+MAX_MESSAGE_FILES: Final = 10
 MAX_FILE_NAME_CHARS: Final = 255
 
 MessageFileMediaType = Literal["application/pdf", "text/plain"]

@@ -1717,7 +1717,7 @@
                 "items": {
                   "$ref": "#/components/schemas/MessageFile"
                 },
-                "maxItems": 5,
+                "maxItems": 10,
                 "minItems": 1,
                 "type": "array"
               },
@@ -8455,7 +8455,7 @@
                 "items": {
                   "$ref": "#/components/schemas/MessageFile"
                 },
-                "maxItems": 5,
+                "maxItems": 10,
                 "minItems": 1,
                 "type": "array"
               },

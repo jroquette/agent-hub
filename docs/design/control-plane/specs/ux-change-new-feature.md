@@ -68,7 +68,7 @@ What do you want to build?
 │ ──────────────────────────────────────────────────────────────────────────── │
 │ [+ Attach]  Paste or drop images, PDFs and text files                        │  bar
 └──────────────────────────────────────────────────────────────────────────────┘
-  Up to 10 images and 5 files of 5 MB each.                                         hint / error line
+  Up to 10 images and 10 files of 5 MB each.                                         hint / error line
 
 Start from an issue (optional)
 [DEMO-1600        ]  Left empty, Claude writes the brief with you and creates it.
@@ -151,7 +151,7 @@ extracted `AttachmentList` keeps the 20 px circle but gives it a 24 × 24 hit ar
 | Bar note | "Paste or drop images, PDFs and text files" |
 | Attach button | "Attach" (accessible name "Attach a file", title "Attach images, PDFs or text files up to 5 MB (or paste or drop them in the box)", as in the chat) |
 | Attachment list name | "Attached to this request" |
-| Hint line (default) | "Up to 10 images and 5 files of 5 MB each." |
+| Hint line (default) | "Up to 10 images and 10 files of 5 MB each." |
 | Issue label / hint | "Start from an issue (optional)" / "Left empty, Claude writes the brief with you and creates it." Invalid: "An issue id, like DEMO-1600." |
 | Disclosure summary | "More options · Slug: <slug or 'Claude picks'> · Size: <size label>" |
 | Slug label / hints | "Slug (optional)" / "Left empty, Claude picks one." / "Lowercase letters, digits and dashes, starting with a letter." / "A feature with this slug already exists." |
@@ -165,7 +165,7 @@ extracted `AttachmentList` keeps the 20 px circle but gives it a 24 × 24 hit ar
 | Found status | "<slug> has its record." + link "Open <slug>" |
 | Second request | "Start another feature" |
 
-Refusals reuse the chat's words exactly: "A message takes up to 10 images." · "A message takes up to 5 files." ·
+Refusals reuse the chat's words exactly: "A message takes up to 10 images." · "A message takes up to 10 files." ·
 "“<name>” is <size>: files go up to 5 MB." · "“<name>” is empty." · "Claude reads PDFs and text files here, and
 “<name>” is neither." · "Could not read that image. Try another one." · "Could not read that file. Try again."
 (Open question 2: "message" in the first two.)
@@ -216,7 +216,7 @@ both once the conversation runs.
 | Invalid | Issue or slug: `aria-invalid`, hint turns `failed` text (with the `circle-x` icon, not color alone), primary disabled; the slug error opens More options |
 | Reading files | A 72 px `loader` tile in the attachment list ("Reading…" for screen readers); primary disabled with "Wait for the files to be read." |
 | File refused | The refusal sentence in the hint line (`role="alert"`, `failed` text, icon), the others stay attached |
-| Over limits | Extra items are not taken; "A message takes up to 10 images." / "… 5 files."; Attach disabled once both limits are reached |
+| Over limits | Extra items are not taken; "A message takes up to 10 images." / "… 10 files."; Attach disabled once both limits are reached |
 | Sessions unavailable | `Banner warning boxed` above the form: "<title>. <detail>" from `sessionControlUnavailable` (e.g. "Sessions cannot start here. claude is not available on this machine."). Brief, attachments and options stay editable; primary disabled |
 | No hub folder | Primary disabled with "Project <p> has no hub folder to work in." |
 | Start failed | Under the button, `role="alert"`: the Problem Details `detail` (or `title`); everything stays as typed and attached; the button is enabled again |

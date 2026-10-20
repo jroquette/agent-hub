@@ -1,5 +1,5 @@
 /** The most files one message carries (the API's `MAX_MESSAGE_FILES`). */
-export const MAX_MESSAGE_FILES = 5;
+export const MAX_MESSAGE_FILES = 10;
 /** The decoded size limit of each file (the API's `MAX_MESSAGE_FILE_BYTES`: 5 MiB). */
 export const MAX_MESSAGE_FILE_BYTES = 5 * 1024 * 1024;
 

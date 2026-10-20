@@ -74,9 +74,9 @@ HUB_REGISTRY_WRITES = (
 # carries a text of up to the largest
 # ``--message-max-bytes`` (4 MiB), which JSON escaping may grow. Every other route keeps
 # ``max_body_bytes``.
-AGENT_SESSION_CREATE_BODY_BYTES: Final = 100 * 1024 * 1024
+AGENT_SESSION_CREATE_BODY_BYTES: Final = 160 * 1024 * 1024
 AGENT_SESSION_CREATE_PATH: Final = f"{API_PREFIX}/agent-sessions"
-AGENT_SESSION_MESSAGE_BODY_BYTES: Final = 100 * 1024 * 1024
+AGENT_SESSION_MESSAGE_BODY_BYTES: Final = 160 * 1024 * 1024
 AGENT_SESSION_MESSAGE_PATH: Final = re.compile(
     rf"^{re.escape(API_PREFIX)}/agent-sessions/[^/]+/messages$"
 )
