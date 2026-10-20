@@ -1,4 +1,4 @@
-"""``hub scenario list|plan``: the hub's scenarios, listed and planned
+"""``hub scenario list|plan|run``: the hub's scenarios, listed, planned and run
 (docs/design/scenarios.md § Contract, § Plan and modes; ADR 0041).
 
 ``list`` prints one line per scenario that loads, ``<name>  <pack>  <nodes> nodes
@@ -22,10 +22,19 @@ action's output lacks, two unordered gates) is a stderr line; a problem or a ``d
 ``endpoints`` (input → ``{service, url, resource}``), ``every``, ``timeout`` (``null`` but on an
 expect), ``content_hash``, ``draft``, ``decision``, ``reason_kind``, ``reason`` (a deny's, else
 ``null``) and ``plan`` (the summary, or why there is none).
+
+``run NAME --env ENV [--input name=value]... --mode regression [--run-id RUN]`` plans the
+scenario as ``plan`` does, without plan-mode calls; any problem or ``deny`` is one stderr line
+(an undeclared environment once, not per step) and exits 1 with no scenario run. Otherwise
+``scenario_runs`` starts it: a policy ``ask`` is a ``<step>__ask`` approval, answered with ``hub
+workflow approve|reject``. ``--mode interactive``, the default, exits 2 until the investigation
+lands (release gate O-6), and no option removes a gate: ``--yes`` and its kind are unknown
+options (exit 2).
 """
 
 import os
-from typing import Annotated, Final
+from pathlib import Path
+from typing import Annotated, Final, NoReturn
 
 import typer
 
@@ -41,7 +50,17 @@ from agent_hub.cli.action_process import ActionCall, plan_action
 from agent_hub.cli.command_exits import FAILURE, fail
 from agent_hub.cli.effective_config import load_effective_config_or_exit
 from agent_hub.cli.init_report import shown_path, shown_text
+from agent_hub.cli.run_log import new_run_id
+from agent_hub.cli.scenario_runs import (
+    INTERACTIVE,
+    INTERACTIVE_NOT_YET,
+    MODES,
+    REGRESSION,
+    ScenarioStart,
+    start,
+)
 from agent_hub.cli.workflow_command import problem_line, typed_input
+from agent_hub.cli.workflow_runs import RUN_ID_PATTERN, WorkflowRunError
 from agent_hub.core.hub_config.effective_environments import effective_environments
 from agent_hub.core.json_form import JsonValue, dump_json
 from agent_hub.core.scenarios.access_policy import PolicyDecision
@@ -53,14 +72,16 @@ from agent_hub.core.workflows.engine import WorkflowEngineError, start_inputs
 from agent_hub.core.workflows.plan import WorkflowPlan
 from agent_hub.generator.action_discovery import ActionDiscovery, discover_actions
 from agent_hub.generator.scenario_discovery import HUB_SCENARIOS, DiscoveredScenarioSource
+from agent_hub.generator.workflow_discovery import DiscoveredWorkflow
 
 COMMAND: Final = "scenario"
 RUN_TIME: Final = "runs with values known at run time"
 NOT_PLANNED: Final = "not planned"
 _PLAN_PREFIX: Final = "hub scenario plan"
+_RUN_PREFIX: Final = "hub scenario run"
 
 scenario_app = typer.Typer(
-    name=COMMAND, no_args_is_help=True, help="List and plan the hub's scenarios."
+    name=COMMAND, no_args_is_help=True, help="List, plan and run the hub's scenarios."
 )
 
 
@@ -90,18 +111,13 @@ def plan_command(
     """Show what each step would do in ENV, and the policy's decision; nothing runs."""
     texts = given_texts(given or [])
     hub = action_hub()
-    source = DiscoveredScenarioSource(hub, only=name)
-    catalog = check_workflows(source)
-    _exit_on_problems(catalog)
-    if not catalog.plans:
-        fail(f"{_PLAN_PREFIX}: no scenario named {shown_path(name)} in {HUB_SCENARIOS}/")
-    [plan] = catalog.plans
+    plan, scenario = _scenario(hub, name, prefix=_PLAN_PREFIX)
     found = discover_actions(hub)
     effective = load_effective_config_or_exit(hub)
     view = effective_environments(effective.config, effective.local)
     planned = plan_scenario(
         plan,
-        pack=source.found[name].pack,
+        pack=scenario.pack,
         actions=found.actions,
         view=view,
         environment=environment,
@@ -121,6 +137,85 @@ def plan_command(
         )
     if planned.denied:
         raise typer.Exit(FAILURE)
+
+
+Mode = Annotated[
+    str,
+    typer.Option(
+        "--mode",
+        metavar="MODE",
+        help="interactive (the default; not available yet) or regression (no agent; a"
+        " divergence fails the scenario run).",
+    ),
+]
+RunId = Annotated[str | None, typer.Option("--run-id", help="The new scenario run's id.")]
+
+
+@scenario_app.command("run")
+def run_command(
+    name: Name,
+    *,
+    environment: Environment,
+    given: Inputs = None,
+    mode: Mode = INTERACTIVE,
+    run_id: RunId = None,
+) -> None:
+    """Run a scenario in ENV once its plan holds no deny; an ask is a gate to approve."""
+    if mode not in MODES:
+        raise typer.BadParameter(f"give one of {', '.join(MODES)}", param_hint="--mode")
+    if mode != REGRESSION:
+        raise typer.BadParameter(INTERACTIVE_NOT_YET, param_hint="--mode")
+    if run_id is not None and not RUN_ID_PATTERN.fullmatch(run_id):
+        hint = "use 1 to 32 of a-z 0-9 -, starting with a letter or digit"
+        raise typer.BadParameter(hint, param_hint="--run-id")
+    texts = given_texts(given or [])
+    hub = action_hub()
+    plan, scenario = _scenario(hub, name, prefix=_RUN_PREFIX)
+    found = discover_actions(hub)
+    effective = load_effective_config_or_exit(hub)
+    view = effective_environments(effective.config, effective.local)
+    inputs = _inputs(plan, texts)
+    planned = plan_scenario(
+        plan,
+        pack=scenario.pack,
+        actions=found.actions,
+        view=view,
+        environment=environment,
+        inputs=inputs,
+    )
+    if planned.denied:
+        _refuse_start(planned)
+    begin = ScenarioStart(
+        plan=plan, found=scenario, planned=planned, actions=found, inputs=inputs, mode=mode
+    )
+    try:
+        code = start(hub, run_id or new_run_id(), begin)
+    except (WorkflowRunError, WorkflowEngineError) as error:
+        fail(f"{_RUN_PREFIX}: {error}")
+    raise typer.Exit(code)
+
+
+def _refuse_start(planned: ScenarioPlan) -> NoReturn:
+    """Exit 1, naming each problem and each denied step; no scenario run is made."""
+    for problem in planned.problems:
+        typer.echo(f"{_RUN_PREFIX}: {problem}", err=True)
+    for row in planned.rows:
+        # An undeclared environment is one problem line already, not one per step.
+        if row.decision == "deny" and row.reason_kind != "undeclared":
+            reason = _reason(planned, row)
+            typer.echo(f"{_RUN_PREFIX}: step {row.step}: deny ({reason})", err=True)
+    where = f"{planned.scenario} cannot start in {planned.environment}"
+    fail(f"{_RUN_PREFIX}: {where}; no scenario run was created")
+
+
+def _scenario(hub: Path, name: str, *, prefix: str) -> tuple[WorkflowPlan, DiscoveredWorkflow]:
+    """The scenario ``name``, loaded and planned, as discovered; else exit 1."""
+    source = DiscoveredScenarioSource(hub, only=name)
+    catalog = check_workflows(source)
+    _exit_on_problems(catalog)
+    if not catalog.plans:
+        fail(f"{prefix}: no scenario named {shown_path(name)} in {HUB_SCENARIOS}/")
+    return catalog.plans[0], source.found[name]
 
 
 def _inputs(plan: WorkflowPlan, texts: dict[str, str]) -> dict[str, JsonValue]:
