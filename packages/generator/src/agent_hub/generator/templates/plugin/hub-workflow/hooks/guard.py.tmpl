@@ -1797,7 +1797,10 @@ def _env_file_grep(env_files: _EnvFiles, ti: dict, cwd: str) -> str | None:
         return env_files.at(root)
     grep_glob = _str(ti.get("glob"))
     if grep_glob:
-        return env_files.under(root, lambda rel: _grep_glob_passes((rel,), grep_glob))
+        # braces expanded first (bounded: over 64 words asks), since _grep_glob_passes lets a
+        # brace glob through whole (it only adds files to the blocked-word scan)
+        alternatives = _braces(grep_glob)
+        return env_files.under(root, lambda rel: any(_grep_glob_passes((rel,), alt) for alt in alternatives))
     return env_files.holding(root)
 
 
