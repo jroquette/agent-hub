@@ -487,13 +487,13 @@ class _Run:
         the attempt ``config``."""
         context = self._own_context(node, output)
         for name, ref in node.capture.items():
-            value = resolve(parse_ref(ref), context, ref)
+            value = resolve(parse_ref(ref, scenario=True), context, ref)
             self._traced(ContextCapture(node.id, attempt, name, self.ports.clock.now(), value))
 
     def _own_context(self, node: Node, output: JsonValue) -> RefContext:
         context = self._context(node)
         own = NodeResult("completed", output)
-        return dataclasses.replace(context, self_output=own)
+        return dataclasses.replace(context, self_output=own, scenario=True)
 
     def _traced(self, item: ExpectPoll | ContextCapture) -> None:
         trace = self.ports.trace
@@ -690,7 +690,10 @@ class _Run:
         with self.lock:
             results = dict(self.results)
             loop_prev = self.loop_prevs.get(group.id)
-        return RefContext(self.inputs, results, loop_prev, ctx=self._captured(results))
+        scenario = self.plan.document.kind == "scenario"
+        return RefContext(
+            self.inputs, results, loop_prev, ctx=self._captured(results), scenario=scenario
+        )
 
     def _captured(self, results: Mapping[str, NodeResult]) -> dict[str, NodeResult]:
         """Each ``$CTX`` name whose node has ended, read again from that node's result: a
@@ -706,7 +709,7 @@ class _Run:
             own = RefContext(self.inputs, results, self_output=result)
             try:
                 ctx[name] = NodeResult(
-                    "completed", resolve(parse_ref(capture.ref), own, capture.ref)
+                    "completed", resolve(parse_ref(capture.ref, scenario=True), own, capture.ref)
                 )
             except SubstitutionError:
                 ctx[name] = NodeResult("failed")
@@ -920,7 +923,7 @@ def _action_value(value: JsonValue, context: RefContext) -> JsonValue:
     """A ``with`` value for an action: a whole reference's value as is, other text rendered."""
     if isinstance(value, str):
         try:
-            ref = parse_ref(value)
+            ref = parse_ref(value, scenario=context.scenario)
         except SubstitutionError:
             return render(value, context)
         return resolve(ref, context, value)

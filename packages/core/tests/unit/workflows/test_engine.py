@@ -1262,3 +1262,16 @@ def test_resolves_ctx_after_resume_when_run_context_from_prior() -> None:
     [use] = [start for start in resumed.recorder.starts if start.node == "use"]
     assert use.attempt == 2
     assert resumed.report.status == "done"
+
+
+def test_renders_text_when_run_context_tokens_in_plain_workflow() -> None:
+    plan = plan_of(
+        shell("self", command=["echo", "cost $CTX"]),
+        shell("b", "self", command=["echo", "$self.output"]),
+    )
+    runner = ScriptedRunner({"self": ["ten"]})
+
+    run = Run(plan, runner)
+
+    assert [call.argv for call in runner.calls] == [("echo", "cost $CTX"), ("echo", "ten")]
+    assert run.report.status == "done"

@@ -272,4 +272,8 @@ def test_refuses_id_when_reserved_suffix_or_self_used(node_id: str, message: str
     approval = {"id": node_id, "type": "approval", "message": "m"}
 
     assert problems_of(a_scenario(action)) == [("nodes[0].id", message)]
-    assert problems_of(a_document(nodes=[approval])) == [("nodes[0].id", message)]
+    if node_id == "self":
+        # Reserved in scenarios only: a workflow's node may still be named self.
+        assert parse_workflow(a_document(nodes=[approval])).nodes[0].id == "self"
+    else:
+        assert problems_of(a_document(nodes=[approval])) == [("nodes[0].id", message)]

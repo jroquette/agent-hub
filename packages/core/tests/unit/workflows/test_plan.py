@@ -466,10 +466,12 @@ def test_reports_missing_when_run_context_not_captured() -> None:
     group = {"id": "poll", "type": "loop_group", "max_iterations": 2, "until_when": "$CTX.n == 1"}
     group |= {"nodes": [expect("check", **{"capture": {"n": "$self.output.n"}})]}
 
-    assert problems_of(action("a"), action("b", "a", **reads("$CTX.order_id"))) == [
+    missing = [action("a"), action("b", "a", **reads("$CTX.order_id"))]
+    assert problems_of(*missing, kind="scenario") == [
         ("nodes[1].with.order", "$CTX.order_id is not captured upstream")
     ]
-    assert problems_of(action("a", **reads("$CTX.order_id")), expect("b", "a", **captured)) == [
+    later = [action("a", **reads("$CTX.order_id")), expect("b", "a", **captured)]
+    assert problems_of(*later, kind="scenario") == [
         ("nodes[0].with.order", "$CTX.order_id is not captured upstream")
     ]
     plan = plan_of(
@@ -509,13 +511,13 @@ def test_reports_twice_when_run_context_captured_twice_on_path() -> None:
             },
             "nodes[0].until_when",
         ),
-        (shell("a", stdin="$self.output"), "nodes[0].stdin"),
     ],
 )
 def test_reports_self_when_run_context_self_outside_until(
     node: dict[str, object], key: str
 ) -> None:
-    assert problems_of(node) == [(key, "$self reads only in an expect's until_when or a capture")]
+    message = "$self reads only in an expect's until_when or a capture"
+    assert problems_of(node, kind="scenario") == [(key, message)]
 
 
 def test_checks_with_refs_when_action_node_texts_read() -> None:
@@ -550,3 +552,22 @@ def test_reports_ctx_when_run_context_read_in_capture() -> None:
         ("nodes[1].capture.copy", "a capture reads no $CTX: capture from $self or node outputs")
     ]
     assert plan_of(first, action("b", "a", capture={"copy": "$a.output.order_id"})).captures
+
+
+def test_keeps_workflow_text_when_run_context_tokens_in_plain_workflow() -> None:
+    plan = plan_of(
+        shell("self", command=["echo", "cost $CTX and $CTX.total"]),
+        shell("b", "self", command=["echo", "$self.output"]),
+    )
+
+    assert plan.layers == (("self",), ("b",))
+    assert plan.captures == {}
+
+
+def test_refuses_tokens_when_run_context_tokens_in_scenario() -> None:
+    assert problems_of(action("a", **reads("cost $CTX")), kind="scenario") == [
+        ("nodes[0].with.order", '"$CTX": malformed reference')
+    ]
+    assert problems_of(action("self"), kind="scenario") == [
+        ("nodes[0].id", "the id self is reserved: $self reads a node's own output")
+    ]

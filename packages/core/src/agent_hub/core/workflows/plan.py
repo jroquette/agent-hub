@@ -253,13 +253,18 @@ class _Graph:
     producers: Mapping[str, Node]
     captures: Mapping[str, _Captured]
 
+    @property
+    def scenario(self) -> bool:
+        """Whether texts read in the scenario grammar (``$CTX``, ``$self``)."""
+        return self.document.kind == "scenario"
+
     def problems(
         self, node: Node, text: str, *, own: bool = False, capture: bool = False
     ) -> Iterator[str]:
         """What is wrong with the references ``text`` holds, read in ``node``; ``own``: a text
         that may read the node's own output (``$self``); ``capture``: a ``capture`` ref."""
         try:
-            refs = find_refs(text)
+            refs = find_refs(text, scenario=self.scenario or own)
         except SubstitutionError as error:
             yield str(error)
             return
@@ -591,7 +596,7 @@ def _reference_problems(
             messages = graph.problems(node, text, own=own, capture=scenario and loc[0] == "capture")
             yield from (WorkflowProblem(where, message) for message in messages)
         for key, argv, offset in lists:
-            problems = check_argv([*([""] * offset), *argv])
+            problems = check_argv([*([""] * offset), *argv], scenario=graph.scenario)
             refused = {problem.index - offset: problem.error for problem in problems}
             for position, element in enumerate(argv):
                 where = (*where_node, key, position)

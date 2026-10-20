@@ -48,14 +48,11 @@ def _not_blank(value: str) -> str:
 
 # The engine's own gate ids: a policy ask before a step, an investigation after a divergence.
 RESERVED_SUFFIXES: Final = ("__ask", "__investigation")
-# ``$self.output`` reads the node's own output: no node may be named ``self``.
+# ``$self.output`` reads the node's own output: no scenario node may be named ``self``.
 SELF_ID: Final = "self"
 
 
 def _node_id(value: str) -> str:
-    if value == SELF_ID:
-        msg = "the id self is reserved: $self reads a node's own output"
-        raise ValueError(msg)
     if value.endswith(RESERVED_SUFFIXES):
         msg = "an id ending __ask or __investigation is reserved for the engine's gates"
         raise ValueError(msg)
@@ -423,7 +420,7 @@ ActionRef = Annotated[
 
 def _whole_ref(value: str) -> str:
     try:
-        parse_ref(value)
+        parse_ref(value, scenario=True)
     except SubstitutionError as error:
         raise ValueError(str(error)) from None
     return value

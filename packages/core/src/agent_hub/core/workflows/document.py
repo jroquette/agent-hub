@@ -27,6 +27,7 @@ from agent_hub.core.features.output_shape import output_path
 from agent_hub.core.hub_config.problems import one_line
 from agent_hub.core.workflows.nodes import (
     READ_ONLY,
+    SELF_ID,
     FieldName,
     KebabId,
     LoopGroupNode,
@@ -162,8 +163,8 @@ def parse_workflow(content: object) -> WorkflowDocument:
 
 
 def kind_problems(document: WorkflowDocument) -> Iterator[WorkflowProblem]:
-    """Each node, a ``loop_group``'s body included, whose type the document's kind refuses
-    (planning checks an expanded document again: an include may bring other types)."""
+    """Each node, a ``loop_group``'s body included, whose type (or the id ``self``) a scenario
+    refuses (planning checks an expanded document again: an include may bring other types)."""
     if document.kind != "scenario":
         return
     allowed = ", ".join(SCENARIO_NODE_TYPES[:-1]) + f" and {SCENARIO_NODE_TYPES[-1]}"
@@ -172,6 +173,9 @@ def kind_problems(document: WorkflowDocument) -> Iterator[WorkflowProblem]:
         located: list[tuple[Loc, Node]] = [(("nodes", index), node)]
         located += [(("nodes", index, "nodes", inner), child) for inner, child in enumerate(body)]
         for loc, found in located:
+            if found.id == SELF_ID:
+                message = "the id self is reserved: $self reads a node's own output"
+                yield WorkflowProblem((*loc, "id"), message)
             if found.type not in SCENARIO_NODE_TYPES:
                 message = (
                     f"the node {json.dumps(found.id)} has type {found.type}: a scenario takes"

@@ -24,7 +24,7 @@ cap) or JSON, then a frozen Pydantic model that forbids unknown keys. A load err
 | `inputs` | map `^[a-z][a-z0-9_]*$` → `{type, required, default, description}` | `type`: `string` (default), `integer`, `number`, `boolean`; `required` excludes `default` |
 | `returns` | node id, optional | the node whose output is the workflow's (and an include's) output |
 | `outcome_field` | string, optional | a `required` property of `returns`' `output_format`, `boolean` or a `string` with `enum` |
-| `nodes` | list, at least one | ids `^[a-z][a-z0-9_-]*$`, unique, never containing `__`, never `self` |
+| `nodes` | list, at least one | ids `^[a-z][a-z0-9_-]*$`, unique, never containing `__` (nor, in a scenario, `self`) |
 
 ### Nodes
 
@@ -82,7 +82,7 @@ node. A node that does not run is skipped with a `skip_cause`: `upstream_failed`
 the origin node, carried down the chain), `condition`, `condition_parse_error`, or `prior_success` (reused on resume).
 
 References are `$INPUTS.<name>`, `$<node>.output`, `$<node>.output.<path>` (dot segments, `.0` for an array item; a path
-needs the producer's `output_format`), `$LOOP_PREV…`, `$WITH.<name>`, `$CTX.<name>` and `$self…`, in prompts, `command`,
+needs the producer's `output_format`), `$LOOP_PREV…`, `$WITH.<name>`, `$CTX.<name>`, `$self…` (scenario), in prompts, `command`,
 `args`, `cwd`, `env`, `stdin`, `with`, `until_bash`, `wait.until`, `message` and `reason`, resolved in one pass (never
 rescanned). An undeclared input or a path outside the producer's schema is a load error; a failed producer fails the
 node (`config`). Values render as canonical text: strings as is, numbers and booleans as JSON, null as empty, objects
