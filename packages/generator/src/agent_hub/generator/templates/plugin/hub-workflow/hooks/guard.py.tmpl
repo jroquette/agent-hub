@@ -1778,14 +1778,16 @@ class _EnvFiles:
 
 
 def _env_file_grep(env_files: _EnvFiles, ti: dict, cwd: str) -> str | None:
-    """A Grep on an env file, on the folder holding one (its path, else the cwd), or with a glob
-    filter that lets one through under its folder (E-5: a folder above it with no glob passes)."""
+    """A Grep on an env file; with a glob filter, one the filter lets through under its folder; with
+    none, on the folder holding one (its path, else the cwd). E-5: a folder above it with no glob,
+    or a glob that cannot reach it, passes."""
     root = os.path.join(cwd, os.path.expanduser(_str(ti.get("path"))))
     if not os.path.isdir(root):
         return env_files.at(root)
     grep_glob = _str(ti.get("glob"))
-    reached = env_files.under(root, lambda rel: _grep_glob_passes((rel,), grep_glob)) if grep_glob else None
-    return reached or env_files.holding(root)
+    if grep_glob:
+        return env_files.under(root, lambda rel: _grep_glob_passes((rel,), grep_glob))
+    return env_files.holding(root)
 
 
 def _env_file_glob(env_files: _EnvFiles, ti: dict, cwd: str) -> str | None:
