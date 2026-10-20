@@ -1167,7 +1167,12 @@ class FailingStore(InMemoryAgentSessionStore):
 
 class SendFailingDriver(InMemorySessionDriver):
     async def send(
-        self, handle: DriverHandle, text: str, *, images: tuple[DriverImage, ...] = ()
+        self,
+        handle: DriverHandle,
+        text: str,
+        *,
+        images: tuple[DriverImage, ...] = (),
+        files: tuple[DriverFile, ...] = (),
     ) -> None:
         raise RuntimeError("pipe closed")
 
@@ -1450,6 +1455,53 @@ async def test_sends_prompt_with_image_when_screenshot_sent(make_rig: MakeRig) -
     first = rig.records(created.id)[0]
     assert first.kind == "user.message"
     assert first.body == {"text": "Say hello.", "attachments": [SCREENSHOT_MARKER]}
+
+
+async def test_sends_prompt_with_capture_images_and_files_when_all_attached(
+    make_rig: MakeRig,
+) -> None:
+    rig = make_rig()
+    notes = b"# Brief\nExport orders.\n"
+    attached = {
+        "name": "brief.md",
+        "media_type": "text/plain",
+        "data": base64.b64encode(notes).decode("ascii"),
+    }
+
+    created = await rig.create(
+        "Start it.", screenshot=_screenshot(), screenshots=[_screenshot()], files=[attached]
+    )
+    await rig.until_status(created.id, "idle")
+
+    image = DriverImage(media_type="image/png", data=PNG)
+    file = DriverFile(name="brief.md", media_type="text/plain", data=notes)
+    sends = [call.args for call in rig.driver.calls if call.method == "send"]
+    assert sends == [("Start it.", (image, image), (file,))]
+    file_marker = {
+        "kind": "file",
+        "media_type": "text/plain",
+        "bytes": len(notes),
+        "name": "brief.md",
+    }
+    assert rig.records(created.id)[0].body == {
+        "text": "Start it.",
+        "attachments": [file_marker, SCREENSHOT_MARKER, SCREENSHOT_MARKER],
+    }
+
+
+async def test_refuses_before_driver_when_first_prompt_file_refused(make_rig: MakeRig) -> None:
+    rig = make_rig()
+    fake_pdf = {
+        "name": "a.pdf",
+        "media_type": "application/pdf",
+        "data": base64.b64encode(b"hi").decode("ascii"),
+    }
+
+    with pytest.raises(InvalidMessageFileError) as refused:
+        await rig.create("Start it.", files=[fake_pdf])
+
+    assert refused.value.pointer == "/files/0/data"
+    assert [call.method for call in rig.driver.calls] == []
 
 
 @pytest.mark.parametrize(

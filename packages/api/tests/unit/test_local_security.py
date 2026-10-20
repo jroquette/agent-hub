@@ -366,7 +366,7 @@ def test_accepts_large_body_when_create_session_under_create_body_cap() -> None:
         "/api/v1/agent-sessions", content=_streamed(AGENT_SESSION_CREATE_BODY_BYTES)
     )
 
-    assert AGENT_SESSION_CREATE_BODY_BYTES == 16 * 1024 * 1024
+    assert AGENT_SESSION_CREATE_BODY_BYTES == 100 * 1024 * 1024
     assert (sized.status_code, sized.json()) == (200, {"length": len(body)})
     assert (streamed.status_code, streamed.json()) == (200, {"length": len(body)})
 

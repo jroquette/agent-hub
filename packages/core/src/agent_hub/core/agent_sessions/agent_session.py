@@ -229,39 +229,6 @@ class Screenshot(ViewModel):
         yield "chars", len(self.data)
 
 
-class CreateAgentSession(ViewModel):
-    """``POST /agent-sessions``: where, how, and an optional first prompt (its byte size is
-    checked against the message limit, 413), or a past session to resume (and fork).
-    ``screenshot`` goes with the first prompt as an image, so it needs one."""
-
-    project: ProjectName
-    workdir_id: WorkdirId
-    mode: PermissionMode = "default"
-    model: ModelName | None = None
-    prompt: str | None = Field(default=None, min_length=1)
-    resume_session_id: str | None = Field(default=None, pattern=UUID_PATTERN)
-    fork: bool = False
-    screenshot: Screenshot | None = None
-
-    @model_validator(mode="after")
-    def _fork_needs_resume(self) -> CreateAgentSession:
-        if self.fork and self.resume_session_id is None:
-            msg = "fork needs resume_session_id"
-            raise ValueError(msg)
-        return self
-
-    @model_validator(mode="after")
-    def _screenshot_needs_prompt(self) -> CreateAgentSession:
-        if self.screenshot is not None and self.prompt is None:
-            msg = "screenshot needs prompt"
-            raise ValueError(msg)
-        return self
-
-
-# The most images one message carries: each is a PNG of at most ``MAX_SCREENSHOT_BYTES``.
-MAX_MESSAGE_SCREENSHOTS: Final = 10
-
-
 # The most files one message carries: each is a PDF or a UTF-8 text of at most
 # ``MAX_MESSAGE_FILE_BYTES``.
 MAX_MESSAGE_FILES: Final = 5
@@ -283,6 +250,47 @@ class MessageFile(ViewModel):
         yield "name", self.name
         yield "media_type", self.media_type
         yield "chars", len(self.data)
+
+
+# The most images one message carries: each is a PNG of at most ``MAX_SCREENSHOT_BYTES``.
+MAX_MESSAGE_SCREENSHOTS: Final = 10
+
+
+class CreateAgentSession(ViewModel):
+    """``POST /agent-sessions``: where, how, and an optional first prompt (its byte size is
+    checked against the message limit, 413), or a past session to resume (and fork).
+    ``screenshot`` (the screen's capture), ``screenshots`` (images pasted in the first
+    message) and ``files`` go with the first prompt, so they need one."""
+
+    project: ProjectName
+    workdir_id: WorkdirId
+    mode: PermissionMode = "default"
+    model: ModelName | None = None
+    prompt: str | None = Field(default=None, min_length=1)
+    resume_session_id: str | None = Field(default=None, pattern=UUID_PATTERN)
+    fork: bool = False
+    screenshot: Screenshot | None = None
+    screenshots: tuple[Screenshot, ...] | None = Field(
+        default=None, min_length=1, max_length=MAX_MESSAGE_SCREENSHOTS
+    )
+    files: tuple[MessageFile, ...] | None = Field(
+        default=None, min_length=1, max_length=MAX_MESSAGE_FILES
+    )
+
+    @model_validator(mode="after")
+    def _fork_needs_resume(self) -> CreateAgentSession:
+        if self.fork and self.resume_session_id is None:
+            msg = "fork needs resume_session_id"
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _screenshot_needs_prompt(self) -> CreateAgentSession:
+        attached = (self.screenshot, self.screenshots, self.files)
+        if any(item is not None for item in attached) and self.prompt is None:
+            msg = "screenshot, screenshots and files need prompt"
+            raise ValueError(msg)
+        return self
 
 
 class SendMessage(ViewModel):

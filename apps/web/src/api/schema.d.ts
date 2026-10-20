@@ -2332,9 +2332,12 @@ export interface components {
      * CreateAgentSession
      * @description ``POST /agent-sessions``: where, how, and an optional first prompt (its byte size is
      *     checked against the message limit, 413), or a past session to resume (and fork).
-     *     ``screenshot`` goes with the first prompt as an image, so it needs one.
+     *     ``screenshot`` (the screen's capture), ``screenshots`` (images pasted in the first
+     *     message) and ``files`` go with the first prompt, so they need one.
      */
     CreateAgentSession: {
+      /** Files */
+      files?: components["schemas"]["MessageFile"][] | null;
       /**
        * Fork
        * @default false
@@ -2350,6 +2353,8 @@ export interface components {
       /** Resume Session Id */
       resume_session_id?: string | null;
       screenshot?: components["schemas"]["Screenshot"] | null;
+      /** Screenshots */
+      screenshots?: components["schemas"]["Screenshot"][] | null;
       /** Workdir Id */
       workdir_id: string;
     };

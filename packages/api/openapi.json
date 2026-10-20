@@ -1697,8 +1697,24 @@
       },
       "CreateAgentSession": {
         "additionalProperties": false,
-        "description": "``POST /agent-sessions``: where, how, and an optional first prompt (its byte size is\nchecked against the message limit, 413), or a past session to resume (and fork).\n``screenshot`` goes with the first prompt as an image, so it needs one.",
+        "description": "``POST /agent-sessions``: where, how, and an optional first prompt (its byte size is\nchecked against the message limit, 413), or a past session to resume (and fork).\n``screenshot`` (the screen's capture), ``screenshots`` (images pasted in the first\nmessage) and ``files`` go with the first prompt, so they need one.",
         "properties": {
+          "files": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/MessageFile"
+                },
+                "maxItems": 5,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Files"
+          },
           "fork": {
             "default": false,
             "title": "Fork",
@@ -1757,6 +1773,22 @@
                 "type": "null"
               }
             ]
+          },
+          "screenshots": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Screenshot"
+                },
+                "maxItems": 10,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Screenshots"
           },
           "workdir_id": {
             "pattern": "^[0-9a-f]{16}$",
