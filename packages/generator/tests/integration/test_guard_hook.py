@@ -5832,3 +5832,56 @@ def test_denies_bash_glob_when_mixed_case_env_file_matched_after_cd(
     verdicts = decide([(at(bash_call(command), ws), None) for command in commands])
 
     assert verdicts == [env_file_denial("Bash")] * len(commands)
+
+
+# AGH-354 review F3 (plan erratum E-5): a Grep is denied only when its path is a declared env file
+# or the folder holding one (by real path), or when a non-empty glob can reach one; a Grep from a
+# folder above it with no glob passes.
+def test_passes_grep_when_repo_root_searched_without_glob(
+    decide: Decide, mixed_case_env_file_hub: Path
+) -> None:
+    # only demo-api/environment/ holds an env file here (env_file_hub has one in demo-api too)
+    ws = mixed_case_env_file_hub.parent
+    api = ws / "demo-api"
+    calls = [
+        (tool_call("Grep", pattern="DB"), api),
+        (tool_call("Grep", pattern="DB", path="demo-api"), ws),
+        (tool_call("Grep", pattern="DB", path=str(api)), ws),
+        (tool_call("Grep", pattern="DB", path="demo-api", glob="*.py"), ws),
+    ]
+
+    verdicts = decide([(at(event, cwd), None) for event, cwd in calls])
+
+    assert verdicts == [None] * len(calls)
+
+
+def test_denies_grep_when_path_is_env_file_folder(decide: Decide, env_file_hub: Path) -> None:
+    ws = env_file_hub.parent
+    api = ws / "demo-api"
+    (api / "settings").symlink_to(api / "environment")
+    calls = [
+        (tool_call("Grep", pattern="DB", path="environment"), api),
+        (tool_call("Grep", pattern="DB", path="environment/"), api),
+        (tool_call("Grep", pattern="DB", path=str(api / "environment")), ws),
+        (tool_call("Grep", pattern="DB", path="settings"), api),
+        (tool_call("Grep", pattern="DB", path="src/../environment"), api),
+        (tool_call("Grep", pattern="DB"), api / "environment"),
+    ]
+
+    verdicts = decide([(at(event, cwd), None) for event, cwd in calls])
+
+    assert verdicts == [env_file_denial("Grep")] * len(calls)
+
+
+def test_denies_grep_when_glob_reaches_env_file(decide: Decide, env_file_hub: Path) -> None:
+    ws = env_file_hub.parent
+    api = ws / "demo-api"
+    calls = [
+        (tool_call("Grep", pattern="DB", path="demo-api", glob="*.test"), ws),
+        (tool_call("Grep", pattern="DB", glob="**/.env.*"), api),
+        (tool_call("Grep", pattern="DB", glob=".ENV.TEST"), api),
+    ]
+
+    verdicts = decide([(at(event, cwd), None) for event, cwd in calls])
+
+    assert verdicts == [env_file_denial("Grep")] * len(calls)
