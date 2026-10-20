@@ -5938,3 +5938,19 @@ def test_matches_each_brace_alternative_when_grep_glob_has_braces(
     verdicts = decide([(at(event, cwd), None) for event, cwd in (*passed, *denied)])
 
     assert verdicts == [None] * len(passed) + [env_file_denial("Grep")] * len(denied)
+
+
+# Review round 2, finding 3: a Grep of the env file's own folder (its path, or the cwd) whose glob
+# cannot reach the env file passes.
+def test_passes_grep_when_env_file_folder_glob_cannot_reach_it(
+    decide: Decide, env_file_hub: Path
+) -> None:
+    api = env_file_hub.parent / "demo-api"
+    calls = [
+        (tool_call("Grep", pattern="DB", path="environment", glob="*.py"), api),
+        (tool_call("Grep", pattern="DB", glob="*.py"), api / "environment"),
+    ]
+
+    verdicts = decide([(at(event, cwd), None) for event, cwd in calls])
+
+    assert verdicts == [None] * len(calls)
