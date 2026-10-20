@@ -82,8 +82,8 @@ def test_reads_every_part_when_feature_complete() -> None:
     assert (
         view.verdict_line == "**Verdict: SHIP-WITH-OWNER-STEPS.** Two of three ACs pass by command."
     )
-    assert view.phase == "implement"
-    assert view.golden_path.phase == "implement"
+    assert view.phase == "build"
+    assert view.golden_path.phase == "build"
     assert view.tickets_source == "plan"
     assert view.problem is None
     assert view.sources_missing == (EventSource.GITHUB,)
@@ -140,17 +140,17 @@ def test_reads_no_verdict_when_no_eval() -> None:
 
     assert view.verdict is None
     assert view.verdict_line is None
-    assert view.phase == "implement"
+    assert view.phase == "build"
 
 
-def test_reaches_implement_phase_when_an_ac_passes_without_eval() -> None:
+def test_reaches_build_phase_when_an_ac_passes_without_eval() -> None:
     folder = FeatureFolder(
         slug="moving",
         files=("spec.md", "plan.md", "issues.md", "features.json"),
         features_json=a_record(passes=(True, False)),
     )
 
-    assert feature_view(folder, project="demo").phase == "implement"
+    assert feature_view(folder, project="demo").phase == "build"
 
 
 @pytest.mark.parametrize(
@@ -191,7 +191,7 @@ def test_ignores_frontmatter_when_spec_has_none() -> None:
 
     assert view.size is None
     assert view.repos == ()
-    assert view.phase == "research"
+    assert view.phase == "ux_design"
 
 
 def test_ignores_unknown_size_when_frontmatter_odd() -> None:
@@ -224,12 +224,7 @@ def test_keeps_eval_and_review_heads_when_folder_built() -> None:
     head = RecordHead(name="acme-1520.md", head=b"---\ntype: eval\n---\n", problem=None)
     folder = FeatureFolder(slug="demo", files=(), evals=(head,), evals_skipped=2)
 
-    assert (folder.evals, folder.reviews, folder.evals_skipped, folder.reviews_skipped) == (
-        (head,),
-        (),
-        2,
-        0,
-    )
+    assert (folder.evals, folder.reviews, folder.evals_skipped) == ((head,), (), 2)
 
 
 def a_summary(issue_id: str, *, state_type: str = "started") -> IssueSummary:
@@ -311,7 +306,7 @@ def test_parses_record_when_tickets_and_ticket_per_ac() -> None:
     assert detail.tickets_source == "plan"
     assert detail.phase == detail.golden_path.phase == "tickets"
     assert _meta(detail.golden_path, "tickets") == "1 of 2 created"
-    assert _meta(detail.golden_path, "shipped") == LINEAR_NOT_CONNECTED
+    assert _meta(detail.golden_path, "build") == LINEAR_NOT_CONNECTED
 
 
 def test_reads_ticket_ids_when_record_plans_tickets() -> None:
@@ -367,7 +362,7 @@ def test_uses_warm_snapshot_when_read_from_linear() -> None:
     )
 
     assert detail.tickets_source == "linear"
-    assert _meta(detail.golden_path, "shipped") == "1/2 Done"
+    assert _meta(detail.golden_path, "build") == "1 of 2 merged"
 
 
 def test_says_not_loaded_when_cache_cold_with_tickets() -> None:
@@ -380,7 +375,7 @@ def test_says_not_loaded_when_cache_cold_with_tickets() -> None:
     detail = feature_detail(folder, project="demo", read=COLD_READ)
 
     assert detail.tickets_source == "plan"
-    assert _meta(detail.golden_path, "shipped") == LINEAR_NOT_LOADED
+    assert _meta(detail.golden_path, "build") == LINEAR_NOT_LOADED
 
 
 def test_lists_every_eval_when_detail_read() -> None:
@@ -423,11 +418,11 @@ def _owner_record() -> bytes:
     return json.dumps({"tickets": tickets, "acs": acs}).encode()
 
 
-def test_never_marks_evaluate_done_when_ship_covers_part() -> None:
+def test_never_marks_acceptance_done_when_ship_covers_part() -> None:
     """AGH-136 owner report: a SHIP over 3 of 36 ACs showed the feature as Evaluate done.
 
     17 tickets, 1 Done in Linear, 3/36 ACs passing, one ``evals/acme-1520.md`` SHIP covering
-    three ACs and no review records: the feature is still implementing.
+    three ACs and no review records: the feature is still in Build (two-level-flows steps).
     """
     ship = RecordHead(
         name="acme-1520.md",
@@ -452,20 +447,19 @@ def test_never_marks_evaluate_done_when_ship_covers_part() -> None:
     detail = feature_detail(folder, project="demo", read=a_linear_read(*summaries))
 
     path = detail.golden_path
-    assert detail.phase == path.phase == "implement"
+    assert detail.phase == path.phase == "build"
     assert _states(path) == {
         "spec": "done",
+        "ux_design": "skipped",
         "research": "done",
         "plan": "done",
         "tickets": "done",
-        "implement": "current",
-        "review": "partial",
-        "evaluate": "partial",
-        "shipped": "partial",
+        "build": "current",
+        "acceptance": "partial",
+        "shipped": "pending",
     }
-    assert _meta(path, "implement") == "1/17 tickets delivered · 16 in progress · 3/36 ACs"
-    assert _meta(path, "review") == "1/17 reviewed"
-    assert _meta(path, "evaluate") == "partial: covers 3 of 36 ACs"
+    assert _meta(path, "build") == "1 of 17 merged · 16 in progress"
+    assert _meta(path, "acceptance") == "Ticket evals cover 3 of 36 ACs"
     assert [record.delivery for record in detail.evals] == ["acme-1520"]
     assert feature_view(folder, project="demo", read=a_linear_read(*summaries)).golden_path == path
 

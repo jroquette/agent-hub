@@ -13,15 +13,18 @@ The record folders ``evals/`` and ``reviews/`` are opened the same way, relative
 folder: in each, the ``.md`` names not hidden are read in name order, at most ``MAX_EVAL_FILES``
 and ``MAX_REVIEW_FILES``, as the first ``EVAL_HEAD_BYTES`` / ``REVIEW_HEAD_BYTES``. A link, a
 folder or another non-regular file is listed with its problem, never read; the files left out by
-the cap, and the names that are not UTF-8, are counted in ``evals_skipped`` / ``reviews_skipped``.
+the cap, and the names that are not UTF-8, are counted in ``evals_skipped`` (for ``reviews/``
+they are left out uncounted).
 A linked or missing record folder reads as empty: at most ``MAX_EVAL_FILES`` and
 ``MAX_REVIEW_FILES`` names are kept while listing (the smallest by name), the rest only counted.
+The folder's own ``ux-*.md`` designs are read the same way, at most ``MAX_UX_FILES``, as their
+first ``UX_HEAD_BYTES`` (``ux_skipped`` counts the rest).
 
 One call reads at most about ``READ_BUDGET_BYTES``: a folder is read only while the bytes read so
-far are under it, so the total goes over by one folder at most (8,814,594 bytes, about 8.4 MiB:
-``features.json`` 1 MiB + 1, ``plan.md`` 256 KiB + 1, two 64 KiB heads, 200 eval heads of 16 KiB
-and 500 review heads of 8 KiB); each folder past it is listed with ``OVER_BUDGET`` as its record
-problem and files unread.
+far are under it, so the total goes over by one folder at most (9,019,394 bytes, about 8.6 MiB:
+``features.json`` 1 MiB + 1, ``plan.md`` 256 KiB + 1, two 64 KiB heads, 200 eval heads of 16 KiB,
+500 review heads of 8 KiB and 50 UX design heads of 4 KiB); each folder past it is listed with
+``OVER_BUDGET`` as its record problem and files unread.
 ``read_feature_folder`` reads the one folder a slug names, as the listing would, and nothing else.
 """
 
@@ -49,10 +52,13 @@ from agent_hub.core.features.feature_status import (
     EVAL,
     HEAD_BYTES,
     MAX_PLAN_BYTES,
+    MAX_UX_FILES,
     PLAN,
     RECORD,
     RECORD_FILES,
     SPEC,
+    UX_HEAD_BYTES,
+    UX_PREFIX,
     FeatureFolder,
     RecordHead,
 )
@@ -162,9 +168,10 @@ def _read_folder(parent: int, slug: str, meter: _Meter) -> FeatureFolder:
         evals, evals_skipped = _heads(
             folder, EVALS_FOLDER, cap=MAX_EVAL_FILES, size=EVAL_HEAD_BYTES, meter=meter
         )
-        reviews, reviews_skipped = _heads(
+        reviews, _ = _heads(
             folder, REVIEWS_FOLDER, cap=MAX_REVIEW_FILES, size=REVIEW_HEAD_BYTES, meter=meter
         )
+        ux_designs, ux_skipped = _ux_heads(folder, meter)
     finally:
         os.close(folder)
     record, plan = reads[RECORD], reads[PLAN]
@@ -178,9 +185,10 @@ def _read_folder(parent: int, slug: str, meter: _Meter) -> FeatureFolder:
         evals=evals,
         reviews=reviews,
         evals_skipped=evals_skipped,
-        reviews_skipped=reviews_skipped,
         plan=plan if isinstance(plan, bytes) and not too_large else None,
         plan_too_large=too_large,
+        ux_designs=ux_designs,
+        ux_skipped=ux_skipped,
     )
 
 
@@ -202,22 +210,33 @@ def _heads(
     return heads, skipped
 
 
-def _record_names(folder: int, cap: int) -> tuple[list[str], int]:
-    """The first ``cap`` ``.md`` names of ``folder`` not hidden, sorted, and how many others
-    were left out (over the cap, or not UTF-8). At most ``cap`` names are held while listing."""
+def _ux_heads(folder: int, meter: _Meter) -> tuple[tuple[RecordHead, ...], int]:
+    """The heads of the slug folder's own ``ux-*.md`` designs, and how many were skipped."""
+    try:
+        names, skipped = _record_names(folder, MAX_UX_FILES, prefix=UX_PREFIX)
+    except OSError:
+        return (), 0
+    heads = tuple(_record_head(folder, name, size=UX_HEAD_BYTES, meter=meter) for name in names)
+    return heads, skipped
+
+
+def _record_names(folder: int, cap: int, *, prefix: str = "") -> tuple[list[str], int]:
+    """The first ``cap`` ``.md`` names of ``folder`` not hidden (and starting with ``prefix``),
+    sorted, and how many others were left out (over the cap, or not UTF-8). At most ``cap``
+    names are held while listing."""
     left_out = [0]
     with os.scandir(folder) as found:
-        kept = heapq.nsmallest(cap, _notes(found, left_out))
+        kept = heapq.nsmallest(cap, _notes(found, left_out, prefix))
     listed = left_out[0]
     return kept, listed - len(kept)
 
 
-def _notes(entries: Iterable[os.DirEntry[str]], counted: list[int]) -> Iterator[str]:
-    """The UTF-8 ``.md`` names not hidden of ``entries``; ``counted[0]`` counts every ``.md``
-    name not hidden, UTF-8 or not."""
+def _notes(entries: Iterable[os.DirEntry[str]], counted: list[int], prefix: str) -> Iterator[str]:
+    """The UTF-8 ``.md`` names not hidden of ``entries`` that start with ``prefix``;
+    ``counted[0]`` counts every such name, UTF-8 or not."""
     for entry in entries:
         note = entry.name
-        if note.startswith(".") or not note.endswith(NOTE_SUFFIX):
+        if note.startswith(".") or not note.startswith(prefix) or not note.endswith(NOTE_SUFFIX):
             continue
         counted[0] += 1
         try:

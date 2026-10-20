@@ -23,6 +23,7 @@ from agent_hub.core.features.feature_evals import (
     eval_coverage,
     eval_records,
     legacy_verdict_line,
+    owner_wait,
 )
 from agent_hub.core.features.feature_record import (
     RECORD_FILE,
@@ -63,12 +64,18 @@ PLAN: Final = "plan.md"
 ISSUES: Final = "issues.md"
 RECORD: Final = RECORD_FILE
 EVAL: Final = "eval.md"
+# The ``/feature`` intake brief: only its presence counts (AC-1.2); it has no tab of its own.
+BRIEF: Final = "brief.md"
 # The record files of a feature folder, in the order a feature is built.
-RECORD_FILES: Final = (SPEC, RESEARCH, PLAN, ISSUES, RECORD, EVAL)
+RECORD_FILES: Final = (BRIEF, SPEC, RESEARCH, PLAN, ISSUES, RECORD, EVAL)
 # How much of ``spec.md`` and ``eval.md`` is read for the frontmatter and the verdict.
 HEAD_BYTES: Final = 65_536
 # ``plan.md`` is read whole up to this size, so its ``## Amendments`` at the end is seen (P1).
 MAX_PLAN_BYTES: Final = 262_144
+# The UX designs are the folder's own ``ux-*.md`` files: at most this many, their head only (P2).
+UX_PREFIX: Final = "ux-"
+MAX_UX_FILES: Final = 50
+UX_HEAD_BYTES: Final = 4096
 PLAN_TOO_LARGE: Final = (
     f"{PLAN} is larger than {MAX_PLAN_BYTES // 1024} KiB; its version could not be read."
 )
@@ -106,9 +113,10 @@ class FeatureFolder:
     record's bytes, a one-line problem when it could not be read, or None when absent;
     ``spec_head`` and ``eval_head`` are the first ``HEAD_BYTES`` of ``spec.md`` and ``eval.md``.
     ``evals`` and ``reviews`` hold the heads of ``evals/*.md`` and ``reviews/*.md`` sorted by
-    name; ``evals_skipped`` and ``reviews_skipped`` count the files left unread over the cap.
+    name; ``evals_skipped`` counts the eval files left unread over the cap.
     ``plan`` holds ``plan.md`` whole, None when absent or larger than ``MAX_PLAN_BYTES``
-    (``plan_too_large`` then says so).
+    (``plan_too_large`` then says so). ``ux_designs`` holds the heads of the folder's own
+    ``ux-*.md`` sorted by name; ``ux_skipped`` counts those left unread over ``MAX_UX_FILES``.
     """
 
     slug: str
@@ -119,9 +127,10 @@ class FeatureFolder:
     evals: tuple[RecordHead, ...] = ()
     reviews: tuple[RecordHead, ...] = ()
     evals_skipped: int = 0
-    reviews_skipped: int = 0
     plan: bytes | None = None
     plan_too_large: bool = False
+    ux_designs: tuple[RecordHead, ...] = ()
+    ux_skipped: int = 0
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -192,6 +201,7 @@ def feature_parts(
     coverage = eval_coverage(evals, acs, tickets=tickets)
     reviews = review_records(folder.reviews, slug=folder.slug)
     approved = approved_tickets(reviews)
+    accepted = acceptance_eval(evals)
     snapshot = None if read is None else read.snapshot
     board = ticket_board(
         tickets,
@@ -202,21 +212,25 @@ def feature_parts(
         pull_requests=review_pull_requests(reviews, repos or {}),
     )
     source: TicketsSource = "plan" if snapshot is None else "linear"
+    waiting = owner_wait(evals, acs, tickets=tickets)
     gate = EvalGate(
         evals=len(evals),
         covered=len(coverage.covered),
-        owner_steps=len(coverage.owner_steps),
-        scope_recorded=not coverage.unscoped or len(coverage.covered) == coverage.total > 0,
+        owner_steps=None if waiting is None else len(waiting.acs),
+        reopened=0 if waiting is None else len(waiting.reopened),
         skipped=folder.evals_skipped,
+        acceptance=None if accepted is None else accepted.verdict,
     )
+    ux_designs, ux_problem = _ux_designs(folder)
     path = golden_path(
         GoldenInputs(
             files=folder.files,
             rows=board.rows,
             acs=acs,
             coverage=gate,
-            approved_reviews=sum(_approved(row.key, row.id, approved) for row in board.rows),
-            reviews_skipped=folder.reviews_skipped,
+            ux_designs=ux_designs,
+            ux_problem=ux_problem,
+            plan=_plan(folder),
             source=source,
             not_loaded=read is not None and snapshot is None and read.failure is None,
         )
@@ -276,8 +290,15 @@ def feature_detail(
     )
 
 
-def _approved(key: str | None, issue_id: str | None, approved: frozenset[str]) -> bool:
-    return any(name is not None and name.upper() in approved for name in (key, issue_id))
+def _ux_designs(folder: FeatureFolder) -> tuple[tuple[bool, ...], str | None]:
+    """Whether each UX design says ``status: approved`` (one whose head could not be read is a
+    draft), and why they could not all be read: more than the cap (an unread one could be a
+    draft)."""
+    if folder.ux_skipped:
+        return (), f"more than {MAX_UX_FILES} UX designs; not all were read"
+    return tuple(
+        _frontmatter(design.head).get("status") == "approved" for design in folder.ux_designs
+    ), None
 
 
 def _records(folder: FeatureFolder) -> tuple[FeatureRecord, ...]:

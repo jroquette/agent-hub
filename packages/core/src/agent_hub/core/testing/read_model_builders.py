@@ -214,13 +214,13 @@ def a_project_summary(**overrides: object) -> ProjectSummary:
 
 
 def a_feature_view(**overrides: object) -> FeatureView:
-    """A synthetic feature in implementation."""
+    """A synthetic feature in Build."""
     fields: dict[str, object] = {
         "project": "demo",
         "slug": "demo-feature",
         "issues": ("DEM-7",),
         "size": "bounded",
-        "phase": "implement",
+        "phase": "build",
         "files": ("spec.md", "plan.md", "features.json"),
         "acs": AcCounts(passing=2, total=5, owner_steps=1),
         "verdict": None,
@@ -234,21 +234,21 @@ def a_feature_view(**overrides: object) -> FeatureView:
 
 
 def a_golden_path(**overrides: object) -> GoldenPath:
-    """The golden path of a synthetic feature in implementation: 1 of 3 tickets, 2 of 5 ACs."""
+    """The golden path of a synthetic feature in Build: 1 of 3 tickets merged, 2 of 5 ACs."""
     states = (
         ("spec", "done", None, None),
+        ("ux_design", "skipped", "No screen change recorded", None),
         ("research", "skipped", None, None),
-        ("plan", "done", None, None),
+        ("plan", "done", "v1", None),
         ("tickets", "done", "3 of 3 created", None),
-        ("implement", "current", "1/3 tickets · 2/5 ACs", None),
-        ("review", "pending", "0/3 reviewed", "Implement is not done"),
-        ("evaluate", "pending", None, "Implement is not done"),
-        ("shipped", "pending", None, "Implement is not done"),
+        ("build", "current", "1 of 3 merged · 1 in progress", "2 of 3 tickets not merged"),
+        ("acceptance", "partial", "Ticket evals cover 2 of 5 ACs", "Build is not done"),
+        ("shipped", "pending", None, "Build is not done"),
     )
     progress = {
         "tickets": {"done": 3, "total": 3},
-        "implement": {"done": 1, "total": 3},
-        "review": {"done": 0, "total": 3},
+        "build": {"done": 1, "total": 3},
+        "acceptance": {"done": 2, "total": 5},
     }
     fields: dict[str, object] = {
         "steps": tuple(
@@ -263,7 +263,7 @@ def a_golden_path(**overrides: object) -> GoldenPath:
             )
             for name, state, meta, reason in states
         ),
-        "phase": "implement",
+        "phase": "build",
     }
     return GoldenPath.model_validate(fields | overrides)
 
