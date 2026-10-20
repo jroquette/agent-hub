@@ -20,6 +20,7 @@ from agent_hub.core.features.feature_tickets import (
 from agent_hub.core.features.golden_path import LINEAR_NOT_CONNECTED, LINEAR_NOT_LOADED
 from agent_hub.core.features.ticket_snapshots import SnapshotRead
 from agent_hub.core.hub_config.model import Tracker
+from agent_hub.core.testing.read_model_builders import READ_TIME
 from agent_hub.core.testing.tracker_reader_fakes import SNAPSHOT_TIME
 from agent_hub.core.tracker.tracker_reader import IssueSummary, TicketSnapshot
 
@@ -100,7 +101,9 @@ def a_snapshot() -> TicketSnapshot:
 def test_serves_plan_fallback_when_transport_mcp_or_no_key(
     transport: str, read: SnapshotRead
 ) -> None:
-    tickets = feature_tickets(a_folder(), read, project="demo", tracker=a_tracker(transport))
+    tickets = feature_tickets(
+        a_folder(), read, project="demo", tracker=a_tracker(transport), now=READ_TIME
+    )
 
     assert (tickets.project, tickets.slug, tickets.source) == ("demo", "demo-feature", "plan")
     assert tickets.notice == (
@@ -119,7 +122,9 @@ def test_serves_plan_fallback_when_transport_mcp_or_no_key(
 
 
 def test_says_not_loaded_when_cache_cold() -> None:
-    tickets = feature_tickets(a_folder(), a_read(), project="demo", tracker=a_tracker())
+    tickets = feature_tickets(
+        a_folder(), a_read(), project="demo", tracker=a_tracker(), now=READ_TIME
+    )
 
     assert tickets.source == "plan"
     assert tickets.notice == NOT_LOADED_NOTICE
@@ -146,7 +151,7 @@ def test_names_problem_when_read_failed(
 ) -> None:
     read = a_read(failure=failure, detail=f"Linear said {SENTINEL_KEY}", http_status=http_status)
 
-    tickets = feature_tickets(a_folder(), read, project="demo", tracker=a_tracker())
+    tickets = feature_tickets(a_folder(), read, project="demo", tracker=a_tracker(), now=READ_TIME)
 
     problem = tickets.tracker_problem
     assert problem is not None
@@ -170,7 +175,7 @@ def test_names_problem_when_stale_snapshot_served() -> None:
         http_status=503,
     )
 
-    tickets = feature_tickets(a_folder(), read, project="demo", tracker=a_tracker())
+    tickets = feature_tickets(a_folder(), read, project="demo", tracker=a_tracker(), now=READ_TIME)
 
     assert (tickets.source, tickets.stale, tickets.as_of) == ("linear", True, SNAPSHOT_TIME)
     assert tickets.notice is not None
@@ -183,7 +188,7 @@ def test_names_problem_when_stale_snapshot_served() -> None:
 def test_agrees_with_detail_when_snapshot_fresh() -> None:
     read = a_read(snapshot=a_snapshot(), as_of=datetime(2026, 10, 13, 9, 0, tzinfo=UTC))
 
-    tickets = feature_tickets(a_folder(), read, project="demo", tracker=a_tracker())
+    tickets = feature_tickets(a_folder(), read, project="demo", tracker=a_tracker(), now=READ_TIME)
 
     assert (tickets.source, tickets.stale, tickets.notice, tickets.tracker_problem) == (
         "linear",
@@ -193,7 +198,10 @@ def test_agrees_with_detail_when_snapshot_fresh() -> None:
     )
     assert [row.readiness for row in tickets.tickets] == ["done", "in_progress"]
     assert tickets.planning.can_start == ()
-    assert tickets.golden_path == feature_detail(a_folder(), project="demo", read=read).golden_path
+    assert (
+        tickets.golden_path
+        == feature_detail(a_folder(), project="demo", read=read, now=READ_TIME).golden_path
+    )
 
 
 # two-level-flows AC-1.8: each non-epic row carries its flow, from the folder's records.
@@ -206,7 +214,7 @@ def test_serves_ticket_flows_when_folder_has_records() -> None:
     )
 
     tickets = feature_tickets(
-        folder, a_read(snapshot=a_snapshot()), project="demo", tracker=a_tracker()
+        folder, a_read(snapshot=a_snapshot()), project="demo", tracker=a_tracker(), now=READ_TIME
     )
 
     first, second = (row.flow for row in tickets.tickets)
@@ -232,7 +240,7 @@ def test_serves_ticket_flows_when_folder_has_records() -> None:
     ids=["not-connected", "cold"],
 )
 def test_marks_merged_unknown_when_linear_not_read(read: SnapshotRead, meta: str) -> None:
-    tickets = feature_tickets(a_folder(), read, project="demo", tracker=a_tracker())
+    tickets = feature_tickets(a_folder(), read, project="demo", tracker=a_tracker(), now=READ_TIME)
 
     for row in tickets.tickets:
         assert row.flow is not None
@@ -258,7 +266,7 @@ def test_folds_eval_verdict_once_when_one_eval_names_every_ticket(
     monkeypatch.setattr(ticket_flow_module, "latest_verdict", counting)
 
     tickets = feature_tickets(
-        folder, a_read(snapshot=a_snapshot()), project="demo", tracker=a_tracker()
+        folder, a_read(snapshot=a_snapshot()), project="demo", tracker=a_tracker(), now=READ_TIME
     )
 
     assert [row.flow.steps[4].state for row in tickets.tickets if row.flow] == ["done", "done"]

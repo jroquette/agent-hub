@@ -69,7 +69,7 @@ def test_detail_has_plan_and_acceptance_eval_when_feature_requested(wired: Any) 
         ],
         "problem": None,
     }
-    assert body["acceptance_eval"] == {"delivery": "feature", "verdict": "SHIP"}
+    assert body["acceptance_eval"] == {"delivery": "feature", "verdict": "SHIP", "owner_wait": None}
 
 
 def test_serves_null_plan_when_feature_has_none(wired: Any) -> None:
