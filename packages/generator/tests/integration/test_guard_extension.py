@@ -1100,6 +1100,16 @@ def test_keeps_latency_ceiling_when_input_tool_scanned(
 
     assert len(samples) == LATENCY_RUNS
     assert p95(samples) <= LATENCY_CEILING
+    # the same input with a word in one row is denied: the walk ran on every sample
+    rows[500] = "prod-" + "x" * 59
+    stdin = json.dumps(event | {"tool_input": {"rows": rows}}).encode()
+    denied = run_hook_file(hook_python, hub / HOOKS / "guard.py", stdin=stdin, cwd=hub, env=env)
+    output = json.loads(denied.stdout)["hookSpecificOutput"]
+    assert (output["permissionDecision"], output["permissionDecisionReason"]) == (
+        "deny",
+        f"{PREFIX}blocked word `prod` (guard.blocked_words, hub.json) in the input of"
+        " `mcp__db__query`: agents do not reach what a blocked word names",
+    )
 
 
 # argv: none. The blocked-word rule's own time on one Bash call with W and no file to scan: the
