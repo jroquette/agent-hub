@@ -2394,7 +2394,13 @@ export interface components {
       | "session.summary"
       | "session.title"
       | "expect.poll"
-      | "context.capture";
+      | "context.capture"
+      | "action.start"
+      | "action.end"
+      | "policy.decision"
+      | "finding"
+      | "workaround.start"
+      | "workaround.end";
     /**
      * ExternalBlocker
      * @description A blocker outside the feature's tickets, with its status when Linear returned it.
