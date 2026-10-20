@@ -35,6 +35,7 @@ from agent_hub.cli.action_process import ActionCall, plan_action, run_action
 from agent_hub.cli.collect import hub_project_name
 from agent_hub.cli.command_exits import FAILURE, fail
 from agent_hub.cli.effective_config import load_effective_config_or_exit
+from agent_hub.cli.env_files_loader import EnvFileLoadError, load_env_file
 from agent_hub.cli.hub_root import hub_checkout, hub_root_or_exit
 from agent_hub.cli.run_children import CHILD_HIDDEN, without
 from agent_hub.cli.run_log import now, open_default_event_store
@@ -50,7 +51,12 @@ from agent_hub.core.scenarios.access_policy import PolicyDecision, decide, find_
 from agent_hub.core.scenarios.action_call import ActionCallError, ActionCallPlan, plan_action_call
 from agent_hub.core.scenarios.action_catalog import ActionEntry, ActionRefError, resolve_action
 from agent_hub.core.scenarios.action_document import ActionDocument
-from agent_hub.core.scenarios.credentials import CredentialNames
+from agent_hub.core.scenarios.credentials import (
+    CredentialNames,
+    CredentialsError,
+    action_credentials,
+    credentials_for,
+)
 from agent_hub.core.scenarios.scenario_events import ActionFacts, ScenarioEvents
 from agent_hub.core.workflows.failures import NodeFailedError
 from agent_hub.generator.action_discovery import ActionDiscovery, discover_actions
@@ -185,6 +191,7 @@ def run_command(name: Name, *, environment: Environment, given: Inputs = None) -
         facts = facts.model_copy(update={"approver": getpass.getuser()})
     events.action_started(facts, at=now())
     try:
+        credentials(resolved)
         output = run_action(resolved.call, environ=os.environ, hidden=resolved.hidden)
     except NodeFailedError as error:
         events.action_ended(facts, status="failed", failure_kind=error.kind, at=now())
@@ -193,6 +200,25 @@ def run_command(name: Name, *, environment: Environment, given: Inputs = None) -
     events.action_ended(facts, status="ok", failure_kind=None, at=now())
     _send(events)
     typer.echo(dump_json(output).decode(), nl=False)
+
+
+def credentials(resolved: ResolvedCall) -> dict[str, str]:
+    """What the call's process gets on top of its plain environment: its env file's variables
+    (read now, the only read), ``AWS_PROFILE`` and the declared names from this environment;
+    raises ``NodeFailedError`` (``config``) when they cannot be had, before any process."""
+    if resolved.environment is None:
+        return {}
+    try:
+        chosen = credentials_for(resolved.environment, resolved.plan.endpoints)
+        env_file = chosen.env_file if chosen is not None else None
+        values = (
+            {}
+            if env_file is None
+            else load_env_file(resolved.hub.parent, env_file, environment=resolved.environment_name)
+        )
+    except (CredentialsError, EnvFileLoadError) as error:
+        raise NodeFailedError("config", str(error)) from None
+    return action_credentials(chosen, environ=os.environ, env_file_values=values)
 
 
 def resolve_call(name: str, *, environment: str, given: list[str]) -> ResolvedCall:
