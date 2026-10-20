@@ -4403,7 +4403,11 @@ def test_asks_when_event_nested_too_deep(
     if nesting.raises:
         assert asked_once(completed) == ("ask", UNREADABLE_ASK)
     else:
-        assert (completed.stdout, completed.stderr) == (b"", b"")
+        # AC-293.4 (D-deep): the parsed event is walked, and its 100,001 values ask
+        assert asked_once(completed) == (
+            "ask",
+            "[hub guard] " + UNCHECKED_REASON.format(INPUT_TOO_MANY),
+        )
 
 
 def test_asks_when_command_over_cap(decide: Decide) -> None:
