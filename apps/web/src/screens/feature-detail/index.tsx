@@ -477,18 +477,18 @@ export function FeatureDetailScreen() {
   };
   const tabs = [
     ...Object.entries(RECORDS).map(([id, meta]) => ({ id, label: meta?.label ?? id })),
-    { id: "eval", label: "Eval" },
+    {
+      id: "tickets",
+      label: "Tickets",
+      count: tickets.data?.tickets.length ?? issueIds.length,
+    },
     {
       id: "acs",
       label: "Acceptance criteria",
       icon: "list-checks" as const,
       count: detail.acs?.total,
     },
-    {
-      id: "tickets",
-      label: "Tickets",
-      count: tickets.data?.tickets.length ?? issueIds.length,
-    },
+    { id: "eval", label: "Eval" },
   ];
   let body: ReactNode;
   if (tab === "tickets") {

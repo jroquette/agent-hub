@@ -354,7 +354,7 @@ describe("FeatureDetailScreen", () => {
   });
 
   describe("records", () => {
-    it("has the Spec, Research, Plan, Eval and Acceptance criteria tabs (AC-269.9, records)", async () => {
+    it("has the Spec, Research, Plan, Tickets, Acceptance criteria and Eval tabs, in golden-path order (AC-269.9, records)", async () => {
       open();
 
       const tabs = within(await screen.findByRole("tablist", { name: "Feature record" }));
@@ -362,9 +362,9 @@ describe("FeatureDetailScreen", () => {
         "Spec",
         "Research",
         "Plan",
-        "Eval",
-        "Acceptance criteria13",
         "Tickets2",
+        "Acceptance criteria13",
+        "Eval",
       ]);
       expect(tabs.getByRole("tab", { name: /Acceptance criteria/ })).toHaveAttribute(
         "aria-selected",
