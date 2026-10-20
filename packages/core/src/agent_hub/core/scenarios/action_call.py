@@ -5,7 +5,9 @@ A given value must be one of the action's inputs and fit its type; a missing inp
 default, and a required one without a value is refused. A ``service`` value names a service of
 ``repos[].services`` (``<service>``, or ``<repo>/<service>`` when two repos have one of that
 name) and is resolved to that service's endpoint in the bound environment, or refused naming the
-service and the environment. Messages name inputs and services, never a given value.
+service and the environment. Messages name inputs and services, never a given value. A
+``pending`` input (a scenario step's value known only at run time) is neither checked nor
+resolved: the plan then leaves it out.
 """
 
 from collections.abc import Mapping
@@ -44,10 +46,11 @@ def plan_action_call(
     *,
     environment: str,
     view: EffectiveEnvironments,
+    pending: frozenset[str] = frozenset(),
 ) -> ActionCallPlan:
-    """The plan of ``action`` called with ``given`` in ``environment``; raises
-    ``ActionCallError`` at the first problem."""
-    inputs = _typed_inputs(action, given)
+    """The plan of ``action`` called with ``given`` in ``environment``, ``pending`` inputs left
+    out; raises ``ActionCallError`` at the first problem."""
+    inputs = _typed_inputs(action, given, pending)
     endpoint: dict[str, Mapping[str, JsonValue]] = {}
     services: list[str] = []
     endpoints: list[Endpoint] = []
@@ -65,13 +68,16 @@ def plan_action_call(
     )
 
 
-def _typed_inputs(action: ActionDocument, given: Mapping[str, JsonValue]) -> dict[str, JsonValue]:
+def _typed_inputs(
+    action: ActionDocument, given: Mapping[str, JsonValue], pending: frozenset[str]
+) -> dict[str, JsonValue]:
     """``given`` checked against the action's inputs, each missing one at its default."""
-    for name in given:
-        if name not in action.inputs:
-            raise ActionCallError(f"unknown input {name}")
+    if unknown := [name for name in (*given, *sorted(pending)) if name not in action.inputs]:
+        raise ActionCallError(f"unknown input {unknown[0]}")
     inputs: dict[str, JsonValue] = {}
     for name, declared in action.inputs.items():
+        if name in pending:
+            continue
         if name in given:
             if not declared.fits(given[name]):
                 raise ActionCallError(f"input {name} must be of type {declared.type}")

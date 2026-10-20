@@ -740,11 +740,12 @@ def _given_values(plan: WorkflowPlan, given: list[str]) -> dict[str, JsonValue]:
         if not sep:
             raise typer.BadParameter(f"{pair!r} is not NAME=VALUE", param_hint="--input")
         kind = declared[key].type if key in declared else "string"
-        values[key] = _typed(text, kind, key)
+        values[key] = typed_input(text, kind, key)
     return values
 
 
-def _typed(text: str, kind: str, key: str) -> JsonValue:
+def typed_input(text: str, kind: str, key: str) -> JsonValue:
+    """``text`` as an input of type ``kind``; else exit 2 naming ``key``."""
     try:
         if kind == "integer":
             return int(text)
@@ -794,10 +795,10 @@ def _catalog(*, name: str | None) -> WorkflowCatalog:
 
 def _exit_on_problems(catalog: WorkflowCatalog) -> None:
     if catalog.problems:
-        fail(*(_problem_line(problem) for problem in catalog.problems))
+        fail(*(problem_line(problem) for problem in catalog.problems))
 
 
-def _problem_line(problem: LoadProblem) -> str:
+def problem_line(problem: LoadProblem) -> str:
     where = shown_path(problem.file) + ("" if problem.line is None else f":{problem.line}")
     return f"{where}: {problem.key}: {problem.message}"
 
