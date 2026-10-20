@@ -98,7 +98,10 @@ tightens); the brief, `hub env list`, doctor and setup show it.
 - **Fail closed:** a list that is not a list, a bad item or an unknown `guard` key in any layer makes the guard ask on
   every Bash and file-tool call, naming the layer and key. So does a `hub.local.json` that exists but is unusable (not
   JSON, not an object, not a regular file, over 64 KiB), until it is fixed (doctor's `config.schema` reports it); an
-  absent one changes nothing.
+  absent one changes nothing. A hook event that is not a JSON object (bad UTF-8, invalid or truncated JSON, nested too
+  deep for the parser, a list) makes the guard ask
+  `blocked words not checked: the tool input could not be read (not a JSON object)` while blocked words, or a problem
+  with the blocked-word list, are in effect; without them, nothing changes.
 - **Reason:** ``blocked word `<w>` (guard.blocked_words, <first layer listing it>) in <where>: agents do not reach what
   a blocked word names``, `<where>` one of `the command`, `the session variable <NAME>`, `the path <path>`, `the
   contents of <path>` (the path escaped, ≤ 100 characters). Never the command, a value or a line. Rule id
