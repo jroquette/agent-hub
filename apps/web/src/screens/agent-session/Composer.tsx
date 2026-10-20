@@ -3,6 +3,14 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from
 import { Button, Icon, ScreenshotThumb } from "../../components";
 import { ApiProblem } from "../../lib/api";
 import { cx } from "../../lib/cx";
+import {
+  fileSize,
+  MAX_MESSAGE_FILES,
+  MessageFileError,
+  otherFiles,
+  readMessageFile,
+  type MessageFile,
+} from "../../lib/messageFile";
 import { imageFiles, imageToPng, MAX_MESSAGE_IMAGES } from "../../lib/pastedImage";
 import { servedCheckout } from "../../lib/devCheckout";
 import { useSlashMenu, type SlashOption } from "./SlashMenu";
@@ -38,8 +46,13 @@ export interface ComposerProps {
   model: string | null;
   /** The model aliases capabilities offer; the current model is added when it is another id. */
   models: readonly string[];
-  /** Sends the text, with the PNG data URLs of the images pasted in it (`acceptsImages`). */
-  onSend: (text: string, screenshots: readonly string[]) => Promise<unknown> | undefined;
+  /** Sends the text, with the PNG data URLs of the images pasted in it (`acceptsImages`) and the
+   * files attached to it (`acceptsFiles`). */
+  onSend: (
+    text: string,
+    screenshots: readonly string[],
+    files: readonly MessageFile[],
+  ) => Promise<unknown> | undefined;
   onInterrupt: () => Promise<unknown> | undefined;
   onSettings: (change: SettingsChange) => Promise<unknown> | undefined;
   /** Called as a message goes out: the chat pins the transcript to its bottom (AC-234.18). */
@@ -61,11 +74,18 @@ export interface ComposerProps {
   resumable?: boolean | undefined;
   /** Images may be pasted, dropped or picked into the message (up to `MAX_MESSAGE_IMAGES`). */
   acceptsImages?: boolean | undefined;
+  /** PDFs and text files may be attached too (up to `MAX_MESSAGE_FILES`, 5 MB each). */
+  acceptsFiles?: boolean | undefined;
 }
 
 interface PastedImage {
   key: number;
   url: string;
+}
+
+interface AttachedFile {
+  key: number;
+  file: MessageFile;
 }
 
 const bytesOf = (text: string) => new TextEncoder().encode(text).length;
@@ -99,9 +119,11 @@ export function Composer({
   focusOnOpen = false,
   resumable = false,
   acceptsImages = false,
+  acceptsFiles = false,
 }: ComposerProps) {
   const { text, setText, accepted } = useDraft(draftId);
   const [images, setImages] = useState<PastedImage[]>([]);
+  const [files, setFiles] = useState<AttachedFile[]>([]);
   const [reading, setReading] = useState(0);
   const [dragging, setDragging] = useState(false);
   const imageKeys = useRef(0);
@@ -129,7 +151,9 @@ export function Composer({
   const size = bytesOf(text);
   const tooLong = size > maxBytes;
   const canSend = reason === null && !sending && !tooLong && reading === 0 && text.trim() !== "";
-  const needsText = images.length > 0 && text.trim() === "";
+  const attached = images.length + files.length;
+  const needsText = attached > 0 && text.trim() === "";
+  const attaches = acceptsImages || acceptsFiles;
   const canStop = status === "running" || status === "waiting_permission";
   const currentModel = model ?? "default";
   const modelOptions = models.includes(currentModel) ? models : [...models, currentModel];
@@ -235,6 +259,43 @@ export function Composer({
     }
   };
 
+  // Each file is read and checked (a PDF, or UTF-8 text, of at most 5 MB); a refused one says why.
+  const addFiles = (picked: readonly File[]) => {
+    if (!acceptsFiles || reason !== null || picked.length === 0) return;
+    const room = MAX_MESSAGE_FILES - files.length;
+    const taken = picked.slice(0, Math.max(0, room));
+    setError(
+      taken.length < picked.length
+        ? `A message takes up to ${String(MAX_MESSAGE_FILES)} files.`
+        : null,
+    );
+    for (const one of taken) {
+      setReading((count) => count + 1);
+      readMessageFile(one)
+        .then((file) => {
+          imageKeys.current += 1;
+          const key = imageKeys.current;
+          setFiles((before) => [...before, { key, file }]);
+        })
+        .catch((cause: unknown) => {
+          setError(
+            cause instanceof MessageFileError
+              ? cause.message
+              : "Could not read that file. Try again.",
+          );
+        })
+        .finally(() => {
+          setReading((count) => count - 1);
+        });
+    }
+  };
+
+  // What a paste, a drop or the picker brought: images go as images, the rest as files.
+  const addAttachments = (source: { files: ArrayLike<File> | null } | null) => {
+    addImages(acceptsImages ? imageFiles(source) : []);
+    addFiles(acceptsFiles ? otherFiles(source) : []);
+  };
+
   const send = () => {
     if (!canSend || busy.current) return;
     onSending?.();
@@ -244,18 +305,21 @@ export function Composer({
     setError(null);
     const message = text;
     const sent = images;
+    const sentFiles = files;
     void Promise.resolve()
       .then(() =>
         onSend(
           message,
           sent.map((image) => image.url),
+          sentFiles.map((attachedFile) => attachedFile.file),
         ),
       )
       .then(
         () => {
           accepted(message);
-          // Images pasted while it was sending stay for the next message.
+          // Images and files added while it was sending stay for the next message.
           setImages((now) => now.filter((image) => !sent.includes(image)));
+          setFiles((now) => now.filter((attachedFile) => !sentFiles.includes(attachedFile)));
         },
         (cause: unknown) => {
           setError(problemText(cause, "send the message"));
@@ -278,8 +342,7 @@ export function Composer({
         send();
       }}
       onDragOver={(event) => {
-        if (!acceptsImages || reason !== null || !event.dataTransfer.types.includes("Files"))
-          return;
+        if (!attaches || reason !== null || !event.dataTransfer.types.includes("Files")) return;
         event.preventDefault();
         event.dataTransfer.dropEffect = "copy";
         setDragging(true);
@@ -288,15 +351,36 @@ export function Composer({
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false);
       }}
       onDrop={(event) => {
-        if (!acceptsImages) return;
+        if (!attaches) return;
         event.preventDefault();
         setDragging(false);
-        addImages(imageFiles(event.dataTransfer));
+        addAttachments(event.dataTransfer);
         focusBox();
       }}
     >
-      {(images.length > 0 || reading > 0) && (
-        <ul className="as-composer-images" aria-label="Images in this message">
+      {(attached > 0 || reading > 0) && (
+        <ul className="as-composer-images" aria-label="Attached to this message">
+          {files.map(({ key, file }) => (
+            <li key={key} className="as-composer-file">
+              <Icon name="file-text" size="sm" />
+              <span className="as-composer-file-name" title={file.name}>
+                {file.name}
+              </span>
+              <span className="ah-small ah-muted">{fileSize(file.bytes)}</span>
+              <button
+                type="button"
+                className="as-composer-image-remove"
+                aria-label={`Remove ${file.name}`}
+                title="Remove"
+                onClick={() => {
+                  setFiles((before) => before.filter((attachedFile) => attachedFile.key !== key));
+                  focusBox();
+                }}
+              >
+                <Icon name="x" size="sm" />
+              </button>
+            </li>
+          ))}
           {images.map((image, index) => (
             <li key={image.key} className="as-composer-image">
               <ScreenshotThumb
@@ -326,7 +410,7 @@ export function Composer({
           {reading > 0 && (
             <li className="as-composer-image as-composer-image-reading" aria-live="polite">
               <Icon name="loader" size="sm" className="as-spin" />
-              <span className="ah-sr">Reading the image…</span>
+              <span className="ah-sr">Reading…</span>
             </li>
           )}
         </ul>
@@ -351,7 +435,9 @@ export function Composer({
             ? "This session has ended. Send a message to resume it."
             : images.length > 0
               ? "Say what Claude should look at in the image"
-              : "Message Claude")
+              : files.length > 0
+                ? "Say what Claude should do with the file"
+                : "Message Claude")
         }
         disabled={reason !== null}
         aria-describedby={hintId}
@@ -365,11 +451,14 @@ export function Composer({
           setCaret(event.currentTarget.selectionStart);
         }}
         onPaste={(event) => {
-          const files = acceptsImages ? imageFiles(event.clipboardData) : [];
-          if (files.length === 0) return;
-          // A copied image may also carry its file name as text: only the image is pasted.
+          const pasted = [
+            ...(acceptsImages ? imageFiles(event.clipboardData) : []),
+            ...(acceptsFiles ? otherFiles(event.clipboardData) : []),
+          ];
+          if (pasted.length === 0) return;
+          // A copied file may also carry its name as text: only the file is pasted.
           event.preventDefault();
-          addImages(files);
+          addAttachments(event.clipboardData);
         }}
         onCompositionStart={() => {
           composing.current = true;
@@ -450,17 +539,17 @@ export function Composer({
           </label>
         </div>
         <div className="as-composer-actions">
-          {acceptsImages && (
+          {attaches && (
             <>
               <input
                 ref={filePicker}
                 type="file"
-                accept="image/*"
+                accept={acceptsFiles ? undefined : "image/*"}
                 multiple
                 hidden
                 tabIndex={-1}
                 onChange={(event) => {
-                  addImages(imageFiles(event.target));
+                  addAttachments(event.target);
                   event.target.value = "";
                   focusBox();
                 }}
@@ -470,12 +559,21 @@ export function Composer({
                 variant="ghost"
                 icon="plus"
                 className="as-composer-attach"
-                disabled={reason !== null || images.length + reading >= MAX_MESSAGE_IMAGES}
-                aria-label="Add an image"
-                title="Add an image (or paste or drop one in the box)"
+                disabled={
+                  reason !== null ||
+                  (acceptsFiles
+                    ? images.length >= MAX_MESSAGE_IMAGES && files.length >= MAX_MESSAGE_FILES
+                    : images.length + reading >= MAX_MESSAGE_IMAGES)
+                }
+                aria-label={acceptsFiles ? "Attach a file" : "Add an image"}
+                title={
+                  acceptsFiles
+                    ? "Attach images, PDFs or text files up to 5 MB (or paste or drop them in the box)"
+                    : "Add an image (or paste or drop one in the box)"
+                }
                 onClick={() => filePicker.current?.click()}
               >
-                Image
+                {acceptsFiles ? "Attach" : "Image"}
               </Button>
             </>
           )}
@@ -499,7 +597,9 @@ export function Composer({
         {tooLong
           ? `Too long: ${String(Math.ceil(size / 1024))} KiB of ${String(Math.floor(maxBytes / 1024))} KiB`
           : needsText
-            ? "Add a message to send with the image"
+            ? files.length > 0
+              ? "Add a message to send with the file"
+              : "Add a message to send with the image"
             : coarsePointer()
               ? "Send to send, Enter for a new line"
               : "Enter to send, Shift+Enter for a new line"}

@@ -16,6 +16,7 @@ import {
 
 import { Icon, Markdown, ScreenshotThumb, type IconName } from "../../components";
 import { cx } from "../../lib/cx";
+import { fileSize } from "../../lib/messageFile";
 import { JumpToLatest } from "./JumpToLatest";
 import { useDismissDrawer } from "./useDismissDrawer";
 import { MessageMeta } from "./MessageMeta";
@@ -28,6 +29,7 @@ import { StoredCopyLabel } from "./SessionStatus";
 import { ActivityPanel, ActivityRun, ThinkingBlock, type ActivityStep } from "./ActivityRun";
 import {
   pendingPermissions,
+  type AttachedFileView,
   type ChangedFile,
   type NoticeTone,
   type PermissionView,
@@ -188,6 +190,7 @@ function UserMessage({
   redacted = false,
   screenshotCount = 0,
   screenshotUrls = [],
+  files = [],
 }: {
   text: string;
   note?: string | null;
@@ -196,6 +199,8 @@ function UserMessage({
   /** How many images went with it (the record's markers). */
   screenshotCount?: number;
   screenshotUrls?: readonly string[] | undefined;
+  /** The files that went with it (name and size). */
+  files?: readonly AttachedFileView[] | undefined;
 }) {
   const many = Math.max(screenshotCount, screenshotUrls.length) > 1;
   return (
@@ -223,6 +228,19 @@ function UserMessage({
           </span>
         )
       )}
+      {files.length > 0 && (
+        <ul className="as-msg-files" aria-label="Files sent with this message">
+          {files.map((file, index) => (
+            <li key={index} className="as-msg-file">
+              <Icon name="file-text" size="sm" />
+              <span className="as-msg-file-name" title={file.name}>
+                {file.name}
+              </span>
+              {file.bytes > 0 && <span className="ah-small ah-muted">{fileSize(file.bytes)}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
       {parseReview(text) ? <ReviewBubble text={text} /> : <div className="as-bubble">{text}</div>}
       {note && <span className="ah-small ah-muted">{note}</span>}
       {redacted && <StoredCopyLabel />}
@@ -242,6 +260,7 @@ function EntryBody({ entry, request, onAnswerPermission, screenshotUrls }: Entry
           redacted={entry.redacted}
           screenshotCount={entry.screenshotCount}
           screenshotUrls={screenshotUrls}
+          files={entry.files}
         />
       );
     case "assistant":
@@ -499,6 +518,7 @@ export function Transcript({
                   note="Sending…"
                   screenshotCount={send.screenshots?.length ?? 0}
                   screenshotUrls={send.screenshots}
+                  files={send.files}
                 />
               </div>
             ))}

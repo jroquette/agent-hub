@@ -1190,6 +1190,48 @@
 .as-composer-image-reading {
   color: var(--text-subtle);
 }
+/* A file attached to the message: a chip with its name and size, the remove button in its corner. */
+.as-composer-file {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 260px;
+  height: 40px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+}
+.as-composer-file-name,
+.as-msg-file-name {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The files a sent message carried, above its bubble. */
+.as-msg-files {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.as-msg-file {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 260px;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+}
 /* What Claude did between two messages: one quiet line; its steps open in the side panel. */
 .as-activity {
   display: flex;
