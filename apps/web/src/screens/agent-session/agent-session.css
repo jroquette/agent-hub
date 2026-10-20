@@ -1112,23 +1112,23 @@
   margin: 0;
 }
 /*
- * The composer is one soft capsule, as the chat apps draw it: a filled field with no frame, "+"
- * on the left, the message in the middle, the mode, the model and Send on the right, on one line
- * while the message is short. What goes with the message (references, attachments) sits inside
- * it, above. A narrow chat (the panel) gives the message a line of its own.
+ * The composer is one soft capsule, as the chat apps draw it: what goes with the message
+ * (references, attachments) on top, the message across the whole width, then one row of
+ * controls: "+" and the mode and model on the left, Stop and Send on the right.
  */
 .as-composer {
   position: relative;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
   grid-template-areas:
     "acc acc acc acc acc"
     "files files files files files"
-    "plus text set stop send"
+    "text text text text text"
+    "plus set . stop send"
     "err err err err err";
-  align-items: end;
+  align-items: center;
   column-gap: var(--space-1);
-  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-2);
+  padding: var(--space-2);
   border: 1px solid var(--border);
   border-radius: 28px;
   background: var(--surface-overlay);
@@ -1150,7 +1150,9 @@
 }
 .as-composer > .as-composer-input {
   grid-area: text;
-  align-self: center;
+  width: 100%;
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  text-align: left;
 }
 .as-composer-bar,
 .as-composer-actions {
@@ -1171,24 +1173,6 @@
 .as-composer > .as-error {
   grid-area: err;
   margin: var(--space-1) var(--space-3) 0;
-}
-@container (max-width: 559px) {
-  .as-composer {
-    grid-template-columns: auto minmax(0, 1fr) auto auto;
-    grid-template-areas:
-      "acc acc acc acc"
-      "files files files files"
-      "text text text text"
-      "plus set stop send"
-      "err err err err";
-    row-gap: var(--space-1);
-  }
-  .as-composer > .as-composer-input {
-    padding-inline: var(--space-2) !important;
-  }
-  .as-composer-settings {
-    justify-self: start;
-  }
 }
 /* The mode and the model read as quiet text with a caret, as the model picker of a chat app does;
  * a mode that runs on its own (edits, auto) keeps its tint as a warning. */
@@ -1214,7 +1198,7 @@
 /* Inside the composer card the card is the field: the box drops its own frame. */
 .as-composer .as-composer-input {
   min-height: 24px;
-  padding: 4px var(--space-1);
+  padding: var(--space-2) var(--space-3) var(--space-1);
   border: 0;
   background: transparent;
   font-size: 14px;
@@ -1232,13 +1216,6 @@
 }
 .as-composer .as-composer-input:disabled {
   cursor: not-allowed;
-}
-.as-composer-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
 }
 .as-composer-settings {
   display: flex;
@@ -3087,11 +3064,12 @@ button.as-bg-head {
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  padding: var(--space-3) var(--space-2) var(--space-2) var(--space-3);
+  height: 40px;
+  padding: 0 var(--space-2) 0 var(--space-4);
 }
-.as-rail-new {
-  flex: 1;
-  justify-content: flex-start;
+.as-rail-title {
+  font-size: 13px;
+  font-weight: 600;
 }
 .as-rail-filter {
   position: relative;
@@ -3120,7 +3098,7 @@ button.as-bg-head {
   padding: 0 var(--space-2) var(--space-4);
 }
 .as-rail-group {
-  margin: var(--space-4) var(--space-2) var(--space-1);
+  margin: var(--space-3) var(--space-2) var(--space-1);
   font-size: 12px;
   line-height: 16px;
   font-weight: 500;
@@ -3132,16 +3110,13 @@ button.as-bg-head {
   padding: 0;
   list-style: none;
 }
-/* One line per session, as a chat app's conversation list: status, name, age. */
 .as-rail-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
-  height: 32px;
-  padding: 0 var(--space-2);
+  padding: 6px var(--space-2);
   border-radius: var(--radius-md);
   color: var(--text);
-  font-size: 13px;
   text-decoration: none;
 }
 .as-rail-row:hover {
@@ -3153,66 +3128,72 @@ button.as-bg-head {
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
-/* The session on screen reads as the sidebar's current page does. */
-.as-rail-row[aria-current="page"],
-.as-rail-strip-item[aria-current="page"] {
-  background: var(--surface);
-  box-shadow: inset 0 0 0 1px var(--border);
+.as-rail-current,
+.as-rail-current:hover {
+  background: var(--surface-turn);
 }
-.as-rail-row[aria-current="page"] .as-rail-name {
-  font-weight: 600;
-}
-.as-rail-ended {
-  color: var(--text-muted);
+.as-rail-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 .as-rail-name {
-  flex: 1;
-  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.as-rail-age {
-  flex: none;
-  font-size: 12px;
-  color: var(--text-subtle);
-}
-.as-rail-mark {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-}
-.as-rail-live {
-  color: var(--live);
-}
-.as-rail-waiting {
-  color: var(--waiting);
-}
-.as-rail-failed {
-  color: var(--failed);
-}
-.as-rail-idle {
-  color: var(--text-subtle);
-}
-.as-rail-none {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-full);
-  background: var(--border-strong);
-}
-.as-rail-all {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  margin: var(--space-3) var(--space-2) 0;
   font-size: 13px;
+  line-height: 20px;
+}
+.as-rail-current .as-rail-name {
+  font-weight: 600;
+}
+/* What the session is about: small chips for its project, ticket and feature. */
+.as-rail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.as-rail-tag {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  line-height: 16px;
   color: var(--text-muted);
 }
-.as-rail-all:hover {
+.as-rail-tag-ticket {
+  font-family: var(--font-mono);
   color: var(--text);
+}
+.as-rail-tag-feature {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--accent);
+}
+.as-rail-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: var(--radius-full);
+}
+.as-rail-dot-running {
+  color: var(--live);
+}
+.as-rail-dot-waiting {
+  color: var(--waiting);
+}
+.as-rail-dot-idle {
+  color: var(--text-subtle);
+}
+.as-rail-dot-failed {
+  color: var(--failed);
 }
 .as-rail-empty {
   margin: var(--space-3) var(--space-2);
@@ -3241,4 +3222,7 @@ button.as-bg-head {
 }
 .as-rail-strip-item:hover {
   background: var(--surface-hover);
+}
+.as-rail-strip-item .as-rail-dot {
+  margin-top: 0;
 }

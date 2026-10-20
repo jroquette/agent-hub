@@ -3,10 +3,15 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
-import { aPage, anAgentSession, renderWithApi } from "../../testing/builders";
-import { RAIL_KEY, SessionRail, railGroups, railName } from "./SessionRail";
+import {
+  aPage,
+  aSession,
+  aSessionLabel,
+  anAgentSession,
+  renderWithApi,
+} from "../../testing/builders";
+import { RAIL_KEY, SessionRail, railGroups, railName, railTagsOf } from "./SessionRail";
 
-const NOW = Date.UTC(2026, 9, 20, 13, 0);
 const at = (minutes: number) => new Date(Date.UTC(2026, 9, 20, 12, minutes)).toISOString();
 const sessions = [
   anAgentSession({ id: "a", title: "Ship the rail", status: "running", updated_at: at(5) }),
@@ -31,23 +36,18 @@ afterEach(() => {
 });
 
 describe("railGroups", () => {
-  it("pins the sessions waiting for you, then groups the rest by day, newest first", () => {
-    const lastWeek = anAgentSession({
-      id: "w",
-      status: "ended",
-      updated_at: new Date(NOW - 3 * 86_400_000).toISOString(),
-    });
-    expect(
-      railGroups([...sessions, lastWeek], "", NOW).map((g) => [g.id, g.sessions.map((s) => s.id)]),
-    ).toEqual([
+  it("lists the sessions waiting for you first, then the open ones, then the recent ended ones", () => {
+    expect(railGroups(sessions, "").map((g) => [g.id, g.sessions.map((s) => s.id)])).toEqual([
       ["needs", ["b"]],
-      ["today", ["d", "a", "c"]],
-      ["week", ["w"]],
+      ["active", ["d", "a"]],
+      ["recent", ["c"]],
     ]);
   });
 
-  it("filters by name, project or folder, and drops empty groups", () => {
-    expect(railGroups(sessions, "GUARD", NOW).map((g) => g.id)).toEqual(["needs"]);
+  it("filters by name, project, folder or tag, and drops empty groups", () => {
+    expect(railGroups(sessions, "GUARD").map((g) => g.id)).toEqual(["needs"]);
+    const tagged = () => ({ ticket: "DEMO-1576", feature: "fraud-check" });
+    expect(railGroups(sessions, "demo-1576", tagged)).toHaveLength(3);
   });
 
   it("names a session by its title, else its last prompt on one line", () => {
@@ -56,8 +56,29 @@ describe("railGroups", () => {
   });
 });
 
+describe("railTagsOf", () => {
+  it("tags a session with its observed twin's ticket and the feature that plans it", () => {
+    const twin = aSession({ id: "obs-1", label: aSessionLabel({ issue: "demo-1576" }) });
+    const lookup = new Map([["DEMO-1576", { project: "demo", slug: "fraud-check", title: null }]]);
+    const tagsOf = railTagsOf([twin], lookup);
+
+    expect(tagsOf(anAgentSession({ observed_session_id: "obs-1" }))).toEqual({
+      ticket: "DEMO-1576",
+      feature: "fraud-check",
+    });
+    expect(tagsOf(anAgentSession({ observed_session_id: null }))).toEqual({
+      ticket: null,
+      feature: null,
+    });
+  });
+});
+
 describe("SessionRail", () => {
-  const routes = { "/api/v1/agent-sessions": aPage(sessions) };
+  const routes = {
+    "/api/v1/agent-sessions": aPage(sessions),
+    "/api/v1/sessions": aPage([]),
+    "/api/v1/features": aPage([]),
+  };
 
   it("marks the current session and links the others to their chat", async () => {
     const { container } = renderWithApi(<SessionRail current="a" />, { routes });
