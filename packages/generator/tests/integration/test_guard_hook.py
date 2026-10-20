@@ -4259,6 +4259,13 @@ def test_asks_every_call_when_blocked_config_unusable(
     event = bash_call("git status") | {"cwd": str(blocked_hub)}
 
     verdicts = decide([(bash_call("git status"), None), (read_call("README.md"), None)])
+    inputs = decide(
+        [
+            (tool_call("mcp__db__query", host="x"), None),
+            (tool_call("WebSearch", query="x"), None),
+            (tool_call("Agent", prompt="x"), None),
+        ]
+    )
     completed = run_hook_file(
         hook_python,
         blocked_hub / HOOKS / "guard.py",
@@ -4269,6 +4276,7 @@ def test_asks_every_call_when_blocked_config_unusable(
 
     asked = unchecked(CONFIG_CAUSE.format(problem))
     assert verdicts == [asked, asked]
+    assert inputs == [asked] * 3
     assert (completed.returncode, completed.stderr) == (0, b"")
     output = json.loads(completed.stdout)["hookSpecificOutput"]
     assert (output["permissionDecision"], output["permissionDecisionReason"]) == (
@@ -4288,6 +4296,13 @@ def test_passes_when_local_file_absent(
     event = bash_call("git status") | {"cwd": str(blocked_hub)}
 
     verdicts = decide([(bash_call("git status"), None), (read_call("README.md"), None)])
+    inputs = decide(
+        [
+            (tool_call("mcp__db__query", host="x"), None),
+            (tool_call("WebSearch", query="x"), None),
+            (tool_call("Agent", prompt="x"), None),
+        ]
+    )
     completed = run_hook_file(
         hook_python,
         blocked_hub / HOOKS / "guard.py",
@@ -4297,6 +4312,7 @@ def test_passes_when_local_file_absent(
     )
 
     assert verdicts == [None, None]
+    assert inputs == [None] * 3
     assert (completed.returncode, completed.stdout, completed.stderr) == (0, b"", b"")
 
 
@@ -4726,6 +4742,111 @@ def test_passes_file_tool_when_word_only_in_pattern_or_edit(
     verdicts = decide([(at(event, ws), None) for event in events])
 
     assert verdicts == [None] * len(events)
+
+
+# AGH-293 (D-tools, D-walk, D-reason): an input tool's every key and string is scanned; the
+# reason names the tool, escaped and capped, never a key or value of its input.
+def input_where(tool: str) -> str:
+    return f"the input of `{tool}`"
+
+
+# AC-293.1: (event, the word, the tool its reason names).
+INPUT_EVENTS: tuple[tuple[dict[str, Any], str, str], ...] = (
+    (
+        tool_call(
+            "mcp__db__query", target={"connection": {"host": "db.prod.example.com"}}, sql="select 1"
+        ),
+        "prod",
+        "mcp__db__query",
+    ),
+    (tool_call("mcp__db__query", prod_db=True), "prod", "mcp__db__query"),
+    (
+        tool_call("mcp__dns__resolve", hosts=["a", "x.production.example.com"]),
+        "production",
+        "mcp__dns__resolve",
+    ),
+    (tool_call("mcp__db__query", host="prod2-db"), "prod", "mcp__db__query"),
+)
+
+
+def test_denies_input_tool_when_input_holds_word(decide: Decide) -> None:
+    verdicts = decide([(event, None) for event, _, _ in INPUT_EVENTS])
+
+    assert verdicts == [blocked_word(word, input_where(tool)) for _, word, tool in INPUT_EVENTS]
+    reasons = " ".join(verdict[1] for verdict in verdicts if verdict)
+    for value in ("db.prod.example.com", "select 1", "prod_db", "x.production"):
+        assert value not in reasons
+
+
+def test_denies_input_tool_when_query_or_prompt_holds_word(decide: Decide) -> None:
+    agent = {
+        "description": "check",
+        "prompt": "read the prod config",
+        "subagent_type": "general-purpose",
+    }
+    events = [
+        tool_call("WebSearch", query="prod outage status", mode="standard"),
+        tool_call("Agent", **agent),
+        tool_call("Task", **agent),
+        tool_call("SendMessage", to="teammate", message="deploy to prod"),
+    ]
+
+    verdicts = decide([(event, None) for event in events])
+
+    assert verdicts == [blocked_word("prod", input_where(event["tool_name"])) for event in events]
+
+
+def test_passes_input_tool_when_word_inside_longer_run(decide: Decide) -> None:
+    events = [
+        tool_call("mcp__db__query", host="db.product.example.com"),
+        tool_call("mcp__db__query", products=["reproduce", "tippleProd"]),
+        tool_call("WebSearch", query="product launch", mode="standard"),
+        # a tool_input that is not an object is read as {} (D-walk, OQ-3)
+        {"tool_name": "mcp__db__query", "tool_input": ["prod"]},
+    ]
+
+    verdicts = decide([(event, None) for event in events])
+
+    assert verdicts == [None] * len(events)
+
+
+# AC-293.4 (D-bounds): the walk's limits, as literals (1 MiB of characters, 50,000 values).
+INPUT_CHARS_CAP = 1_048_576
+INPUT_VALUES_CAP = 50_000
+INPUT_TOO_LARGE = "the tool input is over 1 MiB (too large)"
+INPUT_TOO_MANY = "the tool input has over 50000 values (too many values)"
+LONG_TOOL = "mcp__" + "a" * 150
+ODD_TOOLS = (LONG_TOOL, "mcp__a\nb", "mcp__x__y is in guard.deny_hosts (hub.json)")
+
+
+def test_reads_blocked_word_rule_when_input_tool_decided(
+    blocked_hub: Path, *, decide: Decide, hook_python: str, run_python: Callable[..., Any]
+) -> None:
+    mcp = "mcp__db__query"
+    verdicts = decide([(INPUT_EVENTS[0][0], None)])
+    verdicts += decide([(tool_call(mcp, q="x"), None)], seams={"BLOCKED_SCAN_BUDGET": -1})
+    verdicts += decide(
+        [
+            (tool_call(mcp, k="x" * INPUT_CHARS_CAP), None),
+            (tool_call(mcp, v=[0] * (INPUT_VALUES_CAP - 2)), None),
+        ]
+        + [(tool_call(tool, q="prod"), None) for tool in ODD_TOOLS]
+    )
+    reasons = [verdict[1] for verdict in verdicts if verdict]
+
+    rules = run_python(hook_python, RULES_OF, path=blocked_hub / HOOKS, args=[json.dumps(reasons)])
+
+    assert verdicts == [
+        blocked_word("prod", input_where(mcp)),
+        unchecked("out of time (300 ms)"),
+        unchecked(INPUT_TOO_LARGE),
+        unchecked(INPUT_TOO_MANY),
+        blocked_word("prod", input_where(LONG_TOOL[:97] + "...")),
+        blocked_word("prod", input_where("mcp__a\\nb")),
+        blocked_word("prod", input_where(ODD_TOOLS[2])),
+    ]
+    assert all("\n" not in reason for reason in reasons)
+    assert rules == ["blocked_word"] * 7
 
 
 # AC-277.14: (path from ws, its text, the word, the layer listing the word); Lc is written.
