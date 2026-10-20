@@ -17,6 +17,7 @@ import sys
 import time
 from importlib.metadata import version
 from pathlib import Path
+from typing import Any
 
 import pytest
 from typer.testing import CliRunner, Result
@@ -392,3 +393,90 @@ def test_runs_when_draft_committed(hub: Path, marker: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert modes(marker) == ["run"]
+
+
+ENV_FILE = "demo-api/environment/.env.staging"
+ENV_FILE_CAUSES = (
+    "missing",
+    "unreadable",
+    "too large",
+    "not a regular file",
+    "outside the workspace",
+    "not a dotenv file (line 2)",
+)
+
+
+def declare_env_file(hub: Path) -> Path:
+    """``staging`` names ``ENV_FILE``; the path it stands at, in the workspace."""
+    document = json.loads((hub / "hub.json").read_text())
+    document["environments"]["staging"]["credentials"] = {
+        "aws_profile": "demo-staging",
+        "env_file": ENV_FILE,
+    }
+    (hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
+    git(hub, "commit", "-q", "-am", "staging reads an env file")
+    path = hub.parent / ENV_FILE
+    path.parent.mkdir(parents=True)
+    return path
+
+
+ENV_SECRET = "x-" + "secret" + "-y"
+
+
+@pytest.fixture(params=ENV_FILE_CAUSES)
+def env_file_cause(
+    hub: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> str:
+    """``staging``'s env file made unusable for one cause; the cause's words."""
+    cause: str = request.param
+    path = declare_env_file(hub)
+    good = f"DEMO_DB_URL={ENV_SECRET}\n"
+    if cause == "unreadable":
+        path.write_text(good)
+        path.chmod(0)
+        if os.geteuid() == 0:
+            refuse_open(monkeypatch, path)
+    elif cause == "too large":
+        path.write_text(good + "#" * (64 * 1024))
+    elif cause == "not a regular file":
+        os.mkfifo(path)
+    elif cause == "outside the workspace":
+        outside = hub.parent.parent / "outside.env"
+        outside.write_text(good)
+        path.symlink_to(outside)
+    elif cause.startswith("not a dotenv"):
+        path.write_text(f"{good}not a line {ENV_SECRET}\n")
+    return cause
+
+
+def refuse_open(monkeypatch: pytest.MonkeyPatch, path: Path) -> None:
+    """Root reads a mode-0 file: the refusal the kernel gives others is played here."""
+    real_open = os.open
+
+    def refusing(file: Any, *args: Any, **kwargs: Any) -> int:
+        if os.fspath(file) == str(path):
+            raise PermissionError(13, "Permission denied")
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", refusing)
+
+
+def test_fails_plainly_when_env_file_missing_for_action(
+    hub: Path, marker: Path, env_file_cause: str
+) -> None:
+    cause, secret = env_file_cause, ENV_SECRET
+    result = run_action_command(
+        hub, marker, "run", "demo/get-order", "--env", "staging", "--input", "target=api"
+    )
+
+    assert result.exit_code == 1, result.output
+    assert result.stderr == (
+        f"hub action run: demo/get-order: config: environment staging: env file {ENV_FILE}"
+        f" is {cause}\n"
+    )
+    assert modes(marker) == []
+    assert secret not in result.output
+    events = stored(hub)
+    assert [kind for kind, _ in events] == ["policy.decision", "action.start", "action.end"]
+    assert events[-1][1]["failure_kind"] == "config"
+    assert secret not in json.dumps([payload for _, payload in events])
