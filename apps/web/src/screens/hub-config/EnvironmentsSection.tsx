@@ -8,7 +8,6 @@ import {
   Dialog,
   EmptyState,
   Icon,
-  IconButton,
   PathText,
   StatusBadge,
   Tooltip,
@@ -20,6 +19,7 @@ import { EnvironmentDialog } from "./EnvironmentDialog";
 import {
   ACCESS_LOOK,
   LOCAL_FILE,
+  count,
   endpointText,
   endpointValues,
   endpointsIn,
@@ -105,7 +105,17 @@ function EnvironmentSource({ environment }: { environment: SourcedEnvironment })
 
 type Removal =
   | { kind: "environment"; environment: SourcedEnvironment }
-  | { kind: "in-use"; environment: SourcedEnvironment };
+  | { kind: "in-use"; environment: SourcedEnvironment }
+  | { kind: "loosen"; environment: SourcedEnvironment };
+
+const ADD_ENVIRONMENT_ID = "ah-env-add-environment";
+
+/** After a row goes away its button is gone: focus lands on Add environment, not the page. */
+function focusAddEnvironment() {
+  requestAnimationFrame(() => {
+    document.getElementById(ADD_ENVIRONMENT_ID)?.focus();
+  });
+}
 
 /**
  * The Environments section: every environment with what agents may do there, and every repo's
@@ -154,6 +164,7 @@ export function EnvironmentsSection({
       .then(() => {
         setPending(false);
         setRemoval(null);
+        focusAddEnvironment();
         onSaved(
           isTeams(environment) && scope === "local"
             ? `${environment.name} is back to the team's access`
@@ -218,6 +229,7 @@ export function EnvironmentsSection({
           command="./hub env add local --access write --local"
           action={
             <Button
+              id={ADD_ENVIRONMENT_ID}
               variant="primary"
               icon="plus"
               onClick={() => {
@@ -239,6 +251,7 @@ export function EnvironmentsSection({
               instruction, plus blocked words: best effort.
             </Banner>
             <Button
+              id={ADD_ENVIRONMENT_ID}
               icon="plus"
               onClick={() => {
                 setEditing("new");
@@ -280,6 +293,34 @@ export function EnvironmentsSection({
                     setEditing(environment);
                   }}
                   editLabel="Edit"
+                  actions={
+                    isTeams(environment) && isMine(environment) ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        icon="undo-2"
+                        aria-label={`Use the team's access for ${environment.name}`}
+                        onClick={() => {
+                          setFailure(null);
+                          setRemoval({ kind: "loosen", environment });
+                        }}
+                      >
+                        Use team&apos;s
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        icon="x"
+                        aria-label={`Remove environment ${environment.name}`}
+                        onClick={() => {
+                          startRemove(environment);
+                        }}
+                      >
+                        Remove
+                      </Button>
+                    )
+                  }
                 >
                   <span className="ah-config-cell">
                     <AccessValue environment={environment} />
@@ -294,23 +335,6 @@ export function EnvironmentsSection({
                     <span className="ah-small">
                       <CredentialLine environment={environment} />
                     </span>
-                  </span>
-                  <span className="ah-env-remove">
-                    <IconButton
-                      icon="x"
-                      size="sm"
-                      variant="ghost"
-                      label={
-                        isTeams(environment) && isMine(environment)
-                          ? `Go back to the team's access for ${environment.name}`
-                          : `Remove environment ${environment.name}`
-                      }
-                      onClick={() => {
-                        if (isTeams(environment) && isMine(environment))
-                          removeEnvironment(environment);
-                        else startRemove(environment);
-                      }}
-                    />
                   </span>
                 </ConfigRow>
               );
@@ -417,7 +441,7 @@ export function EnvironmentsSection({
                                 <button
                                   type="button"
                                   className="ah-env-cell"
-                                  aria-label={`Edit endpoint of ${where} in ${environment.name}: ${shown}`}
+                                  aria-label={`Edit endpoint of ${where} in ${environment.name}: ${shown}${found.source === LOCAL_FILE ? " · set by you" : ""}${note ? ` · note: ${note}` : ""}`}
                                   onClick={() => {
                                     setEndpoint({
                                       repo: repo.dir,
@@ -483,7 +507,6 @@ export function EnvironmentsSection({
             ...(removal.environment.production
               ? [`Type ${removal.environment.name} to confirm.`]
               : []),
-            ...(failure ? [failure] : []),
           ]}
           onCancel={() => {
             setRemoval(null);
@@ -491,11 +514,41 @@ export function EnvironmentsSection({
           onConfirm={() => {
             removeEnvironment(removal.environment);
           }}
-        />
+        >
+          {failure && (
+            <p role="alert" className="ah-config-error">
+              {failure}
+            </p>
+          )}
+        </ConfirmDialog>
+      )}
+      {removal?.kind === "loosen" && (
+        <ConfirmDialog
+          title={`Use the team's access for ${removal.environment.name}?`}
+          tone="primary"
+          confirmLabel={pending ? "Saving…" : "Use the team's access"}
+          pending={pending}
+          consequences={[
+            `Your agents ${ACCESS_LOOK[removal.environment.team_access ?? "write"].short} in ${removal.environment.name} again, as the team set it.`,
+            "Your stricter setting is removed from hub.local.json.",
+          ]}
+          onCancel={() => {
+            setRemoval(null);
+          }}
+          onConfirm={() => {
+            removeEnvironment(removal.environment);
+          }}
+        >
+          {failure && (
+            <p role="alert" className="ah-config-error">
+              {failure}
+            </p>
+          )}
+        </ConfirmDialog>
       )}
       {removal?.kind === "in-use" && (
         <Dialog
-          title={`${removal.environment.name} is still used by ${String(endpointsIn(view.environments, removal.environment.name).length)} endpoints`}
+          title={`${removal.environment.name} is still used by ${count(endpointsIn(view.environments, removal.environment.name).length, "endpoint")}`}
           size="sm"
           pending={pending}
           onClose={() => {
@@ -520,7 +573,7 @@ export function EnvironmentsSection({
               >
                 {pending
                   ? "Removing…"
-                  : `Remove ${String(endpointsIn(view.environments, removal.environment.name).length)} endpoints`}
+                  : `Remove ${count(endpointsIn(view.environments, removal.environment.name).length, "endpoint")}`}
               </Button>
             </>
           }

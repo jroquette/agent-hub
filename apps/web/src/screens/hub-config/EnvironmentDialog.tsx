@@ -152,7 +152,11 @@ export function EnvironmentDialog({
       size="md"
       onClose={onClose}
       pending={pending}
-      initialFocus={editing === null ? `#${CSS.escape(fieldId("name"))}` : undefined}
+      initialFocus={
+        editing === null
+          ? `#${CSS.escape(fieldId("name"))}`
+          : `input[name="${CSS.escape(fieldId("access"))}"]:checked`
+      }
       footer={
         <>
           <Button disabled={pending} onClick={onClose}>
@@ -178,45 +182,52 @@ export function EnvironmentDialog({
           </p>
         )}
 
-        <fieldset className="ah-env-fieldset">
-          <legend className="ah-config-field-label">Who is this for</legend>
-          <div className="ah-options">
-            <OptionRow
-              type="radio"
-              name={fieldId("scope")}
-              label="Only me"
-              disabled={localBroken || (editing !== null && !teams)}
-              description={
-                localBroken
-                  ? "Not available: your hub.local.json has a problem (see the notice above)."
-                  : teams
-                    ? "Saved in hub.local.json on this machine. You can only make the team's access stricter for your agents."
-                    : "Saved in hub.local.json on this machine. Your agents get it in their brief. Nothing to commit."
-              }
-              checked={scope === "local"}
-              onToggle={() => {
-                setScope("local");
-                if (teams) setAccess(editing.access);
-              }}
-            />
-            <OptionRow
-              type="radio"
-              name={fieldId("scope")}
-              label="The whole team"
-              disabled={editing !== null && !teams}
-              description={
-                editing !== null && !teams
-                  ? "This environment is yours. To share it, ask Claude to move it to hub.json."
-                  : "Saved in hub.json. You review the change, run ./hub sync and open a hub PR."
-              }
-              checked={scope === "team"}
-              onToggle={() => {
-                setScope("team");
-                if (teams && teamAccess) setAccess(teamAccess);
-              }}
-            />
-          </div>
-        </fieldset>
+        {editing !== null && !teams ? (
+          <p className="ah-small ah-muted" style={{ margin: 0 }}>
+            Saved in hub.local.json: {editing.name} is yours. To share it with the team, ask Claude
+            to move it to hub.json.
+          </p>
+        ) : (
+          <fieldset className="ah-env-fieldset">
+            <legend className="ah-config-field-label">Who is this for</legend>
+            <div className="ah-options">
+              <OptionRow
+                type="radio"
+                name={fieldId("scope")}
+                label="Only me"
+                disabled={localBroken}
+                description={
+                  localBroken
+                    ? "Not available: your hub.local.json has a problem (see the notice above)."
+                    : teams
+                      ? "Saved in hub.local.json on this machine. You can only make the team's access stricter for your agents."
+                      : "Saved in hub.local.json on this machine. Your agents get it in their brief. Nothing to commit."
+                }
+                checked={scope === "local"}
+                onToggle={() => {
+                  setScope("local");
+                  if (teams) setAccess(editing.access);
+                }}
+              />
+              <OptionRow
+                type="radio"
+                name={fieldId("scope")}
+                label="The whole team"
+                disabled={editing !== null && !teams}
+                description={
+                  editing !== null && !teams
+                    ? "This environment is yours. To share it, ask Claude to move it to hub.json."
+                    : "Saved in hub.json. You review the change, run ./hub sync and open a hub PR."
+                }
+                checked={scope === "team"}
+                onToggle={() => {
+                  setScope("team");
+                  if (teams && teamAccess) setAccess(teamAccess);
+                }}
+              />
+            </div>
+          </fieldset>
+        )}
 
         <div className="ah-stack" style={{ gap: 4 }}>
           <label htmlFor={fieldId("name")} className="ah-config-field-label">
@@ -253,7 +264,7 @@ export function EnvironmentDialog({
 
         <fieldset className="ah-env-fieldset">
           <legend className="ah-config-field-label">Access</legend>
-          <div className="ah-options" role="radiogroup" aria-label="Access">
+          <div className="ah-options">
             {ACCESSES.map((candidate) => (
               <OptionRow
                 key={candidate}

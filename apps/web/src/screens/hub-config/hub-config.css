@@ -341,21 +341,6 @@
   gap: 6px;
   flex-wrap: wrap;
 }
-.ah-env-remove {
-  position: absolute;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  opacity: 0;
-}
-.ah-config-row:hover .ah-env-remove,
-.ah-config-row:focus-within .ah-env-remove {
-  opacity: 1;
-}
-.ah-config-row:has(.ah-env-remove) .ah-config-value {
-  position: relative;
-  padding-right: 32px;
-}
 .ah-env-subhead {
   display: flex;
   align-items: flex-end;
@@ -405,11 +390,7 @@
   font-weight: 500;
 }
 .ah-env-add {
-  opacity: 0.55;
-}
-tr:hover .ah-env-add,
-.ah-env-add:focus-visible {
-  opacity: 1;
+  color: var(--text-subtle);
 }
 .ah-env-cell {
   display: inline-flex;
@@ -430,8 +411,8 @@ tr:hover .ah-env-add,
   background: var(--surface-hover);
 }
 .ah-env-cell:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 .ah-env-cell .ah-icon {
   color: var(--text-subtle);

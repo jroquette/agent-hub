@@ -622,9 +622,51 @@ describe("HubConfigScreen", () => {
       await screen.findByRole("button", { name: "Remove environment jane-cloud" }),
     );
 
-    const dialog = screen.getByRole("dialog", { name: /jane-cloud is still used by 1 endpoints/ });
+    const dialog = screen.getByRole("dialog", { name: /jane-cloud is still used by 1 endpoint$/ });
     expect(within(dialog).getByText(/demo-api › api/)).toBeVisible();
-    expect(within(dialog).getByRole("button", { name: "Remove 1 endpoints" })).toBeVisible();
+    expect(within(dialog).getByRole("button", { name: "Remove 1 endpoint" })).toBeVisible();
+  });
+
+  it("confirms before going back to the team's looser access", async () => {
+    const { requests } = open("/projects/demo/config", {
+      [CONFIG]: withEnvironments(),
+      [ENV_WRITE]: withEnvironments(),
+    });
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Use the team's access for staging" }),
+    );
+    const dialog = screen.getByRole("alertdialog", {
+      name: "Use the team's access for staging?",
+    });
+    expect(within(dialog).getByText(/Your agents may change data in staging again/)).toBeVisible();
+    expect(requests.some((r) => r.method === "POST")).toBe(false);
+    await userEvent.click(within(dialog).getByRole("button", { name: "Use the team's access" }));
+
+    expect(await screen.findByText("staging is back to the team's access")).toBeVisible();
+    const post = requests.find((r) => r.method === "POST");
+    expect(await post?.json()).toEqual({
+      op: "remove_environment",
+      scope: "local",
+      name: "staging",
+    });
+  });
+
+  it("confirms before removing an endpoint", async () => {
+    const { requests } = open("/projects/demo/config", { [CONFIG]: withEnvironments() });
+
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: /Edit endpoint of demo-api › api in local: http:\/\/localhost:8000/,
+      }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Remove endpoint" }));
+
+    const dialog = screen.getByRole("alertdialog", {
+      name: "Remove the local endpoint of demo-api › api?",
+    });
+    expect(within(dialog).getByText(/hub.json changes/)).toBeVisible();
+    expect(requests.some((r) => r.method === "POST")).toBe(false);
   });
 
   it("has no serious a11y violations with environments", async () => {

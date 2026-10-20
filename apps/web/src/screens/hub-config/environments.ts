@@ -101,10 +101,18 @@ export async function postEnvironmentEdit(
   project: string,
   body: EnvironmentEdit,
 ): Promise<HubConfigView> {
-  const fresh = await apiPost("/api/v1/projects/{project}/config/environments", body, {
-    path: { project },
-  });
-  client.setQueryData(apiKey("/api/v1/projects/{project}/config", { path: { project } }), fresh);
+  const key = apiKey("/api/v1/projects/{project}/config", { path: { project } });
+  let fresh: HubConfigView;
+  try {
+    fresh = await apiPost("/api/v1/projects/{project}/config/environments", body, {
+      path: { project },
+    });
+  } catch (error: unknown) {
+    // A file changed on disk: show it as it is now, the open form keeps its values.
+    if (refusalOf(error).changed) void client.invalidateQueries({ queryKey: key });
+    throw error;
+  }
+  client.setQueryData(key, fresh);
   return fresh;
 }
 
@@ -142,12 +150,21 @@ export interface Refusal {
   summary: string;
   /** A message per field, by the field's name. */
   fields: Record<string, string>;
+  /** The file changed on disk since the page read it: the caller reloads the config. */
+  changed?: boolean;
 }
 
 /** What a failed write shows: each problem under its field, the rest in the summary. */
 export function refusalOf(error: unknown): Refusal {
   if (!(error instanceof ApiProblem) || error.status === 0)
     return { summary: "Could not reach the server. Nothing was saved.", fields: {} };
+  const changed = error.errors.find((problem) => problem.message.includes("changed since"));
+  if (changed)
+    return {
+      summary: `${changed.message.split(" ")[0] ?? "The file"} changed on disk since this page loaded. Nothing was saved. The page now shows the file as it is; check and save again.`,
+      fields: {},
+      changed: true,
+    };
   const fields: Record<string, string> = {};
   const loose: string[] = [];
   for (const problem of error.errors) {
@@ -179,6 +196,11 @@ export function linesOf(text: string): string[] {
 }
 
 /** The first line holding "=" (a value pasted after a name), 1-based, else null. */
+/** "1 endpoint", "3 endpoints". */
+export function count(amount: number, noun: string): string {
+  return `${String(amount)} ${noun}${amount === 1 ? "" : "s"}`;
+}
+
 export function lineWithValue(text: string): number | null {
   const index = text.split("\n").findIndex((line) => line.includes("="));
   return index === -1 ? null : index + 1;

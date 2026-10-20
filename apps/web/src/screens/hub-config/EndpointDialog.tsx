@@ -1,7 +1,7 @@
 import { useId, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { Button, Dialog, SegmentedControl } from "../../components";
+import { Button, ConfirmDialog, Dialog, SegmentedControl } from "../../components";
 import {
   endpointValues,
   isTeams,
@@ -56,6 +56,7 @@ export function EndpointDialog({
   const [note, setNote] = useState(values?.note ?? "");
   const [pending, setPending] = useState(false);
   const [refusal, setRefusal] = useState<Refusal | null>(null);
+  const [confirming, setConfirming] = useState(false);
 
   const chosen = environments.find((item) => item.name === environment);
   const team = chosen !== undefined && isTeams(chosen);
@@ -117,6 +118,31 @@ export function EndpointDialog({
       });
   };
 
+  if (confirming)
+    return (
+      <ConfirmDialog
+        title={`Remove the ${environment} endpoint of ${serviceLabel(repo, serviceName)}?`}
+        confirmLabel={pending ? "Removing…" : "Remove endpoint"}
+        pending={pending}
+        consequences={[
+          `Agents stop seeing where ${serviceLabel(repo, serviceName)} runs in ${environment}.`,
+          ...(team ? ["hub.json changes; run ./hub sync and open a hub PR."] : []),
+        ]}
+        onCancel={() => {
+          setConfirming(false);
+        }}
+        onConfirm={() => {
+          send(true);
+        }}
+      >
+        {refusal && (
+          <p role="alert" className="ah-config-error">
+            {refusal.summary}
+          </p>
+        )}
+      </ConfirmDialog>
+    );
+
   const title = fixed
     ? `Edit endpoint · ${serviceLabel(repo, serviceName)} · ${environment}`
     : "Add endpoint";
@@ -138,7 +164,8 @@ export function EndpointDialog({
               disabled={pending}
               style={{ marginRight: "auto" }}
               onClick={() => {
-                send(true);
+                setRefusal(null);
+                setConfirming(true);
               }}
             >
               Remove endpoint

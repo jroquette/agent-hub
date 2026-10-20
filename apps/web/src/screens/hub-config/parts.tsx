@@ -63,8 +63,11 @@ export interface RowAsk {
 
 export interface RowProps {
   label: string;
-  /** Shown in place of ``label`` (a name with a badge); ``label`` stays the accessible text. */
+  /** Shown in place of ``label`` (a name with a badge); ``label`` stays the accessible text,
+   * case kept, since it is then a name. */
   labelNode?: ReactNode;
+  /** More actions after Edit, such as a labelled Remove. */
+  actions?: ReactNode;
   children: ReactNode;
   source?: ReactNode;
   /** Point Claude at this row: shown on hover and focus, and kept once attached. */
@@ -82,6 +85,7 @@ export function ConfigRow({
   ask,
   onEdit,
   editLabel = "Change for me",
+  actions,
 }: RowProps) {
   const blocked = useContext(AskBlocked);
   return (
@@ -114,12 +118,13 @@ export function ConfigRow({
             size="sm"
             variant="ghost"
             icon="pencil"
-            aria-label={`${editLabel}: ${label.toLowerCase()}`}
+            aria-label={`${editLabel}: ${labelNode ? label : label.toLowerCase()}`}
             onClick={onEdit}
           >
             {editLabel}
           </Button>
         )}
+        {actions}
       </div>
     </div>
   );
