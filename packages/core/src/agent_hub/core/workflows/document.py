@@ -156,13 +156,14 @@ def parse_workflow(content: object) -> WorkflowDocument:
         document = WorkflowDocument.model_validate(content)
     except ValidationError as error:
         raise load_error(error, content) from None
-    if problems := list(_kind_problems(document)):
+    if problems := list(kind_problems(document)):
         raise WorkflowLoadError(problems)
     return document
 
 
-def _kind_problems(document: WorkflowDocument) -> Iterator[WorkflowProblem]:
-    """Each node, a ``loop_group``'s body included, whose type the document's kind refuses."""
+def kind_problems(document: WorkflowDocument) -> Iterator[WorkflowProblem]:
+    """Each node, a ``loop_group``'s body included, whose type the document's kind refuses
+    (planning checks an expanded document again: an include may bring other types)."""
     if document.kind != "scenario":
         return
     allowed = ", ".join(SCENARIO_NODE_TYPES[:-1]) + f" and {SCENARIO_NODE_TYPES[-1]}"

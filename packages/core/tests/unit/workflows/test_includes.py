@@ -516,3 +516,26 @@ def test_namespaces_action_refs_when_scenario_included() -> None:
     assert isinstance(read, workflow_nodes.ActionNode)
     assert read.with_ == {"v": "$g__a.output"}
     assert plan.captures["order_id"] == planning.Capture("first__wait", "$self.output.order_id")
+
+
+def test_refuses_include_when_scenario_kind_root_expands_workflow_nodes() -> None:
+    walk = {"id": "send", "type": "action", "action": "send-queue-message"}
+    group = {"id": "g", "type": "loop_group", "max_iterations": 2, "until_when": "$x.output == 'a'"}
+    group["nodes"] = [shell("x")]
+    plain = document("plain", walk, group, shell("tidy"))
+
+    problems = problems_of(include("first", "plain"), library=(plain,), kind="scenario")
+
+    assert problems == [
+        (
+            "nodes[0].include",
+            '"first__g": nodes[0].type: the node "x" has type shell: a scenario takes only'
+            " action, expect, approval, wait, loop_group and include nodes",
+        ),
+        (
+            "nodes[0].include",
+            '"first__tidy": type: the node "first__tidy" has type shell: a scenario takes only'
+            " action, expect, approval, wait, loop_group and include nodes",
+        ),
+    ]
+    assert plan_of(include("first", "plain"), library=(plain,)).document.kind == "workflow"
