@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { Navigate, useParams, useSearchParams } from "react-router";
+import { Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
 import {
@@ -24,6 +24,7 @@ import { sessionControlUnavailable } from "../sessions-list/control";
 import type { DiscussReference, DiscussStarter } from "../../shell/discuss";
 import { KnowledgeProjectIndex } from "../knowledge-index";
 import { EnvironmentsSection } from "./EnvironmentsSection";
+import type { SavedState } from "./environments";
 import { LocalSettingsDialog } from "./LocalSettingsDialog";
 import { AskBlocked, ConfigRow, ConfigSource, Mono, NoneText, Section, useAttach } from "./parts";
 import type { RowAsk, Source } from "./parts";
@@ -849,9 +850,17 @@ export function HubConfigScreen() {
   const config = useApi("/api/v1/projects/{project}/config", { path: { project } });
   const { setOpen, addReference } = useDiscuss();
   const [editing, setEditing] = useState(false);
-  const [saved, setSaved] = useState<string | null>(null);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const handed = location.state as SavedState | null;
+  const [saved, setSaved] = useState<string | null>(handed?.saved ?? null);
   // hub.json was changed from this page and is not committed yet: the person syncs and opens a PR.
-  const [teamChanged, setTeamChanged] = useState(false);
+  const [teamChanged, setTeamChanged] = useState(handed?.team ?? false);
+  useEffect(() => {
+    // A setup flow handed its result over once: keep it out of a later back or reload.
+    if (handed)
+      void navigate(`${location.pathname}${location.hash}`, { replace: true, state: null });
+  }, [handed, location.pathname, location.hash, navigate]);
   useEffect(() => {
     if (saved === null) return;
     const timer = setTimeout(() => {
@@ -885,6 +894,10 @@ export function HubConfigScreen() {
   }, [project]);
 
   const view = config.data;
+  useEffect(() => {
+    if (!view || location.hash === "") return;
+    document.getElementById(location.hash.slice(1))?.scrollIntoView({ block: "start" });
+  }, [view, location.hash]);
   const localSet = view
     ? [view.author_name, view.author_email, view.branch_prefix, view.tracker.transport].filter(
         (v) => v.source === "local",

@@ -8,6 +8,8 @@ import { FeatureDetailScreen } from "./screens/feature-detail";
 import { FeaturesScreen } from "./screens/features";
 import { HealthScreen } from "./screens/health";
 import { HubConfigPickerScreen, HubConfigScreen } from "./screens/hub-config";
+import { AddEnvironmentScreen } from "./screens/hub-config/AddEnvironmentFlow";
+import { AddServiceScreen } from "./screens/hub-config/AddServiceFlow";
 import { KnowledgePhase3Screen } from "./screens/knowledge-phase3";
 import { LearningsScreen } from "./screens/learnings";
 import { NotFoundScreen } from "./screens/not-found";
@@ -59,6 +61,11 @@ export const appRoutes: RouteObject[] = [
           { path: "projects/:project", element: <ProjectOverviewScreen /> },
           { path: "projects/:project/brain/*", element: <BrainScreen /> },
           { path: "projects/:project/config", element: <HubConfigScreen /> },
+          {
+            path: "projects/:project/config/environments/new",
+            element: <AddEnvironmentScreen />,
+          },
+          { path: "projects/:project/config/services/new", element: <AddServiceScreen /> },
           { path: "config", element: <HubConfigPickerScreen /> },
           { path: "projects/:project/skills", element: <SkillsScreen /> },
           { path: "projects/:project/skills/new/:kind", element: <NewDraftScreen /> },

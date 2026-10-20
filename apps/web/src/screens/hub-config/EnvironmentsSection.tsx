@@ -1,4 +1,5 @@
 import { Fragment, useState } from "react";
+import { useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -15,10 +16,11 @@ import { ConfigRow, ConfigSource, Mono, NoneText, Section, useAttach } from "./p
 import { EndpointDialog } from "./EndpointDialog";
 import type { EndpointTarget } from "./EndpointDialog";
 import { EnvironmentDialog } from "./EnvironmentDialog";
-import { ServiceDialog } from "./ServiceDialog";
 import {
   ACCESS_LOOK,
   LOCAL_FILE,
+  addEnvironmentPath,
+  addServicePath,
   count,
   endpointText,
   endpointValues,
@@ -130,12 +132,12 @@ export function EnvironmentsSection({
   onSaved: (message: string, team: boolean) => void;
 }) {
   const client = useQueryClient();
+  const navigate = useNavigate();
   const { attach, isAttached } = useAttach();
   const environments = view.environments.environments;
   const services = view.environments.services;
-  const [editing, setEditing] = useState<SourcedEnvironment | "new" | null>(null);
+  const [editing, setEditing] = useState<SourcedEnvironment | null>(null);
   const [endpoint, setEndpoint] = useState<EndpointTarget | null>(null);
-  const [addingService, setAddingService] = useState<{ repo?: string } | null>(null);
   const [removal, setRemoval] = useState<Removal | null>(null);
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -234,7 +236,7 @@ export function EnvironmentsSection({
               variant="primary"
               icon="plus"
               onClick={() => {
-                setEditing("new");
+                void navigate(addEnvironmentPath(view.project));
               }}
             >
               Add environment
@@ -259,7 +261,7 @@ export function EnvironmentsSection({
               id={ADD_ENVIRONMENT_ID}
               icon="plus"
               onClick={() => {
-                setEditing("new");
+                void navigate(addEnvironmentPath(view.project));
               }}
             >
               Add environment
@@ -364,7 +366,7 @@ export function EnvironmentsSection({
             <Button
               icon="plus"
               onClick={() => {
-                setAddingService({});
+                void navigate(addServicePath(view.project));
               }}
             >
               Add service
@@ -385,7 +387,7 @@ export function EnvironmentsSection({
                 variant="primary"
                 icon="plus"
                 onClick={() => {
-                  setAddingService({});
+                  void navigate(addServicePath(view.project));
                 }}
               >
                 Add service
@@ -428,7 +430,7 @@ export function EnvironmentsSection({
                                     icon="plus"
                                     aria-label={`Add a service to ${repo.dir}`}
                                     onClick={() => {
-                                      setAddingService({ repo: repo.dir });
+                                      void navigate(addServicePath(view.project, repo.dir));
                                     }}
                                   >
                                     Add service
@@ -513,19 +515,9 @@ export function EnvironmentsSection({
       {editing !== null && (
         <EnvironmentDialog
           view={view}
-          editing={editing === "new" ? null : editing}
+          editing={editing}
           onClose={() => {
             setEditing(null);
-          }}
-          onSaved={onSaved}
-        />
-      )}
-      {addingService !== null && (
-        <ServiceDialog
-          view={view}
-          repo={addingService.repo}
-          onClose={() => {
-            setAddingService(null);
           }}
           onSaved={onSaved}
         />

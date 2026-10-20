@@ -38,6 +38,25 @@ export function endpointText(endpoint: SourcedEndpoint): string {
   return values.url ?? values.resource ?? "";
 }
 
+/** The Hub config screen's Environments section, and the two setup flows. */
+export function environmentsHome(project: string): string {
+  return `/projects/${encodeURIComponent(project)}/config#environments`;
+}
+export function addEnvironmentPath(project: string): string {
+  return `/projects/${encodeURIComponent(project)}/config/environments/new`;
+}
+export function addServicePath(project: string, repo?: string): string {
+  const path = `/projects/${encodeURIComponent(project)}/config/services/new`;
+  return repo ? `${path}?repo=${encodeURIComponent(repo)}` : path;
+}
+
+/** What a flow hands back to the config screen after a save: its toast and whether hub.json
+ * changed. */
+export interface SavedState {
+  saved: string;
+  team: boolean;
+}
+
 export const LOCAL_FILE = "hub.local.json";
 export const ACCESSES: readonly Access[] = ["read", "ask", "write"];
 /** Higher is stricter: hub.local.json may only move an environment up. */

@@ -1,18 +1,12 @@
 import { useId, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { Banner, Button, Dialog, Icon, OptionRow } from "../../components";
-import { cx } from "../../lib/cx";
+import { Banner, Button, Dialog, OptionRow } from "../../components";
 import {
   ACCESSES,
   ACCESS_LOOK,
-  ENVIRONMENT_PRESETS,
-  NAME_PATTERN,
   STRICTNESS,
-  isMine,
   isTeams,
-  lineWithValue,
-  linesOf,
   postEnvironmentEdit,
   refusalOf,
 } from "./environments";
@@ -28,9 +22,9 @@ type Scope = "local" | "team";
 const DESCRIPTION_MAX = 80;
 
 /**
- * Add an environment, or change one: who it is for (only me: hub.local.json; the team: hub.json,
- * left uncommitted), what agents may do there, whether it is production, and its credentials by
- * name only. On a team environment "Only me" may only tighten its access.
+ * Change an environment (adding one is the Add environment flow). The developer's own changes in
+ * hub.local.json; a team environment changes for the team (hub.json, left uncommitted), or, for
+ * me only, its access may get stricter. The name and credential names change through Ask Claude.
  */
 export function EnvironmentDialog({
   view,
@@ -39,33 +33,20 @@ export function EnvironmentDialog({
   onSaved,
 }: {
   view: HubConfigView;
-  /** The environment to change; null adds one. */
-  editing: SourcedEnvironment | null;
+  editing: SourcedEnvironment;
   onClose: () => void;
   /** Called with the toast's words and whether hub.json changed. */
   onSaved: (message: string, team: boolean) => void;
 }) {
   const id = useId();
   const client = useQueryClient();
-  const teams = editing !== null && isTeams(editing);
-  const teamAccess = editing?.team_access ?? null;
-  const [scope, setScope] = useState<Scope>(editing === null ? "local" : teams ? "team" : "local");
-  const [name, setName] = useState(editing?.name ?? "");
-  const [access, setAccess] = useState<Access>(
-    editing === null ? "read" : scope === "team" && teamAccess ? teamAccess : editing.access,
-  );
-  const [production, setProduction] = useState(editing?.production ?? false);
-  const [description, setDescription] = useState(editing?.description ?? "");
-  const [awsProfile, setAwsProfile] = useState(editing?.credentials?.aws_profile ?? "");
-  const [variables, setVariables] = useState((editing?.credentials?.env ?? []).join("\n"));
-  const [envFile, setEnvFile] = useState(editing?.credentials?.env_file ?? "");
-  const [presetId, setPresetId] = useState<string | null>(null);
-  const [nameTouched, setNameTouched] = useState(false);
-  const credentials = editing?.credentials;
-  const hasCredentials =
-    Boolean(credentials?.aws_profile) ||
-    (credentials?.env ?? []).length > 0 ||
-    Boolean(credentials?.env_file);
+  const teams = isTeams(editing);
+  const teamAccess = editing.team_access ?? null;
+  const [scope, setScope] = useState<Scope>(teams ? "team" : "local");
+  const [access, setAccess] = useState<Access>(teams && teamAccess ? teamAccess : editing.access);
+  const [production, setProduction] = useState(editing.production);
+  const [description, setDescription] = useState(editing.description ?? "");
+  const [envFile, setEnvFile] = useState(editing.credentials?.env_file ?? "");
   const [pending, setPending] = useState(false);
   const [refusal, setRefusal] = useState<Refusal | null>(null);
 
@@ -73,49 +54,15 @@ export function EnvironmentDialog({
   // "Only me" on a team environment: only a stricter access, every other field is the team's.
   const tightening = teams && scope === "local";
   const fieldId = (key: string) => `${id}-${key}`;
-  const pickPreset = (next: string) => {
-    const preset = ENVIRONMENT_PRESETS.find((candidate) => candidate.id === next);
-    if (!preset) return;
-    setPresetId(next);
-    if (!nameTouched) setName(preset.name);
-    setAccess(preset.access);
-    setProduction(preset.production);
-    if (!description || ENVIRONMENT_PRESETS.some((other) => other.description === description))
-      setDescription(preset.description);
-    if (!localBroken) setScope(preset.scope);
-  };
-  const nameTaken =
-    editing === null &&
-    name.trim() !== "" &&
-    view.environments.environments.find(
-      (environment) => environment.name.toLowerCase() === name.trim().toLowerCase(),
-    );
-  const nameProblem =
-    editing !== null || name.trim() === ""
-      ? null
-      : nameTaken
-        ? `${nameTaken.name} is already used by ${isMine(nameTaken) && !isTeams(nameTaken) ? "you" : "the team"}.`
-        : NAME_PATTERN.test(name.trim())
-          ? null
-          : "Letters, digits, - and _ only, starting with a letter or digit; up to 40.";
-  const valueLine = lineWithValue(variables);
   const looser = (candidate: Access) =>
     tightening && teamAccess !== null && STRICTNESS[candidate] < STRICTNESS[teamAccess];
   const shownError = (key: string) => refusal?.fields[key];
+  const credentialNames = [
+    editing.credentials?.aws_profile && `AWS profile ${editing.credentials.aws_profile}`,
+    ...(editing.credentials?.env ?? []),
+  ].filter(Boolean);
 
   const body = (): EnvironmentEdit | null => {
-    if (editing === null)
-      return {
-        op: "add_environment",
-        scope,
-        name: name.trim(),
-        access,
-        production,
-        description: description.trim() || null,
-        aws_profile: awsProfile.trim() || null,
-        credential_env: linesOf(variables),
-        env_file: envFile.trim() || null,
-      };
     if (tightening) {
       // Back to the team's access: the local tightening goes away.
       if (access === teamAccess)
@@ -136,13 +83,6 @@ export function EnvironmentDialog({
   };
 
   const save = () => {
-    if (nameProblem || valueLine !== null || (editing === null && name.trim() === "")) {
-      setRefusal({
-        summary: "Nothing was saved: fix the fields marked below.",
-        fields: name.trim() === "" ? { name: "Give the environment a name." } : {},
-      });
-      return;
-    }
     const edit = body();
     if (edit === null) {
       onClose();
@@ -152,10 +92,8 @@ export function EnvironmentDialog({
     setRefusal(null);
     postEnvironmentEdit(client, view.project, edit)
       .then(() => {
-        const shown = editing?.name ?? name.trim();
-        const who = scope === "team" ? "for the team" : "for you";
         onClose();
-        onSaved(editing === null ? `Added ${shown} ${who}` : `Saved ${shown}`, scope === "team");
+        onSaved(`Saved ${editing.name}`, scope === "team");
       })
       .catch((error: unknown) => {
         setPending(false);
@@ -163,27 +101,20 @@ export function EnvironmentDialog({
       });
   };
 
-  const verb = editing === null ? "Add environment" : "Save";
-  const saveLabel = `${verb} ${scope === "team" ? "for the team" : "for me"}`;
-
   return (
     <Dialog
-      title={editing === null ? "Add environment" : `Edit environment ${editing.name}`}
+      title={`Edit environment ${editing.name}`}
       size="md"
       onClose={onClose}
       pending={pending}
-      initialFocus={
-        editing === null
-          ? `#${CSS.escape(fieldId("name"))}`
-          : `input[name="${CSS.escape(fieldId("access"))}"]:checked`
-      }
+      initialFocus={`input[name="${CSS.escape(fieldId("access"))}"]:checked`}
       footer={
         <>
           <Button disabled={pending} onClick={onClose}>
             Cancel
           </Button>
           <Button variant="primary" disabled={pending} onClick={save}>
-            {pending ? "Saving…" : saveLabel}
+            {pending ? "Saving…" : `Save ${scope === "team" ? "for the team" : "for me"}`}
           </Button>
         </>
       }
@@ -202,73 +133,48 @@ export function EnvironmentDialog({
           </p>
         )}
 
-        {editing === null && (
+        {teams ? (
           <fieldset className="ah-env-fieldset">
-            <legend className="ah-config-field-label">1. What kind of environment is it?</legend>
-            <div className="ah-env-kinds">
-              {ENVIRONMENT_PRESETS.map((candidate) => (
-                <label
-                  key={candidate.id}
-                  className={cx("ah-env-kind", presetId === candidate.id && "ah-env-kind-checked")}
-                >
-                  <input
-                    type="radio"
-                    name={fieldId("preset")}
-                    className="ah-env-kind-input"
-                    checked={presetId === candidate.id}
-                    onChange={() => {
-                      pickPreset(candidate.id);
-                    }}
-                  />
-                  <Icon name={candidate.icon} />
-                  <span className="ah-stack" style={{ gap: 2 }}>
-                    <span className="ah-env-kind-label">{candidate.label}</span>
-                    <span className="ah-small ah-muted">{candidate.hint}</span>
-                  </span>
-                </label>
-              ))}
+            <legend className="ah-config-field-label">Change it for</legend>
+            <div className="ah-options">
+              <OptionRow
+                type="radio"
+                name={fieldId("scope")}
+                label="The whole team"
+                description="Saved in hub.json. You review the change, run ./hub sync and open a hub PR."
+                checked={scope === "team"}
+                onToggle={() => {
+                  setScope("team");
+                  if (teamAccess) setAccess(teamAccess);
+                }}
+              />
+              <OptionRow
+                type="radio"
+                name={fieldId("scope")}
+                label="Only me"
+                disabled={localBroken}
+                description={
+                  localBroken
+                    ? "Not available: your hub.local.json has a problem (see the notice above)."
+                    : "Saved in hub.local.json on this machine. You can only make the team's access stricter for your agents."
+                }
+                checked={scope === "local"}
+                onToggle={() => {
+                  setScope("local");
+                  setAccess(editing.access);
+                }}
+              />
             </div>
           </fieldset>
+        ) : (
+          <p className="ah-small ah-muted" style={{ margin: 0 }}>
+            Saved in hub.local.json: {editing.name} is yours. To share it with the team, ask Claude
+            to move it to hub.json.
+          </p>
         )}
 
-        <div className="ah-stack" style={{ gap: 4 }}>
-          <label htmlFor={fieldId("name")} className="ah-config-field-label">
-            {editing === null ? "2. Name" : "Name"}
-          </label>
-          <input
-            id={fieldId("name")}
-            className="ah-input ah-mono"
-            value={name}
-            readOnly={editing !== null}
-            autoComplete="off"
-            spellCheck={false}
-            maxLength={40}
-            placeholder="staging"
-            aria-invalid={nameProblem || shownError("name") ? true : undefined}
-            aria-describedby={`${fieldId("name")}-help`}
-            onChange={(event) => {
-              setNameTouched(true);
-              setName(event.target.value);
-            }}
-          />
-          <span
-            id={`${fieldId("name")}-help`}
-            className={
-              nameProblem || shownError("name") ? "ah-small ah-config-error" : "ah-small ah-muted"
-            }
-          >
-            {nameProblem ??
-              shownError("name") ??
-              (editing === null
-                ? "Letters, digits, - and _, up to 40. Not used by another environment, in any case."
-                : "Rename it with Ask Claude.")}
-          </span>
-        </div>
-
         <fieldset className="ah-env-fieldset">
-          <legend className="ah-config-field-label">
-            {editing === null ? "3. What may agents do there?" : "What may agents do there?"}
-          </legend>
+          <legend className="ah-config-field-label">What may agents do there?</legend>
           <div className="ah-options">
             {ACCESSES.map((candidate) => (
               <OptionRow
@@ -294,67 +200,22 @@ export function EnvironmentDialog({
           </div>
           <span className={shownError("access") ? "ah-small ah-config-error" : "ah-small ah-muted"}>
             {shownError("access") ??
-              "Actions follow this strictly. Free commands follow it as an instruction, plus blocked words."}
+              "Scripted actions follow this strictly. Free commands follow it as an instruction."}
           </span>
         </fieldset>
 
-        {editing !== null && !teams ? (
+        {tightening ? (
           <p className="ah-small ah-muted" style={{ margin: 0 }}>
-            Saved in hub.local.json: {editing.name} is yours. To share it with the team, ask Claude
-            to move it to hub.json.
+            Everything else stays as the team set it in hub.json.
           </p>
         ) : (
-          <fieldset className="ah-env-fieldset">
-            <legend className="ah-config-field-label">
-              {editing === null ? "4. Who is it for?" : "Who is it for?"}
-            </legend>
-            <div className="ah-options">
-              <OptionRow
-                type="radio"
-                name={fieldId("scope")}
-                label="Only me"
-                disabled={localBroken}
-                description={
-                  localBroken
-                    ? "Not available: your hub.local.json has a problem (see the notice above)."
-                    : teams
-                      ? "Saved in hub.local.json on this machine. You can only make the team's access stricter for your agents."
-                      : "Saved in hub.local.json on this machine. Your agents get it in their brief. Nothing to commit."
-                }
-                checked={scope === "local"}
-                onToggle={() => {
-                  setScope("local");
-                  if (teams) setAccess(editing.access);
-                }}
-              />
-              <OptionRow
-                type="radio"
-                name={fieldId("scope")}
-                label="The whole team"
-                disabled={editing !== null && !teams}
-                description={
-                  editing !== null && !teams
-                    ? "This environment is yours. To share it, ask Claude to move it to hub.json."
-                    : "Saved in hub.json. You review the change, run ./hub sync and open a hub PR."
-                }
-                checked={scope === "team"}
-                onToggle={() => {
-                  setScope("team");
-                  if (teams && teamAccess) setAccess(teamAccess);
-                }}
-              />
-            </div>
-          </fieldset>
-        )}
-
-        {!tightening && (
           <>
             <div className="ah-options">
               <OptionRow
                 type="checkbox"
                 name={fieldId("production")}
-                label="Production"
-                description="Real customer data. Actions never write or delete here, whatever the access."
+                label="This is production"
+                description="Real customers and real data. Actions never write or delete here, whatever the access."
                 checked={production}
                 onToggle={() => {
                   setProduction(!production);
@@ -363,23 +224,22 @@ export function EnvironmentDialog({
             </div>
             {production && access !== "read" && (
               <Banner tone="warning" boxed>
-                Production with {ACCESS_LOOK[access].card.toLowerCase()} access: doctor will warn.
-                Read only is recommended.
+                Production where agents can {access === "ask" ? "ask to change" : "change"} data:
+                doctor will warn. Read only is recommended.
               </Banner>
             )}
 
             <div className="ah-stack" style={{ gap: 4 }}>
               <label htmlFor={fieldId("description")} className="ah-config-field-label">
-                Description <span className="ah-muted">(optional)</span>
+                Short description <span className="ah-muted">(optional)</span>
               </label>
               <input
                 id={fieldId("description")}
                 className="ah-input"
                 value={description}
                 maxLength={DESCRIPTION_MAX}
-                placeholder="docker compose stack on this machine"
-                aria-describedby={`${fieldId("description")}-help`}
                 aria-invalid={shownError("description") ? true : undefined}
+                aria-describedby={`${fieldId("description")}-help`}
                 onChange={(event) => {
                   setDescription(event.target.value);
                 }}
@@ -391,114 +251,41 @@ export function EnvironmentDialog({
                 }
               >
                 {shownError("description") ??
-                  `What it is, so agents can tell environments apart. ${String(description.length)} / ${String(DESCRIPTION_MAX)}`}
+                  `Helps agents tell environments apart. ${String(description.length)} / ${String(DESCRIPTION_MAX)}`}
               </span>
             </div>
 
-            <details className="ah-env-details" open={hasCredentials || undefined}>
-              <summary className="ah-config-field-label">Connection details (optional)</summary>
-              <fieldset
-                className="ah-env-fieldset"
-                aria-describedby={`${fieldId("credentials")}-help`}
+            <div className="ah-stack" style={{ gap: 4 }}>
+              <label htmlFor={fieldId("env_file")} className="ah-config-field-label">
+                Env file path <span className="ah-muted">(optional)</span>
+              </label>
+              <input
+                id={fieldId("env_file")}
+                className="ah-input ah-mono"
+                value={envFile}
+                autoComplete="off"
+                spellCheck={false}
+                aria-invalid={shownError("env_file") ? true : undefined}
+                onChange={(event) => {
+                  setEnvFile(event.target.value);
+                }}
+              />
+              <span
+                className={
+                  shownError("env_file") ? "ah-small ah-config-error" : "ah-small ah-muted"
+                }
               >
-                <legend className="ah-env-caption">Credentials</legend>
-                <span id={`${fieldId("credentials")}-help`} className="ah-small ah-muted">
-                  How actions log in here. Names only: never paste a password, key or token,
-                  agent-hub refuses values that look like a secret. Skip it if you are not sure.
-                </span>
-                <div className="ah-stack" style={{ gap: 4 }}>
-                  <label htmlFor={fieldId("aws_profile")} className="ah-small">
-                    AWS profile name
-                  </label>
-                  <input
-                    id={fieldId("aws_profile")}
-                    className="ah-input ah-mono"
-                    value={awsProfile}
-                    readOnly={editing !== null}
-                    autoComplete="off"
-                    spellCheck={false}
-                    placeholder="demo-staging"
-                    aria-invalid={shownError("aws_profile") ? true : undefined}
-                    onChange={(event) => {
-                      setAwsProfile(event.target.value);
-                    }}
-                  />
-                  {shownError("aws_profile") && (
-                    <span className="ah-small ah-config-error">{shownError("aws_profile")}</span>
-                  )}
-                </div>
-                <div className="ah-stack" style={{ gap: 4 }}>
-                  <label htmlFor={fieldId("variables")} className="ah-small">
-                    Variable names
-                  </label>
-                  <textarea
-                    id={fieldId("variables")}
-                    className="ah-input ah-mono ah-config-textarea"
-                    rows={2}
-                    value={variables}
-                    readOnly={editing !== null}
-                    spellCheck={false}
-                    autoComplete="off"
-                    placeholder="DEMO_DB_URL"
-                    aria-invalid={
-                      valueLine !== null || shownError("credential_env") ? true : undefined
-                    }
-                    onChange={(event) => {
-                      setVariables(event.target.value);
-                    }}
-                  />
-                  <span
-                    aria-live="polite"
-                    className={
-                      valueLine !== null || shownError("credential_env")
-                        ? "ah-small ah-config-error"
-                        : "ah-small ah-muted"
-                    }
-                  >
-                    {valueLine !== null
-                      ? `Line ${String(valueLine)}: only the name. Remove = and what follows.`
-                      : (shownError("credential_env") ??
-                        "One per line: the variables that hold this environment's secrets.")}
-                  </span>
-                </div>
-                <div className="ah-stack" style={{ gap: 4 }}>
-                  <label htmlFor={fieldId("env_file")} className="ah-small">
-                    Env file path
-                  </label>
-                  <input
-                    id={fieldId("env_file")}
-                    className="ah-input ah-mono"
-                    value={envFile}
-                    autoComplete="off"
-                    spellCheck={false}
-                    placeholder="demo-api/.env.staging"
-                    aria-invalid={shownError("env_file") ? true : undefined}
-                    onChange={(event) => {
-                      setEnvFile(event.target.value);
-                    }}
-                  />
-                  <span
-                    className={
-                      shownError("env_file") ? "ah-small ah-config-error" : "ah-small ah-muted"
-                    }
-                  >
-                    {shownError("env_file") ??
-                      "Relative to the workspace. Only actions read it; agents never do."}
-                  </span>
-                </div>
-                {editing !== null && (
-                  <span className="ah-small ah-muted">
-                    To change the AWS profile or variable names, ask Claude.
-                  </span>
-                )}
-              </fieldset>
-            </details>
+                {shownError("env_file") ??
+                  "Relative to the workspace. Only scripted actions read it; agents never do."}
+              </span>
+            </div>
+            <p className="ah-small ah-muted" style={{ margin: 0 }}>
+              {credentialNames.length > 0
+                ? `Credential names: ${credentialNames.join(", ")}. `
+                : ""}
+              To rename it or change its AWS profile or variable names, ask Claude.
+            </p>
           </>
-        )}
-        {tightening && (
-          <p className="ah-small ah-muted" style={{ margin: 0 }}>
-            Everything else stays as the team set it in hub.json.
-          </p>
         )}
       </form>
     </Dialog>
