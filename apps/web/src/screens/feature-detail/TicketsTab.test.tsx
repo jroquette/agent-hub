@@ -7,6 +7,7 @@ import { seriousViolations } from "../../testing/axe";
 import {
   aFeatureTickets,
   aPage,
+  aTicketFlow,
   aSession,
   aTicketPlan,
   aTicketRow,
@@ -24,6 +25,8 @@ function show(
     acPasses?: Record<string, boolean>;
     acRows?: ReturnType<typeof anAcRow>[];
     routes?: ApiRoutes;
+    /** Where the tab opens; most cases read the Table view. */
+    path?: string;
   } = {},
 ) {
   const onRefresh = vi.fn();
@@ -37,7 +40,10 @@ function show(
       acPasses={extra.acPasses}
       acRows={extra.acRows}
     />,
-    { routes: { "/api/v1/sessions": aPage([]), ...extra.routes } },
+    {
+      routes: { "/api/v1/sessions": aPage([]), ...extra.routes },
+      path: extra.path ?? "/?tickets=table",
+    },
   );
   return { ...result, onRefresh };
 }
@@ -256,15 +262,61 @@ describe("TicketsTab", () => {
     expect(onRefresh).toHaveBeenCalledOnce();
   });
 
-  it("shows the ticket flow above the table (planning)", () => {
-    show(aFeatureTickets());
+  // two-level-flows AC-1.11: Flow and Table are two views of one list (AC-268.2 stacked them).
+  it("shows one view at a time, Flow first, the choice kept in ?tickets= (views)", async () => {
+    const { router } = show(aFeatureTickets(), { path: "/?doc=tickets" });
 
-    const flow = screen.getByRole("heading", { name: "Ticket flow" });
-    const table = screen.getByRole("table", { name: "Tickets" });
-    expect(flow.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const toggle = screen.getByRole("group", { name: "Show the tickets as" });
+    expect(within(toggle).getByRole("button", { name: "Flow" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("heading", { name: "Ticket flow" })).toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: "Tickets" })).not.toBeInTheDocument();
+
+    await userEvent.click(within(toggle).getByRole("button", { name: "Table" }));
+
+    expect(screen.getByRole("table", { name: "Tickets" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Ticket flow" })).not.toBeInTheDocument();
+    expect(router.state.location.search).toBe("?doc=tickets&tickets=table");
+    expect(router.state.historyAction).toBe("REPLACE");
+
+    await userEvent.click(within(toggle).getByRole("button", { name: "Flow" }));
+
+    expect(router.state.location.search).toBe("?doc=tickets");
+    expect(screen.getByRole("heading", { name: "Ticket flow" })).toBeInTheDocument();
   });
 
-  it("says a started ticket is in progress, and when it was reviewed (readiness)", () => {
+  it("shows each ticket's step bar and step line on its card and its row (views)", async () => {
+    const data = aFeatureTickets();
+    const flowing = data.tickets.map((t) => ({ ...t, flow: aTicketFlow() }));
+    show({ ...data, tickets: flowing }, { path: "/" });
+
+    const card = screen.getByRole("listitem", { name: /^AGH-202 · / });
+    expect(within(card).getByRole("img", { name: /^Ticket steps: Review\. / })).toBeInTheDocument();
+    expect(card).toHaveTextContent("Review · 4/7");
+
+    await userEvent.click(screen.getByRole("button", { name: "Table" }));
+
+    expect(screen.getByRole("columnheader", { name: "Stage" })).toBeInTheDocument();
+    const row = within(rowOf("AGH-202"));
+    expect(
+      row.getByRole("img", { name: /^Ticket steps: Review\. Context: not recorded; / }),
+    ).toBeInTheDocument();
+    expect(rowOf("AGH-202")).toHaveTextContent("Review · 4/7");
+  });
+
+  it("offers Start once per view (views)", async () => {
+    show(aFeatureTickets(), { path: "/" });
+
+    expect(await screen.findAllByRole("button", { name: /^Start AGH-202/ })).toHaveLength(1);
+
+    await userEvent.click(screen.getByRole("button", { name: "Table" }));
+
+    expect(screen.getAllByRole("button", { name: /^Start AGH-202/ })).toHaveLength(1);
+  });
+
+  it("says a started ticket is in progress, and when it was reviewed (readiness)", async () => {
     const data = aFeatureTickets();
     const first = nth(data.tickets, 0);
     const second = nth(data.tickets, 1);
@@ -291,6 +343,7 @@ describe("TicketsTab", () => {
     const rows = within(screen.getByRole("table", { name: "Tickets" })).getAllByRole("row");
     expect(nth(rows, 1)).toHaveTextContent("Reviewed · waiting for Done");
     expect(nth(rows, 2)).toHaveTextContent(`In progressstarted before ${first.ref} was done`);
+    await userEvent.click(screen.getByRole("button", { name: "Flow" }));
     expect(screen.getByRole("listitem", { name: /in progress/ })).toHaveTextContent(
       "2 in progress",
     );
@@ -432,7 +485,9 @@ describe("TicketsTab", () => {
   });
 
   it("has no serious axe violation (a11y)", async () => {
-    const { container } = show(aFeatureTickets({ source: "plan", notice: "From the plan." }));
+    const data = aFeatureTickets({ source: "plan", notice: "From the plan." });
+    const flowing = data.tickets.map((t) => ({ ...t, flow: aTicketFlow() }));
+    const { container } = show({ ...data, tickets: flowing });
 
     await screen.findByRole("table", { name: "Tickets" });
     expect(await seriousViolations(container)).toEqual([]);

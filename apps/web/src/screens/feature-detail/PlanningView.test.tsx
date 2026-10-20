@@ -2,7 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
-import { aFeatureTickets, aTicketPlan, aTicketRow } from "../../testing/builders";
+import { aFeatureTickets, aTicketFlow, aTicketPlan, aTicketRow } from "../../testing/builders";
 import { PlanningView, splitTitle, ticketAnchor } from "./PlanningView";
 
 const rows = ["T1", "T2", "T3", "T4", "T5"].map((ref) =>
@@ -77,7 +77,7 @@ describe("PlanningView", () => {
     );
   });
 
-  it("draws each parallel group as a step, left to right (flow)", () => {
+  it("draws each parallel group as a column, left to right (flow)", () => {
     render(<PlanningView tickets={rows} planning={plan} />);
 
     expect(screen.getByRole("heading", { name: "Ticket flow" })).toBeInTheDocument();
@@ -85,9 +85,9 @@ describe("PlanningView", () => {
       .getAllByRole("listitem")
       .filter((li) => li.tagName === "SECTION");
     expect(steps.map((s) => s.getAttribute("aria-label"))).toEqual([
-      "Step 1 · in parallel",
-      "Step 2 · after step 1",
-      "Step 3 · after step 2",
+      "Group 1 · in parallel",
+      "Group 2 · after group 1",
+      "Group 3 · after group 2",
     ]);
     expect(
       within(nth(steps, 0))
@@ -97,13 +97,15 @@ describe("PlanningView", () => {
     expect(screen.getByRole("listitem", { name: "T3 · Ticket T3" })).toHaveTextContent(
       "Critical path",
     );
-    expect(screen.getByRole("link", { name: "Ticket T1" })).toHaveAttribute(
-      "href",
-      `#${ticketAnchor("T1")}`,
+    // The card is where the flow's ticket links lead (the table is the other view, AC-1.11).
+    expect(screen.getByRole("listitem", { name: "T1 · Ticket T1" })).toHaveAttribute(
+      "id",
+      ticketAnchor("T1"),
     );
+    expect(screen.queryByRole("link", { name: "Ticket T1" })).not.toBeInTheDocument();
   });
 
-  it("keeps a done ticket in its step, so the steps after it do not move (flow)", () => {
+  it("keeps a done ticket in its group, so the groups after it do not move (flow)", () => {
     const first = aTicketRow({
       ref: "T1",
       key: "T1",
@@ -149,8 +151,8 @@ describe("PlanningView", () => {
       .getAllByRole("listitem")
       .filter((li) => li.tagName === "SECTION");
     expect(steps.map((s) => s.getAttribute("aria-label"))).toEqual([
-      "Step 1 · done",
-      "Step 2 · after step 1",
+      "Group 1 · done",
+      "Group 2 · after group 1",
       "Done · settled",
     ]);
     expect(nth(steps, 0)).toHaveAttribute("data-kind", "done");
@@ -432,7 +434,7 @@ describe("PlanningView", () => {
     const data = aFeatureTickets();
     const { container } = render(
       <PlanningView
-        tickets={data.tickets}
+        tickets={data.tickets.map((t) => ({ ...t, flow: aTicketFlow() }))}
         planning={{ ...data.planning, cycles: [["AGH-202", "AGH-203"]] }}
       />,
     );
