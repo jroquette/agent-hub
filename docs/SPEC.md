@@ -505,6 +505,10 @@ Linear status ([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md), records
   evals never make Acceptance done: with none whole-feature it reads "Not recorded" with the ACs they cover. Plan's
   meta is the plan's version. Without Linear, Build and Shipped are `unknown`, never done
   ([ADR 0043](adr/0043-two-level-feature-and-ticket-flows.md), proposed).
+- **Ticket flow.** Each ticket has its own seven steps, Context, Preflight, Implement, Review, Eval, PR and Merged,
+  folded from its review rounds, review record, evals and Linear and served on the tickets route; a step with no
+  record before a later one with evidence reads "Not recorded". Feature detail shows them on each ticket's step bar and
+  in its ticket panel.
 - **Evals per delivery.** Each evaluation is its own file, `brain/features/<slug>/evals/<delivery>.md`, with its
   scope in frontmatter (tickets, ACs, PRs, commit); none is overwritten. For each AC the latest eval naming it
   decides. A legacy `eval.md` is read as one delivery, `legacy`. The Eval tab lists every delivery.
@@ -684,10 +688,11 @@ Workflow runs list filters by workflow and failure kind.
 - **Chat**: a header with Review changes, an Events link and a Session actions menu; a one-line live activity bar and
   a Steps drawer (Ctrl/Cmd+Alt+.); Changed files opens on the net diff of every change; a turn's result ends every
   message folded into it. An ended terminal session can be continued in the chat from its detail.
-- **Features** groups Needs you, In progress, Evaluated and Shipped with search and filters; a feature can get a
-  nickname kept on this machine (`GET`/`PUT /feature-names`). **Feature detail**: a calm golden path, one Waiting on
-  you banner with the owner sign-off (`POST /features/{project}/{slug}/owner-signoff`, a SHIP eval with `provenance:
-  owner`), an Eval tab with history per scope and who ran each eval, Approve at the end of the spec, research and plan
+- **Features** groups In progress (the features that need you first) and Shipped with search and filters; a feature
+  can get a nickname kept on this machine (`GET`/`PUT /feature-names`). **Feature detail**: a calm golden path, one
+  Waiting on you banner pointing to each owner wait, whose one prompt is on the Eval tab (the owner sign-off, `POST
+  /features/{project}/{slug}/owner-signoff`, a SHIP eval with `provenance: owner`), a ticket panel per ticket, an
+  Eval tab with history per scope and who ran each eval, Approve at the end of the spec, research and plan
   with the spec's open questions, ticket sessions on each ticket, and Run on an AC's recorded check (with Claude by
   default, or `POST …/acs/{ac}/check-runs`, never recorded).
 - **Workflows** lists one plain row per workflow (`step_types`, `inputs` and an outline in the API) and a detail as a
