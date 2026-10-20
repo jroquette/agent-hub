@@ -794,10 +794,10 @@ def _catalog(*, name: str | None) -> WorkflowCatalog:
 
 def _exit_on_problems(catalog: WorkflowCatalog) -> None:
     if catalog.problems:
-        fail(*(_problem_line(problem) for problem in catalog.problems))
+        fail(*(problem_line(problem) for problem in catalog.problems))
 
 
-def _problem_line(problem: LoadProblem) -> str:
+def problem_line(problem: LoadProblem) -> str:
     where = shown_path(problem.file) + ("" if problem.line is None else f":{problem.line}")
     return f"{where}: {problem.key}: {problem.message}"
 
