@@ -20,15 +20,15 @@ A linked or missing record folder reads as empty: at most ``MAX_EVAL_FILES`` and
 The folder's own ``ux-*.md`` designs are read the same way, at most ``MAX_UX_FILES``, as their
 first ``UX_HEAD_BYTES`` (``ux_skipped`` counts the rest). In ``reviews/``, the first
 ``MAX_ROUND_TICKETS`` ticket folders by name (not hidden, UTF-8 names, never a link) are opened
-the same way, and only the names of their review rounds are kept: regular files named as the
-review check names them (``<reviewer>-r<N>.json``), at most ``MAX_ROUND_NAMES`` in all, never
-read. Each ticket folder opened counts ``FOLDER_COST_BYTES`` against the read budget.
+the same way and read only until their first review round: a regular file named as the review
+check names one (``<reviewer>-r<N>.json``), never read; ``MAX_ROUND_ENTRIES`` entries at most in
+all. ``review_round_tickets`` names the folders holding one.
 
 One call reads at most about ``READ_BUDGET_BYTES``: a folder is read only while the bytes read so
-far are under it, so the total goes over by one folder at most (11,067,394 bytes, about 10.6 MiB:
+far are under it, so the total goes over by one folder at most (9,019,394 bytes, about 8.6 MiB:
 ``features.json`` 1 MiB + 1, ``plan.md`` 256 KiB + 1, two 64 KiB heads, 200 eval heads of 16 KiB,
-500 review heads of 8 KiB, 50 UX design heads of 4 KiB and 500 ticket folders of 4 KiB); each
-folder past it is listed with ``OVER_BUDGET`` as its record problem and files unread.
+500 review heads of 8 KiB and 50 UX design heads of 4 KiB); each folder past it is listed with
+``OVER_BUDGET`` as its record problem and files unread.
 ``read_feature_folder`` reads the one folder a slug names, as the listing would, and nothing else.
 """
 
@@ -49,7 +49,7 @@ from agent_hub.core.features.feature_evals import (
 from agent_hub.core.features.feature_record import MAX_RECORD_BYTES
 from agent_hub.core.features.feature_reviews import (
     MAX_REVIEW_FILES,
-    MAX_ROUND_NAMES,
+    MAX_ROUND_ENTRIES,
     MAX_ROUND_TICKETS,
     REVIEW_HEAD_BYTES,
     REVIEWS_FOLDER,
@@ -74,8 +74,6 @@ from agent_hub.generator.regular_files import read_regular
 MAX_FEATURE_FOLDERS: Final = 500
 READ_BUDGET_BYTES: Final = 32 * 1_048_576
 OVER_BUDGET: Final = f"not read: the feature folders read are over {READ_BUDGET_BYTES} bytes"
-# What opening one ticket folder of ``reviews/`` costs against the read budget: a block read.
-FOLDER_COST_BYTES: Final = 4096
 FEATURES_PATH: Final = ("brain", "features")
 _FOLDER_FLAGS: Final = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
@@ -181,7 +179,7 @@ def _read_folder(parent: int, slug: str, meter: _Meter) -> FeatureFolder:
             folder, REVIEWS_FOLDER, cap=MAX_REVIEW_FILES, size=REVIEW_HEAD_BYTES, meter=meter
         )
         ux_designs, ux_skipped = _ux_heads(folder, meter)
-        rounds = _round_names(folder, meter)
+        round_tickets = _round_tickets(folder)
     finally:
         os.close(folder)
     record, plan = reads[RECORD], reads[PLAN]
@@ -199,7 +197,7 @@ def _read_folder(parent: int, slug: str, meter: _Meter) -> FeatureFolder:
         plan_too_large=too_large,
         ux_designs=ux_designs,
         ux_skipped=ux_skipped,
-        review_rounds=rounds,
+        review_round_tickets=round_tickets,
     )
 
 
@@ -231,23 +229,24 @@ def _ux_heads(folder: int, meter: _Meter) -> tuple[tuple[RecordHead, ...], int]:
     return heads, skipped
 
 
-def _round_names(parent: int, meter: _Meter) -> tuple[str, ...]:
-    """The review round names ``<ticket>/<reviewer>-r<N>.json`` of ``reviews/``, by ticket folder
-    then name: at most ``MAX_ROUND_TICKETS`` folder names are held while listing."""
+def _round_tickets(parent: int) -> tuple[str, ...]:
+    """The ticket folders of ``reviews/`` holding a review round, sorted: of the first
+    ``MAX_ROUND_TICKETS`` by name, each read until its first round, ``MAX_ROUND_ENTRIES`` entries
+    in all."""
     try:
         reviews = os.open(REVIEWS_FOLDER, _FOLDER_FLAGS, dir_fd=parent)
     except OSError:
         return ()
     found: list[str] = []
+    left = [MAX_ROUND_ENTRIES]
     try:
         with os.scandir(reviews) as entries:
             tickets = heapq.nsmallest(MAX_ROUND_TICKETS, _ticket_folders(entries))
         for ticket in tickets:
-            if len(found) >= MAX_ROUND_NAMES:
+            if left[0] <= 0:
                 break
-            meter.read += FOLDER_COST_BYTES
-            names = _rounds_of(reviews, ticket, MAX_ROUND_NAMES - len(found))
-            found.extend(f"{ticket}/{name}" for name in names)
+            if _has_round(reviews, ticket, left):
+                found.append(ticket)
     except OSError:
         pass
     finally:
@@ -264,24 +263,24 @@ def _ticket_folders(entries: Iterable[os.DirEntry[str]]) -> Iterator[str]:
             yield entry.name
 
 
-def _rounds_of(reviews: int, ticket: str, cap: int) -> list[str]:
-    """The first ``cap`` names of the review rounds in ``reviews/<ticket>``, regular files only."""
+def _has_round(reviews: int, ticket: str, left: list[int]) -> bool:
+    """Whether ``reviews/<ticket>`` holds a regular file named as a review round; each entry read
+    takes one from ``left[0]``, and reading stops when it is spent."""
     try:
         folder = os.open(ticket, _FOLDER_FLAGS, dir_fd=reviews)
     except OSError:
-        return []
+        return False
     try:
         with os.scandir(folder) as entries:
-            return heapq.nsmallest(
-                cap,
-                (
-                    entry.name
-                    for entry in entries
-                    if is_review_round(entry.name) and entry.is_file(follow_symlinks=False)
-                ),
-            )
+            for entry in entries:
+                left[0] -= 1
+                if is_review_round(entry.name) and entry.is_file(follow_symlinks=False):
+                    return True
+                if left[0] <= 0:
+                    return False
     finally:
         os.close(folder)
+    return False
 
 
 def _is_utf8(name: str) -> bool:

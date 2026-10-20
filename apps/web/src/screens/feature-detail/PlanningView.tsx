@@ -478,10 +478,12 @@ const TICKET_STEP_LABEL: Record<TicketStepName, string> = {
 };
 
 /**
- * A ticket's seven steps as one bar (two-level-flows AC-1.11), labelled with its current step and
- * position ("Review · 4/7"); each step's state and meta are in the tooltip and accessible name.
+ * A ticket's seven steps as one bar (two-level-flows AC-1.11), labelled with its current step,
+ * its position and its meta (or "Blocked"), so the state is never told by color alone ("Review ·
+ * 4/7 · Changes requested"); each step's state and meta are in the tooltip and accessible name.
  */
 export function TicketStepBar({ flow }: { flow: TicketFlow }) {
+  const current = flow.steps.find((step) => step.name === flow.current);
   return (
     <StepBar
       name="Ticket steps"
@@ -491,6 +493,7 @@ export function TicketStepBar({ flow }: { flow: TicketFlow }) {
         state: step.state,
         summary: `${TICKET_STEP_LABEL[step.name]}: ${GOLDEN_STATE_TEXT[step.state].toLowerCase()}${step.meta ? ` · ${step.meta}` : ""}`,
       }))}
+      note={current?.meta ?? (current?.state === "blocked" ? GOLDEN_STATE_TEXT.blocked : null)}
     />
   );
 }
@@ -627,6 +630,7 @@ function EpicCard({
   const pct = (n: number) => `${String(total ? (n / total) * 100 : 0)}%`;
   return (
     <section
+      id={ticketAnchor(epic.ref)}
       className="ah-flow-epic"
       data-readiness={epic.readiness}
       aria-label={`Epic ${epic.ref}${epic.title ? ` · ${epic.title}` : ""}`}
