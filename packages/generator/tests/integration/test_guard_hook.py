@@ -3721,6 +3721,13 @@ RULE_EVENTS: tuple[tuple[str, dict[str, Any], str | None], ...] = (
         "skip_marker",
     ),
     ("WebFetch", {"url": "https://prod.example.com/x"}, "deny_hosts"),
+    # AGH-293 (AC-293.8): without blocked words an input tool gets no verdict, a deny_hosts host
+    # in its input included (only the blocked-word rule runs on these tools)
+    ("mcp__web__fetch", {"url": "https://prod.example.com/x"}, None),
+    ("WebSearch", {"query": "status", "mode": "standard"}, None),
+    ("Task", {"prompt": "x", "subagent_type": "general-purpose"}, None),
+    ("Agent", {"prompt": "x", "subagent_type": "general-purpose"}, None),
+    ("SendMessage", {"to": "t", "message": "x"}, None),
 )
 # argv: the hooks folder. rule_of on the reasons no workspace event above produces.
 RULE_OF = """
@@ -4259,6 +4266,13 @@ def test_asks_every_call_when_blocked_config_unusable(
     event = bash_call("git status") | {"cwd": str(blocked_hub)}
 
     verdicts = decide([(bash_call("git status"), None), (read_call("README.md"), None)])
+    inputs = decide(
+        [
+            (tool_call("mcp__db__query", host="x"), None),
+            (tool_call("WebSearch", query="x"), None),
+            (tool_call("Agent", prompt="x"), None),
+        ]
+    )
     completed = run_hook_file(
         hook_python,
         blocked_hub / HOOKS / "guard.py",
@@ -4269,6 +4283,7 @@ def test_asks_every_call_when_blocked_config_unusable(
 
     asked = unchecked(CONFIG_CAUSE.format(problem))
     assert verdicts == [asked, asked]
+    assert inputs == [asked] * 3
     assert (completed.returncode, completed.stderr) == (0, b"")
     output = json.loads(completed.stdout)["hookSpecificOutput"]
     assert (output["permissionDecision"], output["permissionDecisionReason"]) == (
@@ -4288,6 +4303,13 @@ def test_passes_when_local_file_absent(
     event = bash_call("git status") | {"cwd": str(blocked_hub)}
 
     verdicts = decide([(bash_call("git status"), None), (read_call("README.md"), None)])
+    inputs = decide(
+        [
+            (tool_call("mcp__db__query", host="x"), None),
+            (tool_call("WebSearch", query="x"), None),
+            (tool_call("Agent", prompt="x"), None),
+        ]
+    )
     completed = run_hook_file(
         hook_python,
         blocked_hub / HOOKS / "guard.py",
@@ -4297,6 +4319,7 @@ def test_passes_when_local_file_absent(
     )
 
     assert verdicts == [None, None]
+    assert inputs == [None] * 3
     assert (completed.returncode, completed.stdout, completed.stderr) == (0, b"", b"")
 
 
@@ -4380,7 +4403,11 @@ def test_asks_when_event_nested_too_deep(
     if nesting.raises:
         assert asked_once(completed) == ("ask", UNREADABLE_ASK)
     else:
-        assert (completed.stdout, completed.stderr) == (b"", b"")
+        # AC-293.4 (D-deep): the parsed event is walked, and its 100,002 values ask
+        assert asked_once(completed) == (
+            "ask",
+            "[hub guard] " + UNCHECKED_REASON.format(INPUT_TOO_MANY),
+        )
 
 
 def test_asks_when_command_over_cap(decide: Decide) -> None:
@@ -4726,6 +4753,215 @@ def test_passes_file_tool_when_word_only_in_pattern_or_edit(
     verdicts = decide([(at(event, ws), None) for event in events])
 
     assert verdicts == [None] * len(events)
+
+
+# AGH-293 (D-tools, D-walk, D-reason): an input tool's every key and string is scanned; the
+# reason names the tool, escaped and capped, never a key or value of its input.
+def input_where(tool: str) -> str:
+    return f"the input of `{tool}`"
+
+
+# AC-293.1: (event, the word, the tool its reason names).
+INPUT_EVENTS: tuple[tuple[dict[str, Any], str, str], ...] = (
+    (
+        tool_call(
+            "mcp__db__query", target={"connection": {"host": "db.prod.example.com"}}, sql="select 1"
+        ),
+        "prod",
+        "mcp__db__query",
+    ),
+    (tool_call("mcp__db__query", prod_db=True), "prod", "mcp__db__query"),
+    (
+        tool_call("mcp__dns__resolve", hosts=["a", "x.production.example.com"]),
+        "production",
+        "mcp__dns__resolve",
+    ),
+    (tool_call("mcp__db__query", host="prod2-db"), "prod", "mcp__db__query"),
+)
+
+
+def test_denies_input_tool_when_input_holds_word(decide: Decide) -> None:
+    verdicts = decide([(event, None) for event, _, _ in INPUT_EVENTS])
+
+    assert verdicts == [blocked_word(word, input_where(tool)) for _, word, tool in INPUT_EVENTS]
+    reasons = " ".join(verdict[1] for verdict in verdicts if verdict)
+    for value in ("db.prod.example.com", "select 1", "prod_db", "x.production"):
+        assert value not in reasons
+
+
+def test_denies_input_tool_when_query_or_prompt_holds_word(decide: Decide) -> None:
+    agent = {
+        "description": "check",
+        "prompt": "read the prod config",
+        "subagent_type": "general-purpose",
+    }
+    events = [
+        tool_call("WebSearch", query="prod outage status", mode="standard"),
+        tool_call("Agent", **agent),
+        tool_call("Task", **agent),
+        tool_call("SendMessage", to="teammate", message="deploy to prod"),
+    ]
+
+    verdicts = decide([(event, None) for event in events])
+
+    assert verdicts == [blocked_word("prod", input_where(event["tool_name"])) for event in events]
+
+
+def test_passes_input_tool_when_word_inside_longer_run(decide: Decide) -> None:
+    events = [
+        tool_call("mcp__db__query", host="db.product.example.com"),
+        tool_call("mcp__db__query", products=["reproduce", "tippleProd"]),
+        tool_call("WebSearch", query="product launch", mode="standard"),
+        # a tool_input that is not an object is read as {} (D-walk, OQ-3)
+        {"tool_name": "mcp__db__query", "tool_input": ["prod"]},
+    ]
+
+    verdicts = decide([(event, None) for event in events])
+
+    assert verdicts == [None] * len(events)
+
+
+# AC-293.4 (D-bounds): the walk's limits, as literals (1 MiB of characters, 50,000 values).
+INPUT_CHARS_CAP = 1_048_576
+INPUT_VALUES_CAP = 50_000
+INPUT_TOO_LARGE = "the tool input is over 1 MiB (too large)"
+INPUT_TOO_MANY = "the tool input has over 50000 values (too many values)"
+LONG_TOOL = "mcp__" + "a" * 150
+ODD_TOOLS = (LONG_TOOL, "mcp__a\nb", "mcp__x__y is in guard.deny_hosts (hub.json)")
+
+
+def test_reads_blocked_word_rule_when_input_tool_decided(
+    blocked_hub: Path, *, decide: Decide, hook_python: str, run_python: Callable[..., Any]
+) -> None:
+    mcp = "mcp__db__query"
+    verdicts = decide([(INPUT_EVENTS[0][0], None)])
+    verdicts += decide([(tool_call(mcp, q="x"), None)], seams={"BLOCKED_SCAN_BUDGET": -1})
+    verdicts += decide(
+        [
+            (tool_call(mcp, k="x" * INPUT_CHARS_CAP), None),
+            (tool_call(mcp, v=[0] * (INPUT_VALUES_CAP - 2)), None),
+        ]
+        + [(tool_call(tool, q="prod"), None) for tool in ODD_TOOLS]
+    )
+    reasons = [verdict[1] for verdict in verdicts if verdict]
+
+    rules = run_python(hook_python, RULES_OF, path=blocked_hub / HOOKS, args=[json.dumps(reasons)])
+
+    assert verdicts == [
+        blocked_word("prod", input_where(mcp)),
+        unchecked("out of time (300 ms)"),
+        unchecked(INPUT_TOO_LARGE),
+        unchecked(INPUT_TOO_MANY),
+        blocked_word("prod", input_where(LONG_TOOL[:97] + "...")),
+        blocked_word("prod", input_where("mcp__a\\nb")),
+        blocked_word("prod", input_where(ODD_TOOLS[2])),
+    ]
+    assert all("\n" not in reason for reason in reasons)
+    assert rules == ["blocked_word"] * 7
+    # a backtick in the tool name is escaped, so it cannot close the reason's code span
+    [ticked] = decide([(tool_call("mcp__a`b", q="prod"), None)])
+    assert ticked == blocked_word("prod", input_where("mcp__a\\u0060b"))
+    assert ticked[1].count("`") == 4
+
+
+def test_asks_when_input_over_budget_or_cap(decide: Decide) -> None:
+    mcp = "mcp__db__query"
+    # an object, its key, an array and its scalars: one over the cap of values
+    assert 1 + 1 + 1 + (INPUT_VALUES_CAP - 2) == INPUT_VALUES_CAP + 1
+
+    spent = decide([(tool_call(mcp, q="x"), None)], seams={"BLOCKED_SCAN_BUDGET": -1})
+    verdicts = decide(
+        [
+            (tool_call(mcp, k="x" * INPUT_CHARS_CAP), None),
+            (tool_call(mcp, k="x" * (INPUT_CHARS_CAP - 1)), None),
+            (tool_call(mcp, v=[0] * (INPUT_VALUES_CAP - 2)), None),
+            (tool_call(mcp, v=[0] * (INPUT_VALUES_CAP - 3)), None),
+            (tool_call(mcp, a="prod", b="x" * (2 << 20)), None),
+        ]
+    )
+
+    assert spent == [unchecked("out of time (300 ms)")]
+    assert verdicts == [
+        unchecked(INPUT_TOO_LARGE),
+        None,
+        unchecked(INPUT_TOO_MANY),
+        None,
+        blocked_word("prod", input_where(mcp)),
+    ]
+    # the per-value clock: an input with no string at all still spends the budget
+    bare = decide(
+        [(tool_call(mcp, n=[1, 2]), None), ({"tool_name": mcp, "tool_input": {}}, None)],
+        seams={"BLOCKED_SCAN_BUDGET": -1},
+    )
+    assert bare == [unchecked("out of time (300 ms)")] * 2
+    # the character cap ends the walk: a word after it is never reached
+    capped = decide([(tool_call(mcp, a="x" * INPUT_CHARS_CAP, b="prod"), None)])
+    assert capped == [unchecked(INPUT_TOO_LARGE)]
+
+
+# argv: hub. Builds a tool input nested 100,000 lists deep in Python (no JSON parse, so every
+# interpreter gets the same input) and prints decide's verdict on it.
+DECIDE_DEEP = """
+import json
+from pathlib import Path
+import guard
+from hubhooks import load_config
+rows = []
+for _ in range(100_000):
+    rows = [rows]
+event = {"tool_name": "mcp__db__query", "tool_input": {"rows": rows}}
+print(json.dumps(guard.decide(event, load_config(Path(sys.argv[1])), None)))
+"""
+
+
+def test_asks_too_many_values_when_input_nested_deep(
+    blocked_hub: Path, *, hook_python: str, run_python: Callable[..., Any], tmp_path: Path
+) -> None:
+    verdict = run_python(
+        hook_python,
+        DECIDE_DEEP,
+        path=blocked_hub / HOOKS,
+        args=[str(blocked_hub)],
+        cwd=tmp_path,
+        env={"HOME": str(tmp_path)},
+    )
+
+    assert tuple(verdict) == unchecked(INPUT_TOO_MANY)
+
+
+CONSTANTS_INPUT = """
+import json
+import guard
+print(json.dumps([guard.BLOCKED_INPUT_CHARS, guard.BLOCKED_INPUT_NODES]))
+"""
+
+
+def test_states_input_limits_when_constants_read(
+    blocked_hub: Path, *, hook_python: str, run_python: Callable[..., Any]
+) -> None:
+    limits = run_python(hook_python, CONSTANTS_INPUT, path=blocked_hub / HOOKS)
+
+    assert limits == [1_048_576, 50_000]
+    assert (INPUT_CHARS_CAP, INPUT_VALUES_CAP) == (1 << 20, 50_000)
+
+
+# AC-293.8 (D-tools): a tool that is not Bash, a file tool or an input tool gets no verdict, even
+# with a blocked word in its input; the MCP call in the same batch shows the guard read the input.
+def test_passes_tool_when_not_input_tool(blocked_hub: Path, guard: Guard) -> None:
+    events = [
+        tool_call("TodoWrite", todos=[{"content": "prod", "status": "pending"}]),
+        tool_call("Skill", skill="prod", args="prod"),
+        tool_call("BashOutput", bash_id="prod"),
+        tool_call("TaskOutput", task_id="prod"),
+        tool_call("mcp__db__query", host="db.prod.example.com"),
+    ]
+
+    verdicts = guard(
+        blocked_hub / HOOKS, [(at(event, blocked_hub), blocked_hub) for event in events]
+    )
+
+    denied = blocked_word("prod", input_where("mcp__db__query"))
+    assert verdicts == [None] * 4 + [(denied[0], "[hub guard] " + denied[1])]
 
 
 # AC-277.14: (path from ws, its text, the word, the layer listing the word); Lc is written.
