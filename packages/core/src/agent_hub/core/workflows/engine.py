@@ -43,6 +43,7 @@ has passed. Each poll and each ``capture:`` value goes to ``EnginePorts.trace``;
 explicit ``retry`` neither node is retried.
 """
 
+import dataclasses
 import json
 import threading
 from collections.abc import Callable, Mapping, Sequence
@@ -492,7 +493,7 @@ class _Run:
     def _own_context(self, node: Node, output: JsonValue) -> RefContext:
         context = self._context(node)
         own = NodeResult("completed", output)
-        return RefContext(context.inputs, context.nodes, context.loop_prev, self_output=own)
+        return dataclasses.replace(context, self_output=own)
 
     def _traced(self, item: ExpectPoll | ContextCapture) -> None:
         trace = self.ports.trace
@@ -687,7 +688,29 @@ class _Run:
         """What ``node`` reads: ``$LOOP_PREV`` inside a group (its body or its channels)."""
         group = self.owner.get(node.id, node)
         with self.lock:
-            return RefContext(self.inputs, dict(self.results), self.loop_prevs.get(group.id))
+            results = dict(self.results)
+            loop_prev = self.loop_prevs.get(group.id)
+        return RefContext(self.inputs, results, loop_prev, ctx=self._captured(results))
+
+    def _captured(self, results: Mapping[str, NodeResult]) -> dict[str, NodeResult]:
+        """Each ``$CTX`` name whose node has ended, read again from that node's result: a
+        resumed run recomputes it from the results it reuses. A skipped node's reads as empty,
+        a failed one's fails the reader."""
+        ctx: dict[str, NodeResult] = {}
+        for name, capture in self.plan.captures.items():
+            result = results.get(capture.node)
+            if result is None or result.state != "completed":
+                if result is not None:
+                    ctx[name] = NodeResult(result.state)
+                continue
+            own = RefContext(self.inputs, results, self_output=result)
+            try:
+                ctx[name] = NodeResult(
+                    "completed", resolve(parse_ref(capture.ref), own, capture.ref)
+                )
+            except SubstitutionError:
+                ctx[name] = NodeResult("failed")
+        return ctx
 
     def _node_context(self, node: _CommandNode) -> RefContext:
         """The context of an attempt: an agent's ``with`` values resolved (``$WITH``)."""
