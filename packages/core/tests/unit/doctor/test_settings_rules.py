@@ -129,6 +129,13 @@ def _retimed_session_start() -> JsonValue:
     }
 
 
+def _rematched_session_start() -> JsonValue:
+    """AGH-293: a hub synced by an older release keeps the old matcher; the group differs."""
+    return base_block() | {
+        "SessionStart": [a_group("python3 start.py", timeout=20, matcher="startup|resume")]
+    }
+
+
 def _session_start_not_a_list() -> JsonValue:
     return base_block() | {"SessionStart": a_group("python3 start.py", timeout=20)}
 
@@ -139,6 +146,7 @@ def _session_start_not_a_list() -> JsonValue:
         pytest.param(_without_stop_group(), ["Stop"], id="group-removed"),
         pytest.param(_without_stop_event(), ["Stop"], id="event-removed"),
         pytest.param(_retimed_session_start(), ["SessionStart"], id="timeout-changed"),
+        pytest.param(_rematched_session_start(), ["SessionStart"], id="matcher-changed"),
         pytest.param(_session_start_not_a_list(), ["SessionStart"], id="event-not-array"),
         pytest.param([], ["SessionStart", "Stop"], id="hooks-not-object"),
     ],

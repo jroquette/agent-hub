@@ -471,7 +471,7 @@ function EvalRunStrip({
 
 /**
  * The owner confirms the owner steps of a SHIP-WITH-OWNER-STEPS eval are done: the server writes
- * an `owner-signoff` SHIP eval over the ACs that waited, and the Evaluate step turns done. It is
+ * an `owner-signoff` SHIP eval over the ACs that waited, and the Acceptance step turns done. It is
  * the page's one "waiting on you" place, above the tabs.
  */
 export function OwnerSignOff({

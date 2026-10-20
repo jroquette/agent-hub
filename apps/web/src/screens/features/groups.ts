@@ -1,6 +1,6 @@
 /* The Features list: what is moving (with a warning on the rows that need the owner), what was evaluated, what shipped. */
 import type { components } from "../../api/schema";
-import { GOLDEN_STEP_LABEL, type IconName } from "../../components";
+import { GOLDEN_STEP_LABEL, ownerWaitStep, type IconName } from "../../components";
 import { waitsOnOwner } from "./GoldenPathBar";
 import { phaseIndex } from "./parts";
 
@@ -125,16 +125,10 @@ export const plainVerdictLine = (line: string) => line.replace(/\*\*|`/g, "").tr
 
 const plural = (n: number, word: string) => `${String(n)} ${word}${n === 1 ? "" : "s"}`;
 
-/** The current step's meta without its "N/M ACs" part, which the ACs column already shows. */
-function stepMeta(meta: string | null): string | null {
-  const parts = (meta ?? "").split(" · ").filter((p) => p && !/^\d+\/\d+ ACs$/.test(p));
-  return parts.length ? parts.join(" · ") : null;
-}
-
-/** How many ACs wait on the owner: the AC counts, else the Evaluate step's reason ("3 ACs wait on owner steps …"). */
+/** How many ACs wait on the owner: the AC counts, else the Acceptance step's reason ("3 ACs wait on owner steps …"). */
 export function ownerStepCount(f: Feature): number {
   if (f.acs?.owner_steps) return f.acs.owner_steps;
-  const reason = f.golden_path.steps.find((s) => s.name === "evaluate")?.reason ?? "";
+  const reason = ownerWaitStep(f.golden_path.steps)?.reason ?? "";
   return Number(/^(\d+) ACs?\b/.exec(reason)?.[1] ?? 0);
 }
 
@@ -236,7 +230,8 @@ export function reasonOf(f: Feature, wait: SessionWait | null = null): Reason {
   const step = steps[at];
   // The Golden path column shows where the step sits; the line says what happens in it.
   const parts = [GOLDEN_STEP_LABEL[f.phase]];
-  const meta = stepMeta(step?.meta ?? null);
+  // Build's meta says when Linear was not read: the page says it once, not every row.
+  const meta = step?.meta && !isLinearGap(step.meta) ? step.meta : null;
   if (meta) parts.push(meta);
   const why = step?.reason && step.state !== "done" ? shortReason(step.reason) : null;
   if (why) parts.push(why);

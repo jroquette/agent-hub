@@ -11,8 +11,10 @@ import {
   ApprovalPanel,
   FindingRow,
   FrontmatterChips,
+  GOLDEN_STEP_LABEL,
   GoldenPathStepper,
   goldenStepSummary,
+  ownerWaitStep,
   shownGoldenSteps,
   NeedsYouList,
   ProjectCard,
@@ -378,13 +380,19 @@ describe("AcTable, ApprovalPanel, FindingRow", () => {
   });
 });
 
-/** The owner's case (AC-136.14): 17 tickets, 1 done, 3/36 ACs, one SHIP eval over 3 ACs. */
+/** The owner's case (AC-136.14): 17 tickets, 1 merged, one SHIP eval over 3 of 36 ACs. */
 const ownerCase = aGoldenPath({
-  phase: "implement",
+  phase: "build",
   steps: [
     aGoldenStep({ name: "spec", state: "done", meta: null, progress: null }),
-    aGoldenStep({ name: "research", state: "skipped", meta: "no research.md", progress: null }),
-    aGoldenStep({ name: "plan", state: "done", meta: null, progress: null }),
+    aGoldenStep({
+      name: "ux_design",
+      state: "skipped",
+      meta: "No screen change recorded",
+      progress: null,
+    }),
+    aGoldenStep({ name: "research", state: "skipped", meta: null, progress: null }),
+    aGoldenStep({ name: "plan", state: "done", meta: "v1", progress: null }),
     aGoldenStep({
       name: "tickets",
       state: "done",
@@ -392,30 +400,23 @@ const ownerCase = aGoldenPath({
       progress: { done: 17, total: 17 },
     }),
     aGoldenStep({
-      name: "implement",
+      name: "build",
       state: "current",
-      meta: "1/17 tickets · 3/36 ACs",
+      meta: "1 of 17 merged · 16 in progress",
       progress: { done: 1, total: 17 },
     }),
     aGoldenStep({
-      name: "review",
-      state: "unknown",
-      meta: "Linear not connected",
-      reason: "Ticket status from Linear not loaded yet; open the Tickets tab.",
-      progress: null,
-    }),
-    aGoldenStep({
-      name: "evaluate",
+      name: "acceptance",
       state: "partial",
-      meta: "partial: covers 3 of 36 ACs",
-      reason: "Implement is not done",
+      meta: "Ticket evals cover 3 of 36 ACs",
+      reason: "Build is not done",
       progress: { done: 3, total: 36 },
     }),
     aGoldenStep({
       name: "shipped",
-      state: "blocked",
+      state: "pending",
       meta: null,
-      reason: "Review is unknown",
+      reason: "Build is not done",
       progress: null,
     }),
   ],
@@ -429,33 +430,35 @@ describe("GoldenPathStepper", () => {
     expect(steps.map((li) => li.dataset.state)).toEqual([
       "done",
       "skipped",
+      "skipped",
       "done",
       "done",
       "current",
-      "unknown",
       "partial",
-      "blocked",
+      "pending",
     ]);
     // Only the step in focus (the first not done) shows its meta; the rest is on demand.
     const metaOf = (li: HTMLElement | undefined) =>
       [...(li?.querySelectorAll(".ah-golden-meta") ?? [])].map((m) => m.textContent);
     expect(metaOf(steps[0])).toEqual(["Done"]);
-    expect(metaOf(steps[4])).toEqual(["In progress", "1/17 tickets · 3/36 ACs"]);
-    expect(metaOf(steps[5])).toEqual(["Unknown"]);
-    expect(metaOf(steps[7])).toEqual(["Blocked"]);
+    expect(metaOf(steps[5])).toEqual(["In progress", "1 of 17 merged · 16 in progress"]);
+    expect(metaOf(steps[6])).toEqual(["Partial"]);
+    expect(metaOf(steps[7])).toEqual(["Not reached"]);
     // Every step's meta and reason stay in its description (and tooltip).
-    expect(screen.getByText("Review", { selector: ".ah-golden-name" })).toHaveAccessibleDescription(
-      "Review: unknown · Linear not connected (Ticket status from Linear not loaded yet; open the Tickets tab.)",
-    );
     expect(
       screen.getByText("Shipped", { selector: ".ah-golden-name" }),
-    ).toHaveAccessibleDescription("Shipped: blocked (Review is unknown)");
+    ).toHaveAccessibleDescription("Shipped: not reached (Build is not done)");
+    expect(
+      screen.getByText("Acceptance", { selector: ".ah-golden-name" }),
+    ).toHaveAccessibleDescription(
+      "Acceptance: partial · Ticket evals cover 3 of 36 ACs (Build is not done)",
+    );
   });
 
   it("shows the count of the step in focus when it has no meta (golden)", () => {
     render(
       <GoldenPathStepper
-        steps={[aGoldenStep({ name: "implement", meta: null, progress: { done: 2, total: 8 } })]}
+        steps={[aGoldenStep({ name: "build", meta: null, progress: { done: 2, total: 8 } })]}
       />,
     );
 
@@ -465,24 +468,105 @@ describe("GoldenPathStepper", () => {
   it("reads an owner wait as waiting on you", () => {
     render(
       <GoldenPathStepper
-        steps={[aGoldenStep({ name: "evaluate", state: "current", meta: "waiting: owner steps" })]}
+        steps={[
+          aGoldenStep({
+            name: "acceptance",
+            state: "current",
+            meta: "Waiting on you: sign off 2 ACs",
+          }),
+        ]}
       />,
     );
 
-    expect(screen.getByText("Waiting on you")).toBeInTheDocument();
+    expect(screen.getByText("Waiting on you: sign off 2 ACs")).toBeInTheDocument();
+  });
+
+  it("labels the eight feature steps (AC-1.1)", () => {
+    expect(GOLDEN_STEP_LABEL).toEqual({
+      spec: "Spec",
+      ux_design: "UX design",
+      research: "Research",
+      plan: "Plan",
+      tickets: "Tickets",
+      build: "Build",
+      acceptance: "Acceptance",
+      shipped: "Shipped",
+    });
+    expect(Object.keys(GOLDEN_STEP_LABEL)).toEqual(aGoldenPath().steps.map((step) => step.name));
+  });
+
+  it("shows Not recorded for an unrecorded step (AC-1.6)", () => {
+    render(
+      <GoldenPathStepper
+        steps={[
+          aGoldenStep({
+            name: "acceptance",
+            state: "unrecorded",
+            meta: "Ticket evals cover 6 of 23 ACs",
+            reason: "no whole-feature eval yet",
+          }),
+        ]}
+      />,
+    );
+
+    const step = screen.getByRole("listitem");
+    expect(step).toHaveTextContent("Not recorded");
+    expect(step).toHaveTextContent("Ticket evals cover 6 of 23 ACs");
+    expect(
+      screen.getByText("Acceptance", { selector: ".ah-golden-name" }),
+    ).toHaveAccessibleDescription(
+      "Acceptance: not recorded · Ticket evals cover 6 of 23 ACs (no whole-feature eval yet)",
+    );
+  });
+
+  it("finds the acceptance step waiting on the owner (ownerWaitStep)", () => {
+    const waiting = aGoldenStep({
+      name: "acceptance",
+      state: "current",
+      meta: "Waiting on you: sign off 2 ACs",
+      reason: "2 ACs wait on owner steps (SHIP-WITH-OWNER-STEPS)",
+    });
+
+    expect(ownerWaitStep([aGoldenStep(), waiting])).toBe(waiting);
+    expect(
+      ownerWaitStep([
+        aGoldenStep({ name: "acceptance", state: "done", meta: "Owner steps signed off" }),
+      ]),
+    ).toBeNull();
+    expect(ownerWaitStep([aGoldenStep({ meta: "Waiting on you: sign off 2 ACs" })])).toBeNull();
+    // No AC to sign off: the step waits, but there is nothing for the sign-off to write.
+    expect(
+      ownerWaitStep([
+        aGoldenStep({
+          name: "acceptance",
+          state: "current",
+          meta: "Waiting on owner steps · no ACs listed",
+        }),
+      ]),
+    ).toBeNull();
+    // Reopened ACs need a new evaluation (A11): no sign-off that the API would refuse.
+    expect(
+      ownerWaitStep([
+        aGoldenStep({
+          name: "acceptance",
+          state: "current",
+          meta: "3 ACs reopened · evaluate again",
+        }),
+      ]),
+    ).toBeNull();
   });
 
   it("never shows a step done after a gate that is not done (golden)", () => {
     const steps = [
-      aGoldenStep({ name: "implement", state: "current", reason: null }),
-      aGoldenStep({ name: "review", state: "done", meta: "3/3 reviewed", reason: null }),
-      aGoldenStep({ name: "evaluate", state: "done", meta: null, reason: null }),
+      aGoldenStep({ name: "build", state: "current", reason: null }),
+      aGoldenStep({ name: "acceptance", state: "done", meta: null, reason: null }),
+      aGoldenStep({ name: "shipped", state: "done", meta: null, reason: null }),
     ];
 
     expect(shownGoldenSteps(steps).map((s) => [s.state, s.reason])).toEqual([
       ["current", null],
-      ["blocked", "Implement is not done"],
-      ["blocked", "Implement is not done"],
+      ["blocked", "Build is not done"],
+      ["blocked", "Build is not done"],
     ]);
     render(<GoldenPathStepper steps={steps} />);
     expect(screen.getAllByRole("listitem").map((li) => li.dataset.state)).toEqual([
@@ -504,7 +588,7 @@ describe("GoldenPathStepper", () => {
 
   it("summarises a step in one line (golden)", () => {
     expect(goldenStepSummary(ownerCase.steps[6] ?? aGoldenStep())).toBe(
-      "Evaluate: partial · partial: covers 3 of 36 ACs (Implement is not done)",
+      "Acceptance: partial · Ticket evals cover 3 of 36 ACs (Build is not done)",
     );
     expect(
       goldenStepSummary(aGoldenStep({ name: "spec", state: "done", meta: null, progress: null })),

@@ -30,7 +30,11 @@ type FailureKind = Literal[
     "fatal",
 ]
 FAILURE_KINDS: Final[frozenset[str]] = frozenset(get_args(FailureKind.__value__))
-type ExecutableType = Literal["agent", "shell", "script", "loop"]
+type ExecutableType = Literal["agent", "shell", "script", "loop", "action", "expect"]
+# Nodes that act on a project's systems: retried only as their ``retry`` says (a write sent
+# twice, or an expect's window waited twice, is never implicit).
+_NO_DEFAULT_RETRY: Final[frozenset[str]] = frozenset({"action", "expect"})
+_COMMANDS: Final[frozenset[str]] = frozenset({"shell", "script", "action", "expect"})
 
 # Retried with backoff by default; the provider pushback kinds wait longer, with jitter.
 TRANSIENT_KINDS: Final[frozenset[FailureKind]] = frozenset(
@@ -117,6 +121,8 @@ def retry_decision(
     no less than 45s, cap at 5 minutes and spread ±50% by ``jitter`` (a draw in [0, 1), a
     draw outside clamped into it). No delay ever exceeds ``MAX_RETRY_DELAY``.
     """
+    if policy is None and node_type in _NO_DEFAULT_RETRY:
+        return RetryDecision(retry=False, delay=timedelta(0))
     policy = policy or DEFAULT_RETRY
     if retries_done >= policy.max_attempts or not _retryable(kind, policy, node_type):
         return RetryDecision(retry=False, delay=timedelta(0))
@@ -146,4 +152,4 @@ def _retryable(kind: FailureKind, policy: Retry, node_type: ExecutableType) -> b
         return True
     if kind not in OPT_IN_KINDS or policy.on_error != "all":
         return False
-    return not (node_type in {"shell", "script"} and kind in _NO_RETRY_ON_COMMANDS)
+    return not (node_type in _COMMANDS and kind in _NO_RETRY_ON_COMMANDS)

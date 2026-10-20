@@ -18,7 +18,7 @@ SHIP-WITH-OWNER-STEPS over SHIP), so an undated eval never lets an older SHIP co
 NO-SHIP may have reopened. An eval naming only ``tickets`` covers the ACs whose
 ``ticket`` is one of them (a plan key and its tracker id are the same ticket). A legacy eval
 without scope covers every AC only when every AC passes in ``features.json``; otherwise it covers
-none and the coverage is ``unscoped``. Withdrawn ACs are left out of every count.
+none. Withdrawn ACs are left out of every count.
 """
 
 import re
@@ -80,15 +80,13 @@ class EvalCoverage:
 
     ``covered`` (SHIP or SHIP-WITH-OWNER-STEPS), ``owner_steps`` (the covered ones whose deciding
     verdict is SHIP-WITH-OWNER-STEPS) and ``uncovered`` (NO-SHIP, or no eval names it) hold AC ids
-    in ``features.json`` order; ``total`` counts them. ``unscoped`` is True when a legacy
-    ``eval.md`` without scope could not count ("partial: scope not recorded").
+    in ``features.json`` order; ``total`` counts them.
     """
 
     covered: tuple[str, ...]
     owner_steps: tuple[str, ...]
     uncovered: tuple[str, ...]
     total: int
-    unscoped: bool
 
 
 def eval_records(
@@ -116,20 +114,7 @@ def eval_coverage(
 ) -> EvalCoverage:
     """What ``records`` cover of ``acs`` (S7); ``tickets`` tie a plan key to its tracker id."""
     live = tuple(ac for ac in acs if not ac.withdrawn)
-    aliases = ticket_aliases(tickets)
-    naming: dict[str, list[int]] = {}
-    scoped: list[EvalRecord] = []
-    unscoped = False
-    for record in records:
-        if record.problem is not None or record.verdict is None:
-            continue
-        named = _scope(record, live, aliases)
-        if named is None:
-            unscoped = True
-            continue
-        for ac_id in dict.fromkeys(named):
-            naming.setdefault(ac_id, []).append(len(scoped))
-        scoped.append(record)
+    scoped, naming = _naming(records, live, ticket_aliases(tickets))
     keys = [_order_key(record) for record in scoped]
     decided: dict[tuple[int, ...], Verdict] = {}
     verdicts: dict[str, Verdict] = {}
@@ -144,7 +129,6 @@ def eval_coverage(
         owner_steps=tuple(ac.id for ac in live if verdicts.get(ac.id) == "SHIP-WITH-OWNER-STEPS"),
         uncovered=tuple(ac.id for ac in live if ac.id not in covered),
         total=len(live),
-        unscoped=unscoped,
     )
 
 
@@ -162,16 +146,93 @@ def acceptance_eval(records: Iterable[EvalRecord]) -> EvalRecord | None:
     if not whole:
         return None
     keys = [_order_key(record) for record in whole]
-    group = tuple(range(len(whole)))
-    latest = [
-        index
-        for index in group
-        if not any(_newer(keys[other], keys[index]) for other in group if other != index)
-    ] or list(group)
+    latest = _latest(tuple(range(len(whole))), keys)
     verdicts = {whole[index].verdict for index in latest}
     verdict = next(verdict for verdict in _CONSERVATIVE if verdict in verdicts)
     # The listing order picks one among equals (and all of them when the order loops).
     return max((whole[i] for i in latest if whole[i].verdict == verdict), key=_listing_key)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class OwnerWait:
+    """A SHIP-WITH-OWNER-STEPS acceptance eval still waiting on the owner (two-level-flows A3).
+
+    ``acceptance`` is that eval; ``acs`` the non-withdrawn ACs it leaves as owner steps that no
+    later owner sign-off covers, in ``features.json`` order: what a sign-off must cover. Empty
+    when the feature lists no such AC (no ``features.json``, or every AC withdrawn): there is
+    nothing the app can sign off, and the eval still waits (A10). ``reopened`` are those of
+    ``acs`` whose latest eval of any scope is NO-SHIP: a sign-off is refused over them (A9).
+    ``settled`` are those of ``reopened`` whose latest evals include a NO-SHIP with
+    ``provenance: owner`` that ranks newer than the acceptance eval: the owner already decided
+    "more work" there, so either decision on the acceptance eval is refused until an agent
+    evaluates them again (A11).
+    """
+
+    acceptance: EvalRecord
+    acs: tuple[str, ...]
+    reopened: tuple[str, ...] = ()
+    settled: tuple[str, ...] = ()
+
+
+def owner_wait(
+    records: Iterable[EvalRecord],
+    acs: Iterable[RecordAc],
+    *,
+    tickets: Iterable[PlannedTicket],
+) -> OwnerWait | None:
+    """What the owner must still sign off (A3, A9, A10: the one rule the Acceptance step and the
+    sign-off share); None when nothing waits: no acceptance eval, one that is not
+    SHIP-WITH-OWNER-STEPS, or one the owner signed off.
+
+    The acceptance eval is whole-feature (``acs: all``, or a legacy ``eval.md`` with no scope,
+    A6), so it leaves every non-withdrawn AC as an owner step, whether or not ``features.json``
+    marks it passing. Only a later SHIP eval with ``provenance: owner`` signs one off; ticket
+    evals never do (AC-1.6). With no AC to count, a later owner SHIP of any scope signs it off.
+    """
+    records = tuple(records)
+    accepted = acceptance_eval(records)
+    if accepted is None or accepted.verdict != "SHIP-WITH-OWNER-STEPS":
+        return None
+    signoffs = tuple(
+        record
+        for record in records
+        if record.problem is None and record.provenance == "owner" and record.verdict == "SHIP"
+    )
+    live = tuple(ac for ac in acs if not ac.withdrawn)
+    if not live:
+        since = _order_key(accepted)
+        if any(_newer(_order_key(signoff), since) for signoff in signoffs):
+            return None
+        return OwnerWait(acceptance=accepted, acs=())
+    tickets = tuple(tickets)
+    whole = accepted.model_copy(update={"acs": ALL_ACS})
+    left = eval_coverage((whole, *signoffs), live, tickets=tickets).owner_steps
+    if not left:
+        return None
+    # The acceptance eval read as whole-feature names every live AC, so uncovered is NO-SHIP.
+    named = tuple(whole if record is accepted else record for record in records)
+    uncovered = set(eval_coverage(named, live, tickets=tickets).uncovered)
+    reopened = tuple(ac_id for ac_id in left if ac_id in uncovered)
+    scoped, naming = _naming(named, live, ticket_aliases(tickets))
+    keys = [_order_key(record) for record in scoped]
+    since = _order_key(accepted)
+    settled = tuple(
+        ac_id
+        for ac_id in reopened
+        if any(
+            scoped[index].provenance == "owner"
+            and scoped[index].verdict == "NO-SHIP"
+            and _newer(keys[index], since)
+            for index in _latest(tuple(naming.get(ac_id, ())), keys)
+        )
+    )
+    return OwnerWait(acceptance=accepted, acs=left, reopened=reopened, settled=settled)
+
+
+def ranks_newer(record: EvalRecord, *, delivery: str, at: datetime) -> bool:
+    """Whether a new eval ``delivery`` dated ``at`` is known to be newer than ``record`` (the
+    module's order): False when ``record`` has no usable date or one later than ``at`` (A9)."""
+    return _newer(_key(delivery, at.astimezone(UTC), legacy=False), _order_key(record))
 
 
 def _whole_feature(record: EvalRecord) -> bool:
@@ -356,12 +417,15 @@ class _OrderKey:
 
 
 def _order_key(record: EvalRecord) -> _OrderKey:
-    found = RERUN_PATTERN.search(record.delivery)
-    stem = record.delivery[: found.start()] if found else record.delivery
+    return _key(record.delivery, _instant(record.evaluated_at), legacy=record.legacy)
+
+
+def _key(delivery: str, instant: datetime | None, *, legacy: bool) -> _OrderKey:
+    found = RERUN_PATTERN.search(delivery)
     return _OrderKey(
-        instant=_instant(record.evaluated_at),
-        legacy=record.legacy,
-        stem=stem,
+        instant=instant,
+        legacy=legacy,
+        stem=delivery[: found.start()] if found else delivery,
         rerun=int(found.group(1)) if found else 1,
     )
 
@@ -387,17 +451,38 @@ def _newer(first: _OrderKey, second: _OrderKey) -> bool:
     return first.stem == second.stem and first.rerun > second.rerun
 
 
-def _latest_verdict(
-    group: tuple[int, ...], records: Sequence[EvalRecord], keys: Sequence[_OrderKey]
-) -> Verdict:
-    """The verdict of the latest evals in ``group``: those no other is newer than (all of them
-    if the order loops), the conservative one when they disagree."""
-    latest = [
+def _naming(
+    records: Iterable[EvalRecord], live: tuple[RecordAc, ...], aliases: dict[str, frozenset[str]]
+) -> tuple[list[EvalRecord], dict[str, list[int]]]:
+    """The readable evals that name some of ``live``, and for each AC the indexes of those."""
+    naming: dict[str, list[int]] = {}
+    scoped: list[EvalRecord] = []
+    for record in records:
+        if record.problem is not None or record.verdict is None:
+            continue
+        named = _scope(record, live, aliases)
+        if named is None:
+            continue
+        for ac_id in dict.fromkeys(named):
+            naming.setdefault(ac_id, []).append(len(scoped))
+        scoped.append(record)
+    return scoped, naming
+
+
+def _latest(group: tuple[int, ...], keys: Sequence[_OrderKey]) -> list[int]:
+    """The latest of ``group``: those no other is newer than (all of them if the order loops)."""
+    return [
         index
         for index in group
         if not any(_newer(keys[other], keys[index]) for other in group if other != index)
     ] or list(group)
-    verdicts = {records[index].verdict for index in latest}
+
+
+def _latest_verdict(
+    group: tuple[int, ...], records: Sequence[EvalRecord], keys: Sequence[_OrderKey]
+) -> Verdict:
+    """The verdict of the latest evals in ``group``, the conservative one when they disagree."""
+    verdicts = {records[index].verdict for index in _latest(group, keys)}
     return next(verdict for verdict in _CONSERVATIVE if verdict in verdicts)
 
 

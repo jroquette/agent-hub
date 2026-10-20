@@ -44,7 +44,19 @@ from agent_hub.core.workflows.events import WorkflowEvents
 from agent_hub.core.workflows.failures import FailureKind, RetryRecord
 from agent_hub.core.workflows.gates import GateAnswer, GateForm, OpenGate, gate_id
 from agent_hub.core.workflows.includes import IncludeResolver
-from agent_hub.core.workflows.nodes import AgentNode, LoopNode, ScriptNode
+from agent_hub.core.workflows.nodes import (
+    ActionNode,
+    AgentNode,
+    ApprovalNode,
+    ExpectNode,
+    HaltNode,
+    IncludeNode,
+    LoopGroupNode,
+    LoopNode,
+    ScriptNode,
+    ShellNode,
+    WaitNode,
+)
 from agent_hub.core.workflows.plan import WorkflowPlan
 from agent_hub.core.workflows.ports import GateRequest, RunEnd, SkipCause, StepEnd, StepStart
 from agent_hub.core.workflows.run_state import HeldGroup, NodeEnd, RunState
@@ -179,12 +191,30 @@ def snapshot_includes(snapshot: Path) -> IncludeResolver:
     return resolve
 
 
+# Nodes that read no pack file (an action's files are pinned by the scenario run itself).
+_NO_PACK_FILE: Final = (
+    ShellNode,
+    ActionNode,
+    ExpectNode,
+    ApprovalNode,
+    WaitNode,
+    HaltNode,
+    IncludeNode,
+    LoopGroupNode,
+)
+
+
 def _pack_files(plan: WorkflowPlan) -> Iterator[tuple[PackFolder, str]]:
+    """The pack files the plan's nodes read; every node type is listed, so a new one must say."""
     for node in plan.all_nodes():
-        if isinstance(node, AgentNode | LoopNode) and node.prompt_file is not None:
-            yield "prompts", node.prompt_file
+        if isinstance(node, AgentNode | LoopNode):
+            if node.prompt_file is not None:
+                yield "prompts", node.prompt_file
         elif isinstance(node, ScriptNode):
             yield "scripts", node.script
+        elif not isinstance(node, _NO_PACK_FILE):
+            msg = f"no pack files known for {node.type} nodes"
+            raise TypeError(msg)
 
 
 def read_records(folder: Path) -> list[Record]:

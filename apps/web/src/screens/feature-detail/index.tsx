@@ -16,6 +16,8 @@ import {
   Skeleton,
   StatusBadge,
   Tabs,
+  ownerWaitStep,
+  type GoldenStep,
 } from "../../components";
 import { brainRoute } from "../../lib/brainLinks";
 import { fmtClock } from "../../lib/format";
@@ -61,23 +63,23 @@ const RECORDS: Readonly<
 type FeaturePhase = components["schemas"]["FeaturePhase"];
 
 /**
- * The tab where each phase's work is: a record while it is being written, the tickets while
- * they are built and reviewed, the criteria once it is evaluated or shipped. It is the tab a
- * feature opens on, and the one a golden path step opens.
+ * The tab where each phase's work is: a record while it is being written (UX designs sit beside
+ * the spec), the tickets while they are built, the criteria once it is accepted or shipped. It is
+ * the tab a feature opens on, and the one a golden path step opens.
  */
 const PHASE_TAB: Record<FeaturePhase, string> = {
   spec: "spec",
+  ux_design: "spec",
   research: "research",
   plan: "plan",
   tickets: "tickets",
-  implement: "tickets",
-  review: "tickets",
-  evaluate: "acs",
+  build: "tickets",
+  acceptance: "acs",
   shipped: "acs",
 };
 
-/** The step's tab when the golden path opens it: Evaluate shows its eval records. */
-const STEP_TAB: Record<FeaturePhase, string> = { ...PHASE_TAB, evaluate: "eval" };
+/** The step's tab when the golden path opens it: Acceptance shows its eval records. */
+const STEP_TAB: Record<FeaturePhase, string> = { ...PHASE_TAB, acceptance: "eval" };
 
 /** The tab of `?doc=`: a record, `eval`, `tickets` or Criteria (`acs`); else the phase's tab. */
 function tabOf(doc: string | null, phase: FeaturePhase | undefined): string {
@@ -345,10 +347,10 @@ function featureDiscussTarget(
   };
 }
 
-/** Why the Evaluate step waits on the owner's steps (SHIP-WITH-OWNER-STEPS); null otherwise. */
-function ownerWait(steps: readonly { name: string; meta: string | null; reason: string | null }[]) {
-  const step = steps.find((s) => s.name === "evaluate");
-  if (step?.meta !== "waiting: owner steps") return null;
+/** Why the Acceptance step waits on the owner's steps (SHIP-WITH-OWNER-STEPS); null otherwise. */
+function ownerWait(steps: readonly GoldenStep[]) {
+  const step = ownerWaitStep(steps);
+  if (!step) return null;
   return step.reason ?? "Some ACs wait on owner steps.";
 }
 

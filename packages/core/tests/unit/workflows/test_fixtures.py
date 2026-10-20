@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 
+import agent_hub.core.workflows.dry_run as dry_run_module
 from agent_hub.core.testing.workflow_fakes import KeysOutputs, a_plan
 from agent_hub.core.workflows.document import WorkflowLoadError
 from agent_hub.core.workflows.fixtures import (
@@ -222,3 +223,56 @@ def test_stubs_each_body_node_by_its_recorded_id_when_the_skeleton_has_a_group()
     assert skeleton["stubs"] == {"g__b": {"text": "TODO"}}
     assert skeleton["reached"] == ["g", "g__b"]
     assert run_fixture(a_plan(group), parse_fixture(skeleton), outputs=KeysOutputs()).passed
+
+
+SCENARIO = a_plan(
+    {"id": "send", "type": "action", "action": "send-queue-message"},
+    {
+        "id": "wait",
+        "type": "expect",
+        "action": "get-order",
+        "depends_on": ["send"],
+        "every": "10s",
+        "timeout": "1m",
+        "until_when": "$self.output.status == 'ON_HOLD'",
+        "capture": {"order_id": "$self.output.order_id"},
+    },
+    {"id": "use", "type": "action", "action": "x", "depends_on": ["wait"]}
+    | {"with": {"id": "$CTX.order_id"}},
+    kind="scenario",
+)
+HELD = {"output": {"status": "ON_HOLD", "order_id": "o-7"}}
+PENDING = {"output": {"status": "PENDING"}}
+
+
+@pytest.mark.parametrize(
+    ("polls", "shown"),
+    [
+        ([PENDING, HELD], {"expect": {"status": "done"}, "reached": ["send", "wait", "use"]}),
+        (
+            PENDING,
+            {"expect": {"status": "failed"}, "failed": ["wait"], "reached": ["send", "wait"]},
+        ),
+    ],
+    ids=["holds", "times-out"],
+)
+def test_gives_same_path_when_scenario_fixture_deterministic(
+    polls: Any, shown: dict[str, Any]
+) -> None:
+    stubs = {"send": {"output": {"message_id": "m-1"}}, "wait": polls, "use": {"output": {}}}
+    scenario_fixture = parse_fixture({"workflow": "demo", "stubs": stubs} | shown)
+
+    runs = [
+        dry_run_module.dry_run(SCENARIO, {}, scenario_fixture.stubs, outputs=KeysOutputs())
+        for _ in range(3)
+    ]
+
+    assert run_fixture(SCENARIO, scenario_fixture, outputs=KeysOutputs()).passed
+    assert len({(r.reached, r.run.status, r.captures, r.polls) for r in runs}) == 1
+    if shown["expect"]["status"] == "done":
+        assert (runs[0].captures, runs[0].polls) == ((("wait", "order_id", "o-7"),), 2)
+    else:
+        # A single stub answers every poll: 0s to 60s, every 10s.
+        assert (runs[0].captures, runs[0].polls) == ((), 7)
+    skeleton = skeleton_fixture(SCENARIO, outputs=KeysOutputs())
+    assert run_fixture(SCENARIO, parse_fixture(skeleton), outputs=KeysOutputs()).passed

@@ -136,7 +136,9 @@ the issue once and refuses it, dry or live and with `--from verify` too, when it
 input brief (`Problem`, `Why`, `Why now`, `Outcome`, `Invariants`, `Acceptance criteria`, as Markdown headings,
 [ADR 0026](adr/0026-input-brief-contract.md)): exit 1 with one line naming the missing sections, nothing created, and
 a live run's `failed` record at stage `PICKED`; otherwise (dry run by default: it prints every command and tracker
-write) it makes the worktree, runs the implementing `claude -p` session (no tracker tool: the issue's text is in its prompt), its own gate, the push and
+write) it makes the worktree, runs the implementing `claude -p` session (no tracker tool: the issue's text is in its prompt)
+under the hub's hooks (a hooks-only `--settings` file built from the hub's `.claude/settings.json`; when that file or
+a hook script it names is missing or unusable, the run exits 1 before the issue is read, dry or live, AGH-278), its own gate, the push and
 `gh pr create`, and reports through the port (on success, like `hub ship`, it moves the issue to
 `tracker.states.review`, default `In Review`); records go to the hub's `.agent-runs/` and `brain/_inbox/runs/`. A live
 run is the `issue-to-pr` workflow run through the engine ([ADR 0032](adr/0032-workflow-engine.md), AGH-224): the hub's
@@ -237,7 +239,7 @@ today), and the CLI's model and the hooks' stdlib reader accept it in the same c
 | `guard.readable_env_files`, `guard.secret_env_files` | Env file names (`.env.<suffix>`, never `.env` itself, a path or a key file) the guard stops treating as secret, on top of its fixed list (`.env.example`, …), or always treats as secret, even when that list or `readable_env_files` names one; a name in both is a schema error. A `hub.json` named by `$HUB_CONFIG` can add secret names but never release one; `hub doctor`'s `secrets.config` shows both lists as infos | The guard's fixed list | AGH-210 |
 | `environments` | The project's environments, keyed by a name it chooses: `access` (required: `read`, `write`, or `ask` the user before any write; `write` covers data, never a deploy), `production` (a flag, not a policy), `description` and `credentials` (an AWS profile name and variable names, never values); secret-looking values are rejected. `AGENTS.md` lists them (from `hub.json` only; run `./hub sync`), the SessionStart brief shows both files', and `hub env` lists and edits them; `hub sync`, `hub setup` and `hub env` name each production environment whatever doctor's settings, and doctor's `environments.production` (an ordinary rule, which can be disabled or retuned) warns for `write` or `ask` and informs for `read`. An undeclared environment is out of bounds for the agent by instruction; like `access`, that is rendered for the agent, not enforced by the guard (Blocked words, below; [design/environments.md](design/environments.md), [ADR 0038](adr/0038-declared-environments-and-blocked-words.md)) | No section in `AGENTS.md` or the brief; the hub renders as before | AGH-277 |
 | `repos[].services` | The services a repo runs, keyed by name: `kind` (informational), `description` and `endpoints` per declared environment, each a `url` (no user info, query or fragment) or a `resource`, with a `note` and credential references; `AGENTS.md` lists the service names, the brief and `hub env show` the endpoints | No services | AGH-277 |
-| `guard.blocked_words` | Words the guard denies in a Bash command, a file-tool path, a WebFetch URL, a listed file's contents or a scanned session variable (Blocked words, below): at most 200, `^[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*$`, 2 to 64 characters, matched literally; `hub.local.json` and a `hub.json` named by `$HUB_CONFIG` only add to them | No blocked-word rule | AGH-277 |
+| `guard.blocked_words` | Words the guard denies in a Bash command, a file-tool path, a WebFetch URL, a listed file's contents, a scanned session variable or the input of MCP tools (`mcp__*`), WebSearch, Task, Agent and SendMessage (Blocked words, below): at most 200, `^[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*$`, 2 to 64 characters, matched literally; `hub.local.json` and a `hub.json` named by `$HUB_CONFIG` only add to them | No blocked-word rule | AGH-277 |
 | `guard.blocked_words_files` | Globs of files whose contents the guard checks for a blocked word, besides every `.env*` file: at most 100, each at most 200 printable ASCII characters, no leading `/`, `..` segment or space; a glob without `/` matches the last path component, one with `/` a trailing run of segments; `hub.local.json` and a `hub.json` named by `$HUB_CONFIG` only add to them | `.env*` files only | AGH-277 |
 | `guard.blocked_words_env` | Variable names whose values in the session the guard also checks, besides its fixed list and every `credentials.env` name: at most 50, `^[A-Z_][A-Z0-9_]{0,63}$`, a trailing `*` matching a prefix; `hub.local.json` and a `hub.json` named by `$HUB_CONFIG` only add to them | The fixed list and the `credentials.env` names | AGH-277 |
 | `tracker.states.started`, `tracker.states.review` | The workflow state names: `hub start` moves an issue to `started` on a fresh start, or on a resume while it is unstarted; `review` is reserved for the review step and read by nothing yet; not settable in `hub.local.json` | `In Progress`, `In Review` | AGH-62 |
@@ -345,26 +347,29 @@ names above, of `STAGE`, `SLS_STAGE`, `ENV`, `ENVIRONMENT`, `APP_ENV`, `NODE_ENV
 `FLASK_ENV`, `DATABASE_URL`, `PGHOST`, `PGSERVICE`, `PGDATABASE`, `MYSQL_HOST`, `REDIS_URL`, `MONGODB_URI`,
 `AWS_ENDPOINT_URL`, of every declared `credentials.env` name and of every `guard.blocked_words_env` name, where a match
 denies every Bash call of the session; the path fields of every file tool (`file_path`, `notebook_path`, `path`,
-Grep's `glob`, Glob's `pattern`, WebFetch's `url`); and the contents of `.env*` files and of files a
-`guard.blocked_words_files` glob matches, read through Read, Grep (a directory is walked) and every Bash token that
-names one (glob tokens expanded; not `ls`, `test`, `[` or `stat`). The rule runs first on every surface: its deny is
-final and wins over any declared `access` and any `guard.infra.allow` match, and `prod_markers` still applies beside
-it. It never opens a file the secret-file rule treats as secret; that file keeps the secret-file reason unless its
-path or the command text holds a word. Scans are bounded (1 MiB per command or file, 64 files and 4 MiB per call,
-300 ms); over a bound, on a file that is not regular, on an unusable list in any layer, while an existing
-`hub.local.json` is unusable and on a hook event it cannot read as a JSON object, the guard asks. The lists are the
-union of `hub.json`, `hub.local.json` and a `hub.json` named by `$HUB_CONFIG` (the hooks only); no layer removes an
-entry. A reason names the word, its first layer and the surface, never the command, a value or a line, and the
-recorded event carries `rule: blocked_word`.
+Grep's `glob`, Glob's `pattern`, WebFetch's `url`); every key and string value of the input of MCP tools (`mcp__*`),
+WebSearch, Task, Agent and SendMessage (the tool name is not scanned; only this rule runs on them); and the contents
+of `.env*` files and of files a `guard.blocked_words_files` glob matches, read through Read, Grep (a directory is
+walked) and every Bash token that names one (glob tokens expanded; not `ls`, `test`, `[` or `stat`). The rule runs
+first on every surface: its deny is final and wins over any declared `access` and any `guard.infra.allow` match, and
+`prod_markers` still applies beside it. It never opens a file the secret-file rule treats as secret; that file keeps
+the secret-file reason unless its path or the command text holds a word. Scans are bounded (1 MiB per command or file,
+64 files and 4 MiB per call, 1 MiB and 50,000 values per tool input, 300 ms); over a bound, on a file that is not
+regular, on an unusable list in any layer, while an existing `hub.local.json` is unusable and on a hook event it
+cannot read as a JSON object, the guard asks. The lists are the union of `hub.json`, `hub.local.json` and a `hub.json`
+named by `$HUB_CONFIG` (the hooks only); no layer removes an entry. A reason names the word, its first layer and the
+surface, never the command, a value or a line, and the recorded event carries `rule: blocked_word`.
 **`access` is not enforced by the guard in v1**: the guard cannot tell a read from a write in `psql`, `curl`, `aws` or
 an SDK script, so `access` is an instruction rendered for the agent, and the only hard blocks are blocked words and the
 existing `guard.infra`, `deny_hosts` and `deny_paths`. Blocked words are a best-effort text tripwire, not a security
 boundary: the boundary is which credentials the agent's machine holds. The guard runs only on Bash, Read, Grep, Glob,
-Edit, Write, MultiEdit, NotebookEdit and WebFetch. Accepted limits: false positives; MCP tools, WebSearch and subagent
-(Task) prompts are not checked; nor are files a program opens without the command naming them (`python sync.py`
-reading `config/app.json`, `find … -exec cat`), tool output, obfuscation past the three views, Grep's search regex and
-edit contents; variables a SessionStart hook exports through `$CLAUDE_ENV_FILE` are not seen; `hub run`'s implement
-sessions run without the hub's hooks (AGH-278).
+Edit, Write, MultiEdit, NotebookEdit, WebFetch, WebSearch, Task, Agent and SendMessage and MCP tools (matcher
+`^(Bash|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit|WebFetch|WebSearch|Task|Agent|SendMessage)$|^mcp__`).
+Accepted limits: false positives; the other guard rules do not reach the input tools (a `deny_hosts` host in their
+input passes); Skill, TodoWrite, ExitPlanMode and AskUserQuestion and tool names are not checked; nor are files a
+program opens without the command naming them (`python sync.py` reading `config/app.json`, `find … -exec cat`), tool
+output, obfuscation past the three views, Grep's search regex and edit contents; a recorded guard event carries the
+input tools' input whole; variables a SessionStart hook exports through `$CLAUDE_ENV_FILE` are not seen.
 
 ### Scenarios and actions (AGH-350)
 
@@ -490,13 +495,16 @@ Linear status ([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md), records
   groups (dependency layers), a recommended order (topological, then priority, then plan order), waiting tickets with
   their blockers, cycles, blockers outside the feature and the critical path. It is a recommendation; the runner still
   decides (ADR 0014). A canceled ticket no longer blocks and is left out of every count.
-- **Golden path.** Computed once in core and served on the list and the detail: Spec, Research, Plan, Tickets,
-  Implement, Review, Evaluate, Shipped, each `done`, `current`, `partial`, `pending`, `skipped`, `blocked` or
-  `unknown`, with progress and a reason. A step is done only when the whole feature satisfies it (every ticket
-  created; every ticket delivered, that is In Review or Done in Linear or with an approved review record (with no
-  tickets, every AC passing); every ticket reviewed, that is Done in Linear or with an approved
-  review record; the latest eval of every AC a SHIP, none waiting on owner steps; every ticket Done), and never while an earlier step is not. Without
-  Linear, the ticket-based steps are `unknown`, never done.
+- **Golden path.** Computed once in core and served on the list and the detail: the feature's own steps Spec, UX
+  design, Research, Plan, Tickets, Build, Acceptance, Shipped (a ticket's implement, review and eval are the ticket's,
+  not the feature's), each `done`, `current`, `partial`, `pending`, `skipped`, `blocked`, `unknown` or `unrecorded`,
+  with progress and a reason. A step is done only when the whole feature satisfies it (the spec written, a brief alone
+  leaving Spec current; every `ux-*.md` approved, or none when a later record exists (skipped); every ticket created;
+  every ticket merged, Done in Linear; the latest whole-feature eval (`acs: all`) a SHIP, or a SHIP-WITH-OWNER-STEPS
+  whose owner steps the owner signed off; Build and Acceptance done), and never while an earlier step is not. Ticket
+  evals never make Acceptance done: with none whole-feature it reads "Not recorded" with the ACs they cover. Plan's
+  meta is the plan's version. Without Linear, Build and Shipped are `unknown`, never done
+  ([ADR 0043](adr/0043-two-level-feature-and-ticket-flows.md), proposed).
 - **Evals per delivery.** Each evaluation is its own file, `brain/features/<slug>/evals/<delivery>.md`, with its
   scope in frontmatter (tickets, ACs, PRs, commit); none is overwritten. For each AC the latest eval naming it
   decides. A legacy `eval.md` is read as one delivery, `legacy`. The Eval tab lists every delivery.
@@ -737,7 +745,8 @@ default); `repo`, `agent`, `workflow` and `step` are optional. Unknown fields ar
 - `type` is a closed list: `session.start`, `session.end`, `tool.call`, `tool.result`, `message`, `reasoning`, `decision`,
   `gate.request`, `gate.result`, `learning.proposed`, `learning.accepted`, `learning.rejected`, `step.start`,
   `step.end`, `run.end`, `session.summary` (the last five added in Phase 2 for runs, rejected learnings and stored
-  summaries) and `session.title` ([ADR 0035](adr/0035-session-titles.md)).
+  summaries), `session.title` ([ADR 0035](adr/0035-session-titles.md)), and a scenario run's `expect.poll` and
+  `context.capture` ([ADR 0041](adr/0041-scenarios-actions-and-enforced-access.md)).
 - `source` is a closed list: `claude_code`, `transcript`, `otel`, `executor`, `github`, `linear` and `control_plane`
   (an action the user took in `hub web`, added by AGH-201: a learning decision). Widening either list later is a
   compatible change.
@@ -804,6 +813,7 @@ before anything is appended, and the data stays on the machine in v1:
 | `step.start`, `step.end`, `run.end` from the workflow engine | `issue` (the run's `issue` input, when it is a tracker key such as `DEM-7`), so hub web keeps one live run per issue (AGH-232) |
 | `session.summary` | `text`, `lines` |
 | `session.title` | `text` (the transcript's `ai-title` or `custom-title`, 80 chars), `origin` (`ai` or `custom`; ADR 0035) |
+| `expect.poll`, `context.capture` (a scenario run) | `poll` (count) and `held` (boolean); `name` (the captured name, never its value) |
 
 Note, spec, plan and brain text is read from the hub on request and never stored or logged; a learning's summary
 (its note's first paragraph) is computed on read.
@@ -862,7 +872,7 @@ The MVP goes up to Phase 2: generate hubs from Loki and see the agents' sessions
 | 3 · Knowledge and decisions | Provenance in the brain, inbox triage in the UI (accept and reject moved to Phase 2 by AGH-201; snooze stays here), extracted decisions, learning metrics | One learning traced from the session to the rule |
 | 4 · Workflows as data and actions | Generic executor reading the workflow ([ADR 0032](adr/0032-workflow-engine.md)), gates approved from the UI, adapters for other agents | — |
 
-Status (2026-10-19, latest release v0.17.0; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
+Status (2026-10-20, latest release v0.18.0; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
 Phase 1 in progress: `init`, `sync` (`--adopt`), `doctor`, `worktree`, `brief`, `agent`, `next`, `run` and `bench`
 shipped in v0.8.0, and `setup`, `start` and `ship` in v0.9.0. Phase 2's first slice is shipped too: the control plane
 `hub web` (AGH-200) in v0.9.0 and its clarity pass (AGH-201: session labels, problems, learning accept and reject
@@ -873,8 +883,11 @@ early in v0.14.0: `hub web` starts and drives Claude Code sessions (AGH-165). Th
 from the UI ship in v0.15.0 (AGH-213). v0.16.1 adds to `hub web` the Sessions grid, the New session dialog, resume in
 place, Discuss on every screen, the Studio and `make playground`, and v0.17.0 the Toolkit and Workflows version
 history with Compare and Restore (AGH-296, AGH-297), the delivered playground screens (AGH-314) and declared
-environments with blocked words in the guard (ADR 0038); other agents' adapters stay in Phase 4. The Phase 1 gate
-(Loki hub recreated) is open; pilot: AGH-54.
+environments with blocked words in the guard (ADR 0038), and v0.18.0 `hub env` and environments in `hub setup` and
+`hub brief`, the hub's hooks on `hub run` and workflow sessions (AGH-278), the guard reading MCP, WebSearch and
+Agent inputs (AGH-293), the plan version and acceptance eval on the feature (AGH-323) and the second delivered
+playground (AGH-384); other agents' adapters stay in Phase 4. The Phase 1 gate (Loki hub recreated) is open;
+pilot: AGH-54.
 
 The order follows dogfooding: the first generated hub is the platform's own, and the second replaces `loki-trader-hub`. Editable workflows come later because they depend on observation already showing where the current flow gets stuck.
 

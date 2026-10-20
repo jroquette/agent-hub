@@ -11,6 +11,21 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Changed
+
+- `hub web` Features and Feature detail: the golden path shows the feature's own steps, Spec, UX design, Research,
+  Plan, Tickets, Build, Acceptance and Shipped, instead of Implement, Review and Evaluate (AGH-325). A brief alone
+  keeps Spec in progress; UX design is done when every `ux-*.md` is approved; Plan shows the plan's version; Build
+  counts the tickets merged; Acceptance moves only on a whole-feature eval (`acs: all`), reading "Not recorded" with
+  the ACs the ticket evals cover until one exists, so a feature with only ticket evals no longer reads Shipped. A
+  SHIP-WITH-OWNER-STEPS one reads "Waiting on you: sign off N ACs" until the owner signs off, and the sign-off covers
+  exactly the ACs it waits on (a legacy `eval.md` too); it is refused, writing nothing, when one of those ACs has a
+  NO-SHIP as its latest eval (named), when the eval is undated or future-dated, or when not every eval was read. With
+  no AC listed it keeps waiting until the owner writes the sign-off by hand. The API's `phase` values change to
+  match; ADR 0043 records the two levels.
+
+## [0.18.0] - 2026-10-20
+
 ### Fixed
 
 - `hub web` Feature detail: the golden path's Review and Shipped steps read "Partial" once some tickets are
@@ -23,11 +38,24 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - The guard decides a long quote- or dot-dense Bash command (`echo 'a'a'a…`) in time linear in its length (AGH-302):
   before, its secret-file rule took quadratic time, so a command near or over the blocked-words 1 MiB cap ran past
   the 10 s hook timeout and Claude Code went on with no verdict (no "too large" ask).
+- `hub run`'s implementing session and every workflow agent node whose `cwd` is a repo now run under the hub's hooks
+  (guard, SessionStart brief, Stop gate, post-edit, event sensor), through a hooks-only `--settings` file,
+  `<hub>/.agent-runs/session-settings/<effort>.json`, rebuilt from the hub's `.claude/settings.json` before each
+  session (AGH-278). A hub whose `.claude/settings.json` or one of its hook scripts is missing is refused: `hub run`
+  exits 1 before reading the issue, dry or live, and such a workflow node fails with kind `config`. The Stop gate now
+  runs the repo's `check_fast` inside the session (at most 3 blocks), and a guard `ask` is refused there.
 - While blocked words, or a problem with the blocked-word list, are in effect, the guard asks on a tool call whose
   hook input it cannot read (not a JSON object, or nested too deep for the parser) instead of letting it through
   unchecked (AGH-293).
 
 ### Added
+
+- Blocked words reach MCP tool calls, WebSearch queries, subagent prompts (Task, Agent) and SendMessage: the guard
+  denies a call whose input holds a blocked word in any key or string value, and asks when the input is over 1 MiB or
+  50,000 values or its 300 ms budget runs out; only this rule runs on those tools, and the project extension does not
+  (AGH-293). Still not checked: tool and MCP server names (AGH-373); `deny_hosts` does not apply to these inputs
+  (AGH-372); Skill, TodoWrite, ExitPlanMode and AskUserQuestion (AGH-373); a recorded guard event carries their input
+  whole (AGH-371); the guard's stdin has no byte cap (AGH-375).
 
 - `hub web` Feature detail: the Plan tab shows the plan's version line ("Plan v3 · amendments A1, A2", one link per
   amendment to its section of the plan), and the header verdict is the latest whole-feature eval's (`acs: all`, or a
@@ -87,6 +115,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   Change for me.
 
 ### Changed
+
+- The guard's `PreToolUse` matcher is now
+  `^(Bash|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit|WebFetch|WebSearch|Task|Agent|SendMessage)$|^mcp__`.
+  **Run `hub sync` after you bump `platform.version`**: until then your hub keeps the old matcher, the new tools stay
+  unchecked, and `hub doctor` reports `hooks.PreToolUse: a base hook group is missing or changed` (AGH-293).
 
 - `hub web --sessions-max 0` (`AGENT_HUB_SESSIONS_MAX=0`) sets no limit on live agent sessions: none is ended or
   refused for the limit. `make playground` starts its conductor that way, instead of 16 sessions (AGH-383,
@@ -748,7 +781,8 @@ Includes 0.3.0, which was never tagged.
 - The `hub.json` config model and schema, the generator templates, `hub init` and `hub sync`.
 - The release check on `v*` tags.
 
-[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/jroquette/agent-hub/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/jroquette/agent-hub/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/jroquette/agent-hub/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/jroquette/agent-hub/compare/v0.15.0...v0.16.0

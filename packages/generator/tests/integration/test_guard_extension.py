@@ -1005,6 +1005,42 @@ def test_skips_extension_when_blocked_word_denies(hub: Path, guard: Guard, marke
     assert seen(marker) == ["Bash"]
 
 
+def input_calls(text: str) -> list[dict[str, Any]]:
+    """An MCP, a WebSearch, an Agent and a SendMessage call, each holding ``text``."""
+    return [
+        {"tool_name": "mcp__db__query", "tool_input": {"host": text}},
+        {"tool_name": "WebSearch", "tool_input": {"query": text, "mode": "standard"}},
+        {"tool_name": "Agent", "tool_input": {"prompt": text, "subagent_type": "general-purpose"}},
+        {"tool_name": "SendMessage", "tool_input": {"to": "t", "message": text}},
+    ]
+
+
+# AC-293.9 (O-3): the project extension never runs on an input tool, with or without blocked words.
+def test_skips_extension_when_input_tool(hub: Path, guard: Guard, marker: Path) -> None:
+    install(hub, marker=marker, body='return ("deny", "project says no")')
+
+    clean = guard(hub / HOOKS, [(call, hub) for call in input_calls("status")])
+    clean_seen = seen(marker)
+    with_blocked_words(hub)
+    blocked = guard(hub / HOOKS, [(call, hub) for call in input_calls("prod")])
+    blocked_seen = seen(marker)
+    [bash_verdict] = guard(hub / HOOKS, [(bash("git status"), hub)])
+
+    assert clean == [None] * 4
+    assert clean_seen == []
+    assert blocked == [
+        (
+            "deny",
+            f"{PREFIX}blocked word `prod` (guard.blocked_words, hub.json) in the input of"
+            f" `{call['tool_name']}`: agents do not reach what a blocked word names",
+        )
+        for call in input_calls("prod")
+    ]
+    assert blocked_seen == []
+    assert bash_verdict == ("deny", f"{PREFIX}project guard: project says no")
+    assert seen(marker) == ["Bash"]
+
+
 @pytest.mark.serial
 def test_keeps_latency_ceiling_when_blocked_words_set(
     *,
@@ -1033,6 +1069,47 @@ def test_keeps_latency_ceiling_when_blocked_words_set(
 
     assert len(samples) == 2 * LATENCY_RUNS
     assert p95(samples) <= LATENCY_CEILING
+
+
+# AGH-293 NFR: the ceiling holds with an MCP call whose input is walked (1,000 clean strings).
+@pytest.mark.serial
+def test_keeps_latency_ceiling_when_input_tool_scanned(
+    *,
+    hook_python: str,
+    rendered_tree: Callable[..., Path],
+    run_hook_file: Callable[..., subprocess.CompletedProcess[bytes]],
+    tmp_path: Path,
+) -> None:
+    hub = render_at(rendered_tree, tmp_path / "ws" / "demo-hub")
+    with_blocked_words(hub)
+    env = {"HOME": str(tmp_path)}
+    rows = [f"{n:04d}-" + "x" * 59 for n in range(1000)]
+    assert {len(row) for row in rows} == {64}
+    event = {"tool_name": "mcp__db__query", "tool_input": {"rows": rows}, "cwd": str(hub)}
+    stdin = json.dumps(event).encode()
+    samples: list[float] = []
+
+    for _ in range(LATENCY_RUNS):
+        start = time.perf_counter()
+        completed = run_hook_file(
+            hook_python, hub / HOOKS / "guard.py", stdin=stdin, cwd=hub, env=env
+        )
+        samples.append(time.perf_counter() - start)
+        assert completed.returncode == 0, completed.stderr
+        assert completed.stdout == b"", completed.stdout
+
+    assert len(samples) == LATENCY_RUNS
+    assert p95(samples) <= LATENCY_CEILING
+    # the same input with a word in one row is denied: the walk ran on every sample
+    rows[500] = "prod-" + "x" * 59
+    stdin = json.dumps(event | {"tool_input": {"rows": rows}}).encode()
+    denied = run_hook_file(hook_python, hub / HOOKS / "guard.py", stdin=stdin, cwd=hub, env=env)
+    output = json.loads(denied.stdout)["hookSpecificOutput"]
+    assert (output["permissionDecision"], output["permissionDecisionReason"]) == (
+        "deny",
+        f"{PREFIX}blocked word `prod` (guard.blocked_words, hub.json) in the input of"
+        " `mcp__db__query`: agents do not reach what a blocked word names",
+    )
 
 
 # argv: none. The blocked-word rule's own time on one Bash call with W and no file to scan: the

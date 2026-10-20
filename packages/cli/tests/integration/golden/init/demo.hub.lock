@@ -35,7 +35,7 @@
     ".claude/settings.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "8ddf89e90b52bb8b42bb2c1b8526eee93f021987af1938bf9015501f81814a7b"
+      "sha256": "c703b025b4dbaf06317305459913f76b9cf6097dc90da49ea8089fcba2ee6854"
     },
     ".claude/settings.project.json": {
       "ownership": "seeded"
@@ -299,12 +299,12 @@
     "plugin/hub-workflow/hooks/guard.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "a3da28157bb222ab6893ea97e090bdd2c7da60d88e6012455c4cecd0fc046f4a"
+      "sha256": "1364bb2313a8291caba04d32325243dd8ad5e4cdca6a1650c3b87fc80e94174b"
     },
     "plugin/hub-workflow/hooks/hooks.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "4b582dec64ca0c55d77e0f4da5ba9537caf7a67fca71f153dd24feeb8826af12"
+      "sha256": "d99120854c13b461e636d60eaf98baf505bf67485cb4f839ee7a3742b26ac843"
     },
     "plugin/hub-workflow/hooks/hubhooks.py": {
       "executable": false,
