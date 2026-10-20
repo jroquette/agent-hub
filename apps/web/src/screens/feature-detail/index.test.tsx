@@ -215,6 +215,24 @@ describe("FeatureDetailScreen", () => {
     expect(callout.closest('[role="status"]')).toHaveTextContent("memory loads.");
   });
 
+  it("names the evals waiting on owner steps and opens the first in Eval", async () => {
+    const waiting = anEvalRecord({
+      delivery: "agh-48",
+      path: "features/layered-memory/evals/agh-48.md",
+      verdict: "SHIP-WITH-OWNER-STEPS",
+      tickets: ["AGH-48"],
+    });
+    const { router } = open({ [API]: { ...detail, evals: [waiting] } });
+
+    const banner = (
+      await screen.findByText(/1 eval passed with owner steps: AGH-48 · Eval 1/)
+    ).closest('[role="status"]');
+    expect(banner).not.toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Review owner steps" }));
+    expect(router.state.location.search).toContain("doc=eval");
+    expect(router.state.location.search).toContain("eval=agh-48");
+  });
+
   it("shows every AC row at once, with no Show all fold (AC-269.12)", async () => {
     open();
 
@@ -307,6 +325,15 @@ describe("FeatureDetailScreen", () => {
     const term = await screen.findByText("Given");
     const list = term.closest("dl");
     expect(list).toHaveTextContent("Givencase 12Whenit runsThenit passes");
+  });
+
+  it("moves keyboard focus to the asked AC's toggle when it opens by ?ac=", async () => {
+    open({}, "/features/agent-hub/layered-memory?doc=acs&ac=AC-48.12");
+
+    const toggle = await screen.findByRole("button", { name: "Collapse AC-48.12" });
+    await waitFor(() => {
+      expect(toggle).toHaveFocus();
+    });
   });
 
   it("copies every non-manual command, each under its AC id", async () => {
@@ -541,8 +568,10 @@ describe("FeatureDetailScreen", () => {
       await userEvent.click(await screen.findByRole("tab", { name: "Eval" }));
 
       const table = screen.getByRole("table", { name: "Evals" });
-      expect(table).toHaveTextContent("agh-48");
-      expect(table).toHaveTextContent("agh-49");
+      for (const toggle of within(table).queryAllByRole("button", { expanded: false })) {
+        await userEvent.click(toggle);
+      }
+      expect(within(table).getByRole("button", { name: /^agh-48,/ })).toBeInTheDocument();
       expect(table).toHaveTextContent("NO-SHIP");
       expect(within(table).getByRole("button", { name: /^agh-49,/ })).toHaveAttribute(
         "title",
@@ -554,6 +583,7 @@ describe("FeatureDetailScreen", () => {
       open({}, "/features/agent-hub/layered-memory?doc=eval&eval=agh-48");
 
       expect(await screen.findByRole("article", { name: "Eval agh-48" })).toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: /^AGH-49\b.*1 eval/ }));
       await userEvent.click(screen.getByRole("button", { name: /^agh-49,/ }));
       expect(await screen.findByRole("article", { name: "Eval agh-49" })).toBeInTheDocument();
     });

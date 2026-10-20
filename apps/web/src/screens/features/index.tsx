@@ -1,3 +1,4 @@
+import { featureHref } from "./FeatureChip";
 import "./features.css";
 
 import { useEffect, useRef, useState } from "react";
@@ -34,12 +35,13 @@ import {
   matchesQuery,
   missesLinear,
   reasonOf,
+  sessionWaitOf,
   type GroupId,
   type Reason,
 } from "./groups";
 import { FeatureNameField, RenameButton, useFeatureNames } from "./names";
 import { AcBar, PHASES } from "./parts";
-import { useFeatures } from "./queries";
+import { useFeatures, useLiveSessions } from "./queries";
 
 export { issueId } from "./groups";
 
@@ -75,8 +77,7 @@ function matches(f: Feature, key: FilterKey, values: string[]): boolean {
   }
 }
 
-export const featureHref = (f: Pick<Feature, "project" | "slug">) =>
-  `/features/${encodeURIComponent(f.project)}/${encodeURIComponent(f.slug)}`;
+export { featureHref } from "./FeatureChip";
 
 const COLLAPSED_KEY = "ah.features.collapsed";
 
@@ -84,7 +85,7 @@ function readCollapsed(): Set<GroupId> {
   try {
     const value: unknown = JSON.parse(readStored(COLLAPSED_KEY) ?? "[]");
     const stored: unknown[] = Array.isArray(value) ? value : [];
-    return new Set(GROUPS.map((g) => g.id).filter((id) => id !== "needs" && stored.includes(id)));
+    return new Set(GROUPS.map((g) => g.id).filter((id) => stored.includes(id)));
   } catch {
     return new Set();
   }
@@ -309,9 +310,7 @@ function FeatureRow({
           className="ft-row-line"
           title={reason.line}
           style={
-            reason.tone === "failed" || reason.tone === "blocked"
-              ? { color: TONE_COLOR[reason.tone] }
-              : undefined
+            reason.needs !== null && reason.tone ? { color: TONE_COLOR[reason.tone] } : undefined
           }
         >
           {reason.line}
@@ -328,20 +327,23 @@ function FeatureRow({
   );
 }
 
-/** The group's hint: for Needs you, how many of each kind, so the reason is read at a glance. */
-function hintOf(id: GroupId, rows: Feature[]): string {
-  const meta = GROUPS.find((g) => g.id === id);
-  if (id !== "needs") return meta?.hint ?? "";
-  const ranks = rows.map((f) => reasonOf(f).rank);
-  const count = (rank: number) => ranks.filter((r) => r === rank).length;
-  return [
-    [count(2), "wait on your steps"],
-    [count(1), "no ship"],
-    [count(0), "record cannot be read"],
-  ]
-    .filter(([n]) => Number(n) > 0)
-    .map(([n, words]) => `${String(n)} ${String(words)}`)
-    .join(" · ");
+/** The group's hint, then how many of its rows need you and why, so the warnings are read at a glance. */
+function hintOf(id: GroupId, rows: Feature[], reasonFor: (f: Feature) => Reason): string {
+  const hint = GROUPS.find((g) => g.id === id)?.hint ?? "";
+  const needs = rows.map((f) => reasonFor(f).needs);
+  const count = (kind: Reason["needs"]) => needs.filter((n) => n === kind).length;
+  const warnings = (
+    [
+      [count("session"), "session waits on you"],
+      [count("your-turn"), "your turn in a session"],
+      [count("owner-steps"), "wait on your steps"],
+      [count("no-ship"), "no ship"],
+      [count("problem"), "record cannot be read"],
+    ] as const
+  )
+    .filter(([n]) => n > 0)
+    .map(([n, words]) => `${String(n)} ${words}`);
+  return [hint, ...warnings].filter(Boolean).join(" · ");
 }
 
 /** The column titles at the top of each group's card; the first card also explains them. */
@@ -387,6 +389,7 @@ function ColumnHeads({ withHints }: { withHints: boolean }) {
 
 function Group({
   nameOf,
+  reasonFor,
   id,
   rows,
   collapsed,
@@ -397,6 +400,7 @@ function Group({
   withHints,
 }: {
   nameOf: (f: Feature) => string | null;
+  reasonFor: (f: Feature) => Reason;
   withHints: boolean;
   id: GroupId;
   rows: Feature[] | null;
@@ -430,8 +434,10 @@ function Group({
             {meta.title} · <span className="ft-group-count">{count}</span>
           </button>
         </h2>
-        {open && (rows?.length ? hintOf(id, rows) : meta.hint) && (
-          <span className="ft-group-hint">{rows?.length ? hintOf(id, rows) : meta.hint}</span>
+        {open && (rows?.length ? hintOf(id, rows, reasonFor) : meta.hint) && (
+          <span className="ft-group-hint">
+            {rows?.length ? hintOf(id, rows, reasonFor) : meta.hint}
+          </span>
         )}
       </div>
       {open &&
@@ -459,7 +465,7 @@ function Group({
                     key={`${f.project}/${f.slug}`}
                     f={f}
                     name={nameOf(f)}
-                    reason={reasonOf(f)}
+                    reason={reasonFor(f)}
                     showProject={showProject}
                     onOpen={onOpen}
                   />
@@ -483,10 +489,12 @@ function Group({
   );
 }
 
-/** Features list (spec 17, D23) as an inbox: what needs you, what is moving, what shipped. */
+/** Features list (spec 17, D23): what is moving (rows that need you carry a warning), what was evaluated, what shipped. */
 export function FeaturesScreen() {
   const [scope] = useScope();
   const features = useFeatures(scope);
+  const tiles = useLiveSessions(scope).data?.items ?? [];
+  const reasonFor = (f: Feature) => reasonOf(f, sessionWaitOf(f, tiles));
   const nameOf = useFeatureNames();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
@@ -508,8 +516,8 @@ export function FeaturesScreen() {
       matchesQuery(f, q, nameOf(f)) && active.every(({ key, values }) => matches(f, key, values)),
   );
   const byGroup = new Map<GroupId, Feature[]>(GROUPS.map((g) => [g.id, []]));
-  for (const f of rows) byGroup.get(reasonOf(f).group)?.push(f);
-  for (const list of byGroup.values()) list.sort(byGroupOrder);
+  for (const f of rows) byGroup.get(reasonFor(f).group)?.push(f);
+  for (const list of byGroup.values()) list.sort((a, b) => byGroupOrder(a, b, reasonFor));
 
   const update = (changes: Partial<Record<FilterKey | "q", string | null>>) => {
     setParams(
@@ -562,8 +570,11 @@ export function FeaturesScreen() {
         <h1 className="ah-h1">Features</h1>
         {features.isSuccess && all.length > 0 && (
           <p className="ft-summary">
+            <span data-group="needs">
+              <b>{all.filter((f) => reasonFor(f).needs !== null).length}</b> need you
+            </span>
             {GROUPS.map((g) => {
-              const n = all.filter((f) => reasonOf(f).group === g.id).length;
+              const n = all.filter((f) => reasonFor(f).group === g.id).length;
               return (
                 <span key={g.id} data-group={g.id}>
                   <b>{n}</b> {g.summary}
@@ -697,6 +708,7 @@ export function FeaturesScreen() {
                   <Group
                     key={g.id}
                     nameOf={nameOf}
+                    reasonFor={reasonFor}
                     id={g.id}
                     rows={list}
                     collapsed={collapsed.has(g.id)}

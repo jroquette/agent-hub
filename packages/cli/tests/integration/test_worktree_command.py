@@ -1408,6 +1408,230 @@ class TestScriptEnvironment:
         assert not worktree.exists()
 
 
+class TestBase:
+    """``--base``: a task stacked on a blocker's branch that is still in review."""
+
+    def test_creates_from_blocker_branch_when_base_given(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        blocker = "jdoe/dem-6-y"
+        stacked = demo_workspace.origin_head("demo-api")
+        demo_workspace.git(demo_workspace.origin("demo-api"), "branch", blocker, stacked)
+        trunk = demo_workspace.advance("demo-api")
+
+        result = run_command(
+            demo_workspace.hub, "worktree", NAME, "--only", "demo-api", "--base", blocker
+        )
+
+        assert result.exit_code == 0, result.output
+        worktree = demo_workspace.worktree("demo-api", NAME)
+        assert result.stdout.splitlines()[0] == (
+            f"created  {worktree} ({BRANCH} from origin/{blocker})"
+        )
+        assert demo_workspace.git(worktree, "branch", "--show-current") == BRANCH
+        assert demo_workspace.git(worktree, "rev-parse", "HEAD") == stacked
+        assert stacked != trunk
+
+    def test_refuses_base_when_removing(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        result = run_command(demo_workspace.hub, "worktree", "--remove", NAME, "--base", "x")
+
+        assert_refused(result, "--base applies to creating worktrees, not to --remove")
+        assert_untouched(demo_workspace)
+
+    def test_refuses_base_when_git_refuses_its_name(
+        self, demo_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        result = run_command(demo_workspace.hub, "worktree", NAME, "--base", "bad..name")
+
+        assert result.exit_code == 2
+        assert "bad..name" in unstyle(result.stderr)
+        assert_untouched(demo_workspace)
+
+
+# AGH-381: the fake gh of ``--stack-on``: it logs its arguments and prints ``FAKE_GH_VIEW``.
+_STACK_GH = """#!/bin/sh
+printf '%s\\n' "$*" >> "$FAKE_GH_LOG"
+if [ -n "$FAKE_GH_FAIL" ]; then echo "$FAKE_GH_FAIL" >&2; exit 1; fi
+printf '%s' "$FAKE_GH_VIEW"
+"""
+BLOCKER_PR = "https://github.com/acme/demo-api/pull/6"
+BLOCKER_BRANCH = "jdoe/dem-6-y"
+
+
+def stack_gh(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    head: str = BLOCKER_BRANCH,
+    state: str = "OPEN",
+    fork: bool = False,
+    fail: str = "",
+) -> Path:
+    """Put a fake ``gh`` first on ``PATH`` that answers ``gh pr view``; its call log's path."""
+    bin_dir = tmp_path / "stack-gh-bin"
+    bin_dir.mkdir()
+    gh = bin_dir / "gh"
+    gh.write_text(_STACK_GH, encoding="utf-8")
+    gh.chmod(EXECUTABLE)
+    log = tmp_path / "stack-gh.log"
+    view = {"headRefName": head, "state": state, "isCrossRepository": fork}
+    monkeypatch.setenv("FAKE_GH_LOG", str(log))
+    monkeypatch.setenv("FAKE_GH_VIEW", json.dumps(view))
+    monkeypatch.setenv("FAKE_GH_FAIL", fail)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    return log
+
+
+class TestStackOn:
+    """AGH-381: ``--stack-on <PR url>``: the blocker's repo from its pull request's branch."""
+
+    def test_starts_only_the_blocker_repo_from_its_branch_when_stacked_across_repos(
+        self,
+        demo_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        stacked = demo_workspace.origin_head("demo-api")
+        demo_workspace.git(demo_workspace.origin("demo-api"), "branch", BLOCKER_BRANCH, stacked)
+        api_trunk = demo_workspace.advance("demo-api")
+        web_trunk = demo_workspace.origin_head("demo-web")
+        log = stack_gh(tmp_path, monkeypatch)
+
+        result = run_command(demo_workspace.hub, "worktree", NAME, "--stack-on", BLOCKER_PR)
+
+        assert result.exit_code == 0, result.output
+        api = demo_workspace.worktree("demo-api", NAME)
+        web = demo_workspace.worktree("demo-web", NAME)
+        lines = result.stdout.splitlines()
+        assert f"created  {api} ({BRANCH} from origin/{BLOCKER_BRANCH})" in lines
+        assert f"created  {web} ({BRANCH} from origin/trunk)" in lines
+        assert demo_workspace.git(api, "rev-parse", "HEAD") == stacked
+        assert stacked != api_trunk
+        assert demo_workspace.git(web, "rev-parse", "HEAD") == web_trunk
+        assert log.read_text(encoding="utf-8").splitlines() == [
+            f"pr view {BLOCKER_PR} --json headRefName,state,isCrossRepository"
+        ]
+
+    def test_starts_the_task_repo_from_its_default_branch_when_only_names_the_blocker_repo(
+        self,
+        demo_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        stacked = demo_workspace.origin_head("demo-api")
+        demo_workspace.git(demo_workspace.origin("demo-api"), "branch", BLOCKER_BRANCH, stacked)
+        stack_gh(tmp_path, monkeypatch)
+
+        result = run_command(
+            demo_workspace.hub, "worktree", NAME, "--only", "demo-api", "--stack-on", BLOCKER_PR
+        )
+
+        assert result.exit_code == 0, result.output
+        assert demo_workspace.git(
+            demo_workspace.worktree("demo-api", NAME), "rev-parse", "HEAD"
+        ) == (stacked)
+        assert not demo_workspace.worktree("demo-web", NAME).exists()
+
+    def test_refuses_when_only_leaves_the_blocker_repo_out(
+        self,
+        demo_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        stack_gh(tmp_path, monkeypatch)
+
+        result = run_command(
+            demo_workspace.hub, "worktree", NAME, "--only", "demo-web", "--stack-on", BLOCKER_PR
+        )
+
+        assert result.exit_code == 2
+        assert "the blocker's pull request is in demo-api" in unstyle(result.stderr)
+        assert_untouched(demo_workspace)
+
+    @pytest.mark.parametrize(
+        ("state", "fork", "message"),
+        [
+            ("MERGED", False, "is merged, not open"),
+            ("CLOSED", False, "is closed, not open"),
+            ("OPEN", True, "comes from a fork"),
+        ],
+    )
+    def test_refuses_when_the_pull_request_cannot_be_stacked_on(
+        self,
+        demo_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        state: str,
+        fork: bool,
+        message: str,
+    ) -> None:
+        stack_gh(tmp_path, monkeypatch, state=state, fork=fork)
+
+        result = run_command(demo_workspace.hub, "worktree", NAME, "--stack-on", BLOCKER_PR)
+
+        assert result.exit_code == 1
+        assert message in unstyle(result.stderr)
+        assert_untouched(demo_workspace)
+
+    def test_refuses_when_gh_cannot_read_the_pull_request(
+        self,
+        demo_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        stack_gh(tmp_path, monkeypatch, fail="gh: not logged in")
+
+        result = run_command(demo_workspace.hub, "worktree", NAME, "--stack-on", BLOCKER_PR)
+
+        assert result.exit_code == 1
+        assert "could not read" in unstyle(result.stderr)
+        assert "gh: not logged in" in unstyle(result.stderr)
+        assert_untouched(demo_workspace)
+
+    @pytest.mark.parametrize(
+        ("args", "message"),
+        [
+            (("--stack-on", "https://github.com/acme/other/pull/6"), "is not a repo of hub.json"),
+            (
+                ("--stack-on", "https://example.com/acme/demo-api/pull/6"),
+                "takes a pull request URL",
+            ),
+            (("--stack-on", BLOCKER_PR, "--base", "x"), "--base and --stack-on"),
+            (("--remove", "--stack-on", BLOCKER_PR), "--stack-on applies to creating worktrees"),
+        ],
+    )
+    def test_refuses_usage_when_stack_on_cannot_apply(
+        self,
+        demo_workspace: Workspace,
+        run_command: CommandRunner,
+        *,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        args: tuple[str, ...],
+        message: str,
+    ) -> None:
+        log = stack_gh(tmp_path, monkeypatch)
+
+        result = run_command(demo_workspace.hub, "worktree", NAME, *args)
+
+        assert result.exit_code == 2
+        assert message in " ".join(unstyle(result.stderr).split())
+        assert not log.exists()
+        assert_untouched(demo_workspace)
+
+
 class TestNoFetch:
     """AGH-134: ``--no-fetch``, the sandbox's escape hatch after a bare ``git fetch``."""
 

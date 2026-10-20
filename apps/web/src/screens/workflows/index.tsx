@@ -1,16 +1,10 @@
 import { useState, type ReactNode } from "react";
-import { useParams } from "react-router";
+import { Navigate, useParams } from "react-router";
 
-import {
-  AppLink,
-  DataTable,
-  EmptyState,
-  Icon,
-  JsonViewer,
-  ProblemError,
-  Skeleton,
-} from "../../components";
+import type { components } from "../../api/schema";
+import { AppLink, DataTable, Icon, JsonViewer, ProblemError, Skeleton } from "../../components";
 import { useScope } from "../../lib/scope";
+import { skillsHome, SKILLS_PICKER } from "../skills/routes";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
 import { HistoryPanel } from "../item-history";
@@ -20,14 +14,13 @@ import { StepList } from "./StepList";
 import "./workflows.css";
 import {
   useWorkflow,
-  useWorkflows,
   type WorkflowDetail,
   type WorkflowStep,
   type WorkflowSummary,
 } from "./queries";
 import { countLabel, kindCounts, STEP_KINDS, stepKind } from "./steps";
 
-/* Workflows (plan 6.3, AC-213.15): the catalog with the files that do not load, and one
+/* Workflows (plan 6.3, AC-213.15): the list a project's Toolkit shows in its Workflows tab, and one
  * workflow's layered graph and document, read-only. */
 
 export function SourceBadge({ source }: { source: WorkflowSummary["source"] }) {
@@ -39,8 +32,14 @@ export function SourceBadge({ source }: { source: WorkflowSummary["source"] }) {
   );
 }
 
-function workflowHref(item: { project: string; name: string }): string {
-  return `/workflows/${encodeURIComponent(item.project)}/${encodeURIComponent(item.name)}`;
+/** A workflow's page, inside its project's Toolkit. */
+export function workflowHref(item: { project: string; name: string }): string {
+  return `${skillsHome(item.project)}/workflows/${encodeURIComponent(item.name)}`;
+}
+
+/** The Toolkit's Workflows tab of a project. */
+export function workflowsTab(project: string): string {
+  return `${skillsHome(project)}?view=workflows`;
 }
 
 function Page({ children }: { children: ReactNode }) {
@@ -120,40 +119,25 @@ function WorkflowRow({ item, showProject }: { item: WorkflowSummary; showProject
   );
 }
 
-/** The catalog: what a workflow is in one sentence, the workflows, and the files that do not load. */
-export function WorkflowsScreen() {
-  const [scope] = useScope();
-  const catalog = useWorkflows(scope);
+type WorkflowCatalog = components["schemas"]["WorkflowCatalogView"];
 
-  let content: ReactNode;
-  if (catalog.isError) {
-    content = (
-      <ProblemError
-        title="Could not load workflows"
-        detail={catalog.error.detail}
-        status={catalog.error.status}
-        onRetry={() => void catalog.refetch()}
-      />
-    );
-  } else if (catalog.isPending) {
-    content = <Skeleton width="100%" height={160} />;
-  } else if (catalog.data.items.length + catalog.data.problems.length === 0) {
-    content = (
-      <div className="ah-card">
-        <EmptyState icon="workflow" title="No workflows defined">
-          Workflows are YAML files in the hub. ./hub sync installs the default issue-to-pr workflow.
-        </EmptyState>
-      </div>
-    );
-  } else {
-    const { problems } = catalog.data;
-    // The hub's own first, then the built-ins.
-    const items = [...catalog.data.items].sort(
-      (x, y) => Number(x.source === "builtin") - Number(y.source === "builtin"),
-    );
-    const showProject = new Set(items.map((item) => item.project)).size > 1;
-    content = (
-      <>
+/** A project's workflows, the hub's own first, and the files that do not load. */
+export function WorkflowList({
+  catalog,
+  query = "",
+}: {
+  catalog: Pick<WorkflowCatalog, "items" | "problems">;
+  query?: string;
+}) {
+  const q = query.trim().toLowerCase();
+  const items = catalog.items
+    .filter((item) => !q || `${item.name}\n${item.description ?? ""}`.toLowerCase().includes(q))
+    .sort((x, y) => Number(x.source === "builtin") - Number(y.source === "builtin"));
+  const showProject = new Set(items.map((item) => item.project)).size > 1;
+  const { problems } = catalog;
+  return (
+    <>
+      {items.length > 0 && (
         <ul className="wf-list" aria-label="Workflows">
           {items.map((item) => (
             <WorkflowRow
@@ -163,56 +147,43 @@ export function WorkflowsScreen() {
             />
           ))}
         </ul>
-        {problems.length > 0 && (
-          <DataTable
-            caption="Files that do not load"
-            density="compact"
-            rows={problems}
-            rowKey={(p) => `${p.project}/${p.file}/${p.key}`}
-            columns={[
-              {
-                id: "file",
-                label: "File",
-                render: (p) => (
-                  <span className="ah-mono" style={{ color: "var(--failed)" }}>
-                    {p.file}
-                    {p.line === null ? "" : `:${String(p.line)}`}
-                  </span>
-                ),
-              },
-              { id: "key", label: "Key", render: (p) => <span className="ah-mono">{p.key}</span> },
-              { id: "message", label: "Problem", render: (p) => p.message },
-              {
-                id: "project",
-                label: "Project",
-                width: 160,
-                render: (p) => <span className="ah-mono">{p.project}</span>,
-              },
-            ]}
-          />
-        )}
-      </>
-    );
-  }
-
-  return (
-    <Page>
-      <div className="ah-row ah-wrap" style={{ gap: 12, alignItems: "flex-start" }}>
-        <h1 className="ah-h1 ah-grow">Workflows</h1>
-        <AppLink className="ah-btn" href="/workflows/new">
-          <Icon name="plus" />
-          New workflow
-        </AppLink>
-      </div>
-      <p className="ah-muted" style={{ margin: 0, maxWidth: 720 }}>
-        A workflow is a job the hub does by itself, from start to finish. You give it a task, such
-        as an issue; it runs a fixed list of steps (Claude writes or reviews code, commands run the
-        tests) and hands back a result, such as a pull request. You follow each one in{" "}
-        <AppLink href="/runs">Workflow runs</AppLink>.
-      </p>
-      {content}
-    </Page>
+      )}
+      {problems.length > 0 && (
+        <DataTable
+          caption="Files that do not load"
+          density="compact"
+          rows={problems}
+          rowKey={(p) => `${p.project}/${p.file}/${p.key}`}
+          columns={[
+            {
+              id: "file",
+              label: "File",
+              render: (p) => (
+                <span className="ah-mono" style={{ color: "var(--failed)" }}>
+                  {p.file}
+                  {p.line === null ? "" : `:${String(p.line)}`}
+                </span>
+              ),
+            },
+            { id: "key", label: "Key", render: (p) => <span className="ah-mono">{p.key}</span> },
+            { id: "message", label: "Problem", render: (p) => p.message },
+          ]}
+        />
+      )}
+    </>
   );
+}
+
+/** `/workflows`, an older link: the Toolkit's Workflows tab of the project in scope, else the picker. */
+export function WorkflowsScreen() {
+  const [scope] = useScope();
+  return <Navigate to={scope === null ? SKILLS_PICKER : workflowsTab(scope)} replace />;
+}
+
+/** `/workflows/:project/:name`, an older link: the workflow's page in its project's Toolkit. */
+export function LegacyWorkflowRedirect() {
+  const { project = "", name = "" } = useParams();
+  return <Navigate to={workflowHref({ project, name })} replace />;
 }
 
 type DocNode = Record<string, unknown>;
@@ -248,8 +219,10 @@ function DetailBody({ workflow }: { workflow: WorkflowDetail }) {
     <Page>
       <Breadcrumbs
         items={[
-          { label: "Workflows", href: "/workflows" },
-          { label: workflow.project },
+          { label: "Portfolio", href: "/" },
+          { label: workflow.project, href: `/projects/${encodeURIComponent(workflow.project)}` },
+          { label: "Toolkit", href: skillsHome(workflow.project) },
+          { label: "Workflows", href: workflowsTab(workflow.project) },
           { label: workflow.name, mono: true },
         ]}
       />
@@ -426,7 +399,7 @@ export function WorkflowDetailScreen() {
             Project {project} has no workflow {name} that loads. It may have been renamed, or its
             file may not load.
           </p>
-          <AppLink className="ah-btn" href="/workflows">
+          <AppLink className="ah-btn" href={workflowsTab(project)}>
             Go to Workflows
           </AppLink>
         </Page>

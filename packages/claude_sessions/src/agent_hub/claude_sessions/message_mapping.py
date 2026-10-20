@@ -10,6 +10,9 @@
 - A subagent's own text, deltas and thinking (``parent_tool_use_id`` set) are not shown; its tool
   calls are, nested under the calling tool use.
 - ``TodoWrite`` calls also give the whole todo list as ``Todos``.
+- A task's start and end (``task_started``, ``task_notification``, a terminal ``task_updated``)
+  become ``TaskEvent``s: a background subagent runs on after its turn's result, and only these
+  say so. Progress messages map to nothing.
 - ``ResultMessage`` becomes ``TurnResult``; any ``aborted_*`` terminal reason (the CLI says
   ``aborted_tools`` when interrupted during a tool) is reported as ``ABORTED_TERMINAL_REASON``.
 
@@ -25,6 +28,9 @@ from claude_agent_sdk import (
     ResultMessage,
     StreamEvent,
     SystemMessage,
+    TaskNotificationMessage,
+    TaskStartedMessage,
+    TaskUpdatedMessage,
     TextBlock,
     ThinkingBlock,
     ToolResultBlock,
@@ -40,6 +46,8 @@ from agent_hub.core.agent_sessions.driver import (
     DriverError,
     DriverEvent,
     InitEvent,
+    TaskEvent,
+    TaskStatus,
     TextDelta,
     Thinking,
     TodoItem,
@@ -51,6 +59,17 @@ from agent_hub.core.agent_sessions.driver import (
 from agent_hub.core.sessions.session import TokenUsage
 
 TODO_TOOL: Final = "TodoWrite"
+# A terminal task status as the port says it: the CLI reports a killed task as ``killed`` in a
+# ``task_updated`` and as ``stopped`` in a ``task_notification``.
+# A task_updated's status as the port says it: ``running`` again when a finished agent is
+# resumed (a SendMessage to it), else its end.
+_TASK_UPDATES: Final[dict[str, TaskStatus]] = {"running": "running"}
+_TASK_ENDS: Final[dict[str, TaskStatus]] = {
+    "completed": "completed",
+    "failed": "failed",
+    "stopped": "stopped",
+    "killed": "stopped",
+}
 _ABORTED_PREFIX: Final = "aborted"
 
 
@@ -67,6 +86,8 @@ class EventMapper:
         match message:
             case SystemMessage(subtype="init", data=data):
                 return self._init(data)
+            case TaskStartedMessage() | TaskNotificationMessage() | TaskUpdatedMessage():
+                return _task(message)
             case StreamEvent(event=event, parent_tool_use_id=None):
                 return self._stream(event)
             case AssistantMessage():
@@ -89,11 +110,13 @@ class EventMapper:
         self._initialized = True
         model = data.get("model")
         commands = data.get("slash_commands") or []
+        agents = data.get("agents") or []
         return [
             InitEvent(
                 session_id=session_id,
                 model=model if isinstance(model, str) else None,
                 slash_commands=tuple(str(command) for command in commands),
+                agents=tuple(str(agent) for agent in agents),
             )
         ]
 
@@ -125,6 +148,29 @@ class EventMapper:
                 case _:
                     pass
         return events
+
+
+def _task(
+    message: TaskStartedMessage | TaskNotificationMessage | TaskUpdatedMessage,
+) -> list[DriverEvent]:
+    """A task's start, its end when the message reports a terminal status, or its restart
+    when an update says it runs again; else nothing."""
+    if isinstance(message, TaskStartedMessage):
+        return [
+            TaskEvent(
+                task_id=message.task_id,
+                status="running",
+                description=message.description,
+                tool_use_id=message.tool_use_id,
+                task_type=message.task_type,
+            )
+        ]
+    statuses = _TASK_ENDS | _TASK_UPDATES if isinstance(message, TaskUpdatedMessage) else _TASK_ENDS
+    status = statuses.get(message.status or "")
+    if status is None or not message.task_id:
+        return []
+    tool_use_id = None if isinstance(message, TaskUpdatedMessage) else message.tool_use_id
+    return [TaskEvent(task_id=message.task_id, status=status, tool_use_id=tool_use_id)]
 
 
 def _tool_call(block: ToolUseBlock, parent: str | None) -> list[DriverEvent]:

@@ -7,11 +7,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from agent_hub.core.agent_sessions.agent_session import AgentSession, CreateAgentSession
-from agent_hub.core.agent_sessions.control import AgentSessionControl
+from agent_hub.core.agent_sessions.control import AgentSessionControl, WorkdirSource
 from agent_hub.core.agent_sessions.driver import DriverHandle, PastSession
 from agent_hub.core.agent_sessions.limits import SessionLimits
 from agent_hub.core.agent_sessions.links import ObservedSessionLookup
 from agent_hub.core.agent_sessions.records import LogRecord
+from agent_hub.core.agent_sessions.repo_changes import RepoChangesReader
 from agent_hub.core.agent_sessions.workdirs import ResolvedWorkdir, WorkdirListing
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.testing.agent_session_store_fakes import InMemoryAgentSessionStore
@@ -100,21 +101,25 @@ def build_rig(
     store: InMemoryAgentSessionStore | None = None,
     observed_sessions: ObservedSessionLookup | None = None,
     session_title: Callable[[str, str], str | None] | None = None,
+    workdirs: WorkdirSource = demo_workdirs,
+    repo_changes: RepoChangesReader | None = None,
 ) -> Rig:
     """A rig; ``replies`` script the fake driver per user message; ``observed_sessions`` says
     which Claude sessions have an observed twin; ``session_title`` the title Claude Code gave
-    a session."""
+    a session; ``workdirs`` lists the projects' folders (the demo hub by default);
+    ``repo_changes`` reads their repositories."""
     fake = driver or InMemorySessionDriver(replies=replies, past_sessions=past_sessions)
     store = store or InMemoryAgentSessionStore()
     clock = Clock()
     control = AgentSessionControl(
         fake,
         store,
-        workdirs=demo_workdirs,
+        workdirs=workdirs,
         limits=limits or SessionLimits(),
         clock=clock,
         environment_extra={"AGENT_HUB_WEB_URL": WEB_URL},
         observed_sessions=observed_sessions,
         session_title=session_title,
+        repo_changes=repo_changes,
     )
     return Rig(control=control, driver=fake, store=store, clock=clock)

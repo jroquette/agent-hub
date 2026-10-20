@@ -29,6 +29,11 @@ from agent_hub.core.agent_sessions.agent_session import (
 )
 from agent_hub.core.agent_sessions.driver import DriverCapabilities
 from agent_hub.core.agent_sessions.records import LogRecordPage
+from agent_hub.core.agent_sessions.repo_changes import (
+    COMMIT_SHA_PATTERN,
+    RepoCommitDiff,
+    SessionRepoChanges,
+)
 
 router = APIRouter(prefix="/agent-sessions", tags=["agent-sessions"], responses=PROBLEM_RESPONSES)
 
@@ -37,6 +42,7 @@ DEFAULT_EVENTS_LIMIT = 200
 
 SessionIdPath = Annotated[UUID, Path()]
 RequestIdPath = Annotated[str, Path(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")]
+TaskIdPath = Annotated[str, Path(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")]
 RequiredProject = Annotated[str, Query(min_length=1, max_length=MAX_PROJECT_CHARS)]
 WorkdirParam = Annotated[str, Query(pattern=WORKDIR_ID_PATTERN)]
 MAX_WROTE_CHARS = 1024
@@ -94,6 +100,39 @@ async def get_agent_session(
     return await control.snapshot(str(agent_session_id))
 
 
+@router.get("/{agent_session_id:uuid}/repo-changes")
+async def get_agent_session_repo_changes(
+    agent_session_id: SessionIdPath, control: AgentSessionControlDep
+) -> SessionRepoChanges:
+    """What the repositories the session worked in change against their base branch, as git
+    reads them: the pull request's files, whoever changed them."""
+    return await control.repo_changes(str(agent_session_id))
+
+
+MAX_FILE_PATH_CHARS = 4096
+FilePathParam = Annotated[str, Query(min_length=1, max_length=MAX_FILE_PATH_CHARS, pattern=r"^/")]
+OldFilePathParam = Annotated[
+    str | None, Query(min_length=1, max_length=MAX_FILE_PATH_CHARS, pattern=r"^/")
+]
+CommitShaParam = Annotated[str, Query(pattern=COMMIT_SHA_PATTERN)]
+
+
+@router.get("/{agent_session_id:uuid}/repo-changes/commit")
+async def get_agent_session_repo_commit_diff(
+    agent_session_id: SessionIdPath,
+    control: AgentSessionControlDep,
+    *,
+    path: FilePathParam,
+    sha: CommitShaParam,
+    old_path: OldFilePathParam = None,
+) -> RepoCommitDiff:
+    """What one commit changed in one file of the session's repositories (``path`` absolute,
+    ``old_path`` its name before a rename)."""
+    return await control.repo_commit_diff(
+        str(agent_session_id), path=path, sha=sha, old_path=old_path
+    )
+
+
 @router.delete("/{agent_session_id:uuid}", status_code=204)
 async def delete_agent_session(
     agent_session_id: SessionIdPath, control: AgentSessionControlDep
@@ -128,6 +167,14 @@ async def interrupt_agent_session(
 ) -> AgentSession:
     """Interrupt the running turn; its result follows on the stream."""
     return await control.interrupt(str(agent_session_id))
+
+
+@router.post("/{agent_session_id:uuid}/tasks/{task_id}/stop", status_code=202)
+async def stop_agent_session_task(
+    agent_session_id: SessionIdPath, task_id: TaskIdPath, control: AgentSessionControlDep
+) -> AgentSession:
+    """Stop a background task (an agent or a command); its end follows on the stream."""
+    return await control.stop_task(str(agent_session_id), task_id)
 
 
 @router.post("/{agent_session_id:uuid}/permissions/{request_id}")
