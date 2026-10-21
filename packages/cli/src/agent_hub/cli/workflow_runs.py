@@ -546,6 +546,7 @@ class RecordedRun:
                 "message": request.text,
                 "due": due,
             }
+            | ({} if request.reason is None else {"reason": request.reason})
         )
         self.events.gate_requested(request)
         self._flush()

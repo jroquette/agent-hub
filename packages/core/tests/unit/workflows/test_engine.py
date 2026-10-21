@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+import agent_hub.core.scenarios.investigation as investigation_module
 import agent_hub.core.testing.workflow_fakes as workflow_fakes
 import agent_hub.core.workflows.nodes as workflow_nodes
 from agent_hub.core.json_form import JsonValue
@@ -1237,6 +1238,9 @@ def test_states_scenario_limits_when_constants_read() -> None:
     assert workflow_nodes.MAX_EXPECT_TIMEOUT_SECONDS == 24 * 3600
     assert workflow_nodes.MAX_ACTION_TIMEOUT_SECONDS == 3600
     assert engine_module.MAX_EXPECT_POLLS == 1000
+    # AGH-360: investigations per scenario run, proposals per investigation (owner, Q7).
+    assert investigation_module.MAX_INVESTIGATIONS == 10
+    assert investigation_module.MAX_PROPOSALS == 10
 
 
 def test_resolves_ctx_after_resume_when_run_context_from_prior() -> None:

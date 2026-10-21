@@ -67,3 +67,12 @@ SECRETS: Final = (
 def secret_kind(text: str) -> str | None:
     """The kind of the first secret shape ``text`` holds, in ``SECRETS`` order; None if none."""
     return next((shape.kind for shape in SECRETS if shape.matches(text)), None)
+
+
+def redact_shapes(text: str) -> str:
+    """``text`` with each match of every secret shape replaced by ``[redacted: <kind>]``, in
+    ``SECRETS`` order (text an agent hands the hub, such as an investigation's proposal)."""
+    for shape in SECRETS:
+        for pattern in shape.patterns:
+            text = pattern.sub(f"[redacted: {shape.kind}]", text)
+    return text
