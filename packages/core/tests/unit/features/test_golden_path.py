@@ -210,7 +210,7 @@ def test_marks_plan_meta_unknown_when_plan_too_large() -> None:
     assert (plan.state, plan.reason) == ("unknown", problem)
 
 
-def _request(n: int, ticket: str, affected: str, decision: str | None = None) -> ChangeRequests:
+def _request(n: int, ticket: str, affected: str, *, decision: str | None = None) -> ChangeRequests:
     """One change request from plan v1 to v2, by ``ticket``, affecting ``affected``."""
     front = (
         f"---\nticket: {ticket}\nstatus: open\nplan_from: 1\nplan_to: 2\n"
