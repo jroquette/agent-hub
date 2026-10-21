@@ -332,13 +332,34 @@ class TestVerdict:
         [
             (
                 'Done.\n{"status": "done", "summary": "Adds it.", "tests": "make check"}',
-                {"status": "done", "summary": "Adds it.", "question": ""},
+                {"status": "done", "summary": "Adds it.", "question": "", "discovery": ""},
             ),
-            ("I made the change.", {"status": "done", "summary": "", "question": ""}),
-            ("", {"status": "done", "summary": "", "question": ""}),
+            (
+                'Stops.\n`{"status": "done", "summary": "Half.", "discovery": "T3\\nlists."}`',
+                {
+                    "status": "done",
+                    "summary": "Half.",
+                    "question": "",
+                    "discovery": "T3 lists.",
+                },
+            ),
+            (
+                '{"status": "done", "discovery": 3}',
+                {"status": "done", "summary": "", "question": "", "discovery": ""},
+            ),
+            (
+                "I made the change.",
+                {"status": "done", "summary": "", "question": "", "discovery": ""},
+            ),
+            ("", {"status": "done", "summary": "", "question": "", "discovery": ""}),
             (
                 'Stopping.\n{"status": "blocked", "summary": "needs a plan"}',
-                {"status": "blocked", "summary": "needs a plan", "question": "needs a plan"},
+                {
+                    "status": "blocked",
+                    "summary": "needs a plan",
+                    "question": "needs a plan",
+                    "discovery": "",
+                },
             ),
             (
                 "BLOCKED: the issue has an open question",
@@ -346,6 +367,7 @@ class TestVerdict:
                     "status": "blocked",
                     "summary": "",
                     "question": "BLOCKED: the issue has an open question",
+                    "discovery": "",
                 },
             ),
         ],

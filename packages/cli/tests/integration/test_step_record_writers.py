@@ -9,6 +9,7 @@ writes nothing.
 """
 
 import fcntl
+from datetime import datetime
 import hashlib
 import json
 import os
@@ -75,18 +76,13 @@ Touch `src/other.py`.
 OUTCOME = "---\nmerged_at: 2026-01-20T10:00:00Z\npr: '#4'\n---\n# Outcome\n"
 LOCK = ".agent-runs/locks/demo-flow.lock"
 HELD = "are being written by another run; run again"
-RUN = {
-    "ran_at": "2026-02-02T09:30:00Z",
-    "plan_version": 2,
-    "commit": "4e1a9c2",
-    "blockers_read": ["DEM-7"],
-    "input": "none",
-    "input_text": None,
-    "drift": "none",
-    "local_notes": [],
-    "change_request": None,
-    "run_id": "implement-8",
-}
+FINDINGS = {"drift": "none", "local_notes": [], "blockers_read": ["DEM-7"]}
+FOUND = ("--findings", json.dumps(FINDINGS), "--input", "none")
+RUN_ID = "implement-8"
+
+
+def found(**findings: Any) -> tuple[str, ...]:
+    return ("--findings", json.dumps(FINDINGS | findings), "--input", "none")
 
 
 class Hub:
@@ -191,7 +187,7 @@ class Hub:
         return self.ok(
             "change-request",
             *TICKET,
-            *("--run-id", "implement-8", "--evidence", "The API moved."),
+            *("--evidence", "The API moved."),
             *("--proposal", "Follow it.", "--affected", "T3"),
             *extra,
         )
@@ -237,7 +233,11 @@ class Hub:
 
 
 @pytest.fixture
-def hub(demo_workspace: Workspace, run_command: CommandRunner) -> Iterator[Hub]:
+def hub(
+    demo_workspace: Workspace, run_command: CommandRunner, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[Hub]:
+    # The run's id, as the workflow engine gives its steps.
+    monkeypatch.setenv("AGENT_HUB_RUN_ID", RUN_ID)
     made = Hub(demo_workspace, run_command)
     yield made
     assert made.state() == made.before, "a checkout changed or something was committed"
@@ -305,8 +305,8 @@ class TestTicketBrief:
     def test_refuses_a_ticket_when_the_feature_does_not_plan_it(self, hub: Hub, step: str) -> None:
         extra = {
             "ticket-brief": (),
-            "preflight": ("--run", json.dumps(RUN)),
-            "change-request": ("--run-id", "r1", "--evidence", "e", "--proposal", "p"),
+            "preflight": FOUND,
+            "change-request": ("--evidence", "e", "--proposal", "p"),
         }[step]
 
         line = hub.refused(step, "--feature", "demo-flow", "--ticket", "DEM-99", *extra)
@@ -320,10 +320,8 @@ class TestTicketBrief:
         named = ("--feature", "demo-flow", "--ticket", given)
         brief = hub.ok("ticket-brief", *named)
 
-        output = hub.ok("preflight", *named, "--run", json.dumps(RUN))
-        request = hub.ok(
-            "change-request", *named, "--run-id", "r1", "--evidence", "e", "--proposal", "p"
-        )
+        output = hub.ok("preflight", *named, *FOUND)
+        request = hub.ok("change-request", *named, "--evidence", "e", "--proposal", "p")
 
         assert brief["path"] == f"{FEATURE}/tickets/DEM-8/brief.md"
         assert "\nticket: DEM-8\n" in (hub.root / brief["path"]).read_text()
@@ -340,7 +338,7 @@ class TestTicketBrief:
         for name in ("T2", "dem-8"):
             (hub.feature / "tickets" / name).mkdir()
 
-        output = hub.ok("preflight", *TICKET, "--run", json.dumps(RUN))
+        output = hub.ok("preflight", *TICKET, *FOUND)
 
         assert output["path"] == f"{FEATURE}/tickets/dem-8/preflight.json"
 
@@ -362,18 +360,76 @@ class TestTicketBrief:
 
 
 class TestPreflight:
+    def test_fills_the_run_from_the_findings_the_plan_main_and_the_run_when_appended(
+        self, hub: Hub
+    ) -> None:
+        output = hub.ok("preflight", *TICKET, *FOUND)
+
+        [run] = json.loads((hub.root / output["path"]).read_bytes())["runs"]
+        assert datetime.fromisoformat(run.pop("ran_at")).tzinfo is not None
+        assert run == {
+            "plan_version": 2,
+            # origin's main of the ticket's repo as last fetched, never a worktree's HEAD.
+            "commit": hub.unnamed,
+            "blockers_read": ["DEM-7"],
+            "input": "none",
+            "input_text": None,
+            "drift": "none",
+            "local_notes": [],
+            "change_request": None,
+            "run_id": RUN_ID,
+        }
+
+    @pytest.mark.parametrize(
+        ("given", "expected"),
+        [
+            (
+                ("--input", "decline", "--input-text", "Keep\n\tthe plan.", "--request", "1"),
+                {"input": "declined_change", "input_text": "Keep the plan.", "change_request": 1},
+            ),
+            (
+                ("--input", "approve", "--input-text", "Fine.", "--request", "1"),
+                {"input": "none", "input_text": None, "change_request": 1},
+            ),
+            (
+                ("--input", "declined_change", "--input-text", "No.", "--request", ""),
+                {"input": "declined_change", "input_text": "No.", "change_request": 1},
+            ),
+        ],
+    )
+    def test_records_the_input_and_the_request_when_a_gate_or_a_discovery_gave_them(
+        self, hub: Hub, given: tuple[str, ...], expected: dict[str, Any]
+    ) -> None:
+        if not given[-1]:
+            # A declined change re-checked names the request the last run opened.
+            hub.ok("preflight", *TICKET, *found(drift="plan"), "--request", "1")
+        findings = ("--findings", json.dumps(FINDINGS | {"drift": "plan"}))
+
+        output = hub.ok("preflight", *TICKET, *findings, *given)
+
+        run = json.loads((hub.root / output["path"]).read_bytes())["runs"][-1]
+        assert {key: run[key] for key in expected} == expected
+
+    def test_refuses_without_writing_when_the_run_gives_no_run_id(
+        self, hub: Hub, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("AGENT_HUB_RUN_ID")
+
+        line = hub.refused("preflight", *TICKET, *FOUND)
+
+        assert "run_id" in line
+
     def test_appends_each_run_keeping_earlier_entries_and_validates_when_run_twice(
         self, hub: Hub
     ) -> None:
-        first = hub.ok("preflight", *TICKET, "--run", json.dumps(RUN))
+        first = hub.ok("preflight", *TICKET, *FOUND)
         path = hub.root / first["path"]
         before = json.loads(path.read_bytes())["runs"]
 
         second = hub.ok(
             "preflight",
             *TICKET,
-            "--run",
-            json.dumps(RUN | {"drift": "local", "local_notes": ["x"]}),
+            *found(drift="local", local_notes=["x"]),
         )
 
         assert (first["runs"], second["runs"]) == (1, 2)
@@ -385,9 +441,9 @@ class TestPreflight:
         assert checked.exit_code == 0, checked.output
 
     def test_keeps_the_record_when_the_model_refuses_the_run(self, hub: Hub) -> None:
-        hub.ok("preflight", *TICKET, "--run", json.dumps(RUN))
+        hub.ok("preflight", *TICKET, *FOUND)
 
-        line = hub.refused("preflight", *TICKET, "--run", json.dumps(RUN | {"drift": "plan"}))
+        line = hub.refused("preflight", *TICKET, *found(drift="plan"))
 
         assert "change_request is required when drift is plan" in line
 
@@ -399,7 +455,7 @@ class TestPreflight:
         (hub.feature / "tickets/DEM-8").mkdir(parents=True)
         (hub.feature / "tickets/DEM-8/preflight.json").symlink_to(elsewhere)
 
-        line = hub.refused("preflight", *TICKET, "--run", json.dumps(RUN))
+        line = hub.refused("preflight", *TICKET, *FOUND)
 
         assert line == "hub step preflight: preflight.json is a link; no link is followed"
         assert elsewhere.read_text() == "{}"
@@ -410,7 +466,7 @@ class TestPreflight:
     ) -> None:
         target = hub.link(name, tmp_path)
 
-        for step, extra in (("preflight", ("--run", json.dumps(RUN))), ("ticket-brief", ())):
+        for step, extra in (("preflight", FOUND), ("ticket-brief", ())):
             line = hub.refused(step, *TICKET, *extra)
             leaf = name.rsplit("/", 1)[-1]
             assert line == f"hub step {step}: {leaf} is a link; no link is followed"
@@ -421,18 +477,18 @@ class TestPreflight:
         folder.mkdir(parents=True)
         (folder / "preflight.json").write_bytes(b" " * 65_537)
 
-        line = hub.refused("preflight", *TICKET, "--run", json.dumps(RUN))
+        line = hub.refused("preflight", *TICKET, *FOUND)
 
         assert line == "hub step preflight: preflight.json is larger than 65536 bytes"
 
     def test_replaces_the_record_with_a_new_file_when_a_run_is_appended(
         self, hub: Hub, tmp_path: Path
     ) -> None:
-        path = hub.root / hub.ok("preflight", *TICKET, "--run", json.dumps(RUN))["path"]
+        path = hub.root / hub.ok("preflight", *TICKET, *FOUND)["path"]
         before = path.read_bytes()
         os.link(path, tmp_path / "old.json")
 
-        hub.ok("preflight", *TICKET, "--run", json.dumps(RUN))
+        hub.ok("preflight", *TICKET, *FOUND)
 
         assert (tmp_path / "old.json").read_bytes() == before
         assert path.read_bytes() != before
@@ -442,11 +498,11 @@ class TestPreflight:
     ) -> None:
         with monkeypatch.context() as patched:
             written = hub.lock_held_while(patched)
-            hub.ok("preflight", *TICKET, "--run", json.dumps(RUN))
+            hub.ok("preflight", *TICKET, *FOUND)
         descriptor = os.open(hub.root / LOCK, os.O_RDWR)
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            line = hub.refused("preflight", *TICKET, "--run", json.dumps(RUN))
+            line = hub.refused("preflight", *TICKET, *FOUND)
         finally:
             os.close(descriptor)
 
@@ -458,7 +514,7 @@ class TestPreflight:
     ) -> None:
         (hub.root / "brain/features/linked").symlink_to(hub.feature)
 
-        result = hub.step("preflight", "--feature", "linked", "--ticket", "DEM-8", "--run", "{}")
+        result = hub.step("preflight", "--feature", "linked", "--ticket", "DEM-8", *FOUND)
 
         (hub.root / "brain/features/linked").unlink()
         assert result.exit_code == 1
@@ -488,30 +544,29 @@ class TestChangeRequest:
         hub.request()
         before = first.read_bytes()
         monkeypatch.setattr(step_records, "next_request", lambda names: 1)
+        monkeypatch.setenv("AGENT_HUB_RUN_ID", "implement-9")
 
-        output = hub.request("--run-id", "implement-9")
+        output = hub.request()
 
         assert (output["n"], output["path"]) == (2, f"{FEATURE}/change-requests/2.md")
         assert first.read_bytes() == before
         assert b"run_id: implement-9" in (hub.feature / "change-requests/2.md").read_bytes()
 
+    @pytest.mark.parametrize(("given", "listed"), [("T3, DEM-7", "[T3, DEM-7]"), ("", "[]")])
     def test_takes_the_run_id_from_the_run_and_splits_affected_when_a_workflow_opens_one(
-        self, hub: Hub, monkeypatch: pytest.MonkeyPatch
+        self, hub: Hub, given: str, listed: str
     ) -> None:
-        monkeypatch.setenv("AGENT_HUB_RUN_ID", "implement-7")
-
         output = hub.ok(
             "change-request",
             *TICKET,
-            *("--evidence", "The API moved.", "--proposal", "Follow it."),
-            *("--affected", "T3, DEM-7", "--affected", ""),
+            *("--evidence", "The API moved.", "--proposal", "Follow it.", "--affected", given),
         )
 
         text = (hub.root / output["path"]).read_text()
-        assert "affected: [T3, DEM-7]\n" in text
-        assert "run_id: implement-7\n" in text
+        assert f"affected: {listed}\n" in text
+        assert f"run_id: {RUN_ID}\n" in text
 
-    def test_refuses_without_writing_when_no_run_id_is_given_or_set(
+    def test_refuses_without_writing_when_the_run_gives_no_run_id(
         self, hub: Hub, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("AGENT_HUB_RUN_ID", raising=False)
@@ -530,7 +585,7 @@ class TestChangeRequest:
         line = hub.refused(
             "change-request",
             *TICKET,
-            *("--run-id", "r1", "--evidence", "e", "--proposal", "p"),
+            *("--evidence", "e", "--proposal", "p"),
         )
         decided = hub.refused(
             "decide",
@@ -570,7 +625,12 @@ class TestDecideAndAmend:
         }
         decision = (hub.feature / "change-requests/1.decision.md").read_text()
         assert "decision: approved\ndecided_by: Dana Owner\n" in decision
-        assert amended == {"path": f"{FEATURE}/plan.md", "amendment": "A2", "already": None}
+        assert amended == {
+            "path": f"{FEATURE}/plan.md",
+            "amendment": "A2",
+            "already": None,
+            "moved": None,
+        }
         written = plan.read_bytes()
         assert hashlib.sha256(written[:size]).hexdigest() == prefix
         assert written[size:].decode().startswith("- A2 (")
@@ -582,6 +642,7 @@ class TestDecideAndAmend:
             "path": f"{FEATURE}/plan.md",
             "amendment": "A2",
             "already": "already amended as A2",
+            "moved": None,
         }
         assert plan.read_bytes() == written
 
@@ -696,6 +757,24 @@ class TestDecideAndAmend:
         assert line == f"hub step amend-plan: the records of demo-flow {HELD}"
         hub.amend()
 
+    def test_writes_nothing_and_says_so_when_the_plan_moved_since_the_request(
+        self, hub: Hub
+    ) -> None:
+        hub.approved()
+        plan = hub.feature / "plan.md"
+        plan.write_text(plan.read_text() + "- A2 (2026-02-03, Dana Owner): Other.\n")
+        before = plan.read_bytes()
+
+        output = hub.amend()
+
+        assert output == {
+            "path": f"{FEATURE}/plan.md",
+            "amendment": None,
+            "already": None,
+            "moved": "plan.md is v3; change request 1 asks v2 to v3: re-run preflight",
+        }
+        assert plan.read_bytes() == before
+
     def test_refuses_an_amendment_when_the_request_is_not_decided(self, hub: Hub) -> None:
         hub.request()
 
@@ -709,8 +788,11 @@ class TestDecideAndAmend:
 class TestPendingDecision:
     NONE = {"request": None, "decision": "", "input": "none", "note": "", "summary": ""}
 
-    def preflight(self, hub: Hub, **run: Any) -> None:
-        hub.ok("preflight", *TICKET, "--run", json.dumps(RUN | run))
+    def preflight(
+        self, hub: Hub, *, drift: str, input_kind: str = "none", text: str = "", request: str = ""
+    ) -> None:
+        given = ("--input", input_kind, "--input-text", text, "--request", request)
+        hub.ok("preflight", *TICKET, "--findings", json.dumps(FINDINGS | {"drift": drift}), *given)
 
     def test_reads_nothing_pending_when_the_ticket_has_no_preflight(self, hub: Hub) -> None:
         assert hub.ok("pending-decision", *TICKET) == self.NONE
@@ -733,7 +815,7 @@ class TestPendingDecision:
         self, hub: Hub, decision: tuple[str, ...], expected: dict[str, Any]
     ) -> None:
         hub.request()
-        self.preflight(hub, drift="plan", change_request=1)
+        self.preflight(hub, drift="plan", request="1")
         given = ("--decision", decision[0], "--by", "Dana", *decision[1:])
         assert hub.decide(*given).exit_code == 0
 
@@ -749,17 +831,27 @@ class TestPendingDecision:
         self, hub: Hub, case: str
     ) -> None:
         hub.request()
-        self.preflight(hub, drift="plan", change_request=1)
+        self.preflight(hub, drift="plan", request="1")
         if case != "open":
             assert (
                 hub.decide("--decision", "declined", "--by", "Dana", "--note", "No.").exit_code == 0
             )
         if case == "re-checked":
             # A declined change re-checked and still plan: the next run opens a new request (A2).
-            self.preflight(
-                hub, drift="plan", change_request=1, input="declined_change", input_text="No."
-            )
+            self.preflight(hub, drift="plan", input_kind="declined_change", text="No.")
         if case == "later run":
-            self.preflight(hub, input="declined_change", input_text="No.")
+            self.preflight(hub, drift="none", input_kind="declined_change", text="No.")
+
+        assert hub.ok("pending-decision", *TICKET) == self.NONE
+
+    def test_reads_nothing_pending_when_the_approved_plan_change_no_longer_fits_the_plan(
+        self, hub: Hub
+    ) -> None:
+        hub.request()
+        self.preflight(hub, drift="plan", request="1")
+        assert hub.decide("--decision", "approved", "--by", "Dana").exit_code == 0
+        plan = hub.feature / "plan.md"
+        # Another ticket's change amended the plan first: v2 is now v3.
+        plan.write_text(plan.read_text() + "- A2 (2026-02-03, Dana Owner): Other.\n")
 
         assert hub.ok("pending-decision", *TICKET) == self.NONE
