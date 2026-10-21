@@ -30,8 +30,10 @@ the write's version, and the next read reads the unit again. In this order:
 rename's old and new unit, a new item's destination), under the same one lock and holding all of
 them at once (the lock is not reentrant, so a Publish never calls ``write``). First, before step
 1's checks and any read, a draft that a version of the project already names as its ``publish``
-is spent (A20): ``draft_already_published``, and nothing is read, written, recorded or removed.
-Under the lock, so of two publishes of one draft the second finds the first's ``publish``. Then
+is spent (A20, ``refuse_spent``): ``draft_already_published``, and nothing is read, written,
+recorded or removed. ``PublishDraft`` asks ``refuse_spent`` at its entry too, before any lookup;
+the repeat here, under the lock, makes the second of two publishes of one draft find the first's
+``publish``. Then
 each unit is read (``unreadable`` refuses); ``place`` says where the draft lands from what was
 read (``Destination``, which may refuse). A hook script already on disk with other bytes refuses
 (``item_exists``); one with the same bytes is not written again. A destination equal to the disk
@@ -184,9 +186,8 @@ class RecordAndWrite:
         """Land a draft where ``place`` says, over every unit in ``units``, and record a
         ``publish`` version naming ``draft_id``; a draft already published is refused."""
         with self._write_lock, self._capture.holding(units):
-            if self._store.has_publish(units[0].project, draft_id):
-                # A20: the server cannot prove a kept draft is the one it published.
-                raise ItemWriteRefusedError("draft_already_published")
+            # Again under the lock: of two publishes of one draft, the second finds the first's.
+            self.refuse_spent(units[0].project, draft_id)
             author = self._refuse_before_read(hub_path, units)
             reads = {unit.unit_path: self._read(hub_path, unit) for unit in units}
             destination = place(reads)
@@ -225,6 +226,12 @@ class RecordAndWrite:
             if removed is not None:
                 self._remove_old(hub_path, removed)
             return result
+
+    def refuse_spent(self, project: str, draft_id: str) -> None:
+        """A20: ``draft_already_published`` when a version of ``project`` names ``draft_id`` as
+        its ``publish`` (the server cannot prove a kept draft is the one it published)."""
+        if self._store.has_publish(project, draft_id):
+            raise ItemWriteRefusedError("draft_already_published")
 
     def _remove_old(self, hub_path: str, removed: ItemUnit) -> None:
         """A rename's old unit removed; a failure is ``old_not_removed`` (A18)."""
