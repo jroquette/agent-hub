@@ -1390,6 +1390,24 @@
 .as-pill-select:focus-visible {
   outline: none;
 }
+/* A pill that shows its value in a span is as wide as that value: the native select (as wide as
+ * its longest option) lies invisible over the whole pill, still the keyboard and screen reader
+ * control, so a press anywhere on the pill opens it. */
+.as-pill:has(> .as-pill-value) .as-pill-select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  max-width: none;
+  opacity: 0;
+  cursor: pointer;
+}
+.as-pill-value {
+  overflow: hidden;
+  max-width: 160px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
 /* The mode tints its pill: edits run alone, plan only reads, auto runs everything alone. */
 .as-pill[data-mode="acceptEdits"] {
   background: var(--waiting-soft);

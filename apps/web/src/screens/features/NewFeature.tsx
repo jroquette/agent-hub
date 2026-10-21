@@ -142,7 +142,7 @@ export function NewFeatureScreen() {
           <p className="ft-new-lead">Describe what to build and attach what Claude should see.</p>
         </div>
         {projectsQuery.isPending ? (
-          <Skeleton width={120} height={32} radius={999} />
+          <Skeleton width={110} height={32} radius={999} />
         ) : (
           projects.length > 1 &&
           !sent && <ProjectSelect projects={projects} value={chosenProject} onChange={setProject} />
@@ -212,6 +212,9 @@ function ProjectSelect({
           </option>
         ))}
       </select>
+      <span className="as-pill-value" aria-hidden="true">
+        {value}
+      </span>
       <Icon name="chevron-down" size="sm" className="as-pill-caret" />
     </label>
   );

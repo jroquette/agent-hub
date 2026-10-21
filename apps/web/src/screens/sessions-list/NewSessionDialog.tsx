@@ -370,6 +370,9 @@ export function NewSessionDialog({
                       </option>
                     ))}
                   </select>
+                  <span className="as-pill-value" aria-hidden="true">
+                    {project}
+                  </span>
                   <Icon name="chevron-down" size="sm" className="as-pill-caret" />
                 </label>
               ) : (
