@@ -577,8 +577,15 @@ class TestDecideAndAmend:
         (folder / "1.md").write_bytes(b" " * 262_145)
 
         line = hub.refused(
-            "decide", "--feature", "demo-flow", "--request", "1", "--decision", "approved",
-            "--by", "Dana",
+            "decide",
+            "--feature",
+            "demo-flow",
+            "--request",
+            "1",
+            "--decision",
+            "approved",
+            "--by",
+            "Dana",
         )
 
         assert line == "hub step decide: 1.md is larger than 262144 bytes"

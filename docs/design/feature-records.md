@@ -136,8 +136,8 @@ The `implement` run writes them with `hub step` (P7), in the hub's main checkout
 the files for the owner's hub PR). Every writer checks its record as the readers above read it, follows no link (the
 feature folder, `tickets/`, `change-requests/` and each file) and writes nothing when it refuses
 (`agent_hub.core.features.ticket_writes`, `agent_hub.cli.step_records`). A ticket must be planned in `features.json`,
-and its records go to one folder whatever name the run gives: the existing `tickets/` folder its key or id names (any
-case), else its id (its key while it has none). `brief.md`, `preflight.json` and `plan.md` are read and replaced
+and its records go to one folder whatever name the run gives: the existing `tickets/` folder the ticket flow reads for
+its key or id (`ticket_records.ticket_folder`), else its id (its key while it has none). `brief.md`, `preflight.json` and `plan.md` are read and replaced
 under the feature's lock `.agent-runs/locks/<slug>.lock` (never committed); a run that finds it held is refused.
 
 | Command | Writes | Refuses |
@@ -145,7 +145,7 @@ under the feature's lock `.agent-runs/locks/<slug>.lock` (never committed); a ru
 | `ticket-brief --feature --ticket` | the next `## Brief v<n>` of `brief.md` (temp file, then rename) | a ticket `features.json` does not plan, no `plan.md`, a `brief.md` that is not this ticket's brief |
 | `preflight --feature --ticket --run JSON` | `preflight.json` with one run appended: earlier runs copied as parsed JSON, so each stays equal in canonical form; the file is new or replaced whole (temp file, then rename) | a run `PreflightRun` refuses (cross-field rules included), a record there that is malformed or names another ticket, a result over 64 KiB |
 | `change-request --feature --ticket --run-id --evidence --proposal [--affected]…` | `change-requests/<n>.md`, `n` the next free number, `status: open`, `plan_from` the plan's current version, `plan_to` the next; created exclusively | a field its reader could not read, an empty evidence or proposal, a text over 256 KiB (what `decide` and `amend-plan` read) |
-| `decide --feature --request N --decision approved\|declined --by WHO [--note]` | `change-requests/<n>.decision.md`, `decided_by` the gate's approver, `decided_at` now, `note` on one line (cut at 1,000 characters; the whole note is the body); created exclusively | a second decision, an approver that names no person (empty or `unknown`, A5), an approval whose approver `amend-plan` could not write (a `(` or `)`), a decline without a note, no request `n` |
+| `decide --feature --request N --decision approved\|declined --by WHO [--note]` | `change-requests/<n>.decision.md`, `decided_by` the gate's approver, `decided_at` now, `note` on one line (cut at 1,000 characters; the whole note is the body); created exclusively | a decision other than exactly `approved` or `declined`, a text over 256 KiB, a second decision, an approver that names no person (empty or `unknown`, A5), an approval whose approver `amend-plan` could not write (a `(` or `)`), a decline without a note, no request `n` |
 | `amend-plan --feature --request N --summary` | one entry `- A<k> (<decided_at date>, <decided_by>): <summary> ([change request n](change-requests/n.md))` at the end of `plan.md`, after a new `## Amendments` heading when the last section is another; every earlier byte kept; a re-run once the plan holds the request's entry writes nothing and answers `already amended as A<k>` | a request not decided `approved`, a plan whose version is no longer the request's `plan_from`, an entry that would not read as `A<k>`, a lock another run holds |
 
 ### `summaries/<record>.md`
