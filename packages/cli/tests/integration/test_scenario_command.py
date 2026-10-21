@@ -2450,3 +2450,69 @@ def test_lists_four_subcommands_when_scenario_help(hub: Path, marker: Path) -> N
     for command in ("list", "plan", "run", "findings"):
         # A line of the commands panel: the name, then its help after two or more spaces.
         assert re.search(rf"^\W+{command}\s{{2,}}\S", help_text, re.MULTILINE), command
+
+
+# Review Q1 (AGH-362): an agent's finding text with terminal controls (hidden text, a bare carriage
+# return that rewrites the line, a C1 CSI) reaches the draft, the issue and the note escaped.
+CONTROLLED = "Order\x1b[8m hidden\x1b[0m held\rFAKE\x9b2J"
+ESCAPED = "Order\\x1b[8m hidden\\x1b[0m held\\rFAKE\\x9b2J"
+
+
+def raw_controls(text: str) -> list[str]:
+    return [c for c in text if (ord(c) < 0x20 and c != "\n") or 0x7F <= ord(c) <= 0x9F]
+
+
+def controlled_run(hub: Path, marker: Path, held: Path) -> None:
+    """``hold-walk`` paused at its investigation; finding f1's texts hold terminal controls."""
+    proposal = a_proposal(RELEASE)
+    proposal["findings"][0].update(title=CONTROLLED, text=CONTROLLED, evidence=CONTROLLED)
+    hold_walk(hub, marker, held)
+    proposed = propose(hub, marker, held, proposal=proposal)
+    assert proposed.exit_code == 0, proposed.output
+
+
+def test_escapes_controls_when_findings_issue_drafted_and_created(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    controlled_run(hub, marker, held)
+    env = a_tracker(hub)
+
+    drafted = findings(hub, marker, held, RUN, "--issue", "f1", **env)
+    code, shown = findings_in_terminal(hub, env, RUN, "--issue", "f1", answer="y")
+
+    assert drafted.exit_code == 0, drafted.output
+    assert raw_controls(drafted.stdout) == []
+    assert drafted.stdout.splitlines()[0] == f"title: Scenario hold-walk: {ESCAPED}"
+    assert code == 0, shown
+    # The terminal adds its own CR before each LF; nothing else of the text's controls is shown.
+    assert raw_controls(shown.replace("\r\n", "\n")) == []
+    (call,) = tracker_calls(hub)
+    created = call["arguments"]["title"] + call["arguments"]["description"]
+    assert raw_controls(created) == []
+    assert ESCAPED in call["arguments"]["description"]
+
+
+def test_escapes_controls_when_findings_inbox_written(hub: Path, marker: Path, held: Path) -> None:
+    controlled_run(hub, marker, held)
+
+    result = findings(hub, marker, held, RUN, "--inbox", "f1")
+
+    assert result.exit_code == 0, result.output
+    (note,) = (hub / "brain" / "_inbox").iterdir()
+    assert raw_controls(note.read_text()) == []
+    assert f"## {ESCAPED}" in note.read_text()
+
+
+def test_asks_nothing_when_findings_issue_key_missing_on_terminal(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    # Review Q3: transport "api" without LINEAR_API_KEY cannot create: no question is asked.
+    found_run(hub, marker, held)
+    env = {"LINEAR_API_KEY": "", "TRACKER_CALLS": str(hub.parent.parent / "tracker-calls")}
+
+    code, shown = findings_in_terminal(hub, env, RUN, "--issue", "f1", answer="y")
+
+    assert code == 1, shown
+    assert "[y/N]" not in shown
+    assert "LINEAR_API_KEY is not set" in plain(shown)
+    assert tracker_calls(hub) == []

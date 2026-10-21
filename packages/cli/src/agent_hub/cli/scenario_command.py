@@ -45,7 +45,8 @@ RUN``; ``--json`` prints ``run``, ``scenario``, ``environment`` and ``findings``
 ``finding_id``, ``step``, ``title``, ``text``, ``evidence``). ``--issue F`` prints finding F's
 tracker issue draft (core's ``findings``: title, then the description) and, on a terminal, asks
 ``create this issue in <team>?``: after a ``y`` it calls the tracker's ``create_issue`` once, in
-``tracker.team`` (the first of ``tracker.teams``), and prints ``created <id>  <url>``. Without a
+``tracker.team`` (the first of ``tracker.teams``), and prints ``created <id>  <url>``; the
+question is asked only once the tracker's key is there and its client resolved. Without a
 terminal it creates nothing and says so (exit 0: the draft is the output). ``--inbox F`` writes
 ``brain/_inbox/<date>-scenario-<name>-<F>.md`` in the hub, never over an existing note (exit 1).
 An unknown run or finding id exits 1; ``--issue`` with ``--inbox``, or ``--json`` with either,
@@ -402,14 +403,15 @@ def _issue(hub: Path, view: ScenarioRunView, finding: FindingView, *, run: str) 
         return
     config = load_effective_config_or_exit(hub).config
     team = config.tracker.team_keys[0]
-    if not confirmed(f"create this issue in {team}?"):
-        typer.echo("the issue was not created")
-        return
+    # The question is asked only when a create can run: the key is there, the client resolved.
     missing = missing_key_line(config, os.environ, command="scenario findings")
     if missing is not None:
         fail(missing)
-    typer.echo(transport_line(config), err=True)
     client = resolve_tracker_client(config, os.environ, hub_root=hub)
+    if not confirmed(f"create this issue in {team}?"):
+        typer.echo("the issue was not created")
+        return
+    typer.echo(transport_line(config), err=True)
     try:
         created = client.create_issue(team, draft.title, draft.description)
     except TrackerError as error:
