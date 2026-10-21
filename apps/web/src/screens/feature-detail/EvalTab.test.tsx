@@ -1,5 +1,6 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { fmtDateTime } from "../../lib/format";
@@ -218,6 +219,76 @@ describe("EvalTab rows", () => {
     await userEvent.click(screen.getByRole("button", { name: "Hide list" }));
     await userEvent.click(screen.getByRole("button", { name: "Show list" }));
     expect(screen.getByRole("button", { name: "Hide list" })).toHaveFocus();
+  });
+
+  // AGH-330 r3 Q1: the list opened for an arrival stays open through the owner's next clicks.
+  it("keeps the list a signpost opened while the owner selects another run", async () => {
+    window.localStorage.setItem("agent-hub:eval-list-open", "false");
+    let route: ((search: string) => unknown) | null = null;
+    const { router } = renderWithApi(
+      tab({
+        evals: runs,
+        selected: runs[1],
+        onSelect: (delivery) => route?.(`/?doc=eval&eval=${delivery}`),
+      }),
+    );
+    route = (search) => router.navigate(search, { replace: true });
+    await act(() =>
+      router.navigate("/?doc=eval&eval=agh-201-r2", { replace: true, state: FOCUS_EVAL }),
+    );
+
+    const run = screen.getByRole("button", { name: /^agh-201,/ });
+    await userEvent.click(run);
+
+    expect(screen.getByRole("table", { name: "Evals" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^agh-201,/ })).toHaveFocus();
+    expect(window.localStorage.getItem("agent-hub:eval-list-open")).toBe("false");
+  });
+
+  // AGH-330 r3 Q2: an arrival lands once its eval's row exists, not before.
+  it("lands a signpost once its eval group renders under the same arrival", async () => {
+    function Loading() {
+      const [loaded, setLoaded] = useState(false);
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              setLoaded(true);
+            }}
+          >
+            Load
+          </button>
+          {tab({ evals: loaded ? runs : [], selected: loaded ? runs[1] : undefined })}
+        </>
+      );
+    }
+    const { router } = renderWithApi(<Loading />);
+    await act(() =>
+      router.navigate("/?doc=eval&eval=agh-201-r2", { replace: true, state: FOCUS_EVAL }),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Load" }));
+
+    expect(screen.getByRole("button", { name: /^AGH-201\b.*2 evals/ })).toHaveFocus();
+  });
+
+  // AGH-330 r3 Q3: Back / Forward to a signpost's entry is no arrival.
+  it("neither focuses nor opens the list on Back to a signpost's entry", async () => {
+    window.localStorage.setItem("agent-hub:eval-list-open", "false");
+    const { router } = renderWithApi(tab({ evals: runs, selected: runs[1] }));
+    await act(() => router.navigate("/?doc=eval&eval=agh-201-r2", { state: FOCUS_EVAL }));
+    await userEvent.click(screen.getByRole("button", { name: "Hide list" }));
+    await act(() => router.navigate("/?doc=acs"));
+
+    await act(() => router.navigate(-1));
+
+    expect(router.state.historyAction).toBe("POP");
+    expect(screen.queryByRole("table", { name: "Evals" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Show list" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
   });
 
   it("names runs by number, the group by its ticket's title, the newest as latest", () => {
