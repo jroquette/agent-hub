@@ -6,16 +6,16 @@ text.
 """
 
 import re
+import unicodedata
 from collections.abc import Mapping
 from datetime import UTC, date, datetime
 from typing import Final, Literal
 
-from agent_hub.core.brain.brain_path import INBOX_FOLDER
+from agent_hub.core.brain.brain_path import INBOX_FOLDER, MAX_SLUG_CHARS
 from agent_hub.mcp_server.hub_context import ToolRefusal
 
 MAX_TITLE_CHARS: Final = 120
 MAX_BODY_BYTES: Final = 65_536
-MAX_SLUG_CHARS: Final = 50
 MAX_PR_TITLE_CHARS: Final = 72
 MAX_PR_QUOTE_CHARS: Final = 600
 # A Claude Code session id as the note may name it; anything else leaves the line out.
@@ -30,34 +30,65 @@ KINDS: Final[Mapping[ProposalKind, str]] = {
     "system": "system",
 }
 _CONTROL: Final = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
+# The marks of AI attribution (hub ``AGENTS.md`` rule 1) a proposal may not carry into its note,
+# commit or pull request.
+_ATTRIBUTION: Final = re.compile(
+    r"co-authored-by\s*:|generated\s+with|generated\s+by\s+claude|\U0001f916", re.IGNORECASE
+)
+_BACKTICKS: Final = re.compile(r"`+")
+_MIN_FENCE: Final = 3
 _SLUG_WORD: Final = re.compile(r"[a-z0-9]+")
 _PARAGRAPH_BREAK: Final = re.compile(r"\n[ \t]*\n")
 _ELLIPSIS: Final = "…"
 _NO_SLUG: Final = "propose: the title has no letters or digits for a file name"
+_ATTRIBUTED: Final = "propose: the text carries an AI attribution line"
+
+
+def _is_utf8(text: str) -> bool:
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _has_control(text: str) -> bool:
+    """A C0/C1 control, a line or paragraph separator, or a format character (``Cf``: bidi
+    overrides, zero-width characters)."""
+    return bool(_CONTROL.search(text)) or any(unicodedata.category(c) == "Cf" for c in text)
 
 
 def checked_title(title: str) -> str:
-    """``title`` trimmed: 1..``MAX_TITLE_CHARS`` characters on one line, no control character,
-    and at least one ``a-z0-9`` run (its slug names the note's file and branch)."""
+    """``title`` trimmed: 1..``MAX_TITLE_CHARS`` characters of UTF-8 on one line, no control or
+    format character, no AI attribution mark, and at least one ``a-z0-9`` run (its slug names
+    the note's file and branch)."""
     trimmed = title.strip()
     if not trimmed:
         raise ToolRefusal("propose: the title is empty")
+    if not _is_utf8(trimmed):
+        raise ToolRefusal("propose: the title is not UTF-8 text")
     if len(trimmed) > MAX_TITLE_CHARS:
         raise ToolRefusal(f"propose: the title is longer than {MAX_TITLE_CHARS} characters")
-    if _CONTROL.search(trimmed):
+    if _has_control(trimmed):
         raise ToolRefusal("propose: the title must be one line with no control characters")
+    if _ATTRIBUTION.search(trimmed):
+        raise ToolRefusal(_ATTRIBUTED)
     if not _SLUG_WORD.search(trimmed.lower()):
         raise ToolRefusal(_NO_SLUG)
     return trimmed
 
 
 def checked_body(body: str) -> str:
-    """``body`` trimmed: 1..``MAX_BODY_BYTES`` bytes of UTF-8."""
+    """``body`` trimmed: 1..``MAX_BODY_BYTES`` bytes of UTF-8 with no AI attribution mark."""
     trimmed = body.strip()
     if not trimmed:
         raise ToolRefusal("propose: the body is empty")
+    if not _is_utf8(trimmed):
+        raise ToolRefusal("propose: the body is not UTF-8 text")
     if len(trimmed.encode("utf-8")) > MAX_BODY_BYTES:
         raise ToolRefusal(f"propose: the body is larger than {MAX_BODY_BYTES} bytes")
+    if _ATTRIBUTION.search(trimmed):
+        raise ToolRefusal(_ATTRIBUTED)
     return trimmed
 
 
@@ -146,15 +177,23 @@ def pull_request_title(title: str) -> str:
     return _cut(f"Learning proposal: {title}", MAX_PR_TITLE_CHARS)
 
 
+def _fenced(text: str) -> str:
+    """``text`` in a Markdown code block whose backtick fence is longer than any backtick run in
+    it, so GitHub renders it as written: no @mention notifies, no "Fixes #1" closes an issue."""
+    longest = max((len(run) for run in _BACKTICKS.findall(text)), default=0)
+    fence = "`" * max(_MIN_FENCE, longest + 1)
+    return f"{fence}\n{text}\n{fence}"
+
+
 def pull_request_body(*, note: str, body: str, external: bool, session: str | None) -> str:
     """The pull request's body (D-pr): which note it adds, its provenance and session, then
-    the body's first paragraph cut to ``MAX_PR_QUOTE_CHARS`` and quoted. ``note`` is relative
-    to ``brain/``; no attribution of any kind is added."""
+    the body's first paragraph cut to ``MAX_PR_QUOTE_CHARS`` in a fenced code block (inert:
+    no mention, no closing keyword). ``note`` is relative to ``brain/``; no attribution of any
+    kind is added."""
     named = session_id(session)
     origin = provenance(external=external) + ("" if named is None else f", session {named}")
     paragraph = _cut(_PARAGRAPH_BREAK.split(body.strip(), maxsplit=1)[0], MAX_PR_QUOTE_CHARS)
-    quoted = "\n".join(f"> {line}".rstrip() for line in paragraph.splitlines())
-    return f"Adds brain/{note} (provenance {origin}).\n\n{quoted}\n"
+    return f"Adds brain/{note} (provenance {origin}).\n\n{_fenced(paragraph)}\n"
 
 
 def commit_message(slug: str) -> str:
