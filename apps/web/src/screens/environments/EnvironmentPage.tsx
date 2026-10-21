@@ -35,8 +35,10 @@ import {
   ACCESS_LOOK,
   LOCAL_FILE,
   STRICTNESS,
+  addServicePath,
   endpointText,
   endpointValues,
+  environmentPath,
   environmentsPage,
   isMine,
   isTeams,
@@ -288,6 +290,14 @@ function EnvironmentBody({
                   opener.current =
                     document.activeElement instanceof HTMLElement ? document.activeElement : null;
                   setService(repo, service);
+                }}
+                onAdd={() => {
+                  void navigate(addServicePath(project), {
+                    state: {
+                      returnTo: environmentPath(project, environment.name),
+                      returnLabel: environment.name,
+                    },
+                  });
                 }}
               />
             </div>
@@ -759,10 +769,12 @@ function ServicesHere({
   view,
   environment,
   onOpen,
+  onAdd,
 }: {
   view: HubConfigView;
   environment: SourcedEnvironment;
   onOpen: (repo: string, service: string) => void;
+  onAdd: () => void;
 }) {
   const services = view.environments.services;
   const addressOf = (service: SourcedService) =>
@@ -779,11 +791,14 @@ function ServicesHere({
           Services in {environment.name}{" "}
           <span className="ah-muted ah-env-count">{here.length}</span>
         </h2>
+        <Button size="sm" icon="plus" onClick={onAdd}>
+          Add service
+        </Button>
       </div>
       {here.length === 0 ? (
         <span className="ah-muted">
           {services.length === 0
-            ? "No services yet. Declare the API, portal or database each repo runs with ./hub env service add."
+            ? "No services yet. Add the API, portal or database each repo runs."
             : `No service has an address in ${environment.name} yet. Open one below to add it.`}
         </span>
       ) : (

@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Navigate, useParams } from "react-router";
+import { Navigate, useNavigate, useParams } from "react-router";
 
 import { Banner, Button, ProblemError, Skeleton, Tooltip } from "../../components";
 import { useApi } from "../../lib/api";
@@ -7,8 +7,8 @@ import { useScope } from "../../lib/scope";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { useDiscuss, useDiscussTarget } from "../../shell/discuss";
 import type { DiscussStarter } from "../../shell/discuss";
-import { EnvironmentsSection } from "../hub-config/EnvironmentsSection";
-import { environmentsPage } from "../hub-config/environments";
+import { ADD_ENVIRONMENT_ID, EnvironmentsSection } from "../hub-config/EnvironmentsSection";
+import { addEnvironmentPath, environmentsPage } from "../hub-config/environments";
 import { SavedToast, UncommittedNotice, useSaveNotices } from "../hub-config/notices";
 import { AskBlocked } from "../hub-config/parts";
 import { KnowledgeProjectIndex } from "../knowledge-index";
@@ -43,6 +43,7 @@ export function EnvironmentsScreen() {
   const { project = "" } = useParams();
   const config = useApi("/api/v1/projects/{project}/config", { path: { project } });
   const notices = useSaveNotices();
+  const navigate = useNavigate();
   const { setOpen, addReference } = useDiscuss();
   const capabilities = useAgentCapabilities();
   const unavailable = sessionControlUnavailable(capabilities.error, capabilities.data);
@@ -61,6 +62,7 @@ export function EnvironmentsScreen() {
   }, [project]);
 
   const view = config.data;
+  const origin = { returnTo: environmentsPage(project), returnLabel: "Environments" };
   let body;
   if (config.isError) {
     body = (
@@ -83,7 +85,7 @@ export function EnvironmentsScreen() {
       </div>
     );
   } else {
-    body = <EnvironmentsSection view={view} onSaved={notices.onSaved} />;
+    body = <EnvironmentsSection view={view} onSaved={notices.onSaved} origin={origin} />;
   }
 
   return (
@@ -116,6 +118,19 @@ export function EnvironmentsScreen() {
                 Ask Claude about environments
               </Button>
             </Tooltip>
+            {/* One primary: with no environment yet, the empty state holds it. */}
+            {view && view.environments.environments.length > 0 && (
+              <Button
+                id={ADD_ENVIRONMENT_ID}
+                variant="primary"
+                icon="plus"
+                onClick={() => {
+                  void navigate(addEnvironmentPath(project), { state: origin });
+                }}
+              >
+                Add environment
+              </Button>
+            )}
           </div>
         </header>
         {view && view.local_file.problems.length > 0 && (
