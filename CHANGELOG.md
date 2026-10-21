@@ -16,9 +16,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - `hub search QUERY [--kind KIND]… [--hub NAME] [--json] [--db PATH]` searches the hub's `brain/` (not `brain/auto/`)
   and each repo's `docs/` through a local SQLite FTS5 index in the database `hub web` and `hub collect` use, synced
   with the checkout on every search; `hub brain reindex [--hub NAME] [--db PATH]` rebuilds it. Markdown only, at most
-  256 KiB, no link followed, no file a secret rule matches; each skipped file is named once. A query with no word
-  (`!!!`) exits 2, and a query that starts with `-` goes after `--` (`hub search -- -foo`). The database gains
-  migration 0008; a Python whose SQLite lacks FTS5 can no longer migrate it (ADR 0044) (AGH-391).
+  256 KiB, no link followed, no file a secret rule matches; each skipped file is named once (a file that cannot be
+  read, on every search). A query with no word (`!!!`) exits 2, and a query that starts with `-` goes after `--`
+  (`hub search -- -foo`). The database gains migration 0008; a Python whose SQLite lacks FTS5 can no longer migrate
+  it (ADR 0044) (AGH-391).
 
 ### Changed
 
