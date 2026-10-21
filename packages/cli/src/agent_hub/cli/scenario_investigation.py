@@ -266,6 +266,11 @@ def record_proposal(
     open_now = view.open_investigation
     if open_now is None:
         raise WorkflowRunError(f"the scenario run {folder.name} is not paused at an investigation")
+    if open_now.choice is not None:
+        # The answer was checked against the options shown: they no longer change.
+        raise WorkflowRunError(
+            f"the investigation of step {open_now.step} is already answered ({open_now.choice})"
+        )
     earlier = sum(
         len(found)
         for record in records

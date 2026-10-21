@@ -1819,3 +1819,35 @@ def test_retries_step_without_workaround_when_investigation_retry(
     ]
     assert ends == [(1, "failed"), (2, "ok")]
     assert modes(marker) == ["run", "run"]
+
+
+def test_refuses_proposal_when_investigation_already_answered(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_walk(hub, marker, held)
+    propose(hub, marker, held, proposal=a_proposal(RELEASE))
+    # hub web records the pick and resumes later: the options picked from no longer change.
+    decided = hold_call(
+        hub,
+        marker,
+        held,
+        "workflow",
+        "decide",
+        RUN,
+        "--gate",
+        f"{RUN}:{GATE}:1",
+        "--choice",
+        "pick",
+        "--text-stdin",
+        stdin="o1",
+    )
+
+    again = propose(hub, marker, held, proposal=a_proposal(LOOK))
+
+    assert decided.exit_code == 0, decided.output
+    assert again.exit_code == 1, again.output
+    assert "already answered (pick)" in plain(again.stderr)
+    assert len([line for line in records(hub) if line["event"] == "proposal"]) == 1
+    resumed = hold_call(hub, marker, held, "workflow", "run", "--resume", RUN)
+    assert resumed.exit_code == 0, resumed.output
+    assert plain(resumed.stdout).splitlines()[-1] == f"run {RUN}: done"
