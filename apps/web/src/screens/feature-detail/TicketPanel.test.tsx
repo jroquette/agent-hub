@@ -257,7 +257,7 @@ describe("TicketPanel (AC-1.10)", () => {
       }),
     ]);
 
-    expect(panel()).toHaveTextContent("Waiting on you: Eval 1 passed with owner steps");
+    expect(panel()).toHaveTextContent("Waiting for you: Eval 1 passed with owner steps");
     expect(
       within(panel()).getByRole("link", { name: "Settle them in the Eval tab" }),
     ).toHaveAttribute("href", "/?doc=eval&eval=agh-202");

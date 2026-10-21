@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode, type RefObject } from "react";
+import { Fragment, useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Link, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
@@ -12,6 +12,8 @@ import {
   type StepperStep,
 } from "../../components";
 import { brainRoute } from "../../lib/brainLinks";
+import { fmtDateTime } from "../../lib/format";
+import { GateDecision } from "../approvals/GateDecision";
 import {
   FOCUS_EVAL,
   evalHistory,
@@ -28,9 +30,12 @@ import {
   TICKET_STEP_LABEL,
   TicketOpenLink,
   TicketPrLink,
+  TicketSignal,
+  signalKind,
   ticketParam,
   type TicketOpener,
 } from "./PlanningView";
+import { useDecideChangeRequest, useTicketRecords } from "./queries";
 import { AcList, TicketSessions } from "./TicketsTab";
 
 type FeatureTickets = components["schemas"]["FeatureTickets"];
@@ -38,8 +43,229 @@ type TicketRow = components["schemas"]["TicketRow"];
 type TicketStepName = components["schemas"]["TicketStepName"];
 type EvalRecord = components["schemas"]["EvalRecord"];
 type AcRow = components["schemas"]["AcRow"];
+type TicketRecords = components["schemas"]["TicketRecords"];
+type ChangeRequestView = components["schemas"]["ChangeRequestView"];
+type PreflightRun = components["schemas"]["PreflightRun"];
 
 const NOT_REACHED = "Not reached.";
+
+const DRIFT_WORDS: Record<PreflightRun["drift"], string> = {
+  none: "no drift",
+  local: "local drift",
+  plan: "plan drift",
+};
+
+const plural = (n: number, word: string) => `${String(n)} ${word}${n === 1 ? "" : "s"}`;
+
+/** Whether `name` is one of `row`'s refs (its key, its tracker id), in any case. */
+function namesRow(row: TicketRow, name: string | null | undefined): boolean {
+  const upper = name?.toUpperCase();
+  return [row.key, row.id, row.ref].some((ref) => ref != null && ref.toUpperCase() === upper);
+}
+
+/**
+ * The owner's decision on a change request whose run has no open gate (two-level-flows AC-2.14):
+ * Approve, or Decline with the note the next preflight follows (AC-2.12), recorded in the hub.
+ */
+function LostRunDecision({
+  project,
+  slug,
+  request,
+}: {
+  project: string;
+  slug: string;
+  request: ChangeRequestView;
+}) {
+  const decide = useDecideChangeRequest(project, slug, request.n);
+  const [note, setNote] = useState("");
+  const [needsNote, setNeedsNote] = useState(false);
+  const field = useRef<HTMLTextAreaElement>(null);
+  const fieldId = useId();
+  const hintId = useId();
+  const send = (decision: "approved" | "declined") => {
+    const text = note.trim();
+    if (decision === "declined" && !text) {
+      setNeedsNote(true);
+      field.current?.focus();
+      return;
+    }
+    decide.mutate({ decision, note: text || null });
+  };
+  return (
+    <div className="ah-stack" style={{ gap: 6 }}>
+      <span className="ah-small ah-muted">
+        Its run has no open gate (abandoned, or its record lost): your decision is recorded in the
+        hub, and the next /implement of {request.ticket} reads it.
+      </span>
+      <label htmlFor={fieldId} className="ah-small">
+        Note (required to decline)
+      </label>
+      <textarea
+        ref={field}
+        id={fieldId}
+        className="ah-input"
+        rows={3}
+        maxLength={2000}
+        value={note}
+        disabled={decide.isPending}
+        aria-invalid={needsNote || undefined}
+        aria-describedby={needsNote ? hintId : undefined}
+        onChange={(event) => {
+          setNote(event.target.value);
+          setNeedsNote(false);
+        }}
+      />
+      {needsNote && (
+        <span id={hintId} role="alert" className="ah-small">
+          Write a note to decline: the next preflight follows it.
+        </span>
+      )}
+      <div
+        role="group"
+        aria-label={`Decide change request ${String(request.n)}`}
+        className="ah-row"
+        style={{ gap: 8 }}
+      >
+        <Button
+          size="sm"
+          variant="primary"
+          icon="check"
+          disabled={decide.isPending}
+          onClick={() => {
+            send("approved");
+          }}
+        >
+          Approve plan v{request.plan_to}
+        </Button>
+        <Button
+          size="sm"
+          variant="danger"
+          icon="x"
+          disabled={decide.isPending}
+          onClick={() => {
+            send("declined");
+          }}
+        >
+          Decline
+        </Button>
+      </div>
+      {decide.isError && (
+        <span role="alert" className="ah-small">
+          Could not record your decision: {decide.error.detail ?? decide.error.title}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A plan change request the ticket asks: while open, its decision (the run's gate when it waits,
+ * else the lost-run form); once decided, who decided it, when and with what note.
+ */
+function ChangeRequestBlock({
+  request,
+  project,
+  slug,
+}: {
+  request: ChangeRequestView;
+  project: string;
+  slug: string;
+}) {
+  const { tz } = usePreferences();
+  const name = `Change request ${String(request.n)}`;
+  const decision = request.decision;
+  if (request.status !== "open" || decision) {
+    return (
+      <span>
+        {decision
+          ? `${name} ${decision.decision} by ${decision.decided_by} · ${evaluatedText(decision.decided_at, tz)}${decision.note ? `: ${decision.note}` : ""}`
+          : `${name}: ${request.problem ?? "could not be read"}`}
+      </span>
+    );
+  }
+  return (
+    <div className="ah-stack" style={{ gap: 6 }}>
+      <b style={{ fontWeight: 500 }}>
+        Plan change request {request.n}: plan v{request.plan_from ?? "?"} → v{request.plan_to}
+      </b>
+      {request.affected.length > 0 && (
+        <span className="ah-small">Affects {request.affected.join(", ")}</span>
+      )}
+      {request.problem && <span className="ah-small">{request.problem}</span>}
+      <Link to={brainRoute(project, request.path)}>Read the request in Brain</Link>
+      {request.approval_id ? (
+        <GateDecision approvalId={request.approval_id} requireTextFor={["decline"]} />
+      ) : (
+        <LostRunDecision project={project} slug={slug} request={request} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * The Preflight step's evidence (two-level-flows AC-2.5, AC-2.8, AC-2.12, AC-2.14): the change
+ * requests the ticket asks (with their decision) or is held by, then every run, newest first,
+ * with each local note.
+ */
+function PreflightDetail({
+  row,
+  records,
+  project,
+  slug,
+}: {
+  row: TicketRow;
+  records: TicketRecords;
+  project: string;
+  slug: string;
+}) {
+  const { tz } = usePreferences();
+  const runs = [...(records.preflight?.runs ?? [])].reverse();
+  const asked = records.change_requests.filter((request) => namesRow(row, request.ticket));
+  const holding = records.change_requests.filter(
+    (request) => request.status === "open" && !namesRow(row, request.ticket),
+  );
+  return (
+    <div className="ah-stack" style={{ gap: 8 }}>
+      {asked.map((request) => (
+        <ChangeRequestBlock key={request.n} request={request} project={project} slug={slug} />
+      ))}
+      {holding.map((request) => (
+        <span key={request.n}>
+          Held by change request {request.n} from {request.ticket}: it waits until you answer it.
+        </span>
+      ))}
+      {records.preflight?.problem && <span>{records.preflight.problem}</span>}
+      {runs.length > 0 && (
+        <ol className="ah-stack" style={{ gap: 6, margin: 0, paddingLeft: 18 }}>
+          {runs.map((run, index) => (
+            <li key={index}>
+              {fmtDateTime(run.ran_at, tz)} · checked plan v{run.plan_version} against main at{" "}
+              <span className="ah-mono">{run.commit.slice(0, 7)}</span> ·{" "}
+              {DRIFT_WORDS[run.drift]}
+              {run.input_text && (
+                <span className="ah-small ah-muted">
+                  {" "}
+                  · {run.input === "discovery" ? "after a discovery" : "after a decline"}:{" "}
+                  {run.input_text}
+                </span>
+              )}
+              {run.local_notes.length > 0 && (
+                <div className="ah-small">
+                  Local drift · {plural(run.local_notes.length, "note")}
+                  <ul style={{ margin: 0, paddingLeft: 18 }}>
+                    {run.local_notes.map((note, at) => (
+                      <li key={at}>{note}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
 
 /** What one step of a ticket says it is, from the records S1 reads (Addendum 1). */
 function StepDetail({
@@ -48,6 +274,7 @@ function StepDetail({
   project,
   slug,
   latest,
+  records,
 }: {
   step: StepperStep<TicketStepName>;
   row: TicketRow;
@@ -55,11 +282,17 @@ function StepDetail({
   slug: string;
   /** The newest eval naming the ticket, with its label ("Eval 1"). */
   latest: { record: EvalRecord; label: string } | undefined;
+  /** Its records from the per-ticket route (A7); undefined until read, or when not read. */
+  records?: TicketRecords | undefined;
 }) {
   const [params] = useSearchParams();
   const { tz } = usePreferences();
   const unrecorded = step.state === "unrecorded";
   const id = row.id ?? row.ref;
+  const discoveries = (records?.preflight?.runs ?? []).filter((run) => run.input === "discovery");
+  if (step.name === "preflight" && records && (records.preflight || records.change_requests.length)) {
+    return <PreflightDetail row={row} records={records} project={project} slug={slug} />;
+  }
   switch (step.name) {
     case "context":
     case "preflight":
@@ -75,7 +308,16 @@ function StepDetail({
             ? "A review round exists."
             : unrecorded
               ? "Not recorded."
-              : NOT_REACHED}
+              : (step.meta ?? NOT_REACHED)}
+          {discoveries.length > 0 && (
+            <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+              {discoveries.map((run, index) => (
+                <li key={index}>
+                  Discovery {fmtDateTime(run.ran_at, tz)}: {run.input_text}. Preflight ran again.
+                </li>
+              ))}
+            </ul>
+          )}
         </>
       );
     case "review":
@@ -195,6 +437,7 @@ export function TicketPanel({
   onClose,
 }: TicketPanelProps) {
   const [params, setParams] = useSearchParams();
+  const records = useTicketRecords(project, slug, ticket);
   const shell = (title: string, children: ReactNode) => (
     <SidePanel
       key={ticket}
@@ -264,10 +507,15 @@ export function TicketPanel({
         </span>
         <ReadinessText row={row} rows={data.tickets} external={data.planning.external_blockers} />
       </div>
+      {signalKind(flow) !== null && signalKind(flow) !== "local" && (
+        <p className="ah-small" style={{ margin: 0 }}>
+          <TicketSignal flow={flow} />
+        </p>
+      )}
       {waiting && (
         <p className="ah-small ah-row ah-wrap" style={{ gap: 6, margin: 0 }}>
           <Icon name="hand" size="sm" />
-          <b style={{ fontWeight: 500 }}>Waiting on you: {waiting.label} passed with owner steps</b>
+          <b style={{ fontWeight: 500 }}>Waiting for you: {waiting.label} passed with owner steps</b>
           <Link
             to={{ search: evalSearch(params, waiting.record.delivery) }}
             replace
@@ -291,7 +539,14 @@ export function TicketPanel({
             return `${TICKET_STEP_LABEL[name]}, ${state}${meta}, ${name === open ? "hide" : "show"} details`;
           }}
           detail={(step) => (
-            <StepDetail step={step} row={row} project={project} slug={slug} latest={latest} />
+            <StepDetail
+              step={step}
+              row={row}
+              project={project}
+              slug={slug}
+              latest={latest}
+              records={records.data}
+            />
           )}
         />
       </Section>
