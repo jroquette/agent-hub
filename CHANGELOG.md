@@ -14,7 +14,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 ### Added
 
 - `hub web` can publish a Studio draft itself (AGH-298, `POST .../skills/drafts/{draft_id}/publish` with
-  `{target, confirm_managed}`; the Studio switches to it in a later change): the draft in `.hub-drafts/<id>/` lands on
+  `{target, confirm_managed}`), and the Studio's Publish now calls it instead of asking Claude to copy the draft:
+  Claude only edits the draft, the Studio shows "Publishing…" then "Published." with a link to the item, warns before
+  publishing a managed item, and offers Discard for a draft already published. The draft in `.hub-drafts/<id>/` lands on
   the item it edits, or as a new item in the project's plugin, after the item's current content is recorded, and a
   `publish` version names the draft and your identity; the draft is then removed. A skill edit keeps the files the
   draft does not hold (a rename moves the folder), a hook edit replaces that one hook in its file, and a new hook is
