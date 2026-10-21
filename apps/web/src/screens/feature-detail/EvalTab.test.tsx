@@ -686,7 +686,7 @@ describe("the Acceptance prompt", () => {
     prompt("no_acs");
 
     const callout = screen
-      .getByText("Acceptance: waiting on owner steps · no ACs listed")
+      .getByText("Waiting for you · Acceptance: sign off by hand · no ACs listed")
       .closest('[role="status"]');
     if (!(callout instanceof HTMLElement)) throw new Error("no callout");
     expect(callout).toHaveTextContent(

@@ -458,6 +458,8 @@ interface OwnerWait {
   /** The eval's label in its group ("Eval 2"). */
   label: string;
   text: string;
+  /** A sign-off the app cannot record (A10, A19): a signpost with no button. */
+  byHand?: boolean;
 }
 
 /**
@@ -478,6 +480,15 @@ function ownerWaits(
       delivery: acceptance.delivery,
       label,
       text: `Acceptance: sign off ${String(n)} AC${n === 1 ? "" : "s"} (${label})`,
+    });
+  } else if (acceptance?.owner_wait?.state === "no_acs") {
+    // A19: a sign-off the owner writes by hand waits too; its callout says what to write.
+    const label = acceptanceLabel(detail, tickets, epics) ?? acceptance.delivery;
+    first.push({
+      delivery: acceptance.delivery,
+      label,
+      text: `Acceptance: sign off by hand · no ACs listed (${label})`,
+      byHand: true,
     });
   }
   const others = ownerStepsWaiting(detail.evals, tickets, epics)
@@ -557,7 +568,7 @@ function WaitingBanner({
         Review change request
       </Button>
     );
-  } else if (first && !onEval) {
+  } else if (first && !onEval && !first.byHand) {
     action = (
       <Button
         size="sm"
@@ -592,7 +603,7 @@ function WaitingBanner({
           </li>
         ))}
         {first &&
-          (change ? (
+          (change || first.byHand ? (
             <li>
               <Link to={{ search: evalSearch(params, first.delivery) }} replace state={FOCUS_EVAL}>
                 {first.text}

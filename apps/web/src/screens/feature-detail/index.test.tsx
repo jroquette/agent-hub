@@ -386,7 +386,8 @@ describe("FeatureDetailScreen", () => {
       await screen.findByText("Acceptance: sign off 3 ACs (Eval 2)");
 
       expect(await seriousViolations(container)).toEqual([]);
-    });
+      // Long under the fast gate's parallel lanes, as the panel's axe test is.
+    }, 20_000);
   });
 
   it("shows every AC row at once, with no Show all fold (AC-269.12)", async () => {

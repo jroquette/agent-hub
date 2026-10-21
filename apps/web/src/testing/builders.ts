@@ -814,6 +814,7 @@ export function aChangeRequest(
     run_id: "implement-202",
     approval_id: "implement-202:approve-change:1",
     decidable_here: false,
+    body_cut: false,
     decision: null,
     path: "features/control-plane/change-requests/2.md",
     problem: null,

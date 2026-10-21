@@ -22,12 +22,11 @@ import {
   ProvenanceBadge,
   SidePanel,
   Skeleton,
-  Time,
   type StepperStep,
 } from "../../components";
 import { brainRoute } from "../../lib/brainLinks";
 import { useNow } from "../../lib/clock";
-import { fmtDateTime } from "../../lib/format";
+import { fmtAgo, fmtDateTime } from "../../lib/format";
 import { DecisionError, GateDecision } from "../approvals/GateDecision";
 import {
   FOCUS_EVAL,
@@ -93,9 +92,31 @@ export function WaitAge({ openedAt }: { openedAt: string | null | undefined }) {
   const seconds = Math.max(0, (now - Date.parse(openedAt)) / 1000);
   return (
     <span className="ah-small ah-muted">
-      waiting since <Time iso={openedAt} ago={seconds} />
+      waiting{" "}
+      <time dateTime={openedAt} title={openedAt}>
+        {fmtAgo(seconds).replace(/ ago$/, "")}
+      </time>
     </span>
   );
+}
+
+/** Markdown whose headings start at level `top`, so it sits below the heading that holds it. */
+export function belowHeading(source: string, top: number): string {
+  const levels = [...source.matchAll(/^(#{1,6}) /gm)].map((found) => found[1]?.length ?? 1);
+  const shift = Math.max(0, top - Math.min(...levels, top));
+  if (shift === 0) return source;
+  let fenced = false;
+  return source
+    .split("\n")
+    .map((line) => {
+      if (/^\s*(```|~~~)/.test(line)) fenced = !fenced;
+      if (fenced) return line;
+      return line.replace(
+        /^(#{1,6}) /,
+        (marks: string) => `${"#".repeat(Math.min(6, marks.length - 1 + shift))} `,
+      );
+    })
+    .join("\n");
 }
 
 /**
@@ -219,8 +240,13 @@ function RequestEvidence({ request }: { request: ChangeRequestView }) {
           <span className="ah-row" style={{ gap: 6 }}>
             <ProvenanceBadge provenance="agent" />
           </span>
-          <Markdown source={request.body} />
+          <Markdown source={belowHeading(request.body, 5)} />
         </div>
+      )}
+      {request.body_cut && (
+        <span className="ah-small">
+          The request goes on past what is shown: read the full request in Brain before deciding.
+        </span>
       )}
       <b className="ah-small" style={{ fontWeight: 500 }}>
         What changes if you approve
@@ -230,7 +256,10 @@ function RequestEvidence({ request }: { request: ChangeRequestView }) {
           Plan {version(request.plan_from)} becomes {version(request.plan_to)} (a new amendment).
         </li>
         <li>{request.ticket} runs preflight again on the new plan.</li>
-        {request.affected.length > 0 && (
+        {request.affected.length === 1 && (
+          <li>{request.affected[0]} runs preflight again before it goes on.</li>
+        )}
+        {request.affected.length > 1 && (
           <li>{request.affected.join(", ")} run preflight again before they go on.</li>
         )}
         <li>Nothing is merged or pushed.</li>
@@ -274,7 +303,15 @@ function ChangeRequestBlock({
   }
   let decide: ReactNode;
   if (request.approval_id) {
-    decide = <GateDecision approvalId={request.approval_id} requireTextFor={["decline"]} />;
+    decide = (
+      <GateDecision
+        approvalId={request.approval_id}
+        requireTextFor={["decline"]}
+        onDecided={() => {
+          setDecidedHere(true);
+        }}
+      />
+    );
   } else if (request.decidable_here) {
     decide = (
       <LostRunDecision
@@ -289,7 +326,9 @@ function ChangeRequestBlock({
   } else {
     decide = (
       <span className="ah-small ah-muted">
-        Its run is live and asks you at its gate; the decision shows here once the gate is open.
+        {decidedHere
+          ? "Decision sent to its run; this shows it once the run records it."
+          : "Its run is live and asks you at its gate; the decision shows here once the gate is open."}
       </span>
     );
   }
@@ -302,10 +341,10 @@ function ChangeRequestBlock({
       aria-label={`Plan change request ${String(request.n)}`}
     >
       <span className="ah-row ah-wrap" style={{ gap: 8 }}>
-        <b style={{ fontWeight: 500 }}>
+        <h4 className="ah-small" style={{ margin: 0, fontWeight: 500 }}>
           Plan change request {request.n}: plan {version(request.plan_from)} →{" "}
           {version(request.plan_to)}
-        </b>
+        </h4>
         <WaitAge openedAt={request.opened_at} />
       </span>
       {request.problem && <span className="ah-small">{request.problem}</span>}

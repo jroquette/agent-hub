@@ -150,15 +150,19 @@ function TextDialog({ choice, required, pending, error, onConfirm, onCancel }: T
 
 /**
  * The decision card of an open workflow gate, in Approvals, in Run detail and in the ticket panel
- * (a plan change request); `requireTextFor` names the decisions that need the text (a decline
- * needs the owner's note, two-level-flows AC-2.12).
+ * (a plan change request); `requireTextFor` names the decisions whose text is required when the
+ * gate takes one (a decline needs the owner's note, two-level-flows AC-2.12; the implement gate
+ * captures its response).
  */
 export function GateDecision({
   approvalId,
   requireTextFor = [],
+  onDecided,
 }: {
   approvalId: string;
   requireTextFor?: readonly string[];
+  /** Called once the decision is recorded (the ticket panel moves focus when the run shows it). */
+  onDecided?: (() => void) | undefined;
 }) {
   const gate = useWorkflowGate(approvalId);
   const decide = useDecideGate(approvalId);
@@ -179,6 +183,7 @@ export function GateDecision({
       {
         onSuccess: () => {
           setAsking(null);
+          onDecided?.();
         },
       },
     );
@@ -198,10 +203,8 @@ export function GateDecision({
               disabled={decide.isPending || decide.isSuccess}
               onClick={() => {
                 decide.reset();
-                // A decision that needs the text asks for it even when the gate takes none.
-                if (takesText || (choice.id !== null && requireTextFor.includes(choice.id))) {
-                  setAsking(choice);
-                } else send(choice, "");
+                if (takesText) setAsking(choice);
+                else send(choice, "");
               }}
             >
               {choice.label}
