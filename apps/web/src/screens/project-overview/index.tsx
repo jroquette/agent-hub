@@ -28,7 +28,6 @@ import { useRowKeys } from "../../lib/useRowKeys";
 import { useShell } from "../../shell/AppShell";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { featureHref } from "../features/FeatureChip";
-import { GoldenPathBar } from "../features/GoldenPathBar";
 import { issueId, reasonOf, type Reason } from "../features/groups";
 import { useFeatureNames } from "../features/names";
 import { useFeatures } from "../features/queries";
@@ -50,6 +49,7 @@ import {
   RECENT_VISIBLE,
   recentFeatures,
   recentTickets,
+  runsInOrder,
   STALE_DAYS,
   topFindings,
   type RecentFeature,
@@ -179,7 +179,15 @@ function Header({
         <h1 className="ah-h1">{project.name}</h1>
         {badge && health && (health.error || health.warning) ? (
           <Tooltip label="Setup problems an engineer should look at. They do not stop the agents.">
-            <a href="#po-setup" style={{ textDecoration: "none" }}>
+            <a
+              href="#po-setup"
+              style={{ textDecoration: "none" }}
+              onClick={() => {
+                // The section is folded by default; following the link opens it.
+                const setup = document.getElementById("po-setup");
+                if (setup instanceof HTMLDetailsElement) setup.open = true;
+              }}
+            >
               <StatusBadge
                 status={badge.status}
                 label={badge.label.replace("Health ·", "Setup ·")}
@@ -512,9 +520,7 @@ function TasksSection({ project }: { project: string }) {
     >
       <Region query={runs} title="the agents' tickets" lines={4}>
         {() => {
-          const columns = kanban(runs.data?.items ?? [], now);
-          const working = STAGES.filter((s) => s.id !== "REPORTED").flatMap((s) => columns[s.id]);
-          const ordered = [...working, ...columns.FAILED, ...columns.REPORTED];
+          const { working, ordered } = runsInOrder(runs.data?.items ?? [], now);
           if (ordered.length === 0) {
             return (
               <div className="ah-card po-empty">
@@ -555,8 +561,20 @@ const FEATURE_TONE: Record<NonNullable<Reason["tone"]>, string> = {
   done: "var(--done)",
 };
 
-const COST_HINT =
-  "Spent in the last 7 days, from this work's sessions. Estimated from transcripts.";
+const RECENT_SUB = "What the team worked on in the last 7 days · costs estimated from transcripts";
+
+/** A tooltip on plain text, reachable by keyboard; nothing when there is nothing to say. */
+function Hint({ label, children }: { label: ReactNode; children: ReactNode }) {
+  if (!label) return <>{children}</>;
+  return (
+    <Tooltip label={label}>
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
+      <span className="po-hint" tabIndex={0}>
+        {children}
+      </span>
+    </Tooltip>
+  );
+}
 
 /** A feature worked on this week, read only: its name, where it is on the golden path, when and cost. */
 function RecentFeatureItem({
@@ -606,17 +624,11 @@ function RecentFeatureItem({
           </span>
         </div>
         <div className="ft-row-line" title={reason.line}>
-          {reason.line}
+          {reason.line} · worked on <Time iso={row.lastActivityAt} ago={ago} />
         </div>
       </div>
-      <div className="po-recent-meta">
-        <GoldenPathBar path={f.golden_path} compact />
-        <span className="ah-small ah-muted">
-          <Time iso={row.lastActivityAt} ago={ago} />
-        </span>
-        <span className="ah-small ah-muted ah-mono" title={COST_HINT}>
-          {fmtMoney(row.costUsd)}
-        </span>
+      <div className="ft-row-meta">
+        <span className="ah-small ah-muted ah-mono">{fmtMoney(row.costUsd)}</span>
       </div>
     </li>
   );
@@ -648,17 +660,19 @@ function RecentList({
 
 function RecentSkeleton() {
   return (
-    <ul className="ft-rows ft-card" aria-hidden="true">
-      {Array.from({ length: 3 }, (_, i) => (
-        <li key={i} className="ft-row" style={{ cursor: "default" }}>
-          <span className="ft-row-lead" />
-          <div className="ft-row-main">
-            <Skeleton width="40%" />
-            <Skeleton width="60%" />
-          </div>
-        </li>
-      ))}
-    </ul>
+    <div aria-busy="true">
+      <ul className="ft-rows ft-card" aria-hidden="true">
+        {Array.from({ length: 3 }, (_, i) => (
+          <li key={i} className="ft-row" style={{ cursor: "default" }}>
+            <span className="ft-row-lead" />
+            <div className="ft-row-main">
+              <Skeleton width="40%" />
+              <Skeleton width="60%" />
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -680,8 +694,11 @@ function RecentWorkSection({ project, hubPath }: { project: string; hubPath: str
   const featureIssues = new Set(
     featureItems.flatMap((f) => f.issues.map((i) => issueId(i).toUpperCase())),
   );
+  // Only the runs listed in "Tickets the agents are working on" are left out here.
   const runIssues = new Set(
-    (runs.data?.items ?? []).flatMap((r) => (r.issue ? [r.issue.key.toUpperCase()] : [])),
+    runsInOrder(runs.data?.items ?? [], now)
+      .ordered.slice(0, TASKS_VISIBLE)
+      .flatMap((r) => (r.issue ? [r.issue.key.toUpperCase()] : [])),
   );
   const featureRows = recentFeatures(featureItems, sessionItems, now).slice(0, RECENT_VISIBLE);
   const ticketRows = recentTickets(ticketsOf(sessionItems, featureIssues), runIssues, now).slice(
@@ -691,7 +708,7 @@ function RecentWorkSection({ project, hubPath }: { project: string; hubPath: str
 
   if (sessions.isSuccess && sessionItems.length === 0) {
     return (
-      <Section id="recent" title="Recent work" sub="What the team worked on in the last 7 days">
+      <Section id="recent" title="Recent work" sub={RECENT_SUB}>
         <div className="ah-card">
           <EmptyState
             icon="square-terminal"
@@ -706,7 +723,7 @@ function RecentWorkSection({ project, hubPath }: { project: string; hubPath: str
   }
 
   return (
-    <Section id="recent" title="Recent work" sub="What the team worked on in the last 7 days">
+    <Section id="recent" title="Recent work" sub={RECENT_SUB}>
       <div className="po-recent" ref={listRef}>
         <RecentList
           id="po-recent-features"
@@ -722,6 +739,14 @@ function RecentWorkSection({ project, hubPath }: { project: string; hubPath: str
               detail={features.error.detail}
               status={features.error.status}
               onRetry={() => void features.refetch()}
+            />
+          ) : sessions.isError ? (
+            // Which feature was worked on is read from the sessions; without them it is unknown.
+            <ProblemError
+              title="Could not tell which features were worked on"
+              detail={sessions.error.detail}
+              status={sessions.error.status}
+              onRetry={() => void sessions.refetch()}
             />
           ) : featureRows.length === 0 ? (
             <div className="ah-card po-empty">No feature was worked on in the last 7 days.</div>
@@ -1065,29 +1090,33 @@ function NamingFacts({ config }: { config: HubConfig }) {
   const prefix = config.branch_prefix.value;
   const usesPrefix = branch.pattern.includes("{prefix}");
   const example = (p: { example: string | null }) =>
-    p.example ? `Example with a made-up issue: ${p.example}` : undefined;
+    p.example ? (
+      <>
+        Example with a made-up issue: <code className="ah-mono">{p.example}</code>
+      </>
+    ) : null;
   return (
     <>
       <Fact setBy={branch}>
         <span className="po-fact-label">Branches</span>
-        <span title={example(branch)}>
+        <Hint label={example(branch)}>
           <PatternWords pattern={branch.pattern} />
-        </span>
+        </Hint>
       </Fact>
       <Fact setBy={commit}>
         <span className="po-fact-label">
           {prFollows ? "Commit and pull request titles" : "Commit titles"}
         </span>
-        <span title={example(commit)}>
+        <Hint label={example(commit)}>
           <PatternWords pattern={commit.pattern} />
-        </span>
+        </Hint>
       </Fact>
       {!prFollows && (
         <Fact setBy={pr}>
           <span className="po-fact-label">Pull request titles</span>
-          <span title={example(pr)}>
+          <Hint label={example(pr)}>
             <PatternWords pattern={pr.pattern} />
-          </span>
+          </Hint>
         </Fact>
       )}
       {prefix && (
@@ -1132,10 +1161,23 @@ function GuardFacts({ project, config }: { project: string; config: HubConfig })
     <>
       {guard.ask_before_edit.length > 0 && (
         <Fact>
-          <span title={guard.ask_before_edit.slice(0, 10).join("\n")}>
+          <Hint
+            label={
+              <span className="po-path-list">
+                {guard.ask_before_edit.slice(0, 10).map((p) => (
+                  <code key={p} className="ah-mono">
+                    {p}
+                  </code>
+                ))}
+                {guard.ask_before_edit.length > 10 && (
+                  <span>and {String(guard.ask_before_edit.length - 10)} more</span>
+                )}
+              </span>
+            }
+          >
             Agents ask you before editing{" "}
             {plural(guard.ask_before_edit.length, "file or folder", "files and folders")}.
-          </span>
+          </Hint>
         </Fact>
       )}
       {guard.deny_paths.length > 0 && (
@@ -1257,7 +1299,7 @@ function ConfigSection({ project }: { project: ProjectDetail }) {
                 <NamingFacts config={config.data} />
               </SetupCard>
               <SetupCard
-                icon="shield"
+                icon="shield-alert"
                 title="What agents may touch"
                 link={{ href: `${home}#guard`, text: "See guard" }}
               >

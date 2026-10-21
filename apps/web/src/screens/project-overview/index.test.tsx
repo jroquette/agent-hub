@@ -445,7 +445,10 @@ describe("ProjectOverviewScreen", () => {
     expect(section.getByText(/Agents pick up Linear issues in team/)).toBeInTheDocument();
     expect(section.getByText("agent-ready")).toBeInTheDocument();
     // Patterns read as words; the made-up example only sits in a tooltip.
-    expect(section.queryByText(/TIP-42/)).not.toBeInTheDocument();
+    const examples = section.getAllByText(/TIP-42/);
+    expect(examples.length).toBeGreaterThan(0);
+    for (const example of examples) expect(example.closest('[role="tooltip"]')).not.toBeNull();
+    expect(section.getAllByText(/Example with a made-up issue/).length).toBe(2);
     expect(section.getByText("Commit and pull request titles")).toBeInTheDocument();
     expect(section.getAllByText("issue key").length).toBeGreaterThan(0);
     expect(section.getByText("short description")).toBeInTheDocument();
@@ -462,7 +465,7 @@ describe("ProjectOverviewScreen", () => {
     ).toBeInTheDocument();
     expect(section.queryByText(/never contact/)).not.toBeInTheDocument();
     expect(section.getByText("Production")).toBeInTheDocument();
-    expect(section.getByText(/demo-api/)).toBeInTheDocument();
+    expect(section.getByText("1 repository: demo-api.")).toBeInTheDocument();
     expect(section.getByRole("link", { name: /Open hub configuration/ })).toHaveAttribute(
       "href",
       "/projects/agent-hub/config",

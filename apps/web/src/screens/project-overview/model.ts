@@ -84,6 +84,16 @@ export function healthBadge(summary: HealthSummary): { status: Status; label: st
   return { status: "done", label: "Health · no findings" };
 }
 
+/** The runs as "Tickets the agents are working on" lists them: in flight, then failed, then done. */
+export function runsInOrder(
+  runs: readonly WorkflowRun[],
+  now: number,
+): { working: WorkflowRun[]; ordered: WorkflowRun[] } {
+  const columns = kanban(runs, now);
+  const working = STAGES.filter((s) => s.id !== "REPORTED").flatMap((s) => columns[s.id]);
+  return { working, ordered: [...working, ...columns.FAILED, ...columns.REPORTED] };
+}
+
 /** How many rows each Recent work list shows. */
 export const RECENT_VISIBLE = 5;
 

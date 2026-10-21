@@ -210,12 +210,23 @@
   font-family: var(--font-sans);
   font-weight: 500;
 }
-.po-recent-meta {
+/* The rows here carry only a cost on the right: the list screens' three meta columns would starve the title. */
+.po-recent .ft-card {
+  --ft-meta: auto;
+}
+/* A ticket's title is what people read: plain text, not a quiet mono slug. */
+.po-recent .ft-row-slug {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--text);
+}
+.po-hint {
+  border-radius: var(--radius-sm);
+}
+.po-path-list {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
   gap: 2px;
-  white-space: nowrap;
 }
 
 /* The hub configuration in plain sentences: a 2 x 2 grid of equal cards, one column when narrow. */
