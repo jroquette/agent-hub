@@ -20,7 +20,9 @@ the session's ``PreToolUse`` hook sees against a ``ToolPolicy`` (the hub's real 
 ``Grep`` pass except on a declared env file, compared by resolved real path (a symlink, a ``..``
 or a relative form is caught); a ``Glob`` whose pattern can reach one, or a ``Grep`` on one, on
 the folder holding one, or whose ``glob`` filter can reach one under its root, is denied (E-5: a
-folder above with no filter passes, the env file being git-ignored). ``Write`` passes only under
+folder above with no filter passes, the env file being git-ignored). They are denied under
+``/proc`` too, where a running action's environment (its env file's values) can be read, and a
+``Glob`` or ``Grep`` of the whole file system with it. ``Write`` passes only under
 ``actions/<pack>/``. ``Bash`` passes only for ``./hub action list|plan …``, ``./hub action run …
 --run <run>`` and ``./hub scenario propose --run <run>``, each word plain (no shell
 metacharacter); the proposal's JSON may follow ``propose`` as one quoted here-document
@@ -190,6 +192,8 @@ _WORD = re.compile(r"[A-Za-z0-9_./:=@,+%-]+")
 _HEREDOC = re.compile(r"<<'(?P<end>[A-Za-z_][A-Za-z0-9_]{0,31})'")
 _GLOB_CHARACTERS: Final = frozenset("*?[{")
 _RUN_FLAG: Final = "--run"
+# Where a process's environment can be read (an action's, with its env file's values).
+_PROCESS_FILES: Final = ("/proc", "/dev/fd")
 
 
 class ToolPolicy(BaseModel):
@@ -256,6 +260,14 @@ def _env_file_denied(tool: str) -> ToolVerdict:
     return _denied(f"{tool} reaches the env file of a declared environment")
 
 
+def _process_files_denied(tool: str) -> ToolVerdict:
+    return _denied(f"{tool} reaches the processes' files (/proc), where credentials can be read")
+
+
+def _in_process_files(real: str) -> bool:
+    return any(real == root or real.startswith(f"{root}/") for root in _PROCESS_FILES)
+
+
 class _Paths:
     """The policy's env files, compared ignoring case (stricter, never looser)."""
 
@@ -288,7 +300,10 @@ def _read_verdict(policy: ToolPolicy, tool_input: Mapping[str, object]) -> ToolV
     if not path:
         return _denied("Read needs a file_path")
     paths = _Paths(policy)
-    return _env_file_denied("Read") if paths.is_env_file(paths.resolve(path)) else _ALLOWED
+    real = paths.resolve(path)
+    if _in_process_files(real):
+        return _process_files_denied("Read")
+    return _env_file_denied("Read") if paths.is_env_file(real) else _ALLOWED
 
 
 def _segments_reach(segments: Sequence[str], parts: Sequence[str]) -> bool:
@@ -318,10 +333,14 @@ def _glob_verdict(policy: ToolPolicy, tool_input: Mapping[str, object]) -> ToolV
     parts = os.path.join(root, os.path.expanduser(pattern)).split("/")
     first = next((index for index, part in enumerate(parts) if _GLOB_CHARACTERS & set(part)), None)
     if first is None:
-        reached = paths.is_env_file(paths.resolve("/".join(parts)))
-        return _env_file_denied("Glob") if reached else _ALLOWED
+        real = paths.resolve("/".join(parts))
+        if _in_process_files(real):
+            return _process_files_denied("Glob")
+        return _env_file_denied("Glob") if paths.is_env_file(real) else _ALLOWED
     base = paths.resolve("/".join(parts[:first]) or "/")
     rest = [part.lower() for part in parts[first:] if part]
+    if _in_process_files(base) or (base == "/" and _segments_reach(rest[:1], ["proc"])):
+        return _process_files_denied("Glob")
     reached = any(_segments_reach(rest, rel.split("/")) for rel in paths.under(base))
     return _env_file_denied("Glob") if reached else _ALLOWED
 
@@ -329,6 +348,8 @@ def _glob_verdict(policy: ToolPolicy, tool_input: Mapping[str, object]) -> ToolV
 def _grep_verdict(policy: ToolPolicy, tool_input: Mapping[str, object]) -> ToolVerdict:
     paths = _Paths(policy)
     root = paths.resolve(_text_input(tool_input, "path") or ".")
+    if root == "/" or _in_process_files(root):
+        return _process_files_denied("Grep")
     if paths.is_env_file(root):
         return _env_file_denied("Grep")
     if not os.path.isdir(root):
