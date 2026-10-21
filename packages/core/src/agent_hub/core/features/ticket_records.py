@@ -51,7 +51,6 @@ _REQUEST: Final = re.compile(r"([1-9][0-9]{0,5})\.md")
 _DECISION: Final = re.compile(r"([1-9][0-9]{0,5})\.decision\.md")
 _VERSION: Final = re.compile(r"[1-9][0-9]{0,5}")
 _TICKET: Final = re.compile(KEY_PATTERN)
-_DECISIONS: Final = ("approved", "declined")
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -68,8 +67,10 @@ class TicketFiles:
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ChangeRequest:
     """One plan change request: its origin ``ticket``, its status folded from its decision, the
-    plan version it asks for and the tickets it affects; ``problem`` (status None) when it or its
-    decision could not be read (``ticket`` is kept when the request's own fields could be)."""
+    plan version it asks for and the tickets it affects. ``problem`` says why it could not be
+    read (status None; ``ticket`` kept when it could be), or why its decision could not be: the
+    request then stays ``open``, not known to be decided. A decision needs a person
+    (``decided_by`` neither empty nor ``unknown``, A5)."""
 
     n: int
     ticket: str | None
@@ -168,16 +169,17 @@ def _request(n: int, head: RecordHead, decision: RecordHead | None) -> ChangeReq
         affected = _names(fields.get("affected"))
     except RecordFieldError as problem:
         return _broken(n, ticket, _unreadable(name, str(problem)))
-    if decision is None:
-        status: ChangeStatus = "open"
-    else:
+    status: ChangeStatus = "open"
+    problem = None
+    if decision is not None:
         try:
             status = _decision(decision)
-        except RecordFieldError as problem:
+        except RecordFieldError as error:
+            # Not known to be decided: the request stays open, with the decision's problem.
             where = f"{CHANGE_REQUESTS_FOLDER}/{decision.name}"
-            return _broken(n, ticket, _unreadable(where, str(problem)))
+            problem = _unreadable(where, str(error))
     return ChangeRequest(
-        n=n, ticket=ticket, status=status, plan_to=plan_to, affected=affected, problem=None
+        n=n, ticket=ticket, status=status, plan_to=plan_to, affected=affected, problem=problem
     )
 
 
@@ -185,10 +187,13 @@ def _decision(head: RecordHead) -> ChangeStatus:
     fields = _fields(head)
     record_type(fields, "change-request-decision")
     decision = text_field(fields, "decision")
-    if decision not in _DECISIONS:
+    if decision not in ("approved", "declined"):
         raise RecordFieldError("decision must be approved or declined")
-    if text_field(fields, "decided_by") is None:
+    decided_by = text_field(fields, "decided_by")
+    if decided_by is None:
         raise RecordFieldError("decided_by is missing")
+    if decided_by.strip().lower() == "unknown":
+        raise RecordFieldError(f"decided_by names no person: {decided_by.strip()}")
     if text_field(fields, "decided_at", ISO_TIME) is None:
         raise RecordFieldError("decided_at is missing")
     return cast("ChangeStatus", decision)
