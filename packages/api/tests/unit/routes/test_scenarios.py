@@ -8,11 +8,17 @@ from typing import Any
 import pytest
 
 from agent_hub.api.agent_session_runtime import HubCredentials
-from agent_hub.api.scenario_investigation import ScenarioInvestigations
-from agent_hub.core.agent_sessions.driver import StartSpec
+from agent_hub.api.scenario_investigation import InvestigationRestrictions, ScenarioInvestigations
+from agent_hub.core.agent_sessions.agent_session import EndReason
+from agent_hub.core.agent_sessions.driver import PastSession, StartSpec
+from agent_hub.core.agent_sessions.errors import SessionsUnavailableError
+from agent_hub.core.hub_config.problems import ConfigProblem
+from agent_hub.core.scenarios.investigation import tool_verdict
 from agent_hub.core.testing.agent_session_rig import Rig, build_rig
+from agent_hub.core.testing.agent_session_store_fakes import InMemoryAgentSessionStore
 from agent_hub.core.testing.builders import an_environments_document
 from agent_hub.core.testing.hub_fakes import FakeHub, FakeHubFileReader, InMemoryHubRegistry
+from agent_hub.core.testing.session_driver_fakes import InMemorySessionDriver
 
 RUNNING = "0.9.0"
 RUN = "walk-1"
@@ -59,7 +65,9 @@ def a_hub(tmp_path: Path, record: list[dict[str, Any]]) -> Path:
     return hub
 
 
-def a_reader(hub: Path) -> tuple[InMemoryHubRegistry, FakeHubFileReader]:
+def a_reader(
+    hub: Path, *, local: tuple[ConfigProblem, ...] | None = None
+) -> tuple[InMemoryHubRegistry, FakeHubFileReader]:
     document = an_environments_document()
     document["platform"]["version"] = RUNNING
     document["environments"]["staging"]["credentials"] = {
@@ -69,21 +77,35 @@ def a_reader(hub: Path) -> tuple[InMemoryHubRegistry, FakeHubFileReader]:
     }
     registry = InMemoryHubRegistry()
     registry.add(str(hub))
-    return registry, FakeHubFileReader({str(hub): FakeHub(hub_json=json.dumps(document).encode())})
+    fake = FakeHub(hub_json=json.dumps(document).encode())
+    if local is not None:
+        fake.local = local
+    return registry, FakeHubFileReader({str(hub): fake})
 
 
 @pytest.fixture
 def investigation(wired: Any, tmp_path: Path) -> Any:
     """Wires the investigation route over a real control (fake driver) and a tmp hub."""
 
-    def wire(record: list[dict[str, Any]]) -> tuple[Rig, Path]:
-        hub = a_hub(tmp_path, record)
-        registry, reader = a_reader(hub)
+    def wire(
+        record: list[dict[str, Any]],
+        *,
+        local: tuple[ConfigProblem, ...] | None = None,
+        driver: InMemorySessionDriver | None = None,
+        store: InMemoryAgentSessionStore | None = None,
+        hub: Path | None = None,
+    ) -> tuple[Rig, Path]:
+        hub = hub or a_hub(tmp_path, record)
+        registry, reader = a_reader(hub, local=local)
         credentials = HubCredentials(registry=registry, reader=reader, running_version=RUNNING)
-        rig = build_rig(hidden_environment=credentials.names)
-        investigations = ScenarioInvestigations(
-            hubs=lambda: [("demo", str(hub))], control=rig.control, credentials=credentials
+        restrictions = InvestigationRestrictions(credentials)
+        rig = build_rig(
+            hidden_environment=credentials.names,
+            restriction_of=restrictions.restriction_of,
+            driver=driver,
+            store=store,
         )
+        investigations = ScenarioInvestigations(control=rig.control, restrictions=restrictions)
         wired.wire(agent_sessions=rig.control, scenario_investigations=investigations)
         return rig, hub
 
@@ -162,3 +184,163 @@ def test_sends_message_when_investigation_chat(wired: Any, investigation: Any) -
     assert sent.status_code == 202
     texts = [call.args[0] for call in rig.driver.calls if call.method == "send"]
     assert texts[-1] == "Look at the order's queue first."
+
+
+LINK = Path(".agent-runs", "workflows", RUN, "investigation-1.session")
+UNKNOWN_SESSION = "01929a4e-7a11-7c00-8a00-00000000beef"
+
+
+def _started(response: Any) -> tuple[int, bool]:
+    return response.status_code, response.json().get("started")
+
+
+@pytest.mark.parametrize("content", ["", f"{UNKNOWN_SESSION}\n"])
+def test_takes_link_over_when_investigation_link_empty_or_unknown(
+    wired: Any, investigation: Any, tmp_path: Path, *, content: str
+) -> None:
+    hub = a_hub(tmp_path, a_record())
+    (hub / LINK).write_text(content, encoding="utf-8")
+    rig, _hub = investigation(a_record(), hub=hub)
+
+    response = wired.client.post(ROUTE, json={}, headers=_origin(wired))
+
+    assert _started(response) == (201, True)
+    assert response.json()["agent_session_id"] != UNKNOWN_SESSION
+    assert (hub / LINK).read_text(encoding="utf-8").strip() == response.json()["agent_session_id"]
+    assert len(_starts(rig)) == 1
+
+
+class _RefusingDriver(InMemorySessionDriver):
+    async def start(self, spec: StartSpec) -> Any:  # noqa: ARG002 -- the port's signature
+        raise SessionsUnavailableError("claude is not installed")
+
+
+def test_removes_link_when_investigation_start_fails(wired: Any, investigation: Any) -> None:
+    _rig, hub = investigation(a_record(), driver=_RefusingDriver())
+
+    response = wired.client.post(ROUTE, json={}, headers=_origin(wired))
+
+    assert response.status_code == 503
+    assert not (hub / LINK).exists()
+
+
+def test_stops_session_when_investigation_link_write_fails(
+    wired: Any, investigation: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rig, hub = investigation(a_record())
+
+    def refuse(_link: Path, _session_id: str) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("agent_hub.api.scenario_investigation._write_link", refuse)
+
+    response = wired.client.post(ROUTE, json={}, headers=_origin(wired))
+
+    assert response.status_code == 500
+    assert [call.method for call in rig.driver.calls].count("close") == 1
+    (session,) = rig.store.list(project=None, status=None, kind="local")
+    assert session.status == "ended"
+    assert (hub / LINK).exists()
+
+
+def test_returns_409_conflict_when_investigation_hub_local_invalid(
+    wired: Any, investigation: Any
+) -> None:
+    problem = ConfigProblem(path="hub.local.json", message="not valid JSON")
+    rig, hub = investigation(a_record(), local=(problem,))
+
+    response = wired.client.post(ROUTE, json={}, headers=_origin(wired))
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "hub_local_invalid"
+    assert "hub.local.json" in response.json()["detail"]
+    assert _starts(rig) == []
+    assert not (hub / LINK).exists()
+
+
+def test_returns_422_record_problem_when_investigation_record_too_large_or_broken(
+    wired: Any, investigation: Any, tmp_path: Path
+) -> None:
+    rig, hub = investigation(a_record())
+    records = hub / ".agent-runs" / "workflows" / RUN / "records.jsonl"
+    # The API's bound on a scenario run's record: 8 MiB.
+    records.write_bytes(b" " * (8 * 1024 * 1024) + b"\n")
+    too_large = wired.client.post(ROUTE, json={}, headers=_origin(wired))
+    records.write_text("not one JSON object\n{}\n", encoding="utf-8")
+    broken = wired.client.post(ROUTE, json={}, headers=_origin(wired))
+
+    assert (too_large.status_code, too_large.json()["code"]) == (422, "record_too_large")
+    assert (broken.status_code, broken.json()["code"]) == (422, "record_unreadable")
+    assert _starts(rig) == []
+
+
+def test_denies_other_tools_when_investigation_session_policy_built(
+    wired: Any, investigation: Any
+) -> None:
+    rig, _hub = investigation(a_record())
+    wired.client.post(ROUTE, json={}, headers=_origin(wired))
+    (spec,) = _starts(rig)
+    assert spec.tool_policy is not None
+
+    for tool in ("Edit", "MultiEdit", "WebFetch", "Task", "NotebookEdit", "mcp__demo__query"):
+        assert not tool_verdict(spec.tool_policy, tool, {"file_path": "README.md"}).allowed
+
+
+def _restart(rig: Rig, session_id: str) -> tuple[InMemorySessionDriver, InMemoryAgentSessionStore]:
+    """The store as a restarted server finds it (the session ended ``server_stopped``) and a
+    driver that still lists its Claude conversation."""
+    store = rig.store
+    store.end_unfinished(rig.clock(), EndReason.SERVER_STOPPED)
+    claude = store.get(session_id).claude_session_id
+    assert claude is not None
+    past = PastSession(session_id=claude, last_activity=rig.clock(), cwd="/hubs/demo-hub")
+    return InMemorySessionDriver(past_sessions=[past]), store
+
+
+def test_keeps_restriction_when_investigation_session_reopened_after_restart(
+    wired: Any, investigation: Any
+) -> None:
+    first, hub = investigation(a_record())
+    session_id = wired.client.post(ROUTE, json={}, headers=_origin(wired)).json()[
+        "agent_session_id"
+    ]
+    driver, store = _restart(first, session_id)
+    fresh, _hub = investigation(a_record(), driver=driver, store=store, hub=hub)
+
+    sent = wired.client.post(
+        f"/api/v1/agent-sessions/{session_id}/messages",
+        json={"text": "Go on."},
+        headers=_origin(wired),
+    )
+
+    assert sent.status_code == 202
+    (spec,) = _starts(fresh)
+    assert spec.resume is not None
+    assert spec.tool_policy is not None
+    assert spec.tool_policy.run_id == RUN
+    assert spec.system_prompt is not None
+    assert f"./hub scenario propose --run {RUN}" in spec.system_prompt
+    assert "DEMO_DB_URL" in spec.hidden_environment.env
+
+
+def test_refuses_reopen_when_investigation_restriction_cannot_be_rebuilt(
+    wired: Any, investigation: Any
+) -> None:
+    first, hub = investigation(a_record())
+    session_id = wired.client.post(ROUTE, json={}, headers=_origin(wired)).json()[
+        "agent_session_id"
+    ]
+    driver, store = _restart(first, session_id)
+    records = hub / ".agent-runs" / "workflows" / RUN / "records.jsonl"
+    records.write_text("not one JSON object\n{}\n", encoding="utf-8")
+    fresh, _hub = investigation(a_record(), driver=driver, store=store, hub=hub)
+
+    sent = wired.client.post(
+        f"/api/v1/agent-sessions/{session_id}/messages",
+        json={"text": "Go on."},
+        headers=_origin(wired),
+    )
+
+    assert sent.status_code == 409
+    assert sent.json()["type"] == "urn:agent-hub:problem:agent-session-restriction-unavailable"
+    assert _starts(fresh) == []

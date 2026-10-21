@@ -1,5 +1,5 @@
-"""The investigation session of a paused scenario run (P-7, AM-2, AM-9, AM-13; docs/design/
-scenarios.md § Investigation, answers and workarounds).
+"""The investigation session of a paused scenario run (P-7, AM-2, AM-9, AM-13, E-13;
+docs/design/scenarios.md § Investigation, answers and workarounds).
 
 ``ScenarioInvestigations.open`` serves ``POST /scenario-runs/{run_id}/investigation``. It finds
 the run's folder, ``<hub>/.agent-runs/workflows/<run>/``, in a registered hub (never through a
@@ -7,17 +7,24 @@ link), reads its ``records.jsonl`` (at most ``MAX_RECORD_BYTES``, a torn last li
 folds it with core's ``fold_records``: the run must be a scenario run paused at an open,
 unanswered investigation, which only its record says (E-10), else 409 ``not_paused``. It then
 starts one driven session in the hub, mode ``default``, with the investigation's system prompt,
-its tool policy (P-17: the hub, ``actions/`` and every declared env file's real path) and,
-like every driven session, without the hub's declared credentials. Chat goes through
+its tool policy (P-17, E-13: the workspace, ``actions/`` and every declared env file's real
+path) and, like every driven session, without the hub's declared credentials. Chat goes through
 ``POST /agent-sessions/{id}/messages`` (AM-9).
 
 One session per investigation: the link file ``investigation-<n>.session`` in the run folder
 is created ``O_CREAT|O_EXCL`` (owner-only, never through a link) before the session starts and
 gets its id after, all under one lock, so a second call answers the same session. A start that
-fails removes the file; an empty one (a server stopped mid-start) is taken over by the next
-call. When ``hub.local.json`` cannot be read, the env files it may declare are unknown, so no
-session starts (409 ``hub_local_invalid``). No env file is opened here: the session's own
+fails removes the file; a link that cannot be written stops the session it would have named.
+A link that is empty (a server stopped mid-start), names a session the store does not know, or
+names one that ended and cannot be resumed is taken over by the next call. When
+``hub.local.json`` cannot be read, the env files it may declare are unknown, so no session
+starts (409 ``hub_local_invalid``). No env file is opened here: the session's own
 ``hub action run --run`` loads it in the action's process (P-24).
+
+``InvestigationRestrictions.restriction_of`` is the control's port for a reopen (E-13): it finds
+the link naming the session in its project's runs and rebuilds the tool policy and the prompt
+from that run's record and a fresh read of the hub's config; a session a link names whose
+restriction cannot be rebuilt is not reopened (``SessionRestrictionError``).
 """
 
 import asyncio
@@ -25,13 +32,20 @@ import contextlib
 import errno
 import os
 import re
-from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Final
 
 from agent_hub.api.agent_session_runtime import HubCredentials
-from agent_hub.core.agent_sessions.agent_session import UUID_PATTERN, CreateAgentSession
+from agent_hub.core.agent_sessions.agent_session import (
+    UUID_PATTERN,
+    AgentSession,
+    AgentSessionStatus,
+    CreateAgentSession,
+    EndReason,
+)
 from agent_hub.core.agent_sessions.control import AgentSessionCommands, SessionRestriction
+from agent_hub.core.agent_sessions.errors import HubLocalInvalidError, SessionRestrictionError
+from agent_hub.core.errors import AgentHubError
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.readmodels.view_types import ViewModel
@@ -49,11 +63,13 @@ RECORDS: Final = "records.jsonl"
 # The API's bound on a scenario run's record (docs/design/scenarios.md § Events and bounds).
 MAX_RECORD_BYTES: Final = 8 << 20
 SCENARIO_KIND: Final = "scenario"
+LINK_PATTERN: Final = re.compile(r"investigation-([1-9][0-9]{0,5})\.session")
 _LINK_BYTES: Final = 128
 _OPEN_NEW: Final = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
 _OPEN_READ: Final = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
 _OPEN_WRITE: Final = os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC
 _SESSION_ID = re.compile(UUID_PATTERN)
+_ENDED: Final = frozenset({AgentSessionStatus.ENDED, AgentSessionStatus.FAILED})
 NOT_PAUSED: Final = "the scenario run is not paused at an open investigation"
 
 
@@ -69,31 +85,104 @@ class InvestigationSession(ViewModel):
     started: bool
 
 
-type HubPaths = Callable[[], Iterable[tuple[str, str]]]
+class InvestigationRestrictions:
+    """The tool policy and prompt of an investigation session, built from its run's record and
+    the hub's config as read now (``credentials``, which also lists the projects' hubs)."""
+
+    def __init__(self, credentials: HubCredentials) -> None:
+        self._credentials = credentials
+
+    def run_folder(self, run_id: str) -> tuple[str, str, Path]:
+        """The project, hub and folder of scenario run ``run_id`` (``EntityNotFoundError``)."""
+        if RUN_ID_PATTERN.fullmatch(run_id):
+            for project, hub in self._credentials.project_hubs():
+                folder = Path(hub) / RUN_FOLDERS / run_id
+                if folder.is_dir() and not folder.is_symlink():
+                    return project, hub, folder
+        raise EntityNotFoundError(entity="scenario run", entity_id=run_id)
+
+    def for_run(
+        self, *, project: str, hub: str, records: list[dict[str, JsonValue]], step: str
+    ) -> SessionRestriction:
+        """The restriction of an investigation of the run ``records`` describe, after ``step``;
+        ``HubLocalInvalidError`` when the hub's declared env files cannot all be read."""
+        declared = self._credentials.of_hub(hub)
+        if not declared.complete:
+            raise HubLocalInvalidError(project)
+        header = records[0]
+        run_id = str(header.get("run"))
+        return SessionRestriction(
+            tool_policy=ToolPolicy.of(hub=hub, env_files=declared.env_files, run_id=run_id),
+            system_prompt=investigation_prompt(
+                run_id=run_id,
+                scenario=str(header.get("scenario")),
+                environment=str(header.get("environment")),
+                step=step,
+            ),
+        )
+
+    def restriction_of(self, session: AgentSession) -> SessionRestriction | None:
+        """The restriction ``session`` is held to when a link names it, else None;
+        ``SessionRestrictionError`` when a link names it and it cannot be rebuilt."""
+        try:
+            found = self._linked(session)
+        except OSError as error:
+            reason = "the scenario runs cannot be read to find the session's investigation"
+            raise SessionRestrictionError(session.id, reason) from error
+        if found is None:
+            return None
+        hub, folder, number = found
+        try:
+            records = _read_records(folder)
+            investigation = next(
+                item for item in fold_records(records).investigations if item.number == number
+            )
+            if records[0].get("kind") != SCENARIO_KIND:
+                raise SessionRestrictionError(session.id, "the run is not a scenario run")
+            return self.for_run(
+                project=session.project, hub=hub, records=records, step=investigation.step
+            )
+        except (AgentHubError, OSError, StopIteration, IndexError) as error:
+            reason = "the investigation session's restriction cannot be rebuilt"
+            raise SessionRestrictionError(session.id, reason) from error
+
+    def _linked(self, session: AgentSession) -> tuple[str, Path, int] | None:
+        """The hub, run folder and investigation number of the link naming ``session``."""
+        for project, hub in self._credentials.project_hubs():
+            runs = Path(hub) / RUN_FOLDERS
+            if project != session.project or not runs.is_dir() or runs.is_symlink():
+                continue
+            for folder in sorted(runs.iterdir()):
+                if not folder.is_dir() or folder.is_symlink():
+                    continue
+                for link in sorted(folder.iterdir()):
+                    named = LINK_PATTERN.fullmatch(link.name)
+                    if named and _linked_id(link) == session.id:
+                        return hub, folder, int(named.group(1))
+        return None
 
 
 class ScenarioInvestigations:
-    """``POST /scenario-runs/{run_id}/investigation``; see the module docstring. ``hubs``
-    lists each project's hub folder; ``control`` starts the session; ``credentials`` reads what
-    each hub declares."""
+    """``POST /scenario-runs/{run_id}/investigation``; see the module docstring. ``control``
+    starts (and answers about) the session; ``restrictions`` finds the run and builds its
+    session's restriction."""
 
     def __init__(
-        self, *, hubs: HubPaths, control: AgentSessionCommands, credentials: HubCredentials
+        self, *, control: AgentSessionCommands, restrictions: InvestigationRestrictions
     ) -> None:
-        self._hubs = hubs
         self._control = control
-        self._credentials = credentials
+        self._restrictions = restrictions
         self._lock = asyncio.Lock()
 
     async def open(self, run_id: str) -> InvestigationSession:
         """The investigation session of ``run_id``, started on the first call."""
-        project, hub, folder = await asyncio.to_thread(self._run_folder, run_id)
+        project, hub, folder = await asyncio.to_thread(self._restrictions.run_folder, run_id)
         async with self._lock:
             records = await asyncio.to_thread(_read_records, folder)
             pending = _open_investigation(records, run_id)
             link = folder / f"investigation-{pending.number}.session"
             existing = await asyncio.to_thread(_claim, link, run_id)
-            if existing is not None:
+            if existing is not None and await self._usable(existing):
                 return _view(
                     run_id=run_id,
                     project=project,
@@ -109,18 +198,33 @@ class ScenarioInvestigations:
                 with contextlib.suppress(OSError):
                     link.unlink()
                 raise
-            await asyncio.to_thread(_write_link, link, session_id)
+            try:
+                await asyncio.to_thread(_write_link, link, session_id)
+            except BaseException:
+                # The session exists but nothing names it: stop it, keep the link to take over.
+                with contextlib.suppress(Exception):
+                    await self._control.close(session_id)
+                raise
         return _view(
             run_id=run_id, project=project, pending=pending, session_id=session_id, started=True
         )
 
-    def _run_folder(self, run_id: str) -> tuple[str, str, Path]:
-        if RUN_ID_PATTERN.fullmatch(run_id):
-            for project, hub in self._hubs():
-                folder = Path(hub) / RUN_FOLDERS / run_id
-                if folder.is_dir() and not folder.is_symlink():
-                    return project, hub, folder
-        raise EntityNotFoundError(entity="scenario run", entity_id=run_id)
+    async def _usable(self, session_id: str) -> bool:
+        """Whether the linked session is known and live, or ended and still resumable."""
+        try:
+            session = await self._control.snapshot(session_id)
+        except EntityNotFoundError:
+            return False
+        if session.status not in _ENDED:
+            return True
+        claude = session.claude_session_id
+        if claude is None or session.end_reason == EndReason.LOG_FULL:
+            return False
+        try:
+            listed = await self._control.resumable(session.project, session.workdir_id)
+        except AgentHubError:
+            return False
+        return any(past.session_id == claude for past in listed.items)
 
     async def _start(
         self,
@@ -131,17 +235,10 @@ class ScenarioInvestigations:
         records: list[dict[str, JsonValue]],
         pending: InvestigationView,
     ) -> str:
-        declared = await asyncio.to_thread(self._credentials.of_hub, hub)
-        if not declared.complete:
-            reason = "hub.local.json cannot be read, so its env files are unknown; fix it first"
-            raise RunConflictError(code="hub_local_invalid", reason=reason, run_id=run_id)
-        header = records[0]
-        policy = ToolPolicy.of(hub=hub, env_files=declared.env_files, run_id=run_id)
-        prompt = investigation_prompt(
-            run_id=run_id,
-            scenario=str(header.get("scenario")),
-            environment=str(header.get("environment")),
-            step=pending.step,
+        restriction = await asyncio.to_thread(
+            lambda: self._restrictions.for_run(
+                project=project, hub=hub, records=records, step=pending.step
+            )
         )
         listed = await self._control.workdirs(project)
         workdir = next((item for item in listed.items if item.kind == "hub"), None)
@@ -155,7 +252,6 @@ class ScenarioInvestigations:
             prompt=f"Investigate why step {pending.step} diverged{failure} in scenario run"
             f" {run_id}, then record your proposal.",
         )
-        restriction = SessionRestriction(tool_policy=policy, system_prompt=prompt)
         session = await self._control.create(request, restriction=restriction)
         return session.id
 
@@ -198,7 +294,7 @@ def _open_investigation(records: list[dict[str, JsonValue]], run_id: str) -> Inv
 
 
 def _claim(link: Path, run_id: str) -> str | None:
-    """The session id ``link`` holds; None when this call made it (or found it empty)."""
+    """The session id ``link`` holds; None when this call made it (or found no id in it)."""
     try:
         os.close(os.open(link, _OPEN_NEW, 0o600))
     except FileExistsError:
@@ -206,15 +302,28 @@ def _claim(link: Path, run_id: str) -> str | None:
     else:
         return None
     try:
-        descriptor = os.open(link, _OPEN_READ)
+        return _read_link(link)
     except OSError as error:
         if error.errno != errno.ELOOP:
             raise
         reason = "the investigation's session file is a link"
         raise RunConflictError(code="link_in_path", reason=reason, run_id=run_id) from None
+
+
+def _read_link(link: Path) -> str | None:
+    """The session id a link file holds, never through a link; None when it holds none."""
+    descriptor = os.open(link, _OPEN_READ)
     with os.fdopen(descriptor, "rb") as file:
         text = file.read(_LINK_BYTES).decode("ascii", errors="replace").strip()
     return text if _SESSION_ID.fullmatch(text) else None
+
+
+def _linked_id(link: Path) -> str | None:
+    """The session id a link file names; None when it cannot be read (a link included)."""
+    try:
+        return _read_link(link)
+    except OSError:
+        return None
 
 
 def _write_link(link: Path, session_id: str) -> None:
