@@ -223,12 +223,11 @@ class HubFilesReadModels:
         )
 
     def list_features(self, scope: Scope) -> Page[FeatureView]:
-        """Feature folders of every scoped project."""
+        """Feature folders of every scoped project, read at one time."""
+        now = self._clock()
         return _page(
             tuple(
-                feature_view(
-                    folder, project=found.name, now=self._clock(), read=self._cached(found, folder)
-                )
+                feature_view(folder, project=found.name, now=now, read=self._cached(found, folder))
                 for found in self._scoped(scope)
                 for folder in self._reader.feature_folders(found.path)
             )

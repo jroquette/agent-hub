@@ -24,7 +24,7 @@ none. Withdrawn ACs are left out of every count.
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Final, Literal, cast, get_args
 
 from agent_hub.core.brain.brain_note import FrontmatterValue
@@ -248,12 +248,16 @@ def ranks_newer(record: EvalRecord, *, delivery: str, at: datetime) -> bool:
 
 
 def signoff_block(record: EvalRecord, *, now: datetime) -> Literal["undated"] | datetime | None:
-    """Why no owner sign-off dated ``now`` would rank newer than ``record`` (A9, A15): ``undated``
-    when it has no usable ``evaluated_at`` (a legacy ``eval.md`` never blocks one), its instant
-    when it is dated at or after ``now``; None when a sign-off would rank newer."""
-    if ranks_newer(record, delivery=SIGNOFF_DELIVERY, at=now):
+    """Why no owner sign-off dated ``now`` (to the second, as the write dates it) would rank newer
+    than ``record`` (A9, A15): ``undated`` when it has no usable ``evaluated_at`` (a legacy
+    ``eval.md`` never blocks one), else, when it is dated at or after ``now``, the whole minute
+    from which a sign-off can follow it (its instant rounded up); None when one would."""
+    if ranks_newer(record, delivery=SIGNOFF_DELIVERY, at=now.replace(microsecond=0)):
         return None
-    return _instant(record.evaluated_at) or "undated"
+    instant = _instant(record.evaluated_at)
+    if instant is None:
+        return "undated"
+    return (instant + timedelta(minutes=1, microseconds=-1)).replace(second=0, microsecond=0)
 
 
 def _whole_feature(record: EvalRecord) -> bool:
