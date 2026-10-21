@@ -1,8 +1,8 @@
 # Features
 
-**Phase:** P2 (read-only) · **Routes:** `/features`, `/features/{project}/{slug}` (params `doc=spec|plan|research|eval|issues` (as built: `tickets`, see Departures), `ac=AC-48.21`, `phase=`; as built also `eval=`, `tickets=table`, `ticket=<id>` and `step=<step>`, see Departures (AGH-326, AGH-330)) · **Answers:** "Where is each feature on the golden path, and is it really done?"
+**Phase:** P2 (read-only) · **Routes:** `/features`, `/features/new` (AGH-420, Screen 3), `/features/{project}/{slug}` (params `doc=spec|plan|research|eval|issues` (as built: `tickets`, see Departures), `ac=AC-48.21`, `phase=`; as built also `eval=`, `tickets=table`, `ticket=<id>` and `step=<step>`, see Departures (AGH-326, AGH-330)) · **Answers:** "Where is each feature on the golden path, and is it really done?"
 
-This section holds two screens: the **Features list** and **Feature detail**. A feature is a folder `brain/features/<slug>/` in the hub with `spec.md`, `research.md`, `plan.md`, `features.json`, `issues.md` and `eval.md`. The app only reads these files; editing a feature record stays a human act in a hub PR (principle 2).
+This section holds three screens: the **Features list**, **Feature detail** and **New feature** (AGH-420). A feature is a folder `brain/features/<slug>/` in the hub with `spec.md`, `research.md`, `plan.md`, `features.json`, `issues.md` and `eval.md`. The app only reads these files; editing a feature record stays a human act in a hub PR (principle 2).
 
 ## Departures (AGH-136, ticket planning)
 
@@ -722,6 +722,132 @@ Expanded row: full Given/When/Then, evidence text, "Last verified by hub-workflo
 | Read, copy commands, open evidence, open in GitHub | P2 | No | None |
 | Mark owner step done | Not in the app | n/a | The owner records it in eval.md / features.json through a hub PR (principle 2: the app does not edit the brain) |
 | Start run on an issue of this feature | P4 | Dry-run preview first | Same flow as Run detail "Start run on an issue" |
+
+## Screen 3: New feature (AGH-420)
+
+**Route:** `/features/new`, from the list's "New feature" button · **Phase:** P2 (driven sessions,
+[ADR 0031](../../../adr/0031-driving-claude-code-sessions-from-the-app.md)) · **Answers:** "What do I want built, and how do
+I hand it to Claude?"
+
+### Purpose and primary user
+
+The project owner with an idea, and often a screenshot, a PDF or a CSV: say what to build, attach the material, press
+one button. The one action is **Start with Claude**; the issue, slug and size are optional and look it. The screen
+writes no file: it starts a Discuss conversation in the project's hub folder (`useStartDiscussion`, AC-419.15) whose
+first message asks Claude to run the hub's `feature` skill from step 0. The records stay the skill's: the brief goes
+into the tracker issue's description (step 0), then `brain/features/<slug>/spec.md` and its summary, each shown to the
+owner before it is written; a `brief.md` the agent writes in the feature folder is one of the folder's record files
+([feature-records.md](../../feature-records.md) "`brief.md` and `ux-*.md`"), so the feature shows on the list from it,
+its Spec step "Brief only · spec not written".
+
+### Layout (1440 px, sidebar expanded, Discuss panel closed)
+
+```
+Features › New
+New feature                                                                     ( ▦ tipple  ⌄ )
+Describe what to build and attach what Claude should see.
+
+What do you want to build?                                              ┌ Options ────────── All optional ┐
+╭──────────────────────────────────────────────────────────────────╮    │ Start from an issue             │
+│ [img] [▤ client-brief.pdf 1.2 MB ⨯]              (only with any) │    │ [ None                        ] │
+│ Describe the feature: who it is for, what they should be able    │    │ Like TIP-1600. Claude reads its │
+│ to do, and why.                                  (placeholder)   │    │ brief first.                    │
+│                                                                  │    │ Slug                            │
+│ [+ Attach]  Paste or drop images, PDFs and text files            │    │ [ Claude picks one            ] │
+│                                Ctrl/⌘ Enter [▸ Start with Claude] │   │ Like orders-csv-export.         │
+│ ⓧ the refusal or the failed start, when there is one  (err row)  │    │ Size                            │
+╰──────────────────────────────────────────────────────────────────╯    │ [ Let Claude ask            ⌄ ] │
+                       Write at least a sentence, or give an issue.     │ Claude proposes a size and asks │
+                                                                        │ you.                            │
+What happens next                                                       └─────────────────────────────────┘
+(1) Claude reads your brief…  (2) It asks one question…  (3) It drafts…
+```
+
+The toolbar is one row at the bottom of the box: Attach and the drop note on the left, the key hint and Start on the
+right (the drawing wraps only for its width). The box is a grid of its own (`files`, `text`, `plus set . stop send`,
+`err`) inside the chat composer's frame, focus ring and drop highlight. The Options card is sticky. At 1100 px or
+less, or when `.ft-new` is narrower than 900 px (the Discuss panel docked), one column: brief, Options (its three
+fields side by side as the card allows, `auto-fit` of 200 px), What happens next. Below 640 px of box width the drop
+note hides, below 480 px the key hint; below 560 px of `.ft-new` the project pill drops under the title.
+
+### Components
+
+| Piece | Decision |
+|---|---|
+| `.as-composer` frame, `as-composer-drop`, `AttachmentList`, `useMessageAttachments` | reuse (the chat's, AGH-419) |
+| `useAttachmentDrop`, `AttachButton` (`components/AttachmentList.tsx`), `useAutoGrow` (`lib/useAutoGrow.ts`) | new, shared: the chat composer's paste/drop/picker handlers and its auto-grow, moved out so the chat and this screen use one copy |
+| `useStartDiscussion`, `rememberDiscussSession`, `discussPrompt`, `useDiscussTarget` | reuse (the Discuss panel's) |
+| Project pill: `.as-pill` + `.as-pill-select` + `.as-pill-value` + `.as-pill-caret` | reuse; `.as-pill-value` makes any pill as wide as its value (the native select lies invisible over it) |
+| Options: `.ah-input` fields; Size a `select.ah-input` with a `chevron-down` caret (`.ft-new-select`) | reuse, one local extension |
+| `Button` primary, `Kbd`, `Icon circle-x`, `Banner warning boxed`, `Skeleton`, `ah-card`, `EmptyState` | reuse |
+| `.ah-input.ah-mono` (`styles/bundle.css`) | fix: `.ah-input { font: inherit }` no longer drops a code field's mono face |
+
+### Content
+
+| Element | Copy |
+|---|---|
+| Lead | "Describe what to build and attach what Claude should see." |
+| Brief label / placeholder | "What do you want to build?" / "Describe the feature: who it is for, what they should be able to do, and why." · with images "Say what to build, and what Claude should see in the image." · with files "Say what to build, and what Claude should take from the file." |
+| Toolbar | "Attach" (title "Attach images, PDFs or text files up to 5 MB (or paste or drop them in the box)") · "Paste or drop images, PDFs and text files" · `Ctrl` / `⌘` `Enter` · "Start with Claude", pending "Starting…" |
+| Status line | ready "Opens the Discuss panel. Claude asks before writing any file." · pending "Starting the conversation in the hub folder…" · not ready, the first that holds: the unavailable reason's title ("Session control is locked in this browser.") · "Wait for the files to be read." · "Add a sentence on what to build with the attachments." · "Write at least a sentence, or give an issue." · "Fix the issue id in Options." · "Fix the slug in Options." · the hub folder check ("Looking for the hub folder…") |
+| Options | "Options" / "All optional" · "Start from an issue", placeholder "None", hint "Like TIP-1600. Claude reads its brief first.", error "An issue id, like TIP-1600." · "Slug", placeholder "Claude picks one", hint "Like orders-csv-export.", errors "Lowercase letters, digits and dashes, starting with a letter." / "A feature with this slug already exists." · "Size": "Let Claude ask", "Spike", "Bounded", "Architectural", with the chosen one's hint |
+| Sent card | "Sent to Claude" · the brief and its attachments · "Issue: … · Slug: … · Size: …" · "Claude is working on the brief with you in the panel." with "Open the panel" and "Open the full chat" · once found "`<slug>` has its record." and "Open `<slug>`" · "Start another feature" |
+
+### States
+
+| State | What shows |
+|---|---|
+| Loading | A pill-shaped skeleton in the header; the form's two blocks (the box's radius, the card) |
+| No project | `EmptyState` "No project yet" · "Register a hub to start features in it." · "Open Welcome" |
+| Empty form | Instruction placeholder, Start `aria-disabled`, "Write at least a sentence, or give an issue." |
+| Sessions unavailable | `Banner warning` above the box with the reason and its fix; the status line says the reason's title; the fields stay editable |
+| Error | A refused file or a failed start in the box's last row (`role="alert"`, `circle-x`) |
+| Starting | "Starting…" (`aria-busy`), the pending status line; nothing re-sends |
+| Sent | The sent card, polling the records every 3 s until the feature appears |
+
+### Acceptance criteria (AGH-420)
+
+- **AC-420.1** Given the Features list, when it opens, then a primary "New feature" button sits on the title row and
+  opens `/features/new`; with no feature yet, the empty state says a feature can be started here with New feature.
+- **AC-420.2** Given `/features/new`, when it opens, then it shows the breadcrumb "Features › New", the title "New
+  feature" and the one-line lead; with more than one project, the project is a pill (folder icon, name, caret) on the
+  title row, as wide as the name, its native select (named "Project") covering it; changing it gives the form of that
+  project (the brief's draft is kept per project; issue, slug and size reset); with no project, the "No project yet"
+  empty state.
+- **AC-420.3** Given the brief box, when images, PDFs or UTF-8 text files are pasted, dropped anywhere on the box or
+  picked with Attach, then they join the brief as the chat's thumbnails and chips above the text, with the chat's
+  limits and refusal sentences, and the placeholder turns to the image or file variant; a drag that carries no file
+  (selected text) is left to the browser; a press on the box's empty space puts the caret in the text.
+- **AC-420.4** Given the form, when Start cannot run yet, then Start stays focusable with `aria-disabled`, and one
+  status line under the box, right-aligned and `aria-live`, gives the first reason that holds (sessions unavailable by
+  its title, files being read, no sentence with attachments, no idea of 10 characters and no valid issue, a bad issue
+  id, a bad or taken slug, the hub folder check); pressing Start or Ctrl/⌘+Enter then sends nothing and moves focus to
+  the field at fault (the brief, the issue or the slug).
+- **AC-420.5** Given the Options card, when it shows, then Issue, Slug and Size have one field shape (label, one 32 px
+  field, one hint) in that order: the issue upper-cased and checked as `KEY-123`, the slug checked as kebab case and
+  against the project's features, Size a select defaulting to "Let Claude ask" with the chosen size's hint; the empty
+  fields say their default ("None", "Claude picks one") in the sans face while typed ids show in mono.
+- **AC-420.6** Given a ready form, when Start is pressed or Ctrl/⌘+Enter is typed in any field (Enter in a one-line
+  field does nothing, an IME composition never starts), then one conversation starts in the project's hub folder with
+  the message naming only the filled fields ("Tracker issue: … (read its brief first).", "Slug: …", "Size: …", then the
+  idea), the brief asking Claude to follow the hub's `feature` skill from step 0, one question at a time, showing each
+  record before writing it, and the images and files attached; the Discuss panel opens on that conversation (kept for
+  its target) and the draft is cleared.
+- **AC-420.7** Given a started request, when the sent card shows, then it lists the brief, its attachments and the
+  options, says Claude works with the owner in the panel ("Open the panel" while it is closed, focus back on it when
+  the panel closes, and "Open the full chat"), rereads the features every 3 s and, once the new feature appears (the
+  given slug, else the first slug not there at the start), links to it; "Start another feature" closes the panel and
+  gives an empty form with the focus in the brief.
+- **AC-420.8** Given a file refused earlier, when Start is pressed or that attachment is removed, then the refusal
+  clears, and a failed start always shows in the box's error row (the problem's detail or title, else "Could not
+  start the conversation. Try again."), both lines when both hold; everything typed and attached stays.
+- **AC-420.9** Given the screen at 1440 px, then the brief and its status line sit left and the sticky Options card
+  right, What happens next under the brief; at 1100 px or less, or with `.ft-new` under 900 px (the Discuss panel
+  docked), one column in the order brief, Options, What happens next; the drop note hides under 640 px of box and the
+  key hint under 480 px.
+- **AC-420.10** Given the chat composer and this screen, then both use the same `useAttachmentDrop`, `AttachButton`
+  and `useAutoGrow` (the brief grows to half the viewport, the chat to 40 %), so paste, drop and the picker behave the
+  same in both.
 
 ## UX principles applied
 

@@ -1352,6 +1352,10 @@ pre {
   font: inherit;
   min-width: 0;
 }
+/* `font: inherit` above would undo `.ah-mono`: a code field keeps its mono face. */
+.ah-input.ah-mono {
+  font-family: var(--font-mono);
+}
 .ah-input::placeholder {
   color: var(--text-subtle);
 }
