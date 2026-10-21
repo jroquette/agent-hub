@@ -73,14 +73,29 @@ describe("NewFeatureScreen", () => {
     renderNew();
 
     const start = await ready();
-    expect(start).toBeDisabled();
+    expect(start).toHaveAttribute("aria-disabled", "true");
     expect(
       await screen.findByText("Write at least a sentence, or give an issue."),
     ).toBeInTheDocument();
     await user.type(screen.getByLabelText("Start from an issue"), "agh-12");
     await waitFor(() => {
-      expect(start).toBeEnabled();
+      expect(start).not.toHaveAttribute("aria-disabled");
     });
+  });
+
+  it("sends focus to the field at fault when Start is pressed before it is ready", async () => {
+    const user = userEvent.setup();
+    renderNew();
+
+    const idea = await screen.findByLabelText("What do you want to build?");
+    await user.click(await ready());
+    expect(idea).toHaveFocus();
+
+    await user.type(idea, IDEA);
+    await user.type(screen.getByLabelText("Start from an issue"), "nope");
+    await user.click(screen.getByRole("button", { name: "Start with Claude" }));
+    expect(screen.getByLabelText("Start from an issue")).toHaveFocus();
+    expect(screen.getByText("Fix the issue id in Options.")).toBeInTheDocument();
   });
 
   it("refuses a slug that already names a feature", async () => {
@@ -91,7 +106,10 @@ describe("NewFeatureScreen", () => {
     await user.type(screen.getByLabelText("Slug"), "control-plane");
 
     expect(await screen.findByText("A feature with this slug already exists.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Start with Claude" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Start with Claude" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
   });
 
   it("starts the conversation with the brief and its attachments, then opens the panel on it", async () => {
@@ -109,7 +127,7 @@ describe("NewFeatureScreen", () => {
     await user.type(screen.getByLabelText("Slug"), "orders-csv");
     await user.click(screen.getByRole("radio", { name: "Bounded" }));
     await waitFor(async () => {
-      expect(await ready()).toBeEnabled();
+      expect(await ready()).not.toHaveAttribute("aria-disabled");
     });
     await user.click(screen.getByRole("button", { name: "Start with Claude" }));
 
@@ -151,7 +169,7 @@ describe("NewFeatureScreen", () => {
     const idea = await screen.findByLabelText("What do you want to build?");
     await user.type(idea, IDEA);
     await waitFor(async () => {
-      expect(await ready()).toBeEnabled();
+      expect(await ready()).not.toHaveAttribute("aria-disabled");
     });
     await user.keyboard("{Control>}{Enter}{/Control}");
 
@@ -174,7 +192,7 @@ describe("NewFeatureScreen", () => {
 
     await user.type(await screen.findByLabelText("What do you want to build?"), IDEA);
     await waitFor(async () => {
-      expect(await ready()).toBeEnabled();
+      expect(await ready()).not.toHaveAttribute("aria-disabled");
     });
     await user.click(screen.getByRole("button", { name: "Start with Claude" }));
     expect(
@@ -217,7 +235,7 @@ describe("NewFeatureScreen", () => {
 
     await user.type(await screen.findByLabelText("What do you want to build?"), IDEA);
     await waitFor(async () => {
-      expect(await ready()).toBeEnabled();
+      expect(await ready()).not.toHaveAttribute("aria-disabled");
     });
     await user.click(screen.getByRole("button", { name: "Start with Claude" }));
     await screen.findByRole("region", { name: "Sent to Claude" });

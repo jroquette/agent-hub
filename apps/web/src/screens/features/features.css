@@ -281,21 +281,31 @@
   gap: var(--space-5);
   max-width: 1200px;
   padding: var(--space-4) var(--space-8) var(--space-12);
+  container: ft-new / inline-size;
 }
+/* Title and project select share the first row, centred on the title; the lead runs under both. */
 .ft-new-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--space-3) var(--space-6);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "title project";
+  align-items: center;
+  gap: var(--space-1) var(--space-6);
+}
+.ft-new-head > div:first-child {
+  display: contents;
 }
 .ft-new-head .ah-h1 {
+  grid-area: title;
   margin: 0;
 }
 .ft-new-lead {
-  max-width: 640px;
-  margin: var(--space-1) 0 0;
+  grid-column: 1 / -1;
+  margin: 0;
   color: var(--text-muted);
+}
+.ft-new-head > .ft-new-project,
+.ft-new-head > .ah-skel {
+  grid-area: project;
 }
 .ft-new-project {
   display: flex;
@@ -309,10 +319,14 @@
 .ft-new-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-areas:
+    "main side"
+    "next side";
   align-items: start;
   gap: var(--space-6);
 }
 .ft-new-main {
+  grid-area: main;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
@@ -325,25 +339,38 @@
   font-weight: 600;
   color: var(--text);
 }
+/* The brief box is the chat composer's box: text first, its bar at the bottom. */
 .ft-new-brief {
-  padding: var(--space-4) var(--space-4) var(--space-3);
+  padding: var(--space-3) var(--space-3) var(--space-3);
+  cursor: text;
 }
 .ft-new-brief .ft-new-idea {
   min-height: 200px;
   font-size: 14px;
 }
-.ft-new-attach {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
+.ft-new-brief .ft-new-attach {
+  grid-area: plus;
 }
-.ft-new-under {
+.ft-new-drop-note {
+  grid-area: set;
+  padding-left: var(--space-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ft-new-brief .ft-new-kbd {
+  grid-area: stop;
+  justify-self: end;
+  margin-right: var(--space-2);
+}
+.ft-new-brief .ft-new-start {
+  grid-area: send;
+}
+.ft-new-brief > .ft-new-error {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: var(--space-1) var(--space-4);
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--failed);
 }
 .ft-new-hint {
   display: flex;
@@ -357,15 +384,20 @@
 .ft-new-hint[data-error] {
   color: var(--failed);
 }
+/* Why Start is unavailable, or what it will do: under the button it is about. */
 .ft-new-reason {
-  gap: var(--space-3);
+  justify-content: flex-end;
+  text-align: right;
 }
 .ft-new-kbd {
   display: inline-flex;
   align-items: center;
   gap: 2px;
+  color: var(--text-subtle);
+  font-size: 12px;
 }
 .ft-new-side {
+  grid-area: side;
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
@@ -377,6 +409,7 @@
   flex-direction: column;
   gap: var(--space-4);
   padding: var(--space-4);
+  container-type: inline-size;
 }
 .ft-new-card-head {
   display: flex;
@@ -386,24 +419,35 @@
 .ft-new-card-head h2 {
   margin: 0;
 }
+.ft-new-card-body {
+  display: grid;
+  gap: var(--space-4);
+}
 .ft-new-field {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
 }
 .ft-new-sizes {
-  margin: 0;
-  padding: 0;
-  border: 0;
+  gap: 0;
 }
 .ft-new-sizes legend {
-  margin-bottom: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+.ft-new-sizes .as-radio {
+  align-items: center;
+  min-height: 28px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.ft-new-sizes .ft-new-hint {
+  margin-top: var(--space-1);
 }
 .ft-new-main > .ah-banner {
   margin-bottom: var(--space-3);
 }
 .ft-new-next {
-  margin-top: var(--space-5);
+  grid-area: next;
   padding-top: var(--space-4);
   border-top: 1px solid var(--border);
 }
@@ -433,9 +477,6 @@
   font-size: 12px;
   font-weight: 600;
   color: var(--text);
-}
-.ft-new-sizes .ah-options {
-  gap: var(--space-1);
 }
 .ft-new-sent-wrap {
   display: flex;
@@ -472,15 +513,54 @@
     padding: var(--space-4) var(--space-6) var(--space-8);
   }
 }
-/* With the Discuss panel docked or on a narrow window, the options go under the brief. */
+/* On a narrow window, or with the Discuss panel docked, the options go under the brief. */
 @media (max-width: 1100px) {
-  .ft-new-next ol {
-    grid-template-columns: minmax(0, 1fr);
-  }
   .ft-new-form {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "main" "side" "next";
   }
   .ft-new-side {
     position: static;
+  }
+}
+@container ft-new (max-width: 900px) {
+  .ft-new-form {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "main" "side" "next";
+  }
+  .ft-new-side {
+    position: static;
+  }
+}
+@container ft-new (max-width: 760px) {
+  .ft-new-next ol {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@container ft-new (max-width: 640px) {
+  .ft-new-drop-note {
+    visibility: hidden;
+  }
+}
+@container ft-new (max-width: 480px) {
+  .ft-new-brief .ft-new-kbd {
+    display: none;
+  }
+}
+/* Stacked, the options card is wide: issue and slug on the left, size on the right. */
+@container (min-width: 560px) {
+  .ft-new-card-body {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas: "issue size" "slug size";
+    column-gap: var(--space-6);
+  }
+  .ft-new-card-body > .ft-new-field:first-child {
+    grid-area: issue;
+  }
+  .ft-new-card-body > .ft-new-sizes {
+    grid-area: size;
+  }
+  .ft-new-card-body > .ft-new-field:last-child {
+    grid-area: slug;
   }
 }

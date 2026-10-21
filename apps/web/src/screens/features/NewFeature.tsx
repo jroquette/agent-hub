@@ -11,7 +11,6 @@ import {
   EmptyState,
   Icon,
   Kbd,
-  OptionRow,
   Skeleton,
   useAttachmentDrop,
   useMessageAttachments,
@@ -20,8 +19,6 @@ import {
 } from "../../components";
 import { ApiProblem, useApi } from "../../lib/api";
 import { cx } from "../../lib/cx";
-import { MAX_MESSAGE_FILES } from "../../lib/messageFile";
-import { MAX_MESSAGE_IMAGES } from "../../lib/pastedImage";
 import { useScope } from "../../lib/scope";
 import { useAutoGrow } from "../../lib/useAutoGrow";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
@@ -142,10 +139,7 @@ export function NewFeatureScreen() {
       <header className="ft-new-head">
         <div>
           <h1 className="ah-h1">New feature</h1>
-          <p className="ft-new-lead">
-            Say what to build and attach what Claude should see. Claude writes the brief and the
-            spec with you, one question at a time.
-          </p>
+          <p className="ft-new-lead">Describe what to build and attach what Claude should see.</p>
         </div>
         {projectsQuery.isPending ? (
           <Skeleton width={200} height={32} />
@@ -171,7 +165,10 @@ export function NewFeatureScreen() {
         />
       ) : chosenProject === "" ? (
         // The brief's draft is kept per project: the form waits for it to be known.
-        <Skeleton height={320} radius={12} />
+        <div className="ft-new-form" aria-hidden="true">
+          <Skeleton height={280} radius={20} />
+          <Skeleton height={400} radius={12} />
+        </div>
       ) : (
         <BriefForm
           key={`${chosenProject}:${String(round)}`}
@@ -236,6 +233,8 @@ function BriefForm({
   const [slug, setSlug] = useState("");
   const [attachError, setAttachError] = useState<string | null>(null);
   const box = useRef<HTMLTextAreaElement | null>(null);
+  const issueField = useRef<HTMLInputElement | null>(null);
+  const slugField = useRef<HTMLInputElement | null>(null);
   const focusBox = () => box.current?.focus({ preventScroll: true });
   const discussion = useStartDiscussion(project || null);
   const attachments = useMessageAttachments({
@@ -252,12 +251,12 @@ function BriefForm({
   const items = (features.data?.items ?? []).filter((f) => f.project === project);
   const ids = {
     idea: useId(),
-    hint: useId(),
     issue: useId(),
     issueHint: useId(),
     slug: useId(),
     slugHint: useId(),
     size: useId(),
+    sizeHint: useId(),
     reason: useId(),
     options: useId(),
     next: useId(),
@@ -287,8 +286,19 @@ function BriefForm({
               : discussion.reason;
   const ready = why === null && !discussion.pending;
 
+  /** A press while not ready says why where it can be fixed: focus goes to the field at fault. */
+  const focusFault = () => {
+    if (!hasIdea && !hasIssue) focusBox();
+    else if (badIssue) issueField.current?.focus();
+    else if (badSlug || taken) slugField.current?.focus();
+  };
+
   const start = () => {
-    if (!ready) return;
+    if (discussion.pending) return;
+    if (!ready) {
+      focusFault();
+      return;
+    }
     const target: DiscussTarget = {
       key: newFeatureKey(project),
       project,
@@ -333,7 +343,7 @@ function BriefForm({
       ? "Say what to build, and what Claude should see in the image."
       : attachments.files.length > 0
         ? "Say what to build, and what Claude should take from the file."
-        : "Owners can export the orders of a period as CSV from the admin portal, with the same filters as the list.";
+        : "Describe the feature: who it is for, what they should be able to do, and why.";
 
   const startError =
     discussion.error instanceof ApiProblem
@@ -363,9 +373,16 @@ function BriefForm({
         <label htmlFor={ids.idea} className="ft-new-label">
           What do you want to build?
         </label>
-        {/* Files dropped anywhere on the box join the brief; the keyboard has Attach. */}
+        {/* Files dropped anywhere on the box join the brief; the keyboard has Attach. A press on
+            the box's empty space puts the caret in the text, so the whole box reads as one field. */}
+        {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
         <div
           className={cx("as-composer ft-new-brief", dragging && "as-composer-drop")}
+          onMouseDown={(event) => {
+            if (event.target !== event.currentTarget) return;
+            event.preventDefault();
+            focusBox();
+          }}
           {...dropProps}
         >
           <AttachmentList
@@ -390,7 +407,7 @@ function BriefForm({
             rows={8}
             value={idea}
             placeholder={placeholder}
-            aria-describedby={ids.hint}
+            aria-describedby={ids.reason}
             onChange={(event) => {
               setIdea(event.target.value);
             }}
@@ -401,61 +418,40 @@ function BriefForm({
               attachments.add(event.clipboardData);
             }}
           />
+          {/* The chat composer's bottom bar: Attach on the left, Start on the right. */}
           <div className="as-composer-bar">
-            <div className="ft-new-attach">
-              <AttachButton attachments={attachments} onAdded={focusBox} />
-              <span className="ah-small ah-subtle">Paste or drop images, PDFs and text files</span>
-            </div>
+            <AttachButton attachments={attachments} onAdded={focusBox} className="ft-new-attach" />
+            <span className="ah-small ah-subtle ft-new-drop-note">
+              Paste or drop images, PDFs and text files
+            </span>
+            <span className="ft-new-kbd" aria-hidden="true">
+              <Kbd>Ctrl</Kbd>/<Kbd>⌘</Kbd> <Kbd>Enter</Kbd>
+            </span>
             <Button
               type="submit"
               variant="primary"
               icon="message-square"
-              disabled={!ready}
+              className="ft-new-start"
+              aria-disabled={!ready || undefined}
+              aria-busy={discussion.pending || undefined}
               aria-describedby={ids.reason}
+              aria-keyshortcuts="Control+Enter Meta+Enter"
             >
               {discussion.pending ? "Starting…" : "Start with Claude"}
             </Button>
           </div>
-        </div>
-        <div className="ft-new-under">
-          {attachError ? (
-            <p id={ids.hint} className="ft-new-hint" data-error role="alert">
+          {(attachError ?? startError) && (
+            <p className="ah-small as-error ft-new-error" role="alert">
               <Icon name="circle-x" size="sm" />
-              {attachError}
-            </p>
-          ) : (
-            <p id={ids.hint} className="ft-new-hint">
-              Up to {MAX_MESSAGE_IMAGES} images and {MAX_MESSAGE_FILES} files of 5 MB each.
+              {attachError ?? startError}
             </p>
           )}
-          <p id={ids.reason} className="ft-new-hint ft-new-reason">
-            {why ?? "Opens the Discuss panel. Claude asks before writing any file."}
-            <span className="ft-new-kbd" aria-hidden="true">
-              <Kbd>Ctrl</Kbd>/<Kbd>⌘</Kbd> <Kbd>Enter</Kbd>
-            </span>
-          </p>
         </div>
-        {startError && (
-          <p className="ft-new-hint" data-error role="alert">
-            <Icon name="circle-x" size="sm" />
-            {startError}
-          </p>
-        )}
-        <section className="ft-new-next" aria-labelledby={ids.next}>
-          <h2 id={ids.next} className="ft-new-label">
-            What happens next
-          </h2>
-          <ol>
-            {NEXT_STEPS.map((step, index) => (
-              <li key={step}>
-                <span className="ft-new-step" aria-hidden="true">
-                  {index + 1}
-                </span>
-                {step}
-              </li>
-            ))}
-          </ol>
-        </section>
+        <p id={ids.reason} className="ft-new-hint ft-new-reason" aria-live="polite">
+          {discussion.pending
+            ? "Starting the conversation in the hub folder…"
+            : (why ?? "Opens the Discuss panel. Claude asks before writing any file.")}
+        </p>
       </div>
 
       <aside className="ft-new-side" aria-labelledby={ids.options}>
@@ -466,73 +462,95 @@ function BriefForm({
             </h2>
             <span className="ah-small ah-subtle">All optional</span>
           </header>
-          <div className="ft-new-field">
-            <label htmlFor={ids.issue} className="ft-new-label">
-              Start from an issue
-            </label>
-            <input
-              id={ids.issue}
-              className="ah-input ah-mono"
-              value={issueInput}
-              placeholder="DEMO-1600"
-              aria-invalid={badIssue || undefined}
-              aria-describedby={ids.issueHint}
-              onChange={(event) => {
-                setIssueInput(event.target.value);
-              }}
-            />
-            <FieldHint id={ids.issueHint} error={badIssue ? "An issue id, like DEMO-1600." : null}>
-              Claude reads its brief first. Empty: Claude writes the brief with you.
-            </FieldHint>
-          </div>
-          <div className="ft-new-field">
-            <label htmlFor={ids.slug} className="ft-new-label">
-              Slug
-            </label>
-            <input
-              id={ids.slug}
-              className="ah-input ah-mono"
-              value={slug}
-              placeholder="orders-csv-export"
-              aria-invalid={badSlug || taken || undefined}
-              aria-describedby={ids.slugHint}
-              onChange={(event) => {
-                setSlug(event.target.value.trim());
-              }}
-            />
-            <FieldHint
-              id={ids.slugHint}
-              error={
-                badSlug
-                  ? "Lowercase letters, digits and dashes, starting with a letter."
-                  : taken
-                    ? "A feature with this slug already exists."
-                    : null
-              }
-            >
-              Empty: Claude picks one.
-            </FieldHint>
-          </div>
-          <fieldset className="ft-new-field ft-new-sizes">
-            <legend className="ft-new-label">Size</legend>
-            <div className="ah-options">
-              {SIZES.map((option) => (
-                <OptionRow
-                  key={option.id || "ask"}
-                  type="radio"
-                  name={ids.size}
-                  label={option.label}
-                  description={size === option.id ? option.hint : null}
-                  checked={size === option.id}
-                  onToggle={() => {
-                    setSize(option.id);
-                  }}
-                />
-              ))}
+          <div className="ft-new-card-body">
+            <div className="ft-new-field">
+              <label htmlFor={ids.issue} className="ft-new-label">
+                Start from an issue
+              </label>
+              <input
+                id={ids.issue}
+                ref={issueField}
+                className="ah-input ah-mono"
+                value={issueInput}
+                aria-invalid={badIssue || undefined}
+                aria-describedby={ids.issueHint}
+                onChange={(event) => {
+                  setIssueInput(event.target.value);
+                }}
+              />
+              <FieldHint id={ids.issueHint} error={badIssue ? "An issue id, like DEMO-1600." : null}>
+                Like DEMO-1600. Claude reads its brief first.
+              </FieldHint>
             </div>
-          </fieldset>
+            <fieldset
+              className="as-fieldset ft-new-field ft-new-sizes"
+              aria-describedby={ids.sizeHint}
+            >
+              <legend className="ft-new-label">Size</legend>
+              {SIZES.map((option) => (
+                <label key={option.id || "ask"} className="as-radio">
+                  <input
+                    type="radio"
+                    name={ids.size}
+                    checked={size === option.id}
+                    onChange={() => {
+                      setSize(option.id);
+                    }}
+                  />
+                  {option.label}
+                </label>
+              ))}
+              <p id={ids.sizeHint} className="ft-new-hint">
+                {SIZES.find((option) => option.id === size)?.hint}
+              </p>
+            </fieldset>
+            <div className="ft-new-field">
+              <label htmlFor={ids.slug} className="ft-new-label">
+                Slug
+              </label>
+              <input
+                id={ids.slug}
+                ref={slugField}
+                className="ah-input ah-mono"
+                value={slug}
+                aria-invalid={badSlug || taken || undefined}
+                aria-describedby={ids.slugHint}
+                onChange={(event) => {
+                  setSlug(event.target.value.trim());
+                }}
+              />
+              <FieldHint
+                id={ids.slugHint}
+                error={
+                  badSlug
+                    ? "Lowercase letters, digits and dashes, starting with a letter."
+                    : taken
+                      ? "A feature with this slug already exists."
+                      : null
+                }
+              >
+                Like orders-csv-export. Empty: Claude picks one.
+              </FieldHint>
+            </div>
+          </div>
         </section>
       </aside>
+
+      <section className="ft-new-next" aria-labelledby={ids.next}>
+        <h2 id={ids.next} className="ft-new-label">
+          What happens next
+        </h2>
+        <ol>
+          {NEXT_STEPS.map((step, index) => (
+            <li key={step}>
+              <span className="ft-new-step" aria-hidden="true">
+                {index + 1}
+              </span>
+              {step}
+            </li>
+          ))}
+        </ol>
+      </section>
     </form>
   );
 }
