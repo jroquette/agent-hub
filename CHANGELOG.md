@@ -20,7 +20,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   draft does not hold (a rename moves the folder), a hook edit replaces that one hook in its file, and a new hook is
   merged into the plugin's `hooks/hooks.json` with its scripts. An invalid draft, a name already taken or a draft
   already published is refused with nothing written; an item `hub.lock` manages needs a confirmation; in the
-  container (`make up`) it answers 409 `hub_read_only`. git is never run.
+  container (`make up`) it answers 409 `hub_read_only`. Neither a publish nor a restore spawns a process (no git,
+  no doctor check): the change shows in the hub's working tree.
 
 ### Changed
 

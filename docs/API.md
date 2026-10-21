@@ -118,9 +118,10 @@ Errors are RFC 9457 Problem Details, with media type `application/problem+json`:
   `external` version when a managed refusal answers. A body field the model does not know → 422. A write that fails →
   500 "Item write failed", `code` `write_failed` and `kind` `failed` (the unit is as it was), `rollback_failed` (a
   folder swap could not put the old folder back; `hub doctor`'s `items.leftovers` lists what is left beside it) or
-  `old_not_removed` (a rename's new item is published and recorded, its old item could not be removed and stays
-  until the user removes it); a
-  stored version that does not decode → 500 `corrupt_version`. A race for the unit's next version lost three times
+  `old_not_removed` (a Publish's rename: the new item is published, its old item could not be removed and stays
+  until the user removes it, and so does the draft; the body also carries `published: true` and the write's
+  `changed`, `versioned` and `reason`, and the detail reads "Published; the old item could not be removed and
+  stays. The draft is still there: discard it.", since a recorded `publish` spends it); a stored version that does not decode → 500 `corrupt_version`. A race for the unit's next version lost three times
   → 503 with `Retry-After: 1` and `written`: `false` with `code` `version_race` when nothing was written yet, `true`
   with `code` `written_not_recorded` when the unit was written but its version not stored (the race lost, or the
   database busy or unreadable, after the write; the next read records it as `external`). No problem names a path.
@@ -135,7 +136,9 @@ Errors are RFC 9457 Problem Details, with media type `application/problem+json`:
   object, that holds a hidden name, or that edits a hook and carries scripts. A Publish that wrote the item but could
   not remove the draft answers 500 "Draft not removed" (`code` `draft_not_removed`, `published: true`, and the
   write's `changed`, `versioned` and `reason`; detail "Published; the draft is still there. Discard it."): the item
-  stays published and the kept draft is spent when a `publish` was recorded.
+  stays published and the kept draft is spent when a `publish` was recorded. A draft that cannot be read (an I/O
+  error, not a link or the bounds) answers 500 "Draft read failed" (`code` `write_failed`, `kind`
+  `draft_unreadable`; detail "The draft could not be read; nothing was written or recorded.").
 
 ## Pagination
 
@@ -431,7 +434,8 @@ Other methods answer 405; no route runs a script, a hook or a command.
   from the last one, so a hand edit stays restorable. A version equal to the disk answers `changed: false` and writes
   and records nothing; content with a secret match or past the bounds is written with `versioned: false` and its
   `reason` (`secret`, `too_large`). A strict write that needs the launch cookie ([Local security](#local-security));
-  its refusals are listed under [Errors](#errors). It never runs git: the hub's working tree shows the change.
+  its refusals are listed under [Errors](#errors). It spawns no process (no git, and the project is resolved from
+  the registry and `hub.json` without the hub card's doctor drift check): the hub's working tree shows the change.
 - `POST /api/v1/projects/{project}/skills/drafts/{draft_id}/publish` with `{target, confirm_managed?}` → 200
   `ItemWriteResult` `{changed, versioned, reason, version}`: lands the Studio's draft `.hub-drafts/<draft_id>/` in the
   hub (D10, S5) and records a `publish` version naming the draft (`draft_id`), by the hub's effective identity.
@@ -447,8 +451,8 @@ Other methods answer 405; no route runs a script, a hook or a command.
   when the draft equals the item (`changed: false`, nothing written or recorded). A written unit with a secret match
   or past the bounds answers `versioned: false` with its `reason` (`secret`, `too_large`), and a write of a new hook's
   scripts only `reason: "script_only"`. A draft some version of the project already names as its `publish` is spent
-  (409 `draft_already_published`). Claude only edits the draft; the server reads it here, never through a link. It
-  never runs git.
+  (409 `draft_already_published`). Claude only edits the draft; the server reads it here, never through a link. Like
+  the restore, it spawns no process (no git, no doctor drift check), also when the draft just changed the tree.
 
 Items and files are addressed by ids the server issues (`file_id` is 16 hex characters of the sha256 of the file's
 hub-relative path), never by a client path. Bounds: 500 items per kind, 200 bundled files per skill, 2,000 hooks,
