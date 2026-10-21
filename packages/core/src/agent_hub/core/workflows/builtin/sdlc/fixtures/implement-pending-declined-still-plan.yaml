@@ -1,6 +1,6 @@
 # The owner declined after the run was lost, and the next run's first preflight, given the note,
-# still finds plan drift: no new change request and no gate; the run ends blocked (AC-2.14,
-# AC-2.12, A2).
+# still finds plan drift: no new change request, no gate and no worktree; the run ends blocked
+# (AC-2.14, AC-2.12, A2).
 workflow: implement
 inputs:
   feature: demo-flow
@@ -9,73 +9,43 @@ inputs:
   issue_text: "```text\nid: DEM-1\n```"
 stubs:
   context:
-    output: {path: brain/features/demo-flow/tickets/DEM-1/brief.md, version: 1}
+    output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-1/brief.md, hub: /ws/hub, base: origin/trunk}
   pending:
     output: {request: 1, decision: declined, input: declined_change, note: Keep T2 on the current handler.,
       summary: Route T2 through routes.py.}
-  worktree:
-    output:
-      path: /ws/demo-api/.claude/worktrees/dem-1
-      branch: jdoe/dem-1
-      base: origin/trunk
-      hub: /ws/hub
-      hub_name: hub
-      check: make check
-      prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
-      target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
   pass-1__preflight:
     output:
-      plan_version: 1
-      commit: 0a1b2c3d
-      blockers_read: []
       drift: plan
       local_notes: []
+      blockers_read: []
       evidence: The handler moved to src/api/routes.py.
       proposal: Route T2 through routes.py.
       affected: T3
       summary: T2 goes through routes.py
-  pass-1__entry:
-    output:
-      ran_at: '2026-10-21T10:00:00+00:00'
-      plan_version: 1
-      commit: 0a1b2c3d
-      blockers_read: []
-      input: declined_change
-      input_text: Keep T2 on the current handler.
-      drift: plan
-      local_notes: []
-      change_request: 1
-      run_id: implement-1
   pass-1__record:
-    output: {path: brain/features/demo-flow/tickets/DEM-1/preflight.json, runs: 2}
+    output: {runs: 2}
   pass-1__outcome:
-    output: {status: blocked, question: 'plan drift remains after the owner''s decision on change request
-        1: the next /implement opens a new change request', discovery: '', verdict: ''}
+    output: {status: blocked, question: 'plan drift remains after the owner''s decision on the plan change:
+        the next /implement opens a new change request', discovery: '', verdict: '', path: '', base: '',
+      target: null}
   last:
-    output: {status: blocked, question: 'plan drift remains after the owner''s decision on change request
-        1: the next /implement opens a new change request', verdict: '', pass: 1}
-  commits:
-    output:
-      count: 0
-      subjects: []
-      summary: ''
-      dirty: false
+    output: {status: blocked, question: 'plan drift remains after the owner''s decision on the plan change:
+        the next /implement opens a new change request', verdict: '', pass: 1, path: '', base: '', target: null}
   report:
     output: {delivery: blocked, stage: implementing, reason: 'the implementing session stopped: plan drift
-        remains after the owner''s decision on change request 1: the next /implement opens a new change
-        request', question: 'plan drift remains after the owner''s decision on change request 1: the next
+        remains after the owner''s decision on the plan change: the next /implement opens a new change
+        request', question: 'plan drift remains after the owner''s decision on the plan change: the next
         /implement opens a new change request', pr: '', summary: ''}
   delivery:
     output:
       delivery: blocked
       stage: implementing
-      reason: 'the implementing session stopped: plan drift remains after the owner''s decision on change
-        request 1: the next /implement opens a new change request'
-      question: 'plan drift remains after the owner''s decision on change request 1: the next /implement
+      reason: 'the implementing session stopped: plan drift remains after the owner''s decision on the
+        plan change: the next /implement opens a new change request'
+      question: 'plan drift remains after the owner''s decision on the plan change: the next /implement
         opens a new change request'
       pr: ''
       summary: ''
-      hub_files: [brain/features/demo-flow/tickets/DEM-1/brief.md, brain/features/demo-flow/tickets/DEM-1/preflight.json]
+      hub_files: [change-requests/1.decision.md, change-requests/1.md, tickets/DEM-1/brief.md, tickets/DEM-1/preflight.json]
 expect: {status: done, outcome: blocked}
-reached: [context, pending, worktree, pass-1__preflight, pass-1__entry, pass-1__record, pass-1__outcome,
-  last, commits, report, delivery]
+reached: [context, pending, pass-1__preflight, pass-1__record, pass-1__outcome, last, report, delivery]

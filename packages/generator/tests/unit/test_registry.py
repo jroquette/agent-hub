@@ -23,7 +23,6 @@ OUTPUT_SCHEMA_PACKAGE = "agent_hub.core.features"
 CORE_SOURCES: dict[str, tuple[str, str]] = {
     "hub.schema.json": (SCHEMA_PACKAGE, SCHEMA_FILE),
     "plugin/hub-workflow/schemas/eval.v1.json": (OUTPUT_SCHEMA_PACKAGE, "eval.v1.json"),
-    "plugin/hub-workflow/schemas/preflight.v1.json": (OUTPUT_SCHEMA_PACKAGE, "preflight.v1.json"),
     "plugin/hub-workflow/schemas/review.v1.json": (OUTPUT_SCHEMA_PACKAGE, "review.v1.json"),
 }
 # AGH-227: the built-in workflow packs, core's package data, seeded into `workflows/` as they are.
@@ -57,11 +56,13 @@ SEEDED_PACK_FILES = (
     "sdlc/fixtures/implement-drift-none.yaml",
     "sdlc/fixtures/implement-drift-plan.yaml",
     "sdlc/fixtures/implement-eval-no-ship.yaml",
+    "sdlc/fixtures/implement-eval-owner-steps.yaml",
     "sdlc/fixtures/implement-pending-decision-approved.yaml",
     "sdlc/fixtures/implement-pending-decision-declined.yaml",
     "sdlc/fixtures/implement-pending-declined-still-plan.yaml",
     "sdlc/fixtures/implement-plan-approved.yaml",
     "sdlc/fixtures/implement-plan-declined.yaml",
+    "sdlc/fixtures/implement-plan-moved.yaml",
     "sdlc/fixtures/implement-pr-failure.yaml",
     "sdlc/fixtures/implement-rounds-exhausted.yaml",
     "sdlc/fixtures/review-fail.yaml",
@@ -78,11 +79,9 @@ SEEDED_PACK_FILES = (
     "sdlc/review.yaml",
     "sdlc/scripts/check.py",
     "sdlc/scripts/delivery.py",
-    "sdlc/scripts/discovery.py",
     "sdlc/scripts/feedback.py",
     "sdlc/scripts/last_pass.py",
     "sdlc/scripts/pass_outcome.py",
-    "sdlc/scripts/preflight_run.py",
     "sdlc/scripts/verdict.py",
     "sdlc/ticket-pass.yaml",
 )
@@ -177,7 +176,6 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
     "plugin/hub-workflow/hooks/stop_gate.py": (Kind.GENERIC, Ownership.MANAGED, None),
     # AGH-139 D5, S8: the agent output JSON schemas, core's package data copied verbatim.
     "plugin/hub-workflow/schemas/eval.v1.json": (Kind.GENERIC, Ownership.MANAGED, None),
-    "plugin/hub-workflow/schemas/preflight.v1.json": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/schemas/review.v1.json": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/adr/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/context-audit/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),

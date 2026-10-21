@@ -1177,7 +1177,7 @@ def test_rewrites_feature_agents_when_hub_synced_from_older_templates(
     assert (again.exit_code, again.stdout, again.stderr) == (0, "up to date\n", "")
 
 
-# AGH-139 (AC-139.14): the seven templates that read or write agent outputs, and the schemas.
+# AGH-139 (AC-139.14): the seven templates that read or write agent outputs, and the two schemas.
 AGENT_OUTPUT_TEMPLATES = (
     "plugin/hub-workflow/agents/evaluator.md",
     "plugin/hub-workflow/agents/quality-reviewer.md",
@@ -1189,7 +1189,6 @@ AGENT_OUTPUT_TEMPLATES = (
 )
 AGENT_OUTPUT_SCHEMAS = (
     "plugin/hub-workflow/schemas/eval.v1.json",
-    "plugin/hub-workflow/schemas/preflight.v1.json",
     "plugin/hub-workflow/schemas/review.v1.json",
 )
 

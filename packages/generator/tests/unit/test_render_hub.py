@@ -119,7 +119,6 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/hooks/stop_gate.py",
     # AGH-139 D5, S8: the agent output JSON schemas.
     "plugin/hub-workflow/schemas/eval.v1.json",
-    "plugin/hub-workflow/schemas/preflight.v1.json",
     "plugin/hub-workflow/schemas/review.v1.json",
     "plugin/hub-workflow/skills/adr/SKILL.md",
     "plugin/hub-workflow/skills/context-audit/SKILL.md",
@@ -184,11 +183,13 @@ DESIGN_PATHS = (
     "workflows/sdlc/fixtures/implement-drift-none.yaml",
     "workflows/sdlc/fixtures/implement-drift-plan.yaml",
     "workflows/sdlc/fixtures/implement-eval-no-ship.yaml",
+    "workflows/sdlc/fixtures/implement-eval-owner-steps.yaml",
     "workflows/sdlc/fixtures/implement-pending-decision-approved.yaml",
     "workflows/sdlc/fixtures/implement-pending-decision-declined.yaml",
     "workflows/sdlc/fixtures/implement-pending-declined-still-plan.yaml",
     "workflows/sdlc/fixtures/implement-plan-approved.yaml",
     "workflows/sdlc/fixtures/implement-plan-declined.yaml",
+    "workflows/sdlc/fixtures/implement-plan-moved.yaml",
     "workflows/sdlc/fixtures/implement-pr-failure.yaml",
     "workflows/sdlc/fixtures/implement-rounds-exhausted.yaml",
     "workflows/sdlc/fixtures/review-fail.yaml",
@@ -205,11 +206,9 @@ DESIGN_PATHS = (
     "workflows/sdlc/review.yaml",
     "workflows/sdlc/scripts/check.py",
     "workflows/sdlc/scripts/delivery.py",
-    "workflows/sdlc/scripts/discovery.py",
     "workflows/sdlc/scripts/feedback.py",
     "workflows/sdlc/scripts/last_pass.py",
     "workflows/sdlc/scripts/pass_outcome.py",
-    "workflows/sdlc/scripts/preflight_run.py",
     "workflows/sdlc/scripts/verdict.py",
     "workflows/sdlc/ticket-pass.yaml",
 )
@@ -3836,9 +3835,6 @@ BRAIN_FRONTMATTER_PATHS = (
     "brain/now.md",
 )
 REAL_DATE = re.compile(r"20[0-9]{2}-[0-9]{2}-[0-9]{2}")
-# A seeded pack's fixtures hold a dry run's example data (a run's time, a feature's record paths),
-# not text that names the hub's paths or today's date.
-PACK_FIXTURE = re.compile(r"workflows/[^/]+/fixtures/")
 JOURNAL_FIELDS = ("**Context:**", "**Learning:**", "**Action:**", "**Links:**")
 PORTUGUESE_JOURNAL_WORDS = ("contexto", "aprendizado", "acao", "titulo")
 CONFIG_NAMES = ("demo", "variant")
@@ -4231,9 +4227,9 @@ def test_parses_every_json_when_rendered(config_name: str, request: pytest.Fixtu
 
     json_files = [file for file in render_hub(config).files if file.path.endswith(".json")]
 
-    # The two settings files, both manifests, `hooks.json`, the schema, the three agent output
-    # schemas (AGH-139; preflight's, AGH-404) and `.mcp.json` (AGH-392).
-    assert len(json_files) == 10
+    # The two settings files, both manifests, `hooks.json`, the schema, the two agent output
+    # schemas (AGH-139) and `.mcp.json` (AGH-392).
+    assert len(json_files) == 9
     for file in json_files:
         strict_json(file.content)
 
@@ -4254,8 +4250,7 @@ def test_keeps_literal_date_when_brain_seeded(
     for path in with_frontmatter:
         assert "last_verified: YYYY-MM-DD" in frontmatter_lines(texts[path]), path
     for path, text in texts.items():
-        if not PACK_FIXTURE.match(path):
-            assert not REAL_DATE.search(text), f"{path}: {REAL_DATE.search(text)}"
+        assert not REAL_DATE.search(text), f"{path}: {REAL_DATE.search(text)}"
 
 
 def test_writes_english_journal_template_when_rendered(
@@ -4430,7 +4425,6 @@ def test_references_created_brain_paths_when_markdown_rendered(demo_config: HubC
     references = [
         (path, match.rstrip(".,:;"))
         for path, text in texts.items()
-        if not PACK_FIXTURE.match(path)
         for match in BRAIN_PATH.findall(text)
     ]
     assert references

@@ -7,10 +7,21 @@ inputs:
   issue_text: "```text\nid: DEM-1\n```"
 stubs:
   context:
-    output: {path: brain/features/demo-flow/tickets/DEM-1/brief.md, version: 1}
+    output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-1/brief.md, hub: /ws/hub, base: origin/trunk}
   pending:
     output: {request: null, decision: '', input: none, note: '', summary: ''}
-  worktree:
+  pass-1__preflight:
+    output:
+      drift: none
+      local_notes: []
+      blockers_read: []
+      evidence: ''
+      proposal: ''
+      affected: ''
+      summary: ''
+  pass-1__record:
+    output: {runs: 1}
+  pass-1__worktree:
     output:
       path: /ws/demo-api/.claude/worktrees/dem-1
       branch: jdoe/dem-1
@@ -20,39 +31,12 @@ stubs:
       check: make check
       prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
       target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
-  pass-1__preflight:
-    output:
-      plan_version: 1
-      commit: 0a1b2c3d
-      blockers_read: []
-      drift: none
-      local_notes: []
-      evidence: ''
-      proposal: ''
-      affected: ''
-      summary: ''
-  pass-1__entry:
-    output:
-      ran_at: '2026-10-21T10:00:00+00:00'
-      plan_version: 1
-      commit: 0a1b2c3d
-      blockers_read: []
-      input: none
-      input_text: null
-      drift: none
-      local_notes: []
-      change_request: null
-      run_id: implement-1
-  pass-1__record:
-    output: {path: brain/features/demo-flow/tickets/DEM-1/preflight.json, runs: 1}
   pass-1__plan:
-    output: {path: brain/features/demo-flow/tickets/DEM-1/plan.md, tasks: 2}
+    output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-1/plan.md}
   pass-1__rounds__implement: {text: '{"status": "done", "summary": "Adds the change.", "tests": "make
       test", "discovery": ""}'}
   pass-1__rounds__verdict:
-    output: {status: done, summary: Adds the change., question: ''}
-  pass-1__rounds__discovery:
-    output: {discovery: ''}
+    output: {status: done, summary: Adds the change., question: '', discovery: ''}
   pass-1__rounds__check:
     output:
       passed: true
@@ -100,9 +84,23 @@ stubs:
       findings: []
       omitted: 0
   pass-1__outcome:
-    output: {status: done, question: '', discovery: '', verdict: PASS}
+    output:
+      status: done
+      question: ''
+      discovery: ''
+      verdict: PASS
+      path: /ws/demo-api/.claude/worktrees/dem-1
+      base: origin/trunk
+      target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
   last:
-    output: {status: done, question: '', verdict: PASS, pass: 1}
+    output:
+      status: done
+      question: ''
+      verdict: PASS
+      pass: 1
+      path: /ws/demo-api/.claude/worktrees/dem-1
+      base: origin/trunk
+      target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
   eval:
     output:
       schema: agent-hub/eval/1
@@ -118,15 +116,11 @@ stubs:
       red_on_parent: []
       owner_steps: []
   commits:
-    output:
-      count: 1
-      subjects: ['feat(api): change (DEM-1)']
-      summary: Adds the change.
-      dirty: false
+    output: {count: 1, dirty: false}
   pr: {fail: exec_failed}
 expect: {status: failed}
 failed: [pr]
-reached: [context, pending, worktree, pass-1__preflight, pass-1__entry, pass-1__record, pass-1__plan,
-  pass-1__rounds, pass-1__rounds__implement, pass-1__rounds__verdict, pass-1__rounds__discovery, pass-1__rounds__check,
-  pass-1__rounds__spec, pass-1__rounds__quality, pass-1__rounds__review, pass-1__rounds__notes, pass-1__rounds__feedback,
-  pass-1__outcome, last, eval, commits, pr]
+reached: [context, pending, pass-1__preflight, pass-1__record, pass-1__worktree, pass-1__plan, pass-1__rounds,
+  pass-1__rounds__implement, pass-1__rounds__verdict, pass-1__rounds__check, pass-1__rounds__spec, pass-1__rounds__quality,
+  pass-1__rounds__review, pass-1__rounds__notes, pass-1__rounds__feedback, pass-1__outcome, last, eval,
+  commits, pr]

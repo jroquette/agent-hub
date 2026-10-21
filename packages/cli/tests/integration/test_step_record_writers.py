@@ -9,12 +9,12 @@ writes nothing.
 """
 
 import fcntl
-from datetime import datetime
 import hashlib
 import json
 import os
 import shutil
 from collections.abc import Callable, Iterator
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
