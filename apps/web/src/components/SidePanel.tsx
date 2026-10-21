@@ -29,7 +29,8 @@ function useWide(): boolean {
  * A non-modal side panel (two-level-flows AC-1.10): an `aside` named by its heading, with no scrim
  * and no focus trap, so the page stays usable beside it. Opening moves focus to the heading; Esc
  * or the X closes it, and once closed focus returns to `openerRef`. It overlays the page (`panel` 480 px,
- * `shadow-overlay`) below 1600 px and docks beside it (640 px) from there.
+ * `shadow-overlay`) below 1600 px and docks beside it (640 px) from there. A `footer` is an action
+ * row kept below the scrolling body; `initialFocus` names the control to focus instead of the heading.
  */
 export function SidePanel({
   title,
@@ -37,6 +38,8 @@ export function SidePanel({
   onClose,
   openerRef,
   children,
+  footer,
+  initialFocus,
 }: {
   title: ReactNode;
   /** The X's name ("Close ticket AGH-7"). */
@@ -46,16 +49,22 @@ export function SidePanel({
   openerRef: RefObject<HTMLElement | null>;
   /** The body; as a function it gets the panel's close, which returns focus to the opener. */
   children?: ReactNode;
+  /** An action row below the body (Cancel, Save), always in view. */
+  footer?: ReactNode;
+  /** A selector, inside the panel, of the control focused on open instead of the heading. */
+  initialFocus?: string | undefined;
 }) {
   const headingId = useId();
   const heading = useRef<HTMLHeadingElement>(null);
   const panel = useRef<HTMLElement>(null);
   const wide = useWide();
-  // Opening focuses the heading; closing, by any path (Esc, the X, a Close button inside), gives
+  const opening = useRef(initialFocus);
+  // Opening focuses the heading (or the `initialFocus` control); closing, by any path (Esc, the X, a Close button inside), gives
   // focus back to the opener, unless the reader already moved it elsewhere on the page.
   useEffect(() => {
     const node = panel.current;
-    heading.current?.focus({ preventScroll: true });
+    const chosen = opening.current ? node?.querySelector<HTMLElement>(opening.current) : null;
+    (chosen ?? heading.current)?.focus({ preventScroll: true });
     return () => {
       const active = document.activeElement;
       const lost = active === null || active === document.body || node?.contains(active) === true;
@@ -99,6 +108,7 @@ export function SidePanel({
         <IconButton icon="x" label={closeLabel} onClick={onClose} />
       </div>
       <div className="ah-side-panel-body">{children}</div>
+      {footer !== undefined && <div className="ah-side-panel-foot">{footer}</div>}
     </aside>
   );
 }

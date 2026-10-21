@@ -70,6 +70,18 @@ export function configLink(open: string | null, scope: string | null): string {
   return project === null ? CONFIG_PICKER : `/projects/${encodeURIComponent(project)}/config`;
 }
 
+const ENVIRONMENTS_ID = "environments";
+/** Where Environments goes with All projects in scope: a project picker. */
+const ENVIRONMENTS_PICKER = "/environments";
+
+/** Environments' destination: the project open, else in scope, else the picker. */
+export function environmentsLink(open: string | null, scope: string | null): string {
+  const project = open ?? scope;
+  return project === null
+    ? ENVIRONMENTS_PICKER
+    : `/projects/${encodeURIComponent(project)}/environments`;
+}
+
 interface NavItem {
   id: string;
   label: string;
@@ -128,6 +140,8 @@ export const NAV: readonly NavGroup[] = [
         countNoun: () => "need you",
         tone: "waiting",
       },
+      // Where the project's systems run and what agents may do there (ADR 0038).
+      { id: ENVIRONMENTS_ID, label: "Environments", to: ENVIRONMENTS_PICKER, icon: "server" },
     ],
   },
   {
@@ -189,6 +203,7 @@ export function Sidebar({ counts, showRuns = true, onShortcuts }: SidebarProps) 
   const skillsTo = skillsLink(openSkills?.params.project ?? null, scope);
   const openConfig = useMatch("/projects/:project/*");
   const configTo = configLink(openConfig?.params.project ?? null, scope);
+  const environmentsTo = environmentsLink(openConfig?.params.project ?? null, scope);
   const overview = overviewItem(openConfig?.params.project ?? null, scope);
   const resolve = (item: NavItem): NavItem =>
     item.id === OVERVIEW_ID ? { ...item, ...overview } : item;
@@ -199,7 +214,9 @@ export function Sidebar({ counts, showRuns = true, onShortcuts }: SidebarProps) 
         ? skillsTo
         : item.id === CONFIG_ID
           ? configTo
-          : item.to;
+          : item.id === ENVIRONMENTS_ID
+            ? environmentsTo
+            : item.to;
 
   const renderItem = (navItem: NavItem) => {
     const item = resolve(navItem);
