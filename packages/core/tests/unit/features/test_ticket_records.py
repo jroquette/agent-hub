@@ -3,6 +3,8 @@ read into what the folds need, a malformed file kept as its problem."""
 
 import json
 
+import pytest
+
 from agent_hub.core.features.feature_status import RecordHead
 from agent_hub.core.features.ticket_records import (
     MAX_CHANGE_REQUEST_FILES,
@@ -113,13 +115,56 @@ def test_refuses_edited_status_when_request_says_approved() -> None:
     )
 
 
-def test_keeps_problem_when_decision_malformed() -> None:
-    (request,) = change_requests((a_request(), a_decision(decision="maybe")), skipped=0).requests
+# AGH-402 review S4: a broken decision does not make the request known decided: it stays open.
+def test_keeps_request_open_with_problem_when_decision_malformed() -> None:
+    found = change_requests((a_request(), a_decision(decision="maybe")), skipped=0)
 
-    assert request.status is None
+    (request,) = found.requests
+    assert (request.status, request.ticket, request.plan_to) == ("open", "DEM-8", 3)
     assert request.problem == (
         "change-requests/1.decision.md could not be read (decision must be approved or "
         "declined). Fix it in a hub PR."
+    )
+    assert found.open == (request,)
+    assert found.paused == frozenset({"DEM-8", "DEM-9"})
+
+
+# AGH-402 review Q2: each validation branch of a request, by its problem line.
+@pytest.mark.parametrize(
+    ("fields", "why"),
+    [
+        ({"ticket": ""}, "ticket is missing"),
+        ({"ticket": "dem 8"}, "ticket is not valid: dem 8"),
+        ({"plan_to": ""}, "plan_to is missing"),
+        ({"type": "eval"}, "type is eval, not change-request"),
+        ({"affected": "[DEM-9, dem 10]"}, "affected has an invalid item: dem 10"),
+    ],
+    ids=["no ticket", "bad ticket", "no plan_to", "wrong type", "bad affected"],
+)
+def test_names_problem_when_request_field_invalid(fields: dict[str, str], why: str) -> None:
+    (request,) = change_requests((a_request(3, **fields),), skipped=0).requests
+
+    assert request.status is None
+    assert request.problem == f"change-requests/3.md could not be read ({why}). Fix it in a hub PR."
+
+
+# AGH-402 review Q2, Q7 (A5): each validation branch of a decision, by its problem line.
+@pytest.mark.parametrize(
+    ("fields", "why"),
+    [
+        ({"type": "eval"}, "type is eval, not change-request-decision"),
+        ({"decided_by": ""}, "decided_by is missing"),
+        ({"decided_by": " Unknown "}, "decided_by names no person: Unknown"),
+        ({"decided_at": ""}, "decided_at is missing"),
+    ],
+    ids=["wrong type", "no decided_by", "unknown decided_by", "no decided_at"],
+)
+def test_names_problem_when_decision_field_invalid(fields: dict[str, str], why: str) -> None:
+    (request,) = change_requests((a_request(), a_decision(**fields)), skipped=0).requests
+
+    assert request.status == "open"
+    assert request.problem == (
+        f"change-requests/1.decision.md could not be read ({why}). Fix it in a hub PR."
     )
 
 
