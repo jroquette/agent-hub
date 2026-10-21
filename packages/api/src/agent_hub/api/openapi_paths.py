@@ -176,12 +176,9 @@ SCENARIO_PATHS: frozenset[tuple[str, str]] = frozenset(
     {("post", f"{API_PREFIX}/scenario-runs/{{run_id}}/investigation")}
 )
 
-# Running an AC's recorded check from the feature page (playground): run, never recorded. The
-# scenario paths are grouped here, the last group the path tests' union of the served groups
-# names (they pin that union; AGH-350 changes no existing test).
-AC_CHECK_PATHS: frozenset[tuple[str, str]] = (
-    frozenset({("post", f"{API_PREFIX}/features/{{project}}/{{slug}}/acs/{{ac}}/check-runs")})
-    | SCENARIO_PATHS
+# Running an AC's recorded check from the feature page (playground): run, never recorded.
+AC_CHECK_PATHS: frozenset[tuple[str, str]] = frozenset(
+    {("post", f"{API_PREFIX}/features/{{project}}/{{slug}}/acs/{{ac}}/check-runs")}
 )
 
 # Every path the document lists.
@@ -201,6 +198,7 @@ SERVED_PATHS: frozenset[tuple[str, str]] = (
     | PLATFORM_SYNC_PATHS
     | DOCTOR_FIX_PATHS
     | AC_CHECK_PATHS
+    | SCENARIO_PATHS
 )
 
 
