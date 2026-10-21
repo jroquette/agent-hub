@@ -23,6 +23,14 @@ writes a sign-off over the acceptance eval that differs from what the Acceptance
 Either decision is then refused once an owner decision newer than the acceptance eval settled it
 (A11): its owner SHIP signed off every waiting AC, or its owner NO-SHIP is still the latest eval
 of a waiting AC (the same request twice writes once; an agent's new eval lifts the refusal).
+
+The owner can also sign off named ACs (``acs``, AGH-425): the criteria they checked by hand (a
+manual test, a look at the screen). The note then covers exactly those live ACs, with no source
+eval, and ``done`` makes them pass (``EvalCoverage.signed_off``); being an owner SHIP, it also
+signs them off for the Acceptance step (``owner_wait``). It keeps the refusals above, writing
+nothing: when not every eval was read, when an AC is unknown or withdrawn, when ``done`` names an
+AC whose latest eval is NO-SHIP (fix or re-evaluate it first), and when the note would not rank
+newer than every eval naming those ACs (undated, or dated in the future).
 """
 
 from collections.abc import Callable, Iterable
@@ -40,6 +48,7 @@ from agent_hub.core.features.feature_evals import (
     acceptance_eval,
     eval_coverage,
     eval_records,
+    evals_naming,
     owner_wait,
     ranks_newer,
 )
@@ -108,24 +117,29 @@ def signoff_note(
     tickets: tuple[str, ...] = (),
     decision: OwnerDecision = "done",
     note: str | None = None,
+    by_hand: bool = False,
 ) -> str:
-    """The eval note of the owner's sign-off (``more_work``: the owner's NO-SHIP)."""
+    """The eval note of the owner's sign-off (``more_work``: the owner's NO-SHIP); ``by_hand``
+    when the owner named the ACs themselves rather than an eval's owner steps."""
     listed = ", ".join(acs)
     from_evals = ", ".join(sources) or "the latest eval"
+    checked = f"the owner steps listed in {from_evals}"
+    if by_hand:
+        checked = "these acceptance criteria by hand"
     verdict = _VERDICT_OF[decision]
     ticket_line = f"tickets: [{', '.join(tickets)}]\n" if tickets else ""
     if decision == "done":
         title = f"# Owner sign-off: {slug}"
         lead = (
-            "**Verdict: SHIP.** The owner confirmed in agent-hub that the owner steps listed in "
-            f"{from_evals} are done."
+            f"**Verdict: SHIP.** The owner confirmed in agent-hub that {checked} "
+            f"{'pass' if by_hand else 'are done'}."
         )
         footer = f"ACs signed off: {listed}."
     else:
         title = f"# Owner review: {slug}"
         lead = (
-            "**Verdict: NO-SHIP.** The owner checked the owner steps listed in "
-            f"{from_evals} in agent-hub and found more work is needed before this ships."
+            f"**Verdict: NO-SHIP.** The owner checked {checked} in agent-hub and found more "
+            "work is needed before this ships."
         )
         footer = f"ACs reopened: {listed}."
     body = f"\n\n## Owner's note\n\n{note}\n" if note else ""
@@ -186,6 +200,82 @@ def _eval_scope(
     return acs, (source.delivery,), source.tickets
 
 
+def _named_scope(
+    folder: FeatureFolder,
+    record: FeatureRecordFile,
+    evals: tuple[EvalRecord, ...],
+    *,
+    acs: tuple[str, ...],
+    decision: OwnerDecision,
+    name: str,
+    at: datetime,
+) -> _Scope:
+    """The owner's own sign-off of named ACs (AGH-425): those live ACs in ``features.json`` order,
+    with the whole-feature sign-off's refusals (A9) applied to them."""
+    if folder.evals_skipped:
+        raise OwnerSignOffError(f"more than {MAX_EVAL_FILES} evals; not all were read")
+    live = tuple(ac.id for ac in record.acs if not ac.withdrawn)
+    unknown = [ac for ac in acs if ac not in live]
+    if unknown:
+        raise OwnerSignOffError(f"no AC {unknown[0][:32]} in this feature")
+    wanted = set(acs)
+    named = tuple(ac for ac in live if ac in wanted)
+    naming = evals_naming(evals, record.acs, tickets=record.tickets)
+    if decision == "done":
+        uncovered = set(eval_coverage(evals, record.acs, tickets=record.tickets).uncovered)
+        reopened = [ac for ac in named if ac in uncovered and ac in naming]
+        if reopened:
+            raise OwnerSignOffError(
+                f"the latest eval of {', '.join(reopened)} is NO-SHIP; fix or re-evaluate first"
+            )
+    for ac in named:
+        for found in naming.get(ac, ()):
+            if not ranks_newer(found, delivery=name, at=at):
+                raise OwnerSignOffError(
+                    f"a sign-off would not be newer than {found.delivery}: "
+                    "it has no evaluated_at, or one at or after now"
+                )
+    return named, (), ()
+
+
+def _settled_scope(
+    folder: FeatureFolder,
+    record: FeatureRecordFile,
+    evals: tuple[EvalRecord, ...],
+    *,
+    delivery: str | None,
+    decision: OwnerDecision,
+    name: str,
+    at: datetime,
+) -> _Scope:
+    """The owner steps a sign-off settles: the whole feature's (no ``delivery``, or the acceptance
+    eval named), else one eval's."""
+    if delivery is None and decision != "done":
+        raise OwnerSignOffError("name the eval whose owner steps need more work")
+    accepted = acceptance_eval(evals)
+    on_acceptance = (
+        accepted is not None
+        and accepted.delivery == delivery
+        and accepted.verdict == "SHIP-WITH-OWNER-STEPS"
+    )
+    if delivery is None or on_acceptance:
+        waiting = _owner_wait(
+            folder,
+            record,
+            evals,
+            refuse_reopened=decision == "done",
+            named=delivery if on_acceptance else None,
+        )
+        if not ranks_newer(waiting.acceptance, delivery=name, at=at):
+            raise OwnerSignOffError(
+                f"a sign-off would not be newer than {waiting.acceptance.delivery}: "
+                "it has no evaluated_at, or one at or after now"
+            )
+        return waiting.acs, (waiting.acceptance.delivery,), ()
+    coverage = eval_coverage(evals, record.acs, tickets=record.tickets)
+    return _eval_scope(evals, coverage, record=record, delivery=delivery)
+
+
 class SignOffOwnerSteps:
     """``(project, slug)`` → the new eval record of the owner's sign-off."""
 
@@ -210,6 +300,7 @@ class SignOffOwnerSteps:
         delivery: str | None = None,
         decision: OwnerDecision = "done",
         note: str | None = None,
+        acs: tuple[str, ...] | None = None,
     ) -> EvalRecord:
         missing = EntityNotFoundError(entity="feature", entity_id=f"{project}/{slug}")
         try:
@@ -225,51 +316,67 @@ class SignOffOwnerSteps:
             raise OwnerSignOffError("features.json is missing or invalid")
         evals = eval_records(folder.evals, folder.eval_head, slug=folder.slug)
         name_of_delivery = signoff_name(found.delivery for found in evals if not found.legacy)
-        name = f"{name_of_delivery}{NOTE_SUFFIX}"
         at = self._clock().replace(microsecond=0)
-        accepted = acceptance_eval(evals)
-        if delivery is None and decision != "done":
-            raise OwnerSignOffError("name the eval whose owner steps need more work")
-        on_acceptance = (
-            accepted is not None
-            and accepted.delivery == delivery
-            and accepted.verdict == "SHIP-WITH-OWNER-STEPS"
-        )
-        if delivery is None or on_acceptance:
-            waiting = _owner_wait(
+        if acs is not None:
+            if delivery is not None:
+                raise OwnerSignOffError("name either an eval or ACs, not both")
+            scope = _named_scope(
+                folder, record, evals, acs=acs, decision=decision, name=name_of_delivery, at=at
+            )
+        else:
+            scope = _settled_scope(
                 folder,
                 record,
                 evals,
-                refuse_reopened=decision == "done",
-                named=delivery if on_acceptance else None,
+                delivery=delivery,
+                decision=decision,
+                name=name_of_delivery,
+                at=at,
             )
-            if not ranks_newer(waiting.acceptance, delivery=name_of_delivery, at=at):
-                raise OwnerSignOffError(
-                    f"a sign-off would not be newer than {waiting.acceptance.delivery}: "
-                    "it has no evaluated_at, or one at or after now"
-                )
-            scope: _Scope = waiting.acs, (waiting.acceptance.delivery,), ()
-        else:
-            coverage = eval_coverage(evals, record.acs, tickets=record.tickets)
-            scope = _eval_scope(evals, coverage, record=record, delivery=delivery)
-        acs, sources, tickets = scope
-        text = signoff_note(
+        return self._write(
+            hub_path,
             slug=folder.slug,
             delivery=name_of_delivery,
+            scope=scope,
+            at=at,
+            decision=decision,
+            note=note,
+            by_hand=acs is not None,
+        )
+
+    def _write(
+        self,
+        hub_path: str,
+        *,
+        slug: str,
+        delivery: str,
+        scope: _Scope,
+        at: datetime,
+        decision: OwnerDecision,
+        note: str | None,
+        by_hand: bool,
+    ) -> EvalRecord:
+        """Create the sign-off note ``delivery`` over ``scope``; the record it wrote."""
+        acs, sources, tickets = scope
+        text = signoff_note(
+            slug=slug,
+            delivery=delivery,
             acs=acs,
             sources=sources,
             at=at,
             tickets=tickets,
             decision=decision,
             note=_clean_note(note),
+            by_hand=by_hand,
         )
+        name = f"{delivery}{NOTE_SUFFIX}"
         try:
-            self._writer.create_eval(hub_path, slug=folder.slug, name=name, text=text)
+            self._writer.create_eval(hub_path, slug=slug, name=name, text=text)
         except FileExistsError:
             raise OwnerSignOffError("a sign-off was just written; reload the feature") from None
         return EvalRecord(
-            delivery=name_of_delivery,
-            path=f"features/{folder.slug}/{EVALS_FOLDER}/{name}",
+            delivery=delivery,
+            path=f"features/{slug}/{EVALS_FOLDER}/{name}",
             verdict=_VERDICT_OF[decision],
             tickets=tickets,
             acs=acs,

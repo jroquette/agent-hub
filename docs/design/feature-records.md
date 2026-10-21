@@ -229,6 +229,13 @@ the same wait as `acceptance_eval.owner_wait` ([API.md](../API.md)). With no AC 
 AC withdrawn), the step is not done, "Waiting on owner steps · no ACs listed", until a later owner SHIP of any scope
 exists; the app cannot write that one, so the owner writes it by hand.
 
+The owner can also sign off named ACs they checked by hand (AGH-425, the sign-off's `acs`): an owner eval over
+exactly those live ACs, with no source eval and no tickets. It keeps the refusals above, writing nothing: an unknown
+or withdrawn AC, `done` over an AC whose latest eval is NO-SHIP, a note that would not rank newer than every eval
+naming those ACs, and evals left unread. An AC whose latest evals are all owner SHIPs reads `signed_off` and counts as
+passing (`EvalCoverage.signed_off`) even when `features.json` says it does not; being an owner SHIP, it also leaves
+the Acceptance wait. `features.json` is never changed by it.
+
 Each feature (list and detail) carries `waiting_on_owner`, the owner decision it waits on: `change_request` (with the
 open requests' origin tickets) while a plan change request is open, else `owner_signoff` while the acceptance eval
 waits on a sign-off the app can record, or `owner_signoff_manual` while it lists no AC (A17); none otherwise. Without a Linear snapshot, ticket states are

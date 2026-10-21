@@ -154,8 +154,8 @@ class FeatureFolder:
 class FeatureParts:
     """What the feature views share: the parsed ``record`` (its one-line problem, or None when
     absent), every eval, the ticket ``board``, the ``golden_path``, the tickets' ``source``,
-    what the acceptance eval waits on from the owner (``owner_wait``) and the plan change
-    ``requests``."""
+    what the acceptance eval waits on from the owner (``owner_wait``), the plan change
+    ``requests`` and the ACs the owner ``signed_off`` by hand (``EvalCoverage.signed_off``)."""
 
     record: FeatureRecordFile | str | None
     evals: tuple[EvalRecord, ...]
@@ -164,6 +164,7 @@ class FeatureParts:
     source: TicketsSource
     owner_wait: OwnerWaitView | None
     requests: ChangeRequests
+    signed_off: tuple[str, ...] = ()
 
 
 def ticket_ids(folder: FeatureFolder) -> tuple[str, ...]:
@@ -274,6 +275,7 @@ def feature_parts(
         source=source,
         owner_wait=None if folder.evals_skipped else _owner_wait_view(waiting, block),
         requests=requests,
+        signed_off=coverage.signed_off,
     )
 
 
@@ -321,7 +323,12 @@ def feature_detail(
     front = _frontmatter(folder.spec_head)
     parts = feature_parts(folder, read, now=now)
     record = parts.record
-    rows = () if not isinstance(record, FeatureRecordFile) else tuple(_row(ac) for ac in record.acs)
+    signed = frozenset(parts.signed_off)
+    rows = (
+        ()
+        if not isinstance(record, FeatureRecordFile)
+        else tuple(_row(ac, signed_off=ac.id in signed) for ac in record.acs)
+    )
     accepted = acceptance_eval(parts.evals)
     verdict, verdict_line = _verdict(accepted, folder.eval_head)
     spec_repos = _listed(front.get("repos"))
@@ -405,12 +412,13 @@ def _record(read: bytes | str | None) -> FeatureRecordFile | str | None:
     return record_from_bytes(read)
 
 
-def _row(ac: RecordAc) -> AcRow:
+def _row(ac: RecordAc, *, signed_off: bool = False) -> AcRow:
     return AcRow(
         id=ac.id,
         description=ac.description,
         repo=ac.repo,
         passes=ac.passes,
+        signed_off=signed_off and not ac.passes,
         manual=ac.verification is not None and _MANUAL.match(ac.verification) is not None,
         evidence=ac.evidence,
         command=ac.verification,
@@ -419,9 +427,9 @@ def _row(ac: RecordAc) -> AcRow:
 
 def _counts(rows: tuple[AcRow, ...]) -> AcCounts:
     return AcCounts(
-        passing=sum(row.passes for row in rows),
+        passing=sum(row.passes or row.signed_off for row in rows),
         total=len(rows),
-        owner_steps=sum(row.manual and not row.passes for row in rows),
+        owner_steps=sum(row.manual and not (row.passes or row.signed_off) for row in rows),
     )
 
 

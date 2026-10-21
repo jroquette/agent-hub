@@ -99,6 +99,30 @@ def test_lists_ac_rows_when_detail_read() -> None:
     assert detail.ac_rows[0].command == "make check"
 
 
+# AC-425.1: a criterion the owner signed off by hand counts as passing in the rows and counts.
+def test_counts_ac_as_passing_when_owner_signed_it_off() -> None:
+    signoff = (
+        b"---\ntype: eval\nverdict: SHIP\nacs: [AC-7.2]\n"
+        b"evaluated_at: 2026-10-11\nprovenance: owner\n---\n"
+    )
+    folder = FeatureFolder(
+        slug="demo-feature",
+        files=("features.json",),
+        features_json=a_record(passes=(True, False, False)),
+        evals=(RecordHead(name="owner-signoff.md", head=signoff, problem=None),),
+    )
+
+    detail = feature_detail(folder, project="demo", now=READ_TIME)
+
+    assert [(row.passes, row.signed_off) for row in detail.ac_rows] == [
+        (True, False),
+        (False, True),
+        (False, False),
+    ]
+    assert detail.acs is not None
+    assert (detail.acs.passing, detail.acs.owner_steps) == (2, 1)
+
+
 def test_lists_records_when_research_and_eval_missing() -> None:
     folder = FeatureFolder(
         slug="demo-feature",
