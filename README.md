@@ -675,7 +675,7 @@ Exit codes: `0` no errors, `1` at least one error, `2` usage error. Rules and th
 
 Exit codes: `0` valid (`<file>: valid`), `1` one line per problem, `<file>: <json path>: <message>` (the first 200, then
 the total), or one line naming a file that could not be read, `2` usage error. The schemas ship in every hub as
-`plugin/hub-workflow/schemas/review.v1.json`, `eval.v1.json` and `preflight.v1.json`.
+`plugin/hub-workflow/schemas/review.v1.json` and `eval.v1.json`.
 
 </details>
 
