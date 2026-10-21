@@ -685,8 +685,33 @@ button.ah-setup-step-button:focus-visible {
   font-weight: 400;
   color: var(--text);
 }
+/* The environments list: rows of two lines (name and description), the whole row opens it. */
+.ah-env-list .ah-table {
+  table-layout: fixed;
+}
+.ah-env-list .ah-table td {
+  height: auto;
+  padding-top: var(--space-3);
+  padding-bottom: var(--space-3);
+  vertical-align: middle;
+  white-space: normal;
+}
+.ah-env-list .ah-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.ah-env-list .ah-env-name-link {
+  font-weight: 500;
+}
+.ah-env-list .ah-env-name-link:hover {
+  text-decoration: underline;
+}
+.ah-env-list .ah-env-actions > .ah-icon {
+  margin-left: var(--space-1);
+  color: var(--text-subtle);
+}
 .ah-env-actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: var(--space-1);
 }

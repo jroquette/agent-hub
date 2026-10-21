@@ -112,7 +112,7 @@ describe("EnvironmentsScreen", () => {
     const section = await screen.findByRole("region", { name: /Environments/ });
     expect(within(section).getByText("Agents ask before writing")).toBeVisible();
     expect(within(section).getByText("Shared test environment")).toBeVisible();
-    expect(within(section).getByRole("button", { name: "Edit: staging" })).toBeVisible();
+    expect(within(section).getByRole("link", { name: "staging" })).toBeVisible();
     expect(
       within(section).getByRole("button", { name: "Remove environment staging" }),
     ).toBeVisible();
@@ -147,27 +147,35 @@ describe("EnvironmentsScreen", () => {
     open(withEnvironments());
 
     const table = await screen.findByRole("table", { name: "Environments and what agents may do" });
-    expect(within(table).getByRole("link", { name: "1 service in local" })).toHaveAttribute(
-      "href",
-      "/projects/demo/environment/local",
-    );
-    expect(within(table).getByRole("link", { name: "0 services in live" })).toBeVisible();
+    expect(within(table).getAllByText("1 service")).toHaveLength(2);
+    expect(within(table).getAllByText("None yet").length).toBeGreaterThan(0);
     expect(
       screen.queryByRole("table", { name: "Addresses per service and environment" }),
     ).not.toBeInTheDocument();
   });
 
-  it("opens an environment's page from its name and from Edit", async () => {
+  it("opens an environment's page from its name and from anywhere on its row", async () => {
     const { router } = open(withEnvironments());
 
     const table = await screen.findByRole("table", { name: "Environments and what agents may do" });
-    expect(within(table).getByRole("link", { name: /^live/ })).toHaveAttribute(
+    expect(within(table).getByRole("link", { name: "live" })).toHaveAttribute(
       "href",
       "/projects/demo/environment/live",
     );
-    await userEvent.click(within(table).getByRole("button", { name: "Edit: live" }));
+    await userEvent.click(within(table).getByText("demo-live-ro"));
 
     expect(router.state.location.pathname).toBe("/projects/demo/environment/live");
+  });
+
+  it("keeps the row's own buttons from opening the environment", async () => {
+    const { router } = open(withEnvironments());
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Remove environment jane-cloud" }),
+    );
+
+    expect(screen.getByRole("alertdialog")).toBeVisible();
+    expect(router.state.location.pathname).toBe("/projects/demo/environments");
   });
   it("removes an environment in use and its addresses in one confirmed write", async () => {
     const { requests } = open(withEnvironments(), { [WRITE]: withEnvironments() });

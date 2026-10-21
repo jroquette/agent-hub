@@ -1,7 +1,15 @@
 import { useContext } from "react";
 import { Link, useNavigate } from "react-router";
 
-import { Button, EmptyState, Icon, IconButton, StatusBadge, Tooltip } from "../../components";
+import {
+  Button,
+  DataTable,
+  EmptyState,
+  Icon,
+  IconButton,
+  StatusBadge,
+  Tooltip,
+} from "../../components";
 import { AskBlocked, ConfigSource, Mono, NoneText, useAttach } from "./parts";
 import { discoverPath } from "../environments/discovery";
 import { useEnvironmentRemoval } from "./EnvironmentRemoval";
@@ -173,151 +181,153 @@ export function EnvironmentsSection({
                 Environments <span className="ah-muted ah-env-count">{environments.length}</span>
               </h2>
             </div>
-            <div className="ah-table-wrap">
-              <table className="ah-table ah-env-table">
-                <caption className="ah-sr">Environments and what agents may do</caption>
-                <colgroup>
-                  <col style={{ width: "22%" }} />
-                  <col style={{ width: "22%" }} />
-                  <col />
-                  <col style={{ width: 120 }} />
-                  <col style={{ width: 140 }} />
-                  <col style={{ width: 200 }} />
-                </colgroup>
-                <thead>
-                  <tr>
-                    <th scope="col">Environment</th>
-                    <th scope="col">What agents may do</th>
-                    <th scope="col">Secrets</th>
-                    <th scope="col">Services</th>
-                    <th scope="col">Set by</th>
-                    <th scope="col">
-                      <span className="ah-sr">Actions</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {environments.map((environment) => {
-                    const tightened =
-                      isTeams(environment) &&
-                      isMine(environment) &&
-                      environment.team_access !== environment.access;
-                    const askId = `environments.${environment.name}`;
-                    const reached = services.filter((service) =>
-                      service.endpoints.some((item) => item.environment === environment.name),
-                    ).length;
-                    return (
-                      <tr key={environment.name}>
-                        <th scope="row">
-                          <span className="ah-stack" style={{ gap: 2 }}>
-                            <span className="ah-env-name">
-                              <Link
-                                className="ah-env-name-link"
-                                to={environmentPath(view.project, environment.name)}
-                              >
-                                <Mono>{environment.name}</Mono>
-                                <Icon name="chevron-right" />
-                              </Link>
-                              {environment.production && <ProductionBadge />}
-                            </span>
-                            {environment.description && (
-                              <span className="ah-small ah-muted">{environment.description}</span>
-                            )}
-                          </span>
-                        </th>
-                        <td>
-                          <span className="ah-stack" style={{ gap: 2 }}>
-                            <AccessValue environment={environment} />
-                            {tightened && environment.team_access && (
-                              <span className="ah-small ah-muted">
-                                Team: {ACCESS_LOOK[environment.team_access].short}
-                              </span>
-                            )}
-                          </span>
-                        </td>
-                        <td>
-                          <CredentialLine environment={environment} />
-                        </td>
-                        <td>
+            <div className="ah-env-list">
+              <DataTable<SourcedEnvironment>
+                caption="Environments and what agents may do"
+                rowKey={(environment) => environment.name}
+                rows={environments}
+                onRowClick={(environment) => {
+                  void navigate(environmentPath(view.project, environment.name));
+                }}
+                columns={[
+                  {
+                    id: "environment",
+                    label: "Environment",
+                    width: "24%",
+                    render: (environment) => (
+                      <span className="ah-stack" style={{ gap: 2, minWidth: 0 }}>
+                        <span className="ah-env-name">
                           <Link
-                            className="ah-env-services-count"
+                            className="ah-env-name-link ah-mono"
                             to={environmentPath(view.project, environment.name)}
-                            aria-label={`${String(reached)} ${reached === 1 ? "service" : "services"} in ${environment.name}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                            }}
                           >
-                            {reached === 0 ? (
-                              <span className="ah-muted">None yet</span>
-                            ) : (
-                              `${String(reached)} ${reached === 1 ? "service" : "services"}`
-                            )}
+                            {environment.name}
                           </Link>
-                        </td>
-                        <td>
-                          <EnvironmentSource environment={environment} />
-                        </td>
-                        <td>
-                          <span className="ah-env-actions">
-                            <IconButton
-                              icon={isAttached(askId) ? "check" : "message-square"}
-                              size="sm"
-                              variant="ghost"
-                              disabled={blocked !== null}
-                              label={
-                                blocked !== null
-                                  ? `Ask Claude to change ${environment.name} (unavailable: ${blocked})`
-                                  : `Ask Claude to change ${environment.name}`
-                              }
-                              onClick={() => {
-                                attach({
-                                  id: `config:${askId}`,
-                                  label: `Environment ${environment.name}`,
-                                  source: isMine(environment) ? "hub.local.json" : "hub.json",
-                                  quote: `environments.${environment.name}: access ${environment.access}${environment.production ? ", production" : ""}`,
-                                });
-                              }}
-                            />
+                          {environment.production && <ProductionBadge />}
+                        </span>
+                        {environment.description && (
+                          <span className="ah-small ah-muted">{environment.description}</span>
+                        )}
+                      </span>
+                    ),
+                  },
+                  {
+                    id: "access",
+                    label: "What agents may do",
+                    width: "22%",
+                    render: (environment) => {
+                      const tightened =
+                        isTeams(environment) &&
+                        isMine(environment) &&
+                        environment.team_access !== environment.access;
+                      return (
+                        <span className="ah-stack" style={{ gap: 2 }}>
+                          <AccessValue environment={environment} />
+                          {tightened && environment.team_access && (
+                            <span className="ah-small ah-muted">
+                              Team: {ACCESS_LOOK[environment.team_access].short}
+                            </span>
+                          )}
+                        </span>
+                      );
+                    },
+                  },
+                  {
+                    id: "secrets",
+                    label: "Secrets",
+                    render: (environment) => <CredentialLine environment={environment} />,
+                  },
+                  {
+                    id: "services",
+                    label: "Services",
+                    width: 110,
+                    render: (environment) => {
+                      const reached = services.filter((service) =>
+                        service.endpoints.some((item) => item.environment === environment.name),
+                      ).length;
+                      return reached === 0 ? (
+                        <span className="ah-muted">None yet</span>
+                      ) : (
+                        `${String(reached)} ${reached === 1 ? "service" : "services"}`
+                      );
+                    },
+                  },
+                  {
+                    id: "source",
+                    label: "Set by",
+                    width: 130,
+                    render: (environment) => <EnvironmentSource environment={environment} />,
+                  },
+                  {
+                    id: "actions",
+                    label: <span className="ah-sr">Actions</span>,
+                    width: 190,
+                    align: "right",
+                    render: (environment) => {
+                      const askId = `environments.${environment.name}`;
+                      return (
+                        // The row opens the environment; its buttons do their own thing.
+                        // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
+                        <span
+                          className="ah-env-actions"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                          }}
+                        >
+                          <IconButton
+                            icon={isAttached(askId) ? "check" : "message-square"}
+                            size="sm"
+                            variant="ghost"
+                            disabled={blocked !== null}
+                            label={
+                              blocked !== null
+                                ? `Ask Claude to change ${environment.name} (unavailable: ${blocked})`
+                                : `Ask Claude to change ${environment.name}`
+                            }
+                            onClick={() => {
+                              attach({
+                                id: `config:${askId}`,
+                                label: `Environment ${environment.name}`,
+                                source: isMine(environment) ? "hub.local.json" : "hub.json",
+                                quote: `environments.${environment.name}: access ${environment.access}${environment.production ? ", production" : ""}`,
+                              });
+                            }}
+                          />
+                          {isTeams(environment) && isMine(environment) ? (
                             <Button
                               size="sm"
                               variant="ghost"
-                              icon="pencil"
-                              aria-label={`Edit: ${environment.name}`}
+                              icon="undo-2"
+                              aria-label={`Use the team's access for ${environment.name}`}
                               onClick={() => {
-                                void navigate(environmentPath(view.project, environment.name));
+                                startLoosen(environment);
                               }}
                             >
-                              Edit
+                              Use team&apos;s
                             </Button>
-                            {isTeams(environment) && isMine(environment) ? (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                icon="undo-2"
-                                aria-label={`Use the team's access for ${environment.name}`}
-                                onClick={() => {
-                                  startLoosen(environment);
-                                }}
-                              >
-                                Use team&apos;s
-                              </Button>
-                            ) : (
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                icon="x"
-                                aria-label={`Remove environment ${environment.name}`}
-                                onClick={() => {
-                                  startRemove(environment);
-                                }}
-                              >
-                                Remove
-                              </Button>
-                            )}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              icon="x"
+                              aria-label={`Remove environment ${environment.name}`}
+                              onClick={() => {
+                                startRemove(environment);
+                              }}
+                            >
+                              Remove
+                            </Button>
+                          )}
+                          <Icon name="chevron-right" />
+                        </span>
+                      );
+                    },
+                  },
+                ]}
+              />
             </div>
             <p className="ah-small ah-muted ah-env-honesty">
               <Icon name="info" /> agent-hub&apos;s own scripted actions follow this access
