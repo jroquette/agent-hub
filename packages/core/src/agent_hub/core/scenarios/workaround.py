@@ -6,8 +6,10 @@ Each step of an option an agent proposed is planned as a scenario step is, with 
 run's environment, its content hash and draft state, and the policy's decision. An unresolved
 action or inputs that do not fit are a ``deny`` with the problem. An option holding a ``deny`` (a
 draft action included: ``needs acceptance``) cannot be picked (``pick_refusal``). Picking answers
-its steps' asks. A step whose plan differs, when it is picked or when it runs, from the plan
-shown (``plan_changed``) is not run on that pick: the person is asked again.
+its steps' asks. A step whose plan differs from the plan shown (``plan_changed``,
+``changed_step``) is never run on that pick: at pick time the pick is refused and nothing is
+recorded; at run time (a pick recorded earlier, the plan changed since) the workaround fails and
+a new investigation opens, one of the scenario run's ``MAX_INVESTIGATIONS``.
 """
 
 from collections.abc import Iterable, Mapping, Sequence

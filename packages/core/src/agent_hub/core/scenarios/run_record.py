@@ -7,7 +7,8 @@ investigation with its answer and its latest proposal (a later proposal of the s
 investigation replaces the earlier), the findings kept (each investigation's latest), the
 workarounds and the end. Lines it does not know are left out of the view, never refused.
 
-The lines a scenario run's investigation writes (``cli/scenario_answers.py``):
+The lines a scenario run's investigation writes (``cli/scenario_investigation.py``, and
+``cli/action_command.py`` for ``agent_action``):
 
 - ``investigation``: ``step``, ``gate``, ``number`` (from 1, the gate's attempt), ``step_attempt``
   and ``failure_kind`` of the divergence; then a ``gate`` line on ``gate``;

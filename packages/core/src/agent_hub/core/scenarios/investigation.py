@@ -31,6 +31,8 @@ RETRY: Final = "retry"
 STOP: Final = "stop"
 CHOICES: Final = (PICK, RETRY, STOP)
 MAX_INVESTIGATIONS: Final = 10
+# Proposals one investigation records (owner decision, AGH-360 review Q7).
+MAX_PROPOSALS: Final = 10
 MAX_PROPOSAL_BYTES: Final = 256 * 1024
 MAX_FINDINGS: Final = 20
 MAX_TITLE_CHARS: Final = 120
