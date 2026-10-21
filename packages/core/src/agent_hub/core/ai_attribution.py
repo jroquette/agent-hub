@@ -14,9 +14,9 @@ from typing import Final
 # A co-author tag and its blanks, which end on the line the guard's ``[^\n]*`` searches.
 _TAG: Final = re.compile(r"co-authored-by:\s*", re.IGNORECASE)
 # What a co-author line must name, after the tag's blanks, on the line where they end.
-AI_CO_AUTHOR: Final = re.compile(r"claude|anthropic|openai|copilot|\bai\b", re.IGNORECASE)
+_AI_CO_AUTHOR: Final = re.compile(r"claude|anthropic|openai|copilot|\bai\b", re.IGNORECASE)
 # The marks found by one search.
-AI_GENERATED: Final = re.compile(r"generated with \[?claude|\U0001f916", re.IGNORECASE)
+_AI_GENERATED: Final = re.compile(r"generated with \[?claude|\U0001f916", re.IGNORECASE)
 
 
 def carries_ai_attribution(text: str) -> bool:
@@ -25,7 +25,7 @@ def carries_ai_attribution(text: str) -> bool:
     A tag's blanks (``\\s*``, across lines too) end on some line; that line, from there, must
     name an AI. A later tag whose line was already searched adds nothing: its rest is part of it.
     """
-    if AI_GENERATED.search(text) is not None:
+    if _AI_GENERATED.search(text) is not None:
         return True
     searched_to = -1
     for tag in _TAG.finditer(text):
@@ -34,7 +34,7 @@ def carries_ai_attribution(text: str) -> bool:
         end = len(text) if line_end == -1 else line_end
         if end <= searched_to:
             continue
-        if AI_CO_AUTHOR.search(text, line_start, end) is not None:
+        if _AI_CO_AUTHOR.search(text, line_start, end) is not None:
             return True
         searched_to = end
     return False
