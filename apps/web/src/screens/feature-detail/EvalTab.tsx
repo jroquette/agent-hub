@@ -1016,15 +1016,23 @@ export function EvalTab({
     arrived && (location.state as { focusEval?: boolean } | null)?.focusEval === true
       ? location.key
       : null;
-  // A hidden list shows for the signpost's arrival until the owner toggles it again.
-  const [toggledFor, setToggledFor] = useState<string | null>(null);
-  const listOpen = stored || (focusAsked !== null && toggledFor !== focusAsked);
+  // A hidden list shows from a signpost's arrival until the owner toggles it, whatever happens in
+  // the tab meanwhile; the stored setting is left as the owner chose it.
+  const [arrival, setArrival] = useState<string | null>(null);
+  const [shownForArrival, setShownForArrival] = useState(false);
+  if (focusAsked !== null && focusAsked !== arrival) {
+    setArrival(focusAsked);
+    setShownForArrival(true);
+  }
+  const listOpen = stored || shownForArrival;
   useEffect(() => {
     if (focusAsked === null || landed.current === focusAsked) return;
+    const row = [...(table.current?.querySelectorAll<HTMLElement>("[data-group]") ?? [])].find(
+      (toggle) => toggle.dataset.group === selectedScope,
+    );
+    if (!row) return;
+    row.focus();
     landed.current = focusAsked;
-    [...(table.current?.querySelectorAll<HTMLElement>("[data-group]") ?? [])]
-      .find((toggle) => toggle.dataset.group === selectedScope)
-      ?.focus();
   }, [focusAsked, selectedScope]);
   // A group the owner opened or closed stays so; any other is open when it holds the selected
   // eval (one shown from elsewhere too: a finished run, the sign-off) or is the only one.
@@ -1032,7 +1040,7 @@ export function EvalTab({
   const isOpen = (scope: string) =>
     folded.get(scope) ?? (history.length === 1 || scope === selectedScope);
   const toggleList = () => {
-    setToggledFor(focusAsked);
+    setShownForArrival(false);
     writeListOpen(!listOpen);
     setListOpen(!listOpen);
   };
