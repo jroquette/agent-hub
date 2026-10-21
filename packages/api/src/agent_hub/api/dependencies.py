@@ -108,6 +108,11 @@ def change_request_decisions(request: Request) -> DecideChangeRequest:
     return port
 
 
+def optional_change_request_decisions(request: Request) -> DecideChangeRequest | None:
+    """The change request decision, or None when this build does not wire it (sessions off)."""
+    return _ports(request).change_request_decisions
+
+
 def workflow_reads(request: Request) -> WorkflowReads:
     """The workflow reads, or 501 when not wired."""
     port = _ports(request).workflow_reads
@@ -313,6 +318,9 @@ EventReadModelsDep = Annotated[EventReadModels, Depends(event_read_models)]
 HubReadModelsDep = Annotated[HubReadModels, Depends(hub_read_models)]
 OwnerSignOffDep = Annotated[SignOffOwnerSteps, Depends(owner_signoff)]
 ChangeRequestDecisionsDep = Annotated[DecideChangeRequest, Depends(change_request_decisions)]
+OptionalChangeRequestDecisionsDep = Annotated[
+    DecideChangeRequest | None, Depends(optional_change_request_decisions)
+]
 WorkflowReadsDep = Annotated[WorkflowReads, Depends(workflow_reads)]
 RunStartsDep = Annotated[StartWorkflowRun, Depends(run_starts)]
 RunControlDep = Annotated[ControlWorkflowRun, Depends(run_control)]

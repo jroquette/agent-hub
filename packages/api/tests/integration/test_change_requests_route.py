@@ -67,7 +67,8 @@ REQUESTS = (
 
 # AC-2.7 (web approve via the gate), P8, A5: an open request of a live run carries its gate's
 # approval id; one whose run has no open gate, or one decided, carries none.
-def test_detail_carries_open_gate_when_request_run_waits(wired: Any) -> None:
+def test_detail_carries_open_gate_when_request_run_waits(tmp_path: Path, wired: Any) -> None:
+    _decision_hub(tmp_path, wired)
     detail = FeatureDetail.model_validate(a_feature_view().model_dump())
     wired.hubs.features.append(detail.model_copy(update={"change_requests": REQUESTS}))
     wired.events.approvals.extend([a_gate(), a_gate("implement-9", decided=True)])
@@ -81,6 +82,22 @@ def test_detail_carries_open_gate_when_request_run_waits(wired: Any) -> None:
         True,
         False,
     ]
+
+
+# Q11: with the decision route not wired (sessions off), the detail offers no decision here;
+# spec F2: a run a child still holds is not gone either.
+@pytest.mark.parametrize("wiring", ["not wired", "held by a child"])
+def test_detail_decides_nothing_here_when_route_off_or_run_held(
+    tmp_path: Path, wired: Any, wiring: str
+) -> None:
+    if wiring == "held by a child":
+        _decision_hub(tmp_path, wired, live={"implement-9": "DEM-8"})
+    detail = FeatureDetail.model_validate(a_feature_view().model_dump())
+    wired.hubs.features.append(detail.model_copy(update={"change_requests": REQUESTS[1:2]}))
+
+    body = wired.client.get("/api/v1/features/demo/demo-feature").json()
+
+    assert body["change_requests"][0]["decidable_here"] is False
 
 
 def test_detail_reads_no_approvals_when_no_request_open(wired: Any) -> None:
@@ -130,7 +147,13 @@ class _Launcher:
         return self.live
 
 
-def _decision_hub(tmp_path: Path, wired: Any, *, person: str | None = "Dana Owner") -> Path:
+def _decision_hub(
+    tmp_path: Path,
+    wired: Any,
+    *,
+    person: str | None = "Dana Owner",
+    live: dict[str, str | None] | None = None,
+) -> Path:
     """A hub with request 2 of run implement-8, wired behind the decision route."""
     hub = tmp_path / "demo-hub"
     requests = hub / "brain" / "features" / "demo-feature" / "change-requests"
@@ -153,11 +176,13 @@ def _decision_hub(tmp_path: Path, wired: Any, *, person: str | None = "Dana Owne
         lock_state="in_sync",
         modules=(),
     )
+    launcher = _Launcher()
+    launcher.live = dict(live or {})
     decide = DecideChangeRequest(
         ProjectHubPaths(wired.hubs),
         _DiskFolders(),
         writer=HubDecisionWriter(),
-        guard=RunGuard(wired.events, _Launcher()),  # type: ignore[arg-type]
+        guard=RunGuard(wired.events, launcher),  # type: ignore[arg-type]
         decider=lambda project: person,
         clock=lambda: DECIDED_AT,
     )

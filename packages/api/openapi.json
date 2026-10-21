@@ -1268,7 +1268,7 @@
       },
       "ChangeRequestView": {
         "additionalProperties": false,
-        "description": "A plan change request (``change-requests/<n>.md``, two-level-flows S2): its asking\n``ticket``, ``status`` folded from its decision (None when the request cannot be read,\n``problem`` then says why), the plan versions, the tickets it affects, when it was opened and\nby which ``run_id``. ``approval_id`` is the open gate of that run that answers it (P8, A5);\n``decidable_here`` says the run is gone (lost, or ended), so hub web records the decision\nitself (AC-2.14). ``path`` is relative to the hub's ``brain/``; ``body`` (the ticket route\nonly) is the request's evidence and proposal, as markdown within its 16 KiB head.",
+        "description": "A plan change request (``change-requests/<n>.md``, two-level-flows S2): its asking\n``ticket``, ``status`` folded from its decision (None when the request cannot be read,\n``problem`` then says why), the plan versions, the tickets it affects, when it was opened and\nby which ``run_id``. ``approval_id`` is the open gate of that run that answers it (P8, A5);\n``decidable_here`` says the run is gone (lost, or ended), so hub web records the decision\nitself (AC-2.14). ``path`` is relative to the hub's ``brain/``; ``body`` (the ticket route\nonly) is the request's evidence and proposal, as markdown within its 16 KiB head; ``body_cut``\nsays the file goes on past it.",
         "properties": {
           "affected": {
             "items": {
@@ -1298,6 +1298,11 @@
               }
             ],
             "title": "Body"
+          },
+          "body_cut": {
+            "default": false,
+            "title": "Body Cut",
+            "type": "boolean"
           },
           "decidable_here": {
             "default": false,
