@@ -38,11 +38,25 @@ import {
 import { commonDir, type ChangedFile, type FileChange } from "./model";
 import { useRepoCommitDiff } from "./queries";
 import { writtenText } from "./netDiff";
-import { repoState, type FileCommit, type RepoChanges } from "./repoChanges";
+import { isDiscarded, repoState, type FileCommit, type RepoChanges } from "./repoChanges";
 import { shortSha } from "../feature-detail/acEvidence";
 
+/** The drawer's tabs: one per kind of file, then the files that ended as they began. */
+type FilesTab = FileKind | "discarded";
+
+const DISCARDED_TAB = {
+  label: "Discarded",
+  icon: "file-x",
+  hint: "touched, then put back: none of it goes in the pull request",
+} as const;
+
+/** A file you review: code that goes in the pull request (a discarded file does not). */
+const needsReview = (file: ChangedFile) => isReviewable(file.path) && !isDiscarded(file);
+
 /** What each tab says about its files, under the tabs. */
-const KIND_NOTE: Record<FileKind, string> = {
+const KIND_NOTE: Record<FilesTab, string> = {
+  discarded:
+    "Files this session created or changed, then deleted or put back: they end as they are on the base, so none of it goes in the pull request. Kept here so you can see what was tried.",
   code: "The files of your repo this session changed: what goes in the pull request.",
   plan: "The plans Claude wrote for this work. They stay on this machine.",
   feature:
@@ -611,7 +625,7 @@ function FileList({
   const navWidth = useWidth(nav);
   const compact = navWidth > 0 && navWidth < LIST_COMPACT;
   // Only the code is reviewed: Claude's own files carry no viewed mark and no progress.
-  const reviewable = files.filter((file) => isReviewable(file.path));
+  const reviewable = files.filter(needsReview);
   const viewedCount = reviewable.filter(
     (file) => review.reviewed[file.path] === file.lastChangeId,
   ).length;
@@ -688,7 +702,7 @@ function FileList({
                       </>
                     )}
                   </button>
-                  {isReviewable(file.path) && (
+                  {needsReview(file) && (
                     <ViewedToggle
                       compact
                       viewed={viewed}
@@ -800,7 +814,7 @@ function FileDetail({
           </span>
         </div>
         <CopyButton text={file.path} label="Copy file path" className="as-files-copy" />
-        {isReviewable(file.path) && (
+        {needsReview(file) && (
           <ViewedToggle
             viewed={viewed}
             stale={mark !== undefined && !viewed}
@@ -941,7 +955,7 @@ export function FilesPanel({
   const own = useReviewed(sessionId);
   const review = shared ?? own;
   const [picked, setPicked] = useState<string | null>(initialPath);
-  const [tab, setTab] = useState<FileKind | null>(null);
+  const [tab, setTab] = useState<FilesTab | null>(null);
   const [split, setSplit] = useState<CodeSplit>(readCodeSplit);
   // Opened on a file, the keyboard goes to that file; else to the drawer's heading.
   const [focusFile, setFocusFile] = useState(initialPath !== null);
@@ -959,17 +973,23 @@ export function FilesPanel({
   }, [pickNonce, initialPath]);
 
   // One tab per kind of file the session changed: the code first, Claude's scratch last.
-  const kinds = useMemo(
-    () =>
-      FILE_KINDS.map((kind) => ({
-        kind,
-        files: files.filter((file) => fileKind(file.path) === kind),
-      })).filter((group) => group.files.length > 0),
-    [files],
-  );
+  // The files that ended as they began have a tab of their own, after the code.
+  const kinds = useMemo(() => {
+    const kept = files.filter((file) => !isDiscarded(file));
+    const groups: { kind: FilesTab; files: ChangedFile[] }[] = FILE_KINDS.map((kind) => ({
+      kind,
+      files: kept.filter((file) => fileKind(file.path) === kind),
+    }));
+    groups.splice(1, 0, { kind: "discarded", files: files.filter(isDiscarded) });
+    return groups.filter((group) => group.files.length > 0);
+  }, [files]);
   // A file picked (from a card in the conversation, too) shows in its own tab.
-  const pickedKind =
-    picked !== null && files.some((file) => file.path === picked) ? fileKind(picked) : null;
+  const pickedFile = picked === null ? undefined : files.find((file) => file.path === picked);
+  const pickedKind: FilesTab | null = pickedFile
+    ? isDiscarded(pickedFile)
+      ? "discarded"
+      : fileKind(pickedFile.path)
+    : null;
   const kind = kinds.find((group) => group.kind === (pickedKind ?? tab)) ?? kinds[0];
   // The code tab can show its tests apart: only when it has both tests and other code.
   const testCount = kind?.kind === "code" ? kind.files.filter((f) => isTestFile(f.path)).length : 0;
@@ -1082,13 +1102,13 @@ export function FilesPanel({
                 label="Kind of file"
                 value={kind.kind}
                 onChange={(id) => {
-                  setTab(id as FileKind);
+                  setTab(id as FilesTab);
                   setPicked(null);
                 }}
                 tabs={kinds.map((group) => ({
                   id: group.kind,
-                  label: KIND_TAB[group.kind].label,
-                  icon: KIND_TAB[group.kind].icon,
+                  label: tabOf(group.kind).label,
+                  icon: tabOf(group.kind).icon,
                   count: group.files.length,
                 }))}
               />
@@ -1213,8 +1233,10 @@ function RepoList({ repos }: { repos: readonly RepoChanges[] }) {
 
 /** What the review totals: the code that goes in the pull request (git's files and the repo
  * files Claude changed), never Claude's plans, feature records, brain notes or scratch. */
+const tabOf = (tab: FilesTab) => (tab === "discarded" ? DISCARDED_TAB : KIND_TAB[tab]);
+
 export function codeTotals(files: readonly ChangedFile[]) {
-  const code = files.filter((file) => isReviewable(file.path));
+  const code = files.filter(needsReview);
   return {
     files: code.length,
     added: code.reduce((sum, file) => sum + file.added, 0),
@@ -1238,7 +1260,7 @@ export interface ChangedFilesChipProps {
 export function ChangedFilesChip({ files, review, open, onToggle }: ChangedFilesChipProps) {
   // Only the code counts and waits on you: Claude's own files are in their tabs, not the total.
   const { files: codeFiles, added, removed } = codeTotals(files);
-  const due = files.filter((file) => isReviewable(file.path) && !isViewed(review, file)).length;
+  const due = files.filter((file) => needsReview(file) && !isViewed(review, file)).length;
   const count = codeFiles > 0 ? plural(codeFiles, "file") : "No code";
   const left =
     due === 0

@@ -700,6 +700,70 @@ describe("FilesPanel (pull request)", () => {
   });
 });
 
+describe("FilesPanel (discarded files)", () => {
+  // Claude wrote scratch.py and then deleted it: git lists it nowhere, so it ends as on the base.
+  const files = () =>
+    withRepoChanges(
+      filesOf([
+        tool("t1", "Edit", { file_path: "/w/api/app.py", old_string: "b", new_string: "B" }),
+        tool("t2", "Write", { file_path: "/w/api/scratch.py", content: "x = 1" }),
+      ]),
+      [
+        {
+          source: "worktree",
+          root: "/w/api",
+          label: "api",
+          branch: "dem-1",
+          base: "origin/main",
+          base_sha: "f0",
+          commits: [],
+          files: [
+            {
+              path: "/w/api/app.py",
+              status: "modified",
+              added: 1,
+              removed: 1,
+              diff: "--- a/app.py\n+++ b/app.py\n@@ -1 +1 @@\n-b\n+B",
+              binary: false,
+              fingerprint: "fp1",
+              commits: [],
+              uncommitted: true,
+            },
+          ],
+          truncated: false,
+        },
+      ],
+    );
+
+  it("shows a file that ends as on the base in its own Discarded tab, out of the review", async () => {
+    render(<FilesPanel files={files()} sessionId="s1" onClose={vi.fn()} />);
+
+    const kinds = screen.getByRole("tablist", { name: "Kind of file" });
+    expect(within(kinds).getByRole("tab", { name: /Code/ })).toHaveTextContent("1");
+    expect(screen.getByText("0 of 1 viewed")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /scratch\.py/ })).toBeNull();
+
+    await userEvent.click(within(kinds).getByRole("tab", { name: /Discarded/ }));
+
+    expect(screen.getByText(/none of it goes in the pull request/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /scratch\.py/ })).toBeInTheDocument();
+    expect(screen.queryByText(/viewed$/)).toBeNull();
+  });
+
+  it("leaves a discarded file out of the chip's count and what waits for review", () => {
+    render(
+      <ChangedFilesChip
+        files={files()}
+        review={{ reviewed: {}, toggle: vi.fn() }}
+        open={false}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /Review changes: 1 file,/ })).toBeInTheDocument();
+  });
+});
+
 describe("FilesPanel (repositories)", () => {
   it("names each repository's branch, base, pull request and where it stands", () => {
     render(
