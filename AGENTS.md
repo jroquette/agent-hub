@@ -35,6 +35,11 @@ Set up once per clone or worktree with `uv sync --all-packages` (the `make` targ
 
 - `make check-fast`: while working (format, lint, mypy --strict, test layout, version lockstep, unit and contract tests).
 - `make check`: before a PR, and what CI runs (`check-fast` + integration, e2e, import contracts, migrations, coverage floors).
+- `make pr-title TITLE="<title>"`: before opening a PR (CI does not check titles).
+
+Both gates run two lanes at once (the checks, and the test runners in turn) and print each lane when it ends;
+`check-fast` skips the web app's steps unless something under `apps/web/` differs from `origin/main`
+(`WEB_FAST=1` forces them).
 
 Redirect the output to a file and check the exit code: `make check > check.log 2>&1; echo $?`. Never run them with `-j`.
 
