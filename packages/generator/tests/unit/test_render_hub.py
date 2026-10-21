@@ -118,6 +118,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/schemas/eval.v1.json",
     "plugin/hub-workflow/schemas/review.v1.json",
     "plugin/hub-workflow/skills/adr/SKILL.md",
+    "plugin/hub-workflow/skills/context-audit/SKILL.md",
     "plugin/hub-workflow/skills/create-plan/SKILL.md",
     "plugin/hub-workflow/skills/deliver/SKILL.md",
     "plugin/hub-workflow/skills/feature/SKILL.md",
@@ -131,6 +132,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/skills/overengineering-review/SKILL.md",
     "plugin/hub-workflow/skills/overengineering-review/references/patterns.md",
     "plugin/hub-workflow/skills/plain-language/SKILL.md",
+    "plugin/hub-workflow/skills/premortem/SKILL.md",
     "plugin/hub-workflow/skills/recall/SKILL.md",
     "plugin/hub-workflow/skills/refactor/SKILL.md",
     "plugin/hub-workflow/skills/release/SKILL.md",
@@ -192,6 +194,7 @@ BASE_AGENTS = (
 )
 BASE_SKILLS = (
     "adr",
+    "context-audit",
     "create-plan",
     "deliver",
     "feature",
@@ -203,6 +206,7 @@ BASE_SKILLS = (
     "onboard",
     "overengineering-review",
     "plain-language",
+    "premortem",
     "recall",
     "refactor",
     "release",
@@ -319,13 +323,13 @@ def test_returns_rendered_hub_when_demo_rendered(demo_config: HubConfig) -> None
     assert isinstance(rendered.links, tuple)
     assert all(type(link) is RenderedLink for link in rendered.links)
     # AC-4.6: the 14 links of spec "The rendered set", plus AGH-58's /fix, the ten AGH-99
-    # skills, AGH-274's two review skills and ux-designer agent, /summarize, and AGH-319's
-    # `plain-language`: 30, sorted by path.
+    # skills, AGH-274's two review skills and ux-designer agent, /summarize, AGH-319's
+    # `plain-language`, and AGH-414's /premortem and /context-audit: 32, sorted by path.
     assert [link.path for link in rendered.links] == [
         *(f".claude/agents/{name}.md" for name in BASE_AGENTS),
         *(f".claude/skills/{name}" for name in BASE_SKILLS),
     ]
-    assert len(rendered.links) == 30
+    assert len(rendered.links) == 32
     assert all(
         (link.kind, link.ownership) == (Kind.GENERIC, Ownership.MANAGED) for link in rendered.links
     )
@@ -2047,6 +2051,7 @@ def test_names_transcript_script_when_recall_rendered(
 # model-invocable.
 SKILL_FRONTMATTER_KEYS = {
     "adr": ["name", "description", "disable-model-invocation", "argument-hint"],
+    "context-audit": ["name", "description", "disable-model-invocation", "argument-hint"],
     "create-plan": ["name", "description", "argument-hint"],
     "deliver": ["name", "description", "disable-model-invocation", "argument-hint"],
     "feature": ["name", "description", "disable-model-invocation", "argument-hint"],
@@ -2058,6 +2063,7 @@ SKILL_FRONTMATTER_KEYS = {
     "onboard": ["name", "description", "disable-model-invocation", "argument-hint"],
     "overengineering-review": ["name", "description", "disable-model-invocation", "argument-hint"],
     "plain-language": ["name", "description"],
+    "premortem": ["name", "description", "disable-model-invocation", "argument-hint"],
     "recall": ["name", "description", "argument-hint"],
     "refactor": ["name", "description", "disable-model-invocation", "argument-hint"],
     "release": ["name", "description", "disable-model-invocation", "argument-hint"],

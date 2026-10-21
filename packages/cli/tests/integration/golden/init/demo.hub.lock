@@ -44,6 +44,10 @@
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/adr"
     },
+    ".claude/skills/context-audit": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/context-audit"
+    },
     ".claude/skills/create-plan": {
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/create-plan"
@@ -87,6 +91,10 @@
     ".claude/skills/plain-language": {
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/plain-language"
+    },
+    ".claude/skills/premortem": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/premortem"
     },
     ".claude/skills/recall": {
       "ownership": "managed",
@@ -249,7 +257,7 @@
     "plugin/hub-workflow/NOTICE": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "abbdefc183257342ea248bc5ee62c2805cbd078cf9de6b9e43fec1d54c61a9a3"
+      "sha256": "6bb79963330a4a79bd84140c5ce80fcf1e33686ffb78da49cb702da0b1001b07"
     },
     "plugin/hub-workflow/agents/architect.md": {
       "executable": false,
@@ -366,6 +374,11 @@
       "ownership": "managed",
       "sha256": "9ce7c41cbc0843192921b609073bc0f7e3230f4b1aeb87a6b77d63bf4bd83ca9"
     },
+    "plugin/hub-workflow/skills/context-audit/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "663fb974044fd4259bd492204c6b192103b36ff0552a407559f0d4d06ae48267"
+    },
     "plugin/hub-workflow/skills/create-plan/SKILL.md": {
       "executable": false,
       "ownership": "managed",
@@ -430,6 +443,11 @@
       "executable": false,
       "ownership": "managed",
       "sha256": "be9a1cdcffb759374fba0f1ee0af80cd9e95421ad031f1833726c52e8127946d"
+    },
+    "plugin/hub-workflow/skills/premortem/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "5f2c9f99289a1ef2880f8965b5aac0f6a5b71310a5a2245e732bfd97f5aadef2"
     },
     "plugin/hub-workflow/skills/recall/SKILL.md": {
       "executable": false,
