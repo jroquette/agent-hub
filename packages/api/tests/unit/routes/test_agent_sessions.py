@@ -19,6 +19,7 @@ from agent_hub.core.agent_sessions.cloud import CloudSessionCommands
 from agent_hub.core.agent_sessions.control import AgentSessionCommands
 from agent_hub.core.agent_sessions.driver import DriverCapabilities
 from agent_hub.core.agent_sessions.records import LogRecord, LogRecordPage
+from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.testing.agent_session_rig import build_rig
 from agent_hub.core.testing.agent_session_store_fakes import InMemoryAgentSessionStore
 from agent_hub.core.testing.builders import an_environments_document
@@ -287,7 +288,9 @@ def test_refuses_wrote_when_empty_or_too_long(
     assert control.list_sessions.await_count == 0
 
 
-def _hub_with_credentials(tmp_path: Path) -> HubCredentials:
+def _hub_with_credentials(
+    tmp_path: Path, *, local: tuple[ConfigProblem, ...] | None = None
+) -> HubCredentials:
     """A registered hub ``demo`` whose ``staging`` declares a profile, a name and an env file."""
     hub = tmp_path / "work" / "demo-hub"
     hub.mkdir(parents=True)
@@ -300,7 +303,10 @@ def _hub_with_credentials(tmp_path: Path) -> HubCredentials:
     }
     registry = InMemoryHubRegistry()
     registry.add(str(hub))
-    reader = FakeHubFileReader({str(hub): FakeHub(hub_json=json.dumps(document).encode())})
+    fake = FakeHub(hub_json=json.dumps(document).encode())
+    if local is not None:
+        fake.local = local
+    reader = FakeHubFileReader({str(hub): fake})
     return HubCredentials(registry=registry, reader=reader, running_version=RUNNING)
 
 
@@ -321,3 +327,24 @@ def test_hides_credentials_when_credential_injection_any_session(
     assert hidden.aws_profiles == frozenset({"demo-staging", "demo-live-ro"})
     assert start.args[0].tool_policy is None
     assert start.args[0].system_prompt is None
+
+
+def test_refuses_start_when_credential_injection_local_config_unreadable(
+    wired: Any, tmp_path: Path
+) -> None:
+    problem = ConfigProblem(path="hub.local.json", message="not valid JSON")
+    credentials = _hub_with_credentials(tmp_path, local=(problem,))
+    rig = build_rig(hidden_environment=credentials.names)
+    wired.wire(agent_sessions=rig.control)
+
+    response = wired.client.post(
+        BASE, json={"project": "demo", "workdir_id": WORKDIR_ID}, headers=OWN_ORIGIN
+    )
+
+    assert response.status_code == 409
+    assert response.headers["content-type"] == "application/problem+json"
+    assert response.json()["type"] == "urn:agent-hub:problem:hub-local-invalid"
+    assert response.json()["code"] == "hub_local_invalid"
+    assert "hub.local.json" in response.json()["detail"]
+    assert [call for call in rig.driver.calls if call.method == "start"] == []
+    assert rig.store.list(project=None, status=None, kind="local") == ()
