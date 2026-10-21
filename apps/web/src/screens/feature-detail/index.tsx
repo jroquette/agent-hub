@@ -1,4 +1,4 @@
-import { Fragment, useId, useRef, useState, type MutableRefObject, type ReactNode } from "react";
+import { Fragment, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
@@ -15,13 +15,13 @@ import {
   Skeleton,
   StatusBadge,
   Tabs,
-  Tooltip,
 } from "../../components";
 import { brainRoute } from "../../lib/brainLinks";
 import { fmtClock } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
 import { useCollectorState } from "../../shell/GlobalStream";
 import { DiscussButton, useDiscussTarget, type DiscussTarget } from "../../shell/discuss";
+import { FeatureLabel } from "../features/FeatureChip";
 import { FeatureNameField, RenameButton, useFeatureNames } from "../features/names";
 import { AcBar, PHASES, VERDICT_STATUS } from "../features/parts";
 import { ApproveRecord } from "./ApproveRecord";
@@ -40,7 +40,6 @@ import {
   signableLine,
 } from "./EvalTab";
 import { RecordSummary, summaryRequest } from "./RecordSummary";
-import { StateBadge, ticketSearch } from "./PlanningView";
 import { TicketsTab } from "./TicketsTab";
 import { useFeature, useFeatureTickets } from "./queries";
 
@@ -48,7 +47,6 @@ type Detail = components["schemas"]["FeatureDetail"];
 type AcRow = components["schemas"]["AcRow"];
 
 export { acReference, allCommands } from "./CriteriaTab";
-type TicketRow = components["schemas"]["TicketRow"];
 
 type RecordName = components["schemas"]["FeatureRecordName"];
 type PlanView = components["schemas"]["PlanView"];
@@ -240,75 +238,6 @@ function PlanVersionLine({ plan }: { plan: PlanView }) {
   );
 }
 
-/** One header chip: it opens the ticket's panel; where it goes is its description (UX F6). */
-function TicketChip({
-  id,
-  row,
-  search,
-  openerRef,
-}: {
-  id: string;
-  row: TicketRow | undefined;
-  search: string;
-  openerRef: MutableRefObject<HTMLElement | null>;
-}) {
-  const tipId = useId();
-  return (
-    <span className="ah-row" style={{ gap: 6 }}>
-      <Tooltip id={tipId} label={`${id}${row?.title ? ` · ${row.title}` : ""} · show its steps`}>
-        <Link
-          className="ah-issue"
-          to={{ search }}
-          replace
-          aria-describedby={tipId}
-          onClick={(event) => {
-            openerRef.current = event.currentTarget;
-          }}
-        >
-          {id}
-        </Link>
-      </Tooltip>
-      {row?.state && <StateBadge row={row} />}
-    </span>
-  );
-}
-
-/**
- * The feature's tickets as header chips: each id opens the Tickets tab with its ticket panel
- * (two-level-flows AC-1.10; the Linear link is in the panel), its title on hover and its status in
- * Linear once the tickets route answered (its cached answer).
- */
-function TicketChips({
-  ids,
-  rows,
-  openerRef,
-}: {
-  ids: readonly string[];
-  rows: readonly TicketRow[];
-  openerRef: MutableRefObject<HTMLElement | null>;
-}) {
-  const [params] = useSearchParams();
-  if (ids.length === 0) return null;
-  return (
-    <span
-      className="ah-row ah-wrap"
-      style={{ gap: 12 }}
-      role="group"
-      aria-label="Tickets of this feature"
-    >
-      {ids.map((id) => (
-        <TicketChip
-          key={id}
-          id={id}
-          row={rows.find((r) => r.id === id || r.ref === id)}
-          search={ticketSearch(params, id)}
-          openerRef={openerRef}
-        />
-      ))}
-    </span>
-  );
-}
-
 function Loading() {
   return (
     <div style={{ padding: "16px 32px" }} className="ah-stack" aria-busy="true">
@@ -397,7 +326,7 @@ function featureDiscussTarget(
 }
 
 /** Feature detail (spec 17, D23): golden path, owner steps, acceptance criteria. */
-/** The feature's nickname as the title, the slug beside it; the pencil renames it. */
+/** The feature's name as the title (its slug until renamed), then its fixed label; the pencil renames it. */
 function FeatureHeading({ project, slug }: { project: string; slug: string }) {
   const nameOf = useFeatureNames();
   const [editing, setEditing] = useState(false);
@@ -417,7 +346,7 @@ function FeatureHeading({ project, slug }: { project: string; slug: string }) {
   return (
     <span className="ah-row" style={{ gap: 8, flexWrap: "nowrap", minWidth: 0 }}>
       <h1 className={name ? "ah-h1" : "ah-h1 ah-mono"}>{name ?? slug}</h1>
-      {name && <span className="ah-mono ah-small ah-subtle">{slug}</span>}
+      <FeatureLabel slug={slug} />
       <RenameButton
         slug={slug}
         named={name !== null}
@@ -598,9 +527,10 @@ export function FeatureDetailScreen() {
   const openEval = (delivery: string) => {
     setParams((current) => evalSearch(current, delivery), { replace: true, state: FOCUS_EVAL });
   };
+  // In the order the workflow writes them: the planner writes the criteria and the ticket plan
+  // (features.json) once the plan is approved, and the eval comes last.
   const tabs = [
     ...Object.entries(RECORDS).map(([id, meta]) => ({ id, label: meta?.label ?? id })),
-    { id: "eval", label: "Eval" },
     {
       id: "acs",
       label: "Acceptance criteria",
@@ -612,6 +542,7 @@ export function FeatureDetailScreen() {
       label: "Tickets",
       count: tickets.data?.tickets.length ?? issueIds.length,
     },
+    { id: "eval", label: "Eval" },
   ];
   let body: ReactNode;
   if (tab === "tickets") {
@@ -696,14 +627,8 @@ export function FeatureDetailScreen() {
           {state === "offline" && <AsOfStamp stale time={fmtClock(asOf, tz)} />}
         </div>
         <div className="ah-row ah-wrap ah-small" style={{ gap: 14 }}>
-          <TicketChips ids={issueIds} rows={tickets.data?.tickets ?? []} openerRef={openerRef} />
           {detail.acs && (
-            <>
-              {issueIds.length > 0 && (
-                <span style={{ width: 1, height: 16, background: "var(--border)" }} />
-              )}
-              <AcBar acs={detail.acs} width={180} ownerIds={owners.map((ac) => ac.id)} />
-            </>
+            <AcBar acs={detail.acs} width={180} ownerIds={owners.map((ac) => ac.id)} />
           )}
         </div>
       </div>
