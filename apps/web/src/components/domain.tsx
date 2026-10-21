@@ -849,6 +849,8 @@ export const GOLDEN_STATE_TEXT: Record<GoldenStepState, string> = {
   unknown: "Unknown",
   blocked: "Blocked",
   unrecorded: "Not recorded",
+  waiting: "Waiting for you",
+  stale: "Re-run needed",
 };
 
 const GOLDEN_STATE_ICON: Partial<Record<GoldenStepState, IconName>> = {
