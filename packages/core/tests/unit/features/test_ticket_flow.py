@@ -540,10 +540,14 @@ def test_marks_preflight_unknown_when_ticket_request_malformed() -> None:
     assert meta.startswith("change-requests/1.md could not be read (status must be open")
 
 
-def test_marks_context_and_preflight_unknown_when_ticket_folders_over_cap() -> None:
+# AGH-402 review Q13/S7: the folders left unread over the 500 cap or the read budget alike.
+def test_marks_context_and_preflight_unknown_when_ticket_folders_left_unread() -> None:
     flow = _flow(tickets=(_files("DEM-1", brief=True),), tickets_skipped=1)
 
-    unread = "more than 500 folders in tickets/; not all were read. Fix it in a hub PR."
+    unread = (
+        "not every folder in tickets/ was read (more than 500, or over the read budget). "
+        "Fix it in a hub PR."
+    )
     assert _step(flow, "context") == ("unknown", unread)
     assert _step(flow, "preflight") == ("unknown", unread)
 
