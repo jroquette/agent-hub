@@ -120,7 +120,8 @@ def split_frontmatter(text: str) -> Frontmatter:
     return Frontmatter(fields=fields, body="".join(lines[len(block) + 2 :]))
 
 
-def _scalar(value: str) -> str:
+def scalar(value: str) -> str:
+    """``value`` on one line, as a frontmatter value: plain when it reads back as is, else quoted."""
     text = " ".join(value.split())
     if _PLAIN.fullmatch(text) and not text.endswith(" "):
         return text
@@ -143,11 +144,11 @@ def _rewritten_block(block: list[str], updates: Mapping[str, str]) -> list[str]:
         name = _field_name(line)
         replacing = name in updates
         if name is not None and name in updates:
-            kept.append(f"{name}: {_scalar(updates[name])}\n")
+            kept.append(f"{name}: {scalar(updates[name])}\n")
             written.add(name)
         else:
             kept.append(line)
-    added = [f"{key}: {_scalar(value)}\n" for key, value in updates.items() if key not in written]
+    added = [f"{key}: {scalar(value)}\n" for key, value in updates.items() if key not in written]
     return kept + added
 
 
@@ -161,7 +162,7 @@ def with_frontmatter(text: str, updates: Mapping[str, str]) -> str:
     """
     lines = text.splitlines(keepends=True)
     if not _has_frontmatter(lines):
-        added = [f"{key}: {_scalar(value)}\n" for key, value in updates.items()]
+        added = [f"{key}: {scalar(value)}\n" for key, value in updates.items()]
         return "".join([f"{FENCE}\n", *added, f"{FENCE}\n"]) + text
     end = _closing_fence(lines)
     if end is None:
