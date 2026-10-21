@@ -34,3 +34,254 @@
 .wf-chevron {
   color: var(--text-subtle);
 }
+
+/* A workflow's page: capped so steps keep a readable measure on wide screens. */
+.wf-detail {
+  padding: var(--space-4) var(--space-8) var(--space-8);
+  max-width: 1280px;
+  min-height: 100%;
+}
+@media (max-width: 1359px) {
+  .wf-detail {
+    padding-left: var(--space-6);
+    padding-right: var(--space-6);
+  }
+}
+.wf-shape {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.wf-steps-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+/* The steps as a timeline: numbered nodes, coloured by kind, joined by a rail
+ * (the geometry of the session Steps drawer, without its run states). */
+.wf-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.wf-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  column-gap: var(--space-3);
+  padding-bottom: var(--space-5);
+  border-radius: var(--radius-sm);
+}
+.wf-step:last-child {
+  padding-bottom: 0;
+}
+.wf-step:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: 11.5px;
+  top: 28px;
+  bottom: 4px;
+  border-left: 1px solid var(--border);
+}
+.wf-step:focus-visible {
+  outline: 2px solid var(--focus-ring, var(--accent));
+  outline-offset: 4px;
+}
+.wf-step-node {
+  --kind: var(--ev-lifecycle);
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 4px;
+  border: 1.5px solid var(--kind);
+  border-radius: var(--radius-full, 999px);
+  background: var(--surface);
+  font: 500 11px/1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  white-space: nowrap;
+}
+.wf-step[data-kind="agent"] > .wf-step-node {
+  --kind: var(--ev-message);
+}
+.wf-step[data-kind="command"] > .wf-step-node {
+  --kind: var(--ev-tool);
+}
+.wf-step[data-kind="approval"] > .wf-step-node,
+.wf-step[data-kind="wait"] > .wf-step-node {
+  --kind: var(--ev-gate);
+}
+.wf-step-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  padding-top: 2px;
+}
+.wf-step-body > * {
+  max-width: 100%;
+}
+.wf-step-title {
+  max-width: 88ch;
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--text);
+}
+.wf-step-kind {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
+}
+.wf-step[data-kind="agent"] > .wf-step-body > .wf-step-kind > .ah-icon {
+  color: var(--ev-message);
+}
+.wf-step[data-kind="command"] > .wf-step-body > .wf-step-kind > .ah-icon {
+  color: var(--ev-tool);
+}
+.wf-step[data-kind="approval"] > .wf-step-body > .wf-step-kind > .ah-icon,
+.wf-step[data-kind="wait"] > .wf-step-body > .wf-step-kind > .ah-icon {
+  color: var(--ev-gate);
+}
+.wf-step-kind .ah-fm-chip {
+  height: 20px;
+}
+.wf-step-note {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  max-width: 88ch;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-muted);
+}
+.wf-step-cond {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 6px;
+  font-size: 13px;
+  line-height: 18px;
+}
+.wf-step-cond > .ah-icon {
+  align-self: center;
+  color: var(--text-subtle);
+}
+.wf-step-cond-label {
+  color: var(--text-muted);
+}
+.wf-step-cond code {
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+  font: 400 12px/18px var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.wf-step-body > .ah-code {
+  width: 100%;
+  font: 400 12.5px/18px var(--font-mono);
+}
+.wf-step-body > .ah-code pre {
+  overflow-wrap: anywhere;
+}
+
+/* An agent's prompt, folded. */
+.wf-prompt {
+  width: 100%;
+}
+.wf-prompt > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 13px;
+  color: var(--accent);
+}
+.wf-prompt > summary::-webkit-details-marker {
+  display: none;
+}
+.wf-prompt > summary .ah-icon {
+  transition: transform var(--dur-fast) ease;
+}
+.wf-prompt[open] > summary .ah-icon {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .wf-prompt > summary .ah-icon {
+    transition: none;
+  }
+}
+.wf-prompt-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}
+.wf-prompt-body > pre {
+  display: block;
+  width: 100%;
+  margin: 0;
+  max-height: 280px;
+  overflow: auto;
+  padding: var(--space-3);
+  white-space: pre-wrap;
+  font: 400 12.5px/18px var(--font-mono);
+}
+
+/* A repeat's rounds: the rule, then its own steps on a nested rail. */
+.wf-rounds {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: 100%;
+  margin-top: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.wf-rounds-rule {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+.wf-rounds .wf-step-node {
+  min-width: 32px;
+}
+.wf-rounds .wf-step {
+  grid-template-columns: 32px minmax(0, 1fr);
+}
+.wf-rounds .wf-step:not(:last-child)::before {
+  left: 15.5px;
+}
+.wf-rounds .wf-step-cond code {
+  background: var(--surface);
+}
+
+/* Advanced, under the two columns. */
+.wf-advanced > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.wf-advanced-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}

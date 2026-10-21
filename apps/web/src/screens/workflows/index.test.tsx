@@ -251,13 +251,13 @@ describe("WorkflowDetailScreen", () => {
     const steps = await screen.findByRole("list", { name: "Steps" });
     const items = within(steps).getAllByRole("listitem");
     expect(items.map((item) => item.textContent)).toEqual([
-      expect.stringContaining("AI agentplan"),
-      expect.stringContaining("Commandbuild"),
-      expect.stringContaining("Commanddocs"),
-      expect.stringContaining("Approval by youreview"),
+      expect.stringMatching(/^1Step 1: .*AI agent.*plan/),
+      expect.stringMatching(/^2Step 2: build.*Command/),
+      expect.stringMatching(/^3Step 3: .*Command.*docs/),
+      expect.stringMatching(/^4Step 4: review.*Approval by you/),
     ]);
     expect(items[0]).toHaveTextContent("Writes the plan.");
-    expect(items[2]).toHaveTextContent("after plan");
+    expect(items[2]).toHaveTextContent("Waits for plan");
     const inputs = screen.getByRole("region", { name: "What you give it" });
     expect(inputs).toHaveTextContent("feature");
     expect(inputs).toHaveTextContent("What to build.");
@@ -455,12 +455,88 @@ describe("WorkflowDetailScreen, starting and reading (AC-PG-13)", () => {
     );
 
     const steps = await screen.findByRole("list", { name: "Steps" });
-    expect(steps).toHaveTextContent(
-      "Each round runs these steps; at most 3 rounds, stopping as soon as they pass.",
-    );
+    expect(steps).toHaveTextContent("Rounds, up to 3");
+    expect(steps).toHaveTextContent("Stops when make check passes.");
+    expect(steps).toHaveTextContent("If round 3 ends without stopping, this step fails.");
     expect(within(steps).getByText("Read the prompt")).toBeInTheDocument();
     expect(steps).toHaveTextContent("Fix the failing test.");
-    expect(steps).toHaveTextContent("$ make check");
+    expect(within(steps).getByRole("group", { name: "Command of check" })).toHaveTextContent(
+      "make check",
+    );
+  });
+
+  it("shows a step's condition as text, not only in a tooltip", async () => {
+    renderWith(
+      "feature-flow",
+      aWorkflowDetail({
+        layers: [[{ id: "docs", type: "shell", depends_on: [], description: "Builds the docs." }]],
+        document: {
+          name: "feature-flow",
+          nodes: [
+            {
+              id: "docs",
+              type: "shell",
+              description: "Builds the docs.",
+              when: "$check.output.passed == true",
+              command: ["make", "docs"],
+            },
+          ],
+        },
+      }),
+    );
+
+    const steps = await screen.findByRole("list", { name: "Steps" });
+    expect(steps).toHaveTextContent("Only when $check.output.passed == true");
+  });
+
+  it("moves across the steps with j and k", async () => {
+    // jsdom has no scrollIntoView.
+    Element.prototype.scrollIntoView = vi.fn();
+    const user = userEvent.setup();
+    renderWith("feature-flow", aWorkflowDetail());
+
+    const steps = await screen.findByRole("list", { name: "Steps" });
+    const items = within(steps).getAllByRole("listitem");
+    await user.keyboard("j");
+    expect(items[0]).toHaveFocus();
+    await user.keyboard("j");
+    expect(items[1]).toHaveFocus();
+    await user.keyboard("k");
+    expect(items[0]).toHaveFocus();
+  });
+
+  it("has no serious a11y violations with rounds and an open prompt (a11y)", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWith(
+      "feature-flow",
+      aWorkflowDetail({
+        layers: [[{ id: "fixing", type: "loop_group", depends_on: [], description: null }]],
+        document: {
+          name: "feature-flow",
+          nodes: [
+            {
+              id: "fixing",
+              type: "loop_group",
+              max_iterations: 3,
+              until_when: "$check.output.passed == true",
+              nodes: [
+                { id: "fixing__fix", type: "agent", prompt: "Fix it.", context: "fresh" },
+                {
+                  id: "fixing__check",
+                  type: "shell",
+                  when: "$fix.output.done == true",
+                  command: ["make", "check"],
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+
+    await user.click(await screen.findByText("Read the prompt"));
+    expect(screen.getByText("Starts afresh each round")).toBeInTheDocument();
+    expect(await seriousViolations(container)).toEqual([]);
   });
 
   it("AC-PG-13.4 says a built-in is not a hub file and how to propose a copy", async () => {
