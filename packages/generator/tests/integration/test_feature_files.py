@@ -666,7 +666,7 @@ def test_reads_ticket_records_when_ticket_folders_present(tmp_path: Path) -> Non
     (tickets / "DEM-9").symlink_to(tickets / "DEM-7")
     (tickets / "README.md").write_bytes(b"# Tickets\n")
 
-    read = read_feature_folder(tmp_path, "demo-feature")
+    read = read_feature_folder(tmp_path, "demo-feature", tickets=True)
     assert read is not None
 
     assert read.ticket_folders == (
@@ -681,7 +681,7 @@ def test_reports_problem_when_preflight_over_cap(tmp_path: Path) -> None:
     (folder / "tickets" / "DEM-7").mkdir(parents=True)
     (folder / "tickets" / "DEM-7" / "preflight.json").write_bytes(b" " * (MAX_PREFLIGHT_BYTES + 1))
 
-    read = read_feature_folder(tmp_path, "demo-feature")
+    read = read_feature_folder(tmp_path, "demo-feature", tickets=True)
     assert read is not None
 
     assert read.ticket_folders == (
@@ -698,7 +698,7 @@ def test_counts_ticket_folders_skipped_when_over_cap(
         (folder / "tickets" / ticket).mkdir(parents=True)
     monkeypatch.setattr("agent_hub.generator.feature_files.MAX_TICKET_FOLDERS", 2)
 
-    read = read_feature_folder(tmp_path, "demo-feature")
+    read = read_feature_folder(tmp_path, "demo-feature", tickets=True)
     assert read is not None
 
     assert [found.name for found in read.ticket_folders] == ["DEM-7", "DEM-8"]
@@ -739,3 +739,49 @@ def test_counts_change_requests_skipped_when_over_cap(
 
     assert [head.name for head in read.change_requests] == ["1.md", "2.md"]
     assert read.change_requests_skipped == 1
+
+
+# AGH-402 review S1/Q1: only the tickets route reads tickets/; the detail and the sign-off never.
+def test_reads_no_ticket_folder_when_tickets_not_asked(tmp_path: Path) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    (folder / "tickets" / "DEM-7").mkdir(parents=True)
+    (folder / "tickets" / "DEM-7" / "preflight.json").write_bytes(b"{}")
+
+    read = read_feature_folder(tmp_path, "demo-feature")
+    assert read is not None
+
+    assert (read.ticket_folders, read.ticket_folders_skipped) == ((), 0)
+
+
+# AGH-402 review S1/Q1: the preflight reads stop before one call would pass READ_BUDGET_BYTES.
+@pytest.mark.parametrize(("budget", "kept"), [(10 + 2 * 101 + 4, 2), (10, 0)], ids=["two", "none"])
+def test_skips_ticket_folders_when_read_budget_would_be_passed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, budget: int, kept: int
+) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {"spec.md": b"x" * 10})
+    for ticket in ("DEM-7", "DEM-8", "DEM-9"):
+        (folder / "tickets" / ticket).mkdir(parents=True)
+        (folder / "tickets" / ticket / "preflight.json").write_bytes(b"{}")
+    monkeypatch.setattr("agent_hub.generator.feature_files.MAX_PREFLIGHT_BYTES", 100)
+    monkeypatch.setattr("agent_hub.generator.feature_files.READ_BUDGET_BYTES", budget)
+
+    read = read_feature_folder(tmp_path, "demo-feature", tickets=True)
+    assert read is not None
+
+    assert [found.name for found in read.ticket_folders] == ["DEM-7", "DEM-8"][:kept]
+    assert read.ticket_folders_skipped == 3 - kept
+
+
+@pytest.mark.parametrize("name", ["tickets", "change-requests"])
+def test_reads_nothing_when_record_folder_is_link(tmp_path: Path, name: str) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    outside = tmp_path / "outside"
+    (outside / "DEM-7").mkdir(parents=True)
+    (outside / "DEM-7" / "brief.md").write_bytes(b"# Ticket\n")
+    (outside / "1.md").write_bytes(b"---\nticket: DEM-7\n---\n")
+    (folder / name).symlink_to(outside)
+
+    read = read_feature_folder(tmp_path, "demo-feature", tickets=True)
+    assert read is not None
+
+    assert (read.ticket_folders, read.change_requests) == ((), ())

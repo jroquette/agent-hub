@@ -585,6 +585,8 @@ def test_reads_only_named_folder_when_one_feature_read() -> None:
         models.get_feature("demo", "nope")
 
     assert reader.feature_reads == [("ticketed", DEMO), ("ticketed", DEMO), ("nope", DEMO)]
+    # AGH-402 review S1/Q1: only the tickets route reads the folder's tickets/ records.
+    assert reader.ticket_reads == ["ticketed"]
 
 
 def test_reads_skill_catalog_when_project_known() -> None:

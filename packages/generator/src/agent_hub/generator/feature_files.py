@@ -128,15 +128,18 @@ def read_feature_folders(hub_root: Path) -> tuple[FeatureFolder, ...]:
         )
 
 
-def read_feature_folder(hub_root: Path, slug: str) -> FeatureFolder | None:
-    """The feature folder ``slug`` names, read as ``read_feature_folders`` reads it; None when
-    there is no such folder (absent, hidden, a link, not a folder, or not a single name)."""
+def read_feature_folder(
+    hub_root: Path, slug: str, *, tickets: bool = False
+) -> FeatureFolder | None:
+    """The feature folder ``slug`` names, read as ``read_feature_folders`` reads it, with its
+    ``tickets/`` records when ``tickets`` (the tickets route); None when there is no such folder
+    (absent, hidden, a link, not a folder, or not a single name)."""
     if not slug or slug.startswith(".") or "/" in slug or "\0" in slug:
         return None
     with _features_folder(hub_root) as folder:
         if folder is None or not _is_folder(folder, slug):
             return None
-        return _read_folder(folder, slug, _Meter(), one=True)
+        return _read_folder(folder, slug, _Meter(), one=True, tickets=tickets)
 
 
 @contextlib.contextmanager
@@ -184,7 +187,9 @@ def _limit(name: str) -> int:
     return HEAD_BYTES if name in {SPEC, EVAL} else 0
 
 
-def _read_folder(parent: int, slug: str, meter: _Meter, *, one: bool = False) -> FeatureFolder:
+def _read_folder(
+    parent: int, slug: str, meter: _Meter, *, one: bool = False, tickets: bool = False
+) -> FeatureFolder:
     try:
         folder = os.open(slug, _FOLDER_FLAGS, dir_fd=parent)
     except OSError:
@@ -208,7 +213,7 @@ def _read_folder(parent: int, slug: str, meter: _Meter, *, one: bool = False) ->
             meter=meter,
         )
         rounds = _round_tickets(folder) if one else ()
-        tickets, tickets_skipped = _tickets(folder, meter) if one else ((), 0)
+        ticket_folders, tickets_skipped = _tickets(folder, meter) if tickets else ((), 0)
     finally:
         os.close(folder)
     record, plan = reads[RECORD], reads[PLAN]
@@ -227,7 +232,7 @@ def _read_folder(parent: int, slug: str, meter: _Meter, *, one: bool = False) ->
         ux_designs=ux_designs,
         ux_skipped=ux_skipped,
         review_round_tickets=rounds,
-        ticket_folders=tickets,
+        ticket_folders=ticket_folders,
         ticket_folders_skipped=tickets_skipped,
         change_requests=requests,
         change_requests_skipped=requests_skipped,
@@ -263,16 +268,21 @@ def _ux_heads(folder: int, meter: _Meter) -> tuple[tuple[RecordHead, ...], int]:
 
 
 def _tickets(parent: int, meter: _Meter) -> tuple[tuple[TicketFiles, ...], int]:
-    """The records of ``tickets/``'s first ``MAX_TICKET_FOLDERS`` folders by name, and how many
-    others were left out."""
+    """The records of ``tickets/``'s first folders by name, and how many others were left out: at
+    most ``MAX_TICKET_FOLDERS``, and no more than a full ``preflight.json`` each can add while the
+    call stays within ``READ_BUDGET_BYTES``."""
     try:
         tickets = os.open(TICKETS_FOLDER, _FOLDER_FLAGS, dir_fd=parent)
     except OSError:
         return (), 0
     listed = [0]
+    room = max((READ_BUDGET_BYTES - meter.read) // (MAX_PREFLIGHT_BYTES + 1), 0)
     try:
         with os.scandir(tickets) as entries:
-            names = heapq.nsmallest(MAX_TICKET_FOLDERS, _counted(_ticket_folders(entries), listed))
+            found = _counted(_ticket_folders(entries), listed)
+            names = heapq.nsmallest(min(MAX_TICKET_FOLDERS, room), found)
+            for _ in found:  # nsmallest(0, …) reads nothing: count the folders left out too
+                pass
         return tuple(_ticket_files(tickets, name, meter) for name in names), listed[0] - len(names)
     except OSError:
         return (), 0

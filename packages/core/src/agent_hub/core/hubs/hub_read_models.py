@@ -243,7 +243,7 @@ class HubFilesReadModels:
     def feature_tickets(self, project: str, slug: str) -> FeatureTickets:
         """One feature's tickets, planning and golden path: the only read that may call the
         tracker (through ``ticket_snapshots.fetch``, cached)."""
-        found, folder = self._feature(project, slug)
+        found, folder = self._feature(project, slug, tickets=True)
         tracker = found.config.tracker
         read = NOT_CONNECTED_READ
         if self._snapshots is not None:
@@ -367,13 +367,15 @@ class HubFilesReadModels:
         """Each project and its hub folder (``ProjectHubs``, the workflow reads)."""
         return ((found.name, found.path) for found in self._projects())
 
-    def _feature(self, project: str, slug: str) -> tuple[_Project, FeatureFolder]:
+    def _feature(
+        self, project: str, slug: str, *, tickets: bool = False
+    ) -> tuple[_Project, FeatureFolder]:
         missing = EntityNotFoundError(entity="feature", entity_id=f"{project}/{slug}")
         try:
             found = self._project(project)
         except EntityNotFoundError:
             raise missing from None
-        folder = self._reader.feature_folder(found.path, slug)
+        folder = self._reader.feature_folder(found.path, slug, tickets=tickets)
         if folder is None:
             raise missing
         return found, folder
