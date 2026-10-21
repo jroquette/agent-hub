@@ -11,6 +11,7 @@ import fcntl
 import hashlib
 import json
 import os
+import shutil
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -18,6 +19,7 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner, Result
 
+from agent_hub.cli import step_records
 from agent_hub.cli.main import app
 
 pytestmark = pytest.mark.disable_socket
@@ -32,6 +34,7 @@ FEATURES_JSON = {
         {"key": "T1", "id": "DEM-7", "repo": "demo-api", "blocked_by": []},
         {"key": "T2", "id": "DEM-8", "repo": "demo-api", "blocked_by": ["T1", "T3"]},
         {"key": "T3", "repo": "demo-api", "blocked_by": []},
+        {"key": "P1-T1-T2", "id": "DEM-9", "repo": "demo-api", "blocked_by": []},
     ],
     "acs": [
         {"id": "AC-1.1", "description": "It writes the brief.", "passes": False, "ticket": "T2"},
@@ -55,11 +58,20 @@ Change `src/api/handler.py:3`, per ADR 0040.
 
 Touch `src/other.py`.
 
+## Joined tickets
+
+| Ticket | Boundary | ACs |
+|---|---|---|
+| P1-T1 | `src/api/handler.py` | AC-1.3 |
+| P1-T3 | other | AC-1.1 |
+
 ## Amendments
 
 - A1 (2026-01-01, Dana Owner): First.
 """
 OUTCOME = "---\nmerged_at: 2026-01-20T10:00:00Z\npr: '#4'\n---\n# Outcome\n"
+LOCK = ".agent-runs/locks/demo-flow.lock"
+HELD = "are being written by another run; run again"
 RUN = {
     "ran_at": "2026-02-02T09:30:00Z",
     "plan_version": 2,
@@ -181,6 +193,41 @@ class Hub:
             *extra,
         )
 
+    def link(self, name: str, tmp_path: Path) -> Path:
+        """``<feature>/<name>`` made a link to an empty folder outside the hub."""
+        target = tmp_path / "outside"
+        target.mkdir()
+        (self.feature / name).parent.mkdir(parents=True, exist_ok=True)
+        shutil.rmtree(self.feature / name, ignore_errors=True)
+        (self.feature / name).symlink_to(target)
+        return target
+
+    def approved(self) -> None:
+        self.request()
+        assert self.decide("--decision", "approved", "--by", "Dana").exit_code == 0
+
+    def amend(self, *extra: str) -> dict[str, Any]:
+        return self.ok("amend-plan", "--feature", "demo-flow", "--request", "1", *extra,
+                       "--summary", "Go.")
+
+    def lock_held_while(self, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+        """Each file ``_replace`` writes, after checking the feature's lock is held then."""
+        written: list[str] = []
+        replace = step_records._replace
+
+        def checked(folder: Path, name: str, content: bytes) -> None:
+            descriptor = os.open(self.root / LOCK, os.O_RDWR)
+            try:
+                with pytest.raises(BlockingIOError):
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finally:
+                os.close(descriptor)
+            written.append(name)
+            replace(folder, name, content)
+
+        monkeypatch.setattr(step_records, "_replace", checked)
+        return written
+
     def decide(self, *extra: str) -> Result:
         return self.step("decide", "--feature", "demo-flow", "--request", "1", *extra)
 
@@ -230,10 +277,65 @@ class TestTicketBrief:
         assert path.read_bytes().startswith(first)
         assert b"## Brief v2 (" in path.read_bytes()[len(first) :]
 
-    def test_refuses_a_ticket_when_the_feature_does_not_plan_it(self, hub: Hub) -> None:
-        line = hub.refused("ticket-brief", "--feature", "demo-flow", "--ticket", "DEM-99")
+    def test_keeps_every_earlier_byte_when_the_brief_ends_in_blank_lines(self, hub: Hub) -> None:
+        path = hub.root / hub.ok("ticket-brief", *TICKET)["path"]
+        with path.open("ab") as file:
+            file.write(b"\n \n\n")
+        first = path.read_bytes()
 
-        assert line == "hub step ticket-brief: DEM-99 is not a ticket of features.json"
+        hub.ok("ticket-brief", *TICKET)
+
+        assert path.read_bytes().startswith(first)
+
+    def test_takes_the_plan_rows_and_their_acs_when_the_key_joins_plan_ids(self, hub: Hub) -> None:
+        output = hub.ok("ticket-brief", "--feature", "demo-flow", "--ticket", "DEM-9")
+
+        text = (hub.root / output["path"]).read_text()
+        assert output["path"] == f"{FEATURE}/tickets/DEM-9/brief.md"
+        assert "> | P1-T1 | `src/api/handler.py` | AC-1.3 |" in text
+        assert "P1-T3" not in text
+        assert "**AC-1.3** Another ticket's." in text and "AC-1.1" not in text
+        assert f"`{hub.handler_after[:12]}`" in text
+
+    @pytest.mark.parametrize("step", ["ticket-brief", "preflight", "change-request"])
+    def test_refuses_a_ticket_when_the_feature_does_not_plan_it(self, hub: Hub, step: str) -> None:
+        extra = {
+            "ticket-brief": (),
+            "preflight": ("--run", json.dumps(RUN)),
+            "change-request": ("--run-id", "r1", "--evidence", "e", "--proposal", "p"),
+        }[step]
+
+        line = hub.refused(step, "--feature", "demo-flow", "--ticket", "DEM-99", *extra)
+
+        assert line == f"hub step {step}: DEM-99 is not a ticket of features.json"
+
+    @pytest.mark.parametrize("given", ["dem-8", "T2", "t2"])
+    def test_writes_into_the_one_folder_of_the_ticket_when_named_by_key_or_case(
+        self, hub: Hub, given: str
+    ) -> None:
+        hub.ok("ticket-brief", *TICKET)
+
+        output = hub.ok("preflight", "--feature", "demo-flow", "--ticket", given,
+                        "--run", json.dumps(RUN))
+
+        assert output["path"] == f"{FEATURE}/tickets/DEM-8/preflight.json"
+        assert sorted(p.name for p in (hub.feature / "tickets").iterdir()) == ["DEM-7", "DEM-8"]
+
+    def test_writes_into_the_existing_folder_when_its_name_differs_in_case(self, hub: Hub) -> None:
+        (hub.feature / "tickets/t2").mkdir()
+
+        output = hub.ok("ticket-brief", *TICKET)
+
+        assert output["path"] == f"{FEATURE}/tickets/t2/brief.md"
+
+    def test_writes_the_brief_under_the_feature_lock_when_run(
+        self, hub: Hub, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        written = hub.lock_held_while(monkeypatch)
+
+        hub.ok("ticket-brief", *TICKET)
+
+        assert written == ["brief.md"]
 
 
 class TestPreflight:
@@ -279,6 +381,55 @@ class TestPreflight:
         assert line == "hub step preflight: preflight.json is a link; no link is followed"
         assert elsewhere.read_text() == "{}"
 
+    @pytest.mark.parametrize("name", ["tickets", "tickets/DEM-8"])
+    def test_refuses_without_writing_when_a_ticket_folder_is_a_link(
+        self, hub: Hub, tmp_path: Path, name: str
+    ) -> None:
+        target = hub.link(name, tmp_path)
+
+        for step, extra in (("preflight", ("--run", json.dumps(RUN))), ("ticket-brief", ())):
+            line = hub.refused(step, *TICKET, *extra)
+            leaf = name.rsplit("/", 1)[-1]
+            assert line == f"hub step {step}: {leaf} is a link; no link is followed"
+        assert list(target.iterdir()) == []
+
+    def test_refuses_a_record_when_it_is_one_byte_over_its_read_cap(self, hub: Hub) -> None:
+        folder = hub.feature / "tickets/DEM-8"
+        folder.mkdir(parents=True)
+        (folder / "preflight.json").write_bytes(b" " * 65_537)
+
+        line = hub.refused("preflight", *TICKET, "--run", json.dumps(RUN))
+
+        assert line == "hub step preflight: preflight.json is larger than 65536 bytes"
+
+    def test_replaces_the_record_with_a_new_file_when_a_run_is_appended(
+        self, hub: Hub, tmp_path: Path
+    ) -> None:
+        path = hub.root / hub.ok("preflight", *TICKET, "--run", json.dumps(RUN))["path"]
+        before = path.read_bytes()
+        os.link(path, tmp_path / "old.json")
+
+        hub.ok("preflight", *TICKET, "--run", json.dumps(RUN))
+
+        assert (tmp_path / "old.json").read_bytes() == before
+        assert path.read_bytes() != before
+
+    def test_writes_the_record_under_the_feature_lock_and_refuses_while_held(
+        self, hub: Hub, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        with monkeypatch.context() as patched:
+            written = hub.lock_held_while(patched)
+            hub.ok("preflight", *TICKET, "--run", json.dumps(RUN))
+        descriptor = os.open(hub.root / LOCK, os.O_RDWR)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            line = hub.refused("preflight", *TICKET, "--run", json.dumps(RUN))
+        finally:
+            os.close(descriptor)
+
+        assert written == ["preflight.json"]
+        assert line == f"hub step preflight: the records of demo-flow {HELD}"
+
     def test_refuses_without_writing_when_the_feature_folder_is_a_link(
         self, hub: Hub, tmp_path: Path
     ) -> None:
@@ -307,6 +458,39 @@ class TestChangeRequest:
         text = (hub.root / first["path"]).read_text()
         assert "ticket: DEM-8\nstatus: open\nplan_from: 2\nplan_to: 3\naffected: [T3]\n" in text
 
+    def test_takes_the_next_number_keeping_the_request_when_the_one_picked_is_taken(
+        self, hub: Hub, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        first = hub.feature / "change-requests/1.md"
+        hub.request()
+        before = first.read_bytes()
+        monkeypatch.setattr(step_records, "next_request", lambda names: 1)
+
+        output = hub.request("--run-id", "implement-9")
+
+        assert (output["n"], output["path"]) == (2, f"{FEATURE}/change-requests/2.md")
+        assert first.read_bytes() == before
+        assert b"run_id: implement-9" in (hub.feature / "change-requests/2.md").read_bytes()
+
+    def test_refuses_without_writing_when_the_requests_folder_is_a_link(
+        self, hub: Hub, tmp_path: Path
+    ) -> None:
+        target = hub.link("change-requests", tmp_path)
+
+        line = hub.refused(
+            "change-request",
+            *TICKET,
+            *("--run-id", "r1", "--evidence", "e", "--proposal", "p"),
+        )
+        decided = hub.refused(
+            "decide", "--feature", "demo-flow", "--request", "1", "--decision", "approved",
+            "--by", "Dana",
+        )
+
+        assert line == "hub step change-request: change-requests is a link; no link is followed"
+        assert decided == "hub step decide: change-requests is a link; no link is followed"
+        assert list(target.iterdir()) == []
+
 
 class TestDecideAndAmend:
     def test_records_the_approval_then_one_amendment_keeping_the_plan_when_approved(
@@ -329,15 +513,45 @@ class TestDecideAndAmend:
         }
         decision = (hub.feature / "change-requests/1.decision.md").read_text()
         assert "decision: approved\ndecided_by: Dana Owner\n" in decision
-        assert amended == {"path": f"{FEATURE}/plan.md", "amendment": "A2"}
+        assert amended == {"path": f"{FEATURE}/plan.md", "amendment": "A2", "already": None}
         written = plan.read_bytes()
         assert hashlib.sha256(written[:size]).hexdigest() == prefix
         assert written[size:].decode().startswith("- A2 (")
         assert written[size:].decode().count("\n") == 1
-        again = hub.refused(
+        again = hub.ok(
             "amend-plan", "--feature", "demo-flow", "--request", "1", "--summary", "Again."
         )
-        assert "plan.md is v3" in again
+        assert again == {
+            "path": f"{FEATURE}/plan.md",
+            "amendment": "A2",
+            "already": "already amended as A2",
+        }
+        assert plan.read_bytes() == written
+
+    def test_keeps_every_earlier_byte_when_the_plan_ends_in_blank_lines(
+        self, hub: Hub, tmp_path: Path
+    ) -> None:
+        plan = hub.feature / "plan.md"
+        with plan.open("ab") as file:
+            file.write(b"\n \n\n")
+        before = plan.read_bytes()
+        os.link(plan, tmp_path / "old.md")
+        hub.approved()
+
+        hub.amend()
+
+        assert plan.read_bytes().startswith(before)
+        assert (tmp_path / "old.md").read_bytes() == before
+
+    def test_amends_the_plan_under_the_feature_lock_when_approved(
+        self, hub: Hub, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        hub.approved()
+        written = hub.lock_held_while(monkeypatch)
+
+        hub.amend()
+
+        assert written == ["plan.md"]
 
     def test_keeps_the_first_decision_when_a_second_is_asked(self, hub: Hub) -> None:
         hub.request()
@@ -361,7 +575,8 @@ class TestDecideAndAmend:
         ("args", "reason"),
         [
             (("--decision", "approved", "--by", "unknown"), "names no person"),
-            (("--decision", "approved", "--by", " "), "names no person"),
+            (("--decision", "approved", "--by", " "), "decided_by is missing"),
+            (("--decision", "approved", "--by", "Dana (owner)"), "could not be written"),
             (("--decision", "declined", "--by", "Dana"), "a declined change needs a note"),
             (("--decision", "approved", "--by", "Dana", "--request", "2"), "no 2.md"),
         ],
@@ -376,11 +591,10 @@ class TestDecideAndAmend:
         assert reason in line
 
     def test_refuses_without_writing_when_another_run_holds_the_plan_lock(self, hub: Hub) -> None:
-        hub.request()
-        assert hub.decide("--decision", "approved", "--by", "Dana").exit_code == 0
+        hub.approved()
         locks = hub.root / ".agent-runs/locks"
         locks.mkdir(parents=True, exist_ok=True)
-        descriptor = os.open(locks / "demo-flow.plan.lock", os.O_RDWR | os.O_CREAT, 0o600)
+        descriptor = os.open(hub.root / LOCK, os.O_RDWR | os.O_CREAT, 0o600)
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
             line = hub.refused(
@@ -389,11 +603,8 @@ class TestDecideAndAmend:
         finally:
             os.close(descriptor)
 
-        assert (
-            line == "hub step amend-plan: plan.md of demo-flow is being amended by another run;"
-            " run again"
-        )
-        hub.ok("amend-plan", "--feature", "demo-flow", "--request", "1", "--summary", "Go.")
+        assert line == f"hub step amend-plan: the records of demo-flow {HELD}"
+        hub.amend()
 
     def test_refuses_an_amendment_when_the_request_is_not_decided(self, hub: Hub) -> None:
         hub.request()
