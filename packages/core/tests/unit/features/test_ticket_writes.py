@@ -309,19 +309,19 @@ class TestDecision:
         assert body.endswith('Keep "v2"\nfor now\n')
 
     @pytest.mark.parametrize("who", ["", "  ", "unknown", " Unknown "])
-    def test_refuses_a_decision_that_names_no_person(self, who: str) -> None:
+    def test_refuses_a_decision_when_it_names_no_person(self, who: str) -> None:
         with pytest.raises(TicketRecordError, match="names no person"):
             a_decision(decided_by=who)
 
     @pytest.mark.parametrize("note", [None, "", "  "])
-    def test_refuses_a_decline_without_a_note(self, note: str | None) -> None:
+    def test_refuses_a_decline_when_it_has_no_note(self, note: str | None) -> None:
         with pytest.raises(TicketRecordError, match="a declined change needs a note"):
             a_decision(decision="declined", note=note)
 
-    def test_takes_an_approval_without_a_note(self) -> None:
+    def test_takes_an_approval_when_it_has_no_note(self) -> None:
         assert b"decision: approved\n" in a_decision(note=None)
 
-    def test_refuses_a_decision_on_a_request_the_reader_cannot_read(self) -> None:
+    def test_refuses_a_decision_when_the_reader_cannot_read_its_request(self) -> None:
         with pytest.raises(TicketRecordError, match="could not be read"):
             a_decision(request=b"---\ntype: change-request\n---\n")
 
@@ -358,7 +358,7 @@ class TestAmendment:
         assert written[len(plan) :].decode().startswith("\n\n## Amendments\n\n- A2 (")
         assert plan_version(written).version == 3
 
-    def test_refuses_a_second_amendment_for_the_same_request(self) -> None:
+    def test_refuses_an_amendment_when_the_request_was_already_amended(self) -> None:
         once = self.amend(PLAN)
 
         with pytest.raises(TicketRecordError, match="plan.md is v3"):

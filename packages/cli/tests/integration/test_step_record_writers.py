@@ -230,7 +230,7 @@ class TestTicketBrief:
         assert path.read_bytes().startswith(first)
         assert b"## Brief v2 (" in path.read_bytes()[len(first) :]
 
-    def test_refuses_a_ticket_the_feature_does_not_plan(self, hub: Hub) -> None:
+    def test_refuses_a_ticket_when_the_feature_does_not_plan_it(self, hub: Hub) -> None:
         line = hub.refused("ticket-brief", "--feature", "demo-flow", "--ticket", "DEM-99")
 
         assert line == "hub step ticket-brief: DEM-99 is not a ticket of features.json"
@@ -259,14 +259,14 @@ class TestPreflight:
         checked = CliRunner().invoke(app, ["validate-output", "preflight", str(path)])
         assert checked.exit_code == 0, checked.output
 
-    def test_refuses_a_run_the_model_refuses_without_touching_the_record(self, hub: Hub) -> None:
+    def test_keeps_the_record_when_the_model_refuses_the_run(self, hub: Hub) -> None:
         hub.ok("preflight", *TICKET, "--run", json.dumps(RUN))
 
         line = hub.refused("preflight", *TICKET, "--run", json.dumps(RUN | {"drift": "plan"}))
 
         assert "change_request is required when drift is plan" in line
 
-    def test_refuses_a_record_reached_through_a_link(self, hub: Hub, tmp_path: Path) -> None:
+    def test_refuses_without_writing_when_the_record_is_a_link(self, hub: Hub, tmp_path: Path) -> None:
         elsewhere = tmp_path / "elsewhere.json"
         elsewhere.write_text("{}")
         (hub.feature / "tickets/DEM-8").mkdir(parents=True)
@@ -277,7 +277,7 @@ class TestPreflight:
         assert line == "hub step preflight: preflight.json is a link; no link is followed"
         assert elsewhere.read_text() == "{}"
 
-    def test_refuses_a_feature_folder_that_is_a_link(self, hub: Hub, tmp_path: Path) -> None:
+    def test_refuses_without_writing_when_the_feature_folder_is_a_link(self, hub: Hub, tmp_path: Path) -> None:
         (hub.root / "brain/features/linked").symlink_to(hub.feature)
 
         result = hub.step("preflight", "--feature", "linked", "--ticket", "DEM-8", "--run", "{}")
@@ -335,7 +335,7 @@ class TestDecideAndAmend:
         )
         assert "plan.md is v3" in again
 
-    def test_refuses_a_second_decision_keeping_the_first(self, hub: Hub) -> None:
+    def test_keeps_the_first_decision_when_a_second_is_asked(self, hub: Hub) -> None:
         hub.request()
         assert hub.decide("--decision", "declined", "--by", "Dana", "--note", "No.").exit_code == 0
 
@@ -362,7 +362,7 @@ class TestDecideAndAmend:
             (("--decision", "approved", "--by", "Dana", "--request", "2"), "no 2.md"),
         ],
     )
-    def test_refuses_a_decision_without_a_person_note_or_request(
+    def test_refuses_without_writing_when_a_person_note_or_request_is_missing(
         self, hub: Hub, args: tuple[str, ...], reason: str
     ) -> None:
         hub.request()
@@ -371,7 +371,7 @@ class TestDecideAndAmend:
 
         assert reason in line
 
-    def test_refuses_an_amendment_while_another_run_holds_the_plan_lock(self, hub: Hub) -> None:
+    def test_refuses_without_writing_when_another_run_holds_the_plan_lock(self, hub: Hub) -> None:
         hub.request()
         assert hub.decide("--decision", "approved", "--by", "Dana").exit_code == 0
         locks = hub.root / ".agent-runs/locks"
@@ -391,7 +391,7 @@ class TestDecideAndAmend:
         )
         hub.ok("amend-plan", "--feature", "demo-flow", "--request", "1", "--summary", "Go.")
 
-    def test_refuses_an_amendment_before_the_request_is_decided(self, hub: Hub) -> None:
+    def test_refuses_an_amendment_when_the_request_is_not_decided(self, hub: Hub) -> None:
         hub.request()
 
         line = hub.refused(
