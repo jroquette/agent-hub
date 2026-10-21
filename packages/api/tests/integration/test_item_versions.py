@@ -529,18 +529,18 @@ def test_never_versioned_when_local_settings_builtin_pack_files_drafts_or_plugin
         for path in (".claude/settings.local.json", ".hub-drafts/skill-a1b2c3/SKILL.md", PACK_FILE)
     }
 
-    restored = _restore(writer, SETTINGS_HOOK, first.id, confirm_managed=True)
+    with _opened_names(monkeypatch) as restore_opened:
+        restored = _restore(writer, SETTINGS_HOOK, first.id, confirm_managed=True)
 
     assert restored.status_code == 200, restored.text
+    assert not any(name.endswith("settings.local.json") for name in restore_opened)
     assert (hub / SETTINGS).read_bytes() == _json(settings)
     assert {path: (hub / path).read_bytes() for path in untouched} == untouched
     assert {path for path, _ in _rows(writer)} == {*TOOLKIT_UNITS, REVIEW}
     # A publish of another draft writes the agent only: the draft it reads, the other draft and
     # the local settings are never versioned, and the local settings never opened.
+    # Cold: the new draft changed the tree since the last read, and nothing reads it first.
     _draft(hub, "agent-nvr001")
-    # The new draft changes the tree, so the next read reruns the hub card's doctor drift check
-    # (before this feature; it reads the whole tree): a read first, as the Studio's own does.
-    _get(writer, CATALOG)
     with _opened_names(monkeypatch) as opened:
         published = _publish(writer, "agent-nvr001")
 
@@ -1240,8 +1240,6 @@ def test_git_untouched_when_every_route_runs(
     _git(hub, "init", "--quiet", "--initial-branch=main")
     _git(hub, "add", "--all")
     _git(hub, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "c")
-    # The Studio's draft, written after the commit as Claude writes it (never staged).
-    draft = _draft(hub, "agent-git001")
     before = _git_state(hub)
     spawned: list[tuple[Any, ...]] = []
     forks: list[str] = []
@@ -1276,17 +1274,24 @@ def test_git_untouched_when_every_route_runs(
         _get(app, f"{SCOUT_DETAIL}/versions/{first}")
         workflow_first = _get(app, f"{REVIEW_DETAIL}/versions")["items"][-1]["id"]
         _get(app, f"{REVIEW_DETAIL}/versions/{workflow_first}")
+        # The POSTs run cold: the Studio's draft (never staged) changes the tree just before,
+        # and each write changes it again for the next.
+        draft = _draft(hub, "agent-git001")
+        read_spawns = len(spawned)
         restored = _restore(app, SCOUT_DETAIL, first)
         workflow_restored = _restore(app, REVIEW_DETAIL, workflow_first)
         published = _publish(app, "agent-git001")
+        post_spawns = spawned[read_spawns:]
 
     assert restored.status_code == 200, restored.text
     assert workflow_restored.status_code == 200, workflow_restored.text
     assert published.status_code == 200, published.text
     assert (hub / SCOUT).read_bytes() == PUBLISHED
     assert not draft.exists()
-    # The only processes are the hub card's doctor drift check listing the checkout (read-only,
-    # before this feature), when a read or a restore resolves the project after the tree changed.
+    # A11: the POSTs spawn no process. The only processes are the hub card's doctor drift check
+    # listing the checkout (read-only, before this feature), when a Toolkit or Workflows GET
+    # resolves the project after the tree changed.
+    assert post_spawns == []
     assert {_git_arguments(args) for args in spawned} <= READ_ONLY_LISTINGS
     assert (forks, git_reads) == ([], [])
     assert _git_state(hub) == before
