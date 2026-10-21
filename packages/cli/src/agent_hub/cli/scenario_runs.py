@@ -28,9 +28,12 @@ recorded reject of a policy gate are ``workflow_policy``'s rules, shared with pr
 The run's folder is removed when anything fails before its start record is written; the
 snapshot keeps the includes the plan resolved, not a second read.
 
-Only ``regression`` mode runs here: no agent starts, and a divergence (a failed action, an
-``expect`` timeout, an output contract failure) fails the scenario run, printing ``step <id>:
-<kind>: <detail>``; a policy ask or an ``approval`` still pauses it.
+No agent starts here. In ``regression`` mode a divergence (a failed action, an ``expect``
+timeout, an output contract failure) fails the scenario run, printing ``step <id>: <kind>:
+<detail>``; a policy ask or an ``approval`` still pauses it. In ``interactive`` mode (the
+default) a divergence pauses it at an investigation gate instead (``scenario_investigation``),
+at most ``MAX_INVESTIGATIONS`` times; the resume first acts on the gate's answer (``stop``,
+``pick`` with its workaround, ``retry``), and refuses while the gate has none.
 """
 
 import json
@@ -56,6 +59,15 @@ from agent_hub.cli.collect import hub_project_name
 from agent_hub.cli.effective_config import load_effective_config_or_exit
 from agent_hub.cli.init_report import shown_text
 from agent_hub.cli.run_log import now
+from agent_hub.cli.scenario_investigation import (
+    LIMIT_REACHED,
+    AnswerPorts,
+    HeldEnd,
+    answer,
+    investigations,
+    open_investigation,
+    paused_line,
+)
 from agent_hub.cli.workflow_command import own_hub_program
 from agent_hub.cli.workflow_executors import WorkflowExecutors
 from agent_hub.cli.workflow_policy import (
@@ -92,9 +104,11 @@ from agent_hub.core.hub_config.effective_environments import (
 )
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.scenarios.credentials import CredentialNames
+from agent_hub.core.scenarios.investigation import CHOICES
 from agent_hub.core.scenarios.policy_gates import (
     PolicyAsk,
 )
+from agent_hub.core.scenarios.run_record import InvestigationView, fold_records
 from agent_hub.core.scenarios.scenario_events import ScenarioEvents
 from agent_hub.core.scenarios.scenario_plan import ScenarioPlan
 from agent_hub.core.workflows.document import WorkflowDocument, WorkflowLoadError, parse_workflow
@@ -105,6 +119,7 @@ from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
 from agent_hub.core.workflows.ports import (
     RunEnd,
 )
+from agent_hub.core.workflows.run_state import RunReport
 from agent_hub.generator.action_discovery import ActionDiscovery
 from agent_hub.generator.scenario_discovery import discover_scenarios
 from agent_hub.generator.workflow_discovery import DiscoveredWorkflow, pack_resolver
@@ -115,8 +130,6 @@ KIND: Final = "scenario"
 REGRESSION: Final = "regression"
 INTERACTIVE: Final = "interactive"
 MODES: Final = (INTERACTIVE, REGRESSION)
-# Release gate (O-6): interactive mode lands with the investigation (T9).
-INTERACTIVE_NOT_YET: Final = "interactive mode is not available yet: use --mode regression"
 CONTEXT_CAPTURE: Final = "context.capture"
 ACTION_CALL: Final = "action"
 # A retry's jitter: spread, not secrecy.
@@ -205,30 +218,33 @@ def _begin(folder: Path, begin: ScenarioStart) -> dict[str, JsonValue]:
 
 def resume(hub: Path, folder: Path, records: list[dict[str, JsonValue]]) -> int:
     """Continue a scenario run from its snapshot and records (the caller holds its lock and
-    checked its snapshot's hash); its gates' answers are the recorded decisions."""
+    checked its snapshot's hash); its gates' answers are the recorded decisions. An open
+    investigation must have its answer first."""
+    pending = fold_records(records).open_investigation
+    if pending is not None and pending.choice is None:
+        raise WorkflowRunError(
+            f"the scenario run {folder.name} is paused at the investigation of step"
+            f" {pending.step}: answer it with hub workflow respond {folder.name} --node"
+            f" {pending.gate} --choice {'|'.join(CHOICES)}"
+        )
     append_record(folder, {"event": "resume"})
-    return execute(hub, folder, records, resumed=True)
+    return execute(hub, folder, records, resumed=True, answered=pending)
 
 
-def execute(hub: Path, folder: Path, records: list[dict[str, JsonValue]], *, resumed: bool) -> int:
-    """Run the scenario run in ``folder`` on the engine, as its snapshot pins it."""
+def execute(
+    hub: Path,
+    folder: Path,
+    records: list[dict[str, JsonValue]],
+    *,
+    resumed: bool,
+    answered: InvestigationView | None = None,
+) -> int:
+    """Run the scenario run in ``folder`` on the engine, as its snapshot pins it, after acting
+    on ``answered``, the answered investigation it was paused at."""
     header, snapshot = records[0], folder / SNAPSHOT
     environment, pack = str(header.get("environment")), str(header.get("pack"))
     pinned = pinned_actions(snapshot, header)
     document, includes, recorded = _snapshot_parts(snapshot)
-    owed = Owed()
-    if resumed:
-        base = _planned(document, includes, {})
-        owed = _owed(
-            folder,
-            records,
-            plan=base,
-            effects=action_effects(base, pinned, pack),
-            environment=environment,
-        )
-    record_asks(folder, owed.steps)
-    asks = recorded | owed.steps
-    plan = _planned(document, includes, asks)
     effective = load_effective_config_or_exit(hub)
     view = effective_environments(effective.config, effective.local)
     hidden = CredentialNames.of(view)
@@ -257,11 +273,40 @@ def execute(hub: Path, folder: Path, records: list[dict[str, JsonValue]], *, res
         hub_program=own_hub_program(),
         hidden=hidden,
     )
+    recorder = RecordedRun(folder=folder, events=events, sink=EventSink())
+    roots = (hub.name, *(repo.dir for repo in effective.config.repos))
+    if answered is not None:
+        given = AnswerPorts(
+            hub=hub,
+            folder=folder,
+            header=header,
+            records=records,
+            recorded=recorder,
+            log=log,
+            inner=inner,
+            roots=roots,
+        )
+        if (code := answer(given, answered)) is not None:
+            return code
+        records = read_records(folder)
+    owed = Owed()
+    if resumed:
+        base = _planned(document, includes, {})
+        owed = _owed(
+            folder,
+            records,
+            plan=base,
+            effects=action_effects(base, pinned, pack),
+            environment=environment,
+        )
+    record_asks(folder, owed.steps)
+    asks = recorded | owed.steps
+    plan = _planned(document, includes, asks)
     runner = ActionExecutors(
         hub=hub,
         environment=environment,
         view=view,
-        roots=(hub.name, *(repo.dir for repo in effective.config.repos)),
+        roots=roots,
         pack=pack,
         pinned=pinned,
         asks=frozenset(asks),
@@ -270,9 +315,12 @@ def execute(hub: Path, folder: Path, records: list[dict[str, JsonValue]], *, res
         inner=inner,
         environ=os.environ,
     )
+    held = None
+    if header.get("mode") == INTERACTIVE:
+        held = HeldEnd(recorder=recorder, plan=plan, opened=investigations(records))
     ports = EnginePorts(
         runner,
-        RecordedRun(folder=folder, events=events, sink=EventSink()),
+        held or recorder,
         SystemClock(),
         JsonSchemaOutputs(),
         _JITTER.random,
@@ -295,13 +343,40 @@ def execute(hub: Path, folder: Path, records: list[dict[str, JsonValue]], *, res
         prior=resumed_prior(records, owed.reopen) if resumed else None,
     )
     append_record(folder, {"event": "sessions", "sessions": dict(report.state.sessions)})
+    return _reported(folder, header, report, held=held, recorder=recorder)
+
+
+def _reported(
+    folder: Path,
+    header: Mapping[str, JsonValue],
+    report: RunReport,
+    *,
+    held: HeldEnd | None,
+    recorder: RecordedRun,
+) -> int:
+    """Print how the pass ended (an investigation it opened included); its exit code."""
+    run_id = folder.name
     if report.status == "paused":
         append_record(folder, held_record(report.state))
         typer.echo(f"run {run_id}: paused at {report.reason}")
         return 0
+    if held is not None and held.held is not None and (step := held.held.reason) is not None:
+        attempt, kind = held.failed[step]
+        typer.echo(_divergence(folder, step))
+        open_investigation(
+            folder,
+            recorder,
+            step=step,
+            step_attempt=attempt,
+            failure_kind=kind,
+            number=held.opened + 1,
+        )
+        typer.echo(paused_line(run_id, str(header.get("scenario")), step))
+        return 0
     typer.echo(f"run {run_id}: {report.status}")
     if report.status == "failed" and report.reason is not None:
-        typer.echo(_divergence(folder, report.reason))
+        capped = held is not None and held.capped
+        typer.echo(_divergence(folder, report.reason) + (f" {LIMIT_REACHED}" if capped else ""))
     return 0 if report.status == "done" else 1
 
 

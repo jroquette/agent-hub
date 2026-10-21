@@ -36,11 +36,14 @@ Without an environment nothing is decided, as before, and an action node refuses
 under the run's lock, then resume it as ``--resume`` does. NODE may be left out while the run has
 one open gate; a single word after RUN that names no open gate is the TEXT. ``approve`` and
 ``reject`` give those decisions; ``respond`` answers with ``--choice`` (a declared decision or
-option) and/or TEXT. The decision and its text go to the run's record, a ``control_plane``
-``gate.result`` to the events; a gate that is not open, already decided or cannot take the
-answer is refused (exit 1). ``decide RUN --gate GATE`` (hidden: hub web's decisions) records one
-decision for that exact open gate, ``--choice`` and the text read from stdin with ``--text-stdin``
-(UTF-8, at most 64 KiB), as taken in ``web``, and does not resume the run.
+option) and/or TEXT (``--node`` and ``--text`` may name them). The decision and its text go to
+the run's record, a ``control_plane`` ``gate.result`` to the events; a gate that is not open,
+already decided or cannot take the answer is refused (exit 1), as is an investigation's ``pick``
+that ``scenario_investigation.check_answer`` refuses (nothing is recorded then). ``decide RUN
+--gate GATE`` (hidden: hub web's decisions) records one decision for that exact open gate,
+``--choice`` and the text read from stdin with ``--text-stdin`` (UTF-8, at most 64 KiB), as taken
+in ``web``, checked the same way, and does not resume the run. A scenario run resumes through
+``scenario_runs.resume``, which acts on an investigation's answer first.
 
 ``test [NAME]...`` dry-runs each fixture of the discovered packs (or the NAMEs', each file once)
 in memory through the engine (generator's ``run_fixtures``): one ``<file>: ok|FAILED`` line
@@ -86,6 +89,7 @@ from agent_hub.cli.hub_root import hub_checkout, hub_root_or_exit, local_home
 from agent_hub.cli.init_report import shown_path, shown_text
 from agent_hub.cli.run_children import CHILD_HIDDEN, SESSION_HIDDEN, shown_command, without
 from agent_hub.cli.run_log import new_run_id, now, open_default_event_store
+from agent_hub.cli.scenario_investigation import check_answer
 from agent_hub.cli.workflow_checkout import GitCheckoutProbe
 from agent_hub.cli.workflow_delivery import (
     ISSUE_TEXT,
@@ -308,8 +312,25 @@ def respond(
     choice: Annotated[
         str | None, typer.Option("--choice", help="A declared decision or option id.")
     ] = None,
+    node_option: Annotated[
+        str | None, typer.Option("--node", help="The gate's node (as NODE).")
+    ] = None,
+    text_option: Annotated[
+        str | None, typer.Option("--text", help="The answer's text (as TEXT).")
+    ] = None,
 ) -> None:
     """Answer a paused run's gate with a choice and/or a text, then resume the run."""
+    if node_option is not None:
+        if node is not None and text is None:
+            # With --node given, a lone word after RUN is the text.
+            node, text = None, node
+        if node is not None and node != node_option:
+            raise typer.BadParameter("give the gate's node once", param_hint="--node")
+        node = node_option
+    if text_option is not None:
+        if text is not None:
+            raise typer.BadParameter("give the text once", param_hint="--text")
+        text = text_option
     raise typer.Exit(_decide("respond", run_id, node=node, text=text, choice=choice))
 
 
@@ -321,11 +342,13 @@ def _decide(
         folder = _existing_run(hub, run_id)
         with run_lock(folder):
             drop_torn_tail(folder)
-            book = RecordedGates(folder, _ended_check(folder))
+            records = _ended_check(folder)
+            book = RecordedGates(folder, records)
             gate, text = _gate_of(book, node, text)
-            _record_decision(
-                command, hub, book=book, gate=gate, answer=GateAnswer(choice, text), where="cli"
-            )
+            answer = GateAnswer(choice, text)
+            # An investigation's answer is checked first: a refused pick records nothing.
+            check_answer(hub, records, gate=gate, answer=answer)
+            _record_decision(command, hub, book=book, gate=gate, answer=answer, where="cli")
             return _continue(hub, folder)
     except (WorkflowRunError, WorkflowEngineError, GateDecisionError) as error:
         fail(f"hub workflow {command}: {error}")
@@ -353,11 +376,13 @@ def decide(
         folder = _existing_run(hub, run_id)
         with run_lock(folder):
             drop_torn_tail(folder)
-            book = RecordedGates(folder, _ended_check(folder))
+            records = _ended_check(folder)
+            book = RecordedGates(folder, records)
             gate = book.open_gate(gate_id)
             if gate is None:
                 raise GateDecisionError(f"no open gate {gate_id}")
             answer = GateAnswer(choice, text)
+            check_answer(hub, records, gate=gate, answer=answer)
             _record_decision("decide", hub, book=book, gate=gate, answer=answer, where="web")
     except (WorkflowRunError, WorkflowEngineError, GateDecisionError) as error:
         fail(f"hub workflow decide: {error}")
