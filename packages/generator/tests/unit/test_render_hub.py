@@ -138,6 +138,8 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/skills/retro/SKILL.md",
     "plugin/hub-workflow/skills/review/SKILL.md",
     "plugin/hub-workflow/skills/summarize/SKILL.md",
+    "plugin/hub-workflow/skills/test-strength/SKILL.md",
+    "plugin/hub-workflow/skills/test-strength/references/tools.md",
     "plugin/hub-workflow/skills/triage/SKILL.md",
     "plugin/hub-workflow/skills/upgrade/SKILL.md",
     "plugin/hub-workflow/skills/ux-review/SKILL.md",
@@ -210,6 +212,7 @@ BASE_SKILLS = (
     "retro",
     "review",
     "summarize",
+    "test-strength",
     "triage",
     "upgrade",
     "ux-review",
@@ -319,13 +322,13 @@ def test_returns_rendered_hub_when_demo_rendered(demo_config: HubConfig) -> None
     assert isinstance(rendered.links, tuple)
     assert all(type(link) is RenderedLink for link in rendered.links)
     # AC-4.6: the 14 links of spec "The rendered set", plus AGH-58's /fix, the ten AGH-99
-    # skills, AGH-274's two review skills and ux-designer agent, /summarize, and AGH-319's
-    # `plain-language`: 30, sorted by path.
+    # skills, AGH-274's two review skills and ux-designer agent, /summarize, AGH-319's
+    # `plain-language`, and AGH-412's /test-strength: 31, sorted by path.
     assert [link.path for link in rendered.links] == [
         *(f".claude/agents/{name}.md" for name in BASE_AGENTS),
         *(f".claude/skills/{name}" for name in BASE_SKILLS),
     ]
-    assert len(rendered.links) == 30
+    assert len(rendered.links) == 31
     assert all(
         (link.kind, link.ownership) == (Kind.GENERIC, Ownership.MANAGED) for link in rendered.links
     )
@@ -2065,6 +2068,7 @@ SKILL_FRONTMATTER_KEYS = {
     "retro": ["name", "description", "disable-model-invocation", "argument-hint"],
     "review": ["name", "description", "disable-model-invocation", "argument-hint"],
     "summarize": ["name", "description", "argument-hint"],
+    "test-strength": ["name", "description", "disable-model-invocation", "argument-hint"],
     "triage": ["name", "description", "disable-model-invocation", "argument-hint"],
     "upgrade": ["name", "description", "disable-model-invocation", "argument-hint"],
     "ux-review": ["name", "description", "disable-model-invocation", "argument-hint"],

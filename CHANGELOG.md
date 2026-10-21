@@ -13,6 +13,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- The base plugin gains the `/test-strength` skill (AGH-412): mutation testing on the lines a diff changed only, with
+  the repo's own tool and a time budget, each surviving mutant classified as a test gap, an equivalent mutant (proved)
+  or unresolved, and redundant tests pointed out, never deleted. It sets no score target. Arrives with `hub sync`
+  after you bump `platform.version`.
 - `hub validate-output preflight <file>` checks a ticket's `preflight.json` against `agent-hub/preflight/1` and names
   the JSON path of each problem (AGH-402). `hub web` reads a ticket's records (`tickets/<id>/brief.md`,
   `preflight.json`, `plan.md`) and the feature's plan change requests (`change-requests/<n>.md` and their
