@@ -49,6 +49,7 @@ Below 768 px, every non-glance screen shows: "This view needs a wider screen." �
 | Metrics | 2-column chart grid | 1 column below 1360; KPI sparklines hidden |
 | Workflows | Graph + docked step inspector | Inspector overlays; editor panes switch via "Visual | YAML" segmented control |
 | Feature detail (ticket panel, AGH-330) | Ticket panel docked beside the Tickets tab at ≥ 1600 (640 px) | Ticket panel overlays (`panel` 480, `scrim` none, `shadow-overlay`); the page keeps its scroll |
+| Discuss panel (any screen, AGH-422) | Docked beside the page, resizable 320 to `min(720, viewport − sidebar − 640)`, default 480 | Still docked from 1280 (at 1280 with the sidebar collapsed: 320 to 584); below 1280 it overlays (`shadow-overlay`, no scrim, 320 to `100vw − 96`); below 768 full width, no edge, no Widen (AC-422.2, AC-422.3) |
 
 ### Table column priority (hide from the end of the list first)
 | Table | Priority order (kept → hidden first at the end) | Hidden at 1280 |
