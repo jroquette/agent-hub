@@ -98,8 +98,8 @@ class TicketBrief:
 def appended_brief(existing: bytes | None, brief: TicketBrief) -> tuple[bytes, int]:
     """``brief.md`` with ``brief`` appended as its next version, and that version."""
     if existing is None:
-        head = f"---\ntype: {BRIEF_TYPE}\nticket: {brief.ticket}\n---\n\n# Context brief: {brief.ticket}\n"
-        start = head.encode()
+        front = f"---\ntype: {BRIEF_TYPE}\nticket: {brief.ticket}\n---\n"
+        start = f"{front}\n# Context brief: {brief.ticket}\n".encode()
     else:
         fields = split_frontmatter(existing.decode("utf-8", "replace")).fields
         if fields.get("type") != BRIEF_TYPE or str(fields.get("ticket", "")).upper() != (
@@ -133,7 +133,8 @@ def _brief_section(brief: TicketBrief, version: int) -> str:
         f"## Brief v{version} ({brief.at.isoformat()})",
         f"```json\n{json.dumps(fields, ensure_ascii=False)}\n```",
         "### Acceptance criteria\n\n" + ("\n".join(acs) or "None listed in features.json."),
-        "### Plan section\n\n" + ("\n".join(quoted) or f"No heading of plan.md names {brief.ticket}."),
+        "### Plan section\n\n"
+        + ("\n".join(quoted) or f"No heading of plan.md names {brief.ticket}."),
         "### Blockers\n\n" + ("\n".join(blockers) or "None."),
         "### Main commits since the plan\n\n" + "\n".join(f"- {line}" for line in commits),
         "### ADRs cited\n\n" + ("\n".join(f"- {adr}" for adr in brief.adrs) or "None."),

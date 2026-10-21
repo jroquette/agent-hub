@@ -119,7 +119,13 @@ def test_carries_the_approver_in_the_output_when_the_answer_names_one() -> None:
     answers = {("gate", 1): GateAnswer("approve", approver="jdoe")}
     when = "$gate.output.approver == 'jdoe'"
 
-    run = Gated(shell("a"), approval(), shell("b", "gate", when=when), answers=answers, prior=paused_at_gate())
+    run = Gated(
+        shell("a"),
+        approval(),
+        shell("b", "gate", when=when),
+        answers=answers,
+        prior=paused_at_gate(),
+    )
 
     assert run.recorder.end_of("gate").output == {"decision": "approve", "approver": "jdoe"}
     assert run.runner.ran() == ["b"]

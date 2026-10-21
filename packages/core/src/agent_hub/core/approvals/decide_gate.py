@@ -98,7 +98,9 @@ class DecideGate:
         if gate is None:
             raise GateDecisionError(f"no open gate {decision.gate_id}")
         if decision.approver.strip().lower() in NO_PERSON:
-            raise GateDecisionError(f"the decision names no person (approver {decision.approver!r})")
+            raise GateDecisionError(
+                f"the decision names no person (approver {decision.approver!r})"
+            )
         if self._book.decided(gate.gate_id):
             raise GateDecisionError(f"the gate {gate.gate_id} is already decided")
         if (problem := answer_problem(gate.form, gate.choices, decision.answer)) is not None:

@@ -91,7 +91,9 @@ def ticket_brief(
     plan = _required(folder / PLAN, MAX_PLAN_BYTES)
     names = _names(planned)
     section = plan_section(plan.decode("utf-8", "replace"), names)
-    commits, note = _commits(hub, config, planned, folder, named_paths(section))
+    commits, note = _commits(
+        hub, config, planned=planned, folder=folder, paths=named_paths(section)
+    )
     brief = TicketBrief(
         ticket=ticket,
         at=now,
@@ -237,7 +239,7 @@ def _blocker(folder: Path, planned: PlannedTicket | None, key: str) -> Blocker:
 
 
 def _commits(
-    hub: Path, config: HubConfig, planned: PlannedTicket, folder: Path, paths: Sequence[str]
+    hub: Path, config: HubConfig, *, planned: PlannedTicket, folder: Path, paths: Sequence[str]
 ) -> tuple[tuple[str, ...], str | None]:
     """Main's commits since the plan's last hub commit on ``paths``; else why none were read."""
     if not paths:

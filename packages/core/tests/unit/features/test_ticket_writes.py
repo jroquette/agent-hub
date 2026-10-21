@@ -124,7 +124,11 @@ class TestBrief:
             "blockers": [{"id": "DEM-7", "outcome_path": None, "recorded_at": None}],
             "adrs": ["ADR 0040"],
         }
-        for part in ("**AC-1.1** It writes.", "> ### DEM-8 core: the writer", "DEM-7: none recorded"):
+        for part in (
+            "**AC-1.1** It writes.",
+            "> ### DEM-8 core: the writer",
+            "DEM-7: none recorded",
+        ):
             assert part in body
         assert "feat: a change" in body
 
@@ -188,8 +192,11 @@ class TestPreflight:
         self,
     ) -> None:
         hand_written = json.dumps(
-            {"runs": [json.loads(a_run(ran_at="2026-10-20T09:30:00Z"))], "ticket": "dem-8",
-             "schema": "agent-hub/preflight/1"},
+            {
+                "runs": [json.loads(a_run(ran_at="2026-10-20T09:30:00Z"))],
+                "ticket": "dem-8",
+                "schema": "agent-hub/preflight/1",
+            },
         ).encode()
 
         written, count = appended_preflight(
@@ -214,9 +221,7 @@ class TestPreflight:
             (b"[]", "must be a JSON object"),
         ],
     )
-    def test_refuses_a_run_the_model_refuses_when_appending(
-        self, run: bytes, message: str
-    ) -> None:
+    def test_refuses_a_run_the_model_refuses_when_appending(self, run: bytes, message: str) -> None:
         with pytest.raises(TicketRecordError, match=message):
             appended_preflight(None, run, folder="DEM-8")
 
@@ -225,7 +230,9 @@ class TestPreflight:
         [
             (b"{", "preflight.json could not be read"),
             (
-                json.dumps({"schema": "agent-hub/preflight/1", "ticket": "DEM-9", "runs": []}).encode(),
+                json.dumps(
+                    {"schema": "agent-hub/preflight/1", "ticket": "DEM-9", "runs": []}
+                ).encode(),
                 "not the folder's ticket DEM-8",
             ),
         ],
@@ -254,7 +261,11 @@ class TestChangeRequest:
 
         [request] = change_requests(heads(("3.md", text)), skipped=0).requests
         assert (request.n, request.ticket, request.status) == (3, "DEM-8", "open")
-        assert (request.plan_to, request.affected, request.problem) == (3, ("DEM-9", "DEM-10"), None)
+        assert (request.plan_to, request.affected, request.problem) == (
+            3,
+            ("DEM-9", "DEM-10"),
+            None,
+        )
         body = text.decode()
         assert "plan_from: 2\n" in body
         assert "opened_at: 2026-10-21T10:00:00+00:00\n" in body
@@ -316,12 +327,12 @@ class TestDecision:
 
 
 class TestAmendment:
-    def amend(self, plan: bytes, *, decision: bytes | None = None, summary: str = "Use v2.") -> bytes:
+    def amend(
+        self, plan: bytes, *, decision: bytes | None = None, summary: str = "Use v2."
+    ) -> bytes:
         request = a_request(2)
         decided = a_decision(2) if decision is None else decision
-        written, _ = amended_plan(
-            plan, n=2, request=request, decision=decided, summary=summary
-        )
+        written, _ = amended_plan(plan, n=2, request=request, decision=decided, summary=summary)
         return written
 
     def test_appends_one_entry_keeping_every_earlier_byte_when_approved(self) -> None:
@@ -332,8 +343,7 @@ class TestAmendment:
         assert hashlib.sha256(written[: len(PLAN)]).hexdigest() == prefix
         added = written[len(PLAN) :].decode()
         assert added == (
-            "- A2 (2026-10-21, Dana Owner): Use v2. "
-            "([change request 2](change-requests/2.md))\n"
+            "- A2 (2026-10-21, Dana Owner): Use v2. ([change request 2](change-requests/2.md))\n"
         )
         assert plan_version(written).version == 3
 
