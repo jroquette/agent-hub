@@ -71,7 +71,10 @@ from agent_hub.api.rfc9457 import (
 )
 from agent_hub.api.run_gate_kinds import RecordedGateKinds
 from agent_hub.api.run_launcher import ProcessRunLauncher
-from agent_hub.api.scenario_investigation import ScenarioInvestigations
+from agent_hub.api.scenario_investigation import (
+    InvestigationRestrictions,
+    ScenarioInvestigations,
+)
 from agent_hub.api.settings import ApiSettings, utc_now
 from agent_hub.api.static_files import WEB_DIST
 from agent_hub.api.ticket_snapshots import (
@@ -513,6 +516,7 @@ class AgentSessionWiring:
     links: AgentSessionLinks
     runtime: SessionRuntime
     credentials: HubCredentials | None = None
+    investigations: ScenarioInvestigations | None = None
 
 
 def wire_agent_sessions(  # noqa: PLR0913 -- the use cases' ports, all injected
@@ -533,7 +537,9 @@ def wire_agent_sessions(  # noqa: PLR0913 -- the use cases' ports, all injected
     ``observed_sessions`` fills each agent session's ``observed_session_id``; ``session_title``
     names a driven session after the title Claude Code gave it; ``repo_changes`` reads the
     session's repositories against their base branch (``hub_git``); ``credentials`` names what
-    each project's hub declares, which no session keeps (AM-13)."""
+    each project's hub declares, which no session keeps (AM-13), and holds the investigation
+    sessions of paused scenario runs (their restriction rebuilt on a reopen, E-13)."""
+    restrictions = None if credentials is None else InvestigationRestrictions(credentials)
     control = AgentSessionControl(
         driver,
         store,
@@ -545,6 +551,7 @@ def wire_agent_sessions(  # noqa: PLR0913 -- the use cases' ports, all injected
         session_title=session_title,
         repo_changes=repo_changes,
         hidden_environment=None if credentials is None else credentials.names,
+        restriction_of=None if restrictions is None else restrictions.restriction_of,
     )
     cloud = CloudSessions(
         launcher=launcher,
@@ -559,6 +566,9 @@ def wire_agent_sessions(  # noqa: PLR0913 -- the use cases' ports, all injected
         links=AgentSessionLinks(control.live_link, store),
         runtime=SessionRuntime(control, store, clock=settings.clock),
         credentials=credentials,
+        investigations=None
+        if restrictions is None
+        else ScenarioInvestigations(control=control, restrictions=restrictions),
     )
 
 
@@ -748,7 +758,7 @@ def build_app(
         ),
         feature_names=FeatureNames(settings.registry_path.parent / FEATURE_NAMES_FILE),
         ac_checks=AcCheckRunner(hubs),
-        scenario_investigations=_investigations(sessions, hubs),
+        scenario_investigations=None if sessions is None else sessions.investigations,
         linear=LinearConnection(
             linear_environ,
             key_file,
@@ -762,17 +772,6 @@ def build_app(
         problems=COMPOSED_PROBLEMS,
         web_dist=web_dist,
         lifecycle=None if sessions is None else sessions.runtime,
-    )
-
-
-def _investigations(
-    sessions: AgentSessionWiring | None, hubs: HubFilesReadModels
-) -> ScenarioInvestigations | None:
-    """The investigation sessions of paused scenario runs, when sessions are driven here."""
-    if sessions is None or sessions.credentials is None:
-        return None
-    return ScenarioInvestigations(
-        hubs=hubs.project_hubs, control=sessions.control, credentials=sessions.credentials
     )
 
 
