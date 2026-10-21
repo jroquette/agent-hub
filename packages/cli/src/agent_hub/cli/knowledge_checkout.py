@@ -126,9 +126,10 @@ class GitKnowledgeCheckout:
         """Each listed name under ``source`` the index looks at: as git printed it (relative
         to the source's cwd) and as a hub-relative path, in the order of the printed names.
 
-        Names the index never looks at are dropped while the output is scanned, so what is kept
-        grows with the Markdown names only. A name that is not UTF-8 is shown with its bytes
-        escaped; when a UTF-8 name reads the same, that one is kept.
+        Splitting the output still builds every printed name; names the index never looks at
+        are then dropped, so what is kept past the scan grows with the Markdown names only. A
+        name that is not UTF-8 is shown with its bytes escaped; when a UTF-8 name reads the
+        same, that one is kept, whichever git printed first.
         """
         chosen: dict[str, bytes] = {}
         for entry in self._list(source).split(b"\0"):

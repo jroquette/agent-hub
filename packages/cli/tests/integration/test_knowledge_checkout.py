@@ -347,6 +347,21 @@ def test_keeps_utf8_name_when_undecodable_name_shows_same(
     assert listed == [ListedFile(path="brain/same\\xff.md", fingerprint=lstat_fingerprint(literal))]
 
 
+def test_keeps_tracked_utf8_name_when_untracked_undecodable_name_listed_first(
+    knowledge_hub: KnowledgeHubFactory,
+) -> None:
+    # git prints untracked names before tracked ones: the undecodable name comes first here.
+    hub = knowledge_hub({"brain/fine.md": NOTE, "brain/same\\xff.md": b"# Literal\n"})
+    brain = os.fsencode(hub / "brain")
+    with open(brain + b"/same\xff.md", "wb") as file:
+        file.write(NOTE)
+
+    listed = [file for file in a_checkout(hub).listed() if file.path.startswith("brain/same")]
+
+    literal = brain + b"/same\\xff.md"
+    assert listed == [ListedFile(path="brain/same\\xff.md", fingerprint=lstat_fingerprint(literal))]
+
+
 def test_counts_files_as_gone_when_file_replaced_folder(
     knowledge_hub: KnowledgeHubFactory,
 ) -> None:

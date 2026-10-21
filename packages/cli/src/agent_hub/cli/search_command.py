@@ -37,6 +37,8 @@ COMMAND: Final = "search"
 # A query with no word, an unknown kind or a bad option, as Typer's own usage errors.
 USAGE: Final = 2
 _SEPARATOR: Final = "  "
+# The third line of a result whose note has no text after its frontmatter.
+NO_TEXT: Final = "(no text)"
 
 Query = Annotated[
     list[str],
@@ -79,7 +81,10 @@ def search(
     for skipped in outcome.report.skipped:
         typer.echo(f"hub {COMMAND}: skipped {shown_text(skipped.path)}: {skipped.reason}", err=True)
     if as_json:
-        typer.echo(dump_json(_outcome_json(hub, text, outcome)).decode(), nl=False)
+        # ASCII only: a hostile name, title or snippet cannot put a bidi or C1 control on the
+        # terminal; a JSON reader gets the same strings back.
+        found = dump_json(_outcome_json(hub, text, outcome), ensure_ascii=True)
+        typer.echo(found.decode(), nl=False)
     elif outcome.results:
         typer.echo("\n\n".join(_block(hit) for hit in outcome.results))
     else:
@@ -106,7 +111,9 @@ def _block(hit: SearchHit) -> str:
     header = [shown_text(hit.path), hit.kind]
     if hit.status is not None:
         header.append(shown_text(hit.status))
-    return "\n".join((_SEPARATOR.join(header), shown_text(hit.title), shown_text(hit.snippet)))
+    # An empty body has an empty snippet: a blank third line would run two blocks together.
+    snippet = shown_text(hit.snippet) if hit.snippet else NO_TEXT
+    return "\n".join((_SEPARATOR.join(header), shown_text(hit.title), snippet))
 
 
 def _outcome_json(hub: KnowledgeHub, query: str, outcome: SearchOutcome) -> JsonValue:
