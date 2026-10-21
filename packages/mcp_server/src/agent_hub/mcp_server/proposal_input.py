@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from datetime import UTC, date, datetime
 from typing import Final, Literal
 
+from agent_hub.core.ai_attribution import carries_ai_attribution
 from agent_hub.core.brain.brain_path import INBOX_FOLDER, MAX_SLUG_CHARS
 from agent_hub.mcp_server.hub_context import ToolRefusal
 
@@ -30,11 +31,6 @@ KINDS: Final[Mapping[ProposalKind, str]] = {
     "system": "system",
 }
 _CONTROL: Final = re.compile(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]")
-# The marks of AI attribution (hub ``AGENTS.md`` rule 1) a proposal may not carry into its note,
-# commit or pull request.
-_ATTRIBUTION: Final = re.compile(
-    r"co-authored-by\s*:|generated\s+with|generated\s+by\s+claude|\U0001f916", re.IGNORECASE
-)
 _BACKTICKS: Final = re.compile(r"`+")
 _MIN_FENCE: Final = 3
 _SLUG_WORD: Final = re.compile(r"[a-z0-9]+")
@@ -71,7 +67,7 @@ def checked_title(title: str) -> str:
         raise ToolRefusal(f"propose: the title is longer than {MAX_TITLE_CHARS} characters")
     if _has_control(trimmed):
         raise ToolRefusal("propose: the title must be one line with no control characters")
-    if _ATTRIBUTION.search(trimmed):
+    if carries_ai_attribution(trimmed):
         raise ToolRefusal(_ATTRIBUTED)
     if not _SLUG_WORD.search(trimmed.lower()):
         raise ToolRefusal(_NO_SLUG)
@@ -87,7 +83,7 @@ def checked_body(body: str) -> str:
         raise ToolRefusal("propose: the body is not UTF-8 text")
     if len(trimmed.encode("utf-8")) > MAX_BODY_BYTES:
         raise ToolRefusal(f"propose: the body is larger than {MAX_BODY_BYTES} bytes")
-    if _ATTRIBUTION.search(trimmed):
+    if carries_ai_attribution(trimmed):
         raise ToolRefusal(_ATTRIBUTED)
     return trimmed
 
