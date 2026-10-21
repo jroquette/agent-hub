@@ -14,6 +14,7 @@ from agent_hub.core.features.ticket_records import (
     ChangeRequest,
     change_requests,
     preflight_record,
+    request_view,
     ticket_folder,
 )
 
@@ -96,6 +97,35 @@ def test_marks_body_cut_when_head_full() -> None:
     (request,) = change_requests((cut,), skipped=0).requests
 
     assert (whole.body_cut, request.body_cut) == (False, True)
+
+
+# Q15: the ticket route's view carries the cut flag with the body; the detail serves neither.
+def test_serves_body_cut_only_with_body_when_viewed() -> None:
+    long = a_request(proposal="x" * CHANGE_REQUEST_HEAD_BYTES)
+    cut = RecordHead(
+        name=long.name, head=(long.head or b"")[:CHANGE_REQUEST_HEAD_BYTES], problem=None
+    )
+    (request,) = change_requests((cut,), skipped=0).requests
+
+    assert request_view(request, slug="demo", body=True).body_cut is True
+    assert request_view(request, slug="demo").body_cut is False
+
+
+# Q19: only a cut head drops the replacement mark a split character leaves; a whole body keeps it.
+def test_strips_split_character_only_when_head_cut() -> None:
+    prefix = len(a_request().head or b"")
+    # The head ends inside the two-byte "é": its first byte alone decodes to U+FFFD.
+    long = a_request(proposal="x" * (CHANGE_REQUEST_HEAD_BYTES - prefix - 1) + "éé")
+    cut = RecordHead(
+        name=long.name, head=(long.head or b"")[:CHANGE_REQUEST_HEAD_BYTES], problem=None
+    )
+    whole = a_request(proposal="ends with \ufffd")
+
+    (cut_request,) = change_requests((cut,), skipped=0).requests
+    (whole_request,) = change_requests((whole,), skipped=0).requests
+
+    assert cut_request.body is not None and not cut_request.body.rstrip().endswith("\ufffd")
+    assert whole_request.body is not None and whole_request.body.rstrip().endswith("\ufffd")
 
 
 # AGH-405 (S2-T7): hub web shows who decided a request, when and with what note.
