@@ -48,6 +48,7 @@ Below 768 px, every non-glance screen shows: "This view needs a wider screen." �
 | Knowledge | Tree 280 + note + rail 280 | Tree 240; rail becomes a "Backlinks (4)" popover; Provenance lineage nodes 148 px, effect panels 2 × 2 |
 | Metrics | 2-column chart grid | 1 column below 1360; KPI sparklines hidden |
 | Workflows | Graph + docked step inspector | Inspector overlays; editor panes switch via "Visual | YAML" segmented control |
+| Feature detail (ticket panel, AGH-330) | Ticket panel docked beside the Tickets tab at ≥ 1600 (640 px) | Ticket panel overlays (`panel` 480, `scrim` none, `shadow-overlay`); the page keeps its scroll |
 
 ### Table column priority (hide from the end of the list first)
 | Table | Priority order (kept → hidden first at the end) | Hidden at 1280 |
@@ -59,6 +60,7 @@ Below 768 px, every non-glance screen shows: "This view needs a wider screen." �
 | Tracker queue | Issue, Title, Age, Action, Repo | Repo |
 | Health findings | Severity, Rule, Path:line, Message, Fix | — (Fix moves under Message) |
 | Collector sources | Source, Health, Last event, Latency p95, p50, Events 24 h | p50, Events 24 h |
+| Feature detail › Tickets table (AGH-330) | Ticket, Title, Stage, Readiness (holds Start), ACs, Status, Blocked by, PR, Sessions, Assignee | Assignee, Sessions. With the ticket panel docked (≥ 1600) only the first four stay; no column chooser: the panel holds the hidden facts |
 
 Hidden columns stay available from the column chooser and in the row hover preview; the URL keeps chosen columns.
 

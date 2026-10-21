@@ -16,6 +16,7 @@ from agent_hub.core.features.feature_evals import (
 from agent_hub.core.features.feature_record import PlannedTicket, RecordAc
 from agent_hub.core.features.feature_reviews import review_records
 from agent_hub.core.features.feature_status import FeatureFolder, RecordHead, feature_detail
+from agent_hub.core.testing.read_model_builders import READ_TIME
 
 SLUG = "demo-feature"
 
@@ -409,7 +410,9 @@ def test_ignores_json_outputs_when_legacy_and_outputs_mixed() -> None:
         eval_records(legacy.evals, legacy.eval_head, slug=SLUG), acs_named(3)
     )
     assert review_records(mixed.reviews, slug=SLUG) == review_records(legacy.reviews, slug=SLUG)
-    assert feature_detail(mixed, project="demo") == feature_detail(legacy, project="demo")
+    assert feature_detail(mixed, project="demo", now=READ_TIME) == feature_detail(
+        legacy, project="demo", now=READ_TIME
+    )
     assert mixed.evals_skipped == 1
 
 
