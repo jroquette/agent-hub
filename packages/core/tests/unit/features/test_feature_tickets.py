@@ -364,7 +364,9 @@ def test_serves_ticket_records_when_ticket_named_by_key_or_id() -> None:
     folder = replace(
         a_folder(),
         ticket_folders=(
-            TicketFiles(name="dem-8", brief=True, plan=True, preflight=json.dumps(preflight).encode()),
+            TicketFiles(
+                name="dem-8", brief=True, plan=True, preflight=json.dumps(preflight).encode()
+            ),
         ),
         change_requests=(
             a_request_head(1, "DEM-8"),
@@ -391,9 +393,7 @@ def test_serves_ticket_records_when_ticket_named_by_key_or_id() -> None:
 
 
 def test_serves_preflight_problem_when_record_malformed() -> None:
-    folder = replace(
-        a_folder(), ticket_folders=(TicketFiles(name="DEM-7", preflight=b"{"),)
-    )
+    folder = replace(a_folder(), ticket_folders=(TicketFiles(name="DEM-7", preflight=b"{"),))
 
     found = ticket_records(folder, "DEM-7", project="demo")
 

@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Final
 
 from agent_hub.core.errors import TrackerFailure
+from agent_hub.core.features.feature_record import FeatureRecordFile, record_from_bytes
 from agent_hub.core.features.feature_reviews import review_records
 from agent_hub.core.features.feature_status import FeatureFolder, feature_parts, plan_view
 from agent_hub.core.features.golden_path import (
@@ -23,7 +24,6 @@ from agent_hub.core.features.golden_path import (
     LINEAR_NOT_LOADED,
     LINEAR_NOT_LOADED_REASON,
 )
-from agent_hub.core.features.feature_record import FeatureRecordFile, record_from_bytes
 from agent_hub.core.features.scope_rules import ticket_aliases
 from agent_hub.core.features.ticket_flow import ticket_evidence, ticket_flow
 from agent_hub.core.features.ticket_records import (
