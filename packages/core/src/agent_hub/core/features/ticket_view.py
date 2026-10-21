@@ -7,7 +7,13 @@ uses it. Everything here is derived: planning is a recommendation, never an acti
 
 from typing import Literal
 
-from agent_hub.core.features.feature_view import GoldenPath, StepState, TicketsSource
+from agent_hub.core.features.feature_view import (
+    ChangeRequestView,
+    GoldenPath,
+    StepState,
+    TicketsSource,
+)
+from agent_hub.core.features.output_models import PreflightRun
 from agent_hub.core.readmodels.view_types import ApiTimestamp, DerivedView, ViewModel
 from agent_hub.core.tracker.tracker_reader import IssueState
 
@@ -151,3 +157,27 @@ class FeatureTickets(DerivedView):
     tickets: tuple[TicketRow, ...]
     planning: TicketPlan
     golden_path: GoldenPath
+
+
+class PreflightView(ViewModel):
+    """A ticket's ``preflight.json`` (``path`` relative to the hub's ``brain/``): every run,
+    oldest first, or why it could not be read (``runs`` then empty)."""
+
+    path: str
+    runs: tuple[PreflightRun, ...]
+    problem: str | None
+
+
+class TicketRecords(DerivedView):
+    """``GET /features/{project}/{slug}/tickets/{ticket}`` (two-level-flows A7): what the ticket
+    panel shows that no tickets row carries. ``brief`` and ``plan`` are the brain paths of the
+    ticket's context brief and ticket plan when they exist; ``preflight`` its record (None
+    without one); ``change_requests`` the plan change requests it asks or is held by."""
+
+    project: str
+    slug: str
+    ticket: str
+    brief: str | None
+    plan: str | None
+    preflight: PreflightView | None
+    change_requests: tuple[ChangeRequestView, ...]
