@@ -106,11 +106,6 @@ def test_reads_every_file_when_version_differs(version: int | None) -> None:
     )
 
 
-def _read(file: ListedFile) -> FileToRead:
-    assert file.fingerprint is not None
-    return FileToRead(path=file.path, fingerprint=file.fingerprint)
-
-
 def test_plans_nothing_when_hub_has_no_row_and_nothing_listed() -> None:
     assert plan_sync(_stored(version=None), (), version=INDEX_VERSION) == NOTHING
 

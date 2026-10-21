@@ -128,6 +128,21 @@ def test_reports_unreadable_file_again_when_unchanged() -> None:
     assert index.stored(HUB).files == {}
 
 
+def test_keeps_listed_fingerprint_when_read_gives_other_reason() -> None:
+    index = InMemoryKnowledgeIndex()
+    checkout = _checkout(swapped="marker")
+    checkout.answer_read("brain/playbooks/swapped.md", THROUGH_LINK)
+
+    report = sync_knowledge(index, checkout, HUB)
+
+    fingerprint = checkout.fingerprint("brain/playbooks/swapped.md")
+    assert report.skipped == (
+        SkippedFile(
+            path="brain/playbooks/swapped.md", fingerprint=fingerprint, reason=THROUGH_LINK
+        ),
+    )
+
+
 def test_drops_row_when_file_vanishes_before_read() -> None:
     index = _CountingIndex()
     checkout = _checkout(a="alpha")
@@ -187,6 +202,21 @@ def test_rebuilds_hub_when_stored_version_differs() -> None:
 
     assert report.read == report.listed == 2
     assert index.stored(HUB).version == INDEX_VERSION
+
+
+def test_counts_unlisted_rows_as_dropped_when_stored_version_differs() -> None:
+    index = InMemoryKnowledgeIndex()
+    checkout = _checkout(a="alpha", b="beta", c="gamma")
+    sync_knowledge(index, checkout, HUB)
+    older = {path: file.fingerprint for path, file in index.stored(HUB).files.items()}
+    index.apply(HUB, IndexChange(version=INDEX_VERSION - 1, touched=older))
+    checkout.remove("brain/playbooks/a.md")
+    checkout.remove("brain/playbooks/b.md")
+
+    report = sync_knowledge(index, checkout, HUB)
+
+    assert report == SyncReport(listed=1, read=1, indexed=1, dropped=2, skipped=())
+    assert list(index.stored(HUB).files) == ["brain/playbooks/c.md"]
 
 
 def test_stops_before_any_read_when_listing_over_file_cap(

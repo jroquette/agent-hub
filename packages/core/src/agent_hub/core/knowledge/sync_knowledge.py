@@ -110,11 +110,14 @@ def sync_knowledge(
     )
     if not change.is_empty:
         index.apply(hub, change)
+    # A rebuild drops the rows as a whole: those of files no longer listed are counted here.
+    paths = {file.path for file in listing}
+    unlisted = sum(path not in paths for path in stored.files) if plan.rebuild else 0
     return SyncReport(
         listed=len(listing),
         read=len(plan.to_read),
         indexed=len(change.documents),
-        dropped=len(change.dropped),
+        dropped=len(change.dropped) + unlisted,
         skipped=tuple(sorted(change.skipped, key=lambda skipped: skipped.path)),
     )
 
