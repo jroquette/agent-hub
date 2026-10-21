@@ -411,7 +411,7 @@ def _owner_steps(gate: EvalGate) -> _Own:
         case "sign_off":
             return _Own(
                 holds=False,
-                meta=f"Waiting for you: sign off {acs}",
+                meta=f"Sign off {acs}",
                 reason=f"{acs} wait{'s' if one else ''} on owner steps (SHIP-WITH-OWNER-STEPS)",
                 started=True,
                 waiting=True,

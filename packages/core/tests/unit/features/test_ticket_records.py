@@ -8,6 +8,7 @@ import pytest
 from agent_hub.core.features.feature_status import RecordHead
 from agent_hub.core.features.feature_view import ChangeDecisionView
 from agent_hub.core.features.ticket_records import (
+    CHANGE_REQUEST_HEAD_BYTES,
     MAX_CHANGE_REQUEST_FILES,
     MAX_PREFLIGHT_BYTES,
     ChangeRequest,
@@ -17,7 +18,9 @@ from agent_hub.core.features.ticket_records import (
 )
 
 
-def a_request(n: int = 1, *, ticket: str = "DEM-8", **fields: str) -> RecordHead:
+def a_request(
+    n: int = 1, *, ticket: str = "DEM-8", proposal: str = "", **fields: str
+) -> RecordHead:
     values = {
         "type": "change-request",
         "ticket": ticket,
@@ -29,7 +32,7 @@ def a_request(n: int = 1, *, ticket: str = "DEM-8", **fields: str) -> RecordHead
         "run_id": "implement-8",
     } | fields
     front = "".join(f"{key}: {value}\n" for key, value in values.items())
-    text = f"---\n{front}---\n# Plan change request {n}\n"
+    text = f"---\n{front}---\n# Plan change request {n}\n{proposal}"
     return RecordHead(name=f"{n}.md", head=text.encode(), problem=None)
 
 
@@ -81,6 +84,18 @@ def test_reads_open_when_request_has_no_decision() -> None:
         ),
     )
     assert found.problem is None
+
+
+# Q13: a request longer than the head read says so, so the panel never shows a cut proposal as whole.
+def test_marks_body_cut_when_head_full() -> None:
+    long = a_request(proposal="x" * CHANGE_REQUEST_HEAD_BYTES)
+    head = long.head[:CHANGE_REQUEST_HEAD_BYTES] if long.head else b""
+    cut = RecordHead(name=long.name, head=head, problem=None)
+
+    (whole,) = change_requests((a_request(),), skipped=0).requests
+    (request,) = change_requests((cut,), skipped=0).requests
+
+    assert (whole.body_cut, request.body_cut) == (False, True)
 
 
 # AGH-405 (S2-T7): hub web shows who decided a request, when and with what note.

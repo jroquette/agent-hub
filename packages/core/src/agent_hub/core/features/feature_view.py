@@ -215,7 +215,8 @@ class ChangeRequestView(ViewModel):
     by which ``run_id``. ``approval_id`` is the open gate of that run that answers it (P8, A5);
     ``decidable_here`` says the run is gone (lost, or ended), so hub web records the decision
     itself (AC-2.14). ``path`` is relative to the hub's ``brain/``; ``body`` (the ticket route
-    only) is the request's evidence and proposal, as markdown within its 16 KiB head."""
+    only) is the request's evidence and proposal, as markdown within its 16 KiB head; ``body_cut``
+    says the file goes on past it."""
 
     n: int = Field(ge=1)
     ticket: str | None
@@ -231,6 +232,7 @@ class ChangeRequestView(ViewModel):
     path: str
     problem: str | None
     body: str | None = None
+    body_cut: bool = False
 
 
 class FeatureDetail(FeatureView):

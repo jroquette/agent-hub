@@ -70,7 +70,8 @@ class TicketFiles:
 class ChangeRequest:
     """One plan change request: its origin ``ticket``, its status folded from its decision, the
     plan versions it goes from and to, the tickets it affects, when it was opened and by which
-    workflow run, and its ``body`` (evidence and proposal, within the head read). ``problem``
+    workflow run, and its ``body`` (evidence and proposal, within the head read; ``body_cut``
+    when the file is longer than that head). ``problem``
     says why it could not be read (status None; ``ticket`` kept when it could be), or why its
     decision could not be: the request then stays ``open``, not known to be decided. A decision
     needs a person (``decided_by`` neither empty nor ``unknown``, A5)."""
@@ -86,6 +87,7 @@ class ChangeRequest:
     run_id: str | None = None
     decision: ChangeDecisionView | None = None
     body: str | None = None
+    body_cut: bool = False
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -171,6 +173,7 @@ def request_view(request: ChangeRequest, *, slug: str, body: bool = False) -> Ch
         path=f"features/{slug}/{CHANGE_REQUESTS_FOLDER}/{request.n}.md",
         problem=request.problem,
         body=request.body if body else None,
+        body_cut=body and request.body_cut,
     )
 
 
@@ -237,6 +240,7 @@ def _request(n: int, head: RecordHead, decision: RecordHead | None) -> ChangeReq
         run_id=run_id,
         decision=decided,
         body=_body(head),
+        body_cut=head.head is not None and len(head.head) >= CHANGE_REQUEST_HEAD_BYTES,
     )
 
 
@@ -244,7 +248,8 @@ def _body(head: RecordHead) -> str | None:
     """The request's text after its frontmatter (within the head read), None when empty."""
     if head.head is None:
         return None
-    text = split_frontmatter(head.head.decode("utf-8", "replace")).body.strip()
+    # A cut at the head's end may split a character: drop its replacement mark.
+    text = split_frontmatter(head.head.decode("utf-8", "replace")).body.strip().rstrip("\ufffd")
     return f"{text}\n" if text else None
 
 
