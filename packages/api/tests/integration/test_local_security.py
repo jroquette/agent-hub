@@ -455,13 +455,20 @@ ITEM_VERSION_WRITES = [
 
 
 class ItemWrites:
-    """An ``ItemVersionWrites`` that records each restore and answers it unchanged."""
+    """An ``ItemVersionWrites`` that records each restore or publish and answers it unchanged."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[object, str, bool]] = []
 
     def restore(self, ref: object, version_id: str, *, confirm_managed: bool) -> ItemWriteResult:
         self.calls.append((ref, version_id, confirm_managed))
+        return ItemWriteResult(changed=False, versioned=False, reason=None, version=None)
+
+    def publish(
+        self, project: str, draft_id: str, target: object, *, confirm_managed: bool
+    ) -> ItemWriteResult:
+        del project
+        self.calls.append((target, draft_id, confirm_managed))
         return ItemWriteResult(changed=False, versioned=False, reason=None, version=None)
 
 

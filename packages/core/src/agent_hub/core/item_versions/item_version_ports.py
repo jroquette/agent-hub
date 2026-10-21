@@ -157,15 +157,12 @@ class ItemWriteResult(ViewModel):
 
 
 class ItemVersionWrites(Protocol):
-    """The history routes' writes (``POST .../versions/{version_id}/restore``; Publish in PR 3)."""
+    """The item routes' writes: ``POST .../versions/{version_id}/restore`` and
+    ``POST .../skills/drafts/{draft_id}/publish``."""
 
     def restore(self, ref: ItemRef, version_id: str, *, confirm_managed: bool) -> ItemWriteResult:
         """Write the version of the item's own unit back and record a ``restore`` version."""
         ...
-
-
-class ItemPublishes(Protocol):
-    """The publish route's write (``POST .../skills/drafts/{draft_id}/publish``, PR 3)."""
 
     def publish(
         self, project: str, draft_id: str, target: ToolkitRef | None, *, confirm_managed: bool
