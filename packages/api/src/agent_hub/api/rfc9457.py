@@ -24,6 +24,7 @@ from agent_hub.core.agent_sessions.errors import (
     CloudFailedError,
     CloudTimeoutError,
     CloudUnavailableError,
+    HubLocalInvalidError,
     InvalidDecisionError,
     InvalidScreenshotError,
     InvalidWorkdirError,
@@ -33,6 +34,7 @@ from agent_hub.core.agent_sessions.errors import (
     PermissionAnsweredError,
     ScreenshotTooLargeError,
     SessionBusyError,
+    SessionRestrictionError,
     SessionsOffError,
     SessionsUnavailableError,
     SessionTerminalError,
@@ -548,6 +550,25 @@ def _live_limit_problem(error: LiveLimitError) -> Problem:
     )
 
 
+def _hub_local_invalid_problem(error: HubLocalInvalidError) -> Problem:
+    """No driven session starts while the hub's ``hub.local.json`` cannot be read (E-8)."""
+    members: dict[str, JsonValue] = {
+        "type": "urn:agent-hub:problem:hub-local-invalid",
+        "code": "hub_local_invalid",
+    }
+    return Problem(409, "hub.local.json cannot be read", str(error), members)
+
+
+def _session_restriction_problem(_: SessionRestrictionError) -> Problem:
+    return _agent_session_problem(
+        409,
+        "restriction-unavailable",
+        "Investigation session cannot be reopened",
+        detail="The investigation session's tool policy cannot be rebuilt from its scenario run,"
+        " so it is not reopened; open the run's investigation again.",
+    )
+
+
 def _log_full_problem(_: LogFullError) -> Problem:
     return _agent_session_problem(
         409,
@@ -703,6 +724,8 @@ AGENT_SESSION_PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
     SessionBusyError: _session_busy_problem,
     LiveLimitError: _live_limit_problem,
     LogFullError: _log_full_problem,
+    HubLocalInvalidError: _hub_local_invalid_problem,
+    SessionRestrictionError: _session_restriction_problem,
     PermissionAnsweredError: _permission_answered_problem,
     UnknownPermissionError: _unknown_permission_problem,
     InvalidDecisionError: _invalid_decision_problem,

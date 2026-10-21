@@ -16,7 +16,9 @@ session raises ``SessionsUnavailableError`` (503).
 ``hub.local.json``, environments and endpoints) each time a session starts: the names every
 driven session loses (AM-13, P-9) and the env files the investigation's tool policy denies
 (P-17). Names and paths only; no env file is ever opened here. When ``hub.local.json`` cannot
-be read, only ``hub.json``'s are known (``complete`` is false).
+be read, only ``hub.json``'s are known (``complete`` is false): ``names`` then refuses
+(``HubLocalInvalidError``), as it does when the registry cannot be read, so no driven session
+starts with credentials it could not hide (E-8).
 """
 
 import asyncio
@@ -40,7 +42,7 @@ from agent_hub.core.agent_sessions.driver import (
     PermissionMode,
     StartSpec,
 )
-from agent_hub.core.agent_sessions.errors import SessionsUnavailableError
+from agent_hub.core.agent_sessions.errors import HubLocalInvalidError, SessionsUnavailableError
 from agent_hub.core.hub_config.effective_environments import (
     declared_env_files,
     effective_environments,
@@ -247,18 +249,37 @@ class HubCredentials:
         self._reader = reader
         self._running = running_version
 
-    def names(self, project: str) -> CredentialNames:
-        """The credential names ``project``'s hub declares."""
+    def project_hubs(self) -> list[tuple[str, str]]:
+        """Each project's hub folder: the first valid registered hub naming it."""
         try:
             entries = self._registry.entries()
         except HubRegistryError:
-            return NO_CREDENTIALS
+            return []
+        found: dict[str, str] = {}
+        for entry in entries:
+            document = read_hub_document(
+                self._reader.read_hub_json(entry.path), running_version=self._running
+            )
+            if document.config is not None:
+                found.setdefault(document.config.project.name, entry.path)
+        return list(found.items())
+
+    def names(self, project: str) -> CredentialNames:
+        """The credential names ``project``'s hub declares; ``HubLocalInvalidError`` when they
+        cannot all be read."""
+        try:
+            entries = self._registry.entries()
+        except HubRegistryError:
+            raise HubLocalInvalidError(project) from None
         for entry in entries:
             document = read_hub_document(
                 self._reader.read_hub_json(entry.path), running_version=self._running
             )
             if document.config is not None and document.config.project.name == project:
-                return self.of_hub(entry.path).names
+                declared = self.of_hub(entry.path)
+                if not declared.complete:
+                    raise HubLocalInvalidError(project)
+                return declared.names
         return NO_CREDENTIALS
 
     def of_hub(self, hub_path: str) -> DeclaredCredentials:
