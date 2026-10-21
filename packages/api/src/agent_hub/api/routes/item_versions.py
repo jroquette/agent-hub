@@ -11,6 +11,12 @@ A restore (D4, D12, D13) is the one route that writes into a hub's working tree:
 rule and the launch cookie gate it before routing (``local_security``, ``session_access``; 409
 ``hub_read_only`` in the container), and the shared write step's refusals answer 409 with a
 ``code`` (``rfc9457``). It answers ``{changed, versioned, reason, version}``.
+
+The Studio's Publish (D10, S5, S7) is the other: ``POST .../skills/drafts/{draft_id}/publish``
+lands the draft ``.hub-drafts/<draft_id>/`` on its ``target`` (``null``: a new item) through
+the same step, behind the same gates, and answers the same shape. A ``draft_id`` outside
+``(skill|agent|hook)-[a-z0-9]{6}`` answers 400 and a body outside its shape 422, before
+anything is read; the draft's own refusals answer 404, 409, 413 or 422 (``rfc9457``).
 """
 
 from typing import Annotated
@@ -24,11 +30,14 @@ from agent_hub.api.schemas import (
     DEFAULT_LIMIT,
     ITEM_WRITE_RESPONSES,
     PROBLEM_RESPONSES,
+    PUBLISH_RESPONSES,
     CursorParam,
     LimitParam,
+    PublishDraftBody,
     RestoreVersionBody,
 )
 from agent_hub.core.events.stored_event import UUID_TEXT_PATTERN
+from agent_hub.core.item_versions.item_version import DRAFT_ID
 from agent_hub.core.item_versions.item_version_ports import (
     ItemVersionContent,
     ItemVersionPage,
@@ -41,6 +50,7 @@ from agent_hub.core.skills.skill_view import ItemKind
 router = APIRouter(tags=["item versions"], responses=PROBLEM_RESPONSES)
 
 VersionIdPath = Annotated[str, Path(pattern=UUID_TEXT_PATTERN)]
+DraftIdPath = Annotated[str, Path(pattern=DRAFT_ID)]
 SKILL_ITEM = "/projects/{project}/skills/{kind}/{source}/{name}"
 WORKFLOW_ITEM = "/workflows/{project}/{name}"
 
@@ -129,3 +139,22 @@ def restore_workflow_version(
     """Write the version back into the hub workflow's file and record a ``restore`` version."""
     ref = WorkflowRef(project=project, name=name)
     return writes.restore(ref, version_id, confirm_managed=body.confirm_managed)
+
+
+@router.post("/projects/{project}/skills/drafts/{draft_id}/publish", responses=PUBLISH_RESPONSES)
+def publish_draft(
+    *,
+    project: ProjectPath,
+    draft_id: DraftIdPath,
+    body: PublishDraftBody,
+    writes: ItemVersionWritesDep,
+) -> ItemWriteResult:
+    """Land the Studio draft on its target (``null``: a new item), record a ``publish``
+    version naming the draft, then remove the draft."""
+    target = body.target
+    ref = (
+        None
+        if target is None
+        else ToolkitRef(project=project, kind=target.kind, source=target.source, name=target.name)
+    )
+    return writes.publish(project, draft_id, ref, confirm_managed=body.confirm_managed)

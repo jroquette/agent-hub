@@ -133,7 +133,8 @@ RUN_COMMAND_PATHS: frozenset[tuple[str, str]] = frozenset(
 )
 
 # An item's version history (AGH-295, S7): its versions, one version and its restore (a strict
-# write that needs the launch cookie), Toolkit and workflows.
+# write that needs the launch cookie), Toolkit and workflows; and the Studio's publish of a
+# draft, the other strict item write.
 ITEM_VERSION_PATHS: frozenset[tuple[str, str]] = frozenset(
     (method, f"{API_PREFIX}{item}{path}")
     for item in ("/projects/{project}/skills/{kind}/{source}/{name}", "/workflows/{project}/{name}")
@@ -142,7 +143,7 @@ ITEM_VERSION_PATHS: frozenset[tuple[str, str]] = frozenset(
         ("get", "/versions/{version_id}"),
         ("post", "/versions/{version_id}/restore"),
     )
-)
+) | {("post", f"{API_PREFIX}/projects/{{project}}/skills/drafts/{{draft_id}}/publish")}
 
 # Connecting hub web to Linear from Settings (playground): its check, the key's save and removal.
 LINEAR_PATHS: frozenset[tuple[str, str]] = frozenset(

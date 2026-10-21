@@ -42,7 +42,13 @@ from agent_hub.core.agent_sessions.errors import (
 from agent_hub.core.brain.brain_note import BrainNoteNotFoundError, BrainNoteTooLargeError
 from agent_hub.core.brain.brain_path import BrainPathError
 from agent_hub.core.errors import AgentHubError, EventConflictError
-from agent_hub.core.item_versions.hub_item_writer import HubItemWriteError, ItemWriteRefusedError
+from agent_hub.core.item_versions.hub_item_writer import (
+    DraftTooLargeError,
+    HubItemWriteError,
+    ItemWriteRefusedError,
+)
+from agent_hub.core.item_versions.publish_draft import DraftNotRemovedError
+from agent_hub.core.item_versions.publish_rules import DraftInvalidError
 from agent_hub.core.item_versions.record_and_write import (
     ItemWrittenRaceLostError,
     ItemWrittenUnrecordedError,
@@ -308,6 +314,37 @@ def _item_write_failed_problem(error: HubItemWriteError) -> Problem:
     return Problem(500, "Item write failed", detail, {"code": "write_failed", "kind": error.kind})
 
 
+def _draft_invalid_problem(error: DraftInvalidError) -> Problem:
+    return Problem(422, "Draft invalid", error.reason, {"code": error.code, "reason": error.reason})
+
+
+def _draft_too_large_problem(error: DraftTooLargeError) -> Problem:
+    return Problem(
+        413,
+        "Draft too large",
+        f"The draft is past the bounds: {error.limit}.",
+        {"code": "draft_too_large", "limit": error.limit},
+    )
+
+
+def _draft_not_removed_problem(error: DraftNotRemovedError) -> Problem:
+    # The item is published (written, and recorded unless ``versioned`` is false); only the
+    # draft folder stayed, spent when a ``publish`` was recorded (A20).
+    result = error.result
+    return Problem(
+        500,
+        "Draft not removed",
+        error.reason,
+        {
+            "code": error.code,
+            "published": True,
+            "changed": result.changed,
+            "versioned": result.versioned,
+            "reason": result.reason,
+        },
+    )
+
+
 def _corrupt_version_problem(_: CorruptVersionError) -> Problem:
     return Problem(
         500,
@@ -342,6 +379,9 @@ def _written_unrecorded_problem(_: ItemWrittenUnrecordedError) -> Problem:
 ITEM_WRITE_PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
     ItemWriteRefusedError: item_write_refused_problem,
     HubItemWriteError: _item_write_failed_problem,
+    DraftInvalidError: _draft_invalid_problem,
+    DraftTooLargeError: _draft_too_large_problem,
+    DraftNotRemovedError: _draft_not_removed_problem,
     CorruptVersionError: _corrupt_version_problem,
     ItemVersionSequenceError: _version_race_problem,
     ItemWrittenUnrecordedError: _written_unrecorded_problem,

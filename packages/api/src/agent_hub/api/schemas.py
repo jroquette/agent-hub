@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StringConstraints
 from agent_hub.core.brain.brain_path import MAX_NOTE_BYTES
 from agent_hub.core.readmodels.filters import DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT
 from agent_hub.core.readmodels.page import MAX_CURSOR_CHARS
+from agent_hub.core.skills.skill_view import ITEM_NAME, ItemKind
 
 MAX_QUERY_TEXT = 200
 MAX_TYPES = 20
@@ -79,6 +80,27 @@ class RestoreVersionBody(BaseModel):
     confirm_managed: StrictBool = False
 
 
+class PublishTarget(BaseModel):
+    """The item a Publish edits, by its catalog id (``kind/source/name``)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: ItemKind
+    source: Annotated[str, Field(pattern=ITEM_NAME)]
+    name: Annotated[str, Field(pattern=ITEM_NAME)]
+
+
+class PublishDraftBody(BaseModel):
+    """``POST .../skills/drafts/{draft_id}/publish``: ``target`` the item the draft edits, or
+    ``null`` for a new item (stated, never left out); ``confirm_managed`` as for a restore (S9),
+    only JSON ``true`` confirms."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    target: PublishTarget | None
+    confirm_managed: StrictBool = False
+
+
 # Every operation may answer a problem; listing the ranges keeps FastAPI's validation schema out.
 PROBLEM_RESPONSES: dict[int | str, dict[str, Any]] = {
     "4XX": {"model": ProblemDetails, "description": "A client error, as an RFC 9457 problem"},
@@ -106,6 +128,18 @@ ITEM_WRITE_RESPONSES: dict[int | str, dict[str, Any]] = {
         "unit_unreadable, secret_unversioned or managed_confirmation_required",
     },
     415: {"model": ProblemDetails, "description": "The body is not application/json"},
+}
+
+# A Publish's problems besides a restore's (AGH-295, S7, S8, A20).
+PUBLISH_RESPONSES: dict[int | str, dict[str, Any]] = {
+    **ITEM_WRITE_RESPONSES,
+    409: {
+        "model": ProblemDetails,
+        "description": "Publish refused, with a code: hub_read_only, no_author, link_in_path, "
+        "unit_unreadable, item_exists, draft_already_published or "
+        "managed_confirmation_required",
+    },
+    413: {"model": ProblemDetails, "description": "The draft is past the bounds (limit)"},
 }
 
 ProjectParam = Annotated[str | None, Query(min_length=1, max_length=MAX_QUERY_TEXT)]
