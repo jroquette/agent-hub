@@ -623,6 +623,11 @@ describe("GoldenPathStepper", () => {
     // Vertically, every step says its state and meta.
     const metaOf = (li: HTMLElement | undefined) =>
       [...(li?.querySelectorAll(".ah-golden-meta") ?? [])].map((m) => m.textContent);
+    expect(steps.map((li) => li.querySelector(".ah-golden-name")?.textContent)).toEqual([
+      "Context",
+      "Implement",
+      "Review",
+    ]);
     expect(metaOf(steps[0])).toEqual(["Not recorded"]);
     expect(metaOf(steps[2])).toEqual(["In progress", "Changes requested"]);
     const review = screen.getByRole("button", { name: "review, show details" });

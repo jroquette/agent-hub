@@ -16,6 +16,7 @@ import {
   type ApiRoutes,
   type FeatureTickets,
 } from "../../testing/builders";
+import { armGoSequence, clearGoSequence } from "../../shell/goSequence";
 import { TicketsTab } from "./TicketsTab";
 
 function show(
@@ -571,12 +572,27 @@ describe("TicketsTab", () => {
     await userEvent.keyboard("v");
     expect(screen.getByRole("link", { name: "Serve the ticket summaries" })).toHaveFocus();
 
+    // A text field inside the tab takes the key as text.
     const field = document.createElement("input");
-    document.body.append(field);
+    screen.getByRole("group", { name: "Show the tickets as" }).append(field);
     field.focus();
     await userEvent.keyboard("v");
     expect(router.state.location.search).toBe("?doc=tickets");
-    field.remove();
+  });
+
+  // AGH-330 UX F4, F5: the row's title opens the panel as the card's does; `g k` is the shell's.
+  it("links each row's title to its panel, and leaves k to a pending g sequence (keys)", async () => {
+    const data = aFeatureTickets();
+    show({ ...data, tickets: data.tickets.map((t) => ({ ...t, flow: aTicketFlow() })) });
+
+    expect(
+      within(rowOf("AGH-202")).getByRole("link", { name: "Serve the ticket summaries" }),
+    ).toHaveAttribute("href", "/?tickets=table&doc=tickets&ticket=AGH-202");
+    rowOf("AGH-202").focus();
+    armGoSequence();
+    await userEvent.keyboard("k");
+    expect(rowOf("AGH-202")).toHaveFocus();
+    clearGoSequence();
   });
 
   it("names each card and row with its id, title and step line (names)", () => {

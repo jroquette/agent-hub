@@ -550,19 +550,12 @@ describe("FeaturesScreen", () => {
     }
   });
 
-  // AC-1.14: both themes. jsdom computes no colors, so axe checks structure and names here; the
-  // contrast of each theme is checked in the browser (visual baselines).
-  it.each(["light", "dark"])(
-    "has no serious a11y violations in the %s theme (a11y)",
-    async (theme) => {
-      document.documentElement.dataset.theme = theme;
-      const { container } = open();
-      await screen.findByRole("link", { name: "layered-memory" });
+  it("has no serious a11y violations (a11y)", async () => {
+    const { container } = open();
+    await screen.findByRole("link", { name: "layered-memory" });
 
-      expect(await seriousViolations(container)).toEqual([]);
-      delete document.documentElement.dataset.theme;
-    },
-  );
+    expect(await seriousViolations(container)).toEqual([]);
+  });
 
   it("shows a feature's nickname with its slug, and renames it inline (names)", async () => {
     const saved: unknown[] = [];

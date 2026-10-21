@@ -50,10 +50,9 @@ function screenWidth(width: number) {
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  delete document.documentElement.dataset.theme;
 });
 
-describe("SidePanel", () => {
+describe("SidePanel (AC-1.10)", () => {
   it("renders a labelled aside region, not a dialog (no focus trap, no scrim)", async () => {
     render(<Page />);
     await userEvent.click(screen.getByRole("button", { name: "Open AGH-7" }));
@@ -102,14 +101,11 @@ describe("SidePanel", () => {
     expect(screen.getByRole("complementary")).toHaveAttribute("data-layout", "docked");
   });
 
-  it.each(["light", "dark"])(
-    "has no serious axe violation in the %s theme (a11y)",
-    async (theme) => {
-      document.documentElement.dataset.theme = theme;
-      const { container } = render(<Page />);
-      await userEvent.click(screen.getByRole("button", { name: "Open AGH-7" }));
+  // Structure, names and roles (A16): theme contrast is tokens.test.ts's.
+  it("has no serious axe violation (a11y)", async () => {
+    const { container } = render(<Page />);
+    await userEvent.click(screen.getByRole("button", { name: "Open AGH-7" }));
 
-      expect(await seriousViolations(container)).toEqual([]);
-    },
-  );
+    expect(await seriousViolations(container)).toEqual([]);
+  });
 });

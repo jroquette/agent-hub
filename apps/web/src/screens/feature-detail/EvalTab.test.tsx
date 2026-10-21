@@ -2,6 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { fmtDateTime } from "../../lib/format";
 import { seriousViolations } from "../../testing/axe";
 import {
   aBrainNote,
@@ -392,7 +393,8 @@ describe("the Acceptance prompt", () => {
   }
 
   it("asks to sign off the ACs it waits on, under the Whole feature group (sign off)", async () => {
-    const view = prompt("sign_off");
+    const onSelect = vi.fn();
+    const view = prompt("sign_off", { onSelect });
 
     const callout = screen
       .getByText("Waiting on you · Acceptance: sign off 3 ACs")
@@ -416,6 +418,10 @@ describe("the Acceptance prompt", () => {
     });
     const post = view.requests.find((r) => r.method === "POST");
     expect(await post?.json()).toMatchObject({ delivery: "feature-r2", decision: "done" });
+    // The written eval is selected (AC-376.14).
+    await waitFor(() => {
+      expect(onSelect).toHaveBeenCalledWith("owner-signoff");
+    });
   });
 
   it("offers only Needs more work while an agent's eval reopened ACs (reopened)", () => {
@@ -467,25 +473,54 @@ describe("the Acceptance prompt", () => {
       return found;
     });
     const body = JSON.parse(await post.clone().text()) as { prompt: string };
-    expect(body.prompt).toContain("feature-r<N>");
+    expect(body.prompt).toContain("`feature-r2`");
+  });
+
+  // AGH-330 Q2: a re-run's own re-run keeps its stem, so it ranks after it.
+  it("asks for the next re-run of an undated re-run (undated)", () => {
+    const prompt = evalPrompt("agent-hub", "control-plane", "feature", "feature-r2");
+
+    expect(prompt).toContain("`feature-r3`");
+    expect(prompt).not.toContain("feature-r2-r");
+  });
+
+  // AGH-330 Q10: no wait served (an owner decision settled it) is no prompt, whatever the client
+  // would find on its own.
+  it("shows no callout for the acceptance eval when the server serves no wait", () => {
+    renderWithApi(
+      tab({
+        evals: runs,
+        acceptance: { delivery: "feature-r2", verdict: "SHIP-WITH-OWNER-STEPS", owner_wait: null },
+      }),
+      { routes: driving },
+    );
+
+    expect(screen.queryByRole("button", { name: "Mark owner steps done" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Needs more work" })).toBeNull();
   });
 
   it("says when a sign-off becomes possible after a future-dated eval (future)", () => {
     renderWithApi(
       tab({
-        evals: [whole("feature", "2026-11-21T09:00:00Z")],
+        evals: [whole("feature", "2026-11-21T09:00:30Z")],
         acceptance: {
           delivery: "feature",
           verdict: "SHIP-WITH-OWNER-STEPS",
-          owner_wait: { state: "future", acs, reopened: [] },
+          owner_wait: {
+            state: "future",
+            acs,
+            reopened: [],
+            signable_after: "2026-11-21T09:01:00Z",
+          },
         },
       }),
       { routes: driving },
     );
 
-    const callout = screen.getByText(/^Sign-off possible after/).closest('[role="status"]');
+    // The served instant (rounded up to the minute), as the page writes every date-time (AGH-330 Q4).
+    const after = fmtDateTime("2026-11-21T09:01:00Z", "local");
+    const callout = screen.getByText(`Sign-off possible after ${after}`).closest('[role="status"]');
     if (!(callout instanceof HTMLElement)) throw new Error("no callout");
-    expect(callout).toHaveTextContent("2026");
     expect(within(callout).queryByRole("button")).toBeNull();
   });
 
@@ -502,18 +537,13 @@ describe("the Acceptance prompt", () => {
     expect(within(callout).queryByRole("button")).toBeNull();
   });
 
-  it.each(["light", "dark"])(
-    "has no serious axe violation in any state, in the %s theme (a11y)",
-    async (theme) => {
-      document.documentElement.dataset.theme = theme;
-      for (const state of ["sign_off", "reopened", "undated", "future", "no_acs"] as const) {
-        const { container, unmount } = prompt(state);
-        expect(await seriousViolations(container)).toEqual([]);
-        unmount();
-      }
-      delete document.documentElement.dataset.theme;
-    },
-  );
+  it("has no serious axe violation in any state (a11y)", async () => {
+    for (const state of ["sign_off", "reopened", "undated", "future", "no_acs"] as const) {
+      const { container, unmount } = prompt(state);
+      expect(await seriousViolations(container)).toEqual([]);
+      unmount();
+    }
+  });
 });
 
 describe("evalPrompt", () => {
