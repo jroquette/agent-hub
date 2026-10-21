@@ -358,3 +358,42 @@ def test_hides_credentials_from_nodes_when_credential_injection_workflow_environ
     assert "HUB_RUN_ENVIRONMENT" not in variables(tmp_path / "dump" / "shell.env")
     assert SECRET not in result.output
     assert stored_anywhere(SECRET, hub / ".agent-runs", tmp_path / "events.db") == []
+
+
+ACTION_FLOW = """\
+version: 1
+name: act
+revision: 1
+environment: staging
+nodes:
+  - id: show
+    type: action
+    action: ops/show-env
+  - id: after
+    type: shell
+    command: [sh, -c, "env > {dump}/after.env"]
+    effect: read
+    depends_on: [show]
+"""
+
+
+def test_injects_env_file_only_into_action_when_credential_injection_workflow_environment(
+    tmp_path: Path, credentials_env: dict[str, str]
+) -> None:
+    hub = an_action_hub(tmp_path)
+    flow = ACTION_FLOW.replace("{dump}", str(tmp_path / "dump"))
+    (hub / "workflows" / "demo" / "act.yaml").write_text(flow)
+
+    result = run_hub(hub, "workflow", "run", "act", "--live", env=credentials_env)
+
+    assert result.exit_code == 0, result.output
+    seen = variables(tmp_path / "dump" / "action.env")
+    assert (seen["AWS_PROFILE"], seen["DEMO_DB_URL"]) == ("demo-staging", SECRET)
+    assert seen["DEMO_TOKEN"] == SECRET + "-file"
+    after = variables(tmp_path / "dump" / "after.env")
+    assert "DEMO_DB_URL" not in after
+    assert "DEMO_TOKEN" not in after
+    assert "AWS_PROFILE" not in after
+    assert SECRET not in result.output
+    assert stored_anywhere(SECRET, hub / ".agent-runs", tmp_path / "events.db") == []
+    assert (tmp_path / "events.db").exists()

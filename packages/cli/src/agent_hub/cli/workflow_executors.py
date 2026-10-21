@@ -158,8 +158,11 @@ class WorkflowExecutors:
     def run(self, call: NodeCall) -> NodeReply:
         node = call.node
         if isinstance(node, ActionNode | ExpectNode):
-            # Actions need the access policy and their pinned content: a scenario run's.
-            raise NodeFailedError("config", f"{node.type} nodes run only in a scenario run")
+            # Actions need the access policy and their pinned content: a run in an environment's
+            # (a scenario run, or a process workflow's through workflow_policy).
+            raise NodeFailedError(
+                "config", f"{node.type} nodes run only in a scenario run or in an environment"
+            )
         if isinstance(node, AgentNode | LoopNode):
             return self._agent(call, node)
         stdin = None

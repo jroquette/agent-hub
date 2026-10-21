@@ -1638,3 +1638,18 @@ def test_reads_reject_when_workflow_environment_body_approval_named_ask(
     assert paused.stdout.splitlines()[-1] == "run r1: paused at g__ask"
     assert rejected.exit_code == 0, rejected.output
     assert rejected.stdout.splitlines()[-1] == "run r1: done"
+
+
+def test_refuses_start_when_workflow_environment_differs_on_include(sample: SampleRun) -> None:
+    declare_environments(sample, local="write", staging="write")
+    check = CHECK_YAML.replace("revision: 1", "revision: 1\nenvironment: local")
+    write(sample.hub, "workflows/envy/check.yaml", check)
+    write(sample.hub, "workflows/envy/main.yaml", MAIN_YAML)
+
+    result = sample.run("main", "--live", "--run-id", RUN_ID, "--env", "staging")
+
+    assert result.exit_code == 1, result.output
+    assert unstyle(result.stderr).splitlines() == [
+        "hub workflow run: the included workflow check declares the environment local, not staging"
+    ]
+    assert not run_path(sample).exists()
