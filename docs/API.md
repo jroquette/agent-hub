@@ -390,6 +390,12 @@ cookie: Chromium sends none on a same-origin `EventSource` (verified); Firefox a
 minted. No route speaks WebSocket: any upgrade is closed with code 1008. Under `make dev`, open the token address
 `hub web` printed (port 7420) once: cookies are not port-scoped, so the dev server's `/api` proxy then carries it.
 
+Every driven session starts, and reopens, without the credential names its hub declares (`credentials.env` names
+and an `AWS_PROFILE` naming a declared `aws_profile`, AM-13). While the hub's `hub.local.json` (or the hub registry)
+cannot be read, those names are unknown, so creating or reopening a session in that project answers 409
+`urn:agent-hub:problem:hub-local-invalid` (`code: hub_local_invalid`, the detail names `hub.local.json`) and nothing
+starts (E-8).
+
 **Problems** (`urn:agent-hub:problem:agent-session-<code>`; details name ids, limits and causes, never conversation
 text or a value the browser sent):
 
@@ -406,6 +412,7 @@ text or a value the browser sent):
 | `screenshot-too-large` | 413 | a screenshot over 3,932,160 bytes decoded (`limit`, `size`) |
 | `invalid-screenshot` | 422 | a screenshot that is not strict base64 of a PNG (`errors[]` points at `/screenshot/data`, or `/screenshots/{index}/data` for a message's image) |
 | `unavailable` | 503 | no `claude` on `PATH` or no `sessions` extra (`reason`), on every write |
+| `restriction-unavailable` | 409 | a message to an ended scenario investigation session whose tool policy cannot be rebuilt from its run (E-13): it is not reopened |
 | `cloud-unavailable` · `cloud-failed` · `cloud-timeout` | 501 · 502 · 504 | link-out guidance (`guidance`) · the step that failed (`step`) · the 60 s deadline (`seconds`) |
 
 ## Skills
@@ -584,24 +591,42 @@ it answers 404 `urn:agent-hub:problem:run-control-off`.
 ## Scenario runs
 
 A scenario run paused at an open investigation ([design](design/scenarios.md#investigation-answers-and-workarounds))
-gets its agent session from hub web (AGH-350 P-7, AM-2):
+gets its agent session from hub web (AGH-350 P-7, AM-2, E-13):
 
 - `POST /api/v1/scenario-runs/{run_id}/investigation` → 201 `InvestigationSession` (`run_id`, `project`,
   `investigation` (its number), `step`, `agent_session_id`, `started: true`) and
   `Location: /api/v1/agent-sessions/{agent_session_id}`; a later call for the same investigation answers 200 with the
-  same session (`started: false`). The run is found in a registered hub's `.agent-runs/workflows/<run_id>/` (else 404)
-  and must be a scenario run paused at an open, unanswered investigation, as its own record says (else 409
-  `workflow-run-not-paused`). The session starts in the hub, mode `default`, with the investigation's system prompt,
-  its tool policy (a `PreToolUse` hook: `Read`, `Glob`, `Grep` except on a declared env file or `/proc`, `Write` under
-  `actions/<pack>/`, Bash for the listed `./hub` commands only) and, like every driven session, without the
-  credential names the hub declares; no env file is read. The link file `investigation-<n>.session` in the run folder,
-  created exclusively, keeps it to one session per investigation. A hub whose `hub.local.json` cannot be read answers
-  409 `workflow-run-hub-local-invalid`; a record over 8 MiB answers 422 `record_too_large`, a broken one 422
-  `record_unreadable`. `run_id` must match `^[a-z0-9][a-z0-9-]{0,31}$` (else 400).
-- The chat is the agent-session routes' (`POST /api/v1/agent-sessions/{agent_session_id}/messages`, AM-9).
+  same session (`started: false`). The run is found in a registered hub's `.agent-runs/workflows/<run_id>/` and must
+  be a scenario run paused at an open, unanswered investigation, as its own record says. The session starts in the
+  hub, mode `default`, with the investigation's system prompt, its tool policy (a `PreToolUse` hook: `Read`, `Glob`,
+  `Grep` only inside the workspace and never on a declared env file, under `/proc` or on `/`; `Write` under
+  `actions/<pack>/`; Bash for the listed `./hub` commands only; every other tool denied) and, like every driven
+  session, without the credential names the hub declares; no env file is read here.
+- The link file `investigation-<n>.session` in the run folder, created exclusively and owner-only, keeps it to one
+  session per investigation and per `hub web` process. A link that is empty (a start cut short), names a session the
+  store does not know, or names one that ended and cannot be resumed is taken over by a new session; a start that
+  fails removes the link; a link that cannot be written stops the session it would have named.
+- The chat is the agent-session routes' (`POST /api/v1/agent-sessions/{agent_session_id}/messages`, AM-9). A message
+  that reopens an ended investigation session (after a restart, for example) rebuilds its tool policy and prompt from
+  the link and the run's record, or is refused (409 `agent-session-restriction-unavailable`).
 
-It is a strict write ([Local security](#local-security)) that needs the launch cookie, like the run commands; with
-`AGENT_HUB_IN_CONTAINER=1` it answers 404 `urn:agent-hub:problem:run-control-off`.
+Problems:
+
+| Status | Type or code | When |
+| --- | --- | --- |
+| 400 | "Invalid request parameter" | `run_id` does not match `^[a-z0-9][a-z0-9-]{0,31}$` |
+| 401 · 403 · 415 | as in [Local security](#local-security) | no launch cookie · a foreign `Origin` or fetch site · a body that is not JSON |
+| 404 | `about:blank` | no registered hub holds the run (or its record), or the hub has no workdir |
+| 404 | `urn:agent-hub:problem:run-control-off` | in the container (`AGENT_HUB_IN_CONTAINER=1`) |
+| 409 | `workflow-run-not-paused` | not a scenario run, or not paused at an open, unanswered investigation |
+| 409 | `workflow-run-link-in-path` | the link file `investigation-<n>.session` is a symbolic link |
+| 409 | `urn:agent-hub:problem:hub-local-invalid` (`hub_local_invalid`) | the hub's `hub.local.json` cannot be read, so its env files and credential names are unknown |
+| 422 | `record_too_large` · `record_unreadable` | the run's record is over 8 MiB · a line before its last is not one JSON object |
+| 409 · 429 · 503 | the agent-session problems | the session cannot start ([Agent sessions](#agent-sessions)) |
+
+The `workflow-run-*` types are `urn:agent-hub:problem:workflow-run-<code>` with `code` and `run_id`; the record
+problems are `urn:agent-hub:problem:scenario-run-record-too-large` and `-record-unreadable`. It is a strict write
+([Local security](#local-security)) that needs the launch cookie, like the run commands.
 
 ## Local security
 
