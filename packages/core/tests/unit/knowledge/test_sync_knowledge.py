@@ -219,6 +219,30 @@ def test_counts_unlisted_rows_as_dropped_when_stored_version_differs() -> None:
     assert list(index.stored(HUB).files) == ["brain/playbooks/c.md"]
 
 
+def test_counts_dropped_rows_when_reindex_requested() -> None:
+    index = InMemoryKnowledgeIndex()
+    checkout = _checkout(a="alpha", b="beta", c="gamma")
+    sync_knowledge(index, checkout, HUB)
+    checkout.remove("brain/playbooks/a.md")
+    checkout.answer_read("brain/playbooks/c.md", None)
+
+    report = sync_knowledge(index, checkout, HUB, rebuild=True)
+
+    # a is no longer listed, c vanished before its read: both rows are gone.
+    assert report == SyncReport(listed=2, read=2, indexed=1, dropped=2, skipped=())
+    assert list(index.stored(HUB).files) == ["brain/playbooks/b.md"]
+
+
+def test_counts_nothing_dropped_when_reindex_finds_same_files() -> None:
+    index = InMemoryKnowledgeIndex()
+    checkout = _checkout(a="alpha", b="beta")
+    sync_knowledge(index, checkout, HUB)
+
+    report = sync_knowledge(index, checkout, HUB, rebuild=True)
+
+    assert report == SyncReport(listed=2, read=2, indexed=2, dropped=0, skipped=())
+
+
 def test_stops_before_any_read_when_listing_over_file_cap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -8,6 +8,7 @@ import typer
 from agent_hub.cli.action_command import action_app
 from agent_hub.cli.agent_command import PassThroughCommand, agent
 from agent_hub.cli.bench_command import bench
+from agent_hub.cli.brain_command import brain_app
 from agent_hub.cli.brief_command import brief
 from agent_hub.cli.collect import collect
 from agent_hub.cli.doctor_command import doctor
@@ -73,3 +74,4 @@ app.add_typer(step_app, name="step")
 app.add_typer(env_app, name="env")
 app.add_typer(action_app, name="action")
 app.add_typer(scenario_app, name="scenario")
+app.add_typer(brain_app, name="brain")
