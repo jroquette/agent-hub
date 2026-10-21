@@ -7,9 +7,12 @@ report names the changed files for the owner's hub PR (D-1). The texts and their
 the feature folder, ``tickets/``, ``change-requests/`` and every file read or replaced must not
 be one. A file that is appended to (``brief.md``, ``preflight.json``, ``plan.md``) is replaced
 whole through a temp file and a rename; a change request and its decision are created
-exclusively, never over another file, so a request is decided once. ``plan.md`` is amended under
-a per-feature lock (``.agent-runs/locks/<slug>.plan.lock``, never committed), so two runs never
-interleave their entries. ``ticket-brief`` also reads git, without changing anything: the hub's
+exclusively, never over another file, so a request is decided once. ``brief.md``,
+``preflight.json`` and ``plan.md`` are read and replaced under a per-feature lock
+(``.agent-runs/locks/<slug>.lock``, never committed), so two runs never drop or interleave
+entries. A ticket must be planned in ``features.json``; its records go to one folder whatever
+name it is given: the existing ``tickets/`` folder named (any case) by its key or id, else its id
+(its key before it has one). ``ticket-brief`` also reads git, without changing anything: the hub's
 last commit of ``plan.md``, and the log of the ticket's repo checkout on ``origin/<default
 branch>`` as last fetched.
 """
@@ -30,9 +33,9 @@ from agent_hub.cli.pr_steps import git_output
 from agent_hub.cli.ship_steps import ship_child, step_timeouts
 from agent_hub.core.features.feature_evals import RecordFieldError, record_fields, text_field
 from agent_hub.core.features.feature_record import (
-    KEY_PATTERN,
     MAX_RECORD_BYTES,
     RECORD_FILE,
+    FeatureRecordFile,
     PlannedTicket,
     record_from_bytes,
 )
@@ -46,6 +49,7 @@ from agent_hub.core.features.ticket_records import (
     TICKETS_FOLDER,
 )
 from agent_hub.core.features.ticket_writes import (
+    MAX_REQUEST_BYTES,
     Blocker,
     TicketBrief,
     TicketRecordError,
@@ -57,7 +61,9 @@ from agent_hub.core.features.ticket_writes import (
     decision_text,
     named_paths,
     next_request,
+    plan_ids,
     plan_section,
+    ticket_acs,
 )
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import one_line
@@ -68,12 +74,10 @@ PLAN: Final = "plan.md"
 OUTCOME: Final = "outcome.md"
 LOCKS: Final = (".agent-runs", "locks")
 MAX_BRIEF_BYTES: Final = 1_048_576
-MAX_REQUEST_BYTES: Final = 262_144
 MAX_COMMITS: Final = 50
 # A new number is tried this many times when another run took the one picked.
 MAX_REQUEST_TRIES: Final = 100
 _SLUG: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
-_TICKET: Final = re.compile(KEY_PATTERN)
 _TEMP_FLAGS: Final = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
 
 
@@ -82,27 +86,20 @@ def ticket_brief(
 ) -> dict[str, JsonValue]:
     """Append the next version of ``tickets/<ticket>/brief.md``."""
     folder = _feature(hub, feature)
-    record = record_from_bytes(_required(folder / RECORD_FILE, MAX_RECORD_BYTES))
-    if isinstance(record, str):
-        raise TicketRecordError(record)
-    planned = _planned(record.tickets, ticket)
-    if planned is None:
-        raise TicketRecordError(f"{one_line(ticket)} is not a ticket of {RECORD_FILE}")
+    record = _record(folder)
+    planned = _planned_or_refuse(record.tickets, ticket)
     plan = _required(folder / PLAN, MAX_PLAN_BYTES)
-    names = _names(planned)
+    names = (*plan_ids(planned.key), *_names(planned)[1:])
     section = plan_section(plan.decode("utf-8", "replace"), names)
     commits, note = _commits(
         hub, config, planned=planned, folder=folder, paths=named_paths(section)
     )
+    target = _ticket_folder(folder, planned)
     brief = TicketBrief(
-        ticket=ticket,
+        ticket=target.name,
         at=now,
         plan_version=_version(plan),
-        acs=tuple(
-            ac
-            for ac in record.acs
-            if not ac.withdrawn and (ac.ticket or "").upper() in {n.upper() for n in names}
-        ),
+        acs=ticket_acs(record.acs, names, section),
         plan_section=section,
         blockers=tuple(
             _blocker(folder, _planned(record.tickets, key), key) for key in planned.blocked_by
@@ -111,18 +108,20 @@ def ticket_brief(
         commits=commits,
         commits_note=note,
     )
-    target = _ticket_folder(folder, ticket)
-    written, version = appended_brief(_read(target / TICKET_BRIEF, MAX_BRIEF_BYTES), brief)
-    _replace(target, TICKET_BRIEF, written)
+    with _feature_lock(hub, feature):
+        written, version = appended_brief(_read(target / TICKET_BRIEF, MAX_BRIEF_BYTES), brief)
+        _replace(target, TICKET_BRIEF, written)
     return {"path": _relative(hub, target / TICKET_BRIEF), "version": version}
 
 
 def preflight(hub: Path, *, feature: str, ticket: str, run: bytes) -> dict[str, JsonValue]:
     """Append ``run`` to ``tickets/<ticket>/preflight.json``."""
-    target = _ticket_folder(_feature(hub, feature), ticket)
-    existing = _read(target / PREFLIGHT_FILE, MAX_PREFLIGHT_BYTES)
-    written, count = appended_preflight(existing, run, folder=ticket)
-    _replace(target, PREFLIGHT_FILE, written)
+    folder = _feature(hub, feature)
+    target = _ticket_folder(folder, _planned_or_refuse(_record(folder).tickets, ticket))
+    with _feature_lock(hub, feature):
+        existing = _read(target / PREFLIGHT_FILE, MAX_PREFLIGHT_BYTES)
+        written, count = appended_preflight(existing, run, folder=target.name)
+        _replace(target, PREFLIGHT_FILE, written)
     return {"path": _relative(hub, target / PREFLIGHT_FILE), "runs": count}
 
 
@@ -140,13 +139,14 @@ def change_request(
     """Create ``change-requests/<n>.md`` (``n`` the next free number) against the plan's
     current version."""
     folder = _feature(hub, feature)
+    planned = _planned_or_refuse(_record(folder).tickets, ticket)
     plan_from = _version(_required(folder / PLAN, MAX_PLAN_BYTES))
     requests = _folder(folder, CHANGE_REQUESTS_FOLDER)
     first = next_request(os.listdir(requests))
     for n in range(first, first + MAX_REQUEST_TRIES):
         text = change_request_text(
             n=n,
-            ticket=ticket,
+            ticket=planned.id or planned.key,
             plan_from=plan_from,
             affected=affected,
             opened_at=now,
@@ -194,21 +194,40 @@ def amend_plan(hub: Path, *, feature: str, request: int, summary: str) -> dict[s
     """Append the amendment of approved request ``request`` to ``plan.md``."""
     folder = _feature(hub, feature)
     requests = _folder(folder, CHANGE_REQUESTS_FOLDER, create=False)
-    with _plan_lock(hub, feature):
+    with _feature_lock(hub, feature):
+        plan = _required(folder / PLAN, MAX_PLAN_BYTES)
         written, ident = amended_plan(
-            _required(folder / PLAN, MAX_PLAN_BYTES),
+            plan,
             n=request,
             request=_required(requests / f"{request}.md", MAX_REQUEST_BYTES),
             decision=_required(requests / f"{request}.decision.md", MAX_REQUEST_BYTES),
             summary=summary,
         )
-        _replace(folder, PLAN, written)
-    return {"path": _relative(hub, folder / PLAN), "amendment": ident}
+        if written == plan:
+            already: str | None = f"already amended as {ident}"
+        else:
+            already = None
+            _replace(folder, PLAN, written)
+    return {"path": _relative(hub, folder / PLAN), "amendment": ident, "already": already}
 
 
 def _version(plan: bytes) -> int:
     # ``plan_version`` always counts a plan it is given; its None is for a plan left unread.
     return plan_version(plan).version or 1
+
+
+def _record(folder: Path) -> FeatureRecordFile:
+    record = record_from_bytes(_required(folder / RECORD_FILE, MAX_RECORD_BYTES))
+    if isinstance(record, str):
+        raise TicketRecordError(record)
+    return record
+
+
+def _planned_or_refuse(tickets: Sequence[PlannedTicket], name: str) -> PlannedTicket:
+    planned = _planned(tickets, name)
+    if planned is None:
+        raise TicketRecordError(f"{one_line(name)} is not a ticket of {RECORD_FILE}")
+    return planned
 
 
 def _planned(tickets: Sequence[PlannedTicket], name: str) -> PlannedTicket | None:
@@ -290,10 +309,13 @@ def _feature(hub: Path, slug: str) -> Path:
     return path
 
 
-def _ticket_folder(feature: Path, ticket: str) -> Path:
-    if _TICKET.fullmatch(ticket) is None:
-        raise TicketRecordError(f"not a ticket key or id: {one_line(ticket)[:64]}")
-    return _folder(_folder(feature, TICKETS_FOLDER), ticket)
+def _ticket_folder(feature: Path, planned: PlannedTicket) -> Path:
+    """The ticket's one folder: the existing one its key or id names (any case), else its id
+    (its key before it has one)."""
+    tickets = _folder(feature, TICKETS_FOLDER)
+    names = {name.upper() for name in _names(planned)}
+    found = next((entry for entry in sorted(os.listdir(tickets)) if entry.upper() in names), None)
+    return _folder(tickets, found or planned.id or planned.key)
 
 
 def _folder(parent: Path, name: str, *, create: bool = True) -> Path:
@@ -347,17 +369,17 @@ def _replace(folder: Path, name: str, content: bytes) -> None:
 
 
 @contextlib.contextmanager
-def _plan_lock(hub: Path, slug: str) -> Iterator[None]:
-    """Hold the feature's plan lock (an exclusive ``flock``); refused while a run holds it."""
+def _feature_lock(hub: Path, slug: str) -> Iterator[None]:
+    """Hold the feature's lock (an exclusive ``flock``); refused while a run holds it."""
     folder = hub.joinpath(*LOCKS)
     folder.mkdir(parents=True, exist_ok=True)
     flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC
-    descriptor = os.open(folder / f"{slug}.plan.lock", flags, 0o600)
+    descriptor = os.open(folder / f"{slug}.lock", flags, 0o600)
     try:
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            reason = f"{PLAN} of {slug} is being amended by another run; run again"
+            reason = f"the records of {slug} are being written by another run; run again"
             raise TicketRecordError(reason) from None
         yield
     finally:

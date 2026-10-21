@@ -16,6 +16,7 @@ from agent_hub.core.features.ticket_records import (
     preflight_record,
 )
 from agent_hub.core.features.ticket_writes import (
+    MAX_REQUEST_BYTES,
     Blocker,
     TicketBrief,
     TicketRecordError,
@@ -27,7 +28,9 @@ from agent_hub.core.features.ticket_writes import (
     decision_text,
     named_paths,
     next_request,
+    plan_ids,
     plan_section,
+    ticket_acs,
 )
 
 AT = datetime(2026, 10, 21, 10, 0, tzinfo=UTC)
@@ -147,9 +150,24 @@ class TestBrief:
 
         assert "None read: no file named." in text.decode()
 
-    def test_refuses_to_append_when_the_file_is_not_a_ticket_brief(self) -> None:
+    @pytest.mark.parametrize("tail", [b"\n\n", b"\n  \n", b"x  "])
+    def test_keeps_every_earlier_byte_when_the_brief_ends_in_blank_lines_or_spaces(
+        self, tail: bytes
+    ) -> None:
+        first = appended_brief(None, a_brief())[0] + tail
+
+        second, _ = appended_brief(first, a_brief())
+
+        assert second.startswith(first)
+
+    @pytest.mark.parametrize(
+        "existing", [b"# Someone's notes\n", appended_brief(None, a_brief(ticket="DEM-9"))[0]]
+    )
+    def test_refuses_to_append_when_the_file_is_not_this_tickets_brief(
+        self, existing: bytes
+    ) -> None:
         with pytest.raises(TicketRecordError, match="not a ticket brief of DEM-8"):
-            appended_brief(b"# Someone's notes\n", a_brief())
+            appended_brief(existing, a_brief())
 
     def test_counts_versions_only_from_its_own_headings_when_the_plan_quotes_one(self) -> None:
         first, _ = appended_brief(None, a_brief(plan_section="## Brief v9 (x)\n"))
@@ -168,6 +186,40 @@ class TestPlanReads:
         assert section.startswith("### DEM-8 core: the writer\n")
         assert "DEM-9" not in section
         assert plan_section(PLAN.decode(), ("DEM-80",)) == ""
+
+    def test_takes_the_table_rows_whose_first_cell_names_a_plan_id_when_the_key_is_joined(
+        self,
+    ) -> None:
+        plan = (
+            "| Ticket | Boundary | ACs |\n|---|---|---|\n"
+            "| S2-T3 | `core/a.py` | AC-2.7 |\n| S2-T30 | other | AC-2.9 |\n"
+            "| S2-T4 | writers | AC-2.2, AC-2.3 |\n| S2-T3, S2-T4 | AGH-403 | `S2-T3-T4` |\n"
+        )
+
+        section = plan_section(plan, plan_ids("S2-T3-T4"))
+
+        assert plan_ids("S2-T3-T4") == ("S2-T3-T4", "S2-T3", "S2-T4")
+        assert plan_ids("T2") == ("T2",)
+        assert section == (
+            "| S2-T3 | `core/a.py` | AC-2.7 |\n| S2-T4 | writers | AC-2.2, AC-2.3 |\n"
+            "| S2-T3, S2-T4 | AGH-403 | `S2-T3-T4` |\n"
+        )
+
+    def test_lists_the_acs_keyed_to_the_ticket_or_named_in_its_section_when_read(self) -> None:
+        acs = tuple(
+            RecordAc(id=ident, description=ident, passes=False, ticket=ticket, withdrawn=gone)
+            for ident, ticket, gone in (
+                ("AC-2.1", None, False),
+                ("AC-2.2", None, False),
+                ("AC-2.3", "s2-t3-t4", False),
+                ("AC-2.20", None, False),
+                ("AC-2.7", "S2-T5", True),
+            )
+        )
+
+        found = ticket_acs(acs, ("S2-T3-T4", "AGH-403"), "| S2-T4 | AC-2.2, AC-2.7 |\n")
+
+        assert [ac.id for ac in found] == ["AC-2.2", "AC-2.3"]
 
     def test_lists_the_paths_and_adrs_a_section_names_when_read(self) -> None:
         section = plan_section(PLAN.decode(), ("DEM-8",))
@@ -208,6 +260,7 @@ class TestPreflight:
 
         before, after = json.loads(hand_written)["runs"], json.loads(written)["runs"]
         assert count == 2
+        assert json.loads(written)["ticket"] == "dem-8"
         assert [canonical(entry) for entry in after[:-1]] == [canonical(e) for e in before]
         assert after[-1]["drift"] == "local"
 
@@ -289,6 +342,10 @@ class TestChangeRequest:
         with pytest.raises(TicketRecordError, match=message):
             a_request(**fields)
 
+    def test_refuses_a_request_when_its_text_would_pass_the_read_cap(self) -> None:
+        with pytest.raises(TicketRecordError, match=f"larger than {MAX_REQUEST_BYTES} bytes"):
+            a_request(evidence="e" * MAX_REQUEST_BYTES)
+
     def test_takes_the_next_free_number_when_requests_and_decisions_exist(self) -> None:
         assert next_request([]) == 1
         assert next_request(["1.md", "2.decision.md", "notes.txt", "10.md"]) == 11
@@ -308,10 +365,26 @@ class TestDecision:
         assert 'note: "Keep \\"v2\\" for now"\n' in body
         assert body.endswith('Keep "v2"\nfor now\n')
 
-    @pytest.mark.parametrize("who", ["", "  ", "unknown", " Unknown "])
-    def test_refuses_a_decision_when_it_names_no_person(self, who: str) -> None:
-        with pytest.raises(TicketRecordError, match="names no person"):
+    @pytest.mark.parametrize(
+        ("who", "message"),
+        [
+            ("", "decided_by is missing"),
+            ("  ", "decided_by is missing"),
+            ("unknown", "names no person"),
+            (" Unknown ", "names no person"),
+        ],
+    )
+    def test_refuses_a_decision_when_it_names_no_person(self, who: str, message: str) -> None:
+        with pytest.raises(TicketRecordError, match=message):
             a_decision(decided_by=who)
+
+    @pytest.mark.parametrize("who", ["Dana (owner)", "Dana)"])
+    def test_refuses_an_approval_when_its_approver_could_not_be_written_in_the_plan(
+        self, who: str
+    ) -> None:
+        with pytest.raises(TicketRecordError, match="could not be written in an amendment"):
+            a_decision(decided_by=who)
+        assert b"decision: declined\n" in a_decision(decision="declined", decided_by=who)
 
     @pytest.mark.parametrize("note", [None, "", "  "])
     def test_refuses_a_decline_when_it_has_no_note(self, note: str | None) -> None:
@@ -347,6 +420,27 @@ class TestAmendment:
         )
         assert plan_version(written).version == 3
 
+    @pytest.mark.parametrize("tail", [b"\n\n", b"\n \n\n", b"  "])
+    def test_keeps_every_earlier_byte_when_the_plan_ends_in_blank_lines_or_spaces(
+        self, tail: bytes
+    ) -> None:
+        plan = PLAN + tail
+        prefix = hashlib.sha256(plan).hexdigest()
+
+        written = self.amend(plan)
+
+        assert hashlib.sha256(written[: len(plan)]).hexdigest() == prefix
+        assert plan_version(written).version == 3
+
+    def test_takes_the_number_after_the_highest_when_the_ids_have_a_gap(self) -> None:
+        plan = PLAN + b"- A3 (2026-10-20, Dana Owner): Third.\n"
+        request = a_request(2, plan_from=3)
+        decision = a_decision(2, request=request)
+
+        _, ident = amended_plan(plan, n=2, request=request, decision=decision, summary="Go.")
+
+        assert ident == "A4"
+
     def test_opens_an_amendments_heading_at_the_end_when_the_last_section_is_another(
         self,
     ) -> None:
@@ -358,11 +452,16 @@ class TestAmendment:
         assert written[len(plan) :].decode().startswith("\n\n## Amendments\n\n- A2 (")
         assert plan_version(written).version == 3
 
-    def test_refuses_an_amendment_when_the_request_was_already_amended(self) -> None:
+    def test_returns_the_existing_entry_unchanged_when_the_request_was_already_amended(
+        self,
+    ) -> None:
         once = self.amend(PLAN)
 
-        with pytest.raises(TicketRecordError, match="plan.md is v3"):
-            self.amend(once)
+        again, ident = amended_plan(
+            once, n=2, request=a_request(2), decision=a_decision(2), summary="Other."
+        )
+
+        assert (again, ident) == (once, "A2")
 
     def test_refuses_when_the_plan_moved_since_the_request(self) -> None:
         with pytest.raises(TicketRecordError, match="plan.md is v1"):
@@ -375,7 +474,8 @@ class TestAmendment:
             self.amend(PLAN, decision=declined)
 
     def test_refuses_when_the_entry_would_not_read_as_an_amendment(self) -> None:
-        odd = a_decision(2, decided_by="Dana (owner)")
+        # A decision file written by hand: decision_text refuses this approver.
+        odd = a_decision(2).replace(b"decided_by: Dana Owner", b'decided_by: "Dana (owner)"')
 
         with pytest.raises(TicketRecordError, match="would not read as A2"):
             self.amend(PLAN, decision=odd)

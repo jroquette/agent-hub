@@ -26,7 +26,6 @@ from typing import Final, cast
 
 from pydantic import ValidationError
 
-from agent_hub.core.approvals.decide_gate import NO_PERSON
 from agent_hub.core.brain.frontmatter import scalar, split_frontmatter
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.features.feature_evals import RecordFieldError, record_fields, text_field
@@ -52,6 +51,8 @@ PREFLIGHT_SCHEMA: Final = "agent-hub/preflight/1"
 # A decision's note on its frontmatter line; the whole note is the file's body.
 NOTE_LINE_CHARS: Final = 1000
 MAX_NAMED_PATHS: Final = 50
+# What ``decide`` and ``amend-plan`` read of a request or a decision; a larger one is refused.
+MAX_REQUEST_BYTES: Final = 262_144
 
 _TICKET: Final = re.compile(KEY_PATTERN)
 _RUN_ID: Final = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
@@ -63,6 +64,8 @@ _LINE_SUFFIX: Final = re.compile(r":[0-9]+(?:[-,][0-9]+)*$")
 _ADR: Final = re.compile(r"\bADR[ -]?([0-9]{4})\b|docs/adr/([0-9]{4})-")
 _REQUEST_NAME: Final = re.compile(r"([1-9][0-9]{0,5})(?:\.decision)?\.md")
 _AMENDMENT_ID: Final = re.compile(r"A([1-9][0-9]*)")
+# A key joining plan ids, ``S2-T3-T4``: the prefix, then each ``-T<n>``.
+_JOINED_KEY: Final = re.compile(r"([A-Za-z0-9]+)((?:-T[0-9]+){2,})")
 
 
 class TicketRecordError(AgentHubError):
@@ -142,10 +145,21 @@ def _brief_section(brief: TicketBrief, version: int) -> str:
     return "\n" + "\n\n".join(parts) + "\n"
 
 
+def plan_ids(key: str) -> tuple[str, ...]:
+    """``key`` and, for a key joining plan ids (``S2-T3-T4``), each of them (``S2-T3``,
+    ``S2-T4``)."""
+    joined = _JOINED_KEY.fullmatch(key)
+    if joined is None:
+        return (key,)
+    return (key, *(f"{joined[1]}-T{n}" for n in re.findall(r"-T([0-9]+)", joined[2])))
+
+
 def plan_section(plan: str, names: Iterable[str]) -> str:
     """Every section of ``plan`` whose heading names one of ``names`` (a whole word, any case),
-    each up to the next heading of its level or higher; empty when none does."""
+    each up to the next heading of its level or higher, and every table row whose first cell
+    lists one of them (comma-separated); empty when none does."""
     wanted = [re.compile(rf"(?<![\w-]){re.escape(name)}(?![\w-])", re.IGNORECASE) for name in names]
+    upper = {name.upper() for name in names}
     taken: list[str] = []
     level: int | None = None
     for line in plan.splitlines():
@@ -156,9 +170,30 @@ def plan_section(plan: str, names: Iterable[str]) -> str:
                 level = None
             if level is None and any(name.search(heading.group(2)) for name in wanted):
                 level = depth
-        if level is not None:
+        if level is not None or _row_names(line) & upper:
             taken.append(line)
     return "\n".join(taken) + "\n" if taken else ""
+
+
+def _row_names(line: str) -> set[str]:
+    cells = line.strip().split("|")
+    if len(cells) < 3 or cells[0]:  # noqa: PLR2004 -- a row is "| first | … |"
+        return set()
+    return {name.strip().upper() for name in cells[1].split(",")}
+
+
+def ticket_acs(acs: Iterable[RecordAc], names: Iterable[str], section: str) -> tuple[RecordAc, ...]:
+    """The live ACs keyed to one of ``names`` or named in the ticket's plan ``section``."""
+    upper = {name.upper() for name in names}
+    return tuple(
+        ac
+        for ac in acs
+        if not ac.withdrawn
+        and (
+            (ac.ticket or "").upper() in upper
+            or re.search(rf"(?<![\w.-]){re.escape(ac.id)}(?![\w-]|\.[0-9])", section)
+        )
+    )
 
 
 def named_paths(text: str) -> tuple[str, ...]:
@@ -246,6 +281,8 @@ def change_request_text(
         f"# Change request {n}: plan v{plan_from} to v{plan_from + 1}, from {ticket}\n\n"
         f"## Evidence\n\n{evidence.strip()}\n\n## Proposal\n\n{proposal.strip()}\n"
     ).encode()
+    if len(text) > MAX_REQUEST_BYTES:
+        raise TicketRecordError(f"the request would be larger than {MAX_REQUEST_BYTES} bytes")
     _read_back(n, text)
     return text
 
@@ -260,11 +297,13 @@ def decision_text(
     note: str | None,
 ) -> bytes:
     """``change-requests/<n>.decision.md`` for ``request`` (the bytes of ``<n>.md``)."""
-    if decided_by.strip().lower() in NO_PERSON:
-        raise TicketRecordError(f"the decision names no person (decided_by {decided_by!r})")
     note = (note or "").strip()
     if decision == "declined" and not note:
         raise TicketRecordError("a declined change needs a note")
+    who = " ".join(decided_by.split())
+    probe = b"## Amendments\n" + _entry("A1", "2000-01-01", who, "x", n).encode()
+    if decision == "approved" and who and plan_version(probe).version != 2:  # noqa: PLR2004
+        raise TicketRecordError(f"decided_by could not be written in an amendment: {who[:64]}")
     line = scalar(note[:NOTE_LINE_CHARS])
     text = (
         f"---\ntype: change-request-decision\ndecision: {decision}\n"
@@ -282,6 +321,10 @@ def amended_plan(
     status = _read_back(n, request, decision)
     if status != "approved":
         raise TicketRecordError(f"change request {n} is {status}, not approved")
+    link = re.escape(f"([change request {n}](change-requests/{n}.md))")
+    done = re.search(rf"^- (A[1-9][0-9]*) \(.*{link}$", plan.decode("utf-8", "replace"), re.M)
+    if done is not None:
+        return plan, done[1]
     plan_from = int(_field(request, "plan_from"))
     view = plan_version(plan)
     if view.version != plan_from:
@@ -295,10 +338,7 @@ def amended_plan(
     numbers = [int(found[1]) for a in view.amendments if (found := _AMENDMENT_ID.fullmatch(a.id))]
     ident = f"A{max(numbers, default=0) + 1}"
     who, date = _field(decision, "decided_by"), _field(decision, "decided_at")[:10]
-    entry = (
-        f"- {ident} ({date}, {who}): {one_line(' '.join(summary.split()))} "
-        f"([change request {n}](change-requests/{n}.md))\n"
-    )
+    entry = _entry(ident, date, who, summary, n)
     start = plan if plan.endswith(b"\n") or not plan else plan + b"\n"
     section = last_section(plan)
     if section is None or not opens_amendments(section):
@@ -307,6 +347,11 @@ def amended_plan(
     if plan_version(written).version != plan_from + 1:
         raise TicketRecordError(f"the entry would not read as {ident}: {one_line(entry.strip())}")
     return written, ident
+
+
+def _entry(ident: str, date: str, who: str, summary: str, n: int) -> str:
+    title = one_line(" ".join(summary.split()))
+    return f"- {ident} ({date}, {who}): {title} ([change request {n}](change-requests/{n}.md))\n"
 
 
 def _read_back(n: int, request: bytes, decision: bytes | None = None) -> str | None:

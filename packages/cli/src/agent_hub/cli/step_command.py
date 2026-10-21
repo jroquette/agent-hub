@@ -110,7 +110,6 @@ Ticket = Annotated[str, typer.Option("--ticket", metavar="TICKET", help="The tic
 Request = Annotated[
     int, typer.Option("--request", metavar="N", min=1, help="The change request's number.")
 ]
-DECISIONS: Final = ("approved", "declined")
 
 
 class StepFailedError(Exception):
@@ -430,8 +429,6 @@ def decide(
     note: Annotated[str, typer.Option("--note", help="The note; a decline needs one.")] = "",
 ) -> None:
     """Record the owner's decision as change-requests/<n>.decision.md, once."""
-    if decision not in DECISIONS:
-        raise typer.BadParameter("use approved or declined", param_hint="--decision")
     hub = _hub()
     _record(
         "decide",
