@@ -663,6 +663,17 @@ def test_searches_valid_hub_when_invalid_hub_registered_first_names_project(
     assert [result["path"] for result in found["results"]] == ["brain/a.md"]
 
 
+def test_searches_valid_hub_when_missing_hub_registered_first(
+    knowledge_hub: KnowledgeHubFactory, run_command: CommandRunner, tmp_path: Path
+) -> None:
+    hub = knowledge_hub({"brain/a.md": MARKER})
+    env = registered(tmp_path, tmp_path / "removed-hub", hub)
+
+    found = json_of(run_command(tmp_path, "search", "marker", "--hub", "demo", "--json", env=env))
+
+    assert [result["path"] for result in found["results"]] == ["brain/a.md"]
+
+
 def test_exits_one_with_pin_line_when_hub_option_names_hub_pinned_elsewhere(
     knowledge_hub: KnowledgeHubFactory, run_command: CommandRunner, tmp_path: Path
 ) -> None:

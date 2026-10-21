@@ -38,7 +38,7 @@ _ASSIGNED: Final = rf"(?<!{_NAME_CHARS}){_NAME_CHARS}{{0,64}}?{_NAME_WORD}{_ASSI
 
 
 # Every "secret" rule needs a name word followed by an assignment (``=``) or a JSON key's
-# ``":"``; this is that part of each, with the same flags, so text without it skips all three
+# ``":"``; this is that part of each, with the same flags, so text without it skips all four
 # (the shortcut for long texts such as indexed notes, AGH-391). It cannot change the result:
 # where it finds nothing, no "secret" rule can match.
 _SECRET_HINT: Final = re.compile(
