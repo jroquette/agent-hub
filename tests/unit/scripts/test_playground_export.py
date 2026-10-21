@@ -2,12 +2,13 @@ import hashlib
 import json
 import os
 import subprocess
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 
 from scripts.playground_export import (
@@ -233,7 +234,7 @@ def test_opens_turn_per_message_and_links_its_own_commits_when_session_read() ->
         _bash("git commit -F - <<'EOF'\nfix(web): a step\n\nBody.\nEOF"),
     ]
 
-    turns, _, _ = read_session(events, [first, second, later])
+    turns, _ = read_session(events, [first, second, later])
 
     assert [turn.message for turn in turns] == ["Put tabs on the page", "Now fix the step"]
     assert turns[0].screenshot is True
@@ -242,17 +243,165 @@ def test_opens_turn_per_message_and_links_its_own_commits_when_session_read() ->
     assert turns[1].commits == [later.sha]
 
 
-def test_keeps_written_and_published_paths_when_session_read() -> None:
-    events = [
-        _said("Make a skill"),
-        {"kind": "tool.call", "body": {"name": "Write", "input": {"file_path": "/hub/brain/a.md"}}},
-        {"kind": "text", "body": {"text": "PUBLISHED plugin/p/skills/x/SKILL.md\nDone."}},
-    ]
+def _wrote_draft(path: str, tool: str = "Write") -> dict[str, Any]:
+    return {"kind": "tool.call", "body": {"name": tool, "input": {"file_path": path}}}
 
-    _, written, published = read_session(events, [])
 
-    assert written == ["/hub/brain/a.md"]
-    assert published == ["plugin/p/skills/x/SKILL.md"]
+def _version(origin: str, draft_id: str | None = None) -> dict[str, Any]:
+    return {"id": f"v-{origin}-{draft_id}", "origin": origin, "draft_id": draft_id}
+
+
+def _conductor(
+    tmp_path: Path,
+    *,
+    sessions: Mapping[str, Sequence[dict[str, Any]]],
+    catalog: Sequence[dict[str, str]],
+    versions: Mapping[str, tuple[str, Sequence[Sequence[dict[str, Any]]]] | None],
+    seen: list[str] | None = None,
+) -> tuple[list[Path], httpx.MockTransport]:
+    """A conductor serving ``sessions`` (id to events), the hub's ``catalog`` and each item's
+    unit and versions pages (``kind/source/name`` to both; None answers 404), and its log."""
+    log = tmp_path / "conductor.log"
+    log.write_text("hub web at http://127.0.0.1:7420/?token=synthetic-token\n", "utf-8")
+    at = CREATED.isoformat()
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        path, query = request.url.path, request.url.params
+        if seen is not None:
+            seen.append(str(request.url.copy_with(scheme=None, host=None, port=None)))
+        if path == "/api/v1/agent-sessions":
+            items = [
+                {"id": sid, "title": f"Ask {sid}", "workdir_label": "hub", "created_at": at}
+                for sid in sessions
+            ]
+            return httpx.Response(200, json={"items": items})
+        if path.startswith("/api/v1/agent-sessions/"):
+            sid = path.split("/")[4]
+            return httpx.Response(200, json={"items": list(sessions[sid]), "next_after": None})
+        if path == "/api/v1/projects/agent-hub/skills":
+            return httpx.Response(200, json={"project": "agent-hub", "items": list(catalog)})
+        if path.startswith("/api/v1/projects/agent-hub/skills/") and path.endswith("/versions"):
+            item = path.removeprefix("/api/v1/projects/agent-hub/skills/").removesuffix("/versions")
+            found = versions.get(item)
+            if found is None:
+                return httpx.Response(404, json={"title": "Not Found"})
+            unit, pages = found
+            index = int(query.get("cursor", "0"))
+            more = index + 1 < len(pages)
+            page = {"items": list(pages[index]), "next_cursor": str(index + 1) if more else None}
+            return httpx.Response(200, json={**page, "unit_path": unit})
+        return httpx.Response(200, json={})
+
+    return [log], httpx.MockTransport(handle)
+
+
+def _item(kind: str, name: str) -> dict[str, str]:
+    return {"id": f"{kind}/hub/{name}", "kind": kind, "source": "hub", "name": name}
+
+
+def _hub_requests(
+    conductor: tuple[list[Path], httpx.MockTransport], hub_files: list[str], *, hub: Path
+) -> dict[str, list[str]]:
+    logs, transport = conductor
+    sessions = owner_sessions(CREATED, commits=[], logs=logs, transport=transport)
+    requests = build_requests(sessions, [], hub_files=hub_files, hub_root=hub)
+    return {request.title: request.hub_files for request in requests}
+
+
+def test_credits_published_files_when_session_wrote_draft(tmp_path: Path) -> None:
+    hub = tmp_path / "hub"
+    unit = "plugin/agent-hub/skills/review"
+    conductor = _conductor(
+        tmp_path,
+        sessions={
+            "s1": [
+                _said("Make a review skill"),
+                _wrote_draft(f"{hub}/.hub-drafts/skill-abc123/SKILL.md"),
+                _wrote_draft(f"{hub}/.hub-drafts/skill-abc123/notes.md", tool="Edit"),
+            ],
+            "s2": [_said("Only talk"), _wrote_draft(f"{hub}/brain/_inbox/idea.md")],
+        },
+        catalog=[_item("skill", "review"), _item("agent", "planner")],
+        versions={
+            "skill/hub/review": (
+                unit,
+                [[_version("publish", "skill-abc123"), _version("external")]],
+            ),
+            "agent/hub/planner": ("agents/p.md", [[_version("publish", "agent-abc123")]]),
+        },
+    )
+    hub_files = [f"{unit}/SKILL.md", f"{unit}/notes.md", "agents/p.md", "brain/_inbox/idea.md"]
+
+    credited = _hub_requests(conductor, hub_files, hub=hub)
+
+    assert credited == {
+        "Ask s1": [f"{unit}/SKILL.md", f"{unit}/notes.md"],
+        "Ask s2": ["brain/_inbox/idea.md"],
+        NO_SESSION: ["agents/p.md"],
+    }
+
+
+def test_leaves_publish_unattributed_when_no_session_wrote_its_draft(tmp_path: Path) -> None:
+    conductor = _conductor(
+        tmp_path,
+        sessions={
+            "s1": [_said("Try a hook"), _wrote_draft("/hub/.hub-drafts/hook-aaa111/hooks.json")]
+        },
+        catalog=[_item("hook", "guard")],
+        versions={"hook/hub/guard": ("hooks/hooks.json", [[_version("publish", "hook-zzz999")]])},
+    )
+
+    credited = _hub_requests(conductor, ["hooks/hooks.json"], hub=tmp_path / "hub")
+
+    assert credited == {"Ask s1": [], NO_SESSION: ["hooks/hooks.json"]}
+
+
+def test_reads_every_versions_page_when_publish_on_later_page(tmp_path: Path) -> None:
+    seen: list[str] = []
+    unit = "plugin/agent-hub/agents/planner.md"
+    conductor = _conductor(
+        tmp_path,
+        sessions={
+            "s1": [_said("Edit the planner"), _wrote_draft("/hub/.hub-drafts/agent-b2c3d4/a.md")]
+        },
+        catalog=[_item("agent", "planner"), _item("skill", "review")],
+        versions={
+            "agent/hub/planner": (
+                unit,
+                [[_version("external")], [_version("publish", "agent-b2c3d4")]],
+            )
+        },
+        seen=seen,
+    )
+
+    credited = _hub_requests(conductor, [unit], hub=tmp_path / "hub")
+
+    assert credited == {"Ask s1": [unit]}
+    pages = [url for url in seen if url.startswith("/api/v1/projects/agent-hub/skills/agent/")]
+    assert len(pages) == 2
+    assert "cursor=1" in pages[1]
+    # Only the kinds of the drafts the sessions wrote are read.
+    assert not any("/skills/skill/" in url for url in seen)
+
+
+@pytest.mark.parametrize(
+    "found",
+    [("agents/p.md", [[{"id": "v1", "origin": "publish"}]]), None],
+    ids=["no_draft_id", "no_versions_route"],
+)
+def test_credits_nothing_when_server_predates_draft_id(
+    tmp_path: Path, found: tuple[str, list[list[dict[str, Any]]]] | None
+) -> None:
+    conductor = _conductor(
+        tmp_path,
+        sessions={"s1": [_said("Edit it"), _wrote_draft("/hub/.hub-drafts/agent-abc123/p.md")]},
+        catalog=[_item("agent", "p")],
+        versions={"agent/hub/p": found},
+    )
+
+    credited = _hub_requests(conductor, ["agents/p.md"], hub=tmp_path / "hub")
+
+    assert credited == {"Ask s1": [], NO_SESSION: ["agents/p.md"]}
 
 
 def test_merges_same_title_sessions_and_keeps_unclaimed_work_when_requests_built(
@@ -269,7 +418,7 @@ def test_merges_same_title_sessions_and_keeps_unclaimed_work_when_requests_built
             "Review skill",
             Turn("t3", "Create it"),
             folder="hub",
-            published=["plugin/p/skills/x/SKILL.md"],
+            published=["plugin/p/skills/x"],
         ),
         _session(
             "Chat panel",
