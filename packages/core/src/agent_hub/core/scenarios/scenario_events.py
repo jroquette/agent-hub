@@ -14,7 +14,13 @@ and no ``workflow``.
 (``workflows.events``). Outputs and captured values stay in the run's record, never here
 (ADR 0019). ``source_id`` is ``<run>:<step>:<attempt>:<type>:<poll or name>``: an expect's
 action call gives its ``poll`` (from 1), so each poll's call is an event of its own (the store
-keeps one event per source id); a plain call has none.
+keeps one event per source id); a plain call has none, and an investigation's read gives its own
+``item``.
+
+An investigation adds a ``finding`` per finding of a proposal (``finding_id`` and the diverged
+``step``; its title and text stay in the record) and, when an option is picked,
+``workaround.start`` and ``workaround.end`` (``workaround_id``, ``option`` id, ``steps`` count,
+``status``), their attempt the investigation's number.
 """
 
 from datetime import datetime
@@ -62,6 +68,27 @@ class ActionFacts(BaseModel):
             "service": list(self.services),
         }
         return called if self.approver is None else {**called, "approver": self.approver}
+
+
+class WorkaroundFacts(BaseModel):
+    """What a workaround's events say: the diverged ``step``, the investigation's number
+    (``attempt``), the workaround's id, the option picked and its step count."""
+
+    model_config = ConfigDict(frozen=True)
+
+    step: str
+    attempt: int
+    workaround_id: str
+    option: str
+    steps: int
+
+    def payload(self, status: str) -> dict[str, JsonValue]:
+        return {
+            "workaround_id": self.workaround_id,
+            "option": self.option,
+            "steps": self.steps,
+            "status": status,
+        }
 
 
 class ScenarioEvents:
@@ -118,13 +145,15 @@ class ScenarioEvents:
             EventType.POLICY_DECISION, decision.step, attempt, item=item, at=at, payload=payload
         )
 
-    def action_started(self, facts: ActionFacts, *, at: datetime, poll: int = 0) -> None:
+    def action_started(
+        self, facts: ActionFacts, *, at: datetime, poll: int = 0, item: str | None = None
+    ) -> None:
         payload = facts.called()
         self._add(
             EventType.ACTION_START,
             facts.step,
             facts.attempt,
-            item=_poll_item(poll),
+            item=_poll_item(poll) if item is None else item,
             at=at,
             payload=payload,
         )
@@ -137,6 +166,7 @@ class ScenarioEvents:
         failure_kind: str | None,
         at: datetime,
         poll: int = 0,
+        item: str | None = None,
     ) -> None:
         payload: dict[str, JsonValue] = {**facts.called(), "status": status}
         if failure_kind is not None:
@@ -145,7 +175,7 @@ class ScenarioEvents:
             EventType.ACTION_END,
             facts.step,
             facts.attempt,
-            item=_poll_item(poll),
+            item=_poll_item(poll) if item is None else item,
             at=at,
             payload=payload,
         )
@@ -170,6 +200,31 @@ class ScenarioEvents:
             item=capture.name,
             at=capture.at,
             payload=payload,
+        )
+
+    def finding_recorded(self, *, step: str, attempt: int, finding_id: str, at: datetime) -> None:
+        """A finding of an investigation's proposal: its id and the diverged step only."""
+        payload: dict[str, JsonValue] = {"finding_id": finding_id, "step": step}
+        self._add(EventType.FINDING, step, attempt, item=finding_id, at=at, payload=payload)
+
+    def workaround_started(self, facts: WorkaroundFacts, *, at: datetime) -> None:
+        self._add(
+            EventType.WORKAROUND_START,
+            facts.step,
+            facts.attempt,
+            item=facts.workaround_id,
+            at=at,
+            payload=facts.payload("started"),
+        )
+
+    def workaround_ended(self, facts: WorkaroundFacts, *, status: str, at: datetime) -> None:
+        self._add(
+            EventType.WORKAROUND_END,
+            facts.step,
+            facts.attempt,
+            item=facts.workaround_id,
+            at=at,
+            payload=facts.payload(status),
         )
 
     def _add(

@@ -10,7 +10,8 @@ read model can tell an issue's live runs apart. A retry adds no event: its faile
 already ended with its kind. A gate adds a ``gate.request`` (``gate_id``
 ``<run>:<step>:<attempt>``, ``name`` its node id): ``kind`` ``human_gate``, which the Approvals
 read model lists, when a person answers it (an approval, an attention wait), ``wait`` for a
-timed wait; its message and choices stay in the run's record. The composition root passes
+timed wait; its message and choices stay in the run's record; ``reason`` (``investigation``)
+when a scenario run opened it at a divergence. The composition root passes
 ``events`` to ``IngestEvents``, which redacts and trims them like any other.
 """
 
@@ -100,6 +101,8 @@ class WorkflowEvents:
             "kind": gate_event_kind(request.form),
             "name": request.node,
         }
+        if request.reason is not None:
+            payload["reason"] = request.reason
         source_id = f"{self.run_id}:{request.node}:{request.attempt}:{EventType.GATE_REQUEST}"
         self.events.append(
             self._event(
