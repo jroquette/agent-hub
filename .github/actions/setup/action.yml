@@ -1,0 +1,73 @@
+# The toolchain one CI job needs, so every job sets it up the same way (ci.yml). Python and the
+# workspace by default; each job turns on only the extras its make targets read.
+name: setup
+description: uv, Python 3.14 and the workspace from uv.lock; optionally Python 3.9, Node and Chromium
+
+inputs:
+  python:
+    description: install uv, Python 3.14 (.python-version) and sync the workspace from uv.lock
+    default: "true"
+  python39:
+    description: put a Python 3.9 on PATH (the rendered hooks and scripts run on it)
+    default: "false"
+  node:
+    description: install Node (apps/web/.node-version) and the web app's dependencies
+    default: "false"
+  chromium:
+    description: install Chromium for Playwright (needs node)
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    # Pinned: the newest uv we checked that offers final Python 3.14 builds. To bump, run
+    # `uvx --from uv==<v> uv python list 3.14 --all-versions` and check it lists a final build.
+    - if: inputs.python == 'true'
+      uses: astral-sh/setup-uv@v7
+      with:
+        version: "0.12.19"
+    - if: inputs.python == 'true'
+      name: Install Python (from .python-version)
+      shell: bash
+      run: uv python install
+    # Rendered hooks and scripts must run on Python 3.9 (the system python3 on macOS); with a 3.9
+    # on PATH, the generator integration tests (hook_python) run them there too, and under CI
+    # they fail instead of skipping when it is missing.
+    - if: inputs.python39 == 'true'
+      name: Install Python 3.9 for the hooks reader test
+      shell: bash
+      run: |
+        uv python install 3.9
+        uv python dir --bin >> "$GITHUB_PATH"
+    - if: inputs.python39 == 'true'
+      name: Require Python 3.9 on PATH
+      shell: bash
+      run: python3.9 -c "import sys; assert sys.version_info[:2] == (3, 9), sys.version"
+    - if: inputs.python == 'true'
+      name: Sync the workspace from uv.lock
+      shell: bash
+      run: uv sync --locked --all-packages
+    - if: inputs.python == 'true'
+      name: Require a final Python 3.14 (no release candidate)
+      shell: bash
+      run: >-
+        uv run --locked --all-packages python -c
+        "import sys; assert sys.version_info[:2] == (3, 14) and sys.version_info.releaselevel == 'final', sys.version"
+    # The web app (apps/web): Node from its .node-version, npm's cache keyed by its lockfile. The
+    # make targets then skip their own `npm ci` (web-install: node_modules is newer than the lock).
+    - if: inputs.node == 'true'
+      uses: actions/setup-node@v5
+      with:
+        node-version-file: apps/web/.node-version
+        cache: npm
+        cache-dependency-path: apps/web/package-lock.json
+    - if: inputs.node == 'true'
+      name: Install the web app's dependencies
+      shell: bash
+      run: make web-install
+    # Chromium for the Playwright smoke test (tests/e2e/test_web_smoke.py), which fails under CI
+    # when the browser is missing.
+    - if: inputs.chromium == 'true'
+      name: Install Chromium for Playwright
+      shell: bash
+      run: npx --prefix apps/web playwright install --with-deps chromium
