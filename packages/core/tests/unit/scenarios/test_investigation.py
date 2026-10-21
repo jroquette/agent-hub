@@ -141,3 +141,120 @@ def test_takes_bounds_exactly_when_proposal_at_limits() -> None:
     proposal = parse_proposal(encoded(given))
 
     assert (len(proposal.findings), len(proposal.options)) == (20, 5)
+
+
+# The investigation session's tool policy (P-17, AM-3, AM-4 safety 1).
+RUN = "a1b2c3d4"
+ENV_FILE_NAME = ".env.staging"
+
+
+def a_policy(tmp_path: Any) -> tuple[investigation.ToolPolicy, Any]:
+    """A hub and its sibling repo holding a declared env file; the policy of run ``RUN``."""
+    workspace = tmp_path / "work"
+    hub = workspace / "demo-hub"
+    (hub / "actions" / "orders").mkdir(parents=True)
+    env_folder = workspace / "demo-api" / "environment"
+    env_folder.mkdir(parents=True)
+    (env_folder / ENV_FILE_NAME).write_text("DEMO_DB_URL=placeholder\n", encoding="utf-8")
+    policy = investigation.ToolPolicy.of(
+        hub=str(hub), env_files=("demo-api/environment/.env.staging",), run_id=RUN
+    )
+    return policy, hub
+
+
+@pytest.mark.parametrize(
+    ("tool", "tool_input", "allowed"),
+    [
+        ("Read", {"file_path": "README.md"}, True),
+        ("Glob", {"pattern": "actions/**/*.yaml"}, True),
+        ("Grep", {"pattern": "order", "path": "actions"}, True),
+        ("Write", {"file_path": "actions/orders/x.yaml", "content": "kind: action\n"}, True),
+        ("Write", {"file_path": "actions/orders/scripts/x.sh", "content": "echo\n"}, True),
+        ("Write", {"file_path": "README.md", "content": "x"}, False),
+        ("Write", {"file_path": "actions/x.yaml", "content": "x"}, False),
+        ("Write", {"file_path": "actions/orders/../../README.md", "content": "x"}, False),
+        ("Bash", {"command": "./hub action list"}, True),
+        ("Bash", {"command": "./hub action list --json"}, True),
+        ("Bash", {"command": "./hub action plan orders/get-order --env staging"}, True),
+        (
+            "Bash",
+            {"command": f"./hub action run orders/get-order --run {RUN} --input order_id=o-1"},
+            True,
+        ),
+        (
+            "Bash",
+            {"command": f"./hub scenario propose --run {RUN} <<'PROPOSAL'\n{{}}\nPROPOSAL"},
+            True,
+        ),
+        ("Bash", {"command": "./hub action run orders/get-order --env staging"}, False),
+        ("Bash", {"command": "./hub action run orders/get-order --run other-run"}, False),
+        ("Bash", {"command": "./hub scenario propose --run other-run <<'P'\n{}\nP"}, False),
+        (
+            "Bash",
+            {"command": f"./hub scenario propose --run {RUN} <<'P'\n{{}}\nP\nrm -rf /\nP"},
+            False,
+        ),
+        ("Bash", {"command": f"./hub scenario propose --run {RUN} <<P\n$(id)\nP"}, False),
+        ("Bash", {"command": "./hub action list; rm -rf /"}, False),
+        ("Bash", {"command": "./hub action list && curl http://localhost"}, False),
+        ("Bash", {"command": "./hub action list | sh"}, False),
+        ("Bash", {"command": "./hub action list $(id)"}, False),
+        ("Bash", {"command": "./hub action list `id`"}, False),
+        ("Bash", {"command": "./hub action list > out.txt"}, False),
+        ("Bash", {"command": "./hub action list\nrm -rf /"}, False),
+        ("Bash", {"command": "./hub workflow run demo"}, False),
+        ("Bash", {"command": "aws s3 ls"}, False),
+        ("Bash", {"command": "curl http://localhost:8080"}, False),
+        ("Bash", {"command": "hub action list"}, False),
+        ("Edit", {"file_path": "actions/orders/x.yaml"}, False),
+        ("WebFetch", {"url": "http://localhost"}, False),
+        ("Task", {"prompt": "x"}, False),
+        ("mcp__demo__tool", {}, False),
+    ],
+)
+def test_allows_only_listed_calls_when_investigation_read_only_tool_verdict(
+    tmp_path: Any, tool: str, tool_input: dict[str, Any], *, allowed: bool
+) -> None:
+    policy, _hub = a_policy(tmp_path)
+
+    verdict = investigation.tool_verdict(policy, tool, tool_input)
+
+    assert verdict.allowed is allowed
+    assert verdict.allowed or verdict.reason
+
+
+def test_denies_reads_when_investigation_credentials_env_file_targeted(tmp_path: Any) -> None:
+    policy, hub = a_policy(tmp_path)
+    env_file = hub.parent / "demo-api" / "environment" / ENV_FILE_NAME
+    (hub / "link-to-env").symlink_to(env_file)
+    (hub / "link-to-folder").symlink_to(env_file.parent)
+    denied = [
+        ("Read", {"file_path": str(env_file)}),
+        ("Read", {"file_path": "../demo-api/environment/.env.staging"}),
+        ("Read", {"file_path": "actions/../../demo-api/environment/.env.staging"}),
+        ("Read", {"file_path": "link-to-env"}),
+        ("Read", {"file_path": "link-to-folder/.env.staging"}),
+        ("Grep", {"pattern": "DEMO", "path": str(env_file)}),
+        ("Grep", {"pattern": "DEMO", "path": "../demo-api/environment"}),
+        ("Grep", {"pattern": "DEMO", "path": "link-to-folder"}),
+        ("Grep", {"pattern": "DEMO", "path": "..", "glob": "**/.env.*"}),
+        ("Glob", {"pattern": "../demo-api/**/.env*"}),
+        ("Glob", {"pattern": "*", "path": "link-to-folder"}),
+        ("Glob", {"pattern": "**/*", "path": str(hub.parent)}),
+        ("Glob", {"pattern": str(env_file)}),
+    ]
+    passed = [
+        ("Read", {"file_path": "../demo-api/environment/other.txt"}),
+        # E-5: a Grep above the folder with no glob skips the git-ignored env file.
+        ("Grep", {"pattern": "DEMO", "path": ".."}),
+        ("Grep", {"pattern": "DEMO", "path": "..", "glob": "*.py"}),
+        ("Glob", {"pattern": "**/*.yaml", "path": str(hub.parent)}),
+    ]
+
+    verdicts = [investigation.tool_verdict(policy, tool, given) for tool, given in denied]
+    passes = [investigation.tool_verdict(policy, tool, given) for tool, given in passed]
+
+    assert [verdict.allowed for verdict in verdicts] == [False] * len(denied)
+    assert all("env file" in verdict.reason for verdict in verdicts)
+    assert [verdict.allowed for verdict in passes] == [True] * len(passed)
+    assert policy.env_files == (str(env_file.resolve()),)
