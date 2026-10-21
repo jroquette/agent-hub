@@ -14,7 +14,8 @@ addresses above the fold, and the action that matters is changing the one wrong 
 only make a team environment stricter).
 
 Built from the playground's UX designs v2 (overview, setup flows), v3 (environment page, service panel) and the Hub
-config change (AGH-417); the find-services part of v3 is AGH-418.
+config change (AGH-417, in parts: the address display, the screens, then the add flows of section 6); the
+find-services part of v3 is AGH-418.
 
 ## One place per verb
 
