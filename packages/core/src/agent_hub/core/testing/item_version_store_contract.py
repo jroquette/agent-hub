@@ -91,7 +91,8 @@ def _outcome(store: ItemVersionStore, version: NewItemVersion) -> object:
 
 
 class ItemVersionStoreContract:
-    """Append gap-free, last, newest-first pages with a cursor, scoped get, append-only."""
+    """Append gap-free, last, newest-first pages with a cursor, scoped get, a project's publish
+    of a draft, append-only."""
 
     def test_appends_and_reads_last_when_versions_appended(
         self, item_version_store: ItemVersionStore
@@ -198,6 +199,23 @@ class ItemVersionStoreContract:
             f"every loser is refused as seq 1 where 2 is expected: {losers}",
         )
         _check(len(item_version_store.page("race", AGENT)) == 1, "one version was stored")
+
+    def test_tells_publish_of_draft_when_project_holds_one(
+        self, item_version_store: ItemVersionStore
+    ) -> None:
+        store = item_version_store
+        draft = "agent-a1b2c3"
+        _check(not store.has_publish("demo", draft), "an empty store holds no publish")
+        _append(store, 1)
+        _check(not store.has_publish("demo", draft), "an external version names no draft")
+        _append(store, 2, project="other", unit_path=OTHER_AGENT)
+        _check(not store.has_publish("demo", draft), "a publish of another project is not one")
+        _check(store.has_publish("other", draft), "a publish of any unit of the project is one")
+
+        store.append(_new(2))
+
+        _check(store.has_publish("demo", draft), "the project's publish names the draft")
+        _check(not store.has_publish("demo", "agent-zzz999"), "another draft id is not one")
 
     def test_has_no_update_or_delete_when_port_inspected(
         self, item_version_store: ItemVersionStore

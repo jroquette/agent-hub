@@ -348,6 +348,17 @@ def test_maps_item_write_refusal_when_raised() -> None:
     assert no_author.members == {"code": "no_author", "reason": "No commit author for this hub"}
 
 
+def test_answers_conflict_when_draft_already_published() -> None:
+    found = _mapped(ItemWriteRefusedError("draft_already_published"))
+
+    assert (found.status, found.title) == (409, "Item write refused")
+    assert found.members == {
+        "code": "draft_already_published",
+        "reason": "This draft was already published; discard it",
+    }
+    assert found.detail == "This draft was already published; discard it"
+
+
 def test_answers_write_failed_without_path_when_item_write_fails() -> None:
     failed = _mapped(HubItemWriteError(f"rename failed in /home/demo/{UNIT_PATH}"))
     rolled = _mapped(rollback_failed())
