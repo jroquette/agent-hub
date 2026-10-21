@@ -72,7 +72,8 @@ class ChangeRequest:
     plan versions it goes from and to, the tickets it affects, when it was opened and by which
     workflow run, and its ``body`` (evidence and proposal, within the head read). ``problem``
     says why it could not be read (status None; ``ticket`` kept when it could be), or why its
-    decision could not be: the request then stays ``open``, not known to be decided. A decision needs a person (``decided_by`` neither empty nor ``unknown``, A5)."""
+    decision could not be: the request then stays ``open``, not known to be decided. A decision
+    needs a person (``decided_by`` neither empty nor ``unknown``, A5)."""
 
     n: int
     ticket: str | None
