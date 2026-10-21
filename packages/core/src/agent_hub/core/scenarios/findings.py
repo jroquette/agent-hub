@@ -6,9 +6,12 @@ The findings come from the run record, folded by ``run_record``; each is named b
 finding's text and evidence, and where its record is: the scenario run's page in hub web and its
 ``records.jsonl``. They hold names only, never a credential value: the finding's texts were
 redacted when proposed, and every text is redacted again here (``redact_shapes``). The texts
-are agent-written, so every control character but the newline (C0, DEL, C1) and every bidi
-control is written as a visible escape (``\\x1b``, ``\\r``, ``\\u202e``) before the draft is
-printed, sent to the tracker or written: none can hide or rewrite what a person confirms.
+are agent-written, so every control character but the newline (C0, DEL, C1), every format
+character (bidi and other marks, zero-width characters, tags) and the line and paragraph
+separators are written as a visible escape (``\\x1b``, ``\\r``, ``\\u202e``) before the draft is
+printed, sent to the tracker or written: none can hide or rewrite what a person confirms. As an
+escape is up to ten characters, each escaped part is cut to a bound (``CUT_MARKER``, never inside
+an escape), so a draft stays under every tracker adapter's title and description caps.
 
 The inbox note is ``brain/_inbox/<date>-scenario-<name>-<finding-id>.md`` with frontmatter
 ``provenance: agent-from-external``, because its evidence comes from the system under test. The
@@ -17,6 +20,7 @@ folder or break a line raises ``FindingsError``.
 """
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import date
 from typing import Final
@@ -27,16 +31,28 @@ from agent_hub.core.secret_shapes import redact_shapes
 
 PROVENANCE: Final = "agent-from-external"
 NOTE_TYPE: Final = "scenario-finding"
-# Linear's title limit is 255 characters; a longer title is cut, with an ellipsis.
-MAX_TITLE_CHARS: Final = 200
+# The draft's bounds, under every tracker adapter's (the MCP adapter's 255-character title and
+# 10,000-character description): escapes grow a text up to tenfold, so each escaped part is cut,
+# at an escape boundary, with ``CUT_MARKER``.
+MAX_DRAFT_TITLE_CHARS: Final = 200
+MAX_DRAFT_DESCRIPTION_CHARS: Final = 9_000
+MAX_ESCAPED_TEXT_CHARS: Final = 5_000
+MAX_ESCAPED_EVIDENCE_CHARS: Final = 3_000
+# A step, environment or record path as shown: names, cut all the same.
+MAX_NAME_CHARS: Final = 200
+CUT_MARKER: Final = " … [cut]"
 # A scenario name (a kebab id) and a run id, as their writers check them; a finding id ``f<n>``.
 _SCENARIO: Final = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 _RUN: Final = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
 _FINDING: Final = re.compile(r"f[1-9][0-9]{0,5}")
 _NO_TEXT: Final = "(no description was recorded)"
 _NO_EVIDENCE: Final = "none recorded"
-_BIDI: Final = frozenset("\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
 _NAMED: Final = {"\t": "\\t", "\r": "\\r"}
+# Control characters (Cc), format characters (Cf: bidi controls, marks, zero-width characters,
+# tags) and the line and paragraph separators: each is written as an escape.
+_ESCAPED_CATEGORIES: Final = frozenset({"Cc", "Cf", "Zl", "Zp"})
+# One escape this module writes, or one other character: where a cut may fall.
+_PIECE: Final = re.compile(r"\\x[0-9a-f]{2}|\\u[0-9a-f]{4}|\\U[0-9a-f]{8}|\\[rt]|.", re.DOTALL)
 
 
 class FindingsError(AgentHubError):
@@ -80,9 +96,7 @@ def screen_path(scenario: str, run: str) -> str:
 def issue_draft(view: ScenarioRunView, finding: FindingView, *, record: str) -> IssueDraft:
     """The issue a person may create for ``finding``; ``record`` is the record file's path."""
     names = _names(view, finding)
-    title = _one_line(f"Scenario {names.scenario}: {finding.title}")
-    if len(title) > MAX_TITLE_CHARS:
-        title = title[: MAX_TITLE_CHARS - 1] + "…"
+    title = _cut(_one_line(f"Scenario {names.scenario}: {finding.title}"), MAX_DRAFT_TITLE_CHARS)
     return IssueDraft(title=title, description=_body(names, finding, record=record))
 
 
@@ -99,7 +113,7 @@ def inbox_note(view: ScenarioRunView, finding: FindingView, *, record: str, day:
         f"provenance: {PROVENANCE}",
         "---",
     )
-    heading = f"## {_one_line(finding.title) or names.finding}"
+    heading = f"## {_cut(_one_line(finding.title), MAX_DRAFT_TITLE_CHARS) or names.finding}"
     text = "\n".join((*front, heading, "", _body(names, finding, record=record)))
     name = f"{day.isoformat()}-scenario-{names.scenario}-{names.finding}.md"
     return InboxNote(name=name, text=text)
@@ -107,7 +121,7 @@ def inbox_note(view: ScenarioRunView, finding: FindingView, *, record: str, day:
 
 def _names(view: ScenarioRunView, finding: FindingView) -> _Names:
     """The names the texts are built from, each checked; else ``FindingsError``."""
-    environment = _one_line(view.environment or "") or "unknown"
+    environment = _cut(_one_line(view.environment or ""), MAX_NAME_CHARS) or "unknown"
     return _Names(
         scenario=_checked("scenario", view.scenario, _SCENARIO),
         run=_checked("run", view.run, _RUN),
@@ -126,13 +140,14 @@ def _checked(noun: str, value: str | None, pattern: re.Pattern[str]) -> str:
 def _body(names: _Names, finding: FindingView, *, record: str) -> str:
     where = (
         f"The scenario {names.scenario} found this in run {names.run}, at step"
-        f" {_one_line(finding.step)}, in environment {names.environment}."
+        f" {_cut(_one_line(finding.step), MAX_NAME_CHARS)}, in environment {names.environment}."
     )
-    text = _escaped(redact_shapes(finding.text)).strip() or _NO_TEXT
-    evidence = _one_line(finding.evidence) or _NO_EVIDENCE
+    text = _escaped(redact_shapes(finding.text)).strip()
+    text = _cut(text, MAX_ESCAPED_TEXT_CHARS) or _NO_TEXT
+    evidence = _cut(_one_line(finding.evidence), MAX_ESCAPED_EVIDENCE_CHARS) or _NO_EVIDENCE
     link = (
         f"Record: {screen_path(names.scenario, names.run)} in hub web, or the file"
-        f" {_one_line(record)} in the hub (finding {names.finding})."
+        f" {_cut(_one_line(record), MAX_NAME_CHARS)} in the hub (finding {names.finding})."
     )
     return "\n".join((where, "", text, "", f"Evidence: {evidence}", "", link)) + "\n"
 
@@ -149,11 +164,25 @@ def _escaped(text: str) -> str:
 
 
 def _escape(character: str) -> str:
-    code = ord(character)
     if character in _NAMED:
         return _NAMED[character]
-    if (code < 0x20 and character != "\n") or 0x7F <= code <= 0x9F:  # noqa: PLR2004 - C0, DEL, C1
+    if character == "\n" or unicodedata.category(character) not in _ESCAPED_CATEGORIES:
+        return character
+    code = ord(character)
+    if code <= 0xFF:  # noqa: PLR2004 - C0, DEL and C1
         return f"\\x{code:02x}"
-    if character in _BIDI:
-        return f"\\u{code:04x}"
-    return character
+    return f"\\u{code:04x}" if code <= 0xFFFF else f"\\U{code:08x}"  # noqa: PLR2004 - BMP
+
+
+def _cut(text: str, limit: int) -> str:
+    """``text`` when it holds at most ``limit`` characters; else its longest start that, with
+    ``CUT_MARKER``, does, never ending inside an escape."""
+    if len(text) <= limit:
+        return text
+    budget, kept = limit - len(CUT_MARKER), []
+    for piece in _PIECE.finditer(text):
+        budget -= len(piece.group())
+        if budget < 0:
+            break
+        kept.append(piece.group())
+    return "".join(kept) + CUT_MARKER
