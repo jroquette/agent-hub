@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useEffect, useId, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Link, useLocation } from "react-router";
+import { Link, NavigationType, useLocation, useNavigationType } from "react-router";
 
 import type { components } from "../../api/schema";
 import {
@@ -783,7 +783,7 @@ function AcceptancePrompt({
 /* ---------- The selected eval ---------- */
 
 /** A frontmatter time as the app writes times; a bare date (no time) stays as it is. */
-function evaluatedText(value: string, tz: ReturnType<typeof usePreferences>["tz"]): string {
+export function evaluatedText(value: string, tz: ReturnType<typeof usePreferences>["tz"]): string {
   return value.includes("T") && !Number.isNaN(Date.parse(value)) ? fmtDateTime(value, tz) : value;
 }
 
@@ -1002,17 +1002,26 @@ export function EvalTab({
   acRows = [],
   acceptance,
 }: EvalTabProps) {
-  const [listOpen, setListOpen] = useState(readListOpen);
+  const [stored, setListOpen] = useState(readListOpen);
   const wait = acceptance?.owner_wait;
   const history = evalHistory(evals, tickets, epics);
   const selectedScope = history.find((g) => g.evals.some((e) => e.path === selected?.path))?.scope;
-  // A signpost (the banner, the Acceptance step, the ticket panel) lands on its eval's group row.
+  // A signpost (the banner, the Acceptance step, the ticket panel) lands on its eval's group row,
+  // once per arrival (not on Back / Forward or a reload), opening the list for it when hidden.
   const location = useLocation();
+  const arrived = useNavigationType() !== NavigationType.Pop;
   const table = useRef<HTMLDivElement>(null);
+  const landed = useRef<string | null>(null);
   const focusAsked =
-    (location.state as { focusEval?: boolean } | null)?.focusEval === true ? location.key : null;
+    arrived && (location.state as { focusEval?: boolean } | null)?.focusEval === true
+      ? location.key
+      : null;
+  // A hidden list shows for the signpost's arrival until the owner toggles it again.
+  const [toggledFor, setToggledFor] = useState<string | null>(null);
+  const listOpen = stored || (focusAsked !== null && toggledFor !== focusAsked);
   useEffect(() => {
-    if (focusAsked === null) return;
+    if (focusAsked === null || landed.current === focusAsked) return;
+    landed.current = focusAsked;
     [...(table.current?.querySelectorAll<HTMLElement>("[data-group]") ?? [])]
       .find((toggle) => toggle.dataset.group === selectedScope)
       ?.focus();
@@ -1023,6 +1032,7 @@ export function EvalTab({
   const isOpen = (scope: string) =>
     folded.get(scope) ?? (history.length === 1 || scope === selectedScope);
   const toggleList = () => {
+    setToggledFor(focusAsked);
     writeListOpen(!listOpen);
     setListOpen(!listOpen);
   };
