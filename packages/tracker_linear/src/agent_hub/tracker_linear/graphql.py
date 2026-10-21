@@ -5,7 +5,9 @@ The transport (the key, the request, the checks on the answer) is ``graphql_tran
 Every write resolves the identifier (``DEM-1``) to the issue's UUID once, with ``issue(id:)``,
 and passes only UUIDs to the mutation (D-c). A write that would change nothing (the current
 state, a present label added, an absent label removed) sends no mutation. ``create_issue``
-resolves the team key to its UUID with ``teams(filter:)``, then sends one ``issueCreate``.
+resolves the team key to its UUID with ``teams(filter:)``, then sends one ``issueCreate``; any
+failure of that mutation (a timeout or a 5xx after Linear may have made the issue) says to check
+the team's issues, never to retry (``CREATE_FIX``), so no issue is made twice.
 
 Every failure is a one-line ``TrackerError`` naming the operation, the issue id, the cause and
 the fix (``graphql_transport`` lists the transport's). Nothing is retried. The key is never part
@@ -43,6 +45,8 @@ DONE_STATE_TYPES = ("completed", "canceled", "duplicate")
 MAX_PAGES = 20
 # Labels read per issue; an issue with more raises instead of being read in part.
 MAX_LABELS = 50
+# The fix of a failed issueCreate: the issue may exist, so it is never retried.
+CREATE_FIX = "check the team's issues in Linear: it may have been created, and it is not retried"
 
 
 def _labels_selection(fields: str) -> str:
@@ -274,20 +278,29 @@ class LinearGraphqlTrackerClient:
                 cause=f"team {team!r} not found",
                 fix="use the key of a team in Linear, as tracker.team names it",
             )
-        data = self._request(
-            operation="create_issue",
-            issue_id=None,
-            operation_name="CreateIssue",
-            query=_CREATE_ISSUE,
-            variables={"input": {"teamId": teams[0], "title": title, "description": description}},
-            shape=_CREATE_ISSUE_SHAPE,
-        )
+        try:
+            data = self._request(
+                operation="create_issue",
+                issue_id=None,
+                operation_name="CreateIssue",
+                query=_CREATE_ISSUE,
+                variables={
+                    "input": {"teamId": teams[0], "title": title, "description": description}
+                },
+                shape=_CREATE_ISSUE_SHAPE,
+            )
+        except TrackerError as error:
+            raise TrackerError(
+                operation="create_issue",
+                cause=error.cause,
+                fix=CREATE_FIX,
+                kind=error.kind,
+                http_status=error.http_status,
+            ) from error
         payload = data["issueCreate"]
         if payload["success"] is not True or payload["issue"] is None:
             raise TrackerError(
-                operation="create_issue",
-                cause="Linear reported no success",
-                fix="check the team in Linear before creating it again",
+                operation="create_issue", cause="Linear reported no success", fix=CREATE_FIX
             )
         return _issue_from_node("create_issue", None, payload["issue"])
 
