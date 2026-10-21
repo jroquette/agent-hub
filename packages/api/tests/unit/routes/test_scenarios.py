@@ -14,7 +14,6 @@ from agent_hub.core.testing.agent_session_rig import Rig, build_rig
 from agent_hub.core.testing.builders import an_environments_document
 from agent_hub.core.testing.hub_fakes import FakeHub, FakeHubFileReader, InMemoryHubRegistry
 
-OWN_ORIGIN = {"Origin": "http://127.0.0.1:7420"}
 RUNNING = "0.9.0"
 RUN = "walk-1"
 STEP = "order-held"
@@ -91,6 +90,11 @@ def investigation(wired: Any, tmp_path: Path) -> Any:
     return wire
 
 
+def _origin(wired: Any) -> dict[str, str]:
+    """The server's own ``Origin`` (the strict writes want it): the test client's base URL."""
+    return {"Origin": str(wired.client.base_url).rstrip("/")}
+
+
 def _starts(rig: Rig) -> list[StartSpec]:
     return [call.args[0] for call in rig.driver.calls if call.method == "start"]  # type: ignore[misc]
 
@@ -100,8 +104,8 @@ def test_starts_one_read_only_session_when_investigation_requested_twice(
 ) -> None:
     rig, hub = investigation(a_record())
 
-    first = wired.client.post(ROUTE, json={}, headers=OWN_ORIGIN)
-    second = wired.client.post(ROUTE, json={}, headers=OWN_ORIGIN)
+    first = wired.client.post(ROUTE, json={}, headers=_origin(wired))
+    second = wired.client.post(ROUTE, json={}, headers=_origin(wired))
 
     assert (first.status_code, second.status_code) == (201, 200)
     assert first.json()["agent_session_id"] == second.json()["agent_session_id"]
@@ -127,12 +131,14 @@ def test_starts_one_read_only_session_when_investigation_requested_twice(
     assert link.read_text(encoding="utf-8").strip() == first.json()["agent_session_id"]
 
 
-def test_returns_409_conflict_when_investigation_run_not_paused(wired: Any, investigation: Any) -> None:
+def test_returns_409_conflict_when_investigation_run_not_paused(
+    wired: Any, investigation: Any
+) -> None:
     rig, hub = investigation(a_record(paused=False))
 
-    response = wired.client.post(ROUTE, json={}, headers=OWN_ORIGIN)
+    response = wired.client.post(ROUTE, json={}, headers=_origin(wired))
     unknown = wired.client.post(
-        "/api/v1/scenario-runs/other-run/investigation", json={}, headers=OWN_ORIGIN
+        "/api/v1/scenario-runs/other-run/investigation", json={}, headers=_origin(wired)
     )
 
     assert response.status_code == 409
@@ -145,12 +151,12 @@ def test_returns_409_conflict_when_investigation_run_not_paused(wired: Any, inve
 
 def test_sends_message_when_investigation_chat(wired: Any, investigation: Any) -> None:
     rig, _hub = investigation(a_record())
-    started = wired.client.post(ROUTE, json={}, headers=OWN_ORIGIN).json()
+    started = wired.client.post(ROUTE, json={}, headers=_origin(wired)).json()
 
     sent = wired.client.post(
         f"/api/v1/agent-sessions/{started['agent_session_id']}/messages",
         json={"text": "Look at the order's queue first."},
-        headers=OWN_ORIGIN,
+        headers=_origin(wired),
     )
 
     assert sent.status_code == 202
