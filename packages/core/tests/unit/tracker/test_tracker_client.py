@@ -12,6 +12,8 @@ from agent_hub.core.tracker.tracker_client import (
 
 # Spec D1: the port's operations, no more and no fewer.
 D1_OPERATIONS = {"list_ready", "get_issue", "move_state", "add_label", "remove_label", "comment"}
+# Q-5 of the Scenarios spec (AGH-362) adds the one create operation.
+D1_OPERATIONS |= {"create_issue"}
 
 
 def an_issue_value() -> Issue:

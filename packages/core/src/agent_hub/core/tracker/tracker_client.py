@@ -49,7 +49,8 @@ class TrackerClient(Protocol):
     Every failure raises ``TrackerError``. In ``get_issue`` and the write operations, an
     unknown issue id, state name or label name raises it naming that value, and nothing
     changes; no state or label is ever created. ``list_ready`` filters, so an unknown team
-    or label returns ``[]``.
+    or label returns ``[]``. ``create_issue`` is the one operation that creates: an issue, in
+    the team's default state, with no label (Q-5 of the Scenarios spec).
     """
 
     def list_ready(self, team: str, label: str) -> list[Issue]:
@@ -85,4 +86,12 @@ class TrackerClient(Protocol):
 
     def comment(self, issue_id: str, body: str) -> None:
         """Add one comment with ``body`` to the issue; never retried, as it is not idempotent."""
+        ...
+
+    def create_issue(self, team: str, title: str, description: str) -> Issue:
+        """Create one issue in ``team`` with ``title`` and the Markdown ``description``; return it.
+
+        Called only after a person's yes (``hub scenario findings --issue``). An unknown team
+        raises naming it, and nothing is created. Never retried, as it is not idempotent.
+        """
         ...

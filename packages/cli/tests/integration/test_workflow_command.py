@@ -627,6 +627,51 @@ def test_approves_the_gate_and_resumes_the_run_when_approve_names_the_paused_run
     assert approval.status == "approved"
 
 
+def test_gives_the_gate_its_approver_when_a_person_approves_it(
+    sample: SampleRun, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gated(sample)
+    monkeypatch.setattr(workflow_command.getpass, "getuser", lambda: "jdoe")
+
+    result = sample.run_command("approve", RUN_ID, "looks good")
+
+    assert result.exit_code == 0, result.output
+    [decision] = [r for r in sample.records() if r["event"] == "decision"]
+    assert decision["approver"] == "jdoe"
+    [ship] = [r for r in sample.records() if r.get("node") == "ship" and r["event"] == "step_end"]
+    assert ship["output"] == {"decision": "approve", "text": "looks good", "approver": "jdoe"}
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        (KeyError("uid"), "no account name is known"),
+        (OSError("no account"), "no account name is known"),
+        ("unknown", "approver 'unknown'"),
+    ],
+)
+def test_refuses_the_decision_and_stays_paused_when_no_person_is_known(
+    sample: SampleRun, monkeypatch: pytest.MonkeyPatch, case: tuple[object, str]
+) -> None:
+    account, reason = case
+
+    def getuser() -> str:
+        if isinstance(account, Exception):
+            raise account
+        return str(account)
+
+    gated(sample)
+    monkeypatch.setattr(workflow_command.getpass, "getuser", getuser)
+
+    result = sample.run_command("approve", RUN_ID)
+
+    assert result.exit_code == 1
+    assert "names no person" in result.output
+    assert reason in result.output
+    assert [r for r in sample.records() if r["event"] == "decision"] == []
+    assert sample.fakes.calls("make") == []
+
+
 def test_skips_the_guarded_node_and_refuses_another_decision_when_reject_ends_the_run(
     sample: SampleRun,
 ) -> None:

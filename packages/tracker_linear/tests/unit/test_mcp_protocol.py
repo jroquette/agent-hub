@@ -8,16 +8,19 @@ import pytest
 from agent_hub.core.errors import TrackerError
 from agent_hub.core.tracker.tracker_client import Issue
 from agent_hub.tracker_linear.mcp_protocol import (
+    CREATE_FIX,
     DENIED,
     LINEAR_TOOL_PREFIX,
     LINEAR_TOOLS,
     MAX_COMMENT_CHARS,
+    MAX_DESCRIPTION_CHARS,
     MAX_LABELS,
     MAX_NAME_CHARS,
     MAX_NAMES,
     MAX_QUOTED_CHARS,
     MAX_READY_ISSUES,
     MAX_REPLY_BYTES,
+    MAX_TITLE_CHARS,
     TOOLS,
     WRITE_KINDS,
     CallKind,
@@ -32,6 +35,7 @@ from agent_hub.tracker_linear.mcp_protocol import (
     StateSaved,
     call_error,
     comment_read_call,
+    create_issue_call,
     get_issue_call,
     label_read_call,
     list_ready_call,
@@ -198,9 +202,13 @@ def test_prefixes_every_tool_when_table_read() -> None:
         CallKind.SAVE_STATE: ["save_issue"],
         CallKind.SAVE_LABELS: ["save_issue"],
         CallKind.SAVE_COMMENT: ["save_comment"],
+        CallKind.CREATE_ISSUE: ["save_issue"],
     }
 
 
+# AGH-362 (Q-5) adds a fourth write kind, create_issue: this pin of the three is kept, insert-only
+# (AC-350.35), as a strict xfail; test_allows_one_write_tool_when_call_writes_or_creates pins four.
+@pytest.mark.xfail(strict=True, reason="create_issue is a fourth write kind (AGH-362)")
 def test_allows_no_write_tool_when_call_reads() -> None:
     assert {CallKind.SAVE_STATE, CallKind.SAVE_LABELS, CallKind.SAVE_COMMENT} == WRITE_KINDS
     for kind, tools in TOOLS.items():
@@ -744,3 +752,67 @@ def test_rejects_reply_when_issue_listed_twice() -> None:
         parse_reply(
             list_ready_call("DEM", "agent-ready"), _line({"issues": [first, again], "more": False})
         )
+
+
+def test_allows_one_write_tool_when_call_writes_or_creates() -> None:
+    assert {
+        CallKind.SAVE_STATE,
+        CallKind.SAVE_LABELS,
+        CallKind.SAVE_COMMENT,
+        CallKind.CREATE_ISSUE,
+    } == WRITE_KINDS
+    for kind, tools in TOOLS.items():
+        writes = [tool for tool in tools if "save_" in tool]
+        assert len(writes) == (1 if kind in WRITE_KINDS else 0), kind
+        assert len(tools) == 1 or kind not in WRITE_KINDS, kind
+
+
+def test_names_no_prefix_when_create_issue_prompt_built() -> None:
+    call = create_issue_call("DEM", "Order mcp__x stays held", "See mcp__Linear__save_issue.")
+
+    text = prompt(call)
+
+    assert "mcp__" not in text
+    assert text.endswith("\n" + request_line(call.kind, call.arguments))
+    assert (call.operation, call.issue_id) == ("create_issue", None)
+    assert json.loads(text.splitlines()[-1])["arguments"]["title"] == "Order mcp__x stays held"
+
+
+def test_refuses_long_text_before_call_when_create_issue_built() -> None:
+    with pytest.raises(TrackerError, match=r"^create_issue: title too long"):
+        create_issue_call("DEM", "t" * (MAX_TITLE_CHARS + 1), "Plain words.")
+    with pytest.raises(TrackerError, match=r"^create_issue: description too long"):
+        create_issue_call("DEM", "A title", "d" * (MAX_DESCRIPTION_CHARS + 1))
+
+
+def test_parses_issue_when_create_issue_replied() -> None:
+    call = create_issue_call("DEM", "A title", "")
+
+    assert parse_reply(call, json.dumps({"issue": _ISSUE_JSON})) == _ISSUE
+
+
+def test_names_team_when_create_issue_answers_team_not_found() -> None:
+    call = create_issue_call("NOPE", "A title", "Plain words.")
+
+    with pytest.raises(TrackerError) as raised:
+        parse_reply(call, json.dumps({"error": "team not found"}))
+
+    assert str(raised.value).startswith("create_issue: team 'NOPE' not found in Linear; ")
+    assert "may have been created" not in str(raised.value)
+
+
+def test_names_team_check_when_create_issue_reply_has_another_shape() -> None:
+    call = create_issue_call("DEM", "A title", "Plain words.")
+
+    with pytest.raises(TrackerError) as raised:
+        parse_reply(call, json.dumps({"id": "DEM-9"}))
+
+    assert raised.value.fix == CREATE_FIX
+
+
+def test_shares_one_create_fix_when_adapters_read() -> None:
+    # Review Q7 (AGH-362): one definition, so the two transports cannot drift apart.
+    from agent_hub.tracker_linear import graphql, graphql_transport, mcp_protocol  # noqa: PLC0415
+
+    assert graphql.CREATE_FIX is graphql_transport.CREATE_FIX
+    assert mcp_protocol.CREATE_FIX is graphql_transport.CREATE_FIX
