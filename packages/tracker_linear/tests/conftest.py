@@ -51,6 +51,7 @@ _STATE_FILTER_KEYS = frozenset({"team", "name"})
 _LABEL_FILTER_KEYS = frozenset({"name", "team"})
 _UPDATE_INPUT_KEYS = frozenset({"stateId", "addedLabelIds", "removedLabelIds"})
 _COMMENT_INPUT_KEYS = frozenset({"issueId", "body"})
+_CREATE_INPUT_KEYS = frozenset({"teamId", "title", "description"})
 _UUID_NAMESPACE = uuid.NAMESPACE_URL
 NOT_FOUND_MESSAGE = "Entity not found: Issue"
 
@@ -66,6 +67,7 @@ _OPERATIONS = {
     "UpdateIssue": ("mutation", "issueUpdate"),
     "CreateComment": ("mutation", "commentCreate"),
 }
+_OPERATIONS |= {"FindTeams": ("query", "teams"), "CreateIssue": ("mutation", "issueCreate")}
 _ROOT_ARGUMENTS = {
     "issues": {"filter": "IssueFilter", "first": "Int", "after": "String"},
     "issue": {"id": "String!"},
@@ -73,6 +75,10 @@ _ROOT_ARGUMENTS = {
     "issueLabels": {"filter": "IssueLabelFilter"},
     "issueUpdate": {"id": "String!", "input": "IssueUpdateInput!"},
     "commentCreate": {"input": "CommentCreateInput!"},
+}
+_ROOT_ARGUMENTS |= {
+    "teams": {"filter": "TeamFilter"},
+    "issueCreate": {"input": "IssueCreateInput!"},
 }
 _OPERATION = re.compile(r"\s*(query|mutation)\s+(\w+)\s*\(([^)]*)\)\s*(\{.*\})\s*", re.DOTALL)
 _DECLARATION = re.compile(r"\$(\w+)\s*:\s*([\w!\[\]]+)")
@@ -144,6 +150,8 @@ class FakeLinearApi:
             "FindLabels": self._labels,
             "UpdateIssue": self._update_issue,
             "CreateComment": self._create_comment,
+            "FindTeams": self._teams,
+            "CreateIssue": self._create_issue,
         }
         try:
             full = handlers[request["operationName"]](request["variables"])
@@ -306,6 +314,29 @@ class FakeLinearApi:
             return {"commentCreate": {"success": False}}
         self._backend.comments.append((issue.id, comment_input["body"]))
         return {"commentCreate": {"success": True}}
+
+    def _teams(self, variables: Json) -> Json:
+        # The TeamFilter the adapter sends: exactly {key: {eq: <key>}}.
+        team_filter: Json = variables["filter"]
+        assert set(team_filter) == {"key"}, team_filter
+        team = _eq(team_filter["key"])
+        nodes = [{"id": _team_uuid(team)}] if team in self._backend.states else []
+        return {"teams": {"nodes": nodes}}
+
+    def _create_issue(self, variables: Json) -> Json:
+        create_input: Json = variables["input"]
+        assert set(create_input) == _CREATE_INPUT_KEYS, create_input
+        team_id = _assert_uuid(create_input["teamId"], "issueCreate(input: {teamId})")
+        teams = {_team_uuid(team): team for team in self._backend.states}
+        assert team_id in teams, f"teamId {team_id} is not a team"
+        assert isinstance(create_input["title"], str), create_input
+        assert isinstance(create_input["description"], str), create_input
+        if not self.mutation_success:
+            return {"issueCreate": {"success": False, "issue": None}}
+        issue = self._backend.new_issue(
+            teams[team_id], create_input["title"], create_input["description"]
+        )
+        return {"issueCreate": {"success": True, "issue": self._node(issue)}}
 
     def _team(self, issue: Issue) -> str:
         return self.issue_teams.get(issue.id, _team_of(issue))
@@ -522,6 +553,10 @@ def _issue_uuid(issue: Issue) -> str:
 
 def _state_uuid(team: str, name: str) -> str:
     return str(uuid.uuid5(_UUID_NAMESPACE, f"agent-hub-fake:state:{team}:{name}"))
+
+
+def _team_uuid(team: str) -> str:
+    return str(uuid.uuid5(_UUID_NAMESPACE, f"agent-hub-fake:team:{team}"))
 
 
 def _label_uuid(team: str | None, name: str) -> str:
@@ -813,6 +848,8 @@ class FakeClaude:
         """The honest answer to one request."""
         if kind is CallKind.LIST_READY:
             return self._ready(arguments["team"], arguments["label"])
+        if kind is CallKind.CREATE_ISSUE:
+            return self._create(arguments)
         issue = self.backend.issues.get(arguments["issue_id"])
         if issue is None:
             return {"error": "not found"}
@@ -825,6 +862,13 @@ class FakeClaude:
             if _team_of(issue) == team and label in issue.labels and not self._state(issue).closed
         ]
         return {"issues": issues, "more": False}
+
+    def _create(self, arguments: Json) -> Json:
+        team = arguments["team"]
+        if team not in self.backend.states:
+            return {"error": "team not found"}
+        created = self.backend.new_issue(team, arguments["title"], arguments["description"])
+        return {"issue": _reply_issue(created)}
 
     def _get(self, issue: Issue, _arguments: Json) -> Json:
         return {"issue": _reply_issue(issue)}
