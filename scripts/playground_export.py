@@ -27,12 +27,13 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -61,8 +62,9 @@ SOURCES_ONLY = (".", ":(exclude,attr:linguist-generated)")
 LOCAL_FILE = re.compile(r"(^|/)[^/]*\.local\.[^/]+$")
 NO_SESSION = "Not made by a playground session"
 UNTITLED = "Untitled session"
-# The Studio's publish reply: one line per file written in the hub (apps/web/.../skills/draft.ts).
-PUBLISHED = re.compile(r"^PUBLISHED\s+(\S+)", re.MULTILINE)
+# A Studio draft a session writes in the hub (.hub-drafts/<draft_id>/); a publish version names it.
+DRAFT_PATH = re.compile(r"(?:^|/)\.hub-drafts/((skill|agent|hook)-[a-z0-9]{6})/")
+VERSIONS_PAGE = 200
 WRITING_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 
 
@@ -148,7 +150,7 @@ class Session:
     turns: list[Turn]
     # The paths its Write and Edit calls wrote, absolute or as given.
     written: list[str] = field(default_factory=list)
-    # The hub paths a Studio publish reply listed.
+    # The hub units (a skill's folder, an agent's or a hook's file) a publish of its drafts wrote.
     published: list[str] = field(default_factory=list)
 
 
@@ -375,8 +377,8 @@ def conductor_token(log: Path) -> str | None:
 
 def read_session(
     events: Sequence[Mapping[str, Any]], commits: Sequence[Commit]
-) -> tuple[list[Turn], list[str], list[str]]:
-    """A session's turns, the paths it wrote and the hub paths it published.
+) -> tuple[list[Turn], list[str]]:
+    """A session's turns and the paths it wrote.
 
     A turn opens on each owner message and takes the answers they gave and the commits of
     ``commits`` made until the next one. A commit is the session's when its subject ends a line
@@ -385,7 +387,6 @@ def read_session(
     """
     turns: list[Turn] = []
     written: list[str] = []
-    published: list[str] = []
     for event in events:
         kind, body = event.get("kind"), event.get("body") or {}
         if kind == "user.message":
@@ -413,9 +414,70 @@ def read_session(
                     if commit.sha not in turns[-1].commits
                     and re.search(re.escape(commit.subject) + r"""(?=["'\n\\]|$)""", command)
                 ]
-        elif kind == "text":
-            published += PUBLISHED.findall(str(body.get("text", "")))
-    return turns, written, published
+    return turns, written
+
+
+def drafts_of(written: Sequence[str]) -> list[str]:
+    """The Studio drafts (``draft_id``) among the paths a session wrote."""
+    return list(dict.fromkeys(m.group(1) for path in written if (m := DRAFT_PATH.search(path))))
+
+
+def published_units(client: httpx.Client, drafts: Collection[str]) -> dict[str, str]:
+    """The hub unit each of ``drafts`` was published to: the ``publish`` versions of the
+    project's items (``GET .../skills``, then each item's ``.../versions``, every page) that
+    name one. Only the kinds of ``drafts`` are read; an item without versions, or a server whose
+    versions carry no ``draft_id`` (older than AGH-298), credits nothing."""
+    kinds = {draft.split("-", 1)[0] for draft in drafts}
+    if not kinds:
+        return {}
+    catalog = client.get(f"/api/v1/projects/{PROJECT}/skills")
+    if catalog.status_code == httpx.codes.NOT_FOUND:
+        return {}
+    catalog.raise_for_status()
+    units: dict[str, str] = {}
+    for item in catalog.json().get("items", []):
+        if item.get("kind") not in kinds:
+            continue
+        ids = (item["kind"], item["source"], item["name"])
+        url = f"/api/v1/projects/{PROJECT}/skills/" + "/".join(quote(str(p), safe="") for p in ids)
+        for page in _version_pages(client, f"{url}/versions"):
+            units |= {
+                version["draft_id"]: str(page["unit_path"])
+                for version in page.get("items", [])
+                if version.get("origin") == "publish" and version.get("draft_id") in drafts
+            }
+    return units
+
+
+def _version_pages(client: httpx.Client, url: str) -> Iterator[dict[str, Any]]:
+    """Every page of an item's versions, by their cursor; none when the item has no history."""
+    cursor: str | None = None
+    while True:
+        params: dict[str, str | int] = {"limit": VERSIONS_PAGE}
+        if cursor:
+            params["cursor"] = cursor
+        reply = client.get(url, params=params)
+        if reply.status_code == httpx.codes.NOT_FOUND:
+            return
+        reply.raise_for_status()
+        page = reply.json()
+        yield page
+        cursor = page.get("next_cursor")
+        if not cursor:
+            return
+
+
+def credit_published(client: httpx.Client, sessions: Sequence[Session]) -> None:
+    """Give each session the hub units its Studio drafts were published to (``published``):
+    only a draft it wrote credits it."""
+    writers: dict[str, list[Session]] = {}
+    for session in sessions:
+        for draft in drafts_of(session.written):
+            writers.setdefault(draft, []).append(session)
+    for draft, unit in published_units(client, writers.keys()).items():
+        for session in writers[draft]:
+            if unit not in session.published:
+                session.published.append(unit)
 
 
 def _session_events(client: httpx.Client, session_id: str) -> list[dict[str, Any]]:
@@ -434,9 +496,14 @@ def _session_events(client: httpx.Client, session_id: str) -> list[dict[str, Any
 
 
 def owner_sessions(
-    start: datetime, *, commits: Sequence[Commit], logs: Sequence[Path]
+    start: datetime,
+    *,
+    commits: Sequence[Commit],
+    logs: Sequence[Path],
+    transport: httpx.BaseTransport | None = None,
 ) -> list[Session]:
-    """The playground sessions active since ``start - lead``, or that made one of ``commits``.
+    """The playground sessions active since ``start - lead``, or that made one of ``commits``,
+    each with the hub units its Studio drafts were published to (``credit_published``).
 
     Raises RequestsUnavailableError when the conductor cannot be read.
     """
@@ -449,7 +516,9 @@ def owner_sessions(
         )
     sessions = []
     try:
-        with httpx.Client(base_url=CONDUCTOR, timeout=CONDUCTOR_TIMEOUT) as client:
+        with httpx.Client(
+            base_url=CONDUCTOR, timeout=CONDUCTOR_TIMEOUT, transport=transport
+        ) as client:
             client.get("/", params={"token": token})
             reply = client.get("/api/v1/agent-sessions", params={"project": PROJECT})
             reply.raise_for_status()
@@ -458,9 +527,7 @@ def owner_sessions(
                 updated = _instant(item.get("updated_at")) or created
                 if created is None or updated is None or updated < start - REQUEST_LEAD:
                     continue
-                turns, written, published = read_session(
-                    _session_events(client, str(item["id"])), commits
-                )
+                turns, written = read_session(_session_events(client, str(item["id"])), commits)
                 if created < start - REQUEST_LEAD and not any(turn.commits for turn in turns):
                     continue
                 sessions.append(
@@ -471,9 +538,9 @@ def owner_sessions(
                         created_at=created,
                         turns=turns,
                         written=written,
-                        published=published,
                     )
                 )
+            credit_published(client, sessions)
     except (httpx.HTTPError, ValueError, KeyError) as error:
         raise RequestsUnavailableError(f"the conductor at {CONDUCTOR} failed: {error!r}") from error
     return sorted(sessions, key=lambda session: session.created_at)
@@ -487,8 +554,9 @@ def _instant(value: object) -> datetime | None:
 
 
 def _wrote(session: Session, path: str, roots: Sequence[Path]) -> bool:
-    """Whether the session wrote ``path`` (relative to one of ``roots``) or published it."""
-    if path in session.published:
+    """Whether the session wrote ``path`` (relative to one of ``roots``), or a draft whose
+    publish wrote the unit holding it."""
+    if any(path == unit or path.startswith(f"{unit}/") for unit in session.published):
         return True
     targets = {str(root / path) for root in roots}
     return any(written in targets or written == path for written in session.written)
