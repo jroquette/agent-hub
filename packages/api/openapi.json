@@ -1194,6 +1194,218 @@
         "title": "CatalogItem",
         "type": "object"
       },
+      "ChangeDecisionView": {
+        "additionalProperties": false,
+        "description": "The owner's decision on a plan change request (``<n>.decision.md``, D-11).",
+        "properties": {
+          "decided_at": {
+            "title": "Decided At",
+            "type": "string"
+          },
+          "decided_by": {
+            "title": "Decided By",
+            "type": "string"
+          },
+          "decision": {
+            "enum": [
+              "approved",
+              "declined"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "required": [
+          "decision",
+          "decided_by",
+          "decided_at",
+          "note"
+        ],
+        "title": "ChangeDecisionView",
+        "type": "object"
+      },
+      "ChangeRequestDecisionBody": {
+        "additionalProperties": false,
+        "description": "``POST .../change-requests/{n}/decision``: approved or declined, and the owner's note\n(required to decline).",
+        "properties": {
+          "decision": {
+            "enum": [
+              "approved",
+              "declined"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "title": "ChangeRequestDecisionBody",
+        "type": "object"
+      },
+      "ChangeRequestView": {
+        "additionalProperties": false,
+        "description": "A plan change request (``change-requests/<n>.md``, two-level-flows S2): its asking\n``ticket``, ``status`` folded from its decision (None when the request cannot be read,\n``problem`` then says why), the plan versions, the tickets it affects, when it was opened and\nby which ``run_id``. ``approval_id`` is the open gate of that run that answers it (P8, A5),\nNone when the run has none: hub web then records the decision itself (AC-2.14). ``path`` is\nrelative to the hub's ``brain/``.",
+        "properties": {
+          "affected": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Affected",
+            "type": "array"
+          },
+          "approval_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Id"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChangeDecisionView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "n": {
+            "minimum": 1.0,
+            "title": "N",
+            "type": "integer"
+          },
+          "opened_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opened At"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "plan_from": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan From"
+          },
+          "plan_to": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan To"
+          },
+          "problem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Problem"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "open",
+                  "approved",
+                  "declined"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "ticket": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ticket"
+          }
+        },
+        "required": [
+          "n",
+          "ticket",
+          "status",
+          "plan_from",
+          "plan_to",
+          "affected",
+          "opened_at",
+          "run_id",
+          "decision",
+          "path",
+          "problem"
+        ],
+        "title": "ChangeRequestView",
+        "type": "object"
+      },
       "ChangedFile": {
         "additionalProperties": false,
         "description": "A file the session's tool calls changed (``Edit``, ``MultiEdit``, ``Write``,\n``NotebookEdit``, subagents' included); ``last_change_id`` is the ``tool_use_id`` of the\nlatest change to it, the id the chat's review marks compare with.",
@@ -1406,6 +1618,10 @@
         ],
         "title": "CollectorStatus",
         "type": "object"
+      },
+      "Commit": {
+        "pattern": "^[0-9a-f]{7,40}$",
+        "type": "string"
       },
       "ConfigFileView": {
         "additionalProperties": false,
@@ -2046,7 +2262,7 @@
       },
       "FeatureDetail": {
         "additionalProperties": false,
-        "description": "A feature with its acceptance criteria rows, its records (D3) and every eval; ``plan``\n(None without ``plan.md``) and ``acceptance_eval`` (None before one exists), whose verdict is\nthe header's ``verdict``.",
+        "description": "A feature with its acceptance criteria rows, its records (D3) and every eval; ``plan``\n(None without ``plan.md``) and ``acceptance_eval`` (None before one exists), whose verdict is\nthe header's ``verdict``; ``change_requests`` by number.",
         "properties": {
           "ac_rows": {
             "default": [],
@@ -2075,6 +2291,14 @@
                 "type": "null"
               }
             ]
+          },
+          "change_requests": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ChangeRequestView"
+            },
+            "title": "Change Requests",
+            "type": "array"
           },
           "derived": {
             "default": true,
@@ -5131,6 +5355,12 @@
         "title": "NowItem",
         "type": "object"
       },
+      "OneLine1000": {
+        "maxLength": 1000,
+        "minLength": 1,
+        "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f]*$",
+        "type": "string"
+      },
       "OpenPermission": {
         "additionalProperties": false,
         "description": "The permission request a live session waits on, as memory holds it (E10).\n\n``summary`` is the input summary (at most 4 KiB); ``input`` is the tool input only for an\n``AskUserQuestion`` (its questions) or a plan approval (its plan), None for a tool.",
@@ -6137,6 +6367,133 @@
           "changed_files"
         ],
         "title": "PlatformSyncResult",
+        "type": "object"
+      },
+      "PreflightRun": {
+        "additionalProperties": false,
+        "description": "One preflight run of a ticket: when it ran, the plan version and commit it checked, the\nblocker outcomes it read, the input it was given (a discovery or a declined change's note,\n``input_text``; null for ``none``), the drift it found with its local notes (at least one for\n``local``), the change request it opened (required for ``plan``) and the workflow\nrun it belongs to.",
+        "properties": {
+          "blockers_read": {
+            "items": {
+              "$ref": "#/components/schemas/TicketKey"
+            },
+            "maxItems": 50,
+            "title": "Blockers Read",
+            "type": "array"
+          },
+          "change_request": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Request"
+          },
+          "commit": {
+            "$ref": "#/components/schemas/Commit"
+          },
+          "drift": {
+            "enum": [
+              "none",
+              "local",
+              "plan"
+            ],
+            "title": "Drift",
+            "type": "string"
+          },
+          "input": {
+            "enum": [
+              "none",
+              "discovery",
+              "declined_change"
+            ],
+            "title": "Input",
+            "type": "string"
+          },
+          "input_text": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OneLine1000"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "local_notes": {
+            "items": {
+              "$ref": "#/components/schemas/OneLine1000"
+            },
+            "maxItems": 50,
+            "title": "Local Notes",
+            "type": "array"
+          },
+          "plan_version": {
+            "minimum": 1.0,
+            "title": "Plan Version",
+            "type": "integer"
+          },
+          "ran_at": {
+            "format": "date-time",
+            "title": "Ran At",
+            "type": "string"
+          },
+          "run_id": {
+            "$ref": "#/components/schemas/RunId"
+          }
+        },
+        "required": [
+          "ran_at",
+          "plan_version",
+          "commit",
+          "blockers_read",
+          "input",
+          "input_text",
+          "drift",
+          "local_notes",
+          "change_request",
+          "run_id"
+        ],
+        "title": "PreflightRun",
+        "type": "object"
+      },
+      "PreflightView": {
+        "additionalProperties": false,
+        "description": "A ticket's ``preflight.json`` (``path`` relative to the hub's ``brain/``): every run,\noldest first, or why it could not be read (``runs`` then empty).",
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "problem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Problem"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/PreflightRun"
+            },
+            "title": "Runs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "path",
+          "runs",
+          "problem"
+        ],
+        "title": "PreflightView",
         "type": "object"
       },
       "Problem": {
@@ -7671,6 +8028,10 @@
         ],
         "title": "RunGateResult",
         "type": "object"
+      },
+      "RunId": {
+        "pattern": "^[a-z0-9][a-z0-9-]{0,31}$",
+        "type": "string"
       },
       "RunStatus": {
         "enum": [
@@ -9615,6 +9976,10 @@
         "title": "TicketFlow",
         "type": "object"
       },
+      "TicketKey": {
+        "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,31}$",
+        "type": "string"
+      },
       "TicketPlan": {
         "additionalProperties": false,
         "description": "The planning of the feature's tickets, every ticket named by its row's ``ref``.\n\n``layers`` are the parallel groups (Kahn's layers over tickets not done or canceled);\n``can_start`` the first layer's tickets that wait on nothing and are not started yet;\n``order`` the recommended order; ``waiting`` the tickets with a blocker not done;\n``cycles`` each dependency cycle (left out of the layers); ``critical_path`` the longest\nchain of tickets not done; ``epics`` the rows that are a parent of other rows: they track\nthe work, are left out of the layers and never block.",
@@ -9701,6 +10066,87 @@
           "warnings"
         ],
         "title": "TicketPlan",
+        "type": "object"
+      },
+      "TicketRecords": {
+        "additionalProperties": false,
+        "description": "``GET /features/{project}/{slug}/tickets/{ticket}`` (two-level-flows A7): what the ticket\npanel shows that no tickets row carries. ``brief`` and ``plan`` are the brain paths of the\nticket's context brief and ticket plan when they exist; ``preflight`` its record (None\nwithout one); ``change_requests`` the plan change requests it asks or is held by.",
+        "properties": {
+          "brief": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brief"
+          },
+          "change_requests": {
+            "items": {
+              "$ref": "#/components/schemas/ChangeRequestView"
+            },
+            "title": "Change Requests",
+            "type": "array"
+          },
+          "derived": {
+            "default": true,
+            "title": "Derived",
+            "type": "boolean"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan"
+          },
+          "preflight": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PreflightView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "sources_missing": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EventSource"
+            },
+            "title": "Sources Missing",
+            "type": "array"
+          },
+          "ticket": {
+            "title": "Ticket",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project",
+          "slug",
+          "ticket",
+          "brief",
+          "plan",
+          "preflight",
+          "change_requests"
+        ],
+        "title": "TicketRecords",
         "type": "object"
       },
       "TicketRow": {
@@ -13446,7 +13892,7 @@
     },
     "/api/v1/features/{project}/{slug}": {
       "get": {
-        "description": "One feature with its acceptance criteria.",
+        "description": "One feature with its acceptance criteria; each open change request carries the open gate\nof its run that answers it (``approval_id``), null when the run has none.",
         "operationId": "get_feature_api_v1_features__project___slug__get",
         "parameters": [
           {
@@ -13582,6 +14028,93 @@
           }
         },
         "summary": "Run Ac Check",
+        "tags": [
+          "features"
+        ]
+      }
+    },
+    "/api/v1/features/{project}/{slug}/change-requests/{n}/decision": {
+      "post": {
+        "description": "The owner decides a plan change request whose run has no open gate (abandoned, or its\nrecord lost): creates ``change-requests/<n>.decision.md`` once with the hub's person as\n``decided_by``, never editing the request; the next ``/implement`` of its ticket reads it.\n409 while the run's gate is open (answer it through ``approval_id``), once decided, or with\nno person to record; 422 for a decline without a note.",
+        "operationId": "decide_change_request_api_v1_features__project___slug__change_requests__n__decision_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "n",
+            "required": true,
+            "schema": {
+              "maximum": 999999,
+              "minimum": 1,
+              "title": "N",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangeRequestDecisionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeRequestView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Decide Change Request",
         "tags": [
           "features"
         ]
@@ -13731,6 +14264,83 @@
           }
         },
         "summary": "Get Feature Tickets",
+        "tags": [
+          "features"
+        ]
+      }
+    },
+    "/api/v1/features/{project}/{slug}/tickets/{ticket}": {
+      "get": {
+        "description": "One ticket's records the ticket panel shows: its context brief and ticket plan, every\npreflight run (local notes, discoveries) and the change requests it asks or is held by, each\nopen one with its run's open gate; 404 when the feature does not list the ticket.",
+        "operationId": "get_ticket_records_api_v1_features__project___slug__tickets__ticket__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "ticket",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Ticket",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TicketRecords"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Ticket Records",
         "tags": [
           "features"
         ]

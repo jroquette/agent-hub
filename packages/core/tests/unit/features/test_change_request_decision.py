@@ -59,13 +59,15 @@ class Folders:
 
 
 class Writer:
-    def __init__(self, *, exists: bool = False) -> None:
-        self.exists = exists
+    def __init__(self, *, exists: bool = False, linked: bool = False) -> None:
+        self.exists, self.linked = exists, linked
         self.written: list[tuple[str, str, int, str]] = []
 
     def create_decision(self, hub_path: str, *, slug: str, n: int, text: str) -> None:
         if self.exists:
             raise FileExistsError(n)
+        if self.linked:
+            raise FileNotFoundError("change-requests")
         self.written.append((hub_path, slug, n, text))
 
 
@@ -188,6 +190,19 @@ def test_refuses_when_decision_file_appears_meanwhile() -> None:
         use("demo", "demo-feature", 2, decision="approved", note=None)
 
     assert raised.value.code == "decided"
+
+
+# A folder that became a link since the read: refused, never followed.
+def test_refuses_when_folder_cannot_be_written() -> None:
+    use, _ = decide(writer=Writer(linked=True))
+
+    with pytest.raises(ChangeRequestDecisionError) as raised:
+        use("demo", "demo-feature", 2, decision="approved", note=None)
+
+    assert (raised.value.code, raised.value.reason) == (
+        "unwritable",
+        "change-requests/2.decision.md could not be created",
+    )
 
 
 # A5: who decided is a person, never empty or unknown.
