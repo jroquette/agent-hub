@@ -49,6 +49,7 @@ from agent_hub.core.hub_config.effective_environments import EffectiveEnvironmen
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.scenarios.access_policy import (
     Effect,
+    Origin,
     PolicyDecision,
     decide,
     find_environment,
@@ -155,11 +156,11 @@ class ActionLog:
             self.events.context_captured(capture)
             self.sink.flush(self.events)
 
-    def begun(self, call: NodeCall, entry: ActionEntry | None) -> None:
+    def begun(self, step: str, *, attempt: int, poll: int, entry: ActionEntry | None) -> None:
         """The call's ``action_start`` line, before anything else of it: one per call (an
         expect's polls are counted from them) and the mark of a call that may have run."""
-        line: dict[str, JsonValue] = {"event": ACTION_START, "node": call.node.id}
-        line |= {"attempt": call.attempt, "poll": call.poll}
+        line: dict[str, JsonValue] = {"event": ACTION_START, "node": step}
+        line |= {"attempt": attempt, "poll": poll}
         if entry is not None:
             line |= {"action": entry.ref, "effect": entry.document.effect}
         # A write's start must outlive the hub: a resume reads it to ask again.
@@ -237,6 +238,9 @@ class ActionExecutors:
     stop: threading.Event = field(default_factory=threading.Event)
     # What its messages call the run.
     noun: str = "scenario run"
+    # Who proposed the calls: the run's document, or an agent (a picked workaround's steps,
+    # whose asks the pick answered: they are in ``asks``).
+    origin: Origin = "author"
 
     def stop_children(self) -> None:
         """Kill every running action's group and the other children (an interrupted layer)."""
@@ -249,30 +253,45 @@ class ActionExecutors:
         node = call.node
         if not isinstance(node, ActionNode | ExpectNode):
             raise NodeFailedError("config", f"{node.type} nodes do not run as actions")
-        entry = self._entry(node)
-        self.log.begun(call, entry)
+        return self.run_call(
+            node.id, action=node.action, attempt=call.attempt, poll=call.poll, inputs=call.inputs
+        )
+
+    def run_call(
+        self,
+        step: str,
+        *,
+        action: str,
+        attempt: int,
+        inputs: Mapping[str, JsonValue],
+        poll: int = 0,
+    ) -> NodeReply:
+        """One call of ``action`` as step ``step`` (its id as recorded), decided for this
+        runner's ``origin``: an engine node's, or a picked workaround's step."""
+        entry = self._entry(action)
+        self.log.begun(step, attempt=attempt, poll=poll, entry=entry)
         if entry is None:
-            raise NodeFailedError("config", f"the {self.noun} pinned no action {node.action}")
+            raise NodeFailedError("config", f"the {self.noun} pinned no action {action}")
         declared = find_environment(self.view, self.environment)
-        decision = decide(declared, entry.document.effect, "author")
+        decision = decide(declared, entry.document.effect, self.origin)
         facts = ActionFacts(
-            step=node.id,
-            attempt=call.attempt,
+            step=step,
+            attempt=attempt,
             action=entry.ref,
             content_hash=entry.content_hash,
             environment=self.environment,
             services=(),
             effect=entry.document.effect,
-            origin="author",
+            origin=self.origin,
             decision=decision.decision,
-            approver=self.approvers.get(ask_gate(node.id)) if node.id in self.asks else None,
+            approver=self.approvers.get(ask_gate(step)) if step in self.asks else None,
         )
-        self.log.decided(facts, decision, poll=call.poll)
+        self.log.decided(facts, decision, poll=poll)
         line = CallLine(
             facts=facts,
             reason_kind=decision.reason_kind,
-            poll=call.poll,
-            inputs=call.inputs,
+            poll=poll,
+            inputs=inputs,
             started=False,
         )
         planned = self._checked(entry, decision, line)
@@ -281,9 +300,9 @@ class ActionExecutors:
     def until_exit(self, argv: Sequence[str], call: NodeCall) -> int:
         return self.inner.until_exit(argv, call)
 
-    def _entry(self, node: ActionNode | ExpectNode) -> ActionEntry | None:
+    def _entry(self, action: str) -> ActionEntry | None:
         try:
-            return resolve_action(self.pinned.entries, node.action, pack=self.pack)
+            return resolve_action(self.pinned.entries, action, pack=self.pack)
         except ActionRefError:
             return None
 
