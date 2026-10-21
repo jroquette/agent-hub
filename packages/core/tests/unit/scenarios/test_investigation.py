@@ -248,12 +248,22 @@ def test_denies_reads_when_investigation_credentials_env_file_targeted(tmp_path:
         ("Grep", {"pattern": "DEMO", "path": "/"}),
         ("Glob", {"pattern": "/proc/*/environ"}),
         ("Glob", {"pattern": "*/*/environ", "path": "/"}),
+        # Claude Code splits a Grep glob on spaces and commas; ripgrep reads each part as a
+        # gitignore-style glob that overrides .gitignore, so these reach the ignored env file.
+        ("Grep", {"pattern": "DEMO", "path": "../demo-api", "glob": "*.py .env.staging"}),
+        ("Grep", {"pattern": "DEMO", "path": "../demo-api", "glob": "*.py,.env.staging"}),
+        ("Grep", {"pattern": "DEMO", "path": "../demo-api", "glob": "\\.env*"}),
+        ("Grep", {"pattern": "DEMO", "path": "../demo-api", "glob": "/env/.env*"}),
+        ("Grep", {"pattern": "DEMO", "path": "../demo-api", "glob": "env/\\.env.staging"}),
+        ("Grep", {"pattern": "DEMO", "path": "..", "glob": "\\.env*"}),
+        ("Grep", {"pattern": "DEMO", "path": "..", "glob": "*.py"}),
     ]
     passed = [
         ("Read", {"file_path": "../demo-api/environment/other.txt"}),
         # E-5: a Grep above the folder with no glob skips the git-ignored env file.
         ("Grep", {"pattern": "DEMO", "path": ".."}),
-        ("Grep", {"pattern": "DEMO", "path": "..", "glob": "*.py"}),
+        ("Grep", {"pattern": "DEMO", "path": "..", "glob": "!*.env*"}),
+        ("Grep", {"pattern": "DEMO", "path": "actions", "glob": "*.yaml"}),
         ("Glob", {"pattern": "**/*.yaml", "path": str(hub.parent)}),
     ]
 
@@ -262,5 +272,32 @@ def test_denies_reads_when_investigation_credentials_env_file_targeted(tmp_path:
 
     assert [verdict.allowed for verdict in verdicts] == [False] * len(denied)
     assert all("env file" in verdict.reason or "/proc" in verdict.reason for verdict in verdicts)
+    assert all(str(env_file.resolve()) not in verdict.reason for verdict in verdicts)
     assert [verdict.allowed for verdict in passes] == [True] * len(passed)
     assert policy.env_files == (str(env_file.resolve()),)
+
+
+def test_denies_reads_when_investigation_path_outside_workspace(tmp_path: Any) -> None:
+    policy, hub = a_policy(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "notes.txt").write_text("not the workspace's\n", encoding="utf-8")
+    (hub / "link-out").symlink_to(outside)
+    denied = [
+        ("Read", {"file_path": "~/.aws/credentials"}),
+        ("Read", {"file_path": str(outside / "notes.txt")}),
+        ("Read", {"file_path": "link-out/notes.txt"}),
+        ("Read", {"file_path": "../../outside/notes.txt"}),
+        ("Glob", {"pattern": "*", "path": str(outside)}),
+        ("Glob", {"pattern": "../../outside/*"}),
+        ("Glob", {"pattern": "*", "path": "link-out"}),
+        ("Grep", {"pattern": "x", "path": str(outside)}),
+        ("Grep", {"pattern": "x", "path": "link-out"}),
+        ("Grep", {"pattern": "x", "path": "~"}),
+    ]
+
+    verdicts = [investigation.tool_verdict(policy, tool, given) for tool, given in denied]
+
+    assert [verdict.allowed for verdict in verdicts] == [False] * len(denied)
+    assert all("workspace" in verdict.reason for verdict in verdicts)
+    assert investigation.tool_verdict(policy, "Read", {"file_path": "README.md"}).allowed

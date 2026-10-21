@@ -17,17 +17,21 @@ every text redacted of the secret shapes (``secret_shapes.redact_shapes``).
 The investigation session's tools (P-17, AM-3, AM-4 safety 1): ``tool_verdict`` judges each call
 the session's ``PreToolUse`` hook sees against a ``ToolPolicy`` (the hub's real path, its
 ``actions/`` folder, every declared env file's real path and the run). ``Read``, ``Glob`` and
-``Grep`` pass except on a declared env file, compared by resolved real path (a symlink, a ``..``
-or a relative form is caught); a ``Glob`` whose pattern can reach one, or a ``Grep`` on one, on
-the folder holding one, or whose ``glob`` filter can reach one under its root, is denied (E-5: a
-folder above with no filter passes, the env file being git-ignored). They are denied under
-``/proc`` too, where a running action's environment (its env file's values) can be read, and a
-``Glob`` or ``Grep`` of the whole file system with it. ``Write`` passes only under
-``actions/<pack>/``. ``Bash`` passes only for ``./hub action list|plan …``, ``./hub action run …
---run <run>`` and ``./hub scenario propose --run <run>``, each word plain (no shell
+``Grep`` pass only inside the workspace (the folder holding the hub and its repos, E-13) and
+never on a declared env file, both by resolved real path (a symlink, a ``..`` or a relative form
+is caught); a ``Glob`` whose pattern can reach one, or a ``Grep`` on one or on the folder
+holding one, is denied (E-5: a folder above with no filter passes, the env file being
+git-ignored). A ``Grep`` filter is split as Claude Code splits it (spaces, and commas outside
+braces) and ripgrep reads each part as a glob that overrides ``.gitignore``, so under a root
+holding a declared env file at any depth only a filter made of ``!`` negations passes. The three
+are denied under ``/proc`` too, where a running action's environment (its env file's values) can
+be read, and a ``Glob`` or ``Grep`` of the whole file system with it. ``Write`` passes only
+under ``actions/<pack>/``. ``Bash`` passes only for ``./hub action list|plan …``, ``./hub action
+run … --run <run>`` and ``./hub scenario propose --run <run>``, each word plain (no shell
 metacharacter); the proposal's JSON may follow ``propose`` as one quoted here-document
-(``<<'END'``), whose body the shell never expands. Every other tool is denied. A verdict's reason
-names the tool and the rule, never a path's content. This is not a sandbox (known limit 2).
+(``<<'END'``), whose body the shell never expands. Every other tool is denied. A verdict's
+reason names the tool and the rule, never a path's content. This is not a sandbox (known limit
+2).
 """
 
 import os
@@ -260,6 +264,10 @@ def _env_file_denied(tool: str) -> ToolVerdict:
     return _denied(f"{tool} reaches the env file of a declared environment")
 
 
+def _outside_denied(tool: str) -> ToolVerdict:
+    return _denied(f"{tool} reaches outside the workspace (the hub and its repos)")
+
+
 def _process_files_denied(tool: str) -> ToolVerdict:
     return _denied(f"{tool} reaches the processes' files (/proc), where credentials can be read")
 
@@ -273,10 +281,15 @@ class _Paths:
 
     def __init__(self, policy: ToolPolicy) -> None:
         self.workdir = policy.workdir
+        self.workspace = os.path.dirname(policy.workdir)
         self.env_files = tuple(path.lower() for path in policy.env_files)
 
     def resolve(self, path: str) -> str:
         return os.path.realpath(os.path.join(self.workdir, os.path.expanduser(path)))
+
+    def inside(self, real: str) -> bool:
+        """Whether ``real`` is the workspace or below it."""
+        return real == self.workspace or real.startswith(self.workspace.rstrip("/") + "/")
 
     def is_env_file(self, real: str) -> bool:
         return real.lower() in self.env_files
@@ -303,6 +316,8 @@ def _read_verdict(policy: ToolPolicy, tool_input: Mapping[str, object]) -> ToolV
     real = paths.resolve(path)
     if _in_process_files(real):
         return _process_files_denied("Read")
+    if not paths.inside(real):
+        return _outside_denied("Read")
     return _env_file_denied("Read") if paths.is_env_file(real) else _ALLOWED
 
 
@@ -336,11 +351,15 @@ def _glob_verdict(policy: ToolPolicy, tool_input: Mapping[str, object]) -> ToolV
         real = paths.resolve("/".join(parts))
         if _in_process_files(real):
             return _process_files_denied("Glob")
+        if not paths.inside(real):
+            return _outside_denied("Glob")
         return _env_file_denied("Glob") if paths.is_env_file(real) else _ALLOWED
     base = paths.resolve("/".join(parts[:first]) or "/")
     rest = [part.lower() for part in parts[first:] if part]
     if _in_process_files(base) or (base == "/" and _segments_reach(rest[:1], ["proc"])):
         return _process_files_denied("Glob")
+    if not paths.inside(base) or ".." in rest:
+        return _outside_denied("Glob")
     reached = any(_segments_reach(rest, rel.split("/")) for rel in paths.under(base))
     return _env_file_denied("Glob") if reached else _ALLOWED
 
@@ -350,23 +369,37 @@ def _grep_verdict(policy: ToolPolicy, tool_input: Mapping[str, object]) -> ToolV
     root = paths.resolve(_text_input(tool_input, "path") or ".")
     if root == "/" or _in_process_files(root):
         return _process_files_denied("Grep")
+    if not paths.inside(root):
+        return _outside_denied("Grep")
     if paths.is_env_file(root):
         return _env_file_denied("Grep")
     if not os.path.isdir(root):
         return _ALLOWED
-    grep_glob = (_text_input(tool_input, "glob") or "").lower()
-    if not grep_glob:
+    grep_glob = _text_input(tool_input, "glob") or ""
+    if not grep_glob.strip():
         return _env_file_denied("Grep") if paths.holds(root) else _ALLOWED
-    for rel in paths.under(root):
-        name = rel.rsplit("/", 1)[-1]
-        if (
-            "{" in grep_glob
-            or fnmatchcase(name, grep_glob)
-            or fnmatchcase(rel, grep_glob)
-            or _segments_reach(grep_glob.split("/"), rel.split("/"))
-        ):
-            return _env_file_denied("Grep")
+    negations = all(part.startswith("!") for part in _glob_parts(grep_glob))
+    if paths.under(root) and not negations:
+        return _env_file_denied("Grep")
     return _ALLOWED
+
+
+def _glob_parts(grep_glob: str) -> list[str]:
+    """A Grep filter's globs as Claude Code splits them: on whitespace, and on commas outside
+    braces."""
+    parts: list[str] = []
+    for word in grep_glob.split():
+        depth, start = 0, 0
+        for index, character in enumerate(word):
+            if character == "{":
+                depth += 1
+            elif character == "}":
+                depth = max(depth - 1, 0)
+            elif character == "," and depth == 0:
+                parts.append(word[start:index])
+                start = index + 1
+        parts.append(word[start:])
+    return [part for part in parts if part]
 
 
 def _write_verdict(policy: ToolPolicy, tool_input: Mapping[str, object]) -> ToolVerdict:
