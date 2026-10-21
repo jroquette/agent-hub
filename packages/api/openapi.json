@@ -3487,6 +3487,46 @@
           }
         ]
       },
+      "InvestigationSession": {
+        "additionalProperties": false,
+        "description": "The session of a scenario run's open investigation: ``started`` when this call\nstarted it.",
+        "properties": {
+          "agent_session_id": {
+            "title": "Agent Session Id",
+            "type": "string"
+          },
+          "investigation": {
+            "title": "Investigation",
+            "type": "integer"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "started": {
+            "title": "Started",
+            "type": "boolean"
+          },
+          "step": {
+            "title": "Step",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "project",
+          "investigation",
+          "step",
+          "agent_session_id",
+          "started"
+        ],
+        "title": "InvestigationSession",
+        "type": "object"
+      },
       "IssueRef": {
         "additionalProperties": false,
         "description": "The tracker issue a run works on; title and url need Linear (``null`` in Phase 2).",
@@ -15740,6 +15780,70 @@
         "summary": "Restore Skill Version",
         "tags": [
           "item versions"
+        ]
+      }
+    },
+    "/api/v1/scenario-runs/{run_id}/investigation": {
+      "post": {
+        "description": "Start the investigation session of a scenario run paused at an open investigation, or\nanswer the one already started (200); 409 when the run is not paused there.",
+        "operationId": "open_investigation_api_v1_scenario_runs__run_id__investigation_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{0,31}$",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvestigationSession"
+                }
+              }
+            },
+            "description": "The session already started"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvestigationSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Open Investigation",
+        "tags": [
+          "scenarios"
         ]
       }
     },

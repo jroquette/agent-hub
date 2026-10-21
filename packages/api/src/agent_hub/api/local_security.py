@@ -40,6 +40,7 @@ STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 RUN_WRITES = re.compile(
     rf"^{re.escape(API_PREFIX)}/(workflow-runs(/[^/]+/(cancel|resume|abandon))?"
     r"|approvals/[^/]+/decision"
+    r"|scenario-runs/[^/]+/investigation"
     r"|features/[^/]+/[^/]+/acs/[^/]+/check-runs)$"
 )
 # The item writes (AGH-295, S7, D13) write into a hub's working tree: strict too, and they need

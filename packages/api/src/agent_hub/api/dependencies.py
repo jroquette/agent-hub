@@ -16,6 +16,7 @@ from agent_hub.api.change_feed import ChangeFeed
 from agent_hub.api.feature_names import FeatureNames
 from agent_hub.api.linear_connection import LinearConnection
 from agent_hub.api.rfc9457 import InvalidParameterError, NotImplementedInBuildError
+from agent_hub.api.scenario_investigation import ScenarioInvestigations
 from agent_hub.api.settings import ApiSettings
 from agent_hub.core.agent_sessions.cloud import CloudSessionCommands
 from agent_hub.core.agent_sessions.control import AgentSessionCommands
@@ -62,6 +63,7 @@ class ApiPorts:
     owner_signoff: SignOffOwnerSteps | None = None
     feature_names: FeatureNames | None = None
     ac_checks: AcCheckRunner | None = None
+    scenario_investigations: ScenarioInvestigations | None = None
 
 
 def _ports(request: Request) -> ApiPorts:
@@ -117,6 +119,14 @@ def run_starts(request: Request) -> StartWorkflowRun:
 def run_control(request: Request) -> ControlWorkflowRun:
     """The workflow-run cancel, resume and abandon, or 501 when not wired."""
     port = _ports(request).run_control
+    if port is None:
+        raise _unwired(request)
+    return port
+
+
+def scenario_investigations(request: Request) -> ScenarioInvestigations:
+    """A scenario run's investigation session, or 501 when not wired."""
+    port = _ports(request).scenario_investigations
     if port is None:
         raise _unwired(request)
     return port
@@ -305,6 +315,7 @@ OwnerSignOffDep = Annotated[SignOffOwnerSteps, Depends(owner_signoff)]
 WorkflowReadsDep = Annotated[WorkflowReads, Depends(workflow_reads)]
 RunStartsDep = Annotated[StartWorkflowRun, Depends(run_starts)]
 RunControlDep = Annotated[ControlWorkflowRun, Depends(run_control)]
+ScenarioInvestigationsDep = Annotated[ScenarioInvestigations, Depends(scenario_investigations)]
 WorkflowGatesDep = Annotated[WorkflowGates, Depends(workflow_gates)]
 GateDecisionsDep = Annotated[DecideWorkflowGate, Depends(gate_decisions)]
 ItemVersionReadsDep = Annotated[ItemVersionReads, Depends(item_version_reads)]
