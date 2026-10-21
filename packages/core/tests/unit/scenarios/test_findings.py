@@ -1,5 +1,6 @@
 """A scenario run's findings as texts for others (AC-350.27; docs/design/scenarios.md)."""
 
+import re
 from datetime import date
 from typing import Any
 
@@ -7,11 +8,15 @@ import pytest
 
 from agent_hub.core.brain.frontmatter import split_frontmatter
 from agent_hub.core.scenarios.findings import (
+    CUT_MARKER,
+    MAX_DRAFT_DESCRIPTION_CHARS,
+    MAX_DRAFT_TITLE_CHARS,
     FindingsError,
     finding_of,
     inbox_note,
     issue_draft,
 )
+from agent_hub.core.scenarios.investigation import MAX_TEXT_CHARS, MAX_TITLE_CHARS
 from agent_hub.core.scenarios.run_record import fold_records
 
 GATE = "order-held__investigation"
@@ -167,3 +172,73 @@ def test_escapes_controls_when_findings_inbox_built() -> None:
 
     assert raw_controls(note.text) == []
     assert "## Order\\x1b[8m hidden\\x1b[0m held\\rFAKE\\x9b2J\\u202eflip" in note.text
+
+
+# Review Q4, Q5 (AGH-362): escapes grow text up to six times; the draft stays under the tracker's
+# caps (the MCP adapter's 255-character title and 10,000-character description), cut at an escape
+# boundary with a marker. Every format character (Cf) and line or paragraph separator is escaped.
+TRACKER_TITLE_CAP = 255
+TRACKER_DESCRIPTION_CAP = 10_000
+# An escape, or one plain character: a cut never ends inside an escape.
+ESCAPE_OR_CHARACTER = r"\\x[0-9a-f]{2}|\\u[0-9a-f]{4}|\\U[0-9a-f]{8}|\\[rt]|."
+
+
+def an_all_controls_record() -> list[dict[str, Any]]:
+    record = a_record()
+    record[-1]["findings"][0].update(
+        title="‮" * MAX_TITLE_CHARS,
+        text="‮" * MAX_TEXT_CHARS,
+        evidence="‮" * MAX_TEXT_CHARS,
+    )
+    return record
+
+
+def test_fits_tracker_caps_when_findings_text_all_controls() -> None:
+    view = fold_records(an_all_controls_record())
+
+    draft = issue_draft(view, view.findings[0], record=RECORD)
+    note = inbox_note(view, view.findings[0], record=RECORD, day=DAY)
+
+    assert len(draft.title) <= MAX_DRAFT_TITLE_CHARS <= TRACKER_TITLE_CAP
+    assert len(draft.description) <= MAX_DRAFT_DESCRIPTION_CHARS <= TRACKER_DESCRIPTION_CAP
+    assert draft.title.endswith(CUT_MARKER)
+    escapes = draft.title.removesuffix(CUT_MARKER).removeprefix("Scenario order-walk: ")
+    assert re.fullmatch(r"(\\u202e)+", escapes), escapes
+    assert draft.description.count(CUT_MARKER) == 2
+    for line in draft.description.splitlines():
+        cut = line.removesuffix(CUT_MARKER)
+        assert "".join(re.findall(ESCAPE_OR_CHARACTER, cut)) == cut
+        assert not re.search(r"\\(u[0-9a-f]{0,3}|x[0-9a-f]?)$", cut), line[-12:]
+    assert raw_controls(draft.title + draft.description + note.text) == []
+
+
+@pytest.mark.parametrize(
+    ("character", "escape"),
+    [
+        ("‎", "\\u200e"),
+        ("‏", "\\u200f"),
+        ("؜", "\\u061c"),
+        ("​", "\\u200b"),
+        ("⁠", "\\u2060"),
+        ("﻿", "\\ufeff"),
+        (" ", "\\u2028"),
+        (" ", "\\u2029"),
+        ("\U000e0041", "\\U000e0041"),
+    ],
+    ids=["lrm", "rlm", "alm", "zwsp", "word-joiner", "bom", "line-sep", "para-sep", "tag"],
+)
+def test_escapes_format_character_when_findings_texts_built(character: str, escape: str) -> None:
+    record = a_record()
+    record[-1]["findings"][0].update(
+        title=f"a{character}b", text=f"c{character}d", evidence=f"e{character}f"
+    )
+    view = fold_records(record)
+
+    draft = issue_draft(view, view.findings[0], record=RECORD)
+    note = inbox_note(view, view.findings[0], record=RECORD, day=DAY)
+
+    for text in (draft.title, draft.description, note.text):
+        assert character not in text
+    assert draft.title.endswith(f"a{escape}b")
+    assert f"c{escape}d" in draft.description
+    assert f"Evidence: e{escape}f" in note.text
