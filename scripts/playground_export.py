@@ -90,6 +90,8 @@ SCREEN_ROUTES: Mapping[str, tuple[Route, ...]] = {
     "brain": (Route("brain", "/knowledge/brain", follow="/projects/"),),
     "feature-detail": (Route("feature", "/features", follow="/features/"),),
     "features": (Route("features", "/features"),),
+    # The Environments page; an environment's own page and the add flows open from it.
+    "environments": (Route("environments", "/projects/demo/environments"),),
     "health": (Route("health", "/health"),),
     "hub-config": (Route("config", "/projects/demo/config"),),
     # The History panel (AGH-297) shows on a Toolkit item's detail and a hub workflow's page.
