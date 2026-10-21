@@ -14,9 +14,20 @@ type Verdict = Literal["SHIP", "SHIP-WITH-OWNER-STEPS", "NO-SHIP"]
 # A golden-path step's state (AGH-136 S8): ``partial`` is a later step with some progress,
 # ``blocked`` a step whose own condition holds while an earlier gate does not, ``unknown`` a
 # step whose evidence cannot be read (``reason`` says why), ``unrecorded`` the gate step whose
-# record was never written (Acceptance with no whole-feature eval, two-level-flows AC-1.6).
+# record was never written (Acceptance with no whole-feature eval, two-level-flows AC-1.6),
+# ``waiting`` a step paused until the owner decides, ``stale`` a step whose record must be made
+# again (a preflight that checked an older plan version than the one approved, AC-2.8).
 type StepState = Literal[
-    "done", "partial", "current", "pending", "skipped", "unknown", "blocked", "unrecorded"
+    "done",
+    "partial",
+    "current",
+    "pending",
+    "skipped",
+    "unknown",
+    "blocked",
+    "unrecorded",
+    "waiting",
+    "stale",
 ]
 # Where a feature's ticket data came from: Linear (a snapshot) or the plan (``features.json``).
 type TicketsSource = Literal["linear", "plan"]
