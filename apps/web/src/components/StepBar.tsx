@@ -22,6 +22,8 @@ const SEGMENT: Record<StepState, CSSProperties> = {
   skipped: { background: "transparent", border: DASHED },
   unknown: { background: "transparent", border: DASHED },
   unrecorded: { background: "transparent", border: DASHED },
+  waiting: { background: "var(--waiting)" },
+  stale: { background: "var(--waiting-soft)", border: "1px solid var(--waiting)" },
 };
 
 /**
