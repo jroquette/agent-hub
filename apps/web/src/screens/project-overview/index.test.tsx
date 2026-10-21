@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import {
+  aFeature,
   aFinding,
   aNeedsYouItem,
   anId,
@@ -181,6 +182,11 @@ const routes: ApiRoutes = {
   ]),
   "/api/v1/projects": aPage([aProjectSummary()]),
   "/api/v1/workflow-runs": runs,
+  "/api/v1/features": aPage([
+    aFeature({ slug: "control-plane", issues: ["ACME-1511"] }),
+    aFeature({ slug: "old-feature", issues: ["ACME-1"] }),
+  ]),
+  "/api/v1/feature-names": aPage([]),
   "/api/v1/sessions": aPage([
     aSession({
       id: anId(1),
@@ -189,6 +195,7 @@ const routes: ApiRoutes = {
       errors: 6,
       started_at: at(-9000),
       ended_at: at(-6000),
+      last_activity_at: recent,
       agent: "main",
       label: aSessionLabel({ issue: "ACME-1511", repo: "storefront", branch: "main" }),
     }),
@@ -197,6 +204,32 @@ const routes: ApiRoutes = {
       status: "live",
       label: aSessionLabel({ issue: null, workflow: "/create-plan", branch: "dev/agh-9-x" }),
       started_at: at(-100),
+      last_activity_at: recent,
+    }),
+    aSession({
+      id: anId(3),
+      status: "ended",
+      outcome: "done",
+      last_activity_at: recent,
+      label: aSessionLabel({
+        issue: "ACME-7",
+        title: "Fix the order export",
+        workflow: "/fix",
+        workflows: ["/fix"],
+      }),
+    }),
+    aSession({
+      id: anId(4),
+      status: "live",
+      last_activity_at: recent,
+      label: aSessionLabel({ issue: "AGH-112", workflow: "/fix", workflows: ["/fix"] }),
+    }),
+    aSession({
+      id: anId(5),
+      status: "ended",
+      outcome: "done",
+      last_activity_at: old,
+      label: aSessionLabel({ issue: "ACME-1", workflow: "/feature", workflows: ["/feature"] }),
     }),
   ]),
   "/api/v1/needs-you": aPage([
@@ -336,33 +369,33 @@ describe("ProjectOverviewScreen", () => {
     ).toBeInTheDocument();
   });
 
-  it("lists recent sessions live first and opens one on click", async () => {
+  it("lists the features worked on this week, never sessions, and opens one on click", async () => {
     const user = userEvent.setup();
     const { router } = renderProject();
 
-    const table = await screen.findByRole("table", { name: "Recent sessions" });
-    await within(table).findByText("ACME-1511 · /feature");
-    const rows = within(table).getAllByRole("row").slice(1);
-    expect(rows[0]).toHaveTextContent("/create-plan");
-    expect(rows[1]).toHaveTextContent("Error");
-    await user.click(within(table).getByText("ACME-1511 · /feature"));
-    expect(router.state.location.pathname).toBe(`/sessions/${anId(1)}`);
+    const recent = await screen.findByRole("region", { name: "Recent work" });
+    const features = within(await within(recent).findByRole("list", { name: "Features" }));
+    expect(await features.findByText("control-plane")).toBeInTheDocument();
+    expect(features.queryByText("old-feature")).not.toBeInTheDocument();
+    expect(within(recent).queryByRole("table")).not.toBeInTheDocument();
+    await user.click(features.getByText("control-plane"));
+    expect(router.state.location.pathname).toBe("/features/agent-hub/control-plane");
   });
 
-  it("names each recent session by its label, never by its agent (label, AC-201.4)", async () => {
-    renderProject();
+  it("lists the tickets worked on this week, leaving out the agents' own runs", async () => {
+    const user = userEvent.setup();
+    const { router } = renderProject();
 
-    const table = await screen.findByRole("table", { name: "Recent sessions" });
-    await within(table).findByText("ACME-1511 · /feature");
-    const headers = within(table)
-      .getAllByRole("columnheader")
-      .map((th) => th.textContent);
-    expect(headers).not.toContain("Agent");
-    expect(headers).toEqual(["What", "Status", "Started", "Took", "Cost"]);
-    expect(within(table).getByText("storefront · main")).toBeInTheDocument();
-    expect(within(table).getByText("agent-hub · dev/agh-9-x")).toBeInTheDocument();
-    const mains = within(table).queryAllByText(/\bmain\b/);
-    expect(mains.map((node) => node.textContent)).toEqual(["storefront · main"]);
+    const recent = await screen.findByRole("region", { name: "Recent work" });
+    const tickets = within(await within(recent).findByRole("list", { name: "Tickets" }));
+    expect(await tickets.findByText("ACME-7")).toBeInTheDocument();
+    expect(tickets.getByText("Fix the order export")).toBeInTheDocument();
+    // AGH-112 runs as an agent ticket, already listed above.
+    expect(tickets.queryByText("AGH-112")).not.toBeInTheDocument();
+    // ACME-1511 belongs to a feature.
+    expect(tickets.queryByText("ACME-1511")).not.toBeInTheDocument();
+    await user.click(tickets.getByText("ACME-7"));
+    expect(router.state.location.pathname).toBe(`/sessions/${anId(3)}`);
   });
 
   it("folds setup and health away for engineers, with findings, repos and the hub", async () => {
@@ -377,61 +410,77 @@ describe("ProjectOverviewScreen", () => {
 
     const scope = within(setup as HTMLElement);
     expect(await scope.findByText("1 error · 1 warning · 0 info")).toBeInTheDocument();
+    expect(scope.getByRole("link", { name: /See all 2 findings/ })).toBeInTheDocument();
+    // The message leads; the rule id follows as a reference.
+    expect(scope.getByText("132 lines, limit 100")).toBeInTheDocument();
     const rules = scope.getAllByText(/instructions\.size|brain\.memory/).map((n) => n.textContent);
     expect(rules).toEqual(["instructions.size", "brain.memory"]);
 
     const table = scope.getByRole("table", { name: "Repos" });
-    expect(within(table).getAllByText("make check-fast")).toHaveLength(3);
+    const headers = within(table)
+      .getAllByRole("columnheader")
+      .map((th) => th.textContent);
+    expect(headers).toEqual([
+      "Repo",
+      "What it is",
+      "Main branch",
+      "Open pull requests",
+      "Checks",
+      "Agent instructions",
+    ]);
+    // The commands live in each Checks tooltip, not in a cell of their own.
+    expect(within(table).queryAllByRole("button", { name: /Copy/ })).toHaveLength(0);
+    expect(within(table).getAllByText("Fast and full")).toHaveLength(3);
     expect(within(table).getByText("Missing")).toBeInTheDocument();
-    expect(within(table).getByText("132 lines")).toBeInTheDocument();
+    expect(within(table).getByText("132 lines, over 100")).toBeInTheDocument();
   });
 
-  it("shows what the hub configuration sets, and who set it, without opening Hub config", async () => {
+  it("says how the project is set up in sentences, never as a made-up example", async () => {
     renderProject();
 
     const section = within(
       await screen.findByRole("region", { name: "How this project is set up" }),
     );
     expect(await section.findByText("Sync pending (lock 0.3.0, pin 0.4.0)")).toBeInTheDocument();
-    expect(section.getByText("bench")).toBeInTheDocument();
-    expect(section.getByText("demo-api")).toBeInTheDocument();
+    expect(section.getByText(/Agents pick up Linear issues in team/)).toBeInTheDocument();
     expect(section.getByText("agent-ready")).toBeInTheDocument();
-    // The commit title and the PR title that follows it.
-    expect(section.getAllByText("TIP-42: feat(api): add the hub config view")).toHaveLength(2);
-    expect(section.getByText("jdoe/")).toBeInTheDocument();
+    // Patterns read as words; the made-up example only sits in a tooltip.
+    expect(section.queryByText(/TIP-42/)).not.toBeInTheDocument();
+    expect(section.getByText("Commit and pull request titles")).toBeInTheDocument();
+    expect(section.getAllByText("issue key").length).toBeGreaterThan(0);
+    expect(section.getByText("short description")).toBeInTheDocument();
+    // The pattern has no {prefix}, so the prefix is said to be unused.
+    expect(section.getByText(/is not used: the branch pattern has no place/)).toBeInTheDocument();
     expect(section.getAllByText("Set by you").length).toBeGreaterThan(0);
-    expect(section.getByText("local")).toBeInTheDocument();
-    expect(section.getByText("1 marked live")).toBeInTheDocument();
-    expect(section.getByText("2 words")).toBeInTheDocument();
-    expect(section.getByRole("link", { name: /Open hub config/ })).toHaveAttribute(
+    expect(section.queryByText("Built-in")).not.toBeInTheDocument();
+    // Guard rules as sentences; a rule with nothing in it is not shown.
+    expect(
+      section.getByText("Agents ask you before editing 1 file or folder."),
+    ).toBeInTheDocument();
+    expect(
+      section.getByText("2 words are blocked from anything the agents write."),
+    ).toBeInTheDocument();
+    expect(section.queryByText(/never contact/)).not.toBeInTheDocument();
+    expect(section.getByText("Production")).toBeInTheDocument();
+    expect(section.getByText(/demo-api/)).toBeInTheDocument();
+    expect(section.getByRole("link", { name: /Open hub configuration/ })).toHaveAttribute(
       "href",
       "/projects/agent-hub/config",
+    );
+    expect(section.getByRole("link", { name: /See guard/ })).toHaveAttribute(
+      "href",
+      "/projects/agent-hub/config#guard",
     );
   });
 
-  it("AC-PG-38.7 links Setup and health to the hub configuration and each repo's conventions", async () => {
+  it("links Repositories to the hub configuration once, with no per-repo link", async () => {
     const user = userEvent.setup();
-    renderProject({
-      "/api/v1/projects/agent-hub/repos": aPage([
-        aRepo(),
-        aRepo({ name: "web app", dir: "web-app" }),
-      ]),
-    });
+    renderProject();
 
     await user.click(await screen.findByText("Setup and health"));
     const setup = within(screen.getByText("Setup and health").closest("details") as HTMLElement);
-    expect(setup.getByRole("link", { name: /Open hub configuration/ })).toHaveAttribute(
-      "href",
-      "/projects/agent-hub/config",
-    );
-    expect(await setup.findByRole("link", { name: "Conventions of agent-hub" })).toHaveAttribute(
-      "href",
-      "/projects/agent-hub/config?repo=agent-hub",
-    );
-    expect(setup.getByRole("link", { name: "Conventions of web app" })).toHaveAttribute(
-      "href",
-      "/projects/agent-hub/config?repo=web-app",
-    );
+    expect(setup.getAllByRole("link", { name: /Open hub configuration/ })).toHaveLength(1);
+    expect(setup.queryByRole("link", { name: /Conventions of/ })).not.toBeInTheDocument();
   });
 
   describe("states", () => {
@@ -476,7 +525,16 @@ describe("ProjectOverviewScreen", () => {
 
       expect(await screen.findByText("Could not load the agents' tickets")).toBeInTheDocument();
       expect(screen.getByText("Database busy.")).toBeInTheDocument();
-      expect(await screen.findByRole("table", { name: "Recent sessions" })).toBeInTheDocument();
+      expect(await screen.findByRole("list", { name: "Features" })).toBeInTheDocument();
+    });
+
+    it("keeps a failing features read inside its column", async () => {
+      renderProject({
+        "/api/v1/features": aProblem({ status: 503, title: "Busy", detail: "Records busy." }),
+      });
+
+      expect(await screen.findByText("Could not load features")).toBeInTheDocument();
+      expect(await screen.findByRole("list", { name: "Tickets" })).toBeInTheDocument();
     });
 
     it("shows the now.md problem when the file cannot be read", async () => {
@@ -531,7 +589,8 @@ describe("ProjectOverviewScreen", () => {
     const { container } = renderProject();
 
     await screen.findByText("Cap the tracker team list");
-    await screen.findByText("/create-plan");
+    await screen.findByText("ACME-7");
+    await screen.findByText("control-plane");
     expect(await seriousViolations(container)).toEqual([]);
   });
 });
