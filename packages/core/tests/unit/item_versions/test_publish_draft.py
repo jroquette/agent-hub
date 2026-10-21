@@ -382,7 +382,7 @@ def test_keeps_hook_in_place_when_draft_equal_to_hook() -> None:
     assert rig.drafts() == []
 
 
-def test_answers_not_found_when_renamed_skill_retried() -> None:
+def test_refuses_spent_draft_when_renamed_skill_retried_with_old_item_gone() -> None:
     rig = _Rig({f"{ALPHA}/SKILL.md": _named("alpha")})
     rig.draft("skill-ren003", {"SKILL.md": _named("alpha2")})
     rig.writer.fail_on.add(".hub-drafts/skill-ren003")
@@ -392,11 +392,36 @@ def test_answers_not_found_when_renamed_skill_retried() -> None:
     rig.writer.fail_on.clear()
     rig.writer.writes.clear()
 
-    with pytest.raises(EntityNotFoundError):
+    with pytest.raises(ItemWriteRefusedError) as refused:
         rig.publish.publish(PROJECT, "skill-ren003", alpha, confirm_managed=False)
 
+    # A20 comes first: the old item being gone is not what answers.
+    assert refused.value.code == "draft_already_published"
     assert rig.writer.writes == []
     assert rig.origins("plugin/demo/skills/alpha2") == [VersionOrigin.PUBLISH]
+    assert rig.drafts() == [".hub-drafts/skill-ren003/SKILL.md"]
+
+
+def test_answers_not_found_when_unversioned_rename_retried_with_old_item_gone() -> None:
+    renamed = "plugin/demo/skills/alpha2"
+    rig = _Rig({f"{ALPHA}/SKILL.md": _named("alpha")})
+    rig.draft("skill-ren010", {"SKILL.md": _named("alpha2", f"token: {SYNTHETIC_TOKEN}\n")})
+    rig.writer.fail_on.add(".hub-drafts/skill-ren010")
+    alpha = _ref(ItemKind.SKILL, "demo", "alpha")
+    with pytest.raises(DraftNotRemovedError) as first:
+        rig.publish.publish(PROJECT, "skill-ren010", alpha, confirm_managed=False)
+    assert first.value.result.reason == "secret"
+    assert f"{ALPHA}/SKILL.md" not in rig.hub.skill_files
+    rig.writer.fail_on.clear()
+    rig.writer.writes.clear()
+
+    # A12: no version names the draft, so the gone old item answers.
+    with pytest.raises(EntityNotFoundError):
+        rig.publish.publish(PROJECT, "skill-ren010", alpha, confirm_managed=False)
+
+    assert rig.writer.writes == []
+    assert rig.store.last(PROJECT, renamed) is None
+    assert rig.drafts() == [".hub-drafts/skill-ren010/SKILL.md"]
 
 
 def test_refuses_new_item_when_retried_without_version() -> None:
@@ -972,3 +997,91 @@ def test_keeps_other_target_when_spent_rename_draft_published_onto_it() -> None:
     }
     assert rig.store.last(PROJECT, GAMMA) is None
     assert rig.drafts() == [".hub-drafts/skill-spt005/SKILL.md"]
+
+
+def _spent_scout(rig: _Rig, draft_id: str) -> None:
+    rig.draft(draft_id, {"scout.md": _named("scout", "New.\n")})
+    rig.writer.fail_on.add(f".hub-drafts/{draft_id}")
+    with pytest.raises(DraftNotRemovedError):
+        rig.publish.publish(PROJECT, draft_id, SCOUT_REF, confirm_managed=False)
+    rig.writer.fail_on.clear()
+    rig.writer.writes.clear()
+
+
+def test_refuses_spent_draft_when_aimed_at_target_of_other_kind() -> None:
+    rig = _Rig({SCOUT: _named("scout"), f"{ALPHA}/SKILL.md": _named("alpha")})
+    _spent_scout(rig, "agent-spt006")
+
+    with pytest.raises(ItemWriteRefusedError) as refused:
+        rig.publish.publish(
+            PROJECT, "agent-spt006", _ref(ItemKind.SKILL, "demo", "alpha"), confirm_managed=False
+        )
+
+    _assert_spent(rig, refused)
+    assert rig.hub.skill_files[f"{ALPHA}/SKILL.md"] == _named("alpha")
+    assert rig.drafts() == [".hub-drafts/agent-spt006/scout.md"]
+
+
+def test_refuses_spent_draft_when_kept_draft_edited_into_invalid_one() -> None:
+    rig = _Rig({SCOUT: _named("scout")})
+    _spent_scout(rig, "agent-spt007")
+    rig.draft("agent-spt007", {"scout.md": b"no frontmatter\n"})
+
+    with pytest.raises(ItemWriteRefusedError) as refused:
+        rig.publish.publish(PROJECT, "agent-spt007", SCOUT_REF, confirm_managed=False)
+
+    _assert_spent(rig, refused)
+    assert rig.hub.skill_files[SCOUT] == _named("scout", "New.\n")
+    assert rig.drafts() == [".hub-drafts/agent-spt007/scout.md"]
+
+
+def _versions(rig: _Rig, *unit_paths: str) -> list[list[str]]:
+    return [[version.id for version in rig.store.page(PROJECT, path)] for path in unit_paths]
+
+
+def test_refuses_rename_retry_when_written_not_recorded() -> None:
+    store = _PublishFailingStore()
+    rig = _Rig({f"{ALPHA}/SKILL.md": _named("alpha")}, store=store)
+    rig.draft("skill-unr001", {"SKILL.md": _named("alpha2")})
+    alpha = _ref(ItemKind.SKILL, "demo", "alpha")
+    with pytest.raises(ItemWrittenUnrecordedError):
+        rig.publish.publish(PROJECT, "skill-unr001", alpha, confirm_managed=False)
+    store.failing = False
+    rig.writer.writes.clear()
+    before = _versions(rig, ALPHA, RENAMED)
+
+    with pytest.raises(ItemWriteRefusedError) as refused:
+        rig.publish.publish(PROJECT, "skill-unr001", alpha, confirm_managed=False)
+
+    assert refused.value.code == "item_exists"
+    assert rig.writer.writes == []
+    assert _versions(rig, ALPHA, RENAMED) == before
+    assert rig.hub.skill_files[f"{ALPHA}/SKILL.md"] == _named("alpha")
+    assert rig.drafts() == [".hub-drafts/skill-unr001/SKILL.md"]
+
+
+@pytest.mark.parametrize(
+    ("draft_id", "files", "unit"),
+    [
+        ("skill-unr002", {"SKILL.md": _named("changelog")}, "plugin/demo/skills/changelog"),
+        ("agent-unr003", {"planner.md": _named("planner")}, "plugin/demo/agents/planner.md"),
+    ],
+)
+def test_refuses_new_item_retry_when_written_not_recorded(
+    draft_id: str, files: dict[str, bytes], unit: str
+) -> None:
+    store = _PublishFailingStore()
+    rig = _Rig({}, store=store)
+    rig.draft(draft_id, files)
+    with pytest.raises(ItemWrittenUnrecordedError):
+        rig.publish.publish(PROJECT, draft_id, None, confirm_managed=False)
+    store.failing = False
+    rig.writer.writes.clear()
+
+    with pytest.raises(ItemWriteRefusedError) as refused:
+        rig.publish.publish(PROJECT, draft_id, None, confirm_managed=False)
+
+    assert refused.value.code == "item_exists"
+    assert rig.writer.writes == []
+    assert rig.store.page(PROJECT, unit) == ()
+    assert rig.drafts() == sorted(f".hub-drafts/{draft_id}/{path}" for path in files)
