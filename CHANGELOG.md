@@ -20,6 +20,17 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   read, on every search). A query with no word (`!!!`) exits 2, and a query that starts with `-` goes after `--`
   (`hub search -- -foo`). The database gains migration 0008; a Python whose SQLite lacks FTS5 can no longer migrate
   it (ADR 0044) (AGH-391).
+
+### Changed
+
+- Redaction `r1` skips its four `secret` rules on a text with no name word followed by `=` or a JSON key's `:`,
+  which no `secret` rule can match: the same rule set with identical results, about three times faster on note-sized
+  prose (AGH-391).
+
+## [0.19.0] - 2026-10-21
+
+### Added
+
 - The base plugin gains the `/premortem` and `/context-audit` skills (AGH-414). `/premortem` assumes a decision
   already failed and gives its top three causes an early-warning sign and the cheapest experiment that could prove the
   choice wrong. `/context-audit` estimates the always-loaded context of a hub and its repos and ranks the cuts by
@@ -64,9 +75,6 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Changed
 
-- Redaction `r1` skips its four `secret` rules on a text with no name word followed by `=` or a JSON key's `:`,
-  which no `secret` rule can match: the same rule set with identical results, about three times faster on note-sized
-  prose (AGH-391).
 - `make playground-export`: a session is credited with the hub files of a Studio Publish through the draft it
   wrote (the `draft_id` a `publish` version names, read from the conductor's item versions), instead of a
   `PUBLISHED <path>` line in Claude's reply, which the server publish no longer gives (AGH-298). A conductor older
@@ -858,7 +866,8 @@ Includes 0.3.0, which was never tagged.
 - The `hub.json` config model and schema, the generator templates, `hub init` and `hub sync`.
 - The release check on `v*` tags.
 
-[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/jroquette/agent-hub/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/jroquette/agent-hub/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/jroquette/agent-hub/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/jroquette/agent-hub/compare/v0.16.0...v0.16.1
