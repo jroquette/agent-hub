@@ -341,8 +341,9 @@
 }
 /* The brief box is the chat composer's box: text first, its bar at the bottom. */
 .ft-new-brief {
-  padding: var(--space-3) var(--space-3) var(--space-3);
+  padding: var(--space-3);
   cursor: text;
+  container: ft-new-brief / inline-size;
 }
 .ft-new-brief .ft-new-idea {
   min-height: 200px;
@@ -368,9 +369,15 @@
 }
 .ft-new-brief > .ft-new-error {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: var(--space-1);
   color: var(--failed);
+}
+.ft-new-error p {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0;
 }
 .ft-new-hint {
   display: flex;
@@ -532,17 +539,24 @@
     position: static;
   }
 }
+@container ft-new (max-width: 560px) {
+  .ft-new-head {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "title" "project";
+  }
+}
 @container ft-new (max-width: 760px) {
   .ft-new-next ol {
     grid-template-columns: minmax(0, 1fr);
   }
 }
-@container ft-new (max-width: 640px) {
+/* The box's bar keeps Attach and Start; the notes go first when the box narrows. */
+@container ft-new-brief (max-width: 640px) {
   .ft-new-drop-note {
-    visibility: hidden;
+    display: none;
   }
 }
-@container ft-new (max-width: 480px) {
+@container ft-new-brief (max-width: 480px) {
   .ft-new-brief .ft-new-kbd {
     display: none;
   }

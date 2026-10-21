@@ -7,6 +7,7 @@ import {
   aCapabilities,
   aFeature,
   aPage,
+  aProblem,
   aProjectSummary,
   aWorkdir,
   anAgentSession,
@@ -96,6 +97,31 @@ describe("NewFeatureScreen", () => {
     await user.click(screen.getByRole("button", { name: "Start with Claude" }));
     expect(screen.getByLabelText("Start from an issue")).toHaveFocus();
     expect(screen.getByText("Fix the issue id in Options.")).toBeInTheDocument();
+  });
+
+  it("shows a failed start even after a refused file", async () => {
+    const user = userEvent.setup();
+    renderNew({
+      "POST /api/v1/agent-sessions": aProblem({
+        status: 409,
+        title: "Busy",
+        detail: "The hub is busy.",
+      }),
+    });
+
+    const idea = await screen.findByLabelText("What do you want to build?");
+    fireEvent.paste(idea, {
+      clipboardData: { files: [new File([new Uint8Array([0, 1, 2])], "app.bin")] },
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent("“app.bin” is neither");
+    await user.type(idea, IDEA);
+    await waitFor(async () => {
+      expect(await ready()).not.toHaveAttribute("aria-disabled");
+    });
+    await user.click(screen.getByRole("button", { name: "Start with Claude" }));
+
+    expect(await screen.findByText("The hub is busy.")).toBeInTheDocument();
+    expect(screen.queryByText(/app\.bin/)).not.toBeInTheDocument();
   });
 
   it("refuses a slug that already names a feature", async () => {

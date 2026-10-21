@@ -166,8 +166,8 @@ export function NewFeatureScreen() {
       ) : chosenProject === "" ? (
         // The brief's draft is kept per project: the form waits for it to be known.
         <div className="ft-new-form" aria-hidden="true">
-          <Skeleton height={280} radius={20} />
-          <Skeleton height={400} radius={12} />
+          <Skeleton height={300} radius={28} />
+          <Skeleton height={430} radius={12} />
         </div>
       ) : (
         <BriefForm
@@ -258,6 +258,7 @@ function BriefForm({
     size: useId(),
     sizeHint: useId(),
     reason: useId(),
+    error: useId(),
     options: useId(),
     next: useId(),
   };
@@ -272,7 +273,7 @@ function BriefForm({
   // The first reason that holds, said next to the button (and read with it).
   const why =
     discussion.unavailable !== null
-      ? "Claude cannot run on this machine yet."
+      ? `${discussion.unavailable.title}.`
       : attachments.reading > 0
         ? "Wait for the files to be read."
         : !hasIdea && !hasIssue
@@ -295,6 +296,7 @@ function BriefForm({
 
   const start = () => {
     if (discussion.pending) return;
+    setAttachError(null); // An old refusal must not hide what this press says.
     if (!ready) {
       focusFault();
       return;
@@ -352,6 +354,8 @@ function BriefForm({
         ? "Could not start the conversation. Try again."
         : null;
 
+  const errors = [attachError, startError].filter((error) => error !== null);
+
   return (
     // Ctrl/Cmd+Enter starts from any field of the form; the button does the same.
     // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
@@ -379,7 +383,8 @@ function BriefForm({
         <div
           className={cx("as-composer ft-new-brief", dragging && "as-composer-drop")}
           onMouseDown={(event) => {
-            if (event.target !== event.currentTarget) return;
+            const spot = event.target as HTMLElement;
+            if (spot.closest("button, a, input, textarea, label, li")) return;
             event.preventDefault();
             focusBox();
           }}
@@ -392,10 +397,12 @@ function BriefForm({
             label="Attached to this request"
             onRemoveImage={(key) => {
               attachments.removeImage(key);
+              setAttachError(null);
               focusBox();
             }}
             onRemoveFile={(key) => {
               attachments.removeFile(key);
+              setAttachError(null);
               focusBox();
             }}
             onReplaceImage={attachments.replaceImage}
@@ -407,7 +414,7 @@ function BriefForm({
             rows={8}
             value={idea}
             placeholder={placeholder}
-            aria-describedby={ids.reason}
+            aria-describedby={errors.length > 0 ? `${ids.error} ${ids.reason}` : ids.reason}
             onChange={(event) => {
               setIdea(event.target.value);
             }}
@@ -440,11 +447,15 @@ function BriefForm({
               {discussion.pending ? "Starting…" : "Start with Claude"}
             </Button>
           </div>
-          {(attachError ?? startError) && (
-            <p className="ah-small as-error ft-new-error" role="alert">
-              <Icon name="circle-x" size="sm" />
-              {attachError ?? startError}
-            </p>
+          {errors.length > 0 && (
+            <div id={ids.error} className="as-error ft-new-error" role="alert">
+              {errors.map((error) => (
+                <p key={error} className="ah-small">
+                  <Icon name="circle-x" size="sm" />
+                  {error}
+                </p>
+              ))}
+            </div>
           )}
         </div>
         <p id={ids.reason} className="ft-new-hint ft-new-reason" aria-live="polite">
