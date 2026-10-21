@@ -42,8 +42,9 @@ A later proposal replaces the earlier one as the investigation's options.
 ``findings RUN [--json]`` lists scenario run RUN's findings, read from its record through core's
 ``run_record`` fold: one line each, ``<finding-id>  <step>  <title>``, or ``no findings in run
 RUN``; ``--json`` prints ``run``, ``scenario``, ``environment`` and ``findings`` (each
-``finding_id``, ``step``, ``title``, ``text``, ``evidence``). ``--issue F`` prints finding F's
-tracker issue draft (core's ``findings``: title, then the description) and, on a terminal, asks
+``finding_id``, ``step``, ``title``, ``text``, ``evidence``), in ASCII so no control is shown
+raw. ``--issue F`` prints finding F's tracker issue draft (core's ``findings``: title, then the
+description) and, on a terminal, asks
 ``create this issue in <team>?``: after a ``y`` it calls the tracker's ``create_issue`` once, in
 ``tracker.team`` (the first of ``tracker.teams``), and prints ``created <id>  <url>``; the
 question is asked only once the tracker's key is there and its client resolved. Without a
@@ -53,6 +54,7 @@ An unknown run or finding id exits 1; ``--issue`` with ``--inbox``, or ``--json`
 exits 2.
 """
 
+import json
 import os
 import sys
 from datetime import date
@@ -349,7 +351,8 @@ def findings_command(
     elif inbox is not None:
         _inbox(hub, view, _finding(view, run, inbox), run=run)
     elif as_json:
-        typer.echo(dump_json(_findings_json(view)).decode(), nl=False)
+        # ASCII only: agent-written findings may hold C1 or bidi controls, never shown raw.
+        typer.echo(json.dumps(_findings_json(view), indent=2, sort_keys=True, ensure_ascii=True))
     else:
         _print_findings(run, view)
 
