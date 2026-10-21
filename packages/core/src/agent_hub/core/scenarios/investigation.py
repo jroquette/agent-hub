@@ -13,11 +13,29 @@ untrusted text: ``{"findings": [{"title", "text", "evidence"?}], "options": [{"s
 "steps": [{"action", "with"?}]}]}``, unknown keys refused, every bound of
 ``docs/design/scenarios.md`` § Events and bounds checked (the first problem is the error), then
 every text redacted of the secret shapes (``secret_shapes.redact_shapes``).
+
+The investigation session's tools (P-17, AM-3, AM-4 safety 1): ``tool_verdict`` judges each call
+the session's ``PreToolUse`` hook sees against a ``ToolPolicy`` (the hub's real path, its
+``actions/`` folder, every declared env file's real path and the run). ``Read``, ``Glob`` and
+``Grep`` pass except on a declared env file, compared by resolved real path (a symlink, a ``..``
+or a relative form is caught); a ``Glob`` whose pattern can reach one, or a ``Grep`` on one, on
+the folder holding one, or whose ``glob`` filter can reach one under its root, is denied (E-5: a
+folder above with no filter passes, the env file being git-ignored). ``Write`` passes only under
+``actions/<pack>/``. ``Bash`` passes only for ``./hub action list|plan …``, ``./hub action run …
+--run <run>`` and ``./hub scenario propose --run <run>``, each word plain (no shell
+metacharacter); the proposal's JSON may follow ``propose`` as one quoted here-document
+(``<<'END'``), whose body the shell never expands. Every other tool is denied. A verdict's reason
+names the tool and the rule, never a path's content. This is not a sandbox (known limit 2).
 """
 
-from collections.abc import Mapping, Sequence
+import os
+import re
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Final
+from fnmatch import fnmatchcase
+from typing import Final, Self
+
+from pydantic import BaseModel, ConfigDict
 
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.json_form import InvalidJsonError, JsonValue, load_json_bytes
@@ -162,3 +180,233 @@ def _text(value: JsonValue, where: str, most: int, *, empty: bool = True) -> str
         least = 0 if empty else 1
         raise ProposalError(f"{where} must be text of {least} to {most} characters")
     return redact_shapes(value)
+
+
+# The investigation session's built-in tools; the hook (``tool_verdict``) holds each call.
+INVESTIGATION_TOOLS: Final = ("Read", "Glob", "Grep", "Write", "Bash")
+ACTIONS_FOLDER: Final = "actions"
+HUB_COMMAND: Final = "./hub"
+_WORD = re.compile(r"[A-Za-z0-9_./:=@,+%-]+")
+_HEREDOC = re.compile(r"<<'(?P<end>[A-Za-z_][A-Za-z0-9_]{0,31})'")
+_GLOB_CHARACTERS: Final = frozenset("*?[{")
+_RUN_FLAG: Final = "--run"
+
+
+class ToolPolicy(BaseModel):
+    """What the investigation session may touch: ``workdir`` (the hub's real path) resolves a
+    relative path, ``actions`` is where ``Write`` may write (a pack's folder below it),
+    ``env_files`` are the declared env files' real paths and ``run_id`` the scenario run its
+    ``./hub`` commands must name. It holds paths only, never an env file's content."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    workdir: str
+    actions: str
+    env_files: tuple[str, ...]
+    run_id: str
+
+    @classmethod
+    def of(cls, *, hub: str, env_files: Iterable[str], run_id: str) -> Self:
+        """The policy of ``run_id`` in ``hub``; ``env_files`` are relative to the workspace
+        (the folder holding the hub and its repos), as the config declares them."""
+        real = os.path.realpath(hub)
+        workspace = os.path.dirname(real)
+        resolved = (os.path.realpath(os.path.join(workspace, path)) for path in env_files)
+        return cls(
+            workdir=real,
+            actions=os.path.realpath(os.path.join(real, ACTIONS_FOLDER)),
+            env_files=tuple(dict.fromkeys(resolved)),
+            run_id=run_id,
+        )
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ToolVerdict:
+    """Whether a tool call may run; ``reason`` says why not."""
+
+    allowed: bool
+    reason: str = ""
+
+
+_ALLOWED: Final = ToolVerdict(allowed=True)
+
+
+def _denied(reason: str) -> ToolVerdict:
+    return ToolVerdict(allowed=False, reason=f"investigation: {reason}")
+
+
+def tool_verdict(policy: ToolPolicy, tool: str, tool_input: Mapping[str, object]) -> ToolVerdict:
+    """Whether the investigation session may call ``tool`` with ``tool_input`` (P-17)."""
+    match tool:
+        case "Read":
+            return _read_verdict(policy, tool_input)
+        case "Glob":
+            return _glob_verdict(policy, tool_input)
+        case "Grep":
+            return _grep_verdict(policy, tool_input)
+        case "Write":
+            return _write_verdict(policy, tool_input)
+        case "Bash":
+            return _bash_verdict(policy, tool_input)
+        case _:
+            return _denied(f"{tool[:64]} is not one of the investigation's tools")
+
+
+def _env_file_denied(tool: str) -> ToolVerdict:
+    return _denied(f"{tool} reaches the env file of a declared environment")
+
+
+class _Paths:
+    """The policy's env files, compared ignoring case (stricter, never looser)."""
+
+    def __init__(self, policy: ToolPolicy) -> None:
+        self.workdir = policy.workdir
+        self.env_files = tuple(path.lower() for path in policy.env_files)
+
+    def resolve(self, path: str) -> str:
+        return os.path.realpath(os.path.join(self.workdir, os.path.expanduser(path)))
+
+    def is_env_file(self, real: str) -> bool:
+        return real.lower() in self.env_files
+
+    def holds(self, folder: str) -> bool:
+        return any(os.path.dirname(path) == folder.lower() for path in self.env_files)
+
+    def under(self, folder: str) -> list[str]:
+        """Each env file below ``folder``, as a path from it."""
+        base = folder.lower().rstrip("/") + "/"
+        return [path[len(base) :] for path in self.env_files if path.startswith(base)]
+
+
+def _text_input(tool_input: Mapping[str, object], key: str) -> str | None:
+    value = tool_input.get(key)
+    return value if isinstance(value, str) else None
+
+
+def _read_verdict(policy: ToolPolicy, tool_input: Mapping[str, object]) -> ToolVerdict:
+    path = _text_input(tool_input, "file_path")
+    if not path:
+        return _denied("Read needs a file_path")
+    paths = _Paths(policy)
+    return _env_file_denied("Read") if paths.is_env_file(paths.resolve(path)) else _ALLOWED
+
+
+def _segments_reach(segments: Sequence[str], parts: Sequence[str]) -> bool:
+    """Whether glob ``segments`` match all of ``parts``: ``*`` within a part, ``**`` any run of
+    parts; a segment with braces or ``..`` counts as reaching. One pass per segment."""
+    if any(segment == ".." for segment in segments):
+        return True
+    reach = [True] + [False] * len(parts)
+    for segment in segments:
+        if segment == "**":
+            for index in range(1, len(reach)):
+                reach[index] = reach[index] or reach[index - 1]
+        else:
+            pattern = "*" if "{" in segment else segment
+            reach = [False] + [
+                reach[index] and fnmatchcase(parts[index], pattern) for index in range(len(parts))
+            ]
+    return reach[-1]
+
+
+def _glob_verdict(policy: ToolPolicy, tool_input: Mapping[str, object]) -> ToolVerdict:
+    pattern = _text_input(tool_input, "pattern")
+    if not pattern:
+        return _denied("Glob needs a pattern")
+    paths = _Paths(policy)
+    root = paths.resolve(_text_input(tool_input, "path") or ".")
+    parts = os.path.join(root, os.path.expanduser(pattern)).split("/")
+    first = next((index for index, part in enumerate(parts) if _GLOB_CHARACTERS & set(part)), None)
+    if first is None:
+        reached = paths.is_env_file(paths.resolve("/".join(parts)))
+        return _env_file_denied("Glob") if reached else _ALLOWED
+    base = paths.resolve("/".join(parts[:first]) or "/")
+    rest = [part.lower() for part in parts[first:] if part]
+    reached = any(_segments_reach(rest, rel.split("/")) for rel in paths.under(base))
+    return _env_file_denied("Glob") if reached else _ALLOWED
+
+
+def _grep_verdict(policy: ToolPolicy, tool_input: Mapping[str, object]) -> ToolVerdict:
+    paths = _Paths(policy)
+    root = paths.resolve(_text_input(tool_input, "path") or ".")
+    if paths.is_env_file(root):
+        return _env_file_denied("Grep")
+    if not os.path.isdir(root):
+        return _ALLOWED
+    grep_glob = (_text_input(tool_input, "glob") or "").lower()
+    if not grep_glob:
+        return _env_file_denied("Grep") if paths.holds(root) else _ALLOWED
+    for rel in paths.under(root):
+        name = rel.rsplit("/", 1)[-1]
+        if (
+            "{" in grep_glob
+            or fnmatchcase(name, grep_glob)
+            or fnmatchcase(rel, grep_glob)
+            or _segments_reach(grep_glob.split("/"), rel.split("/"))
+        ):
+            return _env_file_denied("Grep")
+    return _ALLOWED
+
+
+def _write_verdict(policy: ToolPolicy, tool_input: Mapping[str, object]) -> ToolVerdict:
+    path = _text_input(tool_input, "file_path")
+    paths = _Paths(policy)
+    real = paths.resolve(path) if path else ""
+    base = policy.actions.rstrip("/") + "/"
+    inside = real.startswith(base) and len(real[len(base) :].split("/")) >= 2  # noqa: PLR2004 -- pack, file
+    if not inside or paths.is_env_file(real):
+        return _denied("Write only writes under actions/<pack>/")
+    return _ALLOWED
+
+
+def _bash_verdict(policy: ToolPolicy, tool_input: Mapping[str, object]) -> ToolVerdict:
+    command = _text_input(tool_input, "command") or ""
+    head, newline, body = command.partition("\n")
+    words = head.split(" ")
+    if newline and not _closes_heredoc(words, body):
+        words = []
+    if newline:
+        words = words[:-1]
+    if (
+        words
+        and all(_WORD.fullmatch(word) for word in words)
+        and _hub_call(words, policy, heredoc=bool(newline))
+    ):
+        return _ALLOWED
+    return _denied(
+        f"Bash runs only {HUB_COMMAND} action list|plan, {HUB_COMMAND} action run … "
+        f"{_RUN_FLAG} {policy.run_id} and {HUB_COMMAND} scenario propose {_RUN_FLAG} "
+        f"{policy.run_id}, plain words with no shell metacharacter"
+    )
+
+
+def _closes_heredoc(words: Sequence[str], body: str) -> bool:
+    """Whether ``words`` end with a quoted here-document operator that ``body`` closes on its
+    last line and on no line before (so nothing runs after it)."""
+    found = _HEREDOC.fullmatch(words[-1]) if words else None
+    if found is None:
+        return False
+    lines = body.removesuffix("\n").split("\n")
+    end = found.group("end")
+    return lines[-1] == end and end not in lines[:-1]
+
+
+def _hub_call(words: Sequence[str], policy: ToolPolicy, *, heredoc: bool) -> bool:
+    if words[0] != HUB_COMMAND or len(words) < 3:  # noqa: PLR2004 -- ./hub, group, command
+        return False
+    command = (words[1], words[2])
+    rest = list(words[3:])
+    if command == ("scenario", "propose"):
+        return rest == [_RUN_FLAG, policy.run_id]
+    if heredoc:
+        return False
+    if command in {("action", "list"), ("action", "plan")}:
+        return not any(word.startswith(_RUN_FLAG) for word in rest)
+    if command == ("action", "run"):
+        flags = [index for index, word in enumerate(rest) if word.startswith(_RUN_FLAG)]
+        return (
+            len(flags) == 1
+            and rest[flags[0]] == _RUN_FLAG
+            and rest[flags[0] + 1 : flags[0] + 2] == [policy.run_id]
+        )
+    return False
