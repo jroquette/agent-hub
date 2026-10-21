@@ -27,6 +27,7 @@ from typing import Any
 from agent_hub.core.errors import TrackerError
 from agent_hub.core.json_form import InvalidJsonError, load_json_bytes
 from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN, STATE_TYPES, Issue
+from agent_hub.tracker_linear.graphql_transport import CREATE_FIX as CREATE_FIX
 
 # The tools of the user's ``Linear`` MCP server, as Claude Code names them (D-prefix).
 LINEAR_TOOL_PREFIX = "mcp__Linear__"
@@ -42,11 +43,15 @@ MAX_NAMES = 250
 MAX_NAME_CHARS = 256
 # A longer comment body is refused before any call.
 MAX_COMMENT_CHARS = 10_000
+# A longer title, or description, of an issue to create is refused before any call.
+MAX_TITLE_CHARS = 255
+MAX_DESCRIPTION_CHARS = 10_000
 # Untrusted text (a reply) quoted in an error is cut to this many characters.
 MAX_QUOTED_CHARS = 200
 
 TOOLS_UNAVAILABLE = "tools unavailable"
 NOT_FOUND = "not found"
+TEAM_NOT_FOUND = "team not found"
 
 TRANSPORT_FIX = 'or set tracker.transport to "api" with LINEAR_API_KEY'
 # The fix of a write call that ran and failed: never "retry", since it may have written.
@@ -65,6 +70,7 @@ class CallKind(StrEnum):
     SAVE_STATE = "save_state"
     SAVE_LABELS = "save_labels"
     SAVE_COMMENT = "save_comment"
+    CREATE_ISSUE = "create_issue"
 
 
 def _tools(*names: str) -> tuple[str, ...]:
@@ -81,8 +87,11 @@ TOOLS: Mapping[CallKind, tuple[str, ...]] = {
     CallKind.SAVE_STATE: _tools("save_issue"),
     CallKind.SAVE_LABELS: _tools("save_issue"),
     CallKind.SAVE_COMMENT: _tools("save_comment"),
+    CallKind.CREATE_ISSUE: _tools("save_issue"),
 }
-WRITE_KINDS = frozenset({CallKind.SAVE_STATE, CallKind.SAVE_LABELS, CallKind.SAVE_COMMENT})
+WRITE_KINDS = frozenset(
+    {CallKind.SAVE_STATE, CallKind.SAVE_LABELS, CallKind.SAVE_COMMENT, CallKind.CREATE_ISSUE}
+)
 
 # Every tool of the owner's working ``Linear`` MCP server: a snapshot taken 2026-10-01. A call
 # is denied every one its kind is not allowed (``DENIED``), so a user-level allow of
@@ -313,6 +322,7 @@ _SHAPES: Mapping[CallKind, Shape] = {
     CallKind.SAVE_STATE: {"id": _ISSUE_ID, "state": _NAME},
     CallKind.SAVE_LABELS: {"id": _ISSUE_ID, "labels": _ISSUE_LABELS},
     CallKind.SAVE_COMMENT: {"id": _ISSUE_ID, "commented": bool},
+    CallKind.CREATE_ISSUE: {"issue": _ISSUE_FIELDS},
 }
 
 _PREAMBLE = (
@@ -369,6 +379,13 @@ _TASKS: Mapping[CallKind, str] = {
     CallKind.SAVE_COMMENT: (
         "Use save_comment once to add one comment to the issue whose text is exactly the"
         f' body. Answer {{"id": "<identifier>", "commented": true}}.{_NOT_FOUND}'
+    ),
+    CallKind.CREATE_ISSUE: (
+        "Use save_issue once to create one issue in the team whose key is the request's team,"
+        " with exactly the request's title and description, and no"
+        " label, assignee, project or other field. Never change another issue. Answer"
+        f' {{"issue": {_ISSUE_TEXT}}}}}. If no team has that key, answer'
+        f' {{"error": "{TEAM_NOT_FOUND}"}}.'
     ),
 }
 
@@ -488,6 +505,28 @@ def save_comment_call(issue_id: str, body: str) -> McpCall[CommentSaved]:
         issue_id,
         reader=lambda data: CommentSaved(issue_id=data["id"], commented=data["commented"]),
         body=body,
+    )
+
+
+def create_issue_call(team: str, title: str, description: str) -> McpCall[Issue]:
+    """The one call of ``create_issue``; a long name or text raises before any call."""
+    _check_names("create_issue", None, (team,))
+    for noun, text, limit in (
+        ("title", title, MAX_TITLE_CHARS),
+        ("description", description, MAX_DESCRIPTION_CHARS),
+    ):
+        if len(text) > limit:
+            raise TrackerError(
+                operation="create_issue",
+                cause=f"{noun} too long ({len(text)} characters, at most {limit})",
+                fix=f"shorten the {noun}",
+            )
+    return McpCall(
+        kind=CallKind.CREATE_ISSUE,
+        operation="create_issue",
+        issue_id=None,
+        arguments={"team": team, "title": title, "description": description},
+        reader=lambda data: _issue(data["issue"]),
     )
 
 
@@ -618,6 +657,14 @@ def _error_reply(call: McpCall[Any], message: object, line: str) -> TrackerError
             "the Linear MCP tools are not available to claude",
             f"connect the Linear MCP server in Claude Code, {TRANSPORT_FIX}",
         )
+    if message == TEAM_NOT_FOUND and call.kind is CallKind.CREATE_ISSUE:
+        team = call.arguments["team"]
+        return call_error(
+            call,
+            f"team {team!r} not found in Linear",
+            "use the key of a team in Linear, as tracker.team names it",
+            call_ran=False,
+        )
     if message == NOT_FOUND and call.issue_id is not None:
         return call_error(
             call,
@@ -633,11 +680,12 @@ def call_error(call: McpCall[Any], cause: str, fix: str, *, call_ran: bool = Tru
     """The one-line error of a failed call, naming its port operation and issue.
 
     A write call that ran may have written before it failed, so its fix is ``WRITE_FIX``
-    whatever ``fix`` says: it is never retried. ``call_ran`` is False when ``claude`` never
-    started, and ``fix`` then stands.
+    whatever ``fix`` says (``CREATE_FIX`` for a create): it is never retried. ``call_ran`` is
+    False when ``claude`` never started, or answered that no team has the key, and ``fix`` then
+    stands.
     """
     if call_ran and call.kind in WRITE_KINDS:
-        fix = WRITE_FIX
+        fix = CREATE_FIX if call.kind is CallKind.CREATE_ISSUE else WRITE_FIX
     return TrackerError(operation=call.operation, issue_id=call.issue_id, cause=cause, fix=fix)
 
 

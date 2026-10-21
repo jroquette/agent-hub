@@ -62,7 +62,7 @@ Every node has `id`, `type` and optional `description`, `depends_on`, `trigger_r
 - `loop_group`: body ids are recorded as `<group>__<id>`; `until_when` (the `when:` grammar) reads this iteration's body
   outputs, `$LOOP_PREV.<id>.output[.path]` the previous one (empty at first); the output maps body id → output.
 - `approval`: `decisions` `{id, label}` (default `approve`, `reject`); output `{decision}` (+ `text` with
-  `capture_response`); rework is a `loop_group` reading it; an unread default `reject` cancels the run. Gates (and
+  `capture_response`, + the `approver` a person's recorded decision names); rework is a `loop_group` reading it; an unread default `reject` cancels the run. Gates (and
   groups holding one) are ordered; a body gate pauses its iteration. `wait`: `duration`, `until` (ISO-8601 + offset, or a
   reference), `attention` (text, or an `options` id), ≤ 7d; output `{at}`, `{text}`, `{choice, text}`; ends on a resume.
 - `include` takes only `id`, `description`, `depends_on`, `when`, `trigger_rule`, `include`, `with` and names a workflow
@@ -109,7 +109,9 @@ Each attempt is one `step.start` (`attempt`, `revision`, `content_hash`) and one
 `failed` or `skipped`, `failure_kind`, `skip_cause`); a skipped node emits only `step.end`. `reason` holds only engine
 metadata (a kind, an origin node id): a halt's rendered `reason` stays in the record. `approval` and `wait` add
 `gate.request` (`gate_id` `<run>:<step>:<attempt>`, `kind` `human_gate` if a person answers, else `wait`); one decision
-per `gate_id` comes back as a `control_plane` `gate.result` (`result`, `approver`, `where`), a second is refused.
+per `gate_id` comes back as a `control_plane` `gate.result` (`result`, `approver`, `where`), a second is refused, and
+so is one whose approver names no person (empty or `unknown`, case and blanks ignored; `hub workflow approve|reject|respond`
+refuses when no account name is known, never falling back to `unknown`): nothing is recorded and the run stays paused.
 `run.end` (`source_id` `<run>:run:<n>:end`, n from 0; the fold takes the highest n) carries `status`, `outcome`,
 `reason`, `revision` and `content_hash` (`sha256:` of the snapshot).
 

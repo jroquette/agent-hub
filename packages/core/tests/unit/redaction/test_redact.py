@@ -3,11 +3,14 @@
 Every sample is built here from fragments, so no format-valid secret is ever one literal.
 """
 
+import re
+
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from agent_hub.core.json_form import JsonValue
+from agent_hub.core.redaction import redact
 from agent_hub.core.redaction.redact import (
     KINDS,
     RULESET,
@@ -234,6 +237,130 @@ def test_equals_single_pass_when_text_is_near_secret_syntax_property(text: str) 
     once = redact_text(text)
 
     assert redact_text(once) == once
+
+
+def _every_rule_once(text: str) -> str:
+    """One pass of every r1 rule in order, with no shortcut: the reference for the hint."""
+    for kind, pattern in redact._RULES:  # noqa: SLF001 -- the rules the shortcut must match
+        text = pattern.sub(lambda found, kind=kind: _marked(found, kind), text)
+    return text
+
+
+def _marked(found: re.Match[str], kind: str) -> str:
+    groups = found.groupdict()
+    return (groups.get("head") or "") + marker(kind) + (groups.get("tail") or "")
+
+
+def _reference(text: str) -> str:
+    for _ in range(8):
+        redacted = _every_rule_once(text)
+        if redacted == text:
+            break
+        text = redacted
+    return text
+
+
+@settings(max_examples=500, deadline=None)
+@given(
+    text=st.lists(
+        st.sampled_from(
+            [
+                *"aB9=:\"' -_.\\\n\t",
+                "token",
+                "SECRET",
+                "pass",
+                "passwd",
+                "api_key",
+                "Credential",
+                "\u017fecret",
+                "apí",
+                _secret_value(),
+                "[redacted: secret]",
+                "x" * 31,
+                "_" * 33,
+                '": "',
+                "\": '",
+            ]
+        ),
+        max_size=40,
+    ).map("".join)
+)
+def test_equals_every_rule_when_name_word_hint_skips_secret_rules_property(text: str) -> None:
+    assert redact_text(text) == _reference(text)
+
+
+def test_redacts_assignment_when_name_word_case_folds_to_ascii() -> None:
+    # The long s folds to "s" under IGNORECASE: the hint must see what the rules see.
+    text = "DB_PA\u017f\u017fWORD=" + _secret_value()
+
+    assert redact_text(text) == "DB_PA\u017f\u017fWORD=" + marker("secret")
+
+
+def test_keeps_prose_when_name_words_never_assigned() -> None:
+    text = "The token rotates weekly; keep the secret and the password out of notes.\n" * 50
+
+    assert redact_text(text) == text
+
+
+# A "secret" rule allows at most 64 characters between the name word and the ``=`` or the JSON
+# key's closing quote; the shortcut must allow exactly as many.
+_NAME_TAIL_LIMIT = 64
+
+
+def test_redacts_assignment_when_64_characters_follow_name_word() -> None:
+    head = "token" + "x" * _NAME_TAIL_LIMIT + "="
+
+    assert redact_text(head + _secret_value()) == head + marker("secret")
+
+
+def test_keeps_assignment_when_65_characters_follow_name_word() -> None:
+    text = "token" + "x" * (_NAME_TAIL_LIMIT + 1) + "=" + _secret_value()
+
+    assert redact_text(text) == text
+
+
+def test_redacts_json_value_when_64_characters_follow_name_word_in_key() -> None:
+    head = '{"token' + "x" * _NAME_TAIL_LIMIT + '": "'
+
+    assert redact_text(head + _secret_value() + '"}') == head + marker("secret") + '"}'
+
+
+def test_keeps_json_value_when_65_characters_follow_name_word_in_key() -> None:
+    text = '{"token' + "x" * (_NAME_TAIL_LIMIT + 1) + '": "' + _secret_value() + '"}'
+
+    assert redact_text(text) == text
+
+
+def test_redacts_json_value_when_key_has_no_equals_sign() -> None:
+    head = '{"token_for_ci": "'
+
+    assert redact_text(head + _secret_value() + '"}') == head + marker("secret") + '"}'
+
+
+def test_runs_secret_rules_last_when_rules_listed() -> None:
+    # The shortcut is looked at once per pass, at the first "secret" rule: only rules after it
+    # may be skipped, so every "secret" rule comes after every other rule.
+    kinds = [kind for kind, _ in redact._RULES]  # noqa: SLF001 -- the order the shortcut needs
+    first = kinds.index("secret")
+
+    assert set(kinds[first:]) == {"secret"}
+
+
+@settings(max_examples=300, deadline=None)
+@given(
+    word=st.sampled_from(["token", "SECRET", "passwd", "api_key", "Credential"]),
+    run=st.integers(min_value=_NAME_TAIL_LIMIT - 4, max_value=_NAME_TAIL_LIMIT + 6),
+    filler=st.sampled_from(["x", "_", "-", ".", " ", "é"]),
+    shape=st.sampled_from(
+        ["{0}{1}={2}", "{0}{1} = '{2}'", '{{"{0}{1}": "{2}"}}', '"{0}{1}" : "{2}"']
+    ),
+)
+def test_equals_every_rule_when_name_word_far_from_assignment_property(
+    *, word: str, run: int, filler: str, shape: str
+) -> None:
+    text = shape.format(word, filler * run, _secret_value())
+
+    assert redact_text(text) == _reference(text)
 
 
 def test_drops_token_prefix_when_token_starts_at_character_490_truncation() -> None:

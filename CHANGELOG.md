@@ -13,6 +13,24 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- `hub search QUERY [--kind KIND]… [--hub NAME] [--json] [--db PATH]` searches the hub's `brain/` (not `brain/auto/`)
+  and each repo's `docs/` through a local SQLite FTS5 index in the database `hub web` and `hub collect` use, synced
+  with the checkout on every search; `hub brain reindex [--hub NAME] [--db PATH]` rebuilds it. Markdown only, at most
+  256 KiB, no link followed, no file a secret rule matches; each skipped file is named once (a file that cannot be
+  read, on every search). A query with no word (`!!!`) exits 2, and a query that starts with `-` goes after `--`
+  (`hub search -- -foo`). The database gains migration 0008; a Python whose SQLite lacks FTS5 can no longer migrate
+  it (ADR 0044) (AGH-391).
+
+### Changed
+
+- Redaction `r1` skips its four `secret` rules on a text with no name word followed by `=` or a JSON key's `:`,
+  which no `secret` rule can match: the same rule set with identical results, about three times faster on note-sized
+  prose (AGH-391).
+
+## [0.19.0] - 2026-10-21
+
+### Added
+
 - The base plugin gains the `/premortem` and `/context-audit` skills (AGH-414). `/premortem` assumes a decision
   already failed and gives its top three causes an early-warning sign and the cheapest experiment that could prove the
   choice wrong. `/context-audit` estimates the always-loaded context of a hub and its repos and ranks the cuts by
@@ -38,6 +56,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `<n>.decision.md`): the ticket flow's Context, Preflight and Implement steps follow them, step states gain `waiting`
   and `stale`, and the API's steps and features carry a `signal` and `waiting_on_owner`. A malformed record turns only
   its own step unknown; the screens that show them land with AGH-405.
+- `hub step ticket-brief|preflight|change-request|decide|amend-plan` write a ticket's context brief (a new version per
+  run), append a preflight run, open a plan change request, record its decision once and append its `A<k>` amendment
+  to `plan.md`, in the hub and never committed (AGH-403). A gate decision whose approver names no person (empty or
+  `unknown`) is refused and the run stays paused; `hub workflow approve|reject|respond` refuse when no account name is
+  known instead of recording `unknown`, and an approval's output carries its `approver`.
 - `hub web` can publish a Studio draft itself (AGH-298, `POST .../skills/drafts/{draft_id}/publish` with
   `{target, confirm_managed}`), and the Studio's Publish now calls it instead of asking Claude to copy the draft:
   Claude only edits the draft, the Studio shows "Publishing…" then "Published." with a link to the item, warns before
@@ -843,7 +866,8 @@ Includes 0.3.0, which was never tagged.
 - The `hub.json` config model and schema, the generator templates, `hub init` and `hub sync`.
 - The release check on `v*` tags.
 
-[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/jroquette/agent-hub/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/jroquette/agent-hub/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/jroquette/agent-hub/compare/v0.16.1...v0.17.0
 [0.16.1]: https://github.com/jroquette/agent-hub/compare/v0.16.0...v0.16.1

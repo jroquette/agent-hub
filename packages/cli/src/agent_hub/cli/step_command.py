@@ -1,4 +1,6 @@
-"""``hub step worktree|verdict|commits|pr|report``: ``hub run``'s stages as commands.
+"""``hub step worktree|verdict|commits|pr|report``: ``hub run``'s stages as commands; and
+``hub step ticket-brief|preflight|change-request|decide|amend-plan``, the ticket records an
+``implement`` run writes into the hub (``step_records``).
 
 The issue-to-pr workflow (ADR 0032) runs them as ``hub step`` nodes. Each prints one JSON object
 on stdout, the ``output_format`` its node declares, and exits 0; a failure is one
@@ -18,6 +20,10 @@ writes the tracker: ``report`` only computes the delivery (``delivered``, ``no_c
 ``blocked`` or ``failed``) from what the earlier steps printed; ADR 0030's writes are the
 parent's (``hub workflow run``, ``hub run``).
 
+The record writers run in the hub's main checkout and never commit; each prints the hub-relative
+``path`` it wrote, and a refusal (a record the readers could not read, a second decision, a
+decision without a person, a plan that moved, a link) is a failure that writes nothing.
+
 That parent runs its ``hub step`` nodes in process (``run_in_process``): the same code with
 ``hub run``'s children (in the caller's group), timeouts and lines (the worktree's on stdout, a
 warning naming the parent's command), the node's stdin given, its output kept instead of printed
@@ -34,12 +40,14 @@ import sys
 from collections.abc import Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Final, NoReturn, TextIO
 
 import typer
 from typer._click.exceptions import ClickException
 
+from agent_hub.cli import step_records
 from agent_hub.cli.command_exits import fail
 from agent_hub.cli.effective_config import effective_with_prefix_or_fail
 from agent_hub.cli.errors import ChildTimedOutError, PrStepError, WorktreeError
@@ -64,6 +72,7 @@ from agent_hub.cli.run_steps import (
 )
 from agent_hub.cli.ship_steps import ship_child, step_timeouts
 from agent_hub.cli.worktree_steps import check_branches, create_worktree, worktree_task
+from agent_hub.core.features.ticket_writes import TicketRecordError
 from agent_hub.core.hub_config.conventions import EffectiveConventions
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.runner.run_record import RunOutcome, Stage
@@ -93,6 +102,13 @@ Issue = Annotated[str, typer.Option("--issue", metavar="ISSUE", help="The issue,
 Repo = Annotated[str, typer.Option("--repo", metavar="REPO", help="The repo's dir in hub.json.")]
 Target = Annotated[
     str, typer.Option("--target", metavar="JSON", help="The target hub step worktree printed.")
+]
+Feature = Annotated[
+    str, typer.Option("--feature", metavar="SLUG", help="The folder under brain/features/.")
+]
+Ticket = Annotated[str, typer.Option("--ticket", metavar="TICKET", help="The ticket's key or id.")]
+Request = Annotated[
+    int, typer.Option("--request", metavar="N", min=1, help="The change request's number.")
 ]
 
 
@@ -344,6 +360,118 @@ def report(
             "summary": summary if delivered else "",
         }
     )
+
+
+@step_app.command("ticket-brief")
+def ticket_brief(*, feature: Feature, ticket: Ticket) -> None:
+    """Append the ticket's context brief to tickets/<ticket>/brief.md (a new version)."""
+    hub = _hub()
+    config = load_hub_config_or_exit(hub / FILE_LABEL)
+    _record(
+        "ticket-brief",
+        lambda: step_records.ticket_brief(
+            hub, config, feature=feature, ticket=ticket, now=datetime.now(UTC)
+        ),
+    )
+
+
+@step_app.command("preflight")
+def preflight(
+    *,
+    feature: Feature,
+    ticket: Ticket,
+    run: Annotated[str, typer.Option("--run", metavar="JSON", help="One preflight run.")],
+) -> None:
+    """Append one run to tickets/<ticket>/preflight.json."""
+    hub = _hub()
+    _record(
+        "preflight",
+        lambda: step_records.preflight(hub, feature=feature, ticket=ticket, run=run.encode()),
+    )
+
+
+@step_app.command("change-request")
+def change_request(
+    *,
+    feature: Feature,
+    ticket: Ticket,
+    run_id: Annotated[str, typer.Option("--run-id", help="The workflow run's id.")],
+    evidence: Annotated[str, typer.Option("--evidence", help="What the plan got wrong.")],
+    proposal: Annotated[str, typer.Option("--proposal", help="The plan change asked.")],
+    affected: Annotated[
+        list[str] | None, typer.Option("--affected", metavar="TICKET", help="An affected ticket.")
+    ] = None,
+) -> None:
+    """Open change-requests/<n>.md against the plan's current version."""
+    hub = _hub()
+    _record(
+        "change-request",
+        lambda: step_records.change_request(
+            hub,
+            feature=feature,
+            ticket=ticket,
+            affected=affected or (),
+            run_id=run_id,
+            evidence=evidence,
+            proposal=proposal,
+            now=datetime.now(UTC),
+        ),
+    )
+
+
+@step_app.command("decide")
+def decide(
+    *,
+    feature: Feature,
+    request: Request,
+    decision: Annotated[str, typer.Option("--decision", help="approved or declined.")],
+    decided_by: Annotated[str, typer.Option("--by", help="The person the gate recorded.")],
+    note: Annotated[str, typer.Option("--note", help="The note; a decline needs one.")] = "",
+) -> None:
+    """Record the owner's decision as change-requests/<n>.decision.md, once."""
+    hub = _hub()
+    _record(
+        "decide",
+        lambda: step_records.decide(
+            hub,
+            feature=feature,
+            request=request,
+            decision=decision,
+            decided_by=decided_by,
+            note=note,
+            now=datetime.now(UTC),
+        ),
+    )
+
+
+@step_app.command("amend-plan")
+def amend_plan(
+    *,
+    feature: Feature,
+    request: Request,
+    summary: Annotated[str, typer.Option("--summary", help="The amendment, one line.")],
+) -> None:
+    """Append the approved request's A<k> entry to plan.md's Amendments."""
+    hub = _hub()
+    _record(
+        "amend-plan",
+        lambda: step_records.amend_plan(hub, feature=feature, request=request, summary=summary),
+    )
+
+
+def _hub() -> Path:
+    root = hub_root_or_exit(os.environ, command=COMMAND)
+    return hub_checkout(root, command=COMMAND, environ=without(os.environ, CHILD_HIDDEN))
+
+
+def _record(name: str, write: Callable[[], dict[str, JsonValue]]) -> None:
+    try:
+        written = write()
+    except TicketRecordError as error:
+        _fail(name, str(error))
+    except OSError as error:
+        _fail(name, error.strerror or type(error).__name__)
+    _print(written)
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
