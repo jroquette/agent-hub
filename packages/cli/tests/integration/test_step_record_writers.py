@@ -721,7 +721,11 @@ class TestPendingDecision:
             (("approved",), {"decision": "approved", "input": "none", "note": ""}),
             (
                 ("declined", "--note", "Keep the plan.\nAs it is."),
-                {"decision": "declined", "input": "declined_change", "note": "Keep the plan. As it is."},
+                {
+                    "decision": "declined",
+                    "input": "declined_change",
+                    "note": "Keep the plan. As it is.",
+                },
             ),
         ],
     )
@@ -747,7 +751,9 @@ class TestPendingDecision:
         hub.request()
         self.preflight(hub, drift="plan", change_request=1)
         if case != "open":
-            assert hub.decide("--decision", "declined", "--by", "Dana", "--note", "No.").exit_code == 0
+            assert (
+                hub.decide("--decision", "declined", "--by", "Dana", "--note", "No.").exit_code == 0
+            )
         if case == "re-checked":
             # A declined change re-checked and still plan: the next run opens a new request (A2).
             self.preflight(
