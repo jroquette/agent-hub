@@ -91,7 +91,16 @@ The ticket flow's records (two-level-flows S2), written by the `implement` workf
 `<ticket>` is the ticket's plan key or tracker id, matched in any case.
 
 - `tickets/<ticket>/brief.md` (the context brief) and `tickets/<ticket>/plan.md` (the ticket plan) are checked
-  present, never read.
+  present, never read. The brief opens with frontmatter `type: ticket-brief` and `ticket`, then holds one section per
+  context run, `## Brief v<n> (<ISO time>)`, appended and never rewritten: a re-run adds `v<n+1>` and keeps every
+  earlier byte. Each section starts with its fields as a JSON block, `{"plan_version", "blockers": [{"id",
+  "outcome_path", "recorded_at"}], "adrs": []}` (a flat frontmatter could not hold the blockers, and frontmatter at the
+  top could not change without a rewrite), then `### Acceptance criteria` (the ticket's live ACs from `features.json`),
+  `### Plan section` (each section of `plan.md` whose heading names the ticket's key or id, quoted with `> `),
+  `### Blockers` (each `blocked_by` ticket with its `tickets/<key or id>/outcome.md` and `merged_at`, or "none
+  recorded"), `### Main commits since the plan` (the ticket's repo checkout's `origin/<default branch>` as last
+  fetched, after the hub's last commit of `plan.md`, on the files the plan section names in code spans; at most 50, or
+  the reason none were read) and `### ADRs cited` (`ADR NNNN` or `docs/adr/NNNN-…` in the plan section).
 - `tickets/<ticket>/preflight.json`: schema `agent-hub/preflight/1` (`PreflightRecord` in `output_models.py`, exported
   as `preflight.v1.json`, checked by `hub validate-output preflight FILE`): `{"schema", "ticket", "runs": [...]}`,
   at most 200 runs, oldest first, only ever appended. Each run is `{ran_at, plan_version, commit, blockers_read[],
@@ -120,6 +129,19 @@ each can add before the read reaches 32 MiB; a ticket whose folder was left out 
 `waiting_on_owner` need it): its first 400 `.md` files by name (200 requests and their decisions), heads of 16 KiB;
 more than that is a record problem on Plan's signal. A file that cannot be read or parsed reads "<file> could not be
 read (…). Fix it in a hub PR." on the step it feeds.
+
+The `implement` run writes them with `hub step` (P7), in the hub's main checkout, never committing (its report names
+the files for the owner's hub PR). Every writer checks its record as the readers above read it, follows no link (the
+feature folder, `tickets/`, `change-requests/` and each file) and writes nothing when it refuses
+(`agent_hub.core.features.ticket_writes`, `agent_hub.cli.step_records`):
+
+| Command | Writes | Refuses |
+|---|---|---|
+| `ticket-brief --feature --ticket` | the next `## Brief v<n>` of `brief.md` (temp file, then rename) | a ticket `features.json` does not plan, no `plan.md`, a `brief.md` that is not this ticket's brief |
+| `preflight --feature --ticket --run JSON` | `preflight.json` with one run appended: earlier runs copied as parsed JSON, so each stays equal in canonical form; the file is new or replaced whole (temp file, then rename) | a run `PreflightRun` refuses (cross-field rules included), a record there that is malformed or names another ticket, a result over 64 KiB |
+| `change-request --feature --ticket --run-id --evidence --proposal [--affected]…` | `change-requests/<n>.md`, `n` the next free number, `status: open`, `plan_from` the plan's current version, `plan_to` the next; created exclusively | a field its reader could not read, an empty evidence or proposal |
+| `decide --feature --request N --decision approved\|declined --by WHO [--note]` | `change-requests/<n>.decision.md`, `decided_by` the gate's approver, `decided_at` now, `note` on one line (cut at 1,000 characters; the whole note is the body); created exclusively | a second decision, an approver that names no person (empty or `unknown`, A5), a decline without a note, no request `n` |
+| `amend-plan --feature --request N --summary` | one entry `- A<k> (<decided_at date>, <decided_by>): <summary> ([change request n](change-requests/n.md))` at the end of `plan.md`, after a new `## Amendments` heading when the last section is another; every earlier byte kept; under the feature's lock `.agent-runs/locks/<slug>.plan.lock` | a request not decided `approved`, a plan whose version is no longer the request's `plan_from` (a second amendment for the same request included), an entry that would not read as `A<k>`, a lock another run holds |
 
 ### `summaries/<record>.md`
 
