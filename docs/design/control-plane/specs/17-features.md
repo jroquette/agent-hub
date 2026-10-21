@@ -408,7 +408,7 @@ spec amendment A15. Where the sections above say otherwise, this list wins.
 
 ## Departures (AGH-405, plan change requests and the ticket flow's signals)
 
-Two-level-flows S2 (AC-2.5, AC-2.8, AC-2.12, AC-2.14, AC-1.10's banner opener by A8; spec amendments A13, A16-A18).
+Two-level-flows S2 (AC-2.5, AC-2.8, AC-2.12, AC-2.14, AC-1.10's banner opener by A8; spec amendments A13, A16-A20).
 Records: [feature-records.md](../../feature-records.md) "`tickets/<ticket>/` and `change-requests/`"; routes:
 [API.md](../../../API.md) "Feature detail" (`change_requests`) and "Plan change requests". Where the sections above
 say otherwise, this list wins.
@@ -436,28 +436,60 @@ say otherwise, this list wins.
   cell; local drift ("Local drift · 2 notes") is a muted line beside readiness, never a status (AC-2.5). Which one it
   is comes from the Preflight step's typed state, not the words. The step line keeps the current step's meta
   ("Preflight · 2/7 · Waiting for you").
-- **Panel signal.** The panel shows the same signal under its readiness line (local drift stays in the Preflight
-  step), then the eval wait's line if any.
-- **Panel Preflight.** Read from `GET …/tickets/{ticket}` (A7). It lists the change requests the ticket asks, then
-  "Held by change request N from <ticket>: it waits until you answer it." for those that hold it, then every run,
-  newest first: "<date-time> · checked plan v2 against main at 4e1a9c2 · local drift", its input ("after a discovery:
-  …", "after a decline: …") and, for local drift, "Local drift · N notes" with each note (AC-2.5). An open request
-  shows "Plan change request N: plan v2 → v3", "Affects …", "Read the request in Brain", then its decision:
+- **Panel signal and header.** The panel shows the same signal under its readiness line (local drift stays in the
+  Preflight step), then the eval wait's line if any. While the ticket's own request is open, its header carries the
+  panel's one primary, "Review change request": it opens Preflight (`?step=preflight`, replace) and moves focus to
+  the request's block.
+- **Panel Preflight.** Read from `GET …/tickets/{ticket}` (A7): a skeleton while it loads, a compact `ProblemError`
+  with "Try again" when it fails, and with no record the step's own meta (never "Not reached." for a `waiting` or
+  `stale` step). It lists the change requests the ticket asks, then "Held by change request N from <ticket>: it waits
+  until you answer it." for those that hold it (the request is a link to the asking ticket's panel at Preflight),
+  then every run, newest first: "<date-time> · checked plan v2 against main at <commit> · local drift" (the commit an
+  `IdChip`), its input ("after a discovery: …", "after a decline: …") and, for local drift, "Local drift · N notes"
+  with each note (AC-2.5). An unknown plan version reads "—".
+- **Before the decision (A20).** An open request is a region named "Plan change request N": its title "Plan change
+  request N: plan v2 → v3" with how long it has waited ("waiting since 2 h ago", from `opened_at`, also on the
+  banner's line), problems if any, "Plan drift: it changes an AC, a contract or another ticket, so <ticket> is paused
+  until you answer.", its evidence and proposal (the request's markdown, `Markdown` under a `ProvenanceBadge`
+  "agent"), "What changes if you approve" ("Plan v2 becomes v3 (a new amendment).", "<ticket> runs preflight again on
+  the new plan.", "<affected> run preflight again before they go on.", "Nothing is merged or pushed."), "Read the
+  request in Brain", then its decision:
   - while its run waits at its gate (`approval_id`), the shared `GateDecision` of that gate (Approve, Decline); Decline
-    asks for a "Note (required)" in its dialog and cannot be confirmed without one (AC-2.7, AC-2.12);
-  - else the lost-run form (AC-2.14): "Its run has no open gate (abandoned, or its record lost): your decision is
-    recorded in the hub, and the next /implement of <ticket> reads it.", a "Note (required to decline)" field,
-    "Approve plan v3" (primary) and "Decline" (danger). Decline with an empty note sends nothing, says "Write a note
-    to decline: the next preflight follows it." and moves focus to the note; a refusal reads "Could not record your
-    decision: <server reason>".
-  A decided request reads "Change request N approved by <person> · <date-time>[: <note>]".
+    asks for a "Note (required)" in its dialog and cannot be confirmed without one, even for a gate that takes no
+    text (AC-2.7, AC-2.12);
+  - when the server says the run is gone (`decidable_here`), the lost-run form (AC-2.14): "Its run is gone
+    (abandoned, or its record lost): your decision is recorded in the hub, and the next /implement of <ticket> reads
+    it.", a "Note (required to decline)" field, "Approve plan v3" (primary) and "Decline" (danger). Decline with an
+    empty note sends nothing, says "Write a note to decline: the next preflight follows it." and moves focus to the
+    note; then "Recording your decision…", "Decision recorded in the hub. The next /implement of <ticket> reads it."
+    with the buttons off, or the gate's refusal box (`DecisionError`: the server's reason, "Nothing was recorded.");
+  - else (the run lives but its gate is not open: just decided, or not reached yet) "Its run is live and asks you at
+    its gate; the decision shows here once the gate is open." and no button.
+  A decided request reads "Change request N approved by <person> · <date-time>[: <note>]"; after a decision taken
+  here, focus moves to that line.
+- **Announcing.** A request that arrives while the page is open is said once in a polite live region ("AGH-202 waits
+  for you: plan change request 2."); those open at the first read are the banner's.
+- **Start.** While a ticket's own plan change waits for the owner, the cards' and rows' Start is secondary: the
+  banner's Review change request is the view's one primary.
+- **No repeated state word.** A step meta that only repeats its state's word ("Waiting for you" on a `waiting`
+  Preflight) is not said twice in the stepper, its description or the panel's step buttons; the step bar line keeps
+  it ("Preflight · 2/7 · Waiting for you"), since the bar has no state word of its own.
+- **Departures from the approved designs.** The `ApprovalPanel` with its footer slot (ux-new-ticket-panel.md) is not
+  reused: the request's block above holds its parts (title, wait, evidence and proposal, what changes, the decision),
+  and the decision is `GateDecision` or the lost-run form, so `ApprovalPanel` keeps its Phase-2 footer unchanged. The
+  request's "Requested by preflight in session …" line is left out: the request names its run, not a session. The
+  mobile waiting line ("Answer it on a larger screen or in its session.") is not added: Feature detail below 768 px
+  shows "This view needs a wider screen." (`31-responsive.md`). The banner's "Settle each one below." reads "Settle
+  the eval waits below." on the Eval tab when a change request leads it.
 - **Features list (AC-374.1, AC-374.2, AC-374.5, AC-374.7).** What needs the owner comes from `waiting_on_owner`, not
   the Acceptance step's words: a plan change request ("Plan change waits for you · from AGH-202"; two or more "2 plan
   changes wait for you · from AGH-202, AGH-203"; the row opens the first asking ticket's panel at its Preflight), the
   acceptance sign-off (the line AC-374 gives owner steps, opening Criteria) and a sign-off only the owner can write by
   hand (A17: "Sign off by hand · no ACs listed", opening the Eval tab; no decision button). In progress leads with: a
   session waiting on you, your turn, a broken record, NO-SHIP, a plan change, owner steps, a hand sign-off; the hint
-  counts "1 plan change waits for you" and "1 sign off by hand" too, and the sidebar badge counts them.
+  counts "1 plan change waits for you" and "1 sign-off by hand" too, each kind in the plural for several ("2 plan
+  changes wait for you", "2 sessions wait on you"), and the sidebar badge counts them. A19: the hand sign-off's
+  Acceptance step is `waiting` too ("Waiting for you"), with no decision button.
 - **Panel Implement.** Each discovery of the preflight runs: "Discovery <date-time>: <text>. Preflight ran again."
   (AC-2.13); the step's meta ("Ticket plan written") when no round exists yet.
 

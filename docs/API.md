@@ -266,9 +266,12 @@ acceptance criteria rows, the records and every eval, it carries:
   request cannot be read, `problem` then says why), `plan_from`, `plan_to`, `affected`, `opened_at`, `run_id`,
   `decision` (`null`, or `decision`, `decided_by`, `decided_at` and `note`), `path` (relative to the hub's
   `brain/`) and `approval_id`: the id of the open gate of its run that answers it (an open `human_gate` approval in
-  the run's session `run:<run_id>`), `null` when the request is not open or its run has no open gate. With an
-  `approval_id`, hub web decides through `POST /approvals/{approval_id}/decision` and the run writes the records;
-  without one, through [the decision route](#plan-change-requests) below (P8, A5).
+  the run's session `run:<run_id>`), `null` when the request is not open or its run has no open gate, and
+  `decidable_here`: `true` for an open request whose run has no open gate and is gone (no run is folded under
+  `run_id`, or it ended `done`, `failed` or `cancelled`). With an `approval_id`, hub web decides through
+  `POST /approvals/{approval_id}/decision` and the run writes the records; with `decidable_here`, through
+  [the decision route](#plan-change-requests) below; with neither, the run is live and asks at its gate when it
+  gets there (P8, A5).
 
 ## Feature tickets
 
@@ -316,26 +319,30 @@ the app refetches the route; the cache still applies (`as_of` shows its age). `G
 ## Plan change requests
 
 - `GET /api/v1/features/{project}/{slug}/tickets/{ticket}` serves what the ticket panel shows that no tickets row
-  carries (`TicketRecords`, two-level-flows A7): `ticket` as asked (its plan key or tracker id, any case), `brief`
-  and `plan`, the brain paths of `tickets/<ticket>/brief.md` and `plan.md` when they exist, `preflight` (`null`
-  without `preflight.json`, else its `path`, every run oldest first, each as `agent-hub/preflight/1` writes it with
-  its `local_notes` and its `input`/`input_text` for a discovery or a declined change, and the `problem` when it
-  cannot be read, `runs` then empty), and `change_requests`, the requests the ticket asks or is affected by, as the
-  detail serves them (with `approval_id`). It never calls Linear. A ticket the feature's `features.json` neither plans
+  carries (`TicketRecords`, two-level-flows A7, A20): `ticket` as asked (its plan key or tracker id, any case),
+  `preflight` (`null` without `preflight.json`, else every run oldest first, each as `agent-hub/preflight/1` writes
+  it with its `local_notes` and its `input`/`input_text` for a discovery or a declined change, and the `problem`
+  when it cannot be read, `runs` then empty), and `change_requests`, the requests the ticket asks or is affected
+  by, as the detail serves them (with `approval_id` and `decidable_here`) plus each one's `body`: its markdown after
+  the frontmatter (evidence and proposal), within the 16 KiB head the reader reads; the detail's `body` is `null`. It never calls Linear. A ticket the feature's `features.json` neither plans
   nor lists in `linear` is a 404.
 - `POST /api/v1/features/{project}/{slug}/change-requests/{n}/decision` with `{decision, note?}` → 201 with the
-  decided `ChangeRequestView`. It answers a request whose run has no open gate (the run abandoned or its record
+  decided `ChangeRequestView`. It answers a request whose run is gone (the run abandoned, ended, or its record
   lost, AC-2.14, D-10): it creates `change-requests/<n>.decision.md` once (`type: change-request-decision`,
   `decision` `approved` or `declined`, `decided_by`, `decided_at`, `note`, each on one line; D-11), never editing the
   request, and the next `/implement` of its ticket reads it. `decided_by` is the person the project's hub commits as
   (`author_name` from `hub.json` with `hub.local.json`, else git config, as the item writes' author). It refuses,
   writing nothing: a decline without a note, 422 `urn:agent-hub:problem:change-request-note-required` (D-2); while
-  the run's gate is open, 409 `change-request-gate-open` (answer it through the detail's `approval_id`); a request
+  the run's gate is open, 409 `change-request-gate-open` (answer it through the detail's `approval_id`); while the
+  run lives (folded `running`, paused at a gate just decided or not opened yet, or held by a child hub web
+  started), 409 `change-request-live-run`: the run records the decision; these two are checked, and the file
+  created, holding the run commands' lock; a request
   already decided, or a decision file (or link) of that name already there, 409 `change-request-decided`; no person
   to name (none, empty or `unknown`), 409 `change-request-no-person` (A5); a request that cannot be read, 409
   `change-request-unreadable`; a folder that is a link or went away, 409 `change-request-unwritable`. Each carries
   `code`. An unknown feature or request is a 404, a body with another key or decision a 422, `n` outside 1 to 999999
-  a 422. No link is followed into the feature folder, `change-requests/` or the file. It is a strict write that needs
+  a 422. No link is followed: each folder below the hub (`brain/`, `features/`, the feature, `change-requests/`) is
+  opened without following one, and the file is created exclusively there. It is a strict write that needs
   the launch cookie, as a gate's decision (`RUN_WRITES`, [Local security](#local-security)).
 
 ## Agent sessions
