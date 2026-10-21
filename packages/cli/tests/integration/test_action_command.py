@@ -767,3 +767,54 @@ def test_injects_env_file_when_investigation_credentials_read(hub: Path, marker:
             assert ENV_SECRET.encode() not in item.read_bytes(), item
     assert ENV_SECRET not in json.dumps([payload for _, payload in stored(hub)])
     assert ENV_SECRET.encode() not in (hub.parent.parent / "events.db").read_bytes()
+
+
+# AGH-360 review round 1: another environment, a draft and an always read-only --run.
+
+
+def test_refuses_other_environment_when_investigation_read_only_run_paused(
+    hub: Path, marker: Path
+) -> None:
+    paused_walk(hub, marker)
+
+    result = agent_read(hub, marker, "demo/get-order", "--env", "local")
+
+    assert result.exit_code == 1, result.output
+    assert result.stderr == f"hub action run: scenario run {RUN} runs in staging, not local\n"
+    assert modes(marker) == []
+    assert [line for line in run_records(hub) if line["event"] == "agent_action"] == []
+
+
+def test_denies_draft_when_investigation_read_only_run_reads_draft(hub: Path, marker: Path) -> None:
+    paused_walk(hub, marker)
+    write_action(hub, "peek-order", "read")
+
+    result = agent_read(hub, marker, "demo/peek-order")
+
+    assert result.exit_code == 1, result.output
+    assert "draft action: commit it to run" in result.stderr
+    assert modes(marker) == []
+    (line,) = [line for line in run_records(hub) if line["event"] == "agent_action"]
+    assert (line["decision"], line["reason_kind"], line["status"]) == ("deny", "draft", "refused")
+    decided = [payload for kind, payload in run_events(hub) if kind == "policy.decision"]
+    assert (decided[-1]["origin"], decided[-1]["reason_kind"]) == ("agent", "draft")
+
+
+def test_records_read_only_when_investigation_read_only_run_writes_where_table_denies(
+    hub: Path, marker: Path
+) -> None:
+    document = json.loads((hub / "hub.json").read_text())
+    document["environments"]["staging"]["access"] = "read"
+    (hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
+    paused_walk(hub, marker)
+
+    result = agent_read(hub, marker, "demo/send-order")
+
+    assert result.exit_code == 1, result.output
+    assert result.stderr == (
+        "hub action run: demo/send-order in staging: an investigation runs read actions only\n"
+    )
+    (line,) = [line for line in run_records(hub) if line["event"] == "agent_action"]
+    assert (line["decision"], line["reason_kind"]) == ("deny", "read_only")
+    decided = [payload for kind, payload in run_events(hub) if kind == "policy.decision"]
+    assert (decided[-1]["decision"], decided[-1]["reason_kind"]) == ("deny", "read_only")

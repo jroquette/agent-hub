@@ -325,7 +325,8 @@ class _AgentRead:
             origin="agent",
             decision=decision.decision,
         )
-        if decision.decision != "deny" and entry.document.effect != "read":
+        if entry.document.effect != "read":
+            # Read-only whatever the policy decided (P-10): the reason is always read_only.
             decision = PolicyDecision(decision="deny", reason_kind="read_only")
             facts = facts.model_copy(update={"decision": "deny"})
         events.policy_decided(facts, reason_kind=decision.reason_kind, at=now(), item=self.item)
