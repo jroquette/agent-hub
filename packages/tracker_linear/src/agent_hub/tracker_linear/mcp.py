@@ -2,7 +2,8 @@
 
 Each port operation is one or more short headless ``claude -p`` calls (``mcp_protocol``): a
 read is one call; a write is one read call, then the adapter decides, then at most one write
-call. Every call runs in ``cwd`` (the hub root) with the caller's environment minus
+call; ``create_issue`` is one write call, its reply checked against the team and title
+asked. Every call runs in ``cwd`` (the hub root) with the caller's environment minus
 ``LINEAR_API_KEY``, under the caps given to the constructor (D9), with every hook off and no
 session saved, in permission mode ``dontAsk``, with no built-in tool, the Linear tools its kind
 needs allowed and every other Linear tool of the snapshot ``LINEAR_TOOLS`` denied. What the
@@ -37,6 +38,7 @@ from agent_hub.tracker_linear.claude_process import (
 )
 from agent_hub.tracker_linear.graphql import DONE_STATE_TYPES, LINEAR_API_KEY_VARIABLE
 from agent_hub.tracker_linear.mcp_protocol import (
+    CREATE_FIX,
     DENIED,
     MAX_QUOTED_CHARS,
     MAX_READY_ISSUES,
@@ -50,6 +52,7 @@ from agent_hub.tracker_linear.mcp_protocol import (
     StateSaved,
     call_error,
     comment_read_call,
+    create_issue_call,
     get_issue_call,
     label_read_call,
     list_ready_call,
@@ -196,6 +199,18 @@ class McpTrackerClient:
         _check_echo(
             "comment", issue_id, echoed=saved == CommentSaved(issue_id=issue_id, commented=True)
         )
+
+    def create_issue(self, team: str, title: str, description: str) -> Issue:
+        """Create one issue in ``team``, from one write call; never retried."""
+        self.last_cost_usd = 0.0
+        issue = self._call(create_issue_call(team, title, description))
+        if _team_of(issue.id) != team or issue.title != title:
+            raise TrackerError(
+                operation="create_issue",
+                cause=f"the write reply names another issue, {issue.id}",
+                fix=CREATE_FIX,
+            )
+        return issue
 
     def _label_read(self, operation: str, issue_id: str, name: str) -> LabelsRead:
         """The read call of a label write; a name neither known nor on the issue raises."""

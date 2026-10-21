@@ -923,7 +923,7 @@ The MVP goes up to Phase 2: generate hubs from Loki and see the agents' sessions
 | 3 · Knowledge and decisions | Provenance in the brain, inbox triage in the UI (accept and reject moved to Phase 2 by AGH-201; snooze stays here), extracted decisions, learning metrics | One learning traced from the session to the rule |
 | 4 · Workflows as data and actions | Generic executor reading the workflow ([ADR 0032](adr/0032-workflow-engine.md)), gates approved from the UI, adapters for other agents | — |
 
-Status (2026-10-20, latest release v0.18.0; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
+Status (2026-10-21, latest release v0.19.0; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
 Phase 1 in progress: `init`, `sync` (`--adopt`), `doctor`, `worktree`, `brief`, `agent`, `next`, `run` and `bench`
 shipped in v0.8.0, and `setup`, `start` and `ship` in v0.9.0. Phase 2's first slice is shipped too: the control plane
 `hub web` (AGH-200) in v0.9.0 and its clarity pass (AGH-201: session labels, problems, learning accept and reject
@@ -937,7 +937,10 @@ history with Compare and Restore (AGH-296, AGH-297), the delivered playground sc
 environments with blocked words in the guard (ADR 0038), and v0.18.0 `hub env` and environments in `hub setup` and
 `hub brief`, the hub's hooks on `hub run` and workflow sessions (AGH-278), the guard reading MCP, WebSearch and
 Agent inputs (AGH-293), the plan version and acceptance eval on the feature (AGH-323) and the second delivered
-playground (AGH-384); other agents' adapters stay in Phase 4. The Phase 1 gate (Loki hub recreated) is open;
+playground (AGH-384), and v0.19.0 the two-level feature and ticket flows on screen (AGH-321 slice 1: the eight
+feature steps, ticket step bars, the ticket panel), the ticket records and their `hub step` writers (AGH-402,
+AGH-403), scenarios with `hub scenario` and `hub action` (AGH-355 to AGH-360), the Studio's server publish
+(AGH-298) and new review skills and agents (AGH-411 to AGH-414); other agents' adapters stay in Phase 4. The Phase 1 gate (Loki hub recreated) is open;
 pilot: AGH-54.
 
 The order follows dogfooding: the first generated hub is the platform's own, and the second replaces `loki-trader-hub`. Editable workflows come later because they depend on observation already showing where the current flow gets stuck.
