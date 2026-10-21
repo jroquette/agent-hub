@@ -1,0 +1,373 @@
+# The ticket flow (two-level-flows S2): one planned ticket of a feature, from its context to a PR,
+# without redoing spec, research or plan. The context brief (hub step ticket-brief, read-only to
+# every checkout); a decision the owner gave on this ticket's last change request after its run
+# was lost (hub step pending-decision, AC-2.14: approved, the run writes the A<k> amendment;
+# declined, the note goes to the first preflight as a constraint); the worktree, as issue-to-pr
+# makes it; then ticket-pass (preflight, the plan change gate on plan drift, the ticket plan and
+# the review rounds) up to three times, unrolled (A2): pass-2 runs when pass-1 ended with a
+# discovery, pass-3 likewise, and a discovery in pass-3 ends the run blocked (D-3). After a pass
+# that passed review, the evaluator scoped to the ticket (evals/<delivery>.json, agent-hub/eval/1);
+# then the commits, the PR only on SHIP or SHIP-WITH-OWNER-STEPS, and the delivery: hub step
+# report's, plus the hub files the run changed, for the owner's hub PR (delivery.py, D-1). The
+# run never commits in the hub and has no tracker side.
+version: 1
+name: implement
+description: One ticket of a planned feature to a PR - context, preflight and plan change gate, review rounds, ticket eval.
+revision: 1
+inputs:
+  feature:
+    required: true
+    description: The feature's folder under brain/features/.
+  issue:
+    required: true
+    description: The ticket's tracker issue, <team>-<n>, planned in the feature's features.json.
+  repo:
+    required: true
+    description: The repo to change, its dir in hub.json.
+  issue_text:
+    required: true
+    description: The issue as text, the task to do; implement reads no tracker.
+returns: delivery
+outcome_field: delivery
+nodes:
+  - id: context
+    type: shell
+    description: The context brief, the next version of tickets/<ticket>/brief.md (no checkout changes).
+    command: [hub, step, ticket-brief, --feature, $INPUTS.feature, --ticket, $INPUTS.issue]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        path: {type: string}
+        version: {type: integer, minimum: 1}
+      required: [path, version]
+
+  - id: pending
+    type: shell
+    description: A decision the owner gave on this ticket's last change request while no run waited for it.
+    depends_on: [context]
+    command: [hub, step, pending-decision, --feature, $INPUTS.feature, --ticket, $INPUTS.issue]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        request: {type: [integer, "null"]}
+        decision: {type: string, enum: ["", approved, declined]}
+        input: {type: string, enum: [none, declined_change]}
+        note: {type: string}
+        summary: {type: string}
+      required: [request, decision, input, note, summary]
+
+  - id: amend
+    type: shell
+    description: The approved change's A<k> entry in plan.md (nothing when the plan holds it).
+    depends_on: [pending]
+    when: "$pending.output.decision == 'approved'"
+    command: [hub, step, amend-plan, --feature, $INPUTS.feature, --request, $pending.output.request, --summary, $pending.output.summary]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        path: {type: string}
+        amendment: {type: string}
+        already: {type: [string, "null"]}
+      required: [path, amendment, already]
+
+  - id: worktree
+    type: shell
+    description: Make (or keep) the ticket's worktree from a fresh fetch; print the repo's target.
+    depends_on: [pending, amend]
+    trigger_rule: none_failed_min_one_success
+    command: [hub, step, worktree, --issue, $INPUTS.issue, --repo, $INPUTS.repo]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        path: {type: string}
+        branch: {type: string}
+        base: {type: string}
+        hub: {type: string}
+        hub_name: {type: string}
+        check: {type: string}
+        prompt:
+          type: object
+          properties:
+            guard: {type: string}
+            gate_step: {type: string}
+            commit_shape: {type: string}
+          required: [guard, gate_step, commit_shape]
+        target: {type: object}
+      required: [path, branch, base, hub, hub_name, check, prompt, target]
+
+  - id: pass-1
+    description: The first pass, given the pending decision's note when the owner declined.
+    depends_on: [worktree]
+    type: include
+    include: ticket-pass
+    with:
+      feature: $INPUTS.feature
+      ticket: $INPUTS.issue
+      issue_text: $INPUTS.issue_text
+      brief: $context.output.path
+      path: $worktree.output.path
+      branch: $worktree.output.branch
+      base: $worktree.output.base
+      hub: $worktree.output.hub
+      hub_name: $worktree.output.hub_name
+      check: $worktree.output.check
+      guard: $worktree.output.prompt.guard
+      gate_step: $worktree.output.prompt.gate_step
+      commit_shape: $worktree.output.prompt.commit_shape
+      input: $pending.output.input
+      input_text: $pending.output.note
+      request: $pending.output.request
+
+  - id: pass-2
+    description: The first loop back to preflight, given pass-1's discovery.
+    depends_on: [pass-1]
+    when: "$pass-1.output.status == 'discovery'"
+    type: include
+    include: ticket-pass
+    with:
+      feature: $INPUTS.feature
+      ticket: $INPUTS.issue
+      issue_text: $INPUTS.issue_text
+      brief: $context.output.path
+      path: $worktree.output.path
+      branch: $worktree.output.branch
+      base: $worktree.output.base
+      hub: $worktree.output.hub
+      hub_name: $worktree.output.hub_name
+      check: $worktree.output.check
+      guard: $worktree.output.prompt.guard
+      gate_step: $worktree.output.prompt.gate_step
+      commit_shape: $worktree.output.prompt.commit_shape
+      # The status that starts this pass is the input it gives: discovery.
+      input: $pass-1.output.status
+      input_text: $pass-1.output.discovery
+
+  - id: pass-3
+    description: The second and last loop back to preflight, given pass-2's discovery.
+    depends_on: [pass-2]
+    when: "$pass-2.output.status == 'discovery'"
+    type: include
+    include: ticket-pass
+    with:
+      feature: $INPUTS.feature
+      ticket: $INPUTS.issue
+      issue_text: $INPUTS.issue_text
+      brief: $context.output.path
+      path: $worktree.output.path
+      branch: $worktree.output.branch
+      base: $worktree.output.base
+      hub: $worktree.output.hub
+      hub_name: $worktree.output.hub_name
+      check: $worktree.output.check
+      guard: $worktree.output.prompt.guard
+      gate_step: $worktree.output.prompt.gate_step
+      commit_shape: $worktree.output.prompt.commit_shape
+      input: $pass-2.output.status
+      input_text: $pass-2.output.discovery
+
+  - id: last
+    type: script
+    description: How the last pass ended; a discovery in pass-3 is one too many - blocked.
+    depends_on: [pass-1, pass-2, pass-3]
+    trigger_rule: none_failed_min_one_success
+    runtime: python
+    script: last_pass.py
+    args: [--pass, $pass-1.output, --pass, $pass-2.output, --pass, $pass-3.output]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        status: {type: string, enum: [done, blocked]}
+        question: {type: string}
+        verdict: {type: string}
+        pass: {type: integer, minimum: 1, maximum: 3}
+      required: [status, question, verdict, pass]
+
+  - id: eval
+    type: agent
+    description: The evaluator scoped to the ticket, once its review passed; writes evals/<delivery>.md and .json.
+    depends_on: [last]
+    when: "$last.output.verdict == 'PASS'"
+    prompt_file: ticket-eval.md
+    context: fresh
+    with:
+      feature: $INPUTS.feature
+      ticket: $INPUTS.issue
+      checkout: $worktree.output.path
+      base: $worktree.output.base
+    output_format:
+      $defs:
+        AcId: {pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$', type: string}
+        AcResult:
+          additionalProperties: false
+          properties:
+            ac: {$ref: '#/$defs/AcId'}
+            command: {$ref: '#/$defs/CommandText'}
+            exit_code:
+              anyOf:
+              - {$ref: '#/$defs/ExitCode'}
+              - {type: 'null'}
+            status: {$ref: '#/$defs/RunStatus'}
+            summary: {$ref: '#/$defs/OneLine1000'}
+          required: [ac, command, exit_code, status, summary]
+          type: object
+        CommandText: {maxLength: 2000, minLength: 1, pattern: '^[^\x00-\x1f\x7f-\x9f]*$', type: string}
+        Commit: {pattern: '^[0-9a-f]{7,40}$', type: string}
+        Delivery: {pattern: '^[a-z0-9][a-z0-9-]{0,62}$', type: string}
+        EvalAcs:
+          oneOf:
+          - {const: all, type: string}
+          - items: {$ref: '#/$defs/AcId'}
+            maxItems: 300
+            type: array
+        ExitCode: {maximum: 255, minimum: -255, type: integer}
+        GateResult:
+          additionalProperties: false
+          properties:
+            repo: {$ref: '#/$defs/GateText'}
+            name: {$ref: '#/$defs/GateText'}
+            exit_code:
+              anyOf:
+              - {$ref: '#/$defs/ExitCode'}
+              - {type: 'null'}
+            status: {$ref: '#/$defs/RunStatus'}
+          required: [repo, name, exit_code, status]
+          type: object
+        GateText: {maxLength: 64, minLength: 1, pattern: '^[^\x00-\x1f\x7f-\x9f]*$', type: string}
+        OneLine1000: {maxLength: 1000, minLength: 1, pattern: '^[^\x00-\x1f\x7f-\x9f]*$', type: string}
+        PathText: {maxLength: 512, minLength: 1, pattern: '^[^\x00-\x1f\x7f-\x9f]*$', type: string}
+        RedOnParent:
+          additionalProperties: false
+          properties:
+            test: {$ref: '#/$defs/PathText'}
+            failed_on_base:
+              anyOf:
+              - {type: boolean}
+              - {type: 'null'}
+          required: [test, failed_on_base]
+          type: object
+        RunStatus:
+          enum: [pass, fail, not-run]
+          type: string
+        TicketKey: {pattern: '^[A-Za-z][A-Za-z0-9_-]{0,31}$', type: string}
+        Verdict:
+          enum: [SHIP, SHIP-WITH-OWNER-STEPS, NO-SHIP]
+          type: string
+      additionalProperties: false
+      properties:
+        schema: {const: agent-hub/eval/1, type: string}
+        delivery: {$ref: '#/$defs/Delivery'}
+        verdict: {$ref: '#/$defs/Verdict'}
+        commit: {$ref: '#/$defs/Commit'}
+        tickets:
+          items: {$ref: '#/$defs/TicketKey'}
+          maxItems: 100
+          type: array
+        acs: {$ref: '#/$defs/EvalAcs'}
+        results:
+          items: {$ref: '#/$defs/AcResult'}
+          maxItems: 300
+          type: array
+        gates:
+          items: {$ref: '#/$defs/GateResult'}
+          maxItems: 50
+          type: array
+        red_on_parent:
+          items: {$ref: '#/$defs/RedOnParent'}
+          maxItems: 300
+          type: array
+        owner_steps:
+          items: {$ref: '#/$defs/OneLine1000'}
+          maxItems: 50
+          type: array
+      required: [schema, delivery, verdict, commit, tickets, acs, results, gates, red_on_parent, owner_steps]
+      type: object
+
+  - id: commits
+    type: shell
+    description: The commits on the branch, and whether a tracked change sits beside them.
+    depends_on: [last, eval]
+    trigger_rule: none_failed_min_one_success
+    command: [hub, step, commits, --target, $worktree.output.target]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        count: {type: integer, minimum: 0}
+        subjects: {type: array, items: {type: string}}
+        summary: {type: string}
+        dirty: {type: boolean}
+      required: [count, subjects, summary, dirty]
+
+  - id: pr
+    type: shell
+    description: Push the branch and open its PR, or find the one open - only on a ticket eval that ships.
+    depends_on: [commits]
+    when: "$eval.output.verdict == 'SHIP' && $commits.output.count > 0 && $commits.output.dirty == false || $eval.output.verdict == 'SHIP-WITH-OWNER-STEPS' && $commits.output.count > 0 && $commits.output.dirty == false"
+    command: [hub, step, pr, --issue, $INPUTS.issue, --target, $worktree.output.target]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        url: {type: string}
+        found: {type: boolean}
+        summary: {type: string}
+        title_unmatched: {type: [string, "null"]}
+      required: [url, found, summary, title_unmatched]
+
+  - id: report
+    type: shell
+    description: The run's delivery, from what the steps printed (no tracker write).
+    depends_on: [commits, pr]
+    trigger_rule: none_failed_min_one_success
+    command:
+      - hub
+      - step
+      - report
+      - --status
+      - $last.output.status
+      - --question
+      - $last.output.question
+      - --commits
+      - $commits.output.count
+      - --dirty
+      - $commits.output.dirty
+      - --pr
+      - $pr.output.url
+      - --summary
+      - $pr.output.summary
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        delivery: {type: string, enum: [delivered, no_changes, blocked, failed]}
+        stage: {type: string}
+        reason: {type: string}
+        question: {type: string}
+        pr: {type: string}
+        summary: {type: string}
+      required: [delivery, stage, reason, question, pr, summary]
+
+  - id: delivery
+    type: script
+    description: The report, and the hub files the run changed for the owner's hub PR (the run never commits them).
+    depends_on: [report]
+    runtime: python
+    script: delivery.py
+    args: [--report, $report.output, --feature, $INPUTS.feature, --eval, $eval.output.verdict]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        delivery: {type: string, enum: [delivered, no_changes, blocked, failed]}
+        stage: {type: string}
+        reason: {type: string}
+        question: {type: string}
+        pr: {type: string}
+        summary: {type: string}
+        hub_files: {type: array, items: {type: string}}
+      required: [delivery, stage, reason, question, pr, summary, hub_files]

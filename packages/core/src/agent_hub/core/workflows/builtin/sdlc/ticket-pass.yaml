@@ -1,0 +1,527 @@
+# One pass of the ticket flow (two-level-flows S2, A2), included up to three times by implement:
+# a fresh, read-only preflight of the ticket against the plan and main in its worktree (the
+# findings turned into one agent-hub/preflight/1 run by preflight_run.py and appended by
+# hub step preflight); on `plan` drift a change request (hub step change-request) and the owner's
+# gate (approve, or decline with a note); approved, the decision and the plan's A<k> amendment
+# (hub step decide, amend-plan), declined, the decision with the note; then a re-preflight against
+# the new plan, or with the note as a constraint. Drift still `plan` there, or on a declined
+# change given as input, ends the pass blocked (pass_outcome.py, A2). Otherwise the ticket plan
+# (tickets/<ticket>/plan.md) and deliver's review rounds (at most three, until PASS, the session
+# blocked or a discovery: discovery.py; three without fail the group, max_iterations). The
+# writers create or append in the hub and never commit; implement's report names the files (D-1).
+version: 1
+name: ticket-pass
+description: One ticket pass - preflight, a plan change gate on plan drift, the ticket plan and the review rounds.
+revision: 1
+inputs:
+  feature:
+    required: true
+    description: The feature's folder under brain/features/.
+  ticket:
+    required: true
+    description: The ticket, its tracker id or plan key.
+  issue_text:
+    required: true
+    description: The ticket as text, the task to do (untrusted).
+  brief:
+    required: true
+    description: The context brief, its path in the hub.
+  path:
+    required: true
+    description: The ticket's worktree.
+  branch:
+    required: true
+    description: The worktree's branch.
+  base:
+    required: true
+    description: The ref the change starts from.
+  hub:
+    required: true
+    description: The hub's main checkout.
+  hub_name:
+    required: true
+    description: The hub folder's name.
+  check:
+    required: true
+    description: The repo's check command.
+  guard:
+    required: true
+    description: The prompt's wording for an issue that holds an open question.
+  gate_step:
+    required: true
+    description: The prompt's gate step.
+  commit_shape:
+    required: true
+    description: The prompt's commit convention.
+  input:
+    default: none
+    description: What the pass is given - none, discovery or declined_change; a when reads it, so give a reference.
+  input_text:
+    default: ""
+    description: The discovery, or the declined change's note.
+  request:
+    default: ""
+    description: The decided change request a declined_change input comes from.
+returns: outcome
+nodes:
+  - id: preflight
+    type: agent
+    description: The preflight - does the plan still hold for this ticket? Fresh and read-only.
+    prompt_file: preflight.md
+    cwd: $INPUTS.path
+    context: fresh
+    mutates_checkout: false
+    with:
+      feature: $INPUTS.feature
+      ticket: $INPUTS.ticket
+      brief: $INPUTS.brief
+      input: $INPUTS.input
+      note: $INPUTS.input_text
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [plan_version, commit, blockers_read, drift, local_notes, evidence, proposal, affected, summary]
+      properties:
+        plan_version: {type: integer, minimum: 1}
+        commit: {type: string, pattern: "^[0-9a-f]{7,40}$"}
+        blockers_read:
+          type: array
+          maxItems: 50
+          items: {type: string, pattern: "^[A-Za-z][A-Za-z0-9_-]{0,31}$"}
+        drift: {type: string, enum: [none, local, plan]}
+        local_notes:
+          type: array
+          maxItems: 50
+          items: {type: string, minLength: 1, maxLength: 1000, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+        evidence: {type: string, maxLength: 20000}
+        proposal: {type: string, maxLength: 20000}
+        affected: {type: string, pattern: "^([A-Za-z][A-Za-z0-9_-]{0,31}(,[A-Za-z][A-Za-z0-9_-]{0,31}){0,49})?$"}
+        summary: {type: string, maxLength: 300, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+
+  - id: request
+    type: shell
+    description: On plan drift, open the change request against the plan's current version.
+    depends_on: [preflight]
+    when: "$preflight.output.drift == 'plan' && $INPUTS.input != 'declined_change'"
+    command:
+      - hub
+      - step
+      - change-request
+      - --feature
+      - $INPUTS.feature
+      - --ticket
+      - $INPUTS.ticket
+      - --evidence
+      - $preflight.output.evidence
+      - --proposal
+      - $preflight.output.proposal
+      - --affected
+      - $preflight.output.affected
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        path: {type: string}
+        n: {type: integer, minimum: 1}
+        plan_from: {type: integer}
+        plan_to: {type: integer}
+      required: [path, n, plan_from, plan_to]
+
+  - id: entry
+    type: script
+    description: The preflight's findings as one preflight run.
+    depends_on: [preflight, request]
+    trigger_rule: none_failed_min_one_success
+    runtime: python
+    script: preflight_run.py
+    args: [--agent, $preflight.output, --input, $INPUTS.input, --text, $INPUTS.input_text, --request, $request.output.n, --request, $INPUTS.request]
+    retry: {max_attempts: 0}
+    output_format: {type: object}
+
+  - id: record
+    type: shell
+    description: Append the run to tickets/<ticket>/preflight.json.
+    depends_on: [entry]
+    command: [hub, step, preflight, --feature, $INPUTS.feature, --ticket, $INPUTS.ticket, --run, $entry.output]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        path: {type: string}
+        runs: {type: integer, minimum: 1}
+      required: [path, runs]
+
+  - id: gate
+    type: approval
+    description: The owner approves the plan change, or declines it with a note.
+    depends_on: [record]
+    when: "$preflight.output.drift == 'plan' && $INPUTS.input != 'declined_change'"
+    message: >-
+      Plan change request $request.output.n from $INPUTS.ticket ($request.output.path, plan
+      v$request.output.plan_from to v$request.output.plan_to). Evidence: $preflight.output.evidence
+      Proposal: $preflight.output.proposal Approve to amend the plan (the run writes A<k> and goes on);
+      decline with a note to keep the current plan (the run re-checks the ticket against it).
+    decisions:
+      - {id: approve, label: Approve}
+      - {id: decline, label: Decline}
+    capture_response: true
+
+  - id: approved
+    type: shell
+    description: Record the owner's approval as change-requests/<n>.decision.md.
+    depends_on: [gate]
+    when: "$gate.output.decision == 'approve'"
+    command: [hub, step, decide, --feature, $INPUTS.feature, --request, $request.output.n, --decision, approved, --by, $gate.output.approver, --note, $gate.output.text]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        path: {type: string}
+        decision: {type: string, const: approved}
+      required: [path, decision]
+
+  - id: amend
+    type: shell
+    description: Append the approved change's A<k> entry to plan.md's Amendments.
+    depends_on: [approved]
+    command: [hub, step, amend-plan, --feature, $INPUTS.feature, --request, $request.output.n, --summary, $preflight.output.summary]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        path: {type: string}
+        amendment: {type: string}
+        already: {type: [string, "null"]}
+      required: [path, amendment, already]
+
+  - id: declined
+    type: shell
+    description: Record the owner's decline and its note as change-requests/<n>.decision.md.
+    depends_on: [gate]
+    when: "$gate.output.decision == 'decline'"
+    command: [hub, step, decide, --feature, $INPUTS.feature, --request, $request.output.n, --decision, declined, --by, $gate.output.approver, --note, $gate.output.text]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        path: {type: string}
+        decision: {type: string, const: declined}
+      required: [path, decision]
+
+  - id: recheck
+    type: agent
+    description: The preflight again - against the amended plan, or with the owner's note as a constraint.
+    depends_on: [amend, declined]
+    trigger_rule: none_failed_min_one_success
+    # A decline's note is the re-check's constraint: the gate captures it (capture_response).
+    when: "$gate.output.decision == 'approve' || $gate.output.text != ''"
+    prompt_file: preflight.md
+    cwd: $INPUTS.path
+    context: fresh
+    mutates_checkout: false
+    with:
+      feature: $INPUTS.feature
+      ticket: $INPUTS.ticket
+      brief: $INPUTS.brief
+      input: $gate.output.decision
+      note: $gate.output.text
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [plan_version, commit, blockers_read, drift, local_notes, evidence, proposal, affected, summary]
+      properties:
+        plan_version: {type: integer, minimum: 1}
+        commit: {type: string, pattern: "^[0-9a-f]{7,40}$"}
+        blockers_read:
+          type: array
+          maxItems: 50
+          items: {type: string, pattern: "^[A-Za-z][A-Za-z0-9_-]{0,31}$"}
+        drift: {type: string, enum: [none, local, plan]}
+        local_notes:
+          type: array
+          maxItems: 50
+          items: {type: string, minLength: 1, maxLength: 1000, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+        evidence: {type: string, maxLength: 20000}
+        proposal: {type: string, maxLength: 20000}
+        affected: {type: string, pattern: "^([A-Za-z][A-Za-z0-9_-]{0,31}(,[A-Za-z][A-Za-z0-9_-]{0,31}){0,49})?$"}
+        summary: {type: string, maxLength: 300, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+
+  - id: reentry
+    type: script
+    description: The re-preflight's findings as one preflight run.
+    depends_on: [recheck]
+    runtime: python
+    script: preflight_run.py
+    args: [--agent, $recheck.output, --input, $gate.output.decision, --text, $gate.output.text, --request, $request.output.n]
+    retry: {max_attempts: 0}
+    output_format: {type: object}
+
+  - id: rerecord
+    type: shell
+    description: Append the re-preflight's run to tickets/<ticket>/preflight.json.
+    depends_on: [reentry]
+    command: [hub, step, preflight, --feature, $INPUTS.feature, --ticket, $INPUTS.ticket, --run, $reentry.output]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        path: {type: string}
+        runs: {type: integer, minimum: 1}
+      required: [path, runs]
+
+  - id: plan
+    type: agent
+    description: The ticket plan, tickets/<ticket>/plan.md, once a preflight passed (local drift applied).
+    depends_on: [record, rerecord]
+    trigger_rule: none_failed_min_one_success
+    when: "$preflight.output.drift != 'plan' || $recheck.output.drift == 'none' || $recheck.output.drift == 'local'"
+    prompt_file: ticket-plan.md
+    context: fresh
+    with:
+      feature: $INPUTS.feature
+      ticket: $INPUTS.ticket
+      brief: $INPUTS.brief
+      checkout: $INPUTS.path
+      preflight: $record.output.path
+    output_format:
+      type: object
+      properties:
+        path: {type: string, minLength: 1}
+        tasks: {type: integer, minimum: 1}
+      required: [path, tasks]
+
+  - id: rounds
+    type: loop_group
+    description: Implement, check, review - again until PASS, the session blocked or a discovery; three rounds at most.
+    depends_on: [plan]
+    max_iterations: 3
+    until_when: "$verdict.output.status == 'blocked' || $discovery.output.discovery != '' || $review.output.verdict == 'PASS'"
+    nodes:
+      - id: implement
+        type: agent
+        description: The implementing session, resumed each round with the last round's feedback.
+        prompt_file: ticket-implement.md
+        cwd: $INPUTS.path
+        retry: {max_attempts: 0}
+
+      - id: verdict
+        type: shell
+        description: The session's reply read as hub run reads it - done, or blocked with a question.
+        depends_on: [implement]
+        command: [hub, step, verdict]
+        # On stdin: a reply may be longer than one argument holds, or hold NUL.
+        stdin: $implement.output
+        retry: {max_attempts: 0}
+        output_format:
+          type: object
+          properties:
+            status: {type: string, enum: [done, blocked]}
+            summary: {type: string}
+            question: {type: string}
+          required: [status, summary, question]
+
+      - id: discovery
+        type: script
+        description: The broken plan assumption the session reported, if any.
+        depends_on: [implement]
+        runtime: python
+        script: discovery.py
+        stdin: $implement.output
+        retry: {max_attempts: 0}
+        output_format:
+          type: object
+          properties:
+            discovery: {type: string}
+          required: [discovery]
+
+      - id: check
+        type: script
+        description: The repo's check on the round's work; a red check is data, not a failure.
+        depends_on: [verdict, discovery]
+        when: "$verdict.output.status != 'blocked' && $discovery.output.discovery == ''"
+        runtime: python
+        script: check.py
+        args: [$INPUTS.check, $LOOP_PREV.check.output.round]
+        cwd: $INPUTS.path
+        retry: {max_attempts: 0}
+        output_format:
+          type: object
+          properties:
+            passed: {type: boolean}
+            exit_code: {type: integer}
+            round: {type: integer, minimum: 1}
+            tail: {type: string}
+          required: [passed, exit_code, round, tail]
+
+      - id: spec
+        type: agent
+        description: The spec lens on the commits; it must leave the checkout's git status as it was.
+        depends_on: [check]
+        when: "$check.output.passed == true"
+        context: fresh
+        prompt_file: spec-lens.md
+        cwd: $INPUTS.path
+        mutates_checkout: false
+        with:
+          ticket: $INPUTS.ticket
+          task: $INPUTS.ticket
+          round: $check.output.round
+          base: $INPUTS.base
+          spec: $INPUTS.issue_text
+        output_format:
+          type: object
+          additionalProperties: false
+          required: [schema, reviewer, ticket, task, round, commit, verdict, findings]
+          properties:
+            schema: {type: string, const: agent-hub/review/1}
+            reviewer: {type: string, enum: [spec, quality]}
+            ticket: {type: string, pattern: "^[A-Za-z][A-Za-z0-9_-]{0,31}$"}
+            task: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}
+            round: {type: integer, minimum: 1, maximum: 9999}
+            commit: {type: string, pattern: "^[0-9a-f]{7,40}$"}
+            verdict: {type: string, enum: [PASS, FAIL]}
+            findings:
+              type: array
+              maxItems: 100
+              items:
+                type: object
+                additionalProperties: false
+                required: [id, kind, severity, path, line, acs, what, expected]
+                properties:
+                  id: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$"}
+                  kind:
+                    type: string
+                    enum: [missing, extra, test, assertion, contract, invariant, security, idempotency, quality]
+                  severity: {type: string, enum: [blocking, minor]}
+                  path: {type: string, minLength: 1, maxLength: 512, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+                  line:
+                    anyOf: [{type: integer, minimum: 1, maximum: 10000000}, {type: "null"}]
+                  acs:
+                    type: array
+                    maxItems: 50
+                    items: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}
+                  what: {type: string, minLength: 1, maxLength: 1000, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+                  expected: {type: string, minLength: 1, maxLength: 1000, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+
+      - id: quality
+        type: agent
+        description: The quality lens on the commits; it must leave the checkout's git status as it was.
+        depends_on: [check]
+        when: "$check.output.passed == true"
+        context: fresh
+        prompt_file: quality-lens.md
+        cwd: $INPUTS.path
+        mutates_checkout: false
+        with:
+          ticket: $INPUTS.ticket
+          task: $INPUTS.ticket
+          round: $check.output.round
+          base: $INPUTS.base
+          spec: $INPUTS.issue_text
+        output_format:
+          type: object
+          additionalProperties: false
+          required: [schema, reviewer, ticket, task, round, commit, verdict, findings]
+          properties:
+            schema: {type: string, const: agent-hub/review/1}
+            reviewer: {type: string, enum: [spec, quality]}
+            ticket: {type: string, pattern: "^[A-Za-z][A-Za-z0-9_-]{0,31}$"}
+            task: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}
+            round: {type: integer, minimum: 1, maximum: 9999}
+            commit: {type: string, pattern: "^[0-9a-f]{7,40}$"}
+            verdict: {type: string, enum: [PASS, FAIL]}
+            findings:
+              type: array
+              maxItems: 100
+              items:
+                type: object
+                additionalProperties: false
+                required: [id, kind, severity, path, line, acs, what, expected]
+                properties:
+                  id: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$"}
+                  kind:
+                    type: string
+                    enum: [missing, extra, test, assertion, contract, invariant, security, idempotency, quality]
+                  severity: {type: string, enum: [blocking, minor]}
+                  path: {type: string, minLength: 1, maxLength: 512, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+                  line:
+                    anyOf: [{type: integer, minimum: 1, maximum: 10000000}, {type: "null"}]
+                  acs:
+                    type: array
+                    maxItems: 50
+                    items: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}
+                  what: {type: string, minLength: 1, maxLength: 1000, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+                  expected: {type: string, minLength: 1, maxLength: 1000, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+
+      - id: review
+        type: script
+        description: The lenses' verdicts joined - PASS only when both pass.
+        depends_on: [spec, quality]
+        runtime: python
+        script: verdict.py
+        args: [--spec, $spec.output.verdict, --quality, $quality.output.verdict]
+        output_format:
+          type: object
+          properties:
+            verdict: {type: string, enum: [PASS, FAIL]}
+            lenses:
+              type: object
+              properties:
+                spec: {type: string, enum: [PASS, FAIL]}
+                quality: {type: string, enum: [PASS, FAIL]}
+              required: [spec, quality]
+          required: [verdict, lenses]
+
+      - id: notes
+        type: script
+        description: The check's result and the spec findings, for the next round (a lens not run reads empty).
+        depends_on: [check, spec]
+        trigger_rule: none_failed_min_one_success
+        runtime: python
+        script: feedback.py
+        args: [--check, $check.output]
+        stdin: $spec.output
+        retry: {max_attempts: 0}
+        output_format:
+          type: object
+          properties:
+            check: {type: [object, "null"]}
+            findings: {type: array}
+            omitted: {type: integer, minimum: 0}
+          required: [check, findings, omitted]
+
+      - id: feedback
+        type: script
+        description: The notes and the quality findings, blocking first, within the 32 KiB budget.
+        depends_on: [notes, quality]
+        trigger_rule: none_failed_min_one_success
+        runtime: python
+        script: feedback.py
+        args: [--notes, $notes.output]
+        stdin: $quality.output
+        retry: {max_attempts: 0}
+        output_format:
+          type: object
+          properties:
+            check: {type: [object, "null"]}
+            findings: {type: array}
+            omitted: {type: integer, minimum: 0}
+          required: [check, findings, omitted]
+
+  - id: outcome
+    type: script
+    description: How the pass ended - blocked, a discovery, or done with the review's verdict.
+    depends_on: [rounds, record, rerecord]
+    trigger_rule: none_failed_min_one_success
+    runtime: python
+    script: pass_outcome.py
+    args: [--rounds, $rounds.output, --request, $request.output.n, --request, $INPUTS.request]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        status: {type: string, enum: [done, blocked, discovery]}
+        question: {type: string}
+        discovery: {type: string}
+        verdict: {type: string}
+      required: [status, question, discovery, verdict]
