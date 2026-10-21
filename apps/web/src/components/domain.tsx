@@ -902,8 +902,10 @@ export function goldenStepSummary(
   const progress = step.progress
     ? `${String(step.progress.done)}/${String(step.progress.total)}`
     : null;
-  const meta = step.meta ?? progress;
-  const head = `${labels[step.name] ?? step.name}: ${GOLDEN_STATE_TEXT[step.state].toLowerCase()}`;
+  const word = GOLDEN_STATE_TEXT[step.state];
+  // A meta that only repeats the state's word is said once.
+  const meta = step.meta === word ? progress : (step.meta ?? progress);
+  const head = `${labels[step.name] ?? step.name}: ${word.toLowerCase()}`;
   const reason = step.state !== "done" && step.reason ? ` (${step.reason})` : "";
   const signal = step.signal ? ` · ${step.signal}` : "";
   return `${head}${meta ? ` · ${meta}` : ""}${signal}${reason}`;
@@ -918,9 +920,9 @@ export function ownerWaitStep(steps: readonly GoldenStep[]): GoldenStep | null {
   return step?.state === "waiting" ? step : null;
 }
 
-/** The one short line the step in focus shows under its state. */
+/** The one short line the step in focus shows under its state (never the state's word again). */
 function focusMeta(step: StepperStep<string>): string | null {
-  if (step.meta) return step.meta;
+  if (step.meta && step.meta !== GOLDEN_STATE_TEXT[step.state]) return step.meta;
   return step.progress ? `${String(step.progress.done)}/${String(step.progress.total)}` : null;
 }
 

@@ -813,9 +813,11 @@ export function aChangeRequest(
     opened_at: "2026-10-21T09:30:00Z",
     run_id: "implement-202",
     approval_id: "implement-202:approve-change:1",
+    decidable_here: false,
     decision: null,
     path: "features/control-plane/change-requests/2.md",
     problem: null,
+    body: "## Evidence\n\nAGH-201 shipped `policyRef` instead of `policyId`.\n\n## Proposal\n\nRead `policyRef`.\n",
     ...overrides,
   };
 }
@@ -849,8 +851,6 @@ export function aTicketRecords(
     project: "agent-hub",
     slug: "control-plane",
     ticket: "AGH-202",
-    brief: null,
-    plan: null,
     preflight: null,
     change_requests: [],
     ...overrides,

@@ -16,6 +16,7 @@ import {
   aPreflightRun,
   aTicketFlow,
   aTicketRecords,
+  ProblemReply,
   renderWithApi,
   type FeatureTickets,
 } from "../../testing/builders";
@@ -63,7 +64,6 @@ function tickets(flows: Partial<Record<string, Flow>>): FeatureTickets {
 
 const LOCAL_RECORDS = aTicketRecords({
   preflight: {
-    path: "features/control-plane/tickets/AGH-202/preflight.json",
     runs: [
       aPreflightRun({
         drift: "local",
@@ -129,10 +129,18 @@ describe("Waiting banner (AC-2.8, AC-1.10)", () => {
     open();
 
     const banner = (
-      await screen.findByText("Plan change request 2 from AGH-202: plan v2 → v3 · affects AGH-203")
+      await screen.findByText(
+        (_, element) =>
+          element?.tagName === "LI" &&
+          element.textContent.startsWith(
+            "Plan change request 2 from AGH-202: plan v2 → v3 · affects AGH-203 · waiting since",
+          ),
+      )
     ).closest('[role="status"]');
     if (!(banner instanceof HTMLElement)) throw new Error("no banner");
     expect(within(banner).getByText("Waiting for you")).toBeInTheDocument();
+    // A20: how long the request has waited.
+    expect(banner).toHaveTextContent("waiting since");
     expect(screen.getByRole("list", { name: "Golden path" })).toHaveTextContent("v3 waits for you");
     expect(await seriousViolations(document.body)).toEqual([]);
   });
@@ -158,6 +166,26 @@ describe("Waiting banner (AC-2.8, AC-1.10)", () => {
     ).toHaveFocus();
   });
 
+  // U5: a request that arrives while the page is open is said once in a polite region.
+  it("AC-2.8 announces a newly arrived change request once", async () => {
+    let requests: ReturnType<typeof aChangeRequest>[] = [];
+    const { queryClient } = renderWithApi(<FeatureDetailScreen />, {
+      routes: { [API]: () => aFeatureDetail({ change_requests: requests }) },
+      path: "/features/agent-hub/control-plane?doc=acs",
+      route: "features/:project/:slug",
+    });
+    await screen.findByRole("list", { name: "Golden path" });
+    const region = document.querySelector('[aria-live="polite"].ah-sr');
+    expect(region).toHaveTextContent(/^$/);
+
+    requests = [aChangeRequest()];
+    await queryClient.invalidateQueries();
+
+    await vi.waitFor(() => {
+      expect(region).toHaveTextContent("AGH-202 waits for you: plan change request 2.");
+    });
+  });
+
   it("AC-2.8 shows no banner once the request is decided", async () => {
     renderWithApi(<FeatureDetailScreen />, {
       routes: {
@@ -174,6 +202,28 @@ describe("Waiting banner (AC-2.8, AC-1.10)", () => {
 
 describe("Ticket signals on cards and rows (AC-2.8, AC-2.5, A13)", () => {
   const data = tickets({ "AGH-202": ASKING, "AGH-203": HELD });
+
+  // U13: the signals' marks and words pass axe in both views.
+  it("AC-2.8 has no serious axe violation with the signals, Flow and Table (a11y)", async () => {
+    const { unmount } = showTab(data, "/?doc=tickets");
+    expect(await seriousViolations(document.body)).toEqual([]);
+    unmount();
+    showTab(data, "/?doc=tickets&tickets=table");
+    expect(await seriousViolations(document.body)).toEqual([]);
+  });
+
+  // U7: while a plan change waits for the owner, Start is no view's primary.
+  it("AC-2.8 makes Start secondary while a plan change waits", async () => {
+    const waiting = tickets({ "AGH-203": ASKING });
+    const { unmount } = showTab(waiting, "/?doc=tickets");
+    const quiet = await screen.findByRole("button", { name: /^Start AGH-202/ });
+    expect(quiet).not.toHaveClass("ah-btn-primary");
+    unmount();
+    showTab(tickets({}), "/?doc=tickets");
+    expect(await screen.findByRole("button", { name: /^Start AGH-202/ })).toHaveClass(
+      "ah-btn-primary",
+    );
+  });
 
   it("AC-2.8 the asking ticket waits for you and the affected one is held, in place of readiness", () => {
     showTab(data, "/?doc=tickets");
@@ -274,7 +324,7 @@ describe("Deciding a change request in the ticket panel (AC-2.7, AC-2.12, AC-2.1
   });
 
   it("AC-2.14 without an open gate, records the decision in the hub; Decline needs a note (a11y)", async () => {
-    const lost = aChangeRequest({ approval_id: null });
+    const lost = aChangeRequest({ approval_id: null, decidable_here: true });
     const { requests } = showTab(tickets({ "AGH-202": ASKING }), path, {
       [RECORDS]: aTicketRecords({ change_requests: [lost] }),
       [`POST ${API}/change-requests/2/decision`]: aChangeRequest({ status: "declined" }),
@@ -305,7 +355,9 @@ describe("Deciding a change request in the ticket panel (AC-2.7, AC-2.12, AC-2.1
 
   it("AC-2.14 approves a lost run's request without a note", async () => {
     const { requests } = showTab(tickets({ "AGH-202": ASKING }), path, {
-      [RECORDS]: aTicketRecords({ change_requests: [aChangeRequest({ approval_id: null })] }),
+      [RECORDS]: aTicketRecords({
+        change_requests: [aChangeRequest({ approval_id: null, decidable_here: true })],
+      }),
       [`POST ${API}/change-requests/2/decision`]: aChangeRequest({ status: "approved" }),
     });
 
@@ -313,6 +365,160 @@ describe("Deciding a change request in the ticket panel (AC-2.7, AC-2.12, AC-2.1
 
     const post = requests.find((r) => r.method === "POST");
     expect(await post?.json()).toEqual({ decision: "approved", note: null });
+    // U3: it says it was recorded, and the buttons stay off.
+    expect(
+      await within(panel()).findByText(
+        "Decision recorded in the hub. The next /implement of AGH-202 reads it.",
+      ),
+    ).toBeInTheDocument();
+    expect(within(panel()).getByRole("button", { name: "Approve plan v3" })).toBeDisabled();
+  });
+
+  // Q1: no open gate is not enough: while the run lives it records the decision itself.
+  it("AC-2.14 offers no lost-run form while the server says the run lives", async () => {
+    showTab(tickets({ "AGH-202": ASKING }), path, {
+      [RECORDS]: aTicketRecords({
+        change_requests: [aChangeRequest({ approval_id: null, decidable_here: false })],
+      }),
+    });
+
+    expect(await within(panel()).findByText(/Its run is live/)).toBeInTheDocument();
+    expect(within(panel()).queryByRole("group", { name: /^Decide/ })).toBeNull();
+  });
+
+  // U3: a refusal reads as the gate's does, and says nothing was recorded.
+  it("AC-2.14 shows the server's refusal when the lost-run decision is refused", async () => {
+    showTab(tickets({ "AGH-202": ASKING }), path, {
+      [RECORDS]: aTicketRecords({
+        change_requests: [aChangeRequest({ approval_id: null, decidable_here: true })],
+      }),
+      [`POST ${API}/change-requests/2/decision`]: new ProblemReply({
+        status: 409,
+        type: "urn:agent-hub:problem:change-request-live-run",
+        title: "Change request cannot be decided",
+        detail: "run implement-202 is live: it records the decision itself",
+      }),
+    });
+
+    await userEvent.click(await within(panel()).findByRole("button", { name: "Approve plan v3" }));
+
+    const alert = await within(panel()).findByRole("alert");
+    expect(alert).toHaveTextContent("run implement-202 is live: it records the decision itself");
+    expect(alert).toHaveTextContent("Nothing was recorded.");
+  });
+
+  // U6: after a decision here, focus lands on the line that records it.
+  it("AC-2.14 moves focus to the decided line once the decision is read back", async () => {
+    let decided = false;
+    const open = aChangeRequest({ approval_id: null, decidable_here: true });
+    const done = aChangeRequest({
+      status: "approved",
+      approval_id: null,
+      decision: {
+        decision: "approved",
+        decided_by: "Dana Owner",
+        decided_at: "2026-10-21",
+        note: null,
+      },
+    });
+    showTab(tickets({ "AGH-202": ASKING }), path, {
+      [RECORDS]: () => aTicketRecords({ change_requests: [decided ? done : open] }),
+      [`POST ${API}/change-requests/2/decision`]: () => {
+        decided = true;
+        return done;
+      },
+    });
+
+    await userEvent.click(await within(panel()).findByRole("button", { name: "Approve plan v3" }));
+
+    const line = await within(panel()).findByText(
+      "Change request 2 approved by Dana Owner · 2026-10-21",
+    );
+    expect(line).toHaveFocus();
+  });
+
+  // The gate's own text setting does not lift A20's rule: a decline still asks for its note.
+  it("AC-2.12 asks for the decline's note even when the gate takes no text", async () => {
+    showTab(tickets({ "AGH-202": ASKING }), path, {
+      [RECORDS]: aTicketRecords({ change_requests: [aChangeRequest()] }),
+      [`${GATE_PATH}/gate`]: { ...gate, text: "off" },
+    });
+
+    await userEvent.click(await within(panel()).findByRole("button", { name: "Decline" }));
+
+    expect(screen.getByRole("dialog", { name: "Decline?" })).toBeInTheDocument();
+  });
+
+  // A20, U13: evidence, proposal, consequences and the wait before the gate's buttons.
+  it("A20 shows the request's evidence and what approving does before deciding (a11y)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-21T11:30:00Z") });
+    showTab(tickets({ "AGH-202": ASKING, "AGH-203": HELD }), path, {
+      [RECORDS]: aTicketRecords({ change_requests: [aChangeRequest()] }),
+      [`${GATE_PATH}/gate`]: gate,
+    });
+
+    const block = await within(panel()).findByRole("region", { name: "Plan change request 2" });
+    expect(within(block).getByRole("heading", { name: "Evidence" })).toBeInTheDocument();
+    expect(within(block).getByRole("heading", { name: "Proposal" })).toBeInTheDocument();
+    expect(block).toHaveTextContent("agent");
+    expect(block).toHaveTextContent(
+      "Plan drift: it changes an AC, a contract or another ticket, so AGH-202 is paused until you answer.",
+    );
+    expect(block).toHaveTextContent("Plan v2 becomes v3 (a new amendment).");
+    expect(block).toHaveTextContent("AGH-203 run preflight again before they go on.");
+    expect(block).toHaveTextContent("Nothing is merged or pushed.");
+    expect(block).toHaveTextContent("waiting since 2 h ago");
+    const evidence = within(block).getByText("What changes if you approve");
+    const decline = await within(block).findByRole("button", { name: "Decline" });
+    expect(
+      evidence.compareDocumentPosition(decline) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    vi.useRealTimers();
+    expect(await seriousViolations(panel())).toEqual([]);
+  });
+
+  // U12: the panel's one primary act opens Preflight at the request.
+  it("AC-1.10 the panel header's Review change request opens Preflight at the request", async () => {
+    const { router } = showTab(
+      tickets({ "AGH-202": ASKING }),
+      "/?doc=tickets&ticket=AGH-202&step=review",
+      {
+        [RECORDS]: aTicketRecords({ change_requests: [aChangeRequest()] }),
+        [`${GATE_PATH}/gate`]: gate,
+      },
+    );
+
+    await userEvent.click(
+      await within(panel()).findByRole("button", { name: "Review change request" }),
+    );
+
+    expect(router.state.location.search).toBe("?doc=tickets&ticket=AGH-202&step=preflight");
+    await vi.waitFor(() => {
+      expect(within(panel()).getByRole("region", { name: "Plan change request 2" })).toHaveFocus();
+    });
+  });
+
+  // Q5: an unreadable request offers no decision; a decided one holds nobody.
+  it("AC-2.8 offers no decision on an unreadable request and holds no ticket once decided", async () => {
+    const unreadable = aChangeRequest({
+      status: null,
+      approval_id: null,
+      problem: "change-requests/2.md could not be read (plan_to is missing). Fix it in a hub PR.",
+    });
+    const decidedOther = aChangeRequest({
+      n: 3,
+      ticket: "AGH-201",
+      affected: ["AGH-202"],
+      status: "approved",
+      approval_id: null,
+    });
+    showTab(tickets({ "AGH-202": ASKING }), path, {
+      [RECORDS]: aTicketRecords({ change_requests: [unreadable, decidedOther] }),
+    });
+
+    expect(await within(panel()).findByText(/plan_to is missing/)).toBeInTheDocument();
+    expect(within(panel()).queryByRole("group", { name: /^Decide/ })).toBeNull();
+    expect(within(panel()).queryByText(/Held by/)).toBeNull();
   });
 
   it("AC-2.14 a decided request reads who decided it, with the note", async () => {
@@ -336,5 +542,66 @@ describe("Deciding a change request in the ticket panel (AC-2.7, AC-2.12, AC-2.1
       ),
     ).toBeInTheDocument();
     expect(within(panel()).queryByRole("group", { name: /^Decide/ })).toBeNull();
+  });
+});
+
+describe("Ticket panel states (U1, U4)", () => {
+  const path = "/?doc=tickets&ticket=AGH-202&step=preflight";
+
+  it("U1 shows a skeleton while the ticket's records load, not Not reached", async () => {
+    showTab(tickets({ "AGH-202": ASKING }), path, { [RECORDS]: "pending" });
+
+    const preflight = within(panel()).getByRole("button", { name: /^Preflight, waiting for you/ });
+    expect(preflight).toHaveAttribute("aria-expanded", "true");
+    expect(panel()).not.toHaveTextContent("Not reached.");
+    await vi.waitFor(() => {
+      expect(panel().querySelector(".ah-golden-detail .ah-skel")).not.toBeNull();
+    });
+  });
+
+  it("U1 says why the records failed, with Retry", async () => {
+    showTab(tickets({ "AGH-202": ASKING }), path, {
+      [RECORDS]: new ProblemReply({
+        type: "about:blank",
+        status: 500,
+        title: "Server error",
+        detail: "boom",
+      }),
+    });
+
+    expect(
+      await within(panel()).findByText("Could not load this ticket's records"),
+    ).toBeInTheDocument();
+    expect(within(panel()).getByRole("button", { name: "Try again" })).toBeInTheDocument();
+  });
+
+  it("U1 falls back to the step's meta when the ticket has no records", async () => {
+    showTab(tickets({ "AGH-202": STALE }), path, { [RECORDS]: aTicketRecords() });
+
+    await vi.waitFor(() => {
+      expect(panel().querySelector(".ah-golden-detail")).toHaveTextContent(
+        "Plan v3 approved: re-run preflight",
+      );
+    });
+    expect(panel()).not.toHaveTextContent("Not reached.");
+  });
+
+  it("U4 the held line opens the asking ticket's panel at Preflight", async () => {
+    const { router } = showTab(
+      tickets({ "AGH-203": HELD }),
+      "/?doc=tickets&ticket=AGH-203&step=preflight",
+      {
+        [`${API}/tickets/AGH-203`]: aTicketRecords({
+          ticket: "AGH-203",
+          change_requests: [aChangeRequest()],
+        }),
+      },
+    );
+
+    await userEvent.click(
+      await screen.findByRole("link", { name: "change request 2 from AGH-202" }),
+    );
+
+    expect(router.state.location.search).toBe("?doc=tickets&ticket=AGH-202&step=preflight");
   });
 });
