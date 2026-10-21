@@ -146,9 +146,20 @@ under the feature's lock `.agent-runs/locks/<slug>.lock` (never committed); a ru
 |---|---|---|
 | `ticket-brief --feature --ticket` | the next `## Brief v<n>` of `brief.md` (temp file, then rename) | a ticket `features.json` does not plan, no `plan.md`, a `brief.md` that is not this ticket's brief |
 | `preflight --feature --ticket --run JSON` | `preflight.json` with one run appended: earlier runs copied as parsed JSON, so each stays equal in canonical form; the file is new or replaced whole (temp file, then rename) | a run `PreflightRun` refuses (cross-field rules included), a record there that is malformed or names another ticket, a result over 64 KiB |
-| `change-request --feature --ticket --run-id --evidence --proposal [--affected]…` | `change-requests/<n>.md`, `n` the next free number, `status: open`, `plan_from` the plan's current version, `plan_to` the next; created exclusively | a field its reader could not read, an empty evidence or proposal, a text over 256 KiB (what `decide` and `amend-plan` read) |
+| `change-request --feature --ticket [--run-id] --evidence --proposal [--affected]…` | `change-requests/<n>.md`, `n` the next free number, `status: open`, `plan_from` the plan's current version, `plan_to` the next; created exclusively. `--run-id` defaults to `AGENT_HUB_RUN_ID` (a workflow's steps get it); each `--affected` may list tickets separated by commas | a field its reader could not read, an empty evidence or proposal, a text over 256 KiB (what `decide` and `amend-plan` read) |
 | `decide --feature --request N --decision approved\|declined --by WHO [--note]` | `change-requests/<n>.decision.md`, `decided_by` the gate's approver, `decided_at` now, `note` on one line (cut at 1,000 characters; the whole note is the body); created exclusively | a decision other than exactly `approved` or `declined`, a text over 256 KiB, a second decision, an approver that names no person (empty or `unknown`, A5), an approval whose approver `amend-plan` could not write (a `(` or `)`), a decline without a note, no request `n` |
 | `amend-plan --feature --request N --summary` | one entry `- A<k> (<decided_at date>, <decided_by>): <summary> ([change request n](change-requests/n.md))` at the end of `plan.md`, after a new `## Amendments` heading when the last section is another; every earlier byte kept; a re-run once the plan holds the request's entry writes nothing and answers `already amended as A<k>` | a request not decided `approved`, a plan whose version is no longer the request's `plan_from`, an entry that would not read as `A<k>`, a lock another run holds |
+| `pending-decision --feature --ticket` | nothing: prints `{request, decision, input, note, summary}`, the decision on the request the ticket's last preflight run opened (`drift: plan`, its `input` not `declined_change`) when `<n>.decision.md` exists, else `request: null` and empty texts; `input` is `declined_change` for a decline, else `none`; `summary` is the proposal's first line | a record the readers could not read |
+
+The `implement` workflow (built-in `sdlc` pack, with its `ticket-pass`; A1, A2) runs them in this order:
+`ticket-brief`; `pending-decision`, then `amend-plan` for a decision approved while no run waited (AC-2.14); the
+worktree; then each pass: the preflight agent (fresh, `mutates_checkout: false`, in the worktree), `change-request`
+on `plan` drift, `preflight` (the run composed by `scripts/preflight_run.py`: `ran_at`, `run_id`, the input and the
+request), the gate (`approve`, `decline` with its note, `capture_response`), `decide` (`--by` the gate's
+`approver`) and `amend-plan` or the note, a re-preflight appended the same way, and the ticket plan. A re-preflight
+still on `plan`, or a first preflight given a declined change that still finds it, ends the run `blocked` with no new
+request (A2). The run's `delivery` lists `hub_files`, the paths under the feature folder `git status` shows changed,
+for the owner's hub PR (D-1).
 
 ### `summaries/<record>.md`
 
