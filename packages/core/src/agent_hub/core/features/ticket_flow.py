@@ -49,7 +49,8 @@ _STEPS: Final[tuple[TicketStepName, ...]] = get_args(TicketStepName.__value__)
 # A step the ticket is past: done, or left without a record before later evidence.
 _PASSED: Final = ("done", "unrecorded")
 TICKETS_UNREAD: Final = (
-    f"more than {MAX_TICKET_FOLDERS} folders in {TICKETS_FOLDER}/; not all were read. {FIX_IT}"
+    f"not every folder in {TICKETS_FOLDER}/ was read (more than {MAX_TICKET_FOLDERS}, or over the "
+    f"read budget). {FIX_IT}"
 )
 
 type _Found = tuple[StepState, str | None]
