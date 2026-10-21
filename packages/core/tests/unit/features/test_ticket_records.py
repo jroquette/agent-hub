@@ -86,7 +86,7 @@ def test_reads_open_when_request_has_no_decision() -> None:
     assert found.problem is None
 
 
-# Q13: a request longer than the head read says so, so the panel never shows a cut proposal as whole.
+# Q13: a request longer than the head read says so: the panel never shows a cut one as whole.
 def test_marks_body_cut_when_head_full() -> None:
     long = a_request(proposal="x" * CHANGE_REQUEST_HEAD_BYTES)
     head = long.head[:CHANGE_REQUEST_HEAD_BYTES] if long.head else b""
