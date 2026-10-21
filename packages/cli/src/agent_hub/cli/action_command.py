@@ -17,8 +17,17 @@ or destroy exits 1, ``write and destroy actions need a terminal or a scenario ru
 recorded as a ``deny`` with ``reason_kind: read_only``); an ``ask`` prompts ``y/N`` and ``n``
 runs nothing. The output is printed as the script gave it. Each decision is a
 ``policy.decision`` event, a run is ``action.start`` and ``action.end``, under the session
-``action:<uuid>`` (metadata only). ``--run`` (an investigation's reads) is not here yet: it needs
-a scenario run paused at an investigation (plan task 9.4).
+``action:<uuid>`` (metadata only).
+
+``run NAME --run RUN [--input name=value]...`` is an investigation's read (P-10, AM-12): scenario
+run RUN must be paused at an open, unanswered investigation (else exit 1), and the call runs in
+its environment (``--env`` may be left out; another one exits 1), decided for origin ``agent``,
+read-only whatever the terminal: a write or destroy exits 1 and is recorded as a ``deny`` with
+``reason_kind: read_only``. The env file is loaded here, by the one loader, so the action gets
+``AWS_PROFILE`` and the env file's variables even when the caller's environment (an agent
+session's) has none of them. The call is an ``agent_action`` line in the run's record (its
+inputs, its output redacted, its status) and its events are the run's (session ``run:<id>``, step
+the investigation's gate), all under the run's lock; no credential value reaches either.
 """
 
 import getpass
@@ -40,6 +49,15 @@ from agent_hub.cli.env_files_loader import EnvFileLoadError, load_env_file
 from agent_hub.cli.hub_root import hub_checkout, hub_root_or_exit
 from agent_hub.cli.run_children import CHILD_HIDDEN, without
 from agent_hub.cli.run_log import now, open_default_event_store
+from agent_hub.cli.workflow_runs import (
+    RUN_ID_PATTERN,
+    WorkflowRunError,
+    append_record,
+    drop_torn_tail,
+    read_records,
+    run_folder,
+    run_lock,
+)
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.hub_config.effective_environments import (
     EffectiveEnvironments,
@@ -51,6 +69,7 @@ from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.json_form import JsonValue, dump_json
 from agent_hub.core.scenarios.access_policy import (
     Effect,
+    Origin,
     PolicyDecision,
     decide,
     find_environment,
@@ -64,6 +83,7 @@ from agent_hub.core.scenarios.credentials import (
     action_credentials,
     credentials_for,
 )
+from agent_hub.core.scenarios.run_record import AGENT_ACTION, fold_records
 from agent_hub.core.scenarios.scenario_events import ActionFacts, ScenarioEvents
 from agent_hub.core.workflows.failures import NodeFailedError
 from agent_hub.generator.action_discovery import ActionDiscovery, discover_actions
@@ -73,6 +93,7 @@ MAX_INPUTS: Final = 64
 MAX_INPUT_BYTES: Final = 64 * 1024
 DRAFT_REASON: Final = "draft action: commit it to run"
 NEEDS_TERMINAL: Final = "write and destroy actions need a terminal or a scenario run"
+INVESTIGATION_READS: Final = "an investigation runs read actions only"
 _RUN_PREFIX: Final = "hub action run"
 
 action_app = typer.Typer(
@@ -158,9 +179,36 @@ def plan_command(name: Name, *, environment: Environment, given: Inputs = None) 
         raise typer.Exit(FAILURE)
 
 
+RunEnvironment = Annotated[
+    str | None,
+    typer.Option(
+        "--env", metavar="ENV", help="The environment the action runs in (with --run, the run's)."
+    ),
+]
+InvestigationRun = Annotated[
+    str | None,
+    typer.Option(
+        "--run",
+        metavar="RUN",
+        help="A scenario run paused at an investigation: a read for it, origin agent.",
+    ),
+]
+
+
 @action_app.command("run")
-def run_command(name: Name, *, environment: Environment, given: Inputs = None) -> None:
+def run_command(
+    name: Name,
+    *,
+    environment: RunEnvironment = None,
+    given: Inputs = None,
+    run: InvestigationRun = None,
+) -> None:
     """Run one action for a person: reads anywhere declared, writes only on a terminal."""
+    if run is not None:
+        _investigation_read(name, run=run, environment=environment, given=given or [])
+        return
+    if environment is None:
+        raise typer.BadParameter("give the environment the action runs in", param_hint="--env")
     resolved = resolve_call(name, environment=environment, given=given or [])
     entry, decision = resolved.entry, resolved.decision
     events = ScenarioEvents(
@@ -213,6 +261,117 @@ def run_command(name: Name, *, environment: Environment, given: Inputs = None) -
     typer.echo(dump_json(output).decode(), nl=False)
 
 
+def _investigation_read(name: str, *, run: str, environment: str | None, given: list[str]) -> None:
+    """``run NAME --run RUN``: an investigation's read, under the scenario run's lock."""
+    if not RUN_ID_PATTERN.fullmatch(run):
+        hint = "use 1 to 32 of a-z 0-9 -, starting with a letter or digit"
+        raise typer.BadParameter(hint, param_hint="--run")
+    folder = run_folder(action_hub(), run)
+    if not folder.is_dir() or folder.is_symlink():
+        fail(f"{_RUN_PREFIX}: no scenario run {run}")
+    try:
+        with run_lock(folder):
+            drop_torn_tail(folder)
+            records = read_records(folder)
+            pending = fold_records(records).open_investigation
+            header = records[0] if records else {}
+            if header.get("kind") != "scenario" or pending is None or pending.choice is not None:
+                fail(f"{_RUN_PREFIX}: scenario run {run} is not paused at an open investigation")
+            where = str(header.get("environment"))
+            if environment is not None and environment != where:
+                fail(f"{_RUN_PREFIX}: scenario run {run} runs in {where}, not {environment}")
+            resolved = resolve_call(name, environment=where, given=given, origin="agent")
+            reads = sum(1 for record in records if record.get("event") == AGENT_ACTION)
+            _AgentRead(
+                folder=folder,
+                resolved=resolved,
+                gate=pending.gate,
+                number=pending.number,
+                item=f"read{reads + 1}",
+                workflow=str(header.get("workflow")),
+            ).execute()
+    except WorkflowRunError as error:
+        fail(f"{_RUN_PREFIX}: {error}")
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _AgentRead:
+    """One investigation read: decided for origin ``agent``, run only when it is a read the
+    policy allows, recorded in the scenario run and as its events."""
+
+    folder: Path
+    resolved: ResolvedCall
+    gate: str
+    number: int
+    item: str
+    workflow: str
+
+    def execute(self) -> None:
+        resolved = self.resolved
+        entry, decision = resolved.entry, resolved.decision
+        events = ScenarioEvents(
+            project=hub_project_name(resolved.hub) or resolved.hub.name,
+            run_id=self.folder.name,
+            workflow=self.workflow,
+        )
+        facts = ActionFacts(
+            step=self.gate,
+            attempt=self.number,
+            action=entry.ref,
+            content_hash=entry.content_hash,
+            environment=resolved.environment_name,
+            services=resolved.plan.services,
+            effect=entry.document.effect,
+            origin="agent",
+            decision=decision.decision,
+        )
+        if decision.decision != "deny" and entry.document.effect != "read":
+            decision = PolicyDecision(decision="deny", reason_kind="read_only")
+            facts = facts.model_copy(update={"decision": "deny"})
+        events.policy_decided(facts, reason_kind=decision.reason_kind, at=now(), item=self.item)
+        if decision.decision != "allow":
+            self._record(decision, status="refused", failure_kind=None, output=None)
+            _send(events)
+            reason = INVESTIGATION_READS if decision.reason_kind == "read_only" else None
+            shown = reason or decision_text(resolved)
+            fail(f"{_RUN_PREFIX}: {entry.ref} in {resolved.environment_name}: {shown}")
+        events.action_started(facts, at=now(), item=self.item)
+        try:
+            output = run_action(
+                resolved.call,
+                environ=os.environ,
+                hidden=resolved.hidden,
+                credentials=credentials(resolved),
+            )
+        except NodeFailedError as error:
+            events.action_ended(
+                facts, status="failed", failure_kind=error.kind, at=now(), item=self.item
+            )
+            self._record(decision, status="failed", failure_kind=error.kind, output=None)
+            _send(events)
+            fail(f"{_RUN_PREFIX}: {entry.ref}: {error.kind}: {error}")
+        events.action_ended(facts, status="ok", failure_kind=None, at=now(), item=self.item)
+        self._record(decision, status="ok", failure_kind=None, output=output)
+        _send(events)
+        typer.echo(dump_json(output).decode(), nl=False)
+
+    def _record(
+        self,
+        decision: PolicyDecision,
+        *,
+        status: str,
+        failure_kind: str | None,
+        output: JsonValue,
+    ) -> None:
+        resolved = self.resolved
+        line: dict[str, JsonValue] = {"event": AGENT_ACTION, "gate": self.gate}
+        line |= {"number": self.number, "item": self.item, "action": resolved.entry.ref}
+        line |= {"effect": resolved.entry.document.effect, "origin": "agent"}
+        line |= {"decision": decision.decision, "reason_kind": decision.reason_kind}
+        line |= {"inputs": dict(resolved.plan.inputs), "status": status}
+        append_record(self.folder, line | {"failure_kind": failure_kind, "output": output})
+
+
 def credentials(resolved: ResolvedCall) -> dict[str, str]:
     """What the call's process gets on top of its plain environment (``call_credentials``)."""
     if resolved.environment is None:
@@ -251,9 +410,11 @@ def call_credentials(
     return action_credentials(chosen, environ=environ, env_file_values=values)
 
 
-def resolve_call(name: str, *, environment: str, given: list[str]) -> ResolvedCall:
-    """The call of action ``name`` in ``environment`` with ``given`` inputs, decided for origin
-    ``human``; exit 2 on a malformed ``--input``, 1 on anything that cannot be resolved."""
+def resolve_call(
+    name: str, *, environment: str, given: list[str], origin: Origin = "human"
+) -> ResolvedCall:
+    """The call of action ``name`` in ``environment`` with ``given`` inputs, decided for
+    ``origin``; exit 2 on a malformed ``--input``, 1 on anything that cannot be resolved."""
     values = given_texts(given)
     hub = action_hub()
     found = discover_actions(hub)
@@ -281,7 +442,7 @@ def resolve_call(name: str, *, environment: str, given: list[str]) -> ResolvedCa
         environment=declared,
         environment_name=environment,
         plan=plan,
-        decision=decide(declared, entry.document.effect, "human", draft=entry.draft),
+        decision=decide(declared, entry.document.effect, origin, draft=entry.draft),
         roots=(hub.name, *(repo.dir for repo in effective.config.repos)),
     )
 

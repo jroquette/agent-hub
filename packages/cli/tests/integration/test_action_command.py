@@ -562,3 +562,208 @@ def test_runs_nothing_when_standalone_terminal_ends_input_at_prompt(
     assert [(kind, payload["decision"]) for kind, payload in stored(hub)] == [
         ("policy.decision", "ask")
     ]
+
+
+# AGH-360 (AC-350.20, AC-350.41): an investigation's reads, ``hub action run --run``.
+# ``hold-walk`` runs its one read step in staging, which fails until the file ``HELD`` names
+# exists, so the scenario run pauses at an investigation.
+
+HELD_SCRIPT = """\
+stdin=$(cat)
+if [ ! -e "$HELD" ]; then
+  exit 3
+fi
+printf '{"order": "o-1"}'
+"""
+ENV_SCRIPT = """\
+stdin=$(cat)
+printf '%s\\n' "$stdin" >> "$MARKER"
+printf '%s %s\\n' "$AWS_PROFILE" "$DEMO_DB_URL" >> "$ENV_MARKER"
+printf '{"order": "%s"}' "$DEMO_DB_URL"
+"""
+HOLD_WALK = """\
+version: 1
+kind: scenario
+name: hold-walk
+revision: 1
+nodes:
+  - id: order-held
+    type: action
+    action: held-order
+    with: {target: api}
+"""
+RUN = "walk-1"
+
+
+def investigation_env(hub: Path, marker: Path) -> dict[str, str]:
+    return {
+        "HELD": str(hub.parent.parent / "released"),
+        "ENV_MARKER": str(marker.parent / "env-marker"),
+    }
+
+
+def paused_walk(hub: Path, marker: Path) -> None:
+    """Commit ``hold-walk`` and its action, then run it to its first investigation."""
+    write_action(hub, "held-order", "read")
+    (hub / "actions" / "demo" / "scripts" / "held-order.sh").write_text(HELD_SCRIPT)
+    write_action(hub, "env-check", "read")
+    (hub / "actions" / "demo" / "scripts" / "env-check.sh").write_text(ENV_SCRIPT)
+    scenario = hub / "scenarios" / "demo" / "hold-walk.yaml"
+    scenario.parent.mkdir(parents=True)
+    scenario.write_text(HOLD_WALK)
+    git(hub, "add", "-A")
+    git(hub, "commit", "-q", "-m", "hold walk")
+    environ = {
+        "AGENT_HUB_ROOT": str(hub),
+        "MARKER": str(marker),
+        "AGENT_HUB_DB": str(hub.parent.parent / "events.db"),
+        **investigation_env(hub, marker),
+    }
+    args = ["scenario", "run", "hold-walk", "--env", "staging", "--run-id", RUN]
+    started = CliRunner().invoke(app, args, env=environ, input="")
+    assert started.exit_code == 0, started.output
+    assert "paused at order-held (investigation)" in started.stdout
+
+
+def run_records(hub: Path) -> list[dict[str, Any]]:
+    path = hub / ".agent-runs" / "workflows" / RUN / "records.jsonl"
+    return [json.loads(line) for line in path.read_text().splitlines()]
+
+
+def agent_read(hub: Path, marker: Path, action: str, *extra: str) -> Result:
+    return run_action_command(
+        hub,
+        marker,
+        "run",
+        action,
+        "--run",
+        RUN,
+        "--input",
+        "target=api",
+        *extra,
+        **investigation_env(hub, marker),
+    )
+
+
+def run_events(hub: Path) -> list[tuple[str, dict[str, object]]]:
+    database = hub.parent.parent / "events.db"
+    return [
+        (event.type, event.payload)
+        for event in open_event_store(database).read_all()
+        if event.session == f"run:{RUN}" and event.type in ("policy.decision", "action.start")
+    ]
+
+
+def test_refuses_write_and_records_deny_when_investigation_read_only_run(
+    hub: Path, marker: Path
+) -> None:
+    paused_walk(hub, marker)
+
+    result = agent_read(hub, marker, "demo/send-order")
+
+    assert result.exit_code == 1, result.output
+    assert result.stderr == (
+        "hub action run: demo/send-order in staging: an investigation runs read actions only\n"
+    )
+    assert modes(marker) == []
+    decided = [payload for kind, payload in run_events(hub) if kind == "policy.decision"]
+    assert [
+        (item["action"], item["origin"], item["decision"], item["reason_kind"]) for item in decided
+    ][-1] == ("demo/send-order", "agent", "deny", "read_only")
+    (line,) = [line for line in run_records(hub) if line["event"] == "agent_action"]
+    assert (line["action"], line["origin"], line["status"], line["reason_kind"]) == (
+        "demo/send-order",
+        "agent",
+        "refused",
+        "read_only",
+    )
+
+
+def test_records_read_with_agent_origin_when_investigation_read_only_run(
+    hub: Path, marker: Path
+) -> None:
+    paused_walk(hub, marker)
+
+    result = agent_read(hub, marker, "demo/get-order")
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.stdout) == {"order": "o-1"}
+    assert modes(marker) == ["run"]
+    (line,) = [line for line in run_records(hub) if line["event"] == "agent_action"]
+    assert (line["gate"], line["origin"], line["decision"], line["status"]) == (
+        "order-held__investigation",
+        "agent",
+        "allow",
+        "ok",
+    )
+    agent = [payload for _, payload in run_events(hub) if payload.get("origin") == "agent"]
+    assert [(item["action"], item["decision"]) for item in agent] == [
+        ("demo/get-order", "allow"),
+        ("demo/get-order", "allow"),
+    ]
+
+
+def test_refuses_when_run_not_paused_at_investigation(hub: Path, marker: Path) -> None:
+    missing = agent_read(hub, marker, "demo/get-order")
+    paused_walk(hub, marker)
+    (hub.parent.parent / "released").touch()
+    answered = CliRunner().invoke(
+        app,
+        ["workflow", "respond", RUN, "--node", "order-held__investigation", "--choice", "retry"],
+        env={
+            "AGENT_HUB_ROOT": str(hub),
+            "MARKER": str(marker),
+            "AGENT_HUB_DB": str(hub.parent.parent / "events.db"),
+            **investigation_env(hub, marker),
+        },
+        input="",
+    )
+
+    done = agent_read(hub, marker, "demo/get-order")
+    elsewhere = agent_read(hub, marker, "demo/get-order", "--env", "local")
+
+    assert missing.exit_code == 1, missing.output
+    assert missing.stderr == f"hub action run: no scenario run {RUN}\n"
+    assert answered.exit_code == 0, answered.output
+    assert done.exit_code == 1, done.output
+    assert (
+        done.stderr
+        == f"hub action run: scenario run {RUN} is not paused at an open investigation\n"
+    )
+    assert elsewhere.exit_code == 1, elsewhere.output
+    assert modes(marker) == []
+    assert [line for line in run_records(hub) if line["event"] == "agent_action"] == []
+
+
+def test_injects_env_file_when_investigation_credentials_read(hub: Path, marker: Path) -> None:
+    path = declare_env_file(hub)
+    path.write_text(f"DEMO_DB_URL={ENV_SECRET}\n")
+    paused_walk(hub, marker)
+
+    # The caller's environment (an agent session's) has no DEMO_DB_URL and no AWS_PROFILE.
+    result = run_action_command(
+        hub,
+        marker,
+        "run",
+        "demo/env-check",
+        "--run",
+        RUN,
+        "--input",
+        "target=api",
+        **investigation_env(hub, marker),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "DEMO_DB_URL" not in os.environ
+    seen = (marker.parent / "env-marker").read_text()
+    assert seen == f"demo-staging {ENV_SECRET}\n"
+    assert json.loads(result.stdout) == {"order": "<credential DEMO_DB_URL>"}
+    assert ENV_SECRET not in result.output
+    (line,) = [line for line in run_records(hub) if line["event"] == "agent_action"]
+    assert (line["origin"], line["status"]) == ("agent", "ok")
+    folder = hub / ".agent-runs" / "workflows" / RUN
+    for item in folder.rglob("*"):
+        if item.is_file():
+            assert ENV_SECRET.encode() not in item.read_bytes(), item
+    assert ENV_SECRET not in json.dumps([payload for _, payload in stored(hub)])
+    assert ENV_SECRET.encode() not in (hub.parent.parent / "events.db").read_bytes()
