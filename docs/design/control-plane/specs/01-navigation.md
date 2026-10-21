@@ -171,6 +171,11 @@ Badge rules:
 
 Collapse: the `IconButton` `panel-left-close` at the bottom toggles collapse; `[` is not used (reserved for tabs). Default collapsed below 1360 px; the choice persists in local storage `ah.sidebar.collapsed`.
 
+- **Look (AGH-422).** The sidebar's rows take the chat's vocabulary: 36 px soft rounded rows (`radius-xl`) at 14 px,
+  the current page filled with `surface-turn` (its icon accent) instead of an outline, group titles at 12 px, and no
+  border lines on the sidebar, its brand row or its foot (AC-422.22 in
+  [agent-sessions.md](../../agent-sessions.md#chat-redesign-the-sessions-rail-and-the-side-columns-agh-422)).
+
 ## Top bar anatomy
 
 Left to right: `ProjectSwitcher`, `CommandPalette` trigger, flexible space, `CollectorPill`, theme `IconButton`, time zone `SegmentedControl`, identity chip.

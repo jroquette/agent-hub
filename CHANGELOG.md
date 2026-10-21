@@ -13,6 +13,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- A sessions rail sits beside the full chat (AGH-422): the sessions waiting for you, then the open ones, then the
+  recent ended ones, each named by its ticket as the chat's header names it and tagged with its project, ticket and
+  feature; a filter narrows it and it folds to a strip of status dots. The app's sidebar and the rail take the chat's
+  softer style, and the chat page never scrolls past its own height.
 - The full chat's header is a toolbar on the window and a heading in the column (AGH-422): the breadcrumb names the
   project and the session's short id, the title has its own line with the status, feature and cost under it, the
   cost reads "Cost $X · estimated" with the split in its tooltip, Review changes is the only bordered button while

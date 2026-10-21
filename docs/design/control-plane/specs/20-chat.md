@@ -232,3 +232,40 @@ focusable tooltip, `compact` for the panel), `ChangedFilesChip` (extend: a `Butt
 
 Open, not designed in: which short id both the chat and the session detail show; whether the Waiting badge should
 scroll to the oldest request; a cloud session's link to claude.ai; arrow keys in the menus; the chat below 768 px.
+
+## Sessions rail
+
+AC-422.18 to AC-422.22 in
+[agent-sessions.md](../../agent-sessions.md#chat-redesign-the-sessions-rail-and-the-side-columns-agh-422). The
+rail answers "which other session needs me, and how do I get there in one click?"; its first job is to surface
+"Waiting for you" (principle 2).
+
+```
++--------+------------------------+------------------------------------------------------------+
+| app    | Sessions      All [◧]  | (chat header)                                              |
+| sidebar| ( 🔍 Filter          ) |                                                            |
+| on bg  | Waiting for you 1      |                                                            |
+|        | ● Fix the guard        |                    (the chat, on surface)                  |
+|        |   [AGH-12] [export]    |                                                            |
+|        | Open 2                 |                                                            |
+|        | ● Ship the rail        |                                                            |
+|        | Recent 20              |                                                            |
+|        |   Old spike            |                                                            |
++--------+------------------------+------------------------------------------------------------+
+           260 px on surface-sunken; folds to a 48 px strip of status dots
+```
+
+- **Rows:** a status dot (pulsing while running, none once ended; its word for screen readers and in the tooltip),
+  the name (as the chat's header names the session: its ticket's name, else its title, else its last prompt), and
+  chips: the project (across projects), the ticket (mono) and the feature (accent-soft).
+- **Groups:** Waiting for you, Open, Recent (the 20 newest ended), each with its count.
+- **Filter:** a small filled capsule with the composer's focus halo; Escape clears it.
+- **Fold:** "Hide sessions" / "Show sessions", kept in `ah.chat.rail`.
+- **Columns:** the app sidebar (on `bg`), the rail (`surface-sunken`) and the chat (`surface`) step in by tone, not
+  borders; the sidebar's and the rail's rows are soft `radius-xl` rows with a filled current item.
+- **Scroll:** the chat layout clips its overflow, so only the transcript and the rail's list scroll, never the page.
+
+The UX review of the page (on the way to this state) proposed a one-line conversation list grouped by day, a New
+session button and status icons instead of dots; the owner took the two-line rows with tags back ("the rail as
+before with tags"), so the status is still a coloured dot on screen with its word for screen readers and in the
+tooltip (a known gap against "never colour alone", left for a follow-up).
