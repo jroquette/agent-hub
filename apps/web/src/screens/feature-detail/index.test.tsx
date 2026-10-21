@@ -1036,6 +1036,7 @@ describe("FeatureDetailScreen", () => {
 
       const header = screen.getByRole("group", { name: "Tickets of this feature" });
       const link = within(header).getByRole("link", { name: "AGH-48" });
+      expect(link).toHaveTextContent(/^AGH-48$/);
       expect(link).toHaveAttribute(
         "href",
         "/features/agent-hub/layered-memory?doc=tickets&ticket=AGH-48",
