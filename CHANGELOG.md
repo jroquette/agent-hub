@@ -13,6 +13,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- `hub validate-output preflight <file>` checks a ticket's `preflight.json` against `agent-hub/preflight/1` and names
+  the JSON path of each problem (AGH-402). `hub web` reads a ticket's records (`tickets/<id>/brief.md`,
+  `preflight.json`, `plan.md`) and the feature's plan change requests (`change-requests/<n>.md` and their
+  `<n>.decision.md`): the ticket flow's Context, Preflight and Implement steps follow them, step states gain `waiting`
+  and `stale`, and the API's steps and features carry a `signal` and `waiting_on_owner`. A malformed record turns only
+  its own step unknown; the screens that show them land with AGH-405.
 - `hub web` can publish a Studio draft itself (AGH-298, `POST .../skills/drafts/{draft_id}/publish` with
   `{target, confirm_managed}`), and the Studio's Publish now calls it instead of asking Claude to copy the draft:
   Claude only edits the draft, the Studio shows "Publishing…" then "Published." with a link to the item, warns before
