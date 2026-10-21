@@ -382,7 +382,7 @@ def test_gives_same_bytes_when_hook_edited_in_place_twice() -> None:
         }
     ).encode()
     # A hook edited in place sits where it was, so replacing it again changes nothing; a moved
-    # hook's replay is told by its draft_id (test_publish_draft), not by replace_hook.
+    # hook's retry is a spent draft, told by its draft_id (A20), not by replace_hook.
     draft = read_draft_item(
         UnitKind.HOOK, _files({"hooks.json": _hooks("PreToolUse", "changed", "Bash")})
     )
