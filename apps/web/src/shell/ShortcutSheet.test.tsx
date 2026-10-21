@@ -54,3 +54,17 @@ describe("ShortcutSheet (steps)", () => {
     expect(group("Chat")).toContain("Show / hide steps: Ctrl Alt .");
   });
 });
+
+// AGH-330 UX F7: Feature detail's Tickets tab keys.
+describe("ShortcutSheet (tickets)", () => {
+  it("lists the Tickets tab's keys in a Tickets group", () => {
+    render(<ShortcutSheet onClose={vi.fn()} />);
+
+    expect(group("Tickets")).toEqual([
+      "Flow / table: v",
+      "Next / previous row: j k ↓ ↑",
+      "Open the ticket panel: ↵ o",
+      "Close the ticket panel: Esc",
+    ]);
+  });
+});

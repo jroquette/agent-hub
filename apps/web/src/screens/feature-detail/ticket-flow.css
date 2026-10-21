@@ -615,3 +615,29 @@
   min-height: 56px;
   resize: vertical;
 }
+
+/* The Tickets tab beside its ticket panel (AGH-330, 31-responsive.md): the panel overlays below
+   1600 px and docks from there, the table then keeping its first four columns. */
+.ah-ticket-layout {
+  display: flex;
+  gap: var(--space-4);
+  align-items: flex-start;
+}
+.ah-ticket-main {
+  flex: 1;
+  min-width: 0;
+}
+.ah-ticket-table tbody tr[data-ticket-open]:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+@media (max-width: 1599px) {
+  .ah-ticket-table [data-hide="laptop"] {
+    display: none;
+  }
+}
+@media (min-width: 1600px) {
+  .ah-ticket-layout:has(.ah-side-panel[data-layout="docked"]) .ah-ticket-table [data-hide] {
+    display: none;
+  }
+}

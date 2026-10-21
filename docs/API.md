@@ -233,8 +233,16 @@ acceptance criteria rows, the records and every eval, it carries:
   `amendments` (each `id`, `date`, `who`, `title` and `anchor`, the text of the `## Amendments…` heading) and
   `problem`. A `plan.md` over 256 KiB has `version: null` and its `problem`; the rest of the detail is served as
   usual.
-- `acceptance_eval`: `null` before a whole-feature eval exists, else its `delivery` (`legacy` for `eval.md`) and
-  `verdict`. It is the latest eval whose scope is `acs: all`, or a legacy `eval.md` without scope.
+- `acceptance_eval`: `null` before a whole-feature eval exists, else its `delivery` (`legacy` for `eval.md`),
+  `verdict` and `owner_wait`. It is the latest eval whose scope is `acs: all`, or a legacy `eval.md` without scope.
+  `owner_wait` is what a SHIP-WITH-OWNER-STEPS acceptance eval waits on from the owner, by the rule the owner
+  sign-off follows (two-level-flows A9-A11, A15): `state`, `acs` (the ACs it waits on) and `reopened` (those whose
+  latest eval is NO-SHIP). `state` is, in this order, `no_acs` (no live AC to sign off), `undated` (the eval has no
+  usable `evaluated_at`; a legacy `eval.md` never is), `future` (dated at or after the read), `reopened`, else
+  `sign_off`, the one state in which a sign-off can be recorded; with `future`, `signable_after` is the instant (UTC,
+  rounded up to the minute) after which one can be. It is `null` when nothing waits, when not every eval was read
+  (the sign-off's first refusal), and once an owner decision newer than the eval settled it (a "more work" still the
+  latest eval of a waiting AC).
 - `verdict` and `verdict_line` (here and in the list) are the acceptance eval's: a legacy `eval.md` keeps its own
   verdict line, an `evals/` record reads "Verdict: <verdict>, from the <delivery> eval". A ticket-scoped eval never
   sets them.

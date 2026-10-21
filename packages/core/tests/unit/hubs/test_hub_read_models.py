@@ -676,3 +676,26 @@ def test_resolves_item_lookups_without_doctor_when_lock_matches_pin() -> None:
     # The hub card still asks the doctor.
     models.list_hubs()
     assert reader.snapshots == {DEMO: 1, OTHER: 1}
+
+
+# AGH-330 Q5: one read time for the whole list.
+def test_reads_clock_once_when_features_listed() -> None:
+    registry = InMemoryHubRegistry(clock=lambda: NOW)
+    registry.add(DEMO)
+    reads: list[datetime] = []
+
+    def clock() -> datetime:
+        reads.append(NOW)
+        return NOW
+
+    models = HubFilesReadModels(
+        registry=registry,
+        reader=FakeHubFileReader({DEMO: a_demo_hub()}),
+        activity=FakeActivity(),
+        running_version=RUNNING,
+        settings=SETTINGS,
+        clock=clock,
+    )
+
+    assert len(models.list_features(Scope()).items) == 2
+    assert len(reads) == 1

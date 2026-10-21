@@ -291,6 +291,7 @@ Every entity, tab, filter and selected item is addressable. The URL is the sourc
 | Skills catalog | `/projects/agent-hub/skills?q=plan&kind=skill&mode=user-only` | search and facets in the query, updated with `replace` (a departure from the push rule below: typing must not fill the history); unknown values ignored |
 | Skill detail | `/projects/agent-hub/skills/skill/hub-workflow/feature` | `kind/source/name`; `source` is the folder (`claude` for `.claude/`, `settings` / `settings-project` for hooks) |
 | Feature AC | `/features/agent-hub/layered-memory?ac=AC-48.21` | |
+| Feature ticket panel | `/features/agent-hub/layered-memory?doc=tickets&ticket=AGH-48` | `step=` keeps the open step (AGH-330) |
 | Metrics chart | `/metrics?metric=failure-stage&period=30d&group_by=step` | |
 | Health finding | `/health?project=agent-hub&finding=:id` | |
 | Lists with filters | `/sessions?agent=hub-workflow:evaluator&outcome=error&from=2026-10-01` | |
@@ -371,6 +372,15 @@ Shortcuts are listed in the `ShortcutSheet` (`?`). Two-key sequences start with 
 
 The Live sessions screen and its keys are retired ([ADR 0033](../../../adr/0033-sessions-and-chat-interaction-model.md));
 the chat's own keys are in [agent-sessions.md](../../agent-sessions.md#chat-behaviour).
+
+### Feature detail › Tickets tab (AGH-330)
+
+| Keys | Action |
+|---|---|
+| `v` | Toggle Flow / Table, while focus is in the Tickets tab and not in a text field; focus stays on the same ticket |
+| `j` / `k`, `↓` / `↑` | Move between the table's ticket rows (the table body is one tab stop; epic rows are skipped) |
+| `Enter` / `o` | Open the focused row's ticket panel (`?ticket=<id>`) |
+| `Esc` | Close the ticket panel; focus returns to what opened it |
 
 ### Learnings triage (P3)
 

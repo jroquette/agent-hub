@@ -68,6 +68,7 @@ from agent_hub.api.rfc9457 import (
     invalid_cursor_problem,
     owner_signoff_problem,
 )
+from agent_hub.api.run_gate_kinds import RecordedGateKinds
 from agent_hub.api.run_launcher import ProcessRunLauncher
 from agent_hub.api.settings import ApiSettings, utc_now
 from agent_hub.api.static_files import WEB_DIST
@@ -691,7 +692,8 @@ def build_app(
         events, reader, hub_of=facts.hub_of, availability=CachedAvailability(changes.availability)
     )
     workflows = ReadWorkflows(hubs, workflow_source_of, capture=capture)
-    gates = WorkflowGates(events, hubs, workflows)
+    # A gate the definition lacks is classified by the run's own record (AM-14, P-6).
+    gates = WorkflowGates(events, hubs, workflows, kinds=RecordedGateKinds())
     guard = None
     if not settings.sessions_off:
         env: Mapping[str, str] = os.environ if environ is None else environ

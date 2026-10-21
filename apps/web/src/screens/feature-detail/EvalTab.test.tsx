@@ -1,7 +1,9 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { fmtDateTime } from "../../lib/format";
 import { seriousViolations } from "../../testing/axe";
 import {
   aBrainNote,
@@ -17,7 +19,7 @@ import {
 } from "../../testing/builders";
 import {
   EvalTab,
-  OwnerSignOff,
+  FOCUS_EVAL,
   evalHistory,
   evalPrompt,
   pickEval,
@@ -203,6 +205,162 @@ describe("EvalTab rows", () => {
     }),
   ];
 
+  // AGH-330 R1, R2, F6: a signpost lands once on its eval's group row, the list opened for it.
+  it("focuses a signpost's eval group once, opening a hidden list, never again on a later render", async () => {
+    window.localStorage.setItem("agent-hub:eval-list-open", "false");
+    const { router } = renderWithApi(tab({ evals: runs, selected: runs[1] }));
+    expect(screen.queryByRole("table", { name: "Evals" })).toBeNull();
+
+    await act(() =>
+      router.navigate("/?doc=eval&eval=agh-201-r2", { replace: true, state: FOCUS_EVAL }),
+    );
+
+    expect(screen.getByRole("button", { name: /^AGH-201\b.*2 evals/ })).toHaveFocus();
+    await userEvent.click(screen.getByRole("button", { name: "Hide list" }));
+    await userEvent.click(screen.getByRole("button", { name: "Show list" }));
+    expect(screen.getByRole("button", { name: "Hide list" })).toHaveFocus();
+  });
+
+  // AGH-330 r3 Q1: the list opened for an arrival stays open through the owner's next clicks.
+  it("keeps the list a signpost opened while the owner selects another run", async () => {
+    window.localStorage.setItem("agent-hub:eval-list-open", "false");
+    let route: ((search: string) => unknown) | null = null;
+    const { router } = renderWithApi(
+      tab({
+        evals: runs,
+        selected: runs[1],
+        onSelect: (delivery) => route?.(`/?doc=eval&eval=${delivery}`),
+      }),
+    );
+    route = (search) => router.navigate(search, { replace: true });
+    await act(() =>
+      router.navigate("/?doc=eval&eval=agh-201-r2", { replace: true, state: FOCUS_EVAL }),
+    );
+
+    const run = screen.getByRole("button", { name: /^agh-201,/ });
+    await userEvent.click(run);
+
+    expect(screen.getByRole("table", { name: "Evals" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^agh-201,/ })).toHaveFocus();
+    expect(window.localStorage.getItem("agent-hub:eval-list-open")).toBe("false");
+  });
+
+  // AGH-330 r3 Q2: an arrival lands once its eval's row exists, not before.
+  it("lands a signpost once its eval group renders under the same arrival", async () => {
+    function Loading() {
+      const [loaded, setLoaded] = useState(false);
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              setLoaded(true);
+            }}
+          >
+            Load
+          </button>
+          {tab({ evals: loaded ? runs : [], selected: loaded ? runs[1] : undefined })}
+        </>
+      );
+    }
+    const { router } = renderWithApi(<Loading />);
+    await act(() =>
+      router.navigate("/?doc=eval&eval=agh-201-r2", { replace: true, state: FOCUS_EVAL }),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Load" }));
+
+    expect(screen.getByRole("button", { name: /^AGH-201\b.*2 evals/ })).toHaveFocus();
+  });
+
+  // AGH-330 r3 Q3: Back / Forward to a signpost's entry is no arrival.
+  it("neither focuses nor opens the list on Back to a signpost's entry", async () => {
+    window.localStorage.setItem("agent-hub:eval-list-open", "false");
+    const { router } = renderWithApi(tab({ evals: runs, selected: runs[1] }));
+    await act(() => router.navigate("/?doc=eval&eval=agh-201-r2", { state: FOCUS_EVAL }));
+    await userEvent.click(screen.getByRole("button", { name: "Hide list" }));
+    await act(() => router.navigate("/?doc=acs"));
+
+    await act(() => router.navigate(-1));
+
+    expect(router.state.historyAction).toBe("POP");
+    expect(screen.queryByRole("table", { name: "Evals" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Show list" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+  });
+
+  // AGH-330 r4 F1: after a remount, Back to a signpost's entry is still no arrival.
+  it("neither focuses nor opens the list on Back to a signpost's entry after a remount", async () => {
+    window.localStorage.setItem("agent-hub:eval-list-open", "false");
+    function Remount() {
+      const [mount, setMount] = useState(0);
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              setMount((n) => n + 1);
+            }}
+          >
+            Remount
+          </button>
+          <EvalTab
+            key={mount}
+            project="agent-hub"
+            slug="control-plane"
+            tickets={["AGH-201", "AGH-202"]}
+            evals={runs}
+            selected={runs[1]}
+            onSelect={() => undefined}
+          />
+        </>
+      );
+    }
+    const { router } = renderWithApi(<Remount />);
+    await act(() => router.navigate("/?doc=eval&eval=agh-201-r2", { state: FOCUS_EVAL }));
+    await userEvent.click(screen.getByRole("button", { name: "Hide list" }));
+    await act(() => router.navigate("/?doc=acs"));
+    await userEvent.click(screen.getByRole("button", { name: "Remount" }));
+
+    await act(() => router.navigate(-1));
+
+    expect(router.state.historyAction).toBe("POP");
+    expect(screen.queryByRole("table", { name: "Evals" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Remount" })).toHaveFocus();
+  });
+
+  // AGH-330 r4 F2: a regrouping under the same arrival does not take focus back.
+  it("does not refocus when the selected eval's group changes under the same arrival", async () => {
+    function Regroup() {
+      const [epics, setEpics] = useState<string[]>([]);
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              setEpics(["AGH-201"]);
+            }}
+          >
+            Regroup
+          </button>
+          {tab({ evals: runs, selected: runs[1], epics })}
+        </>
+      );
+    }
+    const { router } = renderWithApi(<Regroup />);
+    await act(() =>
+      router.navigate("/?doc=eval&eval=agh-201-r2", { replace: true, state: FOCUS_EVAL }),
+    );
+    expect(screen.getByRole("button", { name: /^AGH-201\b.*2 evals/ })).toHaveFocus();
+
+    await userEvent.click(screen.getByRole("button", { name: "Regroup" }));
+
+    expect(screen.getByRole("button", { name: /^Whole feature\b.*2 evals/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Regroup" })).toHaveFocus();
+  });
+
   it("names runs by number, the group by its ticket's title, the newest as latest", () => {
     renderWithApi(
       tab({ evals: runs, ticketRows: [aTicketRow({ id: "AGH-201", title: "Claim lifecycle" })] }),
@@ -353,6 +511,199 @@ describe("EvalTab rows", () => {
   });
 });
 
+// AGH-330 (ux-change-waiting-prompts.md, A15): the Acceptance wait's one prompt, by its state.
+describe("the Acceptance prompt", () => {
+  const SIGNOFF = "/api/v1/features/agent-hub/control-plane/owner-signoff";
+  const whole = (delivery: string, evaluated_at: string | null) =>
+    anEvalRecord({
+      delivery,
+      path: `features/control-plane/evals/${delivery}.md`,
+      verdict: "SHIP-WITH-OWNER-STEPS",
+      tickets: [],
+      acs: "all",
+      evaluated_at,
+    });
+  const runs = [
+    whole("feature", "2026-10-10T10:00:00Z"),
+    whole("feature-r2", "2026-10-12T10:00:00Z"),
+  ];
+  const acs = ["AC-4", "AC-7", "AC-9"];
+  function prompt(
+    state: "sign_off" | "reopened" | "undated" | "future" | "no_acs",
+    extra: Partial<EvalTabProps> = {},
+  ) {
+    return renderWithApi(
+      tab({
+        evals: runs,
+        acceptance: {
+          delivery: "feature-r2",
+          verdict: "SHIP-WITH-OWNER-STEPS",
+          owner_wait: {
+            state,
+            acs: state === "no_acs" ? [] : acs,
+            reopened: state === "reopened" ? ["AC-4", "AC-7"] : [],
+          },
+        },
+        ...extra,
+      }),
+      { routes: { ...driving, [`POST ${SIGNOFF}`]: anEvalRecord({ delivery: "owner-signoff" }) } },
+    );
+  }
+
+  it("asks to sign off the ACs it waits on, under the Whole feature group (sign off)", async () => {
+    const onSelect = vi.fn();
+    const view = prompt("sign_off", { onSelect });
+
+    const callout = screen
+      .getByText("Waiting on you · Acceptance: sign off 3 ACs")
+      .closest('[role="status"]');
+    if (!(callout instanceof HTMLElement)) throw new Error("no callout");
+    expect(callout).toHaveTextContent(
+      "Eval 2 passed the whole feature with owner steps. Did you do them?",
+    );
+    expect(callout).toHaveTextContent("Owner steps: AC-4, AC-7, AC-9");
+    expect(
+      within(callout)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual(["Needs more work", "Mark owner steps done"]);
+    // One prompt per wait: the client's own callout for the same eval is gone.
+    expect(screen.queryByText(/The whole feature Eval 2 passed/)).toBeNull();
+    await userEvent.click(within(callout).getByRole("button", { name: "Mark owner steps done" }));
+    await userEvent.click(screen.getByRole("button", { name: "Mark owner steps done" }));
+    await waitFor(() => {
+      expect(view.requests.some((r) => r.method === "POST")).toBe(true);
+    });
+    const post = view.requests.find((r) => r.method === "POST");
+    expect(await post?.json()).toMatchObject({ delivery: "feature-r2", decision: "done" });
+    // The written eval is selected (AC-376.14).
+    await waitFor(() => {
+      expect(onSelect).toHaveBeenCalledWith("owner-signoff");
+    });
+  });
+
+  it("offers only Needs more work while an agent's eval reopened ACs (reopened)", () => {
+    prompt("reopened");
+
+    const callout = screen
+      .getByText("Acceptance: 2 ACs reopened · evaluate again")
+      .closest('[role="status"]');
+    if (!(callout instanceof HTMLElement)) throw new Error("no callout");
+    expect(callout).toHaveTextContent(
+      "A later eval says NO-SHIP for AC-4, AC-7, which Eval 2 left as owner steps.",
+    );
+    expect(
+      within(callout)
+        .getAllByRole("button")
+        .map((b) => b.textContent),
+    ).toEqual(["Needs more work"]);
+    expect(screen.queryByText(/^Waiting on you/)).toBeNull();
+  });
+
+  it("asks for a dated re-run of the acceptance eval when it is undated (undated)", async () => {
+    const created = anAgentSession({ id: anId(13, "0192a5e5"), status: "running" });
+    const view = renderWithApi(
+      tab({
+        evals: [whole("feature", null)],
+        acceptance: {
+          delivery: "feature",
+          verdict: "SHIP-WITH-OWNER-STEPS",
+          owner_wait: { state: "undated", acs, reopened: [] },
+        },
+      }),
+      { routes: { ...driving, [`POST ${AGENT}`]: created, [`${AGENT}/${created.id}`]: created } },
+    );
+
+    const callout = screen
+      .getByText("Acceptance eval undated · evaluate again")
+      .closest('[role="status"]');
+    if (!(callout instanceof HTMLElement)) throw new Error("no callout");
+    expect(callout).toHaveTextContent(
+      "Eval 1 has no evaluated_at, so a sign-off cannot be recorded after it.",
+    );
+    expect(within(callout).queryByRole("button")).toBeNull();
+    const evaluate = await screen.findByRole("button", { name: "Evaluate whole feature" });
+    expect(evaluate).toHaveClass("ah-btn-primary");
+    await userEvent.click(evaluate);
+    const post = await waitFor(() => {
+      const found = view.requests.find((r) => r.method === "POST");
+      if (!found) throw new Error("no POST");
+      return found;
+    });
+    const body = JSON.parse(await post.clone().text()) as { prompt: string };
+    expect(body.prompt).toContain("`feature-r2`");
+  });
+
+  // AGH-330 Q2: a re-run's own re-run keeps its stem, so it ranks after it.
+  it("asks for the next re-run of an undated re-run (undated)", () => {
+    const prompt = evalPrompt("agent-hub", "control-plane", "feature", "feature-r2");
+
+    expect(prompt).toContain("`feature-r3`");
+    expect(prompt).not.toContain("feature-r2-r");
+  });
+
+  // AGH-330 Q10: no wait served (an owner decision settled it) is no prompt, whatever the client
+  // would find on its own.
+  it("shows no callout for the acceptance eval when the server serves no wait", () => {
+    renderWithApi(
+      tab({
+        evals: runs,
+        acceptance: { delivery: "feature-r2", verdict: "SHIP-WITH-OWNER-STEPS", owner_wait: null },
+      }),
+      { routes: driving },
+    );
+
+    expect(screen.queryByRole("button", { name: "Mark owner steps done" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Needs more work" })).toBeNull();
+  });
+
+  it("says when a sign-off becomes possible after a future-dated eval (future)", () => {
+    renderWithApi(
+      tab({
+        evals: [whole("feature", "2026-11-21T09:00:30Z")],
+        acceptance: {
+          delivery: "feature",
+          verdict: "SHIP-WITH-OWNER-STEPS",
+          owner_wait: {
+            state: "future",
+            acs,
+            reopened: [],
+            signable_after: "2026-11-21T09:01:00Z",
+          },
+        },
+      }),
+      { routes: driving },
+    );
+
+    // The served instant (rounded up to the minute), as the page writes every date-time (AGH-330 Q4).
+    const after = fmtDateTime("2026-11-21T09:01:00Z", "local");
+    const callout = screen.getByText(`Sign-off possible after ${after}`).closest('[role="status"]');
+    if (!(callout instanceof HTMLElement)) throw new Error("no callout");
+    expect(within(callout).queryByRole("button")).toBeNull();
+  });
+
+  it("names the hand-written sign-off when no AC is listed (no ACs)", () => {
+    prompt("no_acs");
+
+    const callout = screen
+      .getByText("Acceptance: waiting on owner steps · no ACs listed")
+      .closest('[role="status"]');
+    if (!(callout instanceof HTMLElement)) throw new Error("no callout");
+    expect(callout).toHaveTextContent(
+      "evals/owner-signoff.md with verdict SHIP and provenance owner",
+    );
+    expect(within(callout).queryByRole("button")).toBeNull();
+  });
+
+  it("has no serious axe violation in any state (a11y)", async () => {
+    for (const state of ["sign_off", "reopened", "undated", "future", "no_acs"] as const) {
+      const { container, unmount } = prompt(state);
+      expect(await seriousViolations(container)).toEqual([]);
+      unmount();
+    }
+  });
+});
+
 describe("evalPrompt", () => {
   it("asks the evaluator for one scope and never to touch an existing eval (AC-269.1)", () => {
     expect(evalPrompt("agent-hub", "control-plane", "feature")).toContain(
@@ -409,42 +760,6 @@ describe("EvalTab", () => {
       `/agent-sessions/${created.id}`,
     );
     expect(screen.getByRole("button", { name: /An evaluation is already running/ })).toBeDisabled();
-  });
-
-  it("signs off the owner steps after a confirmation when the eval waits on them", async () => {
-    const SIGNOFF = "/api/v1/features/agent-hub/control-plane/owner-signoff";
-    const onSelect = vi.fn();
-    const written = anEvalRecord({
-      delivery: "owner-signoff",
-      path: "features/control-plane/evals/owner-signoff.md",
-      verdict: "SHIP",
-    });
-    const view = renderWithApi(
-      <OwnerSignOff
-        project="agent-hub"
-        slug="control-plane"
-        reason="17 ACs wait on owner steps (SHIP-WITH-OWNER-STEPS)"
-        onShow={onSelect}
-      />,
-      { routes: { ...driving, [`POST ${SIGNOFF}`]: written } },
-    );
-
-    await userEvent.click(screen.getByRole("button", { name: "Mark owner steps done" }));
-    expect(view.requests.some((r) => r.method === "POST")).toBe(false);
-    await userEvent.click(screen.getByRole("button", { name: "Yes, I did them" }));
-
-    await waitFor(() => {
-      expect(onSelect).toHaveBeenCalledWith("owner-signoff");
-    });
-    expect(
-      view.requests.some((r) => r.method === "POST" && new URL(r.url).pathname === SIGNOFF),
-    ).toBe(true);
-  });
-
-  it("offers no sign-off inside the Eval tab: the page's banner holds it", () => {
-    renderWithApi(tab({ evals }), { routes: driving });
-
-    expect(screen.queryByRole("button", { name: "Mark owner steps done" })).toBeNull();
   });
 
   it("lists every delivery's eval with its verdict, scope and date (golden)", async () => {

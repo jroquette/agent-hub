@@ -857,29 +857,47 @@ const GOLDEN_STATE_ICON: Partial<Record<GoldenStepState, IconName>> = {
   unknown: "circle-dashed",
 };
 
+/** A step the stepper draws: a feature's golden path step, or a ticket's (two-level-flows). */
+export interface StepperStep<N extends string = FeaturePhase> {
+  name: N;
+  state: GoldenStepState;
+  meta: string | null;
+  reason?: string | null | undefined;
+  progress?: components["schemas"]["StepProgress"] | null | undefined;
+}
+
+/** States a later step may follow without being blocked: an unrecorded step had later evidence. */
+const PASSABLE: readonly GoldenStepState[] = ["done", "skipped", "unrecorded"];
+
 /**
  * The steps as shown: a step the server marks done after a gate that is neither done nor skipped
- * is shown `blocked`, naming that gate, so the stepper never claims a step done after an
- * incomplete one (S8, AC-136.17).
+ * (nor unrecorded: a later step had evidence, AC-1.9) is shown `blocked`, naming that gate, so the
+ * stepper never claims a step done after an incomplete one (S8, AC-136.17).
  */
-export function shownGoldenSteps(steps: readonly GoldenStep[]): GoldenStep[] {
-  let gate: GoldenStep | null = null;
+export function shownGoldenSteps<S extends StepperStep<string>>(
+  steps: readonly S[],
+  labels: Readonly<Record<string, string>> = GOLDEN_STEP_LABEL,
+): S[] {
+  let gate: S | null = null;
   return steps.map((step) => {
     if (gate && step.state === "done") {
-      return { ...step, state: "blocked", reason: `${GOLDEN_STEP_LABEL[gate.name]} is not done` };
+      return { ...step, state: "blocked", reason: `${labels[gate.name] ?? gate.name} is not done` };
     }
-    if (!gate && step.state !== "done" && step.state !== "skipped") gate = step;
+    if (!gate && !PASSABLE.includes(step.state)) gate = step;
     return step;
   });
 }
 
 /** "Acceptance: partial · Ticket evals cover 3 of 36 ACs (Build is not done)". */
-export function goldenStepSummary(step: GoldenStep): string {
+export function goldenStepSummary(
+  step: StepperStep<string>,
+  labels: Readonly<Record<string, string>> = GOLDEN_STEP_LABEL,
+): string {
   const progress = step.progress
     ? `${String(step.progress.done)}/${String(step.progress.total)}`
     : null;
   const meta = step.meta ?? progress;
-  const head = `${GOLDEN_STEP_LABEL[step.name]}: ${GOLDEN_STATE_TEXT[step.state].toLowerCase()}`;
+  const head = `${labels[step.name] ?? step.name}: ${GOLDEN_STATE_TEXT[step.state].toLowerCase()}`;
   const reason = step.state !== "done" && step.reason ? ` (${step.reason})` : "";
   return `${head}${meta ? ` · ${meta}` : ""}${reason}`;
 }
@@ -894,7 +912,7 @@ export function ownerWaitStep(steps: readonly GoldenStep[]): GoldenStep | null {
 }
 
 /** The one short line the step in focus shows under its state. */
-function focusMeta(step: GoldenStep): string | null {
+function focusMeta(step: StepperStep<string>): string | null {
   if (step.meta) return step.meta;
   return step.progress ? `${String(step.progress.done)}/${String(step.progress.total)}` : null;
 }
@@ -914,34 +932,49 @@ const DOT_STYLE: Partial<Record<GoldenStepState, CSSProperties>> = {
  * The golden path of a feature as the server computes it (S8), kept calm: each step shows its dot,
  * its name and its state as text; only the step in focus (the first one not done) adds one short
  * line. Every step's meta, progress and reason are in its tooltip and its accessible description.
+ * It draws any list of steps with their `labels` (a ticket's seven, two-level-flows AC-1.10);
+ * with `detail`, it runs vertically, every step says its meta and its button discloses its
+ * detail, the `open` one shown.
  */
-export function GoldenPathStepper({
+export function GoldenPathStepper<N extends string = FeaturePhase>({
   steps,
+  labels = GOLDEN_STEP_LABEL as Readonly<Record<string, string>>,
   label = "Golden path",
   onSelect,
   selectLabel,
+  open,
+  detail,
 }: {
-  steps: readonly GoldenStep[];
+  steps: readonly StepperStep<N>[];
+  labels?: Readonly<Record<N, string>> | undefined;
   label?: string | undefined;
   /** Makes each step's name a button (e.g. to open the tab that holds its evidence). */
-  onSelect?: ((step: FeaturePhase) => void) | undefined;
+  onSelect?: ((step: N) => void) | undefined;
   /** The accessible name of a step's button; "Open <step>" by default. */
-  selectLabel?: ((step: FeaturePhase) => string) | undefined;
+  selectLabel?: ((step: N) => string) | undefined;
+  /** The step whose `detail` shows (its button is expanded). */
+  open?: N | null | undefined;
+  /** What a step discloses under it; given, each step's button says whether it is expanded. */
+  detail?: ((step: StepperStep<N>) => ReactNode) | undefined;
 }) {
   const baseId = useId();
-  const shown = shownGoldenSteps(steps);
+  const shown = shownGoldenSteps(steps, labels);
   const focus = shown.find((s) => s.state !== "done" && s.state !== "skipped")?.name;
+  const vertical = detail !== undefined;
+  const name = (step: N) => (labels as Readonly<Record<string, string>>)[step] ?? step;
   return (
     <ol
       className="ah-golden"
       style={{ listStyle: "none", margin: 0, padding: 0 }}
       aria-label={label}
+      data-orientation={vertical ? "vertical" : undefined}
     >
       {shown.map((step) => {
         const icon = GOLDEN_STATE_ICON[step.state];
-        const summary = goldenStepSummary(step);
+        const summary = goldenStepSummary(step, labels);
         const descId = `${baseId}-${step.name}`;
-        const meta = step.name === focus ? focusMeta(step) : null;
+        const meta = vertical || step.name === focus ? focusMeta(step) : null;
+        const expanded = detail ? step.name === open : undefined;
         return (
           <li key={step.name} className="ah-golden-step" data-state={step.state}>
             {/* Only the dot fades: faded text would fail the contrast check (axe). */}
@@ -953,18 +986,19 @@ export function GoldenPathStepper({
                 <button
                   type="button"
                   className="ah-golden-name ah-golden-select"
-                  aria-label={selectLabel?.(step.name) ?? `Open ${GOLDEN_STEP_LABEL[step.name]}`}
+                  aria-label={selectLabel?.(step.name) ?? `Open ${name(step.name)}`}
                   aria-describedby={descId}
+                  aria-expanded={expanded}
                   onClick={() => {
                     onSelect(step.name);
                   }}
                 >
-                  {GOLDEN_STEP_LABEL[step.name]}
+                  {name(step.name)}
                 </button>
               ) : (
                 // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
                 <span className="ah-golden-name" tabIndex={0} aria-describedby={descId}>
-                  {GOLDEN_STEP_LABEL[step.name]}
+                  {name(step.name)}
                 </span>
               )}
             </Tooltip>
@@ -979,6 +1013,7 @@ export function GoldenPathStepper({
                 {meta}
               </span>
             )}
+            {expanded && detail && <div className="ah-golden-detail">{detail(step)}</div>}
           </li>
         );
       })}

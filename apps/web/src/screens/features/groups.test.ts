@@ -97,6 +97,23 @@ describe("reasonOf", () => {
     expect(reason.line).toMatch(/^Acceptance · Waiting on owner steps · no ACs listed · /);
   });
 
+  // two-level-flows A12, A15 (AGH-330 Q10): no sign-off can be recorded yet, so no Needs you.
+  it.each([
+    "Acceptance eval undated · evaluate again",
+    "Sign-off possible after 21 Nov 2026, 09:01:00 UTC",
+  ])("does not count %s as needing you", (meta) => {
+    const waiting = aFeature({
+      phase: "acceptance",
+      verdict: "SHIP-WITH-OWNER-STEPS",
+      golden_path: aGoldenPath({
+        phase: "acceptance",
+        steps: [aGoldenStep({ name: "acceptance", state: "current", meta, progress: null })],
+      }),
+    });
+
+    expect(reasonOf(waiting)).toMatchObject({ group: "progress", needs: null });
+  });
+
   it("names a permission prompt when the waiting session gives no reason", () => {
     const wait = {
       tile: aLiveTile({ group: "waiting", waiting_reason: null }),

@@ -1,6 +1,6 @@
 # Features
 
-**Phase:** P2 (read-only) · **Routes:** `/features`, `/features/{project}/{slug}` (params `doc=spec|plan|research|eval|issues` (as built: `tickets`, see Departures), `ac=AC-48.21`, `phase=`) · **Answers:** "Where is each feature on the golden path, and is it really done?"
+**Phase:** P2 (read-only) · **Routes:** `/features`, `/features/{project}/{slug}` (params `doc=spec|plan|research|eval|issues` (as built: `tickets`, see Departures), `ac=AC-48.21`, `phase=`; as built also `eval=`, `tickets=table`, `ticket=<id>` and `step=<step>`, see Departures (AGH-326, AGH-330)) · **Answers:** "Where is each feature on the golden path, and is it really done?"
 
 This section holds two screens: the **Features list** and **Feature detail**. A feature is a folder `brain/features/<slug>/` in the hub with `spec.md`, `research.md`, `plan.md`, `features.json`, `issues.md` and `eval.md`. The app only reads these files; editing a feature record stays a human act in a hub PR (principle 2).
 
@@ -336,6 +336,76 @@ Each ticket has its own seven steps, Context, Preflight, Implement, Review, Eval
   card's readiness line stays its one signal line (AC-376.6, AC-381.4): in S1 the flow carries no signal of its own
   (spec amendment A13).
 
+## Departures (AGH-330, the ticket panel and one prompt per owner wait)
+
+Designs: `two-level-flows/ux-new-ticket-panel.md` (Addendum 1) and `ux-change-waiting-prompts.md`, both approved;
+spec amendment A15. Where the sections above say otherwise, this list wins.
+
+**Ticket panel (two-level-flows AC-1.10)**
+
+- **Panel.** `?ticket=<id>` (a tracker id or a plan key; written with replace) opens a non-modal panel beside the
+  Tickets tab: an `aside` named "Ticket <id> · <title>" (the shared `SidePanel`), no scrim and no focus trap. Opening
+  moves focus to its heading; Esc or its X ("Close ticket <id>") closes it and returns focus to the element that
+  opened it, else to the same ticket in the view shown. It overlays at 1280 and docks at 1600 (`31-responsive.md`).
+- **Content.** Its Linear link, status, assignee and readiness line; the seven steps as a vertical stepper (the
+  shared `GoldenPathStepper`, `vertical`), one disclosure button per step ("Review, in progress, changes requested,
+  show details"), the current step open (`?step=` keeps the open one); then its ACs, Blocked by and Blocks (each
+  opens that ticket's panel in place) and its sessions. Every step says only what S1's records hold (Context and
+  Preflight "Not recorded" before `/implement`; Review links its review record in Brain; Eval its latest eval in the
+  Eval tab; PR its pull request; Merged "Done in Linear"). The panel reads the tickets route's row (spec A7).
+- **No Start.** Start stays once per view, on the card or the row (owner decision 4, A15).
+- **Signal.** Its one signal is a ticket eval waiting on owner steps: "Waiting on you: Eval N passed with owner steps"
+  with "Settle them in the Eval tab", which closes the panel and opens that eval.
+- **States.** An id that is no ticket of the feature reads "<id> is not a ticket of this feature." with Close panel;
+  the feature's epic reads "<id> is this feature's epic: it has no steps of its own."
+- **Openers.** The card title, and a table row's title, are links to `?doc=tickets&ticket=<id>` (this reverses
+  AGH-326's "Card title": the title opens the panel; the epic's title stays plain text); a table row (the body is one tab stop: `j` / `k` and `↓` / `↑`
+  move between tickets, epics skipped; `Enter`, `o` or a click opens it; links and buttons in the row keep their own
+  action); a header chip, which now opens the Tickets tab with that ticket's panel (tooltip "<id> · <title> · show its
+  steps"; the Linear link moved into the panel, so AC-268.17's link is gone). The waiting banner opens it in S2 (A8).
+- **Tab.** The panel belongs to the Tickets tab: another tab closes it and drops `ticket=` and `step=`.
+
+**Tickets tab follow-ups (reviews/AGH-326.md)**
+
+- **`v`** toggles Flow and Table while focus is in the Tickets tab and not in a text field (`?tickets=`, replaced);
+  focus stays on the same ticket (card title and row), else goes to the toggle.
+- **Names.** A card's and a row's accessible name carry its step line: "AGH-326 · <title> · Review · 4/7 · Changes
+  requested". The StepBar stays out of the tab order; its per-step states are in the panel's step list.
+- **Epic Stage.** The epic row's "—" is a focusable tooltip: "An epic has no steps of its own; each of its tickets has
+  seven."
+- **Columns.** At 1280 Assignee and Sessions hide; with the panel docked the table keeps Ticket, Title, Stage and
+  Readiness (`31-responsive.md`).
+
+**One prompt per owner wait (A15; replaces AC-376.13 and AC-376.16 for the acceptance eval)**
+
+- **Acceptance prompt.** The decision buttons live only on the Eval tab, in a callout under the Whole feature group,
+  whose state is the server's `acceptance_eval.owner_wait` (A9-A11): *sign off* ("Waiting on you · Acceptance: sign off
+  3 ACs", Needs more work and Mark owner steps done, the request naming the acceptance eval); *reopened* ("Acceptance:
+  2 ACs reopened · evaluate again", Needs more work only); *undated* ("Acceptance eval undated · evaluate again", no
+  button; Evaluate whole feature is primary and asks for the acceptance eval's next re-run, `feature-r2` after
+  `feature`, `feature-r3` after `feature-r2`); *future-dated* ("Sign-off possible after <date-time>", no button: the
+  served `signable_after`, rounded up to the minute, written as the page writes every date-time, so the `t` toggle
+  applies; the Acceptance step reads the same line on this page; the Features list still shows the server's UTC line, a known
+  gap followed up in AGH-332); *no ACs listed* ("Acceptance: waiting on owner steps · no ACs listed", names the
+  hand-written `evals/owner-signoff.md`). Only *sign off* is amber; the others are info. The client's own callout no
+  longer shows for the acceptance eval; ticket eval callouts (AC-376.13, AC-376.14) are unchanged.
+- **Banner.** The page has one "Waiting on you" banner, a signpost with one line per wait: "Acceptance: sign off 3
+  ACs (Eval 2)" first (only in *sign off*), then "AGH-48: Eval 1 passed with owner steps" for each other eval waiting
+  on owner steps, each line after the first a link to its eval; "Review owner steps" opens the first. The
+  `OwnerSignOff` banner ("Mark owner steps done" above the tabs) is removed; the features.json "N owner steps left"
+  banner shows only while the feature has no acceptance eval. Undated and future-dated never rank the feature as
+  needing the owner (A12).
+- **Acceptance step.** Its step, named "Open Eval N, the acceptance eval", opens `?doc=eval&eval=<acceptance
+  delivery>`.
+- **Signposts land on their eval.** The Acceptance step, the banner's button and lines, and the ticket panel's
+  "Settle them in the Eval tab" open the Eval tab at their eval and move focus to its group's row.
+- **Banner link names** are their visible lines ("AGH-48: Eval 1 passed with owner steps"), not "Open AGH-48 Eval 1
+  in the Eval tab" as the design drafted: a link's name holds its visible label (WCAG 2.5.3).
+- **Header verdict badge.** It shows the acceptance eval's verdict only (AC-1.6): the latest whole-feature eval's, none
+  before one exists; a ticket eval never sets it.
+- **Contrast (AC-1.14, A16).** The screens' axe tests run once, for structure and names (jsdom computes no colours);
+  both themes' contrast is `tokens.test.ts`'s, on the token pairs the panel, the callouts and the banner use.
+
 ## Screen 1: Features list
 
 **Route:** `/features` · **Answers:** "Which features are moving through the golden path, and how close is each to done?"
@@ -429,8 +499,8 @@ Validated by the owner in the playground; where Screen 1 says otherwise, this li
   with a tooltip) instead of a footnote, and the columns have fixed widths.
 - **AC-268.25 Issues.** Given a feature with several issues, then the first shows and "+N" opens all of them in a
   popover.
-- **AC-268.26 Verdict scope.** Given a verdict while Evaluate is not done, then the Evaluate step's meta (its scope)
-  shows under the badge.
+- **AC-268.26 Verdict scope.** Given a verdict while Acceptance is not done, then the Acceptance step's meta shows
+  under the badge (the Evaluate step became Acceptance, AGH-325).
 - **AC-268.27 Shipped last.** Given shipped features, then they sort after every feature in progress.
 - **AC-268.28 Tooltips.** Given a tooltip in a table, then it wraps and opens downward where the table would cut it.
 
@@ -541,6 +611,11 @@ When a document tab is selected (Spec, Research, Plan, Evaluation), the content 
 | `Skeleton`, `EmptyState`, `ProblemError`, `AsOfStamp`, `ExternalLabel` | States; ExternalLabel on any doc section sourced from outside (e.g. quoted web research) |
 
 ### Golden path stepper (detail)
+
+As built (AGH-325, two-level-flows AC-1.1) the stepper draws the feature's eight steps, Spec, UX design, Research,
+Plan, Tickets, Build, Acceptance and Shipped ([feature-records.md](../../feature-records.md) "Golden path"); each
+ticket's seven steps, Context, Preflight, Implement, Review, Eval, PR and Merged, are on its step bar and in its
+ticket panel (Departures AGH-326, AGH-330). The draft below, and the layout above, predate them.
 
 Phases (fixed order): Spec → Research → Plan (approved) → Tickets → Implement → Review → Evaluate → Shipped.
 

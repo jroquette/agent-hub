@@ -451,3 +451,143 @@ def test_one_decision_launches_when_two_arrive_together() -> None:
 def test_refuses_body_when_it_breaks_the_request_shape(body: dict[str, Any]) -> None:
     with pytest.raises(ValidationError):
         GateDecisionRequest.model_validate(body)
+
+
+# AGH-359 (P-6, AM-14): a gate is a policy gate or an investigation gate only when the run's
+# own record says so; an authored gate is found in the definition first, whatever its id.
+
+
+class Kinds:
+    """The gate kinds a run's record names (``RunGateKinds``), by run."""
+
+    def __init__(self, **kinds: Mapping[str, str]) -> None:
+        self.kinds = kinds
+        self.calls: list[tuple[str, str]] = []
+
+    def gate_kinds(self, hub_path: str, run_id: str) -> Mapping[str, str]:
+        self.calls.append((hub_path, run_id))
+        return self.kinds.get(run_id.replace("-", "_"), {})
+
+
+AUTHORED = {
+    "version": 1,
+    "name": "review",
+    "revision": 1,
+    "nodes": [
+        {
+            "id": "grp",
+            "type": "loop_group",
+            "max_iterations": 2,
+            "until_when": "$ask.output.decision == 'ship'",
+            "nodes": [
+                {
+                    "id": "ask",
+                    "type": "approval",
+                    "message": "Which?",
+                    "decisions": [{"id": "ship", "label": "Ship"}, {"id": "hold", "label": "Hold"}],
+                },
+                {
+                    "id": "investigation",
+                    "type": "approval",
+                    "message": "Look?",
+                    "depends_on": ["ask"],
+                },
+            ],
+        }
+    ],
+}
+
+
+class AuthoredPlans(Plans):
+    def __init__(self) -> None:
+        self.plan = plan_workflow(parse_workflow(AUTHORED))
+
+
+def gates_with(reads: Reads, kinds: Kinds, plans: Plans | None = None) -> WorkflowGates:
+    plans = plans or Plans()
+    return WorkflowGates(reads, plans, plans, kinds=kinds)  # type: ignore[arg-type]
+
+
+def decide_with(
+    reads: Reads, launcher: Launcher, approval_id: str, *, kinds: Kinds, **body: Any
+) -> Any:
+    guard = RunGuard(reads, launcher)  # type: ignore[arg-type]
+    use_case = DecideWorkflowGate(gates_with(reads, kinds), guard)
+    return use_case(approval_id, GateDecisionRequest.model_validate(body))
+
+
+@pytest.mark.parametrize(
+    ("node", "workflow"),
+    [
+        ("build__ask", "review"),
+        ("rework__build__ask", "review"),
+        ("send-order__ask", "scenario:order-walk"),
+    ],
+)
+def test_offers_approve_reject_when_policy_gate_not_in_definition(node: str, workflow: str) -> None:
+    run = a_run(id="run-9", workflow=workflow, content_hash="sha256:abc")
+    reads = Reads(run, approvals=[a_gate(node)])
+    launcher = Launcher()
+    kinds = Kinds(run_9={node: "policy"})
+
+    gate = gates_with(reads, kinds).gate(f"run-9:{node}:1")
+    decided = decide_with(reads, launcher, f"run-9:{node}:1", kinds=kinds, decision="approve")
+
+    assert (gate.node, gate.workflow, gate.form, gate.text) == (node, workflow, "decision", "off")
+    assert [(choice.id, choice.label) for choice in gate.choices] == [
+        ("approve", "Approve"),
+        ("reject", "Reject"),
+    ]
+    assert decided.decision == "approve"
+    assert [name for name, _ in launcher.calls] == ["decide", "resume"]
+    assert kinds.calls[0] == ("/hubs/demo", "run-9")
+    with pytest.raises(RunInputError):
+        decide_with(
+            reads, Launcher(), f"run-9:{node}:1", kinds=kinds, decision="approve", text="why"
+        )
+
+
+@pytest.mark.parametrize("workflow", ["review", "scenario:order-walk"])
+def test_refuses_when_investigation_gate_decided_in_approvals(workflow: str) -> None:
+    run = a_run(id="run-9", workflow=workflow, content_hash="sha256:abc")
+    reads = Reads(run, approvals=[a_gate("send__investigation")])
+    launcher = Launcher()
+    kinds = Kinds(run_9={"send__investigation": "investigation"})
+
+    with pytest.raises(RunConflictError) as caught:
+        decide_with(reads, launcher, "run-9:send__investigation:1", kinds=kinds, decision="retry")
+
+    assert caught.value.code == "investigation_gate"
+    assert launcher.calls == []
+
+
+def test_shows_authored_choices_when_policy_gate_suffix_on_body_approval() -> None:
+    reads = Reads(engine_run(), approvals=[a_gate("grp__ask")])
+
+    gate = gates_with(reads, Kinds(), AuthoredPlans()).gate("run-9:grp__ask:1")
+
+    assert (gate.node, gate.form) == ("grp__ask", "decision")
+    assert [choice.id for choice in gate.choices] == ["ship", "hold"]
+
+
+def test_decides_authored_gate_when_investigation_gate_suffix_on_body_approval() -> None:
+    reads = Reads(engine_run(), approvals=[a_gate("grp__investigation")])
+    launcher = Launcher()
+    plans = AuthoredPlans()
+    use_case = DecideWorkflowGate(gates_with(reads, Kinds(), plans), RunGuard(reads, launcher))  # type: ignore[arg-type]
+
+    use_case("run-9:grp__investigation:1", GateDecisionRequest(decision="approve"))
+
+    assert [name for name, _ in launcher.calls] == ["decide", "resume"]
+
+
+def test_refuses_policy_gate_suffix_when_policy_gate_not_in_record() -> None:
+    reads = Reads(engine_run(), approvals=[a_gate("build__ask"), a_gate("send__investigation")])
+
+    for node in ("build__ask", "send__investigation"):
+        with pytest.raises(RunConflictError) as caught:
+            gates_with(reads, Kinds()).gate(f"run-9:{node}:1")
+        assert caught.value.code == "gate_not_in_workflow"
+    with pytest.raises(RunConflictError) as unwired:
+        gate_of(reads, "run-9:build__ask:1")
+    assert unwired.value.code == "gate_not_in_workflow"
