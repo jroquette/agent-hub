@@ -593,7 +593,7 @@ export function projectPluginDir(items: readonly CatalogItem[]): string | null {
   return best;
 }
 
-/** Where the draft lands when published, for the owner to read before clicking Publish. */
+/** Where the draft lands when the server publishes it, for the owner to read before clicking Publish. */
 export function destination(kind: ItemKind, name: string | null, pluginDir: string | null): string {
   const root = pluginDir ?? "plugin/<project plugin>";
   const item = name ?? "<name>";
@@ -643,6 +643,10 @@ const KIND_BRIEF: Record<ItemKind, string> = {
   hook: 'A hook is a hooks.json in Claude Code\'s format: {"hooks": {"<Event>": [{"matcher": "<tool pattern>", "hooks": [{"type": "command", "command": "<shell>", "timeout": <seconds>}]}]}}. Events: PreToolUse, PostToolUse, UserPromptSubmit, Stop, SubagentStop, SessionStart, SessionEnd, Notification, PreCompact. A script it runs goes beside it (scripts/<name>.sh), referenced through ${CLAUDE_PLUGIN_ROOT} once published.',
 };
 
+/** What both first messages say about publishing: the web app's server does it (AGH-295). */
+const ONLY_THE_DRAFT =
+  "Edit only the draft; never publish, copy or move it. When I click Publish, the web app publishes the draft itself and removes the folder.";
+
 export interface StudioBrief {
   project: string;
   kind: ItemKind;
@@ -662,6 +666,7 @@ export function studioPrompt(brief: StudioBrief, message: string): string {
     `I am the owner of the agent-hub project "${brief.project}", writing from the agent-hub web app's Studio.`,
     `I want to create a new ${brief.kind} for this hub with you. ${KIND_BRIEF[brief.kind]}`,
     `Write the draft ONLY inside the folder ${dir}/ (create it). The web app previews every file you write there, live, as you write it. Do not write anywhere else: nothing is published until I click Publish.`,
+    ONLY_THE_DRAFT,
     target,
     "Before writing, read the closest existing items of the hub (plugin/*/skills, plugin/*/agents, .claude/) and mirror their shape and tone; reuse what exists instead of duplicating it.",
     brief.taken.length > 0 ? `These ${brief.kind} names are taken: ${brief.taken.join(", ")}.` : "",
@@ -695,6 +700,7 @@ export function editPrompt(brief: EditBrief, message: string): string {
     `I want to change the existing ${brief.kind} "${brief.name}" of this hub with you. ${KIND_BRIEF[brief.kind]}`,
     start,
     `Write ONLY inside the folder ${dir}/ (create it). The web app previews every file you write there, live. Do not touch the original: nothing changes until I click Publish.`,
+    ONLY_THE_DRAFT,
     brief.managed
       ? "This item is managed by hub.lock: the next hub sync overwrites a local edit. Say so if the change belongs upstream instead, but edit the draft if I ask."
       : "",
@@ -702,44 +708,6 @@ export function editPrompt(brief: EditBrief, message: string): string {
     "If my ask is unclear, ask me at most three short questions first. Otherwise make the change right away, then tell me in a few lines what you changed and what I should decide. Use Write for whole files and Edit for changes, so the preview stays exact.",
   ];
   return [...lines.filter((line) => line !== ""), "", "What I want to change:", message].join("\n");
-}
-
-/** The message the Publish button sends for an edit: the draft's files over the item's. */
-export function publishEditPrompt(
-  kind: ItemKind,
-  draftId: string,
-  sourcePath: string,
-  hookText: string | null,
-): string {
-  const dir = draftDir(draftId);
-  const to = editDestination(kind, sourcePath);
-  const how: Record<ItemKind, string> = {
-    skill: `Copy every file of ${dir}/ over its counterpart in ${to} (same relative path; a new file is added). Leave the files the draft does not hold as they are. If the name in SKILL.md changed, rename the folder to match.`,
-    agent: `Replace ${sourcePath} with the agent file in ${dir}/. If its name changed, rename the file to match.`,
-    hook: `In ${sourcePath}, replace this hook as it is today:\n${hookText ?? ""}\nwith the hooks of ${dir}/hooks.json. Keep every other hook and setting of the file as it is.`,
-  };
-  return [
-    "I reviewed the changed draft in the preview and I approve it. Publish it now:",
-    how[kind],
-    `Then delete ${dir}/. Do not change anything else and do not commit.`,
-    "Reply with one line per file you wrote, starting with PUBLISHED.",
-  ].join("\n");
-}
-
-/** The message the Publish button sends: move the draft into place, nothing else. */
-export function publishPrompt(kind: ItemKind, draftId: string, to: string): string {
-  const dir = draftDir(draftId);
-  const how: Record<ItemKind, string> = {
-    skill: `Move the folder ${dir}/ to ${to} (SKILL.md and every bundled file).`,
-    agent: `Move the agent file from ${dir}/ to ${to}.`,
-    hook: `Merge the hooks of ${dir}/hooks.json into ${to} (create it if missing; keep every hook already there), move any script beside it into the plugin's scripts/ and point the command at \${CLAUDE_PLUGIN_ROOT}.`,
-  };
-  return [
-    "I reviewed the draft in the preview and I approve it. Publish it now:",
-    how[kind],
-    `Then delete ${dir}/. If the plugin's manifest lists its ${kind}s explicitly, add it there too. Do not change anything else and do not commit.`,
-    "Reply with one line per file you wrote, starting with PUBLISHED.",
-  ].join("\n");
 }
 
 /** The message the Discard button sends. */
@@ -750,8 +718,9 @@ export function discardPrompt(draftId: string): string {
   ].join("\n");
 }
 
-/** The line a reply starts with to confirm a publish or a discard (the prompts ask for it). */
-export type Confirmation = "PUBLISHED" | "DISCARDED";
+/** The line a reply starts with to confirm a discard (the prompt asks for it). The server
+ * publishes a draft itself (AGH-295), so a publish needs no confirmation from Claude. */
+export type Confirmation = "DISCARDED";
 
 /**
  * Whether Claude confirmed `sent` (posted when the transcript had `from` entries): true when a reply
