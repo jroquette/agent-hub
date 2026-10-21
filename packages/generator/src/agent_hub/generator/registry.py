@@ -162,6 +162,7 @@ _BASE_AGENTS: Final = (
     "quality-reviewer",
     "requirements-analyst",
     "researcher",
+    "security-reviewer",
     "spec-reviewer",
     "ux-designer",
 )
@@ -170,6 +171,7 @@ _BASE_SKILLS: Final = (
     "adr",
     "create-plan",
     "deliver",
+    "design-fit",
     "feature",
     "fix",
     "handoff",

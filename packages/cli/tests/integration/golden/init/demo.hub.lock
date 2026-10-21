@@ -24,6 +24,10 @@
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/agents/researcher.md"
     },
+    ".claude/agents/security-reviewer.md": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/agents/security-reviewer.md"
+    },
     ".claude/agents/spec-reviewer.md": {
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/agents/spec-reviewer.md"
@@ -51,6 +55,10 @@
     ".claude/skills/deliver": {
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/deliver"
+    },
+    ".claude/skills/design-fit": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/design-fit"
     },
     ".claude/skills/feature": {
       "ownership": "managed",
@@ -217,7 +225,7 @@
     "hub.schema.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "eda74ce22d1d76121070f12e27a157f1ff3523c88d18cc05350268a22441b0fa"
+      "sha256": "b1d7ffd0d8ff0d0b4594029b7d9a3bb6e9933f6561d3a58ee32d671fcd0e630f"
     },
     "plugin/demo/.claude-plugin/plugin.json": {
       "ownership": "seeded"
@@ -249,7 +257,7 @@
     "plugin/hub-workflow/NOTICE": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "abbdefc183257342ea248bc5ee62c2805cbd078cf9de6b9e43fec1d54c61a9a3"
+      "sha256": "fae9c81bfd09f4efeaa616f3a12bfcdeea2579499f490009edb409fc17b6413a"
     },
     "plugin/hub-workflow/agents/architect.md": {
       "executable": false,
@@ -280,6 +288,11 @@
       "executable": false,
       "ownership": "managed",
       "sha256": "f4859e0b694dff6cea2a69d29074d111c9374971f544289b134a8f0a620da9cf"
+    },
+    "plugin/hub-workflow/agents/security-reviewer.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "1fe3ab6edd2241ad3a9e41ec3fd45abf0bfbfe93fed0eb708a18941f18fb454d"
     },
     "plugin/hub-workflow/agents/spec-reviewer.md": {
       "executable": false,
@@ -375,6 +388,11 @@
       "executable": false,
       "ownership": "managed",
       "sha256": "8290c651c1d84161dc1c5614f7fefb857b2c50bc9c3396c270f92687ebdeba6d"
+    },
+    "plugin/hub-workflow/skills/design-fit/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "45451b136b256d0927a4318b7627863be5ca9e3fc3a008efadf231bd7e6fb0de"
     },
     "plugin/hub-workflow/skills/feature/SKILL.md": {
       "executable": false,
