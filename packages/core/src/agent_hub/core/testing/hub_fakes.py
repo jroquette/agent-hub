@@ -128,7 +128,8 @@ class FakeHubFileReader:
 
     ``snapshots`` counts the doctor snapshots built per hub, so a test sees the cache work;
     ``feature_reads`` records each feature read, ``("*", hub_path)`` for a listing and
-    ``(slug, hub_path)`` for one folder, so a test sees how much a request read;
+    ``(slug, hub_path)`` for one folder, so a test sees how much a request read, and
+    ``ticket_reads`` the slugs read with their ``tickets/`` records;
     ``skill_listings`` records each ``skill_sources`` call's hub and ``skill_reads`` each
     ``read_skill_file`` call as ``(hub_path, path)``, refused paths included, and
     ``unit_reads`` each ``read_unit`` call the same way.
@@ -141,6 +142,7 @@ class FakeHubFileReader:
         self.aliases = dict(aliases or {})
         self.snapshots: dict[str, int] = {}
         self.feature_reads: list[tuple[str, str]] = []
+        self.ticket_reads: list[str] = []
         self.skill_listings: list[str] = []
         self.skill_reads: list[tuple[str, str]] = []
         self.unit_reads: list[tuple[str, str]] = []
@@ -211,9 +213,13 @@ class FakeHubFileReader:
         self.feature_reads.append(("*", hub_path))
         return self._hub(hub_path).features
 
-    def feature_folder(self, hub_path: str, slug: str) -> FeatureFolder | None:
+    def feature_folder(
+        self, hub_path: str, slug: str, *, tickets: bool = False
+    ) -> FeatureFolder | None:
         """The hub's feature folder ``slug``, or None."""
         self.feature_reads.append((slug, hub_path))
+        if tickets:
+            self.ticket_reads.append(slug)
         return next((f for f in self._hub(hub_path).features if f.slug == slug), None)
 
     def brain_tree(self, hub_path: str) -> BrainListing:

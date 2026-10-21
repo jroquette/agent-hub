@@ -2529,6 +2529,7 @@ export interface components {
       verdict: components["schemas"]["Verdict"] | null;
       /** Verdict Line */
       verdict_line: string | null;
+      waiting_on_owner?: components["schemas"]["WaitingOnOwner"] | null;
     };
     /**
      * FeatureName
@@ -2620,7 +2621,8 @@ export interface components {
      * @description A feature as the Features list shows it; ``problem`` when a file of it is malformed.
      *
      *     ``phase`` equals ``golden_path.phase``; ``tickets_source`` says whether the ticket counts
-     *     behind the golden path came from Linear or from the plan.
+     *     behind the golden path came from Linear or from the plan; ``waiting_on_owner`` what it waits
+     *     on from the owner, None when nothing.
      */
     FeatureView: {
       acs: components["schemas"]["AcCounts"] | null;
@@ -2654,6 +2656,7 @@ export interface components {
       verdict: components["schemas"]["Verdict"] | null;
       /** Verdict Line */
       verdict_line: string | null;
+      waiting_on_owner?: components["schemas"]["WaitingOnOwner"] | null;
     };
     /** @enum {string} */
     FileOperation: "read" | "edited" | "created" | "written";
@@ -2742,7 +2745,8 @@ export interface components {
     /**
      * GoldenStep
      * @description One step of the golden path: its state, a short ``meta`` text and the ``reason`` it is
-     *     not done (naming the failing gate), and its ``progress`` when it counts something.
+     *     not done (naming the failing gate), its ``progress`` when it counts something, and the one
+     *     ``signal`` that needs attention (Plan: "v3 waits for you" while a change request is open).
      */
     GoldenStep: {
       /** Meta */
@@ -2751,6 +2755,8 @@ export interface components {
       progress: components["schemas"]["StepProgress"] | null;
       /** Reason */
       reason: string | null;
+      /** Signal */
+      signal?: string | null;
       state: components["schemas"]["StepState"];
     };
     /**
@@ -3537,6 +3543,8 @@ export interface components {
       /** Note */
       note?: string | null;
     };
+    /** @enum {string} */
+    OwnerWaitKind: "change_request" | "owner_signoff" | "owner_signoff_manual";
     /** @enum {string} */
     OwnerWaitState: "sign_off" | "reopened" | "undated" | "future" | "no_acs";
     /**
@@ -5108,7 +5116,16 @@ export interface components {
     };
     /** @enum {string} */
     StepState:
-      "done" | "partial" | "current" | "pending" | "skipped" | "unknown" | "blocked" | "unrecorded";
+      | "done"
+      | "partial"
+      | "current"
+      | "pending"
+      | "skipped"
+      | "unknown"
+      | "blocked"
+      | "unrecorded"
+      | "waiting"
+      | "stale";
     /** @enum {string} */
     StepStatus: "running" | "ok" | "failed" | "skipped";
     /** @enum {string} */
@@ -5139,9 +5156,13 @@ export interface components {
      * TicketFlow
      * @description A ticket's seven steps in their fixed order (``ticket_flow.py``); ``current`` is where the
      *     ticket is: the first step neither done nor unrecorded, the last when every step is.
+     *     ``signal`` is the one line that needs attention, from its preflight and the plan change
+     *     requests (waiting for the owner, held, re-run needed, local drift), None when none.
      */
     TicketFlow: {
       current: components["schemas"]["TicketStepName"];
+      /** Signal */
+      signal?: string | null;
       /** Steps */
       steps: components["schemas"]["TicketStep"][];
     };
@@ -5474,6 +5495,19 @@ export interface components {
      * @enum {string}
      */
     VersionOrigin: "publish" | "restore" | "external";
+    /**
+     * WaitingOnOwner
+     * @description The owner decision a feature waits on; ``tickets`` are the open change requests' origin
+     *     tickets (``change_request`` only).
+     */
+    WaitingOnOwner: {
+      kind: components["schemas"]["OwnerWaitKind"];
+      /**
+       * Tickets
+       * @default []
+       */
+      tickets: string[];
+    };
     /**
      * Workdir
      * @description A folder a session may start in (D6): the hub, a repo checkout or one of its worktrees.

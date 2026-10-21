@@ -1,4 +1,5 @@
-"""``hub validate-output review|eval FILE``: check one agent output (AGH-139 S7, E12, E17).
+"""``hub validate-output review|eval|preflight FILE``: check one agent output (AGH-139 S7, E12,
+E17; a ticket's ``preflight.json``, two-level-flows AC-2.3).
 
 A thin adapter: the generator's ``output_files`` reads the output (and, for ``eval``, the sibling
 ``evals/<stem>.md`` head and ``../features.json``) without following a link, then core's
@@ -18,7 +19,11 @@ import typer
 
 from agent_hub.cli.command_exits import fail
 from agent_hub.cli.init_report import shown_path
-from agent_hub.core.features.agent_outputs import eval_problems, review_problems
+from agent_hub.core.features.agent_outputs import (
+    eval_problems,
+    preflight_problems,
+    review_problems,
+)
 from agent_hub.core.features.output_models import OutputProblem
 from agent_hub.generator.output_files import (
     RECORD_NAME,
@@ -31,19 +36,29 @@ MAX_PRINTED_PROBLEMS: Final = 200
 
 
 class OutputKind(StrEnum):
-    """The two agent outputs: a reviewer's review round, the evaluator's eval."""
+    """The agent outputs: a reviewer's review round, the evaluator's eval, a ticket's preflight
+    record."""
 
     REVIEW = "review"
     EVAL = "eval"
+    PREFLIGHT = "preflight"
 
 
 def validate_output(
-    kind: Annotated[OutputKind, typer.Argument(help="The output's kind: review or eval.")],
+    kind: Annotated[
+        OutputKind, typer.Argument(help="The output's kind: review, eval or preflight.")
+    ],
     file: Annotated[Path, typer.Argument(help="The output's JSON file.")],
 ) -> None:
     """Check one agent output JSON file: every problem, one per line."""
     shown = shown_path(str(file))
-    problems = _review(file, shown) if kind is OutputKind.REVIEW else _eval(file, shown)
+    match kind:
+        case OutputKind.REVIEW:
+            problems = _review(file, shown)
+        case OutputKind.EVAL:
+            problems = _eval(file, shown)
+        case OutputKind.PREFLIGHT:
+            problems = _preflight(file, shown)
     if problems:
         fail(*_problem_lines(shown, problems))
     typer.echo(f"{shown}: valid")
@@ -55,6 +70,13 @@ def _review(file: Path, shown: str) -> tuple[OutputProblem, ...]:
         fail(f"{shown}: {content}")
     folder = file.parent.resolve().name
     return review_problems(content, file_name=file.name, folder_name=folder)
+
+
+def _preflight(file: Path, shown: str) -> tuple[OutputProblem, ...]:
+    content = read_output(file)
+    if isinstance(content, str):
+        fail(f"{shown}: {content}")
+    return preflight_problems(content)
 
 
 def _eval(file: Path, shown: str) -> tuple[OutputProblem, ...]:
