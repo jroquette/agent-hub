@@ -5026,6 +5026,7 @@ def test_calls_no_io_when_rendering_modules_scanned() -> None:
     assert hits == []
 
 
+# AGH-431 (AC-431.5): the make -n output is compared without leading tabs.
 def test_passes_budget_and_from_when_run_issue_given(
     variant_config: HubConfig,
     rendered_tree: Callable[[RenderedHub], Path],
@@ -5048,10 +5049,10 @@ def test_passes_budget_and_from_when_run_issue_given(
     ready = run_make(root, fake_uv_bin, "-n", "next")
 
     assert issue.returncode == 0, issue.stderr
-    assert (
-        f"{hub} run 'DEM-1' --repo 'demo-api' --live --budget '2' --from 'verify'"
-        in issue.stdout.splitlines()
-    )
+    # make 3.81 (macOS) prints a recipe's continued lines with their leading tab; make 4 drops it.
+    assert f"{hub} run 'DEM-1' --repo 'demo-api' --live --budget '2' --from 'verify'" in [
+        line.strip() for line in issue.stdout.splitlines()
+    ]
     assert ready.returncode == 0, ready.stderr
     assert ready.stdout.splitlines() == [f"{hub} next"]
     assert logged_calls(fake_uv_bin) == []

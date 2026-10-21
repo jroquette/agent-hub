@@ -804,8 +804,15 @@ def test_raises_when_body_too_large(fake_linear_api: Any, synthetic_key: str) ->
         over_cap.get_issue("DEM-1")
 
 
-def test_raises_when_json_too_deep(synthetic_key: str) -> None:
-    post = _Answering((200, b"[" * 200_000 + b"]" * 200_000))
+# AGH-431 (AC-431.4): the parser's overflow is simulated, not built.
+def test_raises_when_json_too_deep(synthetic_key: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    # How deep the parser can go depends on the interpreter and the machine (Python 3.14 reads
+    # 200,000 levels), so the overflow itself is simulated.
+    def overflow(*_args: object, **_kwargs: object) -> object:
+        raise RecursionError
+
+    monkeypatch.setattr("agent_hub.tracker_linear.graphql_transport.json.loads", overflow)
+    post = _Answering((200, b"[[]]"))
     client = LinearGraphqlTrackerClient(environ={LINEAR_API_KEY_VARIABLE: synthetic_key}, post=post)
 
     with pytest.raises(TrackerError, match=r"^get_issue DEM-1: Linear's answer is nested too deep"):
