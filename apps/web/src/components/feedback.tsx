@@ -157,12 +157,22 @@ export interface BannerProps {
   action?: ReactNode;
   boxed?: boolean | undefined;
   onDismiss?: (() => void) | undefined;
+  /** False when a live region elsewhere already announces it: no status or alert role. */
+  live?: boolean | undefined;
 }
-export function Banner({ tone = "info", icon, children, action, boxed, onDismiss }: BannerProps) {
+export function Banner({
+  tone = "info",
+  icon,
+  children,
+  action,
+  boxed,
+  onDismiss,
+  live = true,
+}: BannerProps) {
   return (
     <div
       className={cx("ah-banner", `ah-banner-${tone}`, boxed && "ah-banner-boxed")}
-      role={tone === "error" ? "alert" : "status"}
+      role={live ? (tone === "error" ? "alert" : "status") : undefined}
     >
       <Icon name={icon ?? BANNER_ICON[tone]} />
       <div className="ah-grow">{children}</div>

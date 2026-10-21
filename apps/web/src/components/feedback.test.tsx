@@ -97,6 +97,23 @@ describe("Banner and Toast", () => {
     expect(onDismiss).toHaveBeenCalled();
   });
 
+  it("drops its live role when another live region announces it", () => {
+    render(
+      <>
+        <Banner tone="error" live={false}>
+          Broken
+        </Banner>
+        <Banner tone="info" live={false}>
+          Done
+        </Banner>
+      </>,
+    );
+
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByText("Broken").closest(".ah-banner")).toHaveClass("ah-banner-error");
+  });
+
   it("offers undo on a toast", () => {
     const onUndo = vi.fn();
     render(

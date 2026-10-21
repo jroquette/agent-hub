@@ -83,7 +83,7 @@ function announcing(text: string): Element[] {
   const live = [...document.querySelectorAll('[aria-live], [role="status"], [role="alert"]')];
   return live.filter(
     (node) =>
-      (node.textContent ?? "").includes(text) &&
+      node.textContent.includes(text) &&
       !live.some((outer) => outer !== node && outer.contains(node)),
   );
 }
@@ -767,7 +767,7 @@ description: Takes an idea from spec to delivery.
     saveDraft(
       DRAFT,
       { project: "demo", kind: "skill" },
-      { target: TARGET, name: "feature", sessionId: ID, sourcePath: SOURCE },
+      { target: TARGET, name: "changelog", sessionId: ID, sourcePath: SOURCE },
       AT,
     );
     saveDraft("agent-zzz999", { project: "demo", kind: "agent" }, { name: "other" }, AT);

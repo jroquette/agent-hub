@@ -63,7 +63,7 @@ import {
   type SkillRef,
 } from "./queries";
 import { KIND_ICON, KIND_NAME, SkillCard } from "./SkillCard";
-import { forgetDraft, openEditDraft, saveDraft, storedDraft } from "./studioDrafts";
+import { forgetDraft, openEditDraft, patchDraft, saveDraft, storedDraft } from "./studioDrafts";
 
 type CatalogItem = components["schemas"]["CatalogItem"];
 type SkillDetail = components["schemas"]["SkillDetail"];
@@ -73,6 +73,14 @@ const DEFAULT_MODELS = ["default", "opus", "sonnet", "haiku"];
 /** S9's warning, in Publish's words: shown before a managed item is published over. */
 export const PUBLISH_MANAGED_WARNING =
   "This file is managed by hub.lock: the next hub sync rewrites it. Publish anyway?";
+/** The Publish dialog's verb once the managed warning shows. */
+const PUBLISH_ANYWAY = "Publish anyway";
+/** What a reopened spent draft says when it stored no detail of its own. */
+const SPENT_DETAIL = "This draft was already published; discard it.";
+
+/** Where an edit or new draft stands once it is past drafting: published (its folder is gone)
+ * or spent (published, its folder kept until discarded). */
+type Settled = "published" | "spent" | null;
 
 /** What a publish the server answered did, for the Studio's status line (AGH-295); `result`
  * is null when the Studio reopens on a draft published earlier. */
@@ -290,22 +298,21 @@ function EditStudio({
     () => (detail.data ? editContext(target, detail.data) : null),
     [detail.data, target],
   );
-  const [stored] = useState(() => storedDraft(draftId));
   // Once the draft is published (or spent), the item may be gone under its old name (a rename):
   // the Studio stays on what it last read, or on what the draft stored, instead of the 404.
+  // Before that, a 404 is a real deletion. A failed read again keeps `data` (TanStack Query),
+  // so the error is checked first.
   const [kept, setKept] = useState<EditContext | null>(null);
   if (loaded && loaded !== kept) setKept(loaded);
   useEffect(() => {
-    if (loaded)
-      saveDraft(draftId, { project, kind: target.kind }, { sourcePath: loaded.sourcePath });
-  }, [loaded, draftId, project, target.kind]);
+    // In place, its time and order kept; only when it changed.
+    if (loaded && storedDraft(draftId)?.sourcePath !== loaded.sourcePath)
+      patchDraft(draftId, { sourcePath: loaded.sourcePath });
+  }, [loaded, draftId]);
+  const stored = storedDraft(draftId);
   const done = stored?.published === true || stored?.spent === true;
-  const edit =
-    loaded ??
-    kept ??
-    (detail.isError && done && stored.sourcePath
-      ? storedEditContext(target, stored.sourcePath)
-      : null);
+  const fromStore = stored?.sourcePath ? storedEditContext(target, stored.sourcePath) : null;
+  const edit = detail.isError ? (done ? (kept ?? fromStore) : null) : (loaded ?? kept);
   if (detail.isError && !edit) {
     return (
       <div className="ah-card">
@@ -384,10 +391,12 @@ function StudioHeader({
   context,
   summary,
   actions,
+  settled = null,
 }: {
   context: StudioContext;
   summary: DraftSummary | null;
   actions?: ReactNode;
+  settled?: Settled;
 }) {
   const { kind, edit } = context;
   return (
@@ -405,10 +414,20 @@ function StudioHeader({
         </h1>
         <span className="ah-small ah-muted">
           <span className="ah-studio-chip">
-            <Icon name="file-pen" size="sm" />
-            {edit ? "Editing" : "Draft"}
+            <Icon name={settled ? "circle-check" : "file-pen"} size="sm" />
+            {settled ? "Published" : edit ? "Editing" : "Draft"}
           </span>{" "}
-          {edit ? (
+          {settled === "published" ? (
+            <>
+              Published from <span className="ah-mono">{draftDir(context.draftId)}/</span>, which is
+              removed
+            </>
+          ) : settled === "spent" ? (
+            <>
+              Published from <span className="ah-mono">{draftDir(context.draftId)}/</span>, which
+              stays until you discard it
+            </>
+          ) : edit ? (
             <>
               <span className="ah-mono">{edit.sourcePath}</span> in{" "}
               <span className="ah-mono">{draftDir(context.draftId)}/</span> · the original is
@@ -591,6 +610,8 @@ interface Notice {
   text: string;
   /** The draft is spent (published, its folder kept): offer to discard it (A20). */
   discard?: boolean;
+  /** Announced by the page's live region (or static on reopen): its banner is not live too. */
+  quiet?: boolean;
 }
 
 function StudioSession({
@@ -629,16 +650,19 @@ function StudioSession({
   const to = edit ? edit.to : destination(kind, summary.name, pluginDir);
 
   useEffect(() => {
-    if (summary.name) saveDraft(draftId, { project, kind }, { name: summary.name });
+    // Only a new name is saved: opening a draft keeps its time and its place in the list.
+    if (summary.name && storedDraft(draftId)?.name !== summary.name)
+      saveDraft(draftId, { project, kind }, { name: summary.name });
   }, [summary.name, draftId, project, kind]);
 
   // The Discard message once accepted, and how far the transcript was when it went.
   const [request, setRequest] = useState<{ text: string; from: number } | null>(null);
-  const [notice, setNotice] = useState<Notice | null>(() =>
-    storedDraft(draftId)?.spent
-      ? { tone: "warning", text: "This draft was already published; discard it.", discard: true }
-      : null,
-  );
+  const [notice, setNotice] = useState<Notice | null>(() => {
+    const stored = storedDraft(draftId);
+    return stored?.spent
+      ? { tone: "warning", text: stored.spentDetail ?? SPENT_DETAIL, discard: true, quiet: true }
+      : null;
+  });
   // The server publishes (AGH-295): what it answered, and whether the draft is spent (A20).
   const publish = usePublishDraft(project, draftId);
   const publishing = publish.isPending;
@@ -652,13 +676,17 @@ function StudioSession({
   const sending = useRef(false);
   // What the page's live region says, and where focus goes once a publish settles.
   const [announcement, setAnnouncement] = useState("");
-  const [focusOn, setFocusOn] = useState<"result" | "notice" | null>(null);
+  // Each settle counts, so a second identical failure takes focus again.
+  const [focusOn, setFocusOn] = useState<{ on: "result" | "notice"; n: number } | null>(null);
+  const focus = (on: "result" | "notice") => {
+    setFocusOn((last) => ({ on, n: (last?.n ?? 0) + 1 }));
+  };
   const resultRef = useRef<HTMLDivElement>(null);
   const noticeRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (focusOn === "result") resultRef.current?.focus();
-    if (focusOn === "notice") {
+    if (focusOn?.on === "result") resultRef.current?.focus();
+    if (focusOn?.on === "notice") {
       const node = noticeRef.current;
       (node?.querySelector<HTMLButtonElement>("button:not(:disabled)") ?? node)?.focus();
     }
@@ -666,7 +694,7 @@ function StudioSession({
   useEffect(() => {
     if (!asked || publishing) return;
     const buttons = dialogRef.current?.closest('[role="alertdialog"]')?.querySelectorAll("button");
-    [...(buttons ?? [])].find((b) => b.textContent === "Publish anyway")?.focus();
+    [...(buttons ?? [])].find((b) => b.textContent === PUBLISH_ANYWAY)?.focus();
   }, [asked, publishing]);
   // A discard settles when its turn has ended, on Claude's confirmation only (adjusted while
   // rendering).
@@ -692,6 +720,7 @@ function StudioSession({
   }, [phase, draftId, navigate, project]);
 
   const words = publishedWords(outcome);
+  const settled: Settled = phase === "published" ? "published" : spent ? "spent" : null;
   // Written but not stored: the warning tone, with its own icon (status is icon and label).
   const unversioned = outcome !== null && outcome.changed && !outcome.versioned;
   // Where the item is now: the draft folder is gone, and a renamed edit moved elsewhere.
@@ -708,7 +737,8 @@ function StudioSession({
     sending.current = true;
     setNotice(null);
     setAsked(false);
-    setAnnouncement("");
+    // Said from the page, outside the dialog, which is busy (aria-busy) meanwhile.
+    setAnnouncement("Publishing…");
     publish.mutate(
       { target: edit?.target ?? null, confirmManaged: managed },
       {
@@ -721,13 +751,15 @@ function StudioSession({
           setPhase("published");
           const said = publishedWords(result);
           setAnnouncement(`Publish finished. ${said.title} ${said.rest}`.trim());
-          setFocusOn("result");
+          focus("result");
         },
         onError: (problem) => {
           // The dialog stays open on S9's warning, and its next confirm sends the flag.
           if (problem.code === "managed_confirmation_required") {
             setManaged(true);
             setAsked(true);
+            // The dialog's own region says it, now that the dialog is not busy.
+            setAnnouncement("");
             return;
           }
           // Anything else keeps the draft and the session. A spent draft (already published,
@@ -736,9 +768,14 @@ function StudioSession({
           const isSpent = spentBy(problem);
           if (isSpent) setSpent(true);
           const text = problem.detail ?? problem.title;
-          setNotice({ tone: problem.published ? "warning" : "error", text, discard: isSpent });
+          setNotice({
+            tone: problem.published ? "warning" : "error",
+            text,
+            discard: isSpent,
+            quiet: true,
+          });
           setAnnouncement(`Publish stopped. ${text}`);
-          setFocusOn("notice");
+          focus("notice");
         },
       },
     );
@@ -804,11 +841,18 @@ function StudioSession({
       <div className="ah-sr" aria-live="polite" aria-atomic="true">
         {announcement}
       </div>
-      <StudioHeader context={context} summary={summary} actions={actions} />
+      <StudioHeader context={context} summary={summary} actions={actions} settled={settled} />
       {notice && (
-        <div ref={noticeRef} tabIndex={-1} className="ah-studio-result">
+        <div
+          ref={noticeRef}
+          tabIndex={-1}
+          className="ah-studio-result"
+          role="region"
+          aria-label="Publish problem"
+        >
           <Banner
             tone={notice.tone}
+            live={!notice.quiet}
             boxed
             action={
               notice.discard ? (
@@ -830,9 +874,16 @@ function StudioSession({
         </div>
       )}
       {phase === "published" && (
-        <div ref={resultRef} tabIndex={-1} className="ah-studio-result">
+        <div
+          ref={resultRef}
+          tabIndex={-1}
+          className="ah-studio-result"
+          role="region"
+          aria-label="Publish result"
+        >
           <Banner
             tone={unversioned ? "warning" : "info"}
+            live={false}
             boxed
             icon={unversioned ? undefined : "circle-check"}
           >
@@ -874,6 +925,7 @@ function StudioSession({
             to={to}
             busy={busy}
             edit={edit}
+            settled={settled}
           />
         </section>
       </div>
@@ -885,7 +937,7 @@ function StudioSession({
               : `Publish ${summary.name ?? `this ${kind}`}?`
           }
           tone="primary"
-          confirmLabel={publishing ? "Publishing…" : managed ? "Publish anyway" : "Publish"}
+          confirmLabel={publishing ? "Publishing…" : managed ? PUBLISH_ANYWAY : "Publish"}
           pending={publishing}
           consequences={[
             edit && kind === "hook" ? (
@@ -921,17 +973,13 @@ function StudioSession({
         >
           <div ref={dialogRef}>
             {managed && (
-              <Banner tone="warning" boxed>
+              <Banner tone="warning" boxed live={false}>
                 {PUBLISH_MANAGED_WARNING}
               </Banner>
             )}
-            {/* Mounted with the dialog, so a change of its text is announced. */}
+            {/* Mounted with the dialog, so the server's managed answer is announced. */}
             <div className="ah-sr" aria-live="polite" aria-atomic="true">
-              {publishing
-                ? "Publishing…"
-                : asked
-                  ? `Confirmation needed. ${PUBLISH_MANAGED_WARNING}`
-                  : ""}
+              {asked && !publishing ? `Confirmation needed. ${PUBLISH_MANAGED_WARNING}` : ""}
             </div>
           </div>
         </ConfirmDialog>
@@ -969,6 +1017,7 @@ function DraftPreview({
   to,
   busy,
   edit,
+  settled,
 }: {
   project: string;
   draftId: string;
@@ -978,6 +1027,7 @@ function DraftPreview({
   to: string;
   busy: boolean;
   edit: EditContext | null;
+  settled: Settled;
 }) {
   const now = useNow(60_000);
   const [tab, setTab] = useState<PreviewTab>(edit ? "changes" : "preview");
@@ -1014,33 +1064,37 @@ function DraftPreview({
           </ul>
         </div>
       )}
-      <div className="ah-studio-block">
-        <h2 className="ah-studio-label">
-          {edit ? "Before publishing the changes" : "Before publishing"}
-        </h2>
-        <ul className="ah-studio-checks">
-          {summary.checks.map((check) => (
-            <li key={check.id} data-state={check.state}>
-              <Icon
-                name={
-                  check.state === "ok"
-                    ? "circle-check"
-                    : check.state === "warn"
-                      ? "triangle-alert"
-                      : "circle-dashed"
-                }
-                size="sm"
-              />
-              {check.label}
+      {/* Once published, the checks and the destination belong to the past: the banner says where it is. */}
+      {settled === null && (
+        <div className="ah-studio-block">
+          <h2 className="ah-studio-label">
+            {edit ? "Before publishing the changes" : "Before publishing"}
+          </h2>
+          <ul className="ah-studio-checks">
+            {summary.checks.map((check) => (
+              <li key={check.id} data-state={check.state}>
+                <Icon
+                  name={
+                    check.state === "ok"
+                      ? "circle-check"
+                      : check.state === "warn"
+                        ? "triangle-alert"
+                        : "circle-dashed"
+                  }
+                  size="sm"
+                />
+                {check.label}
+              </li>
+            ))}
+            <li data-state="info">
+              <Icon name="folder-open" size="sm" />
+              Publishes to <span className="ah-mono">{to}</span>
             </li>
-          ))}
-          <li data-state="info">
-            <Icon name="folder-open" size="sm" />
-            Publishes to <span className="ah-mono">{to}</span>
-          </li>
-        </ul>
-        {writes.outside.length > 0 && <OutsideWarning paths={writes.outside} />}
-      </div>
+          </ul>
+          {writes.outside.length > 0 && <OutsideWarning paths={writes.outside} />}
+        </div>
+      )}
+      {settled !== null && writes.outside.length > 0 && <OutsideWarning paths={writes.outside} />}
       <div className="ah-studio-block ah-grow">
         <div className="ah-row ah-wrap" style={{ gap: 8 }}>
           <SegmentedControl
@@ -1064,7 +1118,7 @@ function DraftPreview({
           )}
         </div>
         {tab === "changes" && edit ? (
-          <DraftChanges files={writes.files} edit={edit} />
+          <DraftChanges files={writes.files} edit={edit} settled={settled} />
         ) : tab === "preview" ? (
           <RenderedDraft kind={kind} summary={summary} />
         ) : (
@@ -1095,12 +1149,27 @@ function DraftPreview({
 }
 
 /** Each draft file against the item as it is now: the main file as a diff, the others as new. */
-function DraftChanges({ files, edit }: { files: readonly DraftFile[]; edit: EditContext }) {
+function DraftChanges({
+  files,
+  edit,
+  settled,
+}: {
+  files: readonly DraftFile[];
+  edit: EditContext;
+  settled: Settled;
+}) {
   return (
     <div className="ah-stack" style={{ gap: 12 }}>
       {files.map((file) => {
         const isMain = file.path === edit.mainPath;
         const before = isMain ? edit.baseline.original : null;
+        if (isMain && before === null && settled !== null) {
+          return (
+            <p key={file.path} className="ah-small ah-muted">
+              The item's earlier text is in its history; see Files for what was published.
+            </p>
+          );
+        }
         if (isMain && before === null) {
           return (
             <p key={file.path} className="ah-small ah-muted">

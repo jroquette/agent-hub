@@ -88,7 +88,7 @@ export function spentBy(problem: ApiProblem): boolean {
 export function usePublishDraft(project: string, draftId: string) {
   const client = useQueryClient();
   const kind = draftKind(draftId);
-  const store = (patch: { published: true } | { spent: true }) => {
+  const store = (patch: { published: true } | { spent: true; spentDetail: string }) => {
     if (kind) saveDraft(draftId, { project, kind }, patch);
   };
   return useMutation<
@@ -109,7 +109,7 @@ export function usePublishDraft(project: string, draftId: string) {
       store({ published: true });
     },
     onError: (problem) => {
-      if (spentBy(problem)) store({ spent: true });
+      if (spentBy(problem)) store({ spent: true, spentDetail: problem.detail ?? problem.title });
     },
     onSettled: (_result, _problem, { target }) => {
       // A publish (or a failure that still landed it) changes the catalog, the items and their
