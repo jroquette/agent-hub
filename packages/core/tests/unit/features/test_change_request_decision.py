@@ -11,8 +11,8 @@ import pytest
 
 from agent_hub.core.approvals.approval import ApprovalKind
 from agent_hub.core.features.change_request_decision import (
-    ChangeRequestDecisionError,
     MAX_GATE_PAGES,
+    ChangeRequestDecisionError,
     DecideChangeRequest,
     RequestRuns,
     decision_note,
@@ -124,7 +124,7 @@ class Guard:
         self.locked_when_checked: list[bool] = []
 
     @property
-    def launcher(self) -> "Guard":
+    def launcher(self) -> Guard:
         return self
 
     def live_runs(self, hub_path: str) -> Mapping[str, str | None]:
