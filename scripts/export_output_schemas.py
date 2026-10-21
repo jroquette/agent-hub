@@ -1,7 +1,7 @@
 """Regenerate the shipped JSON Schemas of the agent outputs from their models (AGH-139 S8).
 
 Writes ``export_output_schema_text(kind)`` for each kind to its core package data file. Run it
-after any change to ``ReviewOutput`` or ``EvalOutput`` and commit both files;
+after any change to ``ReviewOutput``, ``EvalOutput`` or ``PreflightRecord`` and commit the files;
 ``test_agent_outputs.py`` fails until you do.
 Run it as ``make output-schemas`` or ``python -m scripts.export_output_schemas`` from the repo
 root.
@@ -18,7 +18,7 @@ OUTPUT_SCHEMA_DIR = Path("packages/core/src/agent_hub/core/features")
 
 
 def main(argv: Sequence[str] | None = None, *, root: Path = REPO_ROOT) -> int:
-    """Write both schemas under ``root``; ``argv`` takes no arguments."""
+    """Write every schema under ``root``; ``argv`` takes no arguments."""
     args = sys.argv[1:] if argv is None else argv
     if args:
         print("usage: python -m scripts.export_output_schemas", file=sys.stderr)
