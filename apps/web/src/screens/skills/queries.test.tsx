@@ -76,7 +76,11 @@ function Reader() {
   const catalog = useSkillCatalog("demo");
   const other = useApi("/api/v1/projects/{project}/skills", { path: { project: "other" } });
   const edited = useSkillDetail("demo", FEATURE);
-  const sibling = useSkillDetail("demo", { kind: "agent", source: "hub-workflow", name: "evaluator" });
+  const sibling = useSkillDetail("demo", {
+    kind: "agent",
+    source: "hub-workflow",
+    name: "evaluator",
+  });
   const version = useApi(
     "/api/v1/projects/{project}/skills/{kind}/{source}/{name}/versions/{version_id}",
     {

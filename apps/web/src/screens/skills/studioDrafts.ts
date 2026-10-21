@@ -14,6 +14,10 @@ export interface StoredDraft {
   published: boolean;
   /** The existing item the draft changes; absent for a new item. */
   target?: SkillRef | null;
+  /** An edit's hub-relative main file, so a published rename reopens without its old detail. */
+  sourcePath?: string | null;
+  /** Published, but its folder stayed (A20): it can only be discarded. */
+  spent?: boolean;
 }
 
 const KEY = "ah.studio.drafts";
@@ -46,7 +50,9 @@ function isStoredDraft(value: unknown): value is StoredDraft {
     nullableText(d.name) &&
     typeof d.updatedAt === "string" &&
     typeof d.published === "boolean" &&
-    isTarget(d.target)
+    isTarget(d.target) &&
+    (d.sourcePath === undefined || nullableText(d.sourcePath)) &&
+    (d.spent === undefined || typeof d.spent === "boolean")
   );
 }
 
