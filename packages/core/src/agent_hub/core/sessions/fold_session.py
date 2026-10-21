@@ -14,7 +14,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
 from typing import NamedTuple
 
-from agent_hub.core.approvals.fold_approvals import open_gate_ids
+from agent_hub.core.approvals.fold_approvals import fold_approvals
 from agent_hub.core.events.event import EventSource, EventType
 from agent_hub.core.events.stored_event import StoredEvent
 from agent_hub.core.readmodels.fact_keys import canonical_events, canonical_part, resolve_facts
@@ -205,15 +205,18 @@ def fold_session_with_problems(
     cost = fold_session_cost(first.session, ordered, prices=prices)
     records = usage_records(ordered)
     last_at = ordered[-1].event.timestamp
+    approvals = fold_approvals(ordered)
     status = session_status(
         segments,
         last_activity_at=last_at,
         now=now,
-        has_open_gate=bool(open_gate_ids(ordered)),
+        has_open_gate=any(not approval.decided for approval in approvals.values()),
         has_open_tool_call=_has_open_tool_call(winners, ordered),
     )
     actors = fold_actors(ordered, winners=winners)
-    problems = fold_problems(ordered, status=status, winners=winners, actors=actors)
+    problems = fold_problems(
+        ordered, status=status, winners=winners, actors=actors, approvals=approvals
+    )
     session = Session(
         id=first.session,
         project=first.project,

@@ -128,6 +128,42 @@ def test_ignores_follow_up_when_it_happened_before_request() -> None:
     assert approval.status == "open"
 
 
+# AGH-429 (AC-429.4): each request is decided by its own follow-up.
+def test_ignores_follow_up_when_it_happened_at_same_moment_as_request() -> None:
+    approval = fold_approvals(as_stored([_prompt(0), _guard_ask()]))[TOOL_USE_ID]
+
+    assert approval.status == "open"
+
+
+# AGH-429 (AC-429.4): each request is decided by its own follow-up.
+def test_decides_each_request_by_its_own_follow_up_when_session_asks_many_times() -> None:
+    asks = [
+        _guard_ask().model_copy(
+            update={
+                "timestamp": _at(minute * 10),
+                "source_id": f"session-1:guard_ask:toolu_{minute}",
+                "payload": {"gate_id": f"toolu_{minute}", "kind": "guard_ask"},
+            }
+        )
+        for minute in range(3)
+    ]
+    ran = _tool_result("claude_code", "ok", minutes=1).model_copy(
+        update={
+            "source_id": "session-1:PostToolUse:toolu_0",
+            "payload": {"tool": "Edit", "tool_use_id": "toolu_0", "status": "ok"},
+        }
+    )
+
+    approvals = fold_approvals(as_stored([*asks, ran, _prompt(12)]))
+
+    assert {gate_id: approval.status for gate_id, approval in approvals.items()} == {
+        "toolu_0": "approved",
+        "toolu_1": "declined",
+        "toolu_2": "open",
+    }
+    assert approvals["toolu_1"].decided_at == _at(12)
+
+
 def test_decides_by_gate_result_when_gate_id_matches() -> None:
     plan = an_event(
         type="gate.request",
