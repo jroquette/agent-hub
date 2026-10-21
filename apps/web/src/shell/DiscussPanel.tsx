@@ -1,13 +1,30 @@
 import "./discuss.css";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router";
 
-import { AppLink, Banner, Button, EmptyState, Icon, IconButton } from "../components";
+import {
+  Banner,
+  copyText,
+  EmptyState,
+  Icon,
+  IconButton,
+  MenuItem,
+  PathText,
+  Popover,
+} from "../components";
+import { usePanelDismiss } from "../components/usePanelDismiss";
 import { ApiProblem } from "../lib/api";
 import { captureScreen } from "../lib/screenCapture";
 import { rememberScreenshot } from "../lib/screenshotCopy";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "../screens/agent-session/Composer";
 import { DiscussChat } from "../screens/agent-session/DiscussChat";
+import {
+  DRAWER_MIN,
+  useDrawerWidth,
+  type DrawerWidth,
+  type PanelBounds,
+} from "../screens/agent-session/DrawerResize";
 import type { PermissionMode } from "../screens/agent-session/model";
 import { sessionControlUnavailable } from "../screens/sessions-list/control";
 import {
@@ -44,25 +61,88 @@ function writeStored(target: DiscussTarget, id: string | null) {
   }
 }
 
+/** The width the owner chose for the panel, kept in this browser. */
+export const DISCUSS_WIDTH_KEY = "ah.discuss.width";
+/** Docked from this viewport width; below it the panel lays over the page. */
+const DOCKED_FROM = 1280;
+/** The page keeps at least this much beside a docked panel. */
+const PAGE_MIN = 640;
+const PANEL_MAX = 720;
+/** Beside an overlaid panel, this much of the page stays in view. */
+const OVERLAY_GAP = 96;
+
+/**
+ * The widest the panel may be in a viewport `viewport` wide, beside a sidebar `sidebar` wide: docked,
+ * it leaves the page 640 px and stops at 720; over the page, it leaves 96 px of it in view.
+ */
+export function discussMax(viewport: number, sidebar: number): number {
+  const max =
+    viewport >= DOCKED_FROM
+      ? Math.min(PANEL_MAX, viewport - sidebar - PAGE_MIN)
+      : viewport - OVERLAY_GAP;
+  return Math.max(DRAWER_MIN, max);
+}
+
+const discussBounds = (): PanelBounds => {
+  const sidebar = document.getElementById("main")?.getBoundingClientRect().left ?? 0;
+  return { right: window.innerWidth, max: discussMax(window.innerWidth, sidebar) };
+};
+
+/** The Discuss panel's width: the shell sets it on its frame, so the page makes room for it. */
+export function useDiscussWidth(): DrawerWidth {
+  return useDrawerWidth({
+    storageKey: DISCUSS_WIDTH_KEY,
+    cssVar: "--discuss-chosen",
+    label: "Resize the Discuss panel",
+    defaultWidth: 480,
+    bounds: discussBounds,
+  });
+}
 /**
  * The right-hand panel to talk with Claude about what is on screen: one conversation per
  * artifact, a session `hub web` drives in the project's hub folder. Edits Claude proposes ask
  * through the same permission cards as the full chat.
  */
-export function DiscussPanel() {
-  const { target, open, setOpen } = useDiscuss();
+export function DiscussPanel({ resize }: { resize?: DrawerWidth | undefined }) {
+  const { open } = useDiscuss();
   if (!open) return null;
+  return <OpenPanel resize={resize} />;
+}
+
+/** Docked beside the page from this width: Escape closes it only from inside it there. */
+const docked = () =>
+  typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1280px)").matches;
+
+function OpenPanel({ resize }: { resize: DrawerWidth | undefined }) {
+  const { target, setOpen } = useDiscuss();
+  const panel = useRef<HTMLElement>(null);
+  usePanelDismiss(
+    panel,
+    () => {
+      setOpen(false);
+    },
+    {
+      fromAnywhere: () => !docked(),
+      fallbackFocus: () => document.querySelector<HTMLElement>("[data-discuss-toggle]"),
+      keepTypedEscape: true,
+    },
+  );
   return (
-    <aside className="ah-discuss" aria-label="Discuss with Claude">
+    <aside ref={panel} className="ah-discuss" id="ah-discuss" aria-label="Discuss with Claude">
+      {resize && <div {...resize.handle} aria-controls="ah-discuss" />}
       <header className="ah-discuss-head">
         <Icon name="message-square" size="sm" />
-        <div className="ah-discuss-title">
-          <b>Discuss with Claude</b>
-          <span className="ah-small ah-muted">
-            {target ? `${target.kind} · ${target.title}` : "Nothing on this screen yet"}
-          </span>
-        </div>
+        <b className="ah-discuss-title">Discuss with Claude</b>
         <span className="ah-grow" />
+        {resize && (
+          <IconButton
+            icon="maximize-2"
+            label={resize.wide ? "Narrow panel" : "Widen panel"}
+            aria-pressed={resize.wide}
+            className="ah-discuss-widen"
+            onClick={resize.toggleWide}
+          />
+        )}
         <IconButton
           icon="x"
           label="Close panel"
@@ -72,7 +152,8 @@ export function DiscussPanel() {
         />
       </header>
       {target ? (
-        <DiscussBody key={target.key} target={target} />
+        // The owner session is read after the target: the body starts over once it is known.
+        <DiscussBody key={`${target.key}:${target.ownerSession?.id ?? ""}`} target={target} />
       ) : (
         <EmptyState icon="message-square" title="Open something to discuss">
           Register a project to talk with Claude about any screen. The conversation follows what is
@@ -116,27 +197,143 @@ function ReferenceChips({
   );
 }
 
+/**
+ * The conversation's own actions, behind one "…" at the end of the panel's second row: the full
+ * chat, a new conversation, back to the feature's session, and the file under discussion.
+ */
+function ConversationMenu({
+  sessionId,
+  path,
+  onNew,
+  onOwner,
+}: {
+  sessionId: string | null;
+  path: string | null | undefined;
+  onNew: (() => void) | null;
+  onOwner: (() => void) | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrap = useRef<HTMLSpanElement>(null);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointer = (event: PointerEvent) => {
+      if (!wrap.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setOpen(false);
+      wrap.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    };
+    document.addEventListener("pointerdown", onPointer);
+    // Capture: the menu spends Escape before the panel sees it.
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [open]);
+
+  if (!sessionId && !path && !onOwner) return null;
+  const run = (action: () => void) => () => {
+    setOpen(false);
+    action();
+  };
+  return (
+    <span ref={wrap} style={{ position: "relative" }}>
+      <IconButton
+        icon="ellipsis"
+        label="More for this conversation"
+        size="sm"
+        aria-haspopup="true"
+        aria-expanded={open}
+        onClick={() => {
+          setOpen(!open);
+        }}
+      />
+      <Popover
+        open={open}
+        label="More for this conversation"
+        style={{ top: 30, right: 0, minWidth: 240, maxWidth: 360 }}
+      >
+        {sessionId && (
+          <MenuItem
+            icon="external-link"
+            onClick={run(() => {
+              void navigate(`/agent-sessions/${encodeURIComponent(sessionId)}`);
+            })}
+          >
+            Open the full chat
+          </MenuItem>
+        )}
+        {onNew && (
+          <MenuItem icon="plus" onClick={run(onNew)}>
+            New conversation
+          </MenuItem>
+        )}
+        {onOwner && (
+          <MenuItem icon="undo-2" onClick={run(onOwner)}>
+            Back to the feature session
+          </MenuItem>
+        )}
+        {path && (
+          <MenuItem
+            icon="file-text"
+            onClick={run(() => {
+              copyText(path);
+            })}
+            hint={<span className="ah-small ah-subtle">Copy</span>}
+          >
+            <PathText path={path} max={40} dimDir />
+          </MenuItem>
+        )}
+      </Popover>
+    </span>
+  );
+}
+
 function DiscussBody({ target }: { target: DiscussTarget }) {
   const { references, removeReference, clearReferences } = useDiscuss();
-  const [sessionId, setSessionId] = useState<string | null>(() => readStored(target));
+  const owner = target.ownerSession ?? null;
+  // The owner's session comes first; the panel's own conversation is one click away.
+  const [sessionId, setSessionId] = useState<string | null>(() => owner?.id ?? readStored(target));
+  const [statusSlot, setStatusSlot] = useState<HTMLSpanElement | null>(null);
+  const onOwner = owner !== null && sessionId === owner.id;
   const forget = useCallback(() => {
-    writeStored(target, null);
+    if (!onOwner) writeStored(target, null);
     setSessionId(null);
-  }, [target]);
+  }, [target, onOwner]);
+  const what = `${target.kind} · ${target.title}`;
 
   return (
     <div className="ah-discuss-body">
-      <div className="ah-row ah-small ah-discuss-meta">
-        {target.path && <span className="ah-mono ah-muted ah-discuss-path">{target.path}</span>}
-        <span className="ah-grow" />
-        {sessionId && (
-          <>
-            <AppLink href={`/agent-sessions/${encodeURIComponent(sessionId)}`}>Full chat</AppLink>
-            <Button size="sm" variant="ghost" icon="plus" onClick={forget}>
-              New conversation
-            </Button>
-          </>
+      <div className="ah-row ah-small ah-discuss-sub">
+        {onOwner ? (
+          <span className="ah-discuss-what" title={`Feature session · ${owner.name}`}>
+            <Icon name="square-terminal" size="sm" />
+            <span className="ah-muted">Feature session ·</span> {owner.name}
+          </span>
+        ) : (
+          <span className="ah-discuss-what ah-muted" title={what}>
+            {what}
+          </span>
         )}
+        <span ref={setStatusSlot} className="ah-row ah-discuss-status" />
+        <span className="ah-grow" />
+        <ConversationMenu
+          sessionId={sessionId}
+          path={target.path}
+          onNew={sessionId ? forget : null}
+          onOwner={
+            owner && !onOwner
+              ? () => {
+                  setSessionId(owner.id);
+                }
+              : null
+          }
+        />
       </div>
       <ReferenceChips references={references} onRemove={removeReference} />
       {sessionId ? (
@@ -145,6 +342,7 @@ function DiscussBody({ target }: { target: DiscussTarget }) {
           onGone={forget}
           prepareMessage={(text) => referencedMessage(references, text)}
           onSent={clearReferences}
+          metaSlot={statusSlot}
         />
       ) : (
         <StartDiscussion
@@ -249,37 +447,41 @@ function StartDiscussion({
 
   return (
     <div className="as-page">
-      <div className="ah-discuss-note ah-small ah-muted">
-        {target.screen ? (
-          <>
-            Ask about what this screen shows. Your first message takes its text and a screenshot
-            along; select text on the page and press Discuss selection to point at one part.
-          </>
-        ) : (
-          <>
-            Ask about this {target.kind.toLowerCase()}, challenge it, or ask Claude to change it.
-            Point at one part with its Discuss button, or select text on the page and press Discuss
-            selection.
-          </>
-        )}{" "}
-        Claude works in the hub folder of <b>{target.project}</b>; every file edit asks you first
-        unless you switch the mode to accept edits.
+      <div className="ah-discuss-intro as-column">
+        <h2 className="ah-discuss-intro-title">
+          {target.screen ? "Ask about this screen" : `Ask about this ${target.kind.toLowerCase()}`}
+        </h2>
+        <p className="ah-small ah-muted">
+          {target.screen
+            ? "Your first message takes this screen's text and a screenshot. Edits ask you first."
+            : `Claude works in the hub folder of ${target.project}. Edits ask you first.`}
+        </p>
       </div>
       {target.starters && target.starters.length > 0 && (
-        <div className="ah-discuss-starters" role="group" aria-label="Start with">
+        <div
+          className="ah-discuss-starters as-column"
+          role="group"
+          aria-labelledby="ah-discuss-starters-label"
+        >
+          <span id="ah-discuss-starters-label" className="ah-discuss-starters-label">
+            Start with
+          </span>
           {target.starters.map((starter) => (
-            <Button
+            <button
               key={starter.label}
-              size="sm"
-              icon="message-square"
+              type="button"
+              className="ah-discuss-starter"
+              title="Sends this message now"
               disabled={reason !== null || create.isPending}
               onClick={() => {
                 // A failure shows below the composer (create.error); nothing else to do here.
                 start(starter.message).catch(() => undefined);
               }}
             >
-              {starter.label}
-            </Button>
+              <Icon name="message-square" size="sm" />
+              <span className="ah-grow">{starter.label}</span>
+              <Icon name="arrow-right" size="sm" />
+            </button>
           ))}
         </div>
       )}

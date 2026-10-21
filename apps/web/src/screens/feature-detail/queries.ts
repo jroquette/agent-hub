@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
+import type { components } from "../../api/schema";
 import { apiKey, useApi } from "../../lib/api";
 
 /**
@@ -45,4 +46,37 @@ export function useFeatureTickets(project: string, slug: string, enabled: boolea
     void client.invalidateQueries({ queryKey: ["api", "/api/v1/features"] });
   }, [client, project, slug, updatedAt]);
   return tickets;
+}
+
+type AgentSession = components["schemas"]["AgentSession"];
+
+/**
+ * The feature's own session: the first session that wrote its spec (else its research, else its
+ * plan), the one that carries the feature from the spec to the tickets. Null until one is found.
+ */
+export function pickFeatureSession(
+  writers: readonly (readonly AgentSession[] | undefined)[],
+): AgentSession | null {
+  for (const list of writers) {
+    if (!list || list.length === 0) continue;
+    return [...list].sort((a, b) => a.created_at.localeCompare(b.created_at))[0] ?? null;
+  }
+  return null;
+}
+
+/** The sessions that wrote one record of the feature (`authorship.wrote` on the server). */
+function useRecordWriters(project: string, slug: string, record: string) {
+  return useApi(
+    "/api/v1/agent-sessions",
+    { query: { project, wrote: `brain/features/${slug}/${record}.md` } },
+    { retry: false, refetchInterval: FEATURE_REFRESH_MS, enabled: project !== "" && slug !== "" },
+  );
+}
+
+/** The session responsible for the feature (`pickFeatureSession`), from who wrote its records. */
+export function useFeatureSession(project: string, slug: string): AgentSession | null {
+  const spec = useRecordWriters(project, slug, "spec");
+  const research = useRecordWriters(project, slug, "research");
+  const plan = useRecordWriters(project, slug, "plan");
+  return pickFeatureSession([spec.data?.items, research.data?.items, plan.data?.items]);
 }
