@@ -24,6 +24,7 @@ import os
 import re
 import secrets
 from collections.abc import Iterator, Sequence
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Final
@@ -56,6 +57,8 @@ from agent_hub.core.features.ticket_writes import (
     MAX_REQUEST_BYTES,
     NO_PENDING,
     Blocker,
+    PlanMovedError,
+    PreflightFacts,
     TicketBrief,
     TicketRecordError,
     amended_plan,
@@ -70,6 +73,7 @@ from agent_hub.core.features.ticket_writes import (
     pending_request,
     plan_ids,
     plan_section,
+    preflight_run,
     ticket_acs,
 )
 from agent_hub.core.hub_config.model import HubConfig
@@ -121,15 +125,53 @@ def ticket_brief(
     return {"path": _relative(hub, target / TICKET_BRIEF), "version": version}
 
 
-def preflight(hub: Path, *, feature: str, ticket: str, run: bytes) -> dict[str, JsonValue]:
-    """Append ``run`` to ``tickets/<ticket>/preflight.json``."""
+def preflight(
+    hub: Path,
+    config: HubConfig,
+    *,
+    feature: str,
+    ticket: str,
+    findings: bytes,
+    facts: PreflightFacts,
+) -> dict[str, JsonValue]:
+    """Append the run built from the agent's ``findings`` to ``tickets/<ticket>/preflight.json``;
+    ``facts`` gives the time, the run's id and the input, and this fills the plan's version and
+    the commit of ``origin/<default branch>`` in the ticket's repo checkout, as last fetched."""
     folder = _feature(hub, feature)
-    target = _ticket_folder(folder, _planned_or_refuse(_record(folder).tickets, ticket))
+    planned = _planned_or_refuse(_record(folder).tickets, ticket)
+    target = _ticket_folder(folder, planned)
+    plan_version = _version(_required(folder / PLAN, MAX_PLAN_BYTES))
+    facts = replace(facts, plan_version=plan_version, commit=_main_commit(hub, config, planned))
     with _feature_lock(hub, feature):
         existing = _read(target / PREFLIGHT_FILE, MAX_PREFLIGHT_BYTES)
+        record = preflight_record(existing, folder=target.name)
+        run = preflight_run(findings, facts, None if isinstance(record, str) else record)
         written, count = appended_preflight(existing, run, folder=target.name)
         _replace(target, PREFLIGHT_FILE, written)
     return {"path": _relative(hub, target / PREFLIGHT_FILE), "runs": count}
+
+
+def _main_commit(hub: Path, config: HubConfig, planned: PlannedTicket) -> str:
+    """``origin/<default branch>``'s commit in the ticket's repo checkout: main as last fetched,
+    read without a checkout."""
+    entry = next((repo for repo in config.repos if repo.dir == planned.repo), None)
+    if entry is None:
+        raise TicketRecordError(
+            f"the ticket's repo {one_line(planned.repo or 'none')} is not in hub.json"
+        )
+    base = f"origin/{config.default_branch_for(entry.dir)}"
+    try:
+        found = git_output(
+            ship_child(hub.parent / entry.dir),
+            *("rev-parse", "--verify", "--quiet", f"{base}^{{commit}}"),
+            environ=os.environ,
+            timeout=step_timeouts().git,
+        ).strip()
+    except PrStepError as error:
+        raise TicketRecordError(
+            f"{base} could not be read: {one_line(error.reason.strip())}"
+        ) from None
+    return found
 
 
 def change_request(
@@ -203,19 +245,29 @@ def amend_plan(hub: Path, *, feature: str, request: int, summary: str) -> dict[s
     requests = _folder(folder, CHANGE_REQUESTS_FOLDER, create=False)
     with _feature_lock(hub, feature):
         plan = _required(folder / PLAN, MAX_PLAN_BYTES)
-        written, ident = amended_plan(
-            plan,
-            n=request,
-            request=_required(requests / f"{request}.md", MAX_REQUEST_BYTES),
-            decision=_required(requests / f"{request}.decision.md", MAX_REQUEST_BYTES),
-            summary=summary,
-        )
+        try:
+            written, ident = amended_plan(
+                plan,
+                n=request,
+                request=_required(requests / f"{request}.md", MAX_REQUEST_BYTES),
+                decision=_required(requests / f"{request}.decision.md", MAX_REQUEST_BYTES),
+                summary=summary,
+            )
+        except PlanMovedError as moved:
+            # The run checks the ticket against the current plan instead (AGH-404 Q1).
+            path = _relative(hub, folder / PLAN)
+            return {"path": path, "amendment": None, "already": None, "moved": str(moved)}
         if written == plan:
             already: str | None = f"already amended as {ident}"
         else:
             already = None
             _replace(folder, PLAN, written)
-    return {"path": _relative(hub, folder / PLAN), "amendment": ident, "already": already}
+    return {
+        "path": _relative(hub, folder / PLAN),
+        "amendment": ident,
+        "already": already,
+        "moved": None,
+    }
 
 
 def pending(hub: Path, *, feature: str, ticket: str) -> dict[str, JsonValue]:
@@ -230,7 +282,8 @@ def pending(hub: Path, *, feature: str, ticket: str) -> dict[str, JsonValue]:
         request = _read(requests / f"{found}.md", MAX_REQUEST_BYTES)
         decision = _read(requests / f"{found}.decision.md", MAX_REQUEST_BYTES)
         if request is not None and decision is not None:
-            decided = pending_decision(found, request, decision)
+            plan = _required(folder / PLAN, MAX_PLAN_BYTES)
+            decided = pending_decision(found, request=request, decision=decision, plan=plan)
     return {
         "request": decided.request,
         "decision": decided.decision,
