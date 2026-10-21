@@ -132,7 +132,18 @@ This system is the north star for the people and agents building the REST API (`
 
 **Personality.** Calm, precise, trustworthy, engineering-grade: the clarity of a good issue tracker, the density of a metrics console, the trace view of a tracing tool. Not playful. No gradients as decoration, no 3D, no robot or spark imagery.
 
-**Color.** A cool 11-step neutral scale (`gray-50` … `gray-950`, inverted in dark so each step keeps its role) carries almost everything. Grounds: `bg` (app), `surface` (panels, tables, timeline), `surface-sunken` (wells, code, table header), `surface-hover`, `surface-overlay` (menus, dialogs). Text: `text`, `text-muted`, `text-subtle`, each at least 4.5:1 on every ground in both themes. Lines: `border` (hairlines, decorative), `border-strong`, `border-control` (inputs, 3:1). One accent, deep indigo `accent`, used sparingly: the primary action of a view, links, the selected nav item and `focus-ring`. Text on an accent fill is `on-accent`.
+**Color.** An 11-step neutral scale (`gray-50` … `gray-950`, inverted in dark so each step keeps its role) carries almost everything. In light, its ground and line steps (`gray-50` … `gray-300`) are a warm sand and its text steps stay cool; dark is cool throughout. Grounds: `bg` (app), `surface` (panels, tables, timeline), `surface-sunken` (wells, code, table header), `surface-hover`, `surface-overlay` (menus, dialogs). Text: `text`, `text-muted`, `text-subtle`, each at least 4.5:1 on every ground in both themes. Lines: `border` (hairlines, decorative), `border-strong`, `border-control` (inputs, 3:1). One accent, deep indigo `accent`, used sparingly: the primary action of a view, links, the selected nav item and `focus-ring`. Text on an accent fill is `on-accent`.
+
+**Warm sand light theme (AGH-428).** The light theme's grounds are warm off-whites instead of bright white, so long
+reading sessions do not glare; dark is unchanged. Tested in `apps/web/src/styles/tokens.test.ts`.
+
+- AC-428.1: Given the light theme, when any screen renders, then `bg`, `surface`, `surface-sunken`, `surface-hover`
+  and `surface-overlay` are warm off-whites (red ≥ green ≥ blue, never `#ffffff`), with `surface` lighter than `bg`.
+- AC-428.2: Given the warm light grounds, when text or a control sits on them, then `text`, `text-muted`,
+  `text-subtle` and `accent` still read at 4.5:1 on every ground and `border-control` at 3:1 on `surface` and `bg`
+  (`text-subtle`, `border-control` and `syntax-title` are darkened a step to keep it).
+- AC-428.3: Given the dark theme, when any screen renders, then its grounds, lines and text colours are the ones it
+  had before AGH-428.
 
 **Status is one pre-attentive channel.** Only status colors pop; everything else stays neutral. Every status is icon + label, never color alone (`StatusBadge`):
 
