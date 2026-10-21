@@ -15,8 +15,10 @@ its last clean point (its end, or a pause recorded with it held), owe a re-ask: 
 once as a durable ``reask_owed`` line and read back from the record (never from attempt numbers).
 An owed step asks through a ``<step>__ask`` gate whose message says it may have run, until the
 step ends; an owed group asks before every write or destroy of its body, each iteration, until
-the group ends. A read step simply runs again. A recorded reject of any policy gate
-(``rejected``) ends the run ``cancelled`` on resume, whatever the plan holds now.
+the group ends; the steps it gates again are recorded as a ``policy_asks`` line. A read step
+simply runs again. A recorded reject of a policy gate (``rejected``) ends the run ``cancelled``
+on resume, whatever the plan holds now. Which gates are policy gates comes from the run's record
+alone (``policy_gate_ids``), never from an id's ``__ask`` suffix.
 
 A process workflow run in an environment runs its nodes through ``NodePolicyRunner``: each
 ``shell`` and ``script`` node is decided again just before it starts (the effective config as it
@@ -45,12 +47,13 @@ from agent_hub.core.hub_config.effective_environments import EffectiveEnvironmen
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.scenarios.access_policy import Effect, decide, find_environment
 from agent_hub.core.scenarios.policy_gates import (
-    ASK_SUFFIX,
+    POLICY_ASKS,
     PolicyAsk,
     PolicyGateError,
     ask_gate,
     gated_plan,
     node_effect,
+    recorded_gate_kinds,
 )
 from agent_hub.core.workflows.document import WorkflowDocument, WorkflowLoadError
 from agent_hub.core.workflows.failures import NodeFailedError
@@ -157,7 +160,7 @@ def owed(
         if isinstance(group, LoopGroupNode)
     }
     owner = {body: group for group, ids in bodies.items() for body in ids}
-    marks = _Marks.of(records)
+    marks = _Marks.of(records, policy=policy_gate_ids(records))
     for node in [*bodies, *(step for step in effects if step not in owner)]:
         if _newly_owed(node, marks, bodies.get(node)):
             line: Record = {"event": REASK_OWED, "node": node}
@@ -193,7 +196,8 @@ class _Marks:
     added: list[str] = field(default_factory=list)
 
     @classmethod
-    def of(cls, records: list[Record]) -> _Marks:
+    def of(cls, records: list[Record], *, policy: frozenset[str]) -> _Marks:
+        """The marks; a ``gate`` line counts only for a gate in ``policy``."""
         marks = cls()
         for index, record in enumerate(records):
             node, event = record.get("node"), record.get("event")
@@ -204,6 +208,8 @@ class _Marks:
             if event in _STARTS and record.get("effect") in ("write", "destroy"):
                 marks.writes[node] = index
             found = {"step_end": marks.ended, REASK_OWED: marks.owed, "gate": marks.gates}
+            if event == "gate" and node not in policy:
+                continue
             if (where := found.get(str(event))) is not None:
                 where[node] = index
         return marks
@@ -219,15 +225,37 @@ def _newly_owed(node: str, marks: _Marks, body: tuple[str, ...] | None) -> bool:
     return started > clean and marks.owed.get(node, -1) <= clean
 
 
+def policy_gate_ids(records: list[Record]) -> frozenset[str]:
+    """The run's policy gates, from its record alone (never from an id's suffix: an authored
+    approval may be recorded ``<group>__ask``): the start record's and each ``policy_asks``
+    line's (``recorded_gate_kinds``), and the gate of each step a ``reask_owed`` line names."""
+    kinds = recorded_gate_kinds(records)
+    owed_gates = {
+        ask_gate(node)
+        for record in records
+        if record.get("event") == REASK_OWED and isinstance(node := record.get("node"), str)
+    }
+    return frozenset({gate for gate, kind in kinds.items() if kind == "policy"} | owed_gates)
+
+
+def record_asks(folder: Path, steps: Mapping[str, PolicyAsk]) -> None:
+    """Record, before the run goes on, the steps this resume gates again (a ``policy_asks``
+    line), so their gates are known as policy gates from the record alone."""
+    if steps:
+        line: Record = {"event": POLICY_ASKS, "steps": list[JsonValue](sorted(steps))}
+        append_record(folder, line, durable=True)
+
+
 def rejected(records: list[Record]) -> str | None:
-    """A policy gate a recorded decision rejected, if any."""
+    """A policy gate (``policy_gate_ids``) a recorded decision rejected, if any."""
+    policy = policy_gate_ids(records)
     return next(
         (
             str(record.get("node"))
             for record in records
             if record.get("event") == "decision"
             and record.get("choice") == "reject"
-            and str(record.get("node")).endswith(ASK_SUFFIX)
+            and record.get("node") in policy
         ),
         None,
     )

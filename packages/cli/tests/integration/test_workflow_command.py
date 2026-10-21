@@ -1606,3 +1606,35 @@ def test_fails_node_when_workflow_environment_tightened_before_it_runs(
         " write"
     )
     assert not [r for r in sample.records() if r["event"] == "node_start"]
+
+
+# AGH-359 (F2): an authored body approval recorded ``<group>__ask`` is no policy gate.
+
+AUTHORED_ASK_YAML = """\
+version: 1
+name: envy
+revision: 1
+environment: local
+nodes:
+  - id: g
+    type: loop_group
+    max_iterations: 2
+    until_when: "$ask.output.decision == 'reject'"
+    nodes:
+      - id: ask
+        type: approval
+        message: Stop looping?
+"""
+
+
+def test_reads_reject_when_workflow_environment_body_approval_named_ask(
+    sample: SampleRun,
+) -> None:
+    declare_environments(sample, local="write")
+
+    paused = envy(sample, AUTHORED_ASK_YAML)
+    rejected = sample.run_command("reject", RUN_ID, "g__ask")
+
+    assert paused.stdout.splitlines()[-1] == "run r1: paused at g__ask"
+    assert rejected.exit_code == 0, rejected.output
+    assert rejected.stdout.splitlines()[-1] == "run r1: done"

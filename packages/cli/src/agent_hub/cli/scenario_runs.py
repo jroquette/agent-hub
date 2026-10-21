@@ -72,6 +72,7 @@ from agent_hub.cli.workflow_policy import (
     gated_run_plan,
     gates_file,
     read_gates,
+    record_asks,
     rejected,
     resumed_prior,
 )
@@ -251,6 +252,7 @@ def execute(hub: Path, folder: Path, records: list[dict[str, JsonValue]], *, res
             effects=_effects(base, pinned, pack),
             environment=environment,
         )
+    record_asks(folder, owed.steps)
     asks = recorded | owed.steps
     plan = _planned(document, includes, asks)
     effective = load_effective_config_or_exit(hub)
