@@ -406,6 +406,61 @@ spec amendment A15. Where the sections above say otherwise, this list wins.
 - **Contrast (AC-1.14, A16).** The screens' axe tests run once, for structure and names (jsdom computes no colours);
   both themes' contrast is `tokens.test.ts`'s, on the token pairs the panel, the callouts and the banner use.
 
+## Departures (AGH-405, plan change requests and the ticket flow's signals)
+
+Two-level-flows S2 (AC-2.5, AC-2.8, AC-2.12, AC-2.14, AC-1.10's banner opener by A8; spec amendments A13, A16-A18).
+Records: [feature-records.md](../../feature-records.md) "`tickets/<ticket>/` and `change-requests/`"; routes:
+[API.md](../../../API.md) "Feature detail" (`change_requests`) and "Plan change requests". Where the sections above
+say otherwise, this list wins.
+
+- **One word for every owner wait (A18).** Each "Waiting on you" above reads "Waiting for you": the banner's title,
+  the Acceptance prompt ("Waiting for you · Acceptance: sign off 3 ACs"), the Acceptance step (its state is the typed
+  `waiting`, "Waiting for you", with the meta "Waiting for you: sign off 3 ACs"), the ticket eval callouts and the
+  panel's signal. A wait is told by its typed state (the step's `waiting`, the list's `waiting_on_owner.kind`), never by
+  its words.
+- **States.** `waiting` reads "Waiting for you" with the `hand` icon and the `waiting` colour; `stale` reads "Re-run
+  needed" with the `clock` icon and the `idle` colour (a StepBar segment filled `idle-soft`, edged `idle`). Their
+  marks are checked at 3:1 in both themes by `tokens.test.ts` (`waiting` and `idle` on `surface` and
+  `surface-overlay`, `idle` on `idle-soft`, A16).
+- **Step signals.** A golden path step shows its `signal` under its state, in or out of focus, with the `hand` icon,
+  and in its tooltip and description ("Plan: done · v2 · v3 waits for you"): Plan stays done while the next version
+  waits (AC-2.8). Build's meta adds "· 1 paused for a plan change" (server).
+- **Banner.** The "Waiting for you" banner lists the open plan change requests first, one line each ("Plan change
+  request 2 from AGH-202: plan v2 → v3 · affects AGH-203"), then the eval waits. With a request, its button is
+  "Review change request" (named "Review change request 2 from AGH-202"), on every tab: it opens the Tickets tab with
+  the asking ticket's panel at its Preflight (`?doc=tickets&ticket=<ticket>&step=preflight`, replace), and Esc
+  returns focus to it (AC-1.10). Each later request line opens its ticket's panel the same way.
+- **Card and row signal (A13).** A ticket's flow `signal` joins its readiness line: the ticket's own plan change
+  ("Waiting for you: plan change", `hand`), a hold ("Held: plan change pending", `circle-pause`) or a re-run ("Plan v3
+  approved: re-run preflight", `clock`) takes the readiness line's place on the card and in the table's Readiness
+  cell; local drift ("Local drift · 2 notes") is a muted line beside readiness, never a status (AC-2.5). Which one it
+  is comes from the Preflight step's typed state, not the words. The step line keeps the current step's meta
+  ("Preflight · 2/7 · Waiting for you").
+- **Panel signal.** The panel shows the same signal under its readiness line (local drift stays in the Preflight
+  step), then the eval wait's line if any.
+- **Panel Preflight.** Read from `GET …/tickets/{ticket}` (A7). It lists the change requests the ticket asks, then
+  "Held by change request N from <ticket>: it waits until you answer it." for those that hold it, then every run,
+  newest first: "<date-time> · checked plan v2 against main at 4e1a9c2 · local drift", its input ("after a discovery:
+  …", "after a decline: …") and, for local drift, "Local drift · N notes" with each note (AC-2.5). An open request
+  shows "Plan change request N: plan v2 → v3", "Affects …", "Read the request in Brain", then its decision:
+  - while its run waits at its gate (`approval_id`), the shared `GateDecision` of that gate (Approve, Decline); Decline
+    asks for a "Note (required)" in its dialog and cannot be confirmed without one (AC-2.7, AC-2.12);
+  - else the lost-run form (AC-2.14): "Its run has no open gate (abandoned, or its record lost): your decision is
+    recorded in the hub, and the next /implement of <ticket> reads it.", a "Note (required to decline)" field,
+    "Approve plan v3" (primary) and "Decline" (danger). Decline with an empty note sends nothing, says "Write a note
+    to decline: the next preflight follows it." and moves focus to the note; a refusal reads "Could not record your
+    decision: <server reason>".
+  A decided request reads "Change request N approved by <person> · <date-time>[: <note>]".
+- **Features list (AC-374.1, AC-374.2, AC-374.5, AC-374.7).** What needs the owner comes from `waiting_on_owner`, not
+  the Acceptance step's words: a plan change request ("Plan change waits for you · from AGH-202"; two or more "2 plan
+  changes wait for you · from AGH-202, AGH-203"; the row opens the first asking ticket's panel at its Preflight), the
+  acceptance sign-off (the line AC-374 gives owner steps, opening Criteria) and a sign-off only the owner can write by
+  hand (A17: "Sign off by hand · no ACs listed", opening the Eval tab; no decision button). In progress leads with: a
+  session waiting on you, your turn, a broken record, NO-SHIP, a plan change, owner steps, a hand sign-off; the hint
+  counts "1 plan change waits for you" and "1 sign off by hand" too, and the sidebar badge counts them.
+- **Panel Implement.** Each discovery of the preflight runs: "Discovery <date-time>: <text>. Preflight ran again."
+  (AC-2.13); the step's meta ("Ticket plan written") when no round exists yet.
+
 ## Screen 1: Features list
 
 **Route:** `/features` · **Answers:** "Which features are moving through the golden path, and how close is each to done?"
