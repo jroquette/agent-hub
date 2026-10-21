@@ -328,6 +328,11 @@ class HubFilesReadModels:
         found = self._project(project)
         return self._skills.catalog(project=found.name, hub_path=found.path)
 
+    def skill_item_names(self, project: str) -> frozenset[tuple[ItemKind, str]]:
+        """The kind and name of each of the project's items (``SkillReads.item_names``)."""
+        found = self._project(project)
+        return self._skills.item_names(project=found.name, hub_path=found.path)
+
     def skill_detail(self, project: str, *, kind: ItemKind, source: str, name: str) -> SkillDetail:
         """One item of the catalog by its id; ``EntityNotFoundError`` (``skill``) when unknown."""
         found = self._project(project)

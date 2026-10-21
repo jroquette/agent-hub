@@ -109,8 +109,10 @@ Errors are RFC 9457 Problem Details, with media type `application/problem+json`:
   the unit and the body did not say `confirm_managed: true`; only the JSON `true` confirms, `1` or `"yes"` is a
   422). The disk's content may already be recorded as an
   `external` version when a managed refusal answers. A body field the model does not know → 422. A write that fails →
-  500 "Item write failed", `code` `write_failed` and `kind` `failed` (the unit is as it was) or `rollback_failed` (a
-  folder swap could not put the old folder back; `hub doctor`'s `items.leftovers` lists what is left beside it); a
+  500 "Item write failed", `code` `write_failed` and `kind` `failed` (the unit is as it was), `rollback_failed` (a
+  folder swap could not put the old folder back; `hub doctor`'s `items.leftovers` lists what is left beside it) or
+  `old_not_removed` (a rename's new item is published and recorded, its old item could not be removed; publishing the
+  kept draft again removes it); a
   stored version that does not decode → 500 `corrupt_version`. A race for the unit's next version lost three times
   → 503 with `Retry-After: 1` and `written`: `false` with `code` `version_race` when nothing was written yet, `true`
   with `code` `written_not_recorded` when the unit was written but its version not stored (the race lost, or the

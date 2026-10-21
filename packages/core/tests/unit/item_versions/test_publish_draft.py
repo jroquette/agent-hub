@@ -811,7 +811,7 @@ def test_keeps_old_unit_and_draft_when_rename_written_not_recorded() -> None:
     assert rig.drafts() == [".hub-drafts/skill-ren006/SKILL.md"]
 
 
-def test_checks_new_name_without_reading_full_catalog() -> None:
+def test_skips_full_catalog_read_when_new_item_name_checked() -> None:
     reviewer = ".claude/agents/reviewer.md"
     rig = _Rig({reviewer: _named("reviewer")})
     rig.draft("skill-new007", {"SKILL.md": _named("changelog")})
