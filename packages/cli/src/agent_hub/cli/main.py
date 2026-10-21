@@ -16,6 +16,7 @@ from agent_hub.cli.generator import init
 from agent_hub.cli.next_command import next_command
 from agent_hub.cli.run_engine import run
 from agent_hub.cli.scenario_command import scenario_app
+from agent_hub.cli.search_command import search
 from agent_hub.cli.setup_command import setup
 from agent_hub.cli.ship_command import ship
 from agent_hub.cli.start_command import start
@@ -66,6 +67,7 @@ app.command("bench")(bench)
 app.command("start")(start)
 app.command("web")(web)
 app.command("validate-output")(validate_output)
+app.command("search")(search)
 app.add_typer(workflow_app, name="workflow")
 app.add_typer(step_app, name="step")
 app.add_typer(env_app, name="env")
