@@ -1,3 +1,5 @@
+import pytest
+
 from agent_hub.api.app import create_app
 from agent_hub.api.openapi_paths import (
     AC_CHECK_PATHS,
@@ -12,6 +14,7 @@ from agent_hub.api.openapi_paths import (
     P2_PATHS,
     PLATFORM_SYNC_PATHS,
     RUN_COMMAND_PATHS,
+    SCENARIO_PATHS,
     SERVED_PATHS,
     SKILL_PATHS,
     TICKET_PATHS,
@@ -122,6 +125,9 @@ AGENT_SESSION_SPEC_PATHS = {
 }
 
 
+@pytest.mark.xfail(
+    strict=True, reason="AGH-350 widens the served union (SCENARIO_PATHS): pinned again below"
+)
 def test_lists_agent_session_paths_when_document_built(api_settings: ApiSettings) -> None:
     # AC-165.48: today's paths plus exactly the agent-session pairs
     # (17, then the task stop and the two repo-changes reads).
@@ -147,6 +153,9 @@ def test_lists_agent_session_paths_when_document_built(api_settings: ApiSettings
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
 
+@pytest.mark.xfail(
+    strict=True, reason="AGH-350 widens the served union (SCENARIO_PATHS): pinned again below"
+)
 def test_lists_skill_paths_when_document_built(api_settings: ApiSettings) -> None:
     # AC-164.11: today's paths plus the three skills reads, all GET, and nothing else.
     assert SKILL_PATHS == SKILL_SPEC_PATHS
@@ -276,3 +285,30 @@ def test_documents_screenshot_when_create_schema_read(api_settings: ApiSettings)
     assert "#/components/schemas/Screenshot" in refs
     # Pydantic writes a one-value Literal as ``const`` (the plan said ``enum: ["image/png"]``).
     assert schemas["Screenshot"]["properties"]["media_type"]["const"] == "image/png"
+
+
+def test_lists_scenario_paths_when_document_built(api_settings: ApiSettings) -> None:
+    # AGH-350 (P-7, AM-2): today's paths plus a scenario run's investigation session, and nothing
+    # else; the agent-session and skills groups stay as pinned above.
+    assert {("post", "/api/v1/scenario-runs/{run_id}/investigation")} == SCENARIO_PATHS
+    assert AGENT_SESSION_PATHS == AGENT_SESSION_SPEC_PATHS
+    assert SKILL_PATHS == SKILL_SPEC_PATHS
+    assert SERVED_PATHS == (
+        P2_PATHS
+        | CLARITY_PATHS
+        | TICKET_PATHS
+        | SKILL_PATHS
+        | AGENT_SESSION_PATHS
+        | WORKFLOW_PATHS
+        | RUN_COMMAND_PATHS
+        | GATE_PATHS
+        | ITEM_VERSION_PATHS
+        | LINEAR_PATHS
+        | OWNER_SIGNOFF_PATHS
+        | FEATURE_NAME_PATHS
+        | PLATFORM_SYNC_PATHS
+        | DOCTOR_FIX_PATHS
+        | AC_CHECK_PATHS
+        | SCENARIO_PATHS
+    )
+    assert document_paths(create_app(api_settings)) == SERVED_PATHS
