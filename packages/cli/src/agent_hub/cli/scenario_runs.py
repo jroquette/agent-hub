@@ -33,7 +33,9 @@ timeout, an output contract failure) fails the scenario run, printing ``step <id
 <detail>``; a policy ask or an ``approval`` still pauses it. In ``interactive`` mode (the
 default) a divergence pauses it at an investigation gate instead (``scenario_investigation``),
 at most ``MAX_INVESTIGATIONS`` times; the resume first acts on the gate's answer (``stop``,
-``pick`` with its workaround, ``retry``), and refuses while the gate has none.
+``pick`` with its workaround, ``retry``), and refuses while the gate has none. A resume whose
+record holds a divergence and no investigation after it (a crash came between) opens that
+investigation instead of running the step again.
 """
 
 import json
@@ -62,11 +64,13 @@ from agent_hub.cli.run_log import now
 from agent_hub.cli.scenario_investigation import (
     LIMIT_REACHED,
     AnswerPorts,
+    Divergence,
     HeldEnd,
     answer,
     gate_recorded,
     investigations,
     open_investigation,
+    owed_investigation,
     paused_line,
 )
 from agent_hub.cli.workflow_command import own_hub_program
@@ -105,7 +109,7 @@ from agent_hub.core.hub_config.effective_environments import (
 )
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.scenarios.credentials import CredentialNames
-from agent_hub.core.scenarios.investigation import CHOICES, PICK, STOP
+from agent_hub.core.scenarios.investigation import CHOICES, MAX_INVESTIGATIONS, PICK, STOP
 from agent_hub.core.scenarios.policy_gates import (
     PolicyAsk,
 )
@@ -312,6 +316,13 @@ def execute(
         if (code := answer(given, answered)) is not None:
             return code
         records = read_records(folder)
+    elif resumed and header.get("mode") == INTERACTIVE:
+        base = _planned(document, includes, {})
+        if (owed_by := owed_investigation(base, records)) is not None:
+            # A crash came between a divergence and its investigation: it opens now.
+            return _owed_divergence(
+                folder, header, recorder, divergence=owed_by, opened=investigations(records)
+            )
     owed = Owed()
     if resumed:
         base = _planned(document, includes, {})
@@ -367,6 +378,35 @@ def execute(
     )
     append_record(folder, {"event": "sessions", "sessions": dict(report.state.sessions)})
     return _reported(folder, header, report, held=held, recorder=recorder)
+
+
+def _owed_divergence(
+    folder: Path,
+    header: Mapping[str, JsonValue],
+    recorder: RecordedRun,
+    *,
+    divergence: Divergence,
+    opened: int,
+) -> int:
+    """Open the investigation ``divergence`` is owed, or past the limit end the run
+    ``failed`` as the engine's pass would have; the exit code."""
+    run_id, step = folder.name, divergence.step
+    if opened >= MAX_INVESTIGATIONS:
+        recorder.run_ended(RunEnd("failed", now(), reason=step))
+        typer.echo(f"run {run_id}: failed")
+        typer.echo(f"{_divergence(folder, step)} {LIMIT_REACHED}")
+        return 1
+    typer.echo(_divergence(folder, step))
+    open_investigation(
+        folder,
+        recorder,
+        step=step,
+        step_attempt=divergence.attempt,
+        failure_kind=divergence.failure_kind,
+        number=opened + 1,
+    )
+    typer.echo(paused_line(run_id, str(header.get("scenario")), step))
+    return 0
 
 
 def _reported(

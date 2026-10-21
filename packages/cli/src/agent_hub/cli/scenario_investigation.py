@@ -171,6 +171,47 @@ def open_investigation(
     request_gate(recorded, step=step, failure_kind=failure_kind, number=number)
 
 
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Divergence:
+    """A diverged step: its id as recorded, its failed attempt and the failure's kind."""
+
+    step: str
+    attempt: int
+    failure_kind: str
+
+
+def owed_investigation(
+    plan: WorkflowPlan, records: Sequence[Mapping[str, JsonValue]]
+) -> Divergence | None:
+    """The divergence an interactive run's record owes an investigation: the last ends of the
+    run's pass hold a failed top-level action or expect step (not ``config``), with no run end
+    and no investigation recorded after it (a crash came between). The first such step in
+    declaration order, as the engine names the run's reason; ``None`` when none is owed."""
+    if any(record.get("event") == "end" for record in records):
+        return None
+    marks = [
+        index
+        for index, record in enumerate(records)
+        if record.get("event") in (INVESTIGATION, "resume", "start")
+    ]
+    since = records[marks[-1] + 1 :] if marks else records
+    last: dict[str, Mapping[str, JsonValue]] = {}
+    for record in since:
+        if record.get("event") in ("step_start", "step_end") and isinstance(
+            record.get("node"), str
+        ):
+            last[str(record["node"])] = record
+    for node in plan.document.nodes:
+        end = last.get(node.id)
+        if not isinstance(node, ActionNode | ExpectNode) or end is None:
+            continue
+        kind, attempt = end.get("failure_kind"), end.get("attempt")
+        failed = end.get("event") == "step_end" and end.get("status") == "failed"
+        if failed and isinstance(kind, str) and kind != "config" and isinstance(attempt, int):
+            return Divergence(step=node.id, attempt=attempt, failure_kind=kind)
+    return None
+
+
 def gate_recorded(
     records: Sequence[Mapping[str, JsonValue]], investigation: InvestigationView
 ) -> bool:
@@ -304,7 +345,6 @@ def record_proposal(
         raise WorkflowRunError(
             f"the investigation of step {open_now.step} already has {MAX_PROPOSALS} proposals"
         )
-
     earlier = sum(
         len(found)
         for record in records
