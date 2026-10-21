@@ -28,10 +28,13 @@ _MARKER: Final = re.compile(r"\[redacted: [a-z ]+\]")
 _NOT_MARKER: Final = r"(?!\[redacted: )"
 _NAME_WORD: Final = r"(?:secret|token|password|passwd|api_key|apikey|private_key|credential)"
 _NAME_CHARS: Final = r"[A-Za-z0-9_.\-]"
+# What follows the name word up to an assignment's ``=``, and up to a JSON value's opening
+# quote. The "secret" rules and their shortcut (``_SECRET_HINT``) share these, so their bounds
+# cannot drift apart.
+_ASSIGNED_TAIL: Final = rf"{_NAME_CHARS}{{0,64}}\s*="
+_JSON_KEY_TAIL: Final = r"[^\"\\\n]{0,64}\"\s*:\s*\""
 # ``<name holding a secret word> =``, the context kept before an assigned value.
-_ASSIGNED: Final = (
-    rf"(?<!{_NAME_CHARS}){_NAME_CHARS}{{0,64}}?{_NAME_WORD}{_NAME_CHARS}{{0,64}}\s*=\s*"
-)
+_ASSIGNED: Final = rf"(?<!{_NAME_CHARS}){_NAME_CHARS}{{0,64}}?{_NAME_WORD}{_ASSIGNED_TAIL}\s*"
 
 
 # Every "secret" rule needs a name word followed by an assignment (``=``) or a JSON key's
@@ -39,8 +42,7 @@ _ASSIGNED: Final = (
 # (the shortcut for long texts such as indexed notes, AGH-391). It cannot change the result:
 # where it finds nothing, no "secret" rule can match.
 _SECRET_HINT: Final = re.compile(
-    rf"{_NAME_WORD}(?:{_NAME_CHARS}{{0,64}}\s*=|[^\"\\\n]{{0,64}}\"\s*:\s*\")",
-    re.IGNORECASE,
+    rf"{_NAME_WORD}(?:{_ASSIGNED_TAIL}|{_JSON_KEY_TAIL})", re.IGNORECASE
 )
 _HINTED_KIND: Final = "secret"
 
@@ -83,7 +85,7 @@ _RULES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     (
         "secret",
         re.compile(
-            rf"(?P<head>\"[^\"\\\n]{{0,64}}?{_NAME_WORD}[^\"\\\n]{{0,64}}\"\s*:\s*\")"
+            rf"(?P<head>\"[^\"\\\n]{{0,64}}?{_NAME_WORD}{_JSON_KEY_TAIL})"
             rf"{_NOT_MARKER}(?:[^\"\\\n]|\\.){{8,}}(?P<tail>\")",
             re.IGNORECASE,
         ),
@@ -156,11 +158,18 @@ def _one_pass(text: str) -> str:
             # Looked at once, before the first "secret" rule: while it finds nothing, none of
             # them changes the text, so it stays right for the ones after.
             if hinted is None:
-                hinted = _SECRET_HINT.search(text) is not None
+                hinted = _has_secret_hint(text)
             if not hinted:
                 continue
         text = pattern.sub(partial(_replacement, kind=kind), text)
     return text
+
+
+def _has_secret_hint(text: str) -> bool:
+    # Both tails end in ``=`` or ``:``: a text with neither has no hint, and no search is needed.
+    if "=" not in text and ":" not in text:
+        return False
+    return _SECRET_HINT.search(text) is not None
 
 
 def _replacement(found: re.Match[str], *, kind: str) -> str:
