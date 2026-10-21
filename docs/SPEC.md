@@ -594,11 +594,14 @@ work on a hub's artifacts, and on agent-hub's own web app, with Claude from `hub
   in the hub and the preview renders it as the catalog card it will be. The Skills catalog has a tab per kind.
   An existing item opens the same way from its detail (Edit with Claude, AGH-271): Claude edits a copy in the draft
   folder, the preview shows the change as a diff against the current version, and Publish writes it over the item.
+  The server writes on Publish (AGH-298, `POST .../skills/drafts/{draft_id}/publish`): Claude only edits the
+  draft, and the route lands it on the item (or a new item) through the restore's write step, recording the item's
+  version first and a `publish` version after, then removes the draft.
 - **Session names.** A session's name is the title Claude Code writes in its transcript, or the user's `/rename`,
   stored as `session.title` ([ADR 0035](adr/0035-session-titles.md), below).
 
 **Skills tab (AGH-164, built; named Toolkit since AGH-271).** Knowledge › Toolkit shows what a hub's agents can do, read from its files on request;
-only the version history below is stored, and only its restore writes into the hub:
+only the version history below is stored, and only its restore and the Studio's Publish write into the hub:
 
 - **Catalog.** `GET /api/v1/projects/{project}/skills` lists the hub's skills, agents and hooks: the base plugin
   `plugin/hub-workflow/`, the project and other plugins under `plugin/`, real entries in `.claude/skills/` and
@@ -625,7 +628,7 @@ only the version history below is stored, and only its restore writes into the h
   kind, 200 bundled files per skill, 2,000 hooks, 256 KiB per file and 16 MiB per catalog. Past a bound the catalog
   says `truncated` with a notice; an over-cap file is listed with `too_large` and no text. The catalog is memoized per
   hub by its listing's fingerprint.
-- **Version history (AGH-295: capture, history, diff and restore so far; [ADR 0039](adr/0039-item-versions-and-server-writes-to-the-hub.md)).**
+- **Version history (AGH-295: capture, history, diff, restore and the server publish; [ADR 0039](adr/0039-item-versions-and-server-writes-to-the-hub.md)).**
   The catalog and the detail, and the Workflows list and detail, record a version of each unit they show in
   agent-hub's database (table `item_versions`): a skill's whole folder, an agent's file, a hook's whole file (every
   hook of a file shares it), a hub workflow's file. A
@@ -654,6 +657,16 @@ only the version history below is stored, and only its restore writes into the h
   the hub's effective identity. A failed write records nothing more and answers 500 without a path. Restore is a
   strict write that needs `hub web`'s launch cookie; in the container it answers 409 `hub_read_only`. It never runs
   git: the change shows in the hub's working tree.
+  `POST /api/v1/projects/{project}/skills/drafts/{draft_id}/publish` (AGH-298) is the Studio's Publish, through the
+  same step and gates: body `target` (`{kind, source, name}` of the item the draft edits, or `null` for a new item in
+  `plugin/<project>/`) and `confirm_managed`. It reads `.hub-drafts/<draft_id>/` whole within the bounds (else 413),
+  never through a link (409 `link_in_path`), as a valid item of the draft's kind (else 422 `draft_invalid`); a new
+  item, or a rename, onto a name its kind has is 409 `item_exists`. A skill edit writes the draft's files over the
+  folder and keeps the rest (a rename moves it, hidden entries and all), an agent's file is replaced, a hook's draft
+  replaces that one hook in its file, and a new hook merges into `plugin/<project>/hooks/hooks.json` with its
+  scripts. It records a `publish` version naming the draft (`draft_id`), then removes the draft, also when the draft
+  equals the item (`changed: false`); a draft already named by a `publish` is spent (409 `draft_already_published`,
+  the draft kept), and a draft that could not be removed answers 500 `draft_not_removed` with the item published.
 
 **Workflows (AGH-225 API, AGH-226 screen).** `GET /api/v1/workflows` lists each project's workflows (the
 hub's `workflows/`, then the built-ins; [workflow schema](design/workflow-schema.md)) with their source (`hub` or
