@@ -1,6 +1,13 @@
 import { useMemo, useState } from "react";
 
-import { AppLink, Icon, IconButton, Skeleton, type TicketLookup } from "../../components";
+import {
+  AppLink,
+  Icon,
+  IconButton,
+  Skeleton,
+  ticketName,
+  type TicketLookup,
+} from "../../components";
 import { useApi } from "../../lib/api";
 import { cx } from "../../lib/cx";
 import { useScope } from "../../lib/scope";
@@ -24,15 +31,22 @@ export interface RailGroup {
   sessions: AgentSession[];
 }
 
-/** What a session is about, as chips: its ticket and the feature that plans it. */
+/** What a session is about: its ticket and the feature that plans it (as chips), and the name its
+ * ticket gives it (`ACME-12: Export orders as CSV`), as the chat's header names it. */
 export interface RailTags {
   ticket: string | null;
   feature: string | null;
+  name: string | null;
 }
 
-/** A session's name in one line: Claude Code's title, else its last prompt. */
-export function railName(session: AgentSession): string {
-  const text = (session.title ?? session.last_prompt ?? "").replace(/\s+/g, " ").trim();
+const NO_TAGS: RailTags = { ticket: null, feature: null, name: null };
+
+/** A session's name in one line, as the chat's header says it: its ticket's name, else Claude
+ * Code's title, else its last prompt. */
+export function railName(session: AgentSession, tags: RailTags = NO_TAGS): string {
+  const text = (tags.name ?? session.title ?? session.last_prompt ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
   return text || "Untitled session";
 }
 
@@ -44,15 +58,15 @@ export function railName(session: AgentSession): string {
 export function railGroups(
   sessions: readonly AgentSession[],
   filter: string,
-  tagsOf: (session: AgentSession) => RailTags = () => ({ ticket: null, feature: null }),
+  tagsOf: (session: AgentSession) => RailTags = () => NO_TAGS,
 ): RailGroup[] {
   const words = filter.trim().toLowerCase();
   const shown = (
     words
       ? sessions.filter((s) => {
           const tags = tagsOf(s);
-          return [railName(s), s.project, s.workdir_label, tags.ticket, tags.feature].some((text) =>
-            text?.toLowerCase().includes(words),
+          return [railName(s, tags), s.project, s.workdir_label, tags.ticket, tags.feature].some(
+            (text) => text?.toLowerCase().includes(words),
           );
         })
       : [...sessions]
@@ -79,16 +93,16 @@ export function railTagsOf(
   observed: readonly Session[],
   tickets: TicketLookup,
 ): (session: AgentSession) => RailTags {
-  const issues = new Map<string, string>();
-  for (const session of observed) {
-    const issue = issueOf(session);
-    if (issue) issues.set(session.id, issue);
-  }
+  const twins = new Map(observed.map((session) => [session.id, session]));
   return (session) => {
-    const ticket = session.observed_session_id
-      ? (issues.get(session.observed_session_id) ?? null)
-      : null;
-    return { ticket, feature: ticket ? (tickets.get(ticket)?.slug ?? null) : null };
+    const twin = session.observed_session_id ? twins.get(session.observed_session_id) : undefined;
+    const ticket = twin ? issueOf(twin) : null;
+    if (!twin || !ticket) return NO_TAGS;
+    return {
+      ticket,
+      feature: tickets.get(ticket)?.slug ?? null,
+      name: ticketName(twin.label, tickets),
+    };
   };
 }
 
@@ -123,7 +137,7 @@ function RailRow({
   current: boolean;
   showProject: boolean;
 }) {
-  const name = railName(session);
+  const name = railName(session, tags);
   const chips = [
     showProject ? { kind: "project", text: session.project } : null,
     tags.ticket ? { kind: "ticket", text: tags.ticket } : null,
@@ -196,10 +210,10 @@ export function SessionRail({ current }: { current: string }) {
                 href={agentSessionHref(session.id)}
                 className={cx("as-rail-strip-item", session.id === current && "as-rail-current")}
                 aria-current={session.id === current ? "page" : undefined}
-                title={`${railName(session)} · ${AGENT_STATUS[session.status].label}`}
+                title={`${railName(session, tagsOf(session))} · ${AGENT_STATUS[session.status].label}`}
               >
                 <StatusDot session={session} />
-                <span className="ah-sr">{railName(session)}</span>
+                <span className="ah-sr">{railName(session, tagsOf(session))}</span>
               </AppLink>
             </li>
           ))}

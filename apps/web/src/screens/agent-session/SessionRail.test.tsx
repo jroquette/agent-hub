@@ -46,7 +46,7 @@ describe("railGroups", () => {
 
   it("filters by name, project, folder or tag, and drops empty groups", () => {
     expect(railGroups(sessions, "GUARD").map((g) => g.id)).toEqual(["needs"]);
-    const tagged = () => ({ ticket: "DEMO-1576", feature: "fraud-check" });
+    const tagged = () => ({ ticket: "DEMO-1576", feature: "fraud-check", name: null });
     expect(railGroups(sessions, "demo-1576", tagged)).toHaveLength(3);
   });
 
@@ -54,21 +54,31 @@ describe("railGroups", () => {
     const untitled = anAgentSession({ title: null, last_prompt: "  write\nthe plan " });
     expect(railName(untitled)).toBe("write the plan");
   });
+
+  it("names a session on a ticket by its ticket, as the chat's header does", () => {
+    const titled = anAgentSession({ title: "Campos buyer_ip_address" });
+    const tags = { ticket: "DEMO-1577", feature: "fraud-check", name: "DEMO-1577: Add the client" };
+    expect(railName(titled, tags)).toBe("DEMO-1577: Add the client");
+  });
 });
 
 describe("railTagsOf", () => {
   it("tags a session with its observed twin's ticket and the feature that plans it", () => {
-    const twin = aSession({ id: "obs-1", label: aSessionLabel({ issue: "demo-1576" }) });
-    const lookup = new Map([["DEMO-1576", { project: "demo", slug: "fraud-check", title: null }]]);
+    const twin = aSession({ id: "obs-1", label: aSessionLabel({ issue: "DEMO-1576" }) });
+    const lookup = new Map([
+      ["DEMO-1576", { project: "demo", slug: "fraud-check", title: "Add the fraud-check client" }],
+    ]);
     const tagsOf = railTagsOf([twin], lookup);
 
     expect(tagsOf(anAgentSession({ observed_session_id: "obs-1" }))).toEqual({
       ticket: "DEMO-1576",
       feature: "fraud-check",
+      name: "DEMO-1576: Add the fraud-check client",
     });
     expect(tagsOf(anAgentSession({ observed_session_id: null }))).toEqual({
       ticket: null,
       feature: null,
+      name: null,
     });
   });
 });
