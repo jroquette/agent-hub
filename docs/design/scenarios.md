@@ -96,20 +96,18 @@ pins its action files and gates, labels events `workflow: scenario:<name>`, and 
 
 ### Investigation, answers and workarounds
 
-Opening a paused run in hub web (`POST /scenario-runs/{id}/investigation`) starts one driven session per gate, its tools
-held by a PreToolUse hook: `Read`, `Glob`, `Grep` only in the workspace, never on a declared env file, `Write` only
-under `actions/<pack>/`, Bash only for `./hub action list|plan|run …` (`run` with `--run <id>`) and `./hub scenario
-propose --run <id>` (JSON in a quoted here-document), in plain words. `--run <id>` needs that run paused at an open
-investigation, uses its environment and env file, records origin `agent`, and runs only `read` actions (a write exits 1
-and records `policy.decision` `deny`). The agent records findings and options (a summary and `{action, with}` steps
-each) with `./hub scenario propose` (JSON on stdin, secret shapes redacted); each option is shown with its plan. The
-answer is `pick` (`--text <option id>`), `retry` or `stop`: `hub workflow respond <run> --node <step>__investigation
---choice …`, `hub workflow decide` from hub web, or the Scenarios screen (Approvals sends the gate there). An option
-holding a `deny`, a draft action or a plan changed since shown cannot be picked (refused, nothing recorded). A pick
-answers its steps' asks: `workaround.start`, its actions (origin `agent`), `workaround.end`, then the diverged step as a
-new attempt; a failed or cut-short workaround (never re-run) opens a new investigation. `retry` skips it; `stop` ends it
-`cancelled`, findings kept. Nothing rewinds the system. `hub scenario findings <run> --issue <id>` creates a tracker
-issue after a terminal `y`; `--inbox <id>` writes a `brain/_inbox/` note (`provenance: agent-from-external`).
+Opening a paused run in hub web (`POST /scenario-runs/{id}/investigation`) starts one driven session per gate, held by a
+PreToolUse hook: reads only in the workspace, never of an env file, `Write` only under `actions/<pack>/`, Bash only for
+plain `./hub action …` and `./hub scenario propose` of that run; `hub action run --run <id>` needs that run paused at an
+open investigation, uses its environment and env file, records origin `agent`, runs only `read` actions (a write is
+denied, `policy.decision` `deny`). The agent records findings and options with `./hub scenario propose` (secret shapes
+redacted). The answer is `pick` (`--text <option id>`), `retry` or `stop`: `hub workflow respond … --node
+<step>__investigation`, `hub workflow decide` (hub web) or the Scenarios screen (Approvals sends the gate there). An
+option holding a `deny`, a draft action or a plan changed since shown cannot be picked. A pick answers its steps' asks:
+`workaround.start`, its actions (origin `agent`), `workaround.end`, then the diverged step as a new attempt; a failed or
+cut-short workaround (never re-run) opens a new investigation. `retry` skips it; `stop` ends it `cancelled`, findings
+kept. Nothing rewinds the system. `hub scenario findings <run> --issue <id>` creates a tracker issue after a terminal
+`y`; `--inbox <id>` writes a `brain/_inbox/` note (`provenance: agent-from-external`).
 
 ### Events and bounds
 
@@ -132,6 +130,8 @@ proposal ≤ 256 KiB, 20 findings, 5 options of ≤ 10 steps; ≤ 10 proposals p
 6. Policy gates (`<step>__ask`) of a process workflow run show in the run's steps but not in its graph.
 7. Redaction replaces each injected value of 4 characters or more exactly as written; a shorter one, or an encoded or
    transformed form (base64 as in a Basic auth header, URL-encoded, escaped in stderr, split across strings), passes.
+8. An investigation session reopens unheld when its link was never written (a failed write closed it) or its run folder
+   is gone, and a `resume_session_id` or `fork` of it starts unheld; two `hub web` on one hub may each start one.
 
 ## Invariants
 
