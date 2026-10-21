@@ -257,12 +257,17 @@ def test_denies_reads_when_investigation_credentials_env_file_targeted(tmp_path:
         ("Grep", {"pattern": "DEMO", "path": "../demo-api", "glob": "env/\\.env.staging"}),
         ("Grep", {"pattern": "DEMO", "path": "..", "glob": "\\.env*"}),
         ("Grep", {"pattern": "DEMO", "path": "..", "glob": "*.py"}),
+        # Any filter, negations included, under a root holding one: splitting is not mimicked.
+        ("Grep", {"pattern": "DEMO", "path": "..", "glob": "!a,.env*"}),
+        ("Grep", {"pattern": "DEMO", "path": "..", "glob": "!a\\{b,.env*"}),
+        ("Grep", {"pattern": "DEMO", "path": "..", "glob": "!a[{],.env*"}),
+        ("Grep", {"pattern": "DEMO", "path": "..", "glob": "!a\ufeff.env*"}),
+        ("Grep", {"pattern": "DEMO", "path": "..", "glob": "!*.env*"}),
     ]
     passed = [
         ("Read", {"file_path": "../demo-api/environment/other.txt"}),
         # E-5: a Grep above the folder with no glob skips the git-ignored env file.
         ("Grep", {"pattern": "DEMO", "path": ".."}),
-        ("Grep", {"pattern": "DEMO", "path": "..", "glob": "!*.env*"}),
         ("Grep", {"pattern": "DEMO", "path": "actions", "glob": "*.yaml"}),
         ("Glob", {"pattern": "**/*.yaml", "path": str(hub.parent)}),
     ]
@@ -301,3 +306,9 @@ def test_denies_reads_when_investigation_path_outside_workspace(tmp_path: Any) -
     assert [verdict.allowed for verdict in verdicts] == [False] * len(denied)
     assert all("workspace" in verdict.reason for verdict in verdicts)
     assert investigation.tool_verdict(policy, "Read", {"file_path": "README.md"}).allowed
+
+
+def test_refuses_policy_when_investigation_workspace_is_root() -> None:
+    # A hub at /demo-hub would make the whole file system its workspace.
+    with pytest.raises(investigation.WorkspaceRootError, match="workspace"):
+        investigation.ToolPolicy.of(hub="/demo-hub", env_files=(), run_id=RUN)

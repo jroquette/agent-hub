@@ -21,17 +21,16 @@ the session's ``PreToolUse`` hook sees against a ``ToolPolicy`` (the hub's real 
 never on a declared env file, both by resolved real path (a symlink, a ``..`` or a relative form
 is caught); a ``Glob`` whose pattern can reach one, or a ``Grep`` on one or on the folder
 holding one, is denied (E-5: a folder above with no filter passes, the env file being
-git-ignored). A ``Grep`` filter is split as Claude Code splits it (spaces, and commas outside
-braces) and ripgrep reads each part as a glob that overrides ``.gitignore``, so under a root
-holding a declared env file at any depth only a filter made of ``!`` negations passes. The three
-are denied under ``/proc`` too, where a running action's environment (its env file's values) can
-be read, and a ``Glob`` or ``Grep`` of the whole file system with it. ``Write`` passes only
-under ``actions/<pack>/``. ``Bash`` passes only for ``./hub action list|plan …``, ``./hub action
-run … --run <run>`` and ``./hub scenario propose --run <run>``, each word plain (no shell
-metacharacter); the proposal's JSON may follow ``propose`` as one quoted here-document
-(``<<'END'``), whose body the shell never expands. Every other tool is denied. A verdict's
-reason names the tool and the rule, never a path's content. This is not a sandbox (known limit
-2).
+git-ignored). A ``Grep`` filter becomes ripgrep globs that override ``.gitignore``, split in
+ways not worth mimicking, so a ``Grep`` with any filter is denied under a root holding a
+declared env file at any depth. The three are denied under ``/proc`` too, where a running
+action's environment (its env file's values) can be read, and a ``Glob`` or ``Grep`` of the
+whole file system with it. ``Write`` passes only under ``actions/<pack>/``. ``Bash`` passes only
+for ``./hub action list|plan …``, ``./hub action run … --run <run>`` and ``./hub scenario
+propose --run <run>``, each word plain (no shell metacharacter); the proposal's JSON may follow
+``propose`` as one quoted here-document (``<<'END'``), whose body the shell never expands. Every
+other tool is denied. A verdict's reason names the tool and the rule, never a path's content.
+This is not a sandbox (known limit 2).
 """
 
 import os
@@ -200,6 +199,11 @@ _RUN_FLAG: Final = "--run"
 _PROCESS_FILES: Final = ("/proc", "/dev/fd")
 
 
+class WorkspaceRootError(AgentHubError):
+    """A hub directly under ``/``: its workspace would be the whole file system, so no
+    investigation policy is built (no session starts)."""
+
+
 class ToolPolicy(BaseModel):
     """What the investigation session may touch: ``workdir`` (the hub's real path) resolves a
     relative path, ``actions`` is where ``Write`` may write (a pack's folder below it),
@@ -219,6 +223,9 @@ class ToolPolicy(BaseModel):
         (the folder holding the hub and its repos), as the config declares them."""
         real = os.path.realpath(hub)
         workspace = os.path.dirname(real)
+        if workspace == os.path.dirname(workspace):
+            msg = f"the hub's workspace is {workspace}, the whole file system: move the hub"
+            raise WorkspaceRootError(msg)
         resolved = (os.path.realpath(os.path.join(workspace, path)) for path in env_files)
         return cls(
             workdir=real,
@@ -378,28 +385,9 @@ def _grep_verdict(policy: ToolPolicy, tool_input: Mapping[str, object]) -> ToolV
     grep_glob = _text_input(tool_input, "glob") or ""
     if not grep_glob.strip():
         return _env_file_denied("Grep") if paths.holds(root) else _ALLOWED
-    negations = all(part.startswith("!") for part in _glob_parts(grep_glob))
-    if paths.under(root) and not negations:
+    if paths.under(root):
         return _env_file_denied("Grep")
     return _ALLOWED
-
-
-def _glob_parts(grep_glob: str) -> list[str]:
-    """A Grep filter's globs as Claude Code splits them: on whitespace, and on commas outside
-    braces."""
-    parts: list[str] = []
-    for word in grep_glob.split():
-        depth, start = 0, 0
-        for index, character in enumerate(word):
-            if character == "{":
-                depth += 1
-            elif character == "}":
-                depth = max(depth - 1, 0)
-            elif character == "," and depth == 0:
-                parts.append(word[start:index])
-                start = index + 1
-        parts.append(word[start:])
-    return [part for part in parts if part]
 
 
 def _write_verdict(policy: ToolPolicy, tool_input: Mapping[str, object]) -> ToolVerdict:
