@@ -2086,3 +2086,43 @@ def test_opens_gate_when_investigation_recorded_without_gate_before_crash(
     retried = respond(hub, marker, held, "stop")
     assert retried.exit_code == 1, retried.output
     assert plain(retried.stdout).splitlines()[-1] == f"run {RUN}: cancelled"
+
+
+def test_opens_investigation_when_divergence_recorded_before_crash(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_walk(hub, marker, held)
+    # The crash came after the step's failed end and before its investigation was recorded.
+    path = hub / ".agent-runs" / "workflows" / RUN / "records.jsonl"
+    kept = path.read_text().splitlines(keepends=True)
+    cut = next(i for i, line in enumerate(kept) if json.loads(line)["event"] == "investigation")
+    path.write_text("".join(kept[:cut]))
+
+    resumed = resume_walk(hub, marker, held)
+
+    assert resumed.exit_code == 0, resumed.output
+    assert plain(resumed.stdout).splitlines()[-1].startswith(PAUSED)
+    # The diverged step is not run again with nobody asked.
+    assert modes(marker) == ["run"]
+    lines = records(hub)
+    opened = [line for line in lines if line["event"] == "investigation"]
+    assert [(line["number"], line["failure_kind"]) for line in opened] == [(1, "exec_failed")]
+    assert [(line["node"], line["attempt"]) for line in lines if line["event"] == "gate"] == [
+        (GATE, 1)
+    ]
+    assert [line for line in lines if line["event"] == "end"] == []
+
+
+def test_refuses_proposal_when_answered_after_ten_proposals(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_walk(hub, marker, held)
+    proposed = [propose(hub, marker, held, proposal=a_proposal(RELEASE)) for _ in range(10)]
+    assert decide(hub, marker, held, "pick", "o1").exit_code == 0
+
+    eleventh = propose(hub, marker, held, proposal=a_proposal(LOOK))
+
+    assert all(result.exit_code == 0 for result in proposed), proposed[-1].output
+    assert eleventh.exit_code == 1, eleventh.output
+    assert "already answered (pick)" in plain(eleventh.stderr)
+    assert len([line for line in records(hub) if line["event"] == "proposal"]) == 10
