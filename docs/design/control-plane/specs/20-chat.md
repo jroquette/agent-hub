@@ -199,3 +199,36 @@ picker is as wide as its value: the native select lies invisible over the pill a
 to send show under the card only while it has focus. The card is reused by every chat composer (the full chat, the
 Discuss panel, its start state) through `Composer`'s `accessory` slot, so a new caller passes what rides with the
 message and keeps the card.
+
+## Full chat header
+
+AC-422.13 to AC-422.17 in [agent-sessions.md](../../agent-sessions.md#chat-redesign-the-full-chats-header-agh-422).
+The pattern is a document window's: the window's chrome (where am I, what can I do) sits on the window's edges, the
+document's heading (what this is, how it is doing) on the text's edges, so the title starts on the first message's
+edge.
+
+```
+| Portfolio › demo › Session 019a0000  [▢ folder]     [◉ 2 running] [⌁ Open timeline] [⇄ Review changes +1 −1 · 1 to review] [⋯] |  row 1, 40, the gutters
+|                     Fix the CSV export test                                                                                   |  the column: title, 20/28
+|                     ◉ Ended · closed  [☑ export-button]                                       Cost $0.04 · estimated          |  small, under it
+|-------------------------------------------------------------------------------------------------------------------------------|  hairline
+```
+
+| Part | Before | After |
+|---|---|---|
+| Breadcrumb | `Sessions › <title>` (the title twice) | `Portfolio › <project> › Session <short id>`, as the session detail's |
+| Folder | `project › workdir` beside the cost | `folder-open` + the folder after the crumbs, only when it differs from the project |
+| Cost | `$13.2405 276 in 93 k out … estimate` | `Cost $13.24 · estimated`; the split in its tooltip, the details one menu item away |
+| Title | 16/24, an icon in front, the chips on its row | 20/28 on its own line in the column; status, feature and cost under it |
+| Controls | Five shapes (pills, a bare accent link, a bordered `⋯`) | One shape, `Button size="sm"`; Review changes the only bordered one, only while files wait |
+| Background | "Background 25 done", always once a task ran | Only while tasks run; the ended ones in `⋯` |
+| Events | Accent "Events" link; "No events" explained in a `title` only | Ghost "Open timeline"; "No timeline yet" in a focusable tooltip |
+| Responsive | `flex-wrap`, a 1279 px media query | No wrap; container steps at 1100 and 960 px drop words first |
+
+Components: `Breadcrumbs` (reuse), `PathText` and `Tooltip` (reuse), `CostMeter` (extend: a labelled field with a
+focusable tooltip, `compact` for the panel), `ChangedFilesChip` (extend: a `Button`, the new count wording, `fmtInt`),
+`BackgroundChip` (extend: only while running), `SessionMenu` (extend: link items and the done tasks), `MenuItem`
+(extend: an optional `href` renders a link). No new token; the header stays inside the README's Shape rules.
+
+Open, not designed in: which short id both the chat and the session detail show; whether the Waiting badge should
+scroll to the oldest request; a cloud session's link to claude.ai; arrow keys in the menus; the chat below 768 px.

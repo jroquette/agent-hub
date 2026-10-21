@@ -613,6 +613,36 @@ Streaming, Messages and Stop items above where they differ (the column, the care
   keeps its 72 px tile (cropped, top first), and a sent screenshot shows at most 320 px of its top; the lightbox shows
   it whole.
 
+### Chat redesign: the full chat's header (AGH-422)
+
+Design: [control-plane/specs/20-chat.md](control-plane/specs/20-chat.md#full-chat-header). It amends AC-265.10 (the
+chip's wording and shape), AC-380.13 (the Background chip shows only while tasks run) and AC-380.23 (the breadcrumb
+no longer repeats the name).
+
+- **AC-422.13 A toolbar on the window, a heading in the column.** Given the full chat, then its header is two parts:
+  row 1, on the page's gutters, the breadcrumb by containment (`Portfolio › <project> › Session <short id>`, the
+  project a link, the id mono), the folder when it differs from the project, then one quiet set of small buttons;
+  under it, in the reading column, the session's title on its own line (20/28, cut with an ellipsis, the whole name
+  in its `title`) and under the title, in small text, the status, the feature and the cost. Neither row wraps. The
+  mode and model live only on the composer; the todo list sits with the live bar above the composer; the Steps chip
+  leaves the header (the live bar and `Ctrl/Cmd+Alt+.` open Steps).
+- **AC-422.14 Actions.** Given the header's buttons, then they are, in order: the running background tasks, "Open
+  timeline" (a ghost link to the session detail; "No timeline yet" with its reason in a focusable tooltip when the
+  hooks never reported the session), Review changes and the session menu. The menu holds links ("Open timeline" when
+  the width hides it, "Open cost details" to the session detail's Cost tab) above Fork, Close and Delete. Below a
+  1100 px page Review changes drops its line counts and Background its label; below 960 px "Open timeline" moves into
+  the menu and the folder hides.
+- **AC-422.15 Cost.** Given the header, then the cost reads "Cost $13.24 · estimated", and its focusable tooltip
+  holds the precise amount ("$13.2405 · Estimated from transcript"), the tokens and the turns; before a turn finishes
+  it reads "Cost —" and says why. The Discuss panel shows the amount only.
+- **AC-422.16 Background tasks.** Given background tasks, then the header's button shows only while one runs; once
+  all are done, the session menu offers "Background tasks · N done", and the card at the conversation's end hides
+  while the live bar already says what runs in the background.
+- **AC-422.17 Review changes.** Given changed files, then Review changes is the header's only bordered button while
+  files wait ("Review changes +a −r · N to review", or "· N of M to review", only the count tinted), and ghost once
+  all are viewed ("· M files" and a check); with Claude's own files only it reads "· No code changes". Its accessible
+  name is unchanged.
+
 ## Invariants
 
 - The platform implements no agent loop and calls no model; the children are the user's own `claude` with its own

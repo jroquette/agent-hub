@@ -19,6 +19,7 @@ import {
   Tabs,
 } from "../../components";
 import { cx } from "../../lib/cx";
+import { fmtInt } from "../../lib/format";
 import { githubPullHref } from "../../lib/safeHref";
 import { readStored, writeStored } from "../../lib/storage";
 import { useDrawerWidth, useListWidth } from "./DrawerResize";
@@ -103,8 +104,8 @@ const CHANGE_VERB: Record<string, string> = {
 export function Stats({ added, removed }: { added: number; removed: number }) {
   return (
     <span className="as-files-stats">
-      <span className="as-files-add">+{added}</span>
-      <span className="as-files-del">−{removed}</span>
+      <span className="as-files-add">+{fmtInt(added)}</span>
+      <span className="as-files-del">−{fmtInt(removed)}</span>
     </span>
   );
 }
@@ -1131,10 +1132,20 @@ export function ChangedFilesChip({ files, review, open, onToggle }: ChangedFiles
   const { files: codeFiles, added, removed } = codeTotals(files);
   const due = files.filter((file) => isReviewable(file.path) && !isViewed(review, file)).length;
   const count = codeFiles > 0 ? plural(codeFiles, "file") : "No code";
+  const left =
+    due === 0
+      ? null
+      : due >= codeFiles
+        ? `${fmtInt(due)} to review`
+        : `${fmtInt(due)} of ${fmtInt(codeFiles)} to review`;
   return (
     <button
       type="button"
-      className={cx("as-files-chip", due > 0 && "as-files-chip-due", open && "as-files-chip-open")}
+      className={cx(
+        "ah-btn ah-btn-sm as-review-btn",
+        due === 0 && "ah-btn-ghost",
+        open && "as-review-open",
+      )}
       aria-expanded={open}
       aria-controls={open ? FILES_PANEL_ID : undefined}
       aria-label={`Review changes: ${count}, ${String(added)} lines added, ${String(removed)} removed, ${due > 0 ? `${String(due)} to review` : "all reviewed"}`}
@@ -1142,13 +1153,20 @@ export function ChangedFilesChip({ files, review, open, onToggle }: ChangedFiles
       onClick={onToggle}
     >
       <Icon name="git-compare" size="sm" />
-      <span className="as-files-chip-label">Review changes</span>
-      <span className="as-files-chip-count">{count}</span>
+      Review changes
       {codeFiles > 0 && <Stats added={added} removed={removed} />}
-      {due > 0 ? (
-        <span className="as-files-chip-due-count">{due} to review</span>
+      {codeFiles === 0 ? (
+        <span className="ah-subtle">· No code changes</span>
+      ) : left ? (
+        <span>
+          <span className="ah-subtle">· </span>
+          <span className="as-review-due">{left}</span>
+        </span>
       ) : (
-        <Icon name="circle-check" size="sm" className="as-files-chip-done" />
+        <span className="ah-row" style={{ gap: 4 }}>
+          <span className="ah-subtle">· {count}</span>
+          <Icon name="circle-check" size="sm" className="as-files-chip-done" />
+        </span>
       )}
     </button>
   );

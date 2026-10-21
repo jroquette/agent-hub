@@ -118,7 +118,7 @@ export function DiscussChatView({
   const meta = (
     <>
       <AgentStatusBadge status={status} endReason={endReason} />
-      <CostMeter meter={state.meter} />
+      <CostMeter meter={state.meter} compact />
     </>
   );
   return (

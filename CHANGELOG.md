@@ -13,6 +13,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- The full chat's header is a toolbar on the window and a heading in the column (AGH-422): the breadcrumb names the
+  project and the session's short id, the title has its own line with the status, feature and cost under it, the
+  cost reads "Cost $X · estimated" with the split in its tooltip, Review changes is the only bordered button while
+  files wait, background tasks show only while they run, and "Open timeline" and "Open cost details" are one click
+  away.
 - hub web's chat reads calmer, in the panel and on its page (AGH-422): Claude's reply flows without a bubble at 15/24
   in a 768 px column, your turn is a soft card, one pulse is the only motion, and no chat text is under 12 px. The
   composer is one floating card with round Send, Stop and attach buttons, the Discuss references inside it and the
