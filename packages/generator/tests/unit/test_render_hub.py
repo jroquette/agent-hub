@@ -100,6 +100,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/agents/quality-reviewer.md",
     "plugin/hub-workflow/agents/requirements-analyst.md",
     "plugin/hub-workflow/agents/researcher.md",
+    "plugin/hub-workflow/agents/security-reviewer.md",
     "plugin/hub-workflow/agents/spec-reviewer.md",
     "plugin/hub-workflow/agents/ux-designer.md",
     "plugin/hub-workflow/hooks/event_sensor.py",
@@ -120,6 +121,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/skills/adr/SKILL.md",
     "plugin/hub-workflow/skills/create-plan/SKILL.md",
     "plugin/hub-workflow/skills/deliver/SKILL.md",
+    "plugin/hub-workflow/skills/design-fit/SKILL.md",
     "plugin/hub-workflow/skills/feature/SKILL.md",
     "plugin/hub-workflow/skills/fix/SKILL.md",
     "plugin/hub-workflow/skills/handoff/SKILL.md",
@@ -187,6 +189,7 @@ BASE_AGENTS = (
     "quality-reviewer",
     "requirements-analyst",
     "researcher",
+    "security-reviewer",
     "spec-reviewer",
     "ux-designer",
 )
@@ -194,6 +197,7 @@ BASE_SKILLS = (
     "adr",
     "create-plan",
     "deliver",
+    "design-fit",
     "feature",
     "fix",
     "handoff",
@@ -319,13 +323,13 @@ def test_returns_rendered_hub_when_demo_rendered(demo_config: HubConfig) -> None
     assert isinstance(rendered.links, tuple)
     assert all(type(link) is RenderedLink for link in rendered.links)
     # AC-4.6: the 14 links of spec "The rendered set", plus AGH-58's /fix, the ten AGH-99
-    # skills, AGH-274's two review skills and ux-designer agent, /summarize, and AGH-319's
-    # `plain-language`: 30, sorted by path.
+    # skills, AGH-274's two review skills and ux-designer agent, /summarize, AGH-319's
+    # `plain-language`, and AGH-413's security-reviewer agent and /design-fit: 32, sorted by path.
     assert [link.path for link in rendered.links] == [
         *(f".claude/agents/{name}.md" for name in BASE_AGENTS),
         *(f".claude/skills/{name}" for name in BASE_SKILLS),
     ]
-    assert len(rendered.links) == 30
+    assert len(rendered.links) == 32
     assert all(
         (link.kind, link.ownership) == (Kind.GENERIC, Ownership.MANAGED) for link in rendered.links
     )
@@ -1443,7 +1447,7 @@ HUB_SCRIPT_NAMES = ("brief.py", "features_check.py", "worktree.sh", "hubconfig")
 FEATURE_CHECK_COMMAND = "./hub doctor --only features.tracker"
 AGENT_FRONTMATTER_KEYS = ["name", "description", "tools", "model"]
 # AGH-141 (AC-141.1): the read-only agents declare `mutates_checkout: false` after `model`.
-READ_ONLY_AGENTS = ("quality-reviewer", "researcher", "spec-reviewer")
+READ_ONLY_AGENTS = ("quality-reviewer", "researcher", "security-reviewer", "spec-reviewer")
 
 
 def plugin_markdown(config: HubConfig) -> dict[str, str]:
@@ -2049,6 +2053,7 @@ SKILL_FRONTMATTER_KEYS = {
     "adr": ["name", "description", "disable-model-invocation", "argument-hint"],
     "create-plan": ["name", "description", "argument-hint"],
     "deliver": ["name", "description", "disable-model-invocation", "argument-hint"],
+    "design-fit": ["name", "description", "disable-model-invocation", "argument-hint"],
     "feature": ["name", "description", "disable-model-invocation", "argument-hint"],
     "fix": ["name", "description", "disable-model-invocation", "argument-hint"],
     "handoff": ["name", "description", "disable-model-invocation", "argument-hint"],
@@ -5090,6 +5095,7 @@ TEMPLATE_TIERS = {
     "quality-reviewer": "large",
     "requirements-analyst": "large",
     "researcher": "medium",
+    "security-reviewer": "large",
     "spec-reviewer": "large",
     "ux-designer": "large",
 }
@@ -5194,6 +5200,7 @@ def test_overrides_agent_tier_when_models_agents_set() -> None:
         "quality-reviewer": "model: claude-opus-4-1",
         "requirements-analyst": "model: claude-opus-4-1",
         "researcher": "model: claude-opus-4-1",
+        "security-reviewer": "model: claude-opus-4-1",
         "spec-reviewer": "model: claude-opus-4-1",
         "ux-designer": "model: claude-opus-4-1",
     }

@@ -55,6 +55,14 @@
           ],
           "type": "string"
         },
+        "security-reviewer": {
+          "enum": [
+            "small",
+            "medium",
+            "large"
+          ],
+          "type": "string"
+        },
         "spec-reviewer": {
           "enum": [
             "small",

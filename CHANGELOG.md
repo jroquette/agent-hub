@@ -13,6 +13,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- The base plugin gains the `security-reviewer` agent and the `/design-fit` skill (AGH-413). `security-reviewer`
+  reviews a diff's added lines in a fresh context, runs Semgrep or Bandit when installed, traces each finding from an
+  untrusted source to a sink and refutes it before reporting; a scanner that did not run is reported as not run.
+  `/design-fit` runs before code: what already exists, where the change belongs, and no abstraction without a consumer
+  today, in at most five lines. Neither is started by `/feature` yet. Both arrive with `hub sync` after you bump
+  `platform.version`; `models.agents` accepts `security-reviewer`.
 - `hub validate-output preflight <file>` checks a ticket's `preflight.json` against `agent-hub/preflight/1` and names
   the JSON path of each problem (AGH-402). `hub web` reads a ticket's records (`tickets/<id>/brief.md`,
   `preflight.json`, `plan.md`) and the feature's plan change requests (`change-requests/<n>.md` and their
