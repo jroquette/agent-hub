@@ -55,6 +55,19 @@ class ListHubs:
         """Every registered hub as read now."""
         return tuple(self.read(entry) for entry in self._registry.entries())
 
+    def documents(self) -> tuple[tuple[RegisteredHub, HubDocument], ...]:
+        """Every registered hub's entry and ``hub.json`` document, in registration order; its
+        lock is not read, so no drift check runs (the item writes' lookups, AGH-298)."""
+        return tuple(
+            (
+                entry,
+                read_hub_document(
+                    self._reader.read_hub_json(entry.path), running_version=self._running
+                ),
+            )
+            for entry in self._registry.entries()
+        )
+
     def read(self, entry: RegisteredHub) -> HubRead:
         """One registered hub as read now."""
         document = read_hub_document(
