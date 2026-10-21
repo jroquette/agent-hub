@@ -106,6 +106,20 @@ class DriverImage(DriverModel):
         yield "bytes", len(self.data)
 
 
+class DriverFile(DriverModel):
+    """A file sent with a user message for Claude to read (a decoded PDF or UTF-8 text); its
+    repr shows only the name, the media type and the size, never the bytes."""
+
+    name: str
+    media_type: Literal["application/pdf", "text/plain"]
+    data: bytes
+
+    def __repr_args__(self) -> Iterator[tuple[str, object]]:
+        yield "name", self.name
+        yield "media_type", self.media_type
+        yield "bytes", len(self.data)
+
+
 class InitEvent(DriverModel):
     """The session started its first turn: Claude's ``session_id``, the model, slash commands
     and the subagents it can call (each offered in the composer as ``/agent-<name>``)."""
@@ -325,10 +339,15 @@ class SessionDriver(Protocol):
         ...
 
     async def send(
-        self, handle: DriverHandle, text: str, *, images: tuple[DriverImage, ...] = ()
+        self,
+        handle: DriverHandle,
+        text: str,
+        *,
+        images: tuple[DriverImage, ...] = (),
+        files: tuple[DriverFile, ...] = (),
     ) -> None:
-        """Send a user message (``images`` first, then ``text``): it starts a turn, or waits
-        behind the running one."""
+        """Send a user message (``files``, then ``images``, then ``text``): it starts a turn,
+        or waits behind the running one."""
         ...
 
     async def interrupt(self, handle: DriverHandle) -> None:

@@ -21,6 +21,7 @@ from agent_hub.core.agent_sessions.driver import (
     DriverCapabilities,
     DriverError,
     DriverEvent,
+    DriverFile,
     DriverHandle,
     DriverImage,
     Exited,
@@ -142,11 +143,16 @@ class InMemorySessionDriver:
         return handle
 
     async def send(
-        self, handle: DriverHandle, text: str, *, images: tuple[DriverImage, ...] = ()
+        self,
+        handle: DriverHandle,
+        text: str,
+        *,
+        images: tuple[DriverImage, ...] = (),
+        files: tuple[DriverFile, ...] = (),
     ) -> None:
-        """Queue a message (its call records the images); it plays one turn once the running
-        one ends."""
-        live = self._open(handle, "send", text, images)
+        """Queue a message (its call records the images, and the files when there are any); it
+        plays one turn once the running one ends."""
+        live = self._open(handle, "send", text, images, *((files,) if files else ()))
         live.inbox.put_nowait(text)
 
     async def interrupt(self, handle: DriverHandle) -> None:
