@@ -1137,15 +1137,19 @@
   column-gap: var(--space-1);
   padding: var(--space-2);
   border: 1px solid var(--border);
-  border-radius: 28px;
+  border-radius: 24px;
   background: var(--surface-overlay);
+  box-shadow: var(--shadow-sm);
   transition:
-    border-color 120ms ease,
-    background 120ms ease;
+    border-color 160ms ease,
+    box-shadow 160ms ease;
 }
+/* Focus is a quiet lift of the frame, not a coloured halo: the caret already shows where you type. */
 .as-composer:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border-strong));
+  box-shadow:
+    var(--shadow-sm),
+    0 0 0 3px color-mix(in srgb, var(--accent-soft) 60%, transparent);
 }
 .as-composer > .ah-discuss-refs {
   grid-area: acc;
@@ -1181,19 +1185,52 @@
   grid-area: err;
   margin: var(--space-1) var(--space-3) 0;
 }
-/* The mode and the model read as quiet text with a caret, as the model picker of a chat app does;
- * a mode that runs on its own (edits, auto) keeps its tint as a warning. */
-.as-composer .as-pill:not([data-mode="acceptEdits"], [data-mode="plan"], [data-mode="auto"]) {
+/* The mode and the model read as quiet text with a caret, as a macOS toolbar menu does: no frame,
+ * no fill, a soft capsule only under the pointer. A mode that runs on its own (edits, plan, auto)
+ * says so with the colour of its icon, not with a filled badge. */
+.as-composer .as-pill,
+.as-composer .as-pill[data-mode] {
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
   border-color: transparent;
   background: transparent;
-}
-.as-composer .as-pill {
-  height: 32px;
-  padding: 0 var(--space-2);
+  color: var(--text-muted);
   font-size: 13px;
 }
-.as-composer .as-pill:hover {
+.as-composer .as-pill:hover,
+.as-composer .as-pill[data-mode]:hover {
+  border-color: transparent;
   background: var(--surface-hover);
+  color: var(--text);
+}
+.as-composer .as-pill:focus-within {
+  outline: none;
+}
+.as-composer .as-pill:has(select:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 0;
+}
+.as-composer .as-pill .as-pill-select {
+  font-weight: 450;
+}
+.as-composer .as-pill .ah-icon {
+  width: 14px;
+  height: 14px;
+}
+.as-composer .as-pill .as-pill-caret {
+  width: 11px;
+  height: 11px;
+  opacity: 0.5;
+}
+.as-composer .as-pill[data-mode="acceptEdits"] .ah-icon:not(.as-pill-caret) {
+  color: var(--waiting);
+}
+.as-composer .as-pill[data-mode="plan"] .ah-icon:not(.as-pill-caret) {
+  color: var(--accent);
+}
+.as-composer .as-pill[data-mode="auto"] .ah-icon:not(.as-pill-caret) {
+  color: var(--guard);
 }
 .as-composer-input {
   height: auto;
@@ -1238,8 +1275,8 @@
 .as-composer .as-round,
 .as-composer .as-composer-attach {
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   gap: 0;
   border-radius: var(--radius-full);
@@ -1255,8 +1292,8 @@
   color: var(--text);
 }
 .as-composer .as-composer-attach .ah-icon {
-  width: 18px;
-  height: 18px;
+  width: 17px;
+  height: 17px;
 }
 /* The keys to send show while the box has focus, under the card, without moving anything. */
 .as-composer-hint {
