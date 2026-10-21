@@ -142,7 +142,7 @@ export function NewFeatureScreen() {
           <p className="ft-new-lead">Describe what to build and attach what Claude should see.</p>
         </div>
         {projectsQuery.isPending ? (
-          <Skeleton width={200} height={32} />
+          <Skeleton width={120} height={32} radius={999} />
         ) : (
           projects.length > 1 &&
           !sent && <ProjectSelect projects={projects} value={chosenProject} onChange={setProject} />
@@ -194,15 +194,13 @@ function ProjectSelect({
   value: string;
   onChange: (project: string) => void;
 }) {
-  const id = useId();
+  // The project pill of New session: the site's way to say where a request runs.
   return (
-    <div className="ft-new-project">
-      <label htmlFor={id} className="ah-small ah-muted">
-        Project
-      </label>
+    <label className="as-pill as-new-pill ft-new-project">
+      <Icon name="folder-kanban" size="sm" />
       <select
-        id={id}
-        className="ah-input"
+        aria-label="Project"
+        className="as-pill-select"
         value={value}
         onChange={(event) => {
           onChange(event.target.value);
@@ -214,7 +212,8 @@ function ProjectSelect({
           </option>
         ))}
       </select>
-    </div>
+      <Icon name="chevron-down" size="sm" className="as-pill-caret" />
+    </label>
   );
 }
 
@@ -482,6 +481,7 @@ function BriefForm({
                 id={ids.issue}
                 ref={issueField}
                 className="ah-input ah-mono"
+                placeholder="None"
                 value={issueInput}
                 aria-invalid={badIssue || undefined}
                 aria-describedby={ids.issueHint}
@@ -493,28 +493,6 @@ function BriefForm({
                 Like DEMO-1600. Claude reads its brief first.
               </FieldHint>
             </div>
-            <fieldset
-              className="as-fieldset ft-new-field ft-new-sizes"
-              aria-describedby={ids.sizeHint}
-            >
-              <legend className="ft-new-label">Size</legend>
-              {SIZES.map((option) => (
-                <label key={option.id || "ask"} className="as-radio">
-                  <input
-                    type="radio"
-                    name={ids.size}
-                    checked={size === option.id}
-                    onChange={() => {
-                      setSize(option.id);
-                    }}
-                  />
-                  {option.label}
-                </label>
-              ))}
-              <p id={ids.sizeHint} className="ft-new-hint">
-                {SIZES.find((option) => option.id === size)?.hint}
-              </p>
-            </fieldset>
             <div className="ft-new-field">
               <label htmlFor={ids.slug} className="ft-new-label">
                 Slug
@@ -523,6 +501,7 @@ function BriefForm({
                 id={ids.slug}
                 ref={slugField}
                 className="ah-input ah-mono"
+                placeholder="Claude picks one"
                 value={slug}
                 aria-invalid={badSlug || taken || undefined}
                 aria-describedby={ids.slugHint}
@@ -540,8 +519,34 @@ function BriefForm({
                       : null
                 }
               >
-                Like orders-csv-export. Empty: Claude picks one.
+                Like orders-csv-export.
               </FieldHint>
+            </div>
+            <div className="ft-new-field">
+              <label htmlFor={ids.size} className="ft-new-label">
+                Size
+              </label>
+              <span className="ft-new-select">
+                <select
+                  id={ids.size}
+                  className="ah-input ft-new-select-input"
+                  value={size}
+                  aria-describedby={ids.sizeHint}
+                  onChange={(event) => {
+                    setSize(event.target.value);
+                  }}
+                >
+                  {SIZES.map((option) => (
+                    <option key={option.id || "ask"} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <Icon name="chevron-down" size="sm" className="ft-new-select-caret" />
+              </span>
+              <p id={ids.sizeHint} className="ft-new-hint">
+                {SIZES.find((option) => option.id === size)?.hint}
+              </p>
             </div>
           </div>
         </section>

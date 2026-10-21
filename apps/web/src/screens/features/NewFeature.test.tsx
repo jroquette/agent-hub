@@ -151,7 +151,7 @@ describe("NewFeatureScreen", () => {
     await user.type(idea, IDEA);
     await user.type(screen.getByLabelText("Start from an issue"), "AGH-12");
     await user.type(screen.getByLabelText("Slug"), "orders-csv");
-    await user.click(screen.getByRole("radio", { name: "Bounded" }));
+    await user.selectOptions(screen.getByLabelText("Size"), "Bounded");
     await waitFor(async () => {
       expect(await ready()).not.toHaveAttribute("aria-disabled");
     });

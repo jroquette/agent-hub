@@ -306,15 +306,7 @@
 .ft-new-head > .ft-new-project,
 .ft-new-head > .ah-skel {
   grid-area: project;
-}
-.ft-new-project {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-.ft-new-project .ah-input {
-  width: auto;
-  min-width: 200px;
+  justify-self: end;
 }
 .ft-new-form {
   display: grid;
@@ -428,27 +420,39 @@
 }
 .ft-new-card-body {
   display: grid;
-  gap: var(--space-4);
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  align-items: start;
+  gap: var(--space-4) var(--space-6);
 }
 .ft-new-field {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
 }
-.ft-new-sizes {
-  gap: 0;
-}
-.ft-new-sizes legend {
-  margin-bottom: var(--space-1);
-}
-.ft-new-sizes .as-radio {
+/* Size reads as the fields around it: the same box, a caret for its choices. */
+.ft-new-select {
+  position: relative;
+  display: flex;
   align-items: center;
-  min-height: 28px;
-  font-size: 13px;
+}
+.ft-new-select-input {
+  width: 100%;
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 32px;
   cursor: pointer;
 }
-.ft-new-sizes .ft-new-hint {
-  margin-top: var(--space-1);
+.ft-new-select-caret {
+  position: absolute;
+  right: 10px;
+  color: var(--text-subtle);
+  pointer-events: none;
+}
+.ft-new-card .ah-input {
+  width: 100%;
+}
+.ft-new-card .ah-input::placeholder {
+  font-family: var(--font-sans);
 }
 .ft-new-main > .ah-banner {
   margin-bottom: var(--space-3);
@@ -544,6 +548,9 @@
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas: "title" "project";
   }
+  .ft-new-head > .ft-new-project {
+    justify-self: start;
+  }
 }
 @container ft-new (max-width: 760px) {
   .ft-new-next ol {
@@ -559,22 +566,5 @@
 @container ft-new-brief (max-width: 480px) {
   .ft-new-brief .ft-new-kbd {
     display: none;
-  }
-}
-/* Stacked, the options card is wide: issue and slug on the left, size on the right. */
-@container (min-width: 560px) {
-  .ft-new-card-body {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    grid-template-areas: "issue size" "slug size";
-    column-gap: var(--space-6);
-  }
-  .ft-new-card-body > .ft-new-field:first-child {
-    grid-area: issue;
-  }
-  .ft-new-card-body > .ft-new-sizes {
-    grid-area: size;
-  }
-  .ft-new-card-body > .ft-new-field:last-child {
-    grid-area: slug;
   }
 }
