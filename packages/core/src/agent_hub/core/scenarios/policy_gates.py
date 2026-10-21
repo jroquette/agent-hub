@@ -30,11 +30,20 @@ from agent_hub.core.json_form import JsonValue
 from agent_hub.core.scenarios.access_policy import Effect, PolicyDecision, decide
 from agent_hub.core.workflows.document import WorkflowDocument
 from agent_hub.core.workflows.includes import IncludeResolver, expand_includes
-from agent_hub.core.workflows.nodes import ApprovalNode, LoopGroupNode, Node, ScriptNode, ShellNode
+from agent_hub.core.workflows.nodes import (
+    ApprovalNode,
+    LoopGroupNode,
+    LoopNode,
+    Node,
+    ScriptNode,
+    ShellNode,
+)
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
 from agent_hub.core.workflows.rewrite import SEPARATOR
 
 ASK_SUFFIX: Final = "__ask"
+# A loop's or loop_group's ``until_bash`` check, decided as a read (it gets no credential).
+UNTIL_BASH: Final = "until_bash"
 # A run's record lines naming its engine gates: the steps a resume gated again (a re-ask, beside
 # the start record's ``policy_gates``), and an investigation's gate (``gate``, T9).
 POLICY_ASKS: Final = "policy_asks"
@@ -136,12 +145,15 @@ def _approval(node: Node, ask: PolicyAsk, *, step: str) -> ApprovalNode:
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class NodeDecision:
-    """The policy's decision on one shell or script node of a process workflow: its id as
-    recorded, its type, its effect (``write`` when it declares none) and the decision."""
+    """The policy's decision on one shell or script node of a process workflow, or on the
+    ``until_bash`` of a loop or loop_group (``node_type`` ``until_bash``, always a read): its id
+    as recorded, its type, its effect (``write`` when it declares none), the environment and
+    the decision."""
 
     step: str
     node_type: str
     effect: Effect
+    environment: str
     decision: PolicyDecision
 
 
@@ -162,16 +174,28 @@ def node_decisions(
     plan: WorkflowPlan, *, environment: str | None, declared: SourcedEnvironment | None
 ) -> tuple[NodeDecision, ...]:
     """The decision on each shell and script node of ``plan`` (origin ``author``), a group's
-    body included, in ``environment`` (``declared`` is its effective declaration, ``None``
-    when neither file declares it). No environment: nothing is decided, an empty tuple."""
+    body included, and on each ``until_bash`` (a read), in ``environment`` (``declared`` is
+    its effective declaration, ``None`` when neither file declares it). No environment:
+    nothing is decided, an empty tuple."""
+    if environment is None:
+        return ()
     decided: list[NodeDecision] = []
     for node in plan.all_nodes():
-        effect = node_effect(node, environment=environment)
-        if effect is not None:
-            decision = decide(declared, effect, "author")
-            decided.append(
-                NodeDecision(step=node.id, node_type=node.type, effect=effect, decision=decision)
+        found: list[tuple[str, Effect]] = []
+        if (effect := node_effect(node, environment=environment)) is not None:
+            found.append((node.type, effect))
+        if isinstance(node, LoopNode | LoopGroupNode) and node.until_bash is not None:
+            found.append((UNTIL_BASH, "read"))
+        decided.extend(
+            NodeDecision(
+                step=node.id,
+                node_type=node_type,
+                effect=effect,
+                environment=environment,
+                decision=decide(declared, effect, "author"),
             )
+            for node_type, effect in found
+        )
     return tuple(decided)
 
 
