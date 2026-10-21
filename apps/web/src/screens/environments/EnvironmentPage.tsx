@@ -260,44 +260,46 @@ function EnvironmentBody({
         </div>
       </header>
 
-      <div className="ah-env-detail">
-        <div className="ah-card ah-env-sections">
-          <AccessSection
-            {...sectionProps("access")}
-            view={view}
-            environment={environment}
-            onSaved={saved}
-          />
-          <SecretsSection
-            {...sectionProps("secrets")}
-            view={view}
-            environment={environment}
-            onSaved={saved}
-          />
-          <DescriptionSection
-            {...sectionProps("description")}
-            view={view}
-            environment={environment}
-            onSaved={saved}
-          />
-          <ServicesHere
-            view={view}
-            environment={environment}
-            blocked={blocked}
-            onOpen={(repo, service) => {
-              setService(repo, service);
-            }}
-            onAdd={() => {
-              void navigate(addServicePath(project), {
-                state: {
-                  returnTo: environmentPath(project, environment.name),
-                  returnLabel: environment.name,
-                },
-              });
-            }}
-          />
+      <div className="ah-env-detail-frame">
+        <div className="ah-env-detail">
+          <div className="ah-card ah-env-sections">
+            <AccessSection
+              {...sectionProps("access")}
+              view={view}
+              environment={environment}
+              onSaved={saved}
+            />
+            <SecretsSection
+              {...sectionProps("secrets")}
+              view={view}
+              environment={environment}
+              onSaved={saved}
+            />
+            <DescriptionSection
+              {...sectionProps("description")}
+              view={view}
+              environment={environment}
+              onSaved={saved}
+            />
+            <ServicesHere
+              view={view}
+              environment={environment}
+              blocked={blocked}
+              onOpen={(repo, service) => {
+                setService(repo, service);
+              }}
+              onAdd={() => {
+                void navigate(addServicePath(project), {
+                  state: {
+                    returnTo: environmentPath(project, environment.name),
+                    returnLabel: environment.name,
+                  },
+                });
+              }}
+            />
+          </div>
+          <AgentsSee view={view} environment={environment} />
         </div>
-        <AgentsSee view={view} environment={environment} />
       </div>
 
       {panelRepo && panelService && (
@@ -905,7 +907,7 @@ function ServiceRow({
   );
 }
 
-/** What agents read about this environment, derived from the record. */
+/** What agents read about this environment, derived from the record: a summary, the brief's lines on demand. */
 function AgentsSee({
   view,
   environment,
@@ -919,36 +921,48 @@ function AgentsSee({
       .map((endpoint) => ({ service, endpoint })),
   );
   const mine = isMine(environment) && !isTeams(environment);
+  const access = ACCESS_LOOK[environment.access];
   return (
-    <aside className="ah-card ah-setup-preview" aria-label="What agents see">
-      <div className="ah-setup-preview-title">
-        <Icon name="scan-eye" /> What agents see{" "}
+    <aside className="ah-card ah-env-agents" aria-label="What agents see">
+      <div className="ah-env-agents-head">
+        <h2 className="ah-h3">What your agents read</h2>
         <DerivedLabel how="Built from hub.json and hub.local.json">Preview</DerivedLabel>
       </div>
-      <div className="ah-small ah-muted">
-        {mine ? "Not in AGENTS.md: only your sessions' brief lists it." : "In AGENTS.md"}
-      </div>
-      <div className="ah-setup-preview-line">
-        <code className="ah-mono">{environment.name}</code>{" "}
-        <span className="ah-muted">
-          ({environment.access}
-          {environment.production ? ", production" : ""})
-        </span>
-        {environment.description ? `: ${environment.description}` : ""}
-      </div>
-      <div className="ah-small ah-muted">In each session&apos;s brief</div>
-      <ul className="ah-setup-preview-list">
+      <p className="ah-small ah-muted">
+        {mine
+          ? "Only your sessions get this, in the brief they read at start. AGENTS.md does not mention it: only you have this environment."
+          : "Every session reads this: the environment is in AGENTS.md, and its services are in each session's brief."}
+      </p>
+      <ul className="ah-env-agents-facts">
         <li>
-          <Icon name={ACCESS_LOOK[environment.access].icon} /> {ACCESS_LOOK[environment.access].row}
+          <Icon name={access.icon} /> {access.row}
+          {environment.production ? ", production" : ""}
         </li>
-        {here.map(({ service, endpoint }) => (
-          <li key={`${service.repo}/${service.name}`}>
-            <span className="ah-mono">{service.name}</span>{" "}
-            <code className="ah-mono">{endpointText(endpoint)}</code>
-          </li>
-        ))}
+        <li>
+          <Icon name="server" /> {here.length} {here.length === 1 ? "service" : "services"} with an
+          address
+        </li>
       </ul>
-      <p className="ah-small ah-muted" style={{ margin: 0 }}>
+      {here.length > 0 && (
+        <details className="ah-env-agents-brief">
+          <summary>Show the services as the brief lists them</summary>
+          <ul>
+            {here.map(({ service, endpoint }) => (
+              <li key={`${service.repo}/${service.name}`}>
+                <span className="ah-mono">{service.name}</span>
+                <span className="ah-mono ah-muted">
+                  <PathText path={endpointText(endpoint)} max={40} />
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="ah-small ah-muted">
+            The brief stops at 60 lines or 2000 characters; past that, agents run{" "}
+            <code className="ah-mono">./hub env list</code>.
+          </p>
+        </details>
+      )}
+      <p className="ah-small ah-muted">
         Agents never see secret values or the env file&apos;s contents.
       </p>
     </aside>
