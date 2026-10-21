@@ -120,7 +120,7 @@ Metadata only ([ADR 0019](../adr/0019-metadata-only-events-and-redaction.md)), e
 `step`), `workaround.start`/`workaround.end` (`workaround_id`, `option`, `steps`, `status`); `gate.request` gains
 `reason`. Args, outputs, captures, findings, chat stay in the run record. Bounds: `expect` `every` ≥ 5 s, `timeout` ≤ 24
 h, ≤ 1000 polls (retries, resumes too); action stdout ≤ 512 KiB; plan mode ≤ 60 s; ≤ 64 `--input` values of ≤ 64 KiB; a
-proposal ≤ 256 KiB, 20 findings, 5 options of ≤ 10 steps (10 per investigation); API record reads ≤ 8 MiB.
+proposal ≤ 256 KiB, 20 findings, 5 options of ≤ 10 steps; ≤ 10 proposals per investigation; API record reads ≤ 8 MiB.
 
 ### Known limits
 
