@@ -28,8 +28,14 @@ tests and the repo's conventions instead of reinterpreting them.
     session's when its subject ends a line of one of the session's `git commit` commands, so sessions running at
     the same time are told apart;
   - its commits, their files, the screens those files show and the routes `HEAD` no longer has;
-  - its hub files (those its Write and Edit calls wrote, or a Studio publish reply listed as `PUBLISHED <path>`)
-    and its uncommitted files (those its Write and Edit calls wrote).
+  - its hub files (those its Write and Edit calls wrote, and those of an item a `hub web` Publish wrote from a
+    Studio draft the session wrote) and its uncommitted files (those its Write and Edit calls wrote). A draft is the
+    `.hub-drafts/<draft_id>/` folder its Write and Edit calls wrote in; the export reads the hub's items
+    (`/api/v1/projects/agent-hub/skills`, only the kinds of those drafts) and each one's versions (`.../versions`,
+    every page by its cursor), and a `publish` version naming one of the drafts (`draft_id`, AGH-298) credits the
+    session with the hub files of that version's unit (a skill's folder, an agent's or a hook's file). A publish of
+    a draft no session wrote, a new hook's scripts outside its unit, and a conductor whose versions carry no
+    `draft_id` (or that has no versions route) credit no one: those files stay in the last request.
   What no session made (commits, hub files, uncommitted files) is a last request, *Not made by a playground
   session*. A request that made nothing is kept, marked: discussed, abandoned or made in another request.
 - **Conductor.** Its token is read from `make playground`'s log in the playground's private folder,
