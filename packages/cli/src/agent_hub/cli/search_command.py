@@ -4,11 +4,11 @@ Every search first brings the hub's rows up to date with its checkout (``search_
 the hub's ``brain/`` minus ``brain/auto/`` and each repo's ``docs/``. A file skipped when it is
 examined is named on stderr. The results are printed as one block per result (D-output), or as
 one JSON object with ``--json``. Every value shown is escaped so it cannot fake a line. Exit
-codes: 0 with or without results, 1 failure (database, git, FTS5), 2 usage or not a hub.
+codes: 0 with or without results, 1 failure (database, git, FTS5, registry, unknown
+``--hub``), 2 usage or not a hub.
 """
 
 import os
-from pathlib import Path
 from typing import Annotated, Final, NoReturn
 
 import typer
@@ -16,6 +16,8 @@ import typer
 from agent_hub.cli.command_exits import fail
 from agent_hub.cli.init_report import shown_text
 from agent_hub.cli.knowledge_hub import (
+    Database,
+    HubName,
     KnowledgeHub,
     knowledge_checkout_or_exit,
     knowledge_hub_or_exit,
@@ -50,22 +52,15 @@ Kinds = Annotated[
     ),
 ]
 AsJson = Annotated[bool, typer.Option("--json", help="Print one JSON object instead of lines.")]
-Database = Annotated[
-    Path | None,
-    typer.Option(
-        "--db",
-        envvar="AGENT_HUB_DB",
-        help=(
-            "Database file. Default: $XDG_DATA_HOME/agent-hub/agent-hub.db, "
-            "or ~/.local/share/agent-hub/agent-hub.db."
-        ),
-        show_default=False,
-    ),
-]
 
 
 def search(
-    query: Query, *, kind: Kinds = None, as_json: AsJson = False, db: Database = None
+    query: Query,
+    *,
+    kind: Kinds = None,
+    hub_name: HubName = None,
+    as_json: AsJson = False,
+    db: Database = None,
 ) -> None:
     """Search the hub's brain and its repos' docs; the index is brought up to date first."""
     # Usage is checked before the hub, the database or git is touched (P-10).
@@ -74,7 +69,7 @@ def search(
     words = query_words(text)
     if not words:
         _usage("the query has no words")
-    hub = knowledge_hub_or_exit(os.environ, command=COMMAND)
+    hub = knowledge_hub_or_exit(os.environ, command=COMMAND, hub_name=hub_name)
     checkout = knowledge_checkout_or_exit(hub, os.environ, command=COMMAND)
     index = open_index_or_exit(db, command=COMMAND)
     try:

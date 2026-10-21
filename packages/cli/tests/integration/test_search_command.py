@@ -21,9 +21,11 @@ from typer.testing import CliRunner, Result
 
 from agent_hub.cli.database_path import default_database_path
 from agent_hub.cli.main import app
+from agent_hub.cli.registry_path import default_registry_path
 from agent_hub.core.json_form import dump_json
 from agent_hub.core.testing.builders import a_second_repo, an_event, events_to_jsonl
 from agent_hub.storage import knowledge_index
+from agent_hub.storage.hub_registry import JsonHubRegistry
 
 pytestmark = pytest.mark.disable_socket
 
@@ -568,6 +570,65 @@ def test_exits_one_when_hub_json_invalid(
     assert not default_database().exists()
 
 
+def registered(tmp_path: Path, *hubs: Path) -> dict[str, str]:
+    """``hubs`` in a ``hubs.json`` under the test's own config folder, in this order, and the
+    environment that names that folder."""
+    config = tmp_path / "config"
+    registry = JsonHubRegistry(default_registry_path({"XDG_CONFIG_HOME": str(config)}))
+    for hub in hubs:
+        registry.add(str(hub))
+    return {"XDG_CONFIG_HOME": str(config)}
+
+
+def test_searches_registered_hub_when_hub_option_given(
+    knowledge_hub: KnowledgeHubFactory, run_command: CommandRunner, tmp_path: Path
+) -> None:
+    hub = knowledge_hub({"brain/a.md": MARKER})
+    env = registered(tmp_path, hub)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+
+    found = json_of(run_command(elsewhere, "search", "marker", "--hub", "demo", "--json", env=env))
+
+    assert found["hub"] == "demo"
+    assert [result["path"] for result in found["results"]] == ["brain/a.md"]
+
+
+def test_exits_one_when_hub_option_names_unknown_hub(
+    knowledge_hub: KnowledgeHubFactory, run_command: CommandRunner, tmp_path: Path
+) -> None:
+    hub = knowledge_hub({"brain/a.md": MARKER})
+    invalid = tmp_path / "invalid"
+    invalid.mkdir()
+    (invalid / "hub.json").write_bytes(b"{not json")
+    env = registered(tmp_path, invalid, hub)
+
+    result = run_command(hub, "search", "marker", "--hub", "nope", env=env)
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == "hub search: no registered hub named nope\n"
+    assert not default_database().exists()
+
+
+def test_exits_one_when_hub_option_registry_unreadable(
+    knowledge_hub: KnowledgeHubFactory, run_command: CommandRunner, tmp_path: Path
+) -> None:
+    hub = knowledge_hub({"brain/a.md": MARKER})
+    env = registered(tmp_path)
+    registry = default_registry_path(env)
+    registry.parent.mkdir(parents=True)
+    registry.write_bytes(b"{not json")
+
+    result = run_command(hub, "search", "marker", "--hub", "demo", env=env)
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr.startswith(f'hub search: hub registry "{registry}": ')
+    assert result.stderr.count("\n") == 1
+    assert not default_database().exists()
+
+
 def rows_of(database: Path, statement: str) -> list[tuple[Any, ...]]:
     with closing(sqlite3.connect(database)) as connection:
         return connection.execute(statement).fetchall()
@@ -629,3 +690,4 @@ def test_exits_one_when_sqlite_has_no_fts5(
         "hub search: this Python's SQLite has no FTS5 module; the knowledge index needs it\n"
     )
     assert not default_database().exists()
+

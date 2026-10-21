@@ -97,12 +97,15 @@ def sync_knowledge(
     if len(listing) > cap:
         msg = f"{len(listing)} Markdown files under the hub's sources, more than {cap}; "
         raise KnowledgeCheckoutError(msg + "nothing was indexed")
-    stored = _NO_ROWS if rebuild else index.stored(hub)
-    plan = plan_sync(stored, listing, version=INDEX_VERSION)
-    reads = _read(checkout, plan.to_read, _NO_ROWS.files if plan.rebuild else stored.files)
+    previous = index.stored(hub)
+    plan = plan_sync(_NO_ROWS if rebuild else previous, listing, version=INDEX_VERSION)
+    rebuilding = rebuild or plan.rebuild
+    # A rebuild trusts no row's text; the rows still say which vanished files lose one.
+    rows = _NO_ROWS.files if rebuilding else previous.files
+    reads = _read(checkout, plan.to_read, rows, known=previous.files)
     change = IndexChange(
         version=INDEX_VERSION,
-        rebuild=rebuild or plan.rebuild,
+        rebuild=rebuilding,
         documents=tuple(reads.documents),
         skipped=plan.skipped_now + tuple(reads.skipped),
         touched=reads.touched,
@@ -112,7 +115,7 @@ def sync_knowledge(
         index.apply(hub, change)
     # A rebuild drops the rows as a whole: those of files no longer listed are counted here.
     paths = {file.path for file in listing}
-    unlisted = sum(path not in paths for path in stored.files) if plan.rebuild else 0
+    unlisted = sum(path not in paths for path in previous.files) if rebuilding else 0
     return SyncReport(
         listed=len(listing),
         read=len(plan.to_read),
@@ -138,16 +141,21 @@ def search_knowledge(
 
 
 def _read(
-    checkout: KnowledgeCheckout, files: tuple[FileToRead, ...], rows: Mapping[str, StoredFile]
+    checkout: KnowledgeCheckout,
+    files: tuple[FileToRead, ...],
+    rows: Mapping[str, StoredFile],
+    *,
+    known: Mapping[str, StoredFile],
 ) -> _Reads:
-    """Read each planned file: a file gone since the listing loses its row; a read that fails
+    """Read each planned file: a file gone since the listing loses its row (one of ``known``,
+    the rows before the sync, so a rebuild counts it too); a read that fails
     is reported every time (nothing remembers it); a text whose hash the row already holds only
     moves the row's fingerprint."""
     reads = _Reads()
     for file in files:
         content = checkout.read(file.path)
         if content is None:
-            if file.path in rows:
+            if file.path in known:
                 reads.vanished.append(file.path)
         elif isinstance(content, str):
             fingerprint = None if content == UNREADABLE else file.fingerprint
