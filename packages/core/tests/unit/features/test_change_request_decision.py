@@ -87,8 +87,8 @@ def decide(
     use = DecideChangeRequest(
         Hubs(),
         Folders(*(heads or (a_request(),))),
-        written,
-        Gates(gates),
+        writer=written,
+        gates=Gates(gates),
         decider=lambda project: decider,
         clock=lambda: DECIDED_AT,
     )

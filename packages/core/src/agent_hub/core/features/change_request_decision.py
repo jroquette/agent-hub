@@ -21,7 +21,11 @@ from agent_hub.core.brain.frontmatter import with_frontmatter
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.features.feature_view import ChangeDecisionView, ChangeRequestView
 from agent_hub.core.features.owner_signoff import FeatureFolders, ProjectHubs
-from agent_hub.core.features.ticket_records import change_requests, request_view
+from agent_hub.core.features.ticket_records import (
+    ChangeRequest,
+    change_requests,
+    request_view,
+)
 from agent_hub.core.readmodels.filters import MAX_PAGE_LIMIT, ApprovalFilter
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError, EventReadModels
 from agent_hub.core.workflows.gate_decisions import RUN_SESSION_PREFIX
@@ -118,13 +122,13 @@ def decision_note(
 class DecideChangeRequest:
     """``(project, slug, n, decision, note)`` → the request, decided by the hub's person."""
 
-    def __init__(  # noqa: PLR0913 -- the use case's ports, all keyword-only after the folders
+    def __init__(  # noqa: PLR0913 -- the use case's ports, keyword-only after the folders
         self,
         hubs: ProjectHubs,
         folders: FeatureFolders,
+        *,
         writer: DecisionWriter,
         gates: RunGates,
-        *,
         decider: Callable[[str], str | None],
         clock: Callable[[], datetime],
     ) -> None:
@@ -134,6 +138,39 @@ class DecideChangeRequest:
     def __call__(
         self, project: str, slug: str, n: int, *, decision: ChangeDecision, note: str | None
     ) -> ChangeRequestView:
+        hub_path, folder_slug, request = self._open_request(project, slug, n)
+        text = " ".join((note or "").split())[:MAX_NOTE_CHARS] or None
+        if decision == "declined" and text is None:
+            reason = "a decline needs your note: the next preflight follows it"
+            raise ChangeRequestDecisionError("note_required", reason)
+        gate = None if request.run_id is None else self._gates.of(project).get(request.run_id)
+        if gate is not None:
+            reason = f"run {request.run_id} waits at its gate: answer approval {gate} instead"
+            raise ChangeRequestDecisionError("gate_open", reason)
+        person = (self._decider(project) or "").strip()
+        if not person or person.lower() == "unknown":
+            reason = "no person to record as decided_by: set author_name in hub.json"
+            raise ChangeRequestDecisionError("no_person", reason)
+        at = self._clock().replace(microsecond=0)
+        content = decision_note(n=n, decision=decision, decided_by=person, at=at, note=text)
+        try:
+            self._writer.create_decision(hub_path, slug=folder_slug, n=n, text=content)
+        except FileExistsError:
+            raise ChangeRequestDecisionError(
+                "decided", f"change request {n} was just decided; reload the feature"
+            ) from None
+        decided = ChangeDecisionView(
+            decision=decision,
+            decided_by=person,
+            decided_at=at.isoformat(timespec="seconds"),
+            note=text,
+        )
+        return request_view(request, slug=folder_slug).model_copy(
+            update={"status": decision, "decision": decided}
+        )
+
+    def _open_request(self, project: str, slug: str, n: int) -> tuple[str, str, ChangeRequest]:
+        """The hub folder, the feature's slug and request ``n``, still open and readable."""
         missing = EntityNotFoundError(entity="feature", entity_id=f"{project}/{slug}")
         try:
             hub_path = self._hubs.hub_path_of(project)
@@ -152,32 +189,4 @@ class DecideChangeRequest:
             raise ChangeRequestDecisionError(
                 "decided", f"change request {n} is already {request.status}"
             )
-        text = " ".join((note or "").split())[:MAX_NOTE_CHARS] or None
-        if decision == "declined" and text is None:
-            reason = "a decline needs your note: the next preflight follows it"
-            raise ChangeRequestDecisionError("note_required", reason)
-        gate = None if request.run_id is None else self._gates.of(project).get(request.run_id)
-        if gate is not None:
-            reason = f"run {request.run_id} waits at its gate: answer approval {gate} instead"
-            raise ChangeRequestDecisionError("gate_open", reason)
-        person = (self._decider(project) or "").strip()
-        if not person or person.lower() == "unknown":
-            reason = "no person to record as decided_by: set author_name in hub.json"
-            raise ChangeRequestDecisionError("no_person", reason)
-        at = self._clock().replace(microsecond=0)
-        content = decision_note(n=n, decision=decision, decided_by=person, at=at, note=text)
-        try:
-            self._writer.create_decision(hub_path, slug=folder.slug, n=n, text=content)
-        except FileExistsError:
-            raise ChangeRequestDecisionError(
-                "decided", f"change request {n} was just decided; reload the feature"
-            ) from None
-        decided = ChangeDecisionView(
-            decision=decision,
-            decided_by=person,
-            decided_at=at.isoformat(timespec="seconds"),
-            note=text,
-        )
-        return request_view(request, slug=folder.slug).model_copy(
-            update={"status": decision, "decision": decided}
-        )
+        return hub_path, folder.slug, request
