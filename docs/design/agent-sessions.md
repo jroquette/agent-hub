@@ -643,6 +643,30 @@ no longer repeats the name).
   all are viewed ("· M files" and a check); with Claude's own files only it reads "· No code changes". Its accessible
   name is unchanged.
 
+### Chat redesign: the sessions rail and the side columns (AGH-422)
+
+Design: [control-plane/specs/20-chat.md](control-plane/specs/20-chat.md#sessions-rail).
+
+- **AC-422.18 Sessions rail.** Given the full chat, then a 260 px rail named "Sessions" sits left of it, as chat apps
+  list conversations: "Waiting for you", then "Open", then "Recent" (the 20 newest ended), newest first in each, each
+  group with its count; each row is the session's status dot (its word for screen readers and in the row's tooltip),
+  its name and, under it, chips for its project (across projects), its ticket and the feature that plans it; the
+  current session reads as selected (`aria-current="page"`), the others link to their chat; "All" opens Sessions.
+  The page never scrolls past its own height: only the transcript and the rail's list scroll.
+- **AC-422.19 Filter.** Given the rail's filter, when the owner types, then it narrows the rows by name, project,
+  folder, ticket or feature and drops empty groups ("No session matches."); Escape clears it.
+- **AC-422.20 Named as the header names it.** Given a session whose observed twin is on a ticket, then its row reads
+  the ticket's name (`ACME-12: Export orders as CSV`) as the chat's header does, else Claude Code's title, else its
+  last prompt on one line, else "Untitled session"; its ticket and feature chips come from the observed sessions and
+  the hub's features (the 200 newest observed sessions, one read).
+- **AC-422.21 Folds.** Given the rail, when "Hide sessions" is pressed, then it folds to a 48 px strip of the open
+  sessions' status dots (their names for screen readers and in tooltips), and the choice is kept per browser
+  (`ah.chat.rail`).
+- **AC-422.22 Side columns in the chat's style.** Given the app's sidebar and the rail, then both take the chat's
+  vocabulary: soft rounded rows (`radius-xl`), a filled current item instead of an outline, more room, no hard lines;
+  the columns step in by tone (the sidebar on `bg`, the rail on `surface-sunken`, the chat on `surface`). The rail's
+  filter is a small capsule with the composer's focus halo, and its tags are soft pills.
+
 ## Invariants
 
 - The platform implements no agent loop and calls no model; the children are the user's own `claude` with its own

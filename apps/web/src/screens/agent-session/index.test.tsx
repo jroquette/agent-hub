@@ -1771,3 +1771,15 @@ describe("AgentSessionScreen (the header as a toolbar and a heading, AGH-422)", 
     );
   });
 });
+
+describe("AgentSessionScreen (the sessions rail, AGH-422)", () => {
+  it("AC-422.18 puts the sessions rail beside the chat, the page itself never scrolling", async () => {
+    const { container } = renderChat(
+      routes({ "/api/v1/agent-sessions": { items: [anAgentSession({ status: "running" })] } }),
+    );
+    expect(await screen.findByRole("navigation", { name: "Sessions" })).toBeInTheDocument();
+    const layout = container.querySelector(".as-chat-layout");
+    expect(layout?.firstElementChild).toHaveClass("as-rail");
+    expect(layout?.querySelector(":scope > .as-page")).not.toBeNull();
+  });
+});
