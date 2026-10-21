@@ -109,8 +109,6 @@ def test_reads_title_and_frontmatter_when_note_has_both() -> None:
     [
         ("notes.md", "Just text, no heading.\n", "notes.md"),
         ("notes.md", "#hashtag is not a heading\n", "notes.md"),
-        ("x.md", "# Title\n\nText.\n", "Title"),
-        ("x.md", "Intro line.\n\n###   Deep heading ##\n", "Deep heading"),
     ],
 )
 def test_uses_file_name_as_title_when_note_has_no_heading(name: str, text: str, title: str) -> None:
@@ -119,6 +117,35 @@ def test_uses_file_name_as_title_when_note_has_no_heading(name: str, text: str, 
     assert meta.title == title
     assert (meta.status, meta.provenance) == (None, None)
     assert meta.body == text
+
+
+@pytest.mark.parametrize(
+    ("name", "text", "title"),
+    [
+        ("x.md", "# Title\n\nText.\n", "Title"),
+        ("x.md", "Intro line.\n\n###   Deep heading ##\n", "Deep heading"),
+    ],
+)
+def test_reads_title_from_first_heading_when_note_has_one(name: str, text: str, title: str) -> None:
+    meta = document_meta(text, name)
+
+    assert meta.title == title
+    assert (meta.status, meta.provenance) == (None, None)
+    assert meta.body == text
+
+
+def test_reads_frontmatter_and_title_when_note_starts_with_byte_order_mark() -> None:
+    meta = document_meta("\ufeff---\nstatus: draft\n---\n# T\n", "bom.md")
+
+    assert (meta.title, meta.status) == ("T", "draft")
+    assert meta.body == "# T\n"
+
+
+def test_reads_title_when_note_starts_with_byte_order_mark_and_heading() -> None:
+    meta = document_meta("\ufeff# Title\n", "bom.md")
+
+    assert meta.title == "Title"
+    assert meta.body == "# Title\n"
 
 
 def test_ignores_frontmatter_when_block_not_at_start() -> None:

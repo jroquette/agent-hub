@@ -50,6 +50,7 @@ _BRAIN_KINDS: Final[dict[str, Kind]] = {
     "features": "feature",
     "journal": "journal",
 }
+_BYTE_ORDER_MARK: Final = "\ufeff"
 _DOCS_FOLDER: Final = "docs"
 _ADR_FOLDER: Final = "adr"
 # A file inside a folder of a source: the source's segments, the folder and the file's name.
@@ -99,9 +100,11 @@ def document_meta(text: str, name: str) -> DocumentMeta:
 
     The body is the text after a well-formed leading frontmatter block, else the whole text. The
     title is the first ATX heading of the body, else ``name``; status and provenance are the
-    frontmatter's text values. Each is cut to ``MAX_META_CHARS`` characters.
+    frontmatter's text values. Each is cut to ``MAX_META_CHARS`` characters. One leading byte
+    order mark is not part of the text.
     """
-    frontmatter = split_frontmatter(text)
+    # An editor's leading byte order mark would hide the frontmatter and a first-line heading.
+    frontmatter = split_frontmatter(text.removeprefix(_BYTE_ORDER_MARK))
     body = frontmatter.body
     return DocumentMeta(
         title=_first_heading(body) or name[:MAX_META_CHARS],
