@@ -107,7 +107,7 @@ def ticket_evidence(
     preflights = {
         name: parsed
         for name, found in files.items()
-        if (parsed := preflight_record(found.preflight)) is not None
+        if (parsed := preflight_record(found.preflight, folder=found.name)) is not None
     }
     versions = [v for v in (plan_version, requests.approved_version) if v is not None]
     return TicketEvidence(

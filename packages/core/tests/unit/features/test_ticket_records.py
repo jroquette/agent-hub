@@ -200,7 +200,9 @@ def test_lists_open_requests_and_paused_tickets_when_folded() -> None:
 
 
 def test_parses_record_when_preflight_valid() -> None:
-    record = preflight_record(a_preflight(drift="local", local_notes=["Moved helper."]))
+    record = preflight_record(
+        a_preflight(drift="local", local_notes=["Moved helper."]), folder="DEM-8"
+    )
 
     assert not isinstance(record, str)
     assert record is not None
@@ -208,14 +210,23 @@ def test_parses_record_when_preflight_valid() -> None:
 
 
 def test_names_json_path_when_preflight_malformed() -> None:
-    assert preflight_record(a_preflight(drift="global")) == (
+    assert preflight_record(a_preflight(drift="global"), folder="DEM-8") == (
         "preflight.json could not be read (runs[0].drift: Input should be 'none', 'local' or "
         "'plan'). Fix it in a hub PR."
     )
 
 
 def test_says_why_when_preflight_not_read() -> None:
-    assert preflight_record(f"larger than {MAX_PREFLIGHT_BYTES} bytes") == (
+    assert preflight_record(f"larger than {MAX_PREFLIGHT_BYTES} bytes", folder="DEM-8") == (
         "preflight.json could not be read (larger than 65536 bytes). Fix it in a hub PR."
     )
-    assert preflight_record(None) is None
+    assert preflight_record(None, folder="DEM-8") is None
+
+
+# AGH-402 review Q9: a record filed under another ticket's folder drives no step.
+def test_names_mismatch_when_preflight_ticket_differs_from_folder() -> None:
+    assert preflight_record(a_preflight(), folder="DEM-9") == (
+        "preflight.json could not be read (ticket: DEM-8 is not the folder's ticket DEM-9). "
+        "Fix it in a hub PR."
+    )
+    assert not isinstance(preflight_record(a_preflight(), folder="dem-8"), str)

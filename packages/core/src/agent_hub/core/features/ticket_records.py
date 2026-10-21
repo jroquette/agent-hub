@@ -135,9 +135,10 @@ def change_requests(heads: Sequence[RecordHead], *, skipped: int) -> ChangeReque
     )
 
 
-def preflight_record(read: bytes | str | None) -> PreflightRecord | str | None:
-    """A ticket's preflight record; its one-line problem when it cannot be read or is malformed
-    (the first problem, at its JSON path); None when absent."""
+def preflight_record(read: bytes | str | None, *, folder: str) -> PreflightRecord | str | None:
+    """The preflight record of ``tickets/<folder>/``; its one-line problem when it cannot be
+    read, is malformed (the first problem, at its JSON path) or names another ticket (ASCII case
+    ignored); None when absent."""
     if read is None:
         return None
     if isinstance(read, str):
@@ -146,10 +147,14 @@ def preflight_record(read: bytes | str | None) -> PreflightRecord | str | None:
     if isinstance(document, OutputProblem):
         return _unreadable(PREFLIGHT_FILE, f"{document.path}: {document.message}")
     try:
-        return PreflightRecord.model_validate(document)
+        record = PreflightRecord.model_validate(document)
     except ValidationError as error:
         first = shape_problems(error)[0]
         return _unreadable(PREFLIGHT_FILE, f"{first.path}: {first.message}")
+    if record.ticket.upper() != folder.upper():
+        why = f"ticket: {record.ticket} is not the folder's ticket {folder}"
+        return _unreadable(PREFLIGHT_FILE, why)
+    return record
 
 
 def _request(n: int, head: RecordHead, decision: RecordHead | None) -> ChangeRequest:
