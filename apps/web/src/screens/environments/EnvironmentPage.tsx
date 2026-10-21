@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   Banner,
   Button,
+  CopyButton,
   DerivedLabel,
   EmptyState,
   Icon,
@@ -25,6 +26,7 @@ import {
   AccessValue,
   CredentialLine,
   EnvironmentSource,
+  FindWithClaude,
   ProductionBadge,
 } from "../hub-config/EnvironmentsSection";
 import { ServicePanel } from "../hub-config/ServicePanel";
@@ -32,9 +34,11 @@ import { AccessFields, SecretsFields } from "../hub-config/environmentFields";
 import type { SecretsFrom } from "../hub-config/environmentFields";
 import {
   ACCESS_LOOK,
+  LOCAL_FILE,
   STRICTNESS,
   addServicePath,
   endpointText,
+  endpointValues,
   environmentPath,
   environmentsPage,
   isMine,
@@ -52,6 +56,7 @@ import type {
   HubConfigView,
   Refusal,
   SourcedEnvironment,
+  SourcedService,
 } from "../hub-config/environments";
 import { SavedToast, UncommittedNotice, useSaveNotices } from "../hub-config/notices";
 import { AskBlocked, Mono } from "../hub-config/parts";
@@ -278,6 +283,7 @@ function EnvironmentBody({
           <ServicesHere
             view={view}
             environment={environment}
+            blocked={blocked}
             onOpen={(repo, service) => {
               setService(repo, service);
             }}
@@ -749,80 +755,153 @@ function DescriptionForm({ view, environment, onDone, onSaved }: FormProps) {
   );
 }
 
-/** Every service of the project, with its address here or "Not here yet". */
+/** The services this environment reaches, grouped by repo, each with its address here; the
+ * project's other services follow, folded, so one can be given an address here. */
 function ServicesHere({
   view,
   environment,
+  blocked,
   onOpen,
   onAdd,
 }: {
   view: HubConfigView;
   environment: SourcedEnvironment;
+  blocked: string | null;
   onOpen: (repo: string, service: string) => void;
   onAdd: () => void;
 }) {
   const services = view.environments.services;
-  const here = services.filter((service) =>
-    service.endpoints.some((endpoint) => endpoint.environment === environment.name),
-  );
+  const addressOf = (service: SourcedService) =>
+    service.endpoints.find((item) => item.environment === environment.name);
+  const here = services.filter((service) => addressOf(service) !== undefined);
+  const elsewhere = services.filter((service) => addressOf(service) === undefined);
+  const repos = view.repos
+    .map((repo) => ({ dir: repo.dir, items: here.filter((service) => service.repo === repo.dir) }))
+    .filter((repo) => repo.items.length > 0);
   return (
     <section className="ah-env-section" aria-labelledby="ah-env-section-services">
       <div className="ah-env-section-head">
         <h2 className="ah-h3" id="ah-env-section-services">
-          Services here <span className="ah-muted ah-env-count">{here.length}</span>
+          Services in {environment.name}{" "}
+          <span className="ah-muted ah-env-count">{here.length}</span>
         </h2>
-        <Button size="sm" icon="plus" onClick={onAdd}>
-          Add service
-        </Button>
+        <span className="ah-row" style={{ gap: 8 }}>
+          <FindWithClaude project={view.project} blocked={blocked} />
+          <Button size="sm" icon="plus" onClick={onAdd}>
+            Add service
+          </Button>
+        </span>
       </div>
-      {services.length === 0 ? (
+      {here.length === 0 ? (
         <span className="ah-muted">
-          No services yet. Add the API, portal or database each repo runs.
+          {services.length === 0
+            ? "No services yet. Add the API, portal or database each repo runs."
+            : `No service has an address in ${environment.name} yet. Open one below to add it.`}
         </span>
       ) : (
-        <ul className="ah-env-services-here">
-          {services.map((service) => {
-            const endpoint = service.endpoints.find(
-              (item) => item.environment === environment.name,
-            );
-            const label = serviceLabel(service.repo, service.name);
-            return (
-              <li key={`${service.repo}/${service.name}`}>
-                <button
-                  type="button"
-                  className="ah-env-service-row"
-                  aria-label={
-                    endpoint
-                      ? `Open ${label}: ${endpointText(endpoint)} in ${environment.name}`
-                      : `Open ${label}: not in ${environment.name} yet`
-                  }
-                  onClick={() => {
-                    onOpen(service.repo, service.name);
-                  }}
-                >
-                  <span className="ah-stack" style={{ gap: 2, minWidth: 0 }}>
-                    <Mono>{label}</Mono>
-                    {service.kind && (
-                      <span className="ah-small ah-muted">
-                        {serviceKind(service.kind)?.label ?? service.kind}
-                      </span>
-                    )}
-                  </span>
-                  <span className="ah-mono ah-small">
-                    {endpoint ? (
-                      <PathText path={endpointText(endpoint)} max={40} />
-                    ) : (
-                      <span className="ah-muted">Not here yet</span>
-                    )}
-                  </span>
-                  <Icon name="chevron-right" />
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+        repos.map((repo) => (
+          <div key={repo.dir} className="ah-stack" style={{ gap: 6 }}>
+            <span className="ah-env-name ah-small ah-muted">
+              <Icon name="book" />
+              {repo.dir}
+            </span>
+            <ul className="ah-env-services-here">
+              {repo.items.map((service) => (
+                <ServiceRow
+                  key={service.name}
+                  service={service}
+                  environment={environment.name}
+                  onOpen={onOpen}
+                />
+              ))}
+            </ul>
+          </div>
+        ))
+      )}
+      {elsewhere.length > 0 && (
+        <details className="ah-env-elsewhere">
+          <summary className="ah-small">
+            {elsewhere.length === 1
+              ? "1 service of this project is not here yet"
+              : `${String(elsewhere.length)} services of this project are not here yet`}
+          </summary>
+          <ul className="ah-env-services-here">
+            {elsewhere.map((service) => (
+              <ServiceRow
+                key={`${service.repo}/${service.name}`}
+                service={service}
+                environment={environment.name}
+                onOpen={onOpen}
+                withRepo
+              />
+            ))}
+          </ul>
+        </details>
       )}
     </section>
+  );
+}
+
+/** One service: its name and kind, its address in this environment (or "Not here yet"). */
+function ServiceRow({
+  service,
+  environment,
+  onOpen,
+  withRepo = false,
+}: {
+  service: SourcedService;
+  environment: string;
+  onOpen: (repo: string, service: string) => void;
+  withRepo?: boolean;
+}) {
+  const endpoint = service.endpoints.find((item) => item.environment === environment);
+  const label = serviceLabel(service.repo, service.name);
+  const shown = endpoint ? endpointText(endpoint) : null;
+  const note = endpoint ? endpointValues(endpoint).note : "";
+  return (
+    <li className="ah-env-service-item">
+      <button
+        type="button"
+        className="ah-env-service-row"
+        aria-label={
+          shown
+            ? `Open ${label}: ${shown} in ${environment}`
+            : `Open ${label}: not in ${environment} yet`
+        }
+        onClick={() => {
+          onOpen(service.repo, service.name);
+        }}
+      >
+        <span className="ah-stack" style={{ gap: 2, minWidth: 0 }}>
+          <Mono>{withRepo ? label : service.name}</Mono>
+          {service.kind && (
+            <span className="ah-small ah-muted">
+              {serviceKind(service.kind)?.label ?? service.kind}
+            </span>
+          )}
+        </span>
+        <span className="ah-row ah-mono ah-small" style={{ gap: 6, minWidth: 0 }}>
+          {shown ? (
+            <>
+              <PathText path={shown} max={48} />
+              {endpoint?.source === LOCAL_FILE && <Icon name="laptop" title="Set by you" />}
+              {note && <Icon name="info" title={note} />}
+            </>
+          ) : (
+            <span className="ah-muted">Not here yet</span>
+          )}
+        </span>
+        <Icon name="chevron-right" />
+      </button>
+      {shown && (
+        <CopyButton
+          text={shown}
+          label={`Copy the address of ${label} in ${environment}`}
+          className="ah-env-copy"
+          compact
+        />
+      )}
+    </li>
   );
 }
 

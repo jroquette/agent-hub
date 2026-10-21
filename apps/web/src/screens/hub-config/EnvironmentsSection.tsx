@@ -1,34 +1,12 @@
-import { Fragment, useContext } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router";
+import { useContext } from "react";
+import { Link, useNavigate } from "react-router";
 
-import {
-  Button,
-  CopyButton,
-  EmptyState,
-  FitText,
-  Icon,
-  IconButton,
-  StatusBadge,
-  Tooltip,
-} from "../../components";
+import { Button, EmptyState, Icon, IconButton, StatusBadge, Tooltip } from "../../components";
 import { AskBlocked, ConfigSource, Mono, NoneText, useAttach } from "./parts";
-import { ServicePanel } from "./ServicePanel";
 import { discoverPath } from "../environments/discovery";
 import { useEnvironmentRemoval } from "./EnvironmentRemoval";
-import {
-  ACCESS_LOOK,
-  LOCAL_FILE,
-  addEnvironmentPath,
-  addServicePath,
-  environmentPath,
-  endpointText,
-  endpointValues,
-  isMine,
-  isTeams,
-  serviceKind,
-  serviceLabel,
-} from "./environments";
-import type { FlowOrigin, HubConfigView, SourcedEnvironment, SourcedService } from "./environments";
+import { ACCESS_LOOK, addEnvironmentPath, environmentPath, isMine, isTeams } from "./environments";
+import type { FlowOrigin, HubConfigView, SourcedEnvironment } from "./environments";
 
 /** Production, by icon and word, never by colour alone. */
 export function ProductionBadge() {
@@ -103,7 +81,7 @@ export function EnvironmentSource({ environment }: { environment: SourcedEnviron
 }
 
 /** Opens "Find services with Claude"; off, with the reason, when sessions cannot start. */
-function FindWithClaude({
+export function FindWithClaude({
   project,
   blocked,
   primary = false,
@@ -139,8 +117,8 @@ function focusAddEnvironment() {
 }
 
 /**
- * The Environments section: every environment with what agents may do there, and every repo's
- * services per environment. Adds, changes and removals go to hub.local.json (only me) or
+ * The Environments section: every environment with what agents may do there and how many services
+ * it reaches; each environment's own page lists its services. Adds, changes and removals go to hub.local.json (only me) or
  * hub.json (the team, uncommitted), through the same checks as `hub env`.
  */
 export function EnvironmentsSection({
@@ -158,42 +136,11 @@ export function EnvironmentsSection({
   const blocked = useContext(AskBlocked);
   const environments = view.environments.environments;
   const services = view.environments.services;
-  const [params, setParams] = useSearchParams();
-  const opened = params.get("service");
-  const [panelRepo, panelService] = opened ? opened.split("/", 2) : [];
-  const panel =
-    panelRepo && panelService
-      ? { repo: panelRepo, service: panelService, environment: params.get("env") ?? undefined }
-      : null;
-  /** Opens a service's panel (on one environment's address), or closes it with null. */
-  const openService = (repo: string | null, service?: string, environment?: string) => {
-    setParams(
-      (prev) => {
-        prev.delete("service");
-        prev.delete("env");
-        if (repo !== null && service) {
-          prev.set("service", `${repo}/${service}`);
-          if (environment) prev.set("env", environment);
-        }
-        return prev;
-      },
-      { replace: true },
-    );
-  };
   const { startRemove, startLoosen, dialogs } = useEnvironmentRemoval({
     view,
     onSaved,
     onDone: focusAddEnvironment,
   });
-
-  const servicesOf = (dir: string): SourcedService[] =>
-    services.filter((service) => service.repo === dir);
-
-  const withServices = view.repos.filter((repo) => servicesOf(repo.dir).length > 0);
-  const withoutServices = view.repos.filter((repo) => servicesOf(repo.dir).length === 0);
-  const addService = (repo?: string) => {
-    void navigate(addServicePath(view.project, repo), { state: origin });
-  };
 
   return (
     <div className="ah-env-page">
@@ -231,8 +178,9 @@ export function EnvironmentsSection({
                 <caption className="ah-sr">Environments and what agents may do</caption>
                 <colgroup>
                   <col style={{ width: "22%" }} />
-                  <col style={{ width: "24%" }} />
+                  <col style={{ width: "22%" }} />
                   <col />
+                  <col style={{ width: 120 }} />
                   <col style={{ width: 140 }} />
                   <col style={{ width: 200 }} />
                 </colgroup>
@@ -241,6 +189,7 @@ export function EnvironmentsSection({
                     <th scope="col">Environment</th>
                     <th scope="col">What agents may do</th>
                     <th scope="col">Secrets</th>
+                    <th scope="col">Services</th>
                     <th scope="col">Set by</th>
                     <th scope="col">
                       <span className="ah-sr">Actions</span>
@@ -254,6 +203,9 @@ export function EnvironmentsSection({
                       isMine(environment) &&
                       environment.team_access !== environment.access;
                     const askId = `environments.${environment.name}`;
+                    const reached = services.filter((service) =>
+                      service.endpoints.some((item) => item.environment === environment.name),
+                    ).length;
                     return (
                       <tr key={environment.name}>
                         <th scope="row">
@@ -285,6 +237,19 @@ export function EnvironmentsSection({
                         </td>
                         <td>
                           <CredentialLine environment={environment} />
+                        </td>
+                        <td>
+                          <Link
+                            className="ah-env-services-count"
+                            to={environmentPath(view.project, environment.name)}
+                            aria-label={`${String(reached)} ${reached === 1 ? "service" : "services"} in ${environment.name}`}
+                          >
+                            {reached === 0 ? (
+                              <span className="ah-muted">None yet</span>
+                            ) : (
+                              `${String(reached)} ${reached === 1 ? "service" : "services"}`
+                            )}
+                          </Link>
                         </td>
                         <td>
                           <EnvironmentSource environment={environment} />
@@ -360,194 +325,9 @@ export function EnvironmentsSection({
               cannot always be blocked.
             </p>
           </section>
-
-          <section className="ah-env-block" aria-labelledby="ah-env-services">
-            <div className="ah-env-block-head">
-              <h2 className="ah-h2" id="ah-env-services">
-                Services <span className="ah-muted ah-env-count">{services.length}</span>
-              </h2>
-              {services.length > 0 && (
-                <span className="ah-row" style={{ gap: 8 }}>
-                  <FindWithClaude project={view.project} blocked={blocked} />
-                  <Button
-                    icon="plus"
-                    onClick={() => {
-                      addService();
-                    }}
-                  >
-                    Add service
-                  </Button>
-                </span>
-              )}
-            </div>
-            {services.length === 0 ? (
-              <EmptyState
-                icon="server"
-                title="No services yet"
-                action={
-                  <span className="ah-row" style={{ gap: 8 }}>
-                    <FindWithClaude project={view.project} blocked={blocked} primary />
-                    <Button
-                      icon="plus"
-                      onClick={() => {
-                        addService();
-                      }}
-                    >
-                      Add service by hand
-                    </Button>
-                  </span>
-                }
-              >
-                Add the API, portal or database each repo runs, with its address in{" "}
-                {environments.map((environment) => environment.name).join(", ")}. Agents then know
-                where to point instead of guessing hosts.
-              </EmptyState>
-            ) : (
-              <div className="ah-table-wrap ah-env-matrix-wrap">
-                <table className="ah-table ah-env-matrix">
-                  <caption className="ah-sr">Addresses per service and environment</caption>
-                  <thead>
-                    <tr>
-                      <th scope="col">Service</th>
-                      {environments.map((environment) => (
-                        <th key={environment.name} scope="col">
-                          <span className="ah-env-name">
-                            {environment.name}
-                            {environment.production && <ProductionBadge />}
-                          </span>
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {withServices.map((repo) => (
-                      <Fragment key={repo.dir}>
-                        <tr className="ah-env-repo">
-                          <th scope="rowgroup" colSpan={environments.length + 1}>
-                            <span className="ah-env-name">
-                              <Icon name="book" />
-                              {repo.dir}
-                            </span>
-                          </th>
-                        </tr>
-                        {servicesOf(repo.dir).map((service) => (
-                          <tr key={service.name}>
-                            <th scope="row" className="ah-env-service">
-                              <button
-                                type="button"
-                                className="ah-link-button ah-mono"
-                                aria-label={`Open ${serviceLabel(repo.dir, service.name)}`}
-                                onClick={() => {
-                                  openService(repo.dir, service.name);
-                                }}
-                              >
-                                {service.name}
-                              </button>
-                              {service.kind && (
-                                <span className="ah-muted">
-                                  {" "}
-                                  · {serviceKind(service.kind)?.label ?? service.kind}
-                                </span>
-                              )}
-                            </th>
-                            {environments.map((environment) => {
-                              const found = service.endpoints.find(
-                                (item) => item.environment === environment.name,
-                              );
-                              const where = serviceLabel(repo.dir, service.name);
-                              if (!found)
-                                return (
-                                  <td key={environment.name}>
-                                    <Button
-                                      size="sm"
-                                      variant="ghost"
-                                      icon="plus"
-                                      className="ah-env-add"
-                                      aria-label={`Add address for ${where} in ${environment.name}`}
-                                      onClick={() => {
-                                        openService(repo.dir, service.name, environment.name);
-                                      }}
-                                    >
-                                      Add address
-                                    </Button>
-                                  </td>
-                                );
-                              const shown = endpointText(found);
-                              const note = endpointValues(found).note;
-                              return (
-                                <td key={environment.name} className="ah-env-value">
-                                  <button
-                                    type="button"
-                                    className="ah-env-cell"
-                                    aria-label={`Edit the address of ${where} in ${environment.name}: ${shown}${found.source === LOCAL_FILE ? " · set by you" : ""}${note ? ` · note: ${note}` : ""}`}
-                                    onClick={() => {
-                                      openService(repo.dir, service.name, environment.name);
-                                    }}
-                                  >
-                                    <FitText
-                                      text={shown}
-                                      tail={Math.min(shown.length, 18)}
-                                      className="ah-mono"
-                                      tooltip
-                                    />
-                                    {found.source === LOCAL_FILE && (
-                                      <Icon name="laptop" title="Set by you" />
-                                    )}
-                                    {note && <Icon name="info" title={note} />}
-                                  </button>
-                                  <CopyButton
-                                    text={shown}
-                                    label={`Copy the address of ${where} in ${environment.name}`}
-                                    className="ah-env-copy"
-                                    compact
-                                  />
-                                </td>
-                              );
-                            })}
-                          </tr>
-                        ))}
-                      </Fragment>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            {services.length > 0 && withoutServices.length > 0 && (
-              <p className="ah-small ah-muted ah-env-without">
-                No services yet in{" "}
-                {withoutServices.map((repo, position) => (
-                  <Fragment key={repo.dir}>
-                    {position > 0 && " · "}
-                    <button
-                      type="button"
-                      className="ah-link-button"
-                      aria-label={`Add a service to ${repo.dir}`}
-                      onClick={() => {
-                        addService(repo.dir);
-                      }}
-                    >
-                      {repo.dir}
-                    </button>
-                  </Fragment>
-                ))}
-              </p>
-            )}
-          </section>
         </>
       )}
 
-      {panel && (
-        <ServicePanel
-          view={view}
-          repo={panel.repo}
-          service={panel.service}
-          focusEnvironment={panel.environment}
-          onClose={() => {
-            openService(null);
-          }}
-          onSaved={onSaved}
-        />
-      )}
       {dialogs}
     </div>
   );

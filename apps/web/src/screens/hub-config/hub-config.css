@@ -339,81 +339,12 @@
   clip-path: inset(50%);
   white-space: nowrap;
 }
-.ah-env-matrix-wrap {
-  max-width: 100%;
-}
-.ah-env-matrix th[scope="row"],
-.ah-env-matrix thead th:first-child {
-  position: sticky;
-  left: 0;
-  z-index: 1;
-  background: var(--surface);
-  font-weight: 400;
-  color: var(--text);
-}
-.ah-env-matrix thead th:first-child {
-  z-index: calc(var(--z-sticky) + 1);
-  background: var(--surface-sunken);
-  color: var(--text-subtle);
-}
-.ah-env-service {
-  padding-left: var(--space-5) !important;
-  text-align: left;
-}
 .ah-env-repo th {
   position: static;
   height: 32px;
   background: var(--surface-sunken);
   color: var(--text);
   font-weight: 500;
-}
-.ah-env-add {
-  color: var(--text-subtle);
-}
-/* An address column takes the room the table has left, and an address longer than that is cut in
-   the middle (whole on hover, copy beside it) instead of widening the table. */
-.ah-env-matrix td.ah-env-value {
-  max-width: 0;
-  white-space: nowrap;
-}
-.ah-env-value > .ah-env-cell {
-  vertical-align: middle;
-  max-width: calc(100% - 32px);
-}
-.ah-env-copy {
-  vertical-align: middle;
-  margin-left: 4px;
-  opacity: 0;
-}
-.ah-env-value:hover .ah-env-copy,
-.ah-env-copy:focus-visible {
-  opacity: 1;
-}
-.ah-env-cell {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
-  padding: 2px 6px;
-  margin: 0 -6px;
-  border: 0;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-  text-align: left;
-}
-.ah-env-cell:hover {
-  background: var(--surface-hover);
-}
-.ah-env-cell:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-.ah-env-cell .ah-icon {
-  color: var(--text-subtle);
-  flex-shrink: 0;
 }
 .ah-env-fieldset {
   display: flex;
@@ -759,9 +690,6 @@ button.ah-setup-step-button:focus-visible {
   justify-content: flex-end;
   gap: var(--space-1);
 }
-.ah-env-without {
-  margin: 0;
-}
 .ah-link-button {
   padding: 0;
   border: 0;
@@ -848,6 +776,41 @@ button.ah-setup-step-button:focus-visible {
 }
 .ah-env-services-here > li + li {
   border-top: 1px solid var(--border);
+}
+.ah-env-service-item {
+  display: flex;
+  align-items: center;
+  padding-right: var(--space-2);
+}
+.ah-env-service-item:hover {
+  background: var(--surface-hover);
+}
+.ah-env-copy {
+  flex-shrink: 0;
+  opacity: 0;
+}
+.ah-env-service-item:hover .ah-env-copy,
+.ah-env-copy:focus-visible {
+  opacity: 1;
+}
+.ah-env-elsewhere {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ah-env-elsewhere > summary {
+  color: var(--text-subtle);
+  cursor: pointer;
+}
+.ah-env-elsewhere[open] > summary {
+  margin-bottom: var(--space-2);
+}
+.ah-env-services-count {
+  color: inherit;
+  text-decoration: none;
+}
+.ah-env-services-count:hover {
+  text-decoration: underline;
 }
 .ah-env-service-row {
   display: grid;

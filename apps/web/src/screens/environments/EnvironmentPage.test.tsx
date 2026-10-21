@@ -84,6 +84,29 @@ describe("EnvironmentScreen", () => {
     expect(screen.getByRole("complementary", { name: "What agents see" })).toBeVisible();
   });
 
+  it("lists the services here by repo, and folds the ones not here yet", async () => {
+    const config = aConfig();
+    config.environments.services.push({
+      repo: "demo-api",
+      name: "worker",
+      kind: "api",
+      description: null,
+      endpoints: [],
+    });
+    open("staging", { [CONFIG]: config });
+
+    expect(
+      await screen.findByRole("heading", { level: 2, name: /Services in staging\s*1/ }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Copy the address of demo-api › api in staging" }),
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByText("1 service of this project is not here yet"));
+    expect(
+      screen.getByRole("button", { name: "Open demo-api › worker: not in staging yet" }),
+    ).toBeVisible();
+  });
+
   it("changes the access in place and saves it for the team", async () => {
     const { requests } = open("staging", { [WRITE]: aConfig() as RouteReply });
 

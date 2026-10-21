@@ -8,6 +8,7 @@ import { DiscussProvider } from "../../shell/discuss";
 import { seriousViolations } from "../../testing/axe";
 import { renderWithApi } from "../../testing/builders";
 import type { ApiRoutes, RouteReply } from "../../testing/builders";
+import { EnvironmentScreen } from "./EnvironmentPage";
 import { EnvironmentsScreen } from "./index";
 
 const CONFIG = "/api/v1/projects/demo/config";
@@ -35,6 +36,15 @@ function open(config: unknown = aConfig(), routes: ApiRoutes = {}) {
     routes: { [CONFIG]: config as RouteReply, ...routes },
     path: "/projects/demo/environments",
     route: "projects/:project/environments",
+  });
+}
+
+/** One environment's own page, where its services' panels open. */
+function openEnvironment(name: string, config: unknown, routes: ApiRoutes = {}) {
+  return renderWithApi(createElement(DiscussProvider, null, createElement(EnvironmentScreen)), {
+    routes: { [CONFIG]: config as RouteReply, ...routes },
+    path: `/projects/demo/environment/${name}`,
+    route: "projects/:project/environment/:name",
   });
 }
 
@@ -133,21 +143,18 @@ describe("EnvironmentsScreen", () => {
     expect(within(table).getByText("DEMO_LIVE_DB_URL")).toBeVisible();
   });
 
-  it("shows each service's address per environment, and repos with none", async () => {
+  it("counts each environment's services and leaves their addresses to its own page", async () => {
     open(withEnvironments());
 
-    const matrix = await screen.findByRole("table", {
-      name: "Addresses per service and environment",
-    });
+    const table = await screen.findByRole("table", { name: "Environments and what agents may do" });
+    expect(within(table).getByRole("link", { name: "1 service in local" })).toHaveAttribute(
+      "href",
+      "/projects/demo/environment/local",
+    );
+    expect(within(table).getByRole("link", { name: "0 services in live" })).toBeVisible();
     expect(
-      within(matrix).getByRole("button", {
-        name: "Edit the address of demo-api › api in local: http://localhost:8000",
-      }),
-    ).toBeVisible();
-    expect(
-      within(matrix).getByRole("button", { name: "Add address for demo-api › api in live" }),
-    ).toBeVisible();
-    expect(screen.getByRole("button", { name: "Add a service to demo-web" })).toBeVisible();
+      screen.queryByRole("table", { name: "Addresses per service and environment" }),
+    ).not.toBeInTheDocument();
   });
 
   it("opens an environment's page from its name and from Edit", async () => {
@@ -212,11 +219,13 @@ describe("EnvironmentsScreen", () => {
   });
 
   it("changes a service's addresses together in its panel", async () => {
-    const { requests } = open(withEnvironments(), { [WRITE]: withEnvironments() });
+    const { requests } = openEnvironment("local", withEnvironments(), {
+      [WRITE]: withEnvironments(),
+    });
 
     await userEvent.click(
       await screen.findByRole("button", {
-        name: /Edit the address of demo-api › api in local/,
+        name: "Open demo-api › api: http://localhost:8000 in local",
       }),
     );
     const panel = screen.getByRole("dialog", { name: "demo-api › api" });
@@ -260,9 +269,13 @@ describe("EnvironmentsScreen", () => {
   });
 
   it("asks before closing a panel with unsaved changes", async () => {
-    open(withEnvironments());
+    openEnvironment("local", withEnvironments());
 
-    await userEvent.click(await screen.findByRole("button", { name: "Open demo-api › api" }));
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: "Open demo-api › api: http://localhost:8000 in local",
+      }),
+    );
     const panel = screen.getByRole("dialog", { name: "demo-api › api" });
     await userEvent.type(
       within(panel).getByRole("textbox", { name: "Address in live" }),
