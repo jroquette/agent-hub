@@ -149,6 +149,7 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
     "plugin/hub-workflow/schemas/eval.v1.json": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/schemas/review.v1.json": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/adr/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
+    "plugin/hub-workflow/skills/context-audit/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/create-plan/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/deliver/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/design-fit/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
@@ -171,6 +172,7 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
         None,
     ),
     "plugin/hub-workflow/skills/plain-language/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
+    "plugin/hub-workflow/skills/premortem/SKILL.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "plugin/hub-workflow/skills/property-based-testing/SKILL.md": (
         Kind.GENERIC,
         Ownership.MANAGED,

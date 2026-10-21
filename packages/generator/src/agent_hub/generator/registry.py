@@ -170,6 +170,7 @@ _BASE_AGENTS: Final = (
 # The base plugin's skills, one folder each (sorted).
 _BASE_SKILLS: Final = (
     "adr",
+    "context-audit",
     "create-plan",
     "deliver",
     "design-fit",
@@ -182,6 +183,7 @@ _BASE_SKILLS: Final = (
     "onboard",
     "overengineering-review",
     "plain-language",
+    "premortem",
     "property-based-testing",
     "recall",
     "refactor",

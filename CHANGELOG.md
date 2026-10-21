@@ -13,6 +13,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- The base plugin gains the `/premortem` and `/context-audit` skills (AGH-414). `/premortem` assumes a decision
+  already failed and gives its top three causes an early-warning sign and the cheapest experiment that could prove the
+  choice wrong. `/context-audit` estimates the always-loaded context of a hub and its repos and ranks the cuts by
+  tokens saved. Both only report. They arrive with `hub sync` after you bump `platform.version`.
 - The base plugin gains the `security-reviewer` agent and the `/design-fit` skill (AGH-413). `security-reviewer`
   reviews a diff's added lines in a fresh context, runs Semgrep or Bandit when installed, traces each finding from an
   untrusted source to a sink and refutes it before reporting; a scanner that did not run is reported as not run.
