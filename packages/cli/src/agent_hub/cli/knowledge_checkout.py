@@ -37,6 +37,8 @@ from agent_hub.generator.regular_files import NOT_REGULAR as READER_NOT_REGULAR
 from agent_hub.generator.regular_files import read_regular
 
 GIT_TIMEOUT_SECONDS: Final = 30.0
+# Of git's last stderr line, an error shows at most this many characters.
+MAX_GIT_MESSAGE_CHARS: Final = 200
 _DOCS_FOLDER: Final = "docs"
 _LIST_ARGUMENTS: Final = ("ls-files", "-z", "--cached", "--others", "--exclude-standard", "--")
 _CEILING_VARIABLE: Final = "GIT_CEILING_DIRECTORIES"
@@ -122,15 +124,23 @@ class GitKnowledgeCheckout:
 
     def _names(self, source: _Source) -> Iterator[tuple[_Source, bytes, str]]:
         """Each listed name under ``source`` the index looks at: as git printed it (relative
-        to the source's cwd) and as a hub-relative path."""
-        printed = self._list(source).split(b"\0")
-        for entry in sorted(set(printed)):
+        to the source's cwd) and as a hub-relative path, in the order of the printed names.
+
+        Names the index never looks at are dropped while the output is scanned, so what is kept
+        grows with the Markdown names only. A name that is not UTF-8 is shown with its bytes
+        escaped; when a UTF-8 name reads the same, that one is kept.
+        """
+        chosen: dict[str, bytes] = {}
+        for entry in self._list(source).split(b"\0"):
             # ``dir/`` is an untracked nested repository: never listed or walked.
             if not entry or entry.endswith(b"/"):
                 continue
             path = source.prefix + entry.decode("utf-8", "backslashreplace")
-            if is_indexed_name(path):
-                yield source, entry, path
+            kept = chosen.get(path)
+            if is_indexed_name(path) and (kept is None or not _is_utf8(kept)):
+                chosen[path] = entry
+        for path, entry in sorted(chosen.items(), key=lambda item: item[1]):
+            yield source, entry, path
 
     def _list(self, source: _Source) -> bytes:
         limit = document_rules.MAX_LISTING_BYTES
@@ -151,8 +161,9 @@ class GitKnowledgeCheckout:
             msg = f"{source.label}: git could not run: {error.strerror or error}"
             raise KnowledgeCheckoutError(msg) from error
         if result.returncode != 0:
-            first = next(iter(result.stderr.decode("utf-8", "replace").splitlines()), "")
-            msg = f"{source.label}: git exited with {result.returncode}: {one_line(first)}"
+            said = [line for line in result.stderr.decode("utf-8", "replace").splitlines() if line]
+            last = said[-1][:MAX_GIT_MESSAGE_CHARS] if said else ""
+            msg = f"{source.label}: git exited with {result.returncode}: {one_line(last)}"
             raise KnowledgeCheckoutError(msg.removesuffix(": "))
         if len(result.stdout) > limit:
             msg = f"{source.label}: git listed more than {limit} bytes; nothing was indexed"
@@ -190,6 +201,14 @@ class GitKnowledgeCheckout:
                         yield found
 
 
+def _is_utf8(entry: bytes) -> bool:
+    try:
+        entry.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
 def _is_plain(entry: bytes) -> bool:
     """Whether ``entry`` is a relative path that stays below its root (no empty, ``.`` or
     ``..`` segment)."""
@@ -199,8 +218,6 @@ def _is_plain(entry: bytes) -> bool:
 def _listed_file(chain: _FolderChain, entry: bytes, path: str) -> ListedFile | None:
     """``entry`` as listed: its fingerprint, and why the listing already rules it out; None
     when it is gone since git listed it."""
-    if not _is_plain(entry):
-        return None
     segments = entry.split(b"/")
     folder = chain.folder(segments[:-1])
     if not isinstance(folder, int):
@@ -217,9 +234,7 @@ def _listed_file(chain: _FolderChain, entry: bytes, path: str) -> ListedFile | N
 
 def _skip_reason(entry: bytes, status: os.stat_result) -> str | None:
     """Why the file ``lstat`` described is not read, or None to read it."""
-    try:
-        entry.decode("utf-8")
-    except UnicodeDecodeError:
+    if not _is_utf8(entry):
         return NOT_UTF8
     if stat.S_ISLNK(status.st_mode):
         return THROUGH_LINK
