@@ -677,7 +677,7 @@ function FlowCard({
       </span>
       {row.flow && <TicketStepBar flow={row.flow} />}
       <div className="ah-flow-card-foot">
-        {(note || action || signal) && (
+        {(note || action != null || signal !== null) && (
           <div className="ah-flow-card-status">
             {replaced && row.flow && <TicketSignal flow={row.flow} />}
             {note && <ReadinessText row={row} rows={rows} external={external} brief />}
