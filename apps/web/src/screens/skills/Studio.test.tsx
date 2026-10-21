@@ -78,6 +78,16 @@ async function bodyOf(request: Request | undefined): Promise<Record<string, unkn
   return JSON.parse(await request.clone().text()) as Record<string, unknown>;
 }
 
+/** The live regions (and live roles) whose text holds `text`, outermost only: one per announcement. */
+function announcing(text: string): Element[] {
+  const live = [...document.querySelectorAll('[aria-live], [role="status"], [role="alert"]')];
+  return live.filter(
+    (node) =>
+      (node.textContent ?? "").includes(text) &&
+      !live.some((outer) => outer !== node && outer.contains(node)),
+  );
+}
+
 /** Opens the Studio on a draft whose session already wrote a publishable SKILL.md, and opens
  * the Publish dialog. */
 async function openPublish(apiRoutes: ApiRoutes) {
@@ -369,16 +379,18 @@ describe("StudioScreen (publish)", () => {
     expect(posts(view.requests, PUBLISH)).toHaveLength(1);
   });
 
-  it("publish_route says Publishing in the dialog's live region, mounted before it", async () => {
-    const { dialog } = await openPublish(routes({ [`POST ${PUBLISH}`]: "pending" }));
-    const region = dialog.querySelector('.ah-sr[aria-live="polite"]');
+  it("publish_route says Publishing once, in the page's live region mounted before it", async () => {
+    const { view, dialog } = await openPublish(routes({ [`POST ${PUBLISH}`]: "pending" }));
+    const region = view.container.querySelector('.ah-sr[aria-live="polite"]');
     expect(region).toBeInTheDocument();
     expect(region?.textContent).toBe("");
 
     await userEvent.click(within(dialog).getByRole("button", { name: "Publish" }));
 
     expect(region).toHaveTextContent("Publishing…");
-    expect(dialog.querySelector('.ah-sr[aria-live="polite"]')).toBe(region);
+    expect(view.container.querySelector('.ah-sr[aria-live="polite"]')).toBe(region);
+    // Not from inside the busy dialog too.
+    expect(announcing("Publishing…")).toEqual([region]);
   });
 
   it("publish_route says Published in the page's live region, then focuses the result", async () => {
@@ -395,6 +407,46 @@ describe("StudioScreen (publish)", () => {
     const result = (await screen.findByText("Published.")).closest("[tabindex]");
     await waitFor(() => {
       expect(result).toHaveFocus();
+    });
+    // One announcement: the focused result is a named region, and its banner is not live.
+    expect(announcing("Published.")).toEqual([region]);
+    expect(result).toHaveAccessibleName("Publish result");
+  });
+
+  it("publish_route says a problem once and focuses it again on a second identical failure", async () => {
+    const { view, dialog } = await openPublish(
+      routes({
+        [`POST ${PUBLISH}`]: aProblem({
+          status: 409,
+          title: "Item write refused",
+          detail: "A skill named changelog already exists",
+          code: "item_exists",
+        }),
+      }),
+    );
+    await userEvent.click(within(dialog).getByRole("button", { name: "Publish" }));
+    const notice = (await screen.findByText("A skill named changelog already exists")).closest(
+      "[tabindex]",
+    );
+    await waitFor(() => {
+      expect(notice).toHaveFocus();
+    });
+    const region = view.container.querySelector('.ah-sr[aria-live="polite"]');
+    expect(announcing("A skill named changelog already exists")).toEqual([region]);
+
+    await userEvent.click(screen.getByRole("button", { name: "Publish" }));
+    await userEvent.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", { name: "Publish" }),
+    );
+
+    await waitFor(() => {
+      expect(posts(view.requests, PUBLISH)).toHaveLength(2);
+    });
+    const again = (await screen.findByText("A skill named changelog already exists")).closest(
+      "[tabindex]",
+    );
+    await waitFor(() => {
+      expect(again).toHaveFocus();
     });
   });
 
@@ -423,6 +475,22 @@ describe("StudioScreen (publish)", () => {
     expect(await screen.findByRole("button", { name: "Discard draft" })).toBeInTheDocument();
     expect(screen.getByText("This draft was already published; discard it.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Publish" })).toBeDisabled();
+    expect(screen.queryByText(/nothing is published until you click Publish/)).toBeNull();
+    expect(screen.getByText(/stays until you discard it/)).toBeInTheDocument();
+  });
+
+  it("publish_route shows a reopened spent draft with the server's own detail", async () => {
+    const detail =
+      "Published; the old item could not be removed and stays. The draft is still there: discard it.";
+    saveDraft(
+      DRAFT,
+      { project: "demo", kind: "skill" },
+      { sessionId: ID, spent: true, spentDetail: detail },
+    );
+    renderStudio(routes());
+
+    expect(await screen.findByText(detail)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Discard draft" })).toBeInTheDocument();
   });
 
   it("publish_managed announces the server's warning and focuses Publish anyway", async () => {
@@ -448,12 +516,37 @@ describe("StudioScreen (publish)", () => {
       expect(anyway).toHaveFocus();
     });
     expect(region).toHaveTextContent(PUBLISH_MANAGED_WARNING);
+    expect(announcing(PUBLISH_MANAGED_WARNING)).toEqual([region]);
   });
 });
 
 describe("StudioScreen (edit an existing item)", () => {
   const TARGET = { kind: "skill" as const, source: "hub-workflow", name: "feature" };
   const DETAIL = "/api/v1/projects/demo/skills/skill/hub-workflow/feature";
+  const SOURCE = "plugin/hub-workflow/skills/feature/SKILL.md";
+
+  /** The session of an edit that renamed feature to feature2. */
+  function renamedEvents() {
+    const renamed =
+      "---\nname: feature2\ndescription: Takes an idea from spec to delivery.\n---\n\n# Feature\n";
+    return {
+      items: [
+        aLogRecord("user.message", { seq: 1, body: { text: "Rename it" } }),
+        aLogRecord("tool.call", {
+          seq: 2,
+          body: {
+            input: { file_path: `${HUB}/.hub-drafts/${DRAFT}/SKILL.md`, content: renamed },
+            name: "Write",
+            parent_tool_use_id: null,
+            tool_use_id: "toolu_01",
+          },
+        }),
+        aLogRecord("tool.result", { seq: 3 }),
+        aLogRecord("result", { seq: 4 }),
+      ],
+      next_after: null,
+    };
+  }
 
   function openEdit() {
     return renderWithApi(<EditDraftScreen />, {
@@ -607,6 +700,82 @@ description: Takes an idea from spec to delivery.
     expect(await screen.findByRole("link", { name: "open feature2" })).toBeInTheDocument();
     expect(screen.getByText("Published.")).toBeInTheDocument();
     expect(screen.queryByText("feature is not in the catalog any more.")).toBeNull();
+  });
+
+  it("shows that an unpublished edit draft's item is gone, on reopen and on a read again", async () => {
+    saveDraft(
+      DRAFT,
+      { project: "demo", kind: "skill" },
+      { target: TARGET, name: "feature", sessionId: ID, sourcePath: SOURCE },
+    );
+    const gone = renderStudio(
+      routes({
+        [DETAIL]: aProblem({ status: 404, title: "Not found", detail: "No skill feature." }),
+      }),
+    );
+    expect(await screen.findByText("feature is not in the catalog any more.")).toBeInTheDocument();
+    gone.unmount();
+
+    let deleted = false;
+    const view = renderStudio(
+      routes({
+        [DETAIL]: () =>
+          deleted
+            ? aProblem({ status: 404, title: "Not found", detail: "No skill feature." })
+            : aSkillDetail(),
+      }),
+    );
+    expect(await screen.findByRole("button", { name: "Publish" })).toBeInTheDocument();
+    deleted = true;
+    await act(async () => {
+      await view.queryClient.refetchQueries();
+    });
+
+    expect(await screen.findByText("feature is not in the catalog any more.")).toBeInTheDocument();
+  });
+
+  it("publish_route reopens a renamed, published edit without its old place", async () => {
+    saveDraft(
+      DRAFT,
+      { project: "demo", kind: "skill" },
+      { target: TARGET, name: "feature2", sessionId: ID, sourcePath: SOURCE, published: true },
+    );
+    renderStudio(
+      routes({
+        "/api/v1/projects/demo/skills": aSkillCatalog({
+          items: [
+            ...aSkillCatalog().items.filter((i) => i.name !== "feature"),
+            aCatalogItem({ name: "feature2" }),
+          ],
+        }),
+        [DETAIL]: aProblem({ status: 404, title: "Not found", detail: "No skill feature." }),
+        [`${SESSION}/events`]: renamedEvents(),
+      }),
+    );
+
+    expect(await screen.findByRole("link", { name: "open feature2" })).toBeInTheDocument();
+    expect(screen.queryByText(/the original is unchanged until you click Publish/)).toBeNull();
+    expect(screen.queryByText(/Publishes to/)).toBeNull();
+    expect(screen.queryByText("plugin/hub-workflow/skills/feature/", { exact: false })).toBeNull();
+    expect(screen.queryByText(SOURCE, { exact: false })).toBeNull();
+    expect(screen.getByText(/Published from/)).toBeInTheDocument();
+    expect(screen.getByText(/The item's earlier text is in its history/)).toBeInTheDocument();
+  });
+
+  it("keeps an edit draft's place in the list and its time when it is opened", async () => {
+    const AT = new Date("2026-10-11T14:00:00.000Z");
+    saveDraft(
+      DRAFT,
+      { project: "demo", kind: "skill" },
+      { target: TARGET, name: "feature", sessionId: ID, sourcePath: SOURCE },
+      AT,
+    );
+    saveDraft("agent-zzz999", { project: "demo", kind: "agent" }, { name: "other" }, AT);
+    renderStudio(routes({ [DETAIL]: aSkillDetail() }));
+
+    expect(await screen.findByRole("button", { name: "Publish" })).toBeInTheDocument();
+    expect(openDrafts("demo").map((d) => d.draftId)).toEqual(["agent-zzz999", DRAFT]);
+    expect(storedDraft(DRAFT)?.updatedAt).toBe(AT.toISOString());
   });
 
   it("starts the session on a copy of the item, leaving the original alone", async () => {

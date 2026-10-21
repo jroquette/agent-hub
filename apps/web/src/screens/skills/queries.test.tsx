@@ -244,6 +244,7 @@ describe("skills queries", () => {
         "POST /api/v1/projects/demo/skills/drafts/skill-def456/publish": aProblem({
           status: 500,
           title: "Draft not removed",
+          detail: "Published; the draft is still there.",
           code: "draft_not_removed",
           published: true,
         }),
@@ -256,6 +257,7 @@ describe("skills queries", () => {
       expect(storedDraft("skill-def456")?.spent).toBe(true);
     });
     expect(storedDraft("skill-def456")?.published).toBe(false);
+    expect(storedDraft("skill-def456")?.spentDetail).toBe("Published; the draft is still there.");
   });
 });
 
