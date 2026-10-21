@@ -457,18 +457,20 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
             />
           </div>
         </div>
-        <div className="as-column ah-row as-heading-row">
+        <div className="as-column as-heading">
           <h1 className="as-title" title={name ?? undefined}>
             {name ?? "Untitled session"}
           </h1>
-          <AgentStatusBadge
-            status={status}
-            endReason={state.endReason ?? session.end_reason}
-            background={runningTasks(state)}
-          />
-          {feature && <FeatureChip project={feature.project} slug={feature.slug} />}
-          <span className="ah-grow" />
-          <CostMeter meter={state.meter} />
+          <div className="ah-row ah-small as-heading-meta">
+            <AgentStatusBadge
+              status={status}
+              endReason={state.endReason ?? session.end_reason}
+              background={runningTasks(state)}
+            />
+            {feature && <FeatureChip project={feature.project} slug={feature.slug} />}
+            <span className="ah-grow" />
+            <CostMeter meter={state.meter} />
+          </div>
         </div>
         {(actionError ?? transcript.streaming) && (
           <div className="as-column">
