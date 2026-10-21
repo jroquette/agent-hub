@@ -122,7 +122,15 @@ def ticket_brief(
     with _feature_lock(hub, feature):
         written, version = appended_brief(_read(target / TICKET_BRIEF, MAX_BRIEF_BYTES), brief)
         _replace(target, TICKET_BRIEF, written)
-    return {"path": _relative(hub, target / TICKET_BRIEF), "version": version}
+    # The hub and the ticket repo's base, which the preflight reads without a checkout.
+    known = any(repo.dir == planned.repo for repo in config.repos)
+    base = f"origin/{config.default_branch_for(planned.repo or '')}" if known else ""
+    return {
+        "path": _relative(hub, target / TICKET_BRIEF),
+        "version": version,
+        "hub": str(hub),
+        "base": base,
+    }
 
 
 def preflight(
