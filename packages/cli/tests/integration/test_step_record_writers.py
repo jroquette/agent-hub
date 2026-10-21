@@ -249,7 +249,13 @@ class TestTicketBrief:
     ) -> None:
         output = hub.ok("ticket-brief", *TICKET)
 
-        assert output == {"path": f"{FEATURE}/tickets/DEM-8/brief.md", "version": 1}
+        assert output == {
+            "path": f"{FEATURE}/tickets/DEM-8/brief.md",
+            "version": 1,
+            # Where the preflight reads the hub and main (AGH-404).
+            "hub": str(hub.root),
+            "base": "origin/trunk",
+        }
         text = (hub.root / output["path"]).read_text()
         fields = json.loads(text.split("```json\n", 1)[1].split("\n```", 1)[0])
         assert fields == {
