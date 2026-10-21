@@ -342,7 +342,7 @@ def a_preflight_run(**fields: object) -> dict[str, object]:
     } | fields
 
 
-def a_request_head(n: int, ticket: str, affected: str = "[]", body: str = "") -> RecordHead:
+def a_request_head(n: int, ticket: str, *, affected: str = "[]", body: str = "") -> RecordHead:
     text = (
         f"---\ntype: change-request\nticket: {ticket}\nstatus: open\nplan_from: 2\nplan_to: 3\n"
         f"affected: {affected}\nopened_at: 2026-10-21\nrun_id: implement-{n}\n---\n{body}"
