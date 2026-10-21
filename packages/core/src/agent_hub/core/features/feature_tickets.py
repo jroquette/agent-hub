@@ -27,10 +27,6 @@ from agent_hub.core.features.golden_path import (
 from agent_hub.core.features.scope_rules import ticket_aliases
 from agent_hub.core.features.ticket_flow import ticket_evidence, ticket_flow
 from agent_hub.core.features.ticket_records import (
-    PREFLIGHT_FILE,
-    TICKET_BRIEF,
-    TICKET_PLAN,
-    TICKETS_FOLDER,
     change_requests,
     preflight_record,
     request_view,
@@ -135,26 +131,23 @@ def ticket_records(folder: FeatureFolder, ticket: str, *, project: str) -> Ticke
     if names is None:
         return None
     files = next((found for found in folder.ticket_folders if found.name.upper() in names), None)
-    base = None if files is None else f"features/{folder.slug}/{TICKETS_FOLDER}/{files.name}"
-    preflight = None
-    if files is not None and base is not None:
-        parsed = preflight_record(files.preflight, folder=files.name)
-        if parsed is not None:
-            preflight = PreflightView(
-                path=f"{base}/{PREFLIGHT_FILE}",
-                runs=() if isinstance(parsed, str) else parsed.runs,
-                problem=parsed if isinstance(parsed, str) else None,
-            )
+    parsed = None if files is None else preflight_record(files.preflight, folder=files.name)
+    preflight = (
+        None
+        if parsed is None
+        else PreflightView(
+            runs=() if isinstance(parsed, str) else parsed.runs,
+            problem=parsed if isinstance(parsed, str) else None,
+        )
+    )
     requests = change_requests(folder.change_requests, skipped=folder.change_requests_skipped)
     return TicketRecords(
         project=project,
         slug=folder.slug,
         ticket=ticket,
-        brief=f"{base}/{TICKET_BRIEF}" if files is not None and files.brief else None,
-        plan=f"{base}/{TICKET_PLAN}" if files is not None and files.plan else None,
         preflight=preflight,
         change_requests=tuple(
-            request_view(request, slug=folder.slug)
+            request_view(request, slug=folder.slug, body=True)
             for request in requests.requests
             if any(name.upper() in names for name in (request.ticket or "", *request.affected))
         ),

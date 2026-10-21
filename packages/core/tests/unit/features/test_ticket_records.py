@@ -6,10 +6,10 @@ import json
 import pytest
 
 from agent_hub.core.features.feature_status import RecordHead
+from agent_hub.core.features.feature_view import ChangeDecisionView
 from agent_hub.core.features.ticket_records import (
     MAX_CHANGE_REQUEST_FILES,
     MAX_PREFLIGHT_BYTES,
-    ChangeDecision,
     ChangeRequest,
     change_requests,
     preflight_record,
@@ -77,6 +77,7 @@ def test_reads_open_when_request_has_no_decision() -> None:
             plan_from=2,
             opened_at="2026-10-21T09:30:00Z",
             run_id="implement-8",
+            body="# Plan change request 1\n",
         ),
     )
     assert found.problem is None
@@ -86,7 +87,7 @@ def test_reads_open_when_request_has_no_decision() -> None:
 def test_reads_decision_when_decision_file_exists() -> None:
     (request,) = change_requests((a_request(), a_decision(decision="declined")), skipped=0).requests
 
-    assert request.decision == ChangeDecision(
+    assert request.decision == ChangeDecisionView(
         decision="declined",
         decided_by="Dana Owner",
         decided_at="2026-10-21T10:00:00Z",

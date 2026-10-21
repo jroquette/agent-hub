@@ -212,9 +212,10 @@ class ChangeRequestView(ViewModel):
     """A plan change request (``change-requests/<n>.md``, two-level-flows S2): its asking
     ``ticket``, ``status`` folded from its decision (None when the request cannot be read,
     ``problem`` then says why), the plan versions, the tickets it affects, when it was opened and
-    by which ``run_id``. ``approval_id`` is the open gate of that run that answers it (P8, A5),
-    None when the run has none: hub web then records the decision itself (AC-2.14). ``path`` is
-    relative to the hub's ``brain/``."""
+    by which ``run_id``. ``approval_id`` is the open gate of that run that answers it (P8, A5);
+    ``decidable_here`` says the run is gone (lost, or ended), so hub web records the decision
+    itself (AC-2.14). ``path`` is relative to the hub's ``brain/``; ``body`` (the ticket route
+    only) is the request's evidence and proposal, as markdown within its 16 KiB head."""
 
     n: int = Field(ge=1)
     ticket: str | None
@@ -225,9 +226,11 @@ class ChangeRequestView(ViewModel):
     opened_at: str | None
     run_id: str | None
     approval_id: str | None = None
+    decidable_here: bool = False
     decision: ChangeDecisionView | None
     path: str
     problem: str | None
+    body: str | None = None
 
 
 class FeatureDetail(FeatureView):
