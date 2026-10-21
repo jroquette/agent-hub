@@ -49,6 +49,9 @@ class Nullable:
     shape: Shape
 
 
+# The fix of a failed issue create, over either transport: the issue may exist, so it is never
+# retried (graphql.py and mcp_protocol.py both use this one).
+CREATE_FIX = "check the team's issues in Linear: it may have been created, and it is not retried"
 UNEXPECTED_FIX = "Linear's API may have changed; report it with the operation named here"
 
 

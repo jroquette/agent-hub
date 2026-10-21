@@ -950,3 +950,27 @@ def test_refuses_list_when_issue_repeated(hub_root: Path) -> None:
 
     with pytest.raises(TrackerError, match=r"^list_ready: the reply has another shape"):
         _client(runner, hub_root).list_ready("DEM", "agent-ready")
+
+
+@pytest.mark.parametrize(
+    "replied",
+    [
+        {"id": "OPS-9", "title": "A finding"},
+        {"id": "DEM-9", "title": "Another title"},
+    ],
+    ids=["other-team", "other-title"],
+)
+def test_raises_when_create_issue_reply_names_other_issue(
+    hub_root: Path, replied: dict[str, str]
+) -> None:
+    issue = {**_issue_reply("DEM-9"), **replied}
+    runner = _Scripted(_reply({"issue": issue}))
+
+    with pytest.raises(TrackerError, match="the write reply names another issue") as raised:
+        _client(runner, hub_root).create_issue("DEM", "A finding", "Plain words.")
+
+    assert "may have been created, and it is not retried" in str(raised.value)
+    # One write call, with only save_issue allowed.
+    (argv,) = runner.argvs
+    allowed, _denied_tools = _tool_flags(tuple(argv))
+    assert allowed == ("mcp__Linear__save_issue",)
