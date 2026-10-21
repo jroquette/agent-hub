@@ -559,7 +559,7 @@ def _skill(path: str) -> ItemUnit:
 
 
 def _renamed(content: UnitContent) -> Placement:
-    def place(reads: UnitReads, *, replayed: bool) -> Destination:
+    def place(reads: UnitReads, *, replayed: frozenset[str]) -> Destination:
         assert not replayed
         assert isinstance(reads[ALPHA], UnitContent)
         assert reads[BETA] == UnreadUnit(kind="missing")
@@ -599,11 +599,11 @@ def test_answers_replayed_when_disk_holds_this_drafts_publish() -> None:
     rig = _Rig({AGENT: SCOUT})
     seen: list[bool] = []
 
-    def place(reads: UnitReads, *, replayed: bool) -> Destination:
-        seen.append(replayed)
+    def place(reads: UnitReads, *, replayed: frozenset[str]) -> Destination:
+        seen.append(AGENT in replayed)
         on_disk = reads[AGENT]
         assert isinstance(on_disk, UnitContent)
-        return Destination(unit=_agent(), content=on_disk if replayed else _scout(NEWER))
+        return Destination(unit=_agent(), content=on_disk if AGENT in replayed else _scout(NEWER))
 
     first = rig.step.publish(HUB, [_agent()], place, confirm_managed=False, draft_id=DRAFT_ID)
     again = rig.step.publish(HUB, [_agent()], place, confirm_managed=False, draft_id=DRAFT_ID)
@@ -624,7 +624,7 @@ def test_refuses_existing_script_when_other_bytes() -> None:
     rig = _Rig({script: b"#!/bin/sh\necho other\n"})
     unit = ItemUnit(project=PROJECT, unit_path=hooks, kind=UnitKind.HOOK)
 
-    def place(reads: UnitReads, *, replayed: bool) -> Destination:
+    def place(reads: UnitReads, *, replayed: frozenset[str]) -> Destination:
         del reads, replayed
         return Destination(
             unit=unit,

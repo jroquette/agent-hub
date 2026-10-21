@@ -24,7 +24,8 @@ and key; ``merge_hooks`` adds hooks to a hook file (or a new one). Both write th
 otherwise it replaces its hook, so a replay of an edit that moved its hook is told by the unit's
 ``publish`` version naming the draft, not by the file (A7); with no such version,
 ``holds_moved_hook`` tells a draft that moves its hook into a file already holding it (A12),
-which is refused. A hooks file on
+which is refused; ``holds_hooks`` tells a file holding every draft group (a replay that keeps
+the file as it is must find them all there). A hooks file on
 disk that is not a strict JSON hooks object is ``ItemWriteRefusedError("unit_unreadable")``.
 
 ``new_destination`` places a new item in the project's own plugin, ``plugin/<project>/``, a new
@@ -281,6 +282,17 @@ def holds_moved_hook(file_json: bytes, at: HookAt, new_hooks: HookGroups) -> boo
     ):
         return False
     return all(_holds(hooks.get(event), draft_group) for event, draft_group in drafted)
+
+
+def holds_hooks(file_json: bytes, new_hooks: HookGroups) -> bool:
+    """Whether ``file_json`` holds every draft group of ``new_hooks`` (as ``merge_hooks`` tells a
+    group already there): a replay of a publish of these hooks does."""
+    hooks = _hooks_of(_hooks_document(file_json))
+    return all(
+        _holds(hooks.get(event), draft_group)
+        for event, draft_groups in new_hooks.items()
+        for draft_group in (draft_groups if isinstance(draft_groups, list) else [])
+    )
 
 
 def merge_hooks(file_json: bytes | None, new_hooks: HookGroups) -> bytes:
