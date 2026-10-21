@@ -1,6 +1,6 @@
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import {
@@ -9,6 +9,7 @@ import {
   aPage,
   aSession,
   aTicketFlow,
+  aTicketRow,
   anEvalRecord,
   renderWithApi,
   type FeatureTickets,
@@ -65,12 +66,8 @@ function panel(): HTMLElement {
   return screen.getByRole("complementary", { name: /^Ticket AGH-/ });
 }
 
-afterEach(() => {
-  delete document.documentElement.dataset.theme;
-});
-
-describe("TicketPanel", () => {
-  it("opens with ?ticket=<id> (replace) from a card title", async () => {
+describe("TicketPanel (AC-1.10)", () => {
+  it("AC-1.10 opens with ?ticket=<id> (replace) from a card title", async () => {
     const { router } = show("/?doc=tickets");
 
     const title = screen.getByRole("link", { name: "Serve the ticket summaries" });
@@ -83,7 +80,7 @@ describe("TicketPanel", () => {
     expect(within(panel()).getByRole("heading", { level: 2 })).toHaveFocus();
   });
 
-  it("opens from a table row on Enter and o, the body one tab stop moved by j and k", async () => {
+  it("AC-1.10 opens from a table row on Enter and o, the body one tab stop moved by j and k", async () => {
     const { router } = show("/?doc=tickets&tickets=table");
 
     const rows = screen.getAllByRole("row").slice(1);
@@ -104,7 +101,7 @@ describe("TicketPanel", () => {
     expect(rows[1]).toHaveFocus();
   });
 
-  it("opens from a header ticket chip, on the Tickets tab", async () => {
+  it("AC-1.10 opens from a header ticket chip, on the Tickets tab", async () => {
     const API = "/api/v1/features/agent-hub/control-plane";
     const { router } = renderWithApi(<FeatureDetailScreen />, {
       routes: {
@@ -118,7 +115,7 @@ describe("TicketPanel", () => {
 
     const chips = await screen.findByRole("group", { name: "Tickets of this feature" });
     const chip = within(chips).getByRole("link", { name: "AGH-202" });
-    expect(chip).toHaveAttribute("title", expect.stringMatching(/AGH-202 · .*show its steps$/));
+    expect(chip).toHaveAccessibleDescription(/AGH-202 · .*show its steps$/);
     await userEvent.click(chip);
 
     expect(router.state.location.search).toBe("?doc=tickets&ticket=AGH-202");
@@ -131,7 +128,7 @@ describe("TicketPanel", () => {
     expect(router.state.location.search).not.toContain("ticket=");
   });
 
-  it("shows the seven steps with the current one disclosed, its ACs, blockers and sessions", async () => {
+  it("AC-1.10 shows the seven steps with the current one disclosed, its ACs, blockers and sessions", async () => {
     show("/?doc=tickets&ticket=AGH-202");
 
     const steps = within(panel()).getByRole("list", { name: "Steps" });
@@ -152,7 +149,7 @@ describe("TicketPanel", () => {
     expect(within(panel()).queryByRole("button", { name: /Start/ })).toBeNull();
   });
 
-  it("Esc closes it and returns focus to the opener", async () => {
+  it("AC-1.10 Esc closes it and returns focus to the opener", async () => {
     const { router } = show("/?doc=tickets");
     const title = screen.getByRole("link", { name: "Serve the ticket summaries" });
     await userEvent.click(title);
@@ -164,7 +161,7 @@ describe("TicketPanel", () => {
     expect(screen.getByRole("link", { name: "Serve the ticket summaries" })).toHaveFocus();
   });
 
-  it("?ticket= naming no ticket shows '<id> is not a ticket of this feature.'", () => {
+  it("AC-1.10 ?ticket= naming no ticket shows '<id> is not a ticket of this feature.'", () => {
     show("/?doc=tickets&ticket=AGH-999");
 
     expect(
@@ -175,7 +172,51 @@ describe("TicketPanel", () => {
     expect(screen.getByRole("button", { name: "Close panel" })).toBeInTheDocument();
   });
 
-  it("switches ticket in place when another card or a blocker is activated", async () => {
+  // AGH-330 Q6, Q7: an epic is the plan's, children or not; Close panel returns focus.
+  it("AC-1.10 names the feature's epic by the plan, keeps its Linear link, Close panel restores focus", async () => {
+    const data = tickets();
+    const epic = aTicketRow({
+      ref: "AGH-9",
+      id: "AGH-9",
+      key: "T0",
+      url: "https://linear.app/demo/issue/AGH-9",
+      blocked_by: [],
+      blocks: [],
+      readiness: "epic",
+      children: [],
+    });
+    const opener = document.createElement("button");
+    document.body.append(opener);
+    renderWithApi(
+      <TicketsTab
+        project="agent-hub"
+        slug="control-plane"
+        data={{
+          ...data,
+          tickets: [...data.tickets, epic],
+          planning: { ...data.planning, epics: ["AGH-9"] },
+        }}
+        error={null}
+        onRefresh={() => undefined}
+        evals={[]}
+        openerRef={{ current: opener }}
+      />,
+      { routes: { "/api/v1/sessions": aPage([]) }, path: "/?doc=tickets&ticket=AGH-9" },
+    );
+
+    const aside = screen.getByRole("complementary");
+    expect(aside).toHaveTextContent("AGH-9 is this feature's epic");
+    expect(within(aside).getByRole("link", { name: /^AGH-9/ })).toHaveAttribute(
+      "href",
+      "https://linear.app/demo/issue/AGH-9",
+    );
+    await userEvent.click(within(aside).getByRole("button", { name: "Close panel" }));
+    expect(screen.queryByRole("complementary")).toBeNull();
+    expect(opener).toHaveFocus();
+    opener.remove();
+  });
+
+  it("AC-1.10 switches ticket in place when another card or a blocker is activated", async () => {
     const { router } = show("/?doc=tickets&ticket=AGH-202");
 
     await userEvent.click(screen.getByRole("link", { name: "Show the planning view" }));
@@ -191,7 +232,7 @@ describe("TicketPanel", () => {
     expect(screen.getAllByRole("complementary")).toHaveLength(1);
   });
 
-  it("points to the Eval tab when a ticket eval waits on owner steps (its one signal)", () => {
+  it("AC-1.10 points to the Eval tab when a ticket eval waits on owner steps (its one signal)", () => {
     show("/?doc=tickets&ticket=AGH-202", [
       anEvalRecord({
         delivery: "agh-202",
@@ -207,10 +248,9 @@ describe("TicketPanel", () => {
     ).toHaveAttribute("href", "/?doc=eval&eval=agh-202");
   });
 
-  it.each(["light", "dark"])(
-    "has no serious axe violation, overlaid and docked, Flow and Table, in the %s theme (a11y)",
-    async (theme) => {
-      document.documentElement.dataset.theme = theme;
+  // Structure, names and roles (A16): theme contrast is tokens.test.ts's.
+  it("AC-1.10 has no serious axe violation, overlaid and docked, Flow and Table (a11y)", async () => {
+    {
       for (const width of [1280, 1600]) {
         vi.stubGlobal("matchMedia", (query: string) => ({
           matches: width >= 1600 && query === "(min-width: 1600px)",
@@ -225,6 +265,6 @@ describe("TicketPanel", () => {
         }
       }
       vi.unstubAllGlobals();
-    },
-  );
+    }
+  });
 });

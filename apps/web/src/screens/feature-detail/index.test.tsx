@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { GlobalStreamProvider } from "../../shell/GlobalStream";
+import { fmtDateTime } from "../../lib/format";
 import { seriousViolations } from "../../testing/axe";
 import {
   aBrainNote,
@@ -300,10 +301,64 @@ describe("FeatureDetailScreen", () => {
       const { router } = open({ [API]: waiting });
 
       await userEvent.click(
-        await screen.findByRole("button", { name: "Open the eval of acceptance" }),
+        await screen.findByRole("button", { name: "Open Eval 2, the acceptance eval" }),
       );
 
       expect(router.state.location.search).toBe("?doc=eval&eval=feature-r2");
+      // A signpost lands on its eval: focus goes to its group's row (AGH-330 UX blocker).
+      expect(screen.getByRole("button", { name: /^Whole feature\b.*2 evals/ })).toHaveFocus();
+    });
+
+    it("moves focus to the eval's group row from the banner's button and lines", async () => {
+      open({ [API]: waiting });
+
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Review owner steps of Eval 2" }),
+      );
+      expect(screen.getByRole("button", { name: /^Whole feature\b.*2 evals/ })).toHaveFocus();
+
+      await userEvent.click(
+        screen.getByRole("link", { name: "AGH-48: Eval 1 passed with owner steps" }),
+      );
+      expect(screen.getByRole("button", { name: /^AGH-48\b.*1 eval/ })).toHaveFocus();
+    });
+
+    it("says the future-dated wait the same way on the step and in the prompt (future)", async () => {
+      const after = "2026-11-21T09:01:00Z";
+      open(
+        {
+          [API]: {
+            ...waiting,
+            acceptance_eval: {
+              ...waiting.acceptance_eval,
+              owner_wait: {
+                ...waiting.acceptance_eval.owner_wait,
+                state: "future" as const,
+                signable_after: after,
+              },
+            },
+            golden_path: aGoldenPath({
+              phase: "acceptance",
+              steps: detail.golden_path.steps.map((step) =>
+                step.name === "acceptance"
+                  ? {
+                      ...step,
+                      state: "current",
+                      meta: "Sign-off possible after 21 Nov 2026, 09:01:00 UTC",
+                      reason: null,
+                    }
+                  : step,
+              ),
+            }),
+          },
+        },
+        "/features/agent-hub/layered-memory?doc=eval&eval=feature-r2",
+      );
+
+      const line = `Sign-off possible after ${fmtDateTime(after, "local")}`;
+      const path = await screen.findByRole("list", { name: "Golden path" });
+      expect(within(path).getByText(line)).toBeInTheDocument();
+      expect(screen.getByText(line, { selector: "b" })).toBeInTheDocument();
     });
 
     it("drops the Acceptance line while no sign-off can be recorded (undated)", async () => {
@@ -321,17 +376,12 @@ describe("FeatureDetailScreen", () => {
       expect(screen.queryByText(/^Acceptance: sign off/)).toBeNull();
     });
 
-    it.each(["light", "dark"])(
-      "has no serious a11y violations with the banner, in the %s theme (a11y)",
-      async (theme) => {
-        document.documentElement.dataset.theme = theme;
-        const { container } = open({ [API]: waiting });
-        await screen.findByText("Acceptance: sign off 3 ACs (Eval 2)");
+    it("has no serious a11y violations with the banner (a11y)", async () => {
+      const { container } = open({ [API]: waiting });
+      await screen.findByText("Acceptance: sign off 3 ACs (Eval 2)");
 
-        expect(await seriousViolations(container)).toEqual([]);
-        delete document.documentElement.dataset.theme;
-      },
-    );
+      expect(await seriousViolations(container)).toEqual([]);
+    });
   });
 
   it("shows every AC row at once, with no Show all fold (AC-269.12)", async () => {
@@ -989,7 +1039,8 @@ describe("FeatureDetailScreen", () => {
         "href",
         "/features/agent-hub/layered-memory?doc=tickets&ticket=AGH-48",
       );
-      expect(link).toHaveAttribute("title", "AGH-48 · Load the memory layers · show its steps");
+      // Its destination is its description (AGH-330 UX F6).
+      expect(link).toHaveAccessibleDescription("AGH-48 · Load the memory layers · show its steps");
       expect(header).not.toHaveTextContent("Load the memory layers");
       expect(within(header).getAllByText("In Progress")).toHaveLength(2);
       expect(screen.queryByText("PR —")).toBeNull();
@@ -1013,6 +1064,7 @@ describe("FeatureDetailScreen", () => {
       expect(await screen.findByRole("region", { name: "Ticket flow" })).toBeInTheDocument();
       expect(router.state.location.search).toBe("?doc=tickets");
       await userEvent.click(screen.getByRole("button", { name: "Open the eval of acceptance" }));
+      // Without an acceptance eval, the step names the tab it opens.
       expect(screen.getByRole("tab", { name: "Eval" })).toHaveAttribute("aria-selected", "true");
     });
 
@@ -1023,8 +1075,7 @@ describe("FeatureDetailScreen", () => {
 
       const header = screen.getByRole("group", { name: "Tickets of this feature" });
       expect(header).toHaveTextContent("AGH-48AGH-49");
-      expect(within(header).getByRole("link", { name: "AGH-49" })).toHaveAttribute(
-        "title",
+      expect(within(header).getByRole("link", { name: "AGH-49" })).toHaveAccessibleDescription(
         "AGH-49 · show its steps",
       );
     });
@@ -1177,15 +1228,10 @@ describe("FeatureDetailScreen", () => {
     });
   });
 
-  it.each(["light", "dark"])(
-    "has no serious a11y violations in the %s theme (a11y)",
-    async (theme) => {
-      document.documentElement.dataset.theme = theme;
-      const { container } = open();
-      await screen.findByRole("table", { name: "Acceptance criteria" });
+  it("has no serious a11y violations (a11y)", async () => {
+    const { container } = open();
+    await screen.findByRole("table", { name: "Acceptance criteria" });
 
-      expect(await seriousViolations(container)).toEqual([]);
-      delete document.documentElement.dataset.theme;
-    },
-  );
+    expect(await seriousViolations(container)).toEqual([]);
+  });
 });
