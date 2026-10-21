@@ -371,7 +371,9 @@ function hintOf(id: GroupId, rows: Feature[], reasonFor: (f: Feature) => Reason)
     [
       [count("session"), "session waits on you"],
       [count("your-turn"), "your turn in a session"],
+      [count("change-request"), "plan change waits for you"],
       [count("owner-steps"), "wait on your steps"],
+      [count("owner-manual"), "sign off by hand"],
       [count("no-ship"), "no ship"],
       [count("problem"), "record cannot be read"],
     ] as const
