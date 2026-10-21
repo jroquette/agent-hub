@@ -199,13 +199,45 @@ class AcceptanceEval(ViewModel):
     owner_wait: OwnerWaitView | None = None
 
 
+class ChangeDecisionView(ViewModel):
+    """The owner's decision on a plan change request (``<n>.decision.md``, D-11)."""
+
+    decision: Literal["approved", "declined"]
+    decided_by: str
+    decided_at: str
+    note: str | None
+
+
+class ChangeRequestView(ViewModel):
+    """A plan change request (``change-requests/<n>.md``, two-level-flows S2): its asking
+    ``ticket``, ``status`` folded from its decision (None when the request cannot be read,
+    ``problem`` then says why), the plan versions, the tickets it affects, when it was opened and
+    by which ``run_id``. ``approval_id`` is the open gate of that run that answers it (P8, A5),
+    None when the run has none: hub web then records the decision itself (AC-2.14). ``path`` is
+    relative to the hub's ``brain/``."""
+
+    n: int = Field(ge=1)
+    ticket: str | None
+    status: Literal["open", "approved", "declined"] | None
+    plan_from: int | None
+    plan_to: int | None
+    affected: tuple[str, ...]
+    opened_at: str | None
+    run_id: str | None
+    approval_id: str | None = None
+    decision: ChangeDecisionView | None
+    path: str
+    problem: str | None
+
+
 class FeatureDetail(FeatureView):
     """A feature with its acceptance criteria rows, its records (D3) and every eval; ``plan``
     (None without ``plan.md``) and ``acceptance_eval`` (None before one exists), whose verdict is
-    the header's ``verdict``."""
+    the header's ``verdict``; ``change_requests`` by number."""
 
     ac_rows: tuple[AcRow, ...] = ()
     records: tuple[FeatureRecord, ...] = ()
     evals: tuple[EvalRecord, ...] = ()
     plan: PlanView | None = None
     acceptance_eval: AcceptanceEval | None = None
+    change_requests: tuple[ChangeRequestView, ...] = ()

@@ -679,3 +679,37 @@ def test_waits_on_nothing_when_no_request_open_and_acceptance_ships() -> None:
     )
 
     assert feature_view(folder, project="demo", now=READ_TIME).waiting_on_owner is None
+
+
+# AGH-405 (S2-T7): the detail lists each change request with its decision; the API resolves its
+# open gate's approval (P8), so core leaves approval_id null.
+def test_detail_lists_change_requests_when_folder_has_them() -> None:
+    folder = FeatureFolder(
+        slug="demo-feature",
+        files=("plan.md", "features.json"),
+        features_json=a_record(),
+        change_requests=(
+            *a_change_request(1, "DEM-9"),
+            *a_change_request(2, "DEM-8", decision="declined"),
+        ),
+    )
+
+    first, second = feature_detail(folder, project="demo", now=READ_TIME).change_requests
+
+    assert first.model_dump() == {
+        "n": 1,
+        "ticket": "DEM-9",
+        "status": "open",
+        "plan_from": 1,
+        "plan_to": 2,
+        "affected": (),
+        "opened_at": "2026-10-21",
+        "run_id": "implement-1",
+        "approval_id": None,
+        "decision": None,
+        "path": "features/demo-feature/change-requests/1.md",
+        "problem": None,
+    }
+    assert second.status == "declined"
+    assert second.decision is not None
+    assert (second.decision.decision, second.decision.decided_by) == ("declined", "Ana")
