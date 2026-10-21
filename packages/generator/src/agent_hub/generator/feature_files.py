@@ -24,14 +24,21 @@ the same way and read only until their first review round: a regular file named 
 check names one (``<reviewer>-r<N>.json``), never read; ``MAX_ROUND_ENTRIES`` entries at most in
 all. ``review_round_tickets`` names the folders holding one; only ``read_feature_folder`` (one
 feature, as the tickets view reads it) looks for them, so the listing leaves it empty.
+``change-requests/`` is read as ``evals/`` is, at most ``MAX_CHANGE_REQUEST_FILES`` heads of
+``CHANGE_REQUEST_HEAD_BYTES`` (requests and their decisions; ``change_requests_skipped`` counts the
+rest). Only ``read_feature_folder`` opens ``tickets/``: its first ``MAX_TICKET_FOLDERS`` folders by
+name (not hidden, UTF-8 names, never a link; ``ticket_folders_skipped`` counts the rest), in each
+``preflight.json`` whole up to ``MAX_PREFLIGHT_BYTES`` (else a one-line problem) and ``brief.md``
+and ``plan.md`` only checked as regular files.
 
 One call reads at most about ``READ_BUDGET_BYTES``: a folder is read only while the bytes read so
-far are under it, so the total goes over by one folder at most (9,019,394 bytes, about 8.6 MiB:
+far are under it, so the total goes over by one folder at most (15,572,994 bytes, about 14.9 MiB:
 ``features.json`` 1 MiB + 1, ``plan.md`` 256 KiB + 1, two 64 KiB heads, 200 eval heads of 16 KiB,
-500 review heads of 8 KiB and 50 UX design heads of 4 KiB); each folder past it is listed with
-``OVER_BUDGET`` as its record problem and files unread.
+500 review heads of 8 KiB, 50 UX design heads of 4 KiB and 400 change request heads of 16 KiB);
+each folder past it is listed with ``OVER_BUDGET`` as its record problem and files unread.
 ``read_feature_folder`` reads the one folder a slug names, as the listing would, plus which of its
-``reviews/`` ticket folders hold a review round.
+``reviews/`` ticket folders hold a review round and its ``tickets/`` records (up to 500 more
+``preflight.json`` of 64 KiB).
 """
 
 import contextlib
@@ -71,6 +78,18 @@ from agent_hub.core.features.feature_status import (
     RecordHead,
 )
 from agent_hub.core.features.review_output_checks import is_review_round
+from agent_hub.core.features.ticket_records import (
+    CHANGE_REQUEST_HEAD_BYTES,
+    CHANGE_REQUESTS_FOLDER,
+    MAX_CHANGE_REQUEST_FILES,
+    MAX_PREFLIGHT_BYTES,
+    MAX_TICKET_FOLDERS,
+    PREFLIGHT_FILE,
+    TICKET_BRIEF,
+    TICKET_PLAN,
+    TICKETS_FOLDER,
+    TicketFiles,
+)
 from agent_hub.generator.regular_files import read_regular
 
 MAX_FEATURE_FOLDERS: Final = 500
@@ -117,7 +136,7 @@ def read_feature_folder(hub_root: Path, slug: str) -> FeatureFolder | None:
     with _features_folder(hub_root) as folder:
         if folder is None or not _is_folder(folder, slug):
             return None
-        return _read_folder(folder, slug, _Meter(), round_tickets=True)
+        return _read_folder(folder, slug, _Meter(), one=True)
 
 
 @contextlib.contextmanager
@@ -165,9 +184,7 @@ def _limit(name: str) -> int:
     return HEAD_BYTES if name in {SPEC, EVAL} else 0
 
 
-def _read_folder(
-    parent: int, slug: str, meter: _Meter, *, round_tickets: bool = False
-) -> FeatureFolder:
+def _read_folder(parent: int, slug: str, meter: _Meter, *, one: bool = False) -> FeatureFolder:
     try:
         folder = os.open(slug, _FOLDER_FLAGS, dir_fd=parent)
     except OSError:
@@ -183,7 +200,15 @@ def _read_folder(
             folder, REVIEWS_FOLDER, cap=MAX_REVIEW_FILES, size=REVIEW_HEAD_BYTES, meter=meter
         )
         ux_designs, ux_skipped = _ux_heads(folder, meter)
-        rounds = _round_tickets(folder) if round_tickets else ()
+        requests, requests_skipped = _heads(
+            folder,
+            CHANGE_REQUESTS_FOLDER,
+            cap=MAX_CHANGE_REQUEST_FILES,
+            size=CHANGE_REQUEST_HEAD_BYTES,
+            meter=meter,
+        )
+        rounds = _round_tickets(folder) if one else ()
+        tickets, tickets_skipped = _tickets(folder, meter) if one else ((), 0)
     finally:
         os.close(folder)
     record, plan = reads[RECORD], reads[PLAN]
@@ -191,7 +216,7 @@ def _read_folder(
     return FeatureFolder(
         slug=slug,
         files=tuple(name for name, read in reads.items() if isinstance(read, bytes)),
-        features_json=_record(record),
+        features_json=_capped(record, MAX_RECORD_BYTES),
         spec_head=_head(reads[SPEC]),
         eval_head=_head(reads[EVAL]),
         evals=evals,
@@ -202,6 +227,10 @@ def _read_folder(
         ux_designs=ux_designs,
         ux_skipped=ux_skipped,
         review_round_tickets=rounds,
+        ticket_folders=tickets,
+        ticket_folders_skipped=tickets_skipped,
+        change_requests=requests,
+        change_requests_skipped=requests_skipped,
     )
 
 
@@ -231,6 +260,47 @@ def _ux_heads(folder: int, meter: _Meter) -> tuple[tuple[RecordHead, ...], int]:
         return (), 0
     heads = tuple(_record_head(folder, name, size=UX_HEAD_BYTES, meter=meter) for name in names)
     return heads, skipped
+
+
+def _tickets(parent: int, meter: _Meter) -> tuple[tuple[TicketFiles, ...], int]:
+    """The records of ``tickets/``'s first ``MAX_TICKET_FOLDERS`` folders by name, and how many
+    others were left out."""
+    try:
+        tickets = os.open(TICKETS_FOLDER, _FOLDER_FLAGS, dir_fd=parent)
+    except OSError:
+        return (), 0
+    listed = [0]
+    try:
+        with os.scandir(tickets) as entries:
+            names = heapq.nsmallest(MAX_TICKET_FOLDERS, _counted(_ticket_folders(entries), listed))
+        return tuple(_ticket_files(tickets, name, meter) for name in names), listed[0] - len(names)
+    except OSError:
+        return (), 0
+    finally:
+        os.close(tickets)
+
+
+def _counted(names: Iterable[str], counted: list[int]) -> Iterator[str]:
+    for name in names:
+        counted[0] += 1
+        yield name
+
+
+def _ticket_files(tickets: int, name: str, meter: _Meter) -> TicketFiles:
+    try:
+        folder = os.open(name, _FOLDER_FLAGS, dir_fd=tickets)
+    except OSError:
+        return TicketFiles(name=name)
+    try:
+        preflight = read_regular(folder, PREFLIGHT_FILE, limit=MAX_PREFLIGHT_BYTES + 1)
+        return TicketFiles(
+            name=name,
+            brief=isinstance(read_regular(folder, TICKET_BRIEF, limit=0), bytes),
+            plan=isinstance(read_regular(folder, TICKET_PLAN, limit=0), bytes),
+            preflight=_capped(meter.add(preflight), MAX_PREFLIGHT_BYTES),
+        )
+    finally:
+        os.close(folder)
 
 
 def _round_tickets(parent: int) -> tuple[str, ...]:
@@ -325,9 +395,9 @@ def _record_head(folder: int, name: str, *, size: int, meter: _Meter) -> RecordH
     return RecordHead(name=name, head=None, problem=read or "could not be read")
 
 
-def _record(read: bytes | str | None) -> bytes | str | None:
-    if isinstance(read, bytes) and len(read) > MAX_RECORD_BYTES:
-        return f"larger than {MAX_RECORD_BYTES} bytes"
+def _capped(read: bytes | str | None, limit: int) -> bytes | str | None:
+    if isinstance(read, bytes) and len(read) > limit:
+        return f"larger than {limit} bytes"
     return read
 
 
