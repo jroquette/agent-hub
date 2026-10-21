@@ -29,6 +29,7 @@ from agent_hub.core.item_versions.publish_draft import DraftNotRemovedError, Pub
 from agent_hub.core.item_versions.publish_rules import DraftInvalidError
 from agent_hub.core.item_versions.record_and_write import (
     ItemWrittenUnrecordedError,
+    OldNotRemovedError,
     RecordAndWrite,
 )
 from agent_hub.core.item_versions.unit_content import MAX_UNIT_FILES
@@ -840,6 +841,11 @@ def test_answers_old_not_removed_when_old_removal_refused(
         )
 
     assert failed.value.kind == "old_not_removed"
+    # It carries what was published, as a kept draft's answer does.
+    assert isinstance(failed.value, OldNotRemovedError)
+    result = failed.value.result
+    assert (result.changed, result.versioned, result.reason) == (True, True, None)
+    assert result.version is not None
     assert rig.hub.skill_files[f"{ALPHA}/SKILL.md"] == _named("alpha")
     assert rig.hub.skill_files[f"{renamed}/SKILL.md"] == _named("alpha2")
     assert rig.origins(renamed) == [VersionOrigin.PUBLISH]

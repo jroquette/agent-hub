@@ -332,6 +332,7 @@ def test_reports_failure_when_draft_read_fails(
         FileSystemHubItemWriter().read_draft(str(hub), "hook-abc123")
 
     assert "hub-drafts" not in str(raised.value)
+    assert raised.value.kind == "draft_unreadable"
 
 
 def test_reports_failure_when_draft_name_not_utf8(tmp_path: Path) -> None:
@@ -339,8 +340,10 @@ def test_reports_failure_when_draft_name_not_utf8(tmp_path: Path) -> None:
     descriptor = os.open(bytes(hub / DRAFT) + b"/\xff.sh", os.O_WRONLY | os.O_CREAT, 0o600)
     os.close(descriptor)
 
-    with pytest.raises(HubItemWriteError):
+    with pytest.raises(HubItemWriteError) as raised:
         FileSystemHubItemWriter().read_draft(str(hub), "hook-abc123")
+
+    assert raised.value.kind == "draft_unreadable"
 
 
 def test_reports_failure_when_draft_folder_cannot_be_opened(
@@ -360,3 +363,4 @@ def test_reports_failure_when_draft_folder_cannot_be_opened(
         FileSystemHubItemWriter().read_draft(str(hub), "hook-abc123")
 
     assert "hub-drafts" not in str(raised.value)
+    assert raised.value.kind == "draft_unreadable"

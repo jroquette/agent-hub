@@ -21,6 +21,7 @@ from agent_hub.core.item_versions.hub_item_writer import (
     DRAFT_LIMIT,
     DraftTooLargeError,
     HubItemWriteError,
+    draft_unreadable,
     ItemWriteRefusedError,
     rollback_failed,
 )
@@ -28,6 +29,7 @@ from agent_hub.core.item_versions.item_version_ports import ItemWriteResult
 from agent_hub.core.item_versions.publish_draft import DraftNotRemovedError
 from agent_hub.core.item_versions.publish_rules import DraftInvalidError
 from agent_hub.core.item_versions.record_and_write import (
+    OldNotRemovedError,
     ItemWrittenRaceLostError,
     ItemWrittenUnrecordedError,
 )
@@ -376,15 +378,31 @@ def test_answers_write_failed_without_path_when_item_write_fails() -> None:
 
 
 def test_answers_write_failed_when_old_item_not_removed() -> None:
-    found = _mapped(
-        HubItemWriteError(f"rmtree failed in /home/demo/{UNIT_PATH}", kind="old_not_removed")
-    )
+    result = ItemWriteResult(changed=True, versioned=True, reason=None, version=None)
+    found = _mapped(OldNotRemovedError(result))
 
-    assert (found.status, found.members) == (
-        500,
-        {"code": "write_failed", "kind": "old_not_removed"},
+    assert (found.status, found.title) == (500, "Item write failed")
+    assert found.members == {
+        "code": "write_failed",
+        "kind": "old_not_removed",
+        "published": True,
+        "changed": True,
+        "versioned": True,
+        "reason": None,
+    }
+    assert found.detail == (
+        "Published; the old item could not be removed and stays. The draft is still there: "
+        "discard it."
     )
-    assert found.detail == "Published and recorded; the old item could not be removed."
+    assert "/" not in str(found.detail)
+
+
+def test_answers_draft_read_failed_when_draft_unreadable() -> None:
+    found = _mapped(draft_unreadable())
+
+    assert (found.status, found.title) == (500, "Draft read failed")
+    assert found.members == {"code": "write_failed", "kind": "draft_unreadable"}
+    assert found.detail == "The draft could not be read; nothing was written or recorded."
 
 
 def test_answers_unprocessable_when_draft_invalid() -> None:

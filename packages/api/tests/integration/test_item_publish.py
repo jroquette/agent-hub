@@ -24,7 +24,7 @@ import pytest
 
 from agent_hub.api.session_token import cookie_name
 from agent_hub.api.settings import ApiSettings
-from agent_hub.core.item_versions.hub_item_writer import HubItemWriteError
+from agent_hub.core.item_versions.hub_item_writer import HubItemWriteError, draft_unreadable
 from agent_hub.core.item_versions.item_version import (
     ItemVersionMeta,
     UnitKind,
@@ -665,3 +665,153 @@ def test_refuses_spent_draft_when_published_again_after_draft_not_removed(
     assert (hub / SCOUT).read_bytes() == published
     assert _rows(app) == rows
     assert (folder / "scout.md").read_bytes() == _agent("scout", "Edited again.\n")
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param({}, id="no-body-fields"),
+        pytest.param({"confirm_managed": True}, id="target-left-out"),
+        pytest.param(
+            {"target": {**SCOUT_TARGET, "path": "plugin/demo"}}, id="target-field-unknown"
+        ),
+    ],
+)
+def test_refuses_body_when_target_missing_or_its_field_unknown(
+    writer: Any, publish_hub: PublishHub, body: dict[str, object]
+) -> None:
+    hub = publish_hub()
+    folder = _draft(hub, "agent-bdy005", {"scout.md": _agent("scout", "New.\n")})
+    tree, rows = _tree(hub), _rows(writer)
+
+    response = writer.client.post(
+        f"{CATALOG}/drafts/agent-bdy005/publish", json=body, headers=ORIGIN
+    )
+
+    assert response.status_code == 422, response.text
+    assert (_tree(hub), _rows(writer)) == (tree, rows)
+    assert (folder / "scout.md").exists()
+
+
+def test_refuses_hook_edit_when_hooks_file_past_bounds(
+    writer: Any, publish_hub: PublishHub
+) -> None:
+    # A13: the hook's file is past the 256 KiB read bound (under the 1 MiB settings cap), so
+    # the draft cannot be merged into it.
+    big = _settings() | {"padding": "x" * (MAX_SKILL_FILE_BYTES + 1)}
+    hub = publish_hub({SETTINGS: _json(big)})
+    draft = {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [_command("Y")]}]}}
+    folder = _draft(hub, "hook-big001", {"hooks.json": _json(draft)})
+    tree, rows = _tree(hub), _rows(writer)
+
+    response = _publish(writer, "hook-big001", SECOND_HOOK_TARGET, confirm_managed=True)
+
+    _refused(response, "unit_unreadable")
+    _no_path(response, hub)
+    assert (_tree(hub), _rows(writer)) == (tree, rows)
+    assert folder.exists()
+
+
+def test_refuses_publish_when_hub_has_no_identity(
+    writer: Any, make_hub: Callable[..., Path]
+) -> None:
+    def no_author(document: dict[str, Any]) -> None:
+        del document["project"]["author_name"], document["project"]["author_email"]
+
+    hub = _registered(writer, lambda: make_hub(change=no_author))
+    folder = _draft(hub, "agent-aut001", {"scout.md": _agent("scout", "New.\n")})
+    tree, rows = _tree(hub), _rows(writer)
+
+    response = _publish(writer, "agent-aut001", SCOUT_TARGET)
+
+    _refused(response, "no_author")
+    assert "author" in response.json()["reason"]
+    assert (_tree(hub), _rows(writer)) == (tree, rows)
+    assert folder.exists()
+
+
+class FaultWriter:
+    """The real writer, with a fault to inject: ``old_stays`` refuses a rename's removal of the
+    old unit; ``draft_unreadable`` fails the draft's read as an I/O error does."""
+
+    def __init__(self) -> None:
+        self.real = FileSystemHubItemWriter()
+        self.old_stays = False
+        self.unreadable = False
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.real, name)
+
+    def remove_unit(self, hub_path: str, unit_path: str, *, kind: UnitKind) -> None:
+        if self.old_stays:
+            raise HubItemWriteError(f"rmtree failed at {hub_path}/{unit_path}")
+        self.real.remove_unit(hub_path, unit_path, kind=kind)
+
+    def read_draft(self, hub_path: str, draft_id: str) -> Any:
+        if self.unreadable:
+            raise draft_unreadable()
+        return self.real.read_draft(hub_path, draft_id)
+
+
+def test_keeps_spent_draft_when_renamed_old_item_not_removed(
+    open_writer: WriterOpener, make_hub: Callable[..., Path]
+) -> None:
+    faults = FaultWriter()
+    faults.old_stays = True
+    app = open_writer(item_writer=faults)
+    hub = _registered(app, make_hub)
+    renamed = b"---\nname: alpha2\ndescription: Checks the alpha flow.\n---\n# Alpha 2\n"
+    folder = _draft(hub, "skill-old001", {"SKILL.md": renamed})
+
+    response = _publish(app, "skill-old001", ALPHA_TARGET)
+
+    assert response.status_code == 500, response.text
+    assert response.json() | {"instance": None} == {
+        "type": "about:blank",
+        "title": "Item write failed",
+        "status": 500,
+        "detail": (
+            "Published; the old item could not be removed and stays. The draft is still there: "
+            "discard it."
+        ),
+        "instance": None,
+        "code": "write_failed",
+        "kind": "old_not_removed",
+        "published": True,
+        "changed": True,
+        "versioned": True,
+        "reason": None,
+    }
+    _no_path(response, hub)
+    assert (hub / ALPHA2 / "SKILL.md").read_bytes() == renamed
+    assert (hub / ALPHA / "SKILL.md").read_bytes() == ALPHA_MD
+    assert (folder / "SKILL.md").read_bytes() == renamed
+    faults.old_stays = False
+
+    _refused(_publish(app, "skill-old001", ALPHA_TARGET), "draft_already_published")
+    assert (hub / ALPHA / "SKILL.md").read_bytes() == ALPHA_MD
+
+
+def test_answers_draft_read_failed_when_draft_unreadable(
+    open_writer: WriterOpener, make_hub: Callable[..., Path]
+) -> None:
+    faults = FaultWriter()
+    faults.unreadable = True
+    app = open_writer(item_writer=faults)
+    hub = _registered(app, make_hub)
+    folder = _draft(hub, "agent-unr001", {"scout.md": _agent("scout", "New.\n")})
+    tree, rows = _tree(hub), _rows(app)
+
+    response = _publish(app, "agent-unr001", SCOUT_TARGET)
+
+    assert response.status_code == 500, response.text
+    body = response.json()
+    assert (body["title"], body["code"], body["kind"]) == (
+        "Draft read failed",
+        "write_failed",
+        "draft_unreadable",
+    )
+    assert body["detail"] == "The draft could not be read; nothing was written or recorded."
+    _no_path(response, hub)
+    assert (_tree(hub), _rows(app)) == (tree, rows)
+    assert folder.exists()
