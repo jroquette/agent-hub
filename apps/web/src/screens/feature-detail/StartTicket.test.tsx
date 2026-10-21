@@ -114,6 +114,8 @@ describe("StartTicket", () => {
     const created = anAgentSession({ id: anId(8, "0192a5e6"), status: "running" });
     const view = renderWithApi(
       <TicketsTab
+        evals={[]}
+        openerRef={{ current: null }}
         project="agent-hub"
         slug="claims"
         data={aFeatureTickets({
@@ -159,6 +161,8 @@ describe("StartTicket", () => {
   it("offers the stacked Start as a default button and starts nothing when the dialog is cancelled", async () => {
     const view = renderWithApi(
       <TicketsTab
+        evals={[]}
+        openerRef={{ current: null }}
         project="agent-hub"
         slug="claims"
         data={aFeatureTickets({
@@ -208,6 +212,8 @@ describe("StartTicket", () => {
     const created = anAgentSession({ id: anId(8, "0192a5e5"), status: "running" });
     const view = renderWithApi(
       <TicketsTab
+        evals={[]}
+        openerRef={{ current: null }}
         project="agent-hub"
         slug="claims"
         data={aFeatureTickets({
@@ -251,6 +257,8 @@ describe("StartTicket", () => {
     };
     renderWithApi(
       <TicketsTab
+        evals={[]}
+        openerRef={{ current: null }}
         project="agent-hub"
         slug="claims"
         data={aFeatureTickets({

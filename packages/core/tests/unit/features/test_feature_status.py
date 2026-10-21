@@ -14,6 +14,7 @@ from agent_hub.core.features.feature_status import (
 from agent_hub.core.features.feature_view import FeatureRecord, GoldenPath
 from agent_hub.core.features.golden_path import LINEAR_NOT_CONNECTED, LINEAR_NOT_LOADED
 from agent_hub.core.features.ticket_snapshots import SnapshotRead
+from agent_hub.core.testing.read_model_builders import READ_TIME
 from agent_hub.core.testing.tracker_reader_fakes import SNAPSHOT_TIME
 from agent_hub.core.tracker.tracker_reader import MAX_READ_IDS, IssueSummary, TicketSnapshot
 
@@ -62,7 +63,7 @@ def a_complete_folder() -> FeatureFolder:
 
 
 def test_reads_every_part_when_feature_complete() -> None:
-    view = feature_view(a_complete_folder(), project="demo")
+    view = feature_view(a_complete_folder(), project="demo", now=READ_TIME)
 
     assert view.project == "demo"
     assert view.slug == "demo-feature"
@@ -90,7 +91,7 @@ def test_reads_every_part_when_feature_complete() -> None:
 
 
 def test_lists_ac_rows_when_detail_read() -> None:
-    detail = feature_detail(a_complete_folder(), project="demo")
+    detail = feature_detail(a_complete_folder(), project="demo", now=READ_TIME)
 
     assert [row.id for row in detail.ac_rows] == ["AC-7.1", "AC-7.2", "AC-7.3"]
     last = detail.ac_rows[-1]
@@ -106,7 +107,7 @@ def test_lists_records_when_research_and_eval_missing() -> None:
         spec_head=SPEC,
     )
 
-    detail = feature_detail(folder, project="demo")
+    detail = feature_detail(folder, project="demo", now=READ_TIME)
 
     base = "features/demo-feature"
     assert detail.records == (
@@ -125,7 +126,7 @@ def test_lists_records_when_research_and_eval_missing() -> None:
         "test run",
         False,
     )
-    assert "records" not in feature_view(folder, project="demo").model_dump()
+    assert "records" not in feature_view(folder, project="demo", now=READ_TIME).model_dump()
 
 
 def test_reads_no_verdict_when_no_eval() -> None:
@@ -136,7 +137,7 @@ def test_reads_no_verdict_when_no_eval() -> None:
         spec_head=SPEC,
     )
 
-    view = feature_view(folder, project="demo")
+    view = feature_view(folder, project="demo", now=READ_TIME)
 
     assert view.verdict is None
     assert view.verdict_line is None
@@ -150,7 +151,7 @@ def test_reaches_build_phase_when_an_ac_passes_without_eval() -> None:
         features_json=a_record(passes=(True, False)),
     )
 
-    assert feature_view(folder, project="demo").phase == "build"
+    assert feature_view(folder, project="demo", now=READ_TIME).phase == "build"
 
 
 @pytest.mark.parametrize(
@@ -171,7 +172,7 @@ def test_carries_problem_when_record_malformed(record: bytes | str, reason: str)
         spec_head=SPEC,
     )
 
-    detail = feature_detail(folder, project="demo")
+    detail = feature_detail(folder, project="demo", now=READ_TIME)
 
     assert detail.problem is not None
     assert reason in detail.problem
@@ -187,7 +188,7 @@ def test_ignores_frontmatter_when_spec_has_none() -> None:
         slug="bare", files=("spec.md",), spec_head=b"# Spec\nprocess_size: huge\n"
     )
 
-    view = feature_view(folder, project="demo")
+    view = feature_view(folder, project="demo", now=READ_TIME)
 
     assert view.size is None
     assert view.repos == ()
@@ -199,7 +200,7 @@ def test_ignores_unknown_size_when_frontmatter_odd() -> None:
         slug="odd", files=("spec.md",), spec_head=b"---\nprocess_size: huge\nrepos: demo-api\n---\n"
     )
 
-    view = feature_view(folder, project="demo")
+    view = feature_view(folder, project="demo", now=READ_TIME)
 
     assert view.size is None
     assert view.repos == ("demo-api",)
@@ -217,7 +218,7 @@ def test_ignores_unknown_size_when_frontmatter_odd() -> None:
 def test_reads_verdict_when_eval_names_one(line: bytes, verdict: str) -> None:
     folder = FeatureFolder(slug="done", files=("eval.md",), eval_head=b"# Eval\n\n" + line + b"\n")
 
-    assert feature_view(folder, project="demo").verdict == verdict
+    assert feature_view(folder, project="demo", now=READ_TIME).verdict == verdict
 
 
 def test_keeps_eval_and_review_heads_when_folder_built() -> None:
@@ -298,7 +299,7 @@ def test_parses_record_when_tickets_and_ticket_per_ac() -> None:
         spec_head=SPEC,
     )
 
-    detail = feature_detail(folder, project="demo")
+    detail = feature_detail(folder, project="demo", now=READ_TIME)
 
     assert detail.problem is None
     assert [row.id for row in detail.ac_rows] == ["AC-7.1", "AC-7.2"]
@@ -358,7 +359,10 @@ def test_uses_warm_snapshot_when_read_from_linear() -> None:
     )
 
     detail = feature_detail(
-        folder, project="demo", read=a_linear_read(a_summary("DEM-7", state_type="completed"))
+        folder,
+        project="demo",
+        read=a_linear_read(a_summary("DEM-7", state_type="completed")),
+        now=READ_TIME,
     )
 
     assert detail.tickets_source == "linear"
@@ -372,7 +376,7 @@ def test_says_not_loaded_when_cache_cold_with_tickets() -> None:
         features_json=a_ticket_record(),
     )
 
-    detail = feature_detail(folder, project="demo", read=COLD_READ)
+    detail = feature_detail(folder, project="demo", read=COLD_READ, now=READ_TIME)
 
     assert detail.tickets_source == "plan"
     assert _meta(detail.golden_path, "build") == LINEAR_NOT_LOADED
@@ -392,13 +396,13 @@ def test_lists_every_eval_when_detail_read() -> None:
         evals=(head,),
     )
 
-    detail = feature_detail(folder, project="demo")
+    detail = feature_detail(folder, project="demo", now=READ_TIME)
 
     assert [(record.delivery, record.legacy) for record in detail.evals] == [
         ("legacy", True),
         ("acme-1520", False),
     ]
-    assert "evals" not in feature_view(folder, project="demo").model_dump()
+    assert "evals" not in feature_view(folder, project="demo", now=READ_TIME).model_dump()
 
 
 def _owner_record() -> bytes:
@@ -444,7 +448,7 @@ def test_never_marks_acceptance_done_when_ship_covers_part() -> None:
         *(a_summary(f"ACME-{1519 + number}") for number in range(2, 18)),
     )
 
-    detail = feature_detail(folder, project="demo", read=a_linear_read(*summaries))
+    detail = feature_detail(folder, project="demo", read=a_linear_read(*summaries), now=READ_TIME)
 
     path = detail.golden_path
     assert detail.phase == path.phase == "build"
@@ -461,7 +465,12 @@ def test_never_marks_acceptance_done_when_ship_covers_part() -> None:
     assert _meta(path, "build") == "1 of 17 merged · 16 in progress"
     assert _meta(path, "acceptance") == "Ticket evals cover 3 of 36 ACs"
     assert [record.delivery for record in detail.evals] == ["acme-1520"]
-    assert feature_view(folder, project="demo", read=a_linear_read(*summaries)).golden_path == path
+    assert (
+        feature_view(
+            folder, project="demo", read=a_linear_read(*summaries), now=READ_TIME
+        ).golden_path
+        == path
+    )
 
 
 @pytest.mark.parametrize(
@@ -485,7 +494,7 @@ def test_shows_final_verdict_line_when_addendum_reverses_first() -> None:
     head = b"# Eval\n\n**Verdict: NO-SHIP.** 1 of 2.\n\n**final verdict: SHIP** after addendum 2.\n"
     folder = FeatureFolder(slug="done", files=("eval.md",), eval_head=head)
 
-    view = feature_view(folder, project="demo")
+    view = feature_view(folder, project="demo", now=READ_TIME)
 
     assert view.verdict == "SHIP"
     assert view.verdict_line == "**final verdict: SHIP** after addendum 2."
@@ -496,7 +505,7 @@ def test_clips_verdict_line_to_200_chars_when_line_long() -> None:
     line = b"**Final verdict: SHIP.** " + b"x" * 400
     folder = FeatureFolder(slug="done", files=("eval.md",), eval_head=b"# Eval\n\n" + line + b"\n")
 
-    view = feature_view(folder, project="demo")
+    view = feature_view(folder, project="demo", now=READ_TIME)
 
     assert view.verdict_line is not None
     assert len(view.verdict_line) == 200
@@ -526,13 +535,15 @@ def test_header_verdict_comes_from_the_acceptance_eval_when_evals_read() -> None
         evals=(ticket, whole),
     )
 
-    before = feature_detail(only_tickets, project="demo")
-    after = feature_detail(with_whole, project="demo")
+    before = feature_detail(only_tickets, project="demo", now=READ_TIME)
+    after = feature_detail(with_whole, project="demo", now=READ_TIME)
 
     assert (before.verdict, before.verdict_line, before.acceptance_eval) == (None, None, None)
     assert after.verdict == "SHIP-WITH-OWNER-STEPS"
     assert after.verdict_line == "Verdict: SHIP-WITH-OWNER-STEPS, from the feature eval"
-    assert feature_view(with_whole, project="demo").verdict == "SHIP-WITH-OWNER-STEPS"
+    assert (
+        feature_view(with_whole, project="demo", now=READ_TIME).verdict == "SHIP-WITH-OWNER-STEPS"
+    )
 
 
 # two-level-flows AC-1.4, AC-1.6 (AGH-323).
@@ -545,7 +556,7 @@ def test_detail_serves_plan_version_and_acceptance_eval_when_records_present() -
         evals=(an_eval_head("feature.md", verdict="SHIP", scope="acs: all"),),
     )
 
-    detail = feature_detail(folder, project="demo")
+    detail = feature_detail(folder, project="demo", now=READ_TIME)
 
     assert detail.plan is not None
     assert detail.plan.version == 2
@@ -564,7 +575,7 @@ def test_detail_serves_plan_version_and_acceptance_eval_when_records_present() -
 
 
 def test_detail_has_no_plan_when_plan_absent() -> None:
-    detail = feature_detail(a_complete_folder(), project="demo")
+    detail = feature_detail(a_complete_folder(), project="demo", now=READ_TIME)
 
     assert detail.plan is None
     assert detail.acceptance_eval is not None
@@ -581,7 +592,7 @@ def test_plan_too_large_is_a_record_problem_when_over_cap() -> None:
         plan_too_large=True,
     )
 
-    detail = feature_detail(folder, project="demo")
+    detail = feature_detail(folder, project="demo", now=READ_TIME)
 
     assert detail.plan is not None
     assert detail.plan.version is None

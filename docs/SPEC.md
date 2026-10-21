@@ -84,6 +84,9 @@ hub collect [FILE|-] [--db PATH]   # ingests canonical events from JSON Lines (s
 hub collect --transcript FILE [--project NAME]   # a Claude Code transcript, as metadata-only events
 hub collect --runs PATH [--project NAME]   # hub run records (.agent-runs/ file or folder) as executor events
 hub web [--host ADDR] [--port N] [--db PATH]   # the control plane: /api/v1 and the web app on 127.0.0.1 (port 7420)
+hub search QUERY [--kind KIND]… [--hub NAME] [--json] [--db PATH]   # full-text search of the brain and the repos' docs, each result with its path and snippet (ADR 0044)
+hub brain reindex [--hub NAME] [--db PATH]   # drops and rebuilds the local knowledge index from the checkout (ADR 0044)
+hub mcp   # the hub's knowledge as a local MCP server over stdio: search, read, propose (ADR 0044; declared in .mcp.json)
 ```
 
 A project starts with a minimal `hub init` (what is known: name, repos, tracker, branch prefix), then onboards in a session in that hub with the managed `/onboard` skill, which never runs `hub init` and also works on a hub joined with `hub sync --adopt`. It reads each repo read-only and proposes `hub.json` values, gates and the `AGENTS.project.md` rules with `path:line` evidence; it applies them only after approval. A run that cannot ask the user (headless, or `/onboard propose`) only writes the proposal to `brain/_inbox/onboard-proposal.md` with the `hub.json` hash it was made against, and a later interactive `/onboard apply` applies it once a human has approved it. A repo without a gate gets one composed from the tools it already declares, in its own task runner and through its own PR; `hub.json` names a gate command only after it has run green from the hub and, for a composed one, after that PR merges.
@@ -418,11 +421,19 @@ A web app reads the hubs and the agents' events and answers five questions, one 
 | Workflows | How should work flow? | Editor and visualization of steps and gates; which step each task is at; where it gets stuck |
 | Sessions | What are the agents doing right now, and which one needs me? | Every session, observed or driven, in status sections (waiting first) as tiles or a table: last action, accumulated turns and cost, pending approvals |
 | Session timeline | Why did the agent do that? | Messages, reasoning summaries, tool calls, files and diffs, marked decisions and the final outcome |
-| Knowledge | What does it know and what did it learn? | Context loaded in the session (rules, brain, memory), proposed learnings, inbox triage, evolution over time |
+| Knowledge | What does it know and what did it learn? | Context loaded in the session (rules, brain, memory), search over the brain and docs, links between notes, proposed learnings, inbox triage, evolution over time |
 
 **Decisions as objects.** A decision is a stretch of the session with a choice, discarded alternatives and a rationale. In v1 it is extracted from the transcript. Later, agents can record it explicitly through a skill or hook (`/decide`).
 
 **Learning with provenance.** Every brain item and every learning keeps its source session, its author (human or agent) and its status. The knowledge view shows the path session → proposal → accepted → rule and measures whether the rule reduced the failure that motivated it (which `mine_transcripts.py` and `retro_metrics.py` already start to do).
+
+**Search and team memory (AGH-388, [ADR 0044](adr/0044-team-memory-git-source-local-index-and-hub-mcp.md), accepted).**
+Git stays the source of truth. Each developer's database holds a derived full-text index (SQLite FTS5) of the hub's
+`brain/` (except `brain/auto/`) and each repo's `docs/`, synced with the checkout on every search and rebuilt by
+`hub brain reindex`. `hub search` and the MCP server `hub mcp` (tools `search`, `read`, `propose`) query it; every
+result names its path and a snippet. `propose` writes a new `brain/_inbox/` note on a branch and opens a hub pull
+request through `hub_git`, never the default branch. The knowledge view gains the same search, links between notes and
+the provenance path above. Transcripts are never indexed or shared; embeddings and hosting are out of scope.
 
 **Actions, not just reading (after v1).** Start a workflow on an issue, approve a gate, pause or cancel a session, accept a learning (built early, through a hub PR: AGH-201 below).
 
@@ -505,6 +516,10 @@ Linear status ([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md), records
   evals never make Acceptance done: with none whole-feature it reads "Not recorded" with the ACs they cover. Plan's
   meta is the plan's version. Without Linear, Build and Shipped are `unknown`, never done
   ([ADR 0043](adr/0043-two-level-feature-and-ticket-flows.md), proposed).
+- **Ticket flow.** Each ticket has its own seven steps, Context, Preflight, Implement, Review, Eval, PR and Merged,
+  folded from its review rounds, review record, evals and Linear and served on the tickets route; a step with no
+  record before a later one with evidence reads "Not recorded". Feature detail shows them on each ticket's step bar and
+  in its ticket panel.
 - **Evals per delivery.** Each evaluation is its own file, `brain/features/<slug>/evals/<delivery>.md`, with its
   scope in frontmatter (tickets, ACs, PRs, commit); none is overwritten. For each AC the latest eval naming it
   decides. A legacy `eval.md` is read as one delivery, `legacy`. The Eval tab lists every delivery.
@@ -697,10 +712,11 @@ Workflow runs list filters by workflow and failure kind.
 - **Chat**: a header with Review changes, an Events link and a Session actions menu; a one-line live activity bar and
   a Steps drawer (Ctrl/Cmd+Alt+.); Changed files opens on the net diff of every change; a turn's result ends every
   message folded into it. An ended terminal session can be continued in the chat from its detail.
-- **Features** groups Needs you, In progress, Evaluated and Shipped with search and filters; a feature can get a
-  nickname kept on this machine (`GET`/`PUT /feature-names`). **Feature detail**: a calm golden path, one Waiting on
-  you banner with the owner sign-off (`POST /features/{project}/{slug}/owner-signoff`, a SHIP eval with `provenance:
-  owner`), an Eval tab with history per scope and who ran each eval, Approve at the end of the spec, research and plan
+- **Features** groups In progress (the features that need you first) and Shipped with search and filters; a feature
+  can get a nickname kept on this machine (`GET`/`PUT /feature-names`). **Feature detail**: a calm golden path, one
+  Waiting on you banner pointing to each owner wait, whose one prompt is on the Eval tab (the owner sign-off, `POST
+  /features/{project}/{slug}/owner-signoff`, a SHIP eval with `provenance: owner`), a ticket panel per ticket, an
+  Eval tab with history per scope and who ran each eval, Approve at the end of the spec, research and plan
   with the spec's open questions, ticket sessions on each ticket, and Run on an AC's recorded check (with Claude by
   default, or `POST …/acs/{ac}/check-runs`, never recorded).
 - **Workflows** lists one plain row per workflow (`step_types`, `inputs` and an outline in the API) and a detail as a
@@ -806,6 +822,10 @@ before anything is appended, and the data stays on the machine in v1:
   (a Phase 0 payload's `input`, `output`, `prompt`, `content`…) is not stored. Release note: re-collecting a file whose
   events were stored before this change, with keys the table drops, now reports a conflict for those events (the
   trimmed event differs from the stored one), as any changed re-ingest does.
+- **Outside the events** (not an exception to the rules above, which are about what sessions and hooks send): the
+  database also keeps the text of hub files in two derived stores, item versions ([ADR 0039](adr/0039-item-versions-and-server-writes-to-the-hub.md))
+  and the knowledge index ([ADR 0044](adr/0044-team-memory-git-source-local-index-and-hub-mcp.md)), both read from
+  files the developer already has and gated by the guard's secret rules; no transcript or session content enters them.
 
 **Payload kept** (every short text is redacted, then truncated; "chars" are characters):
 
@@ -855,7 +875,7 @@ flowchart LR
 
 The sessions and GitHub/Linear feed the collector, and the web app reads everything through the API. The app's actions go back to the workflow executor. The API also reads the hub repos to show brain, rules and workflows.
 
-- **Stack (decided, ADRs 0001–0004, 0008, 0011, 0014, 0015, 0017, 0020 and 0024):** Python 3.14 in a uv workspace with one package per component (`core`, `storage`, `collector`, `generator`, `tracker_linear`, `hub_git`, `cli`, `api`) under a lean hexagonal architecture: entities, use cases and ports in `core`, adapters in the other packages. Persistence is SQLAlchemy Core + Alembic on SQLite, moving to Postgres via config when there are multiple users. The API is FastAPI + Pydantic in `packages/api`, a second composition root that `hub web` serves; the front end is React 18 + TypeScript in `apps/web`, whose production build is committed to `packages/api` so a `uvx` install needs no Node.
+- **Stack (decided, ADRs 0001–0004, 0008, 0011, 0014, 0015, 0017, 0020, 0024 and 0044):** Python 3.14 in a uv workspace with one package per component (`core`, `storage`, `collector`, `generator`, `tracker_linear`, `hub_git`, `cli`, `api`, and `mcp_server` once ADR 0044 is built: the third composition root, behind `hub mcp`) under a lean hexagonal architecture: entities, use cases and ports in `core`, adapters in the other packages. Persistence is SQLAlchemy Core + Alembic on SQLite, moving to Postgres via config when there are multiple users. The API is FastAPI + Pydantic in `packages/api`, a second composition root that `hub web` serves; the front end is React 18 + TypeScript in `apps/web`, whose production build is committed to `packages/api` so a `uvx` install needs no Node.
 - **Hooks as sensors** ([ADR 0021](adr/0021-hook-event-sensor.md)): the generated hub registers a stdlib Python 3.9 sensor, `plugin/hub-workflow/hooks/event_sensor.py`, for eleven Claude Code hooks (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PostToolUseFailure, Notification, Stop, SubagentStart, SubagentStop, PreCompact, SessionEnd). It wraps the hook input in a versioned envelope (`v: 1`, project, repo, the `hub run` run, step and attempt) and posts it to `POST /api/v1/events/hooks` with a 0.5 s timeout; it prints nothing and exits 0 on any failure, so without `hub web` the session carries on normally. `AGENT_HUB_WEB_URL` may only name a loopback URL. The guard and the Stop gate send their own decisions (a denial, an ask, a blocked Stop) the same way, after deciding, without changing their output or exit codes. On Stop, SubagentStop and SessionEnd the server reads the session's transcript from its last offset, only under `~/.claude/projects/` and never through a link.
 - **Read-only agents** (AGH-141): an agent whose definition's frontmatter says `mutates_checkout: false` is held if it
   changes a checkout. The base plugin's researcher, spec-reviewer and quality-reviewer declare it; any hub or project
@@ -966,6 +986,20 @@ Continuity between sessions comes from the brain and the summaries, not from rer
   session ends, deletable; the hook-fed events stay metadata-only.
 - Remote use goes through the user's own tunnel to the loopback port (SSH, `tailscale serve`) with the token, or
   Claude's Remote Control; never a public bind, relay or hosted mode.
+
+**5. Team memory: Git is the source, each developer keeps a derived index, agents search it through `hub mcp` (2026-10-21, AGH-388, [ADR 0044](adr/0044-team-memory-git-source-local-index-and-hub-mcp.md), accepted).**
+
+- Knowledge is placed by kind: procedural rules become checks (`hub doctor`, hooks), skill lines or a repo's
+  `AGENTS.md` and leave the brain; authoritative knowledge (decisions, domain, playbooks, learnings) stays in `brain/`,
+  small and reviewed in pull requests; history (`features/`, journal) stays in Git but off the agent's read path,
+  reached through search; personal notes stay in `brain/auto/workspace/`; transcripts stay on each machine.
+- The team shares by `git pull`; there is no central store. Each developer's index (SQLite FTS5, in the database
+  `hub web` uses) is derived from the checkout, synced on each search and disposable (`hub brain reindex`).
+- Agents reach it through `hub mcp`, a stdio MCP server that `hub sync` declares in the hub's `.mcp.json`: `search`
+  (always with path and snippet), `read` (brain and docs only) and `propose` (a hub pull request through `hub_git`,
+  never the default branch). The app repos get no MCP configuration, so direction 2 holds.
+- Out of scope: hosting, Postgres, accounts, sharing transcripts, embeddings. A move to hosted later replaces only where
+  the index is stored.
 
 **Open questions**
 

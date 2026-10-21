@@ -121,6 +121,9 @@ def session_options(
 def delivery_problem(plan: WorkflowPlan, *, start: str = RunStart.IMPLEMENT) -> str | None:
     """Why the parent cannot run ``plan`` (a hub's own issue-to-pr may lack an input it fills)."""
     declared = set(plan.document.inputs)
+    if plan.document.environment is not None:
+        # hub run decides no node: an environment's policy would not hold here (P-18).
+        return f"{ISSUE_TO_PR} runs in no environment: remove its environment key"
     if not declared >= DELIVERY_INPUTS:
         return f"{ISSUE_TO_PR} must declare the inputs issue, repo and {ISSUE_TEXT}"
     if start == RunStart.VERIFY and START not in declared:

@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Final
 
 from pydantic import JsonValue
 
@@ -86,6 +87,9 @@ STARTED = datetime(2026, 10, 9, 14, 0, 0, 123000, tzinfo=UTC)
 LAST_ACTIVITY = datetime(2026, 10, 9, 14, 5, 41, 882000, tzinfo=UTC)
 EVENT_ID = "01929a4e-6c1d-7f3a-9b2e-5d1c0a8e4f17"
 HUB_ID = "01929a40-5091-7b98-8a6e-3f20c1d4a7b2"
+
+# When the synthetic hub's feature folders are read: after every synthetic eval's date.
+READ_TIME: Final = datetime(2026, 10, 20, 12, 0, tzinfo=UTC)
 
 
 def a_session(**overrides: object) -> Session:

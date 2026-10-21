@@ -168,4 +168,4 @@ and the input tools: MCP tools (`mcp__*`), WebSearch, Task, Agent and SendMessag
 ## Open questions
 
 - Whether the hook's environment equals the Bash tool's in an interactive session (checked headless only).
-- Enforcing `access`, credential injection and audit events: a later `hub env exec`.
+- Holding agent steps: `access` is enforced for actions and declared `shell` and `script` nodes ([scenarios.md](scenarios.md)); agent steps are checked on a best-effort basis.
