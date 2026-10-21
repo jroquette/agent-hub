@@ -54,10 +54,12 @@ from agent_hub.core.features.feature_view import (
     PlanView,
     TicketsSource,
     Verdict,
+    WaitingOnOwner,
 )
 from agent_hub.core.features.golden_path import EvalGate, GoldenInputs, golden_path
 from agent_hub.core.features.plan_version import plan_version
 from agent_hub.core.features.ticket_planning import TicketBoard, ticket_board
+from agent_hub.core.features.ticket_records import ChangeRequests, TicketFiles, change_requests
 from agent_hub.core.features.ticket_snapshots import SnapshotRead
 from agent_hub.core.hub_config.problems import one_line
 from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN
@@ -123,7 +125,10 @@ class FeatureFolder:
     (``plan_too_large`` then says so). ``ux_designs`` holds the heads of the folder's own
     ``ux-*.md`` sorted by name; ``ux_skipped`` counts those left unread over ``MAX_UX_FILES``.
     ``review_round_tickets`` names the ``reviews/`` ticket folders holding a review round
-    (``<reviewer>-r<N>.json``, never read).
+    (``<reviewer>-r<N>.json``, never read). ``ticket_folders`` holds what was read of each
+    ``tickets/<ticket>/`` (``ticket_folders_skipped`` counts those left unread over the cap);
+    ``change_requests`` the heads of ``change-requests/*.md`` sorted by name
+    (``change_requests_skipped`` counts those left unread).
     """
 
     slug: str
@@ -139,13 +144,18 @@ class FeatureFolder:
     ux_designs: tuple[RecordHead, ...] = ()
     ux_skipped: int = 0
     review_round_tickets: tuple[str, ...] = ()
+    ticket_folders: tuple[TicketFiles, ...] = ()
+    ticket_folders_skipped: int = 0
+    change_requests: tuple[RecordHead, ...] = ()
+    change_requests_skipped: int = 0
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class FeatureParts:
     """What the feature views share: the parsed ``record`` (its one-line problem, or None when
-    absent), every eval, the ticket ``board``, the ``golden_path``, the tickets' ``source`` and
-    what the acceptance eval waits on from the owner (``owner_wait``)."""
+    absent), every eval, the ticket ``board``, the ``golden_path``, the tickets' ``source``,
+    what the acceptance eval waits on from the owner (``owner_wait``) and the plan change
+    ``requests``."""
 
     record: FeatureRecordFile | str | None
     evals: tuple[EvalRecord, ...]
@@ -153,6 +163,7 @@ class FeatureParts:
     golden_path: GoldenPath
     source: TicketsSource
     owner_wait: OwnerWaitView | None
+    requests: ChangeRequests
 
 
 def ticket_ids(folder: FeatureFolder) -> tuple[str, ...]:
@@ -240,6 +251,7 @@ def feature_parts(
         acceptance=None if accepted is None else accepted.verdict,
     )
     ux_designs, ux_problem = _ux_designs(folder)
+    requests = change_requests(folder.change_requests, skipped=folder.change_requests_skipped)
     path = golden_path(
         GoldenInputs(
             files=folder.files,
@@ -248,7 +260,8 @@ def feature_parts(
             coverage=gate,
             ux_designs=ux_designs,
             ux_problem=ux_problem,
-            plan=_plan(folder),
+            plan=plan_view(folder),
+            requests=requests,
             source=source,
             not_loaded=read is not None and snapshot is None and read.failure is None,
         )
@@ -260,6 +273,7 @@ def feature_parts(
         golden_path=path,
         source=source,
         owner_wait=None if folder.evals_skipped else _owner_wait_view(waiting, block),
+        requests=requests,
     )
 
 
@@ -330,11 +344,12 @@ def feature_detail(
         golden_path=parts.golden_path,
         tickets_source=parts.source,
         problem=record if isinstance(record, str) else None,
+        waiting_on_owner=_waiting_on_owner(parts),
         sources_missing=(EventSource.GITHUB,),
         ac_rows=rows,
         records=_records(folder),
         evals=parts.evals,
-        plan=_plan(folder),
+        plan=plan_view(folder),
         acceptance_eval=(
             None
             if accepted is None or accepted.verdict is None
@@ -343,6 +358,20 @@ def feature_detail(
             )
         ),
     )
+
+
+def _waiting_on_owner(parts: FeatureParts) -> WaitingOnOwner | None:
+    """What the feature waits on from the owner: an open plan change request first (it pauses
+    tickets), then the acceptance eval's owner steps (A17: by hand when no AC is listed)."""
+    if asking := parts.requests.open:
+        tickets = tuple(dict.fromkeys(request.ticket for request in asking if request.ticket))
+        return WaitingOnOwner(kind="change_request", tickets=tickets)
+    state = None if parts.owner_wait is None else parts.owner_wait.state
+    if state == "sign_off":
+        return WaitingOnOwner(kind="owner_signoff")
+    if state == "no_acs":
+        return WaitingOnOwner(kind="owner_signoff_manual")
+    return None
 
 
 def _ux_designs(folder: FeatureFolder) -> tuple[tuple[bool, ...], str | None]:
@@ -409,7 +438,7 @@ def _verdict(
     return accepted.verdict, one_line(found[1].strip())[:_VERDICT_LINE_CHARS]
 
 
-def _plan(folder: FeatureFolder) -> PlanView | None:
+def plan_view(folder: FeatureFolder) -> PlanView | None:
     """The plan's version and amendments; a record problem when it was too large to read."""
     if folder.plan_too_large:
         return PlanView(version=None, problem=PLAN_TOO_LARGE)
