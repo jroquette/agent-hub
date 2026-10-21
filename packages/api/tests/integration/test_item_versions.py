@@ -28,7 +28,7 @@ import pytest
 
 from agent_hub.api.session_token import cookie_name
 from agent_hub.api.settings import ApiSettings
-from agent_hub.core.item_versions.hub_item_writer import HubItemWriteError
+from agent_hub.core.item_versions.hub_item_writer import DraftFiles, HubItemWriteError
 from agent_hub.core.item_versions.item_version import (
     ItemVersionMeta,
     NewItemVersion,
@@ -535,6 +535,21 @@ def test_never_versioned_when_local_settings_builtin_pack_files_drafts_or_plugin
     assert (hub / SETTINGS).read_bytes() == _json(settings)
     assert {path: (hub / path).read_bytes() for path in untouched} == untouched
     assert {path for path, _ in _rows(writer)} == {*TOOLKIT_UNITS, REVIEW}
+    # A publish of another draft writes the agent only: the draft it reads, the other draft and
+    # the local settings are never versioned, and the local settings never opened.
+    _draft(hub, "agent-nvr001")
+    # The new draft changes the tree, so the next read reruns the hub card's doctor drift check
+    # (before this feature; it reads the whole tree): a read first, as the Studio's own does.
+    _get(writer, CATALOG)
+    with _opened_names(monkeypatch) as opened:
+        published = _publish(writer, "agent-nvr001")
+
+    assert published.status_code == 200, published.text
+    assert (hub / SCOUT).read_bytes() == PUBLISHED
+    assert not any(name.endswith("settings.local.json") for name in opened)
+    assert {path: (hub / path).read_bytes() for path in untouched} == untouched
+    assert {path for path, _ in _rows(writer)} == {*TOOLKIT_UNITS, REVIEW}
+    assert _versions(writer, SCOUT)[-1].draft_id == "agent-nvr001"
 
 
 def _append_versions(composed: Any, unit_path: str, contents: list[bytes]) -> None:
@@ -681,6 +696,24 @@ def _restore(app: Any, item: str, version_id: str, **body: bool) -> Any:
     """``POST {item}/versions/{version_id}/restore`` with ``body``, from this server's page."""
     path = f"{item}/versions/{version_id}/restore"
     return app.client.post(path, json=body, headers=ORIGIN)
+
+
+SCOUT_TARGET: Final = {"kind": "agent", "source": "demo", "name": "scout"}
+PUBLISHED: Final = SCOUT_MD + b"Published from the Studio.\n"
+
+
+def _draft(hub: Path, draft_id: str, content: bytes = PUBLISHED) -> Path:
+    """An agent draft of ``scout`` under ``.hub-drafts/<draft_id>/``, as the Studio writes it."""
+    folder = hub / ".hub-drafts" / draft_id
+    folder.mkdir(parents=True)
+    (folder / "scout.md").write_bytes(content)
+    return folder
+
+
+def _publish(app: Any, draft_id: str, **body: bool) -> Any:
+    """``POST .../skills/drafts/{draft_id}/publish`` onto ``scout``, from this server's page."""
+    path = f"{CATALOG}/drafts/{draft_id}/publish"
+    return app.client.post(path, json={"target": SCOUT_TARGET, **body}, headers=ORIGIN)
 
 
 def _origins(app: Any, unit_path: str) -> list[tuple[VersionOrigin, str]]:
@@ -962,11 +995,20 @@ class EdgeWriter:
         self.real.check_targets(hub_path, unit_paths)
 
     def write_unit(
-        self, hub_path: str, unit_path: str, content: UnitContent, *, kind: UnitKind
+        self,
+        hub_path: str,
+        unit_path: str,
+        content: UnitContent,
+        *,
+        kind: UnitKind,
+        carry_from: str | None = None,
     ) -> None:
         if self.fail:
             raise HubItemWriteError(f"rename failed at {hub_path}/{unit_path}")
-        self.real.write_unit(hub_path, unit_path, content, kind=kind)
+        self.real.write_unit(hub_path, unit_path, content, kind=kind, carry_from=carry_from)
+
+    def read_script(self, hub_path: str, path: str) -> bytes | None:
+        return self.real.read_script(hub_path, path)
 
     def write_file(
         self, hub_path: str, path: str, content: bytes, *, executable: bool = False
@@ -975,6 +1017,12 @@ class EdgeWriter:
 
     def remove_unit(self, hub_path: str, unit_path: str, *, kind: UnitKind) -> None:
         self.real.remove_unit(hub_path, unit_path, kind=kind)
+
+    def read_draft(self, hub_path: str, draft_id: str) -> DraftFiles:
+        return self.real.read_draft(hub_path, draft_id)
+
+    def remove_draft(self, hub_path: str, draft_id: str) -> None:
+        self.real.remove_draft(hub_path, draft_id)
 
 
 def test_write_edges_refuse_or_skip_when_link_equal_or_failing(
@@ -1007,6 +1055,44 @@ def test_write_edges_refuse_or_skip_when_link_equal_or_failing(
 
     _refused(linked, "link_in_path")
     assert (edges.outside / "scout.md").read_bytes() == SECOND
+    assert _versions(app, SCOUT) == [first, second]
+
+
+def test_write_edges_refuse_or_skip_when_publish_link_equal_or_failing(
+    open_writer: WriterOpener, make_hub: Callable[..., Path], tmp_path: Path
+) -> None:
+    edges = EdgeWriter(tmp_path / "outside-agents")
+    app = open_writer(item_writer=edges)
+    hub = _registered(app, make_hub, None)
+    first, second = _two_scout_versions(app, hub)
+    stamp = (hub / SCOUT).stat().st_mtime_ns
+
+    equal_draft = _draft(hub, "agent-eql001", SECOND)
+    equal = _publish(app, "agent-eql001")
+
+    assert equal.status_code == 200, equal.text
+    assert equal.json() == {"changed": False, "versioned": False, "reason": None, "version": None}
+    assert (hub / SCOUT).stat().st_mtime_ns == stamp
+    assert not equal_draft.exists()
+
+    edges.fail = True
+    failed_draft = _draft(hub, "agent-fai001")
+    failed = _publish(app, "agent-fai001")
+
+    assert failed.status_code == 500, failed.text
+    assert (failed.json()["code"], failed.json()["kind"]) == ("write_failed", "failed")
+    assert str(hub) not in failed.text
+    assert SCOUT not in failed.text
+    assert "scout" not in failed.json()["detail"]
+    assert (hub / SCOUT).read_bytes() == SECOND
+    assert (failed_draft / "scout.md").read_bytes() == PUBLISHED
+
+    edges.fail, edges.link = False, True
+    linked = _publish(app, "agent-fai001")
+
+    _refused(linked, "link_in_path")
+    assert (edges.outside / "scout.md").read_bytes() == SECOND
+    assert (failed_draft / "scout.md").read_bytes() == PUBLISHED
     assert _versions(app, SCOUT) == [first, second]
 
 
@@ -1055,13 +1141,16 @@ def test_read_only_hub_refuses_when_folder_not_writable(
     _get(writer, REVIEW_DETAIL)
     [review] = _versions(writer, REVIEW)
     _edit(hub / REVIEW, REVIEW_YAML + b"# Edited.\n")
+    draft = _draft(hub, "agent-ro0001")
     read_only_root(hub)
 
     for response in (
         _restore(writer, SCOUT_DETAIL, first.id),
         _restore(writer, REVIEW_DETAIL, review.id),
+        _publish(writer, "agent-ro0001"),
     ):
         _refused(response, "hub_read_only")
+    assert (draft / "scout.md").read_bytes() == PUBLISHED
     assert (hub / SCOUT).read_bytes() == SECOND
     assert (hub / REVIEW).read_bytes() == REVIEW_YAML + b"# Edited.\n"
     assert _versions(writer, SCOUT) == [first, second]
@@ -1075,12 +1164,17 @@ def test_read_only_hub_refuses_when_in_container(
     first, second = _two_scout_versions(writer, hub)
     container = open_writer(sessions_off=True)
 
+    draft = _draft(hub, "agent-ctr001")
+
     signed_in = _restore(container, SCOUT_DETAIL, first.id)
+    published = _publish(container, "agent-ctr001")
     container.client.cookies.clear()
     without_cookie = _restore(container, f"{REVIEW_DETAIL}", first.id)
+    published_without_cookie = _publish(container, "agent-ctr001")
 
-    for response in (signed_in, without_cookie):
+    for response in (signed_in, published, without_cookie, published_without_cookie):
         _refused(response, "hub_read_only")
+    assert (draft / "scout.md").read_bytes() == PUBLISHED
     assert (hub / SCOUT).read_bytes() == SECOND
     assert _versions(container, SCOUT) == [first, second]
     assert REVIEW not in {path for path, _ in _rows(container)}
@@ -1146,6 +1240,8 @@ def test_git_untouched_when_every_route_runs(
     _git(hub, "init", "--quiet", "--initial-branch=main")
     _git(hub, "add", "--all")
     _git(hub, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "c")
+    # The Studio's draft, written after the commit as Claude writes it (never staged).
+    draft = _draft(hub, "agent-git001")
     before = _git_state(hub)
     spawned: list[tuple[Any, ...]] = []
     forks: list[str] = []
@@ -1182,9 +1278,13 @@ def test_git_untouched_when_every_route_runs(
         _get(app, f"{REVIEW_DETAIL}/versions/{workflow_first}")
         restored = _restore(app, SCOUT_DETAIL, first)
         workflow_restored = _restore(app, REVIEW_DETAIL, workflow_first)
+        published = _publish(app, "agent-git001")
 
     assert restored.status_code == 200, restored.text
     assert workflow_restored.status_code == 200, workflow_restored.text
+    assert published.status_code == 200, published.text
+    assert (hub / SCOUT).read_bytes() == PUBLISHED
+    assert not draft.exists()
     # The only processes are the hub card's doctor drift check listing the checkout (read-only,
     # before this feature), when a read or a restore resolves the project after the tree changed.
     assert {_git_arguments(args) for args in spawned} <= READ_ONLY_LISTINGS
