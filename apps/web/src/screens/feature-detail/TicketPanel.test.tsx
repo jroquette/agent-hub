@@ -1,6 +1,8 @@
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { fmtDateTime } from "../../lib/format";
 
 import { seriousViolations } from "../../testing/axe";
 import {
@@ -61,6 +63,19 @@ function show(path: string, evals: EvalRecord[] = []) {
     },
   );
 }
+
+/** AGH-202's eval, waiting on owner steps. */
+const WAITING = anEvalRecord({
+  delivery: "agh-202",
+  path: "features/control-plane/evals/agh-202.md",
+  verdict: "SHIP-WITH-OWNER-STEPS",
+  tickets: ["AGH-202"],
+  evaluated_at: "2026-10-11T10:00:00Z",
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 function panel(): HTMLElement {
   return screen.getByRole("complementary", { name: /^Ticket AGH-/ });
@@ -250,21 +265,46 @@ describe("TicketPanel (AC-1.10)", () => {
 
   // Structure, names and roles (A16): theme contrast is tokens.test.ts's.
   it("AC-1.10 has no serious axe violation, overlaid and docked, Flow and Table (a11y)", async () => {
-    {
-      for (const width of [1280, 1600]) {
-        vi.stubGlobal("matchMedia", (query: string) => ({
-          matches: width >= 1600 && query === "(min-width: 1600px)",
-          media: query,
-          addEventListener: () => undefined,
-          removeEventListener: () => undefined,
-        }));
-        for (const view of ["", "&tickets=table"]) {
-          const { container, unmount } = show(`/?doc=tickets${view}&ticket=AGH-202`);
-          expect(await seriousViolations(container)).toEqual([]);
-          unmount();
-        }
+    for (const width of [1280, 1600]) {
+      vi.stubGlobal("matchMedia", (query: string) => ({
+        matches: width >= 1600 && query === "(min-width: 1600px)",
+        media: query,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      }));
+      for (const view of ["", "&tickets=table"]) {
+        const { container, unmount } = show(`/?doc=tickets${view}&ticket=AGH-202`);
+        expect(await seriousViolations(container)).toEqual([]);
+        unmount();
       }
-      vi.unstubAllGlobals();
     }
+  });
+
+  // AGH-330 F5: the signal lands on its eval's group row.
+  it("AC-1.10 lands the signal's link on the eval's group row in the Eval tab", async () => {
+    const API = "/api/v1/features/agent-hub/control-plane";
+    renderWithApi(<FeatureDetailScreen />, {
+      routes: {
+        [API]: aFeatureDetail({
+          issues: ["AGH-201", "AGH-202", "AGH-203"],
+          evals: [WAITING],
+        }),
+        [`${API}/tickets`]: tickets(),
+        "/api/v1/sessions": aPage([]),
+      },
+      path: "/features/agent-hub/control-plane?doc=tickets&ticket=AGH-202",
+      route: "features/:project/:slug",
+    });
+
+    await userEvent.click(await screen.findByRole("link", { name: "Settle them in the Eval tab" }));
+
+    expect(await screen.findByRole("button", { name: /^AGH-202\b.*1 eval/ })).toHaveFocus();
+  });
+
+  // AGH-330 F8: the Eval step's date reads as the page writes date-times.
+  it("AC-1.10 dates the Eval step as the page does", () => {
+    show("/?doc=tickets&ticket=AGH-202&step=eval", [WAITING]);
+
+    expect(panel()).toHaveTextContent(fmtDateTime(WAITING.evaluated_at ?? "", "local"));
   });
 });

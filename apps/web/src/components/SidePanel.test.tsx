@@ -88,6 +88,18 @@ describe("SidePanel (AC-1.10)", () => {
     expect(screen.getByRole("button", { name: "Open AGH-7" })).toHaveFocus();
   });
 
+  // AGH-330 R2: a reader who moved focus elsewhere on the page keeps it when the panel closes.
+  it("leaves focus where the reader put it when the panel closes", async () => {
+    render(<Page />);
+    await userEvent.click(screen.getByRole("button", { name: "Open AGH-7" }));
+    screen.getByRole("button", { name: "After" }).focus();
+
+    await userEvent.keyboard("{Escape}");
+
+    expect(screen.queryByRole("complementary")).toBeNull();
+    expect(screen.getByRole("button", { name: "After" })).toHaveFocus();
+  });
+
   it("overlays at 1280 and docks at 1600", async () => {
     screenWidth(1280);
     const { unmount } = render(<Page />);

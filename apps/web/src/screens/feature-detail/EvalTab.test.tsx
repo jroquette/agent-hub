@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -18,6 +18,7 @@ import {
 } from "../../testing/builders";
 import {
   EvalTab,
+  FOCUS_EVAL,
   evalHistory,
   evalPrompt,
   pickEval,
@@ -202,6 +203,22 @@ describe("EvalTab rows", () => {
       evaluated_at: "2026-10-13T10:00:00Z",
     }),
   ];
+
+  // AGH-330 R1, R2, F6: a signpost lands once on its eval's group row, the list opened for it.
+  it("focuses a signpost's eval group once, opening a hidden list, never again on a later render", async () => {
+    window.localStorage.setItem("agent-hub:eval-list-open", "false");
+    const { router } = renderWithApi(tab({ evals: runs, selected: runs[1] }));
+    expect(screen.queryByRole("table", { name: "Evals" })).toBeNull();
+
+    await act(() =>
+      router.navigate("/?doc=eval&eval=agh-201-r2", { replace: true, state: FOCUS_EVAL }),
+    );
+
+    expect(screen.getByRole("button", { name: /^AGH-201\b.*2 evals/ })).toHaveFocus();
+    await userEvent.click(screen.getByRole("button", { name: "Hide list" }));
+    await userEvent.click(screen.getByRole("button", { name: "Show list" }));
+    expect(screen.getByRole("button", { name: "Hide list" })).toHaveFocus();
+  });
 
   it("names runs by number, the group by its ticket's title, the newest as latest", () => {
     renderWithApi(

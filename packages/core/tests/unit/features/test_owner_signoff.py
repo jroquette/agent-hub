@@ -1,7 +1,9 @@
 """The owner signs off a feature's owner steps (playground)."""
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
@@ -568,12 +570,8 @@ _NO_ACS = json.dumps(
 _ALLOWS = {"done": ("sign_off",), "more_work": ("sign_off", "reopened")}
 
 
-def _case(*evals: RecordHead, **fields: object) -> FeatureFolder:
-    return FeatureFolder(**({**vars_of(a_planned_folder(*evals)), **fields}))  # type: ignore[arg-type]
-
-
-def vars_of(folder: FeatureFolder) -> dict[str, object]:
-    return {name: getattr(folder, name) for name in FeatureFolder.__dataclass_fields__}
+def _case(*evals: RecordHead, **fields: Any) -> FeatureFolder:
+    return replace(a_planned_folder(*evals), **fields)
 
 
 # two-level-flows A9-A11, A15 (AGH-330 Q10): the served wait offers exactly what the write accepts.
