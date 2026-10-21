@@ -79,6 +79,7 @@ hub next   # the tracker's ready issues, one line each
 hub run ISSUE --repo REPO [--live] [--budget USD] [--from implement|verify] …   # one issue with a complete brief to a PR through the tracker port
 hub ship [ISSUE] [--draft] [--dry-run]   # each changed repo's check, push and PR, PRs linked, the issue to review
 hub step worktree|verdict|commits|pr|report …   # one hub run stage as JSON, for the issue-to-pr workflow's nodes
+hub step ticket-brief|preflight|change-request|decide|amend-plan --feature SLUG …   # a ticket record written into the hub, never committed
 hub bench [--validate] [--runs N] [--cases IDS] [--budget USD] …   # configuration benchmark (module bench)
 hub collect [FILE|-] [--db PATH]   # ingests canonical events from JSON Lines (stdin when FILE is omitted or -)
 hub collect --transcript FILE [--project NAME]   # a Claude Code transcript, as metadata-only events
@@ -193,6 +194,13 @@ the session's reply on stdin as `hub run` does (done, or blocked, with its quest
 `report` computes the delivery (`delivered`, `no_changes`, `blocked`, `failed`) from the other steps' outputs. A
 failure is one `hub step <name>: <reason>` stderr line and exit 1. No step reads or writes the tracker; only the
 fetch, the push and `gh` get a GitHub token.
+
+The `implement` run's hub writes are `hub step` writers too (two-level-flows P7): `ticket-brief --feature --ticket`,
+`preflight --feature --ticket --run JSON`, `change-request --feature --ticket --run-id --evidence --proposal
+[--affected]…`, `decide --feature --request N --decision approved|declined --by WHO [--note]` and `amend-plan --feature
+--request N --summary`. Each writes one record under the hub's `brain/features/<slug>/`, checked as its reader reads it,
+prints the hub-relative `path` it wrote, follows no link and never commits; a refusal writes nothing. The records and
+their rules are in [feature-records.md](design/feature-records.md).
 
 `hub start ISSUE` reads the issue once, then looks for its task worktrees in every repo: a name found there resumes the
 task, else the task is named `<issue lower>-<title slug>`. It checks the branches, creates the missing worktrees of the

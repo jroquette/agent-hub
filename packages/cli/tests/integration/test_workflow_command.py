@@ -642,9 +642,16 @@ def test_gives_the_gate_its_approver_when_a_person_approves_it(
     assert ship["output"] == {"decision": "approve", "text": "looks good", "approver": "jdoe"}
 
 
-@pytest.mark.parametrize("account", [KeyError("uid"), OSError("no account"), "unknown"])
+@pytest.mark.parametrize(
+    ("account", "reason"),
+    [
+        (KeyError("uid"), "no account name is known"),
+        (OSError("no account"), "no account name is known"),
+        ("unknown", "approver 'unknown'"),
+    ],
+)
 def test_refuses_the_decision_and_stays_paused_when_no_person_is_known(
-    sample: SampleRun, monkeypatch: pytest.MonkeyPatch, account: object
+    sample: SampleRun, monkeypatch: pytest.MonkeyPatch, account: object, reason: str
 ) -> None:
     def getuser() -> str:
         if isinstance(account, Exception):
@@ -658,6 +665,7 @@ def test_refuses_the_decision_and_stays_paused_when_no_person_is_known(
 
     assert result.exit_code == 1
     assert "names no person" in result.output
+    assert reason in result.output
     assert [r for r in sample.records() if r["event"] == "decision"] == []
     assert sample.fakes.calls("make") == []
 
