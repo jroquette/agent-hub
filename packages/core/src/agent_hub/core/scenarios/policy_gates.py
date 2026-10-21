@@ -20,12 +20,13 @@ names the gates its asks need; without one nothing is decided and the workflow r
 Agent nodes are not decided: the guard checks them, best effort.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final
+from typing import Final, Literal
 
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.hub_config.effective_environments import SourcedEnvironment
+from agent_hub.core.json_form import JsonValue
 from agent_hub.core.scenarios.access_policy import Effect, PolicyDecision, decide
 from agent_hub.core.workflows.document import WorkflowDocument
 from agent_hub.core.workflows.includes import IncludeResolver, expand_includes
@@ -34,6 +35,12 @@ from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
 from agent_hub.core.workflows.rewrite import SEPARATOR
 
 ASK_SUFFIX: Final = "__ask"
+# A run's record lines naming its engine gates: the steps a resume gated again (a re-ask, beside
+# the start record's ``policy_gates``), and an investigation's gate (``gate``, T9).
+POLICY_ASKS: Final = "policy_asks"
+INVESTIGATION: Final = "investigation"
+
+type GateKind = Literal["policy", "investigation"]
 
 
 class PolicyGateError(AgentHubError):
@@ -175,3 +182,19 @@ def node_asks(decided: Sequence[NodeDecision], *, environment: str) -> dict[str,
         for item in decided
         if item.decision.decision == "ask"
     }
+
+
+def recorded_gate_kinds(records: Iterable[Mapping[str, JsonValue]]) -> dict[str, GateKind]:
+    """The engine's own gates a run's record names, by gate id as recorded: a ``policy`` gate
+    before each step of the start record's ``policy_gates`` and of each ``policy_asks`` line,
+    and each ``investigation`` line's ``gate``. A gate is never classified by its id alone: an
+    authored approval may be recorded ``<group>__ask``."""
+    kinds: dict[str, GateKind] = {}
+    for record in records:
+        event = record.get("event")
+        steps = record.get("policy_gates" if event == "start" else "steps")
+        if event in ("start", POLICY_ASKS) and isinstance(steps, list):
+            kinds |= {ask_gate(step): "policy" for step in steps if isinstance(step, str)}
+        if event == INVESTIGATION and isinstance(gate := record.get("gate"), str):
+            kinds[gate] = "investigation"
+    return kinds
