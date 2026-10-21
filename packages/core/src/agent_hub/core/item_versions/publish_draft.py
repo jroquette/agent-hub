@@ -17,9 +17,11 @@ first, places the draft from what it read (``edit_destination``, ``replace_hook`
 ``new_destination``), writes (a new hook's scripts first; a renamed skill carries the old
 folder's hidden entries, then the old unit is removed) and records a ``publish`` naming the
 draft. A hook edit's place in its file (``hook_at``) is read from the file the step read under
-its lock, so the hook replaced is the one the recorded content names. A hook edit's replay (the
-step's ``replayed``) keeps the file as it is, since ``replace_hook`` would replace another hook
-the second time; with no version to tell a replay by (the first write stored none: a secret,
+its lock, so the hook replaced is the one the recorded content names. A hook edit's replay (its
+unit among the step's ``replayed``) keeps the file as it is, since ``replace_hook`` would replace
+another hook the second time; a replay whose draft's hooks the file does not all hold (the kept
+draft was edited after its publish) is refused (``item_exists``) rather than dropping the edit;
+with no version to tell a replay by (the first write stored none: a secret,
 too large, a lost race), a draft that moves its hook into a file already holding the draft's
 groups is refused (``item_exists``, A12, in words that claim no earlier publish, A17) and nothing
 is written, while one that splices in place is kept as it is when the file already holds it
@@ -28,7 +30,10 @@ is written, while one that splices in place is kept as it is when the file alrea
 bounds is ``unit_unreadable`` (A13). A retried rename whose old item is gone is an unknown item,
 and a retried new item whose first write stored no version is ``item_exists`` (A12). A retried
 rename whose old unit could not be removed (``old_not_removed``) follows the new unit's
-``publish``: the old unit and the draft are removed, ``changed: false`` (A18). An item gone
+``publish``: the old unit and the draft are removed, ``changed: false`` (A18). That replay is
+told by the new unit's own history only (a kept draft that first edited in place and was then
+renamed onto a sibling is ``item_exists``), and an old unit made or edited by hand since is kept.
+An item gone
 before the lock is an unknown item of its unit's kind.
 
 After the step, the draft is removed, also when nothing changed (A7), so a retry after a failed
@@ -59,6 +64,7 @@ from agent_hub.core.item_versions.publish_rules import (
     DraftItem,
     HookAt,
     edit_destination,
+    holds_hooks,
     holds_moved_hook,
     hook_at,
     new_destination,
@@ -80,6 +86,8 @@ _TOO_LARGE_TO_MERGE: Final = "The item on disk is too large to merge the draft i
 _SCRIPTS_IN_EDIT: Final = "A hook's scripts land only with a new hook"
 # A17: the server cannot tell a retry from a first publish here, so the answer claims neither.
 _MOVED_HOOK_HELD: Final = "The hooks file already holds this draft's hooks"
+# A kept hook draft edited after its publish: the file holds that publish, not the edit.
+_EARLIER_PUBLISH_HELD: Final = "The hooks file holds an earlier publish of this draft"
 
 
 class DraftNotRemovedError(AgentHubError):
@@ -197,7 +205,7 @@ class PublishDraft:
 
 
 class _Place(Protocol):
-    def __call__(self, reads: UnitReads, *, replayed: bool) -> Destination: ...
+    def __call__(self, reads: UnitReads, *, replayed: frozenset[str]) -> Destination: ...
 
 
 class _Edit:
@@ -216,12 +224,14 @@ class _Edit:
         self._listed = listed
         self._renamed = renamed
 
-    def __call__(self, reads: UnitReads, *, replayed: bool) -> Destination:
+    def __call__(self, reads: UnitReads, *, replayed: frozenset[str]) -> Destination:
         current = _current(reads, self._unit, merged=self._unit.kind is UnitKind.SKILL)
-        held = None if self._renamed is None else reads[self._renamed.unit_path]
-        if replayed and self._renamed is not None and isinstance(held, UnitContent):
-            # A18: the new unit holds this draft's publish; only the old unit is left to remove.
-            return Destination(unit=self._renamed, content=held, removed=self._unit)
+        renamed = self._renamed
+        held = None if renamed is None else reads[renamed.unit_path]
+        if renamed is not None and renamed.unit_path in replayed and isinstance(held, UnitContent):
+            # A18: the new unit's own last version is this draft's publish, still on disk; only
+            # the old unit is left (the step removes it if it holds what the rename left).
+            return Destination(unit=renamed, content=held, removed=self._unit)
         # Otherwise an overlay of the draft gives the same content again on a replay.
         destination = edit_destination(self._unit, current, self._draft, existing=self._listed)
         if destination.removed is not None and not _missing(reads, destination.unit):
@@ -237,13 +247,17 @@ class _HookEdit:
         self._unit = unit
         self._draft = draft
 
-    def __call__(self, reads: UnitReads, *, replayed: bool) -> Destination:
+    def __call__(self, reads: UnitReads, *, replayed: frozenset[str]) -> Destination:
         current = _current(reads, self._unit, merged=True)
-        if replayed:
-            return Destination(unit=self._unit, content=current)
         file = current.files[0]
-        at = _hook_in(self._unit, self._target, file.content)
         hooks = self._draft.hooks or {}
+        if self._unit.unit_path in replayed:
+            if not holds_hooks(file.content, hooks):
+                # The kept draft was edited after its publish: the file cannot tell where the
+                # edit goes now, and keeping the file as it is would drop it.
+                raise ItemWriteRefusedError("item_exists", _EARLIER_PUBLISH_HELD)
+            return Destination(unit=self._unit, content=current)
+        at = _hook_in(self._unit, self._target, file.content)
         if holds_moved_hook(file.content, at, hooks):
             raise ItemWriteRefusedError("item_exists", _MOVED_HOOK_HELD)
         written = replace_hook(file.content, at, hooks)
@@ -261,11 +275,13 @@ class _New:
         self._draft = draft
         self._taken = taken
 
-    def __call__(self, reads: UnitReads, *, replayed: bool) -> Destination:
+    def __call__(self, reads: UnitReads, *, replayed: frozenset[str]) -> Destination:
         planned = new_destination(self._project, self._draft)
         if self._draft.kind is not UnitKind.HOOK:
             # A replay finds its own item there: the catalog's name is this draft's publish.
-            if not replayed and (self._taken or not _missing(reads, planned.unit)):
+            if planned.unit.unit_path not in replayed and (
+                self._taken or not _missing(reads, planned.unit)
+            ):
                 raise ItemWriteRefusedError("item_exists")
             return planned
         current = reads[planned.unit.unit_path]
