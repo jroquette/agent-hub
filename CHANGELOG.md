@@ -20,6 +20,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   read, on every search). A query with no word (`!!!`) exits 2, and a query that starts with `-` goes after `--`
   (`hub search -- -foo`). The database gains migration 0008; a Python whose SQLite lacks FTS5 can no longer migrate
   it (ADR 0044) (AGH-391).
+- hub web gains a Tickets list (sidebar Work → Tickets, `/tickets`, AGH-426): the maintenance, fixes and small
+  changes the sessions worked on outside a feature (`/fix`, `/refactor`, `/upgrade`, `/incident`, `/triage`,
+  `/deliver`, `/review`, hub runs), one row per tracker issue under Needs you, In progress and Ended, with a Kind
+  filter and search. **Start ticket** opens the New session dialog on the hub folder with `/fix` in the prompt.
 
 ### Changed
 

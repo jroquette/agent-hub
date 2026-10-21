@@ -128,6 +128,8 @@ export const NAV: readonly NavGroup[] = [
         countNoun: () => "need you",
         tone: "waiting",
       },
+      // Single-ticket work (/fix, /refactor, /upgrade, …), grouped from the sessions by issue.
+      { id: "tickets", label: "Tickets", to: "/tickets", icon: "list-todo" },
     ],
   },
   {

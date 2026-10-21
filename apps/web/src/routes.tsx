@@ -6,6 +6,7 @@ import { AgentSessionScreen } from "./screens/agent-session";
 import { BrainPickerScreen, BrainScreen } from "./screens/brain";
 import { FeatureDetailScreen } from "./screens/feature-detail";
 import { FeaturesScreen } from "./screens/features";
+import { TicketsScreen } from "./screens/tickets";
 import { HealthScreen } from "./screens/health";
 import { HubConfigPickerScreen, HubConfigScreen } from "./screens/hub-config";
 import { KnowledgePhase3Screen } from "./screens/knowledge-phase3";
@@ -86,6 +87,7 @@ export const appRoutes: RouteObject[] = [
           { path: "knowledge/:section", element: <KnowledgePhase3Screen /> },
           { path: "features", element: <FeaturesScreen /> },
           { path: "features/:project/:slug", element: <FeatureDetailScreen /> },
+          { path: "tickets", element: <TicketsScreen /> },
           // Older links: Workflows moved into the Toolkit.
           { path: "workflows", element: <WorkflowsScreen /> },
           { path: "workflows/new", element: <NewWorkflowScreen /> },
