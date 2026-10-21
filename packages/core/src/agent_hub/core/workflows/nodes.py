@@ -31,6 +31,7 @@ from pydantic import (
 )
 
 from agent_hub.core.hub_config.model_tiers import Tier
+from agent_hub.core.scenarios.access_policy import Effect
 from agent_hub.core.workflows.substitution import NodeRef, SubstitutionError, parse_ref
 
 TriggerRule = Literal["all_success", "one_success", "none_failed_min_one_success", "all_done"]
@@ -293,6 +294,8 @@ class ShellNode(_Executable):
     env: EnvMap = Field(default_factory=empty)
     # Written to the child's stdin: a literal, or one whole reference's canonical text.
     stdin: Text | None = None
+    # Under the workflow's ``environment``, the policy's input (``write`` when absent, P-18).
+    effect: Effect | None = None
 
     @property
     def is_hub_step(self) -> bool:
@@ -314,6 +317,7 @@ class ScriptNode(_Executable):
     cwd: Text | None = None
     env: EnvMap = Field(default_factory=empty)
     stdin: Text | None = None
+    effect: Effect | None = None
 
 
 class LoopNode(_AgentKeys):

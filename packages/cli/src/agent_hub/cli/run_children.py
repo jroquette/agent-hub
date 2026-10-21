@@ -55,6 +55,8 @@ OTEL_VARIABLE: Final = "OTEL_RESOURCE_ATTRIBUTES"
 RUN_ID_VARIABLE: Final = "AGENT_HUB_RUN_ID"
 STEP_VARIABLE: Final = "AGENT_HUB_STEP"
 ATTEMPT_VARIABLE: Final = "AGENT_HUB_ATTEMPT"
+# The environment a process workflow runs in, for the guard's endpoint check (best effort).
+RUN_ENVIRONMENT_VARIABLE: Final = "HUB_RUN_ENVIRONMENT"
 IMPLEMENT_STEP: Final = "implement"
 # Set for the push and gh, above any repo config: no fsmonitor, signing or hook runs there.
 PUSH_OVERRIDES: Final = (
@@ -304,16 +306,20 @@ def session_env(
     attempt: int = 1,
     step: str = IMPLEMENT_STEP,
     hidden: CredentialNames = NO_CREDENTIALS,
+    environment: str | None = None,
 ) -> dict[str, str]:
     """The implementing session's environment: ``untrusted_env``, its telemetry tags and the
     run variables the hook sensor attributes the session's events with (D6). A workflow's
-    agent node passes its ``step`` (the node id as recorded) and run-wide ``attempt``, and the
-    hub's credential names as ``hidden``."""
+    agent node passes its ``step`` (the node id as recorded) and run-wide ``attempt``, the
+    hub's credential names as ``hidden``, and the run's ``environment`` when it declares one
+    (``HUB_RUN_ENVIRONMENT``, read by the guard's ``environment_endpoint`` rule)."""
     env = untrusted_env(environ, hidden=hidden)
     env[OTEL_VARIABLE] = f"repo={repo},issue={issue_id},agent_run={run_id}"
     env[RUN_ID_VARIABLE] = run_id
     env[STEP_VARIABLE] = step
     env[ATTEMPT_VARIABLE] = str(attempt)
+    if environment is not None:
+        env[RUN_ENVIRONMENT_VARIABLE] = environment
     return env
 
 
