@@ -396,15 +396,25 @@ def temporaries(hub: Path) -> list[str]:
 
 def test_leaves_no_temporary_file_when_launch_succeeds_or_fails(tmp_path: Path) -> None:
     web(tmp_path).mkdir(parents=True)
-    quick = ProcessRunLauncher(
-        db_path=tmp_path / "db", environ={}, program=[sys.executable, "-c", "pass"]
+    gate = tmp_path / "gate"
+    gate.touch()
+    # The child lives until the test removes the gate (at most 30 s), so its pid file is there.
+    wait = (
+        "import os, time\n"
+        "for _ in range(3000):\n"
+        f"    if not os.path.exists({str(gate)!r}): break\n"
+        "    time.sleep(0.01)\n"
     )
-    quick.start(spec_of(tmp_path))
+    held = ProcessRunLauncher(
+        db_path=tmp_path / "db", environ={}, program=[sys.executable, "-c", wait]
+    )
+    held.start(spec_of(tmp_path))
     assert temporaries(tmp_path) == []
 
     with pytest.raises(FileExistsError):
         run_launcher._create_locked(web(tmp_path) / "run-1.pid")  # noqa: SLF001
     assert temporaries(tmp_path) == []
+    gate.unlink()
 
     deadline = time.monotonic() + 10
     while (web(tmp_path) / "run-1.pid").exists() and time.monotonic() < deadline:
