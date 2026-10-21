@@ -278,7 +278,8 @@ describe("TicketPanel (AC-1.10)", () => {
         unmount();
       }
     }
-  });
+    // Four axe runs (two widths, two views): past 5 s when the fast gate runs its lanes at once.
+  }, 20_000);
 
   // AGH-330 F5: the signal lands on its eval's group row.
   it("AC-1.10 lands the signal's link on the eval's group row in the Eval tab", async () => {
