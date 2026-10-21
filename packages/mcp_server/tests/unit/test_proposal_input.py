@@ -1,3 +1,6 @@
+import re
+from datetime import UTC, date, datetime, timedelta, timezone
+
 import pytest
 
 from agent_hub.mcp_server.hub_context import ToolRefusal
@@ -11,7 +14,14 @@ from agent_hub.mcp_server.proposal_input import (
     SESSION_ID,
     checked_body,
     checked_title,
+    commit_message,
+    note_path,
+    note_text,
+    proposal_date,
+    pull_request_body,
+    pull_request_title,
     target_folder,
+    title_slug,
 )
 
 
@@ -51,9 +61,10 @@ def test_keeps_trimmed_title_when_within_bounds() -> None:
         ("x" * 121, "propose: the title is longer than 120 characters"),
         ("a\nb", "propose: the title must be one line with no control characters"),
         ("a\tb", "propose: the title must be one line with no control characters"),
+        ("a\u2028b", "propose: the title must be one line with no control characters"),
         ("!!!", "propose: the title has no letters or digits for a file name"),
     ],
-    ids=["empty", "blank", "long", "two-lines", "tab", "punctuation"],
+    ids=["empty", "blank", "long", "two-lines", "tab", "line-separator", "punctuation"],
 )
 def test_refuses_title_when_out_of_bounds(title: str, line: str) -> None:
     assert _refusal(checked_title, title) == line
@@ -87,3 +98,156 @@ def test_refuses_kind_when_not_a_brain_folder() -> None:
     line = _refusal(target_folder, "adr")
 
     assert line == "propose: the kind is not one of learning, playbook, decision, domain, system"
+
+
+@pytest.mark.parametrize(
+    ("title", "slug"),
+    [
+        ("Worktrees need a fresh fetch", "worktrees-need-a-fresh-fetch"),
+        ("Café 2x!", "caf-2x"),
+        ("  --Run `make check` (before the PR)--  ", "run-make-check-before-the-pr"),
+    ],
+)
+def test_slugs_title_when_words_present(title: str, slug: str) -> None:
+    assert title_slug(title) == slug
+
+
+def test_cuts_slug_at_word_boundary_when_title_long() -> None:
+    words = " ".join(["abcdefghi"] * 6)  # a 59-character slug whose last dash is at 49
+    exact = "a" * 45 + " bcde fghij"  # a dash exactly at 50: nothing is cut off the last word
+
+    assert title_slug(words) == "-".join(["abcdefghi"] * 5)
+    assert title_slug(exact) == "a" * 45 + "-bcde"
+    assert title_slug("x" * 60) == "x" * 50
+    for title in (words, exact, "x" * 60, "ab " * 40):
+        slug = title_slug(title)
+        assert len(slug) <= MAX_SLUG_CHARS
+        assert not slug.endswith("-")
+
+
+def test_refuses_slug_when_title_has_no_words() -> None:
+    assert _refusal(title_slug, "¡¿!") == (
+        "propose: the title has no letters or digits for a file name"
+    )
+
+
+def test_writes_note_layout_when_proposal_built() -> None:
+    text = note_text(
+        title="Worktrees need a fresh fetch",
+        body="Fetch origin before `make worktree`.\n\nElse the branch starts stale.",
+        kind="playbook",
+        external=False,
+        created=date(2026, 10, 21),
+        session="s-123",
+    )
+
+    assert text == (
+        "---\n"
+        "type: learning-proposal\n"
+        "status: proposed\n"
+        "provenance: agent\n"
+        "target: brain/playbooks/\n"
+        "created: 2026-10-21\n"
+        "session: s-123\n"
+        "---\n"
+        "\n"
+        "# Worktrees need a fresh fetch\n"
+        "\n"
+        "Fetch origin before `make worktree`.\n\nElse the branch starts stale.\n"
+    )
+    assert note_path(date(2026, 10, 21), "worktrees-need-a-fresh-fetch") == (
+        "_inbox/2026-10-21-worktrees-need-a-fresh-fetch.md"
+    )
+
+
+def test_marks_external_provenance_when_knowledge_came_from_outside() -> None:
+    text = note_text(
+        title="X", body="Y", kind="learning", external=True, created=date(2026, 1, 2), session=None
+    )
+
+    assert "provenance: agent-from-external\n" in text
+    assert "target: brain/learnings/\n" in text
+
+
+@pytest.mark.parametrize("session", [None, "", "a b", "s" * 129, "s-1\n", "s-1\nstatus: accepted"])
+def test_omits_session_when_id_missing_or_malformed(session: str | None) -> None:
+    text = note_text(
+        title="X",
+        body="Y",
+        kind="system",
+        external=False,
+        created=date(2026, 1, 2),
+        session=session,
+    )
+
+    assert "session:" not in text
+    assert text.startswith("---\ntype: learning-proposal\n")
+    assert text.count("status:") == 1
+
+
+def test_keeps_session_when_id_at_length_limit() -> None:
+    text = note_text(
+        title="X",
+        body="Y",
+        kind="system",
+        external=False,
+        created=date(2026, 1, 2),
+        session="s" * 128,
+    )
+
+    assert f"session: {'s' * 128}\n" in text
+
+
+def test_dates_note_in_utc_when_clock_near_midnight() -> None:
+    late = datetime(2026, 10, 21, 23, 30, tzinfo=timezone(timedelta(hours=-3)))
+
+    assert proposal_date(late) == date(2026, 10, 22)
+    assert proposal_date(datetime(2026, 10, 21, 0, 0, tzinfo=UTC)) == date(2026, 10, 21)
+
+
+NOTE = "_inbox/2026-10-21-worktrees-need-a-fresh-fetch.md"
+# Pictographs, dingbats and the emoji presentation selector: none may reach a commit or a PR.
+EMOJI = re.compile("[\U0001f000-\U0001faff\u2600-\u27bf\ufe0f]")
+
+
+def test_cuts_pull_request_text_when_long() -> None:
+    title = pull_request_title("Worktrees need a fresh fetch " * 4)
+    paragraph = "word " * 200
+    body = pull_request_body(
+        note=NOTE, body=f"{paragraph}\n\nSecond paragraph.", external=False, session="s-123"
+    )
+
+    assert len(title) == 72
+    assert title.startswith("Learning proposal: Worktrees need a fresh fetch")
+    assert title.endswith("…")
+    assert pull_request_title("Short one") == "Learning proposal: Short one"
+    head, quote = body.split("\n\n", 1)
+    assert head == f"Adds brain/{NOTE} (provenance agent, session s-123)."
+    assert quote.startswith("> word word")
+    assert len(quote.removeprefix("> ").rstrip("\n")) == 600
+    assert quote.rstrip("\n").endswith("…")
+    assert "Second paragraph" not in body
+
+
+def test_quotes_each_line_of_first_paragraph_when_body_built() -> None:
+    body = pull_request_body(
+        note=NOTE, body="Line one\nline two\n\nLater.", external=True, session="a b"
+    )
+
+    assert body == (
+        f"Adds brain/{NOTE} (provenance agent-from-external).\n\n> Line one\n> line two\n"
+    )
+
+
+def test_writes_no_attribution_when_pull_request_built() -> None:
+    texts = [
+        pull_request_title("Worktrees need a fresh fetch"),
+        pull_request_body(note=NOTE, body="Fetch origin first.", external=False, session="s-123"),
+        commit_message("worktrees-need-a-fresh-fetch"),
+    ]
+
+    assert texts[2] == "docs(brain): propose learning worktrees-need-a-fresh-fetch"
+    for text in texts:
+        for mark in ("Co-Authored-By", "Generated with", "Claude"):
+            assert mark.lower() not in text.lower()
+        assert EMOJI.search(text) is None
