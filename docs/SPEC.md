@@ -431,9 +431,11 @@ A web app reads the hubs and the agents' events and answers five questions, one 
 Git stays the source of truth. Each developer's database holds a derived full-text index (SQLite FTS5) of the hub's
 `brain/` (except `brain/auto/`) and each repo's `docs/`, synced with the checkout on every search and rebuilt by
 `hub brain reindex`. `hub search` and the MCP server `hub mcp` (tools `search`, `read`, `propose`) query it; every
-result names its path and a snippet. `propose` writes a new `brain/_inbox/` note on a branch and opens a hub pull
-request through `hub_git`, never the default branch. The knowledge view gains the same search, links between notes and
-the provenance path above. Transcripts are never indexed or shared; embeddings and hosting are out of scope.
+result names its path and a snippet. A query is its runs of letters and digits, all required, never FTS5 syntax: one
+with no word (`!!!`, `(`) exits 2, and one that starts with `-` goes after `--` (`hub search -- -foo`). `propose`
+writes a new `brain/_inbox/` note on a branch and opens a hub pull request through `hub_git`, never the default branch.
+The knowledge view gains the same search, links between notes and the provenance path above. Transcripts are never
+indexed or shared; embeddings and hosting are out of scope.
 
 **Actions, not just reading (after v1).** Start a workflow on an issue, approve a gate, pause or cancel a session, accept a learning (built early, through a hub PR: AGH-201 below).
 
@@ -812,7 +814,8 @@ before anything is appended, and the data stays on the machine in v1:
 - **Outside the events** (not an exception to the rules above, which are about what sessions and hooks send): the
   database also keeps the text of hub files in two derived stores, item versions ([ADR 0039](adr/0039-item-versions-and-server-writes-to-the-hub.md))
   and the knowledge index ([ADR 0044](adr/0044-team-memory-git-source-local-index-and-hub-mcp.md)), both read from
-  files the developer already has and gated by the guard's secret rules; no transcript or session content enters them.
+  files the developer already has and kept out when a rule of the redaction set `r1` matches (`has_secret_match`); no
+  transcript or session content enters them.
 
 **Payload kept** (every short text is redacted, then truncated; "chars" are characters):
 
