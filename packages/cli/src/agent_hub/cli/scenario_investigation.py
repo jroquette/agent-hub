@@ -27,7 +27,8 @@ first: ``workaround.start``, each step (origin ``agent``; the pick answered its 
 again and run only while its plan is the one shown, ``workaround.end``. A failed workaround, or
 one a crash cut (its start and no end: it is never run again silently), opens a new
 investigation of the same step. A crash after the workaround's end resumes from it (an ``ok``
-one goes on to the retry), and a ``stop`` whose gate closed before a crash still cancels.
+one goes on to the retry; any other opens the new investigation, even once the gate closed), and
+a ``stop`` whose gate closed before a crash still cancels.
 """
 
 import contextlib
@@ -167,6 +168,26 @@ def open_investigation(
     line: Record = {"event": INVESTIGATION, "step": step, "gate": gate, "number": number}
     line |= {"step_attempt": step_attempt, "failure_kind": failure_kind}
     append_record(folder, line, durable=True)
+    request_gate(recorded, step=step, failure_kind=failure_kind, number=number)
+
+
+def gate_recorded(
+    records: Sequence[Mapping[str, JsonValue]], investigation: InvestigationView
+) -> bool:
+    """Whether the investigation's gate line is in the record (a crash may come between)."""
+    return any(
+        record.get("event") == "gate"
+        and record.get("node") == investigation.gate
+        and record.get("attempt") == investigation.number
+        for record in records
+    )
+
+
+def request_gate(
+    recorded: RecordedRun, *, step: str, failure_kind: str | None, number: int
+) -> None:
+    """The gate of investigation ``number`` of ``step``: its line and its ``gate.request``."""
+    gate = investigation_gate(step)
     message = (
         f"investigation {number}: step {step} diverged ({failure_kind or 'failed'}); answer"
         " pick <option id>, retry or stop"
@@ -269,6 +290,11 @@ def record_proposal(
     open_now = view.open_investigation
     if open_now is None:
         raise WorkflowRunError(f"the scenario run {folder.name} is not paused at an investigation")
+    if open_now.choice is not None:
+        # The answer was checked against the options shown: they no longer change.
+        raise WorkflowRunError(
+            f"the investigation of step {open_now.step} is already answered ({open_now.choice})"
+        )
     made = sum(
         1
         for record in records
@@ -278,11 +304,7 @@ def record_proposal(
         raise WorkflowRunError(
             f"the investigation of step {open_now.step} already has {MAX_PROPOSALS} proposals"
         )
-    if open_now.choice is not None:
-        # The answer was checked against the options shown: they no longer change.
-        raise WorkflowRunError(
-            f"the investigation of step {open_now.step} is already answered ({open_now.choice})"
-        )
+
     earlier = sum(
         len(found)
         for record in records
@@ -394,9 +416,22 @@ def answer(ports: AnswerPorts, investigation: InvestigationView) -> int | None:
     """Act on the answered ``investigation``: the exit code when the scenario run stops or
     pauses again here, ``None`` when its engine goes on."""
     choice = investigation.choice
+    if choice is None:
+        # Its line was recorded, then a crash came before its gate: the gate opens now.
+        request_gate(
+            ports.recorded,
+            step=investigation.step,
+            failure_kind=investigation.failure_kind,
+            number=investigation.number,
+        )
+        typer.echo(
+            paused_line(ports.folder.name, str(ports.header.get("scenario")), investigation.step)
+        )
+        return 0
     if choice == PICK:
         failed = _workaround(ports, investigation)
-        _close(ports, investigation)
+        if not investigation.closed:
+            _close(ports, investigation)
         if failed is not None:
             return _reopen(ports, investigation, failed)
         return None

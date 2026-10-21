@@ -64,6 +64,7 @@ from agent_hub.cli.scenario_investigation import (
     AnswerPorts,
     HeldEnd,
     answer,
+    gate_recorded,
     investigations,
     open_investigation,
     paused_line,
@@ -104,11 +105,15 @@ from agent_hub.core.hub_config.effective_environments import (
 )
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.scenarios.credentials import CredentialNames
-from agent_hub.core.scenarios.investigation import CHOICES, STOP
+from agent_hub.core.scenarios.investigation import CHOICES, PICK, STOP
 from agent_hub.core.scenarios.policy_gates import (
     PolicyAsk,
 )
-from agent_hub.core.scenarios.run_record import InvestigationView, fold_records
+from agent_hub.core.scenarios.run_record import (
+    InvestigationView,
+    ScenarioRunView,
+    fold_records,
+)
 from agent_hub.core.scenarios.scenario_events import ScenarioEvents
 from agent_hub.core.scenarios.scenario_plan import ScenarioPlan
 from agent_hub.core.workflows.document import WorkflowDocument, WorkflowLoadError, parse_workflow
@@ -223,10 +228,11 @@ def resume(hub: Path, folder: Path, records: list[dict[str, JsonValue]]) -> int:
     view = fold_records(records)
     pending = view.open_investigation
     last = view.investigations[-1] if view.investigations else None
-    if pending is None and last is not None and last.choice == STOP and view.status is None:
-        # The stop closed its gate, then the run stopped before its end: it still cancels.
+    if pending is None and last is not None and view.status is None and _unfinished(view, last):
+        # A stop, or a pick whose workaround did not end ok, closed its gate and the run
+        # stopped before what follows: it still cancels, or opens the next investigation.
         pending = last
-    if pending is not None and pending.choice is None:
+    if pending is not None and pending.choice is None and gate_recorded(records, pending):
         raise WorkflowRunError(
             f"the scenario run {folder.name} is paused at the investigation of step"
             f" {pending.step}: answer it with hub workflow respond {folder.name} --node"
@@ -234,6 +240,18 @@ def resume(hub: Path, folder: Path, records: list[dict[str, JsonValue]]) -> int:
         )
     append_record(folder, {"event": "resume"})
     return execute(hub, folder, records, resumed=True, answered=pending)
+
+
+def _unfinished(view: ScenarioRunView, last: InvestigationView) -> bool:
+    """Whether the closed ``last`` investigation's answer still owes its outcome: a stop owes
+    the run's end, a pick whose workaround ended other than ``ok`` owes a new investigation."""
+    if last.choice == STOP:
+        return True
+    ended = next(
+        (item.status for item in view.workarounds if item.workaround_id == f"w{last.number}"),
+        None,
+    )
+    return last.choice == PICK and ended is not None and ended != "ok"
 
 
 def execute(

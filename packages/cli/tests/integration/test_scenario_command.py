@@ -2019,3 +2019,70 @@ def test_refuses_eleventh_proposal_when_investigation_proposal_cap_reached(
     )
     assert len([line for line in records(hub) if line["event"] == "proposal"]) == 10
     assert len([event for event in stored(hub) if event.type == "finding"]) == 20
+
+
+def test_opens_new_investigation_when_failed_workaround_closed_before_crash(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_walk(hub, marker, held)
+    propose(hub, marker, held, proposal=a_proposal(RELEASE))
+    assert decide(hub, marker, held, "pick", "o1").exit_code == 0
+    # w1 failed, the gate closed, then the crash came before the new investigation opened.
+    append_lines(
+        hub,
+        {"event": "workaround_start", "workaround_id": "w1", "number": 1, "gate": GATE}
+        | {"option": "o1", "steps": 1, "approver": "dev"},
+        {"event": "workaround_end", "workaround_id": "w1", "number": 1, "status": "failed"},
+        {"event": "step_end", "node": GATE, "attempt": 1, "status": "ok"}
+        | {"output": {"choice": "pick", "text": "o1"}},
+    )
+
+    resumed = resume_walk(hub, marker, held)
+
+    assert resumed.exit_code == 0, resumed.output
+    assert plain(resumed.stdout).splitlines()[-1].startswith(PAUSED)
+    # A failed workaround never turns into a silent retry of the diverged step.
+    assert modes(marker) == ["run"]
+    lines = records(hub)
+    opened = [line for line in lines if line["event"] == "investigation"]
+    assert [(line["number"], line["failure_kind"]) for line in opened] == [
+        (1, "exec_failed"),
+        (2, "workaround"),
+    ]
+    assert [line["status"] for line in lines if line["event"] == "workaround_end"] == ["failed"]
+    assert (
+        len([line for line in lines if line["event"] == "step_end" and line["node"] == GATE]) == 1
+    )
+    assert [line for line in lines if line["event"] == "end"] == []
+
+
+def test_opens_gate_when_investigation_recorded_without_gate_before_crash(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_walk(hub, marker, held)
+    propose(hub, marker, held, proposal=a_proposal(RELEASE))
+    assert decide(hub, marker, held, "pick", "o1").exit_code == 0
+    # Investigation 2 was recorded, then the crash came before its gate was.
+    append_lines(
+        hub,
+        {"event": "workaround_start", "workaround_id": "w1", "number": 1, "gate": GATE}
+        | {"option": "o1", "steps": 1, "approver": "dev"},
+        {"event": "workaround_end", "workaround_id": "w1", "number": 1, "status": "failed"},
+        {"event": "step_end", "node": GATE, "attempt": 1, "status": "ok"}
+        | {"output": {"choice": "pick", "text": "o1"}},
+        {"event": "investigation", "step": "order-held", "gate": GATE, "number": 2}
+        | {"step_attempt": 0, "failure_kind": "workaround"},
+    )
+
+    resumed = resume_walk(hub, marker, held)
+
+    assert resumed.exit_code == 0, resumed.output
+    assert plain(resumed.stdout).splitlines()[-1].startswith(PAUSED)
+    assert modes(marker) == ["run"]
+    lines = records(hub)
+    gates = [(line["node"], line["attempt"]) for line in lines if line["event"] == "gate"]
+    assert gates == [(GATE, 1), (GATE, 2)]
+    assert [line["number"] for line in lines if line["event"] == "investigation"] == [1, 2]
+    retried = respond(hub, marker, held, "stop")
+    assert retried.exit_code == 1, retried.output
+    assert plain(retried.stdout).splitlines()[-1] == f"run {RUN}: cancelled"
