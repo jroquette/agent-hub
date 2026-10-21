@@ -1,8 +1,11 @@
-"""The SQLite knowledge index on a real file: the FTS5 probe, an unusable path, porter stemming
-and the snippet FTS5 cuts."""
+"""The SQLite knowledge index on a real file: the FTS5 probe, an unusable path, porter stemming,
+the snippet FTS5 cuts, and syncs through it (a version rebuild, two syncs at once)."""
 
 import hashlib
 import sqlite3
+import threading
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Final
 
@@ -16,6 +19,8 @@ from agent_hub.core.knowledge.knowledge_index import (
     SkippedFile,
 )
 from agent_hub.core.knowledge.search_query import MAX_RESULTS, MAX_SNIPPET_CHARS
+from agent_hub.core.knowledge.sync_knowledge import sync_knowledge
+from agent_hub.core.testing.knowledge_fakes import FakeKnowledgeCheckout
 from agent_hub.storage.errors import Fts5UnavailableError, StorageError
 from agent_hub.storage.knowledge_index import fts5_available, open_knowledge_index
 
@@ -145,3 +150,73 @@ def test_pairs_text_with_indexed_rows_when_rows_dropped_and_hub_rebuilt(tmp_path
     assert [hit.path for hit in index.search(HUB, ("g",), limit=MAX_RESULTS)] == ["brain/a.md"]
     other = index.search("/hubs/other", ("a",), limit=MAX_RESULTS)
     assert [hit.path for hit in other] == ["brain/a.md"]
+
+
+def _rows_per_path(path: Path) -> dict[str, int]:
+    connection = sqlite3.connect(path)
+    try:
+        rows = connection.execute(
+            "SELECT path, COUNT(*) FROM knowledge_documents WHERE hub = ? GROUP BY path", (HUB,)
+        ).fetchall()
+    finally:
+        connection.close()
+    return dict(rows)
+
+
+def _a_checkout(before_read: Callable[[str], None] | None = None) -> FakeKnowledgeCheckout:
+    checkout = FakeKnowledgeCheckout(before_read=before_read)
+    for name in ("a", "b", "c"):
+        checkout.write(f"brain/playbooks/{name}.md", f"marker {name}".encode())
+    return checkout
+
+
+def _listed_paths(checkout: FakeKnowledgeCheckout) -> list[str]:
+    return [file.path for file in checkout.listed()]
+
+
+def test_reads_every_file_when_stored_version_older(tmp_path: Path) -> None:
+    path = tmp_path / "events.db"
+    index = open_knowledge_index(path)
+    checkout = _a_checkout()
+    sync_knowledge(index, checkout, HUB)
+    connection = sqlite3.connect(path)
+    try:
+        with connection:
+            connection.execute("UPDATE knowledge_documents SET index_version = ?", (0,))
+    finally:
+        connection.close()
+
+    report = sync_knowledge(index, checkout, HUB)
+
+    assert report.read == report.listed == 3
+    assert index.stored(HUB).version == INDEX_VERSION
+    assert _rows_per_path(path) == dict.fromkeys(_listed_paths(checkout), 1)
+    assert len(index.search(HUB, ("marker",), limit=MAX_RESULTS)) == 3
+
+
+def test_keeps_one_row_per_file_when_syncs_run_concurrently(tmp_path: Path) -> None:
+    path = tmp_path / "events.db"
+    barrier = threading.Barrier(2)
+    armed = threading.Event()
+
+    def meet(_: str) -> None:
+        # Both syncs have planned the same read before either writes.
+        if armed.is_set():
+            barrier.wait(timeout=10)
+
+    checkout = _a_checkout(meet)
+    sync_knowledge(open_knowledge_index(path), checkout, HUB)
+    checkout.write("brain/playbooks/b.md", b"marker changed")
+    indexes = (open_knowledge_index(path), open_knowledge_index(path))
+
+    armed.set()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        running = [pool.submit(sync_knowledge, index, checkout, HUB) for index in indexes]
+        reports = [future.result(timeout=30) for future in running]
+
+    assert [(report.read, report.indexed) for report in reports] == [(1, 1), (1, 1)]
+    assert _rows_per_path(path) == dict.fromkeys(_listed_paths(checkout), 1)
+    rowids, ids = _text_rowids_and_indexed_ids(path)
+    assert rowids == ids
+    hits = indexes[0].search(HUB, ("changed",), limit=MAX_RESULTS)
+    assert [hit.path for hit in hits] == ["brain/playbooks/b.md"]
