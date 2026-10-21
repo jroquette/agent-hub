@@ -13,6 +13,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- `hub web` starts a feature with Claude (AGH-420): New feature on the Features list opens `/features/new`, where
+  you describe what to build in a box that takes images, PDFs and text files like the chat, and optionally give the
+  tracker issue, a slug and a size. Start with Claude (or Ctrl/⌘+Enter) opens the Discuss panel on a conversation in
+  the hub folder that runs the hub's `feature` skill from the brief, one question at a time; the page links to the
+  feature once its record is written. Code fields such as the issue id now show in the mono face.
 - `hub web`'s chat takes PDF and text files with a message for Claude to read, up to 10 per message and 5 MB each
   (AGH-419): Attach, a paste or a drop adds them as chips with name and size beside the images, and a sent message
   lists them. The server keeps no file byte, only each file's name and size in the log. A session's first prompt may

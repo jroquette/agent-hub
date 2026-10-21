@@ -488,6 +488,14 @@ describe("FeaturesScreen", () => {
     expect(router.state.location.pathname).toBe("/features/agent-hub/control-plane");
   });
 
+  it("opens New feature from the title row (AC-420.1)", async () => {
+    const { router } = open();
+
+    await userEvent.click(await screen.findByRole("button", { name: "New feature" }));
+
+    expect(router.state.location.pathname).toBe("/features/new");
+  });
+
   it("asks for the scoped project's features", async () => {
     const { requests } = open({}, true, "/features?scope=agent-hub");
 
@@ -508,6 +516,8 @@ describe("FeaturesScreen", () => {
 
       expect(await screen.findByText("No feature records yet.")).toBeInTheDocument();
       expect(screen.getByText("/feature AGH-112")).toBeInTheDocument();
+      // AC-420.1: the empty state points at New feature too.
+      expect(screen.getByText(/one here with/)).toHaveTextContent("New feature");
     });
 
     it("shows the problem in place with Try again", async () => {
