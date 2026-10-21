@@ -19,9 +19,18 @@ PHASE_ZERO_INSERT = (
     "VALUES ('demo', 'session-1', 'tool.call', 'claude_code', ?, "
     "'2026-09-27 08:00:00.000000', '{}')"
 )
-HEAD = "0007"
+HEAD = "0008"
 AGENT_SESSION_TABLES = {"agent_sessions", "agent_session_records"}
 ITEM_VERSION_TABLES = {"item_versions"}
+KNOWLEDGE_TABLES = {
+    "knowledge_documents",
+    "knowledge_text",
+    "knowledge_text_data",
+    "knowledge_text_idx",
+    "knowledge_text_content",
+    "knowledge_text_docsize",
+    "knowledge_text_config",
+}
 AGENT_SESSION_INDEXES = {
     "ix_agent_sessions_project_claude_session_id": ["project", "claude_session_id"],
     "ix_agent_sessions_status": ["status"],
@@ -74,6 +83,7 @@ def test_creates_and_drops_events_table_when_upgraded_and_downgraded(tmp_path: P
         "events",
         *AGENT_SESSION_TABLES,
         *ITEM_VERSION_TABLES,
+        *KNOWLEDGE_TABLES,
     }
     columns, unique_constraints = _events_schema(db_path)
     filtered = {"project", "session", "type", "timestamp", "source", "source_id"}
@@ -456,3 +466,67 @@ def test_keeps_sessions_when_review_targets_added_and_dropped(tmp_path: Path) ->
     assert columns[-1] == "review_targets"
     assert at_head == [(*before[0], "[]")]
     assert _all_session_rows(db_path) == before
+
+
+ITEM_VERSION_INSERT = (
+    "INSERT INTO item_versions (id, project, unit_path, kind, seq, origin, first, recorded_at, "
+    "content_hash, size, content) VALUES ('01929a4e-7a11-7c00-8a00-00000000f001', 'demo', "
+    "'skills/demo', 'skill', 1, 'save', 1, '2026-10-17 09:00:00.000000', 'abc', 3, x'616263')"
+)
+
+
+ALL_ROWS = {
+    "events": "SELECT * FROM events ORDER BY id",
+    "agent_sessions": "SELECT * FROM agent_sessions ORDER BY id",
+    "agent_session_records": "SELECT * FROM agent_session_records ORDER BY agent_session_id, seq",
+    "item_versions": "SELECT * FROM item_versions ORDER BY id",
+}
+
+
+def _all_rows(db_path: Path, table: str) -> list[tuple[Any, ...]]:
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.connect() as connection:
+            return [tuple(row) for row in connection.exec_driver_sql(ALL_ROWS[table])]
+    finally:
+        engine.dispose()
+
+
+def test_keeps_rows_when_upgraded_to_knowledge_index(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0007")
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "INSERT INTO events (project, session, type, source, source_id, timestamp, "
+                "payload, event_id) VALUES ('demo', 'session-1', 'tool.call', 'claude_code', "
+                "'evt-1', '2026-09-27 08:00:00.000000', '{}', ?)",
+                (str(uuid.uuid7()),),
+            )
+            connection.exec_driver_sql(SESSION_INSERT)
+            connection.exec_driver_sql(ITEM_VERSION_INSERT)
+    finally:
+        engine.dispose()
+    tables = ("events", "agent_sessions", "agent_session_records", "item_versions")
+    schema_before = {table: _schema(db_path, table) for table in tables}
+    rows_before = {table: _all_rows(db_path, table) for table in tables}
+    assert all(rows_before[table] for table in ("events", "agent_sessions", "item_versions"))
+
+    upgrade(config, "0008")
+
+    assert _current_revision(db_path) == "0008"
+    assert _table_names(db_path) >= KNOWLEDGE_TABLES
+    assert {table: _schema(db_path, table) for table in tables} == schema_before
+    assert {table: _all_rows(db_path, table) for table in tables} == rows_before
+    assert _unique_constraints(db_path, "knowledge_documents") == [
+        ("uq_knowledge_documents_hub_path", ["hub", "path"])
+    ]
+
+    downgrade(config, "0007")
+
+    assert _current_revision(db_path) == "0007"
+    assert _table_names(db_path).isdisjoint(KNOWLEDGE_TABLES)
+    assert {table: _schema(db_path, table) for table in tables} == schema_before
+    assert {table: _all_rows(db_path, table) for table in tables} == rows_before
