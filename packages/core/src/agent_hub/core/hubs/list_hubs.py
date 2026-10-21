@@ -58,21 +58,17 @@ class ListHubs:
     def documents(self) -> tuple[tuple[RegisteredHub, HubDocument], ...]:
         """Every registered hub's entry and ``hub.json`` document, in registration order; its
         lock is not read, so no drift check runs (the item writes' lookups, AGH-298)."""
-        return tuple(
-            (
-                entry,
-                read_hub_document(
-                    self._reader.read_hub_json(entry.path), running_version=self._running
-                ),
-            )
-            for entry in self._registry.entries()
+        return tuple((entry, self._document(entry)) for entry in self._registry.entries())
+
+    def _document(self, entry: RegisteredHub) -> HubDocument:
+        """One registered hub's ``hub.json`` document, its lock not read."""
+        return read_hub_document(
+            self._reader.read_hub_json(entry.path), running_version=self._running
         )
 
     def read(self, entry: RegisteredHub) -> HubRead:
         """One registered hub as read now."""
-        document = read_hub_document(
-            self._reader.read_hub_json(entry.path), running_version=self._running
-        )
+        document = self._document(entry)
         state: LockStateName | None = None
         version: str | None = None
         if document.config is not None:

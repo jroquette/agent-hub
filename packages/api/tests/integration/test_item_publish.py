@@ -689,6 +689,12 @@ def test_refuses_body_when_target_missing_or_its_field_unknown(
     )
 
     assert response.status_code == 422, response.text
+    found = response.json()
+    # The body's validation problem, not a draft's refusal: it names the fields, no `code`.
+    assert found["title"] == "Invalid request body"
+    assert found["errors"]
+    assert all(error["pointer"].startswith("/target") for error in found["errors"])
+    assert "code" not in found
     assert (_tree(hub), _rows(writer)) == (tree, rows)
     assert (folder / "scout.md").exists()
 
@@ -732,7 +738,7 @@ def test_refuses_publish_when_hub_has_no_identity(
 
 class FaultWriter:
     """The real writer, with a fault to inject: ``old_stays`` refuses a rename's removal of the
-    old unit; ``draft_unreadable`` fails the draft's read as an I/O error does."""
+    old unit; ``unreadable`` fails the draft's read as an I/O error does."""
 
     def __init__(self) -> None:
         self.real = FileSystemHubItemWriter()

@@ -375,7 +375,8 @@ class HubFilesReadModels:
                 yield config.project.name, entry.path
 
     def _hub_path(self, project: str) -> str:
-        """The project's hub folder, as ``project_hubs`` names it; ``project`` when unknown."""
+        """The project's hub folder, as ``project_hubs`` names it; raises ``EntityNotFoundError``
+        when no registered hub names ``project``."""
         for name, hub_path in self.project_hubs():
             if name == project:
                 return hub_path
