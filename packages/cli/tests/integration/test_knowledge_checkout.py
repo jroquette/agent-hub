@@ -6,6 +6,7 @@ import faulthandler
 import os
 import re
 import shutil
+import subprocess
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,8 @@ from agent_hub.core.testing.knowledge_fakes import InMemoryKnowledgeIndex
 type KnowledgeHubFactory = Callable[..., Path]
 
 NOTE = b"# Note\n\nmarker\n"
+# Git looks for a repository no higher than these folders.
+CEILING = "GIT_CEILING_DIRECTORIES"
 
 
 def a_checkout(hub: Path, repos: tuple[str, ...] = ("demo-api",)) -> GitKnowledgeCheckout:
@@ -78,12 +81,20 @@ def test_raises_checkout_error_when_git_fails_on_folder(
     knowledge_hub: KnowledgeHubFactory, tmp_path: Path
 ) -> None:
     hub = knowledge_hub({"brain/note.md": NOTE}, repos=())
-    # Beside the hub and under git's ceiling: a folder git cannot take as a repo.
+    # Beside the hub, a folder that is no repo of its own. Above it stands a repo git would take
+    # for the folder's but for the ceiling the checkout sets (the caller's own is left out).
     (tmp_path / "demo-api" / "docs").mkdir(parents=True)
     (tmp_path / "demo-api" / "docs" / "guide.md").write_bytes(NOTE)
+    git = shutil.which("git")
+    assert git is not None
+    environ = {name: value for name, value in os.environ.items() if name != CEILING}
+    subprocess.run(  # noqa: S603 - absolute git, fixed arguments, a tmp_path folder
+        [git, "init", "-q", str(tmp_path)], env=environ, check=True, capture_output=True
+    )
+    checkout = GitKnowledgeCheckout(hub, ("demo-api",), git=git, environ=environ)
 
     with pytest.raises(KnowledgeCheckoutError, match=r"^demo-api/docs: git exited with 128"):
-        a_checkout(hub).listed()
+        checkout.listed()
 
 
 def test_stops_when_listing_over_file_cap(
@@ -99,11 +110,14 @@ def test_stops_when_listing_over_file_cap(
     )
     monkeypatch.setattr(document_rules, "MAX_LISTED_FILES", 3)
     index = InMemoryKnowledgeIndex()
+    line = "4 Markdown files under the hub's sources, more than 3; nothing was indexed"
 
+    with pytest.raises(KnowledgeCheckoutError) as listing:
+        a_checkout(hub).listed()
     with pytest.raises(KnowledgeCheckoutError) as raised:
         sync_knowledge(index, a_checkout(hub), "demo")
 
-    line = "4 Markdown files under the hub's sources, more than 3; nothing was indexed"
+    assert str(listing.value) == line
     assert str(raised.value) == line
     assert index.stored("demo").files == {}
 
@@ -152,7 +166,12 @@ def test_reports_link_and_fifo_when_listed(
     os.mkfifo(brain / "pipe.md")
     checkout = a_checkout(hub)
     reads: list[str] = []
-    monkeypatch.setattr(checkout, "read", reads.append)
+
+    def recorded(folder: int, name: str, *, limit: int) -> bytes:
+        reads.append(name)
+        return b""
+
+    monkeypatch.setattr(knowledge_checkout, "read_regular", recorded)
 
     listed = {file.path: file for file in checkout.listed()}
 
@@ -290,3 +309,71 @@ def test_reports_unreadable_when_read_fails_inside_reader(
     )
 
     assert checkout.read("brain/note.md") == document_rules.UNREADABLE
+
+
+def test_names_last_stderr_line_when_git_fails(
+    knowledge_hub: KnowledgeHubFactory, tmp_path: Path
+) -> None:
+    hub = knowledge_hub({"brain/note.md": NOTE}, repos=())
+    failing = tmp_path / "failing-git"
+    failing.write_text(
+        "#!/bin/sh\nprintf 'first line\\n\\nlast\\t%s\\n\\n' \"$(printf 'y%.0s' $(seq 300))\" >&2\n"
+        "exit 3\n",
+        encoding="utf-8",
+    )
+    failing.chmod(0o755)
+    checkout = GitKnowledgeCheckout(hub, (), git=str(failing), environ=dict(os.environ))
+
+    with pytest.raises(KnowledgeCheckoutError) as raised:
+        checkout.listed()
+
+    # The last line, cut to 200 characters, then escaped: the tab shows as ``\t``.
+    assert str(raised.value) == "brain: git exited with 3: last\\t" + "y" * 195
+
+
+def test_keeps_utf8_name_when_undecodable_name_shows_same(
+    knowledge_hub: KnowledgeHubFactory,
+) -> None:
+    hub = knowledge_hub({"brain/fine.md": NOTE})
+    brain = os.fsencode(hub / "brain")
+    literal = brain + b"/same\\xff.md"
+    with open(literal, "wb") as file:
+        file.write(b"# Literal\n")
+    with open(brain + b"/same\xff.md", "wb") as file:
+        file.write(NOTE)
+
+    listed = [file for file in a_checkout(hub).listed() if file.path.startswith("brain/same")]
+
+    assert listed == [ListedFile(path="brain/same\\xff.md", fingerprint=lstat_fingerprint(literal))]
+
+
+def test_counts_files_as_gone_when_file_replaced_folder(
+    knowledge_hub: KnowledgeHubFactory,
+) -> None:
+    hub = knowledge_hub({"brain/folder/inner.md": NOTE, "brain/note.md": NOTE})
+    shutil.rmtree(hub / "brain" / "folder")
+    (hub / "brain" / "folder").write_bytes(NOTE)
+    checkout = a_checkout(hub)
+
+    assert [file.path for file in checkout.listed()] == ["brain/note.md"]
+    assert checkout.read("brain/folder/inner.md") is None
+
+
+def test_raises_checkout_error_when_source_folder_cannot_open(
+    knowledge_hub: KnowledgeHubFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hub = knowledge_hub({"brain/note.md": NOTE}, repos=())
+    checkout = a_checkout(hub, repos=())
+    real_open = os.open
+
+    def open_failing_on_hub(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        if os.fsdecode(path) == str(hub) and flags & os.O_DIRECTORY:
+            raise PermissionError(errno.EACCES, os.strerror(errno.EACCES))
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", open_failing_on_hub)
+
+    with pytest.raises(KnowledgeCheckoutError) as raised:
+        checkout.listed()
+
+    assert str(raised.value) == f"brain: the folder cannot be opened: {os.strerror(errno.EACCES)}"
