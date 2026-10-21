@@ -303,6 +303,18 @@ function useWidth(element: HTMLElement | null): number {
   return width;
 }
 
+/** A folder on one narrow line: its own name first, then where it sits, dimmed and cut at its
+ * end; the whole path on hover. */
+function FolderLine({ folder }: { folder: string }) {
+  const at = folder.lastIndexOf("/");
+  return (
+    <span className="as-files-folder-line" title={folder}>
+      <span className="as-files-folder-leaf as-files-cut">{folder.slice(at + 1)}</span>
+      {at > 0 && <span className="as-files-folder-parent as-files-cut">{folder.slice(0, at)}</span>}
+    </span>
+  );
+}
+
 /** A path or name that wraps after its separators (`/ _ - .`) instead of being cut: in the
  * review the name is the content, so all of it shows. */
 function Breakable({ text }: { text: string }) {
@@ -334,8 +346,28 @@ const HOME = /^(?:\/Users\/[^/]+|\/home\/[^/]+)(?=\/|$)/;
 /** The folder every listed file is under, on one line: a worktree as its repo and its name (the
  * branch's folder, in bold), else the session's folder in bold when the root is inside it, else
  * the path with the home folder as `~`. The full path on hover and one click away. */
-function RootLine({ base, workdirLabel }: { base: string; workdirLabel: string | undefined }) {
+function RootLine({
+  base,
+  workdirLabel,
+  compact = false,
+}: {
+  base: string;
+  workdirLabel: string | undefined;
+  compact?: boolean;
+}) {
   const path = base.slice(0, -1);
+  if (compact) {
+    // Narrow: only the folder's own name (the branch's, in a worktree), cut at its end.
+    const worktree = WORKTREE.exec(path);
+    const lead = worktree?.[3] ?? path.slice(path.lastIndexOf("/") + 1);
+    return (
+      <div className="as-files-root ah-small" title={path}>
+        <Icon name={worktree ? "git-branch" : "folder"} size="sm" />
+        <span className="as-files-root-lead as-files-cut">{lead}</span>
+        <CopyButton text={path} label="Copy folder path" className="as-files-copy" compact />
+      </div>
+    );
+  }
   const worktree = WORKTREE.exec(path);
   let body;
   if (worktree) {
@@ -565,8 +597,8 @@ function FileList({
   review: ReviewState;
   onSelect: (path: string) => void;
 }) {
-  // Narrow, names and folders wrap whole instead of being cut, and each file's lines go under
-  // its name: a cut in the middle of every row reads as noise.
+  // Narrow, every line stays one line and is cut at its end, never over its neighbour: a folder
+  // leads with its own name, a file drops its line counts (they are on the open file).
   const [nav, setNav] = useState<HTMLElement | null>(null);
   const navWidth = useWidth(nav);
   const compact = navWidth > 0 && navWidth < LIST_COMPACT;
@@ -591,16 +623,14 @@ function FileList({
           </span>
         </div>
       )}
-      {base && <RootLine base={base} workdirLabel={workdirLabel} />}
+      {base && <RootLine base={base} workdirLabel={workdirLabel} compact={compact} />}
       {byFolder(files, nameOf).map(([folder, inFolder]) => (
         <div key={folder} className="as-files-group">
           {folder && (
             <div className="as-files-folder ah-small">
               <Icon name="folder" size="sm" />
               {compact ? (
-                <span className="as-files-folder-name" title={folder.slice(0, -1)}>
-                  <Breakable text={folder.slice(0, -1)} />
-                </span>
+                <FolderLine folder={folder.slice(0, -1)} />
               ) : (
                 <FitText text={folder.slice(0, -1)} tail={folderTail(folder.slice(0, -1))} />
               )}
@@ -633,13 +663,10 @@ function FileList({
                     <KindBadge created={file.created} status={file.repo?.status} />
                     {compact ? (
                       <>
-                        <span className="as-files-nav-name">
-                          <Breakable text={name.slice(name.lastIndexOf("/") + 1)} />
+                        <span className="as-files-nav-name as-files-cut">
+                          {name.slice(name.lastIndexOf("/") + 1)}
                         </span>
-                        <span className="as-files-row-meta">
-                          <Stats added={file.added} removed={file.removed} />
-                          <OpenThreads path={file.path} />
-                        </span>
+                        <OpenThreads path={file.path} />
                       </>
                     ) : (
                       <>

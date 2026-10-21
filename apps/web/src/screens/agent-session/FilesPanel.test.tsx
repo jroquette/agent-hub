@@ -814,15 +814,17 @@ describe("FilesPanel (narrow list)", () => {
     );
   }
 
-  it("wraps names and folders whole and puts each file's lines under its name", () => {
+  it("keeps each item on one line, cut at its end, a folder led by its own name", () => {
     stubWidth(300);
     render(<FilesPanel files={filesOf(TWO_FILES)} sessionId="s1" onClose={vi.fn()} />);
 
     const list = screen.getByRole("navigation", { name: "Files" });
     expect(list).toHaveClass("as-files-nav-compact");
     const row = within(list).getByRole("button", { name: /app\.ts/ });
+    // No cut in the middle (its tail never shrinks), no line counts beside the name.
     expect(row.querySelector(".ah-fit")).toBeNull();
-    expect(row.querySelector(".as-files-row-meta")).toHaveTextContent("+1−1");
+    expect(row.querySelector(".as-files-stats")).toBeNull();
+    expect(row.querySelector(".as-files-cut")).toHaveTextContent("app.ts");
     expect(within(list).getByTitle("ui")).toBeInTheDocument();
   });
 
@@ -832,6 +834,6 @@ describe("FilesPanel (narrow list)", () => {
 
     const list = screen.getByRole("navigation", { name: "Files" });
     expect(list).not.toHaveClass("as-files-nav-compact");
-    expect(list.querySelector(".as-files-row-meta")).toBeNull();
+    expect(list.querySelector(".as-files-cut")).toBeNull();
   });
 });
