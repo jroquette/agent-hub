@@ -32,6 +32,7 @@ from agent_hub.core.agent_sessions.records import LogRecordPage
 from agent_hub.core.agent_sessions.repo_changes import (
     COMMIT_SHA_PATTERN,
     RepoCommitDiff,
+    RepoFileText,
     SessionRepoChanges,
 )
 
@@ -131,6 +132,19 @@ async def get_agent_session_repo_commit_diff(
     return await control.repo_commit_diff(
         str(agent_session_id), path=path, sha=sha, old_path=old_path
     )
+
+
+@router.get("/{agent_session_id:uuid}/repo-changes/file")
+async def get_agent_session_repo_file(
+    agent_session_id: SessionIdPath,
+    control: AgentSessionControlDep,
+    *,
+    path: FilePathParam,
+    sha: CommitShaParam,
+) -> RepoFileText:
+    """One file of the session's repositories (``path`` absolute) as commit ``sha`` has it: the
+    lines a review expands around a pull request's diff."""
+    return await control.repo_file_text(str(agent_session_id), path=path, sha=sha)
 
 
 @router.delete("/{agent_session_id:uuid}", status_code=204)
