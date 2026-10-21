@@ -3144,8 +3144,12 @@ button.as-bg-head {
   display: flex;
   height: 100%;
   min-height: 0;
-  /* Nothing in the chat scrolls the page: only the transcript and the rail's list scroll. */
-  overflow: hidden;
+  /* Nothing in the chat scrolls the page: only the transcript and the rail's list scroll. The
+     screen-reader labels (.ah-sr, absolute) anchor here and are clipped, so a long rail cannot give
+     the shell's main extra height to scroll into; clip, unlike hidden, cannot be scrolled by focus
+     or scrollIntoView. */
+  position: relative;
+  overflow: clip;
 }
 .as-chat-layout > .as-page {
   flex: 1 1 auto;
@@ -3204,6 +3208,8 @@ button.as-bg-head {
 }
 
 .as-rail-scroll {
+  /* Its rows' screen-reader labels scroll with the list instead of overflowing the page. */
+  position: relative;
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
