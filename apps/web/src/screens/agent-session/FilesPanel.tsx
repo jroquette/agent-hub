@@ -173,6 +173,7 @@ function ChangeBlock({
           diff={change.diff}
           label={`Change ${String(index + 1)} to ${path}`}
           numbered={change.numbered}
+          path={filePath}
         />
       )}
     </div>
@@ -219,7 +220,7 @@ function NetBlock({ file, path }: { file: ChangedFile; path: string }) {
           onComment={comments.onComment}
         />
       ) : (
-        <DiffText diff={net.diff} label={label} numbered={net.numbered} />
+        <DiffText diff={net.diff} label={label} numbered={net.numbered} path={file.path} />
       )}
     </div>
   );
@@ -457,7 +458,14 @@ function CommitDiff({
     return <p className="ah-small ah-muted">Too big a diff to show here.</p>;
   if (diff === "")
     return <p className="ah-small ah-muted">This commit changed the file under another name.</p>;
-  return <DiffText diff={diff} label={`Commit ${shortSha(commit.sha)} to ${path}`} numbered />;
+  return (
+    <DiffText
+      diff={diff}
+      label={`Commit ${shortSha(commit.sha)} to ${path}`}
+      numbered
+      path={path}
+    />
+  );
 }
 
 /** A file's history on its branch: the commits that touched it, newest first, each opening on

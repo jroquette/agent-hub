@@ -1549,7 +1549,7 @@ describe("AgentSessionScreen (review-comments)", () => {
     const card = await screen.findByRole("region", { name: "Files edited in this turn" });
     await user.click(within(card).getByRole("button", { name: /^Open src\/app\.py/ }));
     const panel = screen.getByRole("complementary", { name: "Changed files" });
-    expect(within(panel).getByText("+a = 2", { exact: false })).toBeInTheDocument();
+    expect(panel).toHaveTextContent("+a = 2");
     expect(within(panel).queryByRole("button", { name: /^Comment on/ })).toBeNull();
   });
 });

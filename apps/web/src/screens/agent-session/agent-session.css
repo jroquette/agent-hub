@@ -732,6 +732,31 @@
 .as-diff-head {
   color: var(--text-subtle);
 }
+/* A diff coloured in its file's language, as a pull request reads: the line's ground and its sign
+ * say added or removed, the code keeps the text and syntax colours, and the number gutters carry
+ * a stronger tint so the eye finds the changed lines. */
+.as-diff-syntax .as-diff-add,
+.as-diff-syntax .as-diff-del,
+.as-diff-syntax .as-diff-ctx {
+  color: var(--text);
+}
+.as-diff-syntax .as-diff-add .as-diff-sign {
+  color: var(--diff-add);
+}
+.as-diff-syntax .as-diff-del .as-diff-sign {
+  color: var(--diff-del);
+}
+.as-diff-sign {
+  user-select: none;
+}
+.as-diff-syntax .as-diff-line.as-diff-add .as-diff-no {
+  background: color-mix(in srgb, var(--diff-add) 22%, var(--code-bg));
+  color: var(--text-muted);
+}
+.as-diff-syntax .as-diff-line.as-diff-del .as-diff-no {
+  background: color-mix(in srgb, var(--diff-del) 22%, var(--code-bg));
+  color: var(--text-muted);
+}
 /* A request waiting for you: a raised card with an amber halo, so it reads as "your turn". */
 .as-perm {
   --perm-tint: var(--waiting);

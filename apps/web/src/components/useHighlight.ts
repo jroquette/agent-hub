@@ -32,8 +32,8 @@ export function highlightable(text: string): boolean {
   return new TextEncoder().encode(text).length <= MAX_HIGHLIGHT_BYTES;
 }
 
-/** `text` as highlighted nodes once the chunk has loaded and `enabled` holds; null means plain. */
-export function useHighlight(text: string, lang: string, enabled: boolean): ReactNode[] | null {
+/** The highlighter once its chunk has loaded and `enabled` holds (it starts loading then). */
+function useHighlighter(enabled: boolean): Highlighter | null {
   const [module, setModule] = useState(highlighter);
   useEffect(() => {
     if (!enabled || module) return;
@@ -45,8 +45,46 @@ export function useHighlight(text: string, lang: string, enabled: boolean): Reac
       live = false;
     };
   }, [enabled, module]);
-  return useMemo(
-    () => (enabled && module ? module.highlight(text, lang) : null),
-    [enabled, module, text, lang],
-  );
+  return enabled ? module : null;
+}
+
+/** `text` as highlighted nodes once the chunk has loaded and `enabled` holds; null means plain. */
+export function useHighlight(text: string, lang: string, enabled: boolean): ReactNode[] | null {
+  const module = useHighlighter(enabled);
+  return useMemo(() => (module ? module.highlight(text, lang) : null), [module, text, lang]);
+}
+
+/** `text` as highlighted nodes, one list per line; null means plain. */
+export function useHighlightLines(
+  text: string,
+  lang: string,
+  enabled: boolean,
+): ReactNode[][] | null {
+  const module = useHighlighter(enabled);
+  return useMemo(() => (module ? module.highlightLines(text, lang) : null), [module, text, lang]);
+}
+
+/** File extensions whose name is not already a grammar name or alias of the highlighter. */
+const LANGUAGE_BY_EXTENSION: Record<string, string> = {
+  mjs: "javascript",
+  cjs: "javascript",
+  mts: "typescript",
+  cts: "typescript",
+  pyi: "python",
+  htm: "xml",
+  vue: "xml",
+  mdx: "markdown",
+  jsonc: "json",
+  bash: "bash",
+};
+
+/** The language to highlight a file in, from its path: its extension (`ts`, `py`, `yml`… are
+ * grammar aliases), or a few extensions the grammars do not alias. The highlighter
+ * shows an unknown one plain. */
+export function languageOfPath(path: string): string {
+  const name = path.slice(path.lastIndexOf("/") + 1).toLowerCase();
+  const dot = name.lastIndexOf(".");
+  if (dot <= 0) return "";
+  const extension = name.slice(dot + 1);
+  return LANGUAGE_BY_EXTENSION[extension] ?? extension;
 }
