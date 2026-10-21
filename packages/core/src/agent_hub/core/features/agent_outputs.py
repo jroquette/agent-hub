@@ -2,15 +2,15 @@
 
 ``review_problems``, ``eval_problems`` and ``preflight_problems`` return every problem of an
 output, uncapped: first the root problem (bytes that are not a JSON object), else every shape
-problem against ``ReviewOutput``, ``EvalOutput`` or ``PreflightRecord``, then every cross-check problem (``review_output_checks``,
-``eval_output_checks``, then ``eval_output_scope``) in S2's order. The caller decides how many to
-show. Core applies the size bounds to the bytes it is given, whatever the caller read:
-``MAX_OUTPUT_BYTES`` to the output, ``MAX_RECORD_BYTES`` to the record, and the sibling's first
-``EVAL_HEAD_BYTES`` only are read.
+problem against ``ReviewOutput``, ``EvalOutput`` or ``PreflightRecord``, then every cross-check
+problem (``review_output_checks``, ``eval_output_checks``, then ``eval_output_scope``) in S2's
+order; a preflight record has none. The caller decides how many to show. Core applies the size
+bounds to the bytes it is given, whatever the caller read: ``MAX_OUTPUT_BYTES`` to the output,
+``MAX_RECORD_BYTES`` to the record, and the sibling's first ``EVAL_HEAD_BYTES`` only are read.
 
 The JSON Schemas of the outputs ship as package data beside this module (``review.v1.json``,
-``eval.v1.json``, ``preflight.v1.json``), regenerated with ``make output-schemas`` whenever a model changes; unit tests
-fail while a shipped file differs from the export.
+``eval.v1.json``, ``preflight.v1.json``), regenerated with ``make output-schemas`` whenever a
+model changes; unit tests fail while a shipped file differs from the export.
 """
 
 import json

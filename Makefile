@@ -97,7 +97,7 @@ hub-schema: ## regenerate the shipped hub.json schema from HubConfig
 	$(RUN) python -m scripts.export_hub_schema
 
 # Not part of check: the drift tests in test-fast fail while either shipped file is stale.
-output-schemas: ## regenerate the shipped review and eval output schemas from their models
+output-schemas: ## regenerate the shipped review, eval and preflight output schemas from their models
 	$(RUN) python -m scripts.export_output_schemas
 
 # Not part of check: openapi-check (in check-fast) fails while either file is stale.
