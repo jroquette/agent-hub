@@ -711,6 +711,7 @@ def test_detail_lists_change_requests_when_folder_has_them() -> None:
         "path": "features/demo-feature/change-requests/1.md",
         "problem": None,
         "body": None,
+        "body_cut": False,
     }
     assert second.status == "declined"
     assert second.decision is not None

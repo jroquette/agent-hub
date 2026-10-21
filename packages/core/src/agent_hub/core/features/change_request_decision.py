@@ -95,19 +95,27 @@ class RequestRuns:
 
 
 def with_runs(
-    requests: tuple[ChangeRequestView, ...], runs: RequestRuns, *, project: str
+    requests: tuple[ChangeRequestView, ...],
+    runs: RequestRuns,
+    *,
+    project: str,
+    live: frozenset[str] | None,
 ) -> tuple[ChangeRequestView, ...]:
-    """Each open request with its run's open gate (``approval_id``) and, with none, whether its
-    run is gone (``decidable_here``); the gates are read only when a request is open."""
+    """Each open request with its run's open gate (``approval_id``) and whether hub web decides
+    it (``decidable_here``): no gate, and its run is gone, by the write's own test (lost or
+    ended, and none of the ``live`` runs a child holds). ``live`` None: this hub web decides
+    nothing (its decision route is not wired). The gates are read only when a request is open."""
     if not any(request.status == "open" for request in requests):
         return requests
     gates = runs.gates(project)
     annotated = []
     for request in requests:
         if request.status == "open":
-            gate = gates.get(request.run_id) if request.run_id else None
-            gone = gate is None and (request.run_id is None or runs.gone(request.run_id))
-            request = request.model_copy(update={"approval_id": gate, "decidable_here": gone})
+            run = request.run_id
+            gate = gates.get(run) if run else None
+            gone = run is None or (runs.gone(run) and run not in (live or ()))
+            here = live is not None and gate is None and gone
+            request = request.model_copy(update={"approval_id": gate, "decidable_here": here})
         annotated.append(request)
     return tuple(annotated)
 
@@ -171,6 +179,10 @@ class DecideChangeRequest:
         return request_view(request, slug=folder_slug).model_copy(
             update={"status": decision, "decision": decided}
         )
+
+    def live_runs(self, project: str) -> frozenset[str]:
+        """The runs a child hub web started still holds, in the project's hub."""
+        return frozenset(self._guard.launcher.live_runs(self._hubs.hub_path_of(project)))
 
     def _refuse_live(self, project: str, hub_path: str, run_id: str | None) -> None:
         """Refuse while the request's run can still decide it: its gate is open, it is folded

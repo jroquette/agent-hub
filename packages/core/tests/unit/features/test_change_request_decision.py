@@ -64,11 +64,16 @@ class Folders:
 
 
 class Writer:
-    def __init__(self, *, exists: bool = False, linked: bool = False) -> None:
-        self.exists, self.linked = exists, linked
+    def __init__(
+        self, *, exists: bool = False, linked: bool = False, lock: threading.Lock | None = None
+    ) -> None:
+        self.exists, self.linked, self.lock = exists, linked, lock
         self.written: list[tuple[str, str, int, str]] = []
+        self.locked_when_written: list[bool] = []
 
     def create_decision(self, hub_path: str, *, slug: str, n: int, text: str) -> None:
+        if self.lock is not None:
+            self.locked_when_written.append(self.lock.locked())
         if self.exists:
             raise FileExistsError(n)
         if self.linked:
@@ -261,10 +266,11 @@ def test_writes_decision_when_run_ended(status: str) -> None:
 def test_checks_the_run_when_holding_the_run_commands_lock() -> None:
     events = Events()
     guard = Guard(events)
+    writer = Writer(lock=guard.lock)
     use = DecideChangeRequest(
         Hubs(),
         Folders(a_request()),
-        writer=Writer(),
+        writer=writer,
         guard=guard,  # type: ignore[arg-type]
         decider=lambda project: "Dana Owner",
         clock=lambda: DECIDED_AT,
@@ -273,6 +279,8 @@ def test_checks_the_run_when_holding_the_run_commands_lock() -> None:
     use("demo", "demo-feature", 2, decision="approved", note=None)
 
     assert guard.locked_when_checked == [True]
+    # Q8: the file is created under the same lock, so no run starts between check and write.
+    assert writer.locked_when_written == [True]
 
 
 def test_writes_decision_when_only_other_runs_have_gates() -> None:
@@ -431,9 +439,12 @@ def test_sets_gate_and_decidable_here_when_requests_annotated() -> None:
             a_view(n=4, run_id="implement-9"),
             a_view(n=5, run_id="implement-7"),
             a_view(n=6, run_id="implement-lost"),
+            a_view(n=7, run_id=None),
+            a_view(n=8, run_id="implement-held"),
         ),
         RequestRuns(events),  # type: ignore[arg-type]
         project="demo",
+        live=frozenset({"implement-held"}),
     )
 
     assert [(view.approval_id, view.decidable_here) for view in found] == [
@@ -442,4 +453,25 @@ def test_sets_gate_and_decidable_here_when_requests_annotated() -> None:
         (None, False),
         (None, True),
         (None, True),
+        (None, True),  # Q9: a request that names no run is decided here
+        (None, False),  # spec F2: a run a child still holds is not gone
     ]
+
+
+# Q11: where the decision route is not wired (sessions off), nothing is decided here.
+def test_decides_nothing_here_when_route_not_wired() -> None:
+    (found,) = with_runs(
+        (a_view(run_id="implement-lost"),),
+        RequestRuns(Events()),  # type: ignore[arg-type]
+        project="demo",
+        live=None,
+    )
+
+    assert found.decidable_here is False
+
+
+# spec F2: the live runs the view uses are the launcher's, in the project's hub.
+def test_lists_launcher_live_runs_when_asked() -> None:
+    use, _ = decide(live={"implement-8": "DEM-8"})
+
+    assert use.live_runs("demo") == frozenset({"implement-8"})
