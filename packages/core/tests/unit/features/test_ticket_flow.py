@@ -546,3 +546,55 @@ def test_marks_context_and_preflight_unknown_when_ticket_folders_over_cap() -> N
     unread = "more than 500 folders in tickets/; not all were read. Fix it in a hub PR."
     assert _step(flow, "context") == ("unknown", unread)
     assert _step(flow, "preflight") == ("unknown", unread)
+
+
+# AGH-402 review Q2, S4, Q8: a broken decision shows on the asking ticket, which still waits.
+def test_marks_preflight_unknown_and_keeps_waiting_when_decision_malformed() -> None:
+    request = RecordHead(
+        name="1.md",
+        head=(
+            b"---\nticket: DEM-8\nstatus: open\nplan_from: 2\nplan_to: 3\naffected: []\n"
+            b"opened_at: 2026-10-21\nrun_id: implement-8\n---\n"
+        ),
+        problem=None,
+    )
+    decision = RecordHead(name="1.decision.md", head=b"---\ndecision: maybe\n---\n", problem=None)
+
+    flow = _flow(requests=change_requests((request, decision), skipped=0))
+
+    assert _step(flow, "preflight") == (
+        "unknown",
+        "change-requests/1.decision.md could not be read (decision must be approved or "
+        "declined). Fix it in a hub PR.",
+    )
+    assert flow.signal == "Waiting for you: plan change"
+
+
+# AGH-402 review Q8: the asking ticket is never held by its own request.
+@pytest.mark.parametrize("skipped", [0, 1], ids=["malformed preflight", "folder unread"])
+def test_keeps_waiting_signal_when_asking_ticket_preflight_unknown(skipped: int) -> None:
+    files = (_files(preflight=_preflight({"drift": "global"})),) if not skipped else ()
+
+    flow = _flow(
+        tickets=files,
+        tickets_skipped=skipped,
+        requests=_requests((1, "DEM-8 -> DEM-8, DEM-9", None)),
+    )
+
+    assert _step(flow, "preflight")[0] == "unknown"
+    assert flow.signal == "Waiting for you: plan change"
+
+
+# AGH-402 review Q4: a ticket folder without brief.md has no context brief.
+def test_keeps_context_unrecorded_when_ticket_folder_has_no_brief() -> None:
+    flow = _flow(tickets=(_files(plan=True, preflight=_preflight()),))
+
+    assert _step(flow, "context") == ("unrecorded", None)
+    assert _step(flow, "preflight") == ("done", None)
+
+
+# AGH-402 review Q5: a review round makes Implement done, ticket plan or not.
+def test_marks_implement_done_when_ticket_plan_and_review_round_exist() -> None:
+    flow = _flow(rounds=frozenset({"DEM-8"}), tickets=(_files(plan=True),))
+
+    assert _step(flow, "implement") == ("done", None)

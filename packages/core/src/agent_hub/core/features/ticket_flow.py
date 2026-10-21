@@ -51,9 +51,6 @@ _PASSED: Final = ("done", "unrecorded")
 TICKETS_UNREAD: Final = (
     f"more than {MAX_TICKET_FOLDERS} folders in {TICKETS_FOLDER}/; not all were read. {FIX_IT}"
 )
-WAITING: Final = "Waiting for you"
-WAITING_SIGNAL: Final = "Waiting for you: plan change"
-HELD_SIGNAL: Final = "Held: plan change pending"
 
 type _Found = tuple[StepState, str | None]
 
@@ -76,11 +73,11 @@ class TicketEvidence:
     reviews: Sequence[ReviewRecord]
     evals: Mapping[str, tuple[EvalRecord, ...]]
     unread: str | None
-    files: Mapping[str, TicketFiles] = field(default_factory=dict)
-    preflights: Mapping[str, PreflightRecord | str] = field(default_factory=dict)
-    tickets_unread: str | None = None
-    requests: ChangeRequests = NO_REQUESTS
-    approved: int | None = None
+    files: Mapping[str, TicketFiles]
+    preflights: Mapping[str, PreflightRecord | str]
+    tickets_unread: str | None
+    requests: ChangeRequests
+    approved: int | None
     _verdicts: dict[tuple[EvalRecord, ...], Verdict | None] = field(
         default_factory=dict, init=False, repr=False, compare=False
     )
@@ -154,7 +151,9 @@ def _picked_up(
     names: set[str], evidence: TicketEvidence, *, merged: bool
 ) -> tuple[dict[TicketStepName, _Found], str | None]:
     """Context, Preflight and the ticket plan's Implement from ``tickets/<ticket>/``, and the
-    flow's signal; Context and Preflight unknown when its folder was left unread over the cap."""
+    flow's signal; Context and Preflight unknown when its folder was left unread over the cap. A
+    ticket whose own request is open waits for the owner whatever its Preflight reads; only the
+    other tickets a request names are held."""
     found: dict[TicketStepName, _Found] = {}
     files = next((evidence.files[name] for name in sorted(names) if name in evidence.files), None)
     signal = None
@@ -166,8 +165,14 @@ def _picked_up(
         preflight, signal = _preflight(names, evidence, merged=merged)
         if preflight is not None:
             found["preflight"] = preflight
-    if signal != WAITING_SIGNAL and not merged and names & evidence.requests.paused:
-        signal = HELD_SIGNAL
+    asking = any(
+        request.status == "open" and request.ticket and request.ticket.upper() in names
+        for request in evidence.requests.requests
+    )
+    if asking:
+        signal = "Waiting for you: plan change"
+    elif not merged and names & evidence.requests.paused:
+        signal = "Held: plan change pending"
     if files is not None and files.plan:
         found["implement"] = ("current", "Ticket plan written")
     return found, signal
@@ -214,7 +219,7 @@ def _preflight(
     if broken is not None:
         return ("unknown", broken), None
     if any(request.status == "open" for request in asked):
-        return ("waiting", WAITING), WAITING_SIGNAL
+        return ("waiting", "Waiting for you"), None
     if record is None or not record.runs:
         return None, None
     latest = record.runs[-1]

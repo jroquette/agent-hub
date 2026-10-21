@@ -30,7 +30,6 @@ from agent_hub.core.features.scope_rules import AC_ID_PATTERN, COMMIT_PATTERN
 
 REVIEW_SCHEMA_ID: Final = "agent-hub/review/1"
 EVAL_SCHEMA_ID: Final = "agent-hub/eval/1"
-PREFLIGHT_SCHEMA_ID: Final = "agent-hub/preflight/1"
 # An output over this size is refused before it is parsed.
 MAX_OUTPUT_BYTES: Final = 524_288
 MAX_FINDINGS: Final = 100

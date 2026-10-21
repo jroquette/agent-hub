@@ -249,6 +249,23 @@ def test_signals_problem_on_plan_when_change_request_unreadable() -> None:
     )
 
 
+# AGH-402 review Q5: the over-cap problem of change-requests/ reaches Plan's signal.
+def test_signals_problem_on_plan_when_change_requests_over_cap() -> None:
+    requests = ChangeRequests(problem="more than 400 files in change-requests/; not all were read.")
+
+    assert _step(golden_path(_inputs(requests=requests)), "plan").signal == requests.problem
+
+
+# AGH-402 review Q5: Plan keeps its signal when plan.md is too large to read.
+def test_keeps_plan_signal_when_plan_too_large() -> None:
+    plan = PlanView(version=None, problem="plan.md is larger than 256 KiB.")
+
+    path = golden_path(_inputs(plan=plan, requests=_request(1, "ACME-1520", "")))
+
+    step = _step(path, "plan")
+    assert (step.state, step.signal) == ("unknown", "v2 waits for you")
+
+
 # two-level-flows AC-2.8: Build counts the tickets an open change request pauses.
 def test_counts_paused_tickets_in_build_meta_when_change_request_open() -> None:
     rows = (
