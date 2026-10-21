@@ -34,6 +34,17 @@ _ASSIGNED: Final = (
 )
 
 
+# Every "secret" rule needs a name word followed by an assignment (``=``) or a JSON key's
+# ``":"``; this is that part of each, with the same flags, so text without it skips all three
+# (the shortcut for long texts such as indexed notes, AGH-391). It cannot change the result:
+# where it finds nothing, no "secret" rule can match.
+_SECRET_HINT: Final = re.compile(
+    rf"{_NAME_WORD}(?:{_NAME_CHARS}{{0,64}}\s*=|[^\"\\\n]{{0,64}}\"\s*:\s*\")",
+    re.IGNORECASE,
+)
+_HINTED_KIND: Final = "secret"
+
+
 def marker(kind: str) -> str:
     """The text that replaces a secret of ``kind``."""
     return f"[redacted: {kind}]"
@@ -139,7 +150,15 @@ def clip(text: str, limit: int) -> str:
 
 
 def _one_pass(text: str) -> str:
+    hinted: bool | None = None
     for kind, pattern in _RULES:
+        if kind == _HINTED_KIND:
+            # Looked at once, before the first "secret" rule: while it finds nothing, none of
+            # them changes the text, so it stays right for the ones after.
+            if hinted is None:
+                hinted = _SECRET_HINT.search(text) is not None
+            if not hinted:
+                continue
         text = pattern.sub(partial(_replacement, kind=kind), text)
     return text
 

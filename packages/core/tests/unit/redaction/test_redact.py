@@ -3,11 +3,14 @@
 Every sample is built here from fragments, so no format-valid secret is ever one literal.
 """
 
+import re
+
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from agent_hub.core.json_form import JsonValue
+from agent_hub.core.redaction import redact
 from agent_hub.core.redaction.redact import (
     KINDS,
     RULESET,
@@ -234,6 +237,65 @@ def test_equals_single_pass_when_text_is_near_secret_syntax_property(text: str) 
     once = redact_text(text)
 
     assert redact_text(once) == once
+
+
+def _every_rule_once(text: str) -> str:
+    """One pass of every r1 rule in order, with no shortcut: the reference for the hint."""
+    for kind, pattern in redact._RULES:  # noqa: SLF001 -- the rules the shortcut must match
+        text = pattern.sub(lambda found, kind=kind: _marked(found, kind), text)
+    return text
+
+
+def _marked(found: re.Match[str], kind: str) -> str:
+    groups = found.groupdict()
+    return (groups.get("head") or "") + marker(kind) + (groups.get("tail") or "")
+
+
+def _reference(text: str) -> str:
+    for _ in range(8):
+        redacted = _every_rule_once(text)
+        if redacted == text:
+            break
+        text = redacted
+    return text
+
+
+@settings(max_examples=500, deadline=None)
+@given(
+    text=st.lists(
+        st.sampled_from(
+            [
+                *"aB9=:\"' -_.\\\n\t",
+                "token",
+                "SECRET",
+                "pass",
+                "passwd",
+                "api_key",
+                "Credential",
+                "\u017fecret",
+                "apí",
+                _secret_value(),
+                "[redacted: secret]",
+            ]
+        ),
+        max_size=40,
+    ).map("".join)
+)
+def test_equals_every_rule_when_name_word_hint_skips_secret_rules_property(text: str) -> None:
+    assert redact_text(text) == _reference(text)
+
+
+def test_redacts_assignment_when_name_word_case_folds_to_ascii() -> None:
+    # The long s folds to "s" under IGNORECASE: the hint must see what the rules see.
+    text = "DB_PA\u017f\u017fWORD=" + _secret_value()
+
+    assert redact_text(text) == "DB_PA\u017f\u017fWORD=" + marker("secret")
+
+
+def test_keeps_prose_when_name_words_never_assigned() -> None:
+    text = "The token rotates weekly; keep the secret and the password out of notes.\n" * 50
+
+    assert redact_text(text) == text
 
 
 def test_drops_token_prefix_when_token_starts_at_character_490_truncation() -> None:
