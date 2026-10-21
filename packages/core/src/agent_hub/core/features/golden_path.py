@@ -371,8 +371,8 @@ def _acceptance(facts: _Facts) -> _Own:
 
 def _owner_steps(gate: EvalGate) -> _Own:
     """Acceptance over a SHIP-WITH-OWNER-STEPS acceptance eval, by the state of its wait (A9-A11,
-    A15, A18): signed off, no AC listed, no sign-off able to follow it, reopened, or waiting for
-    the owner's sign-off (the one state the app can record, ``waiting``)."""
+    A15, A18, A19): signed off, no AC listed (``waiting`` for a sign-off the owner writes by hand),
+    no sign-off able to follow it, reopened, or waiting for the owner's sign-off (``waiting``)."""
     one = gate.owner_steps == 1
     acs = f"{gate.owner_steps} AC{'' if one else 's'}"
     match gate.wait:
@@ -384,6 +384,7 @@ def _owner_steps(gate: EvalGate) -> _Own:
                 meta="Waiting on owner steps · no ACs listed",
                 reason="the whole-feature eval leaves owner steps and lists no AC to sign off",
                 started=True,
+                waiting=True,
             )
         case "undated":
             return _Own(

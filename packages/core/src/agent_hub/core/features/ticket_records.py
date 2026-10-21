@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Final, Literal, cast
 from pydantic import ValidationError
 
 from agent_hub.core.brain.brain_note import FrontmatterValue
+from agent_hub.core.brain.frontmatter import split_frontmatter
 from agent_hub.core.features.feature_evals import (
     ISO_TIME,
     RecordFieldError,
@@ -66,20 +67,10 @@ class TicketFiles:
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
-class ChangeDecision:
-    """The owner's decision on a request (``<n>.decision.md``): who, when and with what note."""
-
-    decision: Literal["approved", "declined"]
-    decided_by: str
-    decided_at: str
-    note: str | None
-
-
-@dataclass(frozen=True, kw_only=True, slots=True)
 class ChangeRequest:
     """One plan change request: its origin ``ticket``, its status folded from its decision, the
     plan versions it goes from and to, the tickets it affects, when it was opened and by which
-    workflow run. ``problem`` says why it could not be read (status None; ``ticket`` kept when it
+    workflow run, and its ``body`` (evidence and proposal, within the head read). ``problem`` says why it could not be read (status None; ``ticket`` kept when it
     could be), or why its decision could not be: the request then stays ``open``, not known to
     be decided. A decision needs a person (``decided_by`` neither empty nor ``unknown``, A5)."""
 
@@ -92,7 +83,8 @@ class ChangeRequest:
     plan_from: int | None = None
     opened_at: str | None = None
     run_id: str | None = None
-    decision: ChangeDecision | None = None
+    decision: ChangeDecisionView | None = None
+    body: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -162,9 +154,9 @@ def ticket_folder(folders: Iterable[str], names: Iterable[str]) -> str | None:
     )
 
 
-def request_view(request: ChangeRequest, *, slug: str) -> ChangeRequestView:
-    """``request`` as hub web reads it; its ``approval_id`` is the API's to resolve (P8)."""
-    decision = request.decision
+def request_view(request: ChangeRequest, *, slug: str, body: bool = False) -> ChangeRequestView:
+    """``request`` as hub web reads it, with its ``body`` when asked (the ticket route); its
+    run's gate and liveness are the API's to resolve (P8)."""
     return ChangeRequestView(
         n=request.n,
         ticket=request.ticket,
@@ -174,16 +166,10 @@ def request_view(request: ChangeRequest, *, slug: str) -> ChangeRequestView:
         affected=request.affected,
         opened_at=request.opened_at,
         run_id=request.run_id,
-        decision=None
-        if decision is None
-        else ChangeDecisionView(
-            decision=decision.decision,
-            decided_by=decision.decided_by,
-            decided_at=decision.decided_at,
-            note=decision.note,
-        ),
+        decision=request.decision,
         path=f"features/{slug}/{CHANGE_REQUESTS_FOLDER}/{request.n}.md",
         problem=request.problem,
+        body=request.body if body else None,
     )
 
 
@@ -249,10 +235,19 @@ def _request(n: int, head: RecordHead, decision: RecordHead | None) -> ChangeReq
         opened_at=opened_at,
         run_id=run_id,
         decision=decided,
+        body=_body(head),
     )
 
 
-def _decision(head: RecordHead) -> ChangeDecision:
+def _body(head: RecordHead) -> str | None:
+    """The request's text after its frontmatter (within the head read), None when empty."""
+    if head.head is None:
+        return None
+    text = split_frontmatter(head.head.decode("utf-8", "replace")).body.strip()
+    return f"{text}\n" if text else None
+
+
+def _decision(head: RecordHead) -> ChangeDecisionView:
     fields = _fields(head)
     record_type(fields, "change-request-decision")
     decision = text_field(fields, "decision")
@@ -266,7 +261,7 @@ def _decision(head: RecordHead) -> ChangeDecision:
     decided_at = text_field(fields, "decided_at", ISO_TIME)
     if decided_at is None:
         raise RecordFieldError("decided_at is missing")
-    return ChangeDecision(
+    return ChangeDecisionView(
         decision=cast("Literal['approved', 'declined']", decision),
         decided_by=decided_by.strip(),
         decided_at=decided_at,

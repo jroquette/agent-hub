@@ -706,9 +706,11 @@ def test_detail_lists_change_requests_when_folder_has_them() -> None:
         "opened_at": "2026-10-21",
         "run_id": "implement-1",
         "approval_id": None,
+        "decidable_here": False,
         "decision": None,
         "path": "features/demo-feature/change-requests/1.md",
         "problem": None,
+        "body": None,
     }
     assert second.status == "declined"
     assert second.decision is not None

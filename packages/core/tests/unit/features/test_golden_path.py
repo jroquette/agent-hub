@@ -882,8 +882,9 @@ def test_keeps_acceptance_waiting_when_owner_steps_eval_has_no_live_ac() -> None
     ).golden_path
 
     acceptance = _step(path, "acceptance")
+    # A19: a sign-off the owner writes by hand waits for the owner too.
     assert (acceptance.state, acceptance.meta) == (
-        "current",
+        "waiting",
         "Waiting on owner steps · no ACs listed",
     )
     assert path.phase == "acceptance"
@@ -904,8 +905,9 @@ def test_keeps_acceptance_waiting_when_every_ac_is_withdrawn() -> None:
     ).golden_path
 
     acceptance = _step(path, "acceptance")
+    # A19: a sign-off the owner writes by hand waits for the owner too.
     assert (acceptance.state, acceptance.meta) == (
-        "current",
+        "waiting",
         "Waiting on owner steps · no ACs listed",
     )
     assert path.phase == "acceptance"

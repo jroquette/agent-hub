@@ -342,15 +342,15 @@ def a_preflight_run(**fields: object) -> dict[str, object]:
     } | fields
 
 
-def a_request_head(n: int, ticket: str, affected: str = "[]") -> RecordHead:
+def a_request_head(n: int, ticket: str, affected: str = "[]", body: str = "") -> RecordHead:
     text = (
         f"---\ntype: change-request\nticket: {ticket}\nstatus: open\nplan_from: 2\nplan_to: 3\n"
-        f"affected: {affected}\nopened_at: 2026-10-21\nrun_id: implement-{n}\n---\n"
+        f"affected: {affected}\nopened_at: 2026-10-21\nrun_id: implement-{n}\n---\n{body}"
     )
     return RecordHead(name=f"{n}.md", head=text.encode(), problem=None)
 
 
-# two-level-flows A7 (AGH-405): the per-ticket route serves what only it does: the brief, every
+# two-level-flows A7 (AGH-405): the per-ticket route serves what only it does: every
 # preflight run (local notes, discoveries) and the change requests the ticket asks or is held by.
 def test_serves_ticket_records_when_ticket_named_by_key_or_id() -> None:
     preflight = {
@@ -369,7 +369,7 @@ def test_serves_ticket_records_when_ticket_named_by_key_or_id() -> None:
             ),
         ),
         change_requests=(
-            a_request_head(1, "DEM-8"),
+            a_request_head(1, "DEM-8", body="\n# Request 1\n"),
             a_request_head(2, "DEM-7", affected="[T2]"),
             a_request_head(3, "DEM-7"),
         ),
@@ -383,13 +383,12 @@ def test_serves_ticket_records_when_ticket_named_by_key_or_id() -> None:
         by_id.model_dump(exclude={"ticket"}) if by_id else None
     )
     assert (by_key.project, by_key.slug, by_key.ticket) == ("demo", "demo-feature", "t2")
-    assert by_key.brief == "features/demo-feature/tickets/dem-8/brief.md"
-    assert by_key.plan == "features/demo-feature/tickets/dem-8/plan.md"
     assert by_key.preflight is not None
-    assert by_key.preflight.path == "features/demo-feature/tickets/dem-8/preflight.json"
     assert [run.local_notes for run in by_key.preflight.runs] == [("Reuse the shared form.",), ()]
     assert by_key.preflight.runs[1].input_text == "Auth headers are needed."
     assert [request.n for request in by_key.change_requests] == [1, 2]
+    # A20: the panel shows each request's evidence and proposal before its decision.
+    assert [request.body for request in by_key.change_requests] == ["# Request 1\n", None]
 
 
 def test_serves_preflight_problem_when_record_malformed() -> None:
@@ -402,7 +401,7 @@ def test_serves_preflight_problem_when_record_malformed() -> None:
     assert found.preflight.runs == ()
     assert found.preflight.problem is not None
     assert found.preflight.problem.startswith("preflight.json could not be read")
-    assert (found.brief, found.plan, found.change_requests) == (None, None, ())
+    assert found.change_requests == ()
 
 
 def test_serves_nothing_when_ticket_not_in_feature() -> None:
