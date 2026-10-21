@@ -59,7 +59,12 @@ from agent_hub.core.features.feature_view import (
 from agent_hub.core.features.golden_path import EvalGate, GoldenInputs, golden_path
 from agent_hub.core.features.plan_version import plan_version
 from agent_hub.core.features.ticket_planning import TicketBoard, ticket_board
-from agent_hub.core.features.ticket_records import ChangeRequests, TicketFiles, change_requests
+from agent_hub.core.features.ticket_records import (
+    ChangeRequests,
+    TicketFiles,
+    change_requests,
+    request_view,
+)
 from agent_hub.core.features.ticket_snapshots import SnapshotRead
 from agent_hub.core.hub_config.problems import one_line
 from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN
@@ -356,6 +361,9 @@ def feature_detail(
             else AcceptanceEval(
                 delivery=accepted.delivery, verdict=accepted.verdict, owner_wait=parts.owner_wait
             )
+        ),
+        change_requests=tuple(
+            request_view(request, slug=folder.slug) for request in parts.requests.requests
         ),
     )
 

@@ -9,6 +9,7 @@ from agent_hub.core.features.feature_status import RecordHead
 from agent_hub.core.features.ticket_records import (
     MAX_CHANGE_REQUEST_FILES,
     MAX_PREFLIGHT_BYTES,
+    ChangeDecision,
     ChangeRequest,
     change_requests,
     preflight_record,
@@ -67,10 +68,37 @@ def test_reads_open_when_request_has_no_decision() -> None:
 
     assert found.requests == (
         ChangeRequest(
-            n=1, ticket="DEM-8", status="open", plan_to=3, affected=("DEM-9",), problem=None
+            n=1,
+            ticket="DEM-8",
+            status="open",
+            plan_to=3,
+            affected=("DEM-9",),
+            problem=None,
+            plan_from=2,
+            opened_at="2026-10-21T09:30:00Z",
+            run_id="implement-8",
         ),
     )
     assert found.problem is None
+
+
+# AGH-405 (S2-T7): hub web shows who decided a request, when and with what note.
+def test_reads_decision_when_decision_file_exists() -> None:
+    (request,) = change_requests((a_request(), a_decision(decision="declined")), skipped=0).requests
+
+    assert request.decision == ChangeDecision(
+        decision="declined",
+        decided_by="Dana Owner",
+        decided_at="2026-10-21T10:00:00Z",
+        note="Go ahead.",
+    )
+
+
+def test_reads_no_note_when_decision_note_empty() -> None:
+    (request,) = change_requests((a_request(), a_decision(note='""')), skipped=0).requests
+
+    assert request.decision is not None
+    assert request.decision.note is None
 
 
 def test_folds_decision_into_status_when_decision_file_exists() -> None:
