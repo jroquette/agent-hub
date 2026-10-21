@@ -258,7 +258,7 @@ def test_writes_decision_when_run_ended(status: str) -> None:
 
 
 # Q1: the check and the write hold the run commands' lock, as the gate route does.
-def test_checks_the_run_holding_the_run_commands_lock() -> None:
+def test_checks_the_run_when_holding_the_run_commands_lock() -> None:
     events = Events()
     guard = Guard(events)
     use = DecideChangeRequest(
