@@ -32,6 +32,7 @@ from agent_hub.core.features.golden_path import (
     own_conditions,
 )
 from agent_hub.core.features.ticket_planning import ticket_board
+from agent_hub.core.features.ticket_records import ChangeRequests, change_requests
 from agent_hub.core.features.ticket_snapshots import SnapshotRead
 from agent_hub.core.features.ticket_view import TicketRow
 from agent_hub.core.testing.read_model_builders import (
@@ -207,6 +208,60 @@ def test_marks_plan_meta_unknown_when_plan_too_large() -> None:
 
     plan = _step(path, "plan")
     assert (plan.state, plan.reason) == ("unknown", problem)
+
+
+def _request(n: int, ticket: str, affected: str, decision: str | None = None) -> ChangeRequests:
+    """One change request from plan v1 to v2, by ``ticket``, affecting ``affected``."""
+    front = (
+        f"---\nticket: {ticket}\nstatus: open\nplan_from: 1\nplan_to: 2\n"
+        f"affected: [{affected}]\nopened_at: 2026-10-21\nrun_id: implement-1\n---\n"
+    )
+    heads = [RecordHead(name=f"{n}.md", head=front.encode(), problem=None)]
+    if decision is not None:
+        text = f"---\ndecision: {decision}\ndecided_by: Ana\ndecided_at: 2026-10-21\n---\n"
+        heads.append(RecordHead(name=f"{n}.decision.md", head=text.encode(), problem=None))
+    return change_requests(heads, skipped=0)
+
+
+# two-level-flows AC-2.8: while a change request is open, Plan says the next version waits.
+def test_signals_next_version_on_plan_when_change_request_open() -> None:
+    path = golden_path(_inputs(plan=PlanView(version=1), requests=_request(1, "ACME-1520", "")))
+
+    plan = _step(path, "plan")
+    assert (plan.state, plan.meta, plan.signal) == ("done", "v1", "v2 waits for you")
+
+
+def test_signals_nothing_on_plan_when_change_request_decided() -> None:
+    requests = _request(1, "ACME-1520", "", decision="approved")
+
+    path = golden_path(_inputs(plan=PlanView(version=1), requests=requests))
+
+    assert {step.signal for step in path.steps} == {None}
+
+
+def test_signals_problem_on_plan_when_change_request_unreadable() -> None:
+    link = RecordHead(name="1.md", head=None, problem="not a regular file")
+
+    path = golden_path(_inputs(requests=change_requests((link,), skipped=0)))
+
+    assert _step(path, "plan").signal == (
+        "change-requests/1.md could not be read (not a regular file). Fix it in a hub PR."
+    )
+
+
+# two-level-flows AC-2.8: Build counts the tickets an open change request pauses.
+def test_counts_paused_tickets_in_build_meta_when_change_request_open() -> None:
+    rows = (
+        _ticket(1, state=_DONE),
+        _ticket(2, state=_STARTED),
+        _ticket(3, state=_BACKLOG),
+        _ticket(4, state=_BACKLOG),
+    )
+    requests = _request(1, "ACME-1521", "T3, ACME-1520, OTHER-9")
+
+    build = _step(golden_path(_inputs(rows=rows, requests=requests)), "build")
+
+    assert build.meta == "1 of 4 merged · 1 in progress · 2 paused for a plan change"
 
 
 # two-level-flows AC-1.5: Build counts the merged tickets.

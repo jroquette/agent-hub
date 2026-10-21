@@ -42,13 +42,15 @@ class StepProgress(ViewModel):
 
 class GoldenStep(ViewModel):
     """One step of the golden path: its state, a short ``meta`` text and the ``reason`` it is
-    not done (naming the failing gate), and its ``progress`` when it counts something."""
+    not done (naming the failing gate), its ``progress`` when it counts something, and the one
+    ``signal`` that needs attention (Plan: "v3 waits for you" while a change request is open)."""
 
     name: FeaturePhase
     state: StepState
     meta: str | None
     reason: str | None
     progress: StepProgress | None
+    signal: str | None = None
 
 
 class GoldenPath(ViewModel):
