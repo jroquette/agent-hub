@@ -13,6 +13,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- `hub web` reads and edits the declared environments and services (AGH-416). The Hub config view carries every
+  effective environment and repo service with the file it comes from (and hub.json's access of a tightened one), and
+  `POST /projects/{project}/config/environments` adds, changes, renames and removes environments, services and
+  endpoints in `hub.json` or `hub.local.json`, one edit or a batch written together, checked as a read checks them and
+  never committed. A team rename also renames your own `hub.local.json` entries; other developers rename theirs.
 - The base plugin gains the `/premortem` and `/context-audit` skills (AGH-414). `/premortem` assumes a decision
   already failed and gives its top three causes an early-warning sign and the cheapest experiment that could prove the
   choice wrong. `/context-audit` estimates the always-loaded context of a hub and its repos and ranks the cuts by

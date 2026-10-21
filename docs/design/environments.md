@@ -126,6 +126,63 @@ between that check and the replace is overwritten: a narrow window). `remove` re
 environment; a committed write prints `run ./hub sync to update AGENTS.md`. The guard asks before a mutating
 `hub env` and an edit of `hub.local.json`; `list` and `show` pass. `hub setup`'s optional step writes only it.
 
+### From hub web
+
+The Hub config screen reads and makes the same edits as `hub env` through `GET /projects/{project}/config` (its
+`environments`) and `POST /projects/{project}/config/environments` (AGH-416). The edit is checked as a read checks
+both files (each file, then the rules across them) before anything is written, refuses a file changed since it was
+read or a symlinked one, replaces the file through a temporary one, and is never committed: a `hub.json` change waits
+for the owner's hub PR and `./hub sync` ([ADR 0040](../adr/0040-hub-web-keeps-local-settings-writes-hub-files-and-runs-checks.md),
+option 1). The route is a hub registry write: it needs this server's `Origin`. A refused edit answers 422 "This change
+was not saved" with the reason; `hub env` gains no command from it.
+
+**Renames.** renaming a `hub.json` environment also moves every endpoint `hub.json` keys by it, and renaming
+a `hub.json` service keeps its place in its repo. When this developer's `hub.local.json` holds the old name (a
+tightening, or that service's endpoints), the same write renames it there too, both files or neither; other
+developers' `hub.local.json` are not touched, and their entries under the old name stop applying until they rename
+them (the screen warns). A local rename of a `hub.json` name is refused, and `hub.local.json` may only add endpoints to
+a committed service, never change its `kind`, `description` or name.
+
+**Acceptance criteria (AGH-416)**
+
+- **AC-416.1** Given environments and services in `hub.json` and `hub.local.json`, when the Hub config is read, then
+  its `environments` lists every effective environment (name, access, production, description, credentials by name)
+  and every repo service with its endpoints, each with the file it comes from; when `hub.local.json` breaks a rule
+  across both files (a looser `access`), only the team's are listed and the problem is reported.
+- **AC-416.2** Given `hub.local.json` tightens a `hub.json` environment, when the Hub config is read, then that
+  environment carries hub.json's `access` as `team_access` beside the effective one; a developer's own environment
+  has none.
+- **AC-416.3** Given a scope (`team`: `hub.json`, `local`: `hub.local.json`), when `add_environment`,
+  `set_environment` or `remove_environment` is posted, then the change is made in that file as `hub env` makes it:
+  a new environment goes last, credentials are names and a path only (an empty text or list removes the key), a
+  local file is created when absent and removed when its last entry goes, a local `set_environment` on a `hub.json`
+  name may only tighten `access`, a looser `access` or another field is refused, and removing an environment an
+  endpoint uses (or a `hub.json` one this developer's file still tightens) is refused; nothing is committed.
+- **AC-416.4** Given a repo service, when `add_endpoint` or `remove_endpoint` is posted, then the endpoint is added
+  (the service too, when new) or removed (the whole service when no environment is named); an endpoint with both or
+  neither of a URL and a resource, or a URL with user info, is refused and the file is unchanged.
+- **AC-416.5** Given a service with an endpoint in an environment, when `add_endpoint` is posted with `replace`, then
+  that endpoint is replaced in the same write and the service keeps its `kind`.
+- **AC-416.6** Given a new service of a repo, when `add_service` is posted with a `kind`, a `description` and one
+  address per environment, then each address goes to its environment's file (a URL when it holds `://`, else a
+  resource), the kind and description go with the service's first declaration (`hub.json`'s when a team environment
+  gets an address), and when any address is refused or makes either file invalid, neither file is written.
+- **AC-416.7** Given a `hub.json` environment, when `rename_environment` is posted with scope `team`, then it is
+  renamed in its place, every endpoint `hub.json` keys by it follows, and this developer's `hub.local.json`
+  tightening or endpoints under the old name are renamed in the same write; other developers' `hub.local.json` are
+  not touched. A local rename renames the developer's own environment and its endpoints. A new name another
+  environment of either file holds (ignoring case; a change of case renames) is refused, and so is a local rename of
+  a `hub.json` name.
+- **AC-416.8** Given a service, when `set_service` is posted, then its `kind` and `description` change (an empty text
+  removes the key) and a `new_name` renames it in its place in its repo; a team rename also renames this developer's
+  endpoints for it in `hub.local.json`. A name the repo already has is refused, and so is a local change to a
+  `hub.json` service.
+- **AC-416.9** Given a `batch` of edits, when it is posted, then the edits are made in order on both files in memory
+  and written together; when one is refused (named `op N: ...`) or the result is invalid, neither file is written.
+- **AC-416.10** Given a request from another origin or without an `Origin`, when it posts an environment edit, then
+  it is refused as every hub registry write is; with this server's `Origin` the composed app answers the new Hub
+  config view.
+
 ### Known limits
 
 Blocked words are a best-effort text tripwire, not a security boundary: the boundary is which credentials the
@@ -163,6 +220,8 @@ and the input tools: MCP tools (`mcp__*`), WebSearch, Task, Agent and SendMessag
 - [ADR 0038](../adr/0038-declared-environments-and-blocked-words.md): environments in `hub.json` and
   `hub.local.json`, blocked words enforced, `access` advisory, `hub env` and setup as writers, local environments in
   the brief rather than a rendered `CLAUDE.local.md`.
+- [ADR 0040](../adr/0040-hub-web-keeps-local-settings-writes-hub-files-and-runs-checks.md): hub web makes the writes
+  `hub env` would make, in `hub.json` or `hub.local.json`, left uncommitted for the owner's hub PR (AGH-416).
 - Variables by a fixed list of names, not every value (`PATH`, `HOME` hold names); `$HUB_CONFIG` is hooks-only.
 
 ## Open questions
