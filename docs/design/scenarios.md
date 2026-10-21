@@ -108,8 +108,8 @@ environment and env file, records origin `agent`, and runs only `read` actions (
 `deny`, a draft action or a plan changed since shown cannot be picked (refused with its reason, nothing recorded). A
 pick answers its steps' asks: `workaround.start`, its actions (origin `agent`), `workaround.end`, then the diverged step
 as a new attempt; a failed or cut-short workaround (never re-run) opens a new investigation. `retry` skips it; `stop`
-ends it `cancelled`, findings kept. Nothing rewinds the system. `hub scenario findings <run> --issue <id>` creates a
-tracker issue after a terminal `y`; `--inbox <id>` writes a `brain/_inbox/` note (`provenance: agent-from-external`).
+ends it `cancelled`, findings kept. Nothing rewinds the system. `hub scenario findings <run>` lists them; `--issue <id>`
+creates a tracker issue after a terminal `y`; `--inbox <id>` writes a `brain/_inbox/` note (`provenance: agent-from-external`).
 
 ### Events and bounds
 

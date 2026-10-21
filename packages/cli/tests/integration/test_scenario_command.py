@@ -9,6 +9,7 @@ sees which mode ran, if any. Output is read without colour codes (CI forces a te
 
 import json
 import os
+import pty
 import re
 import select
 import shutil
@@ -16,6 +17,7 @@ import signal
 import subprocess
 import sys
 import time
+from datetime import date
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any
@@ -2210,3 +2212,241 @@ def test_ends_cancelled_when_policy_gate_rejected_while_investigation_open(
     ends = [line for line in records(hub) if line["event"] == "end"]
     assert [(line["status"], line["reason"]) for line in ends] == [("cancelled", "send-order__ask")]
     assert modes(marker) == ["run"]
+
+
+# AGH-362: hub scenario findings (AC-350.27, .28). ``tracker.transport`` is "mcp", so the tracker
+# is a ``claude`` first on PATH that plays Linear's MCP server: it records each request in the file
+# ``TRACKER_CALLS`` names and answers a create with DEM-42. Nothing reaches the network.
+
+TRACKER_CLAUDE = """\
+import json
+import os
+import sys
+
+request = json.loads(sys.argv[2].splitlines()[-1])
+with open(os.environ["TRACKER_CALLS"], "a") as calls:
+    calls.write(json.dumps(request) + "\\n")
+given = request["arguments"]
+issue = {
+    "id": "DEM-42",
+    "title": given["title"],
+    "description": given["description"],
+    "url": "https://linear.app/demo/issue/DEM-42",
+    "state": "Todo",
+    "labels": [],
+}
+reply = {"type": "result", "subtype": "success", "is_error": False, "total_cost_usd": 0.01}
+print(json.dumps(reply | {"result": json.dumps({"issue": issue})}))
+"""
+# A secret shape built at run time: the proposal's evidence holds it, redacted when proposed.
+FINDING_KEY = "AKIA" + "SYNTHETIC0000000"
+
+
+def a_tracker(hub: Path) -> dict[str, str]:
+    """``hub``'s tracker through the fake MCP ``claude``; the environment that reaches it."""
+    document = json.loads((hub / "hub.json").read_text())
+    document["tracker"]["transport"] = "mcp"
+    (hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
+    fakes = hub.parent.parent / "tracker-bin"
+    fakes.mkdir()
+    (fakes / "claude").write_text(f"#!{sys.executable}\n{TRACKER_CLAUDE}")
+    (fakes / "claude").chmod(0o755)
+    return {
+        "PATH": f"{fakes}{os.pathsep}{os.environ.get('PATH', '')}",
+        "TRACKER_CALLS": str(hub.parent.parent / "tracker-calls"),
+    }
+
+
+def tracker_calls(hub: Path) -> list[dict[str, Any]]:
+    calls = hub.parent.parent / "tracker-calls"
+    if not calls.exists():
+        return []
+    return [json.loads(line) for line in calls.read_text().splitlines()]
+
+
+def found_run(hub: Path, marker: Path, held: Path) -> None:
+    """``hold-walk`` paused at its investigation, with the findings f1 and f2 proposed."""
+    proposal = a_proposal(RELEASE)
+    proposal["findings"][0]["evidence"] = f"status ON_HOLD; key {FINDING_KEY}"
+    hold_walk(hub, marker, held)
+    proposed = propose(hub, marker, held, proposal=proposal)
+    assert proposed.exit_code == 0, proposed.output
+
+
+def findings(hub: Path, marker: Path, held: Path, *args: str, **env: str) -> Result:
+    environ = {
+        "AGENT_HUB_ROOT": str(hub),
+        "MARKER": str(marker),
+        "HELD": str(held),
+        "AGENT_HUB_DB": str(hub.parent.parent / "events.db"),
+        **env,
+    }
+    return CliRunner().invoke(app, ["scenario", "findings", *args], env=environ, input="")
+
+
+def findings_in_terminal(
+    hub: Path, env: dict[str, str], *args: str, answer: str
+) -> tuple[int, str]:
+    """``hub scenario findings`` in a pseudo-terminal: ``answer`` is typed once a ``[y/N]``
+    prompt shows; the exit code and everything the terminal showed."""
+    environ = {**os.environ, "AGENT_HUB_ROOT": str(hub), **env}
+    main, child = pty.openpty()
+    argv = [sys.executable, "-m", "agent_hub.cli", "scenario", "findings", *args]
+    process = subprocess.Popen(  # noqa: S603 - this interpreter, fixed arguments
+        argv, stdin=child, stdout=child, stderr=child, env=environ, close_fds=True
+    )
+    os.close(child)
+    shown, answered = b"", False
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        ready, _, _ = select.select([main], [], [], 0.2)
+        if ready:
+            try:
+                chunk = os.read(main, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            shown += chunk
+        if not answered and b"[y/N]" in shown:
+            os.write(main, answer.encode() + b"\n")
+            answered = True
+        if process.poll() is not None and not ready:
+            break
+    os.close(main)
+    return process.wait(timeout=30), shown.decode(errors="replace")
+
+
+def test_lists_findings_when_findings_run(hub: Path, marker: Path, held: Path) -> None:
+    found_run(hub, marker, held)
+
+    result = findings(hub, marker, held, RUN)
+
+    assert result.exit_code == 0, result.output
+    assert plain(result.stdout).splitlines() == [
+        "f1  order-held  Order stays on hold",
+        "f2  order-held  Queue is slow",
+    ]
+    as_json = findings(hub, marker, held, RUN, "--json")
+    assert as_json.exit_code == 0, as_json.output
+    listed = json.loads(as_json.stdout)
+    assert (listed["run"], listed["scenario"], listed["environment"]) == (
+        RUN,
+        "hold-walk",
+        "local",
+    )
+    assert [item["finding_id"] for item in listed["findings"]] == ["f1", "f2"]
+    assert listed["findings"][0] == {
+        "finding_id": "f1",
+        "step": "order-held",
+        "title": "Order stays on hold",
+        "text": "The hold flag is set.",
+        "evidence": "status ON_HOLD; key [redacted: AWS access key]",
+    }
+
+
+def test_creates_issue_once_after_yes_when_findings_issue_on_terminal(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    found_run(hub, marker, held)
+    env = a_tracker(hub)
+
+    declined, shown_declined = findings_in_terminal(hub, env, RUN, "--issue", "f1", answer="n")
+    code, shown = findings_in_terminal(hub, env, RUN, "--issue", "f1", answer="y")
+
+    assert declined == 0, shown_declined
+    assert "the issue was not created" in plain(shown_declined)
+    assert code == 0, shown
+    text = plain(shown).replace("\r\n", "\n")
+    assert "title: Scenario hold-walk: Order stays on hold" in text
+    assert "The scenario hold-walk found this in run walk-1, at step order-held," in text
+    assert "created DEM-42  https://linear.app/demo/issue/DEM-42" in text
+    (call,) = tracker_calls(hub)
+    assert call["operation"] == "create_issue"
+    assert call["arguments"]["team"] == "DEM"
+    assert call["arguments"]["title"] == "Scenario hold-walk: Order stays on hold"
+    description = call["arguments"]["description"]
+    assert "Record: /scenarios/hold-walk/runs/walk-1 in hub web" in description
+    assert FINDING_KEY not in description
+
+
+def test_creates_nothing_when_findings_issue_without_terminal(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    found_run(hub, marker, held)
+    env = a_tracker(hub)
+
+    result = findings(hub, marker, held, RUN, "--issue", "f2", **env)
+
+    assert result.exit_code == 0, result.output
+    shown = plain(result.stdout).splitlines()
+    assert shown[0] == "title: Scenario hold-walk: Queue is slow"
+    assert shown[-1] == (
+        "no terminal: the issue was not created; run this command on a terminal to create it"
+    )
+    assert tracker_calls(hub) == []
+
+
+def test_writes_inbox_note_when_findings_inbox(hub: Path, marker: Path, held: Path) -> None:
+    found_run(hub, marker, held)
+
+    result = findings(hub, marker, held, RUN, "--inbox", "f1")
+
+    name = f"{date.today().isoformat()}-scenario-hold-walk-f1.md"
+    assert result.exit_code == 0, result.output
+    assert plain(result.stdout).splitlines() == [f"wrote brain/_inbox/{name}"]
+    (note,) = (hub / "brain" / "_inbox").iterdir()
+    assert note.name == name
+    text = note.read_text()
+    assert "\nprovenance: agent-from-external\n" in text
+    assert "## Order stays on hold" in text
+    assert "Evidence: status ON_HOLD; key [redacted: AWS access key]" in text
+    assert FINDING_KEY not in text
+    # One note per finding: a second write is refused and the note kept.
+    again = findings(hub, marker, held, RUN, "--inbox", "f1")
+    assert again.exit_code == 1, again.output
+    assert f"brain/_inbox/{name} already exists" in plain(again.stderr)
+    assert note.read_text() == text
+
+
+def test_exits_one_when_findings_run_or_finding_unknown(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    found_run(hub, marker, held)
+
+    unknown_run = findings(hub, marker, held, "walk-9")
+    unknown_finding = findings(hub, marker, held, RUN, "--issue", "f9")
+
+    assert unknown_run.exit_code == 1, unknown_run.output
+    assert plain(unknown_run.stderr).splitlines() == [
+        "hub scenario findings: no scenario run walk-9"
+    ]
+    assert unknown_finding.exit_code == 1, unknown_finding.output
+    assert plain(unknown_finding.stderr).splitlines() == [
+        f"hub scenario findings: run {RUN} has no finding f9"
+    ]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [("Walk_1",), (RUN, "--issue", "f1", "--inbox", "f1"), (RUN, "--json", "--inbox", "f1")],
+    ids=["run-id", "issue-and-inbox", "json-and-inbox"],
+)
+def test_exits_two_when_findings_usage_wrong(
+    hub: Path, marker: Path, held: Path, *, args: tuple[str, ...]
+) -> None:
+    result = findings(hub, marker, held, *args)
+
+    assert result.exit_code == 2, result.output
+    assert not (hub / "brain").exists()
+
+
+def test_lists_four_subcommands_when_scenario_help(hub: Path, marker: Path) -> None:
+    result = run_hub(hub, marker, "scenario", "--help")
+
+    assert result.exit_code == 0, result.output
+    help_text = plain(result.stdout)
+    # propose (T9) is listed too; the four of AC-350.28 must be there.
+    for command in ("list", "plan", "run", "findings"):
+        # A line of the commands panel: the name, then its help after two or more spaces.
+        assert re.search(rf"^\W+{command}\s{{2,}}\S", help_text, re.MULTILINE), command

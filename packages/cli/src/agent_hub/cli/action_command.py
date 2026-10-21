@@ -234,7 +234,7 @@ def run_command(
         fail(
             f"{_RUN_PREFIX}: {entry.ref} in {resolved.environment_name}: {decision_text(resolved)}"
         )
-    if entry.document.effect != "read" and not _has_terminal():
+    if entry.document.effect != "read" and not has_terminal():
         refused = facts.model_copy(update={"decision": "deny"})
         events.policy_decided(refused, reason_kind="read_only", at=now())
         _send(events)
@@ -242,7 +242,7 @@ def run_command(
     events.policy_decided(facts, reason_kind=decision.reason_kind, at=now())
     if decision.decision == "ask":
         question = f"run {entry.ref} ({entry.document.effect}) in {resolved.environment_name}?"
-        if not _confirmed(question):
+        if not confirmed(question):
             _send(events)
             fail(f"{_RUN_PREFIX}: {entry.ref}: not run")
         facts = facts.model_copy(update={"approver": getpass.getuser()})
@@ -555,7 +555,7 @@ def _exit_on_problems(found: ActionDiscovery) -> None:
         raise typer.Exit(FAILURE)
 
 
-def _has_terminal() -> bool:
+def has_terminal() -> bool:
     try:
         return sys.stdin.isatty()
     except ValueError:
@@ -573,7 +573,7 @@ def _send(events: ScenarioEvents) -> None:
         typer.echo(f"{_RUN_PREFIX}: event store unavailable: {reason}", err=True)
 
 
-def _confirmed(question: str) -> bool:
+def confirmed(question: str) -> bool:
     """A ``y`` to ``question``; the end of input (or Ctrl-C) at the prompt is a ``n``."""
     try:
         return typer.confirm(question, default=False)
