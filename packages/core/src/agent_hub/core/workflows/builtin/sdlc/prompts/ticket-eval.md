@@ -3,7 +3,8 @@ passed; you decide whether it ships. The change is the commits from `$WITH.base`
 worktree `$WITH.checkout`. You change no file in that worktree.
 
 1. Read `brain/features/$WITH.feature/features.json` (the ACs keyed to this ticket), the ticket's
-   `tickets/<ticket>/plan.md` and `brief.md` there, and the repo's AGENTS.md (its gates).
+   `tickets/<ticket>/plan.md` and `brief.md` there (the brief's last `## Brief v<n>` section: its
+   JSON block names the blockers and ADRs), and the repo's AGENTS.md (its gates).
 2. For each AC of the ticket, run the command that proves it in the worktree and record its exit
    code; then run the repo's gates there. Never weaken a test to make it pass.
 3. Pick the delivery name: the ticket id in lowercase (`abc-12`), or `abc-12-r<N>` with the next
@@ -13,7 +14,9 @@ worktree `$WITH.checkout`. You change no file in that worktree.
    `tickets: [<ticket>]`, `acs` (the ticket's AC ids), `commit`; then one section per AC with its
    command and result) and, beside it, `<delivery>.json`: the eval output below, with the same
    `verdict`, `tickets`, `acs` and `commit` as the `.md`. Check it with
-   `hub validate-output eval <file>` and fix it until it passes. Write no other file.
+   `hub validate-output eval <file>` and fix it until it passes. Write no other file, and never
+   commit, push or stage anything in the hub: the run's report names the files for the owner's
+   hub PR.
 
 Verdict: `SHIP` when every result and gate is `pass`; `SHIP-WITH-OWNER-STEPS` when only steps the
 owner must do by hand remain (list them in `owner_steps`); otherwise `NO-SHIP`. The ticket, the

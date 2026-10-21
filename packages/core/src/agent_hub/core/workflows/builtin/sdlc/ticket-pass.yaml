@@ -1,17 +1,20 @@
-# One pass of the ticket flow (two-level-flows S2, A2), included up to three times by implement:
-# a fresh, read-only preflight of the ticket against the plan and main in its worktree (the
-# findings turned into one agent-hub/preflight/1 run by preflight_run.py and appended by
-# hub step preflight); on `plan` drift a change request (hub step change-request) and the owner's
-# gate (approve, or decline with a note); approved, the decision and the plan's A<k> amendment
-# (hub step decide, amend-plan), declined, the decision with the note; then a re-preflight against
-# the new plan, or with the note as a constraint. Drift still `plan` there, or on a declined
-# change given as input, ends the pass blocked (pass_outcome.py, A2). Otherwise the ticket plan
-# (tickets/<ticket>/plan.md) and deliver's review rounds (at most three, until PASS, the session
-# blocked or a discovery: discovery.py; three without fail the group, max_iterations). The
-# writers create or append in the hub and never commit; implement's report names the files (D-1).
+# One pass of the ticket flow (two-level-flows S2, A2, A22), included up to three times by
+# implement. A fresh, read-only preflight checks the ticket against the plan and origin/<base> in
+# the ticket repo's main checkout (no checkout change, no branch); hub step preflight appends its
+# findings as one agent-hub/preflight/1 run, filling the time, the run's id, main's commit and
+# the plan's version. On `plan` drift: a change request (hub step change-request) and the
+# owner's gate (approve, or decline with a note); approved, the decision and the plan's A<k>
+# amendment (hub step decide, amend-plan; a plan that moved since is not amended: the re-check
+# reads the current plan), declined, the decision with the note; then a re-preflight against the
+# new plan, or with the note as a constraint. Drift still `plan` there, or on a declined change
+# given as input, ends the pass blocked (pass_outcome.py). Only a preflight that passed makes the
+# worktree and branch (hub step worktree), then the ticket plan (tickets/<ticket>/plan.md) and
+# deliver's review rounds (at most three, until PASS, the session blocked or its discovery, which
+# hub step verdict reads; three without fail the group, max_iterations). The writers create or
+# append in the hub and never commit; implement's report names the files (D-1).
 version: 1
 name: ticket-pass
-description: One ticket pass - preflight, a plan change gate on plan drift, the ticket plan and the review rounds.
+description: One ticket pass - preflight, a plan change gate on plan drift, the worktree, the ticket plan and the review rounds.
 revision: 1
 inputs:
   feature:
@@ -19,83 +22,62 @@ inputs:
     description: The feature's folder under brain/features/.
   ticket:
     required: true
-    description: The ticket, its tracker id or plan key.
+    description: The ticket's tracker issue, <team>-<n>.
+  repo:
+    required: true
+    description: The repo to change, its dir in hub.json.
   issue_text:
     required: true
     description: The ticket as text, the task to do (untrusted).
   brief:
     required: true
     description: The context brief, its path in the hub.
-  path:
-    required: true
-    description: The ticket's worktree.
-  branch:
-    required: true
-    description: The worktree's branch.
-  base:
-    required: true
-    description: The ref the change starts from.
   hub:
     required: true
     description: The hub's main checkout.
-  hub_name:
+  base:
     required: true
-    description: The hub folder's name.
-  check:
-    required: true
-    description: The repo's check command.
-  guard:
-    required: true
-    description: The prompt's wording for an issue that holds an open question.
-  gate_step:
-    required: true
-    description: The prompt's gate step.
-  commit_shape:
-    required: true
-    description: The prompt's commit convention.
+    description: The ticket repo's origin/<default branch>, which the preflight reads.
   input:
     default: none
     description: What the pass is given - none, discovery or declined_change; a when reads it, so give a reference.
   input_text:
     default: ""
     description: The discovery, or the declined change's note.
-  request:
-    default: ""
-    description: The decided change request a declined_change input comes from.
 returns: outcome
 nodes:
   - id: preflight
     type: agent
-    description: The preflight - does the plan still hold for this ticket? Fresh and read-only.
+    description: The preflight - does the plan still hold for this ticket? Fresh and read-only, in the repo's main checkout.
     prompt_file: preflight.md
-    cwd: $INPUTS.path
+    cwd: ../$INPUTS.repo
     context: fresh
     mutates_checkout: false
     with:
       feature: $INPUTS.feature
       ticket: $INPUTS.ticket
       brief: $INPUTS.brief
+      hub: $INPUTS.hub
+      base: $INPUTS.base
       input: $INPUTS.input
       note: $INPUTS.input_text
     output_format:
       type: object
       additionalProperties: false
-      required: [plan_version, commit, blockers_read, drift, local_notes, evidence, proposal, affected, summary]
+      required: [drift, local_notes, blockers_read, evidence, proposal, affected, summary]
       properties:
-        plan_version: {type: integer, minimum: 1}
-        commit: {type: string, pattern: "^[0-9a-f]{7,40}$"}
-        blockers_read:
-          type: array
-          maxItems: 50
-          items: {type: string, pattern: "^[A-Za-z][A-Za-z0-9_-]{0,31}$"}
         drift: {type: string, enum: [none, local, plan]}
         local_notes:
           type: array
           maxItems: 50
           items: {type: string, minLength: 1, maxLength: 1000, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+        blockers_read:
+          type: array
+          maxItems: 50
+          items: {type: string, pattern: "^[A-Za-z][A-Za-z0-9_-]{0,31}$"}
         evidence: {type: string, maxLength: 20000}
         proposal: {type: string, maxLength: 20000}
-        affected: {type: string, pattern: "^([A-Za-z][A-Za-z0-9_-]{0,31}(,[A-Za-z][A-Za-z0-9_-]{0,31}){0,49})?$"}
+        affected: {type: string, pattern: "^([A-Za-z][A-Za-z0-9_-]{0,31}(, ?[A-Za-z][A-Za-z0-9_-]{0,31}){0,49})?$"}
         summary: {type: string, maxLength: 300, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
 
   - id: request
@@ -103,53 +85,24 @@ nodes:
     description: On plan drift, open the change request against the plan's current version.
     depends_on: [preflight]
     when: "$preflight.output.drift == 'plan' && $INPUTS.input != 'declined_change'"
-    command:
-      - hub
-      - step
-      - change-request
-      - --feature
-      - $INPUTS.feature
-      - --ticket
-      - $INPUTS.ticket
-      - --evidence
-      - $preflight.output.evidence
-      - --proposal
-      - $preflight.output.proposal
-      - --affected
-      - $preflight.output.affected
+    command: [hub, step, change-request, --feature, $INPUTS.feature, --ticket, $INPUTS.ticket, --evidence, $preflight.output.evidence, --proposal, $preflight.output.proposal, --affected, $preflight.output.affected]
     retry: {max_attempts: 0}
     output_format:
       type: object
       properties:
-        path: {type: string}
         n: {type: integer, minimum: 1}
         plan_from: {type: integer}
         plan_to: {type: integer}
-      required: [path, n, plan_from, plan_to]
-
-  - id: entry
-    type: script
-    description: The preflight's findings as one preflight run.
-    depends_on: [preflight, request]
-    trigger_rule: none_failed_min_one_success
-    runtime: python
-    script: preflight_run.py
-    args: [--agent, $preflight.output, --input, $INPUTS.input, --text, $INPUTS.input_text, --request, $request.output.n, --request, $INPUTS.request]
-    retry: {max_attempts: 0}
-    output_format: {type: object}
+      required: [n, plan_from, plan_to]
 
   - id: record
     type: shell
-    description: Append the run to tickets/<ticket>/preflight.json.
-    depends_on: [entry]
-    command: [hub, step, preflight, --feature, $INPUTS.feature, --ticket, $INPUTS.ticket, --run, $entry.output]
+    description: Append the preflight's run to tickets/<ticket>/preflight.json.
+    depends_on: [preflight, request]
+    trigger_rule: none_failed_min_one_success
+    command: [hub, step, preflight, --feature, $INPUTS.feature, --ticket, $INPUTS.ticket, --findings, $preflight.output, --input, $INPUTS.input, --input-text, $INPUTS.input_text, --request, $request.output.n]
     retry: {max_attempts: 0}
-    output_format:
-      type: object
-      properties:
-        path: {type: string}
-        runs: {type: integer, minimum: 1}
-      required: [path, runs]
+    output_format: {type: object}
 
   - id: gate
     type: approval
@@ -157,9 +110,9 @@ nodes:
     depends_on: [record]
     when: "$preflight.output.drift == 'plan' && $INPUTS.input != 'declined_change'"
     message: >-
-      Plan change request $request.output.n from $INPUTS.ticket ($request.output.path, plan
-      v$request.output.plan_from to v$request.output.plan_to). Evidence: $preflight.output.evidence
-      Proposal: $preflight.output.proposal Approve to amend the plan (the run writes A<k> and goes on);
+      Plan change request $request.output.n from $INPUTS.ticket (plan v$request.output.plan_from
+      to v$request.output.plan_to). Evidence: $preflight.output.evidence Proposal:
+      $preflight.output.proposal Approve to amend the plan (the run writes A<k> and goes on);
       decline with a note to keep the current plan (the run re-checks the ticket against it).
     decisions:
       - {id: approve, label: Approve}
@@ -173,26 +126,15 @@ nodes:
     when: "$gate.output.decision == 'approve'"
     command: [hub, step, decide, --feature, $INPUTS.feature, --request, $request.output.n, --decision, approved, --by, $gate.output.approver, --note, $gate.output.text]
     retry: {max_attempts: 0}
-    output_format:
-      type: object
-      properties:
-        path: {type: string}
-        decision: {type: string, const: approved}
-      required: [path, decision]
+    output_format: {type: object}
 
   - id: amend
     type: shell
-    description: Append the approved change's A<k> entry to plan.md's Amendments.
+    description: Append the approved change's A<k> entry to plan.md's Amendments (nothing when the plan moved since).
     depends_on: [approved]
     command: [hub, step, amend-plan, --feature, $INPUTS.feature, --request, $request.output.n, --summary, $preflight.output.summary]
     retry: {max_attempts: 0}
-    output_format:
-      type: object
-      properties:
-        path: {type: string}
-        amendment: {type: string}
-        already: {type: [string, "null"]}
-      required: [path, amendment, already]
+    output_format: {type: object}
 
   - id: declined
     type: shell
@@ -201,112 +143,113 @@ nodes:
     when: "$gate.output.decision == 'decline'"
     command: [hub, step, decide, --feature, $INPUTS.feature, --request, $request.output.n, --decision, declined, --by, $gate.output.approver, --note, $gate.output.text]
     retry: {max_attempts: 0}
-    output_format:
-      type: object
-      properties:
-        path: {type: string}
-        decision: {type: string, const: declined}
-      required: [path, decision]
+    output_format: {type: object}
 
   - id: recheck
     type: agent
-    description: The preflight again - against the amended plan, or with the owner's note as a constraint.
+    description: The preflight again - against the current plan, or with the owner's note as a constraint.
     depends_on: [amend, declined]
     trigger_rule: none_failed_min_one_success
-    # A decline's note is the re-check's constraint: the gate captures it (capture_response).
-    when: "$gate.output.decision == 'approve' || $gate.output.text != ''"
     prompt_file: preflight.md
-    cwd: $INPUTS.path
+    cwd: ../$INPUTS.repo
     context: fresh
     mutates_checkout: false
     with:
       feature: $INPUTS.feature
       ticket: $INPUTS.ticket
       brief: $INPUTS.brief
+      hub: $INPUTS.hub
+      base: $INPUTS.base
       input: $gate.output.decision
       note: $gate.output.text
     output_format:
       type: object
       additionalProperties: false
-      required: [plan_version, commit, blockers_read, drift, local_notes, evidence, proposal, affected, summary]
+      required: [drift, local_notes, blockers_read, evidence, proposal, affected, summary]
       properties:
-        plan_version: {type: integer, minimum: 1}
-        commit: {type: string, pattern: "^[0-9a-f]{7,40}$"}
-        blockers_read:
-          type: array
-          maxItems: 50
-          items: {type: string, pattern: "^[A-Za-z][A-Za-z0-9_-]{0,31}$"}
         drift: {type: string, enum: [none, local, plan]}
         local_notes:
           type: array
           maxItems: 50
           items: {type: string, minLength: 1, maxLength: 1000, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+        blockers_read:
+          type: array
+          maxItems: 50
+          items: {type: string, pattern: "^[A-Za-z][A-Za-z0-9_-]{0,31}$"}
         evidence: {type: string, maxLength: 20000}
         proposal: {type: string, maxLength: 20000}
-        affected: {type: string, pattern: "^([A-Za-z][A-Za-z0-9_-]{0,31}(,[A-Za-z][A-Za-z0-9_-]{0,31}){0,49})?$"}
+        affected: {type: string, pattern: "^([A-Za-z][A-Za-z0-9_-]{0,31}(, ?[A-Za-z][A-Za-z0-9_-]{0,31}){0,49})?$"}
         summary: {type: string, maxLength: 300, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
-
-  - id: reentry
-    type: script
-    description: The re-preflight's findings as one preflight run.
-    depends_on: [recheck]
-    runtime: python
-    script: preflight_run.py
-    args: [--agent, $recheck.output, --input, $gate.output.decision, --text, $gate.output.text, --request, $request.output.n]
-    retry: {max_attempts: 0}
-    output_format: {type: object}
 
   - id: rerecord
     type: shell
     description: Append the re-preflight's run to tickets/<ticket>/preflight.json.
-    depends_on: [reentry]
-    command: [hub, step, preflight, --feature, $INPUTS.feature, --ticket, $INPUTS.ticket, --run, $reentry.output]
+    depends_on: [recheck]
+    command: [hub, step, preflight, --feature, $INPUTS.feature, --ticket, $INPUTS.ticket, --findings, $recheck.output, --input, $gate.output.decision, --input-text, $gate.output.text, --request, $request.output.n]
+    retry: {max_attempts: 0}
+    output_format: {type: object}
+
+  - id: worktree
+    type: shell
+    description: Once a preflight passed (local drift included), make (or keep) the ticket's worktree from a fresh fetch.
+    depends_on: [record, rerecord]
+    trigger_rule: none_failed_min_one_success
+    when: "$preflight.output.drift != 'plan' || $recheck.output.drift == 'none' || $recheck.output.drift == 'local'"
+    command: [hub, step, worktree, --issue, $INPUTS.ticket, --repo, $INPUTS.repo]
     retry: {max_attempts: 0}
     output_format:
       type: object
       properties:
         path: {type: string}
-        runs: {type: integer, minimum: 1}
-      required: [path, runs]
+        branch: {type: string}
+        base: {type: string}
+        hub: {type: string}
+        hub_name: {type: string}
+        check: {type: string}
+        prompt:
+          type: object
+          properties:
+            guard: {type: string}
+            gate_step: {type: string}
+            commit_shape: {type: string}
+          required: [guard, gate_step, commit_shape]
+        target: {type: object}
+      required: [path, branch, base, hub, hub_name, check, prompt, target]
 
   - id: plan
     type: agent
-    description: The ticket plan, tickets/<ticket>/plan.md, once a preflight passed (local drift applied).
-    depends_on: [record, rerecord]
-    trigger_rule: none_failed_min_one_success
-    when: "$preflight.output.drift != 'plan' || $recheck.output.drift == 'none' || $recheck.output.drift == 'local'"
+    description: The ticket plan, tickets/<ticket>/plan.md (local drift applied).
+    depends_on: [worktree]
     prompt_file: ticket-plan.md
     context: fresh
     with:
       feature: $INPUTS.feature
       ticket: $INPUTS.ticket
       brief: $INPUTS.brief
-      checkout: $INPUTS.path
-      preflight: $record.output.path
+      checkout: $worktree.output.path
     output_format:
       type: object
       properties:
         path: {type: string, minLength: 1}
-        tasks: {type: integer, minimum: 1}
-      required: [path, tasks]
+      required: [path]
 
   - id: rounds
     type: loop_group
     description: Implement, check, review - again until PASS, the session blocked or a discovery; three rounds at most.
     depends_on: [plan]
     max_iterations: 3
-    until_when: "$verdict.output.status == 'blocked' || $discovery.output.discovery != '' || $review.output.verdict == 'PASS'"
+    until_when: "$verdict.output.status == 'blocked' || $verdict.output.discovery != '' || $review.output.verdict == 'PASS'"
     nodes:
       - id: implement
         type: agent
         description: The implementing session, resumed each round with the last round's feedback.
         prompt_file: ticket-implement.md
-        cwd: $INPUTS.path
+        cwd: $worktree.output.path
         retry: {max_attempts: 0}
 
       - id: verdict
         type: shell
-        description: The session's reply read as hub run reads it - done, or blocked with a question.
+        description: The session's reply read as hub run reads it - done, or blocked with a question - and its discovery.
         depends_on: [implement]
         command: [hub, step, verdict]
         # On stdin: a reply may be longer than one argument holds, or hold NUL.
@@ -316,33 +259,19 @@ nodes:
           type: object
           properties:
             status: {type: string, enum: [done, blocked]}
-            summary: {type: string}
             question: {type: string}
-          required: [status, summary, question]
-
-      - id: discovery
-        type: script
-        description: The broken plan assumption the session reported, if any.
-        depends_on: [implement]
-        runtime: python
-        script: discovery.py
-        stdin: $implement.output
-        retry: {max_attempts: 0}
-        output_format:
-          type: object
-          properties:
             discovery: {type: string}
-          required: [discovery]
+          required: [status, question, discovery]
 
       - id: check
         type: script
         description: The repo's check on the round's work; a red check is data, not a failure.
-        depends_on: [verdict, discovery]
-        when: "$verdict.output.status != 'blocked' && $discovery.output.discovery == ''"
+        depends_on: [verdict]
+        when: "$verdict.output.status != 'blocked' && $verdict.output.discovery == ''"
         runtime: python
         script: check.py
-        args: [$INPUTS.check, $LOOP_PREV.check.output.round]
-        cwd: $INPUTS.path
+        args: [$worktree.output.check, $LOOP_PREV.check.output.round]
+        cwd: $worktree.output.path
         retry: {max_attempts: 0}
         output_format:
           type: object
@@ -360,13 +289,13 @@ nodes:
         when: "$check.output.passed == true"
         context: fresh
         prompt_file: spec-lens.md
-        cwd: $INPUTS.path
+        cwd: $worktree.output.path
         mutates_checkout: false
         with:
           ticket: $INPUTS.ticket
           task: $INPUTS.ticket
           round: $check.output.round
-          base: $INPUTS.base
+          base: $worktree.output.base
           spec: $INPUTS.issue_text
         output_format:
           type: object
@@ -410,13 +339,13 @@ nodes:
         when: "$check.output.passed == true"
         context: fresh
         prompt_file: quality-lens.md
-        cwd: $INPUTS.path
+        cwd: $worktree.output.path
         mutates_checkout: false
         with:
           ticket: $INPUTS.ticket
           task: $INPUTS.ticket
           round: $check.output.round
-          base: $INPUTS.base
+          base: $worktree.output.base
           spec: $INPUTS.issue_text
         output_format:
           type: object
@@ -510,12 +439,12 @@ nodes:
 
   - id: outcome
     type: script
-    description: How the pass ended - blocked, a discovery, or done with the review's verdict.
+    description: How the pass ended - blocked, a discovery, or done with the review's verdict - and its worktree.
     depends_on: [rounds, record, rerecord]
     trigger_rule: none_failed_min_one_success
     runtime: python
     script: pass_outcome.py
-    args: [--rounds, $rounds.output, --request, $request.output.n, --request, $INPUTS.request]
+    args: [--rounds, $rounds.output, --worktree, $worktree.output]
     retry: {max_attempts: 0}
     output_format:
       type: object
@@ -524,4 +453,7 @@ nodes:
         question: {type: string}
         discovery: {type: string}
         verdict: {type: string}
-      required: [status, question, discovery, verdict]
+        path: {type: string}
+        base: {type: string}
+        target: {type: [object, "null"]}
+      required: [status, question, discovery, verdict, path, base, target]

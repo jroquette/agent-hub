@@ -7,8 +7,9 @@
 ``implement.yaml`` includes ``ticket-pass`` up to three times; a pass runs only when the one
 before it ended with a discovery. ``last_pass.py --pass JSON...`` takes each pass's
 ``pass_outcome.py`` output in order (blank: it did not run) and prints ``{"status",
-"question", "verdict", "pass"}`` for the last one that ran: ``status`` ``blocked`` or ``done``
-(what ``hub step report --status`` reads), its question and review verdict, and its number. A
+"question", "verdict", "pass", "path", "base", "target"}`` for the last one that ran: ``status``
+``blocked`` or ``done`` (what ``hub step report --status`` reads), its question, review verdict
+and number, and its worktree (the eval, the commits and the PR read it). A
 discovery in the last pass given is the one too many (two loops back at most, D-3): ``blocked``,
 naming it. Text that is not JSON, or no pass, exits 2.
 """
@@ -44,6 +45,9 @@ def main(argv: list[str]) -> int:
         "question": question,
         "verdict": last.get("verdict") or "",
         "pass": n,
+        "path": last.get("path") or "",
+        "base": last.get("base") or "",
+        "target": last.get("target"),
     }
     print(json.dumps(result))
     return 0
