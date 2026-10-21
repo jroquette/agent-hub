@@ -68,8 +68,8 @@ class TicketEvidence:
     was. ``files`` and ``preflights`` hold each ticket folder read and its parsed preflight record
     (or its problem), by name (upper case); ``tickets_unread`` says not every ticket folder was
     read; ``requests`` are the plan change requests and ``approved`` the newest approved plan
-    version (the plan's own, or an approved request's). ``_verdicts`` caches the latest verdict of each set of evals already folded (no part of
-    its value: never compared or shown).
+    version (the plan's own, or an approved request's). ``_verdicts`` caches the latest verdict of
+    each set of evals already folded (no part of its value: never compared or shown).
     """
 
     rounds: frozenset[str]
@@ -131,42 +131,9 @@ def ticket_flow(row: TicketRow, evidence: TicketEvidence) -> TicketFlow | None:
     if row.children:
         return None
     names = {name.upper() for name in (row.key, row.id) if name}
-    reviews = [r for r in evidence.reviews if r.problem is None and r.ticket.upper() in names]
-    evals = tuple(
-        dict.fromkeys(record for name in sorted(names) for record in evidence.evals.get(name, ()))
-    )
     merged = row.state is not None and row.state.type in DONE_TYPES
-    found: dict[TicketStepName, _Found] = {}
-    files = next((evidence.files[name] for name in sorted(names) if name in evidence.files), None)
-    signal = None
-    if files is None and evidence.tickets_unread is not None:
-        found["context"] = found["preflight"] = ("unknown", evidence.tickets_unread)
-    else:
-        if files is not None and files.brief:
-            found["context"] = ("done", None)
-        preflight, signal = _preflight(names, evidence, merged=merged)
-        if preflight is not None:
-            found["preflight"] = preflight
-    if signal != WAITING_SIGNAL and not merged and names & evidence.requests.paused:
-        signal = HELD_SIGNAL
-    if names & evidence.rounds:
-        found["implement"] = ("done", None)
-    elif files is not None and files.plan:
-        found["implement"] = ("current", "Ticket plan written")
-    if reviews:
-        found["review"] = (
-            ("done", None) if approved_tickets(reviews) else ("current", "Changes requested")
-        )
-    verdict = _verdict(evals, evidence._verdicts)
-    if verdict is not None:
-        found["eval"] = ("blocked" if verdict == "NO-SHIP" else "done", verdict)
-    prs = (*(review.pr for review in reviews), *(pr for record in evals for pr in record.prs))
-    if any(names_pull_request(pr) for pr in prs):
-        found["pr"] = ("done", None)
-    if merged:
-        found["merged"] = ("done", None)
-    elif evidence.unread is not None:
-        found["merged"] = ("unknown", evidence.unread)
+    found, signal = _picked_up(names, evidence, merged=merged)
+    found |= _delivered(names, evidence, merged=merged)
     last = max(
         (_STEPS.index(name) for name, (state, _) in found.items() if state != "unknown"),
         default=-1,
@@ -181,6 +148,57 @@ def ticket_flow(row: TicketRow, evidence: TicketEvidence) -> TicketFlow | None:
         (step.name for step in steps if step.state not in _PASSED), "merged"
     )
     return TicketFlow(steps=steps, current=current, signal=signal)
+
+
+def _picked_up(
+    names: set[str], evidence: TicketEvidence, *, merged: bool
+) -> tuple[dict[TicketStepName, _Found], str | None]:
+    """Context, Preflight and the ticket plan's Implement from ``tickets/<ticket>/``, and the
+    flow's signal; Context and Preflight unknown when its folder was left unread over the cap."""
+    found: dict[TicketStepName, _Found] = {}
+    files = next((evidence.files[name] for name in sorted(names) if name in evidence.files), None)
+    signal = None
+    if files is None and evidence.tickets_unread is not None:
+        found["context"] = found["preflight"] = ("unknown", evidence.tickets_unread)
+    else:
+        if files is not None and files.brief:
+            found["context"] = ("done", None)
+        preflight, signal = _preflight(names, evidence, merged=merged)
+        if preflight is not None:
+            found["preflight"] = preflight
+    if signal != WAITING_SIGNAL and not merged and names & evidence.requests.paused:
+        signal = HELD_SIGNAL
+    if files is not None and files.plan:
+        found["implement"] = ("current", "Ticket plan written")
+    return found, signal
+
+
+def _delivered(
+    names: set[str], evidence: TicketEvidence, *, merged: bool
+) -> dict[TicketStepName, _Found]:
+    """Implement (a review round), Review, Eval, PR and Merged from the feature's records."""
+    reviews = [r for r in evidence.reviews if r.problem is None and r.ticket.upper() in names]
+    evals = tuple(
+        dict.fromkeys(record for name in sorted(names) for record in evidence.evals.get(name, ()))
+    )
+    found: dict[TicketStepName, _Found] = {}
+    if names & evidence.rounds:
+        found["implement"] = ("done", None)
+    if reviews:
+        found["review"] = (
+            ("done", None) if approved_tickets(reviews) else ("current", "Changes requested")
+        )
+    verdict = _verdict(evals, evidence._verdicts)
+    if verdict is not None:
+        found["eval"] = ("blocked" if verdict == "NO-SHIP" else "done", verdict)
+    prs = (*(review.pr for review in reviews), *(pr for record in evals for pr in record.prs))
+    if any(names_pull_request(pr) for pr in prs):
+        found["pr"] = ("done", None)
+    if merged:
+        found["merged"] = ("done", None)
+    elif evidence.unread is not None:
+        found["merged"] = ("unknown", evidence.unread)
+    return found
 
 
 def _preflight(

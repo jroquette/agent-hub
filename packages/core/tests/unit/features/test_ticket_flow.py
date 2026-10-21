@@ -9,9 +9,9 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from agent_hub.core.features.feature_reviews import ReviewOutcome, ReviewRecord
+from agent_hub.core.features.feature_status import RecordHead
 from agent_hub.core.features.feature_view import EvalRecord, Verdict
 from agent_hub.core.features.golden_path import LINEAR_NOT_CONNECTED
-from agent_hub.core.features.feature_status import RecordHead
 from agent_hub.core.features.ticket_flow import TicketEvidence, ticket_evidence, ticket_flow
 from agent_hub.core.features.ticket_records import (
     NO_REQUESTS,
