@@ -5,7 +5,8 @@ const OWN_ACTION =
   "a, button, input, textarea, select, label, summary, [role='button'], [role='link'], [role='tab'], " +
   "[role='menuitem'], [role='option'], [contenteditable='true']";
 // Inside a drawer, a dialog or a lightbox opened over the page, a click is not "outside".
-const INSIDE = ".as-drawer, .as-drawer-handle, [role='dialog'], [role='alertdialog'], [role='menu']";
+const INSIDE =
+  ".as-drawer, .as-drawer-handle, [role='dialog'], [role='alertdialog'], [role='menu']";
 
 /** True when a click on `target` should close an open drawer. */
 export function dismissesDrawer(target: EventTarget | null): boolean {
