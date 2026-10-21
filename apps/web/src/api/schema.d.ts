@@ -997,6 +997,27 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/projects/{project}/config/environments": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Post Project Environment Edit
+     * @description Add, change or remove an environment or a service endpoint, in ``hub.json`` (the team's,
+     *     left uncommitted) or ``hub.local.json`` (this developer's), as ``hub env`` does.
+     */
+    post: operations["post_project_environment_edit_api_v1_projects__project__config_environments_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/projects/{project}/config/local": {
     parameters: {
       query?: never;
@@ -1741,6 +1762,8 @@ export interface components {
       owner_wait?: components["schemas"]["OwnerWaitView"] | null;
       verdict: components["schemas"]["Verdict"];
     };
+    /** @enum {string} */
+    Access: "read" | "write" | "ask";
     /**
      * ActivityItem
      * @description A notable event in the activity feed.
@@ -1777,6 +1800,92 @@ export interface components {
     };
     /** @enum {string} */
     ActorKind: "main" | "subagent";
+    /**
+     * AddEndpoint
+     * @description A service's endpoint in one environment; the service is added when new.
+     */
+    AddEndpoint: {
+      /** Environment */
+      environment: string;
+      /** Kind */
+      kind?: string | null;
+      /** Note */
+      note?: string | null;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "add_endpoint";
+      /**
+       * Replace
+       * @default false
+       */
+      replace: boolean;
+      /** Repo */
+      repo: string;
+      /** Resource */
+      resource?: string | null;
+      scope: components["schemas"]["Scope"];
+      /** Service */
+      service: string;
+      /** Url */
+      url?: string | null;
+    };
+    /**
+     * AddEnvironment
+     * @description A new environment, with its credentials by name only.
+     */
+    AddEnvironment: {
+      access: components["schemas"]["Access"];
+      /** Aws Profile */
+      aws_profile?: string | null;
+      /**
+       * Credential Env
+       * @default []
+       */
+      credential_env: string[];
+      /** Description */
+      description?: string | null;
+      /** Env File */
+      env_file?: string | null;
+      /** Name */
+      name: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "add_environment";
+      /**
+       * Production
+       * @default false
+       */
+      production: boolean;
+      scope: components["schemas"]["Scope"];
+    };
+    /**
+     * AddService
+     * @description A new service of a repo with its address in one or more environments, in one step.
+     *
+     *     Each address goes to the file of its environment: a team environment's to ``hub.json``, the
+     *     developer's own to ``hub.local.json``; both files are checked before either is written.
+     */
+    AddService: {
+      /** Addresses */
+      addresses: components["schemas"]["ServiceAddress"][];
+      /** Description */
+      description?: string | null;
+      /** Kind */
+      kind?: string | null;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "add_service";
+      /** Repo */
+      repo: string;
+      /** Service */
+      service: string;
+    };
     /**
      * AgentModelView
      * @description A plugin agent's tier, when ``models.agents`` moves it off its template's.
@@ -2248,6 +2357,24 @@ export interface components {
       workdir_id: string;
     };
     /**
+     * Credentials
+     * @description Where the credentials of an environment come from: names, never values.
+     */
+    Credentials: {
+      /** @description An AWS profile name. */
+      aws_profile?: string;
+      /**
+       * Env
+       * @description Names of the environment variables that hold credentials.
+       * @default []
+       */
+      env: string[];
+      /** @description A dotenv file, relative to the folder holding the hub and its repos, that only actions read; at most 200 characters, no '..', no leading '/' or '~'. */
+      env_file?: string;
+    } & {
+      [key: string]: unknown;
+    };
+    /**
      * Diagnostic
      * @description One informational finding on an item, in one hub-relative line (D5, P6).
      */
@@ -2348,11 +2475,68 @@ export interface components {
     /** @enum {string} */
     EdgeSource: "plan" | "linear" | "both";
     /**
+     * EditBatch
+     * @description Edits made in order and written together: both files or neither.
+     */
+    EditBatch: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "batch";
+      /** Ops */
+      ops: components["schemas"]["SingleEdit"][];
+    };
+    /**
+     * EffectiveEnvironments
+     * @description The union of both files: committed entries first, then the developer's (P-5).
+     */
+    EffectiveEnvironments: {
+      /** Blocked Env */
+      blocked_env: components["schemas"]["LayeredEntry"][];
+      /** Blocked Files */
+      blocked_files: components["schemas"]["LayeredEntry"][];
+      /** Blocked Words */
+      blocked_words: components["schemas"]["LayeredEntry"][];
+      /** Environments */
+      environments: components["schemas"]["SourcedEnvironment"][];
+      /** Services */
+      services: components["schemas"]["SourcedService"][];
+    };
+    /**
      * EndReason
      * @description Why a session ended.
      * @enum {string}
      */
     EndReason: "closed" | "idle_timeout" | "server_stopped" | "failed" | "log_full";
+    /**
+     * Endpoint
+     * @description How a service is reached in one environment: a url, a resource name, or both.
+     */
+    Endpoint:
+      | ({
+          /** @description Names of the credentials to use here; never a value. */
+          credentials?: components["schemas"]["Credentials"];
+          note?: string;
+          /** @description A resource name, such as a table or a function. */
+          resource?: string;
+          /** @description scheme://host[:port][/path], at most 200 characters; no user info, query or fragment. */
+          url?: string;
+        } & {
+          [key: string]: unknown;
+        })
+      | unknown
+      | unknown;
+    EnvironmentEdit:
+      | components["schemas"]["AddEnvironment"]
+      | components["schemas"]["SetEnvironment"]
+      | components["schemas"]["RenameEnvironment"]
+      | components["schemas"]["RemoveEnvironment"]
+      | components["schemas"]["AddEndpoint"]
+      | components["schemas"]["RemoveEndpoint"]
+      | components["schemas"]["AddService"]
+      | components["schemas"]["SetService"]
+      | components["schemas"]["EditBatch"];
     /**
      * EvalRecord
      * @description One evaluation of a delivery: ``evals/<delivery>.md``, or the legacy ``eval.md``.
@@ -2882,6 +3066,7 @@ export interface components {
         components["schemas"]["PatternView"],
       ];
       default_branch: components["schemas"]["SourcedValue"];
+      environments: components["schemas"]["EffectiveEnvironments"];
       guard: components["schemas"]["GuardConfigView"];
       /** Hub Path */
       hub_path: string;
@@ -3065,6 +3250,16 @@ export interface components {
     "JsonValue-Input": unknown;
     /** @enum {string} */
     KeySource: "environment" | "settings";
+    /**
+     * LayeredEntry
+     * @description A blocked word, glob or variable name, and the first layer that lists it.
+     */
+    LayeredEntry: {
+      /** Layer */
+      layer: string;
+      /** Value */
+      value: string;
+    };
     /**
      * LayeredList
      * @description A list the team sets and this developer adds to.
@@ -4098,6 +4293,54 @@ export interface components {
       source: string;
     };
     /**
+     * RemoveEndpoint
+     * @description A service's endpoint in one environment, or the whole service when none is named.
+     */
+    RemoveEndpoint: {
+      /** Environment */
+      environment?: string | null;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "remove_endpoint";
+      /** Repo */
+      repo: string;
+      scope: components["schemas"]["Scope"];
+      /** Service */
+      service: string;
+    };
+    /**
+     * RemoveEnvironment
+     * @description An environment no endpoint uses any more.
+     */
+    RemoveEnvironment: {
+      /** Name */
+      name: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "remove_environment";
+      scope: components["schemas"]["Scope"];
+    };
+    /**
+     * RenameEnvironment
+     * @description A new name for an environment; its endpoints in the same file follow it.
+     */
+    RenameEnvironment: {
+      /** Name */
+      name: string;
+      /** New Name */
+      new_name: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "rename_environment";
+      scope: components["schemas"]["Scope"];
+    };
+    /**
      * RepoChanges
      * @description One repository's changes against its base. ``root`` is the folder git ran in, ``branch``
      *     its checked-out branch (null when detached), ``base`` the ref the branch is compared with
@@ -4451,6 +4694,8 @@ export interface components {
       started_at: components["schemas"]["ApiTimestamp"];
       status: components["schemas"]["StepStatus"];
     };
+    /** @enum {string} */
+    Scope: "team" | "local";
     /**
      * Screenshot
      * @description A PNG image sent with a message (a screenshot, or an image pasted in the chat),
@@ -4495,6 +4740,18 @@ export interface components {
       screenshots?: components["schemas"]["Screenshot"][] | null;
       /** Text */
       text: string;
+    };
+    /**
+     * ServiceAddress
+     * @description Where a service is reached in one environment: a URL (holds ``://``) or a resource name.
+     */
+    ServiceAddress: {
+      /** Address */
+      address: string;
+      /** Environment */
+      environment: string;
+      /** Note */
+      note?: string | null;
     };
     /**
      * Session
@@ -4784,6 +5041,53 @@ export interface components {
       stored: boolean;
     };
     /**
+     * SetEnvironment
+     * @description A change to an environment: a field left out stays; an empty text removes the key.
+     */
+    SetEnvironment: {
+      access?: components["schemas"]["Access"] | null;
+      /** Aws Profile */
+      aws_profile?: string | null;
+      /** Credential Env */
+      credential_env?: string[] | null;
+      /** Description */
+      description?: string | null;
+      /** Env File */
+      env_file?: string | null;
+      /** Name */
+      name: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "set_environment";
+      /** Production */
+      production?: boolean | null;
+      scope: components["schemas"]["Scope"];
+    };
+    /**
+     * SetService
+     * @description A change to a service: a field left out stays; an empty text removes the key.
+     */
+    SetService: {
+      /** Description */
+      description?: string | null;
+      /** Kind */
+      kind?: string | null;
+      /** New Name */
+      new_name?: string | null;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "set_service";
+      /** Repo */
+      repo: string;
+      scope: components["schemas"]["Scope"];
+      /** Service */
+      service: string;
+    };
+    /**
      * SettingsView
      * @description Read-only settings of the running ``hub web`` (no ``PATCH`` in Phase 2).
      */
@@ -4817,6 +5121,15 @@ export interface components {
      * @enum {string}
      */
     Severity: "error" | "warning" | "info";
+    SingleEdit:
+      | components["schemas"]["AddEnvironment"]
+      | components["schemas"]["SetEnvironment"]
+      | components["schemas"]["RenameEnvironment"]
+      | components["schemas"]["RemoveEnvironment"]
+      | components["schemas"]["AddEndpoint"]
+      | components["schemas"]["RemoveEndpoint"]
+      | components["schemas"]["AddService"]
+      | components["schemas"]["SetService"];
     /**
      * SkillCatalog
      * @description A project's skills, agents and hooks in stable order (kind, name, source).
@@ -5011,6 +5324,55 @@ export interface components {
        * @enum {string}
        */
       state: "fresh" | "stale" | "never";
+    };
+    /**
+     * SourcedEndpoint
+     * @description A service's endpoint in one environment, and the file that declares it.
+     */
+    SourcedEndpoint: {
+      endpoint: components["schemas"]["Endpoint"];
+      /** Environment */
+      environment: string;
+      /** Source */
+      source: string;
+    };
+    /**
+     * SourcedEnvironment
+     * @description An effective environment and its source: the file its effective ``access`` comes from.
+     */
+    SourcedEnvironment: {
+      /**
+       * Access
+       * @enum {string}
+       */
+      access: "read" | "write" | "ask";
+      credentials: components["schemas"]["Credentials"] | null;
+      /** Description */
+      description: string | null;
+      /** Name */
+      name: string;
+      /** Production */
+      production: boolean;
+      /** Source */
+      source: string;
+      /** Team Access */
+      team_access?: ("read" | "write" | "ask") | null;
+    };
+    /**
+     * SourcedService
+     * @description A repo's service with its endpoints from both files, the committed ones first.
+     */
+    SourcedService: {
+      /** Description */
+      description: string | null;
+      /** Endpoints */
+      endpoints: components["schemas"]["SourcedEndpoint"][];
+      /** Kind */
+      kind: string | null;
+      /** Name */
+      name: string;
+      /** Repo */
+      repo: string;
     };
     /**
      * SourcedValue
@@ -8038,6 +8400,50 @@ export interface operations {
       cookie?: never;
     };
     requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HubConfigView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  post_project_environment_edit_api_v1_projects__project__config_environments_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["EnvironmentEdit"];
+      };
+    };
     responses: {
       /** @description Successful Response */
       200: {
