@@ -432,3 +432,16 @@ def test_reads_link_when_environments_env_file_behind_linked_folder(hub_root: Pa
         ("demo-api/environment/.env.staging", "demo-api", True),
         ("demo-api/real-env/.env.staging", "demo-api", False),
     ]
+
+
+def test_lists_draft_leftover_when_draft_removal_interrupted(hub_root: Path) -> None:
+    # AGH-298: ``remove_draft`` renames a draft aside before removing it; a failed removal
+    # leaves that folder in ``.hub-drafts``, which the scan lists without reading it.
+    drafts = hub_root / ".hub-drafts"
+    (drafts / ".skill-abc123.hub-tmp-0123abcd").mkdir(parents=True)
+    (drafts / "skill-def456").mkdir()
+
+    leftovers, folders = item_leftovers(str(hub_root))
+
+    assert leftovers == (".hub-drafts/.skill-abc123.hub-tmp-0123abcd",)
+    assert ".hub-drafts" in folders

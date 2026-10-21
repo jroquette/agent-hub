@@ -98,9 +98,14 @@ The owner validated these in the playground too. They refine the Skills catalog 
   Drafts in progress marks it "editing".
 - **AC-271.5** Given an edit draft, when the preview renders, then it shows the change as a diff against the current
   version, and its checks flag "no change yet" (not publishable), a rename and a managed item.
-- **AC-271.6** Given an approved edit, when Publish is confirmed, then Claude writes the draft's files over the
-  item's (a hook replaces only itself in its file), deletes the draft and commits nothing; the Studio settles on
-  Claude's PUBLISHED line as for a new item.
+- **AC-271.6** (changed by AGH-295) Given an approved edit, when Publish is confirmed, then the web app calls the
+  server's publish route (`POST /api/v1/projects/{project}/skills/drafts/{draft_id}/publish`, no message to Claude):
+  the hub writes the draft's files over the item's (a hook replaces only itself in its file), records a `publish`
+  version, deletes the draft and commits nothing. Claude only ever edits the draft. A managed item's dialog shows the
+  hub.lock warning first and sends `confirm_managed`. The Studio shows "Publishing…" until the route answers, then
+  settles on its answer: "Published." with a link to the item (and why it is not versioned, or that nothing
+  changed), or the problem's detail with the draft and its session kept, and Discard offered when the draft is
+  already published.
 
 ## Toolkit: readable detail, name and order (AGH-271)
 

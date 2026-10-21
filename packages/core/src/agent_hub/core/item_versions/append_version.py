@@ -45,6 +45,7 @@ def append_next(  # noqa: PLR0913 -- the version's facts, each named by the call
     clock: Callable[[], datetime],
     author: VersionAuthor | None = None,
     restored_from: str | None = None,
+    draft_id: str | None = None,
 ) -> ItemVersionMeta:
     """Append ``content`` as ``unit``'s next version (see the module doc)."""
     content_hash = unit_hash(unit, content)
@@ -71,6 +72,7 @@ def append_next(  # noqa: PLR0913 -- the version's facts, each named by the call
             size=size_of(content),
             content=encode(content, folder=unit.kind is UnitKind.SKILL),
             restored_from=restored_from,
+            draft_id=draft_id,
         )
         try:
             return store.append(version).meta()

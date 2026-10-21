@@ -17,66 +17,77 @@ the snapshot alone: the document with a ``<step>__ask`` approval before each gat
 an action edited during the run changes neither what runs nor its hash, and a resume takes up
 the gates as recorded.
 
-``ScenarioExecutors`` is the engine's ``NodeRunner``. Each ``action`` or ``expect`` call first
-writes an ``action_start`` line (before any process: an expect's polls are counted from these
-on resume, failed ones too, E-7). Then the call decides
-the policy again (the effective config as it is now; origin ``author``): a ``deny``, or an
-``ask`` the run has no gate for (the config tightened since the start), fails the step
-``config`` before any process. It then resolves the call (each ``service`` input to its
-endpoint in the run's environment), loads the credentials through the one env-file loader
-(``action_command.call_credentials``) and runs the pinned action (``action_process``). Each call
-is a ``policy.decision`` and, when it runs, ``action.start`` and ``action.end`` (approver: who
-approved its gate), metadata only, and one ``action`` line in the record with its inputs. The
-engine's trace (each ``expect`` poll, each ``capture:`` value) goes to the record
-(``expect.poll``, ``context.capture``, with the output or value) and to the events (metadata
-only). Each action runs in a process group of its own; an interrupted layer kills those groups
-too (``stop_children``), and no action starts after it.
+``action_runs.ActionExecutors`` is the engine's ``NodeRunner``: each ``action`` or ``expect`` call
+is decided again (the effective config as loaded when this process started or resumed the run),
+then runs from the pinned files with its credentials; its trace and events are ``ActionLog``'s.
 
 A call that may have run is never repeated silently. The ``action_start`` line of a write or
-destroy is synced to disk before its process starts. On resume, a step outside a loop_group
-whose write started and that never ended after, and a loop_group with a write of its body
-started after its last clean point (its end, or a pause recorded with it held), owe a re-ask:
-it is recorded once as a durable ``reask_owed`` line and read back from the record (never from
-attempt numbers). An owed step asks through a ``<step>__ask`` gate whose message says it may
-have run, until the step ends; an owed group asks before every write or destroy of its body,
-each iteration, until the group ends. A read step simply runs again. A recorded reject of any
-policy gate ends the run ``cancelled`` on resume, whatever the plan holds now.
+destroy is synced to disk before its process starts; on resume, the re-asks it owes and a
+recorded reject of a policy gate are ``workflow_policy``'s rules, shared with process workflows.
 
 The run's folder is removed when anything fails before its start record is written; the
 snapshot keeps the includes the plan resolved, not a second read.
 
-Only ``regression`` mode runs here: no agent starts, and a divergence (a failed action, an
-``expect`` timeout, an output contract failure) fails the scenario run, printing ``step <id>:
-<kind>: <detail>``; a policy ask or an ``approval`` still pauses it.
+No agent starts here. In ``regression`` mode a divergence (a failed action, an ``expect``
+timeout, an output contract failure) fails the scenario run, printing ``step <id>: <kind>:
+<detail>``; a policy ask or an ``approval`` still pauses it. In ``interactive`` mode (the
+default) a divergence pauses it at an investigation gate instead (``scenario_investigation``),
+at most ``MAX_INVESTIGATIONS`` times; the resume first acts on the gate's answer (``stop``,
+``pick`` with its workaround, ``retry``), and refuses while the gate has none. A resume whose
+record holds a divergence and no investigation after it (a crash came between) opens that
+investigation instead of running the step again.
 """
 
-import contextlib
-import dataclasses
 import json
 import os
 import random
 import shutil
-import signal
-import threading
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, get_args
+from typing import Final
 
 import typer
 
-from agent_hub.cli.action_command import call_credentials, deny_reason
-from agent_hub.cli.action_process import ActionCall, run_action
+from agent_hub.cli.action_runs import (
+    ActionExecutors,
+    ActionLog,
+    action_effects,
+    approvers,
+    pinned_actions,
+    pinned_files,
+)
 from agent_hub.cli.collect import hub_project_name
 from agent_hub.cli.effective_config import load_effective_config_or_exit
 from agent_hub.cli.init_report import shown_text
 from agent_hub.cli.run_log import now
+from agent_hub.cli.scenario_investigation import (
+    LIMIT_REACHED,
+    AnswerPorts,
+    Divergence,
+    HeldEnd,
+    answer,
+    gate_recorded,
+    investigations,
+    open_investigation,
+    owed_investigation,
+    paused_line,
+)
 from agent_hub.cli.workflow_command import own_hub_program
 from agent_hub.cli.workflow_executors import WorkflowExecutors
+from agent_hub.cli.workflow_policy import (
+    GATES,
+    Owed,
+    gated_run_plan,
+    gates_file,
+    read_gates,
+    record_asks,
+    rejected,
+    resumed_prior,
+)
+from agent_hub.cli.workflow_policy import owed as _owed
 from agent_hub.cli.workflow_runs import (
-    ACTION_START,
     DOCUMENT,
-    EXPECT_POLL,
     SNAPSHOT,
     EventSink,
     RecordedAnswers,
@@ -87,7 +98,6 @@ from agent_hub.cli.workflow_runs import (
     ends_of,
     held_record,
     make_run,
-    prior_state,
     read_records,
     run_folder,
     run_lock,
@@ -95,44 +105,31 @@ from agent_hub.cli.workflow_runs import (
     snapshot_run,
 )
 from agent_hub.core.hub_config.effective_environments import (
-    EffectiveEnvironments,
     effective_environments,
 )
 from agent_hub.core.json_form import JsonValue
-from agent_hub.core.scenarios.access_policy import (
-    Effect,
-    PolicyDecision,
-    decide,
-    find_environment,
-)
-from agent_hub.core.scenarios.action_call import ActionCallError, ActionCallPlan, plan_action_call
-from agent_hub.core.scenarios.action_catalog import ActionEntry, ActionRefError, resolve_action
 from agent_hub.core.scenarios.credentials import CredentialNames
+from agent_hub.core.scenarios.investigation import CHOICES, MAX_INVESTIGATIONS, PICK, STOP
 from agent_hub.core.scenarios.policy_gates import (
-    ASK_SUFFIX,
     PolicyAsk,
-    PolicyGateError,
-    ask_gate,
-    gated_plan,
 )
-from agent_hub.core.scenarios.scenario_events import ActionFacts, ScenarioEvents
+from agent_hub.core.scenarios.run_record import (
+    InvestigationView,
+    ScenarioRunView,
+    fold_records,
+)
+from agent_hub.core.scenarios.scenario_events import ScenarioEvents
 from agent_hub.core.scenarios.scenario_plan import ScenarioPlan
 from agent_hub.core.workflows.document import WorkflowDocument, WorkflowLoadError, parse_workflow
 from agent_hub.core.workflows.engine import EnginePorts, run_workflow
 from agent_hub.core.workflows.events import WorkflowEvents
-from agent_hub.core.workflows.failures import NodeFailedError
 from agent_hub.core.workflows.includes import IncludeResolver
-from agent_hub.core.workflows.nodes import ActionNode, ExpectNode, LoopGroupNode
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
 from agent_hub.core.workflows.ports import (
-    ContextCapture,
-    ExpectPoll,
-    NodeCall,
-    NodeReply,
     RunEnd,
 )
-from agent_hub.core.workflows.run_state import RunState
-from agent_hub.generator.action_discovery import ActionDiscovery, discover_actions
+from agent_hub.core.workflows.run_state import RunReport
+from agent_hub.generator.action_discovery import ActionDiscovery
 from agent_hub.generator.scenario_discovery import discover_scenarios
 from agent_hub.generator.workflow_discovery import DiscoveredWorkflow, pack_resolver
 from agent_hub.generator.workflow_outputs import JsonSchemaOutputs
@@ -142,14 +139,8 @@ KIND: Final = "scenario"
 REGRESSION: Final = "regression"
 INTERACTIVE: Final = "interactive"
 MODES: Final = (INTERACTIVE, REGRESSION)
-# Release gate (O-6): interactive mode lands with the investigation (T9).
-INTERACTIVE_NOT_YET: Final = "interactive mode is not available yet: use --mode regression"
-GATES: Final = "policy_gates.json"
-# A re-ask the run owes after a call that may have run (``_owed``).
-REASK_OWED: Final = "reask_owed"
 CONTEXT_CAPTURE: Final = "context.capture"
 ACTION_CALL: Final = "action"
-_EFFECTS: Final[tuple[Effect, ...]] = get_args(Effect)
 # A retry's jitter: spread, not secrecy.
 _JITTER: Final = random.SystemRandom()
 
@@ -236,29 +227,53 @@ def _begin(folder: Path, begin: ScenarioStart) -> dict[str, JsonValue]:
 
 def resume(hub: Path, folder: Path, records: list[dict[str, JsonValue]]) -> int:
     """Continue a scenario run from its snapshot and records (the caller holds its lock and
-    checked its snapshot's hash); its gates' answers are the recorded decisions."""
+    checked its snapshot's hash); its gates' answers are the recorded decisions. A recorded
+    reject of a policy gate cancels it before anything else; otherwise an open investigation
+    must have its answer first."""
+    view = fold_records(records)
+    pending = view.open_investigation
+    last = view.investigations[-1] if view.investigations else None
+    if pending is None and last is not None and view.status is None and _unfinished(view, last):
+        # A stop, or a pick whose workaround did not end ok, closed its gate and the run
+        # stopped before what follows: it still cancels, or opens the next investigation.
+        pending = last
+    waiting = pending is not None and pending.choice is None and gate_recorded(records, pending)
+    if pending is not None and waiting and rejected(records) is None:
+        raise WorkflowRunError(
+            f"the scenario run {folder.name} is paused at the investigation of step"
+            f" {pending.step}: answer it with hub workflow respond {folder.name} --node"
+            f" {pending.gate} --choice {'|'.join(CHOICES)}"
+        )
     append_record(folder, {"event": "resume"})
-    return execute(hub, folder, records, resumed=True)
+    return execute(hub, folder, records, resumed=True, answered=pending)
 
 
-def execute(hub: Path, folder: Path, records: list[dict[str, JsonValue]], *, resumed: bool) -> int:
-    """Run the scenario run in ``folder`` on the engine, as its snapshot pins it."""
+def _unfinished(view: ScenarioRunView, last: InvestigationView) -> bool:
+    """Whether the closed ``last`` investigation's answer still owes its outcome: a stop owes
+    the run's end, a pick whose workaround ended other than ``ok`` owes a new investigation."""
+    if last.choice == STOP:
+        return True
+    ended = next(
+        (item.status for item in view.workarounds if item.workaround_id == f"w{last.number}"),
+        None,
+    )
+    return last.choice == PICK and ended is not None and ended != "ok"
+
+
+def execute(
+    hub: Path,
+    folder: Path,
+    records: list[dict[str, JsonValue]],
+    *,
+    resumed: bool,
+    answered: InvestigationView | None = None,
+) -> int:
+    """Run the scenario run in ``folder`` on the engine, as its snapshot pins it, after acting
+    on ``answered``, the answered investigation it was paused at."""
     header, snapshot = records[0], folder / SNAPSHOT
     environment, pack = str(header.get("environment")), str(header.get("pack"))
-    pinned = _pinned(snapshot, header)
+    pinned = pinned_actions(snapshot, header)
     document, includes, recorded = _snapshot_parts(snapshot)
-    owed = _Owed()
-    if resumed:
-        base = _planned(document, includes, {})
-        owed = _owed(
-            folder,
-            records,
-            plan=base,
-            effects=_effects(base, pinned, pack),
-            environment=environment,
-        )
-    asks = recorded | owed.steps
-    plan = _planned(document, includes, asks)
     effective = load_effective_config_or_exit(hub)
     view = effective_environments(effective.config, effective.local)
     hidden = CredentialNames.of(view)
@@ -273,7 +288,7 @@ def execute(hub: Path, folder: Path, records: list[dict[str, JsonValue]], *, res
         content_hash=str(header.get("content_hash")),
         end_index=len(ends_of(records)),
     )
-    log = ScenarioLog(
+    log = ActionLog(
         folder=folder,
         events=ScenarioEvents(project=project, run_id=run_id, workflow=label),
         sink=EventSink(),
@@ -287,22 +302,66 @@ def execute(hub: Path, folder: Path, records: list[dict[str, JsonValue]], *, res
         hub_program=own_hub_program(),
         hidden=hidden,
     )
-    runner = ScenarioExecutors(
+    recorder = RecordedRun(folder=folder, events=events, sink=EventSink())
+    roots = (hub.name, *(repo.dir for repo in effective.config.repos))
+    if resumed and (cancelled := rejected(records)) is not None:
+        # A recorded reject of a policy gate ends the run first, whatever else the record
+        # owes (an investigation's answer, a divergence) or the plan holds now.
+        recorder.run_ended(RunEnd("cancelled", now(), reason=cancelled))
+        typer.echo(f"run {run_id}: cancelled")
+        return 1
+    base = _planned(document, includes, {}) if resumed else None
+    if answered is not None:
+        given = AnswerPorts(
+            hub=hub,
+            folder=folder,
+            header=header,
+            records=records,
+            recorded=recorder,
+            log=log,
+            inner=inner,
+            roots=roots,
+        )
+        if (code := answer(given, answered)) is not None:
+            return code
+        records = read_records(folder)
+    elif base is not None and header.get("mode") == INTERACTIVE:
+        if (owed_by := owed_investigation(base, records)) is not None:
+            # A crash came between a divergence and its investigation: it opens now.
+            return _owed_divergence(
+                folder, header, recorder, divergence=owed_by, opened=investigations(records)
+            )
+    owed = Owed()
+    if base is not None:
+        owed = _owed(
+            folder,
+            records,
+            plan=base,
+            effects=action_effects(base, pinned, pack),
+            environment=environment,
+        )
+    record_asks(folder, owed.steps)
+    asks = recorded | owed.steps
+    plan = _planned(document, includes, asks)
+    runner = ActionExecutors(
         hub=hub,
         environment=environment,
         view=view,
-        roots=(hub.name, *(repo.dir for repo in effective.config.repos)),
+        roots=roots,
         pack=pack,
         pinned=pinned,
         asks=frozenset(asks),
-        approvers=_approvers(records),
+        approvers=approvers(records),
         log=log,
         inner=inner,
         environ=os.environ,
     )
+    held = None
+    if header.get("mode") == INTERACTIVE:
+        held = HeldEnd(recorder=recorder, plan=plan, opened=investigations(records))
     ports = EnginePorts(
         runner,
-        RecordedRun(folder=folder, events=events, sink=EventSink()),
+        held or recorder,
         SystemClock(),
         JsonSchemaOutputs(),
         _JITTER.random,
@@ -312,26 +371,77 @@ def execute(hub: Path, folder: Path, records: list[dict[str, JsonValue]], *, res
         gates=RecordedAnswers(records),
         trace=log,
     )
-    if resumed and (rejected := _rejected(records)) is not None:
-        # A recorded reject of a policy gate ends the run, whatever the plan holds now.
-        ports.recorder.run_ended(RunEnd("cancelled", now(), reason=rejected))
-        typer.echo(f"run {run_id}: cancelled")
-        return 1
     inputs = next((r["inputs"] for r in records if r.get("event") == "inputs"), {})
     report = run_workflow(
         plan,
         inputs if isinstance(inputs, dict) else {},
         ports,
-        prior=_prior(records, owed.reopen) if resumed else None,
+        prior=resumed_prior(records, owed.reopen) if resumed else None,
     )
     append_record(folder, {"event": "sessions", "sessions": dict(report.state.sessions)})
+    return _reported(folder, header, report, held=held, recorder=recorder)
+
+
+def _owed_divergence(
+    folder: Path,
+    header: Mapping[str, JsonValue],
+    recorder: RecordedRun,
+    *,
+    divergence: Divergence,
+    opened: int,
+) -> int:
+    """Open the investigation ``divergence`` is owed, or past the limit end the run
+    ``failed`` as the engine's pass would have; the exit code."""
+    run_id, step = folder.name, divergence.step
+    if opened >= MAX_INVESTIGATIONS:
+        recorder.run_ended(RunEnd("failed", now(), reason=step))
+        typer.echo(f"run {run_id}: failed")
+        typer.echo(f"{_divergence(folder, step)} {LIMIT_REACHED}")
+        return 1
+    typer.echo(_divergence(folder, step))
+    open_investigation(
+        folder,
+        recorder,
+        step=step,
+        step_attempt=divergence.attempt,
+        failure_kind=divergence.failure_kind,
+        number=opened + 1,
+    )
+    typer.echo(paused_line(run_id, str(header.get("scenario")), step))
+    return 0
+
+
+def _reported(
+    folder: Path,
+    header: Mapping[str, JsonValue],
+    report: RunReport,
+    *,
+    held: HeldEnd | None,
+    recorder: RecordedRun,
+) -> int:
+    """Print how the pass ended (an investigation it opened included); its exit code."""
+    run_id = folder.name
     if report.status == "paused":
         append_record(folder, held_record(report.state))
         typer.echo(f"run {run_id}: paused at {report.reason}")
         return 0
+    if held is not None and held.held is not None and (step := held.held.reason) is not None:
+        attempt, kind = held.failed[step]
+        typer.echo(_divergence(folder, step))
+        open_investigation(
+            folder,
+            recorder,
+            step=step,
+            step_attempt=attempt,
+            failure_kind=kind,
+            number=held.opened + 1,
+        )
+        typer.echo(paused_line(run_id, str(header.get("scenario")), step))
+        return 0
     typer.echo(f"run {run_id}: {report.status}")
     if report.status == "failed" and report.reason is not None:
-        typer.echo(_divergence(folder, report.reason))
+        capped = held is not None and held.capped
+        typer.echo(_divergence(folder, report.reason) + (f" {LIMIT_REACHED}" if capped else ""))
     return 0 if report.status == "done" else 1
 
 
@@ -361,16 +471,8 @@ def _asks(planned: ScenarioPlan) -> dict[str, PolicyAsk]:
 
 def _snapshot(folder: Path, begin: ScenarioStart) -> str:
     """Write the snapshot (document, includes, gates and the pinned action files); its hash."""
-    used = {row.action for row in begin.planned.rows}
-    pinned: dict[str, bytes] = {}
-    for entry in begin.actions.actions:
-        if entry.ref in used:
-            pinned.update(begin.actions.files[entry.document_path])
-    gates = {
-        step: {"action": ask.action, "effect": ask.effect, "environment": ask.environment}
-        for step, ask in _asks(begin.planned).items()
-    }
-    pinned[GATES] = json.dumps(gates, sort_keys=True).encode()
+    pinned = pinned_files(begin.actions, frozenset(row.action for row in begin.planned.rows))
+    pinned[GATES] = gates_file(_asks(begin.planned))
     _, content_hash = snapshot_run(
         folder,
         document=dict(begin.found.document),
@@ -382,143 +484,13 @@ def _snapshot(folder: Path, begin: ScenarioStart) -> str:
     return content_hash
 
 
-@dataclass(frozen=True, kw_only=True, slots=True)
-class _Owed:
-    """The re-asks a resume owes: each step asked again (by its id as recorded), and the gates
-    whose earlier answer no longer counts."""
-
-    steps: dict[str, PolicyAsk] = field(default_factory=dict)
-    reopen: frozenset[str] = frozenset()
-
-
-def _owed(
-    folder: Path,
-    records: list[dict[str, JsonValue]],
-    *,
-    plan: WorkflowPlan,
-    effects: Mapping[str, tuple[str, Effect]],
-    environment: str,
-) -> _Owed:
-    """The re-asks this resume owes, each first recorded as a durable ``reask_owed`` line.
-
-    A step outside a loop_group is owed when a write or destroy call of it started and the
-    step never ended after; it stays owed until the step ends, and its earlier gate answer
-    counts only once a gate was opened after the owed line. A loop_group is owed when a write
-    or destroy call of its body started after its last clean point (its end, or a pause
-    recorded with it held): the group may run that body again, so every write or destroy of
-    its body asks first until the group ends. Nothing is derived from attempt numbers."""
-    bodies = {
-        group.id: tuple(body.id for body in group.nodes)
-        for group in plan.document.nodes
-        if isinstance(group, LoopGroupNode)
-    }
-    owner = {body: group for group, ids in bodies.items() for body in ids}
-    marks = _Marks.of(records)
-    for node in [*bodies, *(step for step in effects if step not in owner)]:
-        if _newly_owed(node, marks, bodies.get(node)):
-            line: dict[str, JsonValue] = {"event": REASK_OWED, "node": node}
-            append_record(folder, line, durable=True)
-            marks.owed[node] = len(records) + len(marks.added)
-            marks.added.append(node)
-    steps: dict[str, PolicyAsk] = {}
-    reopen: set[str] = set()
-    for node, at in marks.owed.items():
-        if at <= marks.ended.get(node, -1):
-            continue
-        owed_steps = bodies.get(node, (node,))
-        for step in owed_steps:
-            if step in effects and effects[step][1] != "read":
-                action, effect = effects[step]
-                steps[step] = PolicyAsk(
-                    action=action, effect=effect, environment=environment, again=True
-                )
-        if node not in bodies and marks.gates.get(ask_gate(node), -1) < at:
-            reopen.add(ask_gate(node))
-    return _Owed(steps=steps, reopen=frozenset(reopen))
-
-
-@dataclass(kw_only=True)
-class _Marks:
-    """Where things last happened in a run's record, by line index and node as recorded."""
-
-    ended: dict[str, int] = field(default_factory=dict)
-    held: dict[str, int] = field(default_factory=dict)
-    owed: dict[str, int] = field(default_factory=dict)
-    gates: dict[str, int] = field(default_factory=dict)
-    # The last write or destroy call started of each node.
-    writes: dict[str, int] = field(default_factory=dict)
-    added: list[str] = field(default_factory=list)
-
-    @classmethod
-    def of(cls, records: list[dict[str, JsonValue]]) -> _Marks:
-        marks = cls()
-        for index, record in enumerate(records):
-            node, event = record.get("node"), record.get("event")
-            if event == "held" and isinstance(groups := record.get("groups"), dict):
-                marks.held |= dict.fromkeys(groups, index)
-            if not isinstance(node, str):
-                continue
-            if event == ACTION_START and record.get("effect") in ("write", "destroy"):
-                marks.writes[node] = index
-            found = {"step_end": marks.ended, REASK_OWED: marks.owed, "gate": marks.gates}
-            if (where := found.get(str(event))) is not None:
-                where[node] = index
-        return marks
-
-
-def _newly_owed(node: str, marks: _Marks, body: tuple[str, ...] | None) -> bool:
-    """Whether ``node`` owes a re-ask its record does not hold yet."""
-    if body is None:
-        started = marks.writes.get(node, -1)
-        return started > marks.ended.get(node, -1) and marks.owed.get(node, -1) < started
-    clean = max(marks.ended.get(node, -1), marks.held.get(node, -1))
-    started = max((marks.writes.get(step, -1) for step in body), default=-1)
-    return started > clean and marks.owed.get(node, -1) <= clean
-
-
-def _effects(plan: WorkflowPlan, pinned: PinnedActions, pack: str) -> dict[str, tuple[str, Effect]]:
-    """Each action step's pinned action and effect, by its id as recorded."""
-    found: dict[str, tuple[str, Effect]] = {}
-    for node in plan.all_nodes():
-        if isinstance(node, ActionNode | ExpectNode):
-            try:
-                entry = resolve_action(pinned.entries, node.action, pack=pack)
-            except ActionRefError:
-                continue
-            found[node.id] = (entry.ref, entry.document.effect)
-    return found
-
-
-def _rejected(records: list[dict[str, JsonValue]]) -> str | None:
-    """A policy gate a recorded decision rejected, if any."""
-    return next(
-        (
-            str(record.get("node"))
-            for record in records
-            if record.get("event") == "decision"
-            and record.get("choice") == "reject"
-            and str(record.get("node")).endswith(ASK_SUFFIX)
-        ),
-        None,
-    )
-
-
-def _prior(records: list[dict[str, JsonValue]], reopen: frozenset[str]) -> RunState:
-    """The run's state for a resume, without the earlier answer of each gate in ``reopen``."""
-    prior = prior_state(records)
-    if not reopen:
-        return prior
-    nodes = {node: result for node, result in prior.nodes.items() if node not in reopen}
-    return dataclasses.replace(prior, nodes=nodes)
-
-
 def _snapshot_parts(
     snapshot: Path,
 ) -> tuple[WorkflowDocument, IncludeResolver, dict[str, PolicyAsk]]:
     """The snapshot's document, its includes and the gates ``policy_gates.json`` names."""
     try:
         document = parse_workflow(json.loads((snapshot / DOCUMENT).read_bytes()))
-        asks = _read_asks(json.loads((snapshot / GATES).read_bytes()))
+        asks = read_gates(json.loads((snapshot / GATES).read_bytes()))
     except (OSError, ValueError, WorkflowLoadError) as error:
         raise WorkflowRunError(f"cannot load the scenario run's snapshot: {error}") from None
     return document, snapshot_includes(snapshot), asks
@@ -528,305 +500,4 @@ def _planned(
     document: WorkflowDocument, includes: IncludeResolver, asks: Mapping[str, PolicyAsk]
 ) -> WorkflowPlan:
     """The run's plan, a gate before each step of ``asks``."""
-    try:
-        return gated_plan(document, includes=includes, asks=asks)
-    except (WorkflowLoadError, PolicyGateError) as error:
-        raise WorkflowRunError(f"cannot load the scenario run's snapshot: {error}") from None
-
-
-def _read_asks(value: object) -> dict[str, PolicyAsk]:
-    if not isinstance(value, dict):
-        msg = f"{GATES} is not an object"
-        raise ValueError(msg)
-    asks: dict[str, PolicyAsk] = {}
-    for step, ask in value.items():
-        given = ask if isinstance(ask, dict) else {}
-        action, effect, where = given.get("action"), given.get("effect"), given.get("environment")
-        known = next((item for item in _EFFECTS if item == effect), None)
-        if not (isinstance(action, str) and known is not None and isinstance(where, str)):
-            msg = f"{GATES}: the gate of {step} is malformed"
-            raise ValueError(msg)
-        asks[step] = PolicyAsk(action=action, effect=known, environment=where)
-    return asks
-
-
-@dataclass(frozen=True, kw_only=True, slots=True)
-class PinnedActions:
-    """The actions a scenario run pinned, read back from its snapshot, and their files."""
-
-    entries: tuple[ActionEntry, ...]
-    files: Mapping[str, tuple[tuple[str, bytes], ...]]
-
-
-def _pinned(snapshot: Path, header: Mapping[str, JsonValue]) -> PinnedActions:
-    """The snapshot's actions, each checked against the hash the start record pinned."""
-    found = discover_actions(snapshot)
-    if found.problems:
-        raise WorkflowRunError(
-            f"the scenario run's pinned actions do not load: {found.problems[0]}"
-        )
-    pins = header.get("actions")
-    entries: list[ActionEntry] = []
-    for ref, content_hash in (pins if isinstance(pins, dict) else {}).items():
-        entry = next((item for item in found.actions if item.ref == ref), None)
-        if entry is None or entry.content_hash != content_hash:
-            raise WorkflowRunError(f"the scenario run's snapshot no longer holds {ref} as pinned")
-        entries.append(entry)
-    files = {entry.document_path: found.files[entry.document_path] for entry in entries}
-    return PinnedActions(entries=tuple(entries), files=files)
-
-
-def _approvers(records: list[dict[str, JsonValue]]) -> dict[str, str]:
-    """Who decided each gate, by its node as recorded (the last decision)."""
-    return {
-        str(record.get("node")): str(record.get("approver"))
-        for record in records
-        if record.get("event") == "decision" and isinstance(record.get("approver"), str)
-    }
-
-
-@dataclass(kw_only=True)
-class ScenarioLog:
-    """A scenario run's own lines and events: the engine's ``RunTrace`` (polls, captures) and
-    each action call. Outputs, values and inputs go to the record; events keep metadata."""
-
-    folder: Path
-    events: ScenarioEvents
-    sink: EventSink
-    lock: threading.Lock = field(default_factory=threading.Lock)
-
-    def expect_polled(self, poll: ExpectPoll) -> None:
-        line: dict[str, JsonValue] = {"event": EXPECT_POLL, "node": poll.node}
-        line |= {"attempt": poll.attempt, "poll": poll.poll, "held": poll.held}
-        with self.lock:
-            append_record(self.folder, line | {"output": poll.output})
-            self.events.expect_polled(poll)
-            self.sink.flush(self.events)
-
-    def context_captured(self, capture: ContextCapture) -> None:
-        line: dict[str, JsonValue] = {"event": CONTEXT_CAPTURE, "node": capture.node}
-        line |= {"attempt": capture.attempt, "name": capture.name, "value": capture.value}
-        with self.lock:
-            append_record(self.folder, line)
-            self.events.context_captured(capture)
-            self.sink.flush(self.events)
-
-    def begun(self, call: NodeCall, entry: ActionEntry | None) -> None:
-        """The call's ``action_start`` line, before anything else of it: one per call (an
-        expect's polls are counted from them) and the mark of a call that may have run."""
-        line: dict[str, JsonValue] = {"event": ACTION_START, "node": call.node.id}
-        line |= {"attempt": call.attempt, "poll": call.poll}
-        if entry is not None:
-            line |= {"action": entry.ref, "effect": entry.document.effect}
-        # A write's start must outlive the hub: a resume reads it to ask again.
-        durable = entry is None or entry.document.effect != "read"
-        with self.lock:
-            append_record(self.folder, line, durable=durable)
-
-    def decided(self, facts: ActionFacts, decision: PolicyDecision, *, poll: int) -> None:
-        with self.lock:
-            now = SystemClock().now()
-            self.events.policy_decided(facts, reason_kind=decision.reason_kind, at=now, poll=poll)
-            self.sink.flush(self.events)
-
-    def started(self, facts: ActionFacts, *, poll: int) -> None:
-        with self.lock:
-            self.events.action_started(facts, at=SystemClock().now(), poll=poll)
-            self.sink.flush(self.events)
-
-    def ended(self, call: CallLine, *, status: str, failure_kind: str | None) -> None:
-        """The call's ``action`` line (its inputs too), and ``action.end`` when it started."""
-        facts = call.facts
-        with self.lock:
-            line: dict[str, JsonValue] = {"event": ACTION_CALL, "node": facts.step}
-            line |= {"attempt": facts.attempt, "poll": call.poll, **facts.called()}
-            line |= {"reason_kind": call.reason_kind, "inputs": dict(call.inputs)}
-            append_record(self.folder, line | {"status": status, "failure_kind": failure_kind})
-            if call.started:
-                at = SystemClock().now()
-                self.events.action_ended(
-                    facts, status=status, failure_kind=failure_kind, at=at, poll=call.poll
-                )
-                self.sink.flush(self.events)
-
-
-@dataclass(frozen=True, kw_only=True, slots=True)
-class CallLine:
-    """One action call as its ``action`` line records it."""
-
-    facts: ActionFacts
-    reason_kind: str
-    poll: int
-    inputs: Mapping[str, JsonValue]
-    started: bool
-
-
-@dataclass(frozen=True, kw_only=True)
-class ScenarioExecutors:
-    """The engine's ``NodeRunner`` for a scenario run: its ``action`` and ``expect`` calls, each
-    decided again, then run from the pinned files; ``until_bash`` as any workflow's."""
-
-    hub: Path
-    environment: str
-    view: EffectiveEnvironments
-    # The folders an env file may be in, relative to the workspace: the hub's and each repo's.
-    roots: tuple[str, ...]
-    pack: str
-    pinned: PinnedActions
-    # The steps (as recorded) the run has a policy gate before.
-    asks: frozenset[str]
-    # Who decided each gate, by its node as recorded.
-    approvers: Mapping[str, str]
-    log: ScenarioLog
-    inner: WorkflowExecutors
-    environ: Mapping[str, str]
-    # The process groups of the actions running now: ``stop_children`` kills them.
-    running: set[int] = field(default_factory=set)
-    # Set by ``stop_children``: no action starts after it, and one starting as it lands is killed.
-    stop: threading.Event = field(default_factory=threading.Event)
-
-    def stop_children(self) -> None:
-        """Kill every running action's group and the other children (an interrupted layer)."""
-        self.stop.set()
-        for group in list(self.running):
-            _kill(group)
-        self.inner.stop_children()
-
-    def run(self, call: NodeCall) -> NodeReply:
-        node = call.node
-        if not isinstance(node, ActionNode | ExpectNode):
-            raise NodeFailedError("config", f"{node.type} nodes do not run in a scenario run")
-        entry = self._entry(node)
-        self.log.begun(call, entry)
-        if entry is None:
-            raise NodeFailedError("config", f"the scenario run pinned no action {node.action}")
-        declared = find_environment(self.view, self.environment)
-        decision = decide(declared, entry.document.effect, "author")
-        facts = ActionFacts(
-            step=node.id,
-            attempt=call.attempt,
-            action=entry.ref,
-            content_hash=entry.content_hash,
-            environment=self.environment,
-            services=(),
-            effect=entry.document.effect,
-            origin="author",
-            decision=decision.decision,
-            approver=self.approvers.get(ask_gate(node.id)) if node.id in self.asks else None,
-        )
-        self.log.decided(facts, decision, poll=call.poll)
-        line = CallLine(
-            facts=facts,
-            reason_kind=decision.reason_kind,
-            poll=call.poll,
-            inputs=call.inputs,
-            started=False,
-        )
-        planned = self._checked(entry, decision, line)
-        return self._run(entry, planned, line)
-
-    def until_exit(self, argv: Sequence[str], call: NodeCall) -> int:
-        return self.inner.until_exit(argv, call)
-
-    def _entry(self, node: ActionNode | ExpectNode) -> ActionEntry | None:
-        try:
-            return resolve_action(self.pinned.entries, node.action, pack=self.pack)
-        except ActionRefError:
-            return None
-
-    def _started(self, group: int) -> None:
-        self.running.add(group)
-        if self.stop.is_set():
-            # The stop came between the check before the start and this start.
-            _kill(group)
-
-    def _checked(
-        self, entry: ActionEntry, decision: PolicyDecision, line: CallLine
-    ) -> ActionCallPlan:
-        """The call's plan once the policy lets it run; else the step fails ``config``."""
-        refused = self._refusal(line.facts.step, entry, decision)
-        if refused is None:
-            try:
-                return plan_action_call(
-                    entry.document, line.inputs, environment=self.environment, view=self.view
-                )
-            except ActionCallError as error:
-                refused = f"{entry.ref}: {error}"
-        self.log.ended(line, status="failed", failure_kind="config")
-        raise NodeFailedError("config", refused)
-
-    def _refusal(self, step: str, entry: ActionEntry, decision: PolicyDecision) -> str | None:
-        """Why the policy, decided now, refuses the call; ``None`` when it may run: an
-        ``allow``, or an ``ask`` whose gate the run has (the engine ran it only once approved)."""
-        effect = entry.document.effect
-        if decision.decision == "deny":
-            declared = find_environment(self.view, self.environment)
-            reason = deny_reason(
-                decision,
-                effect=effect,
-                environment=self.environment,
-                access=declared.access if declared is not None else None,
-            )
-            return f"the policy denies {entry.ref} ({effect}) in {self.environment}: {reason}"
-        if decision.decision == "ask" and step not in self.asks:
-            return (
-                f"the policy now asks before {entry.ref} ({effect}) in {self.environment} and"
-                " this scenario run has no gate for it: start a new scenario run"
-            )
-        return None
-
-    def _run(self, entry: ActionEntry, planned: ActionCallPlan, line: CallLine) -> NodeReply:
-        facts = line.facts.model_copy(update={"services": planned.services})
-        line = CallLine(
-            facts=facts,
-            reason_kind=line.reason_kind,
-            poll=line.poll,
-            inputs=planned.inputs,
-            started=True,
-        )
-        self.log.started(facts, poll=line.poll)
-        declared = find_environment(self.view, self.environment)
-        groups: list[int] = []
-
-        def started(group: int) -> None:
-            groups.append(group)
-            self._started(group)
-
-        try:
-            injected = (
-                {}
-                if declared is None
-                else call_credentials(
-                    self.hub,
-                    declared,
-                    endpoints=planned.endpoints,
-                    roots=self.roots,
-                    environ=self.environ,
-                )
-            )
-            if self.stop.is_set():
-                raise NodeFailedError("cancelled", "the scenario run was interrupted")
-            output = run_action(
-                ActionCall(
-                    entry=entry,
-                    files=self.pinned.files[entry.document_path],
-                    inputs=planned.inputs,
-                    endpoint=planned.endpoint,
-                ),
-                environ=self.environ,
-                hidden=CredentialNames.of(self.view),
-                credentials=injected,
-                on_start=started,
-            )
-        except NodeFailedError as error:
-            self.log.ended(line, status="failed", failure_kind=error.kind)
-            raise
-        finally:
-            self.running.difference_update(groups)
-        self.log.ended(line, status="ok", failure_kind=None)
-        return NodeReply(json.dumps(output))
-
-
-def _kill(group: int) -> None:
-    with contextlib.suppress(ProcessLookupError, PermissionError):
-        os.killpg(group, signal.SIGKILL)
+    return gated_run_plan(document, includes, asks)

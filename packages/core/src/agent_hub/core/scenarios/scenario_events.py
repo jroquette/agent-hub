@@ -1,6 +1,7 @@
 """A scenario run's own events (docs/design/scenarios.md § Events and bounds): metadata only.
 
-Each action call is a ``policy.decision`` (every decision, a deny too) and, when it runs,
+Each action call is a ``policy.decision`` (every decision, a deny too; a process workflow's
+shell, script and ``until_bash`` decisions too, with ``node`` for ``action``) and, when it runs,
 ``action.start`` and ``action.end``, built from its ``ActionFacts``: names, its pinned hash, its
 effect, origin, decision and approver; never an arg, an output or a credential. A standalone
 ``hub action run`` has no run: its events carry the session ``action:<uuid>``, no ``run`` key
@@ -13,7 +14,13 @@ and no ``workflow``.
 (``workflows.events``). Outputs and captured values stay in the run's record, never here
 (ADR 0019). ``source_id`` is ``<run>:<step>:<attempt>:<type>:<poll or name>``: an expect's
 action call gives its ``poll`` (from 1), so each poll's call is an event of its own (the store
-keeps one event per source id); a plain call has none.
+keeps one event per source id); a plain call has none, and an investigation's read gives its own
+``item``.
+
+An investigation adds a ``finding`` per finding of a proposal (``finding_id`` and the diverged
+``step``; its title and text stay in the record) and, when an option is picked,
+``workaround.start`` and ``workaround.end`` (``workaround_id``, ``option`` id, ``steps`` count,
+``status``), their attempt the investigation's number.
 """
 
 from datetime import datetime
@@ -23,6 +30,7 @@ from pydantic import BaseModel, ConfigDict
 from agent_hub.core.events.event import Event, EventSource, EventType
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.scenarios.access_policy import Decision, Effect, Origin, ReasonKind
+from agent_hub.core.scenarios.policy_gates import NodeDecision
 from agent_hub.core.workflows.ports import ContextCapture, ExpectPoll
 
 
@@ -62,6 +70,27 @@ class ActionFacts(BaseModel):
         return called if self.approver is None else {**called, "approver": self.approver}
 
 
+class WorkaroundFacts(BaseModel):
+    """What a workaround's events say: the diverged ``step``, the investigation's number
+    (``attempt``), the workaround's id, the option picked and its step count."""
+
+    model_config = ConfigDict(frozen=True)
+
+    step: str
+    attempt: int
+    workaround_id: str
+    option: str
+    steps: int
+
+    def payload(self, status: str) -> dict[str, JsonValue]:
+        return {
+            "workaround_id": self.workaround_id,
+            "option": self.option,
+            "steps": self.steps,
+            "status": status,
+        }
+
+
 class ScenarioEvents:
     """The events of one scenario run (or one standalone action call: ``run_id`` ``None`` and
     its own ``session``), in the order they came."""
@@ -80,25 +109,51 @@ class ScenarioEvents:
         self.events: list[Event] = []
 
     def policy_decided(
-        self, facts: ActionFacts, *, reason_kind: ReasonKind, at: datetime, poll: int = 0
+        self,
+        facts: ActionFacts,
+        *,
+        reason_kind: ReasonKind,
+        at: datetime,
+        poll: int = 0,
+        item: str | None = None,
     ) -> None:
+        """An action call's decision; ``item`` ``start`` for a process workflow's start."""
         payload = {**facts.decided(), "reason_kind": reason_kind}
         self._add(
             EventType.POLICY_DECISION,
             facts.step,
             facts.attempt,
-            item=_poll_item(poll),
+            item=_poll_item(poll) if item is None else item,
             at=at,
             payload=payload,
         )
 
-    def action_started(self, facts: ActionFacts, *, at: datetime, poll: int = 0) -> None:
+    def node_decided(
+        self, decision: NodeDecision, *, attempt: int, at: datetime, item: str = ""
+    ) -> None:
+        """A process workflow node's decision (a shell or script node, or an ``until_bash``):
+        ``attempt`` 0 and ``item`` ``start`` at the start, the call's attempt after."""
+        payload: dict[str, JsonValue] = {
+            "node": decision.step,
+            "environment": decision.environment,
+            "effect": decision.effect,
+            "origin": "author",
+            "decision": decision.decision.decision,
+            "reason_kind": decision.decision.reason_kind,
+        }
+        self._add(
+            EventType.POLICY_DECISION, decision.step, attempt, item=item, at=at, payload=payload
+        )
+
+    def action_started(
+        self, facts: ActionFacts, *, at: datetime, poll: int = 0, item: str | None = None
+    ) -> None:
         payload = facts.called()
         self._add(
             EventType.ACTION_START,
             facts.step,
             facts.attempt,
-            item=_poll_item(poll),
+            item=_poll_item(poll) if item is None else item,
             at=at,
             payload=payload,
         )
@@ -111,6 +166,7 @@ class ScenarioEvents:
         failure_kind: str | None,
         at: datetime,
         poll: int = 0,
+        item: str | None = None,
     ) -> None:
         payload: dict[str, JsonValue] = {**facts.called(), "status": status}
         if failure_kind is not None:
@@ -119,7 +175,7 @@ class ScenarioEvents:
             EventType.ACTION_END,
             facts.step,
             facts.attempt,
-            item=_poll_item(poll),
+            item=_poll_item(poll) if item is None else item,
             at=at,
             payload=payload,
         )
@@ -144,6 +200,31 @@ class ScenarioEvents:
             item=capture.name,
             at=capture.at,
             payload=payload,
+        )
+
+    def finding_recorded(self, *, step: str, attempt: int, finding_id: str, at: datetime) -> None:
+        """A finding of an investigation's proposal: its id and the diverged step only."""
+        payload: dict[str, JsonValue] = {"finding_id": finding_id, "step": step}
+        self._add(EventType.FINDING, step, attempt, item=finding_id, at=at, payload=payload)
+
+    def workaround_started(self, facts: WorkaroundFacts, *, at: datetime) -> None:
+        self._add(
+            EventType.WORKAROUND_START,
+            facts.step,
+            facts.attempt,
+            item=facts.workaround_id,
+            at=at,
+            payload=facts.payload("started"),
+        )
+
+    def workaround_ended(self, facts: WorkaroundFacts, *, status: str, at: datetime) -> None:
+        self._add(
+            EventType.WORKAROUND_END,
+            facts.step,
+            facts.attempt,
+            item=facts.workaround_id,
+            at=at,
+            payload=facts.payload(status),
         )
 
     def _add(

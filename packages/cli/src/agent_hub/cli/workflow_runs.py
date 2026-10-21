@@ -406,11 +406,13 @@ class RecordedAnswers:
                 continue
             if isinstance(attempt, int):
                 choice, text = record.get("choice"), record.get("text")
+                approver = record.get("approver")
                 self.answers.setdefault(
                     (node, attempt),
                     GateAnswer(
                         choice if isinstance(choice, str) else None,
                         text if isinstance(text, str) else None,
+                        approver if isinstance(approver, str) else None,
                     ),
                 )
 
@@ -546,6 +548,7 @@ class RecordedRun:
                 "message": request.text,
                 "due": due,
             }
+            | ({} if request.reason is None else {"reason": request.reason})
         )
         self.events.gate_requested(request)
         self._flush()

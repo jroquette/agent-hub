@@ -10,7 +10,7 @@ from agent_hub.core.features.agent_outputs import (
 from scripts.export_output_schemas import OUTPUT_SCHEMA_DIR, REPO_ROOT, main
 
 
-def test_writes_both_schemas_when_script_run(tmp_path: Path) -> None:
+def test_writes_every_schema_when_script_run(tmp_path: Path) -> None:
     folder = tmp_path / OUTPUT_SCHEMA_DIR
     folder.mkdir(parents=True)
     (folder / "review.v1.json").write_text("{}\n", encoding="utf-8")
@@ -21,6 +21,7 @@ def test_writes_both_schemas_when_script_run(tmp_path: Path) -> None:
     assert written == {
         "review.v1.json": export_output_schema_text("review").encode(),
         "eval.v1.json": export_output_schema_text("eval").encode(),
+        "preflight.v1.json": export_output_schema_text("preflight").encode(),
     }
     assert all(b"\r" not in content for content in written.values())
     assert all(content.endswith(b"}\n") for content in written.values())
@@ -36,7 +37,7 @@ def test_exits_two_when_arguments_given(tmp_path: Path, capsys: pytest.CaptureFi
     assert list(folder.iterdir()) == []
 
 
-@pytest.mark.parametrize("kind", ["review", "eval"])
+@pytest.mark.parametrize("kind", ["review", "eval", "preflight"])
 def test_matches_repo_files_when_schemas_exported(kind: OutputKind) -> None:
     shipped = REPO_ROOT / OUTPUT_SCHEMA_DIR / OUTPUT_SCHEMA_FILES[kind]
 

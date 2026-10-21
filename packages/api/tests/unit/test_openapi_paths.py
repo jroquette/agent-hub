@@ -199,9 +199,12 @@ def test_lists_gate_paths_when_document_built(api_settings: ApiSettings) -> None
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
 
+PUBLISH = "/api/v1/projects/{project}/skills/drafts/{draft_id}/publish"
+
+
 def test_lists_item_version_paths_when_document_built(api_settings: ApiSettings) -> None:
-    # AC-295.36 (slices 2a, 2e): today's paths plus the four history reads and the two restores,
-    # and nothing else.
+    # AC-295.36 (slices 2a, 2e, 3d): today's paths plus the four history reads, the two restores
+    # and the Studio's publish, and nothing else.
     skill = "/api/v1/projects/{project}/skills/{kind}/{source}/{name}/versions"
     workflow = "/api/v1/workflows/{project}/{name}/versions"
     assert {
@@ -211,6 +214,7 @@ def test_lists_item_version_paths_when_document_built(api_settings: ApiSettings)
         ("get", workflow),
         ("get", f"{workflow}/{{version_id}}"),
         ("post", f"{workflow}/{{version_id}}/restore"),
+        ("post", "/api/v1/projects/{project}/skills/drafts/{draft_id}/publish"),
     } == ITEM_VERSION_PATHS
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
@@ -235,20 +239,27 @@ def test_documents_action_problems_when_document_built(api_settings: ApiSettings
 def test_documents_item_write_problems_when_document_built(api_settings: ApiSettings) -> None:
     paths = create_app(api_settings).openapi()["paths"]
 
-    restores = [path for method, path in ITEM_VERSION_PATHS if method == "post"]
-    assert len(restores) == 2
-    for path in restores:
+    writes = [path for method, path in ITEM_VERSION_PATHS if method == "post"]
+    assert len(writes) == 3
+    for path in writes:
         operation = paths[path]["post"]
         assert {"200", "401", "409", "415"} <= set(operation["responses"]), path
+    publish = paths[PUBLISH]["post"]["responses"]
+    assert {"404", "413", "422", "500"} <= set(publish)
+    for status in ("404", "413", "422", "500"):
+        schema = publish[status]["content"]["application/json"]["schema"]
+        assert schema == {"$ref": "#/components/schemas/ProblemDetails"}, status
 
 
 def test_documents_problem_responses_when_document_built(api_settings: ApiSettings) -> None:
     document = create_app(api_settings).openapi()
 
-    for path_item in document["paths"].values():
+    for path, path_item in document["paths"].items():
         for operation in path_item.values():
             assert {"4XX", "5XX"} <= set(operation["responses"]), operation["operationId"]
-            assert "422" not in operation["responses"], operation["operationId"]
+            # Only the publish documents its 422s (a draft_invalid problem), as a problem too.
+            assert ("422" in operation["responses"]) == (path == PUBLISH), operation["operationId"]
+    assert "HTTPValidationError" not in document["components"]["schemas"]
 
 
 def test_keeps_paths_when_screenshot_added(api_settings: ApiSettings) -> None:

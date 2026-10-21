@@ -157,7 +157,8 @@ class GateRequest:
     """A gate opened by an ``approval`` or ``wait`` node's attempt.
 
     ``text`` (the rendered message, or a wait's ``until``) belongs to the run's record only,
-    never to events (ADR 0019); ``choices`` are the ids an answer may choose.
+    never to events (ADR 0019); ``choices`` are the ids an answer may choose. ``reason`` says why
+    a gate the engine did not open was opened (``investigation``: a scenario run's divergence).
     """
 
     node: str
@@ -168,6 +169,7 @@ class GateRequest:
     choices: tuple[str, ...] = ()
     text: str = ""
     due: datetime | None = None
+    reason: str | None = None
 
 
 @dataclass(frozen=True)

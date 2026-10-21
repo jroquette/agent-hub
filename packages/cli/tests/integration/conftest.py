@@ -1554,6 +1554,7 @@ RUN_COST_USD = 0.42
 # The environment values a fake may log as they are: none can hold a secret.
 _LOGGED_VALUES = (
     "OTEL_RESOURCE_ATTRIBUTES",
+    "HUB_RUN_ENVIRONMENT",
     "GIT_CONFIG_COUNT",
     *(f"GIT_CONFIG_{part}_{index}" for part in ("KEY", "VALUE") for index in range(4)),
 )

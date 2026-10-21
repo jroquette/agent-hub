@@ -5,15 +5,20 @@ from collections.abc import Mapping
 
 import pytest
 
+from agent_hub.core.hub_config.effective_environments import SourcedEnvironment
 from agent_hub.core.scenarios.policy_gates import (
     PolicyAsk,
     PolicyGateError,
     gated_plan,
+    node_asks,
+    node_decisions,
     with_policy_gates,
+    workflow_environment,
 )
 from agent_hub.core.workflows.document import WorkflowDocument, parse_workflow
 from agent_hub.core.workflows.gates import reject_cancels
 from agent_hub.core.workflows.nodes import ApprovalNode, LoopGroupNode
+from agent_hub.core.workflows.plan import plan_workflow
 
 GET: dict[str, object] = {"id": "get", "type": "action", "action": "get-order"}
 SEND: dict[str, object] = {
@@ -117,3 +122,88 @@ def test_says_step_may_have_run_when_policy_gates_ask_again() -> None:
         "policy ask: step send runs demo/send-order (write) in local; an earlier attempt"
         " started and never ended, so it may have run: approve to run it again"
     )
+
+
+# AGH-359 (P-18, AC-350.24): a process workflow's shell and script nodes under its environment.
+
+
+def a_workflow(*nodes: Mapping[str, object], environment: str | None = None) -> WorkflowDocument:
+    document: dict[str, object] = {"version": 1, "name": "deploy", "revision": 1}
+    if environment is not None:
+        document["environment"] = environment
+    return parse_workflow({**document, "nodes": list(nodes)})
+
+
+def an_ask_environment() -> SourcedEnvironment:
+    return SourcedEnvironment(
+        name="staging",
+        access="ask",
+        production=False,
+        description=None,
+        credentials=None,
+        source="hub.json",
+    )
+
+
+BUILD: dict[str, object] = {"id": "build", "type": "shell", "command": ["make"]}
+LOOK: dict[str, object] = {
+    "id": "look",
+    "type": "script",
+    "runtime": "sh",
+    "script": "look.sh",
+    "effect": "read",
+    "depends_on": ["build"],
+}
+
+
+def test_defaults_shell_to_write_when_workflow_environment_declared() -> None:
+    agent: dict[str, object] = {"id": "think", "type": "agent", "prompt": "Think."}
+    document = a_workflow(BUILD, LOOK, agent, environment="staging")
+    environment = workflow_environment(document, None)
+
+    decided = node_decisions(
+        plan_workflow(document), environment=environment, declared=an_ask_environment()
+    )
+
+    assert environment == "staging"
+    assert [(item.step, item.effect, item.decision.decision) for item in decided] == [
+        ("build", "write", "ask"),
+        ("look", "read", "allow"),
+    ]
+    assert node_asks(decided, environment="staging") == {
+        "build": PolicyAsk(action="shell", effect="write", environment="staging")
+    }
+    assert workflow_environment(document, "local") == "local"
+
+
+def test_decides_nothing_when_workflow_environment_absent() -> None:
+    document = a_workflow({**BUILD, "effect": "write"}, LOOK)
+    environment = workflow_environment(document, None)
+
+    decided = node_decisions(
+        plan_workflow(document), environment=environment, declared=an_ask_environment()
+    )
+
+    assert (environment, decided) == (None, ())
+    assert node_asks(decided, environment="staging") == {}
+
+
+def test_decides_until_bash_as_read_when_workflow_environment_declared() -> None:
+    body: dict[str, object] = {"id": "look", "type": "shell", "command": ["x"], "effect": "read"}
+    group: dict[str, object] = {
+        "id": "g",
+        "type": "loop_group",
+        "max_iterations": 2,
+        "until_bash": ["true"],
+        "nodes": [body],
+    }
+    plan = plan_workflow(a_workflow(group, environment="staging"))
+
+    decided = node_decisions(plan, environment="staging", declared=None)
+
+    assert [(item.step, item.node_type, item.effect) for item in decided] == [
+        ("g", "until_bash", "read"),
+        ("g__look", "shell", "read"),
+    ]
+    assert {item.decision.reason_kind for item in decided} == {"undeclared"}
+    assert {item.environment for item in decided} == {"staging"}
