@@ -1,5 +1,6 @@
 """The SQLite knowledge index on a real file: the FTS5 probe, an unusable path, porter stemming,
-the snippet FTS5 cuts, and syncs through it (a version rebuild, two syncs at once)."""
+the snippet FTS5 cuts, drops past SQLite's variable limit, an apply that fails partway, and syncs
+through it (a version rebuild, two syncs at once)."""
 
 import hashlib
 import sqlite3
@@ -21,11 +22,13 @@ from agent_hub.core.knowledge.knowledge_index import (
 from agent_hub.core.knowledge.search_query import MAX_RESULTS, MAX_SNIPPET_CHARS
 from agent_hub.core.knowledge.sync_knowledge import sync_knowledge
 from agent_hub.core.testing.knowledge_fakes import FakeKnowledgeCheckout
-from agent_hub.storage.errors import Fts5UnavailableError, StorageError
+from agent_hub.storage.errors import DatabaseAccessError, Fts5UnavailableError, StorageError
 from agent_hub.storage.knowledge_index import fts5_available, open_knowledge_index
 
 NO_FTS5: Final = "no such module: fts5"
 HUB: Final = "/hubs/demo"
+# More paths than SQLite binds in one statement (SQLITE_MAX_VARIABLE_NUMBER, 32766).
+_OVER_VARIABLE_LIMIT: Final = 33_000
 
 
 class _NoFts5Connection:
@@ -220,3 +223,68 @@ def test_keeps_one_row_per_file_when_syncs_run_concurrently(tmp_path: Path) -> N
     assert rowids == ids
     hits = indexes[0].search(HUB, ("changed",), limit=MAX_RESULTS)
     assert [hit.path for hit in hits] == ["brain/playbooks/b.md"]
+
+
+def test_drops_rows_and_text_when_paths_exceed_sql_variable_limit(tmp_path: Path) -> None:
+    path = tmp_path / "events.db"
+    index = open_knowledge_index(path)
+    paths = [f"brain/many/{number:05}.md" for number in range(_OVER_VARIABLE_LIMIT)]
+    connection = sqlite3.connect(path)
+    try:
+        with connection:
+            # Written directly: 33,000 applies would make the test slow.
+            connection.executemany(
+                "INSERT INTO knowledge_documents (hub, path, kind, title, size, mtime_ns, "
+                "sha256, index_version) VALUES (?, ?, 'doc', 'Many', 1, 1, ?, ?)",
+                [(HUB, name, "0" * 64, INDEX_VERSION) for name in paths],
+            )
+            connection.execute(
+                "INSERT INTO knowledge_text (rowid, title, body) "
+                "SELECT id, title, 'many words' FROM knowledge_documents"
+            )
+    finally:
+        connection.close()
+    kept = _document("brain/kept.md", "kept words")
+    index.apply(HUB, IndexChange(version=INDEX_VERSION, documents=(kept,)))
+
+    index.apply(HUB, IndexChange(version=INDEX_VERSION, dropped=tuple(paths)))
+
+    assert list(index.stored(HUB).files) == [kept.path]
+    rowids, ids = _text_rowids_and_indexed_ids(path)
+    assert rowids == ids
+    assert len(ids) == 1
+    assert [hit.path for hit in index.search(HUB, ("words",), limit=MAX_RESULTS)] == [kept.path]
+
+
+def test_keeps_rows_unchanged_when_change_fails_partway(tmp_path: Path) -> None:
+    path = tmp_path / "events.db"
+    index = open_knowledge_index(path)
+    first = (_document("brain/a.md", "alpha"), _document("brain/b.md", "beta"))
+    index.apply(HUB, IndexChange(version=INDEX_VERSION, documents=first))
+    connection = sqlite3.connect(path)
+    try:
+        with connection:
+            connection.execute(
+                "CREATE TRIGGER refuse_c BEFORE INSERT ON knowledge_documents "
+                "WHEN NEW.path = 'brain/c.md' BEGIN SELECT RAISE(ABORT, 'refused'); END"
+            )
+    finally:
+        connection.close()
+    before = index.stored(HUB)
+    # a.md is rewritten before c.md's insert fails; b.md would be dropped after it.
+    change = IndexChange(
+        version=INDEX_VERSION,
+        documents=(_document("brain/a.md", "gamma"), _document("brain/c.md", "delta")),
+        dropped=("brain/b.md",),
+    )
+
+    with pytest.raises(DatabaseAccessError) as raised:
+        index.apply(HUB, change)
+
+    assert "gamma" not in str(raised.value)
+    assert "delta" not in str(raised.value)
+    assert index.stored(HUB) == before
+    for word, paths in (("alpha", ["brain/a.md"]), ("beta", ["brain/b.md"]), ("gamma", [])):
+        assert [hit.path for hit in index.search(HUB, (word,), limit=MAX_RESULTS)] == paths
+    rowids, ids = _text_rowids_and_indexed_ids(path)
+    assert rowids == ids

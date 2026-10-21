@@ -69,6 +69,10 @@ _DELETE_PATH_TEXT: Final = text(
     "DELETE FROM knowledge_text WHERE rowid IN "
     "(SELECT id FROM knowledge_documents WHERE hub = :hub AND path = :path)"
 )
+_DELETE_PATH: Final = delete(knowledge_documents).where(
+    knowledge_documents.c.hub == bindparam("hub"),
+    knowledge_documents.c.path == bindparam("path"),
+)
 _DELETE_HUB_TEXT: Final = text(
     "DELETE FROM knowledge_text WHERE rowid IN "
     "(SELECT id FROM knowledge_documents WHERE hub = :hub)"
@@ -276,9 +280,11 @@ def _drop(connection: Connection, hub: str, paths: tuple[str, ...]) -> None:
     """Delete the rows of ``paths`` in the hub, and their text."""
     if not paths:
         return
-    table = knowledge_documents
-    connection.execute(_DELETE_PATH_TEXT, [{"hub": hub, "path": path} for path in paths])
-    connection.execute(delete(table).where(table.c.hub == hub, table.c.path.in_(paths)))
+    # One statement per path (executemany), never ``path IN (…)``: a list of paths can be
+    # longer than the variables SQLite binds in one statement.
+    rows = [{"hub": hub, "path": path} for path in paths]
+    connection.execute(_DELETE_PATH_TEXT, rows)
+    connection.execute(_DELETE_PATH, rows)
 
 
 def _database_error(error: SQLAlchemyError, action: str) -> DatabaseAccessError:
