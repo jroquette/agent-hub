@@ -5,7 +5,7 @@ metadata directly; ``alembic check`` compares these tables with the migrations.
 """
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Final
 
 from sqlalchemy import (
     JSON,
@@ -173,3 +173,45 @@ item_versions = Table(
     Column("draft_id", String, nullable=True),
     UniqueConstraint("project", "unit_path", "seq", name="uq_item_versions_project_unit_path_seq"),
 )
+
+# One row per file the knowledge index saw in a hub (AGH-391, ADR 0044). ``hub`` is the real
+# path of the hub's main checkout; ``(hub, path)`` is the file's identity, so concurrent syncs
+# converge. ``size`` and ``mtime_ns`` are its fingerprint and ``index_version`` the rules that
+# indexed it. An indexed file has its ``sha256`` and its title and body in the FTS5 table
+# ``knowledge_text`` (``rowid = id``); a skipped one has only ``skip_reason``, no text or hash.
+knowledge_documents = Table(
+    "knowledge_documents",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("hub", String, nullable=False),
+    Column("path", String, nullable=False),
+    Column("kind", String, nullable=True),
+    Column("title", String, nullable=True),
+    Column("status", String, nullable=True),
+    Column("provenance", String, nullable=True),
+    Column("size", Integer, nullable=False),
+    Column("mtime_ns", Integer, nullable=False),
+    Column("sha256", String, nullable=True),
+    Column("skip_reason", String, nullable=True),
+    Column("index_version", Integer, nullable=False),
+    UniqueConstraint("hub", "path", name="uq_knowledge_documents_hub_path"),
+)
+
+# The FTS5 virtual table over the indexed documents' title and body. Migration 0008 creates it
+# (metadata cannot declare a virtual table), so ``alembic check`` must not see it or the shadow
+# tables FTS5 keeps beside it (``knowledge_text_data``, ``_idx``, ``_content``, ``_docsize``,
+# ``_config``).
+KNOWLEDGE_TEXT: Final = "knowledge_text"
+
+
+# The shadow tables FTS5 keeps beside ``knowledge_text`` (``<table>_<suffix>``).
+_FTS5_SHADOW_SUFFIXES: Final = ("data", "idx", "content", "docsize", "config")
+_FTS5_TABLES: Final = frozenset(
+    (KNOWLEDGE_TEXT, *(f"{KNOWLEDGE_TEXT}_{suffix}" for suffix in _FTS5_SHADOW_SUFFIXES))
+)
+
+
+def is_declared_table(name: str) -> bool:
+    """Whether a reflected table belongs to this metadata's comparison: not ``knowledge_text``
+    or one of its five FTS5 shadow tables."""
+    return name not in _FTS5_TABLES
