@@ -91,6 +91,7 @@ type WriteRefusal = Literal[
     "unit_unreadable",
     "no_author",
     "draft_invalid",
+    "draft_already_published",
 ]
 
 _REASONS: dict[WriteRefusal, str] = {
@@ -102,6 +103,7 @@ _REASONS: dict[WriteRefusal, str] = {
     "unit_unreadable": "The item on disk cannot be read whole",
     "no_author": "No author identity is set for this hub",
     "draft_invalid": "The draft is not a valid item",
+    "draft_already_published": "This draft was already published; discard it",
 }
 
 

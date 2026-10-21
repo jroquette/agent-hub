@@ -221,7 +221,8 @@ class ItemVersionStoreContract:
         self, item_version_store: ItemVersionStore
     ) -> None:
         port = {name for name in vars(ItemVersionStore) if not name.startswith("_")}
-        _check(port == {"append", "last", "page", "get"}, f"the port is append and reads: {port}")
+        reads = {"last", "page", "get", "has_publish"}
+        _check(port == {"append", *reads}, f"the port is append and reads: {port}")
         writes = [
             name
             for name in dir(item_version_store)

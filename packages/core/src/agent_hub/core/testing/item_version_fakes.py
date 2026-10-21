@@ -28,6 +28,7 @@ from agent_hub.core.item_versions.item_version import (
     ItemVersionMeta,
     NewItemVersion,
     UnitKind,
+    VersionOrigin,
 )
 from agent_hub.core.item_versions.unit_content import MAX_UNIT_FILES, UnitContent, UnitFile
 from agent_hub.core.item_versions.version_store import ItemVersionSequenceError
@@ -86,6 +87,16 @@ class InMemoryItemVersionStore:
         with self._lock:
             versions = list(self._units.get((project, unit_path), ()))
         return next((version for version in versions if version.id == version_id), None)
+
+    def has_publish(self, project: str, draft_id: str) -> bool:
+        """Whether a version of the project is a ``publish`` of ``draft_id``."""
+        with self._lock:
+            units = [versions for (owner, _), versions in self._units.items() if owner == project]
+        return any(
+            version.origin is VersionOrigin.PUBLISH and version.draft_id == draft_id
+            for versions in units
+            for version in versions
+        )
 
 
 class FakeHubItemWriter:

@@ -1,4 +1,5 @@
-"""Publish rules: what a Studio draft becomes in the hub (AGH-295, S5, D19, D24). Pure.
+"""Publish rules: what a Studio draft becomes in the hub (AGH-295, S5, D19, D24, A12, A16).
+Pure.
 
 ``read_draft_item`` reads a draft's files as an item of its kind, or refuses it with
 ``DraftInvalidError`` (422 ``draft_invalid``): a skill's ``SKILL.md`` or an agent's one top-level
@@ -21,11 +22,10 @@ and key; ``merge_hooks`` adds hooks to a hook file (or a new one). Both write th
 (a draft group already there, equal as JSON, or its hooks already in place, is not added again).
 ``replace_hook`` keeps the file as it is when the edit splices in place and is already applied
 (A16: the splicing group's hooks in a row at the hook's place, every other draft group held);
-otherwise it replaces its hook, so a replay of an edit that moved its hook is told by the unit's
-``publish`` version naming the draft, not by the file (A7); with no such version,
+otherwise it replaces its hook. A retry of a publish that recorded a version never reaches these
+rules (the draft is spent, A20, told by its ``draft_id``); with no such version,
 ``holds_moved_hook`` tells a draft that moves its hook into a file already holding it (A12),
-which is refused; ``holds_hooks`` tells a file holding every draft group (a replay that keeps
-the file as it is must find them all there). A hooks file on
+which is refused. A hooks file on
 disk that is not a strict JSON hooks object is ``ItemWriteRefusedError("unit_unreadable")``.
 
 ``new_destination`` places a new item in the project's own plugin, ``plugin/<project>/``, a new
@@ -203,8 +203,8 @@ def replace_hook(file_json: bytes, at: HookAt, new_hooks: HookGroups) -> bytes:
     left with no group, are dropped. Every other hook and key is kept. When a draft group takes
     the hook's place and the file already holds its hooks in a row from there, and every other
     draft group, the edit is applied: ``file_json`` is given back as it is (A16). Otherwise the
-    hook ``at`` is replaced, even when the file holds every draft group elsewhere: a replay of a
-    moved hook is told by its ``draft_id`` (``PublishDraft``). ``EntityNotFoundError`` when the
+    hook ``at`` is replaced, even when the file holds every draft group elsewhere: a spent draft
+    is told by its ``draft_id`` before (A20, ``RecordAndWrite``). ``EntityNotFoundError`` when the
     file holds no such hook."""
     document = _hooks_document(file_json)
     hooks = _hooks_of(document)
@@ -282,17 +282,6 @@ def holds_moved_hook(file_json: bytes, at: HookAt, new_hooks: HookGroups) -> boo
     ):
         return False
     return all(_holds(hooks.get(event), draft_group) for event, draft_group in drafted)
-
-
-def holds_hooks(file_json: bytes, new_hooks: HookGroups) -> bool:
-    """Whether ``file_json`` holds every draft group of ``new_hooks`` (as ``merge_hooks`` tells a
-    group already there): a replay of a publish of these hooks does."""
-    hooks = _hooks_of(_hooks_document(file_json))
-    return all(
-        _holds(hooks.get(event), draft_group)
-        for event, draft_groups in new_hooks.items()
-        for draft_group in (draft_groups if isinstance(draft_groups, list) else [])
-    )
 
 
 def merge_hooks(file_json: bytes | None, new_hooks: HookGroups) -> bytes:
