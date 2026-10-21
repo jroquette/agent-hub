@@ -56,6 +56,8 @@ Every screen carries its phase. A screen tagged P3 or P4 is not shown in the sid
 └ /features/:project/:slug          Feature detail                                   P2
     ?doc=spec|plan|research|eval&ac=:acId
 
+/tickets?project=&q=&kind=          Tickets list (AGH-426, specs/20-tickets.md)      P2 read-only · Start ticket
+
 /workflows                          Workflow catalog                                 P4
 └ /workflows/:workflowId            Workflow detail                                  P4
     ?view=graph|revisions&overlay=failure|wait&rev=:n
@@ -136,6 +138,8 @@ otherwise, this list wins:
   `/sessions/<session>`. A waiting tile with no chat says "Open session" and opens its session; the session page's
   waiting banner says "Approve in the terminal session". The project overview's "See N more" expands Needs you in
   place (`?needs=all`), as the Portfolio does; a Needs you list with nowhere to go shows no "more" line.
+- **AC-426.1** (AGH-426, [20-tickets.md](20-tickets.md)) **Work** lists Tickets (`list-todo`, no badge) right after
+  Features: the single-ticket work outside features.
 
 
 Groups appear in this order with `caption` style group labels in `text-subtle`. The selected item uses `accent-soft` ground, `accent` icon and a 2px `accent` left bar; hover uses `surface-hover`. Each item is a 32px (`size.control`) row; collapsed, each becomes a 40×40 icon button with a `Tooltip` showing the label and its shortcut.
