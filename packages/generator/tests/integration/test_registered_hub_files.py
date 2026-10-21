@@ -64,6 +64,22 @@ def test_reads_hub_files_when_present(hub: Path) -> None:
     assert reader.feature_folder(path, "nope") is None
 
 
+# AGH-402 review Q11: only a read that asks for them reads the ticket records.
+def test_reads_ticket_folders_only_when_tickets_asked(hub: Path) -> None:
+    ticket = hub / "brain" / "features" / "demo-feature" / "tickets" / "DEM-7"
+    ticket.mkdir(parents=True)
+    (ticket / "brief.md").write_text("# Brief\n")
+    reader = HubFileSystem()
+
+    plain = reader.feature_folder(str(hub), "demo-feature")
+    with_tickets = reader.feature_folder(str(hub), "demo-feature", tickets=True)
+
+    assert plain is not None
+    assert plain.ticket_folders == ()
+    assert with_tickets is not None
+    assert [(found.name, found.brief) for found in with_tickets.ticket_folders] == [("DEM-7", True)]
+
+
 def test_reports_missing_when_hub_json_absent(tmp_path: Path) -> None:
     read = HubFileSystem().read_hub_json(str(tmp_path))
 

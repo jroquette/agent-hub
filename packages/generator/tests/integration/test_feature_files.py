@@ -753,12 +753,22 @@ def test_reads_no_ticket_folder_when_tickets_not_asked(tmp_path: Path) -> None:
     assert (read.ticket_folders, read.ticket_folders_skipped) == ((), 0)
 
 
-# AGH-402 review S1/Q1: the preflight reads stop before one call would pass READ_BUDGET_BYTES.
-@pytest.mark.parametrize(("budget", "kept"), [(10 + 2 * 101 + 4, 2), (10, 0)], ids=["two", "none"])
+# AGH-402 review S1/Q1, Q10, Q12: the preflight reads stop before one call would pass
+# READ_BUDGET_BYTES, counting what the folder read before tickets/ and a full file each (+ 1).
+@pytest.mark.parametrize(
+    ("spec", "budget", "kept"),
+    [
+        (10, 10 + 2 * 101 + 4, 2),
+        (10, 10, 0),
+        (150, 150 + 2 * 101, 2),
+        (10, 10 + 2 * 101 - 1, 1),
+    ],
+    ids=["two", "none", "after a large spec", "no slack"],
+)
 def test_skips_ticket_folders_when_read_budget_would_be_passed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, budget: int, kept: int
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, spec: int, budget: int, kept: int
 ) -> None:
-    folder = a_feature(features_of(tmp_path), "demo-feature", {"spec.md": b"x" * 10})
+    folder = a_feature(features_of(tmp_path), "demo-feature", {"spec.md": b"x" * spec})
     for ticket in ("DEM-7", "DEM-8", "DEM-9"):
         (folder / "tickets" / ticket).mkdir(parents=True)
         (folder / "tickets" / ticket / "preflight.json").write_bytes(b"{}")
@@ -768,7 +778,8 @@ def test_skips_ticket_folders_when_read_budget_would_be_passed(
     read = read_feature_folder(tmp_path, "demo-feature", tickets=True)
     assert read is not None
 
-    assert [found.name for found in read.ticket_folders] == ["DEM-7", "DEM-8"][:kept]
+    names = ("DEM-7", "DEM-8", "DEM-9")[:kept]
+    assert read.ticket_folders == tuple(TicketFiles(name=n, preflight=b"{}") for n in names)
     assert read.ticket_folders_skipped == 3 - kept
 
 
