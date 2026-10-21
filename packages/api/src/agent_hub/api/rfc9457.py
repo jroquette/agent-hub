@@ -66,6 +66,7 @@ from agent_hub.core.learnings.brain_change_requests import (
 )
 from agent_hub.core.learnings.learning_ports import HubReadOnlyError, LearningConflictError
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
+from agent_hub.core.scenarios.run_record import RecordTooLargeError, RunRecordError
 from agent_hub.core.skills.skill_view import SkillFileTooLargeError
 from agent_hub.core.workflows.gate_decisions import ResumeAfterDecisionError
 from agent_hub.core.workflows.launch import (
@@ -455,6 +456,16 @@ def _run_conflict_problem(error: RunConflictError) -> Problem:
     return Problem(409, "Workflow run command refused", error.reason, members)
 
 
+def _run_record_problem(error: RunRecordError) -> Problem:
+    """A scenario run's record the API cannot read whole: 422 with ``code``."""
+    code = "record_too_large" if isinstance(error, RecordTooLargeError) else "record_unreadable"
+    members: dict[str, JsonValue] = {
+        "type": f"urn:agent-hub:problem:scenario-run-{code.replace('_', '-')}",
+        "code": code,
+    }
+    return Problem(422, "Scenario run record unreadable", str(error), members)
+
+
 def _run_launch_problem(_: RunLaunchError) -> Problem:
     members: dict[str, JsonValue] = {"type": f"{WORKFLOW_RUN_PROBLEM_PREFIX}launch-failed"}
     detail = "The hub workflow command could not be started or did not finish; nothing was changed."
@@ -723,6 +734,7 @@ PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
     SkillFileTooLargeError: _skill_file_too_large_problem,
     RunInputError: _run_input_problem,
     RunConflictError: _run_conflict_problem,
+    RunRecordError: _run_record_problem,
     RunLaunchError: _run_launch_problem,
     ResumeAfterDecisionError: _resume_after_decision_problem,
     DecisionUnknownError: _decision_unknown_problem,

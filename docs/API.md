@@ -581,6 +581,28 @@ A paused engine run's `approval` or attention `wait` is an open `human_gate` app
 The decision is a strict write that needs the launch cookie, like the run commands; with `AGENT_HUB_IN_CONTAINER=1`
 it answers 404 `urn:agent-hub:problem:run-control-off`.
 
+## Scenario runs
+
+A scenario run paused at an open investigation ([design](design/scenarios.md#investigation-answers-and-workarounds))
+gets its agent session from hub web (AGH-350 P-7, AM-2):
+
+- `POST /api/v1/scenario-runs/{run_id}/investigation` → 201 `InvestigationSession` (`run_id`, `project`,
+  `investigation` (its number), `step`, `agent_session_id`, `started: true`) and
+  `Location: /api/v1/agent-sessions/{agent_session_id}`; a later call for the same investigation answers 200 with the
+  same session (`started: false`). The run is found in a registered hub's `.agent-runs/workflows/<run_id>/` (else 404)
+  and must be a scenario run paused at an open, unanswered investigation, as its own record says (else 409
+  `workflow-run-not-paused`). The session starts in the hub, mode `default`, with the investigation's system prompt,
+  its tool policy (a `PreToolUse` hook: `Read`, `Glob`, `Grep` except on a declared env file, `Write` under
+  `actions/<pack>/`, Bash for the listed `./hub` commands only) and, like every driven session, without the
+  credential names the hub declares; no env file is read. The link file `investigation-<n>.session` in the run folder,
+  created exclusively, keeps it to one session per investigation. A hub whose `hub.local.json` cannot be read answers
+  409 `workflow-run-hub-local-invalid`; a record over 8 MiB answers 422 `record_too_large`, a broken one 422
+  `record_unreadable`. `run_id` must match `^[a-z0-9][a-z0-9-]{0,31}$` (else 400).
+- The chat is the agent-session routes' (`POST /api/v1/agent-sessions/{agent_session_id}/messages`, AM-9).
+
+It is a strict write ([Local security](#local-security)) that needs the launch cookie, like the run commands; with
+`AGENT_HUB_IN_CONTAINER=1` it answers 404 `urn:agent-hub:problem:run-control-off`.
+
 ## Local security
 
 `hub web` binds `127.0.0.1` only. It refuses a `Host` header other than `127.0.0.1:<port>`, `localhost:<port>` or
@@ -588,7 +610,8 @@ it answers 404 `urn:agent-hub:problem:run-control-off`.
 CORS headers, `Cache-Control: no-store` on `/api`, and a CSP that limits scripts, styles, fonts and connections to
 `'self'`. The web app requests no other host; Linear is read by the server only ([Feature tickets](#feature-tickets)).
 The agent-session routes add a cookie and stricter Origin rules ([Agent sessions](#agent-sessions)), and the workflow
-run writes (`RUN_WRITES`: start, cancel, resume and abandon a run, and a gate's decision), the restores and the
+run writes (`RUN_WRITES`: start, cancel, resume and abandon a run, a gate's decision, and a scenario run's
+investigation session), the restores and the
 Publish (`ITEM_WRITES`) need that cookie too ([Workflow run commands](#workflow-run-commands), [Skills](#skills),
 [Workflows](#workflows)); every other route is unchanged and needs no cookie. In the container (`AGENT_HUB_IN_CONTAINER=1`, where no token is
 minted and the hubs are mounted read-only) a restore or a publish answers 409 `hub_read_only` before the cookie is

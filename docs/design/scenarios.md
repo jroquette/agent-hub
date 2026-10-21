@@ -96,10 +96,10 @@ pins its action files and gates, labels events `workflow: scenario:<name>`, and 
 
 ### Investigation, answers and workarounds
 
-Opening the paused scenario run in hub web (`POST /scenario-runs/{id}/investigation`) starts one driven session per
-gate, its tools held by a PreToolUse hook: `Read`, `Glob`, `Grep` except on a declared env file, `Write` only under
-`actions/<pack>/` (draft actions), Bash only for `./hub action list|plan|run …` and `./hub scenario propose --run <id>`
-and no shell metacharacter. `hub action run --run <id>` needs that run paused at an open investigation, uses its
+Opening a paused run in hub web (`POST /scenario-runs/{id}/investigation`) starts one driven session per gate, its tools
+held by a PreToolUse hook: `Read`, `Glob`, `Grep` except on a declared env file, `Write` only under `actions/<pack>/`,
+Bash only for `./hub action list|plan|run …` (`run` with `--run <id>`) and `./hub scenario propose --run <id>` (JSON in
+a quoted here-document), in plain words. `--run <id>` needs that run paused at an open investigation, uses its
 environment and env file, records origin `agent`, and runs only `read` actions (a write exits 1 and records
 `policy.decision` `deny`). The agent records findings and options (a summary and `{action, with}` steps each) with
 `./hub scenario propose` (JSON on stdin, secret shapes redacted); each option is shown with its plan. The answer is

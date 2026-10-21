@@ -46,6 +46,7 @@ BODIES: dict[tuple[str, str], object] = {
     ("post", "/api/v1/workflow-runs/{run_id}/cancel"): {},
     ("post", "/api/v1/workflow-runs/{run_id}/resume"): {},
     ("post", "/api/v1/workflow-runs/{run_id}/abandon"): {},
+    ("post", "/api/v1/scenario-runs/{run_id}/investigation"): {},
     # A restore and a publish are strict writes too (AGH-295, D13).
     (
         "post",

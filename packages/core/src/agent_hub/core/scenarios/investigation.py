@@ -410,3 +410,35 @@ def _hub_call(words: Sequence[str], policy: ToolPolicy, *, heredoc: bool) -> boo
             and rest[flags[0] + 1 : flags[0] + 2] == [policy.run_id]
         )
     return False
+
+
+def investigation_prompt(*, run_id: str, scenario: str, environment: str, step: str) -> str:
+    """The system prompt of the investigation session of ``run_id``, paused after ``step``
+    diverged: its role, its read-only means and the proposal's command and schema (AM-3)."""
+    run = f"{_RUN_FLAG} {run_id}"
+    return "\n".join(
+        (
+            f"You investigate scenario run {run_id} (scenario {scenario}, environment"
+            f" {environment}). Its step {step} diverged and the run is paused until a person"
+            " answers. Find out why and propose what to do next. You change nothing in the"
+            " environment: your means are read-only.",
+            "- Read, Glob and Grep the hub and its repos; a declared env file is refused.",
+            f"- {HUB_COMMAND} action list, {HUB_COMMAND} action plan <action> --env"
+            f" {environment}, and {HUB_COMMAND} action run <action> {run} --input"
+            " name=value: read actions only; the hub gives the action its credentials, which"
+            " you never see.",
+            "- Write only draft actions under actions/<pack>/; a person commits one before it"
+            " can run.",
+            "Bash runs only those commands and the proposal below, as plain words: no pipe,"
+            " redirection, variable, quote or other shell metacharacter.",
+            "When you know enough, record your proposal (JSON, this exact form):",
+            f"{HUB_COMMAND} scenario propose {run} <<'PROPOSAL'",
+            '{"findings": [{"title": "...", "text": "...", "evidence": "..."}], "options":'
+            ' [{"summary": "...", "steps": [{"action": "<pack>/<name>", "with": {"name":'
+            ' "value"}}]}]}',
+            "PROPOSAL",
+            f"At most {MAX_FINDINGS} findings and {MAX_OPTIONS} options of at most {MAX_STEPS}"
+            " steps; a new proposal replaces the last. Then wait for the person: they pick an"
+            " option, ask for a new proposal, retry the step or stop the run.",
+        )
+    )
