@@ -243,27 +243,42 @@ def test_opens_turn_per_message_and_links_its_own_commits_when_session_read() ->
     assert turns[1].commits == [later.sha]
 
 
+HUB = Path("/hub")
+# Each item's versions: its unit and pages, an HTTP status to answer, or None for a 404.
+type Versions = tuple[str, Sequence[Sequence[dict[str, Any]]]] | int | None
+
+
 def _wrote_draft(path: str, tool: str = "Write") -> dict[str, Any]:
     return {"kind": "tool.call", "body": {"name": tool, "input": {"file_path": path}}}
 
 
-def _version(origin: str, draft_id: str | None = None) -> dict[str, Any]:
-    return {"id": f"v-{origin}-{draft_id}", "origin": origin, "draft_id": draft_id}
+def _version(
+    origin: str, draft_id: str | None = None, at: datetime = CREATED + timedelta(minutes=5)
+) -> dict[str, Any]:
+    return {
+        "id": f"v-{origin}-{draft_id}-{at.isoformat()}",
+        "origin": origin,
+        "draft_id": draft_id,
+        "recorded_at": at.isoformat().replace("+00:00", "Z"),
+    }
 
 
-def _conductor(
+def _conductor(  # noqa: PLR0913 - the fake's whole state, all keyword-only
     tmp_path: Path,
     *,
     sessions: Mapping[str, Sequence[dict[str, Any]]],
-    catalog: Sequence[dict[str, str]],
-    versions: Mapping[str, tuple[str, Sequence[Sequence[dict[str, Any]]]] | None],
+    catalog: Sequence[dict[str, str]] | int = (),
+    versions: Mapping[str, Versions] | None = None,
     seen: list[str] | None = None,
+    repeat_cursor: bool = False,
 ) -> tuple[list[Path], httpx.MockTransport]:
-    """A conductor serving ``sessions`` (id to events), the hub's ``catalog`` and each item's
-    unit and versions pages (``kind/source/name`` to both; None answers 404), and its log."""
+    """A conductor serving ``sessions`` (id to events), the hub's ``catalog`` (or a status) and
+    each item's ``versions`` (``kind/source/name`` to ``Versions``), and its token's log.
+    ``repeat_cursor`` answers the same cursor on every page."""
     log = tmp_path / "conductor.log"
     log.write_text("hub web at http://127.0.0.1:7420/?token=synthetic-token\n", "utf-8")
     at = CREATED.isoformat()
+    versions = versions or {}
 
     def handle(request: httpx.Request) -> httpx.Response:
         path, query = request.url.path, request.url.params
@@ -279,20 +294,28 @@ def _conductor(
             sid = path.split("/")[4]
             return httpx.Response(200, json={"items": list(sessions[sid]), "next_after": None})
         if path == "/api/v1/projects/agent-hub/skills":
+            if isinstance(catalog, int):
+                return httpx.Response(catalog, json={"title": "Refused"})
             return httpx.Response(200, json={"project": "agent-hub", "items": list(catalog)})
         if path.startswith("/api/v1/projects/agent-hub/skills/") and path.endswith("/versions"):
             item = path.removeprefix("/api/v1/projects/agent-hub/skills/").removesuffix("/versions")
-            found = versions.get(item)
-            if found is None:
-                return httpx.Response(404, json={"title": "Not Found"})
-            unit, pages = found
-            index = int(query.get("cursor", "0"))
-            more = index + 1 < len(pages)
-            page = {"items": list(pages[index]), "next_cursor": str(index + 1) if more else None}
-            return httpx.Response(200, json={**page, "unit_path": unit})
+            return _versions_reply(
+                versions.get(item), int(query.get("cursor", "0")), repeat_cursor=repeat_cursor
+            )
         return httpx.Response(200, json={})
 
     return [log], httpx.MockTransport(handle)
+
+
+def _versions_reply(found: Versions, index: int, *, repeat_cursor: bool) -> httpx.Response:
+    """Page ``index`` of an item's versions, or the status ``found`` names."""
+    if not isinstance(found, tuple):
+        return httpx.Response(found or 404, json={"title": "Refused"})
+    unit, pages = found
+    more = index + 1 < len(pages)
+    following = "1" if repeat_cursor else str(index + 1) if more else None
+    page = {"items": list(pages[index]), "next_cursor": following}
+    return httpx.Response(200, json={**page, "unit_path": unit})
 
 
 def _item(kind: str, name: str) -> dict[str, str]:
@@ -300,26 +323,29 @@ def _item(kind: str, name: str) -> dict[str, str]:
 
 
 def _hub_requests(
-    conductor: tuple[list[Path], httpx.MockTransport], hub_files: list[str], *, hub: Path
+    conductor: tuple[list[Path], httpx.MockTransport], hub_files: list[str]
 ) -> dict[str, list[str]]:
     logs, transport = conductor
-    sessions = owner_sessions(CREATED, commits=[], logs=logs, transport=transport)
-    requests = build_requests(sessions, [], hub_files=hub_files, hub_root=hub)
+    sessions = owner_sessions(CREATED, commits=[], logs=logs, hub=HUB, transport=transport)
+    requests = build_requests(sessions, [], hub_files=hub_files, hub_root=HUB)
     return {request.title: request.hub_files for request in requests}
 
 
+def _versions_read(seen: Sequence[str]) -> list[str]:
+    return [url for url in seen if "/versions" in url]
+
+
 def test_credits_published_files_when_session_wrote_draft(tmp_path: Path) -> None:
-    hub = tmp_path / "hub"
     unit = "plugin/agent-hub/skills/review"
     conductor = _conductor(
         tmp_path,
         sessions={
             "s1": [
                 _said("Make a review skill"),
-                _wrote_draft(f"{hub}/.hub-drafts/skill-abc123/SKILL.md"),
-                _wrote_draft(f"{hub}/.hub-drafts/skill-abc123/notes.md", tool="Edit"),
+                _wrote_draft(f"{HUB}/.hub-drafts/skill-abc123/SKILL.md"),
+                _wrote_draft(f"{HUB}/.hub-drafts/skill-abc123/notes.md", tool="Edit"),
             ],
-            "s2": [_said("Only talk"), _wrote_draft(f"{hub}/brain/_inbox/idea.md")],
+            "s2": [_said("Only talk"), _wrote_draft(f"{HUB}/brain/_inbox/idea.md")],
         },
         catalog=[_item("skill", "review"), _item("agent", "planner")],
         versions={
@@ -332,7 +358,7 @@ def test_credits_published_files_when_session_wrote_draft(tmp_path: Path) -> Non
     )
     hub_files = [f"{unit}/SKILL.md", f"{unit}/notes.md", "agents/p.md", "brain/_inbox/idea.md"]
 
-    credited = _hub_requests(conductor, hub_files, hub=hub)
+    credited = _hub_requests(conductor, hub_files)
 
     assert credited == {
         "Ask s1": [f"{unit}/SKILL.md", f"{unit}/notes.md"],
@@ -351,9 +377,68 @@ def test_leaves_publish_unattributed_when_no_session_wrote_its_draft(tmp_path: P
         versions={"hook/hub/guard": ("hooks/hooks.json", [[_version("publish", "hook-zzz999")]])},
     )
 
-    credited = _hub_requests(conductor, ["hooks/hooks.json"], hub=tmp_path / "hub")
+    credited = _hub_requests(conductor, ["hooks/hooks.json"])
 
     assert credited == {"Ask s1": [], NO_SESSION: ["hooks/hooks.json"]}
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/hub/.hub-drafts/skill-abc123/../../plugin/a.md",
+        "/other/repo/.hub-drafts/skill-abc123/a.md",
+    ],
+    ids=["dot_dot", "other_root"],
+)
+def test_credits_nothing_when_draft_path_leaves_hub(tmp_path: Path, path: str) -> None:
+    seen: list[str] = []
+    conductor = _conductor(
+        tmp_path,
+        sessions={"s1": [_said("Edit"), _wrote_draft(path)]},
+        catalog=[_item("skill", "review")],
+        versions={"skill/hub/review": ("plugin/a.md", [[_version("publish", "skill-abc123")]])},
+        seen=seen,
+    )
+
+    credited = _hub_requests(conductor, ["plugin/a.md"])
+
+    assert credited == {"Ask s1": [], NO_SESSION: ["plugin/a.md"]}
+    assert not any("/skills" in url for url in seen)
+
+
+def test_credits_relative_draft_path_when_session_wrote_it(tmp_path: Path) -> None:
+    conductor = _conductor(
+        tmp_path,
+        sessions={"s1": [_said("Edit"), _wrote_draft(".hub-drafts/agent-abc123/p.md")]},
+        catalog=[_item("agent", "p")],
+        versions={"agent/hub/p": ("agents/p.md", [[_version("publish", "agent-abc123")]])},
+    )
+
+    assert _hub_requests(conductor, ["agents/p.md"]) == {"Ask s1": ["agents/p.md"]}
+
+
+def test_credits_new_hook_scripts_when_session_wrote_them_in_draft(tmp_path: Path) -> None:
+    unit = "plugin/agent-hub/hooks/hooks.json"
+    conductor = _conductor(
+        tmp_path,
+        sessions={
+            "s1": [
+                _said("Add a hook"),
+                _wrote_draft(f"{HUB}/.hub-drafts/hook-abc123/hooks.json"),
+                _wrote_draft(f"{HUB}/.hub-drafts/hook-abc123/scripts/check.sh"),
+            ]
+        },
+        catalog=[_item("hook", "check")],
+        versions={"hook/hub/check": (unit, [[_version("publish", "hook-abc123")]])},
+    )
+    scripts = ["plugin/agent-hub/scripts/check.sh", "plugin/agent-hub/scripts/other.sh"]
+
+    credited = _hub_requests(conductor, [unit, *scripts])
+
+    assert credited == {
+        "Ask s1": [unit, "plugin/agent-hub/scripts/check.sh"],
+        NO_SESSION: ["plugin/agent-hub/scripts/other.sh"],
+    }
 
 
 def test_reads_every_versions_page_when_publish_on_later_page(tmp_path: Path) -> None:
@@ -374,34 +459,180 @@ def test_reads_every_versions_page_when_publish_on_later_page(tmp_path: Path) ->
         seen=seen,
     )
 
-    credited = _hub_requests(conductor, [unit], hub=tmp_path / "hub")
+    credited = _hub_requests(conductor, [unit])
 
     assert credited == {"Ask s1": [unit]}
-    pages = [url for url in seen if url.startswith("/api/v1/projects/agent-hub/skills/agent/")]
+    pages = _versions_read(seen)
     assert len(pages) == 2
     assert "cursor=1" in pages[1]
     # Only the kinds of the drafts the sessions wrote are read.
     assert not any("/skills/skill/" in url for url in seen)
 
 
+def test_stops_paging_when_cursor_repeats(tmp_path: Path) -> None:
+    seen: list[str] = []
+    conductor = _conductor(
+        tmp_path,
+        sessions={"s1": [_said("Edit"), _wrote_draft("/hub/.hub-drafts/agent-abc123/p.md")]},
+        catalog=[_item("agent", "p")],
+        versions={"agent/hub/p": ("agents/p.md", [[_version("external")]] * 2)},
+        seen=seen,
+        repeat_cursor=True,
+    )
+
+    assert _hub_requests(conductor, []) == {"Ask s1": []}
+    assert len(_versions_read(seen)) == 2
+
+
+def test_stops_paging_when_page_cap_reached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("scripts.playground_export.MAX_VERSION_PAGES", 3)
+    seen: list[str] = []
+    conductor = _conductor(
+        tmp_path,
+        sessions={"s1": [_said("Edit"), _wrote_draft("/hub/.hub-drafts/agent-abc123/p.md")]},
+        catalog=[_item("agent", "p")],
+        versions={"agent/hub/p": ("agents/p.md", [[_version("external")]] * 10)},
+        seen=seen,
+    )
+
+    assert _hub_requests(conductor, []) == {"Ask s1": []}
+    assert len(_versions_read(seen)) == 3
+
+
+def test_stops_paging_when_versions_older_than_sessions(tmp_path: Path) -> None:
+    seen: list[str] = []
+    old = CREATED - timedelta(hours=2)
+    conductor = _conductor(
+        tmp_path,
+        sessions={"s1": [_said("Edit"), _wrote_draft("/hub/.hub-drafts/agent-abc123/p.md")]},
+        catalog=[_item("agent", "p")],
+        versions={
+            "agent/hub/p": (
+                "agents/p.md",
+                [
+                    [_version("external"), _version("external", at=old)],
+                    [_version("publish", "agent-abc123")],
+                ],
+            )
+        },
+        seen=seen,
+    )
+
+    credited = _hub_requests(conductor, ["agents/p.md"])
+
+    assert credited == {"Ask s1": [], NO_SESSION: ["agents/p.md"]}
+    assert len(_versions_read(seen)) == 1
+
+
+def test_stops_reading_items_when_every_draft_resolved(tmp_path: Path) -> None:
+    seen: list[str] = []
+    conductor = _conductor(
+        tmp_path,
+        sessions={"s1": [_said("Edit"), _wrote_draft("/hub/.hub-drafts/agent-abc123/p.md")]},
+        catalog=[_item("agent", "p"), _item("agent", "q")],
+        versions={
+            "agent/hub/p": ("agents/p.md", [[_version("publish", "agent-abc123")]]),
+            "agent/hub/q": ("agents/q.md", [[_version("external")]]),
+        },
+        seen=seen,
+    )
+
+    assert _hub_requests(conductor, ["agents/p.md"]) == {"Ask s1": ["agents/p.md"]}
+    assert [url for url in _versions_read(seen) if "/agent/hub/q/" in url] == []
+
+
 @pytest.mark.parametrize(
     "found",
-    [("agents/p.md", [[{"id": "v1", "origin": "publish"}]]), None],
-    ids=["no_draft_id", "no_versions_route"],
+    [("agents/p.md", [[{"id": "v1", "origin": "publish"}]]), None, 503, 500],
+    ids=["no_draft_id", "no_versions_route", "unavailable", "server_error"],
 )
-def test_credits_nothing_when_server_predates_draft_id(
-    tmp_path: Path, found: tuple[str, list[list[dict[str, Any]]]] | None
+def test_credits_nothing_for_item_when_server_predates_draft_id_or_fails(
+    tmp_path: Path, found: Versions
 ) -> None:
     conductor = _conductor(
         tmp_path,
-        sessions={"s1": [_said("Edit it"), _wrote_draft("/hub/.hub-drafts/agent-abc123/p.md")]},
-        catalog=[_item("agent", "p")],
-        versions={"agent/hub/p": found},
+        sessions={
+            "s1": [
+                _said("Edit it"),
+                _wrote_draft("/hub/.hub-drafts/agent-abc123/p.md"),
+                _wrote_draft("/hub/.hub-drafts/agent-def456/q.md"),
+            ]
+        },
+        catalog=[_item("agent", "p"), _item("agent", "q")],
+        versions={
+            "agent/hub/p": found,
+            "agent/hub/q": ("agents/q.md", [[_version("publish", "agent-def456")]]),
+        },
     )
 
-    credited = _hub_requests(conductor, ["agents/p.md"], hub=tmp_path / "hub")
+    credited = _hub_requests(conductor, ["agents/p.md", "agents/q.md"])
 
-    assert credited == {"Ask s1": [], NO_SESSION: ["agents/p.md"]}
+    assert credited == {"Ask s1": ["agents/q.md"], NO_SESSION: ["agents/p.md"]}
+
+
+def test_credits_nothing_when_catalog_not_found(tmp_path: Path) -> None:
+    conductor = _conductor(
+        tmp_path,
+        sessions={"s1": [_said("Edit"), _wrote_draft("/hub/.hub-drafts/agent-abc123/p.md")]},
+        catalog=404,
+    )
+
+    assert _hub_requests(conductor, ["agents/p.md"]) == {"Ask s1": [], NO_SESSION: ["agents/p.md"]}
+
+
+def test_raises_requests_unavailable_when_catalog_fails(tmp_path: Path) -> None:
+    conductor = _conductor(
+        tmp_path,
+        sessions={"s1": [_said("Edit"), _wrote_draft("/hub/.hub-drafts/agent-abc123/p.md")]},
+        catalog=503,
+    )
+
+    with pytest.raises(RequestsUnavailableError, match="503"):
+        _hub_requests(conductor, ["agents/p.md"])
+
+
+def test_reads_no_catalog_when_no_session_wrote_draft(tmp_path: Path) -> None:
+    seen: list[str] = []
+    conductor = _conductor(
+        tmp_path,
+        sessions={"s1": [_said("Edit"), _wrote_draft("/hub/brain/a.md")]},
+        catalog=503,
+        seen=seen,
+    )
+
+    assert _hub_requests(conductor, ["brain/a.md"]) == {"Ask s1": ["brain/a.md"]}
+    assert not any("/skills" in url for url in seen)
+
+
+def test_keeps_published_folder_to_its_own_files_when_names_share_prefix() -> None:
+    session = _session("Review", Turn("t1", "Edit"), published=["plugin/x/skills/review"])
+    hub_files = ["plugin/x/skills/review/SKILL.md", "plugin/x/skills/review-two/SKILL.md"]
+
+    requests = build_requests([session], [], hub_files=hub_files, hub_root=HUB)
+
+    assert {r.title: r.hub_files for r in requests} == {
+        "Review": ["plugin/x/skills/review/SKILL.md"],
+        NO_SESSION: ["plugin/x/skills/review-two/SKILL.md"],
+    }
+
+
+def test_credits_publish_with_hub_files_only_when_requests_built(tmp_path: Path) -> None:
+    session = _session("Review", Turn("t1", "Edit"), published=["plugin/x/skills/review"])
+
+    requests = build_requests(
+        [session],
+        [],
+        hub_root=HUB,
+        in_progress=["plugin/x/skills/review/SKILL.md"],
+        checkout=tmp_path,
+    )
+
+    assert {r.title: r.in_progress for r in requests} == {
+        "Review": [],
+        NO_SESSION: ["plugin/x/skills/review/SKILL.md"],
+    }
 
 
 def test_merges_same_title_sessions_and_keeps_unclaimed_work_when_requests_built(
