@@ -1289,8 +1289,8 @@ def test_git_untouched_when_every_route_runs(
     assert (hub / SCOUT).read_bytes() == PUBLISHED
     assert not draft.exists()
     # A11: the POSTs spawn no process. The only processes are the hub card's doctor drift check
-    # listing the checkout (read-only, before this feature), when a Toolkit or Workflows GET
-    # resolves the project after the tree changed.
+    # listing the checkout (read-only, before this feature), which only the Toolkit GETs still
+    # run, when they resolve the project through ``_project`` after the tree changed.
     assert post_spawns == []
     assert {_git_arguments(args) for args in spawned} <= READ_ONLY_LISTINGS
     assert (forks, git_reads) == ([], [])
