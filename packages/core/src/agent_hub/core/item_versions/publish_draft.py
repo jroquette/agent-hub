@@ -15,8 +15,15 @@ the target, a rename's new unit, a new item's destination. It records each unit'
 first, places the draft from what it read (``edit_destination``, ``replace_hook`` for a hook,
 ``new_destination``), writes (a new hook's scripts first; a renamed skill carries the old
 folder's hidden entries, then the old unit is removed) and records a ``publish`` naming the
-draft. A hook edit's replay (the step's ``replayed``) keeps the file as it is, since
-``replace_hook`` would replace another hook the second time.
+draft. A hook edit's place in its file (``hook_at``) is read from the file the step read under
+its lock, so the hook replaced is the one the recorded content names. A hook edit's replay (the
+step's ``replayed``) keeps the file as it is, since ``replace_hook`` would replace another hook
+the second time; with no version to tell a replay by (the first write stored none: a secret,
+too large, a lost race), a draft that moves its hook into a file already holding the draft's
+groups is refused (``item_exists``, A12) and nothing is written. A hook edit carrying scripts is
+``DraftInvalidError`` (A14): scripts land only with a new hook. A merge into a unit past the read
+bounds is ``unit_unreadable`` (A13). A retried rename whose old item is gone is an unknown item,
+and a retried new item whose first write stored no version is ``item_exists`` (A12).
 
 After the step, the draft is removed, also when nothing changed (A7), so a retry after a failed
 removal finishes; a removal that fails raises ``DraftNotRemovedError`` carrying the step's
@@ -44,7 +51,9 @@ from agent_hub.core.item_versions.publish_rules import (
     Destination,
     DraftInvalidError,
     DraftItem,
+    HookAt,
     edit_destination,
+    holds_moved_hook,
     hook_at,
     new_destination,
     read_draft_item,
@@ -54,15 +63,18 @@ from agent_hub.core.item_versions.read_item_versions import marked_unit
 from agent_hub.core.item_versions.record_and_write import RecordAndWrite, UnitReads
 from agent_hub.core.item_versions.unit_content import UnitContent, UnitFile
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
-from agent_hub.core.skills.skill_sources import HOOKS_FOLDER, PLUGIN_FOLDER
-from agent_hub.core.skills.skill_view import ItemKind, SkillCatalog, SkillDetail, item_id
+from agent_hub.core.skills.skill_hooks import hook_records
+from agent_hub.core.skills.skill_sources import PROJECT_SETTINGS_PATH, SETTINGS_PATH
+from agent_hub.core.skills.skill_view import ItemKind, SkillCatalog, item_id
 
 DRAFT_NOT_REMOVED: Final = "Published; the draft is still there. Publish again to remove it."
 _SKILL_ENTITY: Final = "skill"
 _PROJECT_ENTITY: Final = "project"
 _TOO_LARGE_TO_MERGE: Final = "The item on disk is too large to merge the draft into"
-_SCRIPTS_IN_PLUGIN: Final = "A hook's scripts go only with a plugin's hooks file"
-_PLUGIN_HOOKS_SEGMENTS: Final = 4
+_SCRIPTS_IN_EDIT: Final = "A hook's scripts land only with a new hook"
+_MOVED_HOOK_HELD: Final = (
+    "The hooks file already holds this draft's hooks: it may be published already"
+)
 
 
 class DraftNotRemovedError(AgentHubError):
@@ -86,10 +98,6 @@ class PublishCatalog(Protocol):
 
     def skill_catalog(self, project: str) -> SkillCatalog:
         """The project's skills, agents and hooks."""
-        ...
-
-    def skill_detail(self, project: str, *, kind: ItemKind, source: str, name: str) -> SkillDetail:
-        """One item of the catalog by its id."""
         ...
 
 
@@ -157,7 +165,9 @@ class PublishDraft:
         self, hub_path: str, target: ToolkitRef, *, unit: ItemUnit, draft: DraftItem
     ) -> tuple[list[ItemUnit], _Place]:
         if unit.kind is UnitKind.HOOK:
-            return [unit], _HookEdit(self._catalog, target, unit=unit, draft=draft)
+            if draft.scripts:
+                raise DraftInvalidError(_SCRIPTS_IN_EDIT)
+            return [unit], _HookEdit(target, unit=unit, draft=draft)
         listed = self._listed(hub_path) - {unit.unit_path}
         # Where it lands depends only on the draft's name: the content read here is a stand-in.
         planned = edit_destination(unit, draft.content, draft, existing=listed)
@@ -202,35 +212,25 @@ class _Edit:
 class _HookEdit:
     """Where a hook edit lands: its file with that one hook replaced."""
 
-    def __init__(
-        self, catalog: PublishCatalog, target: ToolkitRef, *, unit: ItemUnit, draft: DraftItem
-    ) -> None:
-        detail = catalog.skill_detail(
-            target.project, kind=target.kind, source=target.source, name=target.name
-        )
-        missing = EntityNotFoundError(
-            entity=_SKILL_ENTITY, entity_id=item_id(target.kind, target.source, target.name)
-        )
-        if detail.hook is None:
-            raise missing
-        try:
-            self._at = hook_at(source=target.source, name=target.name, event=detail.hook.event)
-        except ValueError:
-            raise missing from None
+    def __init__(self, target: ToolkitRef, *, unit: ItemUnit, draft: DraftItem) -> None:
+        self._target = target
         self._unit = unit
         self._draft = draft
-        self._scripts = _hook_scripts(unit, draft)
 
     def __call__(self, reads: UnitReads, *, replayed: bool) -> Destination:
         current = _current(reads, self._unit, merged=True)
         if replayed:
-            return Destination(unit=self._unit, content=current, scripts=self._scripts)
+            return Destination(unit=self._unit, content=current)
         file = current.files[0]
-        written = replace_hook(file.content, self._at, self._draft.hooks or {})
+        at = _hook_in(self._unit, self._target, file.content)
+        hooks = self._draft.hooks or {}
+        if holds_moved_hook(file.content, at, hooks):
+            raise ItemWriteRefusedError("item_exists", _MOVED_HOOK_HELD)
+        written = replace_hook(file.content, at, hooks)
         content = UnitContent(
             files=(UnitFile(path=file.path, content=written, executable=file.executable),)
         )
-        return Destination(unit=self._unit, content=content, scripts=self._scripts)
+        return Destination(unit=self._unit, content=content)
 
 
 class _New:
@@ -283,22 +283,19 @@ def _missing(reads: UnitReads, unit: ItemUnit) -> bool:
     return isinstance(read, UnreadUnit) and read.kind == "missing"
 
 
-def _hook_scripts(unit: ItemUnit, draft: DraftItem) -> tuple[UnitFile, ...]:
-    """A hook edit's scripts, beside its plugin's hooks file (``plugin/<p>/scripts/``)."""
-    if not draft.scripts:
-        return ()
-    segments = unit.unit_path.split("/")
-    in_plugin = (
-        len(segments) == _PLUGIN_HOOKS_SEGMENTS
-        and segments[0] == PLUGIN_FOLDER
-        and segments[2] == HOOKS_FOLDER
-    )
-    if not in_plugin:
-        raise DraftInvalidError(_SCRIPTS_IN_PLUGIN)
-    plugin = "/".join(segments[:2])
-    return tuple(
-        UnitFile(
-            path=f"{plugin}/{script.path}", content=script.content, executable=script.executable
-        )
-        for script in draft.scripts
+def _hook_in(unit: ItemUnit, target: ToolkitRef, file_json: bytes) -> HookAt:
+    """Where the hook ``target`` sits in its file's content ``file_json``, named as the catalog
+    names it (a hook's name depends only on its own file); an unknown item when it holds none."""
+    if unit.unit_path == SETTINGS_PATH:
+        fold = hook_records(file_json, None, {}, enabled={}, marketplace=None)
+    elif unit.unit_path == PROJECT_SETTINGS_PATH:
+        fold = hook_records(None, file_json, {}, enabled={}, marketplace=None)
+    else:
+        plugin = unit.unit_path.split("/")[1]
+        fold = hook_records(None, None, {plugin: file_json}, enabled={}, marketplace=None)
+    for record in fold.records:
+        if record.source == target.source and record.name == target.name:
+            return hook_at(source=target.source, name=target.name, event=record.facts.event)
+    raise EntityNotFoundError(
+        entity=_SKILL_ENTITY, entity_id=item_id(target.kind, target.source, target.name)
     )

@@ -14,6 +14,7 @@ from agent_hub.core.item_versions.publish_rules import (
     DraftItem,
     HookAt,
     edit_destination,
+    holds_moved_hook,
     hook_at,
     merge_hooks,
     new_destination,
@@ -488,3 +489,31 @@ def test_removes_hook_when_moved_to_event_already_holding_its_group() -> None:
     assert json.loads(written) == {
         "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "stop"}]}]}
     }
+
+
+def test_tells_moved_hook_held_only_when_file_holds_every_draft_group() -> None:
+    settings = json.dumps(
+        {
+            "hooks": {
+                "PreToolUse": [
+                    {"matcher": "Bash", "hooks": [{"type": "command", "command": "a"}]},
+                    {"matcher": "Edit", "hooks": [{"type": "command", "command": "b"}]},
+                ],
+                "Stop": [{"hooks": [{"type": "command", "command": "stop"}]}],
+            }
+        }
+    ).encode()
+    at = HookAt("PreToolUse", 1)
+
+    def held(hooks_json: bytes) -> bool:
+        draft = read_draft_item(UnitKind.HOOK, _files({"hooks.json": hooks_json}))
+        assert draft.hooks is not None
+        return holds_moved_hook(settings, at, draft.hooks)
+
+    assert held(_hooks("Stop", "stop"))
+    assert held(_hooks("PreToolUse", "b", "Edit"))
+    assert not held(_hooks("Stop", "new"))
+    assert not held(_hooks("PreToolUse", "a", "Bash"))
+    assert not held(_hooks("PreToolUse", "changed", "Bash"))
+    with pytest.raises(EntityNotFoundError):
+        holds_moved_hook(settings, HookAt("PreToolUse", 3), {"Stop": []})

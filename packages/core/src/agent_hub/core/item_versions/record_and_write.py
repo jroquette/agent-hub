@@ -35,11 +35,13 @@ them at once (the lock is not reentrant, so a Publish never calls ``write``): ea
 removal, A7). A hook script already on disk with other bytes refuses (``item_exists``); one with
 the same bytes is not written again. A destination equal to the disk with no rename and no
 script to write answers ``changed: false``. Each unit's disk content is recorded as in step 3,
-then step 4's managed check runs over every unit (O6); the scripts are written, then the unit
-(a renamed skill carrying the old folder's hidden entries), then the old unit removed; the
-written unit is recorded as a ``publish`` naming ``draft_id`` (A5), as in step 6. A failed
-removal of the old unit raises ``HubItemWriteError`` and records nothing more: the new unit is
-then on disk unrecorded, and the next read records it.
+then step 4's managed check runs over every unit (O6); the scripts are written (only scripts,
+the unit equal: ``changed: true, versioned: false, reason: script_only``, A13), then the unit (a
+renamed skill carrying the old folder's hidden entries), recorded at once as a ``publish``
+naming ``draft_id`` (A5), as in step 6; then a rename's old unit is removed (A15). A failed
+removal raises ``HubItemWriteError`` (``failed``): both units stay, the new one's history
+starting with its ``publish``. A record failing after the write raises as in step 6 and the old
+unit is not removed.
 
 Accepted: the lock holds only this process's captures. Another process can capture the written
 content as ``external`` between the write and its record, so one write can show as an
@@ -196,22 +198,22 @@ class RecordAndWrite:
                 self._writer.write_file(
                     hub_path, script.path, script.content, executable=script.executable
                 )
-            if not equal:
-                carry = removed.unit_path if removed and unit.kind is UnitKind.SKILL else None
-                self._writer.write_unit(
-                    hub_path, unit.unit_path, destination.content, kind=unit.kind, carry_from=carry
-                )
-            if removed is not None:
-                self._writer.remove_unit(hub_path, removed.unit_path, kind=removed.kind)
             if equal:
-                return ItemWriteResult(changed=True, versioned=False, reason=None, version=None)
-            return self._record_written(
+                return _SCRIPT_ONLY
+            carry = removed.unit_path if removed and unit.kind is UnitKind.SKILL else None
+            self._writer.write_unit(
+                hub_path, unit.unit_path, destination.content, kind=unit.kind, carry_from=carry
+            )
+            result = self._record_written(
                 unit,
                 destination.content,
                 origin=VersionOrigin.PUBLISH,
                 author=author,
                 draft_id=draft_id,
             )
+            if removed is not None:
+                self._writer.remove_unit(hub_path, removed.unit_path, kind=removed.kind)
+            return result
 
     def _replayed(self, unit: ItemUnit, reads: UnitReads, draft_id: str) -> bool:
         """Whether the unit's last version is this draft's ``publish`` and the disk holds it."""
@@ -311,6 +313,10 @@ class RecordAndWrite:
 
 
 _UNCHANGED: Final = ItemWriteResult(changed=False, versioned=False, reason=None, version=None)
+# Only a new hook's scripts were written: the hooks file was equal, no version (A13).
+_SCRIPT_ONLY: Final = ItemWriteResult(
+    changed=True, versioned=False, reason="script_only", version=None
+)
 
 
 def _content(read: UnitContent | UnreadUnit) -> UnitContent | None:
