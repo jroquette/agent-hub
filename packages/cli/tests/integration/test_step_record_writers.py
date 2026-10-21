@@ -21,6 +21,8 @@ from typer.testing import CliRunner, Result
 
 from agent_hub.cli import step_records
 from agent_hub.cli.main import app
+from agent_hub.core.features.output_models import PreflightRecord
+from agent_hub.core.features.ticket_records import preflight_record
 
 pytestmark = pytest.mark.disable_socket
 
@@ -314,14 +316,32 @@ class TestTicketBrief:
     def test_writes_into_the_one_folder_of_the_ticket_when_named_by_key_or_case(
         self, hub: Hub, given: str
     ) -> None:
-        hub.ok("ticket-brief", *TICKET)
+        named = ("--feature", "demo-flow", "--ticket", given)
+        brief = hub.ok("ticket-brief", *named)
 
-        output = hub.ok(
-            "preflight", "--feature", "demo-flow", "--ticket", given, "--run", json.dumps(RUN)
+        output = hub.ok("preflight", *named, "--run", json.dumps(RUN))
+        request = hub.ok(
+            "change-request", *named, "--run-id", "r1", "--evidence", "e", "--proposal", "p"
         )
 
+        assert brief["path"] == f"{FEATURE}/tickets/DEM-8/brief.md"
+        assert "\nticket: DEM-8\n" in (hub.root / brief["path"]).read_text()
         assert output["path"] == f"{FEATURE}/tickets/DEM-8/preflight.json"
+        written = (hub.root / output["path"]).read_bytes()
+        assert json.loads(written)["ticket"] == "DEM-8"
+        assert isinstance(preflight_record(written, folder="DEM-8"), PreflightRecord)
+        assert "\nticket: DEM-8\n" in (hub.root / request["path"]).read_text()
         assert sorted(p.name for p in (hub.feature / "tickets").iterdir()) == ["DEM-7", "DEM-8"]
+
+    def test_writes_into_the_folder_the_reader_reads_when_key_and_id_folders_exist(
+        self, hub: Hub
+    ) -> None:
+        for name in ("T2", "dem-8"):
+            (hub.feature / "tickets" / name).mkdir()
+
+        output = hub.ok("preflight", *TICKET, "--run", json.dumps(RUN))
+
+        assert output["path"] == f"{FEATURE}/tickets/dem-8/preflight.json"
 
     def test_writes_into_the_existing_folder_when_its_name_differs_in_case(self, hub: Hub) -> None:
         (hub.feature / "tickets/t2").mkdir()
@@ -536,6 +556,32 @@ class TestDecideAndAmend:
             "already": "already amended as A2",
         }
         assert plan.read_bytes() == written
+
+    def test_leaves_the_plan_file_as_it_is_when_the_request_was_already_amended(
+        self, hub: Hub, tmp_path: Path
+    ) -> None:
+        hub.approved()
+        hub.amend()
+        plan = hub.feature / "plan.md"
+        os.link(plan, tmp_path / "same.md")
+
+        hub.amend()
+
+        assert os.stat(plan).st_ino == os.stat(tmp_path / "same.md").st_ino
+
+    def test_refuses_a_decision_when_the_request_is_one_byte_over_its_read_cap(
+        self, hub: Hub
+    ) -> None:
+        folder = hub.feature / "change-requests"
+        folder.mkdir()
+        (folder / "1.md").write_bytes(b" " * 262_145)
+
+        line = hub.refused(
+            "decide", "--feature", "demo-flow", "--request", "1", "--decision", "approved",
+            "--by", "Dana",
+        )
+
+        assert line == "hub step decide: 1.md is larger than 262144 bytes"
 
     def test_keeps_every_earlier_byte_when_the_plan_ends_in_blank_lines(
         self, hub: Hub, tmp_path: Path

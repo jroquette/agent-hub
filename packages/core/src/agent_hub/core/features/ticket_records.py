@@ -10,7 +10,7 @@ the step it feeds turns unknown.
 """
 
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Literal, cast
 
@@ -132,6 +132,18 @@ def change_requests(heads: Sequence[RecordHead], *, skipped: int) -> ChangeReque
     return ChangeRequests(
         requests=tuple(_request(n, requests[n], decisions.get(n)) for n in sorted(requests)),
         problem=problem,
+    )
+
+
+def ticket_folder(folders: Iterable[str], names: Iterable[str]) -> str | None:
+    """The folder of ``tickets/`` the ticket flow reads for a ticket named ``names`` (its key and
+    id): per name in any case the first folder by name, then the first of ``names`` upper-cased
+    in sorted order (``ticket_flow.ticket_evidence`` and ``_picked_up``); None when none is."""
+    by_name: dict[str, str] = {}
+    for folder in sorted(folders):
+        by_name.setdefault(folder.upper(), folder)
+    return next(
+        (by_name[name] for name in sorted(n.upper() for n in names) if name in by_name), None
     )
 
 

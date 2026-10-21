@@ -47,6 +47,7 @@ from agent_hub.core.features.ticket_records import (
     PREFLIGHT_FILE,
     TICKET_BRIEF,
     TICKETS_FOLDER,
+    ticket_folder,
 )
 from agent_hub.core.features.ticket_writes import (
     MAX_REQUEST_BYTES,
@@ -310,11 +311,10 @@ def _feature(hub: Path, slug: str) -> Path:
 
 
 def _ticket_folder(feature: Path, planned: PlannedTicket) -> Path:
-    """The ticket's one folder: the existing one its key or id names (any case), else its id
-    (its key before it has one)."""
+    """The ticket's one folder: the existing one the ticket flow reads for its key or id
+    (``ticket_folder``), else its id (its key before it has one)."""
     tickets = _folder(feature, TICKETS_FOLDER)
-    names = {name.upper() for name in _names(planned)}
-    found = next((entry for entry in sorted(os.listdir(tickets)) if entry.upper() in names), None)
+    found = ticket_folder(os.listdir(tickets), _names(planned))
     return _folder(tickets, found or planned.id or planned.key)
 
 
