@@ -13,6 +13,7 @@ from agent_hub.core.knowledge.knowledge_index import (
     Fingerprint,
     IndexChange,
     IndexedDocument,
+    SkippedFile,
 )
 from agent_hub.core.knowledge.search_query import MAX_RESULTS, MAX_SNIPPET_CHARS
 from agent_hub.storage.errors import Fts5UnavailableError, StorageError
@@ -45,6 +46,22 @@ def _document(path: str, body: str) -> IndexedDocument:
         sha256=hashlib.sha256(body.encode()).hexdigest(),
         body=body,
     )
+
+
+def _text_rowids_and_indexed_ids(path: Path) -> tuple[list[int], list[int]]:
+    """The FTS5 rowids and the ids of the indexed (not skipped) document rows, sorted."""
+    connection = sqlite3.connect(path)
+    try:
+        rowids = [row[0] for row in connection.execute("SELECT rowid FROM knowledge_text")]
+        ids = [
+            row[0]
+            for row in connection.execute(
+                "SELECT id FROM knowledge_documents WHERE sha256 IS NOT NULL"
+            )
+        ]
+    finally:
+        connection.close()
+    return sorted(rowids), sorted(ids)
 
 
 def test_finds_fts5_when_interpreter_sqlite_has_it() -> None:
@@ -95,3 +112,36 @@ def test_cuts_snippet_to_one_line_when_body_long(tmp_path: Path) -> None:
     assert "\r" not in hit.snippet
     assert len(hit.snippet) <= MAX_SNIPPET_CHARS
     assert "marker" in hit.snippet
+
+
+def test_pairs_text_with_indexed_rows_when_rows_dropped_and_hub_rebuilt(tmp_path: Path) -> None:
+    path = tmp_path / "events.db"
+    index = open_knowledge_index(path)
+    first = tuple(_document(f"brain/{name}.md", f"{name} text") for name in ("a", "b", "c", "d"))
+    index.apply("/hubs/other", IndexChange(version=INDEX_VERSION, documents=first[:1]))
+    index.apply(HUB, IndexChange(version=INDEX_VERSION, documents=first))
+
+    # c and d hold the highest ids: once their rows go, SQLite gives a freed id to e.
+    skipped = (
+        SkippedFile(path="brain/b.md", fingerprint=first[1].fingerprint, reason="not UTF-8"),
+        SkippedFile(path="brain/c.md", fingerprint=None, reason="cannot be read"),
+    )
+    index.apply(HUB, IndexChange(version=INDEX_VERSION, skipped=skipped, dropped=("brain/d.md",)))
+    index.apply(
+        HUB, IndexChange(version=INDEX_VERSION, documents=(_document("brain/e.md", "e text"),))
+    )
+
+    rowids, ids = _text_rowids_and_indexed_ids(path)
+    assert rowids == ids
+    assert [hit.path for hit in index.search(HUB, ("d",), limit=MAX_RESULTS)] == []
+    assert [hit.path for hit in index.search(HUB, ("e",), limit=MAX_RESULTS)] == ["brain/e.md"]
+
+    rebuilt = (_document("brain/f.md", "f text"), _document("brain/a.md", "g text"))
+    index.apply(HUB, IndexChange(version=INDEX_VERSION, rebuild=True, documents=rebuilt))
+
+    rowids, ids = _text_rowids_and_indexed_ids(path)
+    assert rowids == ids
+    assert [hit.path for hit in index.search(HUB, ("a",), limit=MAX_RESULTS)] == []
+    assert [hit.path for hit in index.search(HUB, ("g",), limit=MAX_RESULTS)] == ["brain/a.md"]
+    other = index.search("/hubs/other", ("a",), limit=MAX_RESULTS)
+    assert [hit.path for hit in other] == ["brain/a.md"]
