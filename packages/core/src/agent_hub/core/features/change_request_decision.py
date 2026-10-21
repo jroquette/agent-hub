@@ -22,6 +22,7 @@ from agent_hub.core.errors import AgentHubError
 from agent_hub.core.features.feature_view import ChangeDecisionView, ChangeRequestView
 from agent_hub.core.features.owner_signoff import FeatureFolders, ProjectHubs
 from agent_hub.core.features.ticket_records import (
+    CHANGE_REQUESTS_FOLDER,
     ChangeRequest,
     change_requests,
     request_view,
@@ -159,6 +160,10 @@ class DecideChangeRequest:
             raise ChangeRequestDecisionError(
                 "decided", f"change request {n} was just decided; reload the feature"
             ) from None
+        except OSError:
+            # A folder turned into a link, or went away, since the read: nothing written.
+            reason = f"{CHANGE_REQUESTS_FOLDER}/{n}.decision.md could not be created"
+            raise ChangeRequestDecisionError("unwritable", reason) from None
         decided = ChangeDecisionView(
             decision=decision,
             decided_by=person,

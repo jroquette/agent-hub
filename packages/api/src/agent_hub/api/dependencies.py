@@ -22,6 +22,7 @@ from agent_hub.core.agent_sessions.control import AgentSessionCommands
 from agent_hub.core.agent_sessions.links import AgentSessionLinkLookup
 from agent_hub.core.brain.brain_path import DEFAULT_ACCEPT_FOLDER
 from agent_hub.core.events.event_reader import EventReader
+from agent_hub.core.features.change_request_decision import DecideChangeRequest
 from agent_hub.core.features.owner_signoff import SignOffOwnerSteps
 from agent_hub.core.ingestion.ingest_hook import IngestHook
 from agent_hub.core.ingestion.ingestion_status import IngestionCounters
@@ -60,6 +61,7 @@ class ApiPorts:
     item_version_writes: ItemVersionWrites | None = None
     linear: LinearConnection | None = None
     owner_signoff: SignOffOwnerSteps | None = None
+    change_request_decisions: DecideChangeRequest | None = None
     feature_names: FeatureNames | None = None
     ac_checks: AcCheckRunner | None = None
 
@@ -93,6 +95,14 @@ def hub_read_models(request: Request) -> HubReadModels:
 def owner_signoff(request: Request) -> SignOffOwnerSteps:
     """The owner's sign-off of a feature's owner steps, or 501 when not wired."""
     port = _ports(request).owner_signoff
+    if port is None:
+        raise _unwired(request)
+    return port
+
+
+def change_request_decisions(request: Request) -> DecideChangeRequest:
+    """The owner's decision on a change request whose run is gone, or 501 when not wired."""
+    port = _ports(request).change_request_decisions
     if port is None:
         raise _unwired(request)
     return port
@@ -302,6 +312,7 @@ def parse_filter[M: BaseModel](model: type[M], **fields: object) -> M:
 EventReadModelsDep = Annotated[EventReadModels, Depends(event_read_models)]
 HubReadModelsDep = Annotated[HubReadModels, Depends(hub_read_models)]
 OwnerSignOffDep = Annotated[SignOffOwnerSteps, Depends(owner_signoff)]
+ChangeRequestDecisionsDep = Annotated[DecideChangeRequest, Depends(change_request_decisions)]
 WorkflowReadsDep = Annotated[WorkflowReads, Depends(workflow_reads)]
 RunStartsDep = Annotated[StartWorkflowRun, Depends(run_starts)]
 RunControlDep = Annotated[ControlWorkflowRun, Depends(run_control)]

@@ -26,7 +26,7 @@ from agent_hub.core.events.event import Event, EventType
 from agent_hub.core.events.event_query import EventPage, EventQuery
 from agent_hub.core.events.stored_event import StoredEvent
 from agent_hub.core.features.feature_view import FeatureDetail, FeatureView
-from agent_hub.core.features.ticket_view import FeatureTickets
+from agent_hub.core.features.ticket_view import FeatureTickets, TicketRecords
 from agent_hub.core.hub_config.config_view import HubConfigView
 from agent_hub.core.hubs.finding_view import FindingView
 from agent_hub.core.hubs.registered_hub import HubView
@@ -263,6 +263,7 @@ class FakeHubReadModels:
     configs: dict[str, HubConfigView] = field(default_factory=dict)
     features: list[FeatureDetail] = field(default_factory=list)
     tickets: dict[str, FeatureTickets] = field(default_factory=dict)
+    ticket_views: dict[str, TicketRecords] = field(default_factory=dict)
     findings: list[FindingView] = field(default_factory=list)
     settings_view: SettingsView | None = None
     brains: dict[str, BrainTree] = field(default_factory=dict)
@@ -325,6 +326,10 @@ class FakeHubReadModels:
     def feature_tickets(self, project: str, slug: str) -> FeatureTickets:
         self._call("feature_tickets", (project, slug))
         return _found(self.tickets, "feature", f"{project}/{slug}")
+
+    def ticket_records(self, project: str, slug: str, ticket: str) -> TicketRecords:
+        self._call("ticket_records", (project, slug, ticket))
+        return _found(self.ticket_views, "ticket", f"{project}/{slug}/{ticket}")
 
     def doctor_findings(self, scope: Scope) -> Page[FindingView]:
         self._call("doctor_findings", scope)
