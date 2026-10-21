@@ -1,7 +1,7 @@
 """The ticket records an ``implement`` run writes into the hub (two-level-flows S2, P7).
 
 ``hub step ticket-brief|preflight|change-request|decide|amend-plan`` call these with the hub's
-main checkout. They write under ``brain/features/<slug>/`` only and never commit: the run's
+main checkout (and ``pending-decision``, which only reads). They write under ``brain/features/<slug>/`` only and never commit: the run's
 report names the changed files for the owner's hub PR (D-1). The texts and their checks are
 ``agent_hub.core.features.ticket_writes``'; here are the reads and writes. No link is followed:
 the feature folder, ``tickets/``, ``change-requests/`` and every file read or replaced must not
@@ -40,6 +40,7 @@ from agent_hub.core.features.feature_record import (
     record_from_bytes,
 )
 from agent_hub.core.features.feature_status import MAX_PLAN_BYTES
+from agent_hub.core.features.output_models import PreflightRecord
 from agent_hub.core.features.plan_version import plan_version
 from agent_hub.core.features.ticket_records import (
     CHANGE_REQUESTS_FOLDER,
@@ -47,6 +48,7 @@ from agent_hub.core.features.ticket_records import (
     PREFLIGHT_FILE,
     TICKET_BRIEF,
     TICKETS_FOLDER,
+    preflight_record,
     ticket_folder,
 )
 from agent_hub.core.features.ticket_writes import (
@@ -54,6 +56,7 @@ from agent_hub.core.features.ticket_writes import (
     Blocker,
     TicketBrief,
     TicketRecordError,
+    NO_PENDING,
     amended_plan,
     appended_brief,
     appended_preflight,
@@ -62,6 +65,8 @@ from agent_hub.core.features.ticket_writes import (
     decision_text,
     named_paths,
     next_request,
+    pending_decision,
+    pending_request,
     plan_ids,
     plan_section,
     ticket_acs,
@@ -210,6 +215,35 @@ def amend_plan(hub: Path, *, feature: str, request: int, summary: str) -> dict[s
             already = None
             _replace(folder, PLAN, written)
     return {"path": _relative(hub, folder / PLAN), "amendment": ident, "already": already}
+
+
+def pending(hub: Path, *, feature: str, ticket: str) -> dict[str, JsonValue]:
+    """The owner's decision on the change request the ticket's last preflight opened, when one
+    was recorded with no run waiting for it (AC-2.14); empty values when there is none."""
+    folder = _feature(hub, feature)
+    target = _ticket_folder(folder, _planned_or_refuse(_record(folder).tickets, ticket))
+    found = pending_request(_preflight(target))
+    requests = folder / CHANGE_REQUESTS_FOLDER
+    decided = NO_PENDING
+    if found is not None and requests.is_dir() and not requests.is_symlink():
+        request = _read(requests / f"{found}.md", MAX_REQUEST_BYTES)
+        decision = _read(requests / f"{found}.decision.md", MAX_REQUEST_BYTES)
+        if request is not None and decision is not None:
+            decided = pending_decision(found, request, decision)
+    return {
+        "request": decided.request,
+        "decision": decided.decision,
+        "input": decided.input,
+        "note": decided.note,
+        "summary": decided.summary,
+    }
+
+
+def _preflight(target: Path) -> PreflightRecord | None:
+    record = preflight_record(_read(target / PREFLIGHT_FILE, MAX_PREFLIGHT_BYTES), folder=target.name)
+    if isinstance(record, str):
+        raise TicketRecordError(record)
+    return record
 
 
 def _version(plan: bytes) -> int:

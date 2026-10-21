@@ -33,7 +33,9 @@ passed to ``--resume`` only when it matches ``SESSION_ID``.
 Environments: an agent gets ``session_env`` (its step is the node id as recorded, its attempt the
 run-wide one), a ``hub step`` node runs this hub's own executable with ``child_env`` (hub step
 narrows it per call), any other command ``untrusted_env`` plus its ``env``, which may not name a
-token; in a run that declares an environment, an agent also gets ``HUB_RUN_ENVIRONMENT``. No
+token; a ``hub step`` and any other command also get the run's id as ``AGENT_HUB_RUN_ID`` (the
+``implement`` run's records name it), after the node's ``env``; in a run that declares an
+environment, an agent also gets ``HUB_RUN_ENVIRONMENT``. No
 child gets ``LINEAR_API_KEY``, nor (``hidden``) the hub's declared credential names
 and an ``AWS_PROFILE`` naming a declared profile: only an action's process gets credentials. A
 failure's kind comes from where it happened: the exit code (``kind_for_exit``), a timeout,
@@ -62,6 +64,7 @@ from agent_hub.cli.child_process import ChildResult, run_child
 from agent_hub.cli.errors import ChildTimedOutError
 from agent_hub.cli.run_children import (
     IMPLEMENT_STEP,
+    RUN_ID_VARIABLE,
     SESSION_DENIED_TOOLS,
     SESSION_HIDDEN,
     RunOptions,
@@ -278,12 +281,12 @@ class WorkflowExecutors:
         else:
             argv = list(call.argv)
         if isinstance(node, ShellNode) and node.is_hub_step:
-            return [*self.hub_program, *argv[1:]], child_env(
-                hidden_environment(self.environ, self.hidden)
-            )
+            env = child_env(hidden_environment(self.environ, self.hidden))
+            return [*self.hub_program, *argv[1:]], {**env, RUN_ID_VARIABLE: self.run_id}
         if tokens := sorted(set(call.env) & set(SESSION_HIDDEN)):
             raise NodeFailedError("config", f"env may not set {', '.join(tokens)}")
-        return argv, {**untrusted_env(self.environ, hidden=self.hidden), **call.env}
+        env = untrusted_env(self.environ, hidden=self.hidden)
+        return argv, {**env, **call.env, RUN_ID_VARIABLE: self.run_id}
 
     def _pack_file(self, folder: PackFolder, relative: str) -> Path:
         try:

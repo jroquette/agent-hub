@@ -15,6 +15,9 @@ the way its reader will read it, so a record this module returns is never a reco
 - ``plan.md``: one ``A<k> (<date>, <who>): …`` entry appended at the end, under an
   ``## Amendments`` heading (added when the last section is another), only while the plan is
   still the version the approved request was opened against.
+
+``pending_request`` and ``pending_decision`` read, for the next run of a ticket, the owner's
+decision on the request its last preflight opened while no run waited for it (AC-2.14).
 """
 
 import json
@@ -378,3 +381,49 @@ def _field(record: bytes, name: str) -> str:
     if value is None:
         raise TicketRecordError(f"{name} is missing")
     return value
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class PendingDecision:
+    """The owner's decision a new run of the ticket follows: the request, ``approved`` or
+    ``declined``, the note, and the proposal's first line (the amendment's summary); empty when
+    there is none."""
+
+    request: int | None = None
+    decision: str = ""
+    note: str = ""
+    summary: str = ""
+
+    @property
+    def input(self) -> str:
+        """What the run's first preflight is given: a declined change's note, else nothing."""
+        return "declined_change" if self.decision == "declined" else "none"
+
+
+NO_PENDING: Final = PendingDecision()
+MAX_SUMMARY_CHARS: Final = 300
+_PROPOSAL: Final = re.compile(r"^## Proposal\n\n(.+)$", re.MULTILINE)
+
+
+def pending_request(record: PreflightRecord | None) -> int | None:
+    """The change request the ticket's last preflight run opened, waiting for a decision a run
+    then follows: None when the last run found no plan drift, or re-checked a declined change
+    (a still-plan re-check ends blocked; the next run opens a new request, A2)."""
+    last = record.runs[-1] if record is not None and record.runs else None
+    if last is None or last.drift != "plan" or last.input == "declined_change":
+        return None
+    return last.change_request
+
+
+def pending_decision(n: int, request: bytes, decision: bytes) -> PendingDecision:
+    """Request ``n``'s decision as a run follows it; refused when either file is a problem."""
+    status = _read_back(n, request, decision)
+    if status not in ("approved", "declined"):
+        return NO_PENDING
+    try:
+        note = text_field(record_fields(decision[:CHANGE_REQUEST_HEAD_BYTES]), "note") or ""
+    except RecordFieldError as error:
+        raise TicketRecordError(str(error)) from None
+    proposal = _PROPOSAL.search(request.decode("utf-8", "replace"))
+    summary = one_line(proposal[1])[:MAX_SUMMARY_CHARS] if proposal else f"change request {n}"
+    return PendingDecision(request=n, decision=status, note=note, summary=summary)
