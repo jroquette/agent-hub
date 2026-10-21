@@ -117,7 +117,11 @@ def test_gives_shell_its_representative_routes_when_routes_asked() -> None:
 
 
 def test_maps_every_screen_folder_when_routes_listed() -> None:
-    folders = {path.name for path in SCREENS_DIR.iterdir() if path.is_dir()} - {"not-found"}
+    folders = {
+        path.name
+        for path in SCREENS_DIR.iterdir()
+        if path.is_dir() and not path.name.startswith(".")
+    } - {"not-found"}
     assert folders <= set(SCREEN_ROUTES)
 
 
