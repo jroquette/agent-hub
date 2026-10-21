@@ -11,6 +11,12 @@ lifespan's exit) starts it if no signal did, and waits for it: no ``claude`` is 
 ``UnavailableSessionDriver`` and ``UnavailableCloudLauncher`` stand in for the Claude adapters
 when the ``sessions`` extra is not installed (P2): the capabilities say why, and starting a
 session raises ``SessionsUnavailableError`` (503).
+
+``HubCredentials`` reads the credentials a project's hub declares (``hub.json`` and
+``hub.local.json``, environments and endpoints) each time a session starts: the names every
+driven session loses (AM-13, P-9) and the env files the investigation's tool policy denies
+(P-17). Names and paths only; no env file is ever opened here. When ``hub.local.json`` cannot
+be read, only ``hub.json``'s are known (``complete`` is false).
 """
 
 import asyncio
@@ -18,6 +24,7 @@ import contextlib
 import logging
 import time
 from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Final, Protocol
 
@@ -34,6 +41,14 @@ from agent_hub.core.agent_sessions.driver import (
     StartSpec,
 )
 from agent_hub.core.agent_sessions.errors import SessionsUnavailableError
+from agent_hub.core.hub_config.effective_environments import (
+    declared_env_files,
+    effective_environments,
+)
+from agent_hub.core.hub_config.local_config import LocalConfig
+from agent_hub.core.hubs.hub_document import read_hub_document
+from agent_hub.core.hubs.hub_registry import HubFileReader, HubRegistry, HubRegistryError
+from agent_hub.core.scenarios.credentials import NO_CREDENTIALS, CredentialNames
 
 SWEEP_SECONDS: Final = 0.5
 PURGE_SECONDS: Final = 3600.0
@@ -206,3 +221,60 @@ class SessionRuntime:
                 if purge:
                     purged_at = now
             await asyncio.sleep(self._sweep_seconds)
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class DeclaredCredentials:
+    """The credentials one hub declares: the names (``credentials.env`` and ``aws_profile``),
+    the env files as declared (relative to the workspace), and whether both files were read."""
+
+    names: CredentialNames
+    env_files: tuple[str, ...]
+    complete: bool
+
+
+NO_DECLARED: Final = DeclaredCredentials(names=NO_CREDENTIALS, env_files=(), complete=False)
+
+
+class HubCredentials:
+    """Each registered hub's declared credentials, read on every call (see the module
+    docstring); a project no valid registered hub names declares none."""
+
+    def __init__(
+        self, *, registry: HubRegistry, reader: HubFileReader, running_version: str
+    ) -> None:
+        self._registry = registry
+        self._reader = reader
+        self._running = running_version
+
+    def names(self, project: str) -> CredentialNames:
+        """The credential names ``project``'s hub declares."""
+        try:
+            entries = self._registry.entries()
+        except HubRegistryError:
+            return NO_CREDENTIALS
+        for entry in entries:
+            document = read_hub_document(
+                self._reader.read_hub_json(entry.path), running_version=self._running
+            )
+            if document.config is not None and document.config.project.name == project:
+                return self.of_hub(entry.path).names
+        return NO_CREDENTIALS
+
+    def of_hub(self, hub_path: str) -> DeclaredCredentials:
+        """What the hub at ``hub_path`` declares."""
+        config = read_hub_document(
+            self._reader.read_hub_json(hub_path), running_version=self._running
+        ).config
+        if config is None:
+            return NO_DECLARED
+        local = self._reader.read_local(hub_path)
+        complete = isinstance(local, LocalConfig)
+        view = effective_environments(
+            config, local if isinstance(local, LocalConfig) else LocalConfig()
+        )
+        return DeclaredCredentials(
+            names=CredentialNames.of(view),
+            env_files=tuple(found.path for found in declared_env_files(view)),
+            complete=complete,
+        )

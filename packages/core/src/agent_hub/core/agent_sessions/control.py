@@ -34,6 +34,10 @@ and the subscribers (S4, E8).
   the glimpse), reading only the kinds it needs.
 - ``shutdown`` ends every live session ``server_stopped``, interrupting a running turn before
   the driver disconnects (P12), all in parallel and bounded.
+- Every session starts (and reopens) without the credentials its project's hub declares
+  (``hidden_environment``, AM-13). A session created with a ``SessionRestriction`` (the
+  scenario investigation's tool policy and system prompt, P-7, P-17) keeps it when a message
+  reopens it, for as long as this server runs.
 
 Errors are the ``errors`` module's; the API maps each to a problem. Messages and records never
 carry conversation text outside the log itself.
@@ -44,6 +48,7 @@ import contextlib
 import uuid
 import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
 from functools import partial
@@ -154,6 +159,8 @@ from agent_hub.core.agent_sessions.session_state import (
 from agent_hub.core.agent_sessions.store import AgentSessionFields, AgentSessionStore
 from agent_hub.core.agent_sessions.workdirs import ResolvedWorkdir, WorkdirListing
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
+from agent_hub.core.scenarios.credentials import NO_CREDENTIALS, CredentialNames
+from agent_hub.core.scenarios.investigation import ToolPolicy
 from agent_hub.core.sessions.session import TokenUsage
 
 # The workdirs of a project, listed now (``api/workdir_listing.py`` over the hub registry); it
@@ -272,6 +279,15 @@ async def _bounded(step: Awaitable[None], seconds: float) -> None:
         return
 
 
+@dataclass(frozen=True, kw_only=True, slots=True)
+class SessionRestriction:
+    """What holds a session the server starts for itself (the scenario investigation): its
+    tool policy and the system prompt appended to Claude Code's own."""
+
+    tool_policy: ToolPolicy
+    system_prompt: str
+
+
 class AgentSessionCommands(Protocol):
     """Every agent-session use case the routes reach (S3, P5)."""
 
@@ -297,9 +313,11 @@ class AgentSessionCommands(Protocol):
         """Local agent sessions, newest first."""
         ...
 
-    async def create(self, request: CreateAgentSession) -> AgentSession:
+    async def create(
+        self, request: CreateAgentSession, *, restriction: SessionRestriction | None = None
+    ) -> AgentSession:
         """Start a session (and send its first prompt): ``running`` with a prompt, else
-        ``idle`` (E13)."""
+        ``idle`` (E13); ``restriction`` holds one the server starts for itself."""
         ...
 
     async def snapshot(self, agent_session_id: str) -> AgentSession:
@@ -370,7 +388,9 @@ class AgentSessionControl:
     never the access token, L5); ``new_id`` mints agent-session ids (UUIDv7) and
     ``new_claude_session_id`` the Claude session id given to a new session (P13);
     ``observed_sessions`` fills ``observed_session_id`` on the listed and read sessions (D2);
-    ``session_title(cwd, claude_session_id)`` is the title Claude Code gave a session, or None.
+    ``session_title(cwd, claude_session_id)`` is the title Claude Code gave a session, or None;
+    ``hidden_environment(project)`` names the credentials the project's hub declares, which no
+    session's environment keeps (AM-13; read off the loop, none when not given).
     """
 
     def __init__(  # noqa: PLR0913 -- the use case's ports and settings, all injected
@@ -387,6 +407,7 @@ class AgentSessionControl:
         observed_sessions: ObservedSessionLookup | None = None,
         session_title: Callable[[str, str], str | None] | None = None,
         repo_changes: RepoChangesReader | None = None,
+        hidden_environment: Callable[[str], CredentialNames] | None = None,
     ) -> None:
         self._driver = driver
         self._store = store
@@ -399,6 +420,9 @@ class AgentSessionControl:
         self._observed_sessions = observed_sessions
         self._session_title = session_title
         self._repo_changes = repo_changes
+        self._hidden_environment = hidden_environment
+        # The restriction of each session started with one, kept for its reopening.
+        self._restrictions: dict[str, SessionRestriction] = {}
         # Each branch's pull request as GitHub last named it, and when: (root, branch) -> ...
         self._pull_requests: dict[tuple[str, str], tuple[datetime, RepoPullRequest | None]] = {}
         self._live: dict[str, LiveSession] = {}
@@ -657,6 +681,14 @@ class AgentSessionControl:
         if agent_session_id in self._live:
             raise SessionLiveError(agent_session_id)
         await asyncio.to_thread(self._store.delete, agent_session_id)
+        self._restrictions.pop(agent_session_id, None)
+
+    async def _hidden(self, project: str) -> CredentialNames:
+        """The credentials ``project``'s hub declares (none without the port)."""
+        names = self._hidden_environment
+        if names is None:
+            return NO_CREDENTIALS
+        return await asyncio.to_thread(names, project)
 
     def live_link(self, project: str, claude_session_id: str) -> AgentSessionLink | None:
         """The live session driving ``claude_session_id`` in ``project`` and whether it waits
@@ -670,10 +702,13 @@ class AgentSessionControl:
 
     # Commands
 
-    async def create(self, request: CreateAgentSession) -> AgentSession:
+    async def create(
+        self, request: CreateAgentSession, *, restriction: SessionRestriction | None = None
+    ) -> AgentSession:
         """Start a session in a listed workdir (and send its first prompt, with the screenshot
         as an image): ``running`` with a prompt, else ``idle`` (E13). A refused screenshot
-        raises before anything starts or is stored."""
+        raises before anything starts or is stored. ``restriction`` holds the session to a
+        tool policy and a system prompt, now and when it is reopened."""
         prompt = request.prompt
         if prompt is not None:
             self._check_size(prompt)
@@ -682,6 +717,7 @@ class AgentSessionControl:
             await self._check_can_start()
             resolved = (await self._listing(request.project)).resolve(request.workdir_id)
             past = await self._resumed(request, resolved.path)
+            hidden = await self._hidden(request.project)
             minted = (
                 None if request.resume_session_id is not None else self._new_claude_session_id()
             )
@@ -705,6 +741,8 @@ class AgentSessionControl:
                 updated_at=now,
             )
             await asyncio.to_thread(self._store.create, session)
+            if restriction is not None:
+                self._restrictions[session.id] = restriction
             spec = StartSpec(
                 cwd=resolved.path,
                 mode=request.mode,
@@ -714,6 +752,9 @@ class AgentSessionControl:
                 session_id=minted,
                 environment_extra=self._environment_extra,
                 plugin_dirs=resolved.plugin_dirs,
+                hidden_environment=hidden,
+                tool_policy=None if restriction is None else restriction.tool_policy,
+                system_prompt=None if restriction is None else restriction.system_prompt,
             )
             live = await self._start(session, spec, state)
             try:
@@ -1063,6 +1104,8 @@ class AgentSessionControl:
                 "updated_at": now,
                 **digest.fields(),
             }
+            hidden = await self._hidden(session.project)
+            kept = self._restrictions.get(session.id)
             reopened = await asyncio.to_thread(lambda: self._store.update(session.id, **fields))
             spec = StartSpec(
                 cwd=resolved.path,
@@ -1072,6 +1115,9 @@ class AgentSessionControl:
                 session_id=None,
                 environment_extra=self._environment_extra,
                 plugin_dirs=resolved.plugin_dirs,
+                hidden_environment=hidden,
+                tool_policy=None if kept is None else kept.tool_policy,
+                system_prompt=None if kept is None else kept.system_prompt,
             )
             state = start_state(with_prompt=False)
             live = await self._start(reopened, spec, state)
