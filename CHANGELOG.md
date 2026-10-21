@@ -13,6 +13,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- hub web's Discuss panel talks with a feature's own session (the one that wrote its spec, research or plan) from
+  the feature's page, with a new conversation one click away (AGH-422). The panel resizes from its left edge (kept per
+  browser), docks beside the page from 1280 px and lays over it below, closes with Escape and gives focus back; its
+  header is two quiet rows with one menu, it shows what Claude is doing and full errors, and it starts with a short
+  title and the starters as rows.
 - The base plugin gains the `/premortem` and `/context-audit` skills (AGH-414). `/premortem` assumes a decision
   already failed and gives its top three causes an early-warning sign and the cheapest experiment that could prove the
   choice wrong. `/context-audit` estimates the always-loaded context of a hub and its repos and ranks the cuts by

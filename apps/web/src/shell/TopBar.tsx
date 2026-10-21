@@ -99,9 +99,10 @@ function DiscussToggle() {
     <Tooltip label={label}>
       <Button
         size="sm"
-        variant={open ? "primary" : "default"}
+        variant="default"
         icon="message-square"
         aria-pressed={open}
+        data-discuss-toggle
         onClick={() => {
           setOpen(!open);
         }}

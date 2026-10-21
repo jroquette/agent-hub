@@ -9,32 +9,106 @@
   display: flex;
   flex-direction: column;
   border-left: 1px solid var(--border);
-  background: var(--bg);
+  background: var(--surface);
+  container-type: inline-size;
+}
+/*
+ * Its width is the one the owner chose (--discuss-chosen, set while dragging its edge), clamped
+ * to what the window allows now: a narrower window clamps it, the stored choice stays.
+ * Docked from 1280 px (the page keeps 640 px and makes room), over the page below, full width
+ * on a phone.
+ */
+.ah-shell {
+  --sidebar-now: var(--sidebar);
+}
+.ah-shell[data-collapsed="true"] {
+  --sidebar-now: var(--sidebar-collapsed);
 }
 .ah-shell[data-discuss="true"] {
-  --discuss-width: min(460px, 40vw);
+  --discuss-width: clamp(
+    320px,
+    var(--discuss-chosen, 480px),
+    max(320px, min(720px, 100vw - var(--sidebar-now) - 640px))
+  );
 }
 .ah-shell[data-discuss="true"] .ah-shell-main,
 .ah-shell[data-discuss="true"] .ah-shell-banner {
   margin-right: var(--discuss-width);
 }
+.ah-discuss > .as-drawer-handle {
+  z-index: 2;
+}
+@media (max-width: 1279px) {
+  .ah-shell[data-discuss="true"] {
+    --discuss-width: clamp(320px, var(--discuss-chosen, min(480px, 100vw - 96px)), 100vw - 96px);
+  }
+  .ah-shell[data-discuss="true"] .ah-shell-main,
+  .ah-shell[data-discuss="true"] .ah-shell-banner {
+    margin-right: 0;
+  }
+  .ah-discuss {
+    z-index: var(--z-banner);
+    border-left: none;
+    box-shadow: var(--shadow-overlay);
+  }
+}
+@media (max-width: 767px) {
+  .ah-shell[data-discuss="true"] {
+    --discuss-width: 100vw;
+  }
+  .ah-discuss > .as-drawer-handle,
+  .ah-discuss-widen {
+    display: none;
+  }
+}
+/* Row 1: what the panel is, and its window controls. */
 .ah-discuss-head {
   flex: none;
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--border);
+  height: 40px;
+  padding: 0 var(--space-2) 0 var(--space-4);
+  background: var(--surface);
 }
 .ah-discuss-title {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
+  font-weight: 600;
 }
-.ah-discuss-title > span {
+/* Row 2: what is discussed, the session's state, its actions; the panel's only divider under it. */
+.ah-discuss-sub {
+  flex: none;
+  gap: var(--space-2);
+  min-height: 32px;
+  padding: 0 var(--space-2) var(--space-1) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-wrap: nowrap;
+}
+.ah-discuss-what {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.ah-discuss-status {
+  flex: none;
+  gap: var(--space-2);
+}
+.ah-discuss-status:empty {
+  display: none;
+}
+/* Below 400 px the cost gives way to what is discussed; the status stays. */
+@container (max-width: 400px) {
+  .ah-discuss-status .as-meter {
+    display: none;
+  }
+}
+/* In the panel the cost says enough; the tokens stay on the full chat. */
+.ah-discuss-status .as-meter > .ah-muted {
+  display: none;
 }
 .ah-discuss-body {
   flex: 1 1 auto;
@@ -101,9 +175,63 @@
   box-shadow: var(--shadow-popover);
 }
 
+/* The start state: what the panel is for, in two lines, then the starters as rows. */
+.ah-discuss-intro {
+  padding-top: var(--space-6);
+}
+.ah-discuss-intro-title {
+  margin: 0 0 var(--space-1);
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+}
+.ah-discuss-intro p {
+  margin: 0;
+}
 .ah-discuss-starters {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 0 16px 12px;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-top: var(--space-4);
+}
+.ah-discuss-starters-label {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-subtle);
+}
+.ah-discuss-starter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 40px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ah-discuss-starter:hover {
+  background: var(--surface-hover);
+}
+.ah-discuss-starter:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.ah-discuss-starter:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.ah-discuss-starter > .ah-icon:last-child {
+  color: var(--text-subtle);
+}
+
+/* The top bar's Discuss toggle while the panel is open: pressed, not an accent fill. */
+.ah-btn[data-discuss-toggle][aria-pressed="true"] {
+  background: var(--surface-sunken);
+  border-color: var(--border-strong);
+  color: var(--text);
 }
