@@ -33,6 +33,7 @@ SPEC_PATHS = {
     ("get", "/api/v1/projects/{project}/config"),
     ("put", "/api/v1/projects/{project}/config/local"),
     ("post", "/api/v1/projects/{project}/config/environments"),
+    ("get", "/api/v1/projects/{project}/env-file-keys"),
     ("get", "/api/v1/needs-you"),
     ("get", "/api/v1/activity"),
     ("get", "/api/v1/search"),
