@@ -14,7 +14,8 @@ addresses above the fold, and the action that matters is changing the one wrong 
 only make a team environment stricter).
 
 Built from the playground's UX designs v2 (overview, setup flows), v3 (environment page, service panel) and the Hub
-config change (AGH-417); the find-services part of v3 is AGH-418.
+config change (AGH-417, in parts: the address display, then these screens, then the add flows of section 6 with
+their acceptance criteria); the find-services part of v3 is AGH-418.
 
 ## One place per verb
 
@@ -214,18 +215,3 @@ axe check (`npm test -- -t a11y`).
   when it fits, else cut in the middle with its host's end whole, the whole address in a tooltip, and a copy button.
 - **AC-417.11** Given the Hub config screen, when its Environments section is read, then it is one summary row
   (environments and services counted) with Open Environments.
-- **AC-417.13** Given the Environments page, when Add environment is pressed, then a page asks one question per
-  step (kind, name, what agents may do, who it is for, secrets, review) with a step list whose done steps show their
-  answer and lead back, and a live preview; the kind fills the name, access, production and who it is for; the review
-  says what happens next; adding returns to the page that opened the flow with "Added {name}".
-- **AC-417.14** Given the secrets step, when an env file is picked, then only its path field shows and its variable
-  names are listed (never a value) and only the path is sent; when the shell is picked, a variable line holding a
-  value keeps the flow from going on.
-- **AC-417.15** Given an environment name another environment has, ignoring case, when it is typed in the add flow,
-  then the flow refuses it before going on.
-- **AC-417.16** Given environments, when Add service is used, then it asks what runs, which repo and its name, and
-  its address in each environment in one list, and adds the service with each address in one write; with no
-  environment it sends people to add one first.
-- **AC-417.17** Given an add flow opened from a page, when it finishes or is cancelled, then it goes back to that
-  page, only within the project (else the Environments page); every choice is a one-column list of icon rows, and
-  Cancel past the first step asks to discard the answers.
