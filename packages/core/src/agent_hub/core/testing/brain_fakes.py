@@ -5,7 +5,8 @@
 the pull requests opened; ``InMemoryBrainChangeRequests`` applies a ``BrainChange`` to it as
 the ``hub_git`` adapter does to a real ``origin``, with the same refusals. A branch already on
 ``origin`` (a retry after a partly finished action) is adopted when it has an open pull request
-and replaced when it has none, as the adapter does.
+and replaced when it has none, as the adapter does. A ``BrainProposal`` adds its note on a new
+branch, and is refused when its branch or its note already exists.
 """
 
 from dataclasses import dataclass, field
@@ -20,6 +21,7 @@ from agent_hub.core.brain.brain_path import (
 from agent_hub.core.brain.frontmatter import with_body, with_frontmatter
 from agent_hub.core.learnings.brain_change_requests import (
     BrainChange,
+    BrainProposal,
     ChangeRequestConflictError,
     ChangeRequestFailedError,
     ChangeRequestResult,
@@ -91,7 +93,7 @@ class InMemoryBrainChangeRequests:
 
     ``unavailable`` plays an unusable hub (its reason); ``fail_step`` plays a failed git or gh
     step, after which nothing is left pushed (as the adapter deletes its branch). ``calls``
-    records every change asked for.
+    records every change and proposal asked for.
     """
 
     def __init__(
@@ -104,7 +106,7 @@ class InMemoryBrainChangeRequests:
         self.origin = origin
         self.unavailable = unavailable
         self.fail_step = fail_step
-        self.calls: list[BrainChange] = []
+        self.calls: list[BrainChange | BrainProposal] = []
 
     def availability(self, hub_path: str) -> str | None:
         """``unavailable``, whatever the hub."""
@@ -118,6 +120,44 @@ class InMemoryBrainChangeRequests:
     def reject(self, change: BrainChange) -> ChangeRequestResult:
         """Archive the note with its reason on a new branch and open its PR."""
         return self._open(change)
+
+    def propose(self, proposal: BrainProposal) -> ChangeRequestResult:
+        """Add the proposal's note on a new branch off the default branch and open its PR."""
+        self.calls.append(proposal)
+        if self.unavailable is not None:
+            raise ChangeRequestConflictError(self.unavailable)
+        if proposal.branch in self.origin.files:
+            raise ChangeRequestConflictError(f"branch exists: {proposal.branch}")
+        default = self.origin.files[self.origin.default_branch]
+        if _hub_path(proposal.note) in default:
+            raise ChangeRequestConflictError(f"note exists: brain/{proposal.note}")
+        if self.fail_step is not None:
+            raise ChangeRequestFailedError(step=self.fail_step)
+        self.origin.files[proposal.branch] = default | {_hub_path(proposal.note): proposal.text}
+        return self._push_and_open(
+            branch=proposal.branch,
+            commit=OriginCommit(
+                author_name=proposal.author.name,
+                author_email=proposal.author.email,
+                message=proposal.commit_message,
+            ),
+            hub_repo=proposal.hub_repo,
+            title=proposal.title,
+            body=proposal.body,
+        )
+
+    def _push_and_open(
+        self, *, branch: str, commit: OriginCommit, hub_repo: str, title: str, body: str
+    ) -> ChangeRequestResult:
+        """Set the head of ``branch`` (its files already set) and open its pull request."""
+        self.origin.heads[branch] = commit
+        url = f"https://github.com/{hub_repo}/pull/{len(self.origin.pulls) + 1}"
+        self.origin.pulls.append(
+            OpenedPullRequest(
+                url=url, head=branch, base=self.origin.default_branch, title=title, body=body
+            )
+        )
+        return ChangeRequestResult(pr_url=url, branch=branch)
 
     def _refuse(self, change: BrainChange) -> None:
         if self.unavailable is not None:
@@ -159,19 +199,14 @@ class InMemoryBrainChangeRequests:
             text = with_body(text, change.note_body)
         files[_hub_path(change.destination)] = with_frontmatter(text, change.frontmatter)
         self.origin.files[change.branch] = files
-        self.origin.heads[change.branch] = OriginCommit(
-            author_name=change.author.name,
-            author_email=change.author.email,
-            message=change.commit_message,
+        return self._push_and_open(
+            branch=change.branch,
+            commit=OriginCommit(
+                author_name=change.author.name,
+                author_email=change.author.email,
+                message=change.commit_message,
+            ),
+            hub_repo=change.hub_repo,
+            title=change.title,
+            body=change.body,
         )
-        url = f"https://github.com/{change.hub_repo}/pull/{len(self.origin.pulls) + 1}"
-        self.origin.pulls.append(
-            OpenedPullRequest(
-                url=url,
-                head=change.branch,
-                base=self.origin.default_branch,
-                title=change.title,
-                body=change.body,
-            )
-        )
-        return ChangeRequestResult(pr_url=url, branch=change.branch)
