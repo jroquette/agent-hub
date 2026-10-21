@@ -42,6 +42,22 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - Redaction `r1` skips its four `secret` rules on a text with no name word followed by `=` or a JSON key's `:`,
   which no `secret` rule can match: the same rule set with identical results, about three times faster on note-sized
   prose (AGH-391).
+- The built-in `sdlc` pack gains the `implement` workflow and its `ticket-pass` (AGH-404): one planned ticket of a
+  feature to a PR without redoing spec, research or plan. It writes the context brief, then runs a fresh read-only
+  preflight against `origin/<base>` (no checkout, no branch) and appends it to `preflight.json`. On plan drift it
+  opens a change request and pauses for the owner (approve, or decline with a note), writes the decision and the
+  plan's `A<k>` amendment, and checks the ticket again; an approval the plan moved past since is checked again rather
+  than failing. Only once a preflight passed does it make the worktree and branch, write the ticket plan, run the
+  review rounds, loop back to preflight on a discovery (at most twice), evaluate the ticket and open the PR on SHIP or
+  SHIP-WITH-OWNER-STEPS. Its report lists this run's hub files for your hub PR; it never commits them (a failed run's
+  files are left for you to collect with `git status`). A hub that already holds `workflows/sdlc/` runs it from the
+  release.
+- `hub step pending-decision` reads a decision given in `hub web` after a run was lost, and the next run follows it.
+  `hub step preflight` now takes the agent's findings (`--findings`, `--input`, `--input-text`, `--request`) and fills
+  the run's time, id, main's commit and plan version itself (it no longer takes `--run`). `hub step change-request`
+  takes the run's id only from `AGENT_HUB_RUN_ID`, which a workflow's steps and scripts now get (`--run-id` is gone),
+  and `--affected` is one comma-separated value. `hub step verdict` also prints the reply's `discovery`, and
+  `ticket-brief` the hub's path and the ticket repo's base. A fixture's approval stub may name its `approver`.
 
 ## [0.19.0] - 2026-10-21
 
@@ -77,17 +93,6 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   to `plan.md`, in the hub and never committed (AGH-403). A gate decision whose approver names no person (empty or
   `unknown`) is refused and the run stays paused; `hub workflow approve|reject|respond` refuse when no account name is
   known instead of recording `unknown`, and an approval's output carries its `approver`.
-- The built-in `sdlc` pack gains the `implement` workflow and its `ticket-pass` (AGH-404): one planned ticket of a
-  feature to a PR without redoing spec, research or plan. It writes the context brief, runs a fresh read-only preflight
-  in the ticket's worktree and appends it to `preflight.json`; on plan drift it opens a change request and pauses for
-  the owner (approve, or decline with a note), then writes the decision and the plan's `A<k>` amendment and checks the
-  ticket again. It then writes the ticket plan, runs the review rounds, loops back to preflight on a discovery (at most
-  twice), evaluates the ticket and opens the PR only on SHIP or SHIP-WITH-OWNER-STEPS. Its report lists the hub files
-  it changed for your hub PR; it never commits them. A hub that already holds `workflows/sdlc/` runs it from the
-  release. `hub step pending-decision` reads a decision given in `hub web` after a run was lost, and the next run
-  follows it. `hub step change-request` reads the run's id from `AGENT_HUB_RUN_ID`, which a workflow's steps and
-  scripts now get, and `--affected` takes comma-separated tickets. `hub sync` ships
-  `plugin/hub-workflow/schemas/preflight.v1.json`.
 - `hub web` can publish a Studio draft itself (AGH-298, `POST .../skills/drafts/{draft_id}/publish` with
   `{target, confirm_managed}`), and the Studio's Publish now calls it instead of asking Claude to copy the draft:
   Claude only edits the draft, the Studio shows "Publishing…" then "Published." with a link to the item, warns before
