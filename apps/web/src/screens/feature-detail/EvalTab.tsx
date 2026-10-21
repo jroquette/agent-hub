@@ -769,8 +769,9 @@ function AcceptancePrompt({
       );
     }
     case "no_acs":
+      // A wait for the owner (A18, A19): the waiting tone, as the sign-off's; no button.
       return (
-        <Banner tone="info" boxed>
+        <Banner tone="warning" boxed icon="hand">
           {lines(
             "Waiting for you · Acceptance: sign off by hand · no ACs listed",
             "features.json lists no live AC, so the app has nothing to sign off. Write the sign-off by hand: evals/owner-signoff.md with verdict SHIP and provenance owner, in a hub PR.",

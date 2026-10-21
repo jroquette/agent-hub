@@ -21,7 +21,9 @@ import {
   renderWithApi,
   type FeatureTickets,
 } from "../../testing/builders";
+import { fmtDateTime } from "../../lib/format";
 import { FeatureDetailScreen } from "./index";
+import { belowHeading } from "./TicketPanel";
 import { TicketsTab } from "./TicketsTab";
 
 const API = "/api/v1/features/agent-hub/control-plane";
@@ -507,11 +509,14 @@ describe("Deciding a change request in the ticket panel (AC-2.7, AC-2.12, AC-2.1
     const confirm = await screen.findByRole("dialog", { name: "Approve?" });
     await userEvent.click(within(confirm).getByRole("button", { name: "Approve" }));
     await queryClient.invalidateQueries();
-    expect(
-      await within(panel()).findByText(
-        "Decision sent to its run; this shows it once the run records it.",
-      ),
-    ).toBeInTheDocument();
+    // UX r3 1: the sent line takes focus while the run records the decision.
+    const sentLine = await within(panel()).findByText(
+      "Decision sent; the run records it and this shows it.",
+    );
+    expect(sentLine).toHaveAttribute("role", "status");
+    await vi.waitFor(() => {
+      expect(sentLine).toHaveFocus();
+    });
 
     stage = "recorded";
     await queryClient.invalidateQueries();
@@ -520,6 +525,26 @@ describe("Deciding a change request in the ticket panel (AC-2.7, AC-2.12, AC-2.1
       "Change request 2 approved by Dana Owner · 2026-10-21",
     );
     expect(line).toHaveFocus();
+  });
+
+  // Q16: a gate that takes no text sends the decline at once, with no text the gate would refuse.
+  it("AC-2.12 sends a decline with no text on a gate that takes none", async () => {
+    const { requests } = showTab(tickets({ "AGH-202": ASKING }), path, {
+      [RECORDS]: aTicketRecords({ change_requests: [aChangeRequest()] }),
+      [`${GATE_PATH}/gate`]: { ...gate, text: "off" },
+      [`POST ${GATE_PATH}/decision`]: {
+        approval_id: GATE,
+        run_id: "implement-202",
+        project: "agent-hub",
+        decision: "decline",
+      },
+    });
+
+    await userEvent.click(await within(panel()).findByRole("button", { name: "Decline" }));
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    const post = requests.find((r) => r.method === "POST");
+    expect(await post?.json()).toEqual({ decision: "decline" });
   });
 
   // A20, U13: evidence, proposal, consequences and the wait before the gate's buttons.
@@ -541,6 +566,11 @@ describe("Deciding a change request in the ticket panel (AC-2.7, AC-2.12, AC-2.1
     expect(block).toHaveTextContent("AGH-203 runs preflight again before it goes on.");
     expect(block).toHaveTextContent("Nothing is merged or pushed.");
     expect(block).toHaveTextContent("waiting 2 h");
+    // UX r3 4: the age's title is the date-time as the page writes it, not the raw ISO.
+    expect(within(block).getByText("2 h").closest("time")).toHaveAttribute(
+      "title",
+      fmtDateTime("2026-10-21T09:30:00Z", "local"),
+    );
     // UX F4: the request is a heading, its body's headings one level below it.
     expect(
       within(block).getByRole("heading", { level: 4, name: "Plan change request 2: plan v2 → v3" }),
@@ -710,5 +740,33 @@ describe("Ticket panel states (U1, U4)", () => {
     );
 
     expect(router.state.location.search).toBe("?doc=tickets&ticket=AGH-202&step=preflight");
+  });
+});
+
+describe("belowHeading (Q17)", () => {
+  it("shifts only headings outside fences, the fence closed by its own marker", () => {
+    const source = [
+      "## Evidence",
+      "```bash",
+      "# install",
+      "~~~",
+      "# still code",
+      "```",
+      "# Proposal",
+    ].join("\n");
+
+    expect(belowHeading(source, 5).split("\n")).toEqual([
+      "###### Evidence",
+      "```bash",
+      "# install",
+      "~~~",
+      "# still code",
+      "```",
+      "##### Proposal",
+    ]);
+  });
+
+  it("shifts a heading indented by up to three spaces", () => {
+    expect(belowHeading("   ## Evidence", 5)).toBe("   ##### Evidence");
   });
 });

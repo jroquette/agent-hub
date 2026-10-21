@@ -229,7 +229,7 @@ A15), it reads "Acceptance eval undated · evaluate again" (no usable `evaluated
 "Sign-off possible after <date-time>" (dated at or after the read; the minute after which a sign-off can follow it,
 in UTC, "21 Nov 2026, 09:01:00 UTC"), and neither reads "Waiting for you". The detail serves
 the same wait as `acceptance_eval.owner_wait` ([API.md](../API.md)). With no AC to list (no `features.json`, or every
-AC withdrawn), the step is `waiting` (when it is the gate, A19), "Waiting on owner steps · no ACs listed", until a
+AC withdrawn), the step is `waiting` (when it is the gate, A19), "Sign off by hand · no ACs listed", until a
 later owner SHIP of any scope
 exists; the app cannot write that one, so the owner writes it by hand.
 
