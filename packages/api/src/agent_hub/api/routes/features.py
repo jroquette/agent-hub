@@ -58,7 +58,7 @@ def get_feature(
     of its run that answers it (``approval_id``), and whether its run is gone, so hub web
     decides it (``decidable_here``)."""
     detail = models.get_feature(project, slug)
-    requests = _with_runs(project, detail.change_requests, events, decisions)
+    requests = _with_runs(project, detail.change_requests, events=events, decisions=decisions)
     return detail.model_copy(update={"change_requests": requests})
 
 
@@ -85,7 +85,7 @@ def get_ticket_records(
     preflight run (local notes, discoveries) and the change requests it asks or is held by, each
     open one with its run's open gate; 404 when the feature does not list the ticket."""
     records = models.ticket_records(project, slug, ticket)
-    requests = _with_runs(project, records.change_requests, events, decisions)
+    requests = _with_runs(project, records.change_requests, events=events, decisions=decisions)
     return records.model_copy(update={"change_requests": requests})
 
 
@@ -109,6 +109,7 @@ def decide_change_request(
 def _with_runs(
     project: str,
     requests: tuple[ChangeRequestView, ...],
+    *,
     events: EventReadModels,
     decisions: DecideChangeRequest | None,
 ) -> tuple[ChangeRequestView, ...]:
