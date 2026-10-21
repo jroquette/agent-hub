@@ -101,11 +101,11 @@ describe("StartSessionDialog (shake to start a session)", () => {
     });
   });
 
-  it("does not remember the copy when unchecked", async () => {
+  it("does not remember the copy once removed", async () => {
     const { created, view, dialog } = start();
 
     await userEvent.click(
-      within(dialog).getByRole("checkbox", { name: "Attach a screenshot of the current screen" }),
+      within(dialog).getByRole("button", { name: "Remove Screenshot of the screen you shook" }),
     );
     await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
 

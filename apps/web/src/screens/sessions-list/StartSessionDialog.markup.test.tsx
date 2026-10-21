@@ -50,19 +50,16 @@ describe("StartSessionDialog (marked-up screenshot, AC-266.3)", () => {
     const dialog = screen.getByRole("dialog", { name: "New session" });
 
     await userEvent.click(
-      within(dialog).getByRole("checkbox", { name: "Attach a screenshot of the current screen" }),
+      within(dialog).getByRole("button", { name: "Remove Screenshot of the screen you shook" }),
+    );
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Attach the screenshot again" }),
     );
     await userEvent.click(
       within(dialog).getByRole("button", {
         name: "Open and mark up: Screenshot of the screen you shook",
       }),
     );
-    expect(
-      within(dialog).getByRole("checkbox", { name: "Attach a screenshot of the current screen" }),
-    ).toBeChecked();
-    expect(
-      within(dialog).getByText(/Click it to view it larger and mark it up/),
-    ).toBeInTheDocument();
     await userEvent.type(within(dialog).getByRole("textbox", { name: "Prompt" }), "Look here");
     await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
 

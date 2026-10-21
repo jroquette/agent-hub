@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 
-import { rememberScreenshot } from "../../lib/screenshotCopy";
+import { rememberMessageScreenshots, rememberScreenshot } from "../../lib/screenshotCopy";
 import type { PermissionMode } from "../agent-session/model";
 import { agentSessionHref } from "./control";
 import {
@@ -86,9 +86,15 @@ export function StartSessionDialog({
       onSubmit={(body) => {
         create.mutate(body, {
           onSuccess: (created) => {
-            // The image sent, marked up or not, is the one the chat view shows.
-            if (body.screenshot)
-              rememberScreenshot(created.id, `data:image/png;base64,${body.screenshot.data}`);
+            // The images sent, marked up or not, are the ones the chat view shows: the capture,
+            // then the images added to the first prompt (its record is the log's first).
+            const png = (data: string) => `data:image/png;base64,${data}`;
+            if (body.screenshot) rememberScreenshot(created.id, png(body.screenshot.data));
+            if (body.screenshots?.length)
+              rememberMessageScreenshots(created.id, 1, [
+                ...(body.screenshot ? [png(body.screenshot.data)] : []),
+                ...body.screenshots.map((image) => png(image.data)),
+              ]);
             onClose();
             void navigate(agentSessionHref(created.id));
           },

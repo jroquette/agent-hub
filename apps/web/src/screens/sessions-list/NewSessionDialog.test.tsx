@@ -38,9 +38,11 @@ function open(overrides: Partial<NewSessionDialogProps> = {}) {
   return { props, view, dialog: screen.getByRole("dialog", { name }) };
 }
 
-/** Opens the collapsed "Options" disclosure (Mode, Model). */
-async function options(dialog: HTMLElement) {
-  await userEvent.click(within(dialog).getByRole("button", { name: "Options" }));
+/** The values a select offers, in order. */
+function values(select: HTMLElement) {
+  return within(select)
+    .getAllByRole("option")
+    .map((o) => o.getAttribute("value"));
 }
 
 vi.mock("../../lib/devCheckout", async (importOriginal) => {
@@ -56,22 +58,16 @@ describe("NewSessionDialog (new-session)", () => {
   it("offers Auto too, with its hint, in the dev app of make playground", async () => {
     vi.mocked(servedCheckout).mockReturnValue("/srv/demo/agent-hub");
     const { dialog } = open();
-    await options(dialog);
-    const modes = within(dialog).getByRole("group", { name: "Mode" });
+    const modes = within(dialog).getByRole("combobox", { name: "Mode" });
 
-    expect(
-      within(modes)
-        .getAllByRole("radio")
-        .map((r) => r.getAttribute("value")),
-    ).toEqual(["default", "acceptEdits", "plan", "auto"]);
-    await userEvent.click(within(modes).getByRole("radio", { name: /Auto/ }));
+    expect(values(modes)).toEqual(["default", "acceptEdits", "plan", "auto"]);
+    await userEvent.selectOptions(modes, "auto");
     expect(dialog).toHaveTextContent("a safety check blocks risky actions");
     vi.mocked(servedCheckout).mockReturnValue(null);
   });
 
-  it("offers only the listed workdirs, the three modes and the capabilities' models", async () => {
+  it("offers only the listed workdirs, the three modes and the capabilities' models", () => {
     const { dialog } = open();
-    await options(dialog);
 
     const folder = within(dialog).getByRole("combobox", { name: "Working folder" });
     expect(
@@ -80,18 +76,19 @@ describe("NewSessionDialog (new-session)", () => {
         .map((o) => o.textContent),
     ).toEqual(["agent-hub-hub (hub)", "agh-7-collector (worktree of agent-hub)"]);
     expect(within(dialog).queryByRole("textbox", { name: /path/i })).toBeNull();
-    expect(
-      within(within(dialog).getByRole("group", { name: "Mode" }))
-        .getAllByRole("radio")
-        .map((r) => r.getAttribute("value")),
-    ).toEqual(["default", "acceptEdits", "plan"]);
+    expect(values(within(dialog).getByRole("combobox", { name: "Mode" }))).toEqual([
+      "default",
+      "acceptEdits",
+      "plan",
+    ]);
     expect(dialog).not.toHaveTextContent(/bypass/i);
-    const model = within(dialog).getByRole("combobox", { name: "Model" });
-    expect(
-      within(model)
-        .getAllByRole("option")
-        .map((o) => o.getAttribute("value")),
-    ).toEqual(["default", "opus", "sonnet", "haiku", "__other__"]);
+    expect(values(within(dialog).getByRole("combobox", { name: "Model" }))).toEqual([
+      "default",
+      "opus",
+      "sonnet",
+      "haiku",
+      "__other__",
+    ]);
   });
 
   it("submits the chosen folder, mode, model and first prompt", async () => {
@@ -101,8 +98,7 @@ describe("NewSessionDialog (new-session)", () => {
       within(dialog).getByRole("combobox", { name: "Working folder" }),
       "0123456789abcdef",
     );
-    await options(dialog);
-    await userEvent.click(within(dialog).getByRole("radio", { name: /Plan/ }));
+    await userEvent.selectOptions(within(dialog).getByRole("combobox", { name: "Mode" }), "plan");
     await userEvent.selectOptions(within(dialog).getByRole("combobox", { name: "Model" }), "opus");
     await userEvent.type(
       within(dialog).getByRole("textbox", { name: "Prompt" }),
@@ -136,7 +132,6 @@ describe("NewSessionDialog (new-session)", () => {
 
   it("checks a free model id against the pattern before submitting", async () => {
     const { dialog, props } = open();
-    await options(dialog);
 
     await userEvent.selectOptions(
       within(dialog).getByRole("combobox", { name: "Model" }),
@@ -155,6 +150,52 @@ describe("NewSessionDialog (new-session)", () => {
     expect(props.onSubmit).toHaveBeenCalledWith(
       expect.objectContaining({ model: "claude-sonnet-4-5[1m]", prompt: null }),
     );
+  });
+
+  it("sends a file pasted in the card with the first prompt, which it then needs", async () => {
+    const { dialog, props } = open();
+    const prompt = within(dialog).getByRole("textbox", { name: "Prompt" });
+    const start = within(dialog).getByRole("button", { name: "Start session" });
+
+    fireEvent.paste(prompt, {
+      clipboardData: { files: [new File(["# Notes"], "notes.md", { type: "text/markdown" })] },
+    });
+    const attached = await within(dialog).findByRole("list", {
+      name: "Attached to the first prompt",
+    });
+    expect(await within(attached).findByText("notes.md")).toBeInTheDocument();
+    expect(start).toHaveAccessibleDescription("Write a prompt to send the attachments.");
+    await userEvent.type(prompt, "Follow these notes");
+    await userEvent.click(start);
+
+    expect(props.onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: "Follow these notes",
+        files: [expect.objectContaining({ name: "notes.md" })],
+      }),
+    );
+    expect(vi.mocked(props.onSubmit).mock.calls[0]?.[0]).not.toHaveProperty("screenshots");
+  });
+
+  it("lists the folder's skills on / and inserts the one picked; Esc closes only the menu", async () => {
+    const { dialog, props } = open({ workdirs: [WORKTREE] });
+    const prompt = within(dialog).getByRole("textbox", { name: "Prompt" });
+
+    await userEvent.type(prompt, "/");
+    const menu = within(dialog).getByRole("listbox", { name: "Commands" });
+    expect(
+      within(menu)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual([expect.stringContaining("/fix"), expect.stringContaining("/review")]);
+    await userEvent.keyboard("{Escape}");
+    expect(within(dialog).queryByRole("listbox", { name: "Commands" })).toBeNull();
+    expect(props.onCancel).not.toHaveBeenCalled();
+
+    await userEvent.clear(prompt);
+    await userEvent.type(prompt, "/re{Enter}");
+    expect(prompt).toHaveValue("/review ");
+    expect(props.onSubmit).not.toHaveBeenCalled();
   });
 
   it("refuses a first prompt over the byte limit", async () => {
@@ -214,18 +255,18 @@ describe("NewSessionDialog (new-session)", () => {
 });
 
 const SHOT = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
+const SHOT_ALT = "Screenshot of the screen you shook";
 
 describe("NewSessionDialog (shake to start a session)", () => {
-  it("shake-opens: prompt focused, checkbox checked, thumbnail with alt", async () => {
+  it("shake-opens: prompt focused, the screenshot attached in the card with its alt", async () => {
     const { dialog, props } = open({ screenshot: { dataUrl: SHOT } });
 
     const prompt = within(dialog).getByRole("textbox", { name: "Prompt" });
     expect(prompt).toHaveFocus();
-    const attach = within(dialog).getByRole("checkbox", {
-      name: "Attach a screenshot of the current screen",
-    });
-    expect(attach).toBeChecked();
-    expect(attach).toBeEnabled();
+    const attached = within(dialog).getByRole("list", { name: "Attached to the first prompt" });
+    expect(
+      within(attached).getByRole("button", { name: `Remove ${SHOT_ALT}` }),
+    ).toBeInTheDocument();
     expect(
       within(dialog).getByRole("img", { name: "Screenshot of the screen you shook" }),
     ).toHaveAttribute("src", SHOT);
@@ -246,12 +287,14 @@ describe("NewSessionDialog (shake to start a session)", () => {
     expect(await seriousViolations(dialog)).toEqual([]);
   });
 
-  it("screenshot-unchecked: body has no screenshot key", async () => {
+  it("screenshot-removed: body has no screenshot key, and it can be attached again", async () => {
     const { dialog, props } = open({ screenshot: { dataUrl: SHOT } });
 
-    await userEvent.click(
-      within(dialog).getByRole("checkbox", { name: "Attach a screenshot of the current screen" }),
-    );
+    await userEvent.click(within(dialog).getByRole("button", { name: `Remove ${SHOT_ALT}` }));
+    expect(within(dialog).queryByRole("img")).toBeNull();
+    expect(
+      within(dialog).getByRole("button", { name: "Attach the screenshot again" }),
+    ).toBeInTheDocument();
     await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
 
     expect(props.onSubmit).toHaveBeenCalledTimes(1);
@@ -260,14 +303,10 @@ describe("NewSessionDialog (shake to start a session)", () => {
     expect(body).toMatchObject({ prompt: null });
   });
 
-  it("capture-failed: checkbox unchecked and disabled, note, no thumbnail, no screenshot", async () => {
+  it("capture-failed: a note, no thumbnail, no screenshot", async () => {
     const { dialog, props } = open({ screenshot: { failed: true } });
 
-    const attach = within(dialog).getByRole("checkbox", {
-      name: "Attach a screenshot of the current screen",
-    });
-    expect(attach).not.toBeChecked();
-    expect(attach).toBeDisabled();
+    expect(within(dialog).queryByRole("button", { name: /screenshot/i })).toBeNull();
     expect(within(dialog).getByText("No screenshot was taken")).toBeInTheDocument();
     expect(within(dialog).queryByRole("img")).toBeNull();
     expect(within(dialog).getByRole("textbox", { name: "Prompt" })).toHaveFocus();
@@ -276,10 +315,10 @@ describe("NewSessionDialog (shake to start a session)", () => {
     expect(vi.mocked(props.onSubmit).mock.calls[0]?.[0]).not.toHaveProperty("screenshot");
   });
 
-  it("new-session-button: no checkbox, body identical to today", async () => {
+  it("new-session-button: nothing attached, body identical to today", async () => {
     const { dialog, props } = open();
 
-    expect(within(dialog).queryByRole("checkbox")).toBeNull();
+    expect(within(dialog).queryByRole("list", { name: "Attached to the first prompt" })).toBeNull();
     expect(within(dialog).queryByRole("img")).toBeNull();
     expect(within(dialog).getByRole("textbox", { name: "Prompt" })).toHaveFocus();
     await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
@@ -311,20 +350,18 @@ describe("NewSessionDialog (shake to start a session)", () => {
 
     expect(start).toBeDisabled();
     expect(
-      within(dialog).getByText("The screenshot goes with the first prompt: write one."),
+      within(dialog).getByText("The attachments go with the first prompt: write one."),
     ).toBeInTheDocument();
     await userEvent.type(prompt, "   ");
     expect(start).toBeDisabled();
     await userEvent.type(prompt, "Why?");
     expect(start).toBeEnabled();
     await userEvent.clear(prompt);
-    await userEvent.click(
-      within(dialog).getByRole("checkbox", { name: "Attach a screenshot of the current screen" }),
-    );
+    await userEvent.click(within(dialog).getByRole("button", { name: `Remove ${SHOT_ALT}` }));
     expect(start).toBeEnabled();
   });
 
-  it("live-edit: initial workdir and acceptEdits", async () => {
+  it("live-edit: initial workdir and acceptEdits", () => {
     window.localStorage.setItem("ah.sessions.workdir.agent-hub", aWorkdir().workdir_id);
     const { dialog } = open({
       screenshot: { dataUrl: SHOT },
@@ -335,12 +372,11 @@ describe("NewSessionDialog (shake to start a session)", () => {
     expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveValue(
       WORKTREE.workdir_id,
     );
-    await options(dialog);
-    expect(within(dialog).getByRole("radio", { name: /Accept edits/ })).toBeChecked();
+    expect(within(dialog).getByRole("combobox", { name: "Mode" })).toHaveValue("acceptEdits");
     expect(within(dialog).queryByRole("note")).toBeNull();
   });
 
-  it("live-edit-fallback: the note shows and the defaults are kept", async () => {
+  it("live-edit-fallback: the note shows and the defaults are kept", () => {
     const { dialog } = open({
       screenshot: { dataUrl: SHOT },
       initialWorkdirId: "ffffffffffffffff",
@@ -350,8 +386,7 @@ describe("NewSessionDialog (shake to start a session)", () => {
     expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveValue(
       aWorkdir().workdir_id,
     );
-    await options(dialog);
-    expect(within(dialog).getByRole("radio", { name: /Ask/ })).toBeChecked();
+    expect(within(dialog).getByRole("combobox", { name: "Mode" })).toHaveValue("default");
     expect(within(dialog).getByRole("note")).toHaveTextContent(
       "Live reload needs make dev in a listed folder",
     );
@@ -361,7 +396,7 @@ describe("NewSessionDialog (shake to start a session)", () => {
 describe("NewSessionDialog (new-session-dialog)", () => {
   const STORED = "ah.sessions.workdir.agent-hub";
 
-  it("shows only Where and the focused Prompt; Mode and Model wait in Options", async () => {
+  it("shows Where, then the focused Prompt in a card holding the mode and the model", async () => {
     const { dialog } = open({ projects: ["agent-hub", "ops"] });
 
     const where = within(dialog).getByRole("group", { name: "Where" });
@@ -370,21 +405,14 @@ describe("NewSessionDialog (new-session-dialog)", () => {
       aWorkdir().workdir_id,
     );
     expect(within(dialog).getByRole("textbox", { name: "Prompt" })).toHaveFocus();
-    expect(within(dialog).queryByRole("group", { name: "Mode" })).toBeNull();
-    expect(within(dialog).queryByRole("combobox", { name: "Model" })).toBeNull();
+    expect(within(dialog).getByRole("combobox", { name: "Mode" })).toHaveValue("default");
+    expect(within(dialog).getByRole("combobox", { name: "Model" })).toHaveValue("default");
+    expect(within(dialog).getByRole("button", { name: "Attach a file" })).toBeEnabled();
     expect(within(dialog).queryByRole("combobox", { name: "Start from" })).toBeNull();
     expect(within(dialog).queryByRole("checkbox", { name: /Fork/ })).toBeNull();
-    const toggle = within(dialog).getByRole("button", { name: "Options" });
-    expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(toggle).toHaveAccessibleDescription("Ask before edits · default");
 
-    await userEvent.click(toggle);
-    expect(toggle).toHaveAttribute("aria-expanded", "true");
-    await userEvent.click(within(dialog).getByRole("radio", { name: /Plan/ }));
-    await userEvent.selectOptions(within(dialog).getByRole("combobox", { name: "Model" }), "opus");
-    expect(toggle).toHaveAccessibleDescription("Plan · opus");
-    await userEvent.click(toggle);
-    expect(within(dialog).queryByRole("group", { name: "Mode" })).toBeNull();
+    await userEvent.selectOptions(within(dialog).getByRole("combobox", { name: "Mode" }), "plan");
+    expect(dialog).toHaveTextContent("Claude plans first and asks you to approve the plan.");
     expect(await seriousViolations(dialog)).toEqual([]);
   });
 
@@ -480,7 +508,7 @@ describe("NewSessionDialog (new-session-dialog)", () => {
   });
 
   it.each([
-    [{ screenshot: { dataUrl: SHOT } }, "Write a prompt to send the screenshot."],
+    [{ screenshot: { dataUrl: SHOT } }, "Write a prompt to send the attachments."],
     [{ workdirs: [] }, "No working folder to start in."],
     [{ workdirs: undefined }, "Waiting for the working folders."],
     [
@@ -498,17 +526,16 @@ describe("NewSessionDialog (new-session-dialog)", () => {
     },
   );
 
-  it("points to Options when the model id there is not valid, and drops the reason once fixed", async () => {
+  it("says when the model id is not valid, and drops the reason once fixed", async () => {
     const { dialog } = open();
     const start = within(dialog).getByRole("button", { name: "Start session" });
     expect(start).not.toHaveAttribute("aria-describedby");
 
-    await options(dialog);
     await userEvent.selectOptions(
       within(dialog).getByRole("combobox", { name: "Model" }),
       "__other__",
     );
-    expect(start).toHaveAccessibleDescription("Options: the model id is not valid.");
+    expect(start).toHaveAccessibleDescription("The model id is not valid.");
     await userEvent.type(within(dialog).getByRole("textbox", { name: "Model id" }), "opus");
 
     expect(start).toBeEnabled();
@@ -592,7 +619,6 @@ describe("NewSessionDialog (resume: fork)", () => {
   it("resume: a fork keeps a model id the capabilities do not list", async () => {
     const { dialog, props } = fork({ forkOf: { ...ENDED, model: "claude-sonnet-4-5" } });
 
-    await options(dialog);
     expect(within(dialog).getByRole("textbox", { name: "Model id" })).toHaveValue(
       "claude-sonnet-4-5",
     );
@@ -607,13 +633,9 @@ describe("NewSessionDialog (resume: fork)", () => {
     vi.mocked(servedCheckout).mockReturnValue(null);
     const { dialog, props } = fork({ forkOf: { ...ENDED, mode: "auto" } });
 
-    await options(dialog);
-    const modes = within(dialog).getByRole("group", { name: "Mode" });
-    expect(within(modes).queryByRole("radio", { name: /Auto/ })).toBeNull();
-    expect(within(modes).getByRole("radio", { name: /^Ask before edits/ })).toBeChecked();
-    expect(within(dialog).getByRole("button", { name: "Options" })).toHaveAccessibleDescription(
-      /^Ask before edits ·/,
-    );
+    const modes = within(dialog).getByRole("combobox", { name: "Mode" });
+    expect(values(modes)).not.toContain("auto");
+    expect(modes).toHaveValue("default");
     await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
     expect(vi.mocked(props.onSubmit).mock.calls[0]?.[0]).toMatchObject({ mode: "default" });
   });
@@ -622,16 +644,14 @@ describe("NewSessionDialog (resume: fork)", () => {
     vi.mocked(servedCheckout).mockReturnValue("/srv/demo/agent-hub");
     const { dialog, props } = fork({ forkOf: { ...ENDED, mode: "auto" } });
 
-    await options(dialog);
-    expect(within(dialog).getByRole("radio", { name: /Auto/ })).toBeChecked();
+    expect(within(dialog).getByRole("combobox", { name: "Mode" })).toHaveValue("auto");
     await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
     expect(vi.mocked(props.onSubmit).mock.calls[0]?.[0]).toMatchObject({ mode: "auto" });
     vi.mocked(servedCheckout).mockReturnValue(null);
   });
 
-  it("resume: the Fork dialog, Options open, has no serious axe violations", async () => {
+  it("resume: the Fork dialog has no serious axe violations", async () => {
     const { dialog } = fork();
-    await options(dialog);
     expect(await seriousViolations(dialog)).toEqual([]);
   });
 

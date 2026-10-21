@@ -1,14 +1,28 @@
 import "../agent-session/agent-session.css";
 
-import { useId, useState, type KeyboardEvent } from "react";
+import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import type { components } from "../../api/schema";
-import { Button, Dialog, Time } from "../../components";
-import { readStored, writeStored } from "../../lib/storage";
+import {
+  AttachButton,
+  AttachmentList,
+  Button,
+  Dialog,
+  Icon,
+  Time,
+  useAttachmentDrop,
+  useMessageAttachments,
+  type AttachedImage,
+} from "../../components";
 import type { ApiProblem } from "../../lib/api";
+import { cx } from "../../lib/cx";
+import { fileBody } from "../../lib/messageFile";
+import { screenshotBody } from "../../lib/pastedImage";
+import { readStored, writeStored } from "../../lib/storage";
+import { useAutoGrow } from "../../lib/useAutoGrow";
 import { offeredModes, DEFAULT_MESSAGE_MAX_BYTES } from "../agent-session/Composer";
 import { modeLabel, type PermissionMode } from "../agent-session/model";
-import { ScreenshotThumb } from "../../components/ScreenshotLightbox";
+import { useSlashMenu, type SlashOption } from "../agent-session/SlashMenu";
 
 type Schemas = components["schemas"];
 export type Workdir = Schemas["Workdir"];
@@ -24,6 +38,11 @@ export const MODEL_PATTERN = /^[A-Za-z0-9._\-[\]]{1,64}$/;
 const OTHER_MODEL = "__other__";
 /** The folder last started in, per project (AC-234.14). */
 const workdirKey = (project: string) => `ah.sessions.workdir.${project}`;
+/** The prompt grows with its text up to this share of the viewport, then scrolls. */
+const PROMPT_HEIGHT_SHARE = 0.35;
+/** The shake's screenshot in the attachments row, apart from the images added by hand. */
+const SHOT_KEY = -1;
+const SHOT_ALT = "Screenshot of the screen you shook";
 
 const MODE_HINT: Record<PermissionMode, string> = {
   default: "Claude asks before each edit or command.",
@@ -88,7 +107,9 @@ function preferredWorkdir(project: string, workdirs: readonly Workdir[], initial
 
 /**
  * "New session" (D10, AC-165.42, AC-234.14): where to start (project › one of the listed folders)
- * and the prompt; the mode (never bypass) and the model alias or id wait in "Options".
+ * and the first prompt, in the chat's message card: images and files pasted, dropped or picked
+ * go with it, `/` lists the folder's skills, and the mode (never bypass) and the model sit in the
+ * card's bar as in the chat.
  */
 export function NewSessionDialog({
   project,
@@ -112,7 +133,7 @@ export function NewSessionDialog({
 }: NewSessionDialogProps) {
   const [picked, setPicked] = useState<string | null>(null);
   // Only an offered mode starts checked: a built app never offers auto (ADR 0036), so a fork of an
-  // auto session started in the playground falls back to the default, shown checked under Options.
+  // auto session started in the playground falls back to the default.
   const [mode, setMode] = useState<PermissionMode>(() => {
     const wanted = forkOf?.mode ?? initialMode ?? "default";
     return offeredModes().includes(wanted) ? wanted : "default";
@@ -132,21 +153,31 @@ export function NewSessionDialog({
     kept !== null && !capabilities.models.includes(kept) ? kept : "",
   );
   const [prompt, setPrompt] = useState(initialPrompt ?? "");
-  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [attachError, setAttachError] = useState<string | null>(null);
   const [firstProject] = useState(project);
-  const modeName = useId();
-  const whereId = useId();
-  const optionsId = useId();
   // The screenshot's marked-up copy, once edited in the lightbox; it is the one sent.
   const [marked, setMarked] = useState<string | null>(null);
-  const summaryId = useId();
+  const box = useRef<HTMLTextAreaElement | null>(null);
+  const focusBox = () => box.current?.focus({ preventScroll: true });
+  const attachments = useMessageAttachments({
+    acceptsImages: true,
+    acceptsFiles: true,
+    disabled: pending,
+    onError: setAttachError,
+  });
+  const { dragging, dropProps } = useAttachmentDrop(attachments, {
+    disabled: pending,
+    onAdded: focusBox,
+  });
+  useAutoGrow(box, prompt, PROMPT_HEIGHT_SHARE);
+  const whereId = useId();
   const reasonId = useId();
+  const modeField = useId();
   const modelField = useId();
   const otherField = useId();
   const otherHint = useId();
   const promptField = useId();
   const promptHint = useId();
-  const attachField = useId();
   const forkId = useId();
 
   const folders = workdirs ?? [];
@@ -168,7 +199,7 @@ export function NewSessionDialog({
   const promptBytes = new TextEncoder().encode(prompt).length;
   const promptTooLong = promptBytes > maxPromptBytes;
   const attached = attach && shot !== null;
-  const needsPrompt = attached && prompt.trim() === "";
+  const needsPrompt = (attached || attachments.count > 0) && prompt.trim() === "";
   const reason = pending
     ? null
     : !capabilities.available
@@ -178,38 +209,60 @@ export function NewSessionDialog({
         : !where
           ? "No working folder to start in."
           : !modelValid
-            ? "Options: the model id is not valid."
+            ? "The model id is not valid."
             : promptTooLong
               ? "The prompt is too long."
-              : needsPrompt
-                ? "Write a prompt to send the screenshot."
-                : null;
+              : attachments.reading > 0
+                ? "Wait for the files to be read."
+                : needsPrompt
+                  ? "Write a prompt to send the attachments."
+                  : null;
   const ready = !pending && reason === null;
 
   const submit = () => {
     if (!ready || !where) return;
     if (!forkOf) writeStored(workdirKey(project), where.workdir_id);
     const text = prompt.trim();
-    const body: CreateAgentSession = {
+    const { images, files } = attachments;
+    onSubmit({
       ...where,
       mode,
       model: chosenModel,
       prompt: text ? text : null,
       resume_session_id: forkOf?.claude_session_id ?? null,
       fork: forkOf !== undefined,
-    };
-    onSubmit(
-      attached
-        ? {
-            ...body,
-            screenshot: {
-              media_type: "image/png",
-              data: (marked ?? shot).slice((marked ?? shot).indexOf(",") + 1),
-            },
-          }
-        : body,
-    );
+      ...(attached ? { screenshot: screenshotBody(marked ?? shot) } : {}),
+      ...(images.length > 0
+        ? { screenshots: images.map((image) => screenshotBody(image.url)) }
+        : {}),
+      ...(files.length > 0 ? { files: files.map((one) => fileBody(one.file)) } : {}),
+    });
   };
+
+  // The folder's skills fill the `/` menu, as the hub's do in a chat.
+  const skills: SlashOption[] = (workdir?.skills ?? []).map((skill) => ({
+    command: `/${skill}`,
+    hub: false,
+    description: null,
+  }));
+  const [caret, setCaret] = useState<number | null>(null);
+  const placeCaret = useRef<number | null>(null);
+  const slash = useSlashMenu(
+    pending ? "" : prompt,
+    Math.min(caret ?? prompt.length, prompt.length),
+    skills,
+    (next, at) => {
+      placeCaret.current = at;
+      setCaret(at);
+      setPrompt(next);
+    },
+  );
+  useLayoutEffect(() => {
+    const at = placeCaret.current;
+    if (at === null || !box.current) return;
+    placeCaret.current = null;
+    box.current.setSelectionRange(at, at);
+  }, [prompt]);
 
   const onKeyDown = (event: KeyboardEvent) => {
     if (event.key !== "Enter" || !(event.ctrlKey || event.metaKey) || event.nativeEvent.isComposing)
@@ -217,6 +270,13 @@ export function NewSessionDialog({
     event.preventDefault();
     submit();
   };
+
+  // The shake's screenshot leads the attachments row; once marked up, its new copy is shown.
+  const images: AttachedImage[] = [
+    ...(attached ? [{ key: SHOT_KEY, url: marked ?? shot, alt: SHOT_ALT }] : []),
+    ...attachments.images,
+  ];
+  const modes = offeredModes();
 
   return (
     <Dialog
@@ -237,6 +297,7 @@ export function NewSessionDialog({
           </Button>
           <Button
             variant="primary"
+            icon="arrow-up"
             disabled={!ready}
             aria-describedby={reason ? reasonId : undefined}
             onClick={submit}
@@ -249,8 +310,7 @@ export function NewSessionDialog({
       {/* Ctrl/Cmd+Enter from any field starts the session; the controls keep their own keys. */}
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions */}
       <form
-        className="ah-stack"
-        style={{ gap: 12 }}
+        className="as-new-form"
         onKeyDown={onKeyDown}
         onSubmit={(event) => {
           event.preventDefault();
@@ -269,8 +329,8 @@ export function NewSessionDialog({
         )}
 
         {forkOf ? (
-          <div role="group" aria-labelledby={forkId} className="ah-stack" style={{ gap: 4 }}>
-            <span id={forkId} className="ah-small">
+          <div role="group" aria-labelledby={forkId} className="as-new-where as-new-fork">
+            <span id={forkId} className="as-new-label">
               Fork
             </span>
             <b>{forkOf.title ?? "Untitled session"}</b>
@@ -286,34 +346,39 @@ export function NewSessionDialog({
             </span>
           </div>
         ) : (
-          <div role="group" aria-labelledby={whereId} className="ah-stack" style={{ gap: 4 }}>
-            <span id={whereId} className="ah-small">
+          <div role="group" aria-labelledby={whereId} className="as-new-where">
+            <span id={whereId} className="as-new-label">
               Where
             </span>
-            <div className="ah-row ah-wrap" style={{ gap: 6 }}>
+            <div className="as-new-where-row">
               {projects.length > 1 ? (
-                <select
-                  aria-label="Project"
-                  className="ah-input as-select"
-                  value={project}
-                  disabled={pending}
-                  onChange={(event) => {
-                    setPicked(null);
-                    onProjectChange?.(event.target.value);
-                  }}
-                >
-                  {projects.map((name) => (
-                    <option key={name} value={name}>
-                      {name}
-                    </option>
-                  ))}
-                </select>
+                <label className="as-pill as-new-pill">
+                  <Icon name="folder-kanban" size="sm" />
+                  <select
+                    aria-label="Project"
+                    className="as-pill-select"
+                    value={project}
+                    disabled={pending}
+                    onChange={(event) => {
+                      setPicked(null);
+                      onProjectChange?.(event.target.value);
+                    }}
+                  >
+                    {projects.map((name) => (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    ))}
+                  </select>
+                  <Icon name="chevron-down" size="sm" className="as-pill-caret" />
+                </label>
               ) : (
-                <span className="ah-small">{project}</span>
+                <span className="as-new-project">
+                  <Icon name="folder-kanban" size="sm" />
+                  {project}
+                </span>
               )}
-              <span aria-hidden="true" className="ah-subtle">
-                ›
-              </span>
+              <Icon name="chevron-right" size="sm" className="ah-subtle" />
               {workdirs === undefined && !workdirsProblem ? (
                 <span className="ah-small ah-muted">Loading the working folders…</span>
               ) : folders.length === 0 ? (
@@ -321,192 +386,250 @@ export function NewSessionDialog({
                   {workdirsProblem ?? `No working folder found for ${project}.`}
                 </span>
               ) : (
-                <select
-                  aria-label="Working folder"
-                  className="ah-input as-select ah-grow"
-                  value={workdirId}
-                  disabled={pending}
-                  onChange={(event) => {
-                    setPicked(event.target.value);
-                  }}
-                >
-                  {folders.map((w) => (
-                    <option key={w.workdir_id} value={w.workdir_id}>
-                      {workdirText(w)}
-                    </option>
-                  ))}
-                </select>
+                <label className="as-pill as-new-pill as-new-folder">
+                  <Icon name={workdir?.kind === "worktree" ? "git-branch" : "folder"} size="sm" />
+                  <select
+                    aria-label="Working folder"
+                    className="as-pill-select"
+                    value={workdirId}
+                    disabled={pending}
+                    onChange={(event) => {
+                      setPicked(event.target.value);
+                    }}
+                  >
+                    {folders.map((w) => (
+                      <option key={w.workdir_id} value={w.workdir_id}>
+                        {workdirText(w)}
+                      </option>
+                    ))}
+                  </select>
+                  <Icon name="chevron-down" size="sm" className="as-pill-caret" />
+                </label>
               )}
             </div>
           </div>
         )}
-        <div className="ah-stack" style={{ gap: 4 }}>
-          <label htmlFor={promptField} className="ah-small">
+
+        <div className="as-new-prompt">
+          <label htmlFor={promptField} className="as-new-label">
             Prompt
           </label>
-          <textarea
-            id={promptField}
-            className="ah-input as-composer-input"
-            rows={4}
-            value={prompt}
-            disabled={pending}
-            aria-invalid={promptTooLong}
-            aria-describedby={promptHint}
-            onChange={(event) => {
-              setPrompt(event.target.value);
-            }}
-          />
-          <span id={promptHint} className="ah-small ah-subtle">
+          {/* Files dropped anywhere on the card join the first prompt; the keyboard has Attach. */}
+          <div
+            className={cx("as-composer as-new-composer", dragging && "as-composer-drop")}
+            {...dropProps}
+          >
+            <AttachmentList
+              images={images}
+              files={attachments.files}
+              reading={attachments.reading}
+              label="Attached to the first prompt"
+              onRemoveImage={(key) => {
+                if (key === SHOT_KEY) setAttach(false);
+                else attachments.removeImage(key);
+                focusBox();
+              }}
+              onRemoveFile={(key) => {
+                attachments.removeFile(key);
+                focusBox();
+              }}
+              onReplaceImage={(key, url) => {
+                if (key === SHOT_KEY) setMarked(url);
+                else attachments.replaceImage(key, url);
+              }}
+            />
+            {slash.menu}
+            {/* A textbox's activedescendant is not announced everywhere: the menu says what it holds. */}
+            <span className="ah-sr" aria-live="polite" aria-atomic="true">
+              {slash.announcement}
+            </span>
+            <textarea
+              id={promptField}
+              ref={box}
+              className="ah-input as-composer-input"
+              rows={3}
+              value={prompt}
+              disabled={pending}
+              placeholder={
+                images.length > 0
+                  ? "Say what Claude should look at in the image"
+                  : attachments.files.length > 0
+                    ? "Say what Claude should do with the file"
+                    : skills.length > 0
+                      ? "What should Claude do? Type / for the folder's skills"
+                      : "What should Claude do?"
+              }
+              aria-invalid={promptTooLong}
+              aria-describedby={promptHint}
+              {...slash.inputProps}
+              onChange={(event) => {
+                setPrompt(event.target.value);
+                setCaret(event.target.selectionStart);
+              }}
+              onSelect={(event) => {
+                setCaret(event.currentTarget.selectionStart);
+              }}
+              onPaste={(event) => {
+                if (!attachments.takes(event.clipboardData)) return;
+                // A copied file may also carry its name as text: only the file is pasted.
+                event.preventDefault();
+                attachments.add(event.clipboardData);
+              }}
+              onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing) return;
+                // The open `/` menu takes its keys first (Esc closes it, Enter inserts): the
+                // dialog never sees them, so Esc keeps the dialog open and Enter never starts.
+                if (slash.onKeyDown(event)) event.stopPropagation();
+              }}
+            />
+            <div className="as-composer-bar">
+              <AttachButton
+                attachments={attachments}
+                disabled={pending}
+                className="as-composer-attach"
+                onAdded={focusBox}
+              />
+              <div className="as-composer-settings">
+                <label
+                  htmlFor={modeField}
+                  className="as-pill"
+                  data-mode={mode}
+                  title={MODE_HINT[mode]}
+                >
+                  <Icon name="shield" size="sm" />
+                  <span className="ah-sr">Mode</span>
+                  <select
+                    id={modeField}
+                    className="as-pill-select"
+                    value={mode}
+                    disabled={pending}
+                    onChange={(event) => {
+                      const next = modes.find((m) => m === event.target.value);
+                      if (next) setMode(next);
+                    }}
+                  >
+                    {modes.map((m) => (
+                      <option key={m} value={m}>
+                        {modeLabel(m)}
+                      </option>
+                    ))}
+                  </select>
+                  <Icon name="chevron-down" size="sm" className="as-pill-caret" />
+                </label>
+                <label htmlFor={modelField} className="as-pill" title="Model">
+                  <Icon name="cpu" size="sm" />
+                  <span className="ah-sr">Model</span>
+                  <select
+                    id={modelField}
+                    className="as-pill-select"
+                    value={model}
+                    disabled={pending}
+                    onChange={(event) => {
+                      setModel(event.target.value);
+                    }}
+                  >
+                    {capabilities.models.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                    <option value={OTHER_MODEL}>Other model id…</option>
+                  </select>
+                  <Icon name="chevron-down" size="sm" className="as-pill-caret" />
+                </label>
+              </div>
+            </div>
+          </div>
+          <span
+            id={promptHint}
+            className="as-new-hint"
+            data-warn={promptTooLong || needsPrompt || undefined}
+          >
             {promptTooLong
               ? `Too long: at most ${String(Math.floor(maxPromptBytes / 1024))} KiB.`
               : needsPrompt
-                ? "The screenshot goes with the first prompt: write one."
+                ? "The attachments go with the first prompt: write one."
                 : "Without a prompt the session waits for your first message. Ctrl+Enter or ⌘+Enter starts it."}
           </span>
-          {workdir && workdir.skills.length > 0 && (
-            <div className="ah-row ah-wrap" style={{ gap: 6 }} role="group" aria-label="Skills">
-              {workdir.skills.map((skill) => (
-                <Button
-                  key={skill}
-                  size="sm"
-                  variant="ghost"
-                  disabled={pending}
-                  onClick={() => {
-                    setPrompt((before) => withSkill(before, skill));
-                  }}
-                >
-                  /{skill}
-                </Button>
-              ))}
-            </div>
+          <span className="as-new-hint">
+            <b>{modeLabel(mode)}.</b> {MODE_HINT[mode]} Paste or drop images, PDFs and text files.
+          </span>
+          {attachError && (
+            <p role="alert" className="as-error ah-small">
+              {attachError}
+            </p>
           )}
         </div>
 
-        {screenshot && (
-          <div className="ah-stack" style={{ gap: 4 }}>
-            <label htmlFor={attachField} className="ah-row ah-small" style={{ gap: 6 }}>
-              <input
-                id={attachField}
-                type="checkbox"
-                className="ah-check"
-                checked={attached}
-                disabled={pending || shot === null}
-                onChange={(event) => {
-                  setAttach(event.target.checked);
-                }}
-              />
-              Attach a screenshot of the current screen
-            </label>
+        {screenshot && !attached && (
+          <div className="ah-row" style={{ gap: 6 }}>
             {shot === null ? (
               <span className="ah-small ah-subtle">No screenshot was taken</span>
             ) : (
-              <>
-                <ScreenshotThumb
-                  className="as-shot"
-                  src={marked ?? shot}
-                  alt="Screenshot of the screen you shook"
-                  disabled={pending}
-                  onSave={(edited) => {
-                    setMarked(edited);
-                    setAttach(true);
-                  }}
-                />
-                <span className="ah-small ah-subtle">
-                  Click it to view it larger and mark it up (arrows, boxes, pen, text).
-                </span>
-              </>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon="plus"
+                disabled={pending}
+                onClick={() => {
+                  setAttach(true);
+                  focusBox();
+                }}
+              >
+                Attach the screenshot again
+              </Button>
             )}
           </div>
         )}
 
-        <div className="ah-stack" style={{ gap: 8 }}>
-          <div className="ah-row" style={{ gap: 6 }}>
-            <Button
-              size="sm"
-              variant="ghost"
-              icon={optionsOpen ? "chevron-down" : "chevron-right"}
-              aria-expanded={optionsOpen}
-              aria-controls={optionsOpen ? optionsId : undefined}
-              aria-describedby={summaryId}
-              onClick={() => {
-                setOptionsOpen((open) => !open);
+        {model === OTHER_MODEL && (
+          <div className="ah-stack" style={{ gap: 4 }}>
+            <label htmlFor={otherField} className="as-new-label">
+              Model id
+            </label>
+            <input
+              id={otherField}
+              className="ah-input"
+              value={otherModel}
+              maxLength={64}
+              disabled={pending}
+              aria-invalid={otherModel !== "" && !modelValid}
+              aria-describedby={otherHint}
+              onChange={(event) => {
+                setOtherModel(event.target.value);
               }}
-            >
-              Options
-            </Button>
-            <span id={summaryId} className="ah-small ah-muted">
-              {`${modeLabel(mode)} · ${chosenModel || "no model id"}`}
+            />
+            <span id={otherHint} className="ah-small ah-subtle">
+              {otherModel !== "" && !modelValid
+                ? "Letters, digits and . _ - [ ] only, at most 64."
+                : "For example claude-sonnet-4-5."}
             </span>
           </div>
-          {optionsOpen && (
-            <div id={optionsId} className="ah-stack" style={{ gap: 12 }}>
-              <fieldset className="as-fieldset" disabled={pending}>
-                <legend className="ah-small">Mode</legend>
-                {offeredModes().map((m) => (
-                  <label key={m} className="as-radio">
-                    <input
-                      type="radio"
-                      name={modeName}
-                      value={m}
-                      checked={mode === m}
-                      onChange={() => {
-                        setMode(m);
-                      }}
-                    />
-                    {modeLabel(m)}
-                    <span className="ah-small ah-muted">{MODE_HINT[m]}</span>
-                  </label>
-                ))}
-              </fieldset>
+        )}
 
-              <div className="ah-stack" style={{ gap: 4 }}>
-                <label htmlFor={modelField} className="ah-small">
-                  Model
-                </label>
-                <select
-                  id={modelField}
-                  className="ah-input"
-                  value={model}
-                  disabled={pending}
-                  onChange={(event) => {
-                    setModel(event.target.value);
-                  }}
-                >
-                  {capabilities.models.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                  <option value={OTHER_MODEL}>Other model id…</option>
-                </select>
-                {model === OTHER_MODEL && (
-                  <>
-                    <label htmlFor={otherField} className="ah-small">
-                      Model id
-                    </label>
-                    <input
-                      id={otherField}
-                      className="ah-input"
-                      value={otherModel}
-                      maxLength={64}
-                      disabled={pending}
-                      aria-invalid={otherModel !== "" && !modelValid}
-                      aria-describedby={otherHint}
-                      onChange={(event) => {
-                        setOtherModel(event.target.value);
-                      }}
-                    />
-                    <span id={otherHint} className="ah-small ah-subtle">
-                      {otherModel !== "" && !modelValid
-                        ? "Letters, digits and . _ - [ ] only, at most 64."
-                        : "For example claude-sonnet-4-5."}
-                    </span>
-                  </>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
+        {workdir && workdir.skills.length > 0 && (
+          <div className="as-new-skills" role="group" aria-label="Skills">
+            <span className="as-new-label" aria-hidden="true">
+              Skills
+            </span>
+            {workdir.skills.map((skill) => (
+              <Button
+                key={skill}
+                size="sm"
+                variant="ghost"
+                className="as-new-skill"
+                disabled={pending}
+                onClick={() => {
+                  setPrompt((before) => withSkill(before, skill));
+                  focusBox();
+                }}
+              >
+                /{skill}
+              </Button>
+            ))}
+          </div>
+        )}
+
         {pending && (
           <span role="status" className="ah-small">
             Starting the session…
