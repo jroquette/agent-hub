@@ -32,6 +32,7 @@ import {
   fileKind,
   isMarkdown,
   isReviewable,
+  isTestFile,
   type FileKind,
 } from "./fileKind";
 import { commonDir, type ChangedFile, type FileChange } from "./model";
@@ -54,6 +55,15 @@ const KIND_NOTE: Record<FileKind, string> = {
 
 /** The DOM id of the files drawer, for the header button's `aria-controls`. */
 export const FILES_PANEL_ID = "as-files-panel";
+
+/** How the code tab splits its files: all together, the code apart, or the tests apart. Kept in
+ * this browser for every session. */
+type CodeSplit = "all" | "source" | "tests";
+export const CODE_SPLIT_KEY = "ah.chat.codeSplit";
+const readCodeSplit = (): CodeSplit => {
+  const value = readStored(CODE_SPLIT_KEY);
+  return value === "source" || value === "tests" ? value : "all";
+};
 
 export const reviewedKey = (sessionId: string) => `ah.chat.reviewed.${sessionId}`;
 
@@ -866,6 +876,7 @@ export function FilesPanel({
   const review = shared ?? own;
   const [picked, setPicked] = useState<string | null>(initialPath);
   const [tab, setTab] = useState<FileKind | null>(null);
+  const [split, setSplit] = useState<CodeSplit>(readCodeSplit);
   // Opened on a file, the keyboard goes to that file; else to the drawer's heading.
   const [focusFile, setFocusFile] = useState(initialPath !== null);
   useEffect(() => {
@@ -894,7 +905,27 @@ export function FilesPanel({
   const pickedKind =
     picked !== null && files.some((file) => file.path === picked) ? fileKind(picked) : null;
   const kind = kinds.find((group) => group.kind === (pickedKind ?? tab)) ?? kinds[0];
-  const shown = useMemo(() => kind?.files ?? [], [kind]);
+  // The code tab can show its tests apart: only when it has both tests and other code.
+  const testCount = kind?.kind === "code" ? kind.files.filter((f) => isTestFile(f.path)).length : 0;
+  const sourceCount = kind?.kind === "code" ? kind.files.length - testCount : 0;
+  const canSplit = testCount > 0 && sourceCount > 0;
+  // A picked file (a card in the conversation) shows even when the split hides its side.
+  const pickedSide: CodeSplit | null =
+    canSplit && picked !== null && kind?.files.some((file) => file.path === picked)
+      ? isTestFile(picked)
+        ? "tests"
+        : "source"
+      : null;
+  const side: CodeSplit = !canSplit
+    ? "all"
+    : split !== "all" && pickedSide !== null && pickedSide !== split
+      ? pickedSide
+      : split;
+  const shown = useMemo(() => {
+    const all = kind?.files ?? [];
+    if (side === "all") return all;
+    return all.filter((file) => isTestFile(file.path) === (side === "tests"));
+  }, [kind, side]);
 
   const root = useMemo(() => commonDir(shown.map((file) => file.path)), [shown]);
   // One file alone keeps its folder in view: the root is then its parent's parent.
@@ -1004,6 +1035,37 @@ export function FilesPanel({
           )}
           {(kind?.kind ?? "code") === "code" && repos && repos.length > 0 && (
             <RepoList repos={repos} />
+          )}
+          {canSplit && (
+            <div className="as-files-codesplit ah-small">
+              <SegmentedControl
+                label="Show the code and its tests"
+                value={side}
+                onChange={(id) => {
+                  const next = id as CodeSplit;
+                  setSplit(next);
+                  writeStored(CODE_SPLIT_KEY, next);
+                  setPicked(null);
+                }}
+                options={[
+                  {
+                    id: "all",
+                    label: `All ${String(sourceCount + testCount)}`,
+                    title: "Code and tests together",
+                  },
+                  {
+                    id: "source",
+                    label: `Code ${String(sourceCount)}`,
+                    title: "The code, without its tests",
+                  },
+                  {
+                    id: "tests",
+                    label: `Tests ${String(testCount)}`,
+                    title: "Only the test files",
+                  },
+                ]}
+              />
+            </div>
           )}
           <div
             className={cx("as-files-body", wide && "as-files-split")}

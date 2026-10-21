@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ChangedFilesChip, FilesPanel, reviewedKey } from "./FilesPanel";
+import { CODE_SPLIT_KEY, ChangedFilesChip, FilesPanel, reviewedKey } from "./FilesPanel";
 import { changedFiles, type ToolView } from "./model";
 import { withRepoChanges } from "./repoChanges";
 import { commentMessage } from "./review";
@@ -736,5 +736,59 @@ describe("FilesPanel (repositories)", () => {
       "https://github.com/acme/api/pull/7",
     );
     expect(repos).toHaveTextContent("In sync with the pull request");
+  });
+});
+
+describe("FilesPanel (code and tests)", () => {
+  const MIXED = [
+    tool("c1", "Write", { file_path: "/repo/src/provider.py", content: "x = 1" }),
+    tool("c2", "Write", { file_path: "/repo/tests/test_provider.py", content: "def test(): ..." }),
+    tool("c3", "Write", { file_path: "/repo/src/ui/app.test.ts", content: "it()" }),
+  ];
+  const rows = () =>
+    within(screen.getByRole("navigation", { name: "Files" }))
+      .getAllByRole("button")
+      .map((button) => button.dataset.filePath)
+      .filter(Boolean);
+
+  it("shows everything together, then the code or its tests apart, and remembers the choice", async () => {
+    const { unmount } = render(
+      <FilesPanel files={filesOf(MIXED)} sessionId="s1" onClose={vi.fn()} />,
+    );
+    const split = screen.getByRole("group", { name: "Show the code and its tests" });
+    expect(within(split).getByRole("button", { name: "All 3" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(rows()).toHaveLength(3);
+
+    await userEvent.click(within(split).getByRole("button", { name: "Tests 2" }));
+    expect(rows()).toEqual(["/repo/tests/test_provider.py", "/repo/src/ui/app.test.ts"]);
+
+    await userEvent.click(within(split).getByRole("button", { name: "Code 1" }));
+    expect(rows()).toEqual(["/repo/src/provider.py"]);
+    expect(window.localStorage.getItem(CODE_SPLIT_KEY)).toBe("source");
+
+    unmount();
+    render(<FilesPanel files={filesOf(MIXED)} sessionId="s2" onClose={vi.fn()} />);
+    expect(rows()).toEqual(["/repo/src/provider.py"]);
+  });
+
+  it("shows a file a card asked for, even on the side the split hides", () => {
+    window.localStorage.setItem(CODE_SPLIT_KEY, "source");
+    render(
+      <FilesPanel
+        files={filesOf(MIXED)}
+        sessionId="s1"
+        onClose={vi.fn()}
+        initialPath="/repo/tests/test_provider.py"
+      />,
+    );
+    expect(screen.getByRole("region", { name: /test_provider\.py/ })).toBeInTheDocument();
+  });
+
+  it("offers no split when the code has no tests", () => {
+    render(<FilesPanel files={filesOf(TWO_FILES)} sessionId="s1" onClose={vi.fn()} />);
+    expect(screen.queryByRole("group", { name: "Show the code and its tests" })).toBeNull();
   });
 });
