@@ -19,6 +19,7 @@ from agent_hub.core.item_versions.capture_item_versions import CaptureItemVersio
 from agent_hub.core.item_versions.hub_item_writer import HubItemWriteError, ItemWriteRefusedError
 from agent_hub.core.item_versions.item_version import (
     ItemVersion,
+    ItemVersionMeta,
     NewItemVersion,
     VersionAuthor,
     VersionOrigin,
@@ -882,10 +883,31 @@ def _plugin_files(rig: _Rig) -> dict[str, bytes]:
     }
 
 
-def _assert_spent(rig: _Rig, refused: pytest.ExceptionInfo[ItemWriteRefusedError]) -> None:
+# Every unit a spent-draft case can touch, so a refusal is seen to record nothing.
+_SPENT_UNITS: Final = (
+    SCOUT,
+    ALPHA,
+    RENAMED,
+    GAMMA,
+    SETTINGS,
+    PLUGIN_HOOKS,
+    "plugin/demo/agents/planner.md",
+)
+
+
+def _pages(rig: _Rig) -> dict[str, tuple[ItemVersionMeta, ...]]:
+    return {path: rig.store.page(PROJECT, path, limit=200) for path in _SPENT_UNITS}
+
+
+def _assert_spent(
+    rig: _Rig,
+    refused: pytest.ExceptionInfo[ItemWriteRefusedError],
+    before: dict[str, tuple[ItemVersionMeta, ...]],
+) -> None:
     assert refused.value.code == "draft_already_published"
     assert refused.value.reason == SPENT
     assert rig.writer.writes == []
+    assert _pages(rig) == before
 
 
 def test_refuses_spent_draft_when_agent_edit_retried_after_draft_not_removed() -> None:
@@ -897,10 +919,11 @@ def test_refuses_spent_draft_when_agent_edit_retried_after_draft_not_removed() -
     rig.writer.fail_on.clear()
     rig.writer.writes.clear()
 
+    before = _pages(rig)
     with pytest.raises(ItemWriteRefusedError) as refused:
         rig.publish.publish(PROJECT, "agent-spt001", SCOUT_REF, confirm_managed=False)
 
-    _assert_spent(rig, refused)
+    _assert_spent(rig, refused, before)
     assert rig.hub.skill_files[SCOUT] == _named("scout", "New.\n")
     assert rig.origins(SCOUT) == [VersionOrigin.EXTERNAL, VersionOrigin.PUBLISH]
     assert rig.drafts() == [".hub-drafts/agent-spt001/scout.md"]
@@ -917,10 +940,11 @@ def test_keeps_old_item_when_rename_retried_after_old_not_removed() -> None:
     rig.writer.fail_on.clear()
     rig.writer.writes.clear()
 
+    before = _pages(rig)
     with pytest.raises(ItemWriteRefusedError) as refused:
         rig.publish.publish(PROJECT, "skill-spt002", alpha, confirm_managed=False)
 
-    _assert_spent(rig, refused)
+    _assert_spent(rig, refused, before)
     assert _plugin_files(rig) == {
         f"{ALPHA}/SKILL.md": _named("alpha"),
         f"{RENAMED}/SKILL.md": _named("alpha2"),
@@ -945,10 +969,11 @@ def test_refuses_spent_draft_when_hook_edit_retried_after_draft_not_removed(
         rig.draft("hook-spt003", {"hooks.json": _two_hook_draft("C")})
     rig.writer.writes.clear()
 
+    before = _pages(rig)
     with pytest.raises(ItemWriteRefusedError) as refused:
         rig.publish.publish(PROJECT, "hook-spt003", SECOND_HOOK, confirm_managed=False)
 
-    _assert_spent(rig, refused)
+    _assert_spent(rig, refused, before)
     assert _commands(once) == ["x1", "A", "B", "x3"]
     assert rig.hub.skill_files[SETTINGS] == once
     assert rig.origins(SETTINGS) == [VersionOrigin.EXTERNAL, VersionOrigin.PUBLISH]
@@ -965,10 +990,11 @@ def test_refuses_spent_draft_when_new_item_retried_after_draft_not_removed() -> 
     rig.writer.fail_on.clear()
     rig.writer.writes.clear()
 
+    before = _pages(rig)
     with pytest.raises(ItemWriteRefusedError) as refused:
         rig.publish.publish(PROJECT, "agent-spt004", None, confirm_managed=False)
 
-    _assert_spent(rig, refused)
+    _assert_spent(rig, refused, before)
     assert rig.hub.skill_files[planner] == _named("planner")
     assert rig.origins(planner) == [VersionOrigin.PUBLISH]
     assert rig.drafts() == [".hub-drafts/agent-spt004/planner.md"]
@@ -985,12 +1011,13 @@ def test_keeps_other_target_when_spent_rename_draft_published_onto_it() -> None:
     rig.writer.fail_on.clear()
     rig.writer.writes.clear()
 
+    before = _pages(rig)
     with pytest.raises(ItemWriteRefusedError) as refused:
         rig.publish.publish(
             PROJECT, "skill-spt005", _ref(ItemKind.SKILL, "demo", "gamma"), confirm_managed=False
         )
 
-    _assert_spent(rig, refused)
+    _assert_spent(rig, refused, before)
     assert _plugin_files(rig) == {
         f"{RENAMED}/SKILL.md": _named("alpha2"),
         f"{GAMMA}/SKILL.md": _named("gamma"),
@@ -1012,12 +1039,13 @@ def test_refuses_spent_draft_when_aimed_at_target_of_other_kind() -> None:
     rig = _Rig({SCOUT: _named("scout"), f"{ALPHA}/SKILL.md": _named("alpha")})
     _spent_scout(rig, "agent-spt006")
 
+    before = _pages(rig)
     with pytest.raises(ItemWriteRefusedError) as refused:
         rig.publish.publish(
             PROJECT, "agent-spt006", _ref(ItemKind.SKILL, "demo", "alpha"), confirm_managed=False
         )
 
-    _assert_spent(rig, refused)
+    _assert_spent(rig, refused, before)
     assert rig.hub.skill_files[f"{ALPHA}/SKILL.md"] == _named("alpha")
     assert rig.drafts() == [".hub-drafts/agent-spt006/scout.md"]
 
@@ -1027,12 +1055,31 @@ def test_refuses_spent_draft_when_kept_draft_edited_into_invalid_one() -> None:
     _spent_scout(rig, "agent-spt007")
     rig.draft("agent-spt007", {"scout.md": b"no frontmatter\n"})
 
+    before = _pages(rig)
     with pytest.raises(ItemWriteRefusedError) as refused:
         rig.publish.publish(PROJECT, "agent-spt007", SCOUT_REF, confirm_managed=False)
 
-    _assert_spent(rig, refused)
+    _assert_spent(rig, refused, before)
     assert rig.hub.skill_files[SCOUT] == _named("scout", "New.\n")
     assert rig.drafts() == [".hub-drafts/agent-spt007/scout.md"]
+
+
+def test_refuses_spent_draft_when_kept_folder_read_refused() -> None:
+    rig = _Rig({SCOUT: _named("scout")})
+    _spent_scout(rig, "agent-spt008")
+    # The kept folder now reads as a link: a read would refuse it, the spent check answers first.
+    rig.hub.skill_links[".hub-drafts/agent-spt008"] = "/elsewhere"
+    with pytest.raises(ItemWriteRefusedError) as unspent:
+        rig.writer.read_draft(HUB, "agent-spt008")
+    assert unspent.value.code == "link_in_path"
+    before = _pages(rig)
+
+    with pytest.raises(ItemWriteRefusedError) as refused:
+        rig.publish.publish(PROJECT, "agent-spt008", SCOUT_REF, confirm_managed=False)
+
+    _assert_spent(rig, refused, before)
+    assert rig.hub.skill_files[SCOUT] == _named("scout", "New.\n")
+    assert rig.drafts() == [".hub-drafts/agent-spt008/scout.md"]
 
 
 def _versions(rig: _Rig, *unit_paths: str) -> list[list[str]]:
