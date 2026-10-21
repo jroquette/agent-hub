@@ -359,13 +359,14 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
         f"{_BASE_PLUGIN}/hooks/stdlib_reader.py", f"{_BASE_PLUGIN}/hooks/stdlib_reader.py.tmpl"
     ),
     _hook_entry_point("stop_gate"),
-    # The agent output JSON schemas the reviewers and the evaluator write to (AGH-139 S8).
+    # The agent output JSON schemas the reviewers and the evaluator write to (AGH-139 S8), and
+    # the ticket preflight record's (AGH-404).
     *(
         _core_verbatim(
             f"{_BASE_PLUGIN}/schemas/{OUTPUT_SCHEMA_FILES[kind]}",
             TemplateSource(OUTPUT_SCHEMA_PACKAGE, OUTPUT_SCHEMA_FILES[kind]),
         )
-        for kind in ("eval", "review")
+        for kind in ("eval", "preflight", "review")
     ),
     # `render_entries` links each skill folder into `.claude/skills/`.
     *(

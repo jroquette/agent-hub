@@ -399,6 +399,11 @@
       "ownership": "managed",
       "sha256": "6974784c184964e81c26857c12499ad28c8fe8752c79db155f4524378aa0b5cf"
     },
+    "plugin/hub-workflow/schemas/preflight.v1.json": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "83c9eb58342f91856677e9e2ac5107e978126080ed7baf8e59ff0ee6f6c32ef0"
+    },
     "plugin/hub-workflow/schemas/review.v1.json": {
       "executable": false,
       "ownership": "managed",
@@ -634,6 +639,48 @@
     "workflows/sdlc/fixtures/deliver-rework.yaml": {
       "ownership": "seeded"
     },
+    "workflows/sdlc/fixtures/implement-declined-still-plan.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/fixtures/implement-discovery-once.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/fixtures/implement-discovery-third-blocked.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/fixtures/implement-drift-local.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/fixtures/implement-drift-none.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/fixtures/implement-drift-plan.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/fixtures/implement-eval-no-ship.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/fixtures/implement-pending-decision-approved.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/fixtures/implement-pending-decision-declined.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/fixtures/implement-pending-declined-still-plan.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/fixtures/implement-plan-approved.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/fixtures/implement-plan-declined.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/fixtures/implement-pr-failure.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/fixtures/implement-rounds-exhausted.yaml": {
+      "ownership": "seeded"
+    },
     "workflows/sdlc/fixtures/review-fail.yaml": {
       "ownership": "seeded"
     },
@@ -643,7 +690,13 @@
     "workflows/sdlc/fixtures/review-pass.yaml": {
       "ownership": "seeded"
     },
+    "workflows/sdlc/implement.yaml": {
+      "ownership": "seeded"
+    },
     "workflows/sdlc/prompts/implement.md": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/prompts/preflight.md": {
       "ownership": "seeded"
     },
     "workflows/sdlc/prompts/quality-lens.md": {
@@ -652,16 +705,43 @@
     "workflows/sdlc/prompts/spec-lens.md": {
       "ownership": "seeded"
     },
+    "workflows/sdlc/prompts/ticket-eval.md": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/prompts/ticket-implement.md": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/prompts/ticket-plan.md": {
+      "ownership": "seeded"
+    },
     "workflows/sdlc/review.yaml": {
       "ownership": "seeded"
     },
     "workflows/sdlc/scripts/check.py": {
       "ownership": "seeded"
     },
+    "workflows/sdlc/scripts/delivery.py": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/scripts/discovery.py": {
+      "ownership": "seeded"
+    },
     "workflows/sdlc/scripts/feedback.py": {
       "ownership": "seeded"
     },
+    "workflows/sdlc/scripts/last_pass.py": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/scripts/pass_outcome.py": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/scripts/preflight_run.py": {
+      "ownership": "seeded"
+    },
     "workflows/sdlc/scripts/verdict.py": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/ticket-pass.yaml": {
       "ownership": "seeded"
     }
   },
