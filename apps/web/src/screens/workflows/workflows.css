@@ -285,3 +285,30 @@
   flex-direction: column;
   gap: var(--space-4);
 }
+
+/* A node chosen in the graph: under the graph at full width, its facts beside its JSON. */
+.wf-node-detail {
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) minmax(0, 2.5fr);
+  gap: var(--space-4) var(--space-6);
+  align-items: start;
+}
+.wf-node-facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  min-width: 0;
+}
+.wf-node-facts dd {
+  font-size: 14px;
+  line-height: 20px;
+}
+.wf-node-detail .ah-json {
+  min-width: 0;
+}
+@media (max-width: 899px) {
+  .wf-node-detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

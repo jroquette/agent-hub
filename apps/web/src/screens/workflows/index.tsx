@@ -315,43 +315,34 @@ function DetailBody({ workflow }: { workflow: WorkflowDetail }) {
           <span className="ah-h3">Advanced: graph and document</span>
         </summary>
         <div className="ah-card-body wf-advanced-body">
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: selected ? "minmax(0, 1fr) 320px" : "minmax(0, 1fr)",
-              gap: 16,
-              alignItems: "start",
-            }}
-          >
-            <WorkflowGraph
-              layers={workflow.layers}
-              selected={selected?.id ?? null}
-              onSelect={node.open}
-            />
-            {selected && (
-              <NodePanel id={selected.id} focusOnOpen={node.openedByUser} onClose={node.close}>
-                <dl className="ah-small" style={{ margin: 0, display: "grid", gap: 6 }}>
-                  <dt className="ah-subtle">Type</dt>
-                  <dd style={{ margin: 0 }}>{selected.type}</dd>
-                  <dt className="ah-subtle">Waits for</dt>
-                  <dd style={{ margin: 0 }} className="ah-mono">
-                    {selected.depends_on.join(", ") || "—"}
-                  </dd>
+          <WorkflowGraph
+            layers={workflow.layers}
+            selected={selected?.id ?? null}
+            onSelect={node.open}
+          />
+          {selected && (
+            <NodePanel id={selected.id} focusOnOpen={node.openedByUser} onClose={node.close}>
+              <div className="wf-node-detail">
+                <dl className="wf-node-facts">
+                  <div className="ah-skill-fact">
+                    <dt>Type</dt>
+                    <dd className="ah-mono">{selected.type}</dd>
+                  </div>
+                  <div className="ah-skill-fact">
+                    <dt>Waits for</dt>
+                    <dd className="ah-mono">{selected.depends_on.join(", ") || "—"}</dd>
+                  </div>
                   {selected.description && (
-                    <>
-                      <dt className="ah-subtle">Description</dt>
-                      <dd style={{ margin: 0 }}>{selected.description}</dd>
-                    </>
+                    <div className="ah-skill-fact">
+                      <dt>Description</dt>
+                      <dd>{selected.description}</dd>
+                    </div>
                   )}
                 </dl>
-                {written && (
-                  <div style={{ marginTop: 8 }}>
-                    <JsonViewer value={written} maxHeight={240} />
-                  </div>
-                )}
-              </NodePanel>
-            )}
-          </div>
+                {written && <JsonViewer value={written} maxHeight={360} />}
+              </div>
+            </NodePanel>
+          )}
           <section aria-label="Document" className="ah-stack" style={{ gap: 8 }}>
             <h3 className="ah-h3" style={{ margin: 0 }}>
               Document
