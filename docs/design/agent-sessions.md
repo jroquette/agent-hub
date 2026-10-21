@@ -221,9 +221,30 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
   - AC-266.8: the `user.message` record keeps one marker per image, never its bytes; the chat shows the images this
     browser sent with each message (kept by the message's seq), else "N images attached".
   - AC-266.9: a message's text may be up to `--message-max-bytes`, 1 MiB by default (at most 4 MiB); the body caps
-    are 64 MiB for a message and 16 MiB for a session's first prompt.
+    are 160 MiB for a message and for a session's first prompt (AC-419.6).
   - AC-266.10: the composer's toolbar shows mode and model as compact pills (icon, value, caret) over native selects,
     the mode tinting its pill; Stop shows only while a turn can be stopped; the hint sits under the bar.
+- **Files in a message (AGH-419).** PDFs and text files go with a message for Claude to read, like images; the
+  server keeps no file byte (the composer side lands in a follow-up).
+  - **AC-419.1** Given `POST /{id}/messages` with `files: [{name, media_type, data}]` (1 to 10; `media_type`
+    `application/pdf` or `text/plain`, `data` base64), when it is accepted, then Claude gets the files first, then the
+    images, then the text: a PDF as a `document` block titled by its name, a text file as a `text` block wrapped in
+    `<file name="…">`.
+  - **AC-419.2** Given a file whose `data` is not strict base64, a PDF without the `%PDF-` signature, or a text that is
+    not UTF-8 or holds a NUL byte, when it is sent, then it is refused with 422 `invalid-file` pointing at
+    `/files/{index}/data`, before anything is logged or sent; the detail never quotes the data.
+  - **AC-419.3** Given a file over 5,242,880 bytes decoded (5 MiB), when it is sent, then it is refused with 413
+    `file-too-large` (`limit`, `size`) before anything is logged or sent; one exactly at the limit is taken. More than
+    10 files is 422.
+  - **AC-419.4** Given a message with files, when it is logged, then the `user.message` record carries
+    `attachments: [{kind: "file", media_type, bytes, name}]`, one per file, and never its bytes; the request's and the
+    driver's models never print the data in a repr.
+  - **AC-419.5** Given `POST ""` with a first prompt, when it carries `screenshots[]` (1 to 10) and `files[]` (1 to
+    10) besides the screen's `screenshot`, then they are checked like a message's before the session starts, logged
+    as markers and sent with the prompt (the capture first, then the images); without `prompt` they are refused
+    (422).
+  - **AC-419.6** Given the body caps, then `POST ""` and `POST /{id}/messages` take bodies up to 160 MiB, so ten
+    images and ten files fit; 413 above.
 - **Accessibility.** No serious or critical axe violation in any state (empty, streaming, waiting, detached, menu
   open, ended). The log keeps `role="log"` and `aria-busy` and has a visually hidden h2; under
   `prefers-reduced-motion` no caret, shimmer or smooth scroll animates.

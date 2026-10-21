@@ -1465,8 +1465,24 @@
       },
       "CreateAgentSession": {
         "additionalProperties": false,
-        "description": "``POST /agent-sessions``: where, how, and an optional first prompt (its byte size is\nchecked against the message limit, 413), or a past session to resume (and fork).\n``screenshot`` goes with the first prompt as an image, so it needs one.",
+        "description": "``POST /agent-sessions``: where, how, and an optional first prompt (its byte size is\nchecked against the message limit, 413), or a past session to resume (and fork).\n``screenshot`` (the screen's capture), ``screenshots`` (images pasted in the first\nmessage) and ``files`` go with the first prompt, so they need one.",
         "properties": {
+          "files": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/MessageFile"
+                },
+                "maxItems": 10,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Files"
+          },
           "fork": {
             "default": false,
             "title": "Fork",
@@ -1525,6 +1541,22 @@
                 "type": "null"
               }
             ]
+          },
+          "screenshots": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Screenshot"
+                },
+                "maxItems": 10,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Screenshots"
           },
           "workdir_id": {
             "pattern": "^[0-9a-f]{16}$",
@@ -5020,6 +5052,38 @@
         "title": "MessageAccepted",
         "type": "object"
       },
+      "MessageFile": {
+        "additionalProperties": false,
+        "description": "A file attached to a message for Claude to read: a PDF or a UTF-8 text, base64-encoded;\nits decoded size and content are checked by ``decode_message_file`` (413, 422).",
+        "properties": {
+          "data": {
+            "minLength": 1,
+            "title": "Data",
+            "type": "string"
+          },
+          "media_type": {
+            "enum": [
+              "application/pdf",
+              "text/plain"
+            ],
+            "title": "Media Type",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "media_type",
+          "data"
+        ],
+        "title": "MessageFile",
+        "type": "object"
+      },
       "Mode": {
         "description": "Who can invoke a skill (S5, L2); ``neither`` reads \"Hidden\" in the UI.",
         "enum": [
@@ -7869,8 +7933,24 @@
       },
       "SendMessage": {
         "additionalProperties": false,
-        "description": "``POST /{id}/messages``: one user message (byte limit checked, 413), with the images\npasted in it, sent to Claude before the text.",
+        "description": "``POST /{id}/messages``: one user message (byte limit checked, 413), with the files and\nimages attached to it, sent to Claude before the text.",
         "properties": {
+          "files": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/MessageFile"
+                },
+                "maxItems": 10,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Files"
+          },
           "screenshots": {
             "anyOf": [
               {

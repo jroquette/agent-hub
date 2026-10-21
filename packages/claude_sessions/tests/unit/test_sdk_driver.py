@@ -26,7 +26,7 @@ import pytest
 from claude_agent_sdk import ClaudeSDKClient
 
 from agent_hub.claude_sessions.sdk_driver import ClaudeSdkSessionDriver
-from agent_hub.core.agent_sessions.driver import DriverImage, StartSpec
+from agent_hub.core.agent_sessions.driver import DriverFile, DriverImage, StartSpec
 from agent_hub.core.testing.builders import a_png_bytes
 
 pytestmark = pytest.mark.anyio
@@ -76,6 +76,7 @@ async def _sent(
     text: str,
     images: tuple[DriverImage, ...],
     *,
+    files: tuple[DriverFile, ...] = (),
     info: dict[str, Any] | None = None,
 ) -> list[object]:
     claude = tmp_path / "claude"
@@ -90,7 +91,7 @@ async def _sent(
 
     driver = ClaudeSdkSessionDriver(environ={"PATH": str(tmp_path)}, client_factory=factory)
     handle = await driver.start(StartSpec(cwd=str(tmp_path), mode="default"))
-    await driver.send(handle, text, images=images)
+    await driver.send(handle, text, images=images, files=files)
     await driver.close(handle)
     return clients[0].queries
 
@@ -127,6 +128,29 @@ async def test_asks_cli_to_stop_task_when_stop_task_called(tmp_path: Path) -> No
 
     assert clients[0].stopped == ["task-1"]
     assert clients[0].queries == []
+
+
+async def test_queries_files_then_text_when_files_given(tmp_path: Path) -> None:
+    # AC-419.1: files first (a PDF as a document, a text in <file name>), then the text.
+    pdf = DriverFile(name="spec.pdf", media_type="application/pdf", data=b"%PDF-1.7\n")
+    notes = DriverFile(name='my "notes".md', media_type="text/plain", data="olá".encode())
+
+    sent = await _sent(tmp_path, "Read these.", (), files=(pdf, notes))
+
+    content = sent[0][0]["message"]["content"]  # type: ignore[index]
+    assert content == [
+        {
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": base64.b64encode(b"%PDF-1.7\n").decode("ascii"),
+            },
+            "title": "spec.pdf",
+        },
+        {"type": "text", "text": "<file name=\"my 'notes'.md\">\nolá\n</file>"},
+        {"type": "text", "text": "Read these."},
+    ]
 
 
 async def test_queries_image_then_text_when_image_given(tmp_path: Path) -> None:

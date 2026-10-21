@@ -106,11 +106,13 @@ class RecordBody(ViewModel):
 
 
 class Attachment(RecordBody):
-    """What a message carried besides its text: a marker only, never the image's bytes."""
+    """What a message carried besides its text: a marker only, never the bytes. A ``file``
+    also names itself (``name``), so the transcript can say which one was sent."""
 
-    kind: Literal["screenshot"]
-    media_type: Literal["image/png"]
+    kind: Literal["screenshot", "file"]
+    media_type: Literal["image/png", "application/pdf", "text/plain"]
     bytes: int = Field(ge=1)
+    name: str | None = None
 
 
 class UserMessageBody(RecordBody):
