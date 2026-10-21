@@ -137,7 +137,7 @@ class FakeTrackerBackend:
             description=description,
             state=state,
             labels=(),
-            url=f"https://linear.app/demo/issue/{issue_id}",
+            url=f"https://linear.example.com/demo/issue/{issue_id}",
         )
         self.issues[issue_id] = issue
         return issue

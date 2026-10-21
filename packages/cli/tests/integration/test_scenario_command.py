@@ -2231,7 +2231,7 @@ issue = {
     "id": "DEM-42",
     "title": given["title"],
     "description": given["description"],
-    "url": "https://linear.app/demo/issue/DEM-42",
+    "url": "https://linear.example.com/demo/issue/DEM-42",
     "state": "Todo",
     "labels": [],
 }
@@ -2360,7 +2360,7 @@ def test_creates_issue_once_after_yes_when_findings_issue_on_terminal(
     text = plain(shown).replace("\r\n", "\n")
     assert "title: Scenario hold-walk: Order stays on hold" in text
     assert "The scenario hold-walk found this in run walk-1, at step order-held," in text
-    assert "created DEM-42  https://linear.app/demo/issue/DEM-42" in text
+    assert "created DEM-42  https://linear.example.com/demo/issue/DEM-42" in text
     (call,) = tracker_calls(hub)
     assert call["operation"] == "create_issue"
     assert call["arguments"]["team"] == "DEM"
