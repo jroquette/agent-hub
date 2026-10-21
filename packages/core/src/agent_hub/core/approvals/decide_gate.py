@@ -2,8 +2,9 @@
 
 A paused run's gates live in its record (the ``GateBook``: the cli's ``records.jsonl``, read and
 written under the run's lock), which also keeps the answer's text for the engine's resume.
-``DecideGate`` refuses a gate that is not open or already has its decision and an answer the
-gate cannot take, records the decision, then sends a ``control_plane`` ``gate.result`` in the
+``DecideGate`` refuses a gate that is not open or already has its decision, an answer the
+gate cannot take and an approver that names no person (empty or ``unknown``, two-level-flows A5),
+records the decision, then sends a ``control_plane`` ``gate.result`` in the
 run's session (``run:<id>``) through ``IngestEvents``: ``fold_approvals`` pairs it with the
 request by ``gate_id``. The event carries the result, the approver and where it was decided,
 never the text (ADR 0019), which is at most ``MAX_TEXT_BYTES`` in UTF-8. The event store is opened
@@ -27,11 +28,13 @@ from agent_hub.core.workflows.gates import GateAnswer, GateForm, answer_problem
 # An approval's decision as the Approvals read model shows it; any other answer is "approved".
 _RESULTS: Final[Mapping[str, ApprovalStatus]] = {"approve": "approved", "reject": "rejected"}
 MAX_TEXT_BYTES: Final = 65536
+# An approver that names no person (case and surrounding blanks ignored, A5).
+NO_PERSON: Final = frozenset({"", "unknown"})
 
 
 class GateDecisionError(AgentHubError):
     """A decision refused: no open gate by that id, a second decision, an answer that does not
-    fit the gate."""
+    fit the gate, an approver that names no person."""
 
 
 @dataclass(frozen=True)
@@ -94,6 +97,8 @@ class DecideGate:
         gate = self._book.open_gate(decision.gate_id)
         if gate is None:
             raise GateDecisionError(f"no open gate {decision.gate_id}")
+        if decision.approver.strip().lower() in NO_PERSON:
+            raise GateDecisionError(f"the decision names no person (approver {decision.approver!r})")
         if self._book.decided(gate.gate_id):
             raise GateDecisionError(f"the gate {gate.gate_id} is already decided")
         if (problem := answer_problem(gate.form, gate.choices, decision.answer)) is not None:
