@@ -212,9 +212,9 @@ States: the first step that does not hold is `current` (or `unknown` when its ev
 "Ticket evals cover 6 of 23 ACs"). After it, a step whose own condition holds is `blocked` with a `reason` naming that
 earlier step; one with evidence for part of the feature (created or merged tickets, ticket evals covering some ACs, a
 design written) is `partial`; one that cannot be read is `unknown`; the rest are `pending`. A SHIP-WITH-OWNER-STEPS
-acceptance eval not signed off is `waiting` (when it is the gate) and reads "Waiting for you: sign off n ACs" ("1 AC"
-for one; spec amendment A18). The step folds the wait's typed state (`OwnerWaitState`), never its words. One rule decides which ACs
-wait (`feature_evals.owner_wait`), for the step and the sign-off alike: the acceptance eval is whole-feature, so every
+acceptance eval not signed off is `waiting` ("Waiting for you", when it is the gate) with the meta "Sign off n ACs"
+("1 AC" for one; spec amendment A18). The step folds the wait's typed state (`OwnerWaitState`), never its words.
+One rule decides which ACs wait (`feature_evals.owner_wait`), for the step and the sign-off alike: the acceptance eval is whole-feature, so every
 non-withdrawn AC is an owner step (a legacy `eval.md` without scope too, failing ACs included) until a later SHIP with
 `provenance: owner` names it (ticket evals never do); the sign-off lists exactly those. The sign-off is refused,
 writing nothing, with a one-line reason: when any of those ACs has a NO-SHIP as its latest eval (it names them: fix
