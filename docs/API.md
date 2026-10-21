@@ -108,8 +108,8 @@ Errors are RFC 9457 Problem Details, with media type `application/problem+json`:
   `secret_unversioned` (the unit on disk has a secret match) or `managed_confirmation_required` (`hub.lock` manages
   the unit and the body did not say `confirm_managed: true`; only the JSON `true` confirms, `1` or `"yes"` is a
   422). A Publish also refuses `draft_already_published` ("This draft was already published; discard it": a
-  version of the project already names the draft as its `publish`; nothing is written, recorded or removed and the
-  draft stays). The disk's content may already be recorded as an
+  version of the project already names the draft as its `publish`; it answers before any 404, 422 or draft-read
+  refusal; nothing is written, recorded or removed and the draft stays). The disk's content may already be recorded as an
   `external` version when a managed refusal answers. A body field the model does not know → 422. A write that fails →
   500 "Item write failed", `code` `write_failed` and `kind` `failed` (the unit is as it was), `rollback_failed` (a
   folder swap could not put the old folder back; `hub doctor`'s `items.leftovers` lists what is left beside it) or

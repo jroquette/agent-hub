@@ -1,6 +1,11 @@
 """``PublishDraft``: land a Studio draft in the hub (AGH-295, D10, D19, D21, D24, S4, S5, A5, A7,
 A8, A12-A18, A20; AC-295.11-16).
 
+A draft that a version of the project already names as its ``publish`` is spent (A20): the
+Publish answers ``draft_already_published`` first, before the target is resolved or the draft
+read, so no 404, 422 or draft-read refusal answers for it, and nothing is written, recorded or
+removed; the draft stays for the user to discard. The shared step asks again under its lock.
+
 The draft is read whole (``HubItemWriter.read_draft``) and as an item of its kind
 (``read_draft_item``). An edit names its target, resolved to its unit as the history reads
 resolve it (an unknown item is ``EntityNotFoundError``); the draft's kind must be the target's
@@ -11,13 +16,12 @@ destination that the listing holds already (a rename onto a sibling, a new item'
 ``SKILL.md``) is ``item_exists`` too, and so is one the disk holds when the write reads it.
 
 The shared step (``RecordAndWrite.publish``) then holds every unit touched under its one lock:
-the target, a rename's new unit, a new item's destination. A draft that a version of the project
-already names as its ``publish`` is spent (A20): the step answers ``draft_already_published``
-before it reads anything, and nothing is written, recorded or removed; the draft stays for the
-user to discard. Otherwise the step records each unit's disk content first, places the draft from
-what it read (``edit_destination``, ``replace_hook`` for a hook, ``new_destination``), writes (a
-new hook's scripts first; a renamed skill carries the old folder's hidden entries, then the old
-unit is removed) and records a ``publish`` naming the draft. A hook edit's place in its file
+the target, a rename's new unit, a new item's destination; it refuses a spent draft again (a
+publish of it recorded while this one waited). The step records each unit's disk content first,
+places the draft from what it read (``edit_destination``, ``replace_hook`` for a hook,
+``new_destination``), writes (a new hook's scripts first; a renamed skill carries the old
+folder's hidden entries, then the old unit is removed) and records a ``publish`` naming the
+draft. A hook edit's place in its file
 (``hook_at``) is read from the file the step read under its lock, so the hook replaced is the one
 the recorded content names. With no version naming the draft (a first publish, or a retry whose
 first write stored none: a secret, too large, a lost race, ``written_not_recorded``), a draft
@@ -25,8 +29,8 @@ that moves its hook into a file already holding the draft's groups is refused (`
 A12, in words that claim no earlier publish, A17) and nothing is written, while one that splices
 in place is kept as it is when the file already holds it (A16, ``replace_hook``). A hook edit
 carrying scripts is ``DraftInvalidError`` (A14): scripts land only with a new hook. A merge into
-a unit past the read bounds is ``unit_unreadable`` (A13). A retried rename whose old item is gone
-is an unknown item, and a retried new item whose first write stored no version is
+a unit past the read bounds is ``unit_unreadable`` (A13). With no version naming the draft, a
+retried rename whose old item is gone is an unknown item, and a retried new item is
 ``item_exists`` (A12). An item gone before the lock is an unknown item of its unit's kind.
 
 After the step, the draft is removed, also when nothing changed (A7); a removal that fails raises
@@ -128,6 +132,8 @@ class PublishDraft:
     ) -> ItemWriteResult:
         """Land the draft ``draft_id`` of ``project`` on ``target`` (None: a new item), then
         remove the draft."""
+        # A20 first, before the target, the draft or its kind could answer otherwise.
+        self._step.refuse_spent(project, draft_id)
         if target is None:
             hub_path = self._hub_of(project)
             units, place = self._new(project, hub_path, self._draft(hub_path, draft_id))
