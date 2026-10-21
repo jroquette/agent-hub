@@ -150,11 +150,15 @@ class FakeHubItemWriter:
         self.writes.append((hub_path, unit_path))
 
     def read_script(self, hub_path: str, path: str) -> bytes | None:
-        """The script's bytes from ``skill_files``, None when absent."""
+        """The script's bytes from ``skill_files``, None when absent; a folder (an entry below
+        ``path``) or a special file fails as the disk fails."""
         script_parts(path)
         self.check_targets(hub_path, [path])
         hub = self._hub(hub_path)
-        if path in hub.skill_specials:
+        folder = f"{path}/"
+        if path in hub.skill_specials or any(
+            entry.startswith(folder) for entry in (*hub.skill_files, *hub.skill_specials)
+        ):
             raise HubItemWriteError(_NOT_FILE)
         content = hub.skill_files.get(path)
         return None if content is None else content[: MAX_SKILL_FILE_BYTES + 1]
