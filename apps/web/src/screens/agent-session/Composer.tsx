@@ -377,6 +377,9 @@ export function Composer({
                 </option>
               )}
             </select>
+            <span className="as-pill-value" aria-hidden="true">
+              {modeLabel(mode)}
+            </span>
             <Icon name="chevron-down" size="sm" className="as-pill-caret" />
           </label>
           <label htmlFor={modelId} className="as-pill" title="Model">
@@ -398,6 +401,9 @@ export function Composer({
                 </option>
               ))}
             </select>
+            <span className="as-pill-value" aria-hidden="true">
+              {currentModel}
+            </span>
             <Icon name="chevron-down" size="sm" className="as-pill-caret" />
           </label>
         </div>

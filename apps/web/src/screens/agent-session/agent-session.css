@@ -1190,9 +1190,9 @@
  * says so with the colour of its icon, not with a filled badge. */
 .as-composer .as-pill,
 .as-composer .as-pill[data-mode] {
-  gap: 5px;
-  height: 28px;
-  padding: 0 10px;
+  gap: 4px;
+  height: 26px;
+  padding: 0 7px;
   border-color: transparent;
   background: transparent;
   color: var(--text-muted);
@@ -1204,19 +1204,32 @@
   background: var(--surface-hover);
   color: var(--text);
 }
+/* Focus shows as the hover capsule, never as a ring left around the picker after a click. */
 .as-composer .as-pill:focus-within {
   outline: none;
+  background: var(--surface-hover);
+  color: var(--text);
 }
-.as-composer .as-pill:has(select:focus-visible) {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 0;
-}
+/* The pill is as wide as its value: a native select is as wide as its longest option, so it lies
+ * invisible over the whole pill (still the keyboard and screen reader control) and a span shows
+ * the value. */
 .as-composer .as-pill .as-pill-select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  max-width: none;
+  opacity: 0;
+}
+.as-composer .as-pill-value {
+  overflow: hidden;
+  max-width: 160px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font-weight: 450;
 }
 .as-composer .as-pill .ah-icon {
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
 }
 .as-composer .as-pill .as-pill-caret {
   width: 11px;

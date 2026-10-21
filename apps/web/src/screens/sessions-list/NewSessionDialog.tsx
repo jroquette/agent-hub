@@ -514,6 +514,9 @@ export function NewSessionDialog({
                       </option>
                     ))}
                   </select>
+                  <span className="as-pill-value" aria-hidden="true">
+                    {modeLabel(mode)}
+                  </span>
                   <Icon name="chevron-down" size="sm" className="as-pill-caret" />
                 </label>
                 <label htmlFor={modelField} className="as-pill" title="Model">
@@ -535,6 +538,9 @@ export function NewSessionDialog({
                     ))}
                     <option value={OTHER_MODEL}>Other model id…</option>
                   </select>
+                  <span className="as-pill-value" aria-hidden="true">
+                    {model === OTHER_MODEL ? "Other model id…" : model}
+                  </span>
                   <Icon name="chevron-down" size="sm" className="as-pill-caret" />
                 </label>
               </div>
