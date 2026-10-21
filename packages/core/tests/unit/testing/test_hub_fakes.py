@@ -84,7 +84,8 @@ def test_records_feature_reads_when_folders_listed_or_read() -> None:
 
     assert reader.feature_folders("/hubs/demo") == (folder,)
     assert reader.feature_folder("/hubs/demo", "demo-feature") == folder
-    assert reader.feature_folder("/hubs/demo", "nope") is None
+    assert reader.feature_folder("/hubs/demo", "nope", tickets=True) is None
+    assert reader.ticket_reads == ["nope"]
     assert reader.feature_reads == [
         ("*", "/hubs/demo"),
         ("demo-feature", "/hubs/demo"),

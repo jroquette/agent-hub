@@ -14,9 +14,20 @@ type Verdict = Literal["SHIP", "SHIP-WITH-OWNER-STEPS", "NO-SHIP"]
 # A golden-path step's state (AGH-136 S8): ``partial`` is a later step with some progress,
 # ``blocked`` a step whose own condition holds while an earlier gate does not, ``unknown`` a
 # step whose evidence cannot be read (``reason`` says why), ``unrecorded`` the gate step whose
-# record was never written (Acceptance with no whole-feature eval, two-level-flows AC-1.6).
+# record was never written (Acceptance with no whole-feature eval, two-level-flows AC-1.6),
+# ``waiting`` a step paused until the owner decides, ``stale`` a step whose record must be made
+# again (a preflight that checked an older plan version than the one approved, AC-2.8).
 type StepState = Literal[
-    "done", "partial", "current", "pending", "skipped", "unknown", "blocked", "unrecorded"
+    "done",
+    "partial",
+    "current",
+    "pending",
+    "skipped",
+    "unknown",
+    "blocked",
+    "unrecorded",
+    "waiting",
+    "stale",
 ]
 # Where a feature's ticket data came from: Linear (a snapshot) or the plan (``features.json``).
 type TicketsSource = Literal["linear", "plan"]
@@ -31,13 +42,15 @@ class StepProgress(ViewModel):
 
 class GoldenStep(ViewModel):
     """One step of the golden path: its state, a short ``meta`` text and the ``reason`` it is
-    not done (naming the failing gate), and its ``progress`` when it counts something."""
+    not done (naming the failing gate), its ``progress`` when it counts something, and the one
+    ``signal`` that needs attention (Plan: "v3 waits for you" while a change request is open)."""
 
     name: FeaturePhase
     state: StepState
     meta: str | None
     reason: str | None
     progress: StepProgress | None
+    signal: str | None = None
 
 
 class GoldenPath(ViewModel):
@@ -90,11 +103,25 @@ class AcRow(ViewModel):
     command: str | None = None
 
 
+# What a feature waits on from the owner (two-level-flows AC-2.8, A17): a plan change request,
+# the acceptance eval's owner steps to sign off, or a sign-off only the owner can write by hand.
+type OwnerWaitKind = Literal["change_request", "owner_signoff", "owner_signoff_manual"]
+
+
+class WaitingOnOwner(ViewModel):
+    """The owner decision a feature waits on; ``tickets`` are the open change requests' origin
+    tickets (``change_request`` only)."""
+
+    kind: OwnerWaitKind
+    tickets: tuple[str, ...] = ()
+
+
 class FeatureView(DerivedView):
     """A feature as the Features list shows it; ``problem`` when a file of it is malformed.
 
     ``phase`` equals ``golden_path.phase``; ``tickets_source`` says whether the ticket counts
-    behind the golden path came from Linear or from the plan.
+    behind the golden path came from Linear or from the plan; ``waiting_on_owner`` what it waits
+    on from the owner, None when nothing.
     """
 
     project: str
@@ -110,6 +137,7 @@ class FeatureView(DerivedView):
     golden_path: GoldenPath
     tickets_source: TicketsSource
     problem: str | None = None
+    waiting_on_owner: WaitingOnOwner | None = None
 
 
 type FeatureRecordName = Literal["spec", "research", "plan", "eval", "issues"]

@@ -18,6 +18,7 @@ from agent_hub.core.features.feature_tickets import (
     feature_tickets,
 )
 from agent_hub.core.features.golden_path import LINEAR_NOT_CONNECTED, LINEAR_NOT_LOADED
+from agent_hub.core.features.ticket_records import TicketFiles
 from agent_hub.core.features.ticket_snapshots import SnapshotRead
 from agent_hub.core.hub_config.model import Tracker
 from agent_hub.core.testing.read_model_builders import READ_TIME
@@ -232,6 +233,58 @@ def test_serves_ticket_flows_when_folder_has_records() -> None:
     assert first.current == "merged"
     assert {step.state for step in second.steps} == {"pending"}
     assert second.current == "context"
+
+
+# two-level-flows AC-2.8: the folder's ticket records and change requests reach each row's flow.
+def test_serves_preflight_steps_when_folder_has_ticket_records() -> None:
+    request = (
+        b"---\nticket: DEM-8\nstatus: open\nplan_from: 2\nplan_to: 3\naffected: [T1]\n"
+        b"opened_at: 2026-10-21\nrun_id: implement-8\n---\n"
+    )
+    preflight = {
+        "schema": "agent-hub/preflight/1",
+        "ticket": "DEM-7",
+        "runs": [
+            {
+                "ran_at": "2026-10-20T09:00:00Z",
+                "plan_version": 1,
+                "commit": "4e1a9c2",
+                "blockers_read": [],
+                "input": "none",
+                "input_text": None,
+                "drift": "none",
+                "local_notes": [],
+                "change_request": None,
+                "run_id": "implement-7",
+            }
+        ],
+    }
+    folder = replace(
+        a_folder(),
+        plan=b"# Plan\n\n## Amendments\n\n- A1 (2026-10-20, Ana): Split the ticket.\n",
+        ticket_folders=(
+            TicketFiles(name="DEM-7", brief=True, preflight=json.dumps(preflight).encode()),
+            TicketFiles(name="DEM-8", brief=True),
+        ),
+        change_requests=(RecordHead(name="1.md", head=request, problem=None),),
+    )
+    snapshot = TicketSnapshot(
+        summaries=(a_summary("DEM-7", "started"), a_summary("DEM-8", "started")),
+        missing=(),
+        external=(),
+    )
+
+    tickets = feature_tickets(
+        folder, a_read(snapshot=snapshot), project="demo", tracker=a_tracker(), now=READ_TIME
+    )
+
+    first, second = (row.flow for row in tickets.tickets)
+    assert first is not None
+    assert second is not None
+    assert (first.steps[1].state, first.signal) == ("stale", "Held: plan change pending")
+    assert first.steps[1].meta == "Plan v2 approved: re-run preflight"
+    assert (second.steps[1].state, second.signal) == ("waiting", "Waiting for you: plan change")
+    assert tickets.golden_path.steps[3].signal == "v3 waits for you"
 
 
 @pytest.mark.parametrize(

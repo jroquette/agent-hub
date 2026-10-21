@@ -4,12 +4,13 @@ Steps, in order: Spec (``spec.md`` written; with only ``brief.md`` it is current
 UX design (every top-level ``ux-*.md`` says ``status: approved``; none while a later record
 exists is ``skipped``, "No screen change recorded"), Research and Plan (their record file is
 written; one left out while a later record exists is ``skipped``; Plan's meta is the plan's
-version), Tickets (every planned ticket has a tracker id), Build (every ticket merged: Done in
-Linear), Acceptance (the latest whole-feature eval is SHIP, or SHIP-WITH-OWNER-STEPS whose owner
-steps the owner signed off; ticket evals never make it done) and Shipped (Build and Acceptance
-done). Canceled tickets and withdrawn ACs are left out of every count; an epic (a ticket with
-children) counts only under Tickets, as it tracks the others. Each ticket's own steps are its
-row's, not the golden path's.
+version, and its signal says the next version waits for the owner while a plan change request is
+open, AC-2.8), Tickets (every planned ticket has a tracker id), Build (every ticket merged: Done in
+Linear; its meta counts the tickets an open change request pauses), Acceptance (the latest
+whole-feature eval is SHIP, or SHIP-WITH-OWNER-STEPS whose owner steps the owner signed off;
+ticket evals never make it done) and Shipped (Build and Acceptance done). Canceled tickets and
+withdrawn ACs are left out of every count; an epic (a ticket with children) counts only under
+Tickets, as it tracks the others. Each ticket's own steps are its row's, not the golden path's.
 
 The fold: steps hold in turn until the first that does not, the gate; it is ``current`` (or
 ``unknown`` when its evidence cannot be read, ``unrecorded`` when its record was never written)
@@ -35,6 +36,7 @@ from agent_hub.core.features.feature_view import (
     TicketsSource,
     Verdict,
 )
+from agent_hub.core.features.ticket_records import NO_REQUESTS, ChangeRequests
 from agent_hub.core.features.ticket_view import TicketRow
 
 BRIEF_FILE: Final = "brief.md"
@@ -96,8 +98,9 @@ class GoldenInputs:
     ``files`` names the record files present; ``rows`` the ticket rows (Linear's states when
     ``source`` is ``linear``, None in the plan fallback); ``acs`` the record's ACs;
     ``ux_designs`` whether each ``ux-*.md`` is approved, and ``ux_problem`` why they could not
-    all be read; ``plan`` the plan's version (None without ``plan.md``). ``not_loaded`` says the
-    plan fallback is a cold cache with a key present (E5), not a missing connection.
+    all be read; ``plan`` the plan's version (None without ``plan.md``); ``requests`` the plan
+    change requests. ``not_loaded`` says the plan fallback is a cold cache with a key present
+    (E5), not a missing connection.
     """
 
     files: tuple[str, ...]
@@ -107,6 +110,7 @@ class GoldenInputs:
     ux_designs: tuple[bool, ...] = ()
     ux_problem: str | None = None
     plan: PlanView | None = None
+    requests: ChangeRequests = NO_REQUESTS
     source: TicketsSource
     not_loaded: bool = False
 
@@ -119,6 +123,7 @@ class _Own:
 
     holds: bool | None
     meta: str | None = None
+    signal: str | None = None
     reason: str | None = None
     progress: StepProgress | None = None
     started: bool = False
@@ -155,7 +160,12 @@ def golden_path(inputs: GoldenInputs) -> GoldenPath:
     for name, own in owns.items():
         state, reason = _before_gate(own) if gate is None else _after_gate(own, gate)
         step = GoldenStep(
-            name=name, state=state, meta=own.meta, reason=reason, progress=own.progress
+            name=name,
+            state=state,
+            meta=own.meta,
+            reason=reason,
+            progress=own.progress,
+            signal=own.signal,
         )
         if gate is None and state not in ("done", "skipped"):
             gate = step
@@ -259,17 +269,28 @@ def _ux_design(facts: _Facts) -> _Own:
 
 
 def _plan(facts: _Facts) -> _Own:
-    own = _document(facts, file=PLAN_FILE, later=())
+    own = replace(_document(facts, file=PLAN_FILE, later=()), signal=_plan_signal(facts))
     plan = facts.inputs.plan
     if not own.holds or plan is None:
         return own
     if plan.version is None:
-        return _Own(holds=None, reason=plan.problem)
+        return _Own(holds=None, reason=plan.problem, signal=own.signal)
     amended = len(plan.amendments)
     meta = f"v{plan.version}"
     if amended:
         meta += f" · {amended} amendment{'' if amended == 1 else 's'}"
-    return _Own(holds=True, meta=meta)
+    return _Own(holds=True, meta=meta, signal=own.signal)
+
+
+def _plan_signal(facts: _Facts) -> str | None:
+    """The first open change request's version waiting for the owner, else why the change
+    requests could not all be read."""
+    requests = facts.inputs.requests
+    if requests.open:
+        return f"v{requests.open[0].plan_to} waits for you"
+    return requests.problem or next(
+        (request.problem for request in requests.requests if request.problem), None
+    )
 
 
 def _tickets(facts: _Facts) -> _Own:
@@ -302,6 +323,7 @@ def _build(facts: _Facts) -> _Own:
     meta = f"{facts.done} of {total} merged"
     if working:
         meta += f" · {working} in progress"
+    meta += _paused(facts)
     return _Own(
         holds=facts.done == total,
         meta=meta,
@@ -309,6 +331,17 @@ def _build(facts: _Facts) -> _Own:
         progress=StepProgress(done=facts.done, total=total),
         started=facts.done > 0,
     )
+
+
+def _paused(facts: _Facts) -> str:
+    """ " · n paused for a plan change": the tickets not merged an open change request pauses."""
+    paused = facts.inputs.requests.paused
+    count = sum(
+        not (row.state is not None and row.state.type == "completed")
+        and any(name and name.upper() in paused for name in (row.key, row.id))
+        for row in facts.active
+    )
+    return f" · {count} paused for a plan change" if count else ""
 
 
 def _acceptance(facts: _Facts) -> _Own:

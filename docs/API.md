@@ -249,7 +249,15 @@ acceptance criteria rows, the records and every eval, it carries:
 - `phase` and `golden_path` (here, in the list and on the tickets route): the steps are the feature's own, `spec`,
   `ux_design`, `research`, `plan`, `tickets`, `build`, `acceptance`, `shipped`, and a step's `state` is one of
   `done`, `current`, `partial`, `pending`, `skipped`, `blocked`, `unknown` or `unrecorded` (Acceptance with no
-  whole-feature eval). The values `implement`, `review` and `evaluate` are gone (two-level-flows AC-1.1).
+  whole-feature eval); the ticket steps also use `waiting` (paused until the owner decides) and `stale` (a record to
+  make again). Each step carries a `signal`, `null` or the one line that needs attention: Plan's is "v3 waits for
+  you" while a plan change request is open, or the change requests' record problem (two-level-flows AC-2.8). The
+  values `implement`, `review` and `evaluate` are gone (two-level-flows AC-1.1).
+- `waiting_on_owner` (here and in the list): `null`, or what the feature waits on from the owner, `kind` and
+  `tickets`: `change_request` while a plan change request is open (`tickets`, the origin tickets of the open
+  requests), else `owner_signoff` while the acceptance eval's `owner_wait` is `sign_off`, or `owner_signoff_manual`
+  while it is `no_acs` (a sign-off only the owner can write by hand, two-level-flows A17); `tickets` is empty for
+  both.
 
 ## Feature tickets
 
@@ -278,8 +286,10 @@ always answers 200 with a `FeatureTickets`:
   `unknown`), `waiting_on` and `reviewed`. Without Linear the statuses are `null`. Each row but an epic carries its
   `flow` (two-level-flows AC-1.8): `steps`, the seven ticket steps `context`, `preflight`, `implement`, `review`,
   `eval`, `pr` and `merged` in that order, each with a `state` (the golden path's states) and a `meta` or `null`, and
-  `current`, the first step neither `done` nor `unrecorded` (`merged` when there is none). How each step is read is
-  in [design/feature-records.md](design/feature-records.md) "Ticket flow"; an epic's `flow` is `null`.
+  `current`, the first step neither `done` nor `unrecorded` (`merged` when there is none), and `signal`, the ticket's
+  one line that needs attention or `null` ("Waiting for you: plan change", "Held: plan change pending",
+  "Plan v3 approved: re-run preflight", "Local drift · 2 notes"). How each step is read is in
+  [design/feature-records.md](design/feature-records.md) "Ticket flow"; an epic's `flow` is `null`.
 - `planning`: `layers` (tickets that can run in parallel, in turn), `can_start`, the recommended `order`, `waiting`,
   `cycles`, `external_blockers` (with their Linear status), `critical_path` and `warnings`.
 - `golden_path`: the same steps the feature list and detail carry, recomputed with this read.

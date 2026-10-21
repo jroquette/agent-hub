@@ -1,0 +1,141 @@
+{
+  "$defs": {
+    "Commit": {
+      "pattern": "^[0-9a-f]{7,40}$",
+      "type": "string"
+    },
+    "OneLine1000": {
+      "maxLength": 1000,
+      "minLength": 1,
+      "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f]*$",
+      "type": "string"
+    },
+    "PreflightRun": {
+      "additionalProperties": false,
+      "description": "One preflight run of a ticket: when it ran, the plan version and commit it checked, the\nblocker outcomes it read, the input it was given (a discovery or a declined change's note,\n``input_text``; null for ``none``), the drift it found with its local notes (at least one for\n``local``), the change request it opened (required for ``plan``) and the workflow\nrun it belongs to.",
+      "properties": {
+        "ran_at": {
+          "format": "date-time",
+          "title": "Ran At",
+          "type": "string"
+        },
+        "plan_version": {
+          "minimum": 1,
+          "title": "Plan Version",
+          "type": "integer"
+        },
+        "commit": {
+          "$ref": "#/$defs/Commit"
+        },
+        "blockers_read": {
+          "items": {
+            "$ref": "#/$defs/TicketKey"
+          },
+          "maxItems": 50,
+          "title": "Blockers Read",
+          "type": "array"
+        },
+        "input": {
+          "enum": [
+            "none",
+            "discovery",
+            "declined_change"
+          ],
+          "title": "Input",
+          "type": "string"
+        },
+        "input_text": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OneLine1000"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "drift": {
+          "enum": [
+            "none",
+            "local",
+            "plan"
+          ],
+          "title": "Drift",
+          "type": "string"
+        },
+        "local_notes": {
+          "items": {
+            "$ref": "#/$defs/OneLine1000"
+          },
+          "maxItems": 50,
+          "title": "Local Notes",
+          "type": "array"
+        },
+        "change_request": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Change Request"
+        },
+        "run_id": {
+          "$ref": "#/$defs/RunId"
+        }
+      },
+      "required": [
+        "ran_at",
+        "plan_version",
+        "commit",
+        "blockers_read",
+        "input",
+        "input_text",
+        "drift",
+        "local_notes",
+        "change_request",
+        "run_id"
+      ],
+      "title": "PreflightRun",
+      "type": "object"
+    },
+    "RunId": {
+      "pattern": "^[a-z0-9][a-z0-9-]{0,31}$",
+      "type": "string"
+    },
+    "TicketKey": {
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,31}$",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Every preflight run of one ticket, oldest first; runs are only ever appended.",
+  "properties": {
+    "schema": {
+      "const": "agent-hub/preflight/1",
+      "title": "Schema",
+      "type": "string"
+    },
+    "ticket": {
+      "$ref": "#/$defs/TicketKey"
+    },
+    "runs": {
+      "items": {
+        "$ref": "#/$defs/PreflightRun"
+      },
+      "maxItems": 200,
+      "title": "Runs",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema",
+    "ticket",
+    "runs"
+  ],
+  "title": "PreflightRecord",
+  "type": "object"
+}
