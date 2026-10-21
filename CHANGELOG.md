@@ -13,6 +13,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- The base plugin gains the `/premortem` and `/context-audit` skills (AGH-414). `/premortem` assumes a decision
+  already failed and gives its top three causes an early-warning sign and the cheapest experiment that could prove the
+  choice wrong. `/context-audit` estimates the always-loaded context of a hub and its repos and ranks the cuts by
+  tokens saved. Both only report. They arrive with `hub sync` after you bump `platform.version`.
 - `hub validate-output preflight <file>` checks a ticket's `preflight.json` against `agent-hub/preflight/1` and names
   the JSON path of each problem (AGH-402). `hub web` reads a ticket's records (`tickets/<id>/brief.md`,
   `preflight.json`, `plan.md`) and the feature's plan change requests (`change-requests/<n>.md` and their
