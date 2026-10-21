@@ -46,8 +46,8 @@ the PR title the commit on `main`, so the title is what the history and the futu
 
 `scripts/check_pr_title.py` (stdlib only) holds the same lists. Check the title before opening the PR, and again after
 renaming it: `make pr-title TITLE="<title>"` (or `python3 scripts/check_pr_title.py "<title>"`, any Python 3.10+); it
-exits 1 and prints the allowed types and scopes when the title is invalid. CI does not check titles: the owner, who
-squash-merges, reads the title last. Commits inside a branch should use the same format,
+exits 1 and prints the allowed types and scopes when the title is invalid. CI does not check titles ([ADR 0045](adr/0045-pr-titles-checked-before-the-pr-not-in-ci.md)): the owner,
+who squash-merges, reads the title last. Commits inside a branch should use the same format,
 but only the PR title is enforced.
 
 Releases are cut with the hub's `/release` skill (§ Releases), which proposes the version bump from the PR titles
