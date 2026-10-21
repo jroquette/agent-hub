@@ -1,6 +1,7 @@
 """The `.importlinter` contracts enforce the dependency rule (ADR 0001, ADR 0008): cli is the
-composition root, nothing imports it, api sits below it and imports no cli, cli reaches api only
-from its web command, and the adapters stay independent of each other.
+composition root, nothing imports it, api and mcp_server sit below it and import no cli, cli
+reaches api only from its web command and mcp_server only from its mcp command, only mcp_server
+imports the MCP SDK, and the adapters stay independent of each other.
 
 The tests run the real lint-imports with the repo's contracts, renamed onto a scratch root
 package in tmp_path, so a scratch import never touches the real packages."""
@@ -26,14 +27,19 @@ PACKAGES = (
     "claude_sessions",
     "cli",
     "api",
+    "mcp_server",
 )
 COMPOSITION_ROOT = "cli is the composition root"
 API_THROUGH_WEB = "cli reaches api only through web_command"
 CORE_INDEPENDENT = "core imports nothing internal"
 SDK_CONFINED = "only claude_sessions imports the Claude Agent SDK"
 CLI_NO_CLAUDE_SESSIONS = "cli never imports claude_sessions"
-# A third-party module, so the scratch source imports it as is (not under the scratch root).
+MCP_THROUGH_COMMAND = "cli reaches mcp_server only through mcp_command"
+MCP_CONFINED = "only mcp_server imports the MCP SDK"
+# Third-party modules, so the scratch source imports them as they are (not under the scratch root).
 SDK = "claude_agent_sdk"
+MCP = "mcp"
+EXTERNAL = frozenset({SDK, MCP})
 LINT_IMPORTS = str(Path(sys.executable).parent / "lint-imports")
 
 
@@ -50,7 +56,7 @@ def _write_scratch_root(tmp_path: Path, *, importer: str, imported: str) -> None
         (root / name / "__init__.py").write_text("")
     package, _, module = importer.partition(".")
     source = root / package / (f"{module}.py" if module else "__init__.py")
-    target = imported if imported == SDK else f"{SCRATCH_ROOT}.{imported}"
+    target = imported if imported in EXTERNAL else f"{SCRATCH_ROOT}.{imported}"
     source.write_text(f"import {target}\n")
 
 
@@ -104,6 +110,11 @@ def lint_imports(
         ("claude_sessions", "storage"),
         ("storage", "claude_sessions"),
         ("hub_git", "claude_sessions"),
+        ("mcp_server", "cli"),
+        ("mcp_server", "api"),
+        ("api", "mcp_server"),
+        ("storage", "mcp_server"),
+        ("hub_git", "mcp_server"),
     ],
 )
 def test_breaks_composition_root_contract_when_adapter_imports_upward_or_sideways(
@@ -117,7 +128,7 @@ def test_breaks_composition_root_contract_when_adapter_imports_upward_or_sideway
 
 
 @pytest.mark.parametrize(
-    "imported", ["generator", "tracker_linear", "hub_git", "claude_sessions", "api"]
+    "imported", ["generator", "tracker_linear", "hub_git", "claude_sessions", "api", "mcp_server"]
 )
 def test_breaks_core_contract_when_core_imports_adapter(
     lint_imports: Callable[[str, str], CompletedProcess[str]], imported: str
@@ -171,7 +182,7 @@ def test_keeps_every_contract_when_api_wires_adapter(
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-@pytest.mark.parametrize("importer", ["api", "core", "cli"])
+@pytest.mark.parametrize("importer", ["api", "core", "cli", "mcp_server"])
 def test_breaks_sdk_contract_when_api_imports_sdk(
     lint_imports: Callable[[str, str], CompletedProcess[str]], importer: str
 ) -> None:
@@ -198,6 +209,54 @@ def test_breaks_cli_contract_when_cli_imports_claude_sessions(
 
     assert result.returncode != 0, result.stdout + result.stderr
     assert f"{CLI_NO_CLAUDE_SESSIONS} BROKEN" in result.stdout, result.stdout
+
+
+@pytest.mark.parametrize("importer", ["cli", "cli.run_command"])
+def test_breaks_mcp_command_contract_when_other_cli_module_imports_mcp_server(
+    lint_imports: Callable[[str, str], CompletedProcess[str]], importer: str
+) -> None:
+    result = lint_imports(importer, "mcp_server")
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert f"{MCP_THROUGH_COMMAND} BROKEN" in result.stdout, result.stdout
+
+
+def test_keeps_every_contract_when_mcp_command_imports_mcp_server(
+    lint_imports: Callable[[str, str], CompletedProcess[str]],
+) -> None:
+    result = lint_imports("cli.mcp_command", "mcp_server")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"{MCP_THROUGH_COMMAND} KEPT" in result.stdout, result.stdout
+    assert f"{COMPOSITION_ROOT} KEPT" in result.stdout, result.stdout
+
+
+@pytest.mark.parametrize("importer", ["core", "cli", "api", "storage", "hub_git"])
+def test_breaks_mcp_contract_when_other_package_imports_mcp(
+    lint_imports: Callable[[str, str], CompletedProcess[str]], importer: str
+) -> None:
+    result = lint_imports(importer, MCP)
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert f"{MCP_CONFINED} BROKEN" in result.stdout, result.stdout
+
+
+def test_keeps_mcp_contract_when_mcp_server_imports_mcp(
+    lint_imports: Callable[[str, str], CompletedProcess[str]],
+) -> None:
+    result = lint_imports("mcp_server", MCP)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"{MCP_CONFINED} KEPT" in result.stdout, result.stdout
+
+
+@pytest.mark.parametrize("imported", ["core", "storage", "hub_git", "generator"])
+def test_keeps_every_contract_when_mcp_server_wires_adapter(
+    lint_imports: Callable[[str, str], CompletedProcess[str]], imported: str
+) -> None:
+    result = lint_imports("mcp_server", imported)
+
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 # AC-165.41 (E16): the platform never reads a claude.ai token or calls claude.ai or the Anthropic
