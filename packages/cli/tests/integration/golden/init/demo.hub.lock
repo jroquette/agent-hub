@@ -32,6 +32,10 @@
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/agents/spec-reviewer.md"
     },
+    ".claude/agents/test-writer.md": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/agents/test-writer.md"
+    },
     ".claude/agents/ux-designer.md": {
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/agents/ux-designer.md"
@@ -96,6 +100,10 @@
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/plain-language"
     },
+    ".claude/skills/property-based-testing": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/property-based-testing"
+    },
     ".claude/skills/recall": {
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/recall"
@@ -123,6 +131,10 @@
     ".claude/skills/summarize": {
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/summarize"
+    },
+    ".claude/skills/test-strength": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/test-strength"
     },
     ".claude/skills/triage": {
       "ownership": "managed",
@@ -225,7 +237,7 @@
     "hub.schema.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "b1d7ffd0d8ff0d0b4594029b7d9a3bb6e9933f6561d3a58ee32d671fcd0e630f"
+      "sha256": "1f45d32a28f477f21ea264367623f37aaf00cf502406f1b9443c8e21fa63f4d1"
     },
     "plugin/demo/.claude-plugin/plugin.json": {
       "ownership": "seeded"
@@ -257,7 +269,7 @@
     "plugin/hub-workflow/NOTICE": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "fae9c81bfd09f4efeaa616f3a12bfcdeea2579499f490009edb409fc17b6413a"
+      "sha256": "79fe89951231f8b3c656c596c2d8a34d91ebd3871b4df51fc4e1f899b7b88bee"
     },
     "plugin/hub-workflow/agents/architect.md": {
       "executable": false,
@@ -298,6 +310,11 @@
       "executable": false,
       "ownership": "managed",
       "sha256": "54ae53835b987ac549f3058736a22c4038bd41bbc4d8d59e1b20c7cb74adc451"
+    },
+    "plugin/hub-workflow/agents/test-writer.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "b1372a03d7e6f38ecefae2be9b093b70b540fa02c5c64c04018334362b6cc7af"
     },
     "plugin/hub-workflow/agents/ux-designer.md": {
       "executable": false,
@@ -449,6 +466,11 @@
       "ownership": "managed",
       "sha256": "be9a1cdcffb759374fba0f1ee0af80cd9e95421ad031f1833726c52e8127946d"
     },
+    "plugin/hub-workflow/skills/property-based-testing/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "4be017379a1b7d7bbc269dc0ad4a753b54da2bfbc94729e40f9d7148f6af2abd"
+    },
     "plugin/hub-workflow/skills/recall/SKILL.md": {
       "executable": false,
       "ownership": "managed",
@@ -483,6 +505,16 @@
       "executable": false,
       "ownership": "managed",
       "sha256": "1f09f3d48095ae554ea75c842e769b3ed102ea61cad6c74d47bc1689335e5a3c"
+    },
+    "plugin/hub-workflow/skills/test-strength/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "a7e03678ff2eb0353d909246c9d0d8b404e960d34ca2168fa424ef380a7d1ab0"
+    },
+    "plugin/hub-workflow/skills/test-strength/references/tools.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "efed13cdc04349eb00212dcfca34e3dce1d8590bff1bfbf189da0b487e965654"
     },
     "plugin/hub-workflow/skills/triage/SKILL.md": {
       "executable": false,
