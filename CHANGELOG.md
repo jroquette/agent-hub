@@ -13,10 +13,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
-- `hub web`'s agent-session API takes PDF and text files with a message for Claude to read, up to 10 per message and
-  5 MB each (AGH-419): a PDF goes to Claude as a document, a text file as text that names it. The server keeps no
-  file byte, only each file's name and size in the log. A session's first prompt may carry pasted images and files
-  too. The agent-session routes' body cap goes to 160 MiB.
+- `hub web`'s chat takes PDF and text files with a message for Claude to read, up to 10 per message and 5 MB each
+  (AGH-419): Attach, a paste or a drop adds them as chips with name and size beside the images, and a sent message
+  lists them. The server keeps no file byte, only each file's name and size in the log. A session's first prompt may
+  carry pasted images and files too, so the Discuss panel takes them from its first message. The agent-session
+  routes' body cap goes to 160 MiB.
 - The base plugin gains the `/premortem` and `/context-audit` skills (AGH-414). `/premortem` assumes a decision
   already failed and gives its top three causes an early-warning sign and the cheapest experiment that could prove the
   choice wrong. `/context-audit` estimates the always-loaded context of a hub and its repos and ranks the cuts by

@@ -42,7 +42,7 @@ describe("Composer (composer)", () => {
 
     await userEvent.type(box, "Run the tests{Enter}");
 
-    expect(props.onSend).toHaveBeenCalledWith("Run the tests", []);
+    expect(props.onSend).toHaveBeenCalledWith("Run the tests", [], []);
     expect(box).toHaveValue("");
   });
 
@@ -54,7 +54,7 @@ describe("Composer (composer)", () => {
     expect(box).toHaveValue("one\ntwo");
     expect(props.onSend).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Send" }));
-    expect(props.onSend).toHaveBeenCalledWith("one\ntwo", []);
+    expect(props.onSend).toHaveBeenCalledWith("one\ntwo", [], []);
   });
 
   it("sends on Alt+Enter, but leaves Ctrl/Cmd+Alt+Enter to the chat's allow chord", async () => {
@@ -68,7 +68,7 @@ describe("Composer (composer)", () => {
 
     expect(fireEvent.keyDown(box, { key: "Enter", altKey: true })).toBe(false);
     await waitFor(() => {
-      expect(props.onSend).toHaveBeenCalledWith("Run it", []);
+      expect(props.onSend).toHaveBeenCalledWith("Run it", [], []);
     });
   });
 
@@ -168,7 +168,7 @@ describe("Composer (composer)", () => {
     );
     await userEvent.type(box, "Go on.{Enter}");
 
-    expect(props.onSend).toHaveBeenCalledWith("Go on.", []);
+    expect(props.onSend).toHaveBeenCalledWith("Go on.", [], []);
     expect(screen.getByRole("combobox", { name: "Mode" })).toBeDisabled();
   });
 
@@ -276,7 +276,7 @@ describe("Composer (composer)", () => {
     expect(box).toHaveValue("Saved earlier");
     await userEvent.type(box, "{Enter}");
 
-    expect(props.onSend).toHaveBeenCalledWith("Saved earlier", []);
+    expect(props.onSend).toHaveBeenCalledWith("Saved earlier", [], []);
     expect(box).toHaveValue("");
     expect(window.localStorage.getItem("ah.chat.draft.s-1")).toBeNull();
   });
@@ -366,7 +366,7 @@ describe("Composer (composer)", () => {
     expect(box).toHaveValue("one\ntwo");
     expect(props.onSend).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Send" }));
-    expect(props.onSend).toHaveBeenCalledWith("one\ntwo", []);
+    expect(props.onSend).toHaveBeenCalledWith("one\ntwo", [], []);
     vi.unstubAllGlobals();
   });
 
@@ -447,7 +447,7 @@ describe("Composer (images)", () => {
 
     fireEvent.paste(box, { clipboardData: { files: [image("shot.png")] } });
 
-    const strip = await screen.findByRole("list", { name: "Images in this message" });
+    const strip = await screen.findByRole("list", { name: "Attached to this message" });
     expect(within(strip).getByRole("img", { name: "Image 1" })).toHaveAttribute(
       "src",
       "data:image/png;base64,shot.png",
@@ -457,11 +457,13 @@ describe("Composer (images)", () => {
 
     await userEvent.type(box, "What is wrong here?{Enter}");
 
-    expect(props.onSend).toHaveBeenCalledWith("What is wrong here?", [
-      "data:image/png;base64,shot.png",
-    ]);
+    expect(props.onSend).toHaveBeenCalledWith(
+      "What is wrong here?",
+      ["data:image/png;base64,shot.png"],
+      [],
+    );
     await waitFor(() => {
-      expect(screen.queryByRole("list", { name: "Images in this message" })).toBeNull();
+      expect(screen.queryByRole("list", { name: "Attached to this message" })).toBeNull();
     });
   });
 
@@ -476,7 +478,7 @@ describe("Composer (images)", () => {
       },
     });
 
-    const strip = await screen.findByRole("list", { name: "Images in this message" });
+    const strip = await screen.findByRole("list", { name: "Attached to this message" });
     await waitFor(() => {
       expect(within(strip).getAllByRole("img")).toHaveLength(10);
     });
@@ -489,6 +491,7 @@ describe("Composer (images)", () => {
     expect(props.onSend).toHaveBeenCalledWith(
       "Compare",
       "acdefghij".split("").map((n) => `data:image/png;base64,${n}.png`),
+      [],
     );
   });
 
@@ -497,7 +500,75 @@ describe("Composer (images)", () => {
 
     fireEvent.paste(box, { clipboardData: { files: [image("shot.png")] } });
 
-    expect(screen.queryByRole("list", { name: "Images in this message" })).toBeNull();
+    expect(screen.queryByRole("list", { name: "Attached to this message" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Add an image" })).toBeNull();
+  });
+});
+
+describe("Composer (files)", () => {
+  const textFile = (name: string, body = "id,name\n1,Ada\n") =>
+    new File([body], name, { type: "text/csv" });
+
+  it("attaches a picked text file as a chip and sends it with the message (AC-419.7, AC-419.9)", async () => {
+    const { box, props } = open({ acceptsImages: true, acceptsFiles: true });
+    const picker = document.querySelector<HTMLInputElement>("input[type=file]");
+    if (!picker) throw new Error("no file picker");
+    expect(picker).not.toHaveAttribute("accept");
+
+    fireEvent.change(picker, { target: { files: [textFile("people.csv")] } });
+
+    const strip = await screen.findByRole("list", { name: "Attached to this message" });
+    expect(await within(strip).findByText("people.csv")).toBeInTheDocument();
+    expect(screen.getByText("Add a message to send with the file")).toBeInTheDocument();
+    expect(box).toHaveAttribute("placeholder", "Say what Claude should do with the file");
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+
+    await userEvent.type(box, "Summarize it{Enter}");
+
+    expect(props.onSend).toHaveBeenCalledWith(
+      "Summarize it",
+      [],
+      [
+        {
+          name: "people.csv",
+          mediaType: "text/plain",
+          data: btoa("id,name\n1,Ada\n"),
+          bytes: 14,
+        },
+      ],
+    );
+  });
+
+  it("refuses a binary file with the reason and keeps the rest (AC-419.8)", async () => {
+    const { box } = open({ acceptsFiles: true });
+    const binary = new File([new Uint8Array([0, 1, 2])], "app.bin");
+
+    fireEvent.paste(box, { clipboardData: { files: [binary] } });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Claude reads PDFs and text files here, and “app.bin” is neither.",
+    );
+    expect(screen.queryByRole("list", { name: "Attached to this message" })).toBeNull();
+  });
+
+  it("refuses a file over 5 MB before reading it (AC-419.8)", async () => {
+    const { box } = open({ acceptsFiles: true });
+    const big = textFile("huge.log", "a".repeat(5 * 1024 * 1024 + 1));
+
+    fireEvent.paste(box, { clipboardData: { files: [big] } });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("files go up to 5 MB");
+  });
+
+  it("removes an attached file (AC-419.7)", async () => {
+    open({ acceptsFiles: true });
+    const form = screen.getByRole("form", { name: "Message composer" });
+
+    fireEvent.drop(form, { dataTransfer: { files: [textFile("notes.md")], types: ["Files"] } });
+
+    const strip = await screen.findByRole("list", { name: "Attached to this message" });
+    await userEvent.click(await within(strip).findByRole("button", { name: "Remove notes.md" }));
+
+    expect(screen.queryByRole("list", { name: "Attached to this message" })).toBeNull();
   });
 });

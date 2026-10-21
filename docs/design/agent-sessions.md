@@ -225,7 +225,7 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
   - AC-266.10: the composer's toolbar shows mode and model as compact pills (icon, value, caret) over native selects,
     the mode tinting its pill; Stop shows only while a turn can be stopped; the hint sits under the bar.
 - **Files in a message (AGH-419).** PDFs and text files go with a message for Claude to read, like images; the
-  server keeps no file byte (the composer side lands in a follow-up).
+  server keeps no file byte.
   - **AC-419.1** Given `POST /{id}/messages` with `files: [{name, media_type, data}]` (1 to 10; `media_type`
     `application/pdf` or `text/plain`, `data` base64), when it is accepted, then Claude gets the files first, then the
     images, then the text: a PDF as a `document` block titled by its name, a text file as a `text` block wrapped in
@@ -245,6 +245,22 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
     (422).
   - **AC-419.6** Given the body caps, then `POST ""` and `POST /{id}/messages` take bodies up to 160 MiB, so ten
     images and ten files fit; 413 above.
+  - **AC-419.7** Given the composer of a local session, when a PDF or a UTF-8 text file is picked with Attach
+    ("Attach a file"; it also takes images), pasted or dropped, then it shows above the text as a chip with its name
+    and size (KB, MB) and a remove button, and goes with the message; images keep their thumbnails beside the chips.
+    A cloud session offers no Attach.
+  - **AC-419.8** Given a file over 5 MB, an empty one, or one that is neither a PDF nor UTF-8 text, when it is added,
+    then it is refused with the reason ("“x.zip” is 6.0 MB: files go up to 5 MB.", "Claude reads PDFs and text files
+    here, and “x.bin” is neither.") and the rest stay; past 10 files, "A message takes up to 10 files.".
+  - **AC-419.9** Given files attached and no text, then Send stays off and the hint reads "Add a message to send with
+    the file"; the placeholder reads "Say what Claude should do with the file".
+  - **AC-419.10** Given a message sent with files, when the chat shows it ("Sending…" or from its record), then its
+    files are listed above the bubble with name and size, after a reload too (from the record's markers).
+  - **AC-419.11** Given a file chip, when its name is long, then every chip keeps one width, the name is cut with an
+    ellipsis (whole in its title) and the size stays on one line beside the remove button, a 24 px target.
+  - **AC-419.12** Given `AttachmentList` and `useMessageAttachments` in the shared components, when a screen uses
+    them, then it gets the composer's reading, limits, refusals, thumbnails and chips; without remove handlers the
+    list is read-only.
 - **Accessibility.** No serious or critical axe violation in any state (empty, streaming, waiting, detached, menu
   open, ended). The log keeps `role="log"` and `aria-busy` and has a visually hidden h2; under
   `prefers-reduced-motion` no caret, shimmer or smooth scroll animates.
