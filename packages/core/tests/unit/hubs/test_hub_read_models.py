@@ -609,6 +609,7 @@ def test_reads_skill_catalog_when_project_known() -> None:
     )
 
     catalog = models.skill_catalog("demo")
+    names = models.skill_item_names("demo")
     detail = models.skill_detail("demo", kind=ItemKind.SKILL, source="hub-workflow", name="alpha")
     reference = next(bundled for bundled in detail.files if bundled.path == "references/r.md")
     text = models.skill_file(
@@ -617,6 +618,7 @@ def test_reads_skill_catalog_when_project_known() -> None:
 
     assert catalog.project == "demo"
     assert "skill/hub-workflow/alpha" in {item.id for item in catalog.items}
+    assert names == {(item.kind, item.name) for item in catalog.items}
     assert detail.usage is not None
     assert detail.usage.count == 3
     assert text.text == "# R\n\nRead on demand.\n"

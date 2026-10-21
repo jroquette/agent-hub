@@ -359,6 +359,18 @@ def test_answers_write_failed_without_path_when_item_write_fails() -> None:
         assert "scout" not in str(found.detail)
 
 
+def test_answers_write_failed_when_old_item_not_removed() -> None:
+    found = _mapped(
+        HubItemWriteError(f"rmtree failed in /home/demo/{UNIT_PATH}", kind="old_not_removed")
+    )
+
+    assert (found.status, found.members) == (
+        500,
+        {"code": "write_failed", "kind": "old_not_removed"},
+    )
+    assert found.detail == "Published and recorded; the old item could not be removed."
+
+
 def test_answers_server_error_without_content_when_version_corrupt() -> None:
     found = _mapped(CorruptVersionError(f"frame of {UNIT_PATH} past its length"))
 

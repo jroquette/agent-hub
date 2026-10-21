@@ -517,3 +517,90 @@ def test_tells_moved_hook_held_only_when_file_holds_every_draft_group() -> None:
     assert not held(_hooks("PreToolUse", "changed", "Bash"))
     with pytest.raises(EntityNotFoundError):
         holds_moved_hook(settings, HookAt("PreToolUse", 3), {"Stop": []})
+
+
+def _command(command: str) -> JsonValue:
+    return {"type": "command", "command": command}
+
+
+def _three_hooks(*, indent: int | None = None) -> bytes:
+    group = {"matcher": "Bash", "hooks": [_command("x1"), _command("X"), _command("x3")]}
+    return json.dumps({"hooks": {"PreToolUse": [group]}}, indent=indent).encode()
+
+
+def _draft_hooks(groups: dict[str, list[JsonValue]]) -> DraftItem:
+    draft = read_draft_item(
+        UnitKind.HOOK, _files({"hooks.json": json.dumps({"hooks": groups}).encode()})
+    )
+    assert draft.hooks is not None
+    return draft
+
+
+def test_keeps_file_when_spliced_hooks_already_in_place() -> None:
+    # A16: [x1, X, x3] with X replaced by [A, B] gives [x1, A, B, x3]; a retry with no version
+    # to follow finds A, B at X's place and writes nothing more.
+    draft = _draft_hooks(
+        {"PreToolUse": [{"matcher": "Bash", "hooks": [_command("A"), _command("B")]}]}
+    )
+    assert draft.hooks is not None
+    at = HookAt("PreToolUse", 2)
+
+    once = replace_hook(_three_hooks(), at, draft.hooks)
+    again = replace_hook(once, at, draft.hooks)
+
+    assert json.loads(once)["hooks"]["PreToolUse"][0]["hooks"] == [
+        _command("x1"),
+        _command("A"),
+        _command("B"),
+        _command("x3"),
+    ]
+    assert again == once
+
+
+def test_keeps_file_bytes_when_spliced_hooks_and_other_groups_held() -> None:
+    draft = _draft_hooks(
+        {
+            "PreToolUse": [{"matcher": "Bash", "hooks": [_command("A"), _command("B")]}],
+            "Stop": [{"hooks": [_command("stop")]}],
+        }
+    )
+    assert draft.hooks is not None
+    at = HookAt("PreToolUse", 2)
+    applied = json.loads(replace_hook(_three_hooks(), at, draft.hooks))
+    # The same document in another form: an applied draft keeps the file's own bytes.
+    on_disk = json.dumps(applied, indent=4).encode()
+
+    assert replace_hook(on_disk, at, draft.hooks) == on_disk
+
+
+def test_replaces_hook_when_spliced_hooks_in_place_but_other_group_missing() -> None:
+    draft = _draft_hooks(
+        {
+            "PreToolUse": [{"matcher": "Bash", "hooks": [_command("X")]}],
+            "Stop": [{"hooks": [_command("stop")]}],
+        }
+    )
+    assert draft.hooks is not None
+
+    written = json.loads(replace_hook(_three_hooks(), HookAt("PreToolUse", 2), draft.hooks))
+
+    assert written["hooks"]["Stop"] == [{"hooks": [_command("stop")]}]
+    assert written["hooks"]["PreToolUse"][0]["hooks"] == [
+        _command("x1"),
+        _command("X"),
+        _command("x3"),
+    ]
+
+
+def test_refuses_draft_when_a_group_has_no_hooks() -> None:
+    cases: list[dict[str, list[JsonValue]]] = [
+        {
+            "Stop": [{"hooks": [_command("stop")]}],
+            "PreToolUse": [{"matcher": "Bash", "hooks": []}],
+        },
+        {"Stop": [{"hooks": [_command("stop")]}, {"matcher": "x"}]},
+    ]
+    for groups in cases:
+        content = json.dumps({"hooks": groups}).encode()
+        with pytest.raises(DraftInvalidError):
+            read_draft_item(UnitKind.HOOK, _files({"hooks.json": content}))

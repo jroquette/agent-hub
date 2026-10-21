@@ -12,21 +12,33 @@ from typing import Final
 
 import pytest
 
+from agent_hub.core.errors import AgentHubError
+from agent_hub.core.hub_files.hub_lock import HubLock, ManagedFileEntry
 from agent_hub.core.item_versions.capture_item_versions import CaptureItemVersions
 from agent_hub.core.item_versions.hub_item_writer import HubItemWriteError, ItemWriteRefusedError
-from agent_hub.core.item_versions.item_version import VersionAuthor, VersionOrigin
+from agent_hub.core.item_versions.item_version import (
+    ItemVersion,
+    NewItemVersion,
+    VersionAuthor,
+    VersionOrigin,
+)
 from agent_hub.core.item_versions.item_version_ports import MarkedUnit, ToolkitRef
 from agent_hub.core.item_versions.publish_draft import DraftNotRemovedError, PublishDraft
 from agent_hub.core.item_versions.publish_rules import DraftInvalidError
-from agent_hub.core.item_versions.record_and_write import RecordAndWrite
+from agent_hub.core.item_versions.record_and_write import (
+    ItemWrittenUnrecordedError,
+    RecordAndWrite,
+)
+from agent_hub.core.item_versions.unit_content import MAX_UNIT_FILES
 from agent_hub.core.item_versions.unit_hash import file_hash
 from agent_hub.core.json_form import dump_json
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.skills.skill_reads import SkillReads
 from agent_hub.core.skills.skill_sources import MAX_SKILL_FILE_BYTES
-from agent_hub.core.skills.skill_view import ItemKind, SkillCatalog, SkillDetail
+from agent_hub.core.skills.skill_view import ItemKind, SkillCatalog, SkillDetail, SkillUsage
 from agent_hub.core.testing.hub_fakes import FakeHub, FakeHubFileReader
 from agent_hub.core.testing.item_version_fakes import FakeHubItemWriter, InMemoryItemVersionStore
+from agent_hub.core.testing.skill_trees import FIXTURE_PLATFORM_VERSION
 
 HUB: Final = "/hubs/demo-hub"
 PROJECT: Final = "demo"
@@ -57,12 +69,17 @@ class _Catalog:
 
     def __init__(self, reads: SkillReads) -> None:
         self._reads = reads
+        self.catalog_reads = 0
 
     def project_hubs(self) -> Iterator[tuple[str, str]]:
         return iter([(PROJECT, HUB)])
 
     def skill_catalog(self, project: str) -> SkillCatalog:
+        self.catalog_reads += 1
         return self._reads.catalog(project=project, hub_path=HUB)
+
+    def skill_item_names(self, project: str) -> frozenset[tuple[ItemKind, str]]:
+        return self._reads.item_names(project=project, hub_path=HUB)
 
     def skill_detail(self, project: str, *, kind: ItemKind, source: str, name: str) -> SkillDetail:
         return self._reads.detail(
@@ -75,14 +92,29 @@ class _Catalog:
         return self._reads.marked_unit(project, HUB, kind=kind, source=source, name=name)
 
 
+class _Usage:
+    """A usage source that counts the times it is asked."""
+
+    def __init__(self) -> None:
+        self.asked = 0
+
+    def skill_usage(self, project: str) -> SkillUsage:
+        del project
+        self.asked += 1
+        return SkillUsage(since=NOW, by_skill={}, by_agent={})
+
+
 class _Rig:
-    def __init__(self, files: dict[str, bytes]) -> None:
+    def __init__(
+        self, files: dict[str, bytes], *, store: InMemoryItemVersionStore | None = None
+    ) -> None:
         self.hub = FakeHub(skill_files=dict(files))
         reader = FakeHubFileReader({HUB: self.hub})
-        self.store = InMemoryItemVersionStore()
+        self.store = store if store is not None else InMemoryItemVersionStore()
         self.capture = CaptureItemVersions(self.store, reader, lambda: NOW)
         self.writer = FakeHubItemWriter({HUB: self.hub})
-        self.catalog = _Catalog(SkillReads(reader, capture=self.capture))
+        self.usage = _Usage()
+        self.catalog = _Catalog(SkillReads(reader, self.usage, capture=self.capture))
         step = RecordAndWrite(
             self.store,
             reader=reader,
@@ -382,6 +414,8 @@ def test_refuses_moved_hook_when_retried_without_version() -> None:
         rig.publish.publish(PROJECT, "hook-mov002", ref, confirm_managed=False)
 
     assert refused.value.code == "item_exists"
+    # A17: the answer claims no earlier publish.
+    assert refused.value.reason == "The hooks file already holds this draft's hooks"
     assert rig.hub.skill_files[SETTINGS] == once
     assert rig.writer.writes == []
     assert rig.drafts() == [".hub-drafts/hook-mov002/hooks.json"]
@@ -496,7 +530,8 @@ def test_records_publish_before_removing_old_when_renamed() -> None:
             PROJECT, "skill-ren004", _ref(ItemKind.SKILL, "demo", "alpha"), confirm_managed=False
         )
 
-    assert failed.value.kind == "failed"
+    # A18: its own failure kind, naming no path.
+    assert failed.value.kind == "old_not_removed"
     assert "alpha" not in str(failed.value)
     renamed = "plugin/demo/skills/alpha2"
     assert rig.hub.skill_files[f"{ALPHA}/SKILL.md"] == _named("alpha")
@@ -526,14 +561,17 @@ class _EditedAtLock(FakeHubItemWriter):
     """A writer whose first ``is_writable`` (the step's first act under its lock) stands in for
     a hand edit landing between the item's resolve and the lock."""
 
-    def __init__(self, rig: _Rig, path: str, content: bytes) -> None:
+    def __init__(self, rig: _Rig, path: str, content: bytes | None) -> None:
         super().__init__(rig.writer.hubs)
-        self._edit: tuple[str, bytes] | None = (path, content)
+        self._edit: tuple[str, bytes | None] | None = (path, content)
 
     def is_writable(self, hub_path: str, unit_paths: Sequence[str] = ()) -> bool:
         if self._edit is not None and unit_paths:
             path, content = self._edit
-            self.hubs[hub_path].skill_files[path] = content
+            if content is None:
+                del self.hubs[hub_path].skill_files[path]
+            else:
+                self.hubs[hub_path].skill_files[path] = content
             self._edit = None
         return super().is_writable(hub_path, unit_paths)
 
@@ -553,7 +591,7 @@ def test_locates_hook_in_file_read_under_lock_when_edited_before_lock() -> None:
     assert rig.origins(SETTINGS) == [VersionOrigin.EXTERNAL, VersionOrigin.PUBLISH]
 
 
-def _edited_at_lock(rig: _Rig, path: str, content: bytes) -> PublishDraft:
+def _edited_at_lock(rig: _Rig, path: str, content: bytes | None) -> PublishDraft:
     writer = _EditedAtLock(rig, path, content)
     reader = FakeHubFileReader({HUB: rig.hub})
     step = RecordAndWrite(
@@ -601,3 +639,229 @@ def test_replaces_hook_when_in_project_settings_or_plugin(path: str, source: str
     assert json.loads(rig.hub.skill_files[path]) == json.loads(
         _hooks("PreToolUse", "published", "Bash")
     )
+
+
+def _command(command: str) -> dict[str, str]:
+    return {"type": "command", "command": command}
+
+
+def _three_hooks() -> bytes:
+    group = {"matcher": "Bash", "hooks": [_command("x1"), _command("X"), _command("x3")]}
+    return json.dumps({"hooks": {"PreToolUse": [group]}}).encode()
+
+
+def _two_hook_draft(first: str) -> bytes:
+    group = {"matcher": "Bash", "hooks": [_command(first), _command("B")]}
+    return json.dumps({"hooks": {"PreToolUse": [group]}}).encode()
+
+
+SECOND_HOOK: Final = _ref(ItemKind.HOOK, "settings", "settings-pretooluse-2")
+
+
+def _commands(file_json: bytes) -> list[str]:
+    groups = json.loads(file_json)["hooks"]["PreToolUse"]
+    return [hook["command"] for group in groups for hook in group["hooks"]]
+
+
+def test_answers_unchanged_when_spliced_hooks_retried_after_secret() -> None:
+    rig = _Rig({SETTINGS: _three_hooks()})
+    rig.draft("hook-spl001", {"hooks.json": _two_hook_draft(f"notify --token {SYNTHETIC_TOKEN}")})
+    rig.writer.fail_on.add(".hub-drafts/hook-spl001")
+    with pytest.raises(DraftNotRemovedError) as first:
+        rig.publish.publish(PROJECT, "hook-spl001", SECOND_HOOK, confirm_managed=False)
+    assert first.value.result.reason == "secret"
+    once = rig.hub.skill_files[SETTINGS]
+    rig.writer.fail_on.clear()
+    rig.writer.writes.clear()
+
+    again = rig.publish.publish(PROJECT, "hook-spl001", SECOND_HOOK, confirm_managed=False)
+
+    assert _commands(once) == ["x1", f"notify --token {SYNTHETIC_TOKEN}", "B", "x3"]
+    assert (again.changed, again.versioned) == (False, False)
+    assert rig.hub.skill_files[SETTINGS] == once
+    assert rig.writer.writes == [(HUB, ".hub-drafts/hook-spl001")]
+    assert rig.drafts() == []
+
+
+class _PublishFailingStore(InMemoryItemVersionStore):
+    """Fails every ``publish`` append as a busy database does, while ``failing``."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.failing = True
+
+    def append(self, version: NewItemVersion) -> ItemVersion:
+        if self.failing and version.origin is VersionOrigin.PUBLISH:
+            raise _StoreBusyError("database is locked")
+        return super().append(version)
+
+
+class _StoreBusyError(AgentHubError):
+    """Stands in for the storage adapter's busy database."""
+
+
+def test_answers_unchanged_when_spliced_hooks_retried_after_unrecorded() -> None:
+    store = _PublishFailingStore()
+    rig = _Rig({SETTINGS: _three_hooks()}, store=store)
+    rig.draft("hook-spl002", {"hooks.json": _two_hook_draft("A")})
+    with pytest.raises(ItemWrittenUnrecordedError):
+        rig.publish.publish(PROJECT, "hook-spl002", SECOND_HOOK, confirm_managed=False)
+    once = rig.hub.skill_files[SETTINGS]
+    store.failing = False
+    rig.writer.writes.clear()
+
+    again = rig.publish.publish(PROJECT, "hook-spl002", SECOND_HOOK, confirm_managed=False)
+
+    assert _commands(once) == ["x1", "A", "B", "x3"]
+    assert not again.changed
+    assert rig.hub.skill_files[SETTINGS] == once
+    assert rig.writer.writes == [(HUB, ".hub-drafts/hook-spl002")]
+    assert rig.drafts() == []
+
+
+def test_refuses_hook_draft_when_a_group_has_no_hooks() -> None:
+    rig = _Rig({SETTINGS: _three_hooks()})
+    draft = {
+        "hooks": {
+            "Stop": [{"hooks": [_command("stop")]}],
+            "PreToolUse": [{"matcher": "Bash", "hooks": []}],
+        }
+    }
+    rig.draft("hook-emp001", {"hooks.json": json.dumps(draft).encode()})
+
+    for _ in range(2):
+        with pytest.raises(DraftInvalidError):
+            rig.publish.publish(PROJECT, "hook-emp001", SECOND_HOOK, confirm_managed=False)
+
+    assert rig.hub.skill_files[SETTINGS] == _three_hooks()
+    assert rig.writer.writes == []
+    assert rig.drafts() == [".hub-drafts/hook-emp001/hooks.json"]
+
+
+def test_removes_old_and_draft_when_rename_retried_after_old_not_removed() -> None:
+    rig = _Rig({f"{ALPHA}/SKILL.md": _named("alpha")})
+    rig.draft("skill-ren005", {"SKILL.md": _named("alpha2")})
+    rig.writer.fail_on.add(ALPHA)
+    alpha = _ref(ItemKind.SKILL, "demo", "alpha")
+    with pytest.raises(HubItemWriteError) as failed:
+        rig.publish.publish(PROJECT, "skill-ren005", alpha, confirm_managed=False)
+    assert failed.value.kind == "old_not_removed"
+    rig.writer.fail_on.clear()
+
+    again = rig.publish.publish(PROJECT, "skill-ren005", alpha, confirm_managed=False)
+
+    renamed = "plugin/demo/skills/alpha2"
+    assert (again.changed, again.versioned) == (False, False)
+    assert {p: c for p, c in rig.hub.skill_files.items() if p.startswith("plugin/")} == {
+        f"{renamed}/SKILL.md": _named("alpha2")
+    }
+    assert rig.origins(renamed) == [VersionOrigin.PUBLISH]
+    assert rig.drafts() == []
+
+
+def _managed(rig: _Rig, path: str) -> None:
+    entry = ManagedFileEntry(ownership="managed", sha256="ab" * 32, executable=False)
+    rig.hub.lock = HubLock(
+        lock_version=1,
+        platform_version=FIXTURE_PLATFORM_VERSION,
+        schema_version=1,
+        modules=(),
+        files={path: entry},
+    )
+
+
+def test_refuses_managed_unit_when_publish_not_confirmed() -> None:
+    rig = _Rig({SCOUT: _named("scout")})
+    _managed(rig, SCOUT)
+    rig.draft("agent-man001", {"scout.md": _named("scout", "Published.\n")})
+
+    with pytest.raises(ItemWriteRefusedError) as refused:
+        rig.publish.publish(PROJECT, "agent-man001", SCOUT_REF, confirm_managed=False)
+
+    assert refused.value.code == "managed_confirmation_required"
+    assert rig.hub.skill_files[SCOUT] == _named("scout")
+    assert rig.writer.writes == []
+    assert rig.drafts() == [".hub-drafts/agent-man001/scout.md"]
+
+
+def test_writes_managed_unit_when_publish_confirmed() -> None:
+    rig = _Rig({SCOUT: _named("scout")})
+    _managed(rig, SCOUT)
+    rig.draft("agent-man002", {"scout.md": _named("scout", "Published.\n")})
+
+    result = rig.publish.publish(PROJECT, "agent-man002", SCOUT_REF, confirm_managed=True)
+
+    assert (result.changed, result.versioned) == (True, True)
+    assert rig.hub.skill_files[SCOUT] == _named("scout", "Published.\n")
+    assert rig.origins(SCOUT) == [VersionOrigin.EXTERNAL, VersionOrigin.PUBLISH]
+    assert rig.drafts() == []
+
+
+def test_keeps_old_unit_and_draft_when_rename_written_not_recorded() -> None:
+    rig = _Rig({f"{ALPHA}/SKILL.md": _named("alpha")}, store=_PublishFailingStore())
+    rig.draft("skill-ren006", {"SKILL.md": _named("alpha2")})
+
+    with pytest.raises(ItemWrittenUnrecordedError):
+        rig.publish.publish(
+            PROJECT, "skill-ren006", _ref(ItemKind.SKILL, "demo", "alpha"), confirm_managed=False
+        )
+
+    assert rig.hub.skill_files[f"{ALPHA}/SKILL.md"] == _named("alpha")
+    assert rig.hub.skill_files["plugin/demo/skills/alpha2/SKILL.md"] == _named("alpha2")
+    assert rig.drafts() == [".hub-drafts/skill-ren006/SKILL.md"]
+
+
+def test_checks_new_name_without_reading_full_catalog() -> None:
+    reviewer = ".claude/agents/reviewer.md"
+    rig = _Rig({reviewer: _named("reviewer")})
+    rig.draft("skill-new007", {"SKILL.md": _named("changelog")})
+
+    result = rig.publish.publish(PROJECT, "skill-new007", None, confirm_managed=False)
+
+    assert result.changed
+    assert rig.catalog.catalog_reads == 0
+    assert rig.usage.asked == 0
+    # No capture: the other items' units get no version from the name check.
+    assert rig.store.last(PROJECT, reviewer) is None
+
+
+_GONE_CASES: Final = {
+    "agent": (SCOUT, SCOUT_REF, _named("scout"), {"scout.md": _named("scout", "New.\n")}),
+    "hook": (
+        SETTINGS,
+        _ref(ItemKind.HOOK, "settings", "settings-pretooluse-1"),
+        _hooks("PreToolUse", "one", "Bash"),
+        {"hooks.json": _hooks("PreToolUse", "new", "Bash")},
+    ),
+}
+
+
+@pytest.mark.parametrize("entity", sorted(_GONE_CASES))
+def test_names_unit_kind_when_unit_gone_before_lock(entity: str) -> None:
+    path, ref, content, files = _GONE_CASES[entity]
+    rig = _Rig({path: content})
+    publish = _edited_at_lock(rig, path, None)
+    rig.draft(f"{entity}-gone01", files)
+
+    with pytest.raises(EntityNotFoundError) as missing:
+        publish.publish(PROJECT, f"{entity}-gone01", ref, confirm_managed=False)
+
+    assert missing.value.entity == entity
+
+
+def test_refuses_skill_edit_when_folder_past_file_bounds() -> None:
+    files = {f"{ALPHA}/SKILL.md": _named("alpha")}
+    files.update(
+        {f"{ALPHA}/references/r{index:03d}.md": b"# R\n" for index in range(MAX_UNIT_FILES)}
+    )
+    rig = _Rig(files)
+    rig.draft("skill-big001", {"SKILL.md": _named("alpha", "Edited.\n")})
+
+    with pytest.raises(ItemWriteRefusedError) as refused:
+        rig.publish.publish(
+            PROJECT, "skill-big001", _ref(ItemKind.SKILL, "demo", "alpha"), confirm_managed=False
+        )
+
+    assert refused.value.code == "unit_unreadable"
+    assert rig.hub.skill_files[f"{ALPHA}/SKILL.md"] == _named("alpha")
+    assert rig.writer.writes == []
