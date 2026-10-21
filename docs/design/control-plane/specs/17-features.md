@@ -415,8 +415,10 @@ say otherwise, this list wins.
 
 - **One word for every owner wait (A18).** Each "Waiting on you" above reads "Waiting for you": the banner's title,
   the Acceptance prompt ("Waiting for you · Acceptance: sign off 3 ACs"), the Acceptance step (its state is the typed
-  `waiting`, "Waiting for you", with the meta "Waiting for you: sign off 3 ACs"), the ticket eval callouts and the
-  panel's signal. A wait is told by its typed state (the step's `waiting`, the list's `waiting_on_owner.kind`), never by
+  `waiting`, "Waiting for you", with the meta "Sign off 3 ACs"), the hand-written sign-off (A19: its step `waiting`,
+  its banner line "Acceptance: sign off by hand · no ACs listed (Eval 2)", a link to its Eval callout with no button,
+  the callout titled "Waiting for you · Acceptance: sign off by hand · no ACs listed"), the ticket eval callouts and
+  the panel's signal. A wait is told by its typed state (the step's `waiting`, the list's `waiting_on_owner.kind`), never by
   its words.
 - **States.** `waiting` reads "Waiting for you" with the `hand` icon and the `waiting` colour; `stale` reads "Re-run
   needed" with the `clock` icon and the `idle` colour (a StepBar segment filled `idle-soft`, edged `idle`). Their
@@ -448,25 +450,27 @@ say otherwise, this list wins.
   `IdChip`), its input ("after a discovery: …", "after a decline: …") and, for local drift, "Local drift · N notes"
   with each note (AC-2.5). An unknown plan version reads "—".
 - **Before the decision (A20).** An open request is a region named "Plan change request N": its title "Plan change
-  request N: plan v2 → v3" with how long it has waited ("waiting since 2 h ago", from `opened_at`, also on the
+  request N: plan v2 → v3" (a heading, the request's own headings one level below it) with how long it has waited ("waiting 2 h", from `opened_at`, also on the
   banner's line), problems if any, "Plan drift: it changes an AC, a contract or another ticket, so <ticket> is paused
   until you answer.", its evidence and proposal (the request's markdown, `Markdown` under a `ProvenanceBadge`
   "agent"), "What changes if you approve" ("Plan v2 becomes v3 (a new amendment).", "<ticket> runs preflight again on
-  the new plan.", "<affected> run preflight again before they go on.", "Nothing is merged or pushed."), "Read the
-  request in Brain", then its decision:
+  the new plan.", "AGH-203 runs preflight again before it goes on." or "AGH-203, AGH-204 run preflight again before
+  they go on.", "Nothing is merged or pushed."), for a request longer than the 16 KiB read "The request goes on past
+  what is shown: read the full request in Brain before deciding.", "Read the request in Brain", then its decision:
   - while its run waits at its gate (`approval_id`), the shared `GateDecision` of that gate (Approve, Decline); Decline
-    asks for a "Note (required)" in its dialog and cannot be confirmed without one, even for a gate that takes no
-    text (AC-2.7, AC-2.12);
+    asks for a "Note (required)" in its dialog and cannot be confirmed without one; the implement gate captures its
+    response, so the note reaches the run (AC-2.7, AC-2.12);
   - when the server says the run is gone (`decidable_here`), the lost-run form (AC-2.14): "Its run is gone
     (abandoned, or its record lost): your decision is recorded in the hub, and the next /implement of <ticket> reads
     it.", a "Note (required to decline)" field, "Approve plan v3" (primary) and "Decline" (danger). Decline with an
     empty note sends nothing, says "Write a note to decline: the next preflight follows it." and moves focus to the
     note; then "Recording your decision…", "Decision recorded in the hub. The next /implement of <ticket> reads it."
     with the buttons off, or the gate's refusal box (`DecisionError`: the server's reason, "Nothing was recorded.");
-  - else (the run lives but its gate is not open: just decided, or not reached yet) "Its run is live and asks you at
-    its gate; the decision shows here once the gate is open." and no button.
+  - else the run lives but its gate is not open, and no button: "Decision sent to its run; this shows it once the run
+    records it." right after a decision through the gate, otherwise "Its run is live and asks you at its gate; the
+    decision shows here once the gate is open.".
   A decided request reads "Change request N approved by <person> · <date-time>[: <note>]"; after a decision taken
-  here, focus moves to that line.
+  here, through either path, focus moves to that line.
 - **Announcing.** A request that arrives while the page is open is said once in a polite live region ("AGH-202 waits
   for you: plan change request 2."); those open at the first read are the banner's.
 - **Start.** While a ticket's own plan change waits for the owner, the cards' and rows' Start is secondary: the

@@ -267,8 +267,9 @@ acceptance criteria rows, the records and every eval, it carries:
   `decision` (`null`, or `decision`, `decided_by`, `decided_at` and `note`), `path` (relative to the hub's
   `brain/`) and `approval_id`: the id of the open gate of its run that answers it (an open `human_gate` approval in
   the run's session `run:<run_id>`), `null` when the request is not open or its run has no open gate, and
-  `decidable_here`: `true` for an open request whose run has no open gate and is gone (no run is folded under
-  `run_id`, or it ended `done`, `failed` or `cancelled`). With an `approval_id`, hub web decides through
+  `decidable_here`: `true` for an open request whose run has no open gate and is gone by the decision route's own
+  test (no `run_id`, no run folded under it, or one that ended `done`, `failed` or `cancelled`, and no child hub web
+  started holds it); always `false` where the decision route is not wired (sessions off). With an `approval_id`, hub web decides through
   `POST /approvals/{approval_id}/decision` and the run writes the records; with `decidable_here`, through
   [the decision route](#plan-change-requests) below; with neither, the run is live and asks at its gate when it
   gets there (P8, A5).
@@ -324,7 +325,8 @@ the app refetches the route; the cache still applies (`as_of` shows its age). `G
   it with its `local_notes` and its `input`/`input_text` for a discovery or a declined change, and the `problem`
   when it cannot be read, `runs` then empty), and `change_requests`, the requests the ticket asks or is affected
   by, as the detail serves them (with `approval_id` and `decidable_here`) plus each one's `body`: its markdown after
-  the frontmatter (evidence and proposal), within the 16 KiB head the reader reads; the detail's `body` is `null`. It never calls Linear. A ticket the feature's `features.json` neither plans
+  the frontmatter (evidence and proposal), within the 16 KiB head the reader reads, and `body_cut`, `true` when the
+  file goes on past that head; the detail's `body` is `null`. It never calls Linear. A ticket the feature's `features.json` neither plans
   nor lists in `linear` is a 404.
 - `POST /api/v1/features/{project}/{slug}/change-requests/{n}/decision` with `{decision, note?}` → 201 with the
   decided `ChangeRequestView`. It answers a request whose run is gone (the run abandoned, ended, or its record
