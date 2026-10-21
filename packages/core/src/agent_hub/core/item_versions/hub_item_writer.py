@@ -117,18 +117,21 @@ class ItemWriteRefusedError(AgentHubError):
 
 
 # Whether a failed write left the unit as it was (``failed``), could not put it back
-# (``rollback_failed``), or wrote and recorded a rename's new unit but could not remove the old
-# one (``old_not_removed``, A18; raised by ``RecordAndWrite``, never by a writer).
-type WriteFailure = Literal["failed", "rollback_failed", "old_not_removed"]
+# (``rollback_failed``), wrote and recorded a rename's new unit but could not remove the old
+# one (``old_not_removed``, A18; ``OldNotRemovedError``, raised by ``RecordAndWrite``, never by a
+# writer), or could not read the draft at all (``draft_unreadable``: nothing was written).
+type WriteFailure = Literal["failed", "rollback_failed", "old_not_removed", "draft_unreadable"]
 ROLLBACK_FAILED_CAUSE: Final = "the old folder was not put back"
 OLD_NOT_REMOVED_CAUSE: Final = "the renamed item's old unit was not removed"
+DRAFT_UNREADABLE_CAUSE: Final = "the draft could not be read"
 
 
 class HubItemWriteError(AgentHubError):
     """A write that failed on I/O. ``kind`` ``failed``: the hub keeps the unit as it was;
     ``rollback_failed``: the old folder could not be put back either (see the module);
-    ``old_not_removed``: a rename's new unit is written and recorded, its old unit stays. No
-    path is named."""
+    ``old_not_removed``: a rename's new unit is written and recorded, its old unit stays;
+    ``draft_unreadable``: the draft could not be read, nothing was written. No path is
+    named."""
 
     def __init__(self, cause: str = "the write failed", *, kind: WriteFailure = "failed") -> None:
         self.cause = cause
@@ -141,10 +144,9 @@ def rollback_failed() -> HubItemWriteError:
     return HubItemWriteError(ROLLBACK_FAILED_CAUSE, kind="rollback_failed")
 
 
-def old_not_removed() -> HubItemWriteError:
-    """The error of a rename whose old unit could not be removed after the new one was
-    written and recorded (A18)."""
-    return HubItemWriteError(OLD_NOT_REMOVED_CAUSE, kind="old_not_removed")
+def draft_unreadable() -> HubItemWriteError:
+    """The error of a draft read that failed on I/O (not a link, not past the bounds)."""
+    return HubItemWriteError(DRAFT_UNREADABLE_CAUSE, kind="draft_unreadable")
 
 
 class DraftTooLargeError(AgentHubError):

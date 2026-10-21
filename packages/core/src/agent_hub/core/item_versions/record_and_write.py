@@ -65,10 +65,10 @@ from agent_hub.core.hubs.hub_registry import HubFileReader, UnreadUnit
 from agent_hub.core.item_versions.append_version import append_next, unit_hash
 from agent_hub.core.item_versions.capture_item_versions import CaptureItemVersions
 from agent_hub.core.item_versions.hub_item_writer import (
+    OLD_NOT_REMOVED_CAUSE,
     HubItemWriteError,
     HubItemWriter,
     ItemWriteRefusedError,
-    old_not_removed,
 )
 from agent_hub.core.item_versions.item_units import ItemUnit, is_managed
 from agent_hub.core.item_versions.item_version import UnitKind, VersionAuthor, VersionOrigin
@@ -101,6 +101,16 @@ class Placement(Protocol):
     """Where a Publish's draft lands, from what the disk holds now (see the module doc)."""
 
     def __call__(self, reads: UnitReads) -> Destination: ...
+
+
+class OldNotRemovedError(HubItemWriteError):
+    """A18: a rename's new unit was written (``result``, its ``publish`` recorded unless not
+    versioned), but its old unit could not be removed and stays; so does the draft, which a
+    recorded ``publish`` spends (A20). ``kind`` is ``old_not_removed``; no path is named."""
+
+    def __init__(self, result: ItemWriteResult) -> None:
+        super().__init__(OLD_NOT_REMOVED_CAUSE, kind="old_not_removed")
+        self.result = result
 
 
 class ItemWrittenUnrecordedError(AgentHubError):
@@ -224,7 +234,7 @@ class RecordAndWrite:
                 draft_id=draft_id,
             )
             if removed is not None:
-                self._remove_old(hub_path, removed)
+                self._remove_old(hub_path, removed, result)
             return result
 
     def refuse_spent(self, project: str, draft_id: str) -> None:
@@ -233,12 +243,13 @@ class RecordAndWrite:
         if self._store.has_publish(project, draft_id):
             raise ItemWriteRefusedError("draft_already_published")
 
-    def _remove_old(self, hub_path: str, removed: ItemUnit) -> None:
-        """A rename's old unit removed; a failure is ``old_not_removed`` (A18)."""
+    def _remove_old(self, hub_path: str, removed: ItemUnit, result: ItemWriteResult) -> None:
+        """A rename's old unit removed; a failure is ``OldNotRemovedError`` carrying what was
+        published (A18)."""
         try:
             self._writer.remove_unit(hub_path, removed.unit_path, kind=removed.kind)
         except (HubItemWriteError, ItemWriteRefusedError) as failed:
-            raise old_not_removed() from failed
+            raise OldNotRemovedError(result) from failed
 
     def _scripts_to_write(self, hub_path: str, scripts: Sequence[UnitFile]) -> tuple[UnitFile, ...]:
         """The scripts not on disk yet; one there with other bytes refuses (``item_exists``)."""
