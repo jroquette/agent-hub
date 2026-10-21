@@ -242,6 +242,12 @@ def test_denies_reads_when_investigation_credentials_env_file_targeted(tmp_path:
         ("Glob", {"pattern": "*", "path": "link-to-folder"}),
         ("Glob", {"pattern": "**/*", "path": str(hub.parent)}),
         ("Glob", {"pattern": str(env_file)}),
+        # A running action's environment holds the env file's values.
+        ("Read", {"file_path": "/proc/self/environ"}),
+        ("Grep", {"pattern": "DEMO", "path": "/proc"}),
+        ("Grep", {"pattern": "DEMO", "path": "/"}),
+        ("Glob", {"pattern": "/proc/*/environ"}),
+        ("Glob", {"pattern": "*/*/environ", "path": "/"}),
     ]
     passed = [
         ("Read", {"file_path": "../demo-api/environment/other.txt"}),
@@ -255,6 +261,6 @@ def test_denies_reads_when_investigation_credentials_env_file_targeted(tmp_path:
     passes = [investigation.tool_verdict(policy, tool, given) for tool, given in passed]
 
     assert [verdict.allowed for verdict in verdicts] == [False] * len(denied)
-    assert all("env file" in verdict.reason for verdict in verdicts)
+    assert all("env file" in verdict.reason or "/proc" in verdict.reason for verdict in verdicts)
     assert [verdict.allowed for verdict in passes] == [True] * len(passed)
     assert policy.env_files == (str(env_file.resolve()),)

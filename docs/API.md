@@ -592,7 +592,7 @@ gets its agent session from hub web (AGH-350 P-7, AM-2):
   same session (`started: false`). The run is found in a registered hub's `.agent-runs/workflows/<run_id>/` (else 404)
   and must be a scenario run paused at an open, unanswered investigation, as its own record says (else 409
   `workflow-run-not-paused`). The session starts in the hub, mode `default`, with the investigation's system prompt,
-  its tool policy (a `PreToolUse` hook: `Read`, `Glob`, `Grep` except on a declared env file, `Write` under
+  its tool policy (a `PreToolUse` hook: `Read`, `Glob`, `Grep` except on a declared env file or `/proc`, `Write` under
   `actions/<pack>/`, Bash for the listed `./hub` commands only) and, like every driven session, without the
   credential names the hub declares; no env file is read. The link file `investigation-<n>.session` in the run folder,
   created exclusively, keeps it to one session per investigation. A hub whose `hub.local.json` cannot be read answers
