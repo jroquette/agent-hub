@@ -1,8 +1,9 @@
 import re
-import time
+import sys
 
 import pytest
 
+from agent_hub.core import ai_attribution
 from agent_hub.core.ai_attribution import carries_ai_attribution
 
 # The hub guard's pattern (generator's guard.py.tmpl), which carries_ai_attribution follows, linear.
@@ -67,8 +68,25 @@ def test_finds_attribution_when_a_later_tag_names_ai(text: str) -> None:
     assert GUARD.search(text) is not None
 
 
-def test_runs_in_linear_time_when_text_is_dense_with_tags() -> None:
-    text = "co-authored-by:" * 4_000 + " " * 60_000 + "x"
-    started = time.perf_counter()
-    assert not carries_ai_attribution(text)
-    assert time.perf_counter() - started < 1.0
+class _CountingPattern:
+    """The co-author pattern, counting the characters its searches are given to scan."""
+
+    def __init__(self, pattern: re.Pattern[str]) -> None:
+        self._pattern = pattern
+        self.scanned = 0
+
+    def search(self, text: str, pos: int = 0, endpos: int = sys.maxsize) -> re.Match[str] | None:
+        self.scanned += min(endpos, len(text)) - pos
+        return self._pattern.search(text, pos, endpos)
+
+
+def test_runs_in_linear_time_when_text_is_dense_with_tags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Every tag's blanks end on the same line: searching it again per tag would be quadratic.
+    text = "co-authored-by:" * 50 + " " * 1_000 + "x"
+    counting = _CountingPattern(ai_attribution._AI_CO_AUTHOR)  # noqa: SLF001 - wrapped, not changed
+    monkeypatch.setattr(ai_attribution, "_AI_CO_AUTHOR", counting)
+
+    assert carries_ai_attribution(text) is False
+    assert 0 < counting.scanned <= len(text)
