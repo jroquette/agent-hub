@@ -17,6 +17,7 @@ from agent_hub.core.features.agent_outputs import (
     OutputKind,
     eval_problems,
     export_output_schema_text,
+    preflight_problems,
     read_shipped_output_schema,
     review_problems,
 )
@@ -26,6 +27,7 @@ from agent_hub.core.features.output_models import (
     AcResult,
     EvalOutput,
     OutputProblem,
+    PreflightRecord,
     ReviewFinding,
     ReviewOutput,
 )
@@ -766,8 +768,12 @@ def test_drops_only_eval_acs_tag_when_output_path_built(
     assert output_path(loc) == path
 
 
-KINDS: tuple[OutputKind, ...] = ("review", "eval")
-MODELS: dict[OutputKind, type[BaseModel]] = {"review": ReviewOutput, "eval": EvalOutput}
+KINDS: tuple[OutputKind, ...] = ("review", "eval", "preflight")
+MODELS: dict[OutputKind, type[BaseModel]] = {
+    "review": ReviewOutput,
+    "eval": EvalOutput,
+    "preflight": PreflightRecord,
+}
 
 
 def object_nodes(node: object) -> Iterator[dict[str, Any]]:
@@ -803,12 +809,21 @@ def test_matches_export_when_shipped_schema_read(kind: OutputKind) -> None:
 
     assert shipped == export_output_schema_text(kind).encode()
     assert read_shipped_output_schema(kind) == MODELS[kind].model_json_schema()
-    assert OUTPUT_SCHEMA_FILES == {"review": "review.v1.json", "eval": "eval.v1.json"}
+    assert OUTPUT_SCHEMA_FILES == {
+        "review": "review.v1.json",
+        "eval": "eval.v1.json",
+        "preflight": "preflight.v1.json",
+    }
     assert OUTPUT_SCHEMA_PACKAGE == "agent_hub.core.features"
 
 
 @pytest.mark.parametrize(
-    ("kind", "schema_id"), [("review", "agent-hub/review/1"), ("eval", "agent-hub/eval/1")]
+    ("kind", "schema_id"),
+    [
+        ("review", "agent-hub/review/1"),
+        ("eval", "agent-hub/eval/1"),
+        ("preflight", "agent-hub/preflight/1"),
+    ],
 )
 def test_states_schema_const_when_schema_exported(kind: OutputKind, schema_id: str) -> None:
     schema = read_shipped_output_schema(kind)
@@ -817,7 +832,7 @@ def test_states_schema_const_when_schema_exported(kind: OutputKind, schema_id: s
     assert "schema_id" not in json.dumps(schema)
 
 
-@pytest.mark.parametrize(("kind", "objects"), [("review", 2), ("eval", 4)])
+@pytest.mark.parametrize(("kind", "objects"), [("review", 2), ("eval", 4), ("preflight", 2)])
 def test_forbids_extra_keys_when_schema_object_nodes_walked(kind: OutputKind, objects: int) -> None:
     nodes = list(object_nodes(read_shipped_output_schema(kind)))
 
@@ -1392,3 +1407,73 @@ def test_cuts_relayed_problem_when_eval_sibling_malformed() -> None:
 
     relayed = "tickets has an invalid item: " + "\\x01" * 12 + "…"
     assert problems == (OutputProblem("$", f"evals/agh-7.md: {relayed}"),)
+
+
+def a_preflight_run(**overrides: object) -> dict[str, object]:
+    run: dict[str, object] = {
+        "ran_at": "2026-10-21T09:30:00Z",
+        "plan_version": 2,
+        "commit": "4e1a9c2",
+        "blockers_read": ["AGH-6"],
+        "input": "none",
+        "input_text": None,
+        "drift": "local",
+        "local_notes": ["The helper moved to scope_rules.py."],
+        "change_request": None,
+        "run_id": "implement-7",
+    }
+    return run | overrides
+
+
+def a_preflight_document(**overrides: object) -> dict[str, object]:
+    document: dict[str, object] = {
+        "schema": "agent-hub/preflight/1",
+        "ticket": "AGH-7",
+        "runs": [a_preflight_run()],
+    }
+    return document | overrides
+
+
+def test_accepts_valid_preflight_when_every_field_valid() -> None:
+    second = a_preflight_run(
+        input="discovery", input_text="The claim needs auth.", drift="plan", change_request=3
+    )
+    document = a_preflight_document(runs=[a_preflight_run(), second])
+
+    assert preflight_problems(review_bytes(document)) == ()
+
+
+@pytest.mark.parametrize(
+    ("document", "path"),
+    [
+        (a_preflight_document(schema="agent-hub/preflight/2"), "schema"),
+        (a_preflight_document(runs=[a_preflight_run(drift="global")]), "runs[0].drift"),
+        (a_preflight_document(runs=[a_preflight_run(plan_version=0)]), "runs[0].plan_version"),
+        (a_preflight_document(runs=[a_preflight_run(ran_at="yesterday")]), "runs[0].ran_at"),
+        (a_preflight_document(runs=[a_preflight_run(input="hunch")]), "runs[0].input"),
+        (
+            a_preflight_document(runs=[a_preflight_run(local_notes=["a\nb"])]),
+            "runs[0].local_notes[0]",
+        ),
+        (a_preflight_document(runs=[a_preflight_run(colour="red")]), "runs[0].colour"),
+    ],
+    ids=["schema 2", "drift", "plan version 0", "ran at", "input", "note", "extra key"],
+)
+def test_reports_path_when_preflight_shape_broken(document: dict[str, object], path: str) -> None:
+    problems = preflight_problems(review_bytes(document))
+
+    assert [problem.path for problem in problems] == [path]
+
+
+def test_reports_overlong_runs_when_preflight_runs_have_bad_items() -> None:
+    document = a_preflight_document(runs=[a_preflight_run(drift="global")] * 201)
+
+    problems = preflight_problems(review_bytes(document))
+
+    assert problems[-1] == OutputProblem(
+        "runs", "Tuple should have at most 200 items after validation, not 201"
+    )
+
+
+def test_reports_root_when_preflight_bytes_not_object() -> None:
+    assert preflight_problems(b"[]") == (OutputProblem("$", "must be a JSON object"),)

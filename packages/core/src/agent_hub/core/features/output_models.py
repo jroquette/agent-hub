@@ -1,7 +1,9 @@
 """The JSON documents agents hand to ``/feature`` (AGH-139 D6, S3): models and bounds, pure.
 
 A review output is what one reviewer reports for one round of one task; an eval output is what
-the evaluator found for one delivery, beside its ``evals/<delivery>.md``. The models are the
+the evaluator found for one delivery, beside its ``evals/<delivery>.md``; a preflight record is
+every preflight run of one ticket, ``tickets/<ticket>/preflight.json`` (two-level-flows AC-2.3),
+one entry appended per run. The models are the
 single source of truth: the validator checks a document against them and the shipped JSON
 Schemas are exported from them, so a class docstring here becomes a schema ``description`` and
 names no project.
@@ -10,6 +12,7 @@ names no project.
 from typing import Annotated, Final, Literal, NamedTuple
 
 from pydantic import (
+    AwareDatetime,
     BaseModel,
     ConfigDict,
     Discriminator,
@@ -27,6 +30,7 @@ from agent_hub.core.features.scope_rules import AC_ID_PATTERN, COMMIT_PATTERN
 
 REVIEW_SCHEMA_ID: Final = "agent-hub/review/1"
 EVAL_SCHEMA_ID: Final = "agent-hub/eval/1"
+PREFLIGHT_SCHEMA_ID: Final = "agent-hub/preflight/1"
 # An output over this size is refused before it is parsed.
 MAX_OUTPUT_BYTES: Final = 524_288
 MAX_FINDINGS: Final = 100
@@ -37,6 +41,9 @@ MAX_RESULTS: Final = 300
 MAX_GATES: Final = 50
 MAX_RED_ON_PARENT: Final = 300
 MAX_OWNER_STEPS: Final = 50
+MAX_PREFLIGHT_RUNS: Final = 200
+MAX_BLOCKERS_READ: Final = 50
+MAX_LOCAL_NOTES: Final = 50
 # The tags of an eval's ``acs`` union; pydantic puts the chosen one in an error's ``loc``.
 ACS_ALL_TAG: Final = "all"
 ACS_LIST_TAG: Final = "ids"
@@ -60,6 +67,8 @@ type PathText = Annotated[StrictStr, Field(min_length=1, max_length=512, pattern
 type CommandText = Annotated[StrictStr, Field(min_length=1, max_length=2000, pattern=_ONE_LINE)]
 type GateText = Annotated[StrictStr, Field(min_length=1, max_length=64, pattern=_ONE_LINE)]
 type Delivery = Annotated[StrictStr, Field(pattern=f"^{DELIVERY_PATTERN.pattern}$")]
+# The CLI's run id (``workflows.launch.RUN_ID_TEXT``, not imported: ``workflows`` imports this).
+type RunId = Annotated[StrictStr, Field(pattern=r"^[a-z0-9][a-z0-9-]{0,31}$")]
 type ExitCode = Annotated[StrictInt, Field(ge=-255, le=255)]
 type RunStatus = Literal["pass", "fail", "not-run"]
 type ReviewRound = Annotated[StrictInt, Field(ge=1, le=9999)]
@@ -169,3 +178,33 @@ class EvalOutput(BaseModel):
     gates: Annotated[tuple[GateResult, ...], Field(max_length=MAX_GATES)]
     red_on_parent: Annotated[tuple[RedOnParent, ...], Field(max_length=MAX_RED_ON_PARENT)]
     owner_steps: Annotated[tuple[OneLine1000, ...], Field(max_length=MAX_OWNER_STEPS)]
+
+
+class PreflightRun(BaseModel):
+    """One preflight run of a ticket: when it ran, the plan version and commit it checked, the
+    blocker outcomes it read, the input it was given (a discovery or a declined change's note,
+    ``input_text``; null for ``none``), the drift it found with its local notes, the change
+    request it opened (null when none) and the workflow run it belongs to."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    ran_at: AwareDatetime
+    plan_version: Annotated[StrictInt, Field(ge=1)]
+    commit: Commit
+    blockers_read: Annotated[tuple[TicketKey, ...], Field(max_length=MAX_BLOCKERS_READ)]
+    input: Literal["none", "discovery", "declined_change"]
+    input_text: OneLine1000 | None
+    drift: Literal["none", "local", "plan"]
+    local_notes: Annotated[tuple[OneLine1000, ...], Field(max_length=MAX_LOCAL_NOTES)]
+    change_request: Annotated[StrictInt, Field(ge=1)] | None
+    run_id: RunId
+
+
+class PreflightRecord(BaseModel):
+    """Every preflight run of one ticket, oldest first; runs are only ever appended."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    schema_id: Literal["agent-hub/preflight/1"] = Field(alias="schema")
+    ticket: TicketKey
+    runs: Annotated[tuple[PreflightRun, ...], Field(max_length=MAX_PREFLIGHT_RUNS)]
