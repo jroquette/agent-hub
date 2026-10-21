@@ -13,6 +13,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- The base plugin gains the `security-reviewer` agent and the `/design-fit` skill (AGH-413). `security-reviewer`
+  reviews a diff's added lines in a fresh context, runs Semgrep or Bandit when installed, traces each finding from an
+  untrusted source to a sink and refutes it before reporting; a scanner that did not run is reported as not run.
+  `/design-fit` runs before code: what already exists, where the change belongs, and no abstraction without a consumer
+  today, in at most five lines. Neither is started by `/feature` yet. Both arrive with `hub sync` after you bump
+  `platform.version`; `models.agents` accepts `security-reviewer`.
 - The base plugin gains the `test-writer` agent and the `/property-based-testing` skill (AGH-411). `test-writer`
   writes a task's failing acceptance tests from its ACs and public interfaces, never reading the implementation, at
   most three per AC, and commits them RED; `/feature` does not start it yet (AGH-88 measures it first).
