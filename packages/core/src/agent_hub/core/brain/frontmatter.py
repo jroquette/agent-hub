@@ -121,7 +121,7 @@ def split_frontmatter(text: str) -> Frontmatter:
 
 
 def scalar(value: str) -> str:
-    """``value`` on one line, as a frontmatter value: plain when it reads back as is, else quoted."""
+    """``value`` on one line as a frontmatter value: plain when it reads back as is, else quoted."""
     text = " ".join(value.split())
     if _PLAIN.fullmatch(text) and not text.endswith(" "):
         return text

@@ -245,7 +245,10 @@ class TestPreflight:
         before = json.loads(path.read_bytes())["runs"]
 
         second = hub.ok(
-            "preflight", *TICKET, "--run", json.dumps(RUN | {"drift": "local", "local_notes": ["x"]})
+            "preflight",
+            *TICKET,
+            "--run",
+            json.dumps(RUN | {"drift": "local", "local_notes": ["x"]}),
         )
 
         assert (first["runs"], second["runs"]) == (1, 2)
@@ -337,8 +340,15 @@ class TestDecideAndAmend:
         assert hub.decide("--decision", "declined", "--by", "Dana", "--note", "No.").exit_code == 0
 
         line = hub.refused(
-            "decide", "--feature", "demo-flow", "--request", "1", "--decision", "approved",
-            "--by", "Dana",
+            "decide",
+            "--feature",
+            "demo-flow",
+            "--request",
+            "1",
+            "--decision",
+            "approved",
+            "--by",
+            "Dana",
         )
 
         assert line == "hub step decide: change request 1 is already decided"
@@ -375,7 +385,10 @@ class TestDecideAndAmend:
         finally:
             os.close(descriptor)
 
-        assert line == "hub step amend-plan: plan.md of demo-flow is being amended by another run; run again"
+        assert (
+            line == "hub step amend-plan: plan.md of demo-flow is being amended by another run;"
+            " run again"
+        )
         hub.ok("amend-plan", "--feature", "demo-flow", "--request", "1", "--summary", "Go.")
 
     def test_refuses_an_amendment_before_the_request_is_decided(self, hub: Hub) -> None:

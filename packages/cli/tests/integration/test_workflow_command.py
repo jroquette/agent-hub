@@ -643,7 +643,7 @@ def test_gives_the_gate_its_approver_when_a_person_approves_it(
 
 
 @pytest.mark.parametrize(
-    ("account", "reason"),
+    "case",
     [
         (KeyError("uid"), "no account name is known"),
         (OSError("no account"), "no account name is known"),
@@ -651,8 +651,10 @@ def test_gives_the_gate_its_approver_when_a_person_approves_it(
     ],
 )
 def test_refuses_the_decision_and_stays_paused_when_no_person_is_known(
-    sample: SampleRun, monkeypatch: pytest.MonkeyPatch, account: object, reason: str
+    sample: SampleRun, monkeypatch: pytest.MonkeyPatch, case: tuple[object, str]
 ) -> None:
+    account, reason = case
+
     def getuser() -> str:
         if isinstance(account, Exception):
             raise account
