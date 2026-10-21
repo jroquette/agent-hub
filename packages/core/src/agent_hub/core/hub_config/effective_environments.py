@@ -41,6 +41,9 @@ class SourcedEnvironment(BaseModel):
     description: str | None
     credentials: Credentials | None
     source: str
+    # hub.json's access for a committed environment (differs from ``access`` when tightened);
+    # ``None`` for the developer's own.
+    team_access: Access | None = None
 
 
 class SourcedEndpoint(BaseModel):
@@ -164,6 +167,7 @@ def _environments(config: HubConfig, local: LocalConfig) -> tuple[SourcedEnviron
                 description=environment.description,
                 credentials=environment.credentials,
                 source=source,
+                team_access=environment.access,
             )
         )
     folded = {name.lower() for name in config.environments}
