@@ -15006,6 +15006,16 @@
             },
             "description": "No launch cookie (open hub web's address)"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unknown project or target item, or the draft folder missing or empty"
+          },
           "409": {
             "content": {
               "application/json": {
@@ -15036,6 +15046,16 @@
             },
             "description": "The body is not application/json"
           },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The draft is not a valid item (draft_invalid), or the body is outside its shape"
+          },
           "4XX": {
             "content": {
               "application/json": {
@@ -15045,6 +15065,16 @@
               }
             },
             "description": "A client error, as an RFC 9457 problem"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Write failed (write_failed: failed, rollback_failed, old_not_removed, draft_unreadable) or published with the draft kept (draft_not_removed)"
           },
           "5XX": {
             "content": {

@@ -8204,6 +8204,15 @@ export interface operations {
           "application/json": components["schemas"]["ProblemDetails"];
         };
       };
+      /** @description Unknown project or target item, or the draft folder missing or empty */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
       /** @description Publish refused, with a code: hub_read_only, no_author, link_in_path, unit_unreadable, item_exists, draft_already_published or managed_confirmation_required */
       409: {
         headers: {
@@ -8224,6 +8233,24 @@ export interface operations {
       };
       /** @description The body is not application/json */
       415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description The draft is not a valid item (draft_invalid), or the body is outside its shape */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Write failed (write_failed: failed, rollback_failed, old_not_removed, draft_unreadable) or published with the draft kept (draft_not_removed) */
+      500: {
         headers: {
           [name: string]: unknown;
         };
