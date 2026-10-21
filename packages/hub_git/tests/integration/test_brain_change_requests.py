@@ -225,6 +225,25 @@ def test_deletes_branch_when_push_fails_after_origin_accepted_it(
     assert origin.pull_requests() == ()
 
 
+def test_deletes_nothing_when_origin_rejects_accept_push(
+    git_world: GitWorld, origin: GitBrainOrigin
+) -> None:
+    git_world.reject_pushes()
+    change = _change(git_world)
+
+    with pytest.raises(ChangeRequestFailedError) as failed:
+        git_world.adapter(git_world.logging_runner()).accept(change)
+
+    assert failed.value.step == "push"
+    assert origin.branch_names() == {"main"}
+    assert origin.pull_requests() == ()
+    pushes = [call for call in git_world.git_calls() if " push " in f" {call} "]
+    assert len(pushes) == 1
+    assert pushes[0].endswith(f"refs/heads/{change.branch}:refs/heads/{change.branch}")
+    assert [call for call in git_world.git_calls() if "--delete" in call] == []
+    assert not list((git_world.root / "temp").iterdir())
+
+
 def _push_stale_branch(world: GitWorld, branch: str) -> str:
     """A leftover learning branch on ``origin`` with no pull request: one unrelated commit."""
     (world.seed / "stale.txt").write_text("left over\n")
