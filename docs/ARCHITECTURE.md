@@ -284,11 +284,12 @@ main checkout and open `SqliteKnowledgeIndex` on the database `hub web` and `hub
 `knowledge_documents` and `knowledge_text`, migration 0008). Core's `sync_knowledge` lists the sources, `plan_sync`
 compares the listing with the stored fingerprints (size, mtime), only new or changed files are read, and the change is
 written in one `apply`; a search over an unchanged hub reads and writes nothing. A file is kept out when it is not
-Markdown, over 256 KiB, not UTF-8, reached through a link or matched by a rule of `r1` (`has_secret_match`), and each
-skip is reported once. Known limits: an edit that keeps a file's size and mtime is seen only by `hub brain reindex`; a
+Markdown, over 256 KiB, not UTF-8, not a regular file, reached through a link, cannot be read or matched by a rule of
+`r1` (`has_secret_match`), and each skip is reported once. A hub with more than 20,000 Markdown files under its sources
+(or a `git ls-files` listing over 64 MiB) stops the command with exit 1 and nothing is indexed. Known limits: an edit that keeps a file's size and mtime is seen only by `hub brain reindex`; a
 file that cannot be read keeps no fingerprint, so it is reported again on every search; a listing near its 64 MiB
 bound made of millions of short non-Markdown names peaks near 250 MB of memory while it is split; a Python whose
-SQLite lacks FTS5 cannot migrate the database.
+SQLite lacks FTS5 cannot migrate the database; a note whose frontmatter is malformed is indexed without a status.
 
 ## Deployment
 

@@ -22,7 +22,7 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Changed
 
-- Redaction `r1` skips its three `secret` rules on a text with no name word followed by `=` or a JSON key's `:`,
+- Redaction `r1` skips its four `secret` rules on a text with no name word followed by `=` or a JSON key's `:`,
   which no `secret` rule can match: the same rule set with identical results, about three times faster on note-sized
   prose (AGH-391).
 - `hub web` Features and Feature detail: the golden path shows the feature's own steps, Spec, UX design, Research,
