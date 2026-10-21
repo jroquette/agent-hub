@@ -24,8 +24,9 @@ parent's (``hub workflow run``, ``hub run``).
 The record writers run in the hub's main checkout and never commit; each prints the hub-relative
 ``path`` it wrote (``change-request`` takes the run's id from ``AGENT_HUB_RUN_ID``, which the
 engine gives the run's steps, when ``--run-id`` is not given, and each ``--affected`` may list
-several tickets separated by commas), and a refusal (a record the readers could not read, a second decision, a
-decision without a person, a plan that moved, a link) is a failure that writes nothing.
+several tickets separated by commas), and a refusal (a record the readers could not read, a
+second decision, a decision without a person, a plan that moved, a link) is a failure that
+writes nothing.
 
 That parent runs its ``hub step`` nodes in process (``run_in_process``): the same code with
 ``hub run``'s children (in the caller's group), timeouts and lines (the worktree's on stdout, a

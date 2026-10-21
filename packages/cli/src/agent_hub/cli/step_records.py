@@ -1,8 +1,9 @@
 """The ticket records an ``implement`` run writes into the hub (two-level-flows S2, P7).
 
 ``hub step ticket-brief|preflight|change-request|decide|amend-plan`` call these with the hub's
-main checkout (and ``pending-decision``, which only reads). They write under ``brain/features/<slug>/`` only and never commit: the run's
-report names the changed files for the owner's hub PR (D-1). The texts and their checks are
+main checkout (``pending-decision`` too, which only reads). They write under
+``brain/features/<slug>/`` only and never commit: the run's report names the changed files for
+the owner's hub PR (D-1). The texts and their checks are
 ``agent_hub.core.features.ticket_writes``'; here are the reads and writes. No link is followed:
 the feature folder, ``tickets/``, ``change-requests/`` and every file read or replaced must not
 be one. A file that is appended to (``brief.md``, ``preflight.json``, ``plan.md``) is replaced
@@ -53,10 +54,10 @@ from agent_hub.core.features.ticket_records import (
 )
 from agent_hub.core.features.ticket_writes import (
     MAX_REQUEST_BYTES,
+    NO_PENDING,
     Blocker,
     TicketBrief,
     TicketRecordError,
-    NO_PENDING,
     amended_plan,
     appended_brief,
     appended_preflight,
@@ -240,7 +241,9 @@ def pending(hub: Path, *, feature: str, ticket: str) -> dict[str, JsonValue]:
 
 
 def _preflight(target: Path) -> PreflightRecord | None:
-    record = preflight_record(_read(target / PREFLIGHT_FILE, MAX_PREFLIGHT_BYTES), folder=target.name)
+    record = preflight_record(
+        _read(target / PREFLIGHT_FILE, MAX_PREFLIGHT_BYTES), folder=target.name
+    )
     if isinstance(record, str):
         raise TicketRecordError(record)
     return record

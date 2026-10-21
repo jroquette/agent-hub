@@ -164,7 +164,11 @@ def test_reaches_the_built_in_fixtures_when_implement_tested_from_a_hub_with_a_s
 ) -> None:
     # A hub seeded before the release that adds implement: its sdlc copy holds none of it (A1).
     seeded = demo_workspace.hub / "workflows/sdlc"
-    for name in ("implement.yaml", "ticket-pass.yaml", *(f"fixtures/{f}.yaml" for f in IMPLEMENT_FIXTURES)):
+    for name in (
+        "implement.yaml",
+        "ticket-pass.yaml",
+        *(f"fixtures/{f}.yaml" for f in IMPLEMENT_FIXTURES),
+    ):
         (seeded / name).unlink()
     passes = run_command(demo_workspace.hub, "workflow", "validate", "ticket-pass")
     validated = run_command(demo_workspace.hub, "workflow", "validate", "implement")
@@ -492,7 +496,10 @@ def checked(output: str, workflow: str, node: str) -> Any:
 @pytest.mark.parametrize(
     ("reply", "expected"),
     [
-        ('Done.\n`{"status": "done", "discovery": "T3 returns\\na list."}`\n', "T3 returns a list."),
+        (
+            'Done.\n`{"status": "done", "discovery": "T3 returns\\na list."}`\n',
+            "T3 returns a list.",
+        ),
         ('{"status": "done", "discovery": ""}', ""),
         ('{"status": "done", "discovery": 3}', ""),
         ("BLOCKED: which endpoint?", ""),
@@ -524,7 +531,16 @@ AGENT_FINDINGS = {
     ("args", "drift", "expected"),
     [
         (
-            ("--input", "decline", "--text", "Keep\n\tthe plan.", "--request", "", "--request", "3"),
+            (
+                "--input",
+                "decline",
+                "--text",
+                "Keep\n\tthe plan.",
+                "--request",
+                "",
+                "--request",
+                "3",
+            ),
             "plan",
             {"input": "declined_change", "input_text": "Keep the plan.", "change_request": 3},
         ),
@@ -560,9 +576,7 @@ def test_prints_one_valid_preflight_run_when_preflight_run_script_gets_findings(
 def test_exits_two_when_preflight_run_script_has_no_run_id(tmp_path: Path) -> None:
     env = {"PATH": os.environ.get("PATH", "")}
 
-    result = a_script(
-        "preflight_run.py", "--agent", "{}", "--input", "none", cwd=tmp_path, env=env
-    )
+    result = a_script("preflight_run.py", "--agent", "{}", "--input", "none", cwd=tmp_path, env=env)
 
     assert (result.returncode, result.stdout) == (2, "")
 
@@ -587,8 +601,14 @@ def a_rounds(*, status: str = "done", discovery: str = "", verdict: str | None =
                 " the next /implement opens a new change request",
             },
         ),
-        (a_rounds(status="blocked", verdict=None), {"status": "blocked", "question": "which endpoint?"}),
-        (a_rounds(discovery="T3 returns a list.", verdict=None), {"status": "discovery", "discovery": "T3 returns a list."}),
+        (
+            a_rounds(status="blocked", verdict=None),
+            {"status": "blocked", "question": "which endpoint?"},
+        ),
+        (
+            a_rounds(discovery="T3 returns a list.", verdict=None),
+            {"status": "discovery", "discovery": "T3 returns a list."},
+        ),
         (a_rounds(), {"status": "done", "verdict": "PASS"}),
     ],
 )
@@ -605,13 +625,18 @@ def test_says_how_the_pass_ended_when_pass_outcome_script_reads_the_rounds(
 
 
 def a_pass(status: str, *, discovery: str = "", verdict: str = "") -> str:
-    return json.dumps({"status": status, "question": "", "discovery": discovery, "verdict": verdict})
+    return json.dumps(
+        {"status": status, "question": "", "discovery": discovery, "verdict": verdict}
+    )
 
 
 @pytest.mark.parametrize(
     ("passes", "expected"),
     [
-        ((a_pass("done", verdict="PASS"), "", ""), {"status": "done", "verdict": "PASS", "pass": 1}),
+        (
+            (a_pass("done", verdict="PASS"), "", ""),
+            {"status": "done", "verdict": "PASS", "pass": 1},
+        ),
         (
             (a_pass("discovery", discovery="A."), a_pass("done", verdict="PASS"), ""),
             {"status": "done", "verdict": "PASS", "pass": 2},
@@ -644,7 +669,13 @@ def test_names_the_changed_hub_files_and_a_no_ship_when_delivery_script_runs(
     tmp_path: Path,
 ) -> None:
     def git(*args: str) -> None:
-        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)  # noqa: S607
+        subprocess.run(  # noqa: S603 - git from PATH, fixed arguments
+            ["git", *args],  # noqa: S607
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+
     feature = tmp_path / "brain/features/demo-flow"
     (feature / "tickets/DEM-1").mkdir(parents=True)
     (tmp_path / "brain/features/other").mkdir()
