@@ -34,6 +34,7 @@ from agent_hub.core.features.feature_evals import (
     EVALS_FOLDER,
     MAX_EVAL_FILES,
     NOTE_SUFFIX,
+    SIGNOFF_DELIVERY,
     EvalCoverage,
     OwnerWait,
     acceptance_eval,
@@ -48,7 +49,6 @@ from agent_hub.core.features.feature_view import EvalRecord, Verdict
 from agent_hub.core.features.scope_rules import named_scope, ticket_aliases
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 
-SIGNOFF_DELIVERY: Final = "owner-signoff"
 MAX_SIGNOFFS: Final = 99
 MAX_NOTE_CHARS: Final = 2_000
 

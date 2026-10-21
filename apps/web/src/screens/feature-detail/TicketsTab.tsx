@@ -1,5 +1,5 @@
-import { useId, type ReactNode } from "react";
-import { Link, useSearchParams } from "react-router";
+import { useEffect, useId, useRef, useState, type MutableRefObject, type ReactNode } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
 import {
@@ -11,6 +11,7 @@ import {
   StatusBadge,
   Tooltip,
 } from "../../components";
+import { goSequencePending, typingIn } from "../../shell/goSequence";
 import { useApi, type ApiProblem } from "../../lib/api";
 import { fmtClock, fmtDateTime, fmtMoney } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
@@ -28,17 +29,24 @@ import {
   TicketStepBar,
   splitTitle,
   ticketAnchor,
+  TicketOpenLink,
+  ticketParam,
+  ticketSearch,
+  ticketStepLine,
   type TicketAction,
+  type TicketOpener,
 } from "./PlanningView";
 import { PASS, gwtParts, passOf } from "./CriteriaTab";
 import { StartTicketButton, canStartTicket } from "./StartTicket";
 import { TICKETS_REFRESH_MS } from "./queries";
 import { TicketNotice } from "./TicketNotice";
+import { TicketPanel } from "./TicketPanel";
 
 type FeatureTickets = components["schemas"]["FeatureTickets"];
 type TicketRow = components["schemas"]["TicketRow"];
 type EdgeSource = components["schemas"]["EdgeSource"];
 type AcRow = components["schemas"]["AcRow"];
+type EvalRecord = components["schemas"]["EvalRecord"];
 /** Whether each AC passes, by id. */
 type AcPasses = Readonly<Record<string, boolean>>;
 
@@ -79,7 +87,16 @@ function PrCell({ row }: { row: TicketRow }) {
 }
 
 /** The words of the title, the epic tag before them and a branch mark on an epic's child. */
-function TitleCell({ row, child }: { row: TicketRow; child: boolean }) {
+function TitleCell({
+  row,
+  child,
+  onOpen,
+}: {
+  row: TicketRow;
+  child: boolean;
+  /** Given, a ticket's title opens its panel, as its card's does (AC-1.10). */
+  onOpen?: TicketOpener | undefined;
+}) {
   const text = row.title ? splitTitle(row.title).text : null;
   return (
     <span className="ah-ticket-title" data-child={child || undefined}>
@@ -89,7 +106,13 @@ function TitleCell({ row, child }: { row: TicketRow; child: boolean }) {
         </span>
       )}
       {row.children.length > 0 && <span className="ah-flow-epic-tag">Epic</span>}
-      <span>{text ?? <span className="ah-subtle">—</span>}</span>
+      {text && onOpen && row.children.length === 0 ? (
+        <TicketOpenLink row={row} onOpen={onOpen}>
+          {text}
+        </TicketOpenLink>
+      ) : (
+        <span>{text ?? <span className="ah-subtle">—</span>}</span>
+      )}
     </span>
   );
 }
@@ -181,7 +204,7 @@ function CardAction({
 }
 
 /** The sessions whose branch or run names this ticket, newest first, each one click from its dialogue. */
-function TicketSessions({ row, project }: { row: TicketRow; project: string }) {
+export function TicketSessions({ row, project }: { row: TicketRow; project: string }) {
   const sessions = useTicketSessions(project, row);
   if (!row.id) return <span className="ah-subtle">—</span>;
   if (sessions.isPending) return <Skeleton width={90} height={18} />;
@@ -335,52 +358,101 @@ function epicOrder(tickets: readonly TicketRow[]): TicketRow[] {
   return [...ordered, ...tickets.filter((t) => !placed.has(t.ref))];
 }
 
+/** The epic's Stage: an epic has no steps of its own, said in a tooltip a keyboard reaches. */
+function EpicStage() {
+  const tipId = useId();
+  return (
+    <Tooltip id={tipId} label="An epic has no steps of its own; each of its tickets has seven.">
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- the tooltip's trigger */}
+      <span className="ah-subtle" tabIndex={0} aria-describedby={tipId}>
+        —
+      </span>
+    </Tooltip>
+  );
+}
+
+/** Keys that never open or move a row: they belong to the link or button inside it. */
+const INSIDE_CONTROL = "a, button, summary, input, select, textarea";
+
 function TicketsTable({
   data,
   project,
   acPasses,
   acRows,
   ticketAction,
+  onOpen,
+  onOpenTicket,
 }: {
   data: FeatureTickets;
   project: string;
   acPasses?: AcPasses | undefined;
   acRows?: ReadonlyMap<string, AcRow> | undefined;
   ticketAction?: TicketAction | undefined;
+  /** Opens a row's ticket panel (Enter, o or a click on the row). */
+  onOpen: (row: TicketRow, opener: HTMLElement) => void;
+  /** Records the opener when a row's title link opens the panel. */
+  onOpenTicket: TicketOpener;
 }) {
   const byRef = new Set(data.tickets.map((t) => t.ref));
   const isChild = (row: TicketRow) => row.parent != null && byRef.has(row.parent);
+  // The table body is one tab stop (roving tabindex): j / k and the arrows move between tickets.
+  const ordered = epicOrder(data.tickets);
+  const nav = ordered.filter((row) => row.children.length === 0).map((row) => row.ref);
+  const [active, setActive] = useState<string | null>(null);
+  const current = active !== null && nav.includes(active) ? active : nav[0];
+  // `hide`: hidden first at 1280 (laptop), and all but the first four while the panel docks
+  // (31-responsive.md, column priority).
   const columns: {
     label: string;
     width?: number;
     nowrap?: boolean;
     className?: string;
+    hide?: "laptop" | "docked";
     cell: (row: TicketRow) => ReactNode;
   }[] = [
     { label: "Ticket", width: 110, nowrap: true, cell: (row) => <TicketId row={row} /> },
     {
       label: "Title",
       className: "ah-ticket-title-col",
-      cell: (row) => <TitleCell row={row} child={isChild(row)} />,
+      cell: (row) => <TitleCell row={row} child={isChild(row)} onOpen={onOpenTicket} />,
     },
     {
       label: "Stage",
       width: 130,
       cell: (row) =>
-        row.flow ? <TicketStepBar flow={row.flow} /> : <span className="ah-subtle">—</span>,
+        row.flow ? (
+          <TicketStepBar flow={row.flow} />
+        ) : row.children.length > 0 ? (
+          <EpicStage />
+        ) : (
+          <span className="ah-subtle">—</span>
+        ),
     },
-    { label: "Status", width: 110, nowrap: true, cell: (row) => <StateBadge row={row} /> },
-    { label: "Assignee", width: 110, cell: (row) => <Assignee row={row} /> },
-    { label: "Blocked by", width: 110, cell: (row) => <Blockers row={row} data={data} /> },
+    {
+      label: "Status",
+      width: 110,
+      nowrap: true,
+      hide: "docked",
+      cell: (row) => <StateBadge row={row} />,
+    },
+    { label: "Assignee", width: 110, hide: "laptop", cell: (row) => <Assignee row={row} /> },
+    {
+      label: "Blocked by",
+      width: 110,
+      hide: "docked",
+      cell: (row) => <Blockers row={row} data={data} />,
+    },
     {
       label: "ACs",
       width: 150,
+      hide: "docked",
       cell: (row) => <AcList ids={row.acs} acPasses={acPasses} acRows={acRows} />,
     },
     {
       label: "Sessions",
       width: 150,
       nowrap: true,
+      hide: "laptop",
       cell: (row) => <TicketSessions row={row} project={project} />,
     },
     {
@@ -393,8 +465,20 @@ function TicketsTable({
         </span>
       ),
     },
-    { label: "PR", width: 100, nowrap: true, cell: (row) => <PrCell row={row} /> },
+    {
+      label: "PR",
+      width: 100,
+      nowrap: true,
+      hide: "docked",
+      cell: (row) => <PrCell row={row} />,
+    },
   ];
+  const move = (from: string, by: number) => {
+    const next = nav[nav.indexOf(from) + by];
+    if (next === undefined) return;
+    setActive(next);
+    document.getElementById(ticketAnchor(next))?.focus();
+  };
   return (
     <div className="ah-table-wrap">
       <table className="ah-table ah-ticket-table" aria-label="Tickets">
@@ -405,6 +489,7 @@ function TicketsTable({
                 key={c.label}
                 scope="col"
                 className={c.className}
+                data-hide={c.hide}
                 style={c.width ? { width: c.width } : undefined}
               >
                 {c.label}
@@ -413,26 +498,67 @@ function TicketsTable({
           </tr>
         </thead>
         <tbody>
-          {epicOrder(data.tickets).map((row) => (
-            <tr
-              key={row.ref}
-              id={ticketAnchor(row.ref)}
-              style={{ cursor: "default" }}
-              data-epic={row.children.length > 0 || undefined}
-              data-child={isChild(row) || undefined}
-            >
-              {columns.map((c) => (
-                <td
-                  key={c.label}
-                  className={
-                    [c.nowrap && "ah-nowrap", c.className].filter(Boolean).join(" ") || undefined
-                  }
-                >
-                  {c.cell(row)}
-                </td>
-              ))}
-            </tr>
-          ))}
+          {ordered.map((row) => {
+            const epic = row.children.length > 0;
+            const name = [row.ref, row.title, row.flow && ticketStepLine(row.flow)]
+              .filter(Boolean)
+              .join(" · ");
+            return (
+              <tr
+                key={row.ref}
+                id={ticketAnchor(row.ref)}
+                style={{ cursor: epic ? "default" : "pointer" }}
+                data-epic={epic || undefined}
+                data-child={isChild(row) || undefined}
+                data-ticket-open={epic ? undefined : row.ref}
+                aria-label={epic ? undefined : name}
+
+                tabIndex={epic ? undefined : row.ref === current ? 0 : -1}
+                onFocus={
+                  epic
+                    ? undefined
+                    : (event) => {
+                        if (event.target === event.currentTarget) setActive(row.ref);
+                      }
+                }
+                onClick={
+                  epic
+                    ? undefined
+                    : (event) => {
+                        if (event.target instanceof Element && event.target.closest(INSIDE_CONTROL))
+                          return;
+                        onOpen(row, event.currentTarget);
+                      }
+                }
+                onKeyDown={
+                  epic
+                    ? undefined
+                    : (event) => {
+                        if (event.target !== event.currentTarget || goSequencePending()) return;
+                        if (event.ctrlKey || event.metaKey || event.altKey) return;
+                        if (event.key === "j" || event.key === "ArrowDown") move(row.ref, 1);
+                        else if (event.key === "k" || event.key === "ArrowUp") move(row.ref, -1);
+                        else if (event.key === "Enter" || event.key === "o") {
+                          onOpen(row, event.currentTarget);
+                        } else return;
+                        event.preventDefault();
+                      }
+                }
+              >
+                {columns.map((c) => (
+                  <td
+                    key={c.label}
+                    data-hide={c.hide}
+                    className={
+                      [c.nowrap && "ah-nowrap", c.className].filter(Boolean).join(" ") || undefined
+                    }
+                  >
+                    {c.cell(row)}
+                  </td>
+                ))}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
       <div className="ah-table-foot">
@@ -477,6 +603,19 @@ export interface TicketsTabProps {
   acPasses?: AcPasses | undefined;
   /** The feature's ACs, for each AC's text and status (owner step included) in the ids list. */
   acRows?: readonly AcRow[] | undefined;
+  /** The feature's evals: the ticket panel's Eval step and owner-steps signal. */
+  evals: readonly EvalRecord[];
+  /** The element that opened the ticket panel (a card title, a row, a header chip). */
+  openerRef: MutableRefObject<HTMLElement | null>;
+}
+
+/** The element that opens `ref`'s panel in the view shown: its card title or its row. */
+function openerOf(ref: string): HTMLElement | null {
+  const holder = document.getElementById(ticketAnchor(ref));
+  if (!holder) return null;
+  return holder.matches("[data-ticket-open]")
+    ? holder
+    : holder.querySelector<HTMLElement>("[data-ticket-open]");
 }
 
 /**
@@ -494,17 +633,74 @@ export function TicketsTab({
   refreshing,
   acPasses,
   acRows,
+  evals,
+  openerRef,
 }: TicketsTabProps) {
   const acById = acRows && new Map(acRows.map((ac) => [ac.id, ac]));
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
+  const root = useRef<HTMLDivElement>(null);
   // The view is kept in `?tickets=`: `table`, else Flow, the default, with no parameter.
   const view = params.get("tickets") === "table" ? "table" : "flow";
+  const ticket = params.get("ticket");
   const setView = (next: string) => {
     setParams(
       (current) => {
         const search = new URLSearchParams(current);
         if (next === "table") search.set("tickets", "table");
         else search.delete("tickets");
+        return search;
+      },
+      { replace: true },
+    );
+  };
+  // `v` toggles the views while focus is in the tab and not in a text field; focus stays on the
+  // same ticket (card title <-> row), else goes to the toggle.
+  const refocus = useRef<string | null | undefined>(undefined);
+  const latest = useRef({ view, setView });
+  useEffect(() => {
+    latest.current = { view, setView };
+  });
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "v" || event.defaultPrevented) return;
+      if (event.ctrlKey || event.metaKey || event.altKey || typingIn(event.target)) return;
+      if (!(event.target instanceof HTMLElement) || !root.current?.contains(event.target)) return;
+      if (!root.current.querySelector(".ah-seg")) return;
+      event.preventDefault();
+      refocus.current =
+        event.target.closest<HTMLElement>("[data-ticket-open]")?.dataset.ticketOpen ?? null;
+      latest.current.setView(latest.current.view === "table" ? "flow" : "table");
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+    };
+  }, []);
+  useEffect(() => {
+    if (refocus.current === undefined) return;
+    const ref = refocus.current;
+    refocus.current = undefined;
+    const target =
+      (ref === null ? null : openerOf(ref)) ??
+      root.current?.querySelector<HTMLElement>(".ah-seg [aria-pressed='true']");
+    target?.focus();
+  }, [view]);
+  const remember: TicketOpener = (element) => {
+    openerRef.current = element;
+  };
+  const openRow = (row: TicketRow, element: HTMLElement) => {
+    remember(element);
+    void navigate({ search: ticketSearch(params, ticketParam(row)) }, { replace: true });
+  };
+  const closeTicket = (ref: string | undefined) => {
+    // The opener is gone once the view was toggled: the same ticket in this view takes focus.
+    if (!openerRef.current?.isConnected) openerRef.current = ref ? openerOf(ref) : null;
+    setParams(
+      (current) => {
+        const search = new URLSearchParams(current);
+        search.delete("ticket");
+        search.delete("step");
         return search;
       },
       { replace: true },
@@ -528,8 +724,11 @@ export function TicketsTab({
   const cardAction: TicketAction = (row) => (
     <CardAction project={project} slug={slug} row={row} rows={data.tickets} />
   );
+  const shown = ticket
+    ? data.tickets.find((r) => r.id === ticket || r.key === ticket || r.ref === ticket)
+    : undefined;
   return (
-    <div className="ah-stack" style={{ gap: 12 }}>
+    <div ref={root} className="ah-stack" style={{ gap: 12 }}>
       <TicketNotice tickets={data} onRefresh={onRefresh} refreshing={refreshing} />
       {data.tickets.length === 0 ? (
         <div className="ah-card">
@@ -549,22 +748,46 @@ export function TicketsTab({
             value={view}
             onChange={setView}
           />
-          {view === "flow" ? (
-            <PlanningView
-              tickets={data.tickets}
-              planning={data.planning}
-              acPasses={acPasses}
-              ticketAction={cardAction}
-            />
-          ) : (
-            <TicketsTable
-              data={data}
-              project={project}
-              acPasses={acPasses}
-              acRows={acById}
-              ticketAction={ticketAction}
-            />
-          )}
+          <div className="ah-ticket-layout">
+            <div className="ah-ticket-main">
+              {view === "flow" ? (
+                <PlanningView
+                  tickets={data.tickets}
+                  planning={data.planning}
+                  acPasses={acPasses}
+                  ticketAction={cardAction}
+                  onOpenTicket={remember}
+                />
+              ) : (
+                <TicketsTable
+                  data={data}
+                  project={project}
+                  acPasses={acPasses}
+                  acRows={acById}
+                  ticketAction={ticketAction}
+                  onOpen={openRow}
+                  onOpenTicket={remember}
+                />
+              )}
+            </div>
+            {ticket && (
+              <TicketPanel
+                project={project}
+                slug={slug}
+                data={data}
+                ticket={ticket}
+                row={shown}
+                evals={evals}
+                acPasses={acPasses}
+                acRows={acById}
+                openerRef={openerRef}
+                onOpen={remember}
+                onClose={() => {
+                  closeTicket(shown?.ref);
+                }}
+              />
+            )}
+          </div>
         </>
       )}
     </div>

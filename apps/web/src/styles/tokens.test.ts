@@ -37,20 +37,25 @@ function contrast(a: string, b: string): number {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-describe("highlight token colours (AC-234.31)", () => {
-  interface Token {
-    name: string;
-    value: string | Record<string, string>;
+interface Token {
+  name: string;
+  value: string | Record<string, string>;
+}
+const tokens = (
+  JSON.parse(readFileSync(join(process.cwd(), "design/tokens.json"), "utf8")) as {
+    color: { tokens: Token[] };
   }
-  const tokens = (
-    JSON.parse(readFileSync(join(process.cwd(), "design/tokens.json"), "utf8")) as {
-      color: { tokens: Token[] };
-    }
-  ).color.tokens;
-  const value = (name: string, theme: string) => {
-    const token = tokens.find((t) => t.name === name);
-    return typeof token?.value === "string" ? token.value : (token?.value[theme] ?? "");
-  };
+).color.tokens;
+
+/** A colour token's `#rrggbb` in `theme`, following `{other}` references. */
+function value(name: string, theme: string): string {
+  const token = tokens.find((t) => t.name === name);
+  const found = typeof token?.value === "string" ? token.value : (token?.value[theme] ?? "");
+  const ref = /^\{(.+)\}$/.exec(found)?.[1];
+  return ref ? value(ref, theme) : found;
+}
+
+describe("highlight token colours (AC-234.31)", () => {
   // The colours Markdown.css gives highlighted code, on the code block's ground.
   const used = ["text", "syntax-key", "syntax-string", "syntax-number", "syntax-keyword"];
   used.push("syntax-title", "syntax-comment", "diff-add", "diff-del");
@@ -66,4 +71,46 @@ describe("highlight token colours (AC-234.31)", () => {
       }
     },
   );
+});
+
+// two-level-flows AC-1.14 as amended by A16: jsdom computes no colours, so each theme's contrast is
+// checked here, on the token pairs the ticket panel, the owner-wait callouts and banner use.
+describe("Feature detail colour pairs (AC-1.14, A16)", () => {
+  // The panel's ground, the boxed banners' (warning: waiting-soft, info: live-soft) and the page's.
+  const grounds = ["surface-overlay", "surface", "waiting-soft", "live-soft"];
+  // Their words: body, muted and subtle text, and links.
+  const texts = ["text", "text-muted", "text-subtle", "accent"];
+  // Marks that carry a state: step dots and bars, the banners' icons.
+  const marks: [string, string][] = [
+    ...["done", "live", "blocked", "failed", "idle"].map((m): [string, string] => [
+      m,
+      "surface-overlay",
+    ]),
+    ["waiting", "waiting-soft"],
+    ["live", "live-soft"],
+  ];
+
+  it.each(["light", "dark"])("text reads at 4.5:1 on each ground (%s)", (theme) => {
+    for (const ground of grounds) {
+      for (const text of texts) {
+        expect({
+          text,
+          ground,
+          ok: contrast(value(text, theme), value(ground, theme)) >= 4.5,
+        }).toEqual({ text, ground, ok: true });
+      }
+    }
+  });
+
+  it.each(["light", "dark"])("state marks read at 3:1 on their ground (%s)", (theme) => {
+    for (const [mark, ground] of marks) {
+      expect({ mark, ground, ok: contrast(value(mark, theme), value(ground, theme)) >= 3 }).toEqual(
+        {
+          mark,
+          ground,
+          ok: true,
+        },
+      );
+    }
+  });
 });

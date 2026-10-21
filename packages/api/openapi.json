@@ -210,11 +210,21 @@
       },
       "AcceptanceEval": {
         "additionalProperties": false,
-        "description": "The feature's acceptance eval (AC-1.6): the latest whole-feature eval (``acs: all``, or a\nlegacy ``eval.md`` with no scope), by its ``delivery`` (``legacy`` for ``eval.md``).",
+        "description": "The feature's acceptance eval (AC-1.6): the latest whole-feature eval (``acs: all``, or a\nlegacy ``eval.md`` with no scope), by its ``delivery`` (``legacy`` for ``eval.md``);\n``owner_wait`` is None when it waits on no owner decision the app can take.",
         "properties": {
           "delivery": {
             "title": "Delivery",
             "type": "string"
+          },
+          "owner_wait": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OwnerWaitView"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "verdict": {
             "$ref": "#/components/schemas/Verdict"
@@ -5210,6 +5220,58 @@
           }
         },
         "title": "OwnerSignOffBody",
+        "type": "object"
+      },
+      "OwnerWaitState": {
+        "enum": [
+          "sign_off",
+          "reopened",
+          "undated",
+          "future",
+          "no_acs"
+        ],
+        "type": "string"
+      },
+      "OwnerWaitView": {
+        "additionalProperties": false,
+        "description": "What the acceptance eval waits on from the owner (A9-A11, A15), the state the Eval tab's\nprompt shows: ``sign_off`` (the one state a sign-off can be recorded in), ``reopened`` (a\nlater eval says NO-SHIP for ``reopened``: only \"more work\" can be recorded), ``undated`` and\n``future`` (no sign-off can rank newer than an eval with no ``evaluated_at``, or one dated\nafter the read), ``no_acs`` (no live AC to sign off, A10). ``acs`` are the ACs it waits on;\n``signable_after`` (``future`` only) the whole minute after which a sign-off can follow it.",
+        "properties": {
+          "acs": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Acs",
+            "type": "array"
+          },
+          "reopened": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Reopened",
+            "type": "array"
+          },
+          "signable_after": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signable After"
+          },
+          "state": {
+            "$ref": "#/components/schemas/OwnerWaitState"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "OwnerWaitView",
         "type": "object"
       },
       "Page_ActivityItem_": {
