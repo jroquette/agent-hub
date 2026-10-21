@@ -232,6 +232,12 @@ def test_answers_each_gate_from_its_stub_when_every_gate_has_one() -> None:
     assert output_of(report, "pick") == {"choice": "red", "text": ""}
 
 
+def test_records_the_approver_when_an_approval_stub_names_the_person() -> None:
+    report = run(a_plan(GATES[0]), ok={"decision": "approve", "approver": "Dana Owner"})
+
+    assert output_of(report, "ok") == {"decision": "approve", "text": "", "approver": "Dana Owner"}
+
+
 @pytest.mark.parametrize(
     ("node", "stub"),
     [("ok", {"decision": "maybe"}), ("ok", {"output": "x"}), ("a", {"decision": "approve"})],
@@ -257,6 +263,8 @@ def test_fails_config_when_a_stub_does_not_fit_its_node(node: str, stub: object)
         {"decision": "a", "output": 1},
         {"choice": "a", "fail": "exec_failed"},
         {"decision": "Not Kebab"},
+        {"choice": "a", "approver": "Dana"},
+        {"text": "a", "approver": "Dana"},
     ],
 )
 def test_refuses_the_stub_when_it_gives_no_answer_or_more_than_one(stub: object) -> None:
