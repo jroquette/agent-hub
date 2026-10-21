@@ -1,9 +1,10 @@
-"""Publish a Studio draft (AGH-295, D10, D19, D21, D24, S4, S5, A2, A5, A7, A8, A12-A18;
+"""Publish a Studio draft (AGH-295, D10, D19, D21, D24, S4, S5, A2, A5, A7, A8, A12-A18, A20;
 AC-295.11-16): the hand edit is recorded first, the draft lands where the publish rules say under
 one lock, a ``publish`` version naming the draft is recorded, then the draft is removed; an equal
-draft or a replay writes and records nothing and removes the draft; a retry with no version to
-follow refuses what it cannot tell apart, a merge past the bounds is refused, a rename records
-its ``publish`` before removing the old unit."""
+draft writes and records nothing and removes the draft; a draft a version already names as its
+``publish`` is spent (nothing written, recorded or removed); a retry with no version naming the
+draft refuses what it cannot tell apart, a merge past the bounds is refused, a rename records its
+``publish`` before removing the old unit."""
 
 import json
 from collections.abc import Iterator, Sequence
@@ -296,44 +297,6 @@ def test_reports_draft_not_removed_when_removal_fails() -> None:
     assert failed.value.result.changed
     assert rig.hub.skill_files[SCOUT] == _named("scout", "New.\n")
     assert rig.drafts() == [".hub-drafts/agent-rm0001/scout.md"]
-    rig.writer.fail_on.clear()
-
-    again = rig.publish.publish(PROJECT, "agent-rm0001", SCOUT_REF, confirm_managed=False)
-
-    assert not again.changed
-    assert rig.origins(SCOUT) == [VersionOrigin.EXTERNAL, VersionOrigin.PUBLISH]
-    assert rig.drafts() == []
-
-
-def test_replays_moved_hook_when_draft_removal_failed() -> None:
-    settings = {
-        "hooks": {
-            "PreToolUse": [
-                {"matcher": "Bash", "hooks": [{"type": "command", "command": "one"}]},
-                {"matcher": "Bash", "hooks": [{"type": "command", "command": "two"}]},
-            ],
-        }
-    }
-    rig = _Rig({SETTINGS: json.dumps(settings).encode()})
-    rig.draft("hook-mov001", {"hooks.json": _hooks("Stop", "moved")})
-    rig.writer.fail_on.add(".hub-drafts/hook-mov001")
-    ref = _ref(ItemKind.HOOK, "settings", "settings-pretooluse-1")
-
-    with pytest.raises(DraftNotRemovedError):
-        rig.publish.publish(PROJECT, "hook-mov001", ref, confirm_managed=False)
-    once = rig.hub.skill_files[SETTINGS]
-    rig.writer.fail_on.clear()
-    again = rig.publish.publish(PROJECT, "hook-mov001", ref, confirm_managed=False)
-
-    assert json.loads(once) == {
-        "hooks": {
-            "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "two"}]}],
-            "Stop": [{"hooks": [{"type": "command", "command": "moved"}]}],
-        }
-    }
-    assert rig.hub.skill_files[SETTINGS] == once
-    assert not again.changed
-    assert rig.drafts() == []
 
 
 def test_merges_hooks_and_writes_scripts_when_new_hook() -> None:
@@ -369,21 +332,6 @@ def test_refuses_changed_script_when_hooks_file_equal() -> None:
     assert refused.value.code == "item_exists"
     assert rig.hub.skill_files[SCRIPT] == b"#!/bin/sh\necho old\n"
     assert rig.drafts() != []
-
-
-def test_finishes_new_item_when_retried_after_draft_not_removed() -> None:
-    rig = _Rig({})
-    rig.draft("agent-new003", {"planner.md": _named("planner")})
-    rig.writer.fail_on.add(".hub-drafts/agent-new003")
-
-    with pytest.raises(DraftNotRemovedError):
-        rig.publish.publish(PROJECT, "agent-new003", None, confirm_managed=False)
-    rig.writer.fail_on.clear()
-    again = rig.publish.publish(PROJECT, "agent-new003", None, confirm_managed=False)
-
-    assert not again.changed
-    assert rig.origins("plugin/demo/agents/planner.md") == [VersionOrigin.PUBLISH]
-    assert rig.drafts() == []
 
 
 def _secret_hooks(event: str) -> bytes:
@@ -738,27 +686,6 @@ def test_refuses_hook_draft_when_a_group_has_no_hooks() -> None:
     assert rig.drafts() == [".hub-drafts/hook-emp001/hooks.json"]
 
 
-def test_removes_old_and_draft_when_rename_retried_after_old_not_removed() -> None:
-    rig = _Rig({f"{ALPHA}/SKILL.md": _named("alpha")})
-    rig.draft("skill-ren005", {"SKILL.md": _named("alpha2")})
-    rig.writer.fail_on.add(ALPHA)
-    alpha = _ref(ItemKind.SKILL, "demo", "alpha")
-    with pytest.raises(HubItemWriteError) as failed:
-        rig.publish.publish(PROJECT, "skill-ren005", alpha, confirm_managed=False)
-    assert failed.value.kind == "old_not_removed"
-    rig.writer.fail_on.clear()
-
-    again = rig.publish.publish(PROJECT, "skill-ren005", alpha, confirm_managed=False)
-
-    renamed = "plugin/demo/skills/alpha2"
-    assert (again.changed, again.versioned) == (False, False)
-    assert {p: c for p, c in rig.hub.skill_files.items() if p.startswith("plugin/")} == {
-        f"{renamed}/SKILL.md": _named("alpha2")
-    }
-    assert rig.origins(renamed) == [VersionOrigin.PUBLISH]
-    assert rig.drafts() == []
-
-
 def _managed(rig: _Rig, path: str) -> None:
     entry = ManagedFileEntry(ownership="managed", sha256="ab" * 32, executable=False)
     rig.hub.lock = HubLock(
@@ -867,74 +794,6 @@ def test_refuses_skill_edit_when_folder_past_file_bounds() -> None:
     assert rig.writer.writes == []
 
 
-BETA: Final = "plugin/demo/skills/beta"
-
-
-def test_refuses_rename_onto_sibling_when_kept_draft_renamed_after_in_place_publish() -> None:
-    rig = _Rig({f"{ALPHA}/SKILL.md": _named("alpha"), f"{BETA}/SKILL.md": _named("beta")})
-    rig.draft("skill-xyz001", {"SKILL.md": _named("alpha", "Edited.\n")})
-    rig.writer.fail_on.add(".hub-drafts/skill-xyz001")
-    alpha = _ref(ItemKind.SKILL, "demo", "alpha")
-    with pytest.raises(DraftNotRemovedError):
-        rig.publish.publish(PROJECT, "skill-xyz001", alpha, confirm_managed=False)
-    rig.writer.fail_on.clear()
-    # The kept draft is edited further: its name now is the sibling's.
-    rig.draft("skill-xyz001", {"SKILL.md": _named("beta", "Renamed.\n")})
-    rig.writer.writes.clear()
-
-    with pytest.raises(ItemWriteRefusedError) as refused:
-        rig.publish.publish(PROJECT, "skill-xyz001", alpha, confirm_managed=False)
-
-    assert refused.value.code == "item_exists"
-    assert rig.hub.skill_files[f"{ALPHA}/SKILL.md"] == _named("alpha", "Edited.\n")
-    assert rig.hub.skill_files[f"{BETA}/SKILL.md"] == _named("beta")
-    assert rig.writer.writes == []
-    assert rig.drafts() == [".hub-drafts/skill-xyz001/SKILL.md"]
-
-
-def test_keeps_recreated_old_item_when_rename_retried_after_draft_not_removed() -> None:
-    renamed = "plugin/demo/skills/alpha2"
-    rig = _Rig({f"{ALPHA}/SKILL.md": _named("alpha")})
-    rig.draft("skill-ren007", {"SKILL.md": _named("alpha2")})
-    rig.writer.fail_on.add(".hub-drafts/skill-ren007")
-    alpha = _ref(ItemKind.SKILL, "demo", "alpha")
-    with pytest.raises(DraftNotRemovedError):
-        rig.publish.publish(PROJECT, "skill-ren007", alpha, confirm_managed=False)
-    assert f"{ALPHA}/SKILL.md" not in rig.hub.skill_files
-    rig.writer.fail_on.clear()
-    # The old item is made again by hand before the retry.
-    rig.hub.skill_files[f"{ALPHA}/SKILL.md"] = _named("alpha", "By hand.\n")
-
-    again = rig.publish.publish(PROJECT, "skill-ren007", alpha, confirm_managed=False)
-
-    assert (again.changed, again.versioned) == (False, False)
-    assert rig.hub.skill_files[f"{ALPHA}/SKILL.md"] == _named("alpha", "By hand.\n")
-    assert rig.hub.skill_files[f"{renamed}/SKILL.md"] == _named("alpha2")
-    assert rig.origins(ALPHA) == [VersionOrigin.EXTERNAL, VersionOrigin.EXTERNAL]
-    assert rig.origins(renamed) == [VersionOrigin.PUBLISH]
-    assert rig.drafts() == []
-
-
-def test_keeps_hand_edited_old_item_when_rename_retried_after_old_not_removed() -> None:
-    renamed = "plugin/demo/skills/alpha2"
-    rig = _Rig({f"{ALPHA}/SKILL.md": _named("alpha")})
-    rig.draft("skill-ren008", {"SKILL.md": _named("alpha2")})
-    rig.writer.fail_on.add(ALPHA)
-    alpha = _ref(ItemKind.SKILL, "demo", "alpha")
-    with pytest.raises(HubItemWriteError):
-        rig.publish.publish(PROJECT, "skill-ren008", alpha, confirm_managed=False)
-    rig.writer.fail_on.clear()
-    rig.hub.skill_files[f"{ALPHA}/SKILL.md"] = _named("alpha", "Edited by hand.\n")
-
-    again = rig.publish.publish(PROJECT, "skill-ren008", alpha, confirm_managed=False)
-
-    assert not again.changed
-    assert rig.hub.skill_files[f"{ALPHA}/SKILL.md"] == _named("alpha", "Edited by hand.\n")
-    assert rig.hub.skill_files[f"{renamed}/SKILL.md"] == _named("alpha2")
-    assert rig.origins(ALPHA) == [VersionOrigin.EXTERNAL, VersionOrigin.EXTERNAL]
-    assert rig.drafts() == []
-
-
 @pytest.mark.parametrize("code", ["link_in_path", "hub_read_only"])
 def test_answers_old_not_removed_when_old_removal_refused(
     code: str, monkeypatch: pytest.MonkeyPatch
@@ -984,24 +843,132 @@ def test_refuses_moved_hook_when_first_publish_finds_its_groups_held() -> None:
     assert rig.drafts() == [".hub-drafts/hook-mov003/hooks.json"]
 
 
-def test_refuses_hook_edit_when_kept_draft_changed_after_publish() -> None:
-    rig = _Rig({SETTINGS: _three_hooks()})
-    rig.draft("hook-spl003", {"hooks.json": _two_hook_draft("A")})
-    rig.writer.fail_on.add(".hub-drafts/hook-spl003")
+# A20: a draft some version of the project names as its publish is spent.
+SPENT: Final = "This draft was already published; discard it"
+RENAMED: Final = "plugin/demo/skills/alpha2"
+GAMMA: Final = "plugin/demo/skills/gamma"
+
+
+def _plugin_files(rig: _Rig) -> dict[str, bytes]:
+    return {
+        path: content
+        for path, content in rig.hub.skill_files.items()
+        if path.startswith(("plugin/", ".claude/"))
+    }
+
+
+def _assert_spent(rig: _Rig, refused: pytest.ExceptionInfo[ItemWriteRefusedError]) -> None:
+    assert refused.value.code == "draft_already_published"
+    assert refused.value.reason == SPENT
+    assert rig.writer.writes == []
+
+
+def test_refuses_spent_draft_when_agent_edit_retried_after_draft_not_removed() -> None:
+    rig = _Rig({SCOUT: _named("scout")})
+    rig.draft("agent-spt001", {"scout.md": _named("scout", "New.\n")})
+    rig.writer.fail_on.add(".hub-drafts/agent-spt001")
     with pytest.raises(DraftNotRemovedError):
-        rig.publish.publish(PROJECT, "hook-spl003", SECOND_HOOK, confirm_managed=False)
-    once = rig.hub.skill_files[SETTINGS]
+        rig.publish.publish(PROJECT, "agent-spt001", SCOUT_REF, confirm_managed=False)
     rig.writer.fail_on.clear()
-    # The kept draft is edited further: a replay of the file would drop the new edit.
-    rig.draft("hook-spl003", {"hooks.json": _two_hook_draft("C")})
     rig.writer.writes.clear()
 
     with pytest.raises(ItemWriteRefusedError) as refused:
-        rig.publish.publish(PROJECT, "hook-spl003", SECOND_HOOK, confirm_managed=False)
+        rig.publish.publish(PROJECT, "agent-spt001", SCOUT_REF, confirm_managed=False)
 
+    _assert_spent(rig, refused)
+    assert rig.hub.skill_files[SCOUT] == _named("scout", "New.\n")
+    assert rig.origins(SCOUT) == [VersionOrigin.EXTERNAL, VersionOrigin.PUBLISH]
+    assert rig.drafts() == [".hub-drafts/agent-spt001/scout.md"]
+
+
+def test_keeps_old_item_when_rename_retried_after_old_not_removed() -> None:
+    rig = _Rig({f"{ALPHA}/SKILL.md": _named("alpha")})
+    rig.draft("skill-spt002", {"SKILL.md": _named("alpha2")})
+    rig.writer.fail_on.add(ALPHA)
+    alpha = _ref(ItemKind.SKILL, "demo", "alpha")
+    with pytest.raises(HubItemWriteError) as failed:
+        rig.publish.publish(PROJECT, "skill-spt002", alpha, confirm_managed=False)
+    assert failed.value.kind == "old_not_removed"
+    rig.writer.fail_on.clear()
+    rig.writer.writes.clear()
+
+    with pytest.raises(ItemWriteRefusedError) as refused:
+        rig.publish.publish(PROJECT, "skill-spt002", alpha, confirm_managed=False)
+
+    _assert_spent(rig, refused)
+    assert _plugin_files(rig) == {
+        f"{ALPHA}/SKILL.md": _named("alpha"),
+        f"{RENAMED}/SKILL.md": _named("alpha2"),
+    }
+    assert rig.origins(ALPHA) == [VersionOrigin.EXTERNAL]
+    assert rig.origins(RENAMED) == [VersionOrigin.PUBLISH]
+    assert rig.drafts() == [".hub-drafts/skill-spt002/SKILL.md"]
+
+
+@pytest.mark.parametrize("edited", [False, True], ids=["kept", "edited_again"])
+def test_refuses_spent_draft_when_hook_edit_retried_after_draft_not_removed(
+    *, edited: bool
+) -> None:
+    rig = _Rig({SETTINGS: _three_hooks()})
+    rig.draft("hook-spt003", {"hooks.json": _two_hook_draft("A")})
+    rig.writer.fail_on.add(".hub-drafts/hook-spt003")
+    with pytest.raises(DraftNotRemovedError):
+        rig.publish.publish(PROJECT, "hook-spt003", SECOND_HOOK, confirm_managed=False)
+    once = rig.hub.skill_files[SETTINGS]
+    rig.writer.fail_on.clear()
+    if edited:
+        rig.draft("hook-spt003", {"hooks.json": _two_hook_draft("C")})
+    rig.writer.writes.clear()
+
+    with pytest.raises(ItemWriteRefusedError) as refused:
+        rig.publish.publish(PROJECT, "hook-spt003", SECOND_HOOK, confirm_managed=False)
+
+    _assert_spent(rig, refused)
     assert _commands(once) == ["x1", "A", "B", "x3"]
-    assert refused.value.code == "item_exists"
-    assert refused.value.reason == "The hooks file holds an earlier publish of this draft"
     assert rig.hub.skill_files[SETTINGS] == once
-    assert rig.writer.writes == []
-    assert rig.drafts() == [".hub-drafts/hook-spl003/hooks.json"]
+    assert rig.origins(SETTINGS) == [VersionOrigin.EXTERNAL, VersionOrigin.PUBLISH]
+    assert rig.drafts() == [".hub-drafts/hook-spt003/hooks.json"]
+
+
+def test_refuses_spent_draft_when_new_item_retried_after_draft_not_removed() -> None:
+    planner = "plugin/demo/agents/planner.md"
+    rig = _Rig({})
+    rig.draft("agent-spt004", {"planner.md": _named("planner")})
+    rig.writer.fail_on.add(".hub-drafts/agent-spt004")
+    with pytest.raises(DraftNotRemovedError):
+        rig.publish.publish(PROJECT, "agent-spt004", None, confirm_managed=False)
+    rig.writer.fail_on.clear()
+    rig.writer.writes.clear()
+
+    with pytest.raises(ItemWriteRefusedError) as refused:
+        rig.publish.publish(PROJECT, "agent-spt004", None, confirm_managed=False)
+
+    _assert_spent(rig, refused)
+    assert rig.hub.skill_files[planner] == _named("planner")
+    assert rig.origins(planner) == [VersionOrigin.PUBLISH]
+    assert rig.drafts() == [".hub-drafts/agent-spt004/planner.md"]
+
+
+def test_keeps_other_target_when_spent_rename_draft_published_onto_it() -> None:
+    rig = _Rig({f"{ALPHA}/SKILL.md": _named("alpha"), f"{GAMMA}/SKILL.md": _named("gamma")})
+    rig.draft("skill-spt005", {"SKILL.md": _named("alpha2")})
+    rig.writer.fail_on.add(".hub-drafts/skill-spt005")
+    with pytest.raises(DraftNotRemovedError):
+        rig.publish.publish(
+            PROJECT, "skill-spt005", _ref(ItemKind.SKILL, "demo", "alpha"), confirm_managed=False
+        )
+    rig.writer.fail_on.clear()
+    rig.writer.writes.clear()
+
+    with pytest.raises(ItemWriteRefusedError) as refused:
+        rig.publish.publish(
+            PROJECT, "skill-spt005", _ref(ItemKind.SKILL, "demo", "gamma"), confirm_managed=False
+        )
+
+    _assert_spent(rig, refused)
+    assert _plugin_files(rig) == {
+        f"{RENAMED}/SKILL.md": _named("alpha2"),
+        f"{GAMMA}/SKILL.md": _named("gamma"),
+    }
+    assert rig.store.last(PROJECT, GAMMA) is None
+    assert rig.drafts() == [".hub-drafts/skill-spt005/SKILL.md"]
