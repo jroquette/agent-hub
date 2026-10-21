@@ -16,6 +16,7 @@ HOST = "127.0.0.1:7420"
 TOKEN = "synthetic-launch-token-abcdefghijklmnopqrstuvwxyz01"  # noqa: S105 -- synthetic
 RESTORE = "/api/v1/projects/demo/skills/agent/demo/scout/versions/v-1/restore"
 WORKFLOW_RESTORE = "/api/v1/workflows/demo/review/versions/v-1/restore"
+PUBLISH = "/api/v1/projects/demo/skills/drafts/agent-abc123/publish"
 
 
 @pytest.mark.parametrize(
@@ -97,7 +98,7 @@ def _client(*, sessions_off: bool, signed_in: bool = False) -> TestClient:
 
 
 @pytest.mark.parametrize("signed_in", [False, True])
-@pytest.mark.parametrize("path", [RESTORE, WORKFLOW_RESTORE])
+@pytest.mark.parametrize("path", [RESTORE, WORKFLOW_RESTORE, PUBLISH])
 def test_answers_hub_read_only_when_item_write_in_container(path: str, *, signed_in: bool) -> None:
     response = _client(sessions_off=True, signed_in=signed_in).post(path, json={})
 
@@ -109,7 +110,7 @@ def test_answers_hub_read_only_when_item_write_in_container(path: str, *, signed
     assert "served" not in body
 
 
-@pytest.mark.parametrize("path", [RESTORE, WORKFLOW_RESTORE])
+@pytest.mark.parametrize("path", [RESTORE, WORKFLOW_RESTORE, PUBLISH])
 def test_answers_unauthorized_when_item_write_without_cookie(path: str) -> None:
     response = _client(sessions_off=False).post(path, json={})
 

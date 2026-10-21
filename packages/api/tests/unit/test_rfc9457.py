@@ -18,10 +18,15 @@ from agent_hub.core.agent_sessions.errors import InvalidScreenshotError, Screens
 from agent_hub.core.brain.brain_note import BrainNoteNotFoundError, BrainNoteTooLargeError
 from agent_hub.core.brain.brain_path import BrainPathError
 from agent_hub.core.item_versions.hub_item_writer import (
+    DRAFT_LIMIT,
+    DraftTooLargeError,
     HubItemWriteError,
     ItemWriteRefusedError,
     rollback_failed,
 )
+from agent_hub.core.item_versions.item_version_ports import ItemWriteResult
+from agent_hub.core.item_versions.publish_draft import DraftNotRemovedError
+from agent_hub.core.item_versions.publish_rules import DraftInvalidError
 from agent_hub.core.item_versions.record_and_write import (
     ItemWrittenRaceLostError,
     ItemWrittenUnrecordedError,
@@ -380,6 +385,41 @@ def test_answers_write_failed_when_old_item_not_removed() -> None:
         {"code": "write_failed", "kind": "old_not_removed"},
     )
     assert found.detail == "Published and recorded; the old item could not be removed."
+
+
+def test_answers_unprocessable_when_draft_invalid() -> None:
+    found = _mapped(DraftInvalidError("The draft's kind differs from the item's"))
+
+    assert (found.status, found.title) == (422, "Draft invalid")
+    assert found.members == {
+        "code": "draft_invalid",
+        "reason": "The draft's kind differs from the item's",
+    }
+    assert found.detail == "The draft's kind differs from the item's"
+
+
+def test_answers_too_large_with_limit_when_draft_past_bounds() -> None:
+    found = _mapped(DraftTooLargeError())
+
+    assert (found.status, found.title) == (413, "Draft too large")
+    assert found.members == {"code": "draft_too_large", "limit": DRAFT_LIMIT}
+    assert found.detail == f"The draft is past the bounds: {DRAFT_LIMIT}."
+
+
+def test_answers_published_when_draft_not_removed() -> None:
+    result = ItemWriteResult(changed=True, versioned=False, reason="secret", version=None)
+    found = _mapped(DraftNotRemovedError(result))
+
+    assert (found.status, found.title) == (500, "Draft not removed")
+    assert found.members == {
+        "code": "draft_not_removed",
+        "published": True,
+        "changed": True,
+        "versioned": False,
+        "reason": "secret",
+    }
+    assert found.detail == "Published; the draft is still there. Discard it."
+    assert "/" not in str(found.detail)
 
 
 def test_answers_server_error_without_content_when_version_corrupt() -> None:
