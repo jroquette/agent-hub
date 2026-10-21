@@ -11,6 +11,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import time
 from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
@@ -691,3 +692,67 @@ def test_exits_one_when_sqlite_has_no_fts5(
     )
     assert not default_database().exists()
 
+
+# AC-391.17: a hub the size of this project's own (750 notes, 21 MB, none over 256 KiB).
+BUDGET_FILES = 750
+BUDGET_FILE_BYTES = 28_000
+
+
+def large_note(number: int) -> bytes:
+    """Note ``number`` of the budget hub: ``marker``, prose naming a token and a secret as
+    notes do (never assigned), and varied synthetic words, in lines, exactly
+    ``BUDGET_FILE_BYTES`` long."""
+    lines = [f"# Note {number}\n\nmarker: the token rotates and the secret stays out.\n"]
+    size = len(lines[0])
+    line = 0
+    while size < BUDGET_FILE_BYTES - 100:
+        words = " ".join(f"term{(number * 31 + line * 7 + word) % 4000}" for word in range(10))
+        lines.append(words + "\n")
+        size += len(words) + 1
+        line += 1
+    return sized("".join(lines).encode(), BUDGET_FILE_BYTES)
+
+
+def large_hub(knowledge_hub: KnowledgeHubFactory) -> Path:
+    """The budget hub: its notes untracked under ``brain/features/``."""
+    files = {
+        f"brain/features/f{number // 10:03}/note-{number:03}.md": large_note(number)
+        for number in range(BUDGET_FILES)
+    }
+    return knowledge_hub(files, commit=False)
+
+
+@pytest.mark.serial
+def test_stays_within_budget_when_hub_unchanged(
+    knowledge_hub: KnowledgeHubFactory, run_command: CommandRunner
+) -> None:
+    hub = large_hub(knowledge_hub)
+    first = json_of(run_command(hub, "search", "marker", "--json"))
+
+    started = time.perf_counter()
+    result = run_command(hub, "search", "marker", "--json")
+    elapsed = time.perf_counter() - started
+
+    assert first["sync"]["indexed"] == BUDGET_FILES
+    found = json_of(result)
+    assert found["sync"] == {"listed": BUDGET_FILES, "read": 0, "indexed": 0, "dropped": 0}
+    assert len(found["results"]) == 50
+    # Target about 0.3 s; the bound leaves room for a slow machine.
+    assert elapsed < 1.0
+
+
+@pytest.mark.serial
+def test_reindexes_within_budget_when_hub_large(
+    knowledge_hub: KnowledgeHubFactory, run_command: CommandRunner
+) -> None:
+    hub = large_hub(knowledge_hub)
+    assert json_of(run_command(hub, "search", "marker", "--json"))["sync"]["read"] == BUDGET_FILES
+
+    started = time.perf_counter()
+    result = run_command(hub, "brain", "reindex")
+    elapsed = time.perf_counter() - started
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == f"reindexed {BUDGET_FILES} files for demo (0 skipped)\n"
+    # Target about 3 s; the bound leaves room for a slow machine.
+    assert elapsed < 10.0
