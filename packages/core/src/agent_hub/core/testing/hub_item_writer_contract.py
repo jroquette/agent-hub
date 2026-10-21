@@ -2,8 +2,8 @@
 the generator's file system writer honour it.
 
 An implementation's ``tests/contract/`` provides a ``writer_tree`` fixture (an empty hub with
-``write``, ``link``, ``make_executable``, ``make_read_only``, ``files``, ``is_executable``,
-``exists``, ``names``, ``writer`` and ``hub_path``) and declares
+``write``, ``link``, ``make_folder``, ``make_executable``, ``make_read_only``, ``files``,
+``is_executable``, ``exists``, ``names``, ``writer`` and ``hub_path``) and declares
 ``class Test<Implementation>(HubItemWriterContract)``. Checks raise ``AssertionError`` by hand:
 core ships this suite without depending on pytest.
 """
@@ -12,18 +12,22 @@ from typing import Final, Protocol
 
 from agent_hub.core.hub_files.tree_snapshot import is_leftover_name
 from agent_hub.core.item_versions.hub_item_writer import (
+    DraftTooLargeError,
     HubItemWriteError,
     HubItemWriter,
     ItemWriteRefusedError,
 )
 from agent_hub.core.item_versions.item_version import UnitKind
-from agent_hub.core.item_versions.unit_content import UnitContent, UnitFile
-from agent_hub.core.skills.skill_sources import DEFAULT_LIMITS
+from agent_hub.core.item_versions.unit_content import MAX_UNIT_FILES, UnitContent, UnitFile
+from agent_hub.core.readmodels.read_ports import EntityNotFoundError
+from agent_hub.core.skills.skill_sources import DEFAULT_LIMITS, MAX_SKILL_FILE_BYTES
 
 SKILL_UNIT: Final = "plugin/demo/skills/alpha"
 SKILLS_FOLDER: Final = "plugin/demo/skills"
 AGENT_UNIT: Final = ".claude/agents/reviewer.md"
 SKILL_V1: Final = b"---\nname: alpha\n---\n# Alpha v1\n"
+DRAFT_ID: Final = "skill-abc123"
+DRAFT: Final = f".hub-drafts/{DRAFT_ID}"
 
 
 class WriterTree(Protocol):
@@ -45,6 +49,10 @@ class WriterTree(Protocol):
 
     def link(self, path: str, target: str) -> None:
         """Add a link at ``path`` whose target text is ``target``."""
+        ...
+
+    def make_folder(self, path: str) -> None:
+        """Add an empty folder at ``path`` (and its parents)."""
         ...
 
     def make_executable(self, path: str) -> None:
@@ -94,6 +102,19 @@ def _refusal(
 def _no_leftover(tree: WriterTree, folder: str) -> None:
     left = {name for name in tree.names(folder) if is_leftover_name(name)}
     _check(not left, f"temp entries left in {folder}: {sorted(left)}")
+
+
+def _draft_refusal(tree: WriterTree, draft_id: str = DRAFT_ID) -> str:
+    """How reading the draft fails: a refusal's code, ``too_large`` or ``not_found``."""
+    try:
+        tree.writer.read_draft(tree.hub_path, draft_id)
+    except ItemWriteRefusedError as error:
+        return error.code
+    except DraftTooLargeError:
+        return "too_large"
+    except EntityNotFoundError:
+        return "not_found"
+    raise AssertionError("the draft was read")
 
 
 def _v1() -> UnitContent:
@@ -407,3 +428,213 @@ class HubItemWriterContract:
             raise AssertionError("a folder past the names budget was swapped")
         _check(writer_tree.files(SKILL_UNIT)["SKILL.md"] == b"# old\n", "unchanged")
         _no_leftover(writer_tree, SKILLS_FOLDER)
+
+    def test_reads_draft_with_bits_when_present(self, writer_tree: WriterTree) -> None:
+        writer_tree.write(f"{DRAFT}/SKILL.md", SKILL_V1)
+        writer_tree.write(f"{DRAFT}/scripts/s.sh", b"#!/bin/sh\n")
+        writer_tree.write(f"{DRAFT}/scripts/.x", b"hidden")
+        writer_tree.write(f"{DRAFT}/a/b/c.md", b"deepest")
+        writer_tree.make_executable(f"{DRAFT}/scripts/s.sh")
+        writer_tree.write(".hub-drafts/agent-zzz999/x.md", b"another draft")
+
+        draft = writer_tree.writer.read_draft(writer_tree.hub_path, DRAFT_ID)
+
+        found = {file.path: (file.content, file.executable) for file in draft.content.files}
+        expected = {
+            "SKILL.md": (SKILL_V1, False),
+            "a/b/c.md": (b"deepest", False),
+            "scripts/.x": (b"hidden", False),
+            "scripts/s.sh": (b"#!/bin/sh\n", True),
+        }
+        _check(found == expected, f"the draft's files with their bits, hidden ones too: {found}")
+        _check(draft.draft_id == DRAFT_ID, "the draft names its id")
+        _check(draft.kind is UnitKind.SKILL, "its kind is its id's prefix")
+
+    def test_refuses_draft_when_folder_in_draft_is_link(self, writer_tree: WriterTree) -> None:
+        writer_tree.write("elsewhere/SKILL.md", SKILL_V1)
+        writer_tree.write(f"{DRAFT}/SKILL.md", SKILL_V1)
+        writer_tree.link(f"{DRAFT}/references", "../../elsewhere")
+        _check(_draft_refusal(writer_tree) == "link_in_path", "a linked folder in the draft")
+        writer_tree.link(".hub-drafts/agent-aaa111", "../elsewhere")
+        _check(
+            _draft_refusal(writer_tree, "agent-aaa111") == "link_in_path", "a linked draft folder"
+        )
+        _check(writer_tree.files("elsewhere") == {"SKILL.md": SKILL_V1}, "the target untouched")
+
+    def test_refuses_drafts_folder_link_when_drafts_folder_is_link(
+        self, writer_tree: WriterTree
+    ) -> None:
+        writer_tree.write(f"elsewhere/{DRAFT_ID}/SKILL.md", SKILL_V1)
+        writer_tree.link(".hub-drafts", "elsewhere")
+        _check(_draft_refusal(writer_tree) == "link_in_path", "the drafts folder is a link")
+        try:
+            writer_tree.writer.remove_draft(writer_tree.hub_path, DRAFT_ID)
+        except ItemWriteRefusedError as error:
+            _check(error.code == "link_in_path", f"removal refused as {error.code}")
+        else:
+            raise AssertionError("a draft was removed through a link")
+        _check(writer_tree.exists(f"elsewhere/{DRAFT_ID}/SKILL.md"), "nothing removed")
+
+    def test_reports_draft_too_large_when_past_bounds(self, writer_tree: WriterTree) -> None:
+        big = "skill-big000"
+        writer_tree.write(f".hub-drafts/{big}/SKILL.md", b"x" * (MAX_SKILL_FILE_BYTES + 1))
+        many = "skill-many00"
+        for number in range(MAX_UNIT_FILES + 1):
+            writer_tree.write(f".hub-drafts/{many}/f{number:03d}.md", b"x")
+        deep = "skill-deep00"
+        writer_tree.write(f".hub-drafts/{deep}/SKILL.md", SKILL_V1)
+        writer_tree.write(f".hub-drafts/{deep}/a/b/c/d.md", b"too deep")
+        for draft_id in (big, many, deep):
+            refused = _draft_refusal(writer_tree, draft_id)
+            _check(refused == "too_large", f"{draft_id}: {refused}")
+        exact = "skill-exact0"
+        for number in range(MAX_UNIT_FILES):
+            writer_tree.write(f".hub-drafts/{exact}/f{number:03d}.md", b"x")
+        read = writer_tree.writer.read_draft(writer_tree.hub_path, exact)
+        _check(len(read.content.files) == MAX_UNIT_FILES, "a draft at the bound is read")
+
+    def test_answers_not_found_when_draft_missing_or_empty(self, writer_tree: WriterTree) -> None:
+        _check(_draft_refusal(writer_tree) == "not_found", "no drafts folder")
+        writer_tree.write(".hub-drafts/agent-zzz999/x.md", b"another draft")
+        _check(_draft_refusal(writer_tree) == "not_found", "no such draft")
+        writer_tree.make_folder(DRAFT)
+        _check(_draft_refusal(writer_tree) == "not_found", "an empty draft folder")
+        writer_tree.write(".hub-drafts/hook-file00", b"a file, not a folder")
+        _check(_draft_refusal(writer_tree, "hook-file00") == "not_found", "a file")
+
+    def test_refuses_draft_id_when_outside_pattern(self, writer_tree: WriterTree) -> None:
+        for draft_id in ("skill-abc12", "skill-ABC123", "../x", "workflow-abc123", "skill-abc123/"):
+            for call in (writer_tree.writer.read_draft, writer_tree.writer.remove_draft):
+                try:
+                    call(writer_tree.hub_path, draft_id)
+                except ValueError as error:
+                    _check(draft_id not in str(error), "the error names no id")
+                else:
+                    raise AssertionError(f"{draft_id}: accepted")
+
+    def test_removes_draft_folder_without_following_links_when_present(
+        self, writer_tree: WriterTree
+    ) -> None:
+        writer_tree.write("elsewhere/data.md", b"kept\n")
+        writer_tree.write(f"{DRAFT}/SKILL.md", SKILL_V1)
+        writer_tree.write(f"{DRAFT}/scripts/.x", b"hidden")
+        writer_tree.link(f"{DRAFT}/references", "../../elsewhere")
+        writer_tree.write(".hub-drafts/agent-zzz999/x.md", b"another draft")
+
+        writer_tree.writer.remove_draft(writer_tree.hub_path, DRAFT_ID)
+
+        _check(not writer_tree.exists(DRAFT), "the draft is gone")
+        _check(writer_tree.files(".hub-drafts") == {"agent-zzz999/x.md": b"another draft"}, "kept")
+        _check(writer_tree.files("elsewhere") == {"data.md": b"kept\n"}, "a link not followed")
+        _no_leftover(writer_tree, ".hub-drafts")
+        writer_tree.writer.remove_draft(writer_tree.hub_path, DRAFT_ID)
+        writer_tree.writer.remove_draft(writer_tree.hub_path, "hook-none00")
+
+    def test_refuses_draft_when_file_in_draft_is_link(self, writer_tree: WriterTree) -> None:
+        writer_tree.write("elsewhere/secret.md", b"outside\n")
+        writer_tree.write(f"{DRAFT}/SKILL.md", SKILL_V1)
+        writer_tree.link(f"{DRAFT}/references/r.md", "../../../elsewhere/secret.md")
+        _check(_draft_refusal(writer_tree) == "link_in_path", "a linked file in the draft")
+
+    def test_reports_first_problem_when_draft_has_two(self, writer_tree: WriterTree) -> None:
+        writer_tree.write("elsewhere/x.md", b"x")
+        writer_tree.write(f"{DRAFT}/a.md", b"x" * (MAX_SKILL_FILE_BYTES + 1))
+        writer_tree.link(f"{DRAFT}/z.md", "../../elsewhere/x.md")
+        other = "agent-other0"
+        writer_tree.link(f".hub-drafts/{other}/a.md", "../../elsewhere/x.md")
+        writer_tree.write(f".hub-drafts/{other}/z.md", b"x" * (MAX_SKILL_FILE_BYTES + 1))
+        _check(_draft_refusal(writer_tree) == "too_large", "the first problem in path order")
+        _check(_draft_refusal(writer_tree, other) == "link_in_path", "the link comes first")
+
+    def test_fails_removal_when_draft_path_is_file(self, writer_tree: WriterTree) -> None:
+        writer_tree.write(".hub-drafts/hook-file00", b"a file, not a folder")
+        try:
+            writer_tree.writer.remove_draft(writer_tree.hub_path, "hook-file00")
+        except HubItemWriteError as error:
+            _check("hub-drafts" not in str(error), "the error names no path")
+        else:
+            raise AssertionError("a file was removed as a draft")
+        _check(writer_tree.exists(".hub-drafts/hook-file00"), "the file stays")
+
+    def test_fails_removal_when_drafts_folder_is_file(self, writer_tree: WriterTree) -> None:
+        writer_tree.write(".hub-drafts", b"a file, not a folder")
+        try:
+            writer_tree.writer.remove_draft(writer_tree.hub_path, DRAFT_ID)
+        except HubItemWriteError as error:
+            _check("hub-drafts" not in str(error), "the error names no path")
+        else:
+            raise AssertionError("a draft was removed below a file")
+        _check(_draft_refusal(writer_tree) == "not_found", "no draft is read below a file")
+        _check(writer_tree.exists(".hub-drafts"), "the file stays")
+
+    def test_carries_old_hidden_entries_when_written_from_old_folder(
+        self, writer_tree: WriterTree
+    ) -> None:
+        renamed = f"{SKILLS_FOLDER}/beta"
+        writer_tree.write(f"{SKILL_UNIT}/SKILL.md", b"# old\n")
+        writer_tree.write(f"{SKILL_UNIT}/.cache/data", b"cached")
+        writer_tree.write(f"{SKILL_UNIT}/notes/.keep", b"kept")
+        writer_tree.write(f"{SKILL_UNIT}/notes/old.md", b"# old note\n")
+        writer_tree.link(f"{SKILL_UNIT}/.current", "SKILL.md")
+        writer_tree.writer.write_unit(
+            writer_tree.hub_path, renamed, _v1(), kind=UnitKind.SKILL, carry_from=SKILL_UNIT
+        )
+        expected = {file.path: file.content for file in _v1().files}
+        expected |= {".cache/data": b"cached", "notes/.keep": b"kept"}
+        found = writer_tree.files(renamed)
+        _check(found == expected, f"the new folder holds the version and the old hidden: {found}")
+        _check(writer_tree.exists(f"{renamed}/.current"), "a hidden link is carried")
+        _check(not writer_tree.exists(f"{SKILL_UNIT}/.cache"), "the hidden entries moved")
+        writer_tree.writer.remove_unit(writer_tree.hub_path, SKILL_UNIT, kind=UnitKind.SKILL)
+        _check(not writer_tree.exists(SKILL_UNIT), "the old folder is removed after")
+        _no_leftover(writer_tree, SKILLS_FOLDER)
+
+    def test_fails_carry_when_new_folder_exists(self, writer_tree: WriterTree) -> None:
+        renamed = f"{SKILLS_FOLDER}/beta"
+        writer_tree.write(f"{SKILL_UNIT}/SKILL.md", b"# old\n")
+        writer_tree.write(f"{SKILL_UNIT}/.cache/data", b"cached")
+        writer_tree.write(f"{renamed}/SKILL.md", b"# beta\n")
+        try:
+            writer_tree.writer.write_unit(
+                writer_tree.hub_path, renamed, _v1(), kind=UnitKind.SKILL, carry_from=SKILL_UNIT
+            )
+        except HubItemWriteError as error:
+            _check(error.kind == "failed" and "beta" not in str(error), "failed, no path named")
+        else:
+            raise AssertionError("a carry wrote over an existing folder")
+        _check(writer_tree.files(renamed) == {"SKILL.md": b"# beta\n"}, "the folder unchanged")
+        old = {"SKILL.md": b"# old\n", ".cache/data": b"cached"}
+        _check(writer_tree.files(SKILL_UNIT) == old, "the old folder unchanged")
+        _no_leftover(writer_tree, SKILLS_FOLDER)
+
+    def test_reads_script_when_present(self, writer_tree: WriterTree) -> None:
+        script = "plugin/demo/scripts/check.sh"
+        linked = "plugin/demo/scripts/linked.sh"
+        _check(writer_tree.writer.read_script(writer_tree.hub_path, script) is None, "absent")
+        writer_tree.write(script, b"#!/bin/sh\n")
+        writer_tree.write("elsewhere/x.sh", b"x")
+        writer_tree.link(linked, "../../../elsewhere/x.sh")
+        found = writer_tree.writer.read_script(writer_tree.hub_path, script)
+        _check(found == b"#!/bin/sh\n", f"the script's bytes: {found!r}")
+        try:
+            writer_tree.writer.read_script(writer_tree.hub_path, linked)
+        except ItemWriteRefusedError as error:
+            _check(error.code == "link_in_path", f"refused as {error.code}")
+        else:
+            raise AssertionError("a script was read through a link")
+
+    def test_fails_script_read_when_not_regular_file(self, writer_tree: WriterTree) -> None:
+        folder = "plugin/demo/scripts/check.sh"
+        writer_tree.write(f"{folder}/inner.sh", b"x")
+        try:
+            writer_tree.writer.read_script(writer_tree.hub_path, folder)
+        except HubItemWriteError as error:
+            _check(error.kind == "failed" and "check" not in str(error), "failed, no path named")
+        else:
+            raise AssertionError("a folder was read as a script")
+
+    def test_reads_script_one_byte_past_cap_when_larger(self, writer_tree: WriterTree) -> None:
+        script = "plugin/demo/scripts/big.sh"
+        writer_tree.write(script, b"x" * (MAX_SKILL_FILE_BYTES + 10))
+        found = writer_tree.writer.read_script(writer_tree.hub_path, script)
+        _check(found == b"x" * (MAX_SKILL_FILE_BYTES + 1), "read up to one byte past the cap")

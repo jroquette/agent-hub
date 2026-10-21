@@ -28,8 +28,20 @@ tests and the repo's conventions instead of reinterpreting them.
     session's when its subject ends a line of one of the session's `git commit` commands, so sessions running at
     the same time are told apart;
   - its commits, their files, the screens those files show and the routes `HEAD` no longer has;
-  - its hub files (those its Write and Edit calls wrote, or a Studio publish reply listed as `PUBLISHED <path>`)
-    and its uncommitted files (those its Write and Edit calls wrote).
+  - its hub files (those its Write and Edit calls wrote, and those of an item a `hub web` Publish wrote from a
+    Studio draft the session wrote) and its uncommitted files (those its Write and Edit calls wrote; a publish never
+    credits one). A draft is the `.hub-drafts/<draft_id>/` folder its Write and Edit calls wrote in, the path
+    normalized and either relative or under the hub (another checkout's `.hub-drafts/`, or a path whose `..` leaves
+    the hub, is none). Only when a session wrote one, the export reads the hub's items
+    (`/api/v1/projects/agent-hub/skills`, only the kinds of the drafts not yet found) and each one's versions
+    (`.../versions`, newest first, page by page by its cursor; it stops at a repeated cursor, after 50 pages, at a
+    version older than the earliest such session less an hour, or once every draft is found). A `publish` version
+    naming one of the drafts (`draft_id`, AGH-298) credits the session with the hub files of that version's unit (a
+    skill's folder and what is under it, an agent's or a hook's file) and, for a hook draft, with
+    `plugin/agent-hub/scripts/<file>` for each `scripts/<file>` it wrote in the draft, where the Publish copies a
+    new hook's scripts. A publish of a draft no session wrote, an item whose versions answer 404 or a server
+    error, and a conductor whose versions carry no `draft_id` (or that has no items route) credit no one: those
+    files stay in the last request. A server error on the items list fails the export, as any conductor read.
   What no session made (commits, hub files, uncommitted files) is a last request, *Not made by a playground
   session*. A request that made nothing is kept, marked: discussed, abandoned or made in another request.
 - **Conductor.** Its token is read from `make playground`'s log in the playground's private folder,

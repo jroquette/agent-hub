@@ -3,14 +3,14 @@
 The server binds 127.0.0.1 only, but a page on any site can still make the browser send it a
 request. So: the ``Host`` must name the loopback at this port (DNS rebinding), a ``POST`` or
 ``DELETE`` carrying an ``Origin`` must come from this origin (cross-site writes), the learning
-actions, the workflow-run writes, a workflow gate's decision and the item writes (a Restore into
-a hub's tree) also need that ``Origin``, a same-origin fetch and a JSON body (S7), so do the
-hub registry writes (``POST /hubs``, ``DELETE /hubs/{id}``; a missing ``Origin`` is refused too,
-A11: a registered hub is a folder sessions may start in), bodies stop at 1 MiB (8 MiB for
-``POST /agent-sessions``, which may carry a screenshot), API answers are never cached, a CSP
-keeps the app to its own origin, and no CORS header is ever sent. No route speaks WebSocket
-(ADR 0031, D3): any ``websocket`` scope is closed with 1008 before it is accepted, so an upgrade
-never skips these checks (P7, AC-165.54).
+actions, the workflow-run writes, a workflow gate's decision and the item writes (a Restore or a
+Publish into a hub's tree) also need that ``Origin``, a same-origin fetch and a JSON body (S7),
+so do the hub registry writes (``POST /hubs``, ``DELETE /hubs/{id}``; a missing ``Origin`` is
+refused too, A11: a registered hub is a folder sessions may start in), bodies stop at 1 MiB
+(8 MiB for ``POST /agent-sessions``, which may carry a screenshot), API answers are never
+cached, a CSP keeps the app to its own origin, and no CORS header is ever sent. No route
+speaks WebSocket (ADR 0031, D3): any ``websocket`` scope is closed with 1008 before it is
+accepted, so an upgrade never skips these checks (P7, AC-165.54).
 
 ``AGENT_HUB_ALLOWED_HOSTS`` (read by ``hub web``, parsed here) may add exact ``host[:port]``
 names, for example the host port a container publishes; never a wildcard.
@@ -44,10 +44,11 @@ RUN_WRITES = re.compile(
 )
 # The item writes (AGH-295, S7, D13) write into a hub's working tree: strict too, and they need
 # the launch's cookie (``session_access``, which answers 409 ``hub_read_only`` in the container).
-# Restore of a Toolkit item's or a hub workflow's version; Publish joins them in PR 3.
+# Restore of a Toolkit item's or a hub workflow's version, and the Studio's Publish of a draft.
 ITEM_WRITES = re.compile(
-    rf"^{re.escape(API_PREFIX)}/(projects/[^/]+/skills/[^/]+/[^/]+/[^/]+"
-    r"|workflows/[^/]+/[^/]+)/versions/[^/]+/restore$"
+    rf"^{re.escape(API_PREFIX)}/((projects/[^/]+/skills/[^/]+/[^/]+/[^/]+"
+    r"|workflows/[^/]+/[^/]+)/versions/[^/]+/restore"
+    r"|projects/[^/]+/skills/drafts/[^/]+/publish)$"
 )
 STRICT_WRITES = re.compile(
     rf"^{re.escape(API_PREFIX)}/learnings/[^/]+/(accept|reject)$|{RUN_WRITES.pattern}"

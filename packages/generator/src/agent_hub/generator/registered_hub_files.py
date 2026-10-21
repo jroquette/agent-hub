@@ -137,9 +137,11 @@ class HubFileSystem:
         """The hub's feature folders."""
         return read_feature_folders(Path(hub_path))
 
-    def feature_folder(self, hub_path: str, slug: str) -> FeatureFolder | None:
+    def feature_folder(
+        self, hub_path: str, slug: str, *, tickets: bool = False
+    ) -> FeatureFolder | None:
         """The hub's feature folder ``slug``; None when there is no such folder."""
-        return read_feature_folder(Path(hub_path), slug)
+        return read_feature_folder(Path(hub_path), slug, tickets=tickets)
 
     def brain_tree(self, hub_path: str) -> BrainListing:
         """The ``.md`` notes under the hub's ``brain/``, bounded, no link followed."""
