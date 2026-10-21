@@ -1,5 +1,6 @@
 """Feature views (D23): a feature folder's phase, golden path, acceptance criteria and evals."""
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import Field
@@ -151,11 +152,13 @@ class OwnerWaitView(ViewModel):
     prompt shows: ``sign_off`` (the one state a sign-off can be recorded in), ``reopened`` (a
     later eval says NO-SHIP for ``reopened``: only "more work" can be recorded), ``undated`` and
     ``future`` (no sign-off can rank newer than an eval with no ``evaluated_at``, or one dated
-    after the read), ``no_acs`` (no live AC to sign off, A10). ``acs`` are the ACs it waits on."""
+    after the read), ``no_acs`` (no live AC to sign off, A10). ``acs`` are the ACs it waits on;
+    ``signable_after`` (``future`` only) the whole minute from which a sign-off can follow it."""
 
     state: OwnerWaitState
     acs: tuple[str, ...] = ()
     reopened: tuple[str, ...] = ()
+    signable_after: datetime | None = None
 
 
 class AcceptanceEval(ViewModel):

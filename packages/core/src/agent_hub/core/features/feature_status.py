@@ -232,7 +232,10 @@ def feature_parts(
         owner_steps=None if waiting is None else len(waiting.acs),
         reopened=0 if waiting is None else len(waiting.reopened),
         undated=block == "undated",
-        signable_after=(f"{block:%Y-%m-%d %H:%M} UTC" if isinstance(block, datetime) else None),
+        # The web's date-time in UTC ("21 Nov 2026, 09:01:00 UTC"), so the step reads as the prompt.
+        signable_after=(
+            f"{block.day} {block:%b %Y, %H:%M:%S} UTC" if isinstance(block, datetime) else None
+        ),
         skipped=folder.evals_skipped,
         acceptance=None if accepted is None else accepted.verdict,
     )
@@ -256,14 +259,15 @@ def feature_parts(
         board=board,
         golden_path=path,
         source=source,
-        owner_wait=_owner_wait_view(waiting, block),
+        owner_wait=None if folder.evals_skipped else _owner_wait_view(waiting, block),
     )
 
 
 def _owner_wait_view(
     waiting: OwnerWait | None, block: Literal["undated"] | datetime | None
 ) -> OwnerWaitView | None:
-    """The Acceptance wait in the order the sign-off refuses (A9-A11, A15): no AC to sign off,
+    """The Acceptance wait in the order the sign-off refuses (A9-A11, A15; evals left unread, its
+    first refusal, are the caller's): no AC to sign off,
     then no sign-off able to follow the eval, then reopened ACs; None when nothing waits or an
     owner decision newer than the eval already settled it (A11)."""
     if waiting is None or waiting.settled:
@@ -279,7 +283,12 @@ def _owner_wait_view(
         state = "reopened"
     else:
         state = "sign_off"
-    return OwnerWaitView(state=state, acs=waiting.acs, reopened=waiting.reopened)
+    return OwnerWaitView(
+        state=state,
+        acs=waiting.acs,
+        reopened=waiting.reopened,
+        signable_after=block if isinstance(block, datetime) else None,
+    )
 
 
 def feature_view(
