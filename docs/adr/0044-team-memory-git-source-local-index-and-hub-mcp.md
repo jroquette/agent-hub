@@ -1,6 +1,6 @@
 # 0044. Team memory: Git stays the source, each developer keeps a derived search index, agents reach it through `hub mcp`
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-10-21
 - Deciders: José Henrique Roquette
 - Relates to: [ADR 0019](0019-metadata-only-events-and-redaction.md) (metadata-only events; not superseded),
