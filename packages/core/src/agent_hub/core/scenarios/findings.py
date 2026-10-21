@@ -5,7 +5,10 @@ The findings come from the run record, folded by ``run_record``; each is named b
 (``f<n>``, across the run). Both texts name the scenario, the run, the step, the environment, the
 finding's text and evidence, and where its record is: the scenario run's page in hub web and its
 ``records.jsonl``. They hold names only, never a credential value: the finding's texts were
-redacted when proposed, and every text is redacted again here (``redact_shapes``).
+redacted when proposed, and every text is redacted again here (``redact_shapes``). The texts
+are agent-written, so every control character but the newline (C0, DEL, C1) and every bidi
+control is written as a visible escape (``\\x1b``, ``\\r``, ``\\u202e``) before the draft is
+printed, sent to the tracker or written: none can hide or rewrite what a person confirms.
 
 The inbox note is ``brain/_inbox/<date>-scenario-<name>-<finding-id>.md`` with frontmatter
 ``provenance: agent-from-external``, because its evidence comes from the system under test. The
@@ -32,6 +35,8 @@ _RUN: Final = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
 _FINDING: Final = re.compile(r"f[1-9][0-9]{0,5}")
 _NO_TEXT: Final = "(no description was recorded)"
 _NO_EVIDENCE: Final = "none recorded"
+_BIDI: Final = frozenset("\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
+_NAMED: Final = {"\t": "\\t", "\r": "\\r"}
 
 
 class FindingsError(AgentHubError):
@@ -123,7 +128,7 @@ def _body(names: _Names, finding: FindingView, *, record: str) -> str:
         f"The scenario {names.scenario} found this in run {names.run}, at step"
         f" {_one_line(finding.step)}, in environment {names.environment}."
     )
-    text = redact_shapes(finding.text).strip() or _NO_TEXT
+    text = _escaped(redact_shapes(finding.text)).strip() or _NO_TEXT
     evidence = _one_line(finding.evidence) or _NO_EVIDENCE
     link = (
         f"Record: {screen_path(names.scenario, names.run)} in hub web, or the file"
@@ -133,5 +138,22 @@ def _body(names: _Names, finding: FindingView, *, record: str) -> str:
 
 
 def _one_line(text: str) -> str:
-    """``text`` redacted, on one line: every run of whitespace is one space."""
-    return " ".join(redact_shapes(text).split())
+    """``text`` redacted and escaped, on one line: every run of whitespace is one space."""
+    return " ".join(_escaped(redact_shapes(text)).split())
+
+
+def _escaped(text: str) -> str:
+    """``text`` with each control character but the newline, and each bidi control, written as
+    a visible escape; a CRLF line end is a newline."""
+    return "".join(_escape(character) for character in text.replace("\r\n", "\n"))
+
+
+def _escape(character: str) -> str:
+    code = ord(character)
+    if character in _NAMED:
+        return _NAMED[character]
+    if (code < 0x20 and character != "\n") or 0x7F <= code <= 0x9F:  # noqa: PLR2004 - C0, DEL, C1
+        return f"\\x{code:02x}"
+    if character in _BIDI:
+        return f"\\u{code:04x}"
+    return character

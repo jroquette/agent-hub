@@ -119,3 +119,51 @@ def test_refuses_when_findings_record_names_unsafe_header(header: dict[str, Any]
         inbox_note(view, view.findings[0], record=RECORD, day=DAY)
     with pytest.raises(FindingsError):
         issue_draft(view, view.findings[0], record=RECORD)
+
+
+# Agent-written text with terminal controls: hidden text (ESC[8m), a bare carriage return that
+# rewrites the line, a C1 CSI and a bidi override. None may reach the draft or the note raw.
+CONTROLS = "Order\x1b[8m hidden\x1b[0m held\rFAKE\x9b2J‮flip"
+
+
+def a_controlled_record() -> list[dict[str, Any]]:
+    record = a_record()
+    finding = record[-1]["findings"][0]
+    finding.update(title=CONTROLS, text=f"Line one {CONTROLS}\nLine two\r\n", evidence=CONTROLS)
+    return record
+
+
+def raw_controls(text: str) -> list[str]:
+    """The control characters (C0 but newline, DEL, C1) and bidi controls left in ``text``."""
+    return [
+        character
+        for character in text
+        if (ord(character) < 0x20 and character != "\n")
+        or 0x7F <= ord(character) <= 0x9F
+        or character in "‪‫‬‭‮⁦⁧⁨⁩"
+    ]
+
+
+def test_escapes_controls_when_findings_issue_built() -> None:
+    view = fold_records(a_controlled_record())
+
+    draft = issue_draft(view, view.findings[0], record=RECORD)
+
+    assert raw_controls(draft.title + draft.description) == []
+    assert (
+        draft.title
+        == "Scenario order-walk: Order\\x1b[8m hidden\\x1b[0m held\\rFAKE\\x9b2J\\u202eflip"
+    )
+    lines = draft.description.splitlines()
+    assert lines[2] == "Line one Order\\x1b[8m hidden\\x1b[0m held\\rFAKE\\x9b2J\\u202eflip"
+    # A CRLF line end is a line end, not an escaped carriage return.
+    assert lines[3] == "Line two"
+
+
+def test_escapes_controls_when_findings_inbox_built() -> None:
+    view = fold_records(a_controlled_record())
+
+    note = inbox_note(view, view.findings[0], record=RECORD, day=DAY)
+
+    assert raw_controls(note.text) == []
+    assert "## Order\\x1b[8m hidden\\x1b[0m held\\rFAKE\\x9b2J\\u202eflip" in note.text
