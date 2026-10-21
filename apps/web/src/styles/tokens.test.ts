@@ -88,6 +88,12 @@ describe("Feature detail colour pairs (AC-1.14, A16)", () => {
     ]),
     ["waiting", "waiting-soft"],
     ["live", "live-soft"],
+    // The step states two-level-flows S2 adds (AGH-405): `waiting` (hand, filled segment) and
+    // `stale` (clock, an idle-soft segment edged in idle), on the page and the panel.
+    ["waiting", "surface"],
+    ["waiting", "surface-overlay"],
+    ["idle", "surface"],
+    ["idle", "idle-soft"],
   ];
 
   it.each(["light", "dark"])("text reads at 4.5:1 on each ground (%s)", (theme) => {
