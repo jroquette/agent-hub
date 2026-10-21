@@ -25,7 +25,7 @@ import json
 import os
 import signal
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Final, Literal
@@ -68,16 +68,20 @@ def run_action(
     hidden: CredentialNames = NO_CREDENTIALS,
     credentials: Mapping[str, str] | None = None,
     timeout: float | None = None,
+    on_start: Callable[[int], None] | None = None,
 ) -> JsonValue:
     """The action's output in ``run`` mode, injected values redacted; raises
     ``NodeFailedError`` (``output_contract`` when it is not one JSON value matching
-    ``output_format``), its detail redacted too."""
+    ``output_format``), its detail redacted too. ``on_start`` gets the process group as it
+    starts (a scenario run kills it when interrupted)."""
     document = call.entry.document
     injected = dict(credentials or {})
     seconds = timeout if timeout is not None else float(duration_seconds(document.timeout))
     env = {**untrusted_env(environ, hidden=hidden), **injected}
     try:
-        result = _spawn(call, "run", env=env, timeout=seconds, credentials=injected)
+        result = _spawn(
+            call, "run", env=env, timeout=seconds, credentials=injected, on_start=on_start
+        )
     except NodeFailedError as error:
         raise NodeFailedError(error.kind, redacted(str(error), injected)) from None
     # Parsed first, then every string (keys too) redacted: a value the script wrote JSON
@@ -160,6 +164,7 @@ def _spawn(
     env: Mapping[str, str],
     timeout: float,
     credentials: Mapping[str, str] | None = None,
+    on_start: Callable[[int], None] | None = None,
 ) -> ChildResult:
     stdin = {"mode": mode, "inputs": dict(call.inputs), "endpoint": dict(call.endpoint)}
     with tempfile.TemporaryDirectory(prefix="hub-action-") as folder:
@@ -174,6 +179,7 @@ def _spawn(
             env=env,
             timeout=timeout,
             stdin=json.dumps(stdin).encode(),
+            on_start=on_start,
         )
     if (kind := kind_for_exit(result.returncode)) is not None:
         # Redacted whole, then cut: a cut first would leave a value's end in the tail.
@@ -200,9 +206,21 @@ def _write_pinned(root: Path, files: Sequence[tuple[str, bytes]]) -> None:
 
 
 def _run(
-    argv: Sequence[str], *, cwd: Path, env: Mapping[str, str], timeout: float, stdin: bytes
+    argv: Sequence[str],
+    *,
+    cwd: Path,
+    env: Mapping[str, str],
+    timeout: float,
+    stdin: bytes,
+    on_start: Callable[[int], None] | None = None,
 ) -> ChildResult:
     groups: list[int] = []
+
+    def started(group: int) -> None:
+        groups.append(group)
+        if on_start is not None:
+            on_start(group)
+
     try:
         return run_child(
             argv,
@@ -211,7 +229,7 @@ def _run(
             timeout=timeout,
             own_session=True,
             output_limit=MAX_OUTPUT_BYTES + 1,
-            on_start=groups.append,
+            on_start=started,
             stdin=stdin,
         )
     except ChildTimedOutError as error:

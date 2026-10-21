@@ -5,7 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 
+import agent_hub.cli.workflow_runs as workflow_runs
 from agent_hub.cli.workflow_runs import snapshot_run
+from agent_hub.core.json_form import JsonValue
 from agent_hub.core.testing.workflow_fakes import a_plan
 from agent_hub.core.workflows.plan import WorkflowPlan
 
@@ -34,3 +36,43 @@ def test_refuses_node_when_snapshot_meets_unknown_type(
 
     with pytest.raises(TypeError, match="mystery"):
         snapshot_run(tmp_path, document={}, plan=plan, pack_root=tmp_path)
+
+
+def test_restores_polls_when_expect_poll_recorded() -> None:
+    def started(node: str, attempt: int, poll: int) -> dict[str, JsonValue]:
+        return {"event": "action_start", "node": node, "attempt": attempt, "poll": poll}
+
+    def polled(attempt: int, poll: int) -> dict[str, JsonValue]:
+        return {"event": "expect.poll", "node": "wait", "attempt": attempt, "poll": poll}
+
+    records: list[dict[str, JsonValue]] = [
+        {"event": "start", "run": "walk-1"},
+        started("send", 1, 0),
+        started("wait", 1, 1),
+        polled(1, 1),
+        # A poll whose action failed: no expect.poll line, but the poll was taken.
+        started("wait", 1, 2),
+        {"event": "step_end", "node": "wait", "attempt": 1, "status": "failed"},
+        {"event": "resume"},
+        started("wait", 2, 1),
+        polled(2, 1),
+        started("other", 1, 1),
+    ]
+
+    state = workflow_runs.prior_state(records)
+
+    # The 1000-poll bound counts every poll of a node in the run, failed ones, retries and
+    # resumes too, each once (E-7); a plain action call is no poll.
+    assert state.polls == {"wait": 3, "other": 1}
+    assert state.attempts["wait"] == 2
+
+
+def test_syncs_line_when_record_durable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    synced: list[int] = []
+    monkeypatch.setattr(workflow_runs.os, "fsync", synced.append)
+
+    workflow_runs.append_record(tmp_path, {"event": "plain"})
+    workflow_runs.append_record(tmp_path, {"event": "action_start"}, durable=True)
+
+    assert len(synced) == 1
+    assert len((tmp_path / workflow_runs.RECORDS).read_text().splitlines()) == 2
