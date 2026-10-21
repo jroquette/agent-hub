@@ -1850,6 +1850,53 @@ body.as-resizing .as-drawer {
   flex: 1;
   font-family: var(--font-mono);
 }
+/* A narrow list: the whole name wraps at its separators, the lines and threads go under it,
+ * folders wrap too, and the root line may take two lines. */
+.as-files-nav-compact .as-files-row {
+  align-items: flex-start;
+}
+.as-files-nav-compact .as-files-row > .as-files-viewed {
+  margin-top: 6px;
+}
+.as-files-nav-compact .as-files-row-open {
+  flex-wrap: wrap;
+  align-items: flex-start;
+  row-gap: 2px;
+}
+.as-files-nav-compact .as-files-nav-name {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 18px;
+}
+.as-files-row-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-basis: 100%;
+  /* Under the name, past the status letter (18px) and the gap. */
+  padding-left: calc(18px + var(--space-2));
+}
+.as-files-row-meta .as-files-stats {
+  font-size: 11px;
+}
+.as-files-nav-compact .as-files-folder {
+  align-items: flex-start;
+}
+.as-files-nav-compact .as-files-folder > svg {
+  margin-top: 2px;
+}
+.as-files-folder-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.as-files-nav-compact .as-files-folder + ul {
+  padding-left: var(--space-2);
+}
+.as-files-nav-compact .as-files-root {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
 .as-files-stats {
   display: inline-flex;
   gap: 6px;

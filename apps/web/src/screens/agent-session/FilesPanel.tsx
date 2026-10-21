@@ -283,6 +283,8 @@ function OpenThreads({ path }: { path: string }) {
 
 /** The drawer is wide enough for the list beside the file (px). */
 export const SPLIT_MIN = 720;
+/** Below this width the file list wraps its names and folders instead of cutting them (px). */
+export const LIST_COMPACT = 360;
 
 /** How wide `element` is, followed as it resizes (0 without a ResizeObserver: the narrow,
  * one-pane layout). */
@@ -563,13 +565,22 @@ function FileList({
   review: ReviewState;
   onSelect: (path: string) => void;
 }) {
+  // Narrow, names and folders wrap whole instead of being cut, and each file's lines go under
+  // its name: a cut in the middle of every row reads as noise.
+  const [nav, setNav] = useState<HTMLElement | null>(null);
+  const navWidth = useWidth(nav);
+  const compact = navWidth > 0 && navWidth < LIST_COMPACT;
   // Only the code is reviewed: Claude's own files carry no viewed mark and no progress.
   const reviewable = files.filter((file) => isReviewable(file.path));
   const viewedCount = reviewable.filter(
     (file) => review.reviewed[file.path] === file.lastChangeId,
   ).length;
   return (
-    <nav className="as-files-nav" aria-label="Files">
+    <nav
+      ref={setNav}
+      className={cx("as-files-nav", compact && "as-files-nav-compact")}
+      aria-label="Files"
+    >
       {reviewable.length > 0 && (
         <div className="as-files-progress ah-small">
           <span>
@@ -586,7 +597,13 @@ function FileList({
           {folder && (
             <div className="as-files-folder ah-small">
               <Icon name="folder" size="sm" />
-              <FitText text={folder.slice(0, -1)} tail={folderTail(folder.slice(0, -1))} />
+              {compact ? (
+                <span className="as-files-folder-name" title={folder.slice(0, -1)}>
+                  <Breakable text={folder.slice(0, -1)} />
+                </span>
+              ) : (
+                <FitText text={folder.slice(0, -1)} tail={folderTail(folder.slice(0, -1))} />
+              )}
             </div>
           )}
           <ul aria-label={folder ? `Folder ${folder.slice(0, -1)}` : undefined}>
@@ -614,13 +631,27 @@ function FileList({
                     }}
                   >
                     <KindBadge created={file.created} status={file.repo?.status} />
-                    <FitText
-                      text={name.slice(name.lastIndexOf("/") + 1)}
-                      tail={nameTail(name.slice(name.lastIndexOf("/") + 1))}
-                      className="as-files-nav-name"
-                    />
-                    <OpenThreads path={file.path} />
-                    <Stats added={file.added} removed={file.removed} />
+                    {compact ? (
+                      <>
+                        <span className="as-files-nav-name">
+                          <Breakable text={name.slice(name.lastIndexOf("/") + 1)} />
+                        </span>
+                        <span className="as-files-row-meta">
+                          <Stats added={file.added} removed={file.removed} />
+                          <OpenThreads path={file.path} />
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <FitText
+                          text={name.slice(name.lastIndexOf("/") + 1)}
+                          tail={nameTail(name.slice(name.lastIndexOf("/") + 1))}
+                          className="as-files-nav-name"
+                        />
+                        <OpenThreads path={file.path} />
+                        <Stats added={file.added} removed={file.removed} />
+                      </>
+                    )}
                   </button>
                   {isReviewable(file.path) && (
                     <ViewedToggle

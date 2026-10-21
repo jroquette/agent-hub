@@ -792,3 +792,46 @@ describe("FilesPanel (code and tests)", () => {
     expect(screen.queryByRole("group", { name: "Show the code and its tests" })).toBeNull();
   });
 });
+
+describe("FilesPanel (narrow list)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function stubWidth(width: number) {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(private readonly callback: ResizeObserverCallback) {}
+        observe = (target: Element) => {
+          this.callback(
+            [{ target, contentRect: { width } } as unknown as ResizeObserverEntry],
+            this as unknown as ResizeObserver,
+          );
+        };
+        disconnect = vi.fn();
+      },
+    );
+  }
+
+  it("wraps names and folders whole and puts each file's lines under its name", () => {
+    stubWidth(300);
+    render(<FilesPanel files={filesOf(TWO_FILES)} sessionId="s1" onClose={vi.fn()} />);
+
+    const list = screen.getByRole("navigation", { name: "Files" });
+    expect(list).toHaveClass("as-files-nav-compact");
+    const row = within(list).getByRole("button", { name: /app\.ts/ });
+    expect(row.querySelector(".ah-fit")).toBeNull();
+    expect(row.querySelector(".as-files-row-meta")).toHaveTextContent("+1−1");
+    expect(within(list).getByTitle("ui")).toBeInTheDocument();
+  });
+
+  it("keeps one line per file when the list is wide enough", () => {
+    stubWidth(500);
+    render(<FilesPanel files={filesOf(TWO_FILES)} sessionId="s1" onClose={vi.fn()} />);
+
+    const list = screen.getByRole("navigation", { name: "Files" });
+    expect(list).not.toHaveClass("as-files-nav-compact");
+    expect(list.querySelector(".as-files-row-meta")).toBeNull();
+  });
+});
