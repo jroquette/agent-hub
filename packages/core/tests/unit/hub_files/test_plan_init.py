@@ -105,6 +105,8 @@ CORE_MODULES = (
     "knowledge/search_query.py",
     "knowledge/knowledge_index.py",
     "knowledge/document_rules.py",
+    "knowledge/sync_plan.py",
+    "knowledge/sync_knowledge.py",
 )
 
 # Design decision 4 of the plan, word for word: each refusal names the cause or the way out.

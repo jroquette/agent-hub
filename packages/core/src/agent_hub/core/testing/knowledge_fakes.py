@@ -1,12 +1,15 @@
-"""``InMemoryKnowledgeIndex``: the ``KnowledgeIndex`` port over dictionaries, one per hub."""
+"""``InMemoryKnowledgeIndex``: the ``KnowledgeIndex`` port over dictionaries, one per hub; and
+``FakeKnowledgeCheckout``: a hub checkout held in memory."""
 
 import re
 import threading
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Final
 
 from agent_hub.core.knowledge.knowledge_index import (
+    Fingerprint,
     IndexChange,
     IndexedDocument,
     Kind,
@@ -15,6 +18,7 @@ from agent_hub.core.knowledge.knowledge_index import (
     StoredIndex,
 )
 from agent_hub.core.knowledge.search_query import MAX_SNIPPET_CHARS, query_words, snippet_line
+from agent_hub.core.knowledge.sync_plan import ListedFile
 
 # A word in the title counts this many times a word in the body (D-query's weights 10 and 1).
 _TITLE_WEIGHT: Final = 10
@@ -127,3 +131,76 @@ def _snippet(body: str, words: list[str]) -> str:
     )
     start = max(0, first - MAX_SNIPPET_CHARS // 2)
     return snippet_line(("…" if start else "") + line[start:])
+
+
+class FakeKnowledgeCheckout:
+    """A ``KnowledgeCheckout`` over files held in memory, by hub-relative path.
+
+    ``write`` sets a file's bytes and moves its mtime on (or sets ``mtime_ns``), ``touch`` moves
+    only the mtime, ``remove`` deletes it. ``skip_when_listed`` lists a path with a skip reason,
+    ``answer_read`` makes its read return a reason (a ``str``) or None (gone since the listing).
+    ``reads`` holds the paths read, in order; ``before_read`` runs before each read (a test's
+    barrier).
+    """
+
+    def __init__(self, *, before_read: Callable[[str], None] | None = None) -> None:
+        self._lock = threading.Lock()
+        self._files: dict[str, tuple[bytes, int]] = {}
+        self._clock = 0
+        self._listing_skips: dict[str, ListedFile] = {}
+        self._read_answers: dict[str, str | None] = {}
+        self._before_read = before_read
+        self.reads: list[str] = []
+
+    def write(self, path: str, data: bytes, *, mtime_ns: int | None = None) -> None:
+        """Set the file's bytes; its mtime moves on unless ``mtime_ns`` is given."""
+        self._files[path] = (data, self._next_mtime() if mtime_ns is None else mtime_ns)
+
+    def touch(self, path: str) -> None:
+        """Move the file's mtime on, its bytes unchanged."""
+        data, _ = self._files[path]
+        self._files[path] = (data, self._next_mtime())
+
+    def remove(self, path: str) -> None:
+        """Delete the file."""
+        del self._files[path]
+
+    def fingerprint(self, path: str) -> Fingerprint:
+        """The fingerprint the listing gives the file."""
+        data, mtime_ns = self._files[path]
+        return Fingerprint(size=len(data), mtime_ns=mtime_ns)
+
+    def skip_when_listed(
+        self, path: str, reason: str, *, fingerprint: Fingerprint | None = None
+    ) -> None:
+        """List ``path`` as ruled out by the listing (a link, a FIFO, a name not UTF-8)."""
+        self._listing_skips[path] = ListedFile(
+            path=path, fingerprint=fingerprint, skip_reason=reason
+        )
+
+    def answer_read(self, path: str, answer: str | None) -> None:
+        """Make the read of ``path`` return ``answer`` instead of its bytes."""
+        self._read_answers[path] = answer
+
+    def listed(self) -> tuple[ListedFile, ...]:
+        """Every file and listed skip, sorted by path."""
+        files = {
+            path: ListedFile(path=path, fingerprint=self.fingerprint(path)) for path in self._files
+        }
+        files.update(self._listing_skips)
+        return tuple(files[path] for path in sorted(files))
+
+    def read(self, path: str) -> bytes | str | None:
+        """The file's bytes, the answer set for it, or None when it is gone."""
+        if self._before_read is not None:
+            self._before_read(path)
+        with self._lock:
+            self.reads.append(path)
+        if path in self._read_answers:
+            return self._read_answers[path]
+        found = self._files.get(path)
+        return None if found is None else found[0]
+
+    def _next_mtime(self) -> int:
+        self._clock += 1
+        return 1_700_000_000_000_000_000 + self._clock
