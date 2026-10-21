@@ -12,7 +12,8 @@ does, before the session, and prints the repo's facts as ``target`` (the worktre
 GitHub repo, gate and conventions); ``commits`` and ``pr`` take that object back as
 ``--target`` and never read ``hub.json`` again, which the session could have edited. A target
 whose path leaves the workspace is refused. ``verdict`` reads the session's reply as ``hub run``
-does (``session_outcome``), from stdin.
+does (``session_outcome``), from stdin, and the ``discovery`` its last JSON line reports (one
+line, ``""`` when none: the ``implement`` workflow loops back to preflight on one).
 
 Tokens are narrowed per call from the caller's environment, as in ``hub run``: git's reads, the
 worktree add and the repo's setup script get ``untrusted_env``; only the fetch, the push and
@@ -22,9 +23,9 @@ writes the tracker: ``report`` only computes the delivery (``delivered``, ``no_c
 parent's (``hub workflow run``, ``hub run``).
 
 The record writers run in the hub's main checkout and never commit; each prints the hub-relative
-``path`` it wrote (``change-request`` takes the run's id from ``AGENT_HUB_RUN_ID``, which the
-engine gives the run's steps, when ``--run-id`` is not given, and each ``--affected`` may list
-several tickets separated by commas), and a refusal (a record the readers could not read, a
+``path`` it wrote (``change-request`` and ``preflight`` take the run's id from
+``AGENT_HUB_RUN_ID``, which the engine gives the run's steps; ``preflight`` builds the run from
+the agent's findings), and a refusal (a record the readers could not read, a
 second decision, a decision without a person, a plan that moved, a link) is a failure that
 writes nothing.
 
@@ -83,7 +84,7 @@ from agent_hub.cli.run_steps import (
 )
 from agent_hub.cli.ship_steps import ship_child, step_timeouts
 from agent_hub.cli.worktree_steps import check_branches, create_worktree, worktree_task
-from agent_hub.core.features.ticket_writes import TicketRecordError
+from agent_hub.core.features.ticket_writes import PreflightFacts, TicketRecordError
 from agent_hub.core.hub_config.conventions import EffectiveConventions
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.runner.run_record import RunOutcome, Stage
@@ -106,6 +107,8 @@ MAX_REPLY_BYTES: Final = SESSION_OUTPUT_LIMIT
 UNCOMMITTED: Final = "uncommitted changes in the worktree"
 TARGET_TEXTS: Final = ("branch", "base", "default_branch", "github", "gate")
 STOPPED: Final = "the implementing session stopped: "
+# A discovery (a broken plan assumption, implement's loop back to preflight) is one line.
+MAX_DISCOVERY_CHARS: Final = 1000
 
 step_app = typer.Typer(name=COMMAND, no_args_is_help=True, help="Run one stage of hub run.")
 
@@ -248,8 +251,17 @@ def verdict() -> None:
             "status": RunOutcome.BLOCKED.value if blocked else OutcomeKind.DONE.value,
             "summary": summary if isinstance(summary, str) else "",
             "question": outcome.question,
+            "discovery": _one_line(found.get("discovery")),
         }
     )
+
+
+def _one_line(value: object) -> str:
+    """A text of the reply on one line of at most ``MAX_DISCOVERY_CHARS``, else ``""``."""
+    if not isinstance(value, str):
+        return ""
+    kept = "".join(c for c in value if c.isprintable() or c.isspace())
+    return " ".join(kept.split())[:MAX_DISCOVERY_CHARS]
 
 
 @step_app.command("commits")
@@ -391,13 +403,37 @@ def preflight(
     *,
     feature: Feature,
     ticket: Ticket,
-    run: Annotated[str, typer.Option("--run", metavar="JSON", help="One preflight run.")],
+    findings: Annotated[
+        str,
+        typer.Option("--findings", metavar="JSON", help="The agent's drift, notes and blockers."),
+    ],
+    kind: Annotated[
+        str, typer.Option("--input", help="none, discovery, declined_change; a gate's decision.")
+    ],
+    text: Annotated[str, typer.Option("--input-text", help="The discovery, or the note.")] = "",
+    request: Annotated[
+        str, typer.Option("--request", help="The change request it opened or re-checked.")
+    ] = "",
 ) -> None:
-    """Append one run to tickets/<ticket>/preflight.json."""
+    """Append one run to tickets/<ticket>/preflight.json, from the preflight's findings."""
+    if request and not (request.isascii() and request.isdecimal()):
+        raise typer.BadParameter("use a request number, or nothing", param_hint="--request")
     hub = _hub()
+    config = load_hub_config_or_exit(hub / FILE_LABEL)
+    facts = PreflightFacts(
+        ran_at=datetime.now(UTC),
+        plan_version=1,
+        commit="",
+        run_id=os.environ.get(RUN_ID_VARIABLE, ""),
+        input=kind,
+        input_text=text,
+        request=int(request) if request else None,
+    )
     _record(
         "preflight",
-        lambda: step_records.preflight(hub, feature=feature, ticket=ticket, run=run.encode()),
+        lambda: step_records.preflight(
+            hub, config, feature=feature, ticket=ticket, findings=findings.encode(), facts=facts
+        ),
     )
 
 
@@ -406,20 +442,16 @@ def change_request(
     *,
     feature: Feature,
     ticket: Ticket,
-    run_id: Annotated[
-        str, typer.Option("--run-id", help="The workflow run's id (default: AGENT_HUB_RUN_ID).")
-    ] = "",
     evidence: Annotated[str, typer.Option("--evidence", help="What the plan got wrong.")],
     proposal: Annotated[str, typer.Option("--proposal", help="The plan change asked.")],
     affected: Annotated[
-        list[str] | None,
-        typer.Option("--affected", metavar="TICKET", help="Affected tickets, comma-separated."),
-    ] = None,
+        str,
+        typer.Option("--affected", metavar="TICKETS", help="Affected tickets, comma-separated."),
+    ] = "",
 ) -> None:
     """Open change-requests/<n>.md against the plan's current version."""
     hub = _hub()
-    run_id = run_id or os.environ.get(RUN_ID_VARIABLE, "")
-    names = [name.strip() for value in affected or () for name in value.split(",")]
+    names = [name.strip() for name in affected.split(",")]
     _record(
         "change-request",
         lambda: step_records.change_request(
@@ -427,7 +459,7 @@ def change_request(
             feature=feature,
             ticket=ticket,
             affected=[name for name in names if name],
-            run_id=run_id,
+            run_id=os.environ.get(RUN_ID_VARIABLE, ""),
             evidence=evidence,
             proposal=proposal,
             now=datetime.now(UTC),
