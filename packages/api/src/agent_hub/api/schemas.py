@@ -119,7 +119,8 @@ LEARNING_ACTION_RESPONSES: dict[int | str, dict[str, Any]] = {
     504: {"model": ProblemDetails, "description": "The action passed its 60 s deadline"},
 }
 
-# The problems an item write (Restore; Publish in PR 3) documents beyond the ranges (S7, D13).
+# The problems an item write (a restore, and the publish below) documents beyond the ranges (S7,
+# D13).
 ITEM_WRITE_RESPONSES: dict[int | str, dict[str, Any]] = {
     401: {"model": ProblemDetails, "description": "No launch cookie (open hub web's address)"},
     409: {
@@ -139,7 +140,23 @@ PUBLISH_RESPONSES: dict[int | str, dict[str, Any]] = {
         "unit_unreadable, item_exists, draft_already_published or "
         "managed_confirmation_required",
     },
+    404: {
+        "model": ProblemDetails,
+        "description": "Unknown project or target item, or the draft folder missing or empty",
+    },
     413: {"model": ProblemDetails, "description": "The draft is past the bounds (limit)"},
+    # Documented as a problem (``draft_invalid``, or the body outside its shape): listing it
+    # with the problem model keeps FastAPI's validation schema out, as the ranges do.
+    422: {
+        "model": ProblemDetails,
+        "description": "The draft is not a valid item (draft_invalid), or the body is outside "
+        "its shape",
+    },
+    500: {
+        "model": ProblemDetails,
+        "description": "Write failed (write_failed: failed, rollback_failed, old_not_removed, "
+        "draft_unreadable) or published with the draft kept (draft_not_removed)",
+    },
 }
 
 ProjectParam = Annotated[str | None, Query(min_length=1, max_length=MAX_QUERY_TEXT)]
