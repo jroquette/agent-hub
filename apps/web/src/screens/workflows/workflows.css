@@ -1,39 +1,4 @@
-/* Workflows: the catalog's rows. */
-
-.wf-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  overflow: hidden;
-}
-.wf-list > li + li {
-  border-top: 1px solid var(--border);
-}
-.wf-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  padding: var(--space-4) var(--space-5);
-  color: inherit;
-  text-decoration: none;
-}
-.wf-row:hover {
-  background: var(--surface-hover);
-  text-decoration: none;
-}
-.wf-row > :first-child {
-  flex: 1;
-}
-.wf-name {
-  font: 600 15px/22px var(--font-mono);
-  color: var(--text);
-}
-.wf-chevron {
-  color: var(--text-subtle);
-}
+/* Workflows: the catalog cards are the Toolkit's own (Skills.css). */
 
 /* A workflow's page: capped so steps keep a readable measure on wide screens. */
 .wf-detail {

@@ -7,6 +7,7 @@ import { useRowKeys } from "../../lib/useRowKeys";
 import { useScope } from "../../lib/scope";
 import { RailFact } from "../skills/RailFact";
 import "../skills/SkillDetail.css";
+import "../skills/Skills.css";
 import { skillsHome, SKILLS_PICKER } from "../skills/routes";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
@@ -92,28 +93,43 @@ export function shapeInWords(steps: readonly WorkflowStep[]): string {
   return parts.join(" · ");
 }
 
-function WorkflowRow({ item, showProject }: { item: WorkflowSummary; showProject: boolean }) {
+/** A workflow as a catalog card, the shape of the Toolkit's other tabs: name, what it does, then
+ * where it comes from, what you give it and its shape. Only the name takes a Tab stop. */
+function WorkflowCard({ item, showProject }: { item: WorkflowSummary; showProject: boolean }) {
   const needs = item.inputs.filter((input) => input.required);
+  const headingId = `workflow-card-${item.project}-${item.name}`;
   return (
-    <li>
-      <AppLink href={workflowHref(item)} className="wf-row">
-        <span className="ah-stack" style={{ gap: 2, minWidth: 0 }}>
-          <span className="ah-row" style={{ gap: 8 }}>
-            <span className="wf-name">{item.name}</span>
-            {item.source === "builtin" && <span className="ah-small ah-subtle">built-in</span>}
-            {showProject && <span className="ah-small ah-subtle">· {item.project}</span>}
+    <li className="ah-skill-card-item">
+      <article className="ah-skill-card" aria-labelledby={headingId}>
+        <header className="ah-skill-card-head">
+          <h3 id={headingId} className="ah-skill-name">
+            <AppLink href={workflowHref(item)}>{item.name}</AppLink>
+          </h3>
+          <span className="ah-grow" />
+          {showProject && <span className="ah-skill-meta">{item.project}</span>}
+        </header>
+        <p className="ah-skill-desc" title={item.description ?? undefined}>
+          {item.description ?? "No description."}
+        </p>
+        <footer className="ah-skill-card-foot">
+          <span className="ah-skill-card-line">
+            <span className="ah-skill-meta">
+              <Icon name={item.source === "hub" ? "warehouse" : "package"} size="sm" />
+              {item.source === "hub" ? "Hub" : "Built-in"}
+            </span>
+            <span className="ah-skill-meta">
+              <Icon name="braces" size="sm" />
+              {needs.length > 0
+                ? `You give it: ${needs.map((input) => input.name).join(", ")}`
+                : "Takes no input"}
+            </span>
           </span>
-          <span className="ah-muted">{item.description ?? "No description."}</span>
-          <span className="ah-small ah-subtle">
-            {needs.length > 0
-              ? `You give it: ${needs.map((input) => input.name).join(", ")}`
-              : "Takes no input"}
-            {" · "}
+          <span className="ah-skill-meta">
+            <Icon name="list-checks" size="sm" />
             {shapeInWords(item.steps)}
           </span>
-        </span>
-        <Icon name="chevron-right" className="wf-chevron" />
-      </AppLink>
+        </footer>
+      </article>
     </li>
   );
 }
@@ -137,9 +153,9 @@ export function WorkflowList({
   return (
     <>
       {items.length > 0 && (
-        <ul className="wf-list" aria-label="Workflows">
+        <ul className="ah-skills-grid" aria-label="Workflows">
           {items.map((item) => (
-            <WorkflowRow
+            <WorkflowCard
               key={`${item.project}/${item.name}`}
               item={item}
               showProject={showProject}

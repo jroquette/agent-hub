@@ -50,7 +50,9 @@ describe("Toolkit › Workflows tab", () => {
     expect(rows[0]).toHaveTextContent("feature-flow");
     expect(rows[0]).toHaveTextContent("You give it: feature");
     expect(rows[0]).toHaveTextContent("4 steps · Claude does 1 · stops to ask you");
-    expect(rows[1]).toHaveTextContent("reviewbuilt-in");
+    expect(rows[0]).toHaveTextContent("Hub");
+    expect(rows[1]).toHaveTextContent("review");
+    expect(rows[1]).toHaveTextContent("Built-in");
   });
 
   it("says in one sentence what a workflow is, and selects its tab", async () => {
