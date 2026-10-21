@@ -40,7 +40,8 @@ def test_marks_each_step_with_its_type_when_property_skill_rendered(
     texts: dict[str, str],
 ) -> None:
     steps = [
-        (int(number), kind, title) for number, kind, title in STEP_LINE.findall(texts[PROPERTY_TESTS])
+        (int(number), kind, title)
+        for number, kind, title in STEP_LINE.findall(texts[PROPERTY_TESTS])
     ]
 
     assert steps == PROPERTY_TESTS_STEPS

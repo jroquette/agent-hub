@@ -13,6 +13,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- The base plugin gains the `test-writer` agent and the `/property-based-testing` skill (AGH-411). `test-writer`
+  writes a task's failing acceptance tests from its ACs and public interfaces, never reading the implementation, at
+  most three per AC, and commits them RED; `/feature` does not start it yet (AGH-88 measures it first).
+  `/property-based-testing` writes property tests grounded in the code's own claims and classifies each failure.
+  Both arrive with `hub sync` after you bump `platform.version`.
 - `hub web` can publish a Studio draft itself (AGH-298, `POST .../skills/drafts/{draft_id}/publish` with
   `{target, confirm_managed}`), and the Studio's Publish now calls it instead of asking Claude to copy the draft:
   Claude only edits the draft, the Studio shows "Publishing…" then "Published." with a link to the item, warns before
