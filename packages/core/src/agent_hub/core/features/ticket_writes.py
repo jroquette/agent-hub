@@ -236,8 +236,8 @@ def change_request_text(
         raise TicketRecordError(f"affected has an invalid ticket: {one_line(bad[0])[:64]}")
     if _RUN_ID.fullmatch(run_id) is None:
         raise TicketRecordError(f"not a run id: {one_line(run_id)[:64]}")
-    for name, text in (("evidence", evidence), ("proposal", proposal)):
-        if not text.strip():
+    for name, value in (("evidence", evidence), ("proposal", proposal)):
+        if not value.strip():
             raise TicketRecordError(f"the {name} is empty")
     text = (
         f"---\ntype: change-request\nticket: {ticket}\nstatus: open\n"

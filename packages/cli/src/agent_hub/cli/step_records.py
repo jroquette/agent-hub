@@ -97,7 +97,7 @@ def ticket_brief(
     brief = TicketBrief(
         ticket=ticket,
         at=now,
-        plan_version=plan_version(plan).version,
+        plan_version=_version(plan),
         acs=tuple(
             ac
             for ac in record.acs
@@ -140,7 +140,7 @@ def change_request(
     """Create ``change-requests/<n>.md`` (``n`` the next free number) against the plan's
     current version."""
     folder = _feature(hub, feature)
-    plan_from = plan_version(_required(folder / PLAN, MAX_PLAN_BYTES)).version
+    plan_from = _version(_required(folder / PLAN, MAX_PLAN_BYTES))
     requests = _folder(folder, CHANGE_REQUESTS_FOLDER)
     first = next_request(os.listdir(requests))
     for n in range(first, first + MAX_REQUEST_TRIES):
@@ -204,6 +204,11 @@ def amend_plan(hub: Path, *, feature: str, request: int, summary: str) -> dict[s
         )
         _replace(folder, PLAN, written)
     return {"path": _relative(hub, folder / PLAN), "amendment": ident}
+
+
+def _version(plan: bytes) -> int:
+    # ``plan_version`` always counts a plan it is given; its None is for a plan left unread.
+    return plan_version(plan).version or 1
 
 
 def _planned(tickets: Sequence[PlannedTicket], name: str) -> PlannedTicket | None:
