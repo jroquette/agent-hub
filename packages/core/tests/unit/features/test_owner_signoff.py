@@ -7,7 +7,12 @@ import pytest
 
 from agent_hub.core.features.feature_evals import eval_coverage, eval_records
 from agent_hub.core.features.feature_record import record_from_bytes
-from agent_hub.core.features.feature_status import FeatureFolder, RecordHead, feature_parts
+from agent_hub.core.features.feature_status import (
+    FeatureFolder,
+    RecordHead,
+    feature_detail,
+    feature_parts,
+)
 from agent_hub.core.features.feature_view import GoldenStep
 from agent_hub.core.features.owner_signoff import (
     OwnerDecision,
@@ -544,3 +549,77 @@ def test_signs_off_only_the_rest_when_a_ticket_eval_was_settled() -> None:
 
     assert written.acs == ("AC-7.2", "AC-7.3")
     assert written.delivery == "owner-signoff-r2"
+
+
+_WHOLE = a_head("feature", "SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-10-10")
+_REOPENED = a_head("acme-1521", "NO-SHIP", scope="acs: [AC-7.2]", at="2026-10-12")
+_MORE_WORK = a_head(
+    "owner-signoff", "NO-SHIP", scope="acs: [AC-7.2]\nprovenance: owner", at="2026-10-13"
+)
+_UNDATED = RecordHead(
+    name="feature.md",
+    head=b"---\ntype: eval\nverdict: SHIP-WITH-OWNER-STEPS\nacs: all\n---\n",
+    problem=None,
+)
+_FUTURE = a_head("feature", "SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-11-21T09:00:30Z")
+_NO_ACS = json.dumps(
+    {"tickets": [{"key": "T1", "id": "ACME-1520", "order": 1}], "acs": []}
+).encode()
+_ALLOWS = {"done": ("sign_off",), "more_work": ("sign_off", "reopened")}
+
+
+def _case(*evals: RecordHead, **fields: object) -> FeatureFolder:
+    return FeatureFolder(**({**vars_of(a_planned_folder(*evals)), **fields}))  # type: ignore[arg-type]
+
+
+def vars_of(folder: FeatureFolder) -> dict[str, object]:
+    return {name: getattr(folder, name) for name in FeatureFolder.__dataclass_fields__}
+
+
+# two-level-flows A9-A11, A15 (AGH-330 Q10): the served wait offers exactly what the write accepts.
+@pytest.mark.parametrize(
+    ("folder", "state"),
+    [
+        (_case(_WHOLE), "sign_off"),
+        (_case(_WHOLE, _REOPENED), "reopened"),
+        (_case(_UNDATED, _REOPENED), "undated"),
+        (_case(_FUTURE), "future"),
+        (_case(_WHOLE, features_json=_NO_ACS), "no_acs"),
+        (_case(_WHOLE, evals_skipped=3), None),
+        (_case(_WHOLE, _REOPENED, _MORE_WORK), None),
+    ],
+    ids=["sign_off", "reopened", "undated", "future", "no_acs", "evals_skipped", "settled"],
+)
+@pytest.mark.parametrize("decision", ["done", "more_work"])
+def test_offers_only_decisions_the_write_accepts_when_owner_wait_served(
+    folder: FeatureFolder, state: str | None, decision: OwnerDecision
+) -> None:
+    detail = feature_detail(folder, project="demo", read=MERGED, now=NOW)
+    assert detail.acceptance_eval is not None
+    wait = detail.acceptance_eval.owner_wait
+    sign_off, _ = a_sign_off_of(folder)
+
+    try:
+        sign_off("demo", SLUG, delivery="feature", decision=decision)
+        accepted = True
+    except OwnerSignOffError:
+        accepted = False
+
+    assert (None if wait is None else wait.state) == state
+    assert accepted is (state in _ALLOWS[decision])
+
+
+# AGH-330 Q3: the write dates its note to the second, so the read compares the same way.
+def test_serves_future_wait_when_eval_dated_in_the_current_second() -> None:
+    same_second = a_head(
+        "feature", "SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-10-17T12:00:00Z"
+    )
+    folder = a_planned_folder(same_second)
+
+    detail = feature_detail(
+        folder, project="demo", read=MERGED, now=NOW.replace(microsecond=500_000)
+    )
+
+    assert detail.acceptance_eval is not None
+    assert detail.acceptance_eval.owner_wait is not None
+    assert detail.acceptance_eval.owner_wait.state == "future"

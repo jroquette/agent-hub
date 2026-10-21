@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from random import Random
 
 import pytest
@@ -353,7 +354,7 @@ def test_says_when_signoff_possible_in_acceptance_when_acceptance_eval_dated_in_
         evals=1,
         covered=6,
         owner_steps=2,
-        signable_after="2026-11-21 09:00 UTC",
+        signable_after="21 Nov 2026, 09:01:00 UTC",
         acceptance="SHIP-WITH-OWNER-STEPS",
     )
 
@@ -361,7 +362,7 @@ def test_says_when_signoff_possible_in_acceptance_when_acceptance_eval_dated_in_
 
     assert (acceptance.state, acceptance.meta) == (
         "current",
-        "Sign-off possible after 2026-11-21 09:00 UTC",
+        "Sign-off possible after 21 Nov 2026, 09:01:00 UTC",
     )
 
 
@@ -975,9 +976,11 @@ def test_serves_undated_wait_before_reopened_when_acceptance_eval_undated() -> N
     assert _step(path, "acceptance").meta == "Acceptance eval undated · evaluate again"
 
 
+# AGH-330 Q4: the instant is served, rounded up to the minute so "after" holds; the meta says it
+# as the web's UTC date-time does.
 def test_serves_future_wait_when_acceptance_eval_dated_after_read() -> None:
     future = _eval_head(
-        "feature", verdict="SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-11-21T09:00:00Z"
+        "feature", verdict="SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-11-21T09:00:30Z"
     )
     path = feature_parts(_folder(future), _MERGED, now=READ_TIME).golden_path
 
@@ -985,7 +988,8 @@ def test_serves_future_wait_when_acceptance_eval_dated_after_read() -> None:
 
     assert wait is not None
     assert wait.state == "future"
-    assert _step(path, "acceptance").meta == "Sign-off possible after 2026-11-21 09:00 UTC"
+    assert wait.signable_after == datetime(2026, 11, 21, 9, 1, tzinfo=UTC)
+    assert _step(path, "acceptance").meta == "Sign-off possible after 21 Nov 2026, 09:01:00 UTC"
 
 
 def test_serves_no_acs_wait_when_feature_lists_no_live_ac() -> None:
