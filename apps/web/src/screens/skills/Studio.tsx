@@ -5,7 +5,7 @@ import "./Skills.css";
 import "./SkillDetail.css";
 import "./Studio.css";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Navigate, useNavigate, useParams } from "react-router";
 
@@ -44,8 +44,6 @@ import {
   hookFileText,
   newDraftId,
   projectPluginDir,
-  publishEditPrompt,
-  publishPrompt,
   studioPrompt,
   summarize,
   type DraftFile,
@@ -55,14 +53,54 @@ import {
 } from "./draft";
 import { KINDS, KIND_HELP, type ItemKind } from "./filters";
 import { FrontmatterTable } from "./FrontmatterTable";
-import { skillRoute, useSkillCatalog, useSkillDetail, type SkillRef } from "./queries";
+import {
+  skillRoute,
+  spentBy,
+  usePublishDraft,
+  useSkillCatalog,
+  useSkillDetail,
+  type ItemWriteResult,
+  type SkillRef,
+} from "./queries";
 import { KIND_ICON, KIND_NAME, SkillCard } from "./SkillCard";
-import { forgetDraft, openEditDraft, saveDraft, storedDraft } from "./studioDrafts";
+import { forgetDraft, openEditDraft, patchDraft, saveDraft, storedDraft } from "./studioDrafts";
 
 type CatalogItem = components["schemas"]["CatalogItem"];
 type SkillDetail = components["schemas"]["SkillDetail"];
 
 const DEFAULT_MODELS = ["default", "opus", "sonnet", "haiku"];
+
+/** S9's warning, in Publish's words: shown before a managed item is published over. */
+export const PUBLISH_MANAGED_WARNING =
+  "This file is managed by hub.lock: the next hub sync rewrites it. Publish anyway?";
+/** The Publish dialog's verb once the managed warning shows. */
+const PUBLISH_ANYWAY = "Publish anyway";
+/** What a reopened spent draft says when it stored no detail of its own. */
+const SPENT_DETAIL = "This draft was already published; discard it.";
+
+/** Where an edit or new draft stands once it is past drafting: published (its folder is gone)
+ * or spent (published, its folder kept until discarded). */
+type Settled = "published" | "spent" | null;
+
+/** What a publish the server answered did, for the Studio's status line (AGH-295); `result`
+ * is null when the Studio reopens on a draft published earlier. */
+export function publishedWords(result: ItemWriteResult | null): { title: string; rest: string } {
+  if (result && !result.changed)
+    return {
+      title: "Nothing changed.",
+      rest: "The item already matches the draft: nothing was written, and the draft is removed.",
+    };
+  if (result && !result.versioned) {
+    const why =
+      result.reason === "secret"
+        ? "the file matches a secret rule."
+        : result.reason === "script_only"
+          ? "only the hook's scripts were written, and scripts keep no history."
+          : "the item is past the size its history keeps.";
+    return { title: "Published.", rest: `Not versioned: ${why}` };
+  }
+  return { title: "Published.", rest: "" };
+}
 
 /** The route of a draft in the Studio. */
 export function studioRoute(project: string, draftId: string): string {
@@ -232,6 +270,19 @@ function editContext(target: SkillRef, detail: SkillDetail): EditContext {
   };
 }
 
+/** A published edit draft's context when its item is gone under the old name: what the draft
+ * stored. Its original text is not known any more, and is only read while drafting. */
+function storedEditContext(target: SkillRef, sourcePath: string): EditContext {
+  return {
+    target,
+    sourcePath,
+    mainPath: editMainFile(target.kind, sourcePath),
+    to: editDestination(target.kind, sourcePath),
+    hookText: null,
+    baseline: { name: target.name, original: null, managed: false },
+  };
+}
+
 /** An edit draft: loads the item as it is now, then opens the Studio on it. */
 function EditStudio({
   project,
@@ -243,11 +294,26 @@ function EditStudio({
   target: SkillRef;
 }) {
   const detail = useSkillDetail(project, target);
-  const edit = useMemo(
+  const loaded = useMemo(
     () => (detail.data ? editContext(target, detail.data) : null),
     [detail.data, target],
   );
-  if (detail.isError) {
+  // Once the draft is published (or spent), the item may be gone under its old name (a rename):
+  // the Studio stays on what it last read, or on what the draft stored, instead of the 404.
+  // Before that, a 404 is a real deletion. A failed read again keeps `data` (TanStack Query),
+  // so the error is checked first.
+  const [kept, setKept] = useState<EditContext | null>(null);
+  if (loaded && loaded !== kept) setKept(loaded);
+  useEffect(() => {
+    // In place, its time and order kept; only when it changed.
+    if (loaded && storedDraft(draftId)?.sourcePath !== loaded.sourcePath)
+      patchDraft(draftId, { sourcePath: loaded.sourcePath });
+  }, [loaded, draftId]);
+  const stored = storedDraft(draftId);
+  const done = stored?.published === true || stored?.spent === true;
+  const fromStore = stored?.sourcePath ? storedEditContext(target, stored.sourcePath) : null;
+  const edit = detail.isError ? (done ? (kept ?? fromStore) : null) : (loaded ?? kept);
+  if (detail.isError && !edit) {
     return (
       <div className="ah-card">
         <EmptyState icon="file-x" title={`${target.name} is not in the catalog any more.`}>
@@ -325,10 +391,12 @@ function StudioHeader({
   context,
   summary,
   actions,
+  settled = null,
 }: {
   context: StudioContext;
   summary: DraftSummary | null;
   actions?: ReactNode;
+  settled?: Settled;
 }) {
   const { kind, edit } = context;
   return (
@@ -346,10 +414,20 @@ function StudioHeader({
         </h1>
         <span className="ah-small ah-muted">
           <span className="ah-studio-chip">
-            <Icon name="file-pen" size="sm" />
-            {edit ? "Editing" : "Draft"}
+            <Icon name={settled ? "circle-check" : "file-pen"} size="sm" />
+            {settled ? "Published" : edit ? "Editing" : "Draft"}
           </span>{" "}
-          {edit ? (
+          {settled === "published" ? (
+            <>
+              Published from <span className="ah-mono">{draftDir(context.draftId)}/</span>, which is
+              removed
+            </>
+          ) : settled === "spent" ? (
+            <>
+              Published from <span className="ah-mono">{draftDir(context.draftId)}/</span>, which
+              stays until you discard it
+            </>
+          ) : edit ? (
             <>
               <span className="ah-mono">{edit.sourcePath}</span> in{" "}
               <span className="ah-mono">{draftDir(context.draftId)}/</span> · the original is
@@ -525,7 +603,16 @@ function StudioStart({
   );
 }
 
-type Phase = "drafting" | "publishing" | "published" | "discarding" | "discarded";
+type Phase = "drafting" | "published" | "discarding" | "discarded";
+
+interface Notice {
+  tone: "error" | "warning";
+  text: string;
+  /** The draft is spent (published, its folder kept): offer to discard it (A20). */
+  discard?: boolean;
+  /** Announced by the page's live region (or static on reopen): its banner is not live too. */
+  quiet?: boolean;
+}
 
 function StudioSession({
   context,
@@ -563,45 +650,137 @@ function StudioSession({
   const to = edit ? edit.to : destination(kind, summary.name, pluginDir);
 
   useEffect(() => {
-    if (summary.name) saveDraft(draftId, { project, kind }, { name: summary.name });
+    // Only a new name is saved: opening a draft keeps its time and its place in the list.
+    if (summary.name && storedDraft(draftId)?.name !== summary.name)
+      saveDraft(draftId, { project, kind }, { name: summary.name });
   }, [summary.name, draftId, project, kind]);
 
-  // The Publish or Discard message once accepted, and how far the transcript was when it went.
+  // The Discard message once accepted, and how far the transcript was when it went.
   const [request, setRequest] = useState<{ text: string; from: number } | null>(null);
-  const [notice, setNotice] = useState<{ tone: "error" | "warning"; text: string } | null>(null);
-  // It settles when its turn has ended, on Claude's confirmation only (adjusted while rendering).
-  const publishing = phase === "publishing";
-  if (request && !busy && (publishing || phase === "discarding")) {
-    const marker = publishing ? "PUBLISHED" : "DISCARDED";
-    const confirmed = confirmedReply(state.entries, request.text, request.from, marker);
+  const [notice, setNotice] = useState<Notice | null>(() => {
+    const stored = storedDraft(draftId);
+    return stored?.spent
+      ? { tone: "warning", text: stored.spentDetail ?? SPENT_DETAIL, discard: true, quiet: true }
+      : null;
+  });
+  // The server publishes (AGH-295): what it answered, and whether the draft is spent (A20).
+  const publish = usePublishDraft(project, draftId);
+  const publishing = publish.isPending;
+  const [outcome, setOutcome] = useState<ItemWriteResult | null>(null);
+  const [spent, setSpent] = useState(() => storedDraft(draftId)?.spent === true);
+  // The server may know the item is managed when the detail did not (hub.lock changed since).
+  const [managed, setManaged] = useState(edit?.baseline.managed ?? false);
+  // The server asked for the managed confirmation: said in the dialog, focus on its verb.
+  const [asked, setAsked] = useState(false);
+  // One request per press, also for two presses in one tick (before isPending is read).
+  const sending = useRef(false);
+  // What the page's live region says, and where focus goes once a publish settles.
+  const [announcement, setAnnouncement] = useState("");
+  // Each settle counts, so a second identical failure takes focus again.
+  const [focusOn, setFocusOn] = useState<{ on: "result" | "notice"; n: number } | null>(null);
+  const focus = (on: "result" | "notice") => {
+    setFocusOn((last) => ({ on, n: (last?.n ?? 0) + 1 }));
+  };
+  const resultRef = useRef<HTMLDivElement>(null);
+  const noticeRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (focusOn?.on === "result") resultRef.current?.focus();
+    if (focusOn?.on === "notice") {
+      const node = noticeRef.current;
+      (node?.querySelector<HTMLButtonElement>("button:not(:disabled)") ?? node)?.focus();
+    }
+  }, [focusOn]);
+  useEffect(() => {
+    if (!asked || publishing) return;
+    const buttons = dialogRef.current?.closest('[role="alertdialog"]')?.querySelectorAll("button");
+    [...(buttons ?? [])].find((b) => b.textContent === PUBLISH_ANYWAY)?.focus();
+  }, [asked, publishing]);
+  // A discard settles when its turn has ended, on Claude's confirmation only (adjusted while
+  // rendering).
+  if (request && !busy && phase === "discarding") {
+    const confirmed = confirmedReply(state.entries, request.text, request.from, "DISCARDED");
     if (confirmed !== null) {
       setRequest(null);
-      setPhase(confirmed ? (publishing ? "published" : "discarded") : "drafting");
+      setPhase(confirmed ? "discarded" : "drafting");
       if (!confirmed) {
         setNotice({
           tone: "warning",
-          text: `Claude did not confirm the ${publishing ? "publish" : "discard"}. Read its reply and check the hub folder before you try again.`,
+          text: "Claude did not confirm the discard. Read its reply and check the hub folder before you try again.",
         });
       }
     }
   }
+  // A publish is stored on the draft by usePublishDraft, which still runs once this is gone.
   useEffect(() => {
-    if (phase === "published") {
-      onRefresh();
-      saveDraft(draftId, { project, kind }, { published: true });
-    } else if (phase === "discarded") {
+    if (phase === "discarded") {
       forgetDraft(draftId);
       void navigate(`/projects/${encodeURIComponent(project)}/skills`);
     }
-  }, [phase, onRefresh, draftId, project, kind, navigate]);
+  }, [phase, draftId, navigate, project]);
 
+  const words = publishedWords(outcome);
+  const settled: Settled = phase === "published" ? "published" : spent ? "spent" : null;
+  // Written but not stored: the warning tone, with its own icon (status is icon and label).
+  const unversioned = outcome !== null && outcome.changed && !outcome.versioned;
+  // Where the item is now: the draft folder is gone, and a renamed edit moved elsewhere.
+  const renamed = edit !== null && summary.name !== null && summary.name !== edit.baseline.name;
+  const place = renamed || to.includes("<") ? null : to;
   const published =
     phase === "published" && summary.name
       ? (items.find((item) => item.kind === kind && item.name === summary.name) ?? null)
       : null;
 
   const send = (text: string) => transcript.send(text, commands.send);
-  const ask = async (next: "publishing" | "discarding", text: string) => {
+  const confirmPublish = () => {
+    if (sending.current || publish.isPending) return;
+    sending.current = true;
+    setNotice(null);
+    setAsked(false);
+    // Said from the page, outside the dialog, which is busy (aria-busy) meanwhile.
+    setAnnouncement("Publishing…");
+    publish.mutate(
+      { target: edit?.target ?? null, confirmManaged: managed },
+      {
+        onSettled: () => {
+          sending.current = false;
+        },
+        onSuccess: (result) => {
+          setConfirm(null);
+          setOutcome(result);
+          setPhase("published");
+          const said = publishedWords(result);
+          setAnnouncement(`Publish finished. ${said.title} ${said.rest}`.trim());
+          focus("result");
+        },
+        onError: (problem) => {
+          // The dialog stays open on S9's warning, and its next confirm sends the flag.
+          if (problem.code === "managed_confirmation_required") {
+            setManaged(true);
+            setAsked(true);
+            // The dialog's own region says it, now that the dialog is not busy.
+            setAnnouncement("");
+            return;
+          }
+          // Anything else keeps the draft and the session. A spent draft (already published,
+          // or published with its folder kept) can only be discarded.
+          setConfirm(null);
+          const isSpent = spentBy(problem);
+          if (isSpent) setSpent(true);
+          const text = problem.detail ?? problem.title;
+          setNotice({
+            tone: problem.published ? "warning" : "error",
+            text,
+            discard: isSpent,
+            quiet: true,
+          });
+          setAnnouncement(`Publish stopped. ${text}`);
+          focus("notice");
+        },
+      },
+    );
+  };
+  const ask = async (next: "discarding", text: string) => {
     setConfirm(null);
     setNotice(null);
     setPhase(next);
@@ -626,7 +805,7 @@ function StudioSession({
         <Button
           variant="ghost"
           icon="file-x"
-          disabled={busy || phase !== "drafting"}
+          disabled={busy || publishing || phase !== "drafting"}
           onClick={() => {
             setConfirm("discard");
           }}
@@ -636,50 +815,101 @@ function StudioSession({
         <Button
           variant="primary"
           icon="check"
-          disabled={busy || phase !== "drafting" || !summary.publishable}
+          disabled={busy || publishing || spent || phase !== "drafting" || !summary.publishable}
           title={
             busy
               ? "Claude is still working"
-              : !summary.publishable
-                ? "Nothing to publish yet"
-                : `Publish to ${to}`
+              : spent
+                ? "This draft was already published; discard it"
+                : !summary.publishable
+                  ? "Nothing to publish yet"
+                  : `Publish to ${to}`
           }
           onClick={() => {
+            setAsked(false);
             setConfirm("publish");
           }}
         >
-          {phase === "publishing" ? "Publishing…" : "Publish"}
+          {publishing ? "Publishing…" : "Publish"}
         </Button>
       </div>
     );
 
   return (
     <div className="ah-studio">
-      <StudioHeader context={context} summary={summary} actions={actions} />
+      {/* Mounted with the session, so what a publish did is announced when it settles. */}
+      <div className="ah-sr" aria-live="polite" aria-atomic="true">
+        {announcement}
+      </div>
+      <StudioHeader context={context} summary={summary} actions={actions} settled={settled} />
       {notice && (
-        <Banner tone={notice.tone} boxed>
-          {notice.text}
-        </Banner>
+        <div
+          ref={noticeRef}
+          tabIndex={-1}
+          className="ah-studio-result"
+          role="region"
+          aria-label="Publish problem"
+        >
+          <Banner
+            tone={notice.tone}
+            live={!notice.quiet}
+            boxed
+            action={
+              notice.discard ? (
+                <Button
+                  size="sm"
+                  icon="file-x"
+                  disabled={busy || phase !== "drafting"}
+                  onClick={() => {
+                    setConfirm("discard");
+                  }}
+                >
+                  Discard draft
+                </Button>
+              ) : undefined
+            }
+          >
+            {notice.text}
+          </Banner>
+        </div>
       )}
       {phase === "published" && (
-        <Banner tone="info" boxed icon="circle-check">
-          <b>Published.</b>{" "}
-          {published ? (
-            <>
-              It is in the catalog now:{" "}
-              <AppLink href={skillRoute(project, published)}>open {published.name}</AppLink>.
-            </>
-          ) : (
-            <>
-              Claude moved the draft to <span className="ah-mono">{to}</span>; it shows in the
-              catalog once the hub's files are read again.{" "}
-              <Button size="sm" variant="ghost" icon="refresh-cw" onClick={onRefresh}>
-                Check again
-              </Button>
-            </>
-          )}{" "}
-          Review the change in the hub with git before you commit it.
-        </Banner>
+        <div
+          ref={resultRef}
+          tabIndex={-1}
+          className="ah-studio-result"
+          role="region"
+          aria-label="Publish result"
+        >
+          <Banner
+            tone={unversioned ? "warning" : "info"}
+            live={false}
+            boxed
+            icon={unversioned ? undefined : "circle-check"}
+          >
+            <b>{words.title}</b>
+            {words.rest !== "" && <> {words.rest}</>}{" "}
+            {published ? (
+              <>
+                It is in the catalog now:{" "}
+                <AppLink href={skillRoute(project, published)}>open {published.name}</AppLink>.
+              </>
+            ) : (
+              <>
+                {place ? (
+                  <>
+                    The item is in <span className="ah-mono">{place}</span>;{" "}
+                  </>
+                ) : null}
+                it shows in the catalog once the hub's files are read again.{" "}
+                <Button size="sm" variant="ghost" icon="refresh-cw" onClick={onRefresh}>
+                  Check again
+                </Button>
+              </>
+            )}{" "}
+            Review the change in the hub with git before you commit it.
+          </Banner>
+        </div>
       )}
       <div className="ah-studio-split">
         <section className="ah-studio-chat" aria-label="Conversation with Claude">
@@ -695,6 +925,7 @@ function StudioSession({
             to={to}
             busy={busy}
             edit={edit}
+            settled={settled}
           />
         </section>
       </div>
@@ -706,50 +937,52 @@ function StudioSession({
               : `Publish ${summary.name ?? `this ${kind}`}?`
           }
           tone="primary"
-          confirmLabel="Publish"
-          consequences={
-            edit
-              ? [
-                  kind === "hook" ? (
-                    <>
-                      Claude replaces this hook in{" "}
-                      <span className="ah-mono">{edit.sourcePath}</span> and keeps the others, then
-                      deletes <span className="ah-mono">{draftDir(draftId)}/</span>.
-                    </>
-                  ) : (
-                    <>
-                      Claude writes the draft's files over <span className="ah-mono">{to}</span> and
-                      deletes <span className="ah-mono">{draftDir(draftId)}/</span>.
-                    </>
-                  ),
-                  ...(edit.baseline.managed
-                    ? ["It is managed by hub.lock: the next hub sync overwrites this edit."]
-                    : []),
-                  "Nothing is committed: you review and commit the change in the hub.",
-                ]
+          confirmLabel={publishing ? "Publishing…" : managed ? PUBLISH_ANYWAY : "Publish"}
+          pending={publishing}
+          consequences={[
+            edit && kind === "hook" ? (
+              <>
+                The hub replaces this hook in <span className="ah-mono">{edit.sourcePath}</span> and
+                keeps the others.
+              </>
+            ) : (
+              <>
+                The hub writes the draft {edit ? "over" : "to"}{" "}
+                <span className="ah-mono">{to}</span>.
+              </>
+            ),
+            <>
+              A version records it in the item's history, unless the file matches a secret rule or
+              is past the size its history keeps. Then{" "}
+              <span className="ah-mono">{draftDir(draftId)}/</span> is deleted. Claude is not asked
+              to do it.
+            </>,
+            ...(edit
+              ? []
               : [
-                  <>
-                    Claude moves the draft to <span className="ah-mono">{to}</span> and deletes{" "}
-                    <span className="ah-mono">{draftDir(draftId)}/</span>.
-                  </>,
                   kind === "hook"
                     ? "The hook runs in every session of this hub once it is synced; check its command."
                     : "Sessions of this hub can use it from their next start.",
-                  "Nothing is committed: you review and commit the change in the hub.",
-                ]
-          }
+                ]),
+            "Nothing is committed: you review and commit the change in the hub.",
+          ]}
           onCancel={() => {
             setConfirm(null);
           }}
-          onConfirm={() => {
-            void ask(
-              "publishing",
-              edit
-                ? publishEditPrompt(kind, draftId, edit.sourcePath, edit.hookText)
-                : publishPrompt(kind, draftId, to),
-            );
-          }}
-        />
+          onConfirm={confirmPublish}
+        >
+          <div ref={dialogRef}>
+            {managed && (
+              <Banner tone="warning" boxed live={false}>
+                {PUBLISH_MANAGED_WARNING}
+              </Banner>
+            )}
+            {/* Mounted with the dialog, so the server's managed answer is announced. */}
+            <div className="ah-sr" aria-live="polite" aria-atomic="true">
+              {asked && !publishing ? `Confirmation needed. ${PUBLISH_MANAGED_WARNING}` : ""}
+            </div>
+          </div>
+        </ConfirmDialog>
       )}
       {confirm === "discard" && (
         <ConfirmDialog
@@ -784,6 +1017,7 @@ function DraftPreview({
   to,
   busy,
   edit,
+  settled,
 }: {
   project: string;
   draftId: string;
@@ -793,6 +1027,7 @@ function DraftPreview({
   to: string;
   busy: boolean;
   edit: EditContext | null;
+  settled: Settled;
 }) {
   const now = useNow(60_000);
   const [tab, setTab] = useState<PreviewTab>(edit ? "changes" : "preview");
@@ -829,33 +1064,37 @@ function DraftPreview({
           </ul>
         </div>
       )}
-      <div className="ah-studio-block">
-        <h2 className="ah-studio-label">
-          {edit ? "Before publishing the changes" : "Before publishing"}
-        </h2>
-        <ul className="ah-studio-checks">
-          {summary.checks.map((check) => (
-            <li key={check.id} data-state={check.state}>
-              <Icon
-                name={
-                  check.state === "ok"
-                    ? "circle-check"
-                    : check.state === "warn"
-                      ? "triangle-alert"
-                      : "circle-dashed"
-                }
-                size="sm"
-              />
-              {check.label}
+      {/* Once published, the checks and the destination belong to the past: the banner says where it is. */}
+      {settled === null && (
+        <div className="ah-studio-block">
+          <h2 className="ah-studio-label">
+            {edit ? "Before publishing the changes" : "Before publishing"}
+          </h2>
+          <ul className="ah-studio-checks">
+            {summary.checks.map((check) => (
+              <li key={check.id} data-state={check.state}>
+                <Icon
+                  name={
+                    check.state === "ok"
+                      ? "circle-check"
+                      : check.state === "warn"
+                        ? "triangle-alert"
+                        : "circle-dashed"
+                  }
+                  size="sm"
+                />
+                {check.label}
+              </li>
+            ))}
+            <li data-state="info">
+              <Icon name="folder-open" size="sm" />
+              Publishes to <span className="ah-mono">{to}</span>
             </li>
-          ))}
-          <li data-state="info">
-            <Icon name="folder-open" size="sm" />
-            Publishes to <span className="ah-mono">{to}</span>
-          </li>
-        </ul>
-        {writes.outside.length > 0 && <OutsideWarning paths={writes.outside} />}
-      </div>
+          </ul>
+          {writes.outside.length > 0 && <OutsideWarning paths={writes.outside} />}
+        </div>
+      )}
+      {settled !== null && writes.outside.length > 0 && <OutsideWarning paths={writes.outside} />}
       <div className="ah-studio-block ah-grow">
         <div className="ah-row ah-wrap" style={{ gap: 8 }}>
           <SegmentedControl
@@ -879,7 +1118,7 @@ function DraftPreview({
           )}
         </div>
         {tab === "changes" && edit ? (
-          <DraftChanges files={writes.files} edit={edit} />
+          <DraftChanges files={writes.files} edit={edit} settled={settled} />
         ) : tab === "preview" ? (
           <RenderedDraft kind={kind} summary={summary} />
         ) : (
@@ -910,12 +1149,27 @@ function DraftPreview({
 }
 
 /** Each draft file against the item as it is now: the main file as a diff, the others as new. */
-function DraftChanges({ files, edit }: { files: readonly DraftFile[]; edit: EditContext }) {
+function DraftChanges({
+  files,
+  edit,
+  settled,
+}: {
+  files: readonly DraftFile[];
+  edit: EditContext;
+  settled: Settled;
+}) {
   return (
     <div className="ah-stack" style={{ gap: 12 }}>
       {files.map((file) => {
         const isMain = file.path === edit.mainPath;
         const before = isMain ? edit.baseline.original : null;
+        if (isMain && before === null && settled !== null) {
+          return (
+            <p key={file.path} className="ah-small ah-muted">
+              The item's earlier text is in its history; see Files for what was published.
+            </p>
+          );
+        }
         if (isMain && before === null) {
           return (
             <p key={file.path} className="ah-small ah-muted">

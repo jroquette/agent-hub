@@ -17,6 +17,7 @@ from pydantic import (
     JsonValue,
     StrictBool,
     StrictInt,
+    StrictStr,
     ValidationError,
     field_validator,
     model_validator,
@@ -24,7 +25,9 @@ from pydantic import (
 
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.features.output_shape import output_path
+from agent_hub.core.hub_config.environments import MAX_NAME_CHARS
 from agent_hub.core.hub_config.problems import one_line
+from agent_hub.core.hub_config.text_shapes import SAFE_SEGMENT
 from agent_hub.core.workflows.nodes import (
     READ_ONLY,
     SELF_ID,
@@ -59,6 +62,11 @@ _MESSAGES = {
     "union_tag_invalid": f"must be one of {_NODE_TYPES}",
     "union_tag_not_found": "Field required",
 }
+# A declared environment's name (docs/design/environments.md): checked against the effective
+# environments when a run starts, never at load.
+EnvironmentRef = Annotated[
+    StrictStr, Field(pattern=rf"^{SAFE_SEGMENT}$", max_length=MAX_NAME_CHARS)
+]
 # Errors pydantic reports at a node's index, about its ``type`` key.
 _TYPE_ERRORS = frozenset({"union_tag_invalid", "union_tag_not_found"})
 # What pydantic puts after a mapping key it refuses.
@@ -137,6 +145,9 @@ class WorkflowDocument(WorkflowObject):
     )
     returns: NodeId | None = None
     outcome_field: FieldName | None = None
+    # A process workflow's environment (P-18): its shell and script nodes are decided by the
+    # access policy before the start; ``hub workflow run --env`` overrides it.
+    environment: EnvironmentRef | None = None
     # Checked after the items, not as a length constraint: pydantic reports a length error
     # whenever an item fails, which would hide the real problems behind a false one.
     nodes: Annotated[tuple[Node, ...], AfterValidator(_not_empty)]
@@ -167,6 +178,9 @@ def kind_problems(document: WorkflowDocument) -> Iterator[WorkflowProblem]:
     refuses (planning checks an expanded document again: an include may bring other types)."""
     if document.kind != "scenario":
         return
+    if document.environment is not None:
+        message = "a scenario takes its environment from --env, never from the document"
+        yield WorkflowProblem(("environment",), message)
     allowed = ", ".join(SCENARIO_NODE_TYPES[:-1]) + f" and {SCENARIO_NODE_TYPES[-1]}"
     for index, node in enumerate(document.nodes):
         body = node.nodes if isinstance(node, LoopGroupNode) else ()

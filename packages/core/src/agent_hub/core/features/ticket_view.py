@@ -36,10 +36,13 @@ class TicketStep(ViewModel):
 
 class TicketFlow(ViewModel):
     """A ticket's seven steps in their fixed order (``ticket_flow.py``); ``current`` is where the
-    ticket is: the first step neither done nor unrecorded, the last when every step is."""
+    ticket is: the first step neither done nor unrecorded, the last when every step is.
+    ``signal`` is the one line that needs attention, from its preflight and the plan change
+    requests (waiting for the owner, held, re-run needed, local drift), None when none."""
 
     steps: tuple[TicketStep, ...]
     current: TicketStepName
+    signal: str | None = None
 
 
 class TicketEdge(ViewModel):

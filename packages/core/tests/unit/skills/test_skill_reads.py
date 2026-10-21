@@ -423,3 +423,20 @@ def test_marks_unit_as_detail_captures_when_hooks_share_file() -> None:
     # The same mark as the detail's: the memo answers without reading the unit again.
     capture.capture(FIXTURE_PROJECT, HUB, [(marked.unit, marked.mark)])
     assert len(reader.unit_reads) == read_before
+
+
+def test_names_items_without_capture_or_usage_when_names_read() -> None:
+    usage = FakeUsage(a_skill_usage())
+    hub = fake_hub_of(a_skills_fixture_tree())
+    reader = FakeHubFileReader({HUB: hub})
+    store = InMemoryItemVersionStore()
+    capture = CaptureItemVersions(store, reader, lambda: datetime(2026, 10, 17, tzinfo=UTC))
+    reads = SkillReads(reader, usage, capture=capture)
+
+    names = reads.item_names(project=FIXTURE_PROJECT, hub_path=HUB)
+
+    assert (ItemKind.SKILL, "alpha") in names
+    assert (ItemKind.AGENT, "evaluator") in names
+    assert usage.asked == []
+    assert reader.unit_reads == []
+    assert store.last(FIXTURE_PROJECT, "plugin/hub-workflow/skills/alpha") is None

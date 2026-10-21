@@ -79,7 +79,9 @@ def test_lists_plugin_agents_when_agent_names_read() -> None:
         "quality-reviewer",
         "requirements-analyst",
         "researcher",
+        "security-reviewer",
         "spec-reviewer",
+        "test-writer",
         "ux-designer",
     )
 

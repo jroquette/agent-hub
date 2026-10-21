@@ -20,12 +20,57 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   read, on every search). A query with no word (`!!!`) exits 2, and a query that starts with `-` goes after `--`
   (`hub search -- -foo`). The database gains migration 0008; a Python whose SQLite lacks FTS5 can no longer migrate
   it (ADR 0044) (AGH-391).
+- The base plugin gains the `/premortem` and `/context-audit` skills (AGH-414). `/premortem` assumes a decision
+  already failed and gives its top three causes an early-warning sign and the cheapest experiment that could prove the
+  choice wrong. `/context-audit` estimates the always-loaded context of a hub and its repos and ranks the cuts by
+  tokens saved. Both only report. They arrive with `hub sync` after you bump `platform.version`.
+- The base plugin gains the `security-reviewer` agent and the `/design-fit` skill (AGH-413). `security-reviewer`
+  reviews a diff's added lines in a fresh context, runs Semgrep or Bandit when installed, traces each finding from an
+  untrusted source to a sink and refutes it before reporting; a scanner that did not run is reported as not run.
+  `/design-fit` runs before code: what already exists, where the change belongs, and no abstraction without a consumer
+  today, in at most five lines. Neither is started by `/feature` yet. Both arrive with `hub sync` after you bump
+  `platform.version`; `models.agents` accepts `security-reviewer`.
+- The base plugin gains the `test-writer` agent and the `/property-based-testing` skill (AGH-411). `test-writer`
+  writes a task's failing acceptance tests from its ACs and public interfaces, never reading the implementation, at
+  most three per AC, and commits them RED; `/feature` does not start it yet (AGH-88 measures it first).
+  `/property-based-testing` writes property tests grounded in the code's own claims and classifies each failure.
+  Both arrive with `hub sync` after you bump `platform.version`.
+- The base plugin gains the `/test-strength` skill (AGH-412): mutation testing on the lines a diff changed only, with
+  the repo's own tool and a time budget, each surviving mutant classified as a test gap, an equivalent mutant (proved)
+  or unresolved, and redundant tests pointed out, never deleted. It sets no score target. Arrives with `hub sync`
+  after you bump `platform.version`.
+- `hub validate-output preflight <file>` checks a ticket's `preflight.json` against `agent-hub/preflight/1` and names
+  the JSON path of each problem (AGH-402). `hub web` reads a ticket's records (`tickets/<id>/brief.md`,
+  `preflight.json`, `plan.md`) and the feature's plan change requests (`change-requests/<n>.md` and their
+  `<n>.decision.md`): the ticket flow's Context, Preflight and Implement steps follow them, step states gain `waiting`
+  and `stale`, and the API's steps and features carry a `signal` and `waiting_on_owner`. A malformed record turns only
+  its own step unknown; the screens that show them land with AGH-405.
+- `hub step ticket-brief|preflight|change-request|decide|amend-plan` write a ticket's context brief (a new version per
+  run), append a preflight run, open a plan change request, record its decision once and append its `A<k>` amendment
+  to `plan.md`, in the hub and never committed (AGH-403). A gate decision whose approver names no person (empty or
+  `unknown`) is refused and the run stays paused; `hub workflow approve|reject|respond` refuse when no account name is
+  known instead of recording `unknown`, and an approval's output carries its `approver`.
+- `hub web` can publish a Studio draft itself (AGH-298, `POST .../skills/drafts/{draft_id}/publish` with
+  `{target, confirm_managed}`), and the Studio's Publish now calls it instead of asking Claude to copy the draft:
+  Claude only edits the draft, the Studio shows "Publishing…" then "Published." with a link to the item, warns before
+  publishing a managed item, and offers Discard for a draft already published. The draft in `.hub-drafts/<id>/` lands on
+  the item it edits, or as a new item in the project's plugin, after the item's current content is recorded, and a
+  `publish` version names the draft and your identity; the draft is then removed. A skill edit keeps the files the
+  draft does not hold (a rename moves the folder), a hook edit replaces that one hook in its file, and a new hook is
+  merged into the plugin's `hooks/hooks.json` with its scripts. An invalid draft, a name already taken or a draft
+  already published is refused with nothing written; an item `hub.lock` manages needs a confirmation; in the
+  container (`make up`) it answers 409 `hub_read_only`. Neither a publish nor a restore spawns a process (no git,
+  no doctor check): the change shows in the hub's working tree.
 
 ### Changed
 
 - Redaction `r1` skips its four `secret` rules on a text with no name word followed by `=` or a JSON key's `:`,
   which no `secret` rule can match: the same rule set with identical results, about three times faster on note-sized
   prose (AGH-391).
+- `make playground-export`: a session is credited with the hub files of a Studio Publish through the draft it
+  wrote (the `draft_id` a `publish` version names, read from the conductor's item versions), instead of a
+  `PUBLISHED <path>` line in Claude's reply, which the server publish no longer gives (AGH-298). A conductor older
+  than that leaves those files under "Not made by a playground session".
 - `hub web` Features and Feature detail: the golden path shows the feature's own steps, Spec, UX design, Research,
   Plan, Tickets, Build, Acceptance and Shipped, instead of Implement, Review and Evaluate (AGH-325). A brief alone
   keeps Spec in progress; UX design is done when every `ux-*.md` is approved; Plan shows the plan's version; Build

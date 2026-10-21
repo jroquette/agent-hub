@@ -1077,6 +1077,27 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/projects/{project}/skills/drafts/{draft_id}/publish": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Publish Draft
+     * @description Land the Studio draft on its target (``null``: a new item), record a ``publish``
+     *     version naming the draft, then remove the draft.
+     */
+    post: operations["publish_draft_api_v1_projects__project__skills_drafts__draft_id__publish_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/projects/{project}/skills/{kind}/{source}/{name}": {
     parameters: {
       query?: never;
@@ -2508,6 +2529,7 @@ export interface components {
       verdict: components["schemas"]["Verdict"] | null;
       /** Verdict Line */
       verdict_line: string | null;
+      waiting_on_owner?: components["schemas"]["WaitingOnOwner"] | null;
     };
     /**
      * FeatureName
@@ -2599,7 +2621,8 @@ export interface components {
      * @description A feature as the Features list shows it; ``problem`` when a file of it is malformed.
      *
      *     ``phase`` equals ``golden_path.phase``; ``tickets_source`` says whether the ticket counts
-     *     behind the golden path came from Linear or from the plan.
+     *     behind the golden path came from Linear or from the plan; ``waiting_on_owner`` what it waits
+     *     on from the owner, None when nothing.
      */
     FeatureView: {
       acs: components["schemas"]["AcCounts"] | null;
@@ -2633,6 +2656,7 @@ export interface components {
       verdict: components["schemas"]["Verdict"] | null;
       /** Verdict Line */
       verdict_line: string | null;
+      waiting_on_owner?: components["schemas"]["WaitingOnOwner"] | null;
     };
     /** @enum {string} */
     FileOperation: "read" | "edited" | "created" | "written";
@@ -2721,7 +2745,8 @@ export interface components {
     /**
      * GoldenStep
      * @description One step of the golden path: its state, a short ``meta`` text and the ``reason`` it is
-     *     not done (naming the failing gate), and its ``progress`` when it counts something.
+     *     not done (naming the failing gate), its ``progress`` when it counts something, and the one
+     *     ``signal`` that needs attention (Plan: "v3 waits for you" while a change request is open).
      */
     GoldenStep: {
       /** Meta */
@@ -2730,6 +2755,8 @@ export interface components {
       progress: components["schemas"]["StepProgress"] | null;
       /** Reason */
       reason: string | null;
+      /** Signal */
+      signal?: string | null;
       state: components["schemas"]["StepState"];
     };
     /**
@@ -3517,6 +3544,8 @@ export interface components {
       note?: string | null;
     };
     /** @enum {string} */
+    OwnerWaitKind: "change_request" | "owner_signoff" | "owner_signoff_manual";
+    /** @enum {string} */
     OwnerWaitState: "sign_off" | "reopened" | "undated" | "future" | "no_acs";
     /**
      * OwnerWaitView
@@ -3976,6 +4005,31 @@ export interface components {
       sources_missing: components["schemas"]["EventSource"][];
       /** Tracker Teams */
       tracker_teams: string[];
+    };
+    /**
+     * PublishDraftBody
+     * @description ``POST .../skills/drafts/{draft_id}/publish``: ``target`` the item the draft edits, or
+     *     ``null`` for a new item (stated, never left out); ``confirm_managed`` as for a restore (S9),
+     *     only JSON ``true`` confirms.
+     */
+    PublishDraftBody: {
+      /**
+       * Confirm Managed
+       * @default false
+       */
+      confirm_managed: boolean;
+      target: components["schemas"]["PublishTarget"] | null;
+    };
+    /**
+     * PublishTarget
+     * @description The item a Publish edits, by its catalog id (``kind/source/name``).
+     */
+    PublishTarget: {
+      kind: components["schemas"]["ItemKind"];
+      /** Name */
+      name: string;
+      /** Source */
+      source: string;
     };
     /**
      * PullRequestRef
@@ -5062,7 +5116,16 @@ export interface components {
     };
     /** @enum {string} */
     StepState:
-      "done" | "partial" | "current" | "pending" | "skipped" | "unknown" | "blocked" | "unrecorded";
+      | "done"
+      | "partial"
+      | "current"
+      | "pending"
+      | "skipped"
+      | "unknown"
+      | "blocked"
+      | "unrecorded"
+      | "waiting"
+      | "stale";
     /** @enum {string} */
     StepStatus: "running" | "ok" | "failed" | "skipped";
     /** @enum {string} */
@@ -5093,9 +5156,13 @@ export interface components {
      * TicketFlow
      * @description A ticket's seven steps in their fixed order (``ticket_flow.py``); ``current`` is where the
      *     ticket is: the first step neither done nor unrecorded, the last when every step is.
+     *     ``signal`` is the one line that needs attention, from its preflight and the plan change
+     *     requests (waiting for the owner, held, re-run needed, local drift), None when none.
      */
     TicketFlow: {
       current: components["schemas"]["TicketStepName"];
+      /** Signal */
+      signal?: string | null;
       /** Steps */
       steps: components["schemas"]["TicketStep"][];
     };
@@ -5366,7 +5433,7 @@ export interface components {
      */
     UnitState: "ok" | "too_large" | "secret" | "unreadable";
     /** @enum {string} */
-    UnversionedReason: "secret" | "too_large";
+    UnversionedReason: "secret" | "too_large" | "script_only";
     /**
      * Usage
      * @description How often a skill or agent was used in the window: counts and a time only (D6, ADR 0019).
@@ -5428,6 +5495,19 @@ export interface components {
      * @enum {string}
      */
     VersionOrigin: "publish" | "restore" | "external";
+    /**
+     * WaitingOnOwner
+     * @description The owner decision a feature waits on; ``tickets`` are the open change requests' origin
+     *     tickets (``change_request`` only).
+     */
+    WaitingOnOwner: {
+      kind: components["schemas"]["OwnerWaitKind"];
+      /**
+       * Tickets
+       * @default []
+       */
+      tickets: string[];
+    };
     /**
      * Workdir
      * @description A folder a session may start in (D6): the hub, a repo checkout or one of its worktrees.
@@ -8130,6 +8210,114 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["SkillCatalog"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  publish_draft_api_v1_projects__project__skills_drafts__draft_id__publish_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        draft_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PublishDraftBody"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ItemWriteResult"];
+        };
+      };
+      /** @description No launch cookie (open hub web's address) */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Unknown project or target item, or the draft folder missing or empty */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Publish refused, with a code: hub_read_only, no_author, link_in_path, unit_unreadable, item_exists, draft_already_published or managed_confirmation_required */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description The draft is past the bounds (limit) */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description The body is not application/json */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description The draft is not a valid item (draft_invalid), or the body is outside its shape */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Write failed (write_failed: failed, rollback_failed, old_not_removed, draft_unreadable) or published with the draft kept (draft_not_removed) */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */

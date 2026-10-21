@@ -22,15 +22,28 @@ and ``hub run``'s exit codes; there ``issue_text`` comes from the tracker, never
 the workflow must declare ``issue``, ``repo`` and ``issue_text``, and ``--resume`` or
 ``--abandon`` of such a run exits 2. ``hub run --live`` is that run (``run_delivery``), without
 a workflow folder: ``hub run``'s records are its only record.
+A workflow that declares ``environment`` (or ``run NAME --env ENV``, which overrides it; a resume
+keeps the run's) runs there (P-18, ``workflow_policy``): before anything is written, each
+``shell`` and ``script`` node is decided by the access policy with its ``effect`` (``write`` when
+absent), each ``until_bash`` as a read, and each ``action`` and ``expect`` step as a scenario's
+are (``plan_scenario``); an undeclared environment, a plan problem or a ``deny`` exits 1 naming
+the step, and an ``ask`` is a ``<step>__ask`` approval before it. Each decision is a
+``policy.decision`` event. The snapshot keeps ``policy_gates.json`` and the used actions' pinned
+files (``action_runs``); the start record ``environment``, ``policy_gates``, ``pack`` and
+``actions``. Agent nodes get ``HUB_RUN_ENVIRONMENT`` (the guard's check there is best effort).
+Without an environment nothing is decided, as before, and an action node refuses the start.
 ``approve|reject|respond RUN [NODE] [TEXT]`` decide a paused run's open gate (``DecideGate``)
 under the run's lock, then resume it as ``--resume`` does. NODE may be left out while the run has
 one open gate; a single word after RUN that names no open gate is the TEXT. ``approve`` and
 ``reject`` give those decisions; ``respond`` answers with ``--choice`` (a declared decision or
-option) and/or TEXT. The decision and its text go to the run's record, a ``control_plane``
-``gate.result`` to the events; a gate that is not open, already decided or cannot take the
-answer is refused (exit 1). ``decide RUN --gate GATE`` (hidden: hub web's decisions) records one
-decision for that exact open gate, ``--choice`` and the text read from stdin with ``--text-stdin``
-(UTF-8, at most 64 KiB), as taken in ``web``, and does not resume the run.
+option) and/or TEXT (``--node`` and ``--text`` may name them). The decision and its text go to
+the run's record, a ``control_plane`` ``gate.result`` to the events; a gate that is not open,
+already decided or cannot take the answer is refused (exit 1), as is an investigation's ``pick``
+that ``scenario_investigation.check_answer`` refuses (nothing is recorded then). ``decide RUN
+--gate GATE`` (hidden: hub web's decisions) records one decision for that exact open gate,
+``--choice`` and the text read from stdin with ``--text-stdin`` (UTF-8, at most 64 KiB), as taken
+in ``web``, checked the same way, and does not resume the run. A scenario run resumes through
+``scenario_runs.resume``, which acts on an investigation's answer first.
 
 ``test [NAME]...`` dry-runs each fixture of the discovered packs (or the NAMEs', each file once)
 in memory through the engine (generator's ``run_fixtures``): one ``<file>: ok|FAILED`` line
@@ -46,21 +59,37 @@ import os
 import random
 import shutil
 import sys
+import uuid
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Final
 
 import typer
 from typer._click.exceptions import ClickException
 
+from agent_hub.cli.action_runs import (
+    ActionExecutors,
+    ActionLog,
+    action_effects,
+    approvers,
+    pinned_actions,
+    pinned_files,
+)
 from agent_hub.cli.collect import hub_project_name
 from agent_hub.cli.command_exits import FAILURE, fail
-from agent_hub.cli.effective_config import EffectiveConfig, effective_or_problems
+from agent_hub.cli.effective_config import (
+    EffectiveConfig,
+    effective_or_problems,
+    load_effective_config_or_exit,
+)
 from agent_hub.cli.errors import RunLogError
 from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit, local_lines
 from agent_hub.cli.hub_root import hub_checkout, hub_root_or_exit, local_home
 from agent_hub.cli.init_report import shown_path, shown_text
 from agent_hub.cli.run_children import CHILD_HIDDEN, SESSION_HIDDEN, shown_command, without
 from agent_hub.cli.run_log import new_run_id, now, open_default_event_store
+from agent_hub.cli.scenario_investigation import check_answer
 from agent_hub.cli.workflow_checkout import GitCheckoutProbe
 from agent_hub.cli.workflow_delivery import (
     ISSUE_TEXT,
@@ -70,6 +99,20 @@ from agent_hub.cli.workflow_delivery import (
     delivery_problem,
 )
 from agent_hub.cli.workflow_executors import WorkflowExecutors
+from agent_hub.cli.workflow_policy import (
+    GATES,
+    NodePolicyRunner,
+    StartPolicy,
+    decide_start,
+    gated_run_plan,
+    gates_file,
+    node_effects,
+    owed,
+    record_asks,
+    rejected,
+    resumed_prior,
+    snapshot_gates,
+)
 from agent_hub.cli.workflow_runs import (
     DOCUMENT,
     RECORDS,
@@ -106,12 +149,14 @@ from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.scenarios.credentials import CredentialNames
+from agent_hub.core.scenarios.policy_gates import PolicyAsk, workflow_environment
+from agent_hub.core.scenarios.scenario_events import ScenarioEvents
 from agent_hub.core.workflows.catalog import (
     LoadProblem,
     WorkflowCatalog,
     check_workflows,
 )
-from agent_hub.core.workflows.document import WorkflowLoadError, parse_workflow
+from agent_hub.core.workflows.document import WorkflowDocument, WorkflowLoadError, parse_workflow
 from agent_hub.core.workflows.engine import (
     EnginePorts,
     WorkflowEngineError,
@@ -120,10 +165,12 @@ from agent_hub.core.workflows.engine import (
 )
 from agent_hub.core.workflows.events import WorkflowEvents, issue_key
 from agent_hub.core.workflows.gates import GateAnswer, GateAnswers
-from agent_hub.core.workflows.nodes import Node, ScriptNode, ShellNode
+from agent_hub.core.workflows.includes import IncludeResolver
+from agent_hub.core.workflows.nodes import ActionNode, ExpectNode, Node, ScriptNode, ShellNode
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
-from agent_hub.core.workflows.ports import RunEnd, RunRecorder
+from agent_hub.core.workflows.ports import RunEnd, RunRecorder, RunTrace
 from agent_hub.core.workflows.run_state import RunState
+from agent_hub.generator.action_discovery import ActionDiscovery, discover_actions
 from agent_hub.generator.workflow_discovery import (
     BUILTIN_WORKFLOWS,
     HUB_WORKFLOWS,
@@ -199,10 +246,16 @@ def run(
     abandon: Annotated[
         str | None, typer.Option("--abandon", metavar="RUN", help="End this run cancelled.")
     ] = None,
+    env: Annotated[
+        str | None,
+        typer.Option("--env", metavar="ENV", help="Run in ENV, over the workflow's environment."),
+    ] = None,
 ) -> None:
     """Run a workflow, or resume or abandon a run of one."""
     if [name, resume, abandon].count(None) != 2:
         raise typer.BadParameter("give one of NAME, --resume RUN or --abandon RUN")
+    if env is not None and name is None:
+        raise typer.BadParameter("a run keeps the environment it started in", param_hint="--env")
     for option, value in (("--run-id", run_id), ("--resume", resume), ("--abandon", abandon)):
         # A run id names a folder and is the events' session: checked before anything runs.
         if value is not None and not RUN_ID_PATTERN.fullmatch(value):
@@ -217,7 +270,9 @@ def run(
         elif resume is not None:
             raise typer.Exit(_resume(hub, resume))
         else:
-            started = _start(context, hub, name or "", given=given or [], live=live, run_id=run_id)
+            started = _start(
+                context, hub, name or "", given=given or [], live=live, run_id=run_id, env=env
+            )
             raise typer.Exit(started)
     except (WorkflowRunError, WorkflowEngineError) as error:
         fail(f"{_PREFIX}: {error}")
@@ -257,8 +312,25 @@ def respond(
     choice: Annotated[
         str | None, typer.Option("--choice", help="A declared decision or option id.")
     ] = None,
+    node_option: Annotated[
+        str | None, typer.Option("--node", help="The gate's node (as NODE).")
+    ] = None,
+    text_option: Annotated[
+        str | None, typer.Option("--text", help="The answer's text (as TEXT).")
+    ] = None,
 ) -> None:
     """Answer a paused run's gate with a choice and/or a text, then resume the run."""
+    if node_option is not None:
+        if node is not None and text is None:
+            # With --node given, a lone word after RUN is the text.
+            node, text = None, node
+        if node is not None and node != node_option:
+            raise typer.BadParameter("give the gate's node once", param_hint="--node")
+        node = node_option
+    if text_option is not None:
+        if text is not None:
+            raise typer.BadParameter("give the text once", param_hint="--text")
+        text = text_option
     raise typer.Exit(_decide("respond", run_id, node=node, text=text, choice=choice))
 
 
@@ -270,11 +342,13 @@ def _decide(
         folder = _existing_run(hub, run_id)
         with run_lock(folder):
             drop_torn_tail(folder)
-            book = RecordedGates(folder, _ended_check(folder))
+            records = _ended_check(folder)
+            book = RecordedGates(folder, records)
             gate, text = _gate_of(book, node, text)
-            _record_decision(
-                command, hub, book=book, gate=gate, answer=GateAnswer(choice, text), where="cli"
-            )
+            answer = GateAnswer(choice, text)
+            # An investigation's answer is checked first: a refused pick records nothing.
+            check_answer(hub, records, gate=gate, answer=answer)
+            _record_decision(command, hub, book=book, gate=gate, answer=answer, where="cli")
             return _continue(hub, folder)
     except (WorkflowRunError, WorkflowEngineError, GateDecisionError) as error:
         fail(f"hub workflow {command}: {error}")
@@ -302,11 +376,13 @@ def decide(
         folder = _existing_run(hub, run_id)
         with run_lock(folder):
             drop_torn_tail(folder)
-            book = RecordedGates(folder, _ended_check(folder))
+            records = _ended_check(folder)
+            book = RecordedGates(folder, records)
             gate = book.open_gate(gate_id)
             if gate is None:
                 raise GateDecisionError(f"no open gate {gate_id}")
             answer = GateAnswer(choice, text)
+            check_answer(hub, records, gate=gate, answer=answer)
             _record_decision("decide", hub, book=book, gate=gate, answer=answer, where="web")
     except (WorkflowRunError, WorkflowEngineError, GateDecisionError) as error:
         fail(f"hub workflow decide: {error}")
@@ -368,10 +444,11 @@ def _gate_of(
 
 
 def _approver() -> str:
+    """The account deciding; ``GateDecisionError`` when none is known (A5: no fallback)."""
     try:
         return getpass.getuser()
     except KeyError, OSError:
-        return "unknown"
+        raise GateDecisionError("the decision names no person (no account name is known)") from None
 
 
 def _ingest() -> IngestEvents:
@@ -403,11 +480,14 @@ def _start(
     given: list[str],
     live: bool,
     run_id: str | None,
+    env: str | None = None,
 ) -> int:
     plan, found = discovered(hub, name)
     included = _included(hub, found)
     values = _given_values(plan, given)
     delivery = name == ISSUE_TO_PR
+    if delivery and env is not None:
+        raise typer.BadParameter(f"{ISSUE_TO_PR} runs in no environment", param_hint="--env")
     # A hub's own issue-to-pr overrides the built-in: the parent needs its inputs to run it.
     if delivery and (problem := delivery_problem(plan)):
         raise typer.BadParameter(problem, param_hint="NAME")
@@ -415,8 +495,10 @@ def _start(
         raise typer.BadParameter(f"{ISSUE_TEXT} is read from the tracker", param_hint="--input")
     # Checked before the tracker is read; the parent fills issue_text from the issue.
     inputs = _inputs(plan, {**values, ISSUE_TEXT: ""} if delivery else values)
+    policy = _start_policy(hub, found, plan=plan, included=included, env=env, inputs=inputs)
+    run_plan = plan if policy is None else policy.plan
     if not live:
-        _print_plan(plan)
+        _print_plan(run_plan)
         return 0
     run_id = run_id or new_run_id()
     folder = run_folder(hub, run_id)
@@ -430,6 +512,7 @@ def _start(
                 plan=plan,
                 pack_root=found.pack_root,
                 includes=included,
+                pinned=None if policy is None else policy.snapshot_files(),
             )
             if delivery:
                 # After the snapshot, so the picked record names a run that can start.
@@ -442,12 +525,112 @@ def _start(
         return _begin(
             hub,
             folder,
-            plan=plan,
+            plan=run_plan,
             inputs=inputs,
             pack=pack,
             content_hash=content_hash,
             parent=parent,
+            policy=policy,
         )
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _StartPolicy:
+    """A process workflow's environment at its start: its decisions and gates
+    (``workflow_policy.StartPolicy``), its plan with the gates, and its actions as discovered."""
+
+    decided: StartPolicy
+    plan: WorkflowPlan
+    pack: str
+    actions: ActionDiscovery | None
+
+    @property
+    def environment(self) -> str:
+        return self.decided.environment
+
+    @property
+    def asks(self) -> dict[str, PolicyAsk]:
+        return self.decided.asks
+
+    def snapshot_files(self) -> dict[str, bytes]:
+        """``policy_gates.json`` and exactly the files each used action pinned (E-4)."""
+        files = {GATES: gates_file(self.asks)}
+        if self.actions is not None:
+            files |= pinned_files(self.actions, frozenset(self.decided.pins))
+        return files
+
+
+def _start_policy(
+    hub: Path,
+    found: DiscoveredWorkflow,
+    *,
+    plan: WorkflowPlan,
+    included: Mapping[str, WorkflowMapping],
+    env: str | None,
+    inputs: Mapping[str, JsonValue],
+) -> _StartPolicy | None:
+    """Decide each shell, script, ``until_bash`` and action node in the run's environment
+    (``--env``, else the workflow's); ``None`` without one (nothing is decided, and an action
+    node refuses the start). An undeclared environment, a ``deny``, a plan problem, an included
+    workflow declaring another environment, or two unordered gates exits 1 before anything is
+    written; each decision is a ``policy.decision`` event either way."""
+    name = plan.document.name
+    environment = workflow_environment(plan.document, env)
+    actions = [n.id for n in plan.all_nodes() if isinstance(n, ActionNode | ExpectNode)]
+    if environment is None:
+        if declaring := sorted(item for item, doc in included.items() if "environment" in doc):
+            fail(
+                f"{_PREFIX}: the included workflow {declaring[0]} declares an environment:"
+                f" declare one on {name} or give --env"
+            )
+        if actions:
+            fail(
+                f"{_PREFIX}: step {actions[0]} is an action node: actions run only in an"
+                f" environment; declare environment in {name} or give --env"
+            )
+        return None
+    for item, doc in sorted(included.items()):
+        if (other := doc.get("environment")) is not None and other != environment:
+            where = f"the included workflow {item} declares the environment {other}"
+            fail(f"{_PREFIX}: {where}, not {environment}")
+    effective = load_effective_config_or_exit(hub)
+    decided = decide_start(
+        plan,
+        environment=environment,
+        view=effective_environments(effective.config, effective.local),
+        actions=discover_actions(hub) if actions else None,
+        pack=found.pack,
+        inputs=inputs,
+    )
+    if decided.refusals:
+        # No run: the decisions are events of their own session, as a lone action call's.
+        _send_decisions(hub, decided, name=name, run_id=None)
+        fail(*(f"{_PREFIX}: {line}" for line in decided.refusals))
+    try:
+        gated = gated_run_plan(parse_workflow(found.document), _resolver(included), decided.asks)
+    except WorkflowRunError as error:
+        fail(f"{_PREFIX}: {error}")
+    discovered_actions = None if decided.planned is None else discover_actions(hub)
+    return _StartPolicy(decided=decided, plan=gated, pack=found.pack, actions=discovered_actions)
+
+
+def _send_decisions(hub: Path, decided: StartPolicy, *, name: str, run_id: str | None) -> None:
+    """The start's decisions as ``policy.decision`` events: the run's, or (refused, no run)
+    their own session ``workflow:<uuid>``."""
+    project = hub_project_name(hub) or hub.name
+    session = None if run_id is not None else f"{COMMAND}:{uuid.uuid4()}"
+    events = ScenarioEvents(project=project, run_id=run_id, workflow=name, session=session)
+    decided.emit(events, at=now())
+    EventSink().flush(events)
+
+
+def _resolver(included: Mapping[str, WorkflowMapping]) -> IncludeResolver:
+    """Resolve an include from the workflows the plan already read."""
+
+    def resolve(name: str) -> WorkflowDocument | None:
+        return parse_workflow(included[name]) if name in included else None
+
+    return resolve
 
 
 def discovered(hub: Path, name: str) -> tuple[WorkflowPlan, DiscoveredWorkflow]:
@@ -477,11 +660,12 @@ def run_delivery(
 
 
 def _ports(
-    runner: WorkflowExecutors,
+    runner: WorkflowExecutors | NodePolicyRunner,
     recorder: RunRecorder,
     checkout: GitCheckoutProbe | None,
     *,
     gates: GateAnswers | None = None,
+    trace: RunTrace | None = None,
 ) -> EnginePorts:
     """The engine's ports for a live run; ``gates`` answers its gates (a resume's decisions)."""
     return EnginePorts(
@@ -495,6 +679,7 @@ def _ports(
         max_parallel=runner.max_parallel,
         interrupt=runner.stop_children,
         gates=gates or RecordedAnswers([]),
+        trace=trace,
     )
 
 
@@ -508,7 +693,13 @@ def _included(hub: Path, found: DiscoveredWorkflow) -> dict[str, WorkflowMapping
 
 
 def _executors(
-    hub: Path, config: HubConfig, *, run_id: str, pack: Path, parent: IssueToPr | None
+    hub: Path,
+    config: HubConfig,
+    *,
+    run_id: str,
+    pack: Path,
+    parent: IssueToPr | None,
+    environment: str | None = None,
 ) -> WorkflowExecutors:
     return WorkflowExecutors(
         hub=hub,
@@ -518,8 +709,20 @@ def _executors(
         environ=os.environ,
         hub_program=own_hub_program(),
         hidden=credential_names(hub, config),
+        environment=environment,
         **({} if parent is None else parent.executor_options()),
     )
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _RunPolicy:
+    """The environment a process workflow run started in, the steps it has gates before, its
+    start record (its pinned actions and pack) and who decided each gate."""
+
+    environment: str
+    asks: frozenset[str]
+    header: Mapping[str, JsonValue]
+    approvers: Mapping[str, str]
 
 
 def credential_names(hub: Path, config: HubConfig) -> CredentialNames:
@@ -543,18 +746,38 @@ def _begin(
     pack: Path,
     content_hash: str,
     parent: IssueToPr | None,
+    policy: _StartPolicy | None = None,
 ) -> int:
     run_id, name = folder.name, plan.document.name
     header: dict[str, JsonValue] = {"event": "start", "run": run_id, "workflow": name}
     header |= {"revision": plan.document.revision, "content_hash": content_hash}
+    if policy is not None:
+        gated = list[JsonValue](sorted(policy.asks))
+        header |= {"environment": policy.environment, "policy_gates": gated}
+        if pins := policy.decided.pins:
+            header |= {"pack": policy.pack, "actions": pins}
     _, unwatched = _checkouts(hub, load_hub_config_or_exit(hub / FILE_LABEL))
     if unwatched:
         # Noted once: a read-only node's git status check does not see these folders.
         header["checkout_unwatched"] = [str(path) for path in unwatched]
     append_record(folder, header)
     append_record(folder, {"event": "inputs", "inputs": inputs})
+    run_policy = None
+    if policy is not None:
+        _send_decisions(hub, policy.decided, name=name, run_id=run_id)
+        asks = frozenset(policy.asks)
+        run_policy = _RunPolicy(
+            environment=policy.environment, asks=asks, header=header, approvers={}
+        )
     return _execute(
-        hub, folder, plan=plan, inputs=inputs, pack=pack, content_hash=content_hash, parent=parent
+        hub,
+        folder,
+        plan=plan,
+        inputs=inputs,
+        pack=pack,
+        content_hash=content_hash,
+        parent=parent,
+        policy=run_policy,
     )
 
 
@@ -582,6 +805,10 @@ def _continue(hub: Path, folder: Path) -> int:
         from agent_hub.cli import scenario_runs
 
         return scenario_runs.resume(hub, folder, records)
+    if isinstance(environment := header.get("environment"), str):
+        return _continue_in_environment(
+            hub, folder, records=records, document=document, environment=environment
+        )
     try:
         includes = snapshot_includes(folder / SNAPSHOT)
         plan = plan_workflow(document, includes=includes)
@@ -600,6 +827,62 @@ def _continue(hub: Path, folder: Path) -> int:
         end_index=len(ends_of(records)),
         answers=RecordedAnswers(records),
     )
+
+
+def _continue_in_environment(
+    hub: Path,
+    folder: Path,
+    *,
+    records: list[dict[str, JsonValue]],
+    document: WorkflowDocument,
+    environment: str,
+) -> int:
+    """Resume a process workflow run that started in ``environment``: its plan rebuilt from the
+    snapshot with the recorded gates and the re-asks it owes (``workflow_policy``); a recorded
+    reject of a policy gate ends it ``cancelled``."""
+    header, snapshot = records[0], folder / SNAPSHOT
+    includes = snapshot_includes(snapshot)
+    recorded = snapshot_gates(snapshot)
+    base = gated_run_plan(document, includes, {})
+    append_record(folder, {"event": "resume"})
+    effects = node_effects(base, environment)
+    if _pins(header):
+        pinned = pinned_actions(snapshot, header, noun="run")
+        effects |= action_effects(base, pinned, str(header.get("pack")))
+    owes = owed(folder, records, plan=base, effects=effects, environment=environment)
+    record_asks(folder, owes.steps)
+    asks = recorded | owes.steps
+    if (cancelled := rejected(records)) is not None:
+        events = _events(hub, folder.name, header, end_index=len(ends_of(records)))
+        RecordedRun(folder=folder, events=events, sink=EventSink()).run_ended(
+            RunEnd("cancelled", now(), reason=cancelled)
+        )
+        typer.echo(f"run {folder.name}: cancelled")
+        return 1
+    inputs = next((r["inputs"] for r in records if r.get("event") == "inputs"), {})
+    return _execute(
+        hub,
+        folder,
+        plan=gated_run_plan(document, includes, asks),
+        inputs=inputs if isinstance(inputs, dict) else {},
+        pack=snapshot,
+        content_hash=str(header.get("content_hash")),
+        prior=resumed_prior(records, owes.reopen),
+        end_index=len(ends_of(records)),
+        answers=RecordedAnswers(records),
+        policy=_RunPolicy(
+            environment=environment,
+            asks=frozenset(asks),
+            header=header,
+            approvers=approvers(records),
+        ),
+    )
+
+
+def _pins(header: Mapping[str, JsonValue]) -> bool:
+    """Whether the run's start record pins any action."""
+    pins = header.get("actions")
+    return isinstance(pins, dict) and bool(pins)
 
 
 def _abandon(hub: Path, run_id: str) -> None:
@@ -652,6 +935,7 @@ def _execute(
     end_index: int = 0,
     parent: IssueToPr | None = None,
     answers: RecordedAnswers | None = None,
+    policy: _RunPolicy | None = None,
 ) -> int:
     config = load_hub_config_or_exit(hub / FILE_LABEL)
     header: dict[str, JsonValue] = {
@@ -665,11 +949,22 @@ def _execute(
         # issue-to-pr's events are hub run's, from the parent's records.
         sink=EventSink() if parent is None else None,
     )
-    runner = _executors(hub, config, run_id=folder.name, pack=pack, parent=parent)
+    executors = _executors(
+        hub,
+        config,
+        run_id=folder.name,
+        pack=pack,
+        parent=parent,
+        environment=None if policy is None else policy.environment,
+    )
+    runner: WorkflowExecutors | NodePolicyRunner = executors
+    log = None
+    if policy is not None:
+        runner, log = _policy_runner(hub, folder, config, executors=executors, policy=policy)
     recorder = recorded if parent is None else parent.recorder(recorded)
     roots, _ = _checkouts(hub, config)
     checkout = GitCheckoutProbe(roots=roots, environ=os.environ)
-    ports = _ports(runner, recorder, checkout, gates=answers)
+    ports = _ports(runner, recorder, checkout, gates=answers, trace=log)
     try:
         report = run_workflow(plan, inputs, ports, prior=prior)
     except RunLogError as error:
@@ -690,6 +985,52 @@ def _execute(
     if parent is not None:
         return parent.finish(report)
     return 0 if report.status == "done" else 1
+
+
+def _policy_runner(
+    hub: Path,
+    folder: Path,
+    config: HubConfig,
+    *,
+    executors: WorkflowExecutors,
+    policy: _RunPolicy,
+) -> tuple[NodePolicyRunner, ActionLog]:
+    """The runner of a run in an environment, and its log: each node decided again before it
+    starts with the effective config as loaded when this process started or resumed the run;
+    its actions run from the snapshot's pinned files (``action_runs``)."""
+    effective = load_effective_config_or_exit(hub)
+    view = effective_environments(effective.config, effective.local)
+    project = hub_project_name(hub) or hub.name
+    events = ScenarioEvents(
+        project=project, run_id=folder.name, workflow=str(policy.header.get("workflow"))
+    )
+    log = ActionLog(folder=folder, events=events, sink=EventSink())
+    actions = None
+    if _pins(policy.header):
+        actions = ActionExecutors(
+            hub=hub,
+            environment=policy.environment,
+            view=view,
+            roots=(hub.name, *(repo.dir for repo in config.repos)),
+            pack=str(policy.header.get("pack")),
+            pinned=pinned_actions(folder / SNAPSHOT, policy.header, noun="run"),
+            asks=policy.asks,
+            approvers=policy.approvers,
+            log=log,
+            inner=executors,
+            environ=os.environ,
+            noun="run",
+        )
+    runner = NodePolicyRunner(
+        inner=executors,
+        actions=actions,
+        log=log,
+        folder=folder,
+        environment=policy.environment,
+        view=view,
+        asks=policy.asks,
+    )
+    return runner, log
 
 
 def _issue(inputs: dict[str, JsonValue]) -> str | None:

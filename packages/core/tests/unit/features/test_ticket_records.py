@@ -1,0 +1,241 @@
+"""A feature's ticket records and plan change requests (two-level-flows AC-2.5, AC-2.8, AC-2.14):
+read into what the folds need, a malformed file kept as its problem."""
+
+import json
+
+import pytest
+
+from agent_hub.core.features.feature_status import RecordHead
+from agent_hub.core.features.ticket_records import (
+    MAX_CHANGE_REQUEST_FILES,
+    MAX_PREFLIGHT_BYTES,
+    ChangeRequest,
+    change_requests,
+    preflight_record,
+    ticket_folder,
+)
+
+
+def a_request(n: int = 1, *, ticket: str = "DEM-8", **fields: str) -> RecordHead:
+    values = {
+        "type": "change-request",
+        "ticket": ticket,
+        "status": "open",
+        "plan_from": "2",
+        "plan_to": "3",
+        "affected": "[DEM-9]",
+        "opened_at": "2026-10-21T09:30:00Z",
+        "run_id": "implement-8",
+    } | fields
+    front = "".join(f"{key}: {value}\n" for key, value in values.items())
+    text = f"---\n{front}---\n# Plan change request {n}\n"
+    return RecordHead(name=f"{n}.md", head=text.encode(), problem=None)
+
+
+def a_decision(n: int = 1, decision: str = "approved", **fields: str) -> RecordHead:
+    values = {
+        "type": "change-request-decision",
+        "decision": decision,
+        "decided_by": "Dana Owner",
+        "decided_at": "2026-10-21T10:00:00Z",
+        "note": "Go ahead.",
+    } | fields
+    front = "".join(f"{key}: {value}\n" for key, value in values.items())
+    return RecordHead(name=f"{n}.decision.md", head=f"---\n{front}---\n".encode(), problem=None)
+
+
+def a_preflight(**run: object) -> bytes:
+    entry: dict[str, object] = {
+        "ran_at": "2026-10-21T09:30:00Z",
+        "plan_version": 2,
+        "commit": "4e1a9c2",
+        "blockers_read": [],
+        "input": "none",
+        "input_text": None,
+        "drift": "none",
+        "local_notes": [],
+        "change_request": None,
+        "run_id": "implement-8",
+    }
+    return json.dumps(
+        {"schema": "agent-hub/preflight/1", "ticket": "DEM-8", "runs": [entry | run]}
+    ).encode()
+
+
+def test_reads_open_when_request_has_no_decision() -> None:
+    found = change_requests((a_request(),), skipped=0)
+
+    assert found.requests == (
+        ChangeRequest(
+            n=1, ticket="DEM-8", status="open", plan_to=3, affected=("DEM-9",), problem=None
+        ),
+    )
+    assert found.problem is None
+
+
+def test_folds_decision_into_status_when_decision_file_exists() -> None:
+    found = change_requests(
+        (a_decision(1), a_request(1), a_request(2), a_decision(2, "declined")), skipped=0
+    )
+
+    assert [(request.n, request.status) for request in found.requests] == [
+        (1, "approved"),
+        (2, "declined"),
+    ]
+
+
+def test_orders_requests_by_number_when_names_sort_otherwise() -> None:
+    found = change_requests((a_request(10), a_request(2)), skipped=0)
+
+    assert [request.n for request in found.requests] == [2, 10]
+
+
+def test_ignores_other_names_when_folder_holds_notes() -> None:
+    note = RecordHead(name="README.md", head=b"# Notes\n", problem=None)
+
+    assert change_requests((note, a_decision(4)), skipped=0).requests == ()
+
+
+def test_keeps_problem_when_request_malformed() -> None:
+    found = change_requests((a_request(3, plan_to="three"),), skipped=0)
+
+    (request,) = found.requests
+    assert request.status is None
+    assert request.ticket == "DEM-8"
+    assert request.problem == (
+        "change-requests/3.md could not be read (plan_to is not valid: three). Fix it in a hub PR."
+    )
+
+
+def test_refuses_edited_status_when_request_says_approved() -> None:
+    (request,) = change_requests((a_request(status="approved"),), skipped=0).requests
+
+    assert request.problem == (
+        "change-requests/1.md could not be read (status must be open: a decision is its own "
+        "file). Fix it in a hub PR."
+    )
+
+
+# AGH-402 review S4: a broken decision does not make the request known decided: it stays open.
+def test_keeps_request_open_with_problem_when_decision_malformed() -> None:
+    found = change_requests((a_request(), a_decision(decision="maybe")), skipped=0)
+
+    (request,) = found.requests
+    assert (request.status, request.ticket, request.plan_to) == ("open", "DEM-8", 3)
+    assert request.problem == (
+        "change-requests/1.decision.md could not be read (decision must be approved or "
+        "declined). Fix it in a hub PR."
+    )
+    assert found.open == (request,)
+    assert found.paused == frozenset({"DEM-8", "DEM-9"})
+
+
+# AGH-402 review Q2: each validation branch of a request, by its problem line.
+@pytest.mark.parametrize(
+    ("fields", "why"),
+    [
+        ({"ticket": ""}, "ticket is missing"),
+        ({"ticket": "dem 8"}, "ticket is not valid: dem 8"),
+        ({"plan_to": ""}, "plan_to is missing"),
+        ({"type": "eval"}, "type is eval, not change-request"),
+        ({"affected": "[DEM-9, dem 10]"}, "affected has an invalid item: dem 10"),
+    ],
+    ids=["no ticket", "bad ticket", "no plan_to", "wrong type", "bad affected"],
+)
+def test_names_problem_when_request_field_invalid(fields: dict[str, str], why: str) -> None:
+    (request,) = change_requests((a_request(3, **fields),), skipped=0).requests
+
+    assert request.status is None
+    assert request.problem == f"change-requests/3.md could not be read ({why}). Fix it in a hub PR."
+
+
+# AGH-402 review Q2, Q7 (A5): each validation branch of a decision, by its problem line.
+@pytest.mark.parametrize(
+    ("fields", "why"),
+    [
+        ({"type": "eval"}, "type is eval, not change-request-decision"),
+        ({"decided_by": ""}, "decided_by is missing"),
+        ({"decided_by": " Unknown "}, "decided_by names no person: Unknown"),
+        ({"decided_at": ""}, "decided_at is missing"),
+    ],
+    ids=["wrong type", "no decided_by", "unknown decided_by", "no decided_at"],
+)
+def test_names_problem_when_decision_field_invalid(fields: dict[str, str], why: str) -> None:
+    (request,) = change_requests((a_request(), a_decision(**fields)), skipped=0).requests
+
+    assert request.status == "open"
+    assert request.problem == (
+        f"change-requests/1.decision.md could not be read ({why}). Fix it in a hub PR."
+    )
+
+
+def test_keeps_problem_when_request_unreadable() -> None:
+    link = RecordHead(name="1.md", head=None, problem="not read as a regular file")
+
+    (request,) = change_requests((link,), skipped=0).requests
+
+    assert request.ticket is None
+    assert request.problem == (
+        "change-requests/1.md could not be read (not read as a regular file). Fix it in a hub PR."
+    )
+
+
+def test_says_not_all_read_when_files_over_cap() -> None:
+    found = change_requests((a_request(),), skipped=1)
+
+    assert found.problem == (
+        f"more than {MAX_CHANGE_REQUEST_FILES} files in change-requests/; not all were read. "
+        "Fix it in a hub PR."
+    )
+
+
+def test_lists_open_requests_and_paused_tickets_when_folded() -> None:
+    found = change_requests(
+        (a_request(1), a_decision(1), a_request(2, ticket="dem-10", affected="[DEM-8, DEM-11]")),
+        skipped=0,
+    )
+
+    assert [request.n for request in found.open] == [2]
+    assert found.paused == frozenset({"DEM-10", "DEM-8", "DEM-11"})
+    assert found.approved_version == 3
+
+
+def test_parses_record_when_preflight_valid() -> None:
+    record = preflight_record(
+        a_preflight(drift="local", local_notes=["Moved helper."]), folder="DEM-8"
+    )
+
+    assert not isinstance(record, str)
+    assert record is not None
+    assert record.runs[-1].local_notes == ("Moved helper.",)
+
+
+def test_names_json_path_when_preflight_malformed() -> None:
+    assert preflight_record(a_preflight(drift="global"), folder="DEM-8") == (
+        "preflight.json could not be read (runs[0].drift: Input should be 'none', 'local' or "
+        "'plan'). Fix it in a hub PR."
+    )
+
+
+def test_says_why_when_preflight_not_read() -> None:
+    assert preflight_record(f"larger than {MAX_PREFLIGHT_BYTES} bytes", folder="DEM-8") == (
+        "preflight.json could not be read (larger than 65536 bytes). Fix it in a hub PR."
+    )
+    assert preflight_record(None, folder="DEM-8") is None
+
+
+# AGH-402 review Q9: a record filed under another ticket's folder drives no step.
+def test_names_mismatch_when_preflight_ticket_differs_from_folder() -> None:
+    assert preflight_record(a_preflight(), folder="DEM-9") == (
+        "preflight.json could not be read (ticket: DEM-8 is not the folder's ticket DEM-9). "
+        "Fix it in a hub PR."
+    )
+    assert not isinstance(preflight_record(a_preflight(), folder="dem-8"), str)
+
+
+def test_picks_the_folder_the_flow_reads_when_key_and_id_folders_differ_in_case() -> None:
+    folders = ["t2", "dem-8", "DEM-8x", "T2", "DEM-7"]
+
+    assert ticket_folder(folders, ("T2", "DEM-8")) == "dem-8"
+    assert ticket_folder(folders, ("T2",)) == "T2"
+    assert ticket_folder(folders, ("T9",)) is None
