@@ -85,8 +85,8 @@ gate-needing steps that do not depend on each other are a plan error naming both
 `<$CTX.<name> from <node>>`), effect, service → endpoint, content hash, draft state and decision. It calls a script in
 `plan` mode, with no credential, only when all its args are known (else `runs with values known at run time`), and
 starts no run-mode process, agent, event or run; exit 1 on a `deny`. `hub scenario run` (same arguments, `--mode
-interactive|regression`) plans first, refuses to start on a `deny` or an undeclared environment (exit 1, no scenario
-run), and labels its events `workflow: scenario:<name>`.
+interactive|regression`; interactive exits 2 until it ships) refuses a plan problem or `deny` (exit 1, no scenario run),
+pins its action files and gates, labels events `workflow: scenario:<name>`, and decides each action again as it runs.
 
 - **Regression:** no agent, no token. A divergence (a failed action, an `expect` timeout, an output contract failure)
   fails the scenario run and prints `step <id>: <reason>`. Policy asks and `approval` nodes still pause it.

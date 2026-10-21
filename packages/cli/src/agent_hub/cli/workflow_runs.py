@@ -26,7 +26,7 @@ import time
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from threading import Event
 from typing import Final, get_args
 
@@ -39,6 +39,7 @@ from agent_hub.core.errors import AgentHubError
 from agent_hub.core.events.event_store import EventStore
 from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.json_form import JsonValue
+from agent_hub.core.scenarios.scenario_events import ScenarioEvents
 from agent_hub.core.workflows.document import WorkflowDocument, parse_workflow
 from agent_hub.core.workflows.events import WorkflowEvents
 from agent_hub.core.workflows.failures import FailureKind, RetryRecord
@@ -69,6 +70,10 @@ DOCUMENT: Final = "workflow.json"
 INCLUDES: Final = "includes"
 INCLUDE_NAME: Final = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
 RECORDS: Final = "records.jsonl"
+# A scenario run's lines (``scenario_runs``): a poll that held, and each action call, written
+# before its process starts; ``prior_state`` counts an expect's polls from the calls.
+EXPECT_POLL: Final = "expect.poll"
+ACTION_START: Final = "action_start"
 LOCK: Final = "lock"
 MAX_SNAPSHOT_FILE_BYTES: Final = 1 << 20
 MAX_RECORDS_BYTES: Final = 64 << 20
@@ -128,14 +133,17 @@ def snapshot_run(
     plan: WorkflowPlan,
     pack_root: Path,
     includes: Mapping[str, JsonValue] | None = None,
+    pinned: Mapping[str, bytes] | None = None,
 ) -> tuple[Path, str]:
     """Write the run's snapshot; its pack root and content hash. Each pack file is read once
     and at most ``MAX_SNAPSHOT_FILE_BYTES``; each included workflow is kept as
-    ``includes/<name>.json`` (``snapshot_includes`` resolves them on resume)."""
+    ``includes/<name>.json`` (``snapshot_includes`` resolves them on resume); ``pinned`` adds
+    files already read, by snapshot-relative path (a scenario run's actions and gates)."""
     snapshot = folder / SNAPSHOT
     files = {DOCUMENT: json.dumps(document, sort_keys=True).encode()}
     for name, included in (includes or {}).items():
         files[f"{INCLUDES}/{name}.json"] = json.dumps(included, sort_keys=True).encode()
+    files |= _pinned_files(pinned or {}, taken=frozenset(files))
     for pack_folder, relative in sorted(set(_pack_files(plan))):
         name = f"{pack_folder}/{relative}"
         try:
@@ -155,6 +163,15 @@ def snapshot_run(
     except OSError as error:
         raise WorkflowRunError(f"cannot write the run's snapshot: {error}") from None
     return snapshot, snapshot_hash(snapshot)
+
+
+def _pinned_files(pinned: Mapping[str, bytes], *, taken: frozenset[str]) -> dict[str, bytes]:
+    """``pinned`` checked: each a relative path without ``..``, none the snapshot's own."""
+    for name in pinned:
+        parts = PurePosixPath(name).parts
+        if not parts or PurePosixPath(name).is_absolute() or ".." in parts or name in taken:
+            raise WorkflowRunError(f"cannot copy {name}: not a path the snapshot can hold")
+    return dict(pinned)
 
 
 def snapshot_hash(snapshot: Path) -> str:
@@ -257,18 +274,24 @@ def drop_torn_tail(folder: Path) -> None:
         raise WorkflowRunError(f"cannot repair the run {folder.name}: {error}") from None
 
 
-def append_record(folder: Path, record: Record) -> None:
+def append_record(folder: Path, record: Record, *, durable: bool = False) -> None:
+    """Append one line; ``durable`` syncs it to disk before returning (a line that must
+    survive the machine stopping right after, such as the start of a write)."""
     line = {"ts": now().isoformat(timespec="seconds"), **record}
     try:
         with (folder / RECORDS).open("a", encoding="utf-8") as file:
             file.write(json.dumps(line, sort_keys=True) + "\n")
+            if durable:
+                file.flush()
+                os.fsync(file.fileno())
     except OSError as error:
         raise WorkflowRunError(f"cannot write the run {folder.name}: {error}") from None
 
 
 def prior_state(records: list[Record]) -> RunState:
     """The state a run left: each node's last result (a reuse keeps the one reused), the last
-    attempt of each node, the sessions it recorded last, and the gates no step end closed."""
+    attempt of each node, the sessions it recorded last, the gates no step end closed, and each
+    expect node's polls (``_polls``), so its bound spans retries and resumes."""
     nodes: dict[str, NodeResult] = {}
     attempts: dict[str, int] = {}
     sessions: dict[str, str] = {}
@@ -292,7 +315,19 @@ def prior_state(records: list[Record]) -> RunState:
         if event == "step_end" and state and record.get("skip_cause") != "prior_success":
             output = record.get("output") if state == "completed" else None
             nodes[node] = NodeResult(state, output)  # type: ignore[arg-type]
-    return RunState(nodes, attempts, sessions, gates, groups)
+    return RunState(nodes, attempts, sessions, gates, groups, _polls(records))
+
+
+def _polls(records: list[Record]) -> dict[str, int]:
+    """Each expect node's polls in the run: one ``action_start`` line with a ``poll`` each,
+    written before the call, so a poll whose action failed or never ended counts too."""
+    polls: dict[str, int] = {}
+    for record in records:
+        node, poll = record.get("node"), record.get("poll")
+        polled = isinstance(poll, int) and poll > 0
+        if record.get("event") == ACTION_START and isinstance(node, str) and polled:
+            polls[node] = polls.get(node, 0) + 1
+    return polls
 
 
 def held_record(state: RunState) -> Record:
@@ -445,7 +480,7 @@ class EventSink:
     _ingest: IngestEvents | None = None
     _closed: bool = False
 
-    def flush(self, events: WorkflowEvents) -> None:
+    def flush(self, events: WorkflowEvents | ScenarioEvents) -> None:
         fresh, self.sent = events.events[self.sent :], len(events.events)
         if self._closed or not fresh:
             return
