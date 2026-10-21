@@ -301,7 +301,7 @@ def decision_text(
     if decision == "declined" and not note:
         raise TicketRecordError("a declined change needs a note")
     who = " ".join(decided_by.split())
-    probe = b"## Amendments\n" + _entry("A1", "2000-01-01", who, "x", n).encode()
+    probe = b"## Amendments\n" + _entry("A1", date="2000-01-01", who=who, summary="x", n=n).encode()
     if decision == "approved" and who and plan_version(probe).version != 2:  # noqa: PLR2004
         raise TicketRecordError(f"decided_by could not be written in an amendment: {who[:64]}")
     line = scalar(note[:NOTE_LINE_CHARS])
@@ -338,7 +338,7 @@ def amended_plan(
     numbers = [int(found[1]) for a in view.amendments if (found := _AMENDMENT_ID.fullmatch(a.id))]
     ident = f"A{max(numbers, default=0) + 1}"
     who, date = _field(decision, "decided_by"), _field(decision, "decided_at")[:10]
-    entry = _entry(ident, date, who, summary, n)
+    entry = _entry(ident, date=date, who=who, summary=summary, n=n)
     start = plan if plan.endswith(b"\n") or not plan else plan + b"\n"
     section = last_section(plan)
     if section is None or not opens_amendments(section):
@@ -349,7 +349,7 @@ def amended_plan(
     return written, ident
 
 
-def _entry(ident: str, date: str, who: str, summary: str, n: int) -> str:
+def _entry(ident: str, *, date: str, who: str, summary: str, n: int) -> str:
     title = one_line(" ".join(summary.split()))
     return f"- {ident} ({date}, {who}): {title} ([change request {n}](change-requests/{n}.md))\n"
 
