@@ -11,6 +11,7 @@ from agent_hub.core.scenarios.findings import (
     CUT_MARKER,
     MAX_DRAFT_DESCRIPTION_CHARS,
     MAX_DRAFT_TITLE_CHARS,
+    MAX_NAME_CHARS,
     FindingsError,
     finding_of,
     inbox_note,
@@ -114,8 +115,13 @@ def test_finds_nothing_when_finding_id_unknown() -> None:
 
 @pytest.mark.parametrize(
     "header",
-    [{"scenario": "../order-walk"}, {"run": "walk 1"}, {"scenario": None}],
-    ids=["scenario-path", "run-space", "scenario-missing"],
+    [
+        {"scenario": "../order-walk"},
+        {"run": "walk 1"},
+        {"scenario": None},
+        {"scenario": "a" * 41},
+    ],
+    ids=["scenario-path", "run-space", "scenario-missing", "scenario-over-40"],
 )
 def test_refuses_when_findings_record_names_unsafe_header(header: dict[str, Any]) -> None:
     view = fold_records(a_record(**header))
@@ -174,7 +180,7 @@ def test_escapes_controls_when_findings_inbox_built() -> None:
     assert "## Order\\x1b[8m hidden\\x1b[0m held\\rFAKE\\x9b2J\\u202eflip" in note.text
 
 
-# Review Q4, Q5 (AGH-362): escapes grow text up to six times; the draft stays under the tracker's
+# Review Q4, Q5 (AGH-362): escapes grow text up to ten times; the draft stays under the tracker's
 # caps (the MCP adapter's 255-character title and 10,000-character description), cut at an escape
 # boundary with a marker. Every format character (Cf) and line or paragraph separator is escaped.
 TRACKER_TITLE_CAP = 255
@@ -208,7 +214,7 @@ def test_fits_tracker_caps_when_findings_text_all_controls() -> None:
     for line in draft.description.splitlines():
         cut = line.removesuffix(CUT_MARKER)
         assert "".join(re.findall(ESCAPE_OR_CHARACTER, cut)) == cut
-        assert not re.search(r"\\(u[0-9a-f]{0,3}|x[0-9a-f]?)$", cut), line[-12:]
+        assert not re.search(r"\\(U[0-9a-f]{0,7}|u[0-9a-f]{0,3}|x[0-9a-f]?)$", cut), line[-12:]
     assert raw_controls(draft.title + draft.description + note.text) == []
 
 
@@ -224,8 +230,20 @@ def test_fits_tracker_caps_when_findings_text_all_controls() -> None:
         (" ", "\\u2028"),
         (" ", "\\u2029"),
         ("\U000e0041", "\\U000e0041"),
+        ("\ud800", "\\ud800"),
     ],
-    ids=["lrm", "rlm", "alm", "zwsp", "word-joiner", "bom", "line-sep", "para-sep", "tag"],
+    ids=[
+        "lrm",
+        "rlm",
+        "alm",
+        "zwsp",
+        "word-joiner",
+        "bom",
+        "line-sep",
+        "para-sep",
+        "tag",
+        "surrogate",
+    ],
 )
 def test_escapes_format_character_when_findings_texts_built(character: str, escape: str) -> None:
     record = a_record()
@@ -239,6 +257,52 @@ def test_escapes_format_character_when_findings_texts_built(character: str, esca
 
     for text in (draft.title, draft.description, note.text):
         assert character not in text
+        text.encode()  # a lone surrogate, left raw, could not be written
     assert draft.title.endswith(f"a{escape}b")
     assert f"c{escape}d" in draft.description
     assert f"Evidence: e{escape}f" in note.text
+
+
+def test_cuts_on_whole_astral_escape_when_findings_title_long() -> None:
+    # Review Q8: "Scenario order-walk: " (21) and 5 padding leave 166 of the 192 characters before
+    # the marker: the 17th ten-character escape would straddle the bound.
+    record = a_record()
+    record[-1]["findings"][0]["title"] = "xxxxx" + "\U000e0041" * 30
+    view = fold_records(record)
+
+    title = issue_draft(view, view.findings[0], record=RECORD).title
+
+    assert len(title) <= MAX_DRAFT_TITLE_CHARS
+    assert title.endswith(CUT_MARKER)
+    kept = title.removeprefix("Scenario order-walk: xxxxx").removesuffix(CUT_MARKER)
+    assert re.fullmatch(r"(\\U000e0041)+", kept), kept[-12:]
+    assert kept.count("\\U") == 16
+
+
+def test_cuts_names_and_heading_when_findings_parts_all_controls() -> None:
+    # Review Q9: a step and an environment past MAX_NAME_CHARS once escaped, and a title at
+    # MAX_TITLE_CHARS for the inbox note's heading: each is cut to its bound, with the marker.
+    record = a_record(environment="\u202e" * 100)
+    record[1]["step"] = "\u202e" * 100
+    record[-1]["findings"][0]["title"] = "\u202e" * MAX_TITLE_CHARS
+    view = fold_records(record)
+
+    draft = issue_draft(view, view.findings[0], record=RECORD)
+    note = inbox_note(view, view.findings[0], record=RECORD, day=DAY)
+
+    where = draft.description.splitlines()[0]
+    found = re.fullmatch(
+        r"The scenario order-walk found this in run walk-1, at step (.*), in"
+        r" environment (.*)\.",
+        where,
+    )
+    assert found is not None, where
+    for name in found.groups():
+        assert len(name) <= MAX_NAME_CHARS
+        assert name.endswith(CUT_MARKER)
+        assert re.fullmatch(r"(\\u202e)+", name.removesuffix(CUT_MARKER))
+    (heading,) = [line for line in note.text.splitlines() if line.startswith("## ")]
+    shown = heading.removeprefix("## ")
+    assert len(shown) <= MAX_DRAFT_TITLE_CHARS
+    assert shown.endswith(CUT_MARKER)
+    assert re.fullmatch(r"(\\u202e)+", shown.removesuffix(CUT_MARKER))

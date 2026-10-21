@@ -7,11 +7,12 @@ finding's text and evidence, and where its record is: the scenario run's page in
 ``records.jsonl``. They hold names only, never a credential value: the finding's texts were
 redacted when proposed, and every text is redacted again here (``redact_shapes``). The texts
 are agent-written, so every control character but the newline (C0, DEL, C1), every format
-character (bidi and other marks, zero-width characters, tags) and the line and paragraph
-separators are written as a visible escape (``\\x1b``, ``\\r``, ``\\u202e``) before the draft is
-printed, sent to the tracker or written: none can hide or rewrite what a person confirms. As an
-escape is up to ten characters, each escaped part is cut to a bound (``CUT_MARKER``, never inside
-an escape), so a draft stays under every tracker adapter's title and description caps.
+character (bidi and other marks, zero-width characters, tags), lone surrogates and the line and
+paragraph separators are written as a visible escape (``\\x1b``, ``\\r``, ``\\u202e``) before
+the draft is printed, sent to the tracker or written: none can hide or rewrite what a person
+confirms. As an escape is up to ten characters, each escaped part is cut to a bound
+(``CUT_MARKER``, never inside an escape), so a draft stays under every tracker adapter's title and
+description caps.
 
 The inbox note is ``brain/_inbox/<date>-scenario-<name>-<finding-id>.md`` with frontmatter
 ``provenance: agent-from-external``, because its evidence comes from the system under test. The
@@ -35,6 +36,9 @@ NOTE_TYPE: Final = "scenario-finding"
 # 10,000-character description): escapes grow a text up to tenfold, so each escaped part is cut,
 # at an escape boundary, with ``CUT_MARKER``.
 MAX_DRAFT_TITLE_CHARS: Final = 200
+# The sum of the description's part bounds: the escaped text and evidence, step, environment and
+# record (MAX_NAME_CHARS each), a cut marker per part and under 400 characters of fixed words and
+# names; ``test_fits_tracker_caps_when_findings_text_all_controls`` pins it.
 MAX_DRAFT_DESCRIPTION_CHARS: Final = 9_000
 MAX_ESCAPED_TEXT_CHARS: Final = 5_000
 MAX_ESCAPED_EVIDENCE_CHARS: Final = 3_000
@@ -42,15 +46,15 @@ MAX_ESCAPED_EVIDENCE_CHARS: Final = 3_000
 MAX_NAME_CHARS: Final = 200
 CUT_MARKER: Final = " … [cut]"
 # A scenario name (a kebab id) and a run id, as their writers check them; a finding id ``f<n>``.
-_SCENARIO: Final = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
+_SCENARIO: Final = re.compile(r"(?=[a-z0-9-]{1,40}\Z)[a-z0-9]+(?:-[a-z0-9]+)*")
 _RUN: Final = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
 _FINDING: Final = re.compile(r"f[1-9][0-9]{0,5}")
 _NO_TEXT: Final = "(no description was recorded)"
 _NO_EVIDENCE: Final = "none recorded"
 _NAMED: Final = {"\t": "\\t", "\r": "\\r"}
 # Control characters (Cc), format characters (Cf: bidi controls, marks, zero-width characters,
-# tags) and the line and paragraph separators: each is written as an escape.
-_ESCAPED_CATEGORIES: Final = frozenset({"Cc", "Cf", "Zl", "Zp"})
+# tags), lone surrogates (Cs) and the line and paragraph separators: each written as an escape.
+_ESCAPED_CATEGORIES: Final = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
 # One escape this module writes, or one other character: where a cut may fall.
 _PIECE: Final = re.compile(r"\\x[0-9a-f]{2}|\\u[0-9a-f]{4}|\\U[0-9a-f]{8}|\\[rt]|.", re.DOTALL)
 
@@ -158,8 +162,9 @@ def _one_line(text: str) -> str:
 
 
 def _escaped(text: str) -> str:
-    """``text`` with each control character but the newline, and each bidi control, written as
-    a visible escape; a CRLF line end is a newline."""
+    """``text`` with each character of ``_ESCAPED_CATEGORIES`` but the newline (controls, format
+    characters, lone surrogates, line and paragraph separators) written as a visible escape; a
+    CRLF line end is a newline."""
     return "".join(_escape(character) for character in text.replace("\r\n", "\n"))
 
 
