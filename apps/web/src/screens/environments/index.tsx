@@ -180,9 +180,8 @@ export function EnvironmentsPickerScreen() {
       intro="Each project's environments (your machine, staging, production), what agents may do in each, and where each repo's services run. Open a project to see and change them."
       caption="Projects and their environments"
       emptyLine="Register a hub to declare its environments."
-      tip="Tip: pick a project in the scope switcher to open its environments directly."
+      tip="To come straight here, choose a project in the top bar."
       href={environmentsPage}
-      columns={[]}
     />
   );
 }

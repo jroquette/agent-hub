@@ -275,18 +275,32 @@ describe("BrainPickerScreen", () => {
       "/api/v1/projects/agent-hub/now": aProjectNow(),
     });
 
-    const row = (await screen.findByRole("link", { name: "agent-hub" })).closest("tr");
-    if (row === null) throw new Error("no row");
-    await within(row).findByText("Control plane MVP");
-    await within(row).findByText("1 to triage");
-    const cells = within(row)
-      .getAllByRole("cell")
-      .map((cell) => cell.textContent);
-    expect(cells.slice(1)).toEqual(["Control plane MVP", "5", "1", "1", "0", "1 to triage"]);
-    expect(within(row).getByRole("link", { name: "1 to triage" })).toHaveAttribute(
-      "href",
-      "/knowledge/learnings?scope=agent-hub",
-    );
+    const card = await screen.findByRole("article", { name: "agent-hub" });
+    await within(card).findByText("Current focus: Control plane MVP");
+    await within(card).findByText("1 to triage in Learnings");
+    const values = [...card.querySelectorAll(".ah-pcard-stat")].map((stat) => [
+      stat.querySelector(".ah-pcard-k")?.textContent,
+      stat.querySelector(".ah-pcard-v")?.textContent,
+    ]);
+    expect(values).toEqual([
+      ["Notes", "5"],
+      ["Features", "1"],
+      ["Decisions", "1"],
+      ["Learnings", "0"],
+    ]);
+    expect(
+      within(card).getByRole("link", { name: "1 to triage in Learnings for agent-hub" }),
+    ).toHaveAttribute("href", "/knowledge/learnings?scope=agent-hub");
+  });
+
+  it("says the inbox is empty when nothing waits for triage", async () => {
+    pick("/knowledge/brain", {
+      [TREE]: aBrainTree({ entries: [] }),
+      "/api/v1/projects/agent-hub/now": aProjectNow(),
+    });
+
+    const card = await screen.findByRole("article", { name: "agent-hub" });
+    expect(await within(card).findByText("Inbox empty")).toBeInTheDocument();
   });
 
   it("marks an incomplete count with + and a failed one with a dash (AC-270.4)", async () => {
@@ -299,21 +313,19 @@ describe("BrainPickerScreen", () => {
       "/api/v1/projects/broken/brain": aProblem({ status: 500, title: "Boom" }),
     });
 
-    const row = (await screen.findByRole("link", { name: "agent-hub" })).closest("tr");
-    const broken = screen.getByRole("link", { name: "broken" }).closest("tr");
-    if (row === null || broken === null) throw new Error("no row");
-    expect(await within(row).findByText("5+")).toBeInTheDocument();
+    const card = await screen.findByRole("article", { name: "agent-hub" });
+    const broken = screen.getByRole("article", { name: "broken" });
+    expect(await within(card).findByText("5+")).toBeInTheDocument();
     expect((await within(broken).findAllByText("—")).length).toBeGreaterThan(0);
+    expect(within(broken).getByText("Could not read this brain: Boom.")).toBeInTheDocument();
+    expect(within(broken).getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
 
-  it("opens the project's brain when its row is clicked (AC-270.5)", async () => {
+  it("opens the project's brain when its card is clicked (AC-270.5)", async () => {
     const { router } = pick();
 
-    const row = (await screen.findByRole("link", { name: "agent-hub" })).closest("tr");
-    if (row === null) throw new Error("no row");
-    const [, focus] = within(row).getAllByRole("cell");
-    if (focus === undefined) throw new Error("no focus cell");
-    await userEvent.click(focus);
+    const card = await screen.findByRole("article", { name: "agent-hub" });
+    await userEvent.click(card);
     expect(router.state.location.pathname).toBe("/projects/agent-hub/brain");
   });
 
