@@ -1,5 +1,6 @@
 """``InMemoryKnowledgeIndex``: the ``KnowledgeIndex`` port over dictionaries, one per hub."""
 
+import re
 import threading
 from collections import Counter
 from dataclasses import dataclass
@@ -13,10 +14,12 @@ from agent_hub.core.knowledge.knowledge_index import (
     StoredFile,
     StoredIndex,
 )
-from agent_hub.core.knowledge.search_query import query_words, snippet_line
+from agent_hub.core.knowledge.search_query import MAX_SNIPPET_CHARS, query_words, snippet_line
 
 # A word in the title counts this many times a word in the body (D-query's weights 10 and 1).
 _TITLE_WEIGHT: Final = 10
+# A word as ``query_words`` splits it, to find where the first match sits in a body.
+_WORD: Final = re.compile(r"[^\W_]+")
 
 
 @dataclass(frozen=True)
@@ -33,7 +36,8 @@ class InMemoryKnowledgeIndex:
     """Each hub's rows by path, behind one lock; behaves as ``KnowledgeIndexContract`` says.
 
     A document scores ``10 × title hits + body hits`` over the casefolded words of each text, with
-    no stemming (the contract's words are uninflected)."""
+    no stemming (each of the contract's query words appears in the documents in the same form, so
+    stemming does not change the answer)."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -91,7 +95,7 @@ class InMemoryKnowledgeIndex:
             if (score := _score(document, wanted)) is not None
         ]
         scored.sort(key=lambda pair: (-pair[0], pair[1].path))
-        return tuple(_hit(document) for _, document in scored[:limit])
+        return tuple(_hit(document, wanted) for _, document in scored[:limit])
 
 
 def _score(document: IndexedDocument, words: list[str]) -> int | None:
@@ -103,12 +107,23 @@ def _score(document: IndexedDocument, words: list[str]) -> int | None:
     return sum(_TITLE_WEIGHT * title[word] + body[word] for word in words)
 
 
-def _hit(document: IndexedDocument) -> SearchHit:
+def _hit(document: IndexedDocument, words: list[str]) -> SearchHit:
     return SearchHit(
         path=document.path,
         kind=document.kind,
         title=document.title,
         status=document.status,
         provenance=document.provenance,
-        snippet=snippet_line(document.body),
+        snippet=_snippet(document.body, words),
     )
+
+
+def _snippet(body: str, words: list[str]) -> str:
+    """One line of the body around its first matching word, ``…`` where cut (as FTS5's
+    ``snippet()`` then ``snippet_line``); the body's start when only the title matches."""
+    line = " ".join(body.split())
+    first = next(
+        (match.start() for match in _WORD.finditer(line) if match.group().casefold() in words), 0
+    )
+    start = max(0, first - MAX_SNIPPET_CHARS // 2)
+    return snippet_line(("…" if start else "") + line[start:])
