@@ -76,8 +76,8 @@ from agent_hub.core.workflows.substitution import (
     parse_ref,
 )
 
-# An approval's output is ``{decision}`` (plus ``text``), whatever its schema.
-_APPROVAL_FIELDS: Final = frozenset({"decision", "text"})
+# An approval's output is ``{decision}`` (plus ``text`` and ``approver``), whatever its schema.
+_APPROVAL_FIELDS: Final = frozenset({"decision", "text", "approver"})
 # A wait's output is ``{at}``, ``{text}`` or ``{choice, text}``.
 _WAIT_FIELDS: Final = frozenset({"at", "text", "choice"})
 # A cycle message names at most this many nodes, then how many more.

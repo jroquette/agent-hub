@@ -13,6 +13,16 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- The base plugin gains the `/premortem` and `/context-audit` skills (AGH-414). `/premortem` assumes a decision
+  already failed and gives its top three causes an early-warning sign and the cheapest experiment that could prove the
+  choice wrong. `/context-audit` estimates the always-loaded context of a hub and its repos and ranks the cuts by
+  tokens saved. Both only report. They arrive with `hub sync` after you bump `platform.version`.
+- The base plugin gains the `security-reviewer` agent and the `/design-fit` skill (AGH-413). `security-reviewer`
+  reviews a diff's added lines in a fresh context, runs Semgrep or Bandit when installed, traces each finding from an
+  untrusted source to a sink and refutes it before reporting; a scanner that did not run is reported as not run.
+  `/design-fit` runs before code: what already exists, where the change belongs, and no abstraction without a consumer
+  today, in at most five lines. Neither is started by `/feature` yet. Both arrive with `hub sync` after you bump
+  `platform.version`; `models.agents` accepts `security-reviewer`.
 - The base plugin gains the `test-writer` agent and the `/property-based-testing` skill (AGH-411). `test-writer`
   writes a task's failing acceptance tests from its ACs and public interfaces, never reading the implementation, at
   most three per AC, and commits them RED; `/feature` does not start it yet (AGH-88 measures it first).
@@ -28,6 +38,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `<n>.decision.md`): the ticket flow's Context, Preflight and Implement steps follow them, step states gain `waiting`
   and `stale`, and the API's steps and features carry a `signal` and `waiting_on_owner`. A malformed record turns only
   its own step unknown; the screens that show them land with AGH-405.
+- `hub step ticket-brief|preflight|change-request|decide|amend-plan` write a ticket's context brief (a new version per
+  run), append a preflight run, open a plan change request, record its decision once and append its `A<k>` amendment
+  to `plan.md`, in the hub and never committed (AGH-403). A gate decision whose approver names no person (empty or
+  `unknown`) is refused and the run stays paused; `hub workflow approve|reject|respond` refuse when no account name is
+  known instead of recording `unknown`, and an approval's output carries its `approver`.
 - `hub web` can publish a Studio draft itself (AGH-298, `POST .../skills/drafts/{draft_id}/publish` with
   `{target, confirm_managed}`), and the Studio's Publish now calls it instead of asking Claude to copy the draft:
   Claude only edits the draft, the Studio shows "Publishing…" then "Published." with a link to the item, warns before

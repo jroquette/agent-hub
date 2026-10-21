@@ -1,0 +1,26 @@
+---
+name: design-fit
+description: Before writing code for a change, find what the repo already has for it and where it belongs — the module to extend, the symbol to reuse, the layer it lives in, the decisions that bind it — and reject any new abstraction without a consumer today. Read-only; answers in at most five lines. Use before implementing a task, or when unsure where new code goes.
+disable-model-invocation: true
+argument-hint: "<task, issue or one-sentence change>"
+---
+
+# /design-fit <change>
+
+Paths below are relative to the hub (the directory with `hub.json`); repos are its siblings, listed in `hub.json` → `repos`, each with its own `AGENTS.md`: read the one for the repo the change touches.
+Agents write new code more readily than they find the code that exists: duplicated helpers and one-off layers follow. This skill runs before the code, so the change starts from what the repo has. It is not a catalogue of design patterns, and fewer lines is not its goal: the goal is the change that fits.
+Step types: `script` (commands, no judgement), `agent` (reasoning in the session), `gate` (the user decides).
+
+1. `agent` **The change** in one sentence, from the task, its ACs or `plan.md` when they exist, and the module or boundary it touches. **Stop** and ask when it does not fit in one sentence: the change is not clear yet.
+2. `agent` **Constraints**: read only what binds that area: the repo's `AGENTS.md` and the architecture and conventions documents it names, the accepted ADRs on the area (`docs/adr/`, `brain/decisions/index.md`), and its glossary. Any layer, port or dependency rule they set (e.g. an import-linter contract) is a constraint, not a suggestion.
+3. `script` **What exists**: search the repo for code that already does the job or part of it: the domain words of step 1, the types the change takes and returns, nearby helpers, fakes and test builders (`rg`, `ast-grep` when installed). Record each search and what it found.
+4. `agent` **Placement**: the file or module that should hold the change, by the repo's own layers and the code next to it. Reuse a symbol found in step 3 when it does the same thing; a standard-library or framework function only when it behaves the same, edge cases included.
+5. `agent` **New abstractions**: for each new module, class, interface, parameter or option the change seems to need, three checks:
+   - **Deletion test**: if it were deleted and its body inlined at the callers, would complexity grow? A pass-through fails;
+   - **Two real adapters**: an interface or port earns its place with two implementations that exist now (a test fake counts only where the repo's rules use one at that boundary);
+   - **A consumer today**: no extension point, option or registry for a case nothing sends yet.
+   One that fails a check is dropped. An accepted ADR is never contradicted here: when one looks wrong for this change, say so and why, for `/adr`.
+6. `script` **Measure**, only when the repo has the tools installed (never install them): duplication (`jscpd`) and complexity (`radon cc`, `lizard`) of the touched files, now and after the change once it exists; report only what got worse.
+7. `agent` **Report** in at most five lines: reuse (`path:line` of each symbol to use); placement; abstractions rejected and why; the ADRs and rules that bind; the measured change when step 6 ran. Nothing else: no redesign of code outside the change, no list of patterns.
+
+The skill edits nothing. A duplicate or a misplaced module found in code outside the change goes to the user as one line, for `/refactor`.

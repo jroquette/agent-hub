@@ -55,7 +55,7 @@ TARGETS = ("plugin/hub-workflow/agents", "plugin/hub-workflow/skills")
 PROJECT_SKILL = "plugin/demo/skills/demo-skill"
 PROJECT_SKILL_LINK = ".claude/skills/demo-skill"
 # How many links DEMO renders in each folder: 8 base agents; 22 base skills and ``demo-skill``.
-RENDERED_LINKS = {".claude/agents": 9, ".claude/skills": 25}
+RENDERED_LINKS = {".claude/agents": 10, ".claude/skills": 28}
 # The calls that look at a path without opening or listing it.
 LOOKS = frozenset({"lstat", "stat"})
 # The conftest's ``ac4.guard`` and ``ac4.schema``, for parameters (fixtures are not set yet).
