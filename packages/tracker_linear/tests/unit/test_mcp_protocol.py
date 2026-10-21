@@ -808,3 +808,11 @@ def test_names_team_check_when_create_issue_reply_has_another_shape() -> None:
         parse_reply(call, json.dumps({"id": "DEM-9"}))
 
     assert raised.value.fix == CREATE_FIX
+
+
+def test_shares_one_create_fix_when_adapters_read() -> None:
+    # Review Q7 (AGH-362): one definition, so the two transports cannot drift apart.
+    from agent_hub.tracker_linear import graphql, graphql_transport, mcp_protocol  # noqa: PLC0415
+
+    assert graphql.CREATE_FIX is graphql_transport.CREATE_FIX
+    assert mcp_protocol.CREATE_FIX is graphql_transport.CREATE_FIX
