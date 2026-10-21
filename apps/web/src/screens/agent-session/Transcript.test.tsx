@@ -103,6 +103,47 @@ describe("Transcript (screenshot-thumbnail)", () => {
   });
 });
 
+describe("Transcript (files, AC-419.10)", () => {
+  it("lists a message's files with name and size above its bubble", () => {
+    const state = [
+      {
+        type: "record",
+        record: aLogRecord("user.message", {
+          seq: 1,
+          body: {
+            text: "Read the spec.",
+            attachments: [
+              { kind: "file", media_type: "application/pdf", bytes: 2048, name: "spec.pdf" },
+            ],
+          },
+        }),
+      } satisfies StreamItem,
+    ].reduce(reduceTranscript, initialTranscript());
+    render(<Transcript state={state} />);
+
+    const list = screen.getByRole("list", { name: "Files sent with this message" });
+    expect(within(list).getByText("spec.pdf")).toHaveAttribute("title", "spec.pdf");
+    expect(within(list).getByText("2 KB")).toBeInTheDocument();
+  });
+
+  it("lists the files of a message while it sends", () => {
+    const state = [
+      {
+        type: "sending",
+        key: "send-1",
+        text: "Read the notes.",
+        files: [{ name: "notes.md", bytes: 300 }],
+      } satisfies StreamItem,
+    ].reduce(reduceTranscript, initialTranscript());
+    render(<Transcript state={state} />);
+
+    const list = screen.getByRole("list", { name: "Files sent with this message" });
+    expect(within(list).getByText("notes.md")).toBeInTheDocument();
+    expect(within(list).getByText("300 B")).toBeInTheDocument();
+    expect(screen.getByText("Sending…")).toBeInTheDocument();
+  });
+});
+
 describe("Transcript (pasted-images)", () => {
   const twoShots = (seq: number): StreamItem => ({
     type: "record",
