@@ -22,6 +22,7 @@ import { useDiscuss, type DiscussReference } from "../../shell/discuss";
 import { FilterMenu } from "../features/parts";
 import { useProjectRepos } from "../project-overview/queries";
 import { CheckRun } from "./CheckRun";
+import { MarkAcPassing } from "./MarkAcPassing";
 import { useAcCitations, type AcCitations, type Citation } from "./acCitations";
 import {
   parseEvidence,
@@ -43,13 +44,15 @@ export const PASS: Record<Pass, { icon: IconName; tone: string; label: string; t
   owner: { icon: "hand", tone: "waiting", label: "Owner step", title: "Waits on a manual check" },
   none: { icon: "clock", tone: "idle", label: "Not passing", title: "Not passing yet" },
 };
-export const passOf = (ac: AcRow): Pass => (ac.passes ? "yes" : ac.manual ? "owner" : "none");
+export const passOf = (ac: AcRow): Pass =>
+  ac.passes || ac.signed_off ? "yes" : ac.manual ? "owner" : "none";
+const SIGNED_OFF = { label: "Signed off", title: "You checked it by hand and signed it off" };
 
 /** One criterion as a Discuss reference: its text, how it is verified and where it stands. */
 export function acReference(ac: AcRow, slug: string): DiscussReference {
   const lines = [
     `${ac.id}${ac.repo ? ` (${ac.repo})` : ""}: ${ac.description}`,
-    `Passes: ${ac.passes ? "yes" : ac.manual ? "manual owner step" : "not yet"}.`,
+    `Passes: ${ac.passes ? "yes" : ac.signed_off ? "signed off by the owner" : ac.manual ? "manual owner step" : "not yet"}.`,
     ac.command ? `Verify: ${ac.command}` : "",
     ac.evidence ? `Evidence: ${ac.evidence}` : "",
   ];
@@ -149,7 +152,7 @@ function EvalLink({ record }: { record: EvalRecord }) {
 /* ---------- Row cells ---------- */
 
 function StatusCell({ ac }: { ac: AcRow }) {
-  const pass = PASS[passOf(ac)];
+  const pass = { ...PASS[passOf(ac)], ...(!ac.passes && ac.signed_off ? SIGNED_OFF : {}) };
   return (
     <span className="ah-pass" style={{ color: `var(--${pass.tone})` }} title={pass.title}>
       <Icon name={pass.icon} size="sm" />
@@ -539,6 +542,9 @@ function AcCard({
         ) : (
           <span className="ah-subtle ah-small">No verification recorded.</span>
         )}
+        <div style={{ marginTop: 10 }}>
+          <MarkAcPassing ac={ac} project={detail.project} slug={detail.slug} />
+        </div>
       </Section>
       <Section
         title="Where it is cited"

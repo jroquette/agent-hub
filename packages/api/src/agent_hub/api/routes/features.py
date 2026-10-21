@@ -62,10 +62,20 @@ def sign_off_owner_steps(
     naming the acceptance eval covers what the Acceptance step waits on, with the no-body
     refusals, except that ``more_work`` is not refused over ACs an agent's eval reopened; either
     decision there is refused once an owner decision newer than the acceptance eval settled it
-    (its SHIP signed every waiting AC off, or its NO-SHIP is still the latest eval of one)."""
+    (its SHIP signed every waiting AC off, or its NO-SHIP is still the latest eval of one). With
+    ``acs``, signs off those criteria as checked by hand (AGH-425), with the same refusals over
+    them: an unknown AC, a NO-SHIP as the latest eval of one (``done``), an eval naming one that
+    the note would not rank newer than, evals left unread."""
     if body is None:
         return sign_off(project, slug)
-    return sign_off(project, slug, delivery=body.delivery, decision=body.decision, note=body.note)
+    return sign_off(
+        project,
+        slug,
+        delivery=body.delivery,
+        decision=body.decision,
+        note=body.note,
+        acs=body.acs,
+    )
 
 
 @router.post("/features/{project}/{slug}/acs/{ac}/check-runs")

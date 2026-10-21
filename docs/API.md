@@ -258,6 +258,15 @@ acceptance criteria rows, the records and every eval, it carries:
   requests), else `owner_signoff` while the acceptance eval's `owner_wait` is `sign_off`, or `owner_signoff_manual`
   while it is `no_acs` (a sign-off only the owner can write by hand, two-level-flows A17); `tickets` is empty for
   both.
+- `ac_rows[].signed_off` (AGH-425): `true` when the AC does not pass in `features.json` but its latest evals are all
+  the owner's SHIP (`provenance: owner`): the owner checked it by hand. It counts as passing in `acs.passing` (here
+  and in the list) and is no longer counted under `acs.owner_steps`.
+
+`POST /api/v1/features/{project}/{slug}/owner-signoff` also takes `acs` (1 to 200 AC ids, AGH-425) instead of
+`delivery`: the owner signs off the criteria they checked by hand. It writes an owner eval over exactly those live
+ACs, with no tickets, and answers 409, writing nothing, for an unknown or withdrawn AC, for `acs` together with
+`delivery`, for `done` over an AC whose latest eval is NO-SHIP, when the note would not rank newer than an eval
+naming one of them (undated, or dated at or after now), and when not every eval was read. An empty list is 422.
 
 ## Feature tickets
 

@@ -642,7 +642,10 @@ export interface paths {
      *     naming the acceptance eval covers what the Acceptance step waits on, with the no-body
      *     refusals, except that ``more_work`` is not refused over ACs an agent's eval reopened; either
      *     decision there is refused once an owner decision newer than the acceptance eval settled it
-     *     (its SHIP signed every waiting AC off, or its NO-SHIP is still the latest eval of one).
+     *     (its SHIP signed every waiting AC off, or its NO-SHIP is still the latest eval of one). With
+     *     ``acs``, signs off those criteria as checked by hand (AGH-425), with the same refusals over
+     *     them: an unknown AC, a NO-SHIP as the latest eval of one (``done``), an eval naming one that
+     *     the note would not rank newer than, evals left unread.
      */
     post: operations["sign_off_owner_steps_api_v1_features__project___slug__owner_signoff_post"];
     delete?: never;
@@ -1696,7 +1699,8 @@ export interface components {
     };
     /**
      * AcRow
-     * @description One acceptance criterion of ``features.json``.
+     * @description One acceptance criterion of ``features.json``; ``signed_off`` when it does not pass there
+     *     but the owner's latest eval of it (``provenance: owner``) says SHIP: checked by hand.
      */
     AcRow: {
       /** Command */
@@ -1716,6 +1720,11 @@ export interface components {
       passes: boolean;
       /** Repo */
       repo: string | null;
+      /**
+       * Signed Off
+       * @default false
+       */
+      signed_off: boolean;
     };
     /**
      * AcceptLearningBody
@@ -3529,9 +3538,12 @@ export interface components {
     Outcome: "done" | "stopped" | "blocked" | "error";
     /**
      * OwnerSignOffBody
-     * @description ``POST .../owner-signoff``: the eval to settle, the owner's decision and an optional note.
+     * @description ``POST .../owner-signoff``: the eval to settle (or the ACs the owner checked by hand), the
+     *     owner's decision and an optional note.
      */
     OwnerSignOffBody: {
+      /** Acs */
+      acs?: string[] | null;
       /**
        * Decision
        * @default done
