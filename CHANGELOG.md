@@ -11,8 +11,26 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- `hub web` can publish a Studio draft itself (AGH-298, `POST .../skills/drafts/{draft_id}/publish` with
+  `{target, confirm_managed}`), and the Studio's Publish now calls it instead of asking Claude to copy the draft:
+  Claude only edits the draft, the Studio shows "Publishing…" then "Published." with a link to the item, warns before
+  publishing a managed item, and offers Discard for a draft already published. The draft in `.hub-drafts/<id>/` lands on
+  the item it edits, or as a new item in the project's plugin, after the item's current content is recorded, and a
+  `publish` version names the draft and your identity; the draft is then removed. A skill edit keeps the files the
+  draft does not hold (a rename moves the folder), a hook edit replaces that one hook in its file, and a new hook is
+  merged into the plugin's `hooks/hooks.json` with its scripts. An invalid draft, a name already taken or a draft
+  already published is refused with nothing written; an item `hub.lock` manages needs a confirmation; in the
+  container (`make up`) it answers 409 `hub_read_only`. Neither a publish nor a restore spawns a process (no git,
+  no doctor check): the change shows in the hub's working tree.
+
 ### Changed
 
+- `make playground-export`: a session is credited with the hub files of a Studio Publish through the draft it
+  wrote (the `draft_id` a `publish` version names, read from the conductor's item versions), instead of a
+  `PUBLISHED <path>` line in Claude's reply, which the server publish no longer gives (AGH-298). A conductor older
+  than that leaves those files under "Not made by a playground session".
 - `hub web` Features and Feature detail: the golden path shows the feature's own steps, Spec, UX design, Research,
   Plan, Tickets, Build, Acceptance and Shipped, instead of Implement, Review and Evaluate (AGH-325). A brief alone
   keeps Spec in progress; UX design is done when every `ux-*.md` is approved; Plan shows the plan's version; Build

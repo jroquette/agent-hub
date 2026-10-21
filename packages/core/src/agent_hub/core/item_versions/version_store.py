@@ -9,6 +9,8 @@ every implementation:
 - ``last`` answers a unit's newest version; ``page`` its versions newest first, below
   ``before_seq`` when given (the cursor), at most ``limit``.
 - ``get`` answers a version only within its own unit: an id of another unit or project is None.
+- ``has_publish`` answers whether any unit of the project has a ``publish`` version naming that
+  ``draft_id`` (A20: such a draft is spent).
 - Nothing is ever updated or deleted: the port has no such method.
 """
 
@@ -48,4 +50,8 @@ class ItemVersionStore(Protocol):
 
     def get(self, project: str, unit_path: str, version_id: str) -> ItemVersion | None:
         """The version ``version_id`` of that unit, with its content, or None."""
+        ...
+
+    def has_publish(self, project: str, draft_id: str) -> bool:
+        """Whether a version of any of the project's units is a ``publish`` of ``draft_id``."""
         ...

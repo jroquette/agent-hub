@@ -313,11 +313,12 @@ ITEM_WRITES = (
     "/api/v1/projects/demo/skills/skill/demo/alpha/versions/0199f0a0-0000-7000-8000-00000000000a/restore",
     "/api/v1/projects/demo/skills/hook/project/pre-tool-use-1/versions/v-1/restore",
     "/api/v1/workflows/demo/review/versions/0199f0a0-0000-7000-8000-00000000000a/restore",
+    "/api/v1/projects/demo/skills/drafts/skill-abc123/publish",
 )
 
 
 @pytest.mark.parametrize("path", ITEM_WRITES)
-def test_is_item_write_when_restore_path_posted(path: str) -> None:
+def test_is_item_write_when_restore_or_publish_path_posted(path: str) -> None:
     assert is_item_write("POST", path)
     assert is_strict_write("POST", path)
     assert not is_run_write("POST", path)
@@ -332,6 +333,11 @@ def test_is_item_write_when_restore_path_posted(path: str) -> None:
         ("POST", "/api/v1/projects/demo/skills/skill/demo/alpha/versions/v-1/restore/extra"),
         ("POST", "/api/v1/workflows/demo/review/versions//restore"),
         ("POST", "/api/v1/workflows/demo/a/b/versions/v-1/restore"),
+        ("GET", ITEM_WRITES[3]),
+        ("POST", "/api/v1/projects/demo/skills/drafts/skill-abc123"),
+        ("POST", "/api/v1/projects/demo/skills/drafts//publish"),
+        ("POST", "/api/v1/projects/demo/skills/drafts/skill-abc123/publish/extra"),
+        ("POST", "/api/v1/projects/demo/drafts/skill-abc123/publish"),
     ],
 )
 def test_keeps_other_checks_when_not_item_write(method: str, path: str) -> None:
