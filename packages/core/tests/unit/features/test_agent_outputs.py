@@ -1434,6 +1434,7 @@ def a_preflight_document(**overrides: object) -> dict[str, object]:
     return document | overrides
 
 
+# two-level-flows AC-2.3: a preflight record that validates as agent-hub/preflight/1.
 def test_accepts_valid_preflight_when_every_field_valid() -> None:
     second = a_preflight_run(
         input="discovery", input_text="The claim needs auth.", drift="plan", change_request=3
@@ -1459,6 +1460,7 @@ def test_accepts_valid_preflight_when_every_field_valid() -> None:
     ],
     ids=["schema 2", "drift", "plan version 0", "ran at", "input", "note", "extra key"],
 )
+# two-level-flows AC-2.3: a malformed one names the JSON path.
 def test_reports_path_when_preflight_shape_broken(document: dict[str, object], path: str) -> None:
     problems = preflight_problems(review_bytes(document))
 
@@ -1477,3 +1479,32 @@ def test_reports_overlong_runs_when_preflight_runs_have_bad_items() -> None:
 
 def test_reports_root_when_preflight_bytes_not_object() -> None:
     assert preflight_problems(b"[]") == (OutputProblem("$", "must be a JSON object"),)
+
+
+# AGH-402 review S3, Q9: the cross-field rules of a preflight run (auditability NFR, AC-2.5).
+@pytest.mark.parametrize(
+    ("run", "message"),
+    [
+        (
+            {"input": "discovery", "input_text": None},
+            "Value error, input_text is required when input is discovery",
+        ),
+        (
+            {"input": "none", "input_text": "A note."},
+            "Value error, input_text must be null when input is none",
+        ),
+        (
+            {"drift": "local", "local_notes": []},
+            "Value error, local_notes needs at least one note when drift is local",
+        ),
+        (
+            {"drift": "plan", "local_notes": [], "change_request": None},
+            "Value error, change_request is required when drift is plan",
+        ),
+    ],
+    ids=["discovery without text", "none with text", "local without notes", "plan without request"],
+)
+def test_reports_run_when_preflight_fields_disagree(run: dict[str, object], message: str) -> None:
+    document = a_preflight_document(runs=[a_preflight_run(**run)])
+
+    assert preflight_problems(review_bytes(document)) == (OutputProblem("runs[0]", message),)

@@ -395,6 +395,7 @@ def a_preflight_document(**run: object) -> dict[str, object]:
     return {"schema": "agent-hub/preflight/1", "ticket": "DEM-7", "runs": [entry | run]}
 
 
+# two-level-flows AC-2.3: a valid preflight record exits 0.
 def test_prints_valid_when_preflight_record_valid(tmp_path: Path) -> None:
     path = a_preflight_file(tmp_path, a_preflight_document())
 
@@ -405,6 +406,7 @@ def test_prints_valid_when_preflight_record_valid(tmp_path: Path) -> None:
     assert result.stderr == ""
 
 
+# two-level-flows AC-2.3: a malformed one exits non-zero, naming the JSON path.
 def test_names_json_path_when_preflight_record_malformed(tmp_path: Path) -> None:
     path = a_preflight_file(tmp_path, a_preflight_document(drift="global"))
 
@@ -413,3 +415,26 @@ def test_names_json_path_when_preflight_record_malformed(tmp_path: Path) -> None
     assert result.exit_code == 1
     assert result.stdout == ""
     assert result.stderr == f"{path}: runs[0].drift: Input should be 'none', 'local' or 'plan'\n"
+
+
+# AGH-402 review Q3: an unreadable preflight file is never "valid".
+@pytest.mark.parametrize("case", ["missing", "link", "over bound"])
+def test_fails_one_line_when_preflight_record_unreadable(tmp_path: Path, case: str) -> None:
+    path = a_preflight_file(tmp_path, a_preflight_document())
+    cause = NOT_REGULAR
+    if case == "missing":
+        path = path.with_name("absent.json")
+        cause = "No such file or directory"
+    elif case == "link":
+        link = path.with_name("linked.json")
+        link.symlink_to(path.name)
+        path = link
+    else:
+        path.write_bytes(b" " * MAX_OUTPUT_BYTES + b"{}")
+        cause = f"$: the file is over {MAX_OUTPUT_BYTES} bytes"
+
+    result = run_unchanged(tmp_path, "preflight", path)
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == f"{path}: {cause}\n"
