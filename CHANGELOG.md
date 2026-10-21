@@ -19,6 +19,15 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `/design-fit` runs before code: what already exists, where the change belongs, and no abstraction without a consumer
   today, in at most five lines. Neither is started by `/feature` yet. Both arrive with `hub sync` after you bump
   `platform.version`; `models.agents` accepts `security-reviewer`.
+- The base plugin gains the `test-writer` agent and the `/property-based-testing` skill (AGH-411). `test-writer`
+  writes a task's failing acceptance tests from its ACs and public interfaces, never reading the implementation, at
+  most three per AC, and commits them RED; `/feature` does not start it yet (AGH-88 measures it first).
+  `/property-based-testing` writes property tests grounded in the code's own claims and classifies each failure.
+  Both arrive with `hub sync` after you bump `platform.version`.
+- The base plugin gains the `/test-strength` skill (AGH-412): mutation testing on the lines a diff changed only, with
+  the repo's own tool and a time budget, each surviving mutant classified as a test gap, an equivalent mutant (proved)
+  or unresolved, and redundant tests pointed out, never deleted. It sets no score target. Arrives with `hub sync`
+  after you bump `platform.version`.
 - `hub validate-output preflight <file>` checks a ticket's `preflight.json` against `agent-hub/preflight/1` and names
   the JSON path of each problem (AGH-402). `hub web` reads a ticket's records (`tickets/<id>/brief.md`,
   `preflight.json`, `plan.md`) and the feature's plan change requests (`change-requests/<n>.md` and their

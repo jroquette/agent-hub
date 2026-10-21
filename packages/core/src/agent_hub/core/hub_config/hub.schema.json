@@ -71,6 +71,14 @@
           ],
           "type": "string"
         },
+        "test-writer": {
+          "enum": [
+            "small",
+            "medium",
+            "large"
+          ],
+          "type": "string"
+        },
         "ux-designer": {
           "enum": [
             "small",

@@ -85,7 +85,7 @@ gate-needing steps that do not depend on each other are a plan error naming both
 `<$CTX.<name> from <node>>`), effect, service → endpoint, content hash, draft state and decision. It calls a script in
 `plan` mode, with no credential, only when all its args are known (else `runs with values known at run time`), and
 starts no run-mode process, agent, event or run; exit 1 on a `deny`. `hub scenario run` (same arguments, `--mode
-interactive|regression`; interactive exits 2 until it ships) refuses a plan problem or `deny` (exit 1, no scenario run),
+interactive|regression`, interactive by default) refuses a plan problem or `deny` (exit 1, no scenario run),
 pins its action files and gates, labels events `workflow: scenario:<name>`, and decides each action again as it runs.
 
 - **Regression:** no agent, no token. A divergence (a failed action, an `expect` timeout, an output contract failure)
@@ -103,31 +103,31 @@ and no shell metacharacter. `hub action run --run <id>` needs that run paused at
 environment and env file, records origin `agent`, and runs only `read` actions (a write exits 1 and records
 `policy.decision` `deny`). The agent records findings and options (a summary and `{action, with}` steps each) with
 `./hub scenario propose` (JSON on stdin, secret shapes redacted); each option is shown with its plan. The answer is
-`pick` (with the option id), `retry` or `stop`: `hub workflow respond <run> --node <step>__investigation --choice …`,
+`pick` (`--text <option id>`), `retry` or `stop`: `hub workflow respond <run> --node <step>__investigation --choice …`,
 `hub workflow decide` from hub web, or the Scenarios screen (Approvals sends the gate there). An option holding a
-`deny` step or a draft action cannot be picked (the reason is shown). A pick answers its steps' asks; a step whose
-plan changed since it was shown asks again. The option runs as `workaround.start`, its actions (origin `agent`),
-`workaround.end`, then the diverged step again as a new attempt; `retry` skips the workaround; `stop` ends the scenario
-run `cancelled`, findings kept. Nothing rewinds the system. `hub scenario findings <run> --issue <id>` creates a tracker
-issue after a terminal `y`; `--inbox <id>` writes a `brain/_inbox/` note (`provenance: agent-from-external`).
+`deny`, a draft action or a plan changed since shown cannot be picked (refused with its reason, nothing recorded). A
+pick answers its steps' asks: `workaround.start`, its actions (origin `agent`), `workaround.end`, then the diverged step
+as a new attempt; a failed or cut-short workaround (never re-run) opens a new investigation. `retry` skips it; `stop`
+ends it `cancelled`, findings kept. Nothing rewinds the system. `hub scenario findings <run> --issue <id>` creates a
+tracker issue after a terminal `y`; `--inbox <id>` writes a `brain/_inbox/` note (`provenance: agent-from-external`).
 
 ### Events and bounds
 
 Metadata only ([ADR 0019](../adr/0019-metadata-only-events-and-redaction.md)), each with a `payload_keys` row:
 `action.start`/`action.end` (`action`, `content_hash`, `environment`, `service`, `effect`, `origin`, `decision`,
 `approver`, `status`, `failure_kind`), `policy.decision` (`action` or node, `environment`, `effect`, `origin`,
-`decision`, `reason_kind`), `expect.poll` (`poll` count, `held` bool), `context.capture` (`name`), `finding`
-(`finding_id`, `step`), `workaround.start`/`workaround.end` (`workaround_id`, `option` id, `steps` count, `status`);
-`gate.request` gains `reason`. Args, outputs, captures, findings, chat stay in the run record (`.agent-runs/`). Bounds:
-`expect` `every` ≥ 5 s, `timeout` ≤ 24 h, ≤ 1000 polls (retries, resumes too); action stdout ≤ 512 KiB; plan mode ≤ 60 s;
-≤ 64 `--input` values of ≤ 64 KiB; a proposal ≤ 256 KiB, 20 findings, 5 options of ≤ 10 steps; API record reads ≤ 8 MiB.
+`decision`, `reason_kind`), `expect.poll` (`poll`, `held`), `context.capture` (`name`), `finding` (`finding_id`,
+`step`), `workaround.start`/`workaround.end` (`workaround_id`, `option`, `steps`, `status`); `gate.request` gains
+`reason`. Args, outputs, captures, findings, chat stay in the run record. Bounds: `expect` `every` ≥ 5 s, `timeout` ≤ 24
+h, ≤ 1000 polls (retries, resumes too); action stdout ≤ 512 KiB; plan mode ≤ 60 s; ≤ 64 `--input` values of ≤ 64 KiB; a
+proposal ≤ 256 KiB, 20 findings, 5 options of ≤ 10 steps; ≤ 10 proposals per investigation; API record reads ≤ 8 MiB.
 
 ### Known limits
 
 1. Agent nodes of a process workflow get a best-effort guard check (`environment_endpoint`); a hidden host passes.
 2. The guard and the investigation hook are not a sandbox: a process outside the guarded tools can read an env file.
 3. A process that fakes a terminal bypasses `hub action run`'s terminal rule.
-4. After a divergence, steps that do not depend on it still run in that pass.
+4. After a divergence, independent steps still run in that pass; a `loop_group` body step is not investigated.
 5. Local only: cloud sessions have no `hub.local.json`, no env files and no credentials.
 6. Policy gates (`<step>__ask`) of a process workflow run show in the run's steps but not in its graph.
 7. Redaction replaces each injected value of 4 characters or more exactly as written; a shorter one, or an encoded or
