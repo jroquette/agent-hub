@@ -451,3 +451,47 @@ def test_one_decision_launches_when_two_arrive_together() -> None:
 def test_refuses_body_when_it_breaks_the_request_shape(body: dict[str, Any]) -> None:
     with pytest.raises(ValidationError):
         GateDecisionRequest.model_validate(body)
+
+
+# AGH-359 (P-6, AM-14): policy gates are answered from a fixed view; an investigation gate is
+# not answered in Approvals.
+
+
+@pytest.mark.parametrize(
+    ("node", "workflow"),
+    [
+        ("build__ask", "review"),
+        ("rework__build__ask", "review"),
+        ("send-order__ask", "scenario:order-walk"),
+    ],
+)
+def test_offers_approve_reject_when_policy_gate_not_in_definition(node: str, workflow: str) -> None:
+    run = a_run(id="run-9", workflow=workflow, content_hash="sha256:abc")
+    reads = Reads(run, approvals=[a_gate(node)])
+    launcher = Launcher()
+
+    gate = gate_of(reads, f"run-9:{node}:1")
+    decided = decide(reads, launcher, f"run-9:{node}:1", decision="approve")
+
+    assert (gate.node, gate.workflow, gate.form, gate.text) == (node, workflow, "decision", "off")
+    assert [(choice.id, choice.label) for choice in gate.choices] == [
+        ("approve", "Approve"),
+        ("reject", "Reject"),
+    ]
+    assert decided.decision == "approve"
+    assert [name for name, _ in launcher.calls] == ["decide", "resume"]
+    with pytest.raises(RunInputError):
+        decide(reads, Launcher(), f"run-9:{node}:1", decision="approve", text="why")
+
+
+@pytest.mark.parametrize("workflow", ["review", "scenario:order-walk"])
+def test_refuses_when_investigation_gate_decided_in_approvals(workflow: str) -> None:
+    run = a_run(id="run-9", workflow=workflow, content_hash="sha256:abc")
+    reads = Reads(run, approvals=[a_gate("send__investigation")])
+    launcher = Launcher()
+
+    with pytest.raises(RunConflictError) as caught:
+        decide(reads, launcher, "run-9:send__investigation:1", decision="retry")
+
+    assert caught.value.code == "investigation_gate"
+    assert launcher.calls == []

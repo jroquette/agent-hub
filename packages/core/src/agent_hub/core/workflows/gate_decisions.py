@@ -4,7 +4,10 @@
 run, node and attempt (from the approval's ``gate_id``, ``<run>:<node>:<attempt>``, in the run's
 session ``run:<run>``), its form (``decision``, ``choice`` or ``text``), the choices with their
 labels and whether it takes a text, read from the workflow's current definition (the run graph
-does the same, AGH-226). ``DecideWorkflowGate`` checks the answer against that gate (422), then,
+does the same, AGH-226). A policy gate (``<step>__ask``, AM-14) is in no definition: it gets a
+fixed view, approve or reject, no text; an investigation gate (``<step>__investigation``) is
+refused here (409 ``investigation_gate``): its answer is a pick, retry or stop (P-6).
+``DecideWorkflowGate`` checks the answer against that gate (422), then,
 under the run commands' lock (``RunGuard``), refuses a run that ended, whose child still runs or
 whose issue has another live run (409), has the launcher record the decision (``hub workflow
 decide``: the CLI's ``DecideGate`` over the run's record, where ``web``) and resumes the run
@@ -32,11 +35,16 @@ from agent_hub.core.workflows.launch import (
     engine_run_target,
     refuse_busy,
 )
-from agent_hub.core.workflows.nodes import ApprovalNode, WaitNode
+from agent_hub.core.workflows.nodes import RESERVED_SUFFIXES, ApprovalNode, WaitNode
 from agent_hub.core.workflows.workflow_reads import ProjectHubs
 
 RUN_SESSION_PREFIX: Final = "run:"
 MAX_CHOICE_CHARS: Final = 64
+POLICY_GATE_SUFFIX, INVESTIGATION_SUFFIX = RESERVED_SUFFIXES
+# A policy ask (``<step>__ask``, AM-14): planner-inserted, so in no definition; always this view.
+_POLICY_GATE: Final = ApprovalNode.model_validate(
+    {"id": "policy-gate", "type": "approval", "message": "policy ask"}
+)
 
 type TextUse = Literal["off", "optional", "required"]
 
@@ -127,9 +135,14 @@ class WorkflowGates:
         if approval.decided:
             reason = f"the gate is already decided ({approval.status})"
             raise RunConflictError(code="decided", reason=reason, run_id=run_id)
+        if node_id.endswith(INVESTIGATION_SUFFIX):
+            reason = "an investigation is answered on its scenario run's screen, not in Approvals"
+            raise RunConflictError(code="investigation_gate", reason=reason, run_id=run_id)
         run, hub_path = engine_run_target(self._runs, self._hubs, run_id)
-        _, plan = self._plans.workflow_plan(run.project, run.workflow)
-        node = next((found for found in plan.all_nodes() if found.id == node_id), None)
+        node: object = _POLICY_GATE
+        if not node_id.endswith(POLICY_GATE_SUFFIX):
+            _, plan = self._plans.workflow_plan(run.project, run.workflow)
+            node = next((found for found in plan.all_nodes() if found.id == node_id), None)
         if not isinstance(node, ApprovalNode | WaitNode) or gate_form(node) == "timer":
             reason = f"the workflow {run.workflow} has no gate a person answers at {node_id}"
             raise RunConflictError(code="gate_not_in_workflow", reason=reason, run_id=run_id)
