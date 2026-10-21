@@ -503,6 +503,7 @@ describe("Deciding a change request in the ticket panel (AC-2.7, AC-2.12, AC-2.1
     const unreadable = aChangeRequest({
       status: null,
       approval_id: null,
+      decidable_here: true,
       problem: "change-requests/2.md could not be read (plan_to is missing). Fix it in a hub PR.",
     });
     const decidedOther = aChangeRequest({
