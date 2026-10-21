@@ -1,0 +1,186 @@
+# The implementing session reports a discovery: the rounds end, and the run loops back once to a
+# second pass whose preflight is given it (recorded as a discovery input), finds local drift and
+# goes on to the PR (AC-2.13).
+workflow: implement
+inputs:
+  feature: demo-flow
+  issue: DEM-1
+  repo: demo-api
+  issue_text: "```text\nid: DEM-1\n```"
+stubs:
+  context:
+    output: {path: brain/features/demo-flow/tickets/DEM-1/brief.md, version: 1}
+  pending:
+    output: {request: null, decision: '', input: none, note: '', summary: ''}
+  worktree:
+    output:
+      path: /ws/demo-api/.claude/worktrees/dem-1
+      branch: jdoe/dem-1
+      base: origin/trunk
+      hub: /ws/hub
+      hub_name: hub
+      check: make check
+      prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
+      target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
+  pass-1__preflight:
+    output:
+      plan_version: 1
+      commit: 0a1b2c3d
+      blockers_read: []
+      drift: none
+      local_notes: []
+      evidence: ''
+      proposal: ''
+      affected: ''
+      summary: ''
+  pass-1__entry:
+    output:
+      ran_at: '2026-10-21T10:00:00+00:00'
+      plan_version: 1
+      commit: 0a1b2c3d
+      blockers_read: []
+      input: none
+      input_text: null
+      drift: none
+      local_notes: []
+      change_request: null
+      run_id: implement-1
+  pass-1__record:
+    output: {path: brain/features/demo-flow/tickets/DEM-1/preflight.json, runs: 1}
+  pass-1__plan:
+    output: {path: brain/features/demo-flow/tickets/DEM-1/plan.md, tasks: 2}
+  pass-1__rounds__implement: {text: '{"status": "done", "summary": "Stops at a broken assumption.", "tests":
+      "", "discovery": "The plan''s T3 contract returns a list, not a page."}'}
+  pass-1__rounds__verdict:
+    output: {status: done, summary: Stops at a broken assumption., question: ''}
+  pass-1__rounds__discovery:
+    output: {discovery: 'The plan''s T3 contract returns a list, not a page.'}
+  pass-1__outcome:
+    output: {status: discovery, question: '', discovery: 'The plan''s T3 contract returns a list, not
+        a page.', verdict: ''}
+  pass-2__preflight:
+    output:
+      plan_version: 1
+      commit: 0a1b2c3d
+      blockers_read: []
+      drift: local
+      local_notes: ['T3''s list is paged here, in the ticket.']
+      evidence: ''
+      proposal: ''
+      affected: ''
+      summary: ''
+  pass-2__entry:
+    output:
+      ran_at: '2026-10-21T10:00:00+00:00'
+      plan_version: 1
+      commit: 0a1b2c3d
+      blockers_read: []
+      input: discovery
+      input_text: The plan's T3 contract returns a list, not a page.
+      drift: local
+      local_notes: ['T3''s list is paged here, in the ticket.']
+      change_request: null
+      run_id: implement-1
+  pass-2__record:
+    output: {path: brain/features/demo-flow/tickets/DEM-1/preflight.json, runs: 2}
+  pass-2__plan:
+    output: {path: brain/features/demo-flow/tickets/DEM-1/plan.md, tasks: 2}
+  pass-2__rounds__implement: {text: '{"status": "done", "summary": "Adds the change.", "tests": "make
+      test", "discovery": ""}'}
+  pass-2__rounds__verdict:
+    output: {status: done, summary: Adds the change., question: ''}
+  pass-2__rounds__discovery:
+    output: {discovery: ''}
+  pass-2__rounds__check:
+    output:
+      passed: true
+      exit_code: 0
+      round: 1
+      tail: "ok\n"
+  pass-2__rounds__spec:
+    output:
+      schema: agent-hub/review/1
+      reviewer: spec
+      ticket: DEM-1
+      task: DEM-1
+      round: 1
+      commit: 0a1b2c3d
+      verdict: PASS
+      findings: []
+  pass-2__rounds__quality:
+    output:
+      schema: agent-hub/review/1
+      reviewer: quality
+      ticket: DEM-1
+      task: DEM-1
+      round: 1
+      commit: 0a1b2c3d
+      verdict: PASS
+      findings: []
+  pass-2__rounds__review:
+    output:
+      verdict: PASS
+      lenses: {spec: PASS, quality: PASS}
+  pass-2__rounds__notes:
+    output:
+      check:
+        passed: true
+        exit_code: 0
+        tail: "ok\n"
+      findings: []
+      omitted: 0
+  pass-2__rounds__feedback:
+    output:
+      check:
+        passed: true
+        exit_code: 0
+        tail: "ok\n"
+      findings: []
+      omitted: 0
+  pass-2__outcome:
+    output: {status: done, question: '', discovery: '', verdict: PASS}
+  last:
+    output: {status: done, question: '', verdict: PASS, pass: 2}
+  eval:
+    output:
+      schema: agent-hub/eval/1
+      delivery: dem-1
+      verdict: SHIP
+      commit: 0a1b2c3d
+      tickets: [DEM-1]
+      acs: [AC-1.1]
+      results:
+      - {ac: AC-1.1, command: make test, exit_code: 0, status: pass, summary: The endpoint answers.}
+      gates:
+      - {repo: demo-api, name: check, exit_code: 0, status: pass}
+      red_on_parent: []
+      owner_steps: []
+  commits:
+    output:
+      count: 1
+      subjects: ['feat(api): change (DEM-1)']
+      summary: Adds the change.
+      dirty: false
+  pr:
+    output: {url: 'https://github.com/acme/demo-api/pull/99', found: false, summary: Adds the change.,
+      title_unmatched: null}
+  report:
+    output: {delivery: delivered, stage: '', reason: '', question: '', pr: 'https://github.com/acme/demo-api/pull/99',
+      summary: Adds the change.}
+  delivery:
+    output:
+      delivery: delivered
+      stage: ''
+      reason: ''
+      question: ''
+      pr: https://github.com/acme/demo-api/pull/99
+      summary: Adds the change.
+      hub_files: [brain/features/demo-flow/tickets/DEM-1/brief.md, brain/features/demo-flow/tickets/DEM-1/plan.md,
+        brain/features/demo-flow/tickets/DEM-1/preflight.json]
+expect: {status: done, outcome: delivered}
+reached: [context, pending, worktree, pass-1__preflight, pass-1__entry, pass-1__record, pass-1__plan,
+  pass-1__rounds, pass-1__rounds__implement, pass-1__rounds__verdict, pass-1__rounds__discovery, pass-1__outcome,
+  pass-2__preflight, pass-2__entry, pass-2__record, pass-2__plan, pass-2__rounds, pass-2__rounds__implement,
+  pass-2__rounds__verdict, pass-2__rounds__discovery, pass-2__rounds__check, pass-2__rounds__spec, pass-2__rounds__quality,
+  pass-2__rounds__review, pass-2__rounds__notes, pass-2__rounds__feedback, pass-2__outcome, last, eval,
+  commits, pr, report, delivery]

@@ -1,0 +1,111 @@
+# The owner declines and the re-check still finds plan drift: the run ends blocked for the owner
+# (status done, outcome blocked) with no ticket plan, rounds, eval or PR (AC-2.12, A2).
+workflow: implement
+inputs:
+  feature: demo-flow
+  issue: DEM-1
+  repo: demo-api
+  issue_text: "```text\nid: DEM-1\n```"
+stubs:
+  context:
+    output: {path: brain/features/demo-flow/tickets/DEM-1/brief.md, version: 1}
+  pending:
+    output: {request: null, decision: '', input: none, note: '', summary: ''}
+  worktree:
+    output:
+      path: /ws/demo-api/.claude/worktrees/dem-1
+      branch: jdoe/dem-1
+      base: origin/trunk
+      hub: /ws/hub
+      hub_name: hub
+      check: make check
+      prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
+      target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
+  pass-1__preflight:
+    output:
+      plan_version: 1
+      commit: 0a1b2c3d
+      blockers_read: []
+      drift: plan
+      local_notes: []
+      evidence: The handler moved to src/api/routes.py.
+      proposal: Route T2 through routes.py.
+      affected: T3
+      summary: T2 goes through routes.py
+  pass-1__request:
+    output: {path: brain/features/demo-flow/change-requests/1.md, n: 1, plan_from: 1, plan_to: 2}
+  pass-1__entry:
+    output:
+      ran_at: '2026-10-21T10:00:00+00:00'
+      plan_version: 1
+      commit: 0a1b2c3d
+      blockers_read: []
+      input: none
+      input_text: null
+      drift: plan
+      local_notes: []
+      change_request: 1
+      run_id: implement-1
+  pass-1__record:
+    output: {path: brain/features/demo-flow/tickets/DEM-1/preflight.json, runs: 1}
+  pass-1__gate: {decision: decline, text: Keep the handler where the plan says; add the route there.}
+  pass-1__declined:
+    output: {path: brain/features/demo-flow/change-requests/1.decision.md, decision: declined}
+  pass-1__recheck:
+    output:
+      plan_version: 1
+      commit: 0a1b2c3d
+      blockers_read: []
+      drift: plan
+      local_notes: []
+      evidence: The handler moved to src/api/routes.py.
+      proposal: Route T2 through routes.py.
+      affected: T3
+      summary: T2 goes through routes.py
+  pass-1__reentry:
+    output:
+      ran_at: '2026-10-21T10:00:00+00:00'
+      plan_version: 1
+      commit: 0a1b2c3d
+      blockers_read: []
+      input: declined_change
+      input_text: Keep the handler where the plan says; add the route there.
+      drift: plan
+      local_notes: []
+      change_request: 1
+      run_id: implement-1
+  pass-1__rerecord:
+    output: {path: brain/features/demo-flow/tickets/DEM-1/preflight.json, runs: 2}
+  pass-1__outcome:
+    output: {status: blocked, question: 'plan drift remains after the owner''s decision on change request
+        1: the next /implement opens a new change request', discovery: '', verdict: ''}
+  last:
+    output: {status: blocked, question: 'plan drift remains after the owner''s decision on change request
+        1: the next /implement opens a new change request', verdict: '', pass: 1}
+  commits:
+    output:
+      count: 0
+      subjects: []
+      summary: ''
+      dirty: false
+  report:
+    output: {delivery: blocked, stage: implementing, reason: 'the implementing session stopped: plan drift
+        remains after the owner''s decision on change request 1: the next /implement opens a new change
+        request', question: 'plan drift remains after the owner''s decision on change request 1: the next
+        /implement opens a new change request', pr: '', summary: ''}
+  delivery:
+    output:
+      delivery: blocked
+      stage: implementing
+      reason: 'the implementing session stopped: plan drift remains after the owner''s decision on change
+        request 1: the next /implement opens a new change request'
+      question: 'plan drift remains after the owner''s decision on change request 1: the next /implement
+        opens a new change request'
+      pr: ''
+      summary: ''
+      hub_files: [brain/features/demo-flow/change-requests/1.decision.md, brain/features/demo-flow/change-requests/1.md,
+        brain/features/demo-flow/tickets/DEM-1/brief.md, brain/features/demo-flow/tickets/DEM-1/preflight.json]
+expect: {status: done, outcome: blocked}
+reached: [context, pending, worktree, pass-1__preflight, pass-1__request, pass-1__entry, pass-1__record,
+  pass-1__gate, pass-1__declined, pass-1__recheck, pass-1__reentry, pass-1__rerecord, pass-1__outcome,
+  last, commits, report, delivery]

@@ -1,10 +1,13 @@
 """The built-in ``sdlc`` pack (AGH-229, AC-213.17): ``deliver`` and ``review`` load and plan, their
 fixtures pass, every lens declares the review JSON of ``hub validate-output review`` as its
 output_format, the review stubs are valid review outputs, and the pack's Python scripts print what
-their nodes declare.
+their nodes declare. ``implement`` and its ``ticket-pass`` (two-level-flows S2, AC-2.10): they plan,
+their fixtures pass from a hub that holds a seeded ``sdlc`` pack (the built-in ones are reached),
+the ticket eval declares the eval JSON, the gate captures a decline's note, and their scripts.
 """
 
 import json
+import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -16,6 +19,7 @@ from click import unstyle
 from typer.testing import Result
 
 from agent_hub.core.features.agent_outputs import review_problems
+from agent_hub.core.features.output_models import PreflightRun
 from agent_hub.core.runner.issue_block import issue_block
 from agent_hub.core.testing.builders import an_issue
 from agent_hub.core.workflows.document import parse_workflow
@@ -31,6 +35,23 @@ type Workspace = Any
 
 PACK = BUILTIN_WORKFLOWS / "sdlc"
 REVIEW_SCHEMA = Path(__file__).parents[3] / "core/src/agent_hub/core/features/review.v1.json"
+EVAL_SCHEMA = REVIEW_SCHEMA.with_name("eval.v1.json")
+IMPLEMENT_FIXTURES = (
+    "implement-declined-still-plan",
+    "implement-discovery-once",
+    "implement-discovery-third-blocked",
+    "implement-drift-local",
+    "implement-drift-none",
+    "implement-drift-plan",
+    "implement-eval-no-ship",
+    "implement-pending-decision-approved",
+    "implement-pending-decision-declined",
+    "implement-pending-declined-still-plan",
+    "implement-plan-approved",
+    "implement-plan-declined",
+    "implement-pr-failure",
+    "implement-rounds-exhausted",
+)
 FIXTURES = (
     "deliver-blocked",
     "deliver-check-error",
@@ -45,7 +66,11 @@ FIXTURES = (
     "review-lens-failed",
     "review-pass",
 )
-LENSES = {"review": ("spec", "quality"), "deliver": ("rounds__spec", "rounds__quality")}
+LENSES = {
+    "review": ("spec", "quality"),
+    "deliver": ("rounds__spec", "rounds__quality"),
+    "ticket-pass": ("rounds__spec", "rounds__quality"),
+}
 
 
 def nodes_of(name: str) -> dict[str, Any]:
@@ -134,7 +159,56 @@ def test_prints_each_node_without_running_when_deliver_dry_run(
     )
 
 
-@pytest.mark.parametrize("workflow", ["review", "deliver"])
+def test_reaches_the_built_in_fixtures_when_implement_tested_from_a_hub_with_a_seeded_pack(
+    demo_workspace: Workspace, run_command: CommandRunner
+) -> None:
+    # A hub seeded before the release that adds implement: its sdlc copy holds none of it (A1).
+    seeded = demo_workspace.hub / "workflows/sdlc"
+    for name in ("implement.yaml", "ticket-pass.yaml", *(f"fixtures/{f}.yaml" for f in IMPLEMENT_FIXTURES)):
+        (seeded / name).unlink()
+    passes = run_command(demo_workspace.hub, "workflow", "validate", "ticket-pass")
+    validated = run_command(demo_workspace.hub, "workflow", "validate", "implement")
+    tested = run_command(demo_workspace.hub, "workflow", "test", "implement")
+
+    assert (demo_workspace.hub / "workflows/sdlc/deliver.yaml").is_file()
+    assert passes.stdout == "ticket-pass: valid (14 nodes in 13 layers)\n", passes.output
+    assert validated.stdout == "implement: valid (52 nodes in 49 layers)\n", validated.output
+    assert tested.exit_code == 0, tested.output
+    for fixture in IMPLEMENT_FIXTURES:
+        assert f"<builtin>/sdlc/fixtures/{fixture}.yaml: ok" in tested.stdout
+    assert "warning" not in tested.stdout
+    assert tested.stdout.endswith("14 fixtures: 14 passed, 0 failed\n")
+
+
+def test_captures_a_decline_note_when_the_owner_answers_the_plan_change_gate() -> None:
+    gate = nodes_of("ticket-pass")["gate"]
+
+    assert [decision.id for decision in gate.decisions] == ["approve", "decline"]
+    assert gate.capture_response is True
+
+
+def test_declares_the_eval_schema_when_the_ticket_eval_runs() -> None:
+    schema = json.loads(EVAL_SCHEMA.read_text(encoding="utf-8"))
+    node = nodes_of("implement")["eval"]
+
+    # The document's mappings are read-only: dict() them for JSON.
+    declared = json.loads(json.dumps(node.output_format, default=dict))
+
+    assert resolved(declared, declared["$defs"]) == resolved(schema, schema["$defs"])
+
+
+def test_checks_afresh_and_read_only_when_ticket_pass_runs_a_preflight() -> None:
+    nodes = nodes_of("ticket-pass")
+
+    assert nodes["preflight"].output_format == nodes["recheck"].output_format
+    for name in ("preflight", "recheck"):
+        assert (nodes[name].mutates_checkout, nodes[name].context) == (False, "fresh")
+        assert nodes[name].prompt_file == "preflight.md"
+    assert "context" not in nodes["rounds__implement"].model_fields_set
+    assert nodes["rounds"].max_iterations == 3
+
+
+@pytest.mark.parametrize("workflow", ["review", "deliver", "ticket-pass"])
 def test_declares_the_review_schema_when_a_lens_runs(workflow: str) -> None:
     review = json.loads(REVIEW_SCHEMA.read_text(encoding="utf-8"))
     nodes = nodes_of(workflow)
@@ -391,3 +465,217 @@ def test_stays_under_the_prompt_cap_when_both_reviews_are_schema_max(tmp_path: P
     assert f'"omitted":{output["omitted"]}' in prompt
     assert len(issue_text.encode()) > 92000
     assert len(prompt.encode()) < 131072
+
+
+def a_script(
+    name: str, *args: str, cwd: Path, stdin: str = "", env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    path = PACK / "scripts" / name
+    return subprocess.run(  # noqa: S603 - this interpreter, a pack script, fixed arguments
+        [sys.executable, "-I", str(path), *args],
+        cwd=cwd,
+        input=stdin,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+
+
+def checked(output: str, workflow: str, node: str) -> Any:
+    value = json.loads(output)
+    JsonSchemaOutputs().check(nodes_of(workflow)[node].output_format, value)
+    return value
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        ('Done.\n`{"status": "done", "discovery": "T3 returns\\na list."}`\n', "T3 returns a list."),
+        ('{"status": "done", "discovery": ""}', ""),
+        ('{"status": "done", "discovery": 3}', ""),
+        ("BLOCKED: which endpoint?", ""),
+    ],
+)
+def test_reads_the_last_json_line_when_discovery_script_reads_a_reply(
+    tmp_path: Path, *, reply: str, expected: str
+) -> None:
+    result = a_script("discovery.py", cwd=tmp_path, stdin=reply)
+
+    assert result.returncode == 0, result.stderr
+    assert checked(result.stdout, "ticket-pass", "rounds__discovery") == {"discovery": expected}
+
+
+AGENT_FINDINGS = {
+    "plan_version": 2,
+    "commit": "0a1b2c3d",
+    "blockers_read": ["DEM-7"],
+    "drift": "plan",
+    "local_notes": [],
+    "evidence": "The handler moved.",
+    "proposal": "Follow it.",
+    "affected": "T3",
+    "summary": "T2 follows the handler",
+}
+
+
+@pytest.mark.parametrize(
+    ("args", "drift", "expected"),
+    [
+        (
+            ("--input", "decline", "--text", "Keep\n\tthe plan.", "--request", "", "--request", "3"),
+            "plan",
+            {"input": "declined_change", "input_text": "Keep the plan.", "change_request": 3},
+        ),
+        (
+            ("--input", "approve", "--text", "Fine.", "--request", "1"),
+            "none",
+            {"input": "none", "input_text": None, "change_request": None},
+        ),
+        (
+            ("--input", "discovery", "--text", "T3 returns a list."),
+            "local",
+            {"input": "discovery", "input_text": "T3 returns a list.", "change_request": None},
+        ),
+    ],
+)
+def test_prints_one_valid_preflight_run_when_preflight_run_script_gets_findings(
+    tmp_path: Path, *, args: tuple[str, ...], drift: str, expected: dict[str, Any]
+) -> None:
+    findings = AGENT_FINDINGS | {"drift": drift, "local_notes": ["x"] if drift == "local" else []}
+    env = {"PATH": os.environ.get("PATH", ""), "AGENT_HUB_RUN_ID": "implement-1"}
+
+    result = a_script(
+        "preflight_run.py", "--agent", json.dumps(findings), *args, cwd=tmp_path, env=env
+    )
+
+    assert result.returncode == 0, result.stderr
+    run = json.loads(result.stdout)
+    PreflightRun.model_validate(run)
+    assert {key: run[key] for key in expected} == expected
+    assert (run["run_id"], run["plan_version"], run["drift"]) == ("implement-1", 2, drift)
+
+
+def test_exits_two_when_preflight_run_script_has_no_run_id(tmp_path: Path) -> None:
+    env = {"PATH": os.environ.get("PATH", "")}
+
+    result = a_script(
+        "preflight_run.py", "--agent", "{}", "--input", "none", cwd=tmp_path, env=env
+    )
+
+    assert (result.returncode, result.stdout) == (2, "")
+
+
+def a_rounds(*, status: str = "done", discovery: str = "", verdict: str | None = "PASS") -> str:
+    rounds: dict[str, Any] = {
+        "verdict": {"status": status, "summary": "", "question": "which endpoint?"},
+        "discovery": {"discovery": discovery},
+        "review": None if verdict is None else {"verdict": verdict},
+    }
+    return json.dumps(rounds)
+
+
+@pytest.mark.parametrize(
+    ("rounds", "expected"),
+    [
+        (
+            "",
+            {
+                "status": "blocked",
+                "question": "plan drift remains after the owner's decision on change request 4:"
+                " the next /implement opens a new change request",
+            },
+        ),
+        (a_rounds(status="blocked", verdict=None), {"status": "blocked", "question": "which endpoint?"}),
+        (a_rounds(discovery="T3 returns a list.", verdict=None), {"status": "discovery", "discovery": "T3 returns a list."}),
+        (a_rounds(), {"status": "done", "verdict": "PASS"}),
+    ],
+)
+def test_says_how_the_pass_ended_when_pass_outcome_script_reads_the_rounds(
+    tmp_path: Path, *, rounds: str, expected: dict[str, str]
+) -> None:
+    result = a_script(
+        "pass_outcome.py", "--rounds", rounds, "--request", "", "--request", "4", cwd=tmp_path
+    )
+
+    assert result.returncode == 0, result.stderr
+    empty = {"status": "", "question": "", "discovery": "", "verdict": ""}
+    assert checked(result.stdout, "ticket-pass", "outcome") == empty | expected
+
+
+def a_pass(status: str, *, discovery: str = "", verdict: str = "") -> str:
+    return json.dumps({"status": status, "question": "", "discovery": discovery, "verdict": verdict})
+
+
+@pytest.mark.parametrize(
+    ("passes", "expected"),
+    [
+        ((a_pass("done", verdict="PASS"), "", ""), {"status": "done", "verdict": "PASS", "pass": 1}),
+        (
+            (a_pass("discovery", discovery="A."), a_pass("done", verdict="PASS"), ""),
+            {"status": "done", "verdict": "PASS", "pass": 2},
+        ),
+        (
+            (a_pass("discovery"), a_pass("discovery"), a_pass("discovery", discovery="C.")),
+            {"status": "blocked", "question": "a discovery in pass 3, the last one: C.", "pass": 3},
+        ),
+    ],
+)
+def test_reads_the_last_pass_and_blocks_a_third_discovery_when_last_pass_script_runs(
+    tmp_path: Path, *, passes: tuple[str, ...], expected: dict[str, Any]
+) -> None:
+    args = [item for text in passes for item in ("--pass", text)]
+
+    result = a_script("last_pass.py", *args, cwd=tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    empty = {"question": "", "verdict": ""}
+    assert checked(result.stdout, "implement", "last") == empty | expected
+
+
+def test_exits_two_when_last_pass_script_gets_no_pass(tmp_path: Path) -> None:
+    result = a_script("last_pass.py", "--pass", "", cwd=tmp_path)
+
+    assert (result.returncode, result.stdout) == (2, "")
+
+
+def test_names_the_changed_hub_files_and_a_no_ship_when_delivery_script_runs(
+    tmp_path: Path,
+) -> None:
+    def git(*args: str) -> None:
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)  # noqa: S607
+    feature = tmp_path / "brain/features/demo-flow"
+    (feature / "tickets/DEM-1").mkdir(parents=True)
+    (tmp_path / "brain/features/other").mkdir()
+    (feature / "plan.md").write_text("# Plan\n")
+    git("init", "-q")
+    git("-c", "user.name=T", "-c", "user.email=t@example.com", "add", ".")
+    git("-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-qm", "base")
+    (feature / "plan.md").write_text("# Plan\n\n## Amendments\n")
+    (feature / "tickets/DEM-1/brief.md").write_text("x\n")
+    (tmp_path / "brain/features/other/plan.md").write_text("y\n")
+    report = {
+        "delivery": "failed",
+        "stage": "pr_open",
+        "reason": "no PR was opened for the commits",
+        "question": "",
+        "pr": "",
+        "summary": "",
+    }
+
+    result = a_script(
+        "delivery.py",
+        *("--report", json.dumps(report), "--feature", "demo-flow", "--eval", "NO-SHIP"),
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert checked(result.stdout, "implement", "delivery") == report | {
+        "stage": "evaluating",
+        "reason": "the ticket eval is NO-SHIP: no PR was opened",
+        "hub_files": [
+            "brain/features/demo-flow/plan.md",
+            "brain/features/demo-flow/tickets/DEM-1/brief.md",
+        ],
+    }
