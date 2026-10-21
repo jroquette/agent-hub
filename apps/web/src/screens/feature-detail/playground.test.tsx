@@ -292,16 +292,17 @@ describe("the feature page header", () => {
 
     const title = await screen.findByRole("heading", { level: 1, name: "Layered memory" });
     expect(title).not.toHaveClass("ah-mono");
-    const slug = title.nextElementSibling;
-    expect(slug).toHaveTextContent(/^layered-memory$/);
-    expect(slug).toHaveClass("ah-mono");
+    const label = title.nextElementSibling;
+    expect(label).toHaveAccessibleName("Feature label layered-memory");
+    expect(label).toHaveTextContent(/^layered-memory$/);
   });
 
-  it("AC-PG-28.2 reads the slug as the title, mono, when there is no nickname", async () => {
+  it("AC-PG-28.2 reads the slug as the title, mono, when there is no nickname, and keeps the label", async () => {
     open({ "/api/v1/feature-names": { items: [] } }, PAGE);
 
     const title = await screen.findByRole("heading", { level: 1, name: "layered-memory" });
     expect(title).toHaveClass("ah-mono");
+    expect(title.nextElementSibling).toHaveAccessibleName("Feature label layered-memory");
   });
 });
 

@@ -3076,4 +3076,14 @@ button.ah-nav-item {
 .ah-feature-chip-slug {
   overflow: hidden;
   text-overflow: ellipsis;
+  font-family: var(--font-mono);
+}
+.ah-feature-label {
+  cursor: default;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.ah-feature-label:hover {
+  color: var(--text-muted);
+  border-color: var(--border-strong);
 }

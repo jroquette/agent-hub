@@ -1,4 +1,4 @@
-import { featureHref } from "./FeatureChip";
+import { FeatureLabel, featureHref } from "./FeatureChip";
 import "./features.css";
 
 import { useEffect, useRef, useState } from "react";
@@ -289,7 +289,7 @@ function FeatureRow({
               >
                 {name ?? f.slug}
               </Link>
-              {name && <span className="ft-row-slug">{f.slug}</span>}
+              <FeatureLabel slug={f.slug} />
               <RenameButton
                 slug={f.slug}
                 named={name !== null}

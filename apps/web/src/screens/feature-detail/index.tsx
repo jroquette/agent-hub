@@ -26,6 +26,7 @@ import {
   useDiscussTarget,
   type DiscussTarget,
 } from "../../shell/discuss";
+import { FeatureLabel } from "../features/FeatureChip";
 import { FeatureNameField, RenameButton, useFeatureNames } from "../features/names";
 import { AcBar, PHASES, VERDICT_STATUS } from "../features/parts";
 import { ApproveRecord, sessionName } from "./ApproveRecord";
@@ -356,7 +357,7 @@ function FeatureSessionChip({ session }: { session: AgentSession }) {
   );
 }
 
-/** The feature's nickname as the title, the slug beside it; the pencil renames it. */
+/** The feature's name as the title (its slug until renamed), then its fixed label; the pencil renames it. */
 function FeatureHeading({ project, slug }: { project: string; slug: string }) {
   const nameOf = useFeatureNames();
   const [editing, setEditing] = useState(false);
@@ -376,7 +377,7 @@ function FeatureHeading({ project, slug }: { project: string; slug: string }) {
   return (
     <span className="ah-row" style={{ gap: 8, flexWrap: "nowrap", minWidth: 0 }}>
       <h1 className={name ? "ah-h1" : "ah-h1 ah-mono"}>{name ?? slug}</h1>
-      {name && <span className="ah-mono ah-small ah-subtle">{slug}</span>}
+      <FeatureLabel slug={slug} />
       <RenameButton
         slug={slug}
         named={name !== null}
