@@ -240,17 +240,25 @@ def _request(n: int, head: RecordHead, decision: RecordHead | None) -> ChangeReq
         run_id=run_id,
         decision=decided,
         body=_body(head),
-        body_cut=head.head is not None and len(head.head) >= CHANGE_REQUEST_HEAD_BYTES,
+        body_cut=_cut(head),
     )
 
 
 def _body(head: RecordHead) -> str | None:
-    """The request's text after its frontmatter (within the head read), None when empty."""
+    """The request's text after its frontmatter (within the head read), None when empty. A
+    full head may end inside a character: only then is its replacement mark dropped."""
     if head.head is None:
         return None
-    # A cut at the head's end may split a character: drop its replacement mark.
-    text = split_frontmatter(head.head.decode("utf-8", "replace")).body.strip().rstrip("\ufffd")
+    text = split_frontmatter(head.head.decode("utf-8", "replace")).body.strip()
+    if _cut(head):
+        text = text.rstrip("\ufffd").rstrip()
     return f"{text}\n" if text else None
+
+
+def _cut(head: RecordHead) -> bool:
+    """Whether the head read fills its cap: the file may go on past it (a file of exactly the
+    cap reads as cut too, which only sends the owner to read it whole)."""
+    return head.head is not None and len(head.head) >= CHANGE_REQUEST_HEAD_BYTES
 
 
 def _decision(head: RecordHead) -> ChangeDecisionView:

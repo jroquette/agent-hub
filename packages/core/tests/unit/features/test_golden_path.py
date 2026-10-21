@@ -885,7 +885,7 @@ def test_keeps_acceptance_waiting_when_owner_steps_eval_has_no_live_ac() -> None
     # A19: a sign-off the owner writes by hand waits for the owner too.
     assert (acceptance.state, acceptance.meta) == (
         "waiting",
-        "Waiting on owner steps · no ACs listed",
+        "Sign off by hand · no ACs listed",
     )
     assert path.phase == "acceptance"
 
@@ -908,7 +908,7 @@ def test_keeps_acceptance_waiting_when_every_ac_is_withdrawn() -> None:
     # A19: a sign-off the owner writes by hand waits for the owner too.
     assert (acceptance.state, acceptance.meta) == (
         "waiting",
-        "Waiting on owner steps · no ACs listed",
+        "Sign off by hand · no ACs listed",
     )
     assert path.phase == "acceptance"
 
@@ -945,7 +945,7 @@ def test_keeps_acceptance_waiting_when_folder_is_shaped_like_workflows_engine() 
     waiting = _step(feature_parts(folder, now=READ_TIME).golden_path, "acceptance")
     after = _step(feature_parts(signed, now=READ_TIME).golden_path, "acceptance")
 
-    assert (waiting.state, waiting.meta) == ("partial", "Waiting on owner steps · no ACs listed")
+    assert (waiting.state, waiting.meta) == ("partial", "Sign off by hand · no ACs listed")
     assert (after.state, after.meta) == ("blocked", "Owner steps signed off")
 
 

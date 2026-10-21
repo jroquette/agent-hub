@@ -381,7 +381,7 @@ def _owner_steps(gate: EvalGate) -> _Own:
         case "no_acs":
             return _Own(
                 holds=False,
-                meta="Waiting on owner steps · no ACs listed",
+                meta="Sign off by hand · no ACs listed",
                 reason="the whole-feature eval leaves owner steps and lists no AC to sign off",
                 started=True,
                 waiting=True,
