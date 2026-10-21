@@ -131,8 +131,8 @@ reached: [implement, verify, report]              # exactly the nodes that ran
 ```
 
 `hub workflow test [name]...` runs a pack's `fixtures/*.yaml` in memory: no child, network, tracker write or event. A
-stub is `{output: <value>}` (fitting `output_format`), `{fail: <kind>}`, `{decision, text}`, `{text}`, `{choice}` or
-`{}` (waits); a loop iteration may add `until_exit`; an `expect`, one per poll. A reachable node with no stub, or a list
+stub is `{output: <value>}` (fitting `output_format`), `{fail: <kind>}`, `{decision, text, approver}`, `{text}`,
+`{choice}` or `{}` (waits); a loop iteration may add `until_exit`; an `expect`, one per poll. A reachable node with no stub, or a list
 that runs out, fails the test, but an approval or wait with none pauses the run (`expect.status: paused`).
 
 ## Invariants
