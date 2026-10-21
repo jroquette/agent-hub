@@ -6,11 +6,11 @@ exists is ``skipped``, "No screen change recorded"), Research and Plan (their re
 written; one left out while a later record exists is ``skipped``; Plan's meta is the plan's
 version, and its signal says the next version waits for the owner while a plan change request is
 open, AC-2.8), Tickets (every planned ticket has a tracker id), Build (every ticket merged: Done in
-Linear; its meta counts the tickets an open change request pauses), Acceptance (the latest whole-feature eval is SHIP, or SHIP-WITH-OWNER-STEPS whose owner
-steps the owner signed off; ticket evals never make it done) and Shipped (Build and Acceptance
-done). Canceled tickets and withdrawn ACs are left out of every count; an epic (a ticket with
-children) counts only under Tickets, as it tracks the others. Each ticket's own steps are its
-row's, not the golden path's.
+Linear; its meta counts the tickets an open change request pauses), Acceptance (the latest
+whole-feature eval is SHIP, or SHIP-WITH-OWNER-STEPS whose owner steps the owner signed off;
+ticket evals never make it done) and Shipped (Build and Acceptance done). Canceled tickets and
+withdrawn ACs are left out of every count; an epic (a ticket with children) counts only under
+Tickets, as it tracks the others. Each ticket's own steps are its row's, not the golden path's.
 
 The fold: steps hold in turn until the first that does not, the gate; it is ``current`` (or
 ``unknown`` when its evidence cannot be read, ``unrecorded`` when its record was never written)
