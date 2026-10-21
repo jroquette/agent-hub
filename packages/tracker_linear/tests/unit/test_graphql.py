@@ -1157,3 +1157,32 @@ def test_uses_only_the_refusing_redirect_handler_when_module_loaded() -> None:
         )
         is None
     )
+
+
+def test_raises_without_retry_when_create_issue_not_successful(
+    fake_linear_api: Any, synthetic_key: str, tracker_backend: FakeTrackerBackend
+) -> None:
+    fake_linear_api.mutation_success = False
+    before = copy.deepcopy(tracker_backend)
+
+    with pytest.raises(TrackerError, match=r"^create_issue: Linear reported no success"):
+        _client(fake_linear_api, synthetic_key).create_issue("DEM", "A finding", "Plain words.")
+
+    assert tracker_backend == before
+    assert _operation_names(fake_linear_api) == ["FindTeams", "CreateIssue"]
+
+
+def test_sends_team_uuid_and_texts_when_create_issue_called(
+    fake_linear_api: Any, synthetic_key: str
+) -> None:
+    created = _client(fake_linear_api, synthetic_key).create_issue(
+        "DEM", "A finding", "Plain words."
+    )
+
+    (create,) = [r for r in fake_linear_api.requests if r["operationName"] == "CreateIssue"]
+    assert set(create["variables"]["input"]) == {"teamId", "title", "description"}
+    assert (created.title, created.description, created.state) == (
+        "A finding",
+        "Plain words.",
+        "Todo",
+    )

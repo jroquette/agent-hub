@@ -4,7 +4,8 @@ The transport (the key, the request, the checks on the answer) is ``graphql_tran
 
 Every write resolves the identifier (``DEM-1``) to the issue's UUID once, with ``issue(id:)``,
 and passes only UUIDs to the mutation (D-c). A write that would change nothing (the current
-state, a present label added, an absent label removed) sends no mutation.
+state, a present label added, an absent label removed) sends no mutation. ``create_issue``
+resolves the team key to its UUID with ``teams(filter:)``, then sends one ``issueCreate``.
 
 Every failure is a one-line ``TrackerError`` naming the operation, the issue id, the cause and
 the fix (``graphql_transport`` lists the transport's). Nothing is retried. The key is never part
@@ -24,6 +25,7 @@ from agent_hub.tracker_linear.graphql_transport import LINEAR_GRAPHQL_URL as LIN
 from agent_hub.tracker_linear.graphql_transport import MAX_QUOTED_CHARS as MAX_QUOTED_CHARS
 from agent_hub.tracker_linear.graphql_transport import MAX_RESPONSE_BYTES as MAX_RESPONSE_BYTES
 from agent_hub.tracker_linear.graphql_transport import (
+    Nullable,
     Post,
     Shape,
     quoted,
@@ -107,6 +109,14 @@ _CREATE_COMMENT = (
     "mutation CreateComment($input: CommentCreateInput!) {"
     " commentCreate(input: $input) { success } }"
 )
+
+_FIND_TEAMS = "query FindTeams($filter: TeamFilter!) { teams(filter: $filter) { nodes { id } } }"
+
+_CREATE_ISSUE = (
+    "mutation CreateIssue($input: IssueCreateInput!) {"
+    f" issueCreate(input: $input) {{ success issue {{ {_ISSUE_FIELDS} }} }} }}"
+)
+_CREATE_ISSUE_SHAPE: Shape = {"issueCreate": {"success": bool, "issue": Nullable(_ISSUE_SHAPE)}}
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -248,6 +258,39 @@ class LinearGraphqlTrackerClient:
         )
         _check_success("comment", issue_id, data["commentCreate"])
 
+    def create_issue(self, team: str, title: str, description: str) -> Issue:
+        """Create one issue in the team with the key ``team``; an unknown key raises first."""
+        teams = self._node_ids(
+            operation="create_issue",
+            issue_id=None,
+            operation_name="FindTeams",
+            query=_FIND_TEAMS,
+            root="teams",
+            issue_filter={"key": {"eq": team}},
+        )
+        if not teams:
+            raise TrackerError(
+                operation="create_issue",
+                cause=f"team {team!r} not found",
+                fix="use the key of a team in Linear, as tracker.team names it",
+            )
+        data = self._request(
+            operation="create_issue",
+            issue_id=None,
+            operation_name="CreateIssue",
+            query=_CREATE_ISSUE,
+            variables={"input": {"teamId": teams[0], "title": title, "description": description}},
+            shape=_CREATE_ISSUE_SHAPE,
+        )
+        payload = data["issueCreate"]
+        if payload["success"] is not True or payload["issue"] is None:
+            raise TrackerError(
+                operation="create_issue",
+                cause="Linear reported no success",
+                fix="check the team in Linear before creating it again",
+            )
+        return _issue_from_node("create_issue", None, payload["issue"])
+
     def _issue_ref(self, operation: str, issue_id: str) -> _IssueRef:
         """Resolve the identifier to the issue's UUID, team, state and labels (one request)."""
         _check_issue_id(operation, issue_id)
@@ -295,7 +338,7 @@ class LinearGraphqlTrackerClient:
         self,
         *,
         operation: str,
-        issue_id: str,
+        issue_id: str | None,
         operation_name: str,
         query: str,
         root: str,
