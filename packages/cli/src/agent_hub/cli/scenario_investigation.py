@@ -12,7 +12,8 @@ resume runs the diverged step again as a new attempt. Past ``MAX_INVESTIGATIONS`
 held: the scenario run fails as in regression mode. A step in a ``loop_group`` body fails its
 group, which is not an action step, so it is not investigated.
 
-**The proposal** (``record_proposal``, for ``hub scenario propose``): findings get run-wide ids
+**The proposal** (``record_proposal``, for ``hub scenario propose``; at most ``MAX_PROPOSALS``
+per investigation, none once it is answered): findings get run-wide ids
 (``f<n>``), options ``o<n>`` in the proposal; each option's steps are planned with origin
 ``agent`` (``workaround.plan_option``) and recorded with that plan; one ``finding`` event each.
 
@@ -25,7 +26,8 @@ scenario run ``cancelled`` (findings kept), ``retry`` goes on, and ``pick`` runs
 first: ``workaround.start``, each step (origin ``agent``; the pick answered its ask) planned
 again and run only while its plan is the one shown, ``workaround.end``. A failed workaround, or
 one a crash cut (its start and no end: it is never run again silently), opens a new
-investigation of the same step.
+investigation of the same step. A crash after the workaround's end resumes from it (an ``ok``
+one goes on to the retry), and a ``stop`` whose gate closed before a crash still cancels.
 """
 
 import contextlib
@@ -59,6 +61,7 @@ from agent_hub.core.scenarios.investigation import (
     CHOICES,
     INVESTIGATION_REASON,
     MAX_INVESTIGATIONS,
+    MAX_PROPOSALS,
     PICK,
     STOP,
     Proposal,
@@ -266,6 +269,15 @@ def record_proposal(
     open_now = view.open_investigation
     if open_now is None:
         raise WorkflowRunError(f"the scenario run {folder.name} is not paused at an investigation")
+    made = sum(
+        1
+        for record in records
+        if record.get("event") == PROPOSAL and record.get("number") == open_now.number
+    )
+    if made >= MAX_PROPOSALS:
+        raise WorkflowRunError(
+            f"the investigation of step {open_now.step} already has {MAX_PROPOSALS} proposals"
+        )
     if open_now.choice is not None:
         # The answer was checked against the options shown: they no longer change.
         raise WorkflowRunError(
@@ -388,7 +400,9 @@ def answer(ports: AnswerPorts, investigation: InvestigationView) -> int | None:
         if failed is not None:
             return _reopen(ports, investigation, failed)
         return None
-    _close(ports, investigation)
+    if not investigation.closed:
+        # A stop closed before a crash is still a stop: the resume cancels the run.
+        _close(ports, investigation)
     if choice == STOP:
         ports.recorded.run_ended(RunEnd("cancelled", now(), reason=investigation.gate))
         typer.echo(f"run {ports.folder.name}: cancelled")
@@ -440,6 +454,15 @@ def _workaround(ports: AnswerPorts, investigation: InvestigationView) -> str | N
         record.get("event") == WORKAROUND_START and record.get("workaround_id") == workaround_id
         for record in ports.records
     )
+    ended = next(
+        (
+            record.get("status")
+            for record in ports.records
+            if record.get("event") == WORKAROUND_END
+            and record.get("workaround_id") == workaround_id
+        ),
+        None,
+    )
     proposal = investigation.proposal
     option = None if proposal is None else proposal.option((investigation.text or "").strip())
     facts = WorkaroundFacts(
@@ -450,6 +473,9 @@ def _workaround(ports: AnswerPorts, investigation: InvestigationView) -> str | N
         steps=0 if option is None else len(option.steps),
     )
     events = ports.log.events
+    if ended is not None:
+        # It ended before a crash: an ok workaround goes on to the retry, nothing runs twice.
+        return None if ended == "ok" else f"workaround {workaround_id} ended {ended}"
     if started:
         # It started and never ended: it may have run, and is never run again silently.
         _workaround_end(ports, facts, "interrupted")

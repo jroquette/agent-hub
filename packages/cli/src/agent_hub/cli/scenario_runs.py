@@ -104,7 +104,7 @@ from agent_hub.core.hub_config.effective_environments import (
 )
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.scenarios.credentials import CredentialNames
-from agent_hub.core.scenarios.investigation import CHOICES
+from agent_hub.core.scenarios.investigation import CHOICES, STOP
 from agent_hub.core.scenarios.policy_gates import (
     PolicyAsk,
 )
@@ -220,7 +220,12 @@ def resume(hub: Path, folder: Path, records: list[dict[str, JsonValue]]) -> int:
     """Continue a scenario run from its snapshot and records (the caller holds its lock and
     checked its snapshot's hash); its gates' answers are the recorded decisions. An open
     investigation must have its answer first."""
-    pending = fold_records(records).open_investigation
+    view = fold_records(records)
+    pending = view.open_investigation
+    last = view.investigations[-1] if view.investigations else None
+    if pending is None and last is not None and last.choice == STOP and view.status is None:
+        # The stop closed its gate, then the run stopped before its end: it still cancels.
+        pending = last
     if pending is not None and pending.choice is None:
         raise WorkflowRunError(
             f"the scenario run {folder.name} is paused at the investigation of step"
