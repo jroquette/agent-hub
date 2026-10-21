@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -165,3 +166,34 @@ def test_answers_not_found_when_config_of_unknown_project_requested(wired: Any) 
 
     assert response.status_code == 404
     assert response.json()["detail"] == "No project with id 'nope'."
+
+
+def test_lists_env_file_names_only_when_env_file_keys_requested(wired: Any, tmp_path: Path) -> None:
+    (tmp_path / "demo-hub").mkdir()
+    (tmp_path / "demo-api").mkdir()
+    (tmp_path / "demo-api" / "dotenv.staging").write_text(
+        "DATABASE_URL=postgres://pw@db\nTOKEN=x\n"
+    )
+    wired.hubs.configs["demo"] = hub_config_view(
+        hub_path=str(tmp_path / "demo-hub"),
+        config=HubConfig.model_validate(a_conventions_document()),
+        local=LocalConfig(),
+        read_git=lambda _keys: {},
+    )
+
+    response = wired.client.get(
+        "/api/v1/projects/demo/env-file-keys", params={"path": "demo-api/dotenv.staging"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["keys"] == ["DATABASE_URL", "TOKEN"]
+    assert "pw@db" not in response.text
+
+
+@pytest.mark.parametrize("path", ["../outside", "/etc/passwd", "~/x", "a b"])
+def test_rejects_env_file_path_when_it_escapes_the_workspace(wired: Any, path: str) -> None:
+    wired.hubs.configs["demo"] = _config()
+
+    response = wired.client.get("/api/v1/projects/demo/env-file-keys", params={"path": path})
+
+    assert response.status_code == 400

@@ -1038,6 +1038,27 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/projects/{project}/env-file-keys": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Env File Keys
+     * @description The variable NAMES an env file holds, never a value: only a regular file of at most
+     *     64 KiB inside the hub or one of its repos, with whether git ignores it there.
+     */
+    get: operations["get_env_file_keys_api_v1_projects__project__env_file_keys_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/projects/{project}/now": {
     parameters: {
       query?: never;
@@ -2527,6 +2548,33 @@ export interface components {
         })
       | unknown
       | unknown;
+    /**
+     * EnvFileKeys
+     * @description What hub web may show of an env file: whether it is found where it may be, whether git
+     *     ignores it, and its variable names. ``problem`` says, in words, why no names are shown.
+     */
+    EnvFileKeys: {
+      /** Exists */
+      exists: boolean;
+      /** Holder */
+      holder: string | null;
+      /** Ignored */
+      ignored: boolean | null;
+      /**
+       * Keys
+       * @default []
+       */
+      keys: string[];
+      /** Path */
+      path: string;
+      /** Problem */
+      problem?: string | null;
+      /**
+       * Truncated
+       * @default false
+       */
+      truncated: boolean;
+    };
     EnvironmentEdit:
       | components["schemas"]["AddEnvironment"]
       | components["schemas"]["SetEnvironment"]
@@ -8496,6 +8544,48 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["HubConfigView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_env_file_keys_api_v1_projects__project__env_file_keys_get: {
+    parameters: {
+      query: {
+        path: string;
+      };
+      header?: never;
+      path: {
+        project: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EnvFileKeys"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */
