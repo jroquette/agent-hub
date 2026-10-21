@@ -7,12 +7,13 @@ worktree list stay as they were. It takes the note from ``origin/<default_branch
 only read); it checks that the destination and the branch are free; builds one commit with plumbing
 (no checkout, no hook) that moves the note and sets its frontmatter, as the change's author; pushes
 that one new branch through the push guard; and opens the pull request with ``gh pr create``. When
-the push or ``gh`` fails (a timeout may come after GitHub accepted the ref), the branch is deleted
-again so a retry starts clean. A retry that still finds the branch on ``origin`` (the action got as
-far as the pull request, or its cleanup failed) adopts the branch's open pull request and returns
-it; with none open it deletes the branch, which can only be this action's
-(``<prefix>learning-<action>-<slug>``), and goes on. The temporary folder is always removed, and no
-git or gh output is logged, kept or put in an error.
+``gh`` fails, or the push fails after GitHub took the ref (a lost answer: ``origin`` has the branch
+at this action's commit), the branch is deleted again so a retry starts clean; a push ``origin``
+rejected deletes nothing (a proposal's branch there may be another session's). A retry that still
+finds the branch on ``origin`` (the action got as far as the pull request, or its cleanup failed)
+adopts the branch's open pull request and returns it; with none open it deletes the branch, which
+can only be this action's (``<prefix>learning-<action>-<slug>``), and goes on. The temporary
+folder is always removed, and no git or gh output is logged, kept or put in an error.
 
 The third action, ``propose`` (``hub mcp``, ADR 0044), adds one new note to ``brain/_inbox/`` in the
 same kind of clone: one commit off ``origin/<default_branch>`` that adds only the note, pushed on
@@ -233,11 +234,17 @@ class _Workspace[R: BrainChange | BrainProposal]:
 
     def _publish(self, commit: str) -> ChangeRequestResult:
         """Point the change's new branch at ``commit``, push it and open its pull request; when
-        the push or the pull request fails, delete the branch again and re-raise."""
+        the pull request fails, delete the branch again and re-raise. When the push fails, the
+        branch is deleted only if ``origin`` has it at ``commit`` (the push landed and its answer
+        was lost): a push origin rejected leaves a branch someone else wrote as it is."""
         change = self._change
         self._git(["update-ref", f"refs/heads/{change.branch}", commit, ""], step="branch")
         try:
             self._push()
+        except ChangeRequestError:
+            self._delete_branch(only_at=commit)
+            raise
+        try:
             pr_url = self._open_pull_request()
         except ChangeRequestError:
             self._delete_branch()
@@ -323,10 +330,17 @@ class _Workspace[R: BrainChange | BrainProposal]:
             raise ChangeRequestFailedError(step="pr")
         return pr_url
 
-    def _delete_branch(self) -> None:
+    def _delete_branch(self, *, only_at: str | None = None) -> None:
+        """Delete the change's branch on ``origin`` (best effort, on a budget of its own); with
+        ``only_at``, only when ``origin``'s branch points at that commit."""
         change = self._change
         cleanup = self._runner.start(seconds=CLEANUP_SECONDS)
         with contextlib.suppress(ChangeRequestError):
+            if only_at is not None:
+                heads = ["ls-remote", "--heads", "origin", f"refs/heads/{change.branch}"]
+                listed = cleanup.git(heads, cwd=self._clone, step="delete branch")
+                if _text(listed.stdout).split("\t", 1)[0] != only_at:
+                    return
             cleanup.push(
                 change.branch,
                 cwd=self._clone,
