@@ -47,11 +47,13 @@ from agent_hub.core.item_versions.hub_item_writer import (
     HubItemWriteError,
     ItemWriteRefusedError,
 )
+from agent_hub.core.item_versions.item_version_ports import ItemWriteResult
 from agent_hub.core.item_versions.publish_draft import DraftNotRemovedError
 from agent_hub.core.item_versions.publish_rules import DraftInvalidError
 from agent_hub.core.item_versions.record_and_write import (
     ItemWrittenRaceLostError,
     ItemWrittenUnrecordedError,
+    OldNotRemovedError,
 )
 from agent_hub.core.item_versions.unit_content import CorruptVersionError
 from agent_hub.core.item_versions.version_store import ItemVersionSequenceError
@@ -308,7 +310,14 @@ def _item_write_failed_problem(error: HubItemWriteError) -> Problem:
             "was left beside it. Nothing was recorded."
         )
     elif error.kind == "old_not_removed":
-        detail = "Published and recorded; the old item could not be removed."
+        detail = OLD_NOT_REMOVED_DETAIL
+    elif error.kind == "draft_unreadable":
+        return Problem(
+            500,
+            "Draft read failed",
+            "The draft could not be read; nothing was written or recorded.",
+            {"code": "write_failed", "kind": error.kind},
+        )
     else:
         detail = "The write failed; the item is as it was and nothing was recorded."
     return Problem(500, "Item write failed", detail, {"code": "write_failed", "kind": error.kind})
@@ -327,21 +336,34 @@ def _draft_too_large_problem(error: DraftTooLargeError) -> Problem:
     )
 
 
+OLD_NOT_REMOVED_DETAIL = (
+    "Published; the old item could not be removed and stays. The draft is still there: discard it."
+)
+
+
+def _published_members(result: ItemWriteResult) -> dict[str, JsonValue]:
+    """What a Publish that kept its draft did: the item is published (A20 spends the draft)."""
+    return {
+        "published": True,
+        "changed": result.changed,
+        "versioned": result.versioned,
+        "reason": result.reason,
+    }
+
+
+def _old_not_removed_problem(error: OldNotRemovedError) -> Problem:
+    members: dict[str, JsonValue] = {"code": "write_failed", "kind": error.kind}
+    return Problem(
+        500, "Item write failed", OLD_NOT_REMOVED_DETAIL, members | _published_members(error.result)
+    )
+
+
 def _draft_not_removed_problem(error: DraftNotRemovedError) -> Problem:
     # The item is published (written, and recorded unless ``versioned`` is false); only the
     # draft folder stayed, spent when a ``publish`` was recorded (A20).
-    result = error.result
+    members: dict[str, JsonValue] = {"code": error.code}
     return Problem(
-        500,
-        "Draft not removed",
-        error.reason,
-        {
-            "code": error.code,
-            "published": True,
-            "changed": result.changed,
-            "versioned": result.versioned,
-            "reason": result.reason,
-        },
+        500, "Draft not removed", error.reason, members | _published_members(error.result)
     )
 
 
@@ -379,6 +401,7 @@ def _written_unrecorded_problem(_: ItemWrittenUnrecordedError) -> Problem:
 ITEM_WRITE_PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
     ItemWriteRefusedError: item_write_refused_problem,
     HubItemWriteError: _item_write_failed_problem,
+    OldNotRemovedError: _old_not_removed_problem,
     DraftInvalidError: _draft_invalid_problem,
     DraftTooLargeError: _draft_too_large_problem,
     DraftNotRemovedError: _draft_not_removed_problem,

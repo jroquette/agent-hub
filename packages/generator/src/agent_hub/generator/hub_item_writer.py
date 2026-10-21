@@ -71,6 +71,7 @@ from agent_hub.core.item_versions.hub_item_writer import (
     checked_carry_parts,
     checked_unit_parts,
     draft_parts,
+    draft_unreadable,
     plain_parts,
     rollback_failed,
     script_parts,
@@ -195,11 +196,11 @@ class FileSystemHubItemWriter:
             except FileNotFoundError, NotADirectoryError:
                 raise EntityNotFoundError(entity="draft", entity_id=draft_id) from None
             except OSError:
-                raise HubItemWriteError("the draft could not be read") from None
+                raise draft_unreadable() from None
             try:
                 found = read_folder_files(folder)
             except OSError:
-                raise HubItemWriteError("the draft could not be read") from None
+                raise draft_unreadable() from None
             finally:
                 os.close(folder)
         if isinstance(found, UnitContent) and found.files:
