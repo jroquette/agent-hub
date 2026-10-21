@@ -21,7 +21,7 @@ in [TESTING.md](TESTING.md).
 5. **Test first** ([TESTING.md](TESTING.md)), then implement. Run `make check-fast` while working.
 6. **Before the PR**, run `make check`. Redirect the output and check the exit code:
    `make check > check.log 2>&1; echo $?`.
-7. **PR** against `main`, with a Conventional Commit title and the body from `.github/pull_request_template.md` (tracker
+7. **PR** against `main`, with a Conventional Commit title (check it first with `make pr-title TITLE="<title>"`) and the body from `.github/pull_request_template.md` (tracker
    issue, summary, ACs covered, the Definition of Done checklist). Move the issue to In Review.
 8. **Review and merge.** The owner reviews and squash-merges. Fixes after review are new commits; no force-push. The issue
    moves to Done.
@@ -44,9 +44,10 @@ the PR title the commit on `main`, so the title is what the history and the futu
 - The whole title is at most 72 characters, has no trailing period and no trailing whitespace.
 - Examples: `feat(collector): ingest hook events`, `chore(repo): foundation workspace, gates, ADRs and English docs`.
 
-CI checks the title with `scripts/check_pr_title.py` (stdlib only), which holds the same lists. Check a title locally
-with `uv run --locked --all-packages python scripts/check_pr_title.py "<title>"` (any Python 3.10+ runs it); it exits 1
-and prints the allowed types and scopes when the title is invalid. Commits inside a branch should use the same format,
+`scripts/check_pr_title.py` (stdlib only) holds the same lists. Check the title before opening the PR, and again after
+renaming it: `make pr-title TITLE="<title>"` (or `python3 scripts/check_pr_title.py "<title>"`, any Python 3.10+); it
+exits 1 and prints the allowed types and scopes when the title is invalid. CI does not check titles ([ADR 0045](adr/0045-pr-titles-checked-before-the-pr-not-in-ci.md)): the owner,
+who squash-merges, reads the title last. Commits inside a branch should use the same format,
 but only the PR title is enforced.
 
 Releases are cut with the hub's `/release` skill (§ Releases), which proposes the version bump from the PR titles
@@ -217,8 +218,8 @@ The hub's `/release` skill walks these steps: it proposes the version, checks th
 
 These live outside the repo and are set by the owner:
 
-1. **GitHub `main` protection:** pull request required; required status checks = the CI `check` job and the `pr-title`
-   job; linear history; squash merge only (merge commits and rebase merge disabled); default squash commit message =
+1. **GitHub `main` protection:** pull request required; required status check = the CI `check` job (it passes only when
+   every other job of `ci.yml` passed); linear history; squash merge only (merge commits and rebase merge disabled); default squash commit message =
    the PR title. `.github/CODEOWNERS` is informational: code-owner review is not required.
 2. **Linear:** team AGH states, labels (type, area, automation), one project per SPEC phase with the phase gate as the
    final milestone, 2-week cycles, and the issue template above.

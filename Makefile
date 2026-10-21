@@ -1,5 +1,7 @@
-# Gate commands: hub.json and CI call these. Prerequisites run left to right and stop at the
-# first failure, so never run these targets with -j.
+# Gate commands: hub.json and CI call these. `check-fast` and `check` run two lanes at once
+# (GATE_LANES below): the checks, and the test runners that use every CPU (pytest-xdist, then
+# Vitest), which never overlap each other. Each lane runs its steps left to right and stops at the
+# first failure. They set -j themselves: never run these targets with -j.
 
 RUN := uv run --locked --all-packages
 # Coverage of every agent_hub package (the layout checker fails when one is missing). Unit and
@@ -14,6 +16,18 @@ COV := --cov=agent_hub.core --cov=agent_hub.storage --cov=agent_hub.collector \
 # Tests marked serial assert a wall-clock budget, so they run alone after the parallel run.
 PYTEST_N ?= auto
 XDIST := -n $(PYTEST_N)
+# Narrows test-suite, test-suite-serial and test-e2e-serial to part of the tree: paths, or
+# --ignore=<path> for the rest (CI's shards, .github/workflows/ci.yml). Empty: every test.
+TESTS ?=
+E2E_MARK := e2e and not docker and not live
+# The gates' lanes: one make job per lane, each lane a make of its own that runs its steps in
+# order (LANE=1 below). Each lane's output is printed when it ends (make 4 and newer).
+OUTPUT_SYNC := $(if $(filter output-sync,$(.FEATURES)),--output-sync=target)
+GATE_LANES := --no-print-directory -j2 $(OUTPUT_SYNC)
+IN_ORDER := --no-print-directory LANE=1
+ifdef LANE
+.NOTPARALLEL:
+endif
 ALEMBIC := $(RUN) python -m agent_hub.storage.migration
 # The web app (apps/web): Node from apps/web/.node-version, dependencies from its package-lock.json.
 WEB := npm --prefix apps/web
@@ -31,6 +45,8 @@ URL := http://127.0.0.1:$(AGENT_HUB_PORT)
 LIVE_API_PORT ?= 7421
 
 .PHONY: help format lint typecheck layout lockstep test-fast check-fast test-integration test-e2e \
+        test-e2e-parallel test-e2e-serial test-suite test-suite-serial pr-title \
+        lane-checks-fast lane-checks lane-tests-fast lane-tests web-static web-test \
         imports migrations coverage check llms-txt hub-schema output-schemas web-install web-fast web-build web-dist-check \
         openapi openapi-check test-docker test-live run up down logs ps dev live playground playground-stop playground-export demo connect
 
@@ -56,24 +72,69 @@ test-fast: ## unit and contract tests; starts fresh coverage data
 	$(RUN) coverage erase
 	$(RUN) pytest -m "unit or contract" $(XDIST) $(COV)
 
+# npm ci only when package-lock.json is newer than the last install (npm writes
+# node_modules/.package-lock.json), so a gate run reuses an install that is already current.
 web-install: ## install the web app's dependencies exactly as package-lock.json pins them
+	@[ apps/web/node_modules/.package-lock.json -nt apps/web/package-lock.json ] || \
 	$(WEB) ci --no-audit --no-fund
 
-web-fast: web-install ## web app: typecheck, ESLint, Prettier check, tokens drift, Vitest with coverage
-	$(WEB) run check
+web-fast: web-static web-test ## web app: typecheck, ESLint, Prettier check, tokens drift, Vitest with coverage
+
+web-static: web-install ## web app: typecheck, ESLint, Prettier check, tokens drift
+	$(WEB) run typecheck && $(WEB) run lint && $(WEB) run format:check && $(WEB) run gen:tokens:check
+
+web-test: web-install ## web app: Vitest with coverage
+	$(WEB) run coverage
 
 openapi-check: web-install ## the committed openapi.json and the generated TS types match the app
 	$(RUN) python -m scripts.export_openapi --check && $(WEB) run gen:api:check
 
-check-fast: format lint typecheck layout lockstep openapi-check test-fast web-fast ## the fast gate, run while working
+# check-fast runs the web app's steps (5 min, mostly Vitest) when a file under apps/web/ differs
+# from origin/main (committed, staged, unstaged or new), when origin/main is missing, or with
+# WEB_FAST=1; WEB_FAST=0 skips them. check runs them always. openapi-check always runs: it is
+# what catches an API change the web app has not followed.
+WEB_FAST ?= auto
+WEB_UNCHANGED := base="$$(git merge-base HEAD origin/main 2>/dev/null)" && \
+	[ -z "$$(git diff --name-only "$$base" -- apps/web)$$(git ls-files --others --exclude-standard -- apps/web)" ]
+IF_WEB = $(if $(filter 1,$(WEB_FAST)),$(1))
+
+# web-install first, so the two lanes never run npm ci at once.
+check-fast: web-install ## the fast gate, run while working: checks and tests in two lanes at once
+	@web=$(WEB_FAST); \
+	if [ "$$web" = auto ]; then \
+	  if $(WEB_UNCHANGED); then web=0; \
+	    echo "check-fast: web app skipped, nothing under apps/web/ differs from origin/main (WEB_FAST=1 runs it)"; \
+	  else web=1; fi; \
+	fi; \
+	$(MAKE) $(GATE_LANES) lane-checks-fast lane-tests-fast WEB_FAST=$$web
+
+lane-checks-fast:
+	@$(MAKE) $(IN_ORDER) format lint typecheck layout lockstep $(call IF_WEB,web-static) openapi-check
+
+lane-tests-fast:
+	@$(MAKE) $(IN_ORDER) test-fast $(call IF_WEB,web-test)
 
 test-integration: ## integration tests (real SQLite files under tmp_path), never live ones; appends coverage
 	$(RUN) pytest -m "integration and not live and not serial" $(XDIST) $(COV) --cov-append
 	$(RUN) pytest -m "integration and not live and serial" $(COV) --cov-append
 
-test-e2e: ## e2e tests: hub installed with uv tool install, gate self-test (not in coverage)
-	$(RUN) pytest -m "e2e and not docker and not live and not serial" $(XDIST)
-	$(RUN) pytest -m "e2e and not docker and not live and serial"
+test-e2e: test-e2e-parallel test-e2e-serial ## e2e tests: hub installed with uv tool install, gate self-test (not in coverage)
+
+test-e2e-parallel: ## the e2e tests that are not serial, with pytest-xdist
+	$(RUN) pytest -m "$(E2E_MARK) and not serial" $(XDIST)
+
+test-e2e-serial: ## the serial e2e tests (web smoke and visual: wall-clock budgets; TESTS narrows), alone
+	$(RUN) pytest -m "$(E2E_MARK) and serial" $(TESTS)
+
+# check's tests in two runs instead of three: unit, contract and integration share one pytest
+# session (one collection, one set of workers), then the serial ones run alone after every lane.
+test-suite: ## unit, contract and integration tests that are not serial (TESTS narrows); starts fresh coverage data
+	$(RUN) coverage erase
+	$(RUN) pytest -m "(unit or contract or integration) and not live and not serial" $(XDIST) $(COV) $(TESTS)
+
+# pytest exits 5 when TESTS holds no serial test (a CI shard can have none): that is a pass here.
+test-suite-serial: ## the serial integration tests (TESTS narrows), alone; appends coverage
+	$(RUN) pytest -m "integration and not live and serial" $(COV) --cov-append $(TESTS) || [ $$? -eq 5 ]
 
 imports: ## import-linter contracts (config in .importlinter)
 	$(RUN) lint-imports
@@ -83,8 +144,9 @@ migrations: ## upgrade a scratch SQLite database to head, then alembic check (no
 	$(ALEMBIC) -x db_url="sqlite:///$$dir/alembic-check.db" upgrade head && \
 	$(ALEMBIC) -x db_url="sqlite:///$$dir/alembic-check.db" check
 
-# Reads the data that test-fast (erase + unit/contract) and test-integration (append) collect,
-# so run it after them, as `make check` does; on its own it checks stale or missing data.
+# Reads the data that test-suite (erase) and test-suite-serial (append) collect, or test-fast and
+# test-integration, so run it after them, as `make check` does; on its own it checks stale or
+# missing data.
 coverage: ## per-package floors (core 90%, others 80%) over the collected coverage data
 	$(RUN) coverage json -q -o coverage.json && $(RUN) python -m scripts.check_coverage coverage.json
 
@@ -107,12 +169,27 @@ openapi: web-install ## regenerate packages/api/openapi.json and apps/web/src/ap
 web-build: web-install ## build the web app into the API package (web_dist, committed)
 	$(WEB) run build
 
+# Only the bundle: the type check is web-static's, and it does not change the output.
 web-dist-check: web-install ## rebuild the web app in a scratch dir and compare it with the committed web_dist
 	dir="$$(mktemp -d)" && trap 'rm -rf "$$dir"' EXIT && \
-	$(WEB) run build -- --outDir "$$dir" --emptyOutDir && \
+	$(WEB) run bundle -- --outDir "$$dir" --emptyOutDir && \
 	diff -r "$$dir" $(WEB_DIST)
 
-check: check-fast test-integration test-e2e imports migrations coverage web-dist-check ## the full gate, run before a PR
+# The serial tests wait for every lane, so nothing else loads the machine while they time.
+check: web-install ## the full gate, run before a PR: two lanes at once, then the serial tests, then coverage
+	@$(MAKE) $(GATE_LANES) lane-checks lane-tests
+	@$(MAKE) $(IN_ORDER) test-suite-serial test-e2e-serial coverage
+
+lane-checks:
+	@$(MAKE) $(IN_ORDER) format lint typecheck layout lockstep imports migrations web-static openapi-check web-dist-check
+
+lane-tests:
+	@$(MAKE) $(IN_ORDER) test-suite test-e2e-parallel web-test
+
+# Not part of check: CI no longer checks PR titles. Run it before opening a PR (docs/CONTRIBUTING.md).
+pr-title: ## check a PR title against Conventional Commits: make pr-title TITLE="feat(cli): ..."
+	@test -n "$(TITLE)" || { echo 'usage: make pr-title TITLE="<type>(<scope>): <subject>"' >&2; exit 2; }
+	$(RUN) python scripts/check_pr_title.py "$(TITLE)"
 
 # Not part of check: needs a Docker daemon (CI runs it in its own job).
 test-docker: ## build the image, run its Compose service and test it (marker docker)
