@@ -1,5 +1,6 @@
 """``hub step ticket-brief|preflight|change-request|decide|amend-plan`` (two-level-flows AC-2.2,
-AC-2.3, AC-2.7, AC-2.12, P7): the ticket records an ``implement`` run writes into the hub.
+AC-2.3, AC-2.7, AC-2.12, P7): the ticket records an ``implement`` run writes into the hub; and
+``pending-decision`` (AC-2.14), the decision a new run follows.
 
 Each runs in process in a copy of the ``DEMO`` workspace whose hub is a git repo holding one
 feature folder; the repo checkouts are real clones. Every case checks that nothing was committed
@@ -494,6 +495,33 @@ class TestChangeRequest:
         assert first.read_bytes() == before
         assert b"run_id: implement-9" in (hub.feature / "change-requests/2.md").read_bytes()
 
+    def test_takes_the_run_id_from_the_run_and_splits_affected_when_a_workflow_opens_one(
+        self, hub: Hub, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AGENT_HUB_RUN_ID", "implement-7")
+
+        output = hub.ok(
+            "change-request",
+            *TICKET,
+            *("--evidence", "The API moved.", "--proposal", "Follow it."),
+            *("--affected", "T3, DEM-7", "--affected", ""),
+        )
+
+        text = (hub.root / output["path"]).read_text()
+        assert "affected: [T3, DEM-7]\n" in text
+        assert "run_id: implement-7\n" in text
+
+    def test_refuses_without_writing_when_no_run_id_is_given_or_set(
+        self, hub: Hub, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("AGENT_HUB_RUN_ID", raising=False)
+
+        line = hub.refused(
+            "change-request", *TICKET, "--evidence", "The API moved.", "--proposal", "Follow it."
+        )
+
+        assert line == "hub step change-request: not a run id:"
+
     def test_refuses_without_writing_when_the_requests_folder_is_a_link(
         self, hub: Hub, tmp_path: Path
     ) -> None:
@@ -676,3 +704,56 @@ class TestDecideAndAmend:
         )
 
         assert line == "hub step amend-plan: no 1.decision.md in the feature folder"
+
+
+class TestPendingDecision:
+    NONE = {"request": None, "decision": "", "input": "none", "note": "", "summary": ""}
+
+    def preflight(self, hub: Hub, **run: Any) -> None:
+        hub.ok("preflight", *TICKET, "--run", json.dumps(RUN | run))
+
+    def test_reads_nothing_pending_when_the_ticket_has_no_preflight(self, hub: Hub) -> None:
+        assert hub.ok("pending-decision", *TICKET) == self.NONE
+
+    @pytest.mark.parametrize(
+        ("decision", "expected"),
+        [
+            (("approved",), {"decision": "approved", "input": "none", "note": ""}),
+            (
+                ("declined", "--note", "Keep the plan.\nAs it is."),
+                {"decision": "declined", "input": "declined_change", "note": "Keep the plan. As it is."},
+            ),
+        ],
+    )
+    def test_reads_the_decision_when_the_last_preflight_opened_the_request(
+        self, hub: Hub, decision: tuple[str, ...], expected: dict[str, Any]
+    ) -> None:
+        hub.request()
+        self.preflight(hub, drift="plan", change_request=1)
+        given = ("--decision", decision[0], "--by", "Dana", *decision[1:])
+        assert hub.decide(*given).exit_code == 0
+
+        output = hub.ok("pending-decision", *TICKET)
+
+        assert output == {"request": 1, "summary": "Follow it.", **expected}
+
+    @pytest.mark.parametrize(
+        "case",
+        ["open", "re-checked", "later run"],
+    )
+    def test_reads_nothing_pending_when_no_run_should_follow_the_decision(
+        self, hub: Hub, case: str
+    ) -> None:
+        hub.request()
+        self.preflight(hub, drift="plan", change_request=1)
+        if case != "open":
+            assert hub.decide("--decision", "declined", "--by", "Dana", "--note", "No.").exit_code == 0
+        if case == "re-checked":
+            # A declined change re-checked and still plan: the next run opens a new request (A2).
+            self.preflight(
+                hub, drift="plan", change_request=1, input="declined_change", input_text="No."
+            )
+        if case == "later run":
+            self.preflight(hub, input="declined_change", input_text="No.")
+
+        assert hub.ok("pending-decision", *TICKET) == self.NONE

@@ -1,6 +1,7 @@
 """``hub step worktree|verdict|commits|pr|report``: ``hub run``'s stages as commands; and
 ``hub step ticket-brief|preflight|change-request|decide|amend-plan``, the ticket records an
-``implement`` run writes into the hub (``step_records``).
+``implement`` run writes into the hub (``step_records``), and ``pending-decision``, the owner's
+decision a new run follows.
 
 The issue-to-pr workflow (ADR 0032) runs them as ``hub step`` nodes. Each prints one JSON object
 on stdout, the ``output_format`` its node declares, and exits 0; a failure is one
@@ -21,7 +22,9 @@ writes the tracker: ``report`` only computes the delivery (``delivered``, ``no_c
 parent's (``hub workflow run``, ``hub run``).
 
 The record writers run in the hub's main checkout and never commit; each prints the hub-relative
-``path`` it wrote, and a refusal (a record the readers could not read, a second decision, a
+``path`` it wrote (``change-request`` takes the run's id from ``AGENT_HUB_RUN_ID``, which the
+engine gives the run's steps, when ``--run-id`` is not given, and each ``--affected`` may list
+several tickets separated by commas), and a refusal (a record the readers could not read, a second decision, a
 decision without a person, a plan that moved, a link) is a failure that writes nothing.
 
 That parent runs its ``hub step`` nodes in process (``run_in_process``): the same code with
@@ -62,7 +65,14 @@ from agent_hub.cli.pr_steps import (
     titled_pr,
     unmatched_warning,
 )
-from agent_hub.cli.run_children import CHILD_HIDDEN, RunChildren, push_env, untrusted_env, without
+from agent_hub.cli.run_children import (
+    CHILD_HIDDEN,
+    RUN_ID_VARIABLE,
+    RunChildren,
+    push_env,
+    untrusted_env,
+    without,
+)
 from agent_hub.cli.run_command import refuse_usage
 from agent_hub.cli.run_steps import (
     HOOKS_OFF,
@@ -395,28 +405,40 @@ def change_request(
     *,
     feature: Feature,
     ticket: Ticket,
-    run_id: Annotated[str, typer.Option("--run-id", help="The workflow run's id.")],
+    run_id: Annotated[
+        str, typer.Option("--run-id", help="The workflow run's id (default: AGENT_HUB_RUN_ID).")
+    ] = "",
     evidence: Annotated[str, typer.Option("--evidence", help="What the plan got wrong.")],
     proposal: Annotated[str, typer.Option("--proposal", help="The plan change asked.")],
     affected: Annotated[
-        list[str] | None, typer.Option("--affected", metavar="TICKET", help="An affected ticket.")
+        list[str] | None,
+        typer.Option("--affected", metavar="TICKET", help="Affected tickets, comma-separated."),
     ] = None,
 ) -> None:
     """Open change-requests/<n>.md against the plan's current version."""
     hub = _hub()
+    run_id = run_id or os.environ.get(RUN_ID_VARIABLE, "")
+    names = [name.strip() for value in affected or () for name in value.split(",")]
     _record(
         "change-request",
         lambda: step_records.change_request(
             hub,
             feature=feature,
             ticket=ticket,
-            affected=affected or (),
+            affected=[name for name in names if name],
             run_id=run_id,
             evidence=evidence,
             proposal=proposal,
             now=datetime.now(UTC),
         ),
     )
+
+
+@step_app.command("pending-decision")
+def pending_decision(*, feature: Feature, ticket: Ticket) -> None:
+    """Print the owner's decision on the ticket's last change request that no run followed."""
+    hub = _hub()
+    _record("pending-decision", lambda: step_records.pending(hub, feature=feature, ticket=ticket))
 
 
 @step_app.command("decide")

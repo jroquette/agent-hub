@@ -231,6 +231,18 @@ def test_runs_own_hub_with_child_env_when_node_is_hub_step(tmp_path: Path, pack:
     assert sent["cwd"] == (tmp_path / "hub").resolve()
     assert sent["env"]["GH_TOKEN"] == GITHUB_VALUE
     assert "LINEAR_API_KEY" not in sent["env"]
+    assert sent["env"]["AGENT_HUB_RUN_ID"] == "1a2b3c4d"
+
+
+def test_gives_the_run_id_over_the_node_env_when_script_node_called(
+    tmp_path: Path, pack: Path
+) -> None:
+    child = FakeChild()
+    spec = {"id": "count", "type": "script", "runtime": "python", "script": "count.py"}
+
+    executors(tmp_path, pack, child).run(call(spec, env={"AGENT_HUB_RUN_ID": "forged"}))
+
+    assert child.calls[0]["env"]["AGENT_HUB_RUN_ID"] == "1a2b3c4d"
 
 
 @pytest.mark.parametrize("case", [("python", ["uv", "run"]), ("sh", ["sh"])])
