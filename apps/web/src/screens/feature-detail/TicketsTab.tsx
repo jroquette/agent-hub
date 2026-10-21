@@ -22,6 +22,8 @@ import {
   AcCount,
   PlanningView,
   ReadinessText,
+  TicketSignal,
+  signalKind,
   StateBadge,
   TicketIdLine,
   TicketPrLink,
@@ -458,12 +460,25 @@ function TicketsTable({
     {
       label: "Readiness",
       width: 180,
-      cell: (row) => (
-        <span className="ah-row ah-wrap" style={{ gap: 8 }}>
-          <ReadinessText row={row} rows={data.tickets} external={data.planning.external_blockers} />
-          {ticketAction?.(row)}
-        </span>
-      ),
+      cell: (row) => {
+        // A plan change's wait, a hold or a re-run replaces readiness; local drift joins it (A13).
+        const signal = row.flow ? signalKind(row.flow) : null;
+        return (
+          <span className="ah-row ah-wrap" style={{ gap: 8 }}>
+            {signal !== null && signal !== "local" && row.flow ? (
+              <TicketSignal flow={row.flow} />
+            ) : (
+              <ReadinessText
+                row={row}
+                rows={data.tickets}
+                external={data.planning.external_blockers}
+              />
+            )}
+            {ticketAction?.(row)}
+            {signal === "local" && row.flow && <TicketSignal flow={row.flow} />}
+          </span>
+        );
+      },
     },
     {
       label: "PR",

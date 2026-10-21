@@ -555,7 +555,7 @@ describe("the Acceptance prompt", () => {
     const view = prompt("sign_off", { onSelect });
 
     const callout = screen
-      .getByText("Waiting on you · Acceptance: sign off 3 ACs")
+      .getByText("Waiting for you · Acceptance: sign off 3 ACs")
       .closest('[role="status"]');
     if (!(callout instanceof HTMLElement)) throw new Error("no callout");
     expect(callout).toHaveTextContent(
@@ -597,7 +597,7 @@ describe("the Acceptance prompt", () => {
         .getAllByRole("button")
         .map((b) => b.textContent),
     ).toEqual(["Needs more work"]);
-    expect(screen.queryByText(/^Waiting on you/)).toBeNull();
+    expect(screen.queryByText(/^Waiting for you/)).toBeNull();
   });
 
   it("asks for a dated re-run of the acceptance eval when it is undated (undated)", async () => {

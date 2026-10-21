@@ -481,49 +481,110 @@ function ownerWaits(
   return [...first, ...others];
 }
 
+type ChangeRequestView = components["schemas"]["ChangeRequestView"];
+
+/** An open plan change request as the banner names it (two-level-flows AC-2.8). */
+function changeText(request: ChangeRequestView): string {
+  const affects = request.affected.length ? ` · affects ${request.affected.join(", ")}` : "";
+  const versions = `plan v${String(request.plan_from ?? "?")} → v${String(request.plan_to ?? "?")}`;
+  return `Plan change request ${String(request.n)} from ${request.ticket ?? "?"}: ${versions}${affects}`;
+}
+
 /**
- * The page's one "Waiting on you" banner: a signpost for every wait, one line each, each line
- * after the first a link to its eval; the button opens the first. The decisions are on the Eval
- * tab's prompts (ux-change-waiting-prompts.md).
+ * The page's one "Waiting for you" banner (A18): a signpost for every wait, one line each, the
+ * open plan change requests first (AC-2.8), each line after the first a link to where it is
+ * settled; the button opens the first: a request's ticket panel at its Preflight (AC-1.10, A8), or
+ * an eval's prompt. The decisions are in the ticket panel and on the Eval tab's prompts
+ * (ux-change-waiting-prompts.md).
  */
 function WaitingBanner({
+  changes,
   waits,
   onEval,
   onOpen,
+  onTicket,
 }: {
+  changes: readonly ChangeRequestView[];
   waits: readonly OwnerWait[];
-  /** The Eval tab is shown: its prompts are below, so no button. */
+  /** The Eval tab is shown: its prompts are below, so no button for an eval. */
   onEval: boolean;
   onOpen: (delivery: string) => void;
+  /** Opens the ticket panel of `ticket` at its Preflight; `opener` takes focus back on close. */
+  onTicket: (ticket: string, opener: HTMLElement) => void;
 }) {
   const [params] = useSearchParams();
+  const [change, ...moreChanges] = changes;
   const [first, ...rest] = waits;
-  if (!first) return null;
+  if (!change && !first) return null;
+  const ticketLink = (request: ChangeRequestView) => {
+    const next = new URLSearchParams(ticketSearch(params, request.ticket ?? ""));
+    next.set("step", "preflight");
+    return (
+      <Link
+        to={{ search: `?${next.toString()}` }}
+        replace
+        onClick={(event) => {
+          event.preventDefault();
+          onTicket(request.ticket ?? "", event.currentTarget);
+        }}
+      >
+        {changeText(request)}
+      </Link>
+    );
+  };
+  let action: ReactNode = null;
+  if (change) {
+    action = (
+      <Button
+        size="sm"
+        variant="primary"
+        icon="arrow-right"
+        aria-label={`Review change request ${String(change.n)} from ${change.ticket ?? ""}`}
+        onClick={(event) => {
+          onTicket(change.ticket ?? "", event.currentTarget);
+        }}
+      >
+        Review change request
+      </Button>
+    );
+  } else if (first && !onEval) {
+    action = (
+      <Button
+        size="sm"
+        variant="primary"
+        icon="arrow-right"
+        aria-label={`Review owner steps of ${first.label}`}
+        onClick={() => {
+          onOpen(first.delivery);
+        }}
+      >
+        Review owner steps
+      </Button>
+    );
+  }
   return (
-    <Banner
-      tone="warning"
-      boxed
-      icon="hand"
-      action={
-        !onEval && (
-          <Button
-            size="sm"
-            variant="primary"
-            icon="arrow-right"
-            aria-label={`Review owner steps of ${first.label}`}
-            onClick={() => {
-              onOpen(first.delivery);
-            }}
-          >
-            Review owner steps
-          </Button>
-        )
-      }
-    >
-      <b>Waiting on you</b>
-      {onEval && <span className="ah-muted"> · Settle each one below.</span>}
+    <Banner tone="warning" boxed icon="hand" action={action}>
+      <b>Waiting for you</b>
+      {onEval && waits.length > 0 && <span className="ah-muted"> · Settle each one below.</span>}
       <ul className="ah-small" style={{ margin: "2px 0 0", paddingLeft: 18 }}>
-        <li>{first.text}</li>
+        {change && <li>{changeText(change)}</li>}
+        {moreChanges.map((request) => (
+          <li key={request.n}>{ticketLink(request)}</li>
+        ))}
+        {first &&
+          (change ? (
+            <li>
+              <Link
+                to={{ search: evalSearch(params, first.delivery) }}
+                replace
+                state={FOCUS_EVAL}
+              >
+                {first.text}
+              </Link>
+            </li>
+          ) : (
+            <li>{first.text}</li>
+          ))}
         {rest.map((wait) => (
           <li key={wait.delivery}>
             <Link to={{ search: evalSearch(params, wait.delivery) }} replace state={FOCUS_EVAL}>
@@ -579,6 +640,9 @@ export function FeatureDetailScreen() {
   const issueIds = ticketIds(detail.issues);
   const epics = tickets.data?.planning.epics ?? [];
   const waits = ownerWaits(detail, issueIds, epics);
+  const changes = detail.change_requests.filter(
+    (request) => request.status === "open" && request.ticket,
+  );
   const wait = detail.acceptance_eval?.owner_wait;
   const accepted = detail.acceptance_eval && acceptanceLabel(detail, issueIds, epics);
   const setTab = (id: string) => {
@@ -590,6 +654,17 @@ export function FeatureDetailScreen() {
         // The ticket panel belongs to the Tickets tab: another tab closes it.
         next.delete("ticket");
         next.delete("step");
+        return next;
+      },
+      { replace: true },
+    );
+  };
+  const openTicket = (ticket: string, opener: HTMLElement) => {
+    openerRef.current = opener;
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(ticketSearch(current, ticket));
+        next.set("step", "preflight");
         return next;
       },
       { replace: true },
@@ -736,14 +811,20 @@ export function FeatureDetailScreen() {
           }
         />
       </section>
-      {waits.length > 0 ? (
-        <WaitingBanner waits={waits} onEval={tab === "eval"} onOpen={openEval} />
+      {waits.length > 0 || changes.length > 0 ? (
+        <WaitingBanner
+          changes={changes}
+          waits={waits}
+          onEval={tab === "eval"}
+          onOpen={openEval}
+          onTicket={openTicket}
+        />
       ) : (
         !detail.acceptance_eval &&
         owners.length > 0 && (
           <Banner tone="warning" boxed icon="hand">
             <b>
-              Waiting on you: {owners.length} owner step{owners.length === 1 ? "" : "s"} left
+              Waiting for you: {owners.length} owner step{owners.length === 1 ? "" : "s"} left
             </b>
             <span className="ah-muted">
               {" "}
