@@ -2192,3 +2192,21 @@ def test_opens_investigation_when_policy_gate_approved_beside_divergence(
     assert plain(retried.stdout).splitlines()[-1] == f"run {RUN}: done"
     # The retry runs order-held once more; the approved write runs once.
     assert (calls_of(hub, "order-held"), calls_of(hub, "send-order")) == (2, 1)
+
+
+def test_ends_cancelled_when_policy_gate_rejected_while_investigation_open(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_send(hub, marker, held)
+    # A bare resume opens the owed investigation; the policy gate stays open beside it.
+    opened = resume_walk(hub, marker, held)
+    assert opened.exit_code == 0, opened.output
+    assert plain(opened.stdout).splitlines()[-1].startswith(f"run {RUN}: paused at order-held")
+
+    rejected = hold_call(hub, marker, held, "workflow", "reject", RUN, "send-order__ask")
+
+    assert rejected.exit_code == 1, rejected.output
+    assert plain(rejected.stdout).splitlines()[-1] == f"run {RUN}: cancelled"
+    ends = [line for line in records(hub) if line["event"] == "end"]
+    assert [(line["status"], line["reason"]) for line in ends] == [("cancelled", "send-order__ask")]
+    assert modes(marker) == ["run"]
