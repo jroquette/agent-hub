@@ -3525,7 +3525,7 @@ export interface components {
      *     later eval says NO-SHIP for ``reopened``: only "more work" can be recorded), ``undated`` and
      *     ``future`` (no sign-off can rank newer than an eval with no ``evaluated_at``, or one dated
      *     after the read), ``no_acs`` (no live AC to sign off, A10). ``acs`` are the ACs it waits on;
-     *     ``signable_after`` (``future`` only) the whole minute from which a sign-off can follow it.
+     *     ``signable_after`` (``future`` only) the whole minute after which a sign-off can follow it.
      */
     OwnerWaitView: {
       /**

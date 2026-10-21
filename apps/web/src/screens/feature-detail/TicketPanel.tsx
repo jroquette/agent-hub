@@ -12,7 +12,15 @@ import {
   type StepperStep,
 } from "../../components";
 import { brainRoute } from "../../lib/brainLinks";
-import { FOCUS_EVAL, evalHistory, evalSearch, ownerStepsWaiting, runLabels } from "./EvalTab";
+import {
+  FOCUS_EVAL,
+  evalHistory,
+  evalSearch,
+  evaluatedText,
+  ownerStepsWaiting,
+  runLabels,
+} from "./EvalTab";
+import { usePreferences } from "../../lib/preferences";
 import {
   LinearLink,
   ReadinessText,
@@ -49,6 +57,7 @@ function StepDetail({
   latest: { record: EvalRecord; label: string } | undefined;
 }) {
   const [params] = useSearchParams();
+  const { tz } = usePreferences();
   const unrecorded = step.state === "unrecorded";
   const id = row.id ?? row.ref;
   switch (step.name) {
@@ -85,7 +94,8 @@ function StepDetail({
       return (
         <>
           {latest.record.verdict}
-          {latest.record.evaluated_at && ` · ${latest.record.evaluated_at}`}.{" "}
+          {latest.record.evaluated_at &&
+            ` · ${evaluatedText(latest.record.evaluated_at, tz)}`}.{" "}
           <Link
             to={{ search: evalSearch(params, latest.record.delivery) }}
             replace

@@ -358,8 +358,8 @@ spec amendment A15. Where the sections above say otherwise, this list wins.
   with "Settle them in the Eval tab", which closes the panel and opens that eval.
 - **States.** An id that is no ticket of the feature reads "<id> is not a ticket of this feature." with Close panel;
   the feature's epic reads "<id> is this feature's epic: it has no steps of its own."
-- **Openers.** The card title is a link to `?doc=tickets&ticket=<id>` (this reverses AGH-326's "Card title": the title
-  opens the panel; the epic's title stays plain text); a table row (the body is one tab stop: `j` / `k` and `↓` / `↑`
+- **Openers.** The card title, and a table row's title, are links to `?doc=tickets&ticket=<id>` (this reverses
+  AGH-326's "Card title": the title opens the panel; the epic's title stays plain text); a table row (the body is one tab stop: `j` / `k` and `↓` / `↑`
   move between tickets, epics skipped; `Enter`, `o` or a click opens it; links and buttons in the row keep their own
   action); a header chip, which now opens the Tickets tab with that ticket's panel (tooltip "<id> · <title> · show its
   steps"; the Linear link moved into the panel, so AC-268.17's link is gone). The waiting banner opens it in S2 (A8).
@@ -385,7 +385,8 @@ spec amendment A15. Where the sections above say otherwise, this list wins.
   button; Evaluate whole feature is primary and asks for the acceptance eval's next re-run, `feature-r2` after
   `feature`, `feature-r3` after `feature-r2`); *future-dated* ("Sign-off possible after <date-time>", no button: the
   served `signable_after`, rounded up to the minute, written as the page writes every date-time, so the `t` toggle
-  applies; the Acceptance step reads the same line on this page, the Features list the server's UTC one); *no ACs listed* ("Acceptance: waiting on owner steps · no ACs listed", names the
+  applies; the Acceptance step reads the same line on this page; the Features list still shows the server's UTC line, a known
+  gap followed up in AGH-332); *no ACs listed* ("Acceptance: waiting on owner steps · no ACs listed", names the
   hand-written `evals/owner-signoff.md`). Only *sign off* is amber; the others are info. The client's own callout no
   longer shows for the acceptance eval; ticket eval callouts (AC-376.13, AC-376.14) are unchanged.
 - **Banner.** The page has one "Waiting on you" banner, a signpost with one line per wait: "Acceptance: sign off 3

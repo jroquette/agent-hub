@@ -240,11 +240,6 @@ function PlanVersionLine({ plan }: { plan: PlanView }) {
   );
 }
 
-/**
- * The feature's tickets as header chips: each id opens the Tickets tab with its ticket panel
- * (two-level-flows AC-1.10; the Linear link is in the panel), its title on hover and its status in
- * Linear once the tickets route answered (its cached answer).
- */
 /** One header chip: it opens the ticket's panel; where it goes is its description (UX F6). */
 function TicketChip({
   id,
@@ -278,6 +273,11 @@ function TicketChip({
   );
 }
 
+/**
+ * The feature's tickets as header chips: each id opens the Tickets tab with its ticket panel
+ * (two-level-flows AC-1.10; the Linear link is in the panel), its title on hover and its status in
+ * Linear once the tickets route answered (its cached answer).
+ */
 function TicketChips({
   ids,
   rows,
