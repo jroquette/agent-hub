@@ -1077,6 +1077,27 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/projects/{project}/skills/drafts/{draft_id}/publish": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Publish Draft
+     * @description Land the Studio draft on its target (``null``: a new item), record a ``publish``
+     *     version naming the draft, then remove the draft.
+     */
+    post: operations["publish_draft_api_v1_projects__project__skills_drafts__draft_id__publish_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/projects/{project}/skills/{kind}/{source}/{name}": {
     parameters: {
       query?: never;
@@ -3948,6 +3969,31 @@ export interface components {
       sources_missing: components["schemas"]["EventSource"][];
       /** Tracker Teams */
       tracker_teams: string[];
+    };
+    /**
+     * PublishDraftBody
+     * @description ``POST .../skills/drafts/{draft_id}/publish``: ``target`` the item the draft edits, or
+     *     ``null`` for a new item (stated, never left out); ``confirm_managed`` as for a restore (S9),
+     *     only JSON ``true`` confirms.
+     */
+    PublishDraftBody: {
+      /**
+       * Confirm Managed
+       * @default false
+       */
+      confirm_managed: boolean;
+      target: components["schemas"]["PublishTarget"] | null;
+    };
+    /**
+     * PublishTarget
+     * @description The item a Publish edits, by its catalog id (``kind/source/name``).
+     */
+    PublishTarget: {
+      kind: components["schemas"]["ItemKind"];
+      /** Name */
+      name: string;
+      /** Source */
+      source: string;
     };
     /**
      * PullRequestRef
@@ -8102,6 +8148,87 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["SkillCatalog"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  publish_draft_api_v1_projects__project__skills_drafts__draft_id__publish_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        draft_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PublishDraftBody"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ItemWriteResult"];
+        };
+      };
+      /** @description No launch cookie (open hub web's address) */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Publish refused, with a code: hub_read_only, no_author, link_in_path, unit_unreadable, item_exists, draft_already_published or managed_confirmation_required */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description The draft is past the bounds (limit) */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description The body is not application/json */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */
