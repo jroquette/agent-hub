@@ -1,9 +1,15 @@
 import json
 import re
+from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi.testclient import TestClient
 
+from agent_hub.api.app import create_app
+from agent_hub.api.session_token import cookie_name
+from agent_hub.api.settings import ApiSettings
 from agent_hub.core.ingestion.hook_envelope import MAX_BODY_BYTES
 from agent_hub.core.item_versions.item_version_ports import ItemWriteResult
 from agent_hub.core.testing.read_model_builders import a_hub_view
@@ -439,9 +445,12 @@ def test_refuses_gate_decision_without_deciding_when_body_over_cap(wired: Any) -
     assert wired.gate_calls == []
 
 
-# The item writes (AGH-295, AC-295.33): a restore writes into a hub's working tree, so it takes
-# the strict rule and the launch cookie; nothing reaches the port when one fails.
+# The item writes (AGH-295, AC-295.33): a restore or a publish writes into a hub's working tree,
+# so it takes the strict rule and the launch cookie (409 ``hub_read_only`` in the container);
+# nothing reaches the port when one fails.
 VERSION_ID = "0199f0a0-0000-7000-8000-00000000000a"
+DRAFT_ID = "agent-abc123"
+PUBLISH_PATH = f"/api/v1/projects/demo/skills/drafts/{DRAFT_ID}/publish"
 ITEM_VERSION_WRITES = [
     pytest.param(
         f"/api/v1/projects/demo/skills/agent/demo/scout/versions/{VERSION_ID}/restore",
@@ -451,7 +460,11 @@ ITEM_VERSION_WRITES = [
         f"/api/v1/workflows/demo/review/versions/{VERSION_ID}/restore",
         id="item_versions-restore-workflow",
     ),
+    pytest.param(PUBLISH_PATH, id="item_versions-publish"),
 ]
+# The body each write takes, and the id its call names (the version, or the draft).
+_BODIES = {PUBLISH_PATH: b'{"target": null, "confirm_managed": true}'}
+_CALLED = {PUBLISH_PATH: DRAFT_ID}
 
 
 class ItemWrites:
@@ -476,9 +489,8 @@ def _post_restore(wired: Any, path: str, **headers: str) -> tuple[Any, ItemWrite
     writes = ItemWrites()
     wired.wire(item_version_writes=writes)
     sent = {"Origin": OWN_ORIGIN, "Content-Type": "application/json", **headers}
-    response = wired.client.post(
-        path, content=b'{"confirm_managed": true}', headers={k: v for k, v in sent.items() if v}
-    )
+    body = _BODIES.get(path, b'{"confirm_managed": true}')
+    response = wired.client.post(path, content=body, headers={k: v for k, v in sent.items() if v})
     return response, writes
 
 
@@ -487,7 +499,8 @@ def test_accepts_item_versions_restore_when_origin_own_and_body_json(wired: Any,
     response, writes = _post_restore(wired, path, **{"Sec-Fetch-Site": "same-origin"})
 
     assert response.status_code == 200, response.text
-    assert [(version, confirmed) for _, version, confirmed in writes.calls] == [(VERSION_ID, True)]
+    called = _CALLED.get(path, VERSION_ID)
+    assert [(named, confirmed) for _, named, confirmed in writes.calls] == [(called, True)]
 
 
 @pytest.mark.parametrize(
@@ -542,6 +555,31 @@ def test_refuses_item_versions_restore_without_writing_when_body_over_cap(
     )
 
     assert response.status_code == 413
+    assert writes.calls == []
+
+
+@pytest.mark.parametrize("signed_in", [True, False], ids=["signed-in", "no-cookie"])
+@pytest.mark.parametrize("path", ITEM_VERSION_WRITES)
+def test_refuses_item_versions_write_without_writing_when_in_container(
+    api_settings: ApiSettings, web_dist: Path, *, path: str, signed_in: bool
+) -> None:
+    writes = ItemWrites()
+    app = create_app(replace(api_settings, sessions_off=True), web_dist=web_dist)
+    app.state.ports = replace(app.state.ports, item_version_writes=writes)
+    with TestClient(app, base_url=OWN_ORIGIN, raise_server_exceptions=False) as client:
+        if signed_in and api_settings.session_token is not None:
+            client.cookies.set(cookie_name(api_settings.port), api_settings.session_token)
+        response = client.post(
+            path,
+            content=_BODIES.get(path, b"{}"),
+            headers={"Origin": OWN_ORIGIN, "Content-Type": "application/json"},
+        )
+
+    assert response.status_code == 409, response.text
+    assert (response.json()["title"], response.json()["code"]) == (
+        "Item write refused",
+        "hub_read_only",
+    )
     assert writes.calls == []
 
 
