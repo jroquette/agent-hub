@@ -11,7 +11,7 @@ import {
   StatusBadge,
   Tooltip,
 } from "../../components";
-import { typingIn } from "../../shell/goSequence";
+import { goSequencePending, typingIn } from "../../shell/goSequence";
 import { useApi, type ApiProblem } from "../../lib/api";
 import { fmtClock, fmtDateTime, fmtMoney } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
@@ -29,6 +29,8 @@ import {
   TicketStepBar,
   splitTitle,
   ticketAnchor,
+  TicketOpenLink,
+  ticketParam,
   ticketSearch,
   ticketStepLine,
   type TicketAction,
@@ -85,7 +87,16 @@ function PrCell({ row }: { row: TicketRow }) {
 }
 
 /** The words of the title, the epic tag before them and a branch mark on an epic's child. */
-function TitleCell({ row, child }: { row: TicketRow; child: boolean }) {
+function TitleCell({
+  row,
+  child,
+  onOpen,
+}: {
+  row: TicketRow;
+  child: boolean;
+  /** Given, a ticket's title opens its panel, as its card's does (AC-1.10). */
+  onOpen?: TicketOpener | undefined;
+}) {
   const text = row.title ? splitTitle(row.title).text : null;
   return (
     <span className="ah-ticket-title" data-child={child || undefined}>
@@ -95,7 +106,13 @@ function TitleCell({ row, child }: { row: TicketRow; child: boolean }) {
         </span>
       )}
       {row.children.length > 0 && <span className="ah-flow-epic-tag">Epic</span>}
-      <span>{text ?? <span className="ah-subtle">—</span>}</span>
+      {text && onOpen && row.children.length === 0 ? (
+        <TicketOpenLink row={row} onOpen={onOpen}>
+          {text}
+        </TicketOpenLink>
+      ) : (
+        <span>{text ?? <span className="ah-subtle">—</span>}</span>
+      )}
     </span>
   );
 }
@@ -364,6 +381,7 @@ function TicketsTable({
   acRows,
   ticketAction,
   onOpen,
+  onOpenTicket,
 }: {
   data: FeatureTickets;
   project: string;
@@ -372,6 +390,8 @@ function TicketsTable({
   ticketAction?: TicketAction | undefined;
   /** Opens a row's ticket panel (Enter, o or a click on the row). */
   onOpen: (row: TicketRow, opener: HTMLElement) => void;
+  /** Records the opener when a row's title link opens the panel. */
+  onOpenTicket: TicketOpener;
 }) {
   const byRef = new Set(data.tickets.map((t) => t.ref));
   const isChild = (row: TicketRow) => row.parent != null && byRef.has(row.parent);
@@ -394,7 +414,7 @@ function TicketsTable({
     {
       label: "Title",
       className: "ah-ticket-title-col",
-      cell: (row) => <TitleCell row={row} child={isChild(row)} />,
+      cell: (row) => <TitleCell row={row} child={isChild(row)} onOpen={onOpenTicket} />,
     },
     {
       label: "Stage",
@@ -514,7 +534,7 @@ function TicketsTable({
                   epic
                     ? undefined
                     : (event) => {
-                        if (event.target !== event.currentTarget) return;
+                        if (event.target !== event.currentTarget || goSequencePending()) return;
                         if (event.ctrlKey || event.metaKey || event.altKey) return;
                         if (event.key === "j" || event.key === "ArrowDown") move(row.ref, 1);
                         else if (event.key === "k" || event.key === "ArrowUp") move(row.ref, -1);
@@ -671,7 +691,7 @@ export function TicketsTab({
   };
   const openRow = (row: TicketRow, element: HTMLElement) => {
     remember(element);
-    void navigate({ search: ticketSearch(params, row) }, { replace: true });
+    void navigate({ search: ticketSearch(params, ticketParam(row)) }, { replace: true });
   };
   const closeTicket = (ref: string | undefined) => {
     // The opener is gone once the view was toggled: the same ticket in this view takes focus.
@@ -746,6 +766,7 @@ export function TicketsTab({
                   acRows={acById}
                   ticketAction={ticketAction}
                   onOpen={openRow}
+                  onOpenTicket={remember}
                 />
               )}
             </div>
@@ -755,6 +776,7 @@ export function TicketsTab({
                 slug={slug}
                 data={data}
                 ticket={ticket}
+                row={shown}
                 evals={evals}
                 acPasses={acPasses}
                 acRows={acById}

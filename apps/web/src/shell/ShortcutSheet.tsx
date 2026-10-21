@@ -35,6 +35,15 @@ export const SHORTCUTS: readonly { title: string; rows: readonly [string, string
     ],
   },
   {
+    // Feature detail's Tickets tab (AGH-330, spec 01).
+    title: "Tickets",
+    rows: [
+      ["Flow / table", "v"],
+      ["Next / previous row", "j k"],
+      ["Open the ticket panel", "↵ o"],
+    ],
+  },
+  {
     // An agent session's chat (AC-234.29): `/` at the start of the message, the oldest
     // pending request; Ctrl is Cmd on a Mac.
     title: "Chat",

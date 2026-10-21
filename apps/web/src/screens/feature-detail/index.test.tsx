@@ -356,8 +356,9 @@ describe("FeatureDetailScreen", () => {
       );
 
       const line = `Sign-off possible after ${fmtDateTime(after, "local")}`;
-      const path = await screen.findByRole("list", { name: "Golden path" });
-      expect(within(path).getByText(line)).toBeInTheDocument();
+      expect(
+        await screen.findByRole("button", { name: "Open Eval 2, the acceptance eval" }),
+      ).toHaveAccessibleDescription(expect.stringContaining(line));
       expect(screen.getByText(line, { selector: "b" })).toBeInTheDocument();
     });
 
@@ -1041,7 +1042,6 @@ describe("FeatureDetailScreen", () => {
       );
       // Its destination is its description (AGH-330 UX F6).
       expect(link).toHaveAccessibleDescription("AGH-48 · Load the memory layers · show its steps");
-      expect(header).not.toHaveTextContent("Load the memory layers");
       expect(within(header).getAllByText("In Progress")).toHaveLength(2);
       expect(screen.queryByText("PR —")).toBeNull();
     });
@@ -1074,7 +1074,7 @@ describe("FeatureDetailScreen", () => {
       await screen.findByRole("heading", { level: 1, name: "layered-memory" });
 
       const header = screen.getByRole("group", { name: "Tickets of this feature" });
-      expect(header).toHaveTextContent("AGH-48AGH-49");
+      expect(within(header).getByRole("link", { name: "AGH-48" })).toBeInTheDocument();
       expect(within(header).getByRole("link", { name: "AGH-49" })).toHaveAccessibleDescription(
         "AGH-49 · show its steps",
       );

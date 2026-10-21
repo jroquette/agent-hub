@@ -607,7 +607,6 @@ describe("GoldenPathStepper", () => {
         ]}
         labels={{ context: "Context", implement: "Implement", review: "Review" }}
         label="Ticket steps"
-        vertical
         open="review"
         detail={(step) => `Details of ${step.name}`}
         onSelect={onSelect}

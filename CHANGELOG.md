@@ -40,7 +40,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   prompt names the re-run), a future-dated one says when a sign-off becomes possible, reopened ACs offer only "Needs
   more work"; neither undated nor future-dated ranks the feature as needing you. The "Mark owner steps done" banner
   above the tabs is gone: one "Waiting on you" banner points to each prompt, and the Acceptance step opens the
-  acceptance eval. The feature detail's `acceptance_eval` gains `owner_wait` (AGH-330).
+  acceptance eval; each of them moves focus to that eval. The feature detail's `acceptance_eval` gains `owner_wait`,
+  with `signable_after` for a future-dated eval (AGH-330).
 
 ## [0.18.0] - 2026-10-20
 
