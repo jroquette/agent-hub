@@ -2516,3 +2516,47 @@ def test_asks_nothing_when_findings_issue_key_missing_on_terminal(
     assert "[y/N]" not in shown
     assert "LINEAR_API_KEY is not set" in plain(shown)
     assert tracker_calls(hub) == []
+
+
+# Review Q4, Q6 (AGH-362): a finding of nothing but controls, at the proposal's bounds, still makes
+# an issue the tracker takes; --json shows no raw control either.
+BIDI = "‮"
+
+
+def all_controls_run(hub: Path, marker: Path, held: Path) -> None:
+    proposal = a_proposal(RELEASE)
+    proposal["findings"][0].update(title=BIDI * 120, text=BIDI * 2000, evidence=BIDI * 2000)
+    hold_walk(hub, marker, held)
+    proposed = propose(hub, marker, held, proposal=proposal)
+    assert proposed.exit_code == 0, proposed.output
+
+
+def test_creates_issue_when_findings_text_all_controls(hub: Path, marker: Path, held: Path) -> None:
+    all_controls_run(hub, marker, held)
+    env = a_tracker(hub)
+
+    code, shown = findings_in_terminal(hub, env, RUN, "--issue", "f1", answer="y")
+
+    assert code == 0, shown[-400:]
+    assert "created DEM-42" in plain(shown)
+    (call,) = tracker_calls(hub)
+    title, description = call["arguments"]["title"], call["arguments"]["description"]
+    assert len(title) <= 255
+    assert len(description) <= 10_000
+    assert BIDI not in title + description
+    assert "\\u202e" in description
+
+
+def test_escapes_controls_when_findings_json(hub: Path, marker: Path, held: Path) -> None:
+    proposal = a_proposal(RELEASE)
+    text = f"held{BIDI}‏\x9b2J\x1b[8m"
+    proposal["findings"][0].update(title=text, text=text, evidence=text)
+    hold_walk(hub, marker, held)
+    assert propose(hub, marker, held, proposal=proposal).exit_code == 0
+
+    result = findings(hub, marker, held, RUN, "--json")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.isascii()
+    assert raw_controls(result.stdout.replace("\n", "")) == []
+    assert json.loads(result.stdout)["findings"][0]["title"] == text
