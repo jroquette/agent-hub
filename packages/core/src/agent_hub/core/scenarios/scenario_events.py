@@ -82,14 +82,21 @@ class ScenarioEvents:
         self.events: list[Event] = []
 
     def policy_decided(
-        self, facts: ActionFacts, *, reason_kind: ReasonKind, at: datetime, poll: int = 0
+        self,
+        facts: ActionFacts,
+        *,
+        reason_kind: ReasonKind,
+        at: datetime,
+        poll: int = 0,
+        item: str | None = None,
     ) -> None:
+        """An action call's decision; ``item`` ``start`` for a process workflow's start."""
         payload = {**facts.decided(), "reason_kind": reason_kind}
         self._add(
             EventType.POLICY_DECISION,
             facts.step,
             facts.attempt,
-            item=_poll_item(poll),
+            item=_poll_item(poll) if item is None else item,
             at=at,
             payload=payload,
         )

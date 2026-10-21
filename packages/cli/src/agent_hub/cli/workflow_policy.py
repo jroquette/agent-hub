@@ -79,6 +79,8 @@ GATES: Final = "policy_gates.json"
 REASK_OWED: Final = "reask_owed"
 # A process workflow's write or destroy node, written before its process starts.
 NODE_START: Final = "node_start"
+# The ``source_id`` item of a start decision's ``policy.decision`` event (attempt 0).
+START_ITEM: Final = "start"
 _STARTS: Final = frozenset({ACTION_START, NODE_START})
 _EFFECTS: Final[tuple[Effect, ...]] = get_args(Effect)
 
@@ -171,7 +173,14 @@ def owed(
         if isinstance(group, LoopGroupNode)
     }
     owner = {body: group for group, ids in bodies.items() for body in ids}
-    marks = _Marks.of(records, policy=policy_gate_ids(records))
+    owed_steps = frozenset(
+        node
+        for record in records
+        if record.get("event") == REASK_OWED
+        and isinstance(node := record.get("node"), str)
+        and node not in bodies
+    )
+    marks = _Marks.of(records, policy=policy_gate_ids(records, owed_steps=owed_steps))
     for node in [*bodies, *(step for step in effects if step not in owner)]:
         if _newly_owed(node, marks, bodies.get(node)):
             line: Record = {"event": REASK_OWED, "node": node}
@@ -236,17 +245,17 @@ def _newly_owed(node: str, marks: _Marks, body: tuple[str, ...] | None) -> bool:
     return started > clean and marks.owed.get(node, -1) <= clean
 
 
-def policy_gate_ids(records: list[Record]) -> frozenset[str]:
-    """The run's policy gates, from its record alone (never from an id's suffix: an authored
-    approval may be recorded ``<group>__ask``): the start record's and each ``policy_asks``
-    line's (``recorded_gate_kinds``), and the gate of each step a ``reask_owed`` line names."""
+def policy_gate_ids(
+    records: list[Record], *, owed_steps: frozenset[str] = frozenset()
+) -> frozenset[str]:
+    """The run's policy gates, from its record alone and only ever built from a step's id
+    (never from an id's suffix, nor from a loop_group's or an include's id: an authored body
+    approval ``ask`` is recorded ``<group>__ask``): before each step of the start record's
+    ``policy_gates`` and of each ``policy_asks`` line (``recorded_gate_kinds``), and before each
+    of ``owed_steps`` (steps a ``reask_owed`` line names, which ``owed`` tells from groups)."""
     kinds = recorded_gate_kinds(records)
-    owed_gates = {
-        ask_gate(node)
-        for record in records
-        if record.get("event") == REASK_OWED and isinstance(node := record.get("node"), str)
-    }
-    return frozenset({gate for gate, kind in kinds.items() if kind == "policy"} | owed_gates)
+    policy = {gate for gate, kind in kinds.items() if kind == "policy"}
+    return frozenset(policy | {ask_gate(step) for step in owed_steps})
 
 
 def record_asks(folder: Path, steps: Mapping[str, PolicyAsk]) -> None:
@@ -299,9 +308,10 @@ class StartPolicy:
         return {row.action: row.content_hash for row in rows}
 
     def emit(self, events: ScenarioEvents, *, at: datetime) -> None:
-        """One ``policy.decision`` per decided node and action step, attempt 0."""
+        """One ``policy.decision`` per decided node and action step: attempt 0, item
+        ``start``."""
         for decided in self.decided:
-            events.node_decided(decided, attempt=0, at=at)
+            events.node_decided(decided, attempt=0, at=at, item=START_ITEM)
         for row in () if self.planned is None else self.planned.rows:
             facts = ActionFacts(
                 step=row.step,
@@ -314,7 +324,7 @@ class StartPolicy:
                 origin="author",
                 decision=row.decision,
             )
-            events.policy_decided(facts, reason_kind=row.reason_kind, at=at)
+            events.policy_decided(facts, reason_kind=row.reason_kind, at=at, item=START_ITEM)
 
 
 def decide_start(

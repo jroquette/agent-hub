@@ -1653,3 +1653,53 @@ def test_refuses_start_when_workflow_environment_differs_on_include(sample: Samp
         "hub workflow run: the included workflow check declares the environment local, not staging"
     ]
     assert not run_path(sample).exists()
+
+
+# AGH-359 (R2-F1): a loop_group owed after a crash never makes its id a policy gate: an authored
+# body approval ``ask`` (recorded ``g__ask``) is still read by its group.
+
+GROUP_OWED_YAML = """\
+version: 1
+name: envy
+revision: 1
+environment: local
+nodes:
+  - id: g
+    type: loop_group
+    max_iterations: 3
+    until_when: "$ask.output.decision == 'reject'"
+    nodes:
+      - id: ship
+        type: script
+        runtime: sh
+        script: ship.sh
+      - id: ask
+        type: approval
+        message: Stop looping?
+        depends_on: [ship]
+"""
+
+
+def test_reads_body_reject_when_workflow_environment_group_owed_after_crash(
+    sample: SampleRun, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    declare_environments(sample, local="write")
+    marker = tmp_path / "marker"
+    write(sample.hub, "workflows/envy/scripts/ship.sh", CRASH_ONCE_SH)
+    write(sample.hub, "workflows/envy/envy.yaml", GROUP_OWED_YAML)
+    environ = {**os.environ, "AGENT_HUB_ROOT": str(sample.hub), "MARKER": str(marker)}
+    command = [sys.executable, "-m", "agent_hub.cli", "workflow", "run", "envy", "--live"]
+    crashed = subprocess.run(  # noqa: S603 - this interpreter, fixed arguments
+        [*command, "--run-id", RUN_ID], env=environ, capture_output=True, check=False
+    )
+    monkeypatch.setenv("MARKER", str(marker))
+
+    resumed = sample.run("--resume", RUN_ID)
+    approved = sample.run_command("approve", RUN_ID, "g__ship__ask")
+    rejected = sample.run_command("reject", RUN_ID, "g__ask")
+
+    assert crashed.returncode == -signal.SIGKILL
+    assert resumed.stdout.splitlines()[-1] == "run r1: paused at g__ship__ask"
+    assert approved.stdout.splitlines()[-1] == "run r1: paused at g__ask"
+    assert rejected.exit_code == 0, rejected.output
+    assert rejected.stdout.splitlines()[-1] == "run r1: done"

@@ -1351,3 +1351,63 @@ def test_asks_again_when_workflow_environment_action_write_never_ended(
     assert "may have run" in gate["message"]
     assert plain(approved.stdout).splitlines()[-1] == f"run {RUN}: done"
     assert modes(marker) == ["run", "run"]
+
+
+# AGH-359 (R2-F1): the same in a scenario run: an owed group's id is never a policy gate.
+
+GROUP_OWED_SCENARIO = """\
+version: 1
+kind: scenario
+name: order-walk
+revision: 1
+inputs:
+  ref: {type: string, required: true}
+nodes:
+  - id: g
+    type: loop_group
+    max_iterations: 3
+    until_when: "$ask.output.decision == 'reject'"
+    nodes:
+      - id: send-order
+        type: action
+        action: send-order
+        with: {target: api, ref: $INPUTS.ref}
+      - id: ask
+        type: approval
+        message: Stop looping?
+        depends_on: [send-order]
+"""
+
+
+def test_reads_body_reject_when_owed_group_holds_approval_named_ask(
+    hub: Path, marker: Path
+) -> None:
+    write_scenario(hub, GROUP_OWED_SCENARIO)
+    crash_once(hub, marker, "send-order")
+
+    resumed = run_hub(hub, marker, "workflow", "run", "--resume", RUN)
+    approved = decide_gate(hub, marker, "approve", gate="g__send-order__ask")
+    rejected = decide_gate(hub, marker, "reject", gate="g__ask")
+
+    assert plain(resumed.stdout).splitlines()[-1] == f"run {RUN}: paused at g__send-order__ask"
+    assert plain(approved.stdout).splitlines()[-1] == f"run {RUN}: paused at g__ask"
+    assert rejected.exit_code == 0, rejected.output
+    assert plain(rejected.stdout).splitlines()[-1] == f"run {RUN}: done"
+
+
+def test_marks_start_decisions_when_workflow_environment_run_starts(
+    hub: Path, marker: Path
+) -> None:
+    write_flow(hub, FLOW.format(env="local"))
+
+    run_flow(hub, marker)
+
+    sources = sorted(
+        event.source_id
+        for event in stored(hub)
+        if event.type == "policy.decision" and event.payload["attempt"] == 0
+    )
+    assert sources == [
+        f"{RUN}:look:0:policy.decision:start",
+        f"{RUN}:send:0:policy.decision:start",
+    ]
