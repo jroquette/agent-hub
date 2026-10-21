@@ -622,3 +622,19 @@ class HubItemWriterContract:
             _check(error.code == "link_in_path", f"refused as {error.code}")
         else:
             raise AssertionError("a script was read through a link")
+
+    def test_fails_script_read_when_not_regular_file(self, writer_tree: WriterTree) -> None:
+        folder = "plugin/demo/scripts/check.sh"
+        writer_tree.write(f"{folder}/inner.sh", b"x")
+        try:
+            writer_tree.writer.read_script(writer_tree.hub_path, folder)
+        except HubItemWriteError as error:
+            _check(error.kind == "failed" and "check" not in str(error), "failed, no path named")
+        else:
+            raise AssertionError("a folder was read as a script")
+
+    def test_reads_script_one_byte_past_cap_when_larger(self, writer_tree: WriterTree) -> None:
+        script = "plugin/demo/scripts/big.sh"
+        writer_tree.write(script, b"x" * (MAX_SKILL_FILE_BYTES + 10))
+        found = writer_tree.writer.read_script(writer_tree.hub_path, script)
+        _check(found == b"x" * (MAX_SKILL_FILE_BYTES + 1), "read up to one byte past the cap")
