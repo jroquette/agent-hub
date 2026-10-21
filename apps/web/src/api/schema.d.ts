@@ -5338,7 +5338,7 @@ export interface components {
      */
     UnitState: "ok" | "too_large" | "secret" | "unreadable";
     /** @enum {string} */
-    UnversionedReason: "secret" | "too_large";
+    UnversionedReason: "secret" | "too_large" | "script_only";
     /**
      * Usage
      * @description How often a skill or agent was used in the window: counts and a time only (D6, ADR 0019).

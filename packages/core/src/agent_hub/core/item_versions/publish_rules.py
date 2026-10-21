@@ -19,7 +19,9 @@ and key; ``merge_hooks`` adds hooks to a hook file (or a new one). Both write th
 ``dump_json``'s form (D24). ``merge_hooks`` gives the same bytes when run again on its own output
 (a draft group already there, equal as JSON, or its hooks already in place, is not added again);
 ``replace_hook`` always replaces its hook, so a replay of an edit after a failed draft removal
-(A7) is told by the unit's ``publish`` version naming the draft, not by the file. A hooks file on
+(A7) is told by the unit's ``publish`` version naming the draft, not by the file; with no such
+version, ``holds_moved_hook`` tells a draft that moves its hook into a file already holding it
+(A12), which is refused. A hooks file on
 disk that is not a strict JSON hooks object is ``ItemWriteRefusedError("unit_unreadable")``.
 
 ``new_destination`` places a new item in the project's own plugin, ``plugin/<project>/``, a new
@@ -217,6 +219,26 @@ def replace_hook(file_json: bytes, at: HookAt, new_hooks: HookGroups) -> bytes:
         del hooks[at.event]
     _add_groups(hooks, rest)
     return dump_json(document)
+
+
+def holds_moved_hook(file_json: bytes, at: HookAt, new_hooks: HookGroups) -> bool:
+    """Whether ``new_hooks`` move the hook ``at`` (no draft group takes its place: another event
+    or matcher) while ``file_json`` already holds every draft group. A retry of such a publish
+    that stored no version (A12) looks the same as this, and ``replace_hook`` would then replace
+    the hook now at ``at``'s place, another one. ``EntityNotFoundError`` when the file holds no
+    hook ``at``."""
+    hooks = _hooks_of(_hooks_document(file_json))
+    _, group, _, _ = _locate(hooks, at)
+    drafted = [
+        (event, draft_group)
+        for event, draft_groups in new_hooks.items()
+        for draft_group in (draft_groups if isinstance(draft_groups, list) else [])
+    ]
+    if any(
+        _splices(draft_group, event=event, at=at, group=group) for event, draft_group in drafted
+    ):
+        return False
+    return all(_holds(hooks.get(event), draft_group) for event, draft_group in drafted)
 
 
 def merge_hooks(file_json: bytes | None, new_hooks: HookGroups) -> bytes:

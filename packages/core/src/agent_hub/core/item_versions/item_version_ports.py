@@ -140,8 +140,9 @@ class ItemVersionReads(Protocol):
         ...
 
 
-# Why a written unit was not versioned (A2).
-type UnversionedReason = Literal["secret", "too_large"]
+# Why a written unit was not versioned (A2): a secret match, past the bounds, or only a new
+# hook's scripts were written (A13).
+type UnversionedReason = Literal["secret", "too_large", "script_only"]
 
 
 class ItemWriteResult(ViewModel):

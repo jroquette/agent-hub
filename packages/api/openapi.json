@@ -10243,7 +10243,8 @@
       "UnversionedReason": {
         "enum": [
           "secret",
-          "too_large"
+          "too_large",
+          "script_only"
         ],
         "type": "string"
       },

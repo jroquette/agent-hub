@@ -1,25 +1,29 @@
-"""Publish a Studio draft (AGH-295, D10, D19, D21, D24, S4, S5, A2, A5, A7, A8; AC-295.11-16):
-the hand edit is recorded first, the draft lands where the publish rules say under one lock, a
-``publish`` version naming the draft is recorded, then the draft is removed; an equal draft or a
-replay writes and records nothing and removes the draft."""
+"""Publish a Studio draft (AGH-295, D10, D19, D21, D24, S4, S5, A2, A5, A7, A8, A12-A15;
+AC-295.11-16): the hand edit is recorded first, the draft lands where the publish rules say under
+one lock, a ``publish`` version naming the draft is recorded, then the draft is removed; an equal
+draft or a replay writes and records nothing and removes the draft; a retry with no version to
+follow refuses what it cannot tell apart, a merge past the bounds is refused, a rename records
+its ``publish`` before removing the old unit."""
 
 import json
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime
 from typing import Final
 
 import pytest
 
 from agent_hub.core.item_versions.capture_item_versions import CaptureItemVersions
-from agent_hub.core.item_versions.hub_item_writer import ItemWriteRefusedError
+from agent_hub.core.item_versions.hub_item_writer import HubItemWriteError, ItemWriteRefusedError
 from agent_hub.core.item_versions.item_version import VersionAuthor, VersionOrigin
 from agent_hub.core.item_versions.item_version_ports import MarkedUnit, ToolkitRef
 from agent_hub.core.item_versions.publish_draft import DraftNotRemovedError, PublishDraft
 from agent_hub.core.item_versions.publish_rules import DraftInvalidError
 from agent_hub.core.item_versions.record_and_write import RecordAndWrite
 from agent_hub.core.item_versions.unit_hash import file_hash
+from agent_hub.core.json_form import dump_json
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.skills.skill_reads import SkillReads
+from agent_hub.core.skills.skill_sources import MAX_SKILL_FILE_BYTES
 from agent_hub.core.skills.skill_view import ItemKind, SkillCatalog, SkillDetail
 from agent_hub.core.testing.hub_fakes import FakeHub, FakeHubFileReader
 from agent_hub.core.testing.item_version_fakes import FakeHubItemWriter, InMemoryItemVersionStore
@@ -348,3 +352,252 @@ def test_finishes_new_item_when_retried_after_draft_not_removed() -> None:
     assert not again.changed
     assert rig.origins("plugin/demo/agents/planner.md") == [VersionOrigin.PUBLISH]
     assert rig.drafts() == []
+
+
+def _secret_hooks(event: str) -> bytes:
+    return _hooks(event, f"notify --token {SYNTHETIC_TOKEN}")
+
+
+def test_refuses_moved_hook_when_retried_without_version() -> None:
+    settings = {
+        "hooks": {
+            "PreToolUse": [
+                {"matcher": "Bash", "hooks": [{"type": "command", "command": "one"}]},
+                {"matcher": "Bash", "hooks": [{"type": "command", "command": "two"}]},
+            ],
+        }
+    }
+    rig = _Rig({SETTINGS: json.dumps(settings).encode()})
+    rig.draft("hook-mov002", {"hooks.json": _secret_hooks("Stop")})
+    rig.writer.fail_on.add(".hub-drafts/hook-mov002")
+    ref = _ref(ItemKind.HOOK, "settings", "settings-pretooluse-1")
+    with pytest.raises(DraftNotRemovedError) as first:
+        rig.publish.publish(PROJECT, "hook-mov002", ref, confirm_managed=False)
+    assert first.value.result.reason == "secret"
+    once = rig.hub.skill_files[SETTINGS]
+    rig.writer.fail_on.clear()
+    rig.writer.writes.clear()
+
+    with pytest.raises(ItemWriteRefusedError) as refused:
+        rig.publish.publish(PROJECT, "hook-mov002", ref, confirm_managed=False)
+
+    assert refused.value.code == "item_exists"
+    assert rig.hub.skill_files[SETTINGS] == once
+    assert rig.writer.writes == []
+    assert rig.drafts() == [".hub-drafts/hook-mov002/hooks.json"]
+
+
+def test_keeps_hook_in_place_when_draft_equal_to_hook() -> None:
+    hook = dump_json(json.loads(_hooks("PreToolUse", "one", "Bash")))
+    rig = _Rig({SETTINGS: hook})
+    rig.draft("hook-eq0001", {"hooks.json": hook})
+    ref = _ref(ItemKind.HOOK, "settings", "settings-pretooluse-1")
+
+    result = rig.publish.publish(PROJECT, "hook-eq0001", ref, confirm_managed=False)
+
+    assert not result.changed
+    assert rig.hub.skill_files[SETTINGS] == hook
+    assert rig.drafts() == []
+
+
+def test_answers_not_found_when_renamed_skill_retried() -> None:
+    rig = _Rig({f"{ALPHA}/SKILL.md": _named("alpha")})
+    rig.draft("skill-ren003", {"SKILL.md": _named("alpha2")})
+    rig.writer.fail_on.add(".hub-drafts/skill-ren003")
+    alpha = _ref(ItemKind.SKILL, "demo", "alpha")
+    with pytest.raises(DraftNotRemovedError):
+        rig.publish.publish(PROJECT, "skill-ren003", alpha, confirm_managed=False)
+    rig.writer.fail_on.clear()
+    rig.writer.writes.clear()
+
+    with pytest.raises(EntityNotFoundError):
+        rig.publish.publish(PROJECT, "skill-ren003", alpha, confirm_managed=False)
+
+    assert rig.writer.writes == []
+    assert rig.origins("plugin/demo/skills/alpha2") == [VersionOrigin.PUBLISH]
+
+
+def test_refuses_new_item_when_retried_without_version() -> None:
+    rig = _Rig({})
+    secret = _named("planner", f"token: {SYNTHETIC_TOKEN}\n")
+    rig.draft("agent-new004", {"planner.md": secret})
+    rig.writer.fail_on.add(".hub-drafts/agent-new004")
+    with pytest.raises(DraftNotRemovedError) as first:
+        rig.publish.publish(PROJECT, "agent-new004", None, confirm_managed=False)
+    assert first.value.result.reason == "secret"
+    rig.writer.fail_on.clear()
+    rig.writer.writes.clear()
+
+    with pytest.raises(ItemWriteRefusedError) as refused:
+        rig.publish.publish(PROJECT, "agent-new004", None, confirm_managed=False)
+
+    assert refused.value.code == "item_exists"
+    assert rig.writer.writes == []
+
+
+def _past_bounds(event: str) -> bytes:
+    document = json.loads(_hooks(event, "big"))
+    document["padding"] = "x" * MAX_SKILL_FILE_BYTES
+    return json.dumps(document).encode()
+
+
+def test_refuses_hook_edit_when_file_past_bounds() -> None:
+    big = _past_bounds("PreToolUse")
+    rig = _Rig({SETTINGS: big})
+    rig.draft("hook-big001", {"hooks.json": _hooks("PreToolUse", "small")})
+    ref = _ref(ItemKind.HOOK, "settings", "settings-pretooluse-1")
+
+    with pytest.raises(ItemWriteRefusedError) as refused:
+        rig.publish.publish(PROJECT, "hook-big001", ref, confirm_managed=False)
+
+    assert refused.value.code == "unit_unreadable"
+    assert rig.hub.skill_files[SETTINGS] == big
+    assert rig.writer.writes == []
+    assert rig.store.last(PROJECT, SETTINGS) is None
+
+
+def test_refuses_new_hook_when_hooks_file_past_bounds() -> None:
+    big = _past_bounds("Stop")
+    rig = _Rig({PLUGIN_HOOKS: big})
+    rig.draft(
+        "hook-big002", {"hooks.json": _hooks("PreToolUse", "check"), "scripts/check.sh": b"x\n"}
+    )
+
+    with pytest.raises(ItemWriteRefusedError) as refused:
+        rig.publish.publish(PROJECT, "hook-big002", None, confirm_managed=False)
+
+    assert refused.value.code == "unit_unreadable"
+    assert rig.hub.skill_files[PLUGIN_HOOKS] == big
+    assert SCRIPT not in rig.hub.skill_files
+    assert rig.writer.writes == []
+
+
+def test_answers_script_only_when_only_scripts_written() -> None:
+    hook = dump_json(json.loads(_hooks("PreToolUse", "check", "Bash")))
+    rig = _Rig({PLUGIN_HOOKS: hook})
+    rig.draft("hook-new005", {"hooks.json": hook, "scripts/check.sh": b"#!/bin/sh\n"})
+
+    result = rig.publish.publish(PROJECT, "hook-new005", None, confirm_managed=False)
+
+    assert (result.changed, result.versioned, result.reason) == (True, False, "script_only")
+    assert result.version is None
+    assert rig.hub.skill_files[SCRIPT] == b"#!/bin/sh\n"
+    assert rig.hub.skill_files[PLUGIN_HOOKS] == hook
+    assert rig.drafts() == []
+
+
+def test_records_publish_before_removing_old_when_renamed() -> None:
+    rig = _Rig({f"{ALPHA}/SKILL.md": _named("alpha")})
+    rig.draft("skill-ren004", {"SKILL.md": _named("alpha2")})
+    rig.writer.fail_on.add(ALPHA)
+
+    with pytest.raises(HubItemWriteError) as failed:
+        rig.publish.publish(
+            PROJECT, "skill-ren004", _ref(ItemKind.SKILL, "demo", "alpha"), confirm_managed=False
+        )
+
+    assert failed.value.kind == "failed"
+    assert "alpha" not in str(failed.value)
+    renamed = "plugin/demo/skills/alpha2"
+    assert rig.hub.skill_files[f"{ALPHA}/SKILL.md"] == _named("alpha")
+    assert rig.hub.skill_files[f"{renamed}/SKILL.md"] == _named("alpha2")
+    assert rig.origins(renamed) == [VersionOrigin.PUBLISH]
+    assert rig.origins(ALPHA) == [VersionOrigin.EXTERNAL]
+    assert rig.drafts() == [".hub-drafts/skill-ren004/SKILL.md"]
+
+
+def test_refuses_hook_edit_draft_when_it_carries_scripts() -> None:
+    rig = _Rig({PLUGIN_HOOKS: _hooks("PreToolUse", "check", "Bash")})
+    rig.draft(
+        "hook-scr001",
+        {"hooks.json": _hooks("PreToolUse", "check2", "Bash"), "scripts/check.sh": b"x\n"},
+    )
+    ref = _ref(ItemKind.HOOK, "demo", "demo-pretooluse-1")
+
+    with pytest.raises(DraftInvalidError):
+        rig.publish.publish(PROJECT, "hook-scr001", ref, confirm_managed=False)
+
+    assert rig.writer.writes == []
+    assert SCRIPT not in rig.hub.skill_files
+    assert rig.store.last(PROJECT, PLUGIN_HOOKS) is None
+
+
+class _EditedAtLock(FakeHubItemWriter):
+    """A writer whose first ``is_writable`` (the step's first act under its lock) stands in for
+    a hand edit landing between the item's resolve and the lock."""
+
+    def __init__(self, rig: _Rig, path: str, content: bytes) -> None:
+        super().__init__(rig.writer.hubs)
+        self._edit: tuple[str, bytes] | None = (path, content)
+
+    def is_writable(self, hub_path: str, unit_paths: Sequence[str] = ()) -> bool:
+        if self._edit is not None and unit_paths:
+            path, content = self._edit
+            self.hubs[hub_path].skill_files[path] = content
+            self._edit = None
+        return super().is_writable(hub_path, unit_paths)
+
+
+def test_locates_hook_in_file_read_under_lock_when_edited_before_lock() -> None:
+    rig = _Rig({SETTINGS: _hooks("PreToolUse", "one", "Bash")})
+    publish = _edited_at_lock(rig, SETTINGS, _hooks("pretooluse", "by hand", "Bash"))
+    rig.draft("hook-lck001", {"hooks.json": _hooks("pretooluse", "published", "Bash")})
+    ref = _ref(ItemKind.HOOK, "settings", "settings-pretooluse-1")
+
+    result = publish.publish(PROJECT, "hook-lck001", ref, confirm_managed=False)
+
+    assert result.changed
+    assert json.loads(rig.hub.skill_files[SETTINGS]) == json.loads(
+        _hooks("pretooluse", "published", "Bash")
+    )
+    assert rig.origins(SETTINGS) == [VersionOrigin.EXTERNAL, VersionOrigin.PUBLISH]
+
+
+def _edited_at_lock(rig: _Rig, path: str, content: bytes) -> PublishDraft:
+    writer = _EditedAtLock(rig, path, content)
+    reader = FakeHubFileReader({HUB: rig.hub})
+    step = RecordAndWrite(
+        rig.store,
+        reader=reader,
+        writer=writer,
+        author_of=lambda _project: AUTHOR,
+        clock=lambda: NOW,
+        capture=rig.capture,
+    )
+    return PublishDraft(
+        step, writer=writer, reader=reader, toolkit_units=rig.catalog, catalog=rig.catalog
+    )
+
+
+def test_answers_not_found_when_hook_gone_before_lock() -> None:
+    rig = _Rig({SETTINGS: _hooks("PreToolUse", "one", "Bash")})
+    gone = _hooks("Stop", "other")
+    publish = _edited_at_lock(rig, SETTINGS, gone)
+    rig.draft("hook-gon001", {"hooks.json": _hooks("PreToolUse", "published", "Bash")})
+    ref = _ref(ItemKind.HOOK, "settings", "settings-pretooluse-1")
+
+    with pytest.raises(EntityNotFoundError):
+        publish.publish(PROJECT, "hook-gon001", ref, confirm_managed=False)
+
+    assert rig.hub.skill_files[SETTINGS] == gone
+    assert rig.drafts() == [".hub-drafts/hook-gon001/hooks.json"]
+
+
+@pytest.mark.parametrize(
+    ("path", "source"),
+    [
+        (".claude/settings.project.json", "settings-project"),
+        (PLUGIN_HOOKS, "demo"),
+    ],
+)
+def test_replaces_hook_when_in_project_settings_or_plugin(path: str, source: str) -> None:
+    rig = _Rig({path: _hooks("PreToolUse", "one", "Bash")})
+    rig.draft("hook-src001", {"hooks.json": _hooks("PreToolUse", "published", "Bash")})
+    ref = _ref(ItemKind.HOOK, source, f"{source}-pretooluse-1")
+
+    result = rig.publish.publish(PROJECT, "hook-src001", ref, confirm_managed=False)
+
+    assert result.versioned
+    assert json.loads(rig.hub.skill_files[path]) == json.loads(
+        _hooks("PreToolUse", "published", "Bash")
+    )
