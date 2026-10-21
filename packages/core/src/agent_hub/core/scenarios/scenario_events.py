@@ -1,6 +1,7 @@
 """A scenario run's own events (docs/design/scenarios.md § Events and bounds): metadata only.
 
-Each action call is a ``policy.decision`` (every decision, a deny too) and, when it runs,
+Each action call is a ``policy.decision`` (every decision, a deny too; a process workflow's
+shell, script and ``until_bash`` decisions too, with ``node`` for ``action``) and, when it runs,
 ``action.start`` and ``action.end``, built from its ``ActionFacts``: names, its pinned hash, its
 effect, origin, decision and approver; never an arg, an output or a credential. A standalone
 ``hub action run`` has no run: its events carry the session ``action:<uuid>``, no ``run`` key
@@ -23,6 +24,7 @@ from pydantic import BaseModel, ConfigDict
 from agent_hub.core.events.event import Event, EventSource, EventType
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.scenarios.access_policy import Decision, Effect, Origin, ReasonKind
+from agent_hub.core.scenarios.policy_gates import NodeDecision
 from agent_hub.core.workflows.ports import ContextCapture, ExpectPoll
 
 
@@ -90,6 +92,23 @@ class ScenarioEvents:
             item=_poll_item(poll),
             at=at,
             payload=payload,
+        )
+
+    def node_decided(
+        self, decision: NodeDecision, *, attempt: int, at: datetime, item: str = ""
+    ) -> None:
+        """A process workflow node's decision (a shell or script node, or an ``until_bash``):
+        ``attempt`` 0 and ``item`` ``start`` at the start, the call's attempt after."""
+        payload: dict[str, JsonValue] = {
+            "node": decision.step,
+            "environment": decision.environment,
+            "effect": decision.effect,
+            "origin": "author",
+            "decision": decision.decision.decision,
+            "reason_kind": decision.decision.reason_kind,
+        }
+        self._add(
+            EventType.POLICY_DECISION, decision.step, attempt, item=item, at=at, payload=payload
         )
 
     def action_started(self, facts: ActionFacts, *, at: datetime, poll: int = 0) -> None:

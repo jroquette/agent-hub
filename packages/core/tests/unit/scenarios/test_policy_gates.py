@@ -186,3 +186,24 @@ def test_decides_nothing_when_workflow_environment_absent() -> None:
 
     assert (environment, decided) == (None, ())
     assert node_asks(decided, environment="staging") == {}
+
+
+def test_decides_until_bash_as_read_when_workflow_environment_declared() -> None:
+    body: dict[str, object] = {"id": "look", "type": "shell", "command": ["x"], "effect": "read"}
+    group: dict[str, object] = {
+        "id": "g",
+        "type": "loop_group",
+        "max_iterations": 2,
+        "until_bash": ["true"],
+        "nodes": [body],
+    }
+    plan = plan_workflow(a_workflow(group, environment="staging"))
+
+    decided = node_decisions(plan, environment="staging", declared=None)
+
+    assert [(item.step, item.node_type, item.effect) for item in decided] == [
+        ("g", "until_bash", "read"),
+        ("g__look", "shell", "read"),
+    ]
+    assert {item.decision.reason_kind for item in decided} == {"undeclared"}
+    assert {item.environment for item in decided} == {"staging"}
