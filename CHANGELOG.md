@@ -86,6 +86,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   acceptance eval; each of them moves focus to that eval. The feature detail's `acceptance_eval` gains `owner_wait`,
   with `signable_after` for a future-dated eval (AGH-330).
 
+### Fixed
+
+- `make playground` selects the web app's Node before it starts the conductor, so the sessions' Stop gate no
+  longer fails on an older Node; `make playground-export` maps the Environments and Tickets screens; tests no longer
+  depend on the interpreter's stack depth or on GNU make 4 (AGH-431).
+
 ## [0.18.0] - 2026-10-20
 
 ### Fixed
