@@ -31,6 +31,17 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   in `?tickets=`), so Start shows once; each card and row draws the ticket's own steps, Context, Preflight,
   Implement, Review, Eval, PR and Merged ("Review · 4/7"), from its review rounds, review record, evals and Linear;
   the flow's columns read "Group 1", "Group 2". The tickets route's rows carry the steps as `flow` (AGH-326).
+- `hub web` Feature detail: a ticket panel shows one ticket's seven steps (the current one open), its ACs, blockers
+  and sessions beside the Tickets tab (`?ticket=<id>`); a card's title, a table row (`Enter` / `o`, `j` / `k` to
+  move) or a header chip opens it, Esc closes it. `v` toggles Flow and Table; at 1280 the table hides Assignee and
+  Sessions (AGH-330).
+- `hub web` Feature detail: each owner wait has one prompt. The decisions on the whole-feature eval live on the Eval
+  tab's callout, which follows the server's rule: an undated acceptance eval asks to evaluate again (the Evaluate
+  prompt names the re-run), a future-dated one says when a sign-off becomes possible, reopened ACs offer only "Needs
+  more work"; neither undated nor future-dated ranks the feature as needing you. The "Mark owner steps done" banner
+  above the tabs is gone: one "Waiting on you" banner points to each prompt, and the Acceptance step opens the
+  acceptance eval; each of them moves focus to that eval. The feature detail's `acceptance_eval` gains `owner_wait`,
+  with `signable_after` for a future-dated eval (AGH-330).
 
 ## [0.18.0] - 2026-10-20
 
