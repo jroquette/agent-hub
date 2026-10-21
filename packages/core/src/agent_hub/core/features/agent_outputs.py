@@ -1,15 +1,15 @@
 """Check the JSON outputs agents hand to ``/feature`` (AGH-139): pure, bytes in, problems out.
 
-``review_problems`` and ``eval_problems`` return every problem of an output, uncapped: first the
-root problem (bytes that are not a JSON object), else every shape problem against
-``ReviewOutput`` or ``EvalOutput``, then every cross-check problem (``review_output_checks``,
+``review_problems``, ``eval_problems`` and ``preflight_problems`` return every problem of an
+output, uncapped: first the root problem (bytes that are not a JSON object), else every shape
+problem against ``ReviewOutput``, ``EvalOutput`` or ``PreflightRecord``, then every cross-check problem (``review_output_checks``,
 ``eval_output_checks``, then ``eval_output_scope``) in S2's order. The caller decides how many to
 show. Core applies the size bounds to the bytes it is given, whatever the caller read:
 ``MAX_OUTPUT_BYTES`` to the output, ``MAX_RECORD_BYTES`` to the record, and the sibling's first
 ``EVAL_HEAD_BYTES`` only are read.
 
-The JSON Schemas of both outputs ship as package data beside this module (``review.v1.json``,
-``eval.v1.json``), regenerated with ``make output-schemas`` whenever a model changes; unit tests
+The JSON Schemas of the outputs ship as package data beside this module (``review.v1.json``,
+``eval.v1.json``, ``preflight.v1.json``), regenerated with ``make output-schemas`` whenever a model changes; unit tests
 fail while a shipped file differs from the export.
 """
 
@@ -29,10 +29,12 @@ from agent_hub.core.features.output_models import (
     MAX_FINDINGS,
     MAX_GATES,
     MAX_OWNER_STEPS,
+    MAX_PREFLIGHT_RUNS,
     MAX_RED_ON_PARENT,
     MAX_RESULTS,
     EvalOutput,
     OutputProblem,
+    PreflightRecord,
     ReviewOutput,
 )
 from agent_hub.core.features.output_shape import (
@@ -44,16 +46,18 @@ from agent_hub.core.features.output_shape import (
 from agent_hub.core.features.review_output_checks import review_cross_problems
 
 type _Document = dict[str, object]
-type OutputKind = Literal["review", "eval"]
+type OutputKind = Literal["review", "eval", "preflight"]
 
 OUTPUT_SCHEMA_PACKAGE: Final = "agent_hub.core.features"
 OUTPUT_SCHEMA_FILES: Final[Mapping[OutputKind, str]] = {
     "review": "review.v1.json",
     "eval": "eval.v1.json",
+    "preflight": "preflight.v1.json",
 }
 _OUTPUT_MODELS: Final[Mapping[OutputKind, type[BaseModel]]] = {
     "review": ReviewOutput,
     "eval": EvalOutput,
+    "preflight": PreflightRecord,
 }
 
 # Each list of an eval output and its bound, in the model's field order.
@@ -98,6 +102,14 @@ def eval_problems(
     return (*shape, *cross, *eval_scope_problems(document, record=record))
 
 
+def preflight_problems(content: bytes) -> tuple[OutputProblem, ...]:
+    """Every problem of a ticket's ``preflight.json``; () when valid."""
+    document = parse_document(content)
+    if isinstance(document, OutputProblem):
+        return (document,)
+    return _shape(document, model=PreflightRecord, overlong=_overlong_preflight_runs)
+
+
 def _shape(
     document: _Document,
     *,
@@ -127,6 +139,10 @@ def _overlong_review_lists(document: _Document) -> Iterator[OutputProblem]:
 def _overlong_eval_lists(document: _Document) -> Iterator[OutputProblem]:
     for name, limit in _EVAL_LISTS:
         yield from overlong_problem(name, document.get(name), limit)
+
+
+def _overlong_preflight_runs(document: _Document) -> Iterator[OutputProblem]:
+    yield from overlong_problem("runs", document.get("runs"), MAX_PREFLIGHT_RUNS)
 
 
 def export_output_schema_text(kind: OutputKind) -> str:

@@ -369,3 +369,47 @@ def test_names_folder_when_review_path_relative_in_other_folder(
     assert result.exit_code == 1
     assert result.stdout == ""
     assert result.stderr == "spec-r1.json: ticket: the ticket is DEM-7 but the folder is DEM-8\n"
+
+
+def a_preflight_file(root: Path, document: object) -> Path:
+    folder = root / "feature" / "tickets" / "DEM-7"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / "preflight.json"
+    path.write_text(json.dumps(document))
+    return path
+
+
+def a_preflight_document(**run: object) -> dict[str, object]:
+    entry: dict[str, object] = {
+        "ran_at": "2026-10-21T09:30:00Z",
+        "plan_version": 1,
+        "commit": "feb9c4c",
+        "blockers_read": [],
+        "input": "none",
+        "input_text": None,
+        "drift": "none",
+        "local_notes": [],
+        "change_request": None,
+        "run_id": "implement-7",
+    }
+    return {"schema": "agent-hub/preflight/1", "ticket": "DEM-7", "runs": [entry | run]}
+
+
+def test_prints_valid_when_preflight_record_valid(tmp_path: Path) -> None:
+    path = a_preflight_file(tmp_path, a_preflight_document())
+
+    result = run_unchanged(tmp_path, "preflight", path)
+
+    assert result.exit_code == 0
+    assert result.stdout == f"{path}: valid\n"
+    assert result.stderr == ""
+
+
+def test_names_json_path_when_preflight_record_malformed(tmp_path: Path) -> None:
+    path = a_preflight_file(tmp_path, a_preflight_document(drift="global"))
+
+    result = run_unchanged(tmp_path, "preflight", path)
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == f"{path}: runs[0].drift: Input should be 'none', 'local' or 'plan'\n"
