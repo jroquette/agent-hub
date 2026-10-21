@@ -1,5 +1,5 @@
 """``RecordAndWrite``: the write step Publish and Restore share (AGH-295, S4, D3, D9, D12, D22,
-O2, O6, A1, A2, A8).
+O2, O6, A1, A2, A8, A13, A15, A18).
 
 One write runs at a time in the process (the instance's lock: one instance per app, shared by
 Publish and Restore), holding its unit in the app's
@@ -30,18 +30,21 @@ the write's version, and the next read reads the unit again. In this order:
 rename's old and new unit, a new item's destination), under the same one lock and holding all of
 them at once (the lock is not reentrant, so a Publish never calls ``write``): each is read
 (``unreadable`` refuses); ``place`` then says where the draft lands from what was read
-(``Destination``, which may refuse), told ``replayed`` when the first unit's last version is a
-``publish`` of this ``draft_id`` that the disk still holds (a retry after a failed draft
-removal, A7). A hook script already on disk with other bytes refuses (``item_exists``); one with
-the same bytes is not written again. A destination equal to the disk with no rename and no
-script to write answers ``changed: false``. Each unit's disk content is recorded as in step 3,
-then step 4's managed check runs over every unit (O6); the scripts are written (only scripts,
-the unit equal: ``changed: true, versioned: false, reason: script_only``, A13), then the unit (a
-renamed skill carrying the old folder's hidden entries), recorded at once as a ``publish``
-naming ``draft_id`` (A5), as in step 6; then a rename's old unit is removed (A15). A failed
-removal raises ``HubItemWriteError`` (``failed``): both units stay, the new one's history
-starting with its ``publish``. A record failing after the write raises as in step 6 and the old
-unit is not removed.
+(``Destination``, which may refuse), told ``replayed`` when a unit's last version (the target's,
+or a rename's new unit's) is a ``publish`` of this ``draft_id`` that the disk still holds (a
+retry after a failed draft removal, A7, or after a failed old unit removal, A18). A hook script
+already on disk with other bytes refuses (``item_exists``); one with the same bytes is not
+written again. A destination equal to the disk with no rename and no script to write answers
+``changed: false``; so does a replayed rename whose new unit holds its ``publish``, once its old
+unit is recorded as in step 3, checked as in step 4 and removed (A18). Each unit's disk content
+is recorded as in step 3, then step 4's managed check runs over every unit (O6); the scripts are
+written (only scripts, the unit equal: ``changed: true, versioned: false, reason: script_only``,
+A13), then the unit (a renamed skill carrying the old folder's hidden entries), recorded at once
+as a ``publish`` naming ``draft_id`` (A5), as in step 6; then a rename's old unit is removed
+(A15). A failed removal raises ``HubItemWriteError`` (``old_not_removed``, A18): both units stay,
+the new one's history starting with its ``publish``. A record failing after the write raises as
+in step 6 and the old unit is not removed. A new hook's scripts may stay on disk after a failed
+unit write; a retry with the same bytes skips them.
 
 Accepted: the lock holds only this process's captures. Another process can capture the written
 content as ``external`` between the write and its record, so one write can show as an
@@ -58,7 +61,12 @@ from agent_hub.core.errors import AgentHubError
 from agent_hub.core.hubs.hub_registry import HubFileReader, UnreadUnit
 from agent_hub.core.item_versions.append_version import append_next, unit_hash
 from agent_hub.core.item_versions.capture_item_versions import CaptureItemVersions
-from agent_hub.core.item_versions.hub_item_writer import HubItemWriter, ItemWriteRefusedError
+from agent_hub.core.item_versions.hub_item_writer import (
+    HubItemWriteError,
+    HubItemWriter,
+    ItemWriteRefusedError,
+    old_not_removed,
+)
 from agent_hub.core.item_versions.item_units import ItemUnit, is_managed
 from agent_hub.core.item_versions.item_version import UnitKind, VersionAuthor, VersionOrigin
 from agent_hub.core.item_versions.item_version_ports import (
@@ -172,24 +180,30 @@ class RecordAndWrite:
         confirm_managed: bool,
         draft_id: str,
     ) -> ItemWriteResult:
-        """Land a draft where ``place`` says, over every unit in ``units`` (the first the one
-        a replay is told by), and record a ``publish`` version naming ``draft_id``."""
+        """Land a draft where ``place`` says, over every unit in ``units`` (a replay is told by
+        any of them), and record a ``publish`` version naming ``draft_id``."""
         with self._write_lock, self._capture.holding(units):
             author = self._refuse_before_read(hub_path, units)
             reads = {unit.unit_path: self._read(hub_path, unit) for unit in units}
-            destination = place(reads, replayed=self._replayed(units[0], reads, draft_id))
+            replayed = any(self._replayed(touched, reads, draft_id) for touched in units)
+            destination = place(reads, replayed=replayed)
             unit, removed = destination.unit, destination.removed
             if {unit.unit_path, *([] if removed is None else [removed.unit_path])} - reads.keys():
                 msg = "a destination outside the units read"
                 raise ValueError(msg)
             scripts = self._scripts_to_write(hub_path, destination.scripts)
             on_disk = _content(reads[unit.unit_path])
-            equal = (
-                removed is None
-                and on_disk is not None
-                and unit_hash(unit, on_disk) == unit_hash(unit, destination.content)
+            held = on_disk is not None and unit_hash(unit, on_disk) == unit_hash(
+                unit, destination.content
             )
+            equal = removed is None and held
             if equal and not scripts:
+                return _UNCHANGED
+            if replayed and removed is not None and held:
+                # A18: the rename is published and recorded; only its old unit is left.
+                self._record_external(removed, _content(reads[removed.unit_path]))
+                self._refuse_managed(hub_path, [removed], confirm_managed=confirm_managed)
+                self._remove_old(hub_path, removed)
                 return _UNCHANGED
             for touched in units:
                 self._record_external(touched, _content(reads[touched.unit_path]))
@@ -212,8 +226,15 @@ class RecordAndWrite:
                 draft_id=draft_id,
             )
             if removed is not None:
-                self._writer.remove_unit(hub_path, removed.unit_path, kind=removed.kind)
+                self._remove_old(hub_path, removed)
             return result
+
+    def _remove_old(self, hub_path: str, removed: ItemUnit) -> None:
+        """A rename's old unit removed; a failure is ``old_not_removed`` (A18)."""
+        try:
+            self._writer.remove_unit(hub_path, removed.unit_path, kind=removed.kind)
+        except HubItemWriteError as failed:
+            raise old_not_removed() from failed
 
     def _replayed(self, unit: ItemUnit, reads: UnitReads, draft_id: str) -> bool:
         """Whether the unit's last version is this draft's ``publish`` and the disk holds it."""

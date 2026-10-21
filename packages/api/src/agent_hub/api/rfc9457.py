@@ -301,6 +301,8 @@ def _item_write_failed_problem(error: HubItemWriteError) -> Problem:
             "The write failed and the old folder could not be put back; hub doctor lists what "
             "was left beside it. Nothing was recorded."
         )
+    elif error.kind == "old_not_removed":
+        detail = "Published and recorded; the old item could not be removed."
     else:
         detail = "The write failed; the item is as it was and nothing was recorded."
     return Problem(500, "Item write failed", detail, {"code": "write_failed", "kind": error.kind})

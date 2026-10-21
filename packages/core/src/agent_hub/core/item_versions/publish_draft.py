@@ -1,14 +1,15 @@
 """``PublishDraft``: land a Studio draft in the hub (AGH-295, D10, D19, D21, D24, S4, S5, A5, A7,
-A8; AC-295.11-16).
+A8, A12-A18; AC-295.11-16).
 
 The draft is read whole (``HubItemWriter.read_draft``) and as an item of its kind
 (``read_draft_item``). An edit names its target, resolved to its unit as the history reads
 resolve it (an unknown item is ``EntityNotFoundError``); the draft's kind must be the target's
 (``DraftInvalidError``). A new item (no target) lands in the project's own plugin; a skill or
-agent whose name the catalog already has in that kind (any source, case aside) is
-``item_exists``. A skill or agent's destination that the listing holds already (a rename onto a
-sibling, a new item's folder without ``SKILL.md``) is ``item_exists`` too, and so is one the disk
-holds when the write reads it, unless the disk holds this draft's own publish (a replay).
+agent whose name the catalog already has in that kind (any source, case aside; the fold's item
+names only, without the catalog read's capture and usage) is ``item_exists``. A skill or agent's
+destination that the listing holds already (a rename onto a sibling, a new item's folder without
+``SKILL.md``) is ``item_exists`` too, and so is one the disk holds when the write reads it, unless
+the disk holds this draft's own publish (a replay).
 
 The shared step (``RecordAndWrite.publish``) then holds every unit touched under its one lock:
 the target, a rename's new unit, a new item's destination. It records each unit's disk content
@@ -20,10 +21,15 @@ its lock, so the hook replaced is the one the recorded content names. A hook edi
 step's ``replayed``) keeps the file as it is, since ``replace_hook`` would replace another hook
 the second time; with no version to tell a replay by (the first write stored none: a secret,
 too large, a lost race), a draft that moves its hook into a file already holding the draft's
-groups is refused (``item_exists``, A12) and nothing is written. A hook edit carrying scripts is
+groups is refused (``item_exists``, A12, in words that claim no earlier publish, A17) and nothing
+is written, while one that splices in place is kept as it is when the file already holds it
+(A16, ``replace_hook``). A hook edit carrying scripts is
 ``DraftInvalidError`` (A14): scripts land only with a new hook. A merge into a unit past the read
 bounds is ``unit_unreadable`` (A13). A retried rename whose old item is gone is an unknown item,
-and a retried new item whose first write stored no version is ``item_exists`` (A12).
+and a retried new item whose first write stored no version is ``item_exists`` (A12). A retried
+rename whose old unit could not be removed (``old_not_removed``) follows the new unit's
+``publish``: the old unit and the draft are removed, ``changed: false`` (A18). An item gone
+before the lock is an unknown item of its unit's kind.
 
 After the step, the draft is removed, also when nothing changed (A7), so a retry after a failed
 removal finishes; a removal that fails raises ``DraftNotRemovedError`` carrying the step's
@@ -65,16 +71,15 @@ from agent_hub.core.item_versions.unit_content import UnitContent, UnitFile
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.skills.skill_hooks import hook_records
 from agent_hub.core.skills.skill_sources import PROJECT_SETTINGS_PATH, SETTINGS_PATH
-from agent_hub.core.skills.skill_view import ItemKind, SkillCatalog, item_id
+from agent_hub.core.skills.skill_view import ItemKind, item_id
 
 DRAFT_NOT_REMOVED: Final = "Published; the draft is still there. Publish again to remove it."
 _SKILL_ENTITY: Final = "skill"
 _PROJECT_ENTITY: Final = "project"
 _TOO_LARGE_TO_MERGE: Final = "The item on disk is too large to merge the draft into"
 _SCRIPTS_IN_EDIT: Final = "A hook's scripts land only with a new hook"
-_MOVED_HOOK_HELD: Final = (
-    "The hooks file already holds this draft's hooks: it may be published already"
-)
+# A17: the server cannot tell a retry from a first publish here, so the answer claims neither.
+_MOVED_HOOK_HELD: Final = "The hooks file already holds this draft's hooks"
 
 
 class DraftNotRemovedError(AgentHubError):
@@ -96,8 +101,9 @@ class PublishCatalog(Protocol):
         """Each project and its hub folder."""
         ...
 
-    def skill_catalog(self, project: str) -> SkillCatalog:
-        """The project's skills, agents and hooks."""
+    def skill_item_names(self, project: str) -> frozenset[tuple[ItemKind, str]]:
+        """The kind and name of each of the project's items, from the fold alone (no capture,
+        no usage)."""
         ...
 
 
@@ -170,9 +176,11 @@ class PublishDraft:
             return [unit], _HookEdit(target, unit=unit, draft=draft)
         listed = self._listed(hub_path) - {unit.unit_path}
         # Where it lands depends only on the draft's name: the content read here is a stand-in.
-        planned = edit_destination(unit, draft.content, draft, existing=listed)
-        units = [unit] if planned.removed is None else [unit, planned.unit]
-        return units, _Edit(unit, draft, listed)
+        # A destination the listing holds is refused under the lock, where a replay is told.
+        planned = edit_destination(unit, draft.content, draft, existing=())
+        renamed = None if planned.removed is None else planned.unit
+        units = [unit] if renamed is None else [unit, renamed]
+        return units, _Edit(unit, draft, listed, renamed=renamed)
 
     def _new(self, project: str, hub_path: str, draft: DraftItem) -> tuple[list[ItemUnit], _Place]:
         planned = new_destination(project, draft)
@@ -180,10 +188,10 @@ class PublishDraft:
         if draft.kind is not UnitKind.HOOK:
             kind = ItemKind(draft.kind.value)
             name = (draft.name or "").casefold()
-            items = self._catalog.skill_catalog(project).items
+            names = self._catalog.skill_item_names(project)
             listed = {path.casefold() for path in self._listed(hub_path)}
             taken = planned.unit.unit_path.casefold() in listed or any(
-                item.kind is kind and item.name.casefold() == name for item in items
+                item_kind is kind and item_name.casefold() == name for item_kind, item_name in names
             )
         return [planned.unit], _New(project, draft, taken=taken)
 
@@ -195,14 +203,26 @@ class _Place(Protocol):
 class _Edit:
     """Where a skill or agent edit lands, from its unit on disk."""
 
-    def __init__(self, unit: ItemUnit, draft: DraftItem, listed: Collection[str]) -> None:
+    def __init__(
+        self,
+        unit: ItemUnit,
+        draft: DraftItem,
+        listed: Collection[str],
+        *,
+        renamed: ItemUnit | None,
+    ) -> None:
         self._unit = unit
         self._draft = draft
         self._listed = listed
+        self._renamed = renamed
 
     def __call__(self, reads: UnitReads, *, replayed: bool) -> Destination:
-        del replayed  # an overlay of the draft gives the same content again
         current = _current(reads, self._unit, merged=self._unit.kind is UnitKind.SKILL)
+        held = None if self._renamed is None else reads[self._renamed.unit_path]
+        if replayed and self._renamed is not None and isinstance(held, UnitContent):
+            # A18: the new unit holds this draft's publish; only the old unit is left to remove.
+            return Destination(unit=self._renamed, content=held, removed=self._unit)
+        # Otherwise an overlay of the draft gives the same content again on a replay.
         destination = edit_destination(self._unit, current, self._draft, existing=self._listed)
         if destination.removed is not None and not _missing(reads, destination.unit):
             raise ItemWriteRefusedError("item_exists")
@@ -272,7 +292,8 @@ def _current(reads: UnitReads, unit: ItemUnit, *, merged: bool) -> UnitContent:
     if isinstance(read, UnitContent):
         return read
     if read.kind == "missing":
-        raise EntityNotFoundError(entity=_SKILL_ENTITY, entity_id=unit.unit_path.rsplit("/")[-1])
+        entity = unit.kind.value
+        raise EntityNotFoundError(entity=entity, entity_id=unit.unit_path.rsplit("/")[-1])
     if merged:
         raise ItemWriteRefusedError("unit_unreadable", _TOO_LARGE_TO_MERGE)
     return UnitContent(files=())

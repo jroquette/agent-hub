@@ -3,7 +3,8 @@
 ``read_draft_item`` reads a draft's files as an item of its kind, or refuses it with
 ``DraftInvalidError`` (422 ``draft_invalid``): a skill's ``SKILL.md`` or an agent's one top-level
 ``.md`` carries a frontmatter ``name`` within ``ITEM_NAME``; a hook's ``hooks.json`` is a hooks
-object in the catalog's strict shape (at least one hook, at most ``MAX_HOOKS``), beside which only
+object in the catalog's strict shape (at least one hook, at most ``MAX_HOOKS``, no matcher group
+without hooks, A16), beside which only
 ``scripts/<file>`` may sit, the file strict JSON (no repeated key, ``NaN``, overflowing number or
 lone surrogate); no draft holds a hidden name (``scripts/.x``) or a script below a
 folder of ``scripts/`` (``scripts/a/b.sh``).
@@ -17,11 +18,13 @@ name, case aside, as ``item_exists``.
 ``replace_hook`` replaces one hook of a hook file by the draft's hooks and keeps every other hook
 and key; ``merge_hooks`` adds hooks to a hook file (or a new one). Both write the file in
 ``dump_json``'s form (D24). ``merge_hooks`` gives the same bytes when run again on its own output
-(a draft group already there, equal as JSON, or its hooks already in place, is not added again);
-``replace_hook`` always replaces its hook, so a replay of an edit after a failed draft removal
-(A7) is told by the unit's ``publish`` version naming the draft, not by the file; with no such
-version, ``holds_moved_hook`` tells a draft that moves its hook into a file already holding it
-(A12), which is refused. A hooks file on
+(a draft group already there, equal as JSON, or its hooks already in place, is not added again).
+``replace_hook`` keeps the file as it is when the edit splices in place and is already applied
+(A16: the splicing group's hooks in a row at the hook's place, every other draft group held);
+otherwise it replaces its hook, so a replay of an edit that moved its hook is told by the unit's
+``publish`` version naming the draft, not by the file (A7); with no such version,
+``holds_moved_hook`` tells a draft that moves its hook into a file already holding it (A12),
+which is refused. A hooks file on
 disk that is not a strict JSON hooks object is ``ItemWriteRefusedError("unit_unreadable")``.
 
 ``new_destination`` places a new item in the project's own plugin, ``plugin/<project>/``, a new
@@ -196,13 +199,17 @@ def replace_hook(file_json: bytes, at: HookAt, new_hooks: HookGroups) -> bytes:
     """``file_json`` with the hook ``at`` replaced by ``new_hooks`` (a hooks object's ``hooks``):
     a draft group of the hook's event and matcher takes its place, the others are added as
     ``merge_hooks`` adds them; a group left with no hook and no key but ``matcher``, and an event
-    left with no group, are dropped. Every other hook and key is kept. The hook ``at`` is always
-    replaced, even when the file already holds every draft group: a replay of a publish is told
-    by its ``draft_id`` (``PublishDraft``), never by the file. ``EntityNotFoundError`` when the
+    left with no group, are dropped. Every other hook and key is kept. When a draft group takes
+    the hook's place and the file already holds its hooks in a row from there, and every other
+    draft group, the edit is applied: ``file_json`` is given back as it is (A16). Otherwise the
+    hook ``at`` is replaced, even when the file holds every draft group elsewhere: a replay of a
+    moved hook is told by its ``draft_id`` (``PublishDraft``). ``EntityNotFoundError`` when the
     file holds no such hook."""
     document = _hooks_document(file_json)
     hooks = _hooks_of(document)
     groups, group, entries, index = _locate(hooks, at)
+    if _applied_in_place(hooks, at, new_hooks, group=group, entries=entries, index=index):
+        return file_json
     del entries[index]
     rest: dict[str, JsonValue] = {}
     spliced = False
@@ -219,6 +226,41 @@ def replace_hook(file_json: bytes, at: HookAt, new_hooks: HookGroups) -> bytes:
         del hooks[at.event]
     _add_groups(hooks, rest)
     return dump_json(document)
+
+
+def _applied_in_place(  # noqa: PLR0913 -- the located hook's facts, each named
+    hooks: dict[str, JsonValue],
+    at: HookAt,
+    new_hooks: HookGroups,
+    *,
+    group: dict[str, JsonValue],
+    entries: list[JsonValue],
+    index: int,
+) -> bool:
+    """Whether the file already holds an edit that splices in place (A16): the splicing draft
+    group's hooks in a row from the hook ``at``'s index, and every other draft group held."""
+    drafted = [
+        (event, draft_group)
+        for event, draft_groups in new_hooks.items()
+        for draft_group in (draft_groups if isinstance(draft_groups, list) else [])
+    ]
+    splicing = next(
+        (
+            position
+            for position, (event, draft_group) in enumerate(drafted)
+            if _splices(draft_group, event=event, at=at, group=group)
+        ),
+        None,
+    )
+    if splicing is None:
+        return False
+    run = [dump_json(hook) for hook in _group_hooks(drafted[splicing][1])]
+    in_place = [dump_json(entry) for entry in entries[index : index + len(run)]]
+    return in_place == run and all(
+        _holds(hooks.get(event), draft_group)
+        for position, (event, draft_group) in enumerate(drafted)
+        if position != splicing
+    )
 
 
 def holds_moved_hook(file_json: bytes, at: HookAt, new_hooks: HookGroups) -> bool:
@@ -295,6 +337,8 @@ def _hook_draft(files: UnitContent) -> DraftItem:
         raise DraftInvalidError("The draft's hooks.json is not a hooks object")
     # The fold read this same object, so its hooks are there.
     hooks = _hooks_of(_hooks_document(main.content))
+    if any(not _group_hooks(group) for groups in hooks.values() for group in _list(groups)):
+        raise DraftInvalidError("A matcher group of the draft holds no hook")
     return DraftItem(kind=UnitKind.HOOK, name=None, content=files, hooks=hooks, scripts=scripts)
 
 
@@ -362,6 +406,10 @@ def _splices(
         and draft_group.keys() <= _SPLICED_KEYS
         and draft_group.get(_MATCHER_KEY) == group.get(_MATCHER_KEY)
     )
+
+
+def _list(value: JsonValue) -> list[JsonValue]:
+    return value if isinstance(value, list) else []
 
 
 def _group_hooks(draft_group: JsonValue) -> list[JsonValue]:
