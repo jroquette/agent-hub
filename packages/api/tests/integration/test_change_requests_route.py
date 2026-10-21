@@ -11,13 +11,19 @@ import pytest
 from agent_hub.api.change_request_files import HubDecisionWriter
 from agent_hub.api.owner_signoff_files import ProjectHubPaths
 from agent_hub.core.approvals.approval import ApprovalKind
-from agent_hub.core.features.change_request_decision import DecideChangeRequest, OpenRunGates
+from agent_hub.core.features.change_request_decision import DecideChangeRequest
 from agent_hub.core.features.feature_status import FeatureFolder
 from agent_hub.core.features.feature_view import ChangeRequestView, FeatureDetail
 from agent_hub.core.features.ticket_records import change_requests
 from agent_hub.core.features.ticket_view import TicketRecords
 from agent_hub.core.projects.project_views import ProjectDetail, TrackerView
-from agent_hub.core.testing.read_model_builders import HUB_ID, a_feature_view, an_approval
+from agent_hub.core.testing.read_model_builders import (
+    HUB_ID,
+    a_feature_view,
+    a_run,
+    an_approval,
+)
+from agent_hub.core.workflows.launch import RunGuard
 from agent_hub.generator.feature_files import read_feature_folder
 
 OWN = {"Origin": "http://127.0.0.1:7420"}
@@ -69,6 +75,12 @@ def test_detail_carries_open_gate_when_request_run_waits(wired: Any) -> None:
     body = wired.client.get("/api/v1/features/demo/demo-feature").json()
 
     assert [request["approval_id"] for request in body["change_requests"]] == [GATE, None, None]
+    # Q1: implement-9's run is lost (no run folded): hub web decides it; the others it does not.
+    assert [request["decidable_here"] for request in body["change_requests"]] == [
+        False,
+        True,
+        False,
+    ]
 
 
 def test_detail_reads_no_approvals_when_no_request_open(wired: Any) -> None:
@@ -86,8 +98,6 @@ def test_ticket_route_carries_open_gate_when_ticket_asks(wired: Any) -> None:
         project="demo",
         slug="demo-feature",
         ticket="DEM-8",
-        brief="features/demo-feature/tickets/DEM-8/brief.md",
-        plan=None,
         preflight=None,
         change_requests=REQUESTS[:1],
     )
@@ -97,7 +107,6 @@ def test_ticket_route_carries_open_gate_when_ticket_asks(wired: Any) -> None:
 
     assert response.status_code == 200, response.text
     assert response.json()["change_requests"][0]["approval_id"] == GATE
-    assert response.json()["brief"] == "features/demo-feature/tickets/DEM-8/brief.md"
 
 
 def test_ticket_route_answers_not_found_when_ticket_unknown(wired: Any) -> None:
@@ -109,6 +118,16 @@ def test_ticket_route_answers_not_found_when_ticket_unknown(wired: Any) -> None:
 class _DiskFolders:
     def feature_folder(self, hub_path: str, slug: str) -> FeatureFolder | None:
         return read_feature_folder(Path(hub_path), slug)
+
+
+class _Launcher:
+    """The launcher's live children (none): the guard's other calls never happen here."""
+
+    def __init__(self) -> None:
+        self.live: dict[str, str | None] = {}
+
+    def live_runs(self, hub_path: str) -> dict[str, str | None]:
+        return self.live
 
 
 def _decision_hub(tmp_path: Path, wired: Any, *, person: str | None = "Dana Owner") -> Path:
@@ -138,7 +157,7 @@ def _decision_hub(tmp_path: Path, wired: Any, *, person: str | None = "Dana Owne
         ProjectHubPaths(wired.hubs),
         _DiskFolders(),
         writer=HubDecisionWriter(),
-        gates=OpenRunGates(wired.events),
+        guard=RunGuard(wired.events, _Launcher()),  # type: ignore[arg-type]
         decider=lambda project: person,
         clock=lambda: DECIDED_AT,
     )
@@ -201,6 +220,27 @@ def test_refuses_and_writes_nothing_when_run_gate_open(tmp_path: Path, wired: An
     assert _names(requests) == ["2.md"]
 
 
+# Q1: while the run lives (paused at a gate just decided, or running before it opens one), the
+# run writes the records: hub web refuses and writes nothing.
+@pytest.mark.parametrize(
+    "gates",
+    [(), (a_gate(decided=True, status="approved"),)],
+    ids=["no gate yet", "gate just decided"],
+)
+def test_refuses_and_writes_nothing_when_run_live(
+    tmp_path: Path, wired: Any, gates: tuple[Any, ...]
+) -> None:
+    requests = _decision_hub(tmp_path, wired)
+    wired.events.runs.append(a_run(id="implement-8", workflow="implement"))
+    wired.events.approvals.extend(gates)
+
+    response = wired.client.post(DECISION, json={"decision": "approved"}, headers=OWN)
+
+    assert response.status_code == 409, response.text
+    assert response.json()["code"] == "live_run"
+    assert _names(requests) == ["2.md"]
+
+
 # NFR Idempotency: decided once; a second decision is refused and the first kept.
 def test_refuses_second_decision_when_request_decided(tmp_path: Path, wired: Any) -> None:
     requests = _decision_hub(tmp_path, wired)
@@ -226,6 +266,7 @@ def test_refuses_and_writes_nothing_when_decision_name_is_a_link(
     response = wired.client.post(DECISION, json={"decision": "approved"}, headers=OWN)
 
     assert response.status_code == 409, response.text
+    assert response.json()["code"] == "decided"
     assert not target.exists()
 
 

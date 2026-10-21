@@ -17,7 +17,7 @@ from agent_hub.api.dependencies import (
 from agent_hub.api.feature_names import FeatureName, FeatureNameBody, FeatureNamesView
 from agent_hub.api.owner_signoff_files import OwnerSignOffBody
 from agent_hub.api.schemas import MAX_QUERY_TEXT, PROBLEM_RESPONSES, ProjectParam
-from agent_hub.core.features.change_request_decision import OpenRunGates, with_open_gates
+from agent_hub.core.features.change_request_decision import RequestRuns, with_runs
 from agent_hub.core.features.feature_view import (
     ChangeRequestView,
     EvalRecord,
@@ -27,7 +27,6 @@ from agent_hub.core.features.feature_view import (
 from agent_hub.core.features.ticket_view import FeatureTickets, TicketRecords
 from agent_hub.core.readmodels.filters import Scope
 from agent_hub.core.readmodels.page import Page
-from agent_hub.core.readmodels.read_ports import EventReadModels
 
 router = APIRouter(tags=["features"], responses=PROBLEM_RESPONSES)
 
@@ -45,9 +44,10 @@ def get_feature(
     project: NamePath, slug: NamePath, *, models: HubReadModelsDep, events: EventReadModelsDep
 ) -> FeatureDetail:
     """One feature with its acceptance criteria; each open change request carries the open gate
-    of its run that answers it (``approval_id``), null when the run has none."""
+    of its run that answers it (``approval_id``), and whether its run is gone, so hub web
+    decides it (``decidable_here``)."""
     detail = models.get_feature(project, slug)
-    requests = _gated(project, detail.change_requests, events)
+    requests = with_runs(detail.change_requests, RequestRuns(events), project=project)
     return detail.model_copy(update={"change_requests": requests})
 
 
@@ -73,7 +73,7 @@ def get_ticket_records(
     preflight run (local notes, discoveries) and the change requests it asks or is held by, each
     open one with its run's open gate; 404 when the feature does not list the ticket."""
     records = models.ticket_records(project, slug, ticket)
-    requests = _gated(project, records.change_requests, events)
+    requests = with_runs(records.change_requests, RequestRuns(events), project=project)
     return records.model_copy(update={"change_requests": requests})
 
 
@@ -86,21 +86,12 @@ def decide_change_request(
     body: ChangeRequestDecisionBody,
     decide: ChangeRequestDecisionsDep,
 ) -> ChangeRequestView:
-    """The owner decides a plan change request whose run has no open gate (abandoned, or its
-    record lost): creates ``change-requests/<n>.decision.md`` once with the hub's person as
+    """The owner decides a plan change request whose run is gone (lost, or ended, and held by no
+    child): creates ``change-requests/<n>.decision.md`` once with the hub's person as
     ``decided_by``, never editing the request; the next ``/implement`` of its ticket reads it.
-    409 while the run's gate is open (answer it through ``approval_id``), once decided, or with
-    no person to record; 422 for a decline without a note."""
+    409 while the run's gate is open (answer it through ``approval_id``), while the run lives,
+    once decided, or with no person to record; 422 for a decline without a note."""
     return decide(project, slug, n, decision=body.decision, note=body.note)
-
-
-def _gated(
-    project: str, requests: tuple[ChangeRequestView, ...], events: EventReadModels
-) -> tuple[ChangeRequestView, ...]:
-    """The requests with their open gates, read only when one is open."""
-    if not any(request.status == "open" and request.run_id for request in requests):
-        return requests
-    return with_open_gates(requests, OpenRunGates(events).of(project))
 
 
 @router.post("/features/{project}/{slug}/owner-signoff", status_code=201)

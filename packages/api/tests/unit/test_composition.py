@@ -23,6 +23,7 @@ from agent_hub.api.composition import (
     RegisteredHubFacts,
     TicketReaders,
     build_app,
+    decider_of,
     claude_adapters,
     default_brain_changes,
     hub_read_models,
@@ -164,6 +165,20 @@ def test_says_no_author_when_identity_unset() -> None:
     facts, _ = _facts({HUB: FakeHub(hub_json=hub_json)})
 
     assert facts.hub_of("demo") == UnavailableHub(reason=NO_AUTHOR, path=HUB)
+
+
+# two-level-flows A5 (AGH-405 Q3): a change request's decided_by is the person the hub commits as.
+def test_names_hub_author_as_decider_when_identity_set() -> None:
+    facts, _ = _facts({HUB: FakeHub(hub_json=hub_json_bytes(pin=RUNNING))})
+
+    assert decider_of(facts.hub_of)("demo") == "Jane Doe"
+
+
+def test_names_no_decider_when_identity_unset_or_project_unknown() -> None:
+    facts, _ = _facts({HUB: FakeHub(hub_json=_without("author_name", "author_email"))})
+
+    assert decider_of(facts.hub_of)("demo") is None
+    assert decider_of(facts.hub_of)("other") is None
 
 
 def test_says_not_registered_when_project_unknown() -> None:
