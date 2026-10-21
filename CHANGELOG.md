@@ -11,6 +11,18 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- Feature detail shows plan change requests (AGH-405): a "Waiting for you" banner names each open request and opens
+  its ticket's panel at Preflight, Plan carries "v3 waits for you", tickets read "Waiting for you: plan change",
+  "Held: plan change pending", a re-run or their local drift, and the panel lists every preflight run, local note and
+  discovery, shows the request's evidence, proposal and consequences, and decides it (Approve, or Decline with a
+  note) through its run's gate, or, only when the run is gone, through the new
+  `POST /features/{project}/{slug}/change-requests/{n}/decision`, which creates the request's decision file once
+  and refuses while the run lives. `GET /features/{project}/{slug}/tickets/{ticket}` serves a ticket's records, the detail's
+  `change_requests` carry their gate's `approval_id`, the Features list ranks a plan change and a hand-written
+  sign-off in Needs you, and every owner wait reads "Waiting for you".
+
 ## [0.19.0] - 2026-10-21
 
 ### Added
@@ -45,15 +57,6 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   to `plan.md`, in the hub and never committed (AGH-403). A gate decision whose approver names no person (empty or
   `unknown`) is refused and the run stays paused; `hub workflow approve|reject|respond` refuse when no account name is
   known instead of recording `unknown`, and an approval's output carries its `approver`.
-- Feature detail shows plan change requests (AGH-405): a "Waiting for you" banner names each open request and opens
-  its ticket's panel at Preflight, Plan carries "v3 waits for you", tickets read "Waiting for you: plan change",
-  "Held: plan change pending", a re-run or their local drift, and the panel lists every preflight run, local note and
-  discovery, shows the request's evidence, proposal and consequences, and decides it (Approve, or Decline with a
-  note) through its run's gate, or, only when the run is gone, through the new
-  `POST /features/{project}/{slug}/change-requests/{n}/decision`, which creates the request's decision file once
-  and refuses while the run lives. `GET /features/{project}/{slug}/tickets/{ticket}` serves a ticket's records, the detail's
-  `change_requests` carry their gate's `approval_id`, the Features list ranks a plan change and a hand-written
-  sign-off in Needs you, and every owner wait reads "Waiting for you".
 - `hub web` can publish a Studio draft itself (AGH-298, `POST .../skills/drafts/{draft_id}/publish` with
   `{target, confirm_managed}`), and the Studio's Publish now calls it instead of asking Claude to copy the draft:
   Claude only edits the draft, the Studio shows "Publishing…" then "Published." with a link to the item, warns before
