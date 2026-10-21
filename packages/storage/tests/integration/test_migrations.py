@@ -1,5 +1,6 @@
 import io
 import runpy
+import sqlite3
 import sys
 import uuid
 from pathlib import Path
@@ -31,6 +32,7 @@ KNOWLEDGE_TABLES = {
     "knowledge_text_docsize",
     "knowledge_text_config",
 }
+FTS5_DECLARATION = "fts5(title, body, tokenize='porter unicode61 remove_diacritics 2')"
 AGENT_SESSION_INDEXES = {
     "ix_agent_sessions_project_claude_session_id": ["project", "claude_session_id"],
     "ix_agent_sessions_status": ["status"],
@@ -49,6 +51,18 @@ def _table_names(db_path: Path) -> set[str]:
         return set(inspect(engine).get_table_names())
     finally:
         engine.dispose()
+
+
+def _table_sql(db_path: Path, table: str) -> str:
+    """The ``CREATE`` statement SQLite keeps for ``table``."""
+    connection = sqlite3.connect(db_path)
+    try:
+        row = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+        ).fetchone()
+    finally:
+        connection.close()
+    return str(row[0])
 
 
 def _events_schema(db_path: Path) -> tuple[dict[str, TypeEngine[Any]], list[Any]]:
@@ -523,6 +537,7 @@ def test_keeps_rows_when_upgraded_to_knowledge_index(tmp_path: Path) -> None:
     assert _unique_constraints(db_path, "knowledge_documents") == [
         ("uq_knowledge_documents_hub_path", ["hub", "path"])
     ]
+    assert FTS5_DECLARATION in _table_sql(db_path, "knowledge_text")
 
     downgrade(config, "0007")
 

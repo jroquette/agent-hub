@@ -204,6 +204,14 @@ knowledge_documents = Table(
 KNOWLEDGE_TEXT: Final = "knowledge_text"
 
 
+# The shadow tables FTS5 keeps beside ``knowledge_text`` (``<table>_<suffix>``).
+_FTS5_SHADOW_SUFFIXES: Final = ("data", "idx", "content", "docsize", "config")
+_FTS5_TABLES: Final = frozenset(
+    (KNOWLEDGE_TEXT, *(f"{KNOWLEDGE_TEXT}_{suffix}" for suffix in _FTS5_SHADOW_SUFFIXES))
+)
+
+
 def is_declared_table(name: str) -> bool:
-    """Whether a reflected table belongs to this metadata's comparison: not the FTS5 tables."""
-    return name != KNOWLEDGE_TEXT and not name.startswith(f"{KNOWLEDGE_TEXT}_")
+    """Whether a reflected table belongs to this metadata's comparison: not ``knowledge_text``
+    or one of its five FTS5 shadow tables."""
+    return name not in _FTS5_TABLES

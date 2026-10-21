@@ -191,3 +191,6 @@ def test_skips_fts_tables_when_names_reflected() -> None:
     assert not is_declared_table("knowledge_text_data")
     assert is_declared_table("knowledge_documents")
     assert is_declared_table("knowledge_textual")
+    for shadow in ("data", "idx", "content", "docsize", "config"):
+        assert not is_declared_table(f"knowledge_text_{shadow}")
+    assert is_declared_table("knowledge_text_meta")
