@@ -613,6 +613,77 @@ def test_exits_one_when_hub_option_names_unknown_hub(
     assert not default_database().exists()
 
 
+def copied_hub(hub: Path, name: str, edit: Callable[[dict[str, Any]], None] | None = None) -> Path:
+    """A copy of ``hub`` (its git repo included) beside it as ``name``, its ``hub.json`` changed
+    by ``edit`` when given."""
+    copy = hub.parent / name
+    shutil.copytree(hub, copy)
+    if edit is not None:
+        document = json.loads((copy / "hub.json").read_bytes())
+        edit(document)
+        (copy / "hub.json").write_bytes(dump_json(document))
+    return copy
+
+
+@pytest.mark.parametrize(
+    ("copy_first", "paths"), [(True, ["brain/a.md", "brain/b.md"]), (False, ["brain/a.md"])]
+)
+def test_searches_first_registered_hub_when_two_hubs_name_project(
+    *,
+    knowledge_hub: KnowledgeHubFactory,
+    run_command: CommandRunner,
+    tmp_path: Path,
+    copy_first: bool,
+    paths: list[str],
+) -> None:
+    hub = knowledge_hub({"brain/a.md": MARKER})
+    copy = copied_hub(hub, "copy")
+    (copy / "brain" / "b.md").write_bytes(MARKER)
+    env = registered(tmp_path, *((copy, hub) if copy_first else (hub, copy)))
+
+    found = json_of(run_command(tmp_path, "search", "marker", "--hub", "demo", "--json", env=env))
+
+    assert [result["path"] for result in found["results"]] == paths
+
+
+def test_searches_valid_hub_when_invalid_hub_registered_first_names_project(
+    knowledge_hub: KnowledgeHubFactory, run_command: CommandRunner, tmp_path: Path
+) -> None:
+    hub = knowledge_hub({"brain/a.md": MARKER})
+
+    def break_repos(document: dict[str, Any]) -> None:
+        document["repos"] = "not a list"
+
+    invalid = copied_hub(hub, "invalid", break_repos)
+    (invalid / "brain" / "b.md").write_bytes(MARKER)
+    env = registered(tmp_path, invalid, hub)
+
+    found = json_of(run_command(tmp_path, "search", "marker", "--hub", "demo", "--json", env=env))
+
+    assert [result["path"] for result in found["results"]] == ["brain/a.md"]
+
+
+def test_exits_one_with_pin_line_when_hub_option_names_hub_pinned_elsewhere(
+    knowledge_hub: KnowledgeHubFactory, run_command: CommandRunner, tmp_path: Path
+) -> None:
+    hub = knowledge_hub({"brain/a.md": MARKER})
+
+    def pin_elsewhere(document: dict[str, Any]) -> None:
+        document["platform"]["version"] = "0.0.1"
+
+    pinned = copied_hub(hub, "pinned", pin_elsewhere)
+    env = registered(tmp_path, pinned)
+
+    result = run_command(tmp_path, "search", "marker", "--hub", "demo", env=env)
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr.startswith("hub.json: platform.version: ")
+    assert "0.0.1" in result.stderr
+    assert "no registered hub" not in result.stderr
+    assert not default_database().exists()
+
+
 def test_exits_one_when_hub_option_registry_unreadable(
     knowledge_hub: KnowledgeHubFactory, run_command: CommandRunner, tmp_path: Path
 ) -> None:

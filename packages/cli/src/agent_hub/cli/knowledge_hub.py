@@ -3,16 +3,18 @@
 
 The hub is the one the other hub commands use: ``AGENT_HUB_ROOT`` when set and not empty, else
 the cwd, which must hold ``hub.json`` (exit 2). With ``--hub NAME`` it is instead the first hub
-of the registry ``hub web`` reads (``hubs.json``) whose valid ``hub.json`` names the project
-NAME, as ``hub web`` maps a project name to a hub; an unknown NAME exits 1. From a worktree of
-the hub repo, the main checkout is indexed (owner, Q-2), so a worktree and its checkout share
-one index: the index names a hub by the real path of its main checkout (P-1), and ``hub.json``
-is read there.
+of the registry ``hub web`` reads (``hubs.json``) whose ``hub.json`` is valid against its own pin
+and names the project NAME, as ``hub web`` maps a project name to a hub; an unknown NAME exits
+1, and a hub pinned to another release exits 1 with the pin line, as any hub command there.
+From a worktree of the hub repo, the main checkout is indexed (owner, Q-2), so a worktree and
+its checkout share one index: the index names a hub by the real path of its main checkout
+(P-1), and ``hub.json`` is read there.
 """
 
 import os
 import shutil
 from collections.abc import Mapping
+from importlib.metadata import version
 from pathlib import Path
 from typing import Annotated, NamedTuple
 
@@ -22,15 +24,16 @@ from agent_hub.cli.command_exits import fail
 from agent_hub.cli.database_path import default_database_path
 from agent_hub.cli.errors import HomeDirectoryNotFoundError
 from agent_hub.cli.hub_config_reader import (
+    DISTRIBUTION,
     FILE_LABEL,
-    LoadedHubJson,
     load_hub_config_or_exit,
-    read_hub_json,
+    read_hub_bytes,
 )
 from agent_hub.cli.hub_root import hub_checkout, hub_root_or_exit
 from agent_hub.cli.init_report import shown_text
 from agent_hub.cli.knowledge_checkout import GitKnowledgeCheckout
 from agent_hub.cli.registry_path import default_registry_path
+from agent_hub.core.hubs.hub_document import read_hub_document
 from agent_hub.core.hubs.hub_registry import HubRegistryError
 from agent_hub.storage.errors import StorageError
 from agent_hub.storage.hub_registry import JsonHubRegistry
@@ -94,15 +97,21 @@ def knowledge_hub_or_exit(
 
 
 def _registered_hub_or_exit(name: str, environ: Mapping[str, str], *, command: str) -> Path:
-    """The real path of the first registered hub whose valid ``hub.json`` names the project
-    ``name``; a registered hub whose ``hub.json`` cannot be used is not a candidate."""
+    """The real path of the first registered hub whose ``hub.json`` is valid against its own pin
+    and names the project ``name``, as ``hub web`` picks it; a registered hub whose ``hub.json``
+    cannot be read or is not valid is not a candidate. A pin other than the installed ``hub`` is
+    reported when the chosen hub's ``hub.json`` is loaded."""
     try:
         entries = JsonHubRegistry(default_registry_path(environ)).entries()
     except (HomeDirectoryNotFoundError, HubRegistryError) as error:
         fail(f"hub {command}: {error}")
+    running = version(DISTRIBUTION)
     for entry in entries:
-        loaded = read_hub_json(Path(entry.path) / FILE_LABEL)
-        if isinstance(loaded, LoadedHubJson) and loaded.config.project.name == name:
+        content = read_hub_bytes(Path(entry.path) / FILE_LABEL)
+        if not isinstance(content, bytes):
+            continue
+        document = read_hub_document(content, running_version=running)
+        if document.config is not None and document.config.project.name == name:
             return Path(os.path.realpath(entry.path))
     fail(f"hub {command}: no registered hub named {shown_text(name)}")
 

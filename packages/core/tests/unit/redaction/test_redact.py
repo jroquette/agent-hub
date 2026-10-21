@@ -276,6 +276,10 @@ def _reference(text: str) -> str:
                 "apí",
                 _secret_value(),
                 "[redacted: secret]",
+                "x" * 31,
+                "_" * 33,
+                '": "',
+                "\": '",
             ]
         ),
         max_size=40,
@@ -296,6 +300,67 @@ def test_keeps_prose_when_name_words_never_assigned() -> None:
     text = "The token rotates weekly; keep the secret and the password out of notes.\n" * 50
 
     assert redact_text(text) == text
+
+
+# A "secret" rule allows at most 64 characters between the name word and the ``=`` or the JSON
+# key's closing quote; the shortcut must allow exactly as many.
+_NAME_TAIL_LIMIT = 64
+
+
+def test_redacts_assignment_when_64_characters_follow_name_word() -> None:
+    head = "token" + "x" * _NAME_TAIL_LIMIT + "="
+
+    assert redact_text(head + _secret_value()) == head + marker("secret")
+
+
+def test_keeps_assignment_when_65_characters_follow_name_word() -> None:
+    text = "token" + "x" * (_NAME_TAIL_LIMIT + 1) + "=" + _secret_value()
+
+    assert redact_text(text) == text
+
+
+def test_redacts_json_value_when_64_characters_follow_name_word_in_key() -> None:
+    head = '{"token' + "x" * _NAME_TAIL_LIMIT + '": "'
+
+    assert redact_text(head + _secret_value() + '"}') == head + marker("secret") + '"}'
+
+
+def test_keeps_json_value_when_65_characters_follow_name_word_in_key() -> None:
+    text = '{"token' + "x" * (_NAME_TAIL_LIMIT + 1) + '": "' + _secret_value() + '"}'
+
+    assert redact_text(text) == text
+
+
+def test_redacts_json_value_when_key_has_no_equals_sign() -> None:
+    head = '{"token_for_ci": "'
+
+    assert redact_text(head + _secret_value() + '"}') == head + marker("secret") + '"}'
+
+
+def test_runs_secret_rules_last_when_rules_listed() -> None:
+    # The shortcut is looked at once per pass, at the first "secret" rule: only rules after it
+    # may be skipped, so every "secret" rule comes after every other rule.
+    kinds = [kind for kind, _ in redact._RULES]  # noqa: SLF001 -- the order the shortcut needs
+    first = kinds.index("secret")
+
+    assert set(kinds[first:]) == {"secret"}
+
+
+@settings(max_examples=300, deadline=None)
+@given(
+    word=st.sampled_from(["token", "SECRET", "passwd", "api_key", "Credential"]),
+    run=st.integers(min_value=_NAME_TAIL_LIMIT - 4, max_value=_NAME_TAIL_LIMIT + 6),
+    filler=st.sampled_from(["x", "_", "-", ".", " ", "é"]),
+    shape=st.sampled_from(
+        ["{0}{1}={2}", "{0}{1} = '{2}'", '{{"{0}{1}": "{2}"}}', '"{0}{1}" : "{2}"']
+    ),
+)
+def test_equals_every_rule_when_name_word_far_from_assignment_property(
+    *, word: str, run: int, filler: str, shape: str
+) -> None:
+    text = shape.format(word, filler * run, _secret_value())
+
+    assert redact_text(text) == _reference(text)
 
 
 def test_drops_token_prefix_when_token_starts_at_character_490_truncation() -> None:
