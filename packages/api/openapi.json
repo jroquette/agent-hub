@@ -2200,6 +2200,16 @@
               }
             ],
             "title": "Verdict Line"
+          },
+          "waiting_on_owner": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WaitingOnOwner"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -2435,7 +2445,7 @@
       },
       "FeatureView": {
         "additionalProperties": false,
-        "description": "A feature as the Features list shows it; ``problem`` when a file of it is malformed.\n\n``phase`` equals ``golden_path.phase``; ``tickets_source`` says whether the ticket counts\nbehind the golden path came from Linear or from the plan.",
+        "description": "A feature as the Features list shows it; ``problem`` when a file of it is malformed.\n\n``phase`` equals ``golden_path.phase``; ``tickets_source`` says whether the ticket counts\nbehind the golden path came from Linear or from the plan; ``waiting_on_owner`` what it waits\non from the owner, None when nothing.",
         "properties": {
           "acs": {
             "anyOf": [
@@ -2545,6 +2555,16 @@
               }
             ],
             "title": "Verdict Line"
+          },
+          "waiting_on_owner": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WaitingOnOwner"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -2800,7 +2820,7 @@
       },
       "GoldenStep": {
         "additionalProperties": false,
-        "description": "One step of the golden path: its state, a short ``meta`` text and the ``reason`` it is\nnot done (naming the failing gate), and its ``progress`` when it counts something.",
+        "description": "One step of the golden path: its state, a short ``meta`` text and the ``reason`` it is\nnot done (naming the failing gate), its ``progress`` when it counts something, and the one\n``signal`` that needs attention (Plan: \"v3 waits for you\" while a change request is open).",
         "properties": {
           "meta": {
             "anyOf": [
@@ -2836,6 +2856,17 @@
               }
             ],
             "title": "Reason"
+          },
+          "signal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signal"
           },
           "state": {
             "$ref": "#/components/schemas/StepState"
@@ -5221,6 +5252,14 @@
         },
         "title": "OwnerSignOffBody",
         "type": "object"
+      },
+      "OwnerWaitKind": {
+        "enum": [
+          "change_request",
+          "owner_signoff",
+          "owner_signoff_manual"
+        ],
+        "type": "string"
       },
       "OwnerWaitState": {
         "enum": [
@@ -9411,7 +9450,9 @@
           "skipped",
           "unknown",
           "blocked",
-          "unrecorded"
+          "unrecorded",
+          "waiting",
+          "stale"
         ],
         "type": "string"
       },
@@ -9491,10 +9532,21 @@
       },
       "TicketFlow": {
         "additionalProperties": false,
-        "description": "A ticket's seven steps in their fixed order (``ticket_flow.py``); ``current`` is where the\nticket is: the first step neither done nor unrecorded, the last when every step is.",
+        "description": "A ticket's seven steps in their fixed order (``ticket_flow.py``); ``current`` is where the\nticket is: the first step neither done nor unrecorded, the last when every step is.\n``signal`` is the one line that needs attention, from its preflight and the plan change\nrequests (waiting for the owner, held, re-run needed, local drift), None when none.",
         "properties": {
           "current": {
             "$ref": "#/components/schemas/TicketStepName"
+          },
+          "signal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signal"
           },
           "steps": {
             "items": {
@@ -10459,6 +10511,28 @@
         ],
         "title": "VersionOrigin",
         "type": "string"
+      },
+      "WaitingOnOwner": {
+        "additionalProperties": false,
+        "description": "The owner decision a feature waits on; ``tickets`` are the open change requests' origin\ntickets (``change_request`` only).",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/OwnerWaitKind"
+          },
+          "tickets": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Tickets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "WaitingOnOwner",
+        "type": "object"
       },
       "Workdir": {
         "additionalProperties": false,
