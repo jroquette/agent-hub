@@ -27,6 +27,7 @@ from typing import Any
 from agent_hub.core.errors import TrackerError
 from agent_hub.core.json_form import InvalidJsonError, load_json_bytes
 from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN, STATE_TYPES, Issue
+from agent_hub.tracker_linear.graphql_transport import CREATE_FIX as CREATE_FIX
 
 # The tools of the user's ``Linear`` MCP server, as Claude Code names them (D-prefix).
 LINEAR_TOOL_PREFIX = "mcp__Linear__"
@@ -55,8 +56,6 @@ TEAM_NOT_FOUND = "team not found"
 TRANSPORT_FIX = 'or set tracker.transport to "api" with LINEAR_API_KEY'
 # The fix of a write call that ran and failed: never "retry", since it may have written.
 WRITE_FIX = "check the issue in Linear: the write may have been made, and it is not retried"
-# The same for a create call: no issue id to check, the team's issues instead.
-CREATE_FIX = "check the team's issues in Linear: it may have been created, and it is not retried"
 _SHAPE_FIX = f"retry {TRANSPORT_FIX}"
 
 

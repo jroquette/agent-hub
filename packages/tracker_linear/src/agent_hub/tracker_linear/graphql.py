@@ -20,6 +20,7 @@ from typing import Any
 
 from agent_hub.core.errors import TrackerError
 from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN, UNSTARTED_STATE_TYPES, Issue
+from agent_hub.tracker_linear.graphql_transport import CREATE_FIX as CREATE_FIX
 from agent_hub.tracker_linear.graphql_transport import (
     LINEAR_API_KEY_VARIABLE as LINEAR_API_KEY_VARIABLE,
 )
@@ -45,8 +46,6 @@ DONE_STATE_TYPES = ("completed", "canceled", "duplicate")
 MAX_PAGES = 20
 # Labels read per issue; an issue with more raises instead of being read in part.
 MAX_LABELS = 50
-# The fix of a failed issueCreate: the issue may exist, so it is never retried.
-CREATE_FIX = "check the team's issues in Linear: it may have been created, and it is not retried"
 
 
 def _labels_selection(fields: str) -> str:
