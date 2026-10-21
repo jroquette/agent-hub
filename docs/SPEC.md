@@ -723,8 +723,11 @@ Workflow runs list filters by workflow and failure kind.
   message folded into it. An ended terminal session can be continued in the chat from its detail.
 - **Features** groups In progress (the features that need you first) and Shipped with search and filters; a feature
   can get a nickname kept on this machine (`GET`/`PUT /feature-names`). **Feature detail**: a calm golden path, one
-  Waiting on you banner pointing to each owner wait, whose one prompt is on the Eval tab (the owner sign-off, `POST
-  /features/{project}/{slug}/owner-signoff`, a SHIP eval with `provenance: owner`), a ticket panel per ticket, an
+  Waiting for you banner pointing to each owner wait (a plan change request first, which opens its ticket's panel;
+  each acceptance prompt is on the Eval tab: the owner sign-off, `POST /features/{project}/{slug}/owner-signoff`, a
+  SHIP eval with `provenance: owner`), a ticket panel per ticket (its preflight runs, local notes and discoveries from
+  `GET …/tickets/{ticket}`, and a plan change request's Approve or Decline with a note: through its run's gate, or,
+  when the run is gone, `POST …/change-requests/{n}/decision`, which creates the request's decision file once), an
   Eval tab with history per scope and who ran each eval, Approve at the end of the spec, research and plan
   with the spec's open questions, ticket sessions on each ticket, and Run on an AC's recorded check (with Claude by
   default, or `POST …/acs/{ac}/check-runs`, never recorded).
@@ -747,7 +750,7 @@ change; the live-session limit is [ADR 0042](adr/0042-no-live-session-limit-in-t
 - **Features** leads In progress with the features that need you (a warning, or a live session waiting on you), and
   the sidebar badges Features with their count. **Feature detail**: per ticket an AC meter and a last PR column
   (`TicketRow.pr_url`, from its review record), AC links into Criteria with a hover preview, the evals folded by
-  ticket as a tree with a Waiting on you callout, and the owner sign-off of one eval's owner steps (SHIP or NO-SHIP
+  ticket as a tree with a Waiting for you callout, and the owner sign-off of one eval's owner steps (SHIP or NO-SHIP
   with a note). A ticket blocked only by one in review starts on the blocker's branch:
   `hub worktree --stack-on <PR url>` creates that repo's worktree from the pull request's head branch and the other repos' from their default
   branch (`--base BRANCH` starts every repo from one branch); a session belongs to the issue its first prompt names.
