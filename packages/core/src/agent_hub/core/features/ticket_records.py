@@ -175,16 +175,16 @@ def _request(n: int, head: RecordHead, decision: RecordHead | None) -> ChangeReq
     except RecordFieldError as problem:
         return _broken(n, ticket, _unreadable(name, str(problem)))
     status: ChangeStatus = "open"
-    problem = None
+    undecided = None
     if decision is not None:
         try:
             status = _decision(decision)
         except RecordFieldError as error:
             # Not known to be decided: the request stays open, with the decision's problem.
             where = f"{CHANGE_REQUESTS_FOLDER}/{decision.name}"
-            problem = _unreadable(where, str(error))
+            undecided = _unreadable(where, str(error))
     return ChangeRequest(
-        n=n, ticket=ticket, status=status, plan_to=plan_to, affected=affected, problem=problem
+        n=n, ticket=ticket, status=status, plan_to=plan_to, affected=affected, problem=undecided
     )
 
 
