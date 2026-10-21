@@ -448,9 +448,7 @@ class TestAmendment:
     def test_names_the_approver_on_one_line_when_it_spans_lines(self) -> None:
         decision = a_decision(2, decided_by="Dana\nSmith")
 
-        written, _ = amended_plan(
-            PLAN, n=2, request=a_request(2), decision=decision, summary="Go."
-        )
+        written, _ = amended_plan(PLAN, n=2, request=a_request(2), decision=decision, summary="Go.")
 
         assert written[len(PLAN) :].startswith(b"- A2 (2026-10-21, Dana Smith): Go.")
 
