@@ -16,6 +16,8 @@ import {
   GOLDEN_STATE_TEXT,
   GoldenPathStepper,
   Icon,
+  FENCE,
+  HEADING,
   IdChip,
   Markdown,
   ProblemError,
@@ -88,34 +90,53 @@ function namesRow(row: TicketRow, name: string | null | undefined): boolean {
 /** How long a request has waited, from its `opened_at` ("2 h ago"); null when unknown. */
 export function WaitAge({ openedAt }: { openedAt: string | null | undefined }) {
   const now = useNow(60_000);
+  const { tz } = usePreferences();
   if (!openedAt || Number.isNaN(Date.parse(openedAt))) return null;
   const seconds = Math.max(0, (now - Date.parse(openedAt)) / 1000);
   return (
     <span className="ah-small ah-muted">
       waiting{" "}
-      <time dateTime={openedAt} title={openedAt}>
+      <time dateTime={openedAt} title={fmtDateTime(openedAt, tz)}>
         {fmtAgo(seconds).replace(/ ago$/, "")}
       </time>
     </span>
   );
 }
 
+/** Whether each line of `lines` is code: inside a fence, closed by its own marker (as Markdown). */
+function codeLines(lines: readonly string[]): boolean[] {
+  let marker: string | null = null;
+  return lines.map((line) => {
+    if (marker !== null) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith(marker) && /^([`~])\1*$/.test(trimmed)) marker = null;
+      return true;
+    }
+    const fence = FENCE.exec(line);
+    if (fence) marker = fence[1] ?? "```";
+    return fence !== null;
+  });
+}
+
 /** Markdown whose headings start at level `top`, so it sits below the heading that holds it. */
 export function belowHeading(source: string, top: number): string {
-  const levels = [...source.matchAll(/^(#{1,6}) /gm)].map((found) => found[1]?.length ?? 1);
+  const lines = source.split("\n");
+  const code = codeLines(lines);
+  const level = (line: string, index: number) =>
+    code[index] ? null : (HEADING.exec(line)?.[1]?.length ?? null);
+  const levels = lines.map(level).filter((found): found is number => found !== null);
   const shift = Math.max(0, top - Math.min(...levels, top));
   if (shift === 0) return source;
-  let fenced = false;
-  return source
-    .split("\n")
-    .map((line) => {
-      if (/^\s*(```|~~~)/.test(line)) fenced = !fenced;
-      if (fenced) return line;
-      return line.replace(
-        /^(#{1,6}) /,
-        (marks: string) => `${"#".repeat(Math.min(6, marks.length - 1 + shift))} `,
-      );
-    })
+  return lines
+    .map((line, index) =>
+      level(line, index) === null
+        ? line
+        : line.replace(
+            /^( {0,3})(#{1,6})/,
+            (_, indent: string, marks: string) =>
+              `${indent}${"#".repeat(Math.min(6, marks.length + shift))}`,
+          ),
+    )
     .join("\n");
 }
 
@@ -288,10 +309,13 @@ function ChangeRequestBlock({
   const name = `Change request ${String(request.n)}`;
   const decision = request.decision;
   const settled = request.status !== "open" || decision !== null;
+  const sentLine = useRef<HTMLSpanElement>(null);
+  const sent = decidedHere && !settled && !request.approval_id && !request.decidable_here;
   useEffect(() => {
-    // After a decision taken here, focus lands on the line that records it (U6).
+    // After a decision taken here, focus lands on the line that says where it is (U6, UX r3 1).
     if (settled && decidedHere) decidedLine.current?.focus();
-  }, [settled, decidedHere]);
+    else if (sent) sentLine.current?.focus();
+  }, [settled, decidedHere, sent]);
   if (settled) {
     return (
       <span ref={decidedLine} tabIndex={-1} id={requestAnchor(request.n)}>
@@ -323,12 +347,16 @@ function ChangeRequestBlock({
         }}
       />
     );
+  } else if (decidedHere) {
+    decide = (
+      <span ref={sentLine} tabIndex={-1} role="status" className="ah-small ah-muted">
+        Decision sent; the run records it and this shows it.
+      </span>
+    );
   } else {
     decide = (
       <span className="ah-small ah-muted">
-        {decidedHere
-          ? "Decision sent to its run; this shows it once the run records it."
-          : "Its run is live and asks you at its gate; the decision shows here once the gate is open."}
+        Its run is live and asks you at its gate; the decision shows here once the gate is open.
       </span>
     );
   }

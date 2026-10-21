@@ -692,6 +692,8 @@ describe("the Acceptance prompt", () => {
     expect(callout).toHaveTextContent(
       "evals/owner-signoff.md with verdict SHIP and provenance owner",
     );
+    // UX r3 2: a "Waiting for you" callout takes the waiting tone (A18, A19).
+    expect(callout).toHaveClass("ah-banner-warning");
     expect(within(callout).queryByRole("button")).toBeNull();
   });
 

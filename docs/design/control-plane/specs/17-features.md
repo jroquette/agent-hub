@@ -386,8 +386,9 @@ spec amendment A15. Where the sections above say otherwise, this list wins.
   `feature`, `feature-r3` after `feature-r2`); *future-dated* ("Sign-off possible after <date-time>", no button: the
   served `signable_after`, rounded up to the minute, written as the page writes every date-time, so the `t` toggle
   applies; the Acceptance step reads the same line on this page; the Features list still shows the server's UTC line, a known
-  gap followed up in AGH-332); *no ACs listed* ("Acceptance: waiting on owner steps · no ACs listed", names the
-  hand-written `evals/owner-signoff.md`). Only *sign off* is amber; the others are info. The client's own callout no
+  gap followed up in AGH-332); *no ACs listed* ("Waiting for you · Acceptance: sign off by hand · no ACs listed", names
+  the hand-written `evals/owner-signoff.md`, no button). *Sign off* and *no ACs listed* are amber (`warning`, `hand`:
+  both wait for the owner, A18, A19); the others are info. The client's own callout no
   longer shows for the acceptance eval; ticket eval callouts (AC-376.13, AC-376.14) are unchanged.
 - **Banner.** The page has one "Waiting on you" banner, a signpost with one line per wait: "Acceptance: sign off 3
   ACs (Eval 2)" first (only in *sign off*), then "AGH-48: Eval 1 passed with owner steps" for each other eval waiting
@@ -466,9 +467,9 @@ say otherwise, this list wins.
     empty note sends nothing, says "Write a note to decline: the next preflight follows it." and moves focus to the
     note; then "Recording your decision…", "Decision recorded in the hub. The next /implement of <ticket> reads it."
     with the buttons off, or the gate's refusal box (`DecisionError`: the server's reason, "Nothing was recorded.");
-  - else the run lives but its gate is not open, and no button: "Decision sent to its run; this shows it once the run
-    records it." right after a decision through the gate, otherwise "Its run is live and asks you at its gate; the
-    decision shows here once the gate is open.".
+  - else the run lives but its gate is not open, and no button: right after a decision through the gate, "Decision
+    sent; the run records it and this shows it." (a status that takes focus until the run records it), otherwise
+    "Its run is live and asks you at its gate; the decision shows here once the gate is open.".
   A decided request reads "Change request N approved by <person> · <date-time>[: <note>]"; after a decision taken
   here, through either path, focus moves to that line.
 - **Announcing.** A request that arrives while the page is open is said once in a polite live region ("AGH-202 waits
@@ -478,6 +479,16 @@ say otherwise, this list wins.
 - **No repeated state word.** A step meta that only repeats its state's word ("Waiting for you" on a `waiting`
   Preflight) is not said twice in the stepper, its description or the panel's step buttons; the step bar line keeps
   it ("Preflight · 2/7 · Waiting for you"), since the bar has no state word of its own.
+- **Hand sign-off meta.** The Acceptance step of a hand-written sign-off reads `waiting` with the meta "Sign off by
+  hand · no ACs listed" (was "Waiting on owner steps · no ACs listed"), the words its banner line and callout use.
+- **Wording kept apart (UX Q4, Q5; departures).** The gate's own choice reads "Approve" (its label comes from the
+  workflow's declared decision), the lost-run form's "Approve plan v3"; sessions keep "waits on you" (AC-374: a
+  session waits on the person at the keyboard, not on an owner decision). In a build whose decision route is not
+  wired (sessions off, `decidable_here` always false), a gone run's request still reads "Its run is live and asks
+  you at its gate …": the API does not say why it is not decidable here; decide it by hand in the hub (write
+  `change-requests/<n>.decision.md`) until hub web takes decisions there.
+- **Request text cut.** A request read past its 16 KiB head shows "The request goes on past what is shown"; one of
+  exactly 16 KiB reads as cut too, which only sends the owner to read it whole.
 - **Departures from the approved designs.** The `ApprovalPanel` with its footer slot (ux-new-ticket-panel.md) is not
   reused: the request's block above holds its parts (title, wait, evidence and proposal, what changes, the decision),
   and the decision is `GateDecision` or the lost-run form, so `ApprovalPanel` keeps its Phase-2 footer unchanged. The
