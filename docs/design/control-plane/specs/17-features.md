@@ -406,6 +406,17 @@ spec amendment A15. Where the sections above say otherwise, this list wins.
 - **Contrast (AC-1.14, A16).** The screens' axe tests run once, for structure and names (jsdom computes no colours);
   both themes' contrast is `tokens.test.ts`'s, on the token pairs the panel, the callouts and the banner use.
 
+## Departures (AGH-422, the feature's own session)
+
+Design: [20-chat.md](20-chat.md) (the Discuss panel). Where the sections above say otherwise, this list wins.
+
+- **AC-422.1 The feature's session.** Given a feature whose spec (else research, else plan) a session `hub web`
+  drives wrote, when its page opens, then its header names that session ("Session" and the session's name, a ghost
+  button whose tooltip is "Talk with the session that wrote this feature's records: <name>") and a click opens the
+  Discuss panel on that session; the panel's row 2 reads "Feature session · <name>", and its menu offers "New
+  conversation" (the panel's own conversation for the record) and, from there, "Back to the feature session". The
+  first session found wins (the oldest writer of the spec); no writer, no chip, and the panel works as before.
+
 ## Screen 1: Features list
 
 **Route:** `/features` · **Answers:** "Which features are moving through the golden path, and how close is each to done?"
