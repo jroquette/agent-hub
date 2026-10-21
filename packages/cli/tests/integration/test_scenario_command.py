@@ -505,6 +505,10 @@ def test_exits_two_when_no_gate_bypass_flag_given(hub: Path, marker: Path) -> No
     assert modes(marker) == []
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="release gate O-6 ended with AGH-360: interactive mode runs, so it no longer exits 2",
+)
 def test_exits_two_when_interactive_mode_asked(hub: Path, marker: Path) -> None:
     for mode in ("interactive", None):
         result = run_scenario(hub, marker, "local", mode=mode)
@@ -1411,3 +1415,798 @@ def test_marks_start_decisions_when_workflow_environment_run_starts(
         f"{RUN}:look:0:policy.decision:start",
         f"{RUN}:send:0:policy.decision:start",
     ]
+
+
+# AGH-360: interactive mode, the investigation and its answers (AC-350.20 to .23).
+# ``hold-walk`` has one read step, ``order-held``, whose action fails until the file ``HELD``
+# names exists; the write ``release-hold`` creates it. No claude starts (the fake records none).
+
+HELD_SCRIPT = """\
+stdin=$(cat)
+printf '%s\\n' "$stdin" >> "$MARKER"
+if [ ! -e "$HELD" ]; then
+  echo "order on hold" >&2
+  exit 3
+fi
+printf '{"order": "o-1", "status": "ON_HOLD"}'
+"""
+RELEASE_SCRIPT = """\
+stdin=$(cat)
+printf '%s\\n' "$stdin" >> "$MARKER"
+touch "$HELD"
+printf '{"order": "o-1"}'
+"""
+HOLD_WALK = """\
+version: 1
+kind: scenario
+name: hold-walk
+revision: 1
+nodes:
+  - id: order-held
+    type: action
+    action: held-order
+    with: {target: api}
+"""
+GATE = "order-held__investigation"
+PAUSED = f"run {RUN}: paused at order-held (investigation): open /scenarios/hold-walk/runs/{RUN}"
+
+
+def write_script_action(hub: Path, name: str, *, effect: str, script: str) -> None:
+    write_action(hub, name, effect)
+    (hub / "actions" / "demo" / "scripts" / f"{name}.sh").write_text(script)
+
+
+@pytest.fixture
+def held(hub: Path, tmp_path: Path) -> Path:
+    """``hub`` with ``hold-walk`` and its actions, committed; the file that releases the hold."""
+    write_script_action(hub, "held-order", effect="read", script=HELD_SCRIPT)
+    write_script_action(hub, "release-hold", effect="write", script=RELEASE_SCRIPT)
+    write_scenario(hub, HOLD_WALK)
+    commit_all(hub, "hold walk")
+    return tmp_path / "released"
+
+
+def hold_call(hub: Path, marker: Path, held: Path, *args: str, stdin: str = "") -> Result:
+    environ = {
+        "AGENT_HUB_ROOT": str(hub),
+        "MARKER": str(marker),
+        "HELD": str(held),
+        "AGENT_HUB_DB": str(hub.parent.parent / "events.db"),
+        **a_fake_claude_env(hub),
+    }
+    return CliRunner().invoke(app, list(args), env=environ, input=stdin)
+
+
+def a_fake_claude_env(hub: Path) -> dict[str, str]:
+    """A ``claude`` first on PATH that leaves a marker when started (made once per hub)."""
+    fakes = hub.parent.parent / "bin"
+    if not fakes.exists():
+        fakes.mkdir()
+        (fakes / "claude").write_text(FAKE_CLAUDE)
+        (fakes / "claude").chmod(0o755)
+    path = f"{fakes}{os.pathsep}{os.environ.get('PATH', '')}"
+    return {"PATH": path, "CLAUDE_MARKER": str(hub.parent.parent / "claude-started")}
+
+
+def hold_walk(hub: Path, marker: Path, held: Path, *, environment: str = "local") -> Result:
+    args = ("scenario", "run", "hold-walk", "--env", environment, "--run-id", RUN)
+    return hold_call(hub, marker, held, *args)
+
+
+def respond(hub: Path, marker: Path, held: Path, *answer: str) -> Result:
+    """``respond`` on the investigation gate: a choice, then its text (an option id) if any."""
+    choice, *text = answer
+    args = ("workflow", "respond", RUN, "--node", GATE, "--choice", choice)
+    return hold_call(hub, marker, held, *args, *(("--text", *text) if text else ()))
+
+
+def propose(hub: Path, marker: Path, held: Path, *, proposal: dict[str, Any]) -> Result:
+    args = ("scenario", "propose", "--run", RUN)
+    return hold_call(hub, marker, held, *args, stdin=json.dumps(proposal))
+
+
+def a_proposal(*options: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "findings": [
+            {"title": "Order stays on hold", "text": "The hold flag is set.", "evidence": "x"},
+            {"title": "Queue is slow", "text": "It drains in minutes."},
+        ],
+        "options": [
+            {"summary": f"Option {index}", "steps": steps} for index, steps in enumerate(options, 1)
+        ],
+    }
+
+
+RELEASE = [{"action": "release-hold", "with": {"target": "api"}}]
+LOOK = [{"action": "demo/held-order", "with": {"target": "api"}}]
+
+
+def test_pauses_with_investigation_gate_when_interactive_diverges(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    result = hold_walk(hub, marker, held)
+
+    assert result.exit_code == 0, result.output
+    lines = plain(result.stdout).splitlines()
+    assert lines[-1] == f"{PAUSED} in hub web (./hub web)"
+    assert lines[-2].startswith('step order-held: exec_failed: "sh exited 3')
+    lines_recorded = records(hub)
+    assert [line for line in lines_recorded if line["event"] == "end"] == []
+    assert lines_recorded[0]["mode"] == "interactive"
+    (investigation,) = [line for line in lines_recorded if line["event"] == "investigation"]
+    assert {key: investigation[key] for key in ("step", "gate", "number", "failure_kind")} == {
+        "step": "order-held",
+        "gate": GATE,
+        "number": 1,
+        "failure_kind": "exec_failed",
+    }
+    (gate,) = [line for line in lines_recorded if line["event"] == "gate"]
+    assert (gate["node"], gate["attempt"], gate["form"], gate["choices"], gate["reason"]) == (
+        GATE,
+        1,
+        "choice",
+        ["pick", "retry", "stop"],
+        "investigation",
+    )
+    events = stored(hub)
+    requested = [event for event in events if event.type == "gate.request"]
+    assert [(e.payload["name"], e.payload["kind"], e.payload["reason"]) for e in requested] == [
+        (GATE, "human_gate", "investigation")
+    ]
+    assert [event for event in events if event.type == "run.end"] == []
+    assert not (hub.parent.parent / "claude-started").exists()
+    # The gate needs its answer first: a bare resume says how to give it.
+    resumed = hold_call(hub, marker, held, "workflow", "run", "--resume", RUN)
+    assert resumed.exit_code == 1, resumed.output
+    assert f"answer it with hub workflow respond {RUN} --node {GATE}" in plain(resumed.stderr)
+    assert modes(marker) == ["run"]
+
+
+def test_fails_when_investigation_cap_reached(hub: Path, marker: Path, held: Path) -> None:
+    hold_walk(hub, marker, held)
+
+    answers = [respond(hub, marker, held, "retry") for _ in range(10)]
+
+    for answer in answers[:-1]:
+        assert answer.exit_code == 0, answer.output
+        assert plain(answer.stdout).splitlines()[-1].startswith(PAUSED)
+    last = answers[-1]
+    assert last.exit_code == 1, last.output
+    shown = plain(last.stdout).splitlines()
+    assert shown[-2] == f"run {RUN}: failed"
+    assert shown[-1].startswith('step order-held: exec_failed: "sh exited 3')
+    assert shown[-1].endswith(" (investigation limit reached)")
+    lines = records(hub)
+    assert [line["number"] for line in lines if line["event"] == "investigation"] == list(
+        range(1, 11)
+    )
+    assert [line["status"] for line in lines if line["event"] == "end"] == ["failed"]
+    assert modes(marker) == ["run"] * 11
+
+
+def test_records_findings_and_option_plans_when_propose_runs(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_walk(hub, marker, held)
+
+    result = propose(hub, marker, held, proposal=a_proposal(RELEASE, LOOK))
+
+    assert result.exit_code == 0, result.output
+    assert plain(result.stdout).splitlines() == [
+        "proposal 1 for step order-held (investigation 1)",
+        "finding f1: Order stays on hold",
+        "finding f2: Queue is slow",
+        "option o1: Option 1",
+        "  1  demo/release-hold  write  ask",
+        "option o2: Option 2",
+        "  1  demo/held-order  read  allow",
+    ]
+    # No option step runs before a pick, though local's access is write.
+    assert modes(marker) == ["run"]
+    assert not held.exists()
+    (proposal,) = [line for line in records(hub) if line["event"] == "proposal"]
+    assert [finding["finding_id"] for finding in proposal["findings"]] == ["f1", "f2"]
+    assert [option["option_id"] for option in proposal["options"]] == ["o1", "o2"]
+    plan = proposal["options"][0]["plan"][0]
+    assert (plan["action"], plan["decision"], plan["reason_kind"]) == (
+        "demo/release-hold",
+        "ask",
+        "agent_origin",
+    )
+    findings = [event for event in stored(hub) if event.type == "finding"]
+    assert [event.payload for event in findings] == [
+        {"run": RUN, "attempt": 1, "finding_id": "f1", "step": "order-held"},
+        {"run": RUN, "attempt": 1, "finding_id": "f2", "step": "order-held"},
+    ]
+    # A later proposal replaces the earlier as the investigation's options; ids go on.
+    again = propose(hub, marker, held, proposal=a_proposal(LOOK))
+    assert again.exit_code == 0, again.output
+    assert "finding f3: Order stays on hold" in plain(again.stdout)
+
+
+def test_refuses_proposal_when_run_not_paused_at_investigation(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    held.touch()
+    hold_walk(hub, marker, held)
+
+    result = propose(hub, marker, held, proposal=a_proposal(LOOK))
+
+    assert result.exit_code == 1, result.output
+    assert "not paused at an investigation" in plain(result.stderr)
+    assert [line for line in records(hub) if line["event"] == "proposal"] == []
+
+
+RENDER = """\
+version: 1
+name: render-invoice-pdf
+description: Render the invoice again
+effect: read
+runtime: sh
+script: scripts/render-invoice-pdf.sh
+inputs:
+  target: {type: service, required: true}
+output_format: {type: object}
+"""
+
+
+def test_marks_needs_acceptance_when_draft_action_from_agent_in_option(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_walk(hub, marker, held)
+    # What the investigation's agent writes under actions/<pack>/: a draft until committed.
+    (hub / "actions" / "demo" / "render-invoice-pdf.yaml").write_text(RENDER)
+    (hub / "actions" / "demo" / "scripts" / "render-invoice-pdf.sh").write_text(RELEASE_SCRIPT)
+    render = [{"action": "render-invoice-pdf", "with": {"target": "api"}}]
+
+    listed = hold_call(hub, marker, held, "action", "list")
+    proposed = propose(hub, marker, held, proposal=a_proposal(render))
+    picked = respond(hub, marker, held, "pick", "o1")
+
+    assert "demo/render-invoice-pdf  read  target (service)  draft" in plain(listed.stdout)
+    shown = plain(proposed.stdout).splitlines()
+    assert "option o1: Option 1  (needs acceptance)" in shown
+    assert (
+        "  cannot be picked: step 1 (demo/render-invoice-pdf): draft action: commit it to run"
+        in (shown)
+    )
+    assert picked.exit_code == 1, picked.output
+    assert "option o1 cannot be picked" in plain(picked.stderr)
+    assert [line for line in records(hub) if line["event"] == "decision"] == []
+    assert modes(marker) == ["run"]
+    # Committed, a new plan pins its hash and the option can be picked.
+    commit_all(hub, "accept render-invoice-pdf")
+    again = propose(hub, marker, held, proposal=a_proposal(render))
+    assert "needs acceptance" not in plain(again.stdout)
+    accepted = respond(hub, marker, held, "pick", "o1")
+    assert accepted.exit_code == 0, accepted.output
+    assert plain(accepted.stdout).splitlines()[-1] == f"run {RUN}: done"
+
+
+def test_runs_workaround_then_retries_step_when_option_picked(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_walk(hub, marker, held)
+    propose(hub, marker, held, proposal=a_proposal(RELEASE, LOOK))
+
+    picked = respond(hub, marker, held, "pick", "o1")
+
+    assert picked.exit_code == 0, picked.output
+    assert plain(picked.stdout).splitlines()[-1] == f"run {RUN}: done"
+    # The step, the workaround's write, then the step again as a new attempt.
+    assert modes(marker) == ["run", "run", "run"]
+    lines = records(hub)
+    (decision,) = [line for line in lines if line["event"] == "decision"]
+    assert (decision["node"], decision["choice"], decision["text"]) == (GATE, "pick", "o1")
+    assert decision["approver"]
+    order = [
+        line["event"]
+        for line in lines
+        if line["event"] in ("decision", "workaround_start", "workaround_end", "end")
+    ]
+    assert order == ["decision", "workaround_start", "workaround_end", "end"]
+    (call,) = [line for line in lines if line["event"] == "action" and line["node"] != "order-held"]
+    assert (call["node"], call["origin"], call["decision"], call["status"]) == (
+        f"{GATE}.w1",
+        "agent",
+        "ask",
+        "ok",
+    )
+    ends = [
+        (line["attempt"], line["status"])
+        for line in lines
+        if line["event"] == "step_end" and line["node"] == "order-held"
+    ]
+    assert ends == [(1, "failed"), (2, "ok")]
+    events = stored(hub)
+    workaround = [event for event in events if event.type.startswith("workaround.")]
+    assert [(event.type, event.payload["status"]) for event in workaround] == [
+        ("workaround.start", "started"),
+        ("workaround.end", "ok"),
+    ]
+    assert workaround[0].payload | {"status": "ok"} == workaround[1].payload
+    started = [event for event in events if event.type == "action.start"]
+    agent = [event for event in started if event.payload["origin"] == "agent"]
+    assert [(event.step, event.payload["approver"]) for event in agent] == [
+        (f"{GATE}.w1", decision["approver"])
+    ]
+
+
+def test_refuses_pick_with_reason_when_workaround_option_holds_deny(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_walk(hub, marker, held, environment="live")
+    proposed = propose(hub, marker, held, proposal=a_proposal(RELEASE))
+    before = records(hub)
+
+    picked = respond(hub, marker, held, "pick", "o1")
+
+    assert proposed.exit_code == 0, proposed.output
+    assert "  cannot be picked: step 1 (demo/release-hold): live is a production" in plain(
+        proposed.stdout
+    )
+    assert picked.exit_code == 1, picked.output
+    assert plain(picked.stderr) == (
+        "hub workflow respond: option o1 cannot be picked: step 1 (demo/release-hold): live is"
+        " a production environment: writes and destroys are denied\n"
+    )
+    assert records(hub) == before
+    assert not held.exists()
+    unknown = respond(hub, marker, held, "pick", "o9")
+    assert unknown.exit_code == 1, unknown.output
+    assert "one of o1" in plain(unknown.stderr)
+
+
+def test_opens_new_investigation_when_workaround_step_fails(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_walk(hub, marker, held)
+    propose(hub, marker, held, proposal=a_proposal(LOOK))
+
+    picked = respond(hub, marker, held, "pick", "o1")
+
+    assert picked.exit_code == 0, picked.output
+    shown = plain(picked.stdout).splitlines()
+    assert shown[-2] == "step order-held: workaround w1 step 1 (demo/held-order): exec_failed"
+    assert shown[-1].startswith(PAUSED)
+    lines = records(hub)
+    assert [line["status"] for line in lines if line["event"] == "workaround_end"] == ["failed"]
+    assert [line["number"] for line in lines if line["event"] == "investigation"] == [1, 2]
+    assert [line for line in lines if line["event"] == "end"] == []
+    # The diverged step did not run again: the workaround failed first.
+    assert modes(marker) == ["run", "run"]
+
+
+def test_ends_cancelled_keeping_findings_when_investigation_stop(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    from agent_hub.core.scenarios.run_record import fold_records
+
+    hold_walk(hub, marker, held)
+    propose(hub, marker, held, proposal=a_proposal(RELEASE))
+
+    stopped = respond(hub, marker, held, "stop")
+
+    assert stopped.exit_code == 1, stopped.output
+    assert plain(stopped.stdout).splitlines()[-1] == f"run {RUN}: cancelled"
+    view = fold_records(records(hub))
+    assert view.status == "cancelled"
+    assert [finding.finding_id for finding in view.findings] == ["f1", "f2"]
+    assert modes(marker) == ["run"]
+    ends = [event for event in stored(hub) if event.type == "run.end"]
+    assert [event.payload["status"] for event in ends] == ["cancelled"]
+    again = respond(hub, marker, held, "retry")
+    assert again.exit_code == 1, again.output
+
+
+def test_retries_step_without_workaround_when_investigation_retry(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_walk(hub, marker, held)
+    # The system recovered on its own: the step passes when tried again.
+    held.touch()
+
+    retried = respond(hub, marker, held, "retry")
+
+    assert retried.exit_code == 0, retried.output
+    assert plain(retried.stdout).splitlines()[-1] == f"run {RUN}: done"
+    lines = records(hub)
+    assert [line for line in lines if line["event"].startswith("workaround")] == []
+    ends = [
+        (line["attempt"], line["status"])
+        for line in lines
+        if line["event"] == "step_end" and line["node"] == "order-held"
+    ]
+    assert ends == [(1, "failed"), (2, "ok")]
+    assert modes(marker) == ["run", "run"]
+
+
+def test_refuses_proposal_when_investigation_already_answered(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_walk(hub, marker, held)
+    propose(hub, marker, held, proposal=a_proposal(RELEASE))
+    # hub web records the pick and resumes later: the options picked from no longer change.
+    decided = hold_call(
+        hub,
+        marker,
+        held,
+        "workflow",
+        "decide",
+        RUN,
+        "--gate",
+        f"{RUN}:{GATE}:1",
+        "--choice",
+        "pick",
+        "--text-stdin",
+        stdin="o1",
+    )
+
+    again = propose(hub, marker, held, proposal=a_proposal(LOOK))
+
+    assert decided.exit_code == 0, decided.output
+    assert again.exit_code == 1, again.output
+    assert "already answered (pick)" in plain(again.stderr)
+    assert len([line for line in records(hub) if line["event"] == "proposal"]) == 1
+    resumed = hold_call(hub, marker, held, "workflow", "run", "--resume", RUN)
+    assert resumed.exit_code == 0, resumed.output
+    assert plain(resumed.stdout).splitlines()[-1] == f"run {RUN}: done"
+
+
+# AGH-360 review round 1: crash points of an answer, a plan edited before the pick, and the
+# cap on proposals. A crash is played by the record lines it would leave.
+
+
+def append_lines(hub: Path, *lines: dict[str, Any]) -> None:
+    path = hub / ".agent-runs" / "workflows" / RUN / "records.jsonl"
+    with path.open("a") as file:
+        for line in lines:
+            file.write(json.dumps(line) + "\n")
+
+
+def decide(hub: Path, marker: Path, held: Path, *answer: str) -> Result:
+    """``hub workflow decide`` (hub web): the answer recorded, the run not resumed."""
+    choice, *text = answer
+    args = ("workflow", "decide", RUN, "--gate", f"{RUN}:{GATE}:1", "--choice", choice)
+    stdin = text[0] if text else ""
+    return hold_call(hub, marker, held, *args, *(("--text-stdin",) if text else ()), stdin=stdin)
+
+
+def resume_walk(hub: Path, marker: Path, held: Path) -> Result:
+    return hold_call(hub, marker, held, "workflow", "run", "--resume", RUN)
+
+
+def test_opens_new_investigation_when_workaround_cut_short_by_crash(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_walk(hub, marker, held)
+    propose(hub, marker, held, proposal=a_proposal(RELEASE))
+    assert decide(hub, marker, held, "pick", "o1").exit_code == 0
+    # The crash came once w1 started: its start is recorded, its end is not.
+    append_lines(
+        hub,
+        {"event": "workaround_start", "workaround_id": "w1", "number": 1, "gate": GATE}
+        | {"option": "o1", "steps": 1, "approver": "dev"},
+    )
+
+    resumed = resume_walk(hub, marker, held)
+
+    assert resumed.exit_code == 0, resumed.output
+    assert plain(resumed.stdout).splitlines()[-1].startswith(PAUSED)
+    # The write is not run a second time, and the diverged step not either.
+    assert modes(marker) == ["run"]
+    assert not held.exists()
+    lines = records(hub)
+    assert [line["status"] for line in lines if line["event"] == "workaround_end"] == [
+        "interrupted"
+    ]
+    opened = [line for line in lines if line["event"] == "investigation"]
+    assert [(line["number"], line["failure_kind"]) for line in opened] == [
+        (1, "exec_failed"),
+        (2, "workaround"),
+    ]
+    assert [line for line in lines if line["event"] == "end"] == []
+
+
+def test_ends_cancelled_when_investigation_stop_closed_before_crash(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_walk(hub, marker, held)
+    assert decide(hub, marker, held, "stop").exit_code == 0
+    # The crash came between the gate's close and the run's end.
+    append_lines(
+        hub,
+        {"event": "step_end", "node": GATE, "attempt": 1, "status": "ok"}
+        | {"output": {"choice": "stop", "text": ""}},
+    )
+    held.touch()
+
+    resumed = resume_walk(hub, marker, held)
+
+    assert resumed.exit_code == 1, resumed.output
+    assert plain(resumed.stdout).splitlines()[-1] == f"run {RUN}: cancelled"
+    # A stop never turns into a retry.
+    assert modes(marker) == ["run"]
+    lines = records(hub)
+    assert [line["status"] for line in lines if line["event"] == "end"] == ["cancelled"]
+    assert [line for line in lines if line["event"] == "step_end" and line["node"] == GATE] == [
+        next(line for line in lines if line["event"] == "step_end" and line["node"] == GATE)
+    ]
+
+
+def test_retries_step_when_workaround_ended_ok_before_crash(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_walk(hub, marker, held)
+    propose(hub, marker, held, proposal=a_proposal(RELEASE))
+    assert decide(hub, marker, held, "pick", "o1").exit_code == 0
+    # w1 ran and ended ok (its write released the hold); the crash came before the gate closed.
+    held.touch()
+    append_lines(
+        hub,
+        {"event": "workaround_start", "workaround_id": "w1", "number": 1, "gate": GATE}
+        | {"option": "o1", "steps": 1, "approver": "dev"},
+        {"event": "workaround_end", "workaround_id": "w1", "number": 1, "status": "ok"},
+    )
+
+    resumed = resume_walk(hub, marker, held)
+
+    assert resumed.exit_code == 0, resumed.output
+    assert plain(resumed.stdout).splitlines()[-1] == f"run {RUN}: done"
+    # The write is not run again; the diverged step runs again as a new attempt.
+    assert modes(marker) == ["run", "run"]
+    lines = records(hub)
+    assert [line["status"] for line in lines if line["event"] == "workaround_end"] == ["ok"]
+    assert [line["number"] for line in lines if line["event"] == "investigation"] == [1]
+
+
+def test_refuses_pick_when_workaround_action_edited_after_propose(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_walk(hub, marker, held)
+    propose(hub, marker, held, proposal=a_proposal(RELEASE))
+    script = hub / "actions" / "demo" / "scripts" / "release-hold.sh"
+    script.write_text(RELEASE_SCRIPT + "# edited\n")
+    commit_all(hub, "edit release-hold")
+
+    picked = respond(hub, marker, held, "pick", "o1")
+
+    assert picked.exit_code == 1, picked.output
+    assert plain(picked.stderr) == (
+        "hub workflow respond: option o1 cannot be picked: the plan of step 1"
+        " (demo/release-hold) changed since it was shown; ask for a new proposal\n"
+    )
+    assert [line for line in records(hub) if line["event"] == "decision"] == []
+    assert modes(marker) == ["run"]
+
+
+def test_opens_new_investigation_when_workaround_action_edited_after_decide(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_walk(hub, marker, held)
+    propose(hub, marker, held, proposal=a_proposal(RELEASE))
+    assert decide(hub, marker, held, "pick", "o1").exit_code == 0
+    script = hub / "actions" / "demo" / "scripts" / "release-hold.sh"
+    script.write_text(RELEASE_SCRIPT + "# edited\n")
+    commit_all(hub, "edit release-hold")
+
+    resumed = resume_walk(hub, marker, held)
+
+    assert resumed.exit_code == 0, resumed.output
+    shown = plain(resumed.stdout).splitlines()
+    assert shown[-2] == (
+        "step order-held: workaround w1 step 1 (demo/release-hold): its plan changed since it"
+        " was shown"
+    )
+    assert shown[-1].startswith(PAUSED)
+    assert modes(marker) == ["run"]
+    lines = records(hub)
+    assert [line["status"] for line in lines if line["event"] == "workaround_end"] == ["failed"]
+
+
+def test_refuses_eleventh_proposal_when_investigation_proposal_cap_reached(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_walk(hub, marker, held)
+    proposed = [propose(hub, marker, held, proposal=a_proposal(LOOK)) for _ in range(10)]
+
+    eleventh = propose(hub, marker, held, proposal=a_proposal(LOOK))
+
+    assert all(result.exit_code == 0 for result in proposed), proposed[-1].output
+    assert eleventh.exit_code == 1, eleventh.output
+    assert plain(eleventh.stderr) == (
+        "hub scenario propose: the investigation of step order-held already has 10 proposals\n"
+    )
+    assert len([line for line in records(hub) if line["event"] == "proposal"]) == 10
+    assert len([event for event in stored(hub) if event.type == "finding"]) == 20
+
+
+def test_opens_new_investigation_when_failed_workaround_closed_before_crash(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_walk(hub, marker, held)
+    propose(hub, marker, held, proposal=a_proposal(RELEASE))
+    assert decide(hub, marker, held, "pick", "o1").exit_code == 0
+    # w1 failed, the gate closed, then the crash came before the new investigation opened.
+    append_lines(
+        hub,
+        {"event": "workaround_start", "workaround_id": "w1", "number": 1, "gate": GATE}
+        | {"option": "o1", "steps": 1, "approver": "dev"},
+        {"event": "workaround_end", "workaround_id": "w1", "number": 1, "status": "failed"},
+        {"event": "step_end", "node": GATE, "attempt": 1, "status": "ok"}
+        | {"output": {"choice": "pick", "text": "o1"}},
+    )
+
+    resumed = resume_walk(hub, marker, held)
+
+    assert resumed.exit_code == 0, resumed.output
+    assert plain(resumed.stdout).splitlines()[-1].startswith(PAUSED)
+    # A failed workaround never turns into a silent retry of the diverged step.
+    assert modes(marker) == ["run"]
+    lines = records(hub)
+    opened = [line for line in lines if line["event"] == "investigation"]
+    assert [(line["number"], line["failure_kind"]) for line in opened] == [
+        (1, "exec_failed"),
+        (2, "workaround"),
+    ]
+    assert [line["status"] for line in lines if line["event"] == "workaround_end"] == ["failed"]
+    assert (
+        len([line for line in lines if line["event"] == "step_end" and line["node"] == GATE]) == 1
+    )
+    assert [line for line in lines if line["event"] == "end"] == []
+
+
+def test_opens_gate_when_investigation_recorded_without_gate_before_crash(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_walk(hub, marker, held)
+    propose(hub, marker, held, proposal=a_proposal(RELEASE))
+    assert decide(hub, marker, held, "pick", "o1").exit_code == 0
+    # Investigation 2 was recorded, then the crash came before its gate was.
+    append_lines(
+        hub,
+        {"event": "workaround_start", "workaround_id": "w1", "number": 1, "gate": GATE}
+        | {"option": "o1", "steps": 1, "approver": "dev"},
+        {"event": "workaround_end", "workaround_id": "w1", "number": 1, "status": "failed"},
+        {"event": "step_end", "node": GATE, "attempt": 1, "status": "ok"}
+        | {"output": {"choice": "pick", "text": "o1"}},
+        {"event": "investigation", "step": "order-held", "gate": GATE, "number": 2}
+        | {"step_attempt": 0, "failure_kind": "workaround"},
+    )
+
+    resumed = resume_walk(hub, marker, held)
+
+    assert resumed.exit_code == 0, resumed.output
+    assert plain(resumed.stdout).splitlines()[-1].startswith(PAUSED)
+    assert modes(marker) == ["run"]
+    lines = records(hub)
+    gates = [(line["node"], line["attempt"]) for line in lines if line["event"] == "gate"]
+    assert gates == [(GATE, 1), (GATE, 2)]
+    assert [line["number"] for line in lines if line["event"] == "investigation"] == [1, 2]
+    retried = respond(hub, marker, held, "stop")
+    assert retried.exit_code == 1, retried.output
+    assert plain(retried.stdout).splitlines()[-1] == f"run {RUN}: cancelled"
+
+
+def test_opens_investigation_when_divergence_recorded_before_crash(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_walk(hub, marker, held)
+    # The crash came after the step's failed end and before its investigation was recorded.
+    path = hub / ".agent-runs" / "workflows" / RUN / "records.jsonl"
+    kept = path.read_text().splitlines(keepends=True)
+    cut = next(i for i, line in enumerate(kept) if json.loads(line)["event"] == "investigation")
+    path.write_text("".join(kept[:cut]))
+
+    resumed = resume_walk(hub, marker, held)
+
+    assert resumed.exit_code == 0, resumed.output
+    assert plain(resumed.stdout).splitlines()[-1].startswith(PAUSED)
+    # The diverged step is not run again with nobody asked.
+    assert modes(marker) == ["run"]
+    lines = records(hub)
+    opened = [line for line in lines if line["event"] == "investigation"]
+    assert [(line["number"], line["failure_kind"]) for line in opened] == [(1, "exec_failed")]
+    assert [(line["node"], line["attempt"]) for line in lines if line["event"] == "gate"] == [
+        (GATE, 1)
+    ]
+    assert [line for line in lines if line["event"] == "end"] == []
+
+
+def test_refuses_proposal_when_answered_after_ten_proposals(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_walk(hub, marker, held)
+    proposed = [propose(hub, marker, held, proposal=a_proposal(RELEASE)) for _ in range(10)]
+    assert decide(hub, marker, held, "pick", "o1").exit_code == 0
+
+    eleventh = propose(hub, marker, held, proposal=a_proposal(LOOK))
+
+    assert all(result.exit_code == 0 for result in proposed), proposed[-1].output
+    assert eleventh.exit_code == 1, eleventh.output
+    assert "already answered (pick)" in plain(eleventh.stderr)
+    assert len([line for line in records(hub) if line["event"] == "proposal"]) == 10
+
+
+# AGH-360 review round 4: a divergence and a policy pause in one pass. ``hold-send`` runs
+# ``order-held`` (failing until released) beside the write ``send-order``, which staging's
+# access ``ask`` gates; the pass pauses at that gate with the divergence recorded.
+
+HOLD_SEND = HOLD_WALK.replace("name: hold-walk", "name: hold-send") + (
+    "  - id: send-order\n    type: action\n    action: send-order\n    with: {target: api}\n"
+)
+
+
+def hold_send(hub: Path, marker: Path, held: Path) -> Result:
+    write_scenario(hub, HOLD_SEND)
+    commit_all(hub, "hold send")
+    args = ("scenario", "run", "hold-send", "--env", "staging", "--run-id", RUN)
+    started = hold_call(hub, marker, held, *args)
+    assert started.exit_code == 0, started.output
+    assert plain(started.stdout).splitlines()[-1] == f"run {RUN}: paused at send-order__ask"
+    return started
+
+
+def calls_of(hub: Path, node: str) -> int:
+    return len(
+        [line for line in records(hub) if line["event"] == "action" and line["node"] == node]
+    )
+
+
+def test_ends_cancelled_when_policy_gate_rejected_beside_owed_investigation(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_send(hub, marker, held)
+
+    rejected = hold_call(hub, marker, held, "workflow", "reject", RUN, "send-order__ask")
+
+    assert rejected.exit_code == 1, rejected.output
+    assert plain(rejected.stdout).splitlines()[-1] == f"run {RUN}: cancelled"
+    lines = records(hub)
+    assert [line["status"] for line in lines if line["event"] == "end"] == ["cancelled"]
+    assert [line for line in lines if line["event"] == "investigation"] == []
+    assert modes(marker) == ["run"]
+
+
+def test_opens_investigation_when_policy_gate_approved_beside_divergence(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_send(hub, marker, held)
+
+    approved = hold_call(hub, marker, held, "workflow", "approve", RUN, "send-order__ask")
+
+    assert approved.exit_code == 0, approved.output
+    assert (
+        plain(approved.stdout)
+        .splitlines()[-1]
+        .startswith(
+            f"run {RUN}: paused at order-held (investigation): open /scenarios/hold-send/runs/{RUN}"
+        )
+    )
+    # Nothing runs again before the person answers the investigation.
+    assert modes(marker) == ["run"]
+    assert (calls_of(hub, "order-held"), calls_of(hub, "send-order")) == (1, 0)
+    held.touch()
+    retried = respond(hub, marker, held, "retry")
+    assert retried.exit_code == 0, retried.output
+    assert plain(retried.stdout).splitlines()[-1] == f"run {RUN}: done"
+    # The retry runs order-held once more; the approved write runs once.
+    assert (calls_of(hub, "order-held"), calls_of(hub, "send-order")) == (2, 1)
+
+
+def test_ends_cancelled_when_policy_gate_rejected_while_investigation_open(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_send(hub, marker, held)
+    # A bare resume opens the owed investigation; the policy gate stays open beside it.
+    opened = resume_walk(hub, marker, held)
+    assert opened.exit_code == 0, opened.output
+    assert plain(opened.stdout).splitlines()[-1].startswith(f"run {RUN}: paused at order-held")
+
+    rejected = hold_call(hub, marker, held, "workflow", "reject", RUN, "send-order__ask")
+
+    assert rejected.exit_code == 1, rejected.output
+    assert plain(rejected.stdout).splitlines()[-1] == f"run {RUN}: cancelled"
+    ends = [line for line in records(hub) if line["event"] == "end"]
+    assert [(line["status"], line["reason"]) for line in ends] == [("cancelled", "send-order__ask")]
+    assert modes(marker) == ["run"]

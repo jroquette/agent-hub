@@ -23,16 +23,24 @@ action's output lacks, two unordered gates) is a stderr line; a problem or a ``d
 expect), ``content_hash``, ``draft``, ``decision``, ``reason_kind``, ``reason`` (a deny's, else
 ``null``) and ``plan`` (the summary, or why there is none).
 
-``run NAME --env ENV [--input name=value]... --mode regression [--run-id RUN]`` plans the
-scenario as ``plan`` does, without plan-mode calls; any problem or ``deny`` is one stderr line
-(an undeclared environment once, not per step) and exits 1 with no scenario run. Otherwise
-``scenario_runs`` starts it: a policy ``ask`` is a ``<step>__ask`` approval, answered with ``hub
-workflow approve|reject``. ``--mode interactive``, the default, exits 2 until the investigation
-lands (release gate O-6), and no option removes a gate: ``--yes`` and its kind are unknown
-options (exit 2).
+``run NAME --env ENV [--input name=value]... [--mode interactive|regression] [--run-id RUN]``
+plans the scenario as ``plan`` does, without plan-mode calls; any problem or ``deny`` is one
+stderr line (an undeclared environment once, not per step) and exits 1 with no scenario run.
+Otherwise ``scenario_runs`` starts it: a policy ``ask`` is a ``<step>__ask`` approval, answered
+with ``hub workflow approve|reject``. In ``interactive`` mode, the default, a divergence pauses
+the scenario run at ``<step>__investigation`` and prints where hub web shows it. No option
+removes a gate: ``--yes`` and its kind are unknown options (exit 2).
+
+``propose --run RUN`` records an investigation's findings and options, the fixed schema as JSON
+on stdin (at most 256 KiB, bounds and secret-shape redaction in core's ``investigation``), for
+scenario run RUN paused at an open investigation (else exit 1, nothing recorded): each option's
+steps are planned with origin ``agent`` and printed with their plan, ``needs acceptance`` when
+one runs a draft action, and why an option cannot be picked; one ``finding`` event per finding.
+A later proposal replaces the earlier one as the investigation's options.
 """
 
 import os
+import sys
 from pathlib import Path
 from typing import Annotated, Final, NoReturn
 
@@ -47,26 +55,40 @@ from agent_hub.cli.action_command import (
     given_texts,
 )
 from agent_hub.cli.action_process import ActionCall, plan_action
+from agent_hub.cli.collect import hub_project_name
 from agent_hub.cli.command_exits import FAILURE, fail
 from agent_hub.cli.effective_config import load_effective_config_or_exit
 from agent_hub.cli.init_report import shown_path, shown_text
-from agent_hub.cli.run_log import new_run_id
+from agent_hub.cli.run_log import new_run_id, now
+from agent_hub.cli.scenario_investigation import Planned, option_lines, record_proposal
 from agent_hub.cli.scenario_runs import (
     INTERACTIVE,
-    INTERACTIVE_NOT_YET,
     MODES,
-    REGRESSION,
     ScenarioStart,
     load_scenario,
     start,
 )
 from agent_hub.cli.workflow_command import problem_line, typed_input
-from agent_hub.cli.workflow_runs import RUN_ID_PATTERN, WorkflowRunError
+from agent_hub.cli.workflow_runs import (
+    RUN_ID_PATTERN,
+    EventSink,
+    WorkflowRunError,
+    drop_torn_tail,
+    read_records,
+    run_folder,
+    run_lock,
+)
 from agent_hub.core.hub_config.effective_environments import effective_environments
 from agent_hub.core.json_form import JsonValue, dump_json
 from agent_hub.core.scenarios.access_policy import PolicyDecision
 from agent_hub.core.scenarios.action_catalog import resolve_action
 from agent_hub.core.scenarios.credentials import CredentialNames
+from agent_hub.core.scenarios.investigation import (
+    MAX_PROPOSAL_BYTES,
+    ProposalError,
+    parse_proposal,
+)
+from agent_hub.core.scenarios.scenario_events import ScenarioEvents
 from agent_hub.core.scenarios.scenario_plan import PlanRow, ScenarioPlan, plan_scenario
 from agent_hub.core.workflows.catalog import WorkflowCatalog, check_workflows
 from agent_hub.core.workflows.engine import WorkflowEngineError, start_inputs
@@ -80,6 +102,7 @@ RUN_TIME: Final = "runs with values known at run time"
 NOT_PLANNED: Final = "not planned"
 _PLAN_PREFIX: Final = "hub scenario plan"
 _RUN_PREFIX: Final = "hub scenario run"
+_PROPOSE_PREFIX: Final = "hub scenario propose"
 
 scenario_app = typer.Typer(
     name=COMMAND, no_args_is_help=True, help="List, plan and run the hub's scenarios."
@@ -145,8 +168,8 @@ Mode = Annotated[
     typer.Option(
         "--mode",
         metavar="MODE",
-        help="interactive (the default; not available yet) or regression (no agent; a"
-        " divergence fails the scenario run).",
+        help="interactive (the default: a divergence pauses for an investigation in hub web)"
+        " or regression (no agent; a divergence fails the scenario run).",
     ),
 ]
 RunId = Annotated[str | None, typer.Option("--run-id", help="The new scenario run's id.")]
@@ -164,8 +187,6 @@ def run_command(
     """Run a scenario in ENV once its plan holds no deny; an ask is a gate to approve."""
     if mode not in MODES:
         raise typer.BadParameter(f"give one of {', '.join(MODES)}", param_hint="--mode")
-    if mode != REGRESSION:
-        raise typer.BadParameter(INTERACTIVE_NOT_YET, param_hint="--mode")
     if run_id is not None and not RUN_ID_PATTERN.fullmatch(run_id):
         hint = "use 1 to 32 of a-z 0-9 -, starting with a letter or digit"
         raise typer.BadParameter(hint, param_hint="--run-id")
@@ -209,6 +230,54 @@ def run_command(
     except (WorkflowRunError, WorkflowEngineError) as error:
         fail(f"{_RUN_PREFIX}: {error}")
     raise typer.Exit(code)
+
+
+ProposeRun = Annotated[
+    str, typer.Option("--run", metavar="RUN", help="The scenario run paused at an investigation.")
+]
+
+
+@scenario_app.command("propose")
+def propose_command(*, run: ProposeRun) -> None:
+    """Record an investigation's findings and options, as JSON on stdin."""
+    if not RUN_ID_PATTERN.fullmatch(run):
+        hint = "use 1 to 32 of a-z 0-9 -, starting with a letter or digit"
+        raise typer.BadParameter(hint, param_hint="--run")
+    data = sys.stdin.buffer.read(MAX_PROPOSAL_BYTES + 1)
+    hub = action_hub()
+    try:
+        proposal = parse_proposal(data)
+    except ProposalError as error:
+        fail(f"{_PROPOSE_PREFIX}: {error}")
+    folder = run_folder(hub, run)
+    if not folder.is_dir() or folder.is_symlink():
+        fail(f"{_PROPOSE_PREFIX}: no scenario run {run}")
+    try:
+        with run_lock(folder):
+            drop_torn_tail(folder)
+            records = read_records(folder)
+            header = records[0] if records else {}
+            if header.get("kind") != "scenario":
+                fail(f"{_PROPOSE_PREFIX}: {run} is not a scenario run")
+            planned = Planned.of(hub, header)
+            project = hub_project_name(hub) or hub.name
+            label = str(header.get("workflow"))
+            events = ScenarioEvents(project=project, run_id=run, workflow=label)
+            recorded = record_proposal(
+                folder, records, proposal, planned=planned, events=events, at=now()
+            )
+            EventSink().flush(events)
+    except WorkflowRunError as error:
+        fail(f"{_PROPOSE_PREFIX}: {error}")
+    investigation = recorded.investigation
+    typer.echo(
+        f"proposal {recorded.proposal} for step {investigation.step}"
+        f" (investigation {investigation.number})"
+    )
+    for ident, finding in zip(recorded.finding_ids, proposal.findings, strict=True):
+        typer.echo(f"finding {ident}: {shown_text(finding.title)}")
+    for line in option_lines(planned, recorded, proposal):
+        typer.echo(shown_text(line))
 
 
 def _refuse_start(planned: ScenarioPlan) -> NoReturn:
