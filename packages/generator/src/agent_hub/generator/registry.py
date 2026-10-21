@@ -163,6 +163,7 @@ _BASE_AGENTS: Final = (
     "requirements-analyst",
     "researcher",
     "spec-reviewer",
+    "test-writer",
     "ux-designer",
 )
 # The base plugin's skills, one folder each (sorted).
@@ -181,6 +182,7 @@ _BASE_SKILLS: Final = (
     "overengineering-review",
     "plain-language",
     "premortem",
+    "property-based-testing",
     "recall",
     "refactor",
     "release",
@@ -188,17 +190,19 @@ _BASE_SKILLS: Final = (
     "retro",
     "review",
     "summarize",
+    "test-strength",
     "triage",
     "upgrade",
     "ux-review",
 )
 # A skill's files besides `SKILL.md`, read by the skill; its folder link covers them (sorted).
 # `/onboard`'s rules (AGH-108, spec D-split); the review catalogues of `/overengineering-review`
-# and `/ux-review` (AGH-274).
+# and `/ux-review` (AGH-274); `/test-strength`'s mutation tools (AGH-412).
 _SKILL_SUPPORT_FILES: Final = MappingProxyType(
     {
         "onboard": ("reference.md",),
         "overengineering-review": ("references/patterns.md",),
+        "test-strength": ("references/tools.md",),
         "ux-review": ("references/checklist.md",),
     }
 )

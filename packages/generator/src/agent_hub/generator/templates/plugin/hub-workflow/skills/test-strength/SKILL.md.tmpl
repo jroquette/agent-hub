@@ -1,0 +1,28 @@
+---
+name: test-strength
+description: Measure whether the tests of a diff would catch a wrong result, by mutation testing only the lines the diff changed, then classify each surviving mutant as a test gap, an equivalent mutant or unresolved, and point out redundant tests. Read-only on the suite. Use before a PR, after a task's tests pass, or when tests pass but feel weak.
+disable-model-invocation: true
+argument-hint: "[PR | branch] (default: the current diff) [--budget <minutes>]"
+---
+
+# /test-strength [target] [--budget <minutes>]
+
+Paths below are relative to the hub (the directory with `hub.json`); repos are its siblings, listed in `hub.json` → `repos`, each with its own `AGENTS.md`: read the one for the repo under test.
+Coverage says a line ran; a mutant says whether an assertion would notice the line being wrong. A mutant is a small change to the code (a flipped comparison, a constant, a dropped call); one that no test kills is a behaviour the suite does not check.
+**No score target**: a percentage invites tests written to move it. The output is the list of surviving mutants on the changed lines, each with a decision.
+Step types: `script` (commands, no judgement), `agent` (reasoning in the session), `gate` (the user decides).
+
+1. `script` **Scope** the target: the current worktree's diff against its default branch, a PR (`gh pr diff <PR>`, read at its head commit) or a branch. Keep the changed line ranges of non-test source files (`git diff -U0`). Run where HEAD is the commit under review and the checkout is clean: never in a checkout someone else is editing.
+   Find the repo's mutation tool (its dependency files, its `AGENTS.md`). **Stop** and ask when there is none: adding one is the user's decision; [references/tools.md](references/tools.md) lists the usual ones.
+2. `script` **Run** the tool on the changed lines only, with the commands in [references/tools.md](references/tools.md); never apply a mutation by hand with an edit, which is slow and leaves the code changed when a run stops.
+   Run the tests that cover the changed modules first and the whole suite only for the mutants that survive them. Keep to the budget (default 10 minutes): past it, stop and report what ran; a timeout is **inconclusive**, never counted as killed. After the run, `git status` must be clean; restore anything the tool left.
+3. `agent` **Classify** each surviving mutant on a changed line:
+   - **gap**: a wrong result the tests miss. Name the input that tells the mutant from the original and the AC or behaviour it belongs to;
+   - **equivalent**: no input can tell them apart. Prove it from the types, the reachable values and what the callers do with the result; never assume it (a `>` turned `>=` is equivalent only when the boundary value cannot reach that line);
+   - **unresolved**: neither proved. Say what would settle it.
+   Not every gap needs a test: a mutant in a log message or a constant nothing observable depends on is reported as `accept` with one line why.
+4. `agent` **Redundancy**: when the tool reports which tests killed each mutant, a test whose killed mutants are all killed by another test, and that checks no separate AC, is a candidate to merge into the other (often as a parametrized row). A new test that kills no mutant on the changed lines is a candidate too. The skill never deletes a test.
+5. `agent` **Report**, in this order: the changed lines mutated, the mutants run, killed, surviving and inconclusive, and the budget used; one row per surviving mutant (`path:line`, original → mutant, class, the distinguishing input or the proof, the AC); the redundancy candidates; what did not run and why. A tool that failed or was missing is reported as not run, never as a clean result.
+6. `gate` **The user picks** which gaps get a test and which candidates are merged. The tests are written by the task's implementer (or the `test-writer` agent when the gap maps to an AC), one per behaviour, extending an existing test where one owns it; then rerun the one mutant to confirm it is killed.
+
+A gap that keeps coming back in the same kind of code goes to `/learn` as a proposal in `brain/_inbox/`; the skill itself writes nothing in `brain/`.
