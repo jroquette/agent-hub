@@ -933,8 +933,8 @@ const DOT_STYLE: Partial<Record<GoldenStepState, CSSProperties>> = {
  * its name and its state as text; only the step in focus (the first one not done) adds one short
  * line. Every step's meta, progress and reason are in its tooltip and its accessible description.
  * It draws any list of steps with their `labels` (a ticket's seven, two-level-flows AC-1.10);
- * `vertical`, every step says its meta, and with `detail` each step's button discloses it, the
- * `open` one shown.
+ * with `detail`, it runs vertically, every step says its meta and its button discloses its
+ * detail, the `open` one shown.
  */
 export function GoldenPathStepper<N extends string = FeaturePhase>({
   steps,
@@ -942,7 +942,6 @@ export function GoldenPathStepper<N extends string = FeaturePhase>({
   label = "Golden path",
   onSelect,
   selectLabel,
-  vertical = false,
   open,
   detail,
 }: {
@@ -953,7 +952,6 @@ export function GoldenPathStepper<N extends string = FeaturePhase>({
   onSelect?: ((step: N) => void) | undefined;
   /** The accessible name of a step's button; "Open <step>" by default. */
   selectLabel?: ((step: N) => string) | undefined;
-  vertical?: boolean | undefined;
   /** The step whose `detail` shows (its button is expanded). */
   open?: N | null | undefined;
   /** What a step discloses under it; given, each step's button says whether it is expanded. */
@@ -962,6 +960,7 @@ export function GoldenPathStepper<N extends string = FeaturePhase>({
   const baseId = useId();
   const shown = shownGoldenSteps(steps, labels);
   const focus = shown.find((s) => s.state !== "done" && s.state !== "skipped")?.name;
+  const vertical = detail !== undefined;
   const name = (step: N) => (labels as Readonly<Record<string, string>>)[step] ?? step;
   return (
     <ol

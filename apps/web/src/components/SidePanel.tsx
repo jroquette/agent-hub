@@ -28,7 +28,7 @@ function useWide(): boolean {
 /**
  * A non-modal side panel (two-level-flows AC-1.10): an `aside` named by its heading, with no scrim
  * and no focus trap, so the page stays usable beside it. Opening moves focus to the heading; Esc
- * or the X closes it and returns focus to `openerRef`. It overlays the page (`panel` 480 px,
+ * or the X closes it, and once closed focus returns to `openerRef`. It overlays the page (`panel` 480 px,
  * `shadow-overlay`) below 1600 px and docks beside it (640 px) from there.
  */
 export function SidePanel({
@@ -44,28 +44,31 @@ export function SidePanel({
   onClose: () => void;
   /** The element that opened the panel: focus goes back to it on close. */
   openerRef: RefObject<HTMLElement | null>;
+  /** The body; as a function it gets the panel's close, which returns focus to the opener. */
   children?: ReactNode;
 }) {
   const headingId = useId();
   const heading = useRef<HTMLHeadingElement>(null);
+  const panel = useRef<HTMLElement>(null);
   const wide = useWide();
-  const latest = useRef({ onClose, openerRef });
+  // Opening focuses the heading; closing, by any path (Esc, the X, a Close button inside), gives
+  // focus back to the opener, unless the reader already moved it elsewhere on the page.
   useEffect(() => {
-    latest.current = { onClose, openerRef };
-  });
-
-  useEffect(() => {
+    const node = panel.current;
     heading.current?.focus({ preventScroll: true });
-  }, []);
+    return () => {
+      const active = document.activeElement;
+      const lost = active === null || active === document.body || node?.contains(active) === true;
+      // The opener as it is at close: a panel switched in place, or a toggled view, updates it.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      const opener = openerRef.current;
+      if (lost && opener?.isConnected) opener.focus({ preventScroll: true });
+    };
+  }, [openerRef]);
 
-  const close = () => {
-    latest.current.onClose();
-    const opener = latest.current.openerRef.current;
-    if (opener?.isConnected) opener.focus({ preventScroll: true });
-  };
-  const closing = useRef(close);
+  const closing = useRef(onClose);
   useEffect(() => {
-    closing.current = close;
+    closing.current = onClose;
   });
 
   useEffect(() => {
@@ -84,6 +87,7 @@ export function SidePanel({
 
   return (
     <aside
+      ref={panel}
       className="ah-side-panel"
       aria-labelledby={headingId}
       data-layout={wide ? "docked" : "overlay"}
@@ -92,7 +96,7 @@ export function SidePanel({
         <h2 id={headingId} ref={heading} tabIndex={-1} className="ah-h3">
           {title}
         </h2>
-        <IconButton icon="x" label={closeLabel} onClick={close} />
+        <IconButton icon="x" label={closeLabel} onClick={onClose} />
       </div>
       <div className="ah-side-panel-body">{children}</div>
     </aside>

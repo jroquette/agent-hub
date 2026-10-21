@@ -1,4 +1,4 @@
-import { Fragment, useRef, useState, type MutableRefObject, type ReactNode } from "react";
+import { Fragment, useId, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
@@ -15,6 +15,7 @@ import {
   Skeleton,
   StatusBadge,
   Tabs,
+  Tooltip,
 } from "../../components";
 import { brainRoute } from "../../lib/brainLinks";
 import { fmtClock } from "../../lib/format";
@@ -28,9 +29,18 @@ import { QuestionsLink } from "./QuestionsBlock";
 import { NoteView } from "../brain/NoteView";
 import { NotFoundBody } from "../not-found";
 import { CriteriaTab, passOf } from "./CriteriaTab";
-import { EvalTab, evalHistory, ownerStepsWaiting, pickEval, runLabels } from "./EvalTab";
+import {
+  EvalTab,
+  FOCUS_EVAL,
+  evalHistory,
+  evalSearch,
+  ownerStepsWaiting,
+  pickEval,
+  runLabels,
+  signableLine,
+} from "./EvalTab";
 import { RecordSummary, summaryRequest } from "./RecordSummary";
-import { StateBadge } from "./PlanningView";
+import { StateBadge, ticketSearch } from "./PlanningView";
 import { TicketsTab } from "./TicketsTab";
 import { useFeature, useFeatureTickets } from "./queries";
 
@@ -235,6 +245,39 @@ function PlanVersionLine({ plan }: { plan: PlanView }) {
  * (two-level-flows AC-1.10; the Linear link is in the panel), its title on hover and its status in
  * Linear once the tickets route answered (its cached answer).
  */
+/** One header chip: it opens the ticket's panel; where it goes is its description (UX F6). */
+function TicketChip({
+  id,
+  row,
+  search,
+  openerRef,
+}: {
+  id: string;
+  row: TicketRow | undefined;
+  search: string;
+  openerRef: MutableRefObject<HTMLElement | null>;
+}) {
+  const tipId = useId();
+  return (
+    <span className="ah-row" style={{ gap: 6 }}>
+      <Tooltip id={tipId} label={`${id}${row?.title ? ` · ${row.title}` : ""} · show its steps`}>
+        <Link
+          className="ah-issue"
+          to={{ search }}
+          replace
+          aria-describedby={tipId}
+          onClick={(event) => {
+            openerRef.current = event.currentTarget;
+          }}
+        >
+          {id}
+        </Link>
+      </Tooltip>
+      {row?.state && <StateBadge row={row} />}
+    </span>
+  );
+}
+
 function TicketChips({
   ids,
   rows,
@@ -253,29 +296,15 @@ function TicketChips({
       role="group"
       aria-label="Tickets of this feature"
     >
-      {ids.map((id) => {
-        const row = rows.find((r) => r.id === id || r.ref === id);
-        const next = new URLSearchParams(params);
-        next.set("doc", "tickets");
-        next.set("ticket", id);
-        next.delete("step");
-        return (
-          <span key={id} className="ah-row" style={{ gap: 6 }}>
-            <Link
-              className="ah-issue"
-              to={{ search: `?${next.toString()}` }}
-              replace
-              title={`${id}${row?.title ? ` · ${row.title}` : ""} · show its steps`}
-              onClick={(event) => {
-                openerRef.current = event.currentTarget;
-              }}
-            >
-              {id}
-            </Link>
-            {row?.state && <StateBadge row={row} />}
-          </span>
-        );
-      })}
+      {ids.map((id) => (
+        <TicketChip
+          key={id}
+          id={id}
+          row={rows.find((r) => r.id === id || r.ref === id)}
+          search={ticketSearch(params, id)}
+          openerRef={openerRef}
+        />
+      ))}
     </span>
   );
 }
@@ -400,14 +429,18 @@ function FeatureHeading({ project, slug }: { project: string; slug: string }) {
   );
 }
 
-/** The search of the Eval tab at `delivery`, the ticket panel closed. */
-function evalParams(current: URLSearchParams, delivery: string): URLSearchParams {
-  const next = new URLSearchParams(current);
-  next.delete("ticket");
-  next.delete("step");
-  next.set("doc", "eval");
-  next.set("eval", delivery);
-  return next;
+/** How the acceptance eval reads in its group ("Eval 2"); null without one. */
+function acceptanceLabel(
+  detail: Detail,
+  tickets: readonly string[],
+  epics: readonly string[],
+): string | null {
+  const delivery = detail.acceptance_eval?.delivery;
+  const group = evalHistory(detail.evals, tickets, epics).find((g) =>
+    g.evals.some((e) => e.delivery === delivery),
+  );
+  const record = group?.evals.find((e) => e.delivery === delivery);
+  return (record && group && runLabels(group.evals).get(record.path)) ?? null;
 }
 
 /** One thing only the owner can settle, as the page banner signposts it. */
@@ -430,12 +463,7 @@ function ownerWaits(
   const acceptance = detail.acceptance_eval;
   const first: OwnerWait[] = [];
   if (acceptance?.owner_wait?.state === "sign_off") {
-    const group = evalHistory(detail.evals, tickets, epics).find((g) =>
-      g.evals.some((e) => e.delivery === acceptance.delivery),
-    );
-    const record = group?.evals.find((e) => e.delivery === acceptance.delivery);
-    const label =
-      (record && group && runLabels(group.evals).get(record.path)) ?? acceptance.delivery;
+    const label = acceptanceLabel(detail, tickets, epics) ?? acceptance.delivery;
     const n = acceptance.owner_wait.acs.length;
     first.push({
       delivery: acceptance.delivery,
@@ -498,7 +526,7 @@ function WaitingBanner({
         <li>{first.text}</li>
         {rest.map((wait) => (
           <li key={wait.delivery}>
-            <Link to={{ search: `?${evalParams(params, wait.delivery).toString()}` }} replace>
+            <Link to={{ search: evalSearch(params, wait.delivery) }} replace state={FOCUS_EVAL}>
               {wait.text}
             </Link>
           </li>
@@ -551,6 +579,8 @@ export function FeatureDetailScreen() {
   const issueIds = ticketIds(detail.issues);
   const epics = tickets.data?.planning.epics ?? [];
   const waits = ownerWaits(detail, issueIds, epics);
+  const wait = detail.acceptance_eval?.owner_wait;
+  const accepted = detail.acceptance_eval && acceptanceLabel(detail, issueIds, epics);
   const setTab = (id: string) => {
     setParams(
       (current) => {
@@ -566,7 +596,7 @@ export function FeatureDetailScreen() {
     );
   };
   const openEval = (delivery: string) => {
-    setParams((current) => evalParams(current, delivery), { replace: true });
+    setParams((current) => evalSearch(current, delivery), { replace: true, state: FOCUS_EVAL });
   };
   const tabs = [
     ...Object.entries(RECORDS).map(([id, meta]) => ({ id, label: meta?.label ?? id })),
@@ -687,14 +717,23 @@ export function FeatureDetailScreen() {
           <DerivedLabel how="Each step is derived from the record files, the tickets' status in Linear when it was read, and the review and eval records; Shipped needs GitHub, not connected in this version. Hover a step for its details." />
         </div>
         <GoldenPathStepper
-          steps={detail.golden_path.steps}
+          steps={detail.golden_path.steps.map((step) =>
+            // A future-dated wait reads as its prompt does, in the page's time zone (AGH-330 Q4).
+            step.name === "acceptance" && wait?.state === "future"
+              ? { ...step, meta: signableLine(wait, tz) }
+              : step,
+          )}
           onSelect={(step) => {
             // Acceptance opens its own eval, where its prompt is (A15).
             if (step === "acceptance" && detail.acceptance_eval) {
               openEval(detail.acceptance_eval.delivery);
             } else setTab(STEP_TAB[step]);
           }}
-          selectLabel={(step) => `Open the ${TAB_LABEL[STEP_TAB[step]] ?? step} of ${step}`}
+          selectLabel={(step) =>
+            step === "acceptance" && accepted
+              ? `Open ${accepted}, the acceptance eval`
+              : `Open the ${TAB_LABEL[STEP_TAB[step]] ?? step} of ${step}`
+          }
         />
       </section>
       {waits.length > 0 ? (

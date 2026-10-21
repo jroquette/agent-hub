@@ -382,8 +382,10 @@ spec amendment A15. Where the sections above say otherwise, this list wins.
   whose state is the server's `acceptance_eval.owner_wait` (A9-A11): *sign off* ("Waiting on you · Acceptance: sign off
   3 ACs", Needs more work and Mark owner steps done, the request naming the acceptance eval); *reopened* ("Acceptance:
   2 ACs reopened · evaluate again", Needs more work only); *undated* ("Acceptance eval undated · evaluate again", no
-  button; Evaluate whole feature is primary and asks for `<acceptance delivery>-r<N>`); *future-dated* ("Sign-off
-  possible after <date>", no button); *no ACs listed* ("Acceptance: waiting on owner steps · no ACs listed", names the
+  button; Evaluate whole feature is primary and asks for the acceptance eval's next re-run, `feature-r2` after
+  `feature`, `feature-r3` after `feature-r2`); *future-dated* ("Sign-off possible after <date-time>", no button: the
+  served `signable_after`, rounded up to the minute, written as the page writes every date-time, so the `t` toggle
+  applies; the Acceptance step reads the same line on this page, the Features list the server's UTC one); *no ACs listed* ("Acceptance: waiting on owner steps · no ACs listed", names the
   hand-written `evals/owner-signoff.md`). Only *sign off* is amber; the others are info. The client's own callout no
   longer shows for the acceptance eval; ticket eval callouts (AC-376.13, AC-376.14) are unchanged.
 - **Banner.** The page has one "Waiting on you" banner, a signpost with one line per wait: "Acceptance: sign off 3
@@ -392,7 +394,16 @@ spec amendment A15. Where the sections above say otherwise, this list wins.
   `OwnerSignOff` banner ("Mark owner steps done" above the tabs) is removed; the features.json "N owner steps left"
   banner shows only while the feature has no acceptance eval. Undated and future-dated never rank the feature as
   needing the owner (A12).
-- **Acceptance step.** Its step opens `?doc=eval&eval=<acceptance delivery>`.
+- **Acceptance step.** Its step, named "Open Eval N, the acceptance eval", opens `?doc=eval&eval=<acceptance
+  delivery>`.
+- **Signposts land on their eval.** The Acceptance step, the banner's button and lines, and the ticket panel's
+  "Settle them in the Eval tab" open the Eval tab at their eval and move focus to its group's row.
+- **Banner link names** are their visible lines ("AGH-48: Eval 1 passed with owner steps"), not "Open AGH-48 Eval 1
+  in the Eval tab" as the design drafted: a link's name holds its visible label (WCAG 2.5.3).
+- **Header verdict badge.** It shows the acceptance eval's verdict only (AC-1.6): the latest whole-feature eval's, none
+  before one exists; a ticket eval never sets it.
+- **Contrast (AC-1.14, A16).** The screens' axe tests run once, for structure and names (jsdom computes no colours);
+  both themes' contrast is `tokens.test.ts`'s, on the token pairs the panel, the callouts and the banner use.
 
 ## Screen 1: Features list
 
@@ -487,8 +498,8 @@ Validated by the owner in the playground; where Screen 1 says otherwise, this li
   with a tooltip) instead of a footnote, and the columns have fixed widths.
 - **AC-268.25 Issues.** Given a feature with several issues, then the first shows and "+N" opens all of them in a
   popover.
-- **AC-268.26 Verdict scope.** Given a verdict while Evaluate is not done, then the Evaluate step's meta (its scope)
-  shows under the badge.
+- **AC-268.26 Verdict scope.** Given a verdict while Acceptance is not done, then the Acceptance step's meta shows
+  under the badge (the Evaluate step became Acceptance, AGH-325).
 - **AC-268.27 Shipped last.** Given shipped features, then they sort after every feature in progress.
 - **AC-268.28 Tooltips.** Given a tooltip in a table, then it wraps and opens downward where the table would cut it.
 

@@ -12,7 +12,7 @@ import {
   type StepperStep,
 } from "../../components";
 import { brainRoute } from "../../lib/brainLinks";
-import { evalHistory, ownerStepsWaiting, runLabels } from "./EvalTab";
+import { FOCUS_EVAL, evalHistory, evalSearch, ownerStepsWaiting, runLabels } from "./EvalTab";
 import {
   LinearLink,
   ReadinessText,
@@ -30,15 +30,6 @@ type TicketRow = components["schemas"]["TicketRow"];
 type TicketStepName = components["schemas"]["TicketStepName"];
 type EvalRecord = components["schemas"]["EvalRecord"];
 type AcRow = components["schemas"]["AcRow"];
-
-/** The search of the Eval tab at `delivery`: the panel belongs to the Tickets tab, so it closes. */
-function evalSearch(params: URLSearchParams, delivery: string): string {
-  const next = new URLSearchParams(params);
-  for (const key of ["ticket", "step", "tickets"]) next.delete(key);
-  next.set("doc", "eval");
-  next.set("eval", delivery);
-  return `?${next.toString()}`;
-}
 
 const NOT_REACHED = "Not reached.";
 
@@ -95,7 +86,11 @@ function StepDetail({
         <>
           {latest.record.verdict}
           {latest.record.evaluated_at && ` · ${latest.record.evaluated_at}`}.{" "}
-          <Link to={{ search: evalSearch(params, latest.record.delivery) }} replace>
+          <Link
+            to={{ search: evalSearch(params, latest.record.delivery) }}
+            replace
+            state={FOCUS_EVAL}
+          >
             Open {latest.label} in the Eval tab
           </Link>
         </>
@@ -159,6 +154,8 @@ export interface TicketPanelProps {
   data: FeatureTickets;
   /** `?ticket=`: a tracker id or a plan key. */
   ticket: string;
+  /** The ticket it names, if it is one of the feature's. */
+  row: TicketRow | undefined;
   evals: readonly EvalRecord[];
   acPasses?: Readonly<Record<string, boolean>> | undefined;
   acRows?: ReadonlyMap<string, AcRow> | undefined;
@@ -179,6 +176,7 @@ export function TicketPanel({
   slug,
   data,
   ticket,
+  row,
   evals,
   acPasses,
   acRows,
@@ -187,7 +185,6 @@ export function TicketPanel({
   onClose,
 }: TicketPanelProps) {
   const [params, setParams] = useSearchParams();
-  const row = data.tickets.find((r) => r.id === ticket || r.key === ticket || r.ref === ticket);
   const shell = (title: string, children: ReactNode) => (
     <SidePanel
       key={ticket}
@@ -200,24 +197,27 @@ export function TicketPanel({
     </SidePanel>
   );
   if (!row?.flow) {
-    const epic = row && row.children.length > 0;
+    const epic = row !== undefined && data.planning.epics.includes(row.ref);
     return shell(
       `Ticket ${ticket}`,
-      <EmptyState
-        icon="list-todo"
-        title={
-          epic
-            ? `${ticket} is this feature's epic: it has no steps of its own.`
-            : `${ticket} is not a ticket of this feature.`
-        }
-        action={
-          <Button size="sm" onClick={onClose}>
-            Close panel
-          </Button>
-        }
-      >
-        {epic && "Its tickets are listed in the Tickets tab."}
-      </EmptyState>,
+      <div className="ah-stack" style={{ gap: 8 }}>
+        {row?.id && <LinearLink id={row.id} url={row.url} />}
+        <EmptyState
+          icon="list-todo"
+          title={
+            epic
+              ? `${ticket} is this feature's epic: it has no steps of its own.`
+              : `${ticket} is not a ticket of this feature.`
+          }
+          action={
+            <Button size="sm" onClick={onClose}>
+              Close panel
+            </Button>
+          }
+        >
+          {epic && "Its tickets are listed in the Tickets tab."}
+        </EmptyState>
+      </div>,
     );
   }
   const flow = row.flow;
@@ -258,7 +258,11 @@ export function TicketPanel({
         <p className="ah-small ah-row ah-wrap" style={{ gap: 6, margin: 0 }}>
           <Icon name="hand" size="sm" />
           <b style={{ fontWeight: 500 }}>Waiting on you: {waiting.label} passed with owner steps</b>
-          <Link to={{ search: evalSearch(params, waiting.record.delivery) }} replace>
+          <Link
+            to={{ search: evalSearch(params, waiting.record.delivery) }}
+            replace
+            state={FOCUS_EVAL}
+          >
             Settle them in the Eval tab
           </Link>
         </p>
@@ -268,7 +272,6 @@ export function TicketPanel({
           steps={flow.steps}
           labels={TICKET_STEP_LABEL}
           label="Steps"
-          vertical
           open={open}
           onSelect={toggle}
           selectLabel={(name) => {

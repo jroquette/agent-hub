@@ -213,11 +213,11 @@ export function ticketParam(row: TicketRow): string {
   return row.id ?? row.key ?? row.ref;
 }
 
-/** The search that opens `row`'s panel on the Tickets tab, the rest of the URL kept. */
-export function ticketSearch(params: URLSearchParams, row: TicketRow): string {
+/** The search that opens ticket `id`'s panel on the Tickets tab, the rest of the URL kept. */
+export function ticketSearch(params: URLSearchParams, id: string): string {
   const next = new URLSearchParams(params);
   next.set("doc", "tickets");
-  next.set("ticket", ticketParam(row));
+  next.set("ticket", id);
   next.delete("step");
   return `?${next.toString()}`;
 }
@@ -243,7 +243,7 @@ export function TicketOpenLink({
   return (
     <Link
       className={className}
-      to={{ search: ticketSearch(params, row) }}
+      to={{ search: ticketSearch(params, ticketParam(row)) }}
       replace
       title={title}
       data-ticket-open={row.ref}

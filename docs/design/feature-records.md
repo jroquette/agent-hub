@@ -157,7 +157,8 @@ decision newer than the acceptance eval settled it (its SHIP signed them off, or
 of one). While waiting ACs have a NO-SHIP as their latest eval, the step reads "n ACs reopened · evaluate again"
 instead of a sign-off prompt; ahead of that, while no sign-off can rank newer than the acceptance eval (spec amendment
 A15), it reads "Acceptance eval undated · evaluate again" (no usable `evaluated_at`; a legacy `eval.md` never is) or
-"Sign-off possible after <date>" (dated at or after the read), and neither reads "Waiting on you". The detail serves
+"Sign-off possible after <date-time>" (dated at or after the read; the minute after which a sign-off can follow it,
+in UTC, "21 Nov 2026, 09:01:00 UTC"), and neither reads "Waiting on you". The detail serves
 the same wait as `acceptance_eval.owner_wait` ([API.md](../API.md)). With no AC to list (no `features.json`, or every
 AC withdrawn), the step is not done, "Waiting on owner steps · no ACs listed", until a later owner SHIP of any scope
 exists; the app cannot write that one, so the owner writes it by hand. Without a Linear snapshot, ticket states are

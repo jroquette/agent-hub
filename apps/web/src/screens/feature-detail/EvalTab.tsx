@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Fragment, useEffect, useId, useState } from "react";
+import { Fragment, useEffect, useId, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { Link } from "react-router";
+import { Link, useLocation } from "react-router";
 
 import type { components } from "../../api/schema";
 import {
@@ -255,9 +255,29 @@ const scopeLabel = (scope: string) => (scope === FEATURE_SCOPE ? "whole feature"
 const featureName = (epics: readonly string[]) =>
   epics.length > 0 ? `Whole feature · ${epics.join(", ")} epic` : "Whole feature";
 
+/** The navigation state of a signpost to an eval: the Eval tab focuses that eval's group row. */
+export const FOCUS_EVAL = { focusEval: true } as const;
+
+/** The search of the Eval tab at `delivery`, the ticket panel closed (it is the Tickets tab's). */
+export function evalSearch(params: URLSearchParams, delivery: string): string {
+  const next = new URLSearchParams(params);
+  next.delete("ticket");
+  next.delete("step");
+  next.set("doc", "eval");
+  next.set("eval", delivery);
+  return `?${next.toString()}`;
+}
+
+/** The re-run after `delivery`: `feature` -> `feature-r2`, `feature-r2` -> `feature-r3`. */
+function nextRun(delivery: string): string {
+  const found = /-r(\d+)$/.exec(delivery);
+  const stem = found ? delivery.slice(0, found.index) : delivery;
+  return `${stem}-r${String((found ? Number(found[1]) : 1) + 1)}`;
+}
+
 /**
  * The first message of an evaluator run: the hub-workflow evaluator, one scope, nothing else.
- * `rerun` names an undated acceptance eval: only its re-run `<rerun>-r<N>` ranks after it (A15).
+ * `rerun` names an undated acceptance eval: only a re-run of it ranks after it (A15).
  */
 export function evalPrompt(project: string, slug: string, scope: string, rerun?: string): string {
   const what = scope === FEATURE_SCOPE ? "the whole feature" : `ticket ${scope}`;
@@ -266,7 +286,7 @@ export function evalPrompt(project: string, slug: string, scope: string, rerun?:
     `Use the hub-workflow evaluator subagent to evaluate feature \`${slug}\` (its record is in \`brain/features/${slug}/\`). Scope: ${what}.`,
     `It re-runs every verification in scope, the repo gates and the hub doctor, against the spec and the plan, and writes the next free \`brain/features/${slug}/evals/<delivery>.md\` and \`.json\`; never edit an existing eval.`,
     rerun && scope === FEATURE_SCOPE
-      ? `The whole-feature eval \`${rerun}\` has no evaluated_at: name the new one \`${rerun}-r<N>\` (the next free N) and date it, so it ranks after it.`
+      ? `The whole-feature eval \`${rerun}\` has no evaluated_at: name the new one \`${nextRun(rerun)}\` (or the next free -rN above it) and date it, so it ranks after it.`
       : "",
     "Then run `./hub validate-output eval <the new .json>` from the hub; when it is missing or fails, re-dispatch the evaluator once with the same scope and every line the command printed.",
     "Do not merge, push, open pull requests or change tickets.",
@@ -652,6 +672,17 @@ function OwnerAcs({ ids }: { ids: readonly string[] }) {
 const acCount = (n: number) => `${String(n)} AC${n === 1 ? "" : "s"}`;
 
 /**
+ * "Sign-off possible after <date-time>" for a future-dated acceptance eval, from the served
+ * instant, as the page writes every date-time (the `t` toggle applies); the step reads it too.
+ */
+export function signableLine(
+  wait: OwnerWaitView,
+  tz: ReturnType<typeof usePreferences>["tz"],
+): string {
+  return `Sign-off possible after ${wait.signable_after ? fmtDateTime(wait.signable_after, tz) : "a later evaluation"}`;
+}
+
+/**
  * The Acceptance wait's one prompt (ux-change-waiting-prompts.md, A15), under the Whole feature
  * group: its state is the server's rule (A9-A11), so it offers only the decision the server would
  * record: both while it waits on a sign-off, Needs more work once ACs are reopened, none while no
@@ -731,7 +762,7 @@ function AcceptancePrompt({
       return (
         <Banner tone="info" boxed>
           {lines(
-            `Sign-off possible after ${when}`,
+            signableLine(wait, tz),
             `${label} says it ran on ${when}, after now, so a sign-off cannot be recorded after it yet.`,
           )}
         </Banner>
@@ -975,6 +1006,17 @@ export function EvalTab({
   const wait = acceptance?.owner_wait;
   const history = evalHistory(evals, tickets, epics);
   const selectedScope = history.find((g) => g.evals.some((e) => e.path === selected?.path))?.scope;
+  // A signpost (the banner, the Acceptance step, the ticket panel) lands on its eval's group row.
+  const location = useLocation();
+  const table = useRef<HTMLDivElement>(null);
+  const focusAsked =
+    (location.state as { focusEval?: boolean } | null)?.focusEval === true ? location.key : null;
+  useEffect(() => {
+    if (focusAsked === null) return;
+    [...(table.current?.querySelectorAll<HTMLElement>("[data-group]") ?? [])]
+      .find((toggle) => toggle.dataset.group === selectedScope)
+      ?.focus();
+  }, [focusAsked, selectedScope]);
   // A group the owner opened or closed stays so; any other is open when it holds the selected
   // eval (one shown from elsewhere too: a finished run, the sign-off) or is the only one.
   const [folded, setFolded] = useState<ReadonlyMap<string, boolean>>(() => new Map());
@@ -1122,7 +1164,7 @@ export function EvalTab({
     <div className="ah-stack" style={{ gap: 12 }}>
       {strip}
       {listOpen && (
-        <div className="ah-table-wrap" id="eval-list">
+        <div className="ah-table-wrap" id="eval-list" ref={table}>
           <table className="ah-table ah-eval-table" aria-label="Evals">
             <thead>
               <tr>
@@ -1170,6 +1212,7 @@ export function EvalTab({
                       <button
                         type="button"
                         className="ah-eval-group-toggle"
+                        data-group={group.scope}
                         aria-expanded={open}
                         aria-label={`${name}${title ? ` ${title}` : ""} · ${String(group.evals.length)} eval${group.evals.length === 1 ? "" : "s"}`}
                         onClick={(event) => {
