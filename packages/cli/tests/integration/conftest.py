@@ -297,6 +297,48 @@ def demo_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CheckoutFa
     return build
 
 
+type KnowledgeHubFactory = Callable[..., Path]
+
+
+@pytest.fixture
+def knowledge_hub(tmp_path: Path, demo_checkout: CheckoutFactory) -> KnowledgeHubFactory:
+    """``knowledge_hub(files, *, repos=("demo-api",), commit=True)``: a hub checkout at
+    ``tmp_path / "hub"`` holding ``DEMO``'s ``hub.json``, and each of ``repos`` checked out
+    beside it, all synthetic git repos.
+
+    ``files`` maps a hub-relative path, as the knowledge index names it, to its bytes: a path
+    whose first segment is one of ``repos`` is written in that repo (``demo-api/docs/x.md``),
+    any other in the hub (``brain/x.md``). With ``commit`` the files are committed, else they
+    are left untracked.
+    """
+
+    def build(
+        files: Mapping[str, bytes], *, repos: tuple[str, ...] = ("demo-api",), commit: bool = True
+    ) -> Path:
+        hub = tmp_path / "hub"
+        hub.mkdir()
+        (hub / "hub.json").write_bytes(dump_json(demo_document_value()))
+        for name in repos:
+            (tmp_path / name).mkdir()
+
+        def write_files() -> None:
+            for path, data in files.items():
+                first = path.split("/", 1)[0]
+                target = (tmp_path if first in repos else hub) / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
+
+        if commit:
+            write_files()
+        for name in ("hub", *repos):
+            demo_checkout(name)
+        if not commit:
+            write_files()
+        return hub
+
+    return build
+
+
 type SyncRunner = Callable[..., Result]
 
 
