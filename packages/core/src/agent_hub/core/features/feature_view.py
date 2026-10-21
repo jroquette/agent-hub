@@ -103,11 +103,25 @@ class AcRow(ViewModel):
     command: str | None = None
 
 
+# What a feature waits on from the owner (two-level-flows AC-2.8, A17): a plan change request,
+# the acceptance eval's owner steps to sign off, or a sign-off only the owner can write by hand.
+type OwnerWaitKind = Literal["change_request", "owner_signoff", "owner_signoff_manual"]
+
+
+class WaitingOnOwner(ViewModel):
+    """The owner decision a feature waits on; ``tickets`` are the open change requests' origin
+    tickets (``change_request`` only)."""
+
+    kind: OwnerWaitKind
+    tickets: tuple[str, ...] = ()
+
+
 class FeatureView(DerivedView):
     """A feature as the Features list shows it; ``problem`` when a file of it is malformed.
 
     ``phase`` equals ``golden_path.phase``; ``tickets_source`` says whether the ticket counts
-    behind the golden path came from Linear or from the plan.
+    behind the golden path came from Linear or from the plan; ``waiting_on_owner`` what it waits
+    on from the owner, None when nothing.
     """
 
     project: str
@@ -123,6 +137,7 @@ class FeatureView(DerivedView):
     golden_path: GoldenPath
     tickets_source: TicketsSource
     problem: str | None = None
+    waiting_on_owner: WaitingOnOwner | None = None
 
 
 type FeatureRecordName = Literal["spec", "research", "plan", "eval", "issues"]

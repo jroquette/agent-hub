@@ -601,3 +601,81 @@ def test_plan_too_large_is_a_record_problem_when_over_cap() -> None:
     assert detail.problem is None
     assert detail.size == "bounded"
     assert detail.acs is not None
+
+
+def a_dated_eval(verdict: str) -> RecordHead:
+    text = (
+        f"---\ntype: eval\ndelivery: feature\nverdict: {verdict}\nacs: all\n"
+        "evaluated_at: 2026-10-10\n---\n# Eval\n"
+    )
+    return RecordHead(name="feature.md", head=text.encode(), problem=None)
+
+
+def a_change_request(n: int, ticket: str, *, decision: str | None = None) -> tuple[RecordHead, ...]:
+    front = (
+        f"---\nticket: {ticket}\nstatus: open\nplan_from: 1\nplan_to: 2\naffected: []\n"
+        "opened_at: 2026-10-21\nrun_id: implement-1\n---\n"
+    )
+    heads = [RecordHead(name=f"{n}.md", head=front.encode(), problem=None)]
+    if decision is not None:
+        text = f"---\ndecision: {decision}\ndecided_by: Ana\ndecided_at: 2026-10-21\n---\n"
+        heads.append(RecordHead(name=f"{n}.decision.md", head=text.encode(), problem=None))
+    return tuple(heads)
+
+
+# two-level-flows AC-2.8: an open plan change request makes the feature wait for the owner.
+def test_waits_on_owner_for_change_request_when_request_open() -> None:
+    folder = FeatureFolder(
+        slug="demo-feature",
+        files=("plan.md", "features.json"),
+        features_json=a_record(),
+        change_requests=(
+            *a_change_request(1, "DEM-9"),
+            *a_change_request(2, "DEM-8"),
+            *a_change_request(3, "DEM-7", decision="declined"),
+        ),
+    )
+
+    view = feature_view(folder, project="demo", now=READ_TIME)
+
+    assert view.waiting_on_owner is not None
+    assert view.waiting_on_owner.model_dump() == {
+        "kind": "change_request",
+        "tickets": ("DEM-9", "DEM-8"),
+    }
+
+
+@pytest.mark.parametrize(
+    ("record", "kind"),
+    [
+        (a_record(), "owner_signoff"),
+        (json.dumps({"acs": []}).encode(), "owner_signoff_manual"),
+    ],
+    ids=["acs to sign off", "no acs listed"],
+)
+def test_waits_on_owner_for_signoff_when_acceptance_eval_leaves_owner_steps(
+    record: bytes, kind: str
+) -> None:
+    folder = FeatureFolder(
+        slug="demo-feature",
+        files=("features.json",),
+        features_json=record,
+        evals=(a_dated_eval("SHIP-WITH-OWNER-STEPS"),),
+    )
+
+    view = feature_view(folder, project="demo", now=READ_TIME)
+
+    assert view.waiting_on_owner is not None
+    assert (view.waiting_on_owner.kind, view.waiting_on_owner.tickets) == (kind, ())
+
+
+def test_waits_on_nothing_when_no_request_open_and_acceptance_ships() -> None:
+    folder = FeatureFolder(
+        slug="demo-feature",
+        files=("features.json",),
+        features_json=a_record(),
+        evals=(a_dated_eval("SHIP"),),
+        change_requests=a_change_request(1, "DEM-9", decision="approved"),
+    )
+
+    assert feature_view(folder, project="demo", now=READ_TIME).waiting_on_owner is None
