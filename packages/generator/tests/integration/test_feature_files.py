@@ -18,6 +18,13 @@ from agent_hub.core.features.feature_status import (
     FeatureFolder,
     RecordHead,
 )
+from agent_hub.core.features.ticket_records import (
+    CHANGE_REQUEST_HEAD_BYTES,
+    MAX_CHANGE_REQUEST_FILES,
+    MAX_PREFLIGHT_BYTES,
+    MAX_TICKET_FOLDERS,
+    TicketFiles,
+)
 from agent_hub.generator.feature_files import (
     MAX_EVAL_FILES,
     MAX_FEATURE_FOLDERS,
@@ -643,3 +650,149 @@ def test_opens_no_ticket_folder_when_feature_folders_listed(
 
     assert (alpha.review_round_tickets, beta.review_round_tickets) == ((), ())
     assert "AGH-1" not in scans.entries
+
+
+# two-level-flows S2 (AC-2.5, AC-2.8): each ticket folder's records, read only for one feature.
+def test_reads_ticket_records_when_ticket_folders_present(tmp_path: Path) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    tickets = folder / "tickets"
+    for ticket in ("DEM-7", "DEM-8", ".hidden"):
+        (tickets / ticket).mkdir(parents=True)
+    for name in ("brief.md", "plan.md"):
+        (tickets / "DEM-7" / name).write_bytes(b"# Ticket\n")
+    (tickets / "DEM-7" / "preflight.json").write_bytes(b'{"runs": []}')
+    (tickets / "DEM-8" / "brief.md").symlink_to(tickets / "DEM-7" / "brief.md")
+    (tickets / "DEM-8" / "preflight.json").symlink_to(tickets / "DEM-7" / "preflight.json")
+    (tickets / "DEM-9").symlink_to(tickets / "DEM-7")
+    (tickets / "README.md").write_bytes(b"# Tickets\n")
+
+    read = read_feature_folder(tmp_path, "demo-feature", tickets=True)
+    assert read is not None
+
+    assert read.ticket_folders == (
+        TicketFiles(name="DEM-7", brief=True, plan=True, preflight=b'{"runs": []}'),
+        TicketFiles(name="DEM-8", preflight="not a regular file"),
+    )
+    assert read.ticket_folders_skipped == 0
+
+
+def test_reports_problem_when_preflight_over_cap(tmp_path: Path) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    (folder / "tickets" / "DEM-7").mkdir(parents=True)
+    (folder / "tickets" / "DEM-7" / "preflight.json").write_bytes(b" " * (MAX_PREFLIGHT_BYTES + 1))
+
+    read = read_feature_folder(tmp_path, "demo-feature", tickets=True)
+    assert read is not None
+
+    assert read.ticket_folders == (
+        TicketFiles(name="DEM-7", preflight=f"larger than {MAX_PREFLIGHT_BYTES} bytes"),
+    )
+    assert MAX_PREFLIGHT_BYTES == 65_536
+
+
+def test_counts_ticket_folders_skipped_when_over_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    for ticket in ("DEM-9", "DEM-7", "DEM-8"):
+        (folder / "tickets" / ticket).mkdir(parents=True)
+    monkeypatch.setattr("agent_hub.generator.feature_files.MAX_TICKET_FOLDERS", 2)
+
+    read = read_feature_folder(tmp_path, "demo-feature", tickets=True)
+    assert read is not None
+
+    assert [found.name for found in read.ticket_folders] == ["DEM-7", "DEM-8"]
+    assert read.ticket_folders_skipped == 1
+    assert MAX_TICKET_FOLDERS == 500
+
+
+def test_reads_change_requests_when_feature_folders_listed(tmp_path: Path) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    requests = folder / "change-requests"
+    requests.mkdir()
+    (requests / "1.md").write_bytes(b"---\nticket: DEM-7\n---\n")
+    (requests / "1.decision.md").write_bytes(b"---\ndecision: approved\n---\n")
+    (folder / "tickets" / "DEM-7").mkdir(parents=True)
+    (folder / "tickets" / "DEM-7" / "brief.md").write_bytes(b"# Ticket\n")
+
+    (listed,) = read_feature_folders(tmp_path)
+
+    assert listed.change_requests == (
+        RecordHead(name="1.decision.md", head=b"---\ndecision: approved\n---\n", problem=None),
+        RecordHead(name="1.md", head=b"---\nticket: DEM-7\n---\n", problem=None),
+    )
+    assert listed.ticket_folders == ()
+    assert (MAX_CHANGE_REQUEST_FILES, CHANGE_REQUEST_HEAD_BYTES) == (400, 16_384)
+
+
+def test_counts_change_requests_skipped_when_over_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    (folder / "change-requests").mkdir()
+    for n in (1, 2, 3):
+        (folder / "change-requests" / f"{n}.md").write_bytes(b"---\n---\n")
+    monkeypatch.setattr("agent_hub.generator.feature_files.MAX_CHANGE_REQUEST_FILES", 2)
+
+    read = read_feature_folder(tmp_path, "demo-feature")
+    assert read is not None
+
+    assert [head.name for head in read.change_requests] == ["1.md", "2.md"]
+    assert read.change_requests_skipped == 1
+
+
+# AGH-402 review S1/Q1: only the tickets route reads tickets/; the detail and the sign-off never.
+def test_reads_no_ticket_folder_when_tickets_not_asked(tmp_path: Path) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    (folder / "tickets" / "DEM-7").mkdir(parents=True)
+    (folder / "tickets" / "DEM-7" / "preflight.json").write_bytes(b"{}")
+
+    read = read_feature_folder(tmp_path, "demo-feature")
+    assert read is not None
+
+    assert (read.ticket_folders, read.ticket_folders_skipped) == ((), 0)
+
+
+# AGH-402 review S1/Q1, Q10, Q12: the preflight reads stop before one call would pass
+# READ_BUDGET_BYTES, counting what the folder read before tickets/ and a full file each (+ 1).
+@pytest.mark.parametrize(
+    ("spec", "budget", "kept"),
+    [
+        (10, 10 + 2 * 101 + 4, 2),
+        (10, 10, 0),
+        (150, 150 + 2 * 101, 2),
+        (10, 10 + 2 * 101 - 1, 1),
+    ],
+    ids=["two", "none", "after a large spec", "no slack"],
+)
+def test_skips_ticket_folders_when_read_budget_would_be_passed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, spec: int, budget: int, kept: int
+) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {"spec.md": b"x" * spec})
+    for ticket in ("DEM-7", "DEM-8", "DEM-9"):
+        (folder / "tickets" / ticket).mkdir(parents=True)
+        (folder / "tickets" / ticket / "preflight.json").write_bytes(b"{}")
+    monkeypatch.setattr("agent_hub.generator.feature_files.MAX_PREFLIGHT_BYTES", 100)
+    monkeypatch.setattr("agent_hub.generator.feature_files.READ_BUDGET_BYTES", budget)
+
+    read = read_feature_folder(tmp_path, "demo-feature", tickets=True)
+    assert read is not None
+
+    names = ("DEM-7", "DEM-8", "DEM-9")[:kept]
+    assert read.ticket_folders == tuple(TicketFiles(name=n, preflight=b"{}") for n in names)
+    assert read.ticket_folders_skipped == 3 - kept
+
+
+@pytest.mark.parametrize("name", ["tickets", "change-requests"])
+def test_reads_nothing_when_record_folder_is_link(tmp_path: Path, name: str) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    outside = tmp_path / "outside"
+    (outside / "DEM-7").mkdir(parents=True)
+    (outside / "DEM-7" / "brief.md").write_bytes(b"# Ticket\n")
+    (outside / "1.md").write_bytes(b"---\nticket: DEM-7\n---\n")
+    (folder / name).symlink_to(outside)
+
+    read = read_feature_folder(tmp_path, "demo-feature", tickets=True)
+    assert read is not None
+
+    assert (read.ticket_folders, read.change_requests) == ((), ())

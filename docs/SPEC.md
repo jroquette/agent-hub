@@ -68,7 +68,7 @@ hub init --config hub.json   # generates from an existing project config
 hub sync [--check]   # reapplies templates without overwriting what the project customized (--check: plan only)
 hub sync --adopt [--accept PATH]…   # joins a hand-made hub: identical files become managed, differences are listed
 hub doctor [--only RULE]… [--json]   # checks rules, links, dead references and instruction size
-hub validate-output review|eval FILE   # checks one agent JSON output: a review round or an eval
+hub validate-output review|eval|preflight FILE   # checks one agent JSON output: a review round, an eval or a ticket's preflight record
 hub setup [--yes]   # onboards this machine: clones or fetches the repos, writes hub.local.json after confirmation, lists what is missing
 hub env list|show|add|set|remove|service … [--local] [--json]   # the declared environments and services: list, show, or change hub.json (--local: hub.local.json), no prompt
 hub worktree NAME [--only REPO] [--remove] [--no-fetch] [--base BRANCH | --stack-on PR_URL]   # isolated worktrees for one task (--remove removes them; --no-fetch starts from the already-fetched base; --base starts every repo from origin/BRANCH; --stack-on starts the open pull request's repo from its head branch, read with gh, and the other repos from their default branch: a blocker still in review)
@@ -106,15 +106,16 @@ events with the same all-or-nothing rule; their events name no project of their 
 also appends its executor events to the same store as it writes each record; an unwritable store prints one
 `hub run: event store unavailable: <reason>` line and the run carries on.
 
-`hub validate-output review|eval FILE` checks one agent JSON output against its versioned schema
-(`agent-hub/review/1`, `agent-hub/eval/1`) and its cross-field rules, reporting every violation in one run. A `review`
-file is a reviewer's round, `reviews/<ticket>/<reviewer>-r<N>.json`; an `eval` file is `evals/<delivery>.json`, checked
-against its sibling `evals/<delivery>.md` (a missing sibling is a problem) and, when the folder above `evals/` holds
-one, the feature record `features.json`, whose live ACs scope the results (without it, only the document is checked).
+`hub validate-output review|eval|preflight FILE` checks one agent JSON output against its versioned schema
+(`agent-hub/review/1`, `agent-hub/eval/1`, `agent-hub/preflight/1`) and its cross-field rules, reporting every
+violation in one run. A `review` file is a reviewer's round, `reviews/<ticket>/<reviewer>-r<N>.json`; an `eval` file is
+`evals/<delivery>.json`, checked against its sibling `evals/<delivery>.md` (a missing sibling is a problem) and, when
+the folder above `evals/` holds one, the feature record `features.json`, whose live ACs scope the results (without it,
+only the document is checked); a `preflight` file is a ticket's `tickets/<ticket>/preflight.json`, checked on its own.
 Each input is read as a regular file, at most its bound, and links are never followed. Exit 0 prints `<file>: valid`;
 exit 1 prints one line per problem, `<file>: <json path>: <message>`, the first 200 then `<file>: … and <N> more
 problems (<T> in total)`, or one line naming an input that could not be read; a usage error (a kind other than
-`review` or `eval`, no file) exits 2 before any read. It needs no `hub.json`, writes nothing and makes no network call.
+`review`, `eval` or `preflight`, no file) exits 2 before any read. It needs no `hub.json`, writes nothing and makes no network call.
 
 `hub web` serves the control plane from one local process ([Layer 2](#layer-2-control-plane-and-observability)): the
 `/api/v1` REST and SSE API ([API.md](API.md)) and the committed build of the web app, from the database `hub collect`
@@ -609,11 +610,14 @@ work on a hub's artifacts, and on agent-hub's own web app, with Claude from `hub
   in the hub and the preview renders it as the catalog card it will be. The Skills catalog has a tab per kind.
   An existing item opens the same way from its detail (Edit with Claude, AGH-271): Claude edits a copy in the draft
   folder, the preview shows the change as a diff against the current version, and Publish writes it over the item.
+  The server writes on Publish (AGH-298, `POST .../skills/drafts/{draft_id}/publish`): Claude only edits the
+  draft, and the route lands it on the item (or a new item) through the restore's write step, recording the item's
+  version first and a `publish` version after, then removes the draft.
 - **Session names.** A session's name is the title Claude Code writes in its transcript, or the user's `/rename`,
   stored as `session.title` ([ADR 0035](adr/0035-session-titles.md), below).
 
 **Skills tab (AGH-164, built; named Toolkit since AGH-271).** Knowledge › Toolkit shows what a hub's agents can do, read from its files on request;
-only the version history below is stored, and only its restore writes into the hub:
+only the version history below is stored, and only its restore and the Studio's Publish write into the hub:
 
 - **Catalog.** `GET /api/v1/projects/{project}/skills` lists the hub's skills, agents and hooks: the base plugin
   `plugin/hub-workflow/`, the project and other plugins under `plugin/`, real entries in `.claude/skills/` and
@@ -640,7 +644,7 @@ only the version history below is stored, and only its restore writes into the h
   kind, 200 bundled files per skill, 2,000 hooks, 256 KiB per file and 16 MiB per catalog. Past a bound the catalog
   says `truncated` with a notice; an over-cap file is listed with `too_large` and no text. The catalog is memoized per
   hub by its listing's fingerprint.
-- **Version history (AGH-295: capture, history, diff and restore so far; [ADR 0039](adr/0039-item-versions-and-server-writes-to-the-hub.md)).**
+- **Version history (AGH-295: capture, history, diff, restore and the server publish; [ADR 0039](adr/0039-item-versions-and-server-writes-to-the-hub.md)).**
   The catalog and the detail, and the Workflows list and detail, record a version of each unit they show in
   agent-hub's database (table `item_versions`): a skill's whole folder, an agent's file, a hook's whole file (every
   hook of a file shares it), a hub workflow's file. A
@@ -669,6 +673,16 @@ only the version history below is stored, and only its restore writes into the h
   the hub's effective identity. A failed write records nothing more and answers 500 without a path. Restore is a
   strict write that needs `hub web`'s launch cookie; in the container it answers 409 `hub_read_only`. It never runs
   git: the change shows in the hub's working tree.
+  `POST /api/v1/projects/{project}/skills/drafts/{draft_id}/publish` (AGH-298) is the Studio's Publish, through the
+  same step and gates: body `target` (`{kind, source, name}` of the item the draft edits, or `null` for a new item in
+  `plugin/<project>/`) and `confirm_managed`. It reads `.hub-drafts/<draft_id>/` whole within the bounds (else 413),
+  never through a link (409 `link_in_path`), as a valid item of the draft's kind (else 422 `draft_invalid`); a new
+  item, or a rename, onto a name its kind has is 409 `item_exists`. A skill edit writes the draft's files over the
+  folder and keeps the rest (a rename moves it, hidden entries and all), an agent's file is replaced, a hook's draft
+  replaces that one hook in its file, and a new hook merges into `plugin/<project>/hooks/hooks.json` with its
+  scripts. It records a `publish` version naming the draft (`draft_id`), then removes the draft, also when the draft
+  equals the item (`changed: false`); a draft already named by a `publish` is spent (409 `draft_already_published`,
+  the draft kept), and a draft that could not be removed answers 500 `draft_not_removed` with the item published.
 
 **Workflows (AGH-225 API, AGH-226 screen).** `GET /api/v1/workflows` lists each project's workflows (the
 hub's `workflows/`, then the built-ins; [workflow schema](design/workflow-schema.md)) with their source (`hub` or

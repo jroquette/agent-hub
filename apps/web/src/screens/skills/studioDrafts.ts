@@ -14,6 +14,12 @@ export interface StoredDraft {
   published: boolean;
   /** The existing item the draft changes; absent for a new item. */
   target?: SkillRef | null;
+  /** An edit's hub-relative main file, so a published rename reopens without its old detail. */
+  sourcePath?: string | null;
+  /** Published, but its folder stayed (A20): it can only be discarded. */
+  spent?: boolean;
+  /** What the server said when it spent the draft, shown again on reopen. */
+  spentDetail?: string | null;
 }
 
 const KEY = "ah.studio.drafts";
@@ -46,7 +52,10 @@ function isStoredDraft(value: unknown): value is StoredDraft {
     nullableText(d.name) &&
     typeof d.updatedAt === "string" &&
     typeof d.published === "boolean" &&
-    isTarget(d.target)
+    isTarget(d.target) &&
+    (d.sourcePath === undefined || nullableText(d.sourcePath)) &&
+    (d.spent === undefined || typeof d.spent === "boolean") &&
+    (d.spentDetail === undefined || nullableText(d.spentDetail))
   );
 }
 
@@ -109,6 +118,14 @@ export function saveDraft(
   };
   writeAll([next, ...all.filter((d) => d.draftId !== draftId)]);
   return next;
+}
+
+/** Sets `patch` on a stored draft where it is, its time unchanged; a draft storage no longer
+ * has is not created again. */
+export function patchDraft(draftId: string, patch: Pick<StoredDraft, "sourcePath">) {
+  const all = readAll();
+  if (!all.some((d) => d.draftId === draftId)) return;
+  writeAll(all.map((d) => (d.draftId === draftId ? { ...d, ...patch } : d)));
 }
 
 export function forgetDraft(draftId: string) {

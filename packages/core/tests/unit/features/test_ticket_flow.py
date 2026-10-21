@@ -1,5 +1,7 @@
-"""A ticket's own flow (two-level-flows AC-1.8, AC-1.9, AC-1.13): its seven steps from records."""
+"""A ticket's own flow (two-level-flows AC-1.8, AC-1.9, AC-1.13, AC-2.5, AC-2.8, AC-2.14): its
+seven steps from records."""
 
+import json
 from random import Random
 
 import pytest
@@ -7,9 +9,16 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from agent_hub.core.features.feature_reviews import ReviewOutcome, ReviewRecord
+from agent_hub.core.features.feature_status import RecordHead
 from agent_hub.core.features.feature_view import EvalRecord, Verdict
 from agent_hub.core.features.golden_path import LINEAR_NOT_CONNECTED
 from agent_hub.core.features.ticket_flow import TicketEvidence, ticket_evidence, ticket_flow
+from agent_hub.core.features.ticket_records import (
+    NO_REQUESTS,
+    ChangeRequests,
+    TicketFiles,
+    change_requests,
+)
 from agent_hub.core.features.ticket_view import TicketFlow, TicketRow
 from agent_hub.core.testing.read_model_builders import a_ticket_row, an_eval_record
 from agent_hub.core.tracker.tracker_reader import IssueState
@@ -19,7 +28,7 @@ _DONE = IssueState(name="Done", type="completed")
 _STARTED = IssueState(name="In Progress", type="started")
 _TODO = IssueState(name="Todo", type="unstarted")
 # A step "has evidence" when a record (or Linear) says something about it.
-_EVIDENCE = ("done", "current", "blocked")
+_EVIDENCE = ("done", "current", "blocked", "waiting", "stale")
 
 
 def _row(**fields: object) -> TicketRow:
@@ -66,10 +75,23 @@ def _flow(
     reviews: tuple[ReviewRecord, ...] = (),
     evals: tuple[EvalRecord, ...] = (),
     unread: str | None = None,
+    tickets: tuple[TicketFiles, ...] = (),
+    tickets_skipped: int = 0,
+    requests: ChangeRequests = NO_REQUESTS,
+    plan_version: int | None = None,
 ) -> TicketFlow:
     flow = ticket_flow(
         _row() if row is None else row,
-        ticket_evidence(rounds=rounds, reviews=reviews, evals=evals, unread=unread),
+        ticket_evidence(
+            rounds=rounds,
+            reviews=reviews,
+            evals=evals,
+            unread=unread,
+            tickets=tickets,
+            tickets_skipped=tickets_skipped,
+            requests=requests,
+            plan_version=plan_version,
+        ),
     )
     assert flow is not None
     return flow
@@ -245,7 +267,30 @@ def _evidence(draw: st.DrawFn) -> tuple[TicketRow, TicketEvidence]:
     )
     rounds = frozenset(draw(st.lists(st.sampled_from(_NAMES), max_size=2)))
     unread = draw(st.sampled_from((None, LINEAR_NOT_CONNECTED)))
-    evidence = ticket_evidence(rounds=rounds, reviews=reviews, evals=evals, unread=unread)
+    drift = draw(st.sampled_from(("none", "local", "plan", "global")))
+    notes = ["Moved helper."] if drift == "local" else []
+    record = _preflight({"drift": drift, "local_notes": notes})
+    tickets = tuple(
+        _files(
+            name,
+            brief=draw(st.booleans()),
+            plan=draw(st.booleans()),
+            preflight=draw(st.sampled_from((None, record))),
+        )
+        for name in draw(st.lists(st.sampled_from(_NAMES), max_size=2, unique=True))
+    )
+    decision = draw(st.sampled_from((None, "approved", "declined")))
+    asking = draw(st.sampled_from(_NAMES))
+    requests = draw(st.sampled_from((NO_REQUESTS, _requests((1, f"{asking} -> DEM-8", decision)))))
+    evidence = ticket_evidence(
+        rounds=rounds,
+        reviews=reviews,
+        evals=evals,
+        unread=unread,
+        tickets=tickets,
+        requests=requests,
+        plan_version=draw(st.sampled_from((None, 2, 3))),
+    )
     return _row(state=None if unread else state), evidence
 
 
@@ -276,8 +321,16 @@ def test_same_flow_when_read_order_shuffled_property(
     evals = list(dict.fromkeys(e for named in evidence.evals.values() for e in named))
     pick.shuffle(reviews)
     pick.shuffle(evals)
+    files = list(evidence.files.values())
+    pick.shuffle(files)
     shuffled = ticket_evidence(
-        rounds=evidence.rounds, reviews=tuple(reviews), evals=tuple(evals), unread=evidence.unread
+        rounds=evidence.rounds,
+        reviews=tuple(reviews),
+        evals=tuple(evals),
+        unread=evidence.unread,
+        tickets=tuple(files),
+        requests=evidence.requests,
+        plan_version=evidence.approved,
     )
 
     assert ticket_flow(row, evidence) == ticket_flow(row, shuffled)
@@ -294,3 +347,258 @@ def test_compares_equal_when_only_the_verdict_cache_differs() -> None:
     assert flow is not None
     assert _step(flow, "eval") == ("done", "SHIP")
     assert folded == fresh
+
+
+def _preflight(*runs: dict[str, object]) -> bytes:
+    base: dict[str, object] = {
+        "ran_at": "2026-10-21T09:30:00Z",
+        "plan_version": 2,
+        "commit": "4e1a9c2",
+        "blockers_read": [],
+        "input": "none",
+        "input_text": None,
+        "drift": "none",
+        "local_notes": [],
+        "change_request": None,
+        "run_id": "implement-8",
+    }
+    entries = [base | run for run in runs] or [base]
+    return json.dumps(
+        {"schema": "agent-hub/preflight/1", "ticket": "DEM-8", "runs": entries}
+    ).encode()
+
+
+def _files(name: str = "DEM-8", **fields: object) -> TicketFiles:
+    return TicketFiles(name=name, **fields)  # type: ignore[arg-type]
+
+
+def _requests(*heads: tuple[int, str, str | None]) -> ChangeRequests:
+    """Requests ``(n, "<ticket> -> <affected,...>", decision)``, planned from v2 to v3."""
+    found: list[RecordHead] = []
+    for n, names, decision in heads:
+        ticket, _, affected = names.partition(" -> ")
+        front = (
+            f"---\nticket: {ticket}\nstatus: open\nplan_from: 2\nplan_to: 3\n"
+            f"affected: [{affected}]\nopened_at: 2026-10-21\nrun_id: implement-8\n---\n"
+        )
+        found.append(RecordHead(name=f"{n}.md", head=front.encode(), problem=None))
+        if decision is not None:
+            text = (
+                f"---\ndecision: {decision}\ndecided_by: Dana Owner\n"
+                "decided_at: 2026-10-21T10:00:00Z\n---\n"
+            )
+            found.append(RecordHead(name=f"{n}.decision.md", head=text.encode(), problem=None))
+    return change_requests(found, skipped=0)
+
+
+def test_marks_context_done_when_ticket_brief_exists() -> None:
+    flow = _flow(_row(state=_TODO), tickets=(_files(brief=True),))
+
+    assert _step(flow, "context") == ("done", None)
+    assert flow.current == "preflight"
+
+
+def test_marks_preflight_done_when_latest_run_finds_no_drift() -> None:
+    flow = _flow(tickets=(_files(brief=True, preflight=_preflight()),))
+
+    assert _step(flow, "preflight") == ("done", None)
+    assert flow.signal is None
+
+
+# AC-2.5: local drift is recorded, keeps Preflight done and shows its notes count.
+def test_counts_local_notes_when_latest_run_finds_local_drift() -> None:
+    record = _preflight({"drift": "local", "local_notes": ["Moved helper.", "Renamed flag."]})
+
+    flow = _flow(tickets=(_files(preflight=record),))
+
+    assert _step(flow, "preflight") == ("done", "Local drift · 2 notes")
+    assert flow.signal == "Local drift · 2 notes"
+
+
+def test_says_one_note_when_local_drift_has_one_note() -> None:
+    record = _preflight({"drift": "local", "local_notes": ["Moved helper."]})
+
+    assert _flow(tickets=(_files(preflight=record),)).signal == "Local drift · 1 note"
+
+
+def test_reads_latest_run_when_preflight_ran_twice() -> None:
+    record = _preflight({"drift": "local", "local_notes": ["Moved helper."]}, {"drift": "none"})
+
+    assert _step(_flow(tickets=(_files(preflight=record),)), "preflight") == ("done", None)
+
+
+def test_finds_ticket_folder_when_it_names_the_plan_key() -> None:
+    flow = _flow(tickets=(_files("t2", brief=True),))
+
+    assert _step(flow, "context") == ("done", None)
+
+
+def test_marks_implement_current_when_ticket_plan_written() -> None:
+    flow = _flow(tickets=(_files(plan=True),))
+
+    assert _step(flow, "implement") == ("current", "Ticket plan written")
+    assert _step(flow, "preflight") == ("unrecorded", None)
+    assert flow.current == "implement"
+
+
+# AC-2.8: the asking ticket waits for the owner while its change request is open.
+def test_waits_for_owner_when_ticket_asked_open_change_request() -> None:
+    record = _preflight({"drift": "plan", "change_request": 1})
+
+    flow = _flow(
+        tickets=(_files(brief=True, preflight=record),),
+        requests=_requests((1, "DEM-8 -> DEM-9", None)),
+    )
+
+    assert _step(flow, "preflight") == ("waiting", "Waiting for you")
+    assert flow.signal == "Waiting for you: plan change"
+    assert flow.current == "preflight"
+
+
+# AC-2.14: a request whose run (and preflight record) is lost still waits for the owner.
+def test_waits_for_owner_when_request_open_without_preflight_record() -> None:
+    flow = _flow(requests=_requests((1, "dem-8 -> ", None)))
+
+    assert _step(flow, "preflight") == ("waiting", "Waiting for you")
+
+
+# AC-2.8: each affected ticket is held while the request is open.
+def test_holds_affected_ticket_when_another_ticket_request_open() -> None:
+    flow = _flow(_row(state=_TODO), requests=_requests((1, "DEM-7 -> DEM-8, DEM-9", None)))
+
+    assert flow.signal == "Held: plan change pending"
+    assert _step(flow, "preflight") == ("pending", None)
+
+
+def test_holds_nothing_when_affected_ticket_already_merged() -> None:
+    flow = _flow(_row(state=_DONE), requests=_requests((1, "DEM-7 -> DEM-8", None)))
+
+    assert flow.signal is None
+
+
+# AC-2.8: once approved, a preflight that checked an older plan version must run again.
+def test_marks_preflight_stale_when_approved_plan_newer_than_latest_run() -> None:
+    record = _preflight({"drift": "plan", "change_request": 1})
+
+    flow = _flow(
+        tickets=(_files(preflight=record),),
+        requests=_requests((1, "DEM-8 -> DEM-9", "approved")),
+        plan_version=2,
+    )
+
+    assert _step(flow, "preflight") == ("stale", "Plan v3 approved: re-run preflight")
+    assert flow.signal == "Plan v3 approved: re-run preflight"
+
+
+def test_marks_preflight_stale_when_plan_amended_after_latest_run() -> None:
+    flow = _flow(tickets=(_files(preflight=_preflight()),), plan_version=4)
+
+    assert _step(flow, "preflight") == ("stale", "Plan v4 approved: re-run preflight")
+
+
+def test_keeps_preflight_done_when_merged_ticket_checked_older_plan() -> None:
+    flow = _flow(_row(state=_DONE), tickets=(_files(preflight=_preflight()),), plan_version=4)
+
+    assert _step(flow, "preflight") == ("done", None)
+
+
+def test_marks_preflight_blocked_when_plan_drift_declined() -> None:
+    record = _preflight({"drift": "plan", "change_request": 1})
+
+    flow = _flow(
+        tickets=(_files(preflight=record),), requests=_requests((1, "DEM-8 -> ", "declined"))
+    )
+
+    assert _step(flow, "preflight") == ("blocked", "Plan drift")
+
+
+# NFR Robustness: a malformed preflight.json turns only its own step unknown.
+def test_marks_only_preflight_unknown_when_preflight_malformed() -> None:
+    record = _preflight({"drift": "global"})
+
+    flow = _flow(tickets=(_files(brief=True, preflight=record),), reviews=(_review(),))
+
+    assert _step(flow, "preflight") == (
+        "unknown",
+        "preflight.json could not be read (runs[0].drift: Input should be 'none', 'local' or "
+        "'plan'). Fix it in a hub PR.",
+    )
+    assert _step(flow, "context") == ("done", None)
+    assert _step(flow, "review") == ("done", None)
+
+
+def test_marks_preflight_unknown_when_ticket_request_malformed() -> None:
+    broken = RecordHead(
+        name="1.md", head=b"---\nticket: DEM-8\nstatus: approved\n---\n", problem=None
+    )
+
+    flow = _flow(requests=change_requests((broken,), skipped=0))
+
+    state, meta = _step(flow, "preflight")
+    assert state == "unknown"
+    assert meta is not None
+    assert meta.startswith("change-requests/1.md could not be read (status must be open")
+
+
+# AGH-402 review Q13/S7: the folders left unread over the 500 cap or the read budget alike.
+def test_marks_context_and_preflight_unknown_when_ticket_folders_left_unread() -> None:
+    flow = _flow(tickets=(_files("DEM-1", brief=True),), tickets_skipped=1)
+
+    unread = (
+        "not every folder in tickets/ was read (more than 500, or over the read budget). "
+        "Fix it in a hub PR."
+    )
+    assert _step(flow, "context") == ("unknown", unread)
+    assert _step(flow, "preflight") == ("unknown", unread)
+
+
+# AGH-402 review Q2, S4, Q8: a broken decision shows on the asking ticket, which still waits.
+def test_marks_preflight_unknown_and_keeps_waiting_when_decision_malformed() -> None:
+    request = RecordHead(
+        name="1.md",
+        head=(
+            b"---\nticket: DEM-8\nstatus: open\nplan_from: 2\nplan_to: 3\naffected: []\n"
+            b"opened_at: 2026-10-21\nrun_id: implement-8\n---\n"
+        ),
+        problem=None,
+    )
+    decision = RecordHead(name="1.decision.md", head=b"---\ndecision: maybe\n---\n", problem=None)
+
+    flow = _flow(requests=change_requests((request, decision), skipped=0))
+
+    assert _step(flow, "preflight") == (
+        "unknown",
+        "change-requests/1.decision.md could not be read (decision must be approved or "
+        "declined). Fix it in a hub PR.",
+    )
+    assert flow.signal == "Waiting for you: plan change"
+
+
+# AGH-402 review Q8: the asking ticket is never held by its own request.
+@pytest.mark.parametrize("skipped", [0, 1], ids=["malformed preflight", "folder unread"])
+def test_keeps_waiting_signal_when_asking_ticket_preflight_unknown(skipped: int) -> None:
+    files = (_files(preflight=_preflight({"drift": "global"})),) if not skipped else ()
+
+    flow = _flow(
+        tickets=files,
+        tickets_skipped=skipped,
+        requests=_requests((1, "DEM-8 -> DEM-8, DEM-9", None)),
+    )
+
+    assert _step(flow, "preflight")[0] == "unknown"
+    assert flow.signal == "Waiting for you: plan change"
+
+
+# AGH-402 review Q4: a ticket folder without brief.md has no context brief.
+def test_keeps_context_unrecorded_when_ticket_folder_has_no_brief() -> None:
+    flow = _flow(tickets=(_files(plan=True, preflight=_preflight()),))
+
+    assert _step(flow, "context") == ("unrecorded", None)
+    assert _step(flow, "preflight") == ("done", None)
+
+
+# AGH-402 review Q5: a review round makes Implement done, ticket plan or not.
+def test_marks_implement_done_when_ticket_plan_and_review_round_exist() -> None:
+    flow = _flow(rounds=frozenset({"DEM-8"}), tickets=(_files(plan=True),))
+
+    assert _step(flow, "implement") == ("done", None)

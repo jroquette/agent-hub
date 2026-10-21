@@ -121,12 +121,28 @@ def test_passes_typecheck_when_skeleton_unchanged(
 def test_runs_web_and_openapi_steps_when_check_fast_dry_run(
     run: Callable[..., CompletedProcess[str]],
 ) -> None:
-    """AC-200.61: check-fast installs and checks the web app and checks the OpenAPI drift."""
-    result = run(["make", "-n", "check-fast"])
+    """AC-200.61: check-fast installs and checks the web app and checks the OpenAPI drift.
+
+    WEB_FAST=1: without it the web steps run only when apps/web/ differs from origin/main.
+    """
+    result = run(["make", "-n", "check-fast", "WEB_FAST=1"])
 
     assert result.returncode == 0, result.stderr
     assert "npm --prefix apps/web ci" in result.stdout
-    assert "npm --prefix apps/web run check" in result.stdout
+    assert "npm --prefix apps/web run typecheck" in result.stdout
+    assert "npm --prefix apps/web run lint" in result.stdout
+    assert "npm --prefix apps/web run coverage" in result.stdout
+    assert "python -m scripts.export_openapi --check" in result.stdout
+    assert "npm --prefix apps/web run gen:api:check" in result.stdout
+
+
+def test_checks_openapi_drift_when_check_fast_dry_run_without_web_fast(
+    run: Callable[..., CompletedProcess[str]],
+) -> None:
+    """check-fast checks the OpenAPI drift whether or not it runs web-fast (WEB_FAST=auto)."""
+    result = run(["make", "-n", "check-fast"])
+
+    assert result.returncode == 0, result.stderr
     assert "python -m scripts.export_openapi --check" in result.stdout
     assert "npm --prefix apps/web run gen:api:check" in result.stdout
 

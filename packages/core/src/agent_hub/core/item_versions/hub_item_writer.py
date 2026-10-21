@@ -15,11 +15,28 @@ Synchronous. ``HubItemWriterContract`` checks every implementation:
   not hold gone (a link among them removed, never followed), and the target's hidden entries
   (which no version records) carried over unchanged. A version holding a hidden name is a
   caller bug (``ValueError``): the reader never records one. A completed or failed write never
-  leaves a mix of old and new files, but for a failed roll back (below).
+  leaves a mix of old and new files, but for a failed roll back (below). With ``carry_from`` (a
+  skill rename's old folder, a sibling of the unit), the hidden entries moved into the new folder
+  are that folder's instead (the owner's PR 3 decision); the unit must be absent then, else
+  ``HubItemWriteError`` (``failed``) before anything moves, and a failed write moves them back.
 - ``write_file`` writes one new hook's script, ``plugin/<p>/scripts/…`` (no hidden segment),
   the same way as a file unit.
+- ``read_script`` reads a hook script ``write_file`` may write (None when absent; a link on the
+  way or at it ``link_in_path``, another non-regular file ``HubItemWriteError``), at most one byte
+  past ``MAX_SKILL_FILE_BYTES``: enough to tell it from a draft's script.
 - ``remove_unit`` removes a unit (a rename's old unit), a skill folder whole, its hidden entries
-  too (PR 3 decides whether a rename carries them); an absent one is fine.
+  too (a rename has carried them to the new folder first, through ``carry_from``); an absent one
+  is fine.
+- ``read_draft`` reads a Studio draft, ``.hub-drafts/<draft_id>/``, whole (``DraftFiles``),
+  bounded as a skill folder unit (S8) but with its hidden names, which publish refuses:
+  ``EntityNotFoundError`` (entity ``draft``) when the folder is missing, empty or no folder,
+  ``ItemWriteRefusedError("link_in_path")`` when it, the drafts folder or anything in it is a
+  link or a special file, ``DraftTooLargeError`` past the bounds. The draft is untrusted (a
+  Claude session wrote it): never followed through a link, each file's executable bit from the
+  opened file.
+- ``remove_draft`` removes that folder whole, a link inside it removed and never followed, a link
+  at the folder or the drafts folder refused (``link_in_path``), a file at the draft's path or a
+  ``.hub-drafts`` that is a file a ``HubItemWriteError``; an absent draft is fine.
 
 A refusal is ``ItemWriteRefusedError`` (``hub_read_only`` or ``link_in_path``); any other I/O
 failure is ``HubItemWriteError``. Its ``kind`` is ``failed`` when the unit was left as it was,
@@ -31,17 +48,31 @@ No message names a path. A unit path that is not a unit of its kind, or a path t
 plain and relative, is a caller bug (``ValueError``).
 """
 
+import re
 from collections.abc import Sequence
-from typing import Final, Literal, Protocol
+from typing import Annotated, Final, Literal, Protocol
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.item_versions.item_units import unit_parts
-from agent_hub.core.item_versions.item_version import UnitKind
-from agent_hub.core.item_versions.unit_content import UnitContent
+from agent_hub.core.item_versions.item_version import DRAFT_ID, UnitKind
+from agent_hub.core.item_versions.unit_content import MAX_UNIT_FILES, UnitContent
 from agent_hub.core.skills.skill_sources import (
     DEFAULT_LIMITS,
+    MAX_SKILL_FILE_BYTES,
     PLUGIN_FOLDER,
     SkillPathError,
+)
+
+# Where the Studio's drafts live in a hub, outside ``plugin/`` and ``.claude/`` so nothing loads
+# them.
+DRAFTS_FOLDER: Final = ".hub-drafts"
+_DRAFT_ID: Final = re.compile(DRAFT_ID)
+# The bounds a draft is read within, in the words a 413 answer gives.
+DRAFT_LIMIT: Final = (
+    f"a draft holds at most {MAX_UNIT_FILES} files of {MAX_SKILL_FILE_BYTES} bytes each, "
+    f"at most {DEFAULT_LIMITS.skill_depth} segments deep"
 )
 
 _NOT_PLAIN: Final = frozenset({"", ".", ".."})
@@ -60,6 +91,7 @@ type WriteRefusal = Literal[
     "unit_unreadable",
     "no_author",
     "draft_invalid",
+    "draft_already_published",
 ]
 
 _REASONS: dict[WriteRefusal, str] = {
@@ -71,6 +103,7 @@ _REASONS: dict[WriteRefusal, str] = {
     "unit_unreadable": "The item on disk cannot be read whole",
     "no_author": "No author identity is set for this hub",
     "draft_invalid": "The draft is not a valid item",
+    "draft_already_published": "This draft was already published; discard it",
 }
 
 
@@ -83,15 +116,22 @@ class ItemWriteRefusedError(AgentHubError):
         super().__init__(f"item write refused: {code}")
 
 
-# Whether a failed write left the unit as it was (``failed``) or could not put it back.
-type WriteFailure = Literal["failed", "rollback_failed"]
+# Whether a failed write left the unit as it was (``failed``), could not put it back
+# (``rollback_failed``), wrote and recorded a rename's new unit but could not remove the old
+# one (``old_not_removed``, A18; ``OldNotRemovedError``, raised by ``RecordAndWrite``, never by a
+# writer), or could not read the draft at all (``draft_unreadable``: nothing was written).
+type WriteFailure = Literal["failed", "rollback_failed", "old_not_removed", "draft_unreadable"]
 ROLLBACK_FAILED_CAUSE: Final = "the old folder was not put back"
+OLD_NOT_REMOVED_CAUSE: Final = "the renamed item's old unit was not removed"
+DRAFT_UNREADABLE_CAUSE: Final = "the draft could not be read"
 
 
 class HubItemWriteError(AgentHubError):
     """A write that failed on I/O. ``kind`` ``failed``: the hub keeps the unit as it was;
-    ``rollback_failed``: the old folder could not be put back either (see the module). No
-    path is named."""
+    ``rollback_failed``: the old folder could not be put back either (see the module);
+    ``old_not_removed``: a rename's new unit is written and recorded, its old unit stays;
+    ``draft_unreadable``: the draft could not be read, nothing was written. No path is
+    named."""
 
     def __init__(self, cause: str = "the write failed", *, kind: WriteFailure = "failed") -> None:
         self.cause = cause
@@ -102,6 +142,43 @@ class HubItemWriteError(AgentHubError):
 def rollback_failed() -> HubItemWriteError:
     """The error of a folder swap whose roll back failed too."""
     return HubItemWriteError(ROLLBACK_FAILED_CAUSE, kind="rollback_failed")
+
+
+def draft_unreadable() -> HubItemWriteError:
+    """The error of a draft read that failed on I/O (not a link, not past the bounds)."""
+    return HubItemWriteError(DRAFT_UNREADABLE_CAUSE, kind="draft_unreadable")
+
+
+class DraftTooLargeError(AgentHubError):
+    """A draft past the bounds a unit is read within (answers 413); ``limit`` says them."""
+
+    def __init__(self) -> None:
+        self.limit = DRAFT_LIMIT
+        super().__init__(f"draft too large: {DRAFT_LIMIT}")
+
+
+class DraftFiles(BaseModel):
+    """A Studio draft read whole: its id and every file in it, hidden ones included, with their
+    executable bits; ``kind`` is its id's prefix."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    draft_id: Annotated[str, Field(pattern=DRAFT_ID)]
+    content: UnitContent
+
+    @property
+    def kind(self) -> UnitKind:
+        """The draft's kind, from its id."""
+        return UnitKind(self.draft_id.partition("-")[0])
+
+
+def draft_parts(draft_id: str) -> tuple[str, str]:
+    """The draft folder's hub-relative segments, or ``ValueError`` naming no id when
+    ``draft_id`` is outside ``(skill|agent|hook)-[a-z0-9]{6}`` (the route refuses it first)."""
+    if not _DRAFT_ID.fullmatch(draft_id):
+        msg = "not a draft id"
+        raise ValueError(msg)
+    return (DRAFTS_FOLDER, draft_id)
 
 
 def plain_parts(path: str) -> tuple[str, ...]:
@@ -141,6 +218,21 @@ def script_parts(path: str) -> tuple[str, ...]:
     return parts
 
 
+def checked_carry_parts(
+    unit_path: str, carry_from: str | None, *, kind: UnitKind
+) -> tuple[str, ...] | None:
+    """``carry_from``'s segments when it is a skill folder beside ``unit_path`` (another name in
+    the same folder), None when it is None; else ``ValueError`` naming no path."""
+    if carry_from is None:
+        return None
+    parts = checked_unit_parts(carry_from, UnitKind.SKILL)
+    target = checked_unit_parts(unit_path, kind)
+    if kind is not UnitKind.SKILL or parts[:-1] != target[:-1] or parts == target:
+        msg = "carry_from is not a sibling skill folder"
+        raise ValueError(msg)
+    return parts
+
+
 def check_version_names(content: UnitContent) -> None:
     """Refuse a folder version holding a hidden name (``ValueError``, naming no path): the
     reader never records one, and the swap keeps the disk's hidden entries."""
@@ -162,9 +254,20 @@ class HubItemWriter(Protocol):
         ...
 
     def write_unit(
-        self, hub_path: str, unit_path: str, content: UnitContent, *, kind: UnitKind
+        self,
+        hub_path: str,
+        unit_path: str,
+        content: UnitContent,
+        *,
+        kind: UnitKind,
+        carry_from: str | None = None,
     ) -> None:
-        """Make the unit at ``unit_path`` equal to ``content``."""
+        """Make the unit at ``unit_path`` equal to ``content``; a skill written with
+        ``carry_from`` takes that sibling folder's hidden entries."""
+        ...
+
+    def read_script(self, hub_path: str, path: str) -> bytes | None:
+        """The hook script ``path``'s bytes (``script_parts``), None when absent."""
         ...
 
     def write_file(
@@ -175,4 +278,12 @@ class HubItemWriter(Protocol):
 
     def remove_unit(self, hub_path: str, unit_path: str, *, kind: UnitKind) -> None:
         """Remove the unit at ``unit_path``, a folder with its hidden entries; absent is fine."""
+        ...
+
+    def read_draft(self, hub_path: str, draft_id: str) -> DraftFiles:
+        """The draft ``.hub-drafts/<draft_id>/`` read whole, within the bounds."""
+        ...
+
+    def remove_draft(self, hub_path: str, draft_id: str) -> None:
+        """Remove the draft's folder whole; absent is fine."""
         ...

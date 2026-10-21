@@ -2,7 +2,8 @@
 content as ``external`` first when it differs from the last version, writes, then records the
 new version; it refuses before writing (read-only hub, no author, a link, an unreadable unit, a
 managed unit without confirmation), writes nothing when the content is equal, records nothing
-more when the write fails, and never stores secret or too-large content."""
+more when the write fails, and never stores secret or too-large content. A Publish of a draft
+some version already names as its ``publish`` is refused under the lock, before any read (A20)."""
 
 import threading
 from collections.abc import Callable
@@ -29,11 +30,14 @@ from agent_hub.core.item_versions.item_version import (
     VersionAuthor,
     VersionOrigin,
 )
+from agent_hub.core.item_versions.publish_rules import Destination
 from agent_hub.core.item_versions.record_and_write import (
     ItemWrittenRaceLostError,
     ItemWrittenUnrecordedError,
     NoAuthor,
+    Placement,
     RecordAndWrite,
+    UnitReads,
 )
 from agent_hub.core.item_versions.unit_content import UnitContent, UnitFile
 from agent_hub.core.item_versions.unit_hash import file_hash
@@ -544,3 +548,161 @@ def test_raises_store_error_when_store_fails_before_write() -> None:
 
     assert rig.hub.skill_files[AGENT] == SCOUT
     assert rig.writer.writes == []
+
+
+ALPHA: Final = "plugin/demo/skills/alpha"
+BETA: Final = "plugin/demo/skills/beta"
+DRAFT_ID: Final = "skill-abc123"
+
+
+def _skill(path: str) -> ItemUnit:
+    return ItemUnit(project=PROJECT, unit_path=path, kind=UnitKind.SKILL)
+
+
+def _renamed(content: UnitContent) -> Placement:
+    def place(reads: UnitReads) -> Destination:
+        assert isinstance(reads[ALPHA], UnitContent)
+        assert reads[BETA] == UnreadUnit(kind="missing")
+        return Destination(unit=_skill(BETA), content=content, removed=_skill(ALPHA))
+
+    return place
+
+
+def test_records_old_unit_then_moves_when_renamed() -> None:
+    rig = _Rig({f"{ALPHA}/SKILL.md": b"# alpha\n", f"{ALPHA}/.cache/data": b"cached"})
+    renamed = UnitContent(files=(UnitFile(path="SKILL.md", content=b"# beta\n"),))
+
+    result = rig.step.publish(
+        HUB,
+        [_skill(ALPHA), _skill(BETA)],
+        _renamed(renamed),
+        confirm_managed=False,
+        draft_id=DRAFT_ID,
+    )
+
+    assert {path: rig.hub.skill_files[path] for path in rig.hub.skill_files} == {
+        f"{BETA}/SKILL.md": b"# beta\n",
+        f"{BETA}/.cache/data": b"cached",
+    }
+    assert [version.origin for version in rig.store.page(PROJECT, ALPHA)] == [
+        VersionOrigin.EXTERNAL
+    ]
+    published = rig.store.page(PROJECT, BETA)
+    assert [(v.origin, v.first, v.draft_id, v.author) for v in published] == [
+        (VersionOrigin.PUBLISH, True, DRAFT_ID, AUTHOR)
+    ]
+    assert result.version is not None
+    assert result.version.draft_id == DRAFT_ID
+
+
+def test_refuses_existing_script_when_other_bytes() -> None:
+    hooks = "plugin/demo/hooks/hooks.json"
+    script = "plugin/demo/scripts/check.sh"
+    rig = _Rig({script: b"#!/bin/sh\necho other\n"})
+    unit = ItemUnit(project=PROJECT, unit_path=hooks, kind=UnitKind.HOOK)
+
+    def place(reads: UnitReads) -> Destination:
+        del reads
+        return Destination(
+            unit=unit,
+            content=_file("hooks.json", b'{"hooks": {}}\n'),
+            scripts=(UnitFile(path=script, content=b"#!/bin/sh\necho mine\n"),),
+        )
+
+    with pytest.raises(ItemWriteRefusedError) as refused:
+        rig.step.publish(HUB, [unit], place, confirm_managed=False, draft_id="hook-abc123")
+
+    assert refused.value.code == "item_exists"
+    assert rig.writer.writes == []
+    assert rig.store.last(PROJECT, hooks) is None
+
+
+SPENT_DRAFT: Final = "agent-spt001"
+
+
+def _published(content: bytes) -> Placement:
+    def place(reads: UnitReads) -> Destination:
+        del reads
+        return Destination(unit=_agent(), content=_scout(content))
+
+    return place
+
+
+def test_refuses_spent_draft_before_reading_when_publish_names_it() -> None:
+    rig = _Rig({AGENT: SCOUT})
+    rig.step.publish(
+        HUB, [_agent()], _published(NEWER), confirm_managed=False, draft_id=SPENT_DRAFT
+    )
+    rig.hub.skill_files[AGENT] = EDITED
+    rig.reader.unit_reads.clear()
+    placed: list[UnitReads] = []
+
+    def place(reads: UnitReads) -> Destination:
+        placed.append(reads)
+        return Destination(unit=_agent(), content=_scout(NEWER))
+
+    with pytest.raises(ItemWriteRefusedError) as refused:
+        rig.step.publish(HUB, [_agent()], place, confirm_managed=False, draft_id=SPENT_DRAFT)
+    other = rig.step.publish(HUB, [_agent()], place, confirm_managed=False, draft_id="agent-zzz999")
+
+    assert refused.value.code == "draft_already_published"
+    assert refused.value.reason == "This draft was already published; discard it"
+    assert len(placed) == 1
+    assert rig.reader.unit_reads.count((HUB, AGENT)) == 1
+    assert other.changed
+    assert rig.origins() == [
+        (VersionOrigin.EXTERNAL, file_hash(SCOUT)),
+        (VersionOrigin.PUBLISH, file_hash(NEWER)),
+        (VersionOrigin.EXTERNAL, file_hash(EDITED)),
+        (VersionOrigin.PUBLISH, file_hash(NEWER)),
+    ]
+
+
+def test_refuses_second_publish_of_draft_when_first_recorded_while_it_waited() -> None:
+    rig = _Rig({AGENT: SCOUT})
+    entered, release = threading.Event(), threading.Event()
+    placed: list[str] = []
+    outcomes: dict[str, object] = {}
+
+    def held(reads: UnitReads) -> Destination:
+        del reads
+        placed.append("first")
+        entered.set()
+        release.wait(WAIT_SECONDS)
+        return Destination(unit=_agent(), content=_scout(NEWER))
+
+    def second(reads: UnitReads) -> Destination:
+        del reads
+        placed.append("second")
+        return Destination(unit=_agent(), content=_scout(NEWER))
+
+    def run(name: str, place: Placement) -> None:
+        try:
+            outcomes[name] = rig.step.publish(
+                HUB, [_agent()], place, confirm_managed=False, draft_id=SPENT_DRAFT
+            )
+        except ItemWriteRefusedError as refused:
+            outcomes[name] = refused.code
+
+    first_thread = threading.Thread(target=run, args=("first", held), daemon=True)
+    first_thread.start()
+    assert entered.wait(WAIT_SECONDS)
+    second_thread = threading.Thread(target=run, args=("second", second), daemon=True)
+    second_thread.start()
+    second_thread.join(INTERLEAVE_SECONDS)
+    # The second publish passed nothing yet: it waits for the lock the first holds.
+    assert second_thread.is_alive()
+
+    release.set()
+    first_thread.join(WAIT_SECONDS)
+    second_thread.join(WAIT_SECONDS)
+
+    assert not first_thread.is_alive()
+    assert not second_thread.is_alive()
+    assert placed == ["first"]
+    assert outcomes["second"] == "draft_already_published"
+    assert rig.hub.skill_files[AGENT] == NEWER
+    assert rig.origins() == [
+        (VersionOrigin.EXTERNAL, file_hash(SCOUT)),
+        (VersionOrigin.PUBLISH, file_hash(NEWER)),
+    ]

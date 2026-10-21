@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { forgetDraft, openDrafts, openEditDraft, saveDraft, storedDraft } from "./studioDrafts";
+import {
+  forgetDraft,
+  openDrafts,
+  openEditDraft,
+  patchDraft,
+  saveDraft,
+  storedDraft,
+} from "./studioDrafts";
 
 const KEY = "ah.studio.drafts";
 const AT = new Date("2026-10-11T14:00:00.000Z");
@@ -95,5 +102,20 @@ describe("studioDrafts edit drafts", () => {
     );
 
     expect(openEditDraft("demo", TARGET)).toBeNull();
+  });
+
+  it("patches a stored draft in place, and never creates one storage no longer has", () => {
+    saveDraft("skill-abc123", { project: "demo", kind: "skill" }, { name: "a" }, AT);
+    saveDraft("agent-abc123", { project: "demo", kind: "agent" }, { name: "b" }, AT);
+
+    patchDraft("skill-abc123", { sourcePath: "plugin/demo/skills/a/SKILL.md" });
+    patchDraft("hook-gone01", { sourcePath: "x" });
+
+    expect(openDrafts("demo").map((d) => d.draftId)).toEqual(["agent-abc123", "skill-abc123"]);
+    expect(storedDraft("skill-abc123")).toMatchObject({
+      sourcePath: "plugin/demo/skills/a/SKILL.md",
+      updatedAt: AT.toISOString(),
+    });
+    expect(storedDraft("hook-gone01")).toBeNull();
   });
 });

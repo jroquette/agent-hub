@@ -7,7 +7,8 @@ with a notice saying why. ``tracker_problem`` names a failed read as RFC 9457 me
 502 for an answer of another shape, 504 for a timeout and 503 when Linear gave no answer. The
 failure's detail is redacted (r1) and clipped: the key never shows. The MCP transport is never
 connected for hub web, whatever the read says. Each row carries its ticket flow
-(``ticket_flow.py``) from the folder's review rounds, review records and evals.
+(``ticket_flow.py``) from the folder's ticket records, plan change requests, review rounds, review
+records and evals.
 """
 
 from collections.abc import Mapping
@@ -16,7 +17,7 @@ from typing import Final
 
 from agent_hub.core.errors import TrackerFailure
 from agent_hub.core.features.feature_reviews import review_records
-from agent_hub.core.features.feature_status import FeatureFolder, feature_parts
+from agent_hub.core.features.feature_status import FeatureFolder, feature_parts, plan_view
 from agent_hub.core.features.golden_path import (
     LINEAR_NOT_CONNECTED,
     LINEAR_NOT_LOADED,
@@ -83,6 +84,10 @@ def feature_tickets(
         reviews=review_records(folder.reviews, slug=folder.slug),
         evals=parts.evals,
         unread=None if parts.source == "linear" else unread,
+        tickets=folder.ticket_folders,
+        tickets_skipped=folder.ticket_folders_skipped,
+        requests=parts.requests,
+        plan_version=None if (plan := plan_view(folder)) is None else plan.version,
     )
     return FeatureTickets(
         project=project,
