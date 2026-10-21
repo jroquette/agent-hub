@@ -1024,8 +1024,7 @@ export function GoldenPathStepper<N extends string = FeaturePhase>({
             )}
             {step.signal && (
               <span className="ah-golden-meta ah-golden-signal" style={{ fontSize: 11 }}>
-                <Icon name="hand" size="sm" style={{ color: "var(--waiting)" }} />{" "}
-                {step.signal}
+                <Icon name="hand" size="sm" style={{ color: "var(--waiting)" }} /> {step.signal}
               </span>
             )}
             {expanded && detail && <div className="ah-golden-detail">{detail(step)}</div>}

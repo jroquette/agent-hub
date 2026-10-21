@@ -1,0 +1,340 @@
+/* Plan change requests and the ticket flow's signals on Feature detail (two-level-flows S2,
+ * AGH-405): the waiting banner and its opener (AC-2.8, AC-1.10 via A8), the asking and affected
+ * tickets' signals (AC-2.8), local drift (AC-2.5), discoveries (AC-2.13) and the decision in the
+ * ticket panel: the run's gate (AC-2.7, AC-2.12) or the lost-run form (AC-2.12, AC-2.14). */
+import { screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { seriousViolations } from "../../testing/axe";
+import {
+  aChangeRequest,
+  aFeatureDetail,
+  aFeatureTickets,
+  aGoldenPath,
+  aPage,
+  aPreflightRun,
+  aTicketFlow,
+  aTicketRecords,
+  renderWithApi,
+  type FeatureTickets,
+} from "../../testing/builders";
+import { FeatureDetailScreen } from "./index";
+import { TicketsTab } from "./TicketsTab";
+
+const API = "/api/v1/features/agent-hub/control-plane";
+const RECORDS = `${API}/tickets/AGH-202`;
+const GATE = "implement-202:approve-change:1";
+const GATE_PATH = `/api/v1/approvals/${encodeURIComponent(GATE)}`;
+
+type Flow = ReturnType<typeof aTicketFlow>;
+type Step = Flow["steps"][number];
+
+/** A flow whose Preflight step is `preflight`, with `signal`; at Preflight. */
+function flowWith(preflight: Partial<Step>, signal: string | null): Flow {
+  return aTicketFlow({
+    steps: aTicketFlow().steps.map((step) =>
+      step.name === "preflight" ? { ...step, ...preflight } : step,
+    ),
+    current: "preflight",
+    signal,
+  });
+}
+
+const ASKING = flowWith(
+  { state: "waiting", meta: "Waiting for you" },
+  "Waiting for you: plan change",
+);
+const HELD = flowWith({ state: "done", meta: null }, "Held: plan change pending");
+const LOCAL = flowWith({ state: "done", meta: "Local drift · 2 notes" }, "Local drift · 2 notes");
+const STALE = flowWith(
+  { state: "stale", meta: "Plan v3 approved: re-run preflight" },
+  "Plan v3 approved: re-run preflight",
+);
+
+/** The three tickets of `control-plane`, AGH-202 and AGH-203 with the given flows. */
+function tickets(flows: Partial<Record<string, Flow>>): FeatureTickets {
+  const data = aFeatureTickets();
+  return {
+    ...data,
+    tickets: data.tickets.map((row) => ({ ...row, flow: flows[row.ref] ?? aTicketFlow() })),
+  };
+}
+
+const LOCAL_RECORDS = aTicketRecords({
+  preflight: {
+    path: "features/control-plane/tickets/AGH-202/preflight.json",
+    runs: [
+      aPreflightRun({
+        drift: "local",
+        local_notes: ["Reuse the shared form.", "Name the route as the API does."],
+      }),
+      aPreflightRun({
+        ran_at: "2026-10-21T11:00:00Z",
+        input: "discovery",
+        input_text: "The claim service needs auth headers",
+      }),
+    ],
+    problem: null,
+  },
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+function panel(): HTMLElement {
+  return screen.getByRole("complementary", { name: /^Ticket AGH-202/ });
+}
+
+function showTab(data: FeatureTickets, path: string, routes: Record<string, unknown> = {}) {
+  return renderWithApi(
+    <TicketsTab
+      project="agent-hub"
+      slug="control-plane"
+      data={data}
+      error={null}
+      onRefresh={() => undefined}
+      evals={[]}
+      openerRef={{ current: null }}
+    />,
+    { routes: { "/api/v1/sessions": aPage([]), ...routes }, path },
+  );
+}
+
+describe("Waiting banner (AC-2.8, AC-1.10)", () => {
+  const detail = aFeatureDetail({
+    change_requests: [aChangeRequest()],
+    golden_path: aGoldenPath({
+      steps: aGoldenPath().steps.map((step) =>
+        step.name === "plan" ? { ...step, signal: "v3 waits for you" } : step,
+      ),
+    }),
+  });
+
+  function open(path = "/features/agent-hub/control-plane?doc=acs") {
+    return renderWithApi(<FeatureDetailScreen />, {
+      routes: {
+        [API]: detail,
+        [`${API}/tickets`]: tickets({ "AGH-202": ASKING, "AGH-203": HELD }),
+        [RECORDS]: aTicketRecords({ change_requests: [aChangeRequest()] }),
+        "/api/v1/sessions": aPage([]),
+      },
+      path,
+      route: "features/:project/:slug",
+    });
+  }
+
+  it("AC-2.8 names the open change request above the tabs, and Plan carries its signal (a11y)", async () => {
+    open();
+
+    const banner = (
+      await screen.findByText("Plan change request 2 from AGH-202: plan v2 → v3 · affects AGH-203")
+    ).closest('[role="status"]');
+    if (!(banner instanceof HTMLElement)) throw new Error("no banner");
+    expect(within(banner).getByText("Waiting for you")).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Golden path" })).toHaveTextContent("v3 waits for you");
+    expect(await seriousViolations(document.body)).toEqual([]);
+  });
+
+  it("AC-1.10 the banner opens the asking ticket's panel at Preflight; Esc returns focus to it", async () => {
+    const { router } = open();
+
+    const review = await screen.findByRole("button", {
+      name: "Review change request 2 from AGH-202",
+    });
+    await userEvent.click(review);
+
+    expect(router.state.location.search).toBe("?doc=tickets&ticket=AGH-202&step=preflight");
+    expect(router.state.historyAction).toBe("REPLACE");
+    const opened = await screen.findByRole("complementary", { name: /^Ticket AGH-202/ });
+    expect(
+      within(opened).getByRole("button", { name: /^Preflight, waiting for you/ }),
+    ).toHaveAttribute("aria-expanded", "true");
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("complementary", { name: /^Ticket AGH-202/ })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Review change request 2 from AGH-202" }),
+    ).toHaveFocus();
+  });
+
+  it("AC-2.8 shows no banner once the request is decided", async () => {
+    renderWithApi(<FeatureDetailScreen />, {
+      routes: {
+        [API]: aFeatureDetail({ change_requests: [aChangeRequest({ status: "approved" })] }),
+      },
+      path: "/features/agent-hub/control-plane?doc=acs",
+      route: "features/:project/:slug",
+    });
+
+    await screen.findByRole("list", { name: "Golden path" });
+    expect(screen.queryByText("Waiting for you")).toBeNull();
+  });
+});
+
+describe("Ticket signals on cards and rows (AC-2.8, AC-2.5, A13)", () => {
+  const data = tickets({ "AGH-202": ASKING, "AGH-203": HELD });
+
+  it("AC-2.8 the asking ticket waits for you and the affected one is held, in place of readiness", () => {
+    showTab(data, "/?doc=tickets");
+
+    const asking = screen.getByRole("listitem", { name: /^AGH-202/ });
+    const held = screen.getByRole("listitem", { name: /^AGH-203/ });
+    expect(asking).toHaveTextContent("Waiting for you: plan change");
+    expect(asking).toHaveTextContent("Preflight · 2/7 · Waiting for you");
+    expect(asking).not.toHaveTextContent("Can start now");
+    expect(held).toHaveTextContent("Held: plan change pending");
+  });
+
+  it("AC-2.8 a stale preflight reads its re-run on the row", () => {
+    showTab(tickets({ "AGH-202": STALE }), "/?doc=tickets&tickets=table");
+
+    const row = screen.getByRole("row", { name: /^AGH-202/ });
+    expect(row).toHaveTextContent("Plan v3 approved: re-run preflight");
+    expect(row).not.toHaveTextContent("Can start now");
+  });
+
+  it("AC-2.5 local drift joins the readiness line on the card and the row, never replaces it", () => {
+    showTab(tickets({ "AGH-202": LOCAL }), "/?doc=tickets");
+    const card = screen.getByRole("listitem", { name: /^AGH-202/ });
+    expect(card).toHaveTextContent("Local drift · 2 notes");
+    expect(card).toHaveTextContent("Can start now");
+  });
+
+  it("AC-2.5 local drift shows in the table's readiness cell", () => {
+    showTab(tickets({ "AGH-202": LOCAL }), "/?doc=tickets&tickets=table");
+    const row = screen.getByRole("row", { name: /^AGH-202/ });
+    expect(row).toHaveTextContent("Local drift · 2 notes");
+    expect(row).toHaveTextContent("Can start now");
+  });
+});
+
+describe("Ticket panel Preflight and Implement (AC-2.5, AC-2.13)", () => {
+  it("AC-2.5 lists every local note under Preflight, which stays done", async () => {
+    showTab(tickets({ "AGH-202": LOCAL }), "/?doc=tickets&ticket=AGH-202&step=preflight", {
+      [RECORDS]: LOCAL_RECORDS,
+    });
+
+    const preflight = within(panel()).getByRole("button", { name: /^Preflight, done/ });
+    expect(preflight).toHaveAttribute("aria-expanded", "true");
+    expect(await within(panel()).findByText("Reuse the shared form.")).toBeInTheDocument();
+    expect(within(panel()).getByText("Name the route as the API does.")).toBeInTheDocument();
+    expect(panel()).toHaveTextContent("Local drift · 2 notes");
+    expect(panel()).toHaveTextContent("after a discovery: The claim service needs auth headers");
+  });
+
+  it("AC-2.13 lists each discovery under Implement", async () => {
+    showTab(tickets({ "AGH-202": LOCAL }), "/?doc=tickets&ticket=AGH-202&step=implement", {
+      [RECORDS]: LOCAL_RECORDS,
+    });
+
+    expect(
+      await within(panel()).findByText(/Discovery .*: The claim service needs auth headers\./),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("Deciding a change request in the ticket panel (AC-2.7, AC-2.12, AC-2.14)", () => {
+  const path = "/?doc=tickets&ticket=AGH-202&step=preflight";
+  const gate = {
+    approval_id: GATE,
+    run_id: "implement-202",
+    project: "agent-hub",
+    workflow: "implement",
+    node: "approve-change",
+    attempt: 1,
+    form: "decision",
+    choices: [
+      { id: "approve", label: "Approve" },
+      { id: "decline", label: "Decline" },
+    ],
+    text: "optional",
+  };
+
+  it("AC-2.7 AC-2.12 answers the run's gate: Approve, and Decline only with a note", async () => {
+    const decided = { approval_id: GATE, run_id: "implement-202", project: "agent-hub" };
+    const { requests } = showTab(tickets({ "AGH-202": ASKING }), path, {
+      [RECORDS]: aTicketRecords({ change_requests: [aChangeRequest()] }),
+      [`${GATE_PATH}/gate`]: gate,
+      [`POST ${GATE_PATH}/decision`]: { ...decided, decision: "decline" },
+    });
+
+    await userEvent.click(await within(panel()).findByRole("button", { name: "Decline" }));
+    const dialog = screen.getByRole("dialog", { name: "Decline?" });
+    const confirm = within(dialog).getByRole("button", { name: "Decline" });
+    expect(within(dialog).getByLabelText("Note (required)")).toBeInTheDocument();
+    expect(confirm).toBeDisabled();
+    await userEvent.type(within(dialog).getByLabelText("Note (required)"), "Follow the plan.");
+    await userEvent.click(confirm);
+
+    const post = requests.find((r) => r.method === "POST");
+    expect(post?.url).toContain(`${GATE_PATH}/decision`);
+    expect(await post?.json()).toEqual({ decision: "decline", text: "Follow the plan." });
+    expect(requests.some((r) => r.url.includes("/change-requests/"))).toBe(false);
+  });
+
+  it("AC-2.14 without an open gate, records the decision in the hub; Decline needs a note (a11y)", async () => {
+    const lost = aChangeRequest({ approval_id: null });
+    const { requests } = showTab(tickets({ "AGH-202": ASKING }), path, {
+      [RECORDS]: aTicketRecords({ change_requests: [lost] }),
+      [`POST ${API}/change-requests/2/decision`]: aChangeRequest({ status: "declined" }),
+    });
+
+    const group = await within(panel()).findByRole("group", { name: "Decide change request 2" });
+    await userEvent.click(within(group).getByRole("button", { name: "Decline" }));
+    expect(within(panel()).getByRole("alert")).toHaveTextContent(
+      "Write a note to decline: the next preflight follows it.",
+    );
+    expect(within(panel()).getByLabelText("Note (required to decline)")).toHaveFocus();
+    expect(requests.some((r) => r.method === "POST")).toBe(false);
+    expect(await seriousViolations(panel())).toEqual([]);
+
+    await userEvent.type(
+      within(panel()).getByLabelText("Note (required to decline)"),
+      "Keep the current contract.",
+    );
+    await userEvent.click(within(group).getByRole("button", { name: "Decline" }));
+
+    const post = requests.find((r) => r.method === "POST");
+    expect(post?.url).toContain(`${API}/change-requests/2/decision`);
+    expect(await post?.json()).toEqual({
+      decision: "declined",
+      note: "Keep the current contract.",
+    });
+  });
+
+  it("AC-2.14 approves a lost run's request without a note", async () => {
+    const { requests } = showTab(tickets({ "AGH-202": ASKING }), path, {
+      [RECORDS]: aTicketRecords({ change_requests: [aChangeRequest({ approval_id: null })] }),
+      [`POST ${API}/change-requests/2/decision`]: aChangeRequest({ status: "approved" }),
+    });
+
+    await userEvent.click(await within(panel()).findByRole("button", { name: "Approve plan v3" }));
+
+    const post = requests.find((r) => r.method === "POST");
+    expect(await post?.json()).toEqual({ decision: "approved", note: null });
+  });
+
+  it("AC-2.14 a decided request reads who decided it, with the note", async () => {
+    const decided = aChangeRequest({
+      status: "declined",
+      approval_id: null,
+      decision: {
+        decision: "declined",
+        decided_by: "Dana Owner",
+        decided_at: "2026-10-21",
+        note: "Keep the contract",
+      },
+    });
+    showTab(tickets({ "AGH-202": STALE }), path, {
+      [RECORDS]: aTicketRecords({ change_requests: [decided] }),
+    });
+
+    expect(
+      await within(panel()).findByText(
+        "Change request 2 declined by Dana Owner · 2026-10-21: Keep the contract",
+      ),
+    ).toBeInTheDocument();
+    expect(within(panel()).queryByRole("group", { name: /^Decide/ })).toBeNull();
+  });
+});

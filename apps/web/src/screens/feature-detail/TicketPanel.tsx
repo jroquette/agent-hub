@@ -240,8 +240,7 @@ function PreflightDetail({
           {runs.map((run, index) => (
             <li key={index}>
               {fmtDateTime(run.ran_at, tz)} · checked plan v{run.plan_version} against main at{" "}
-              <span className="ah-mono">{run.commit.slice(0, 7)}</span> ·{" "}
-              {DRIFT_WORDS[run.drift]}
+              <span className="ah-mono">{run.commit.slice(0, 7)}</span> · {DRIFT_WORDS[run.drift]}
               {run.input_text && (
                 <span className="ah-small ah-muted">
                   {" "}
@@ -290,7 +289,11 @@ function StepDetail({
   const unrecorded = step.state === "unrecorded";
   const id = row.id ?? row.ref;
   const discoveries = (records?.preflight?.runs ?? []).filter((run) => run.input === "discovery");
-  if (step.name === "preflight" && records && (records.preflight || records.change_requests.length)) {
+  if (
+    step.name === "preflight" &&
+    records &&
+    (records.preflight || records.change_requests.length)
+  ) {
     return <PreflightDetail row={row} records={records} project={project} slug={slug} />;
   }
   switch (step.name) {
@@ -515,7 +518,9 @@ export function TicketPanel({
       {waiting && (
         <p className="ah-small ah-row ah-wrap" style={{ gap: 6, margin: 0 }}>
           <Icon name="hand" size="sm" />
-          <b style={{ fontWeight: 500 }}>Waiting for you: {waiting.label} passed with owner steps</b>
+          <b style={{ fontWeight: 500 }}>
+            Waiting for you: {waiting.label} passed with owner steps
+          </b>
           <Link
             to={{ search: evalSearch(params, waiting.record.delivery) }}
             replace

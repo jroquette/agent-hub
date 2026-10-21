@@ -574,11 +574,7 @@ function WaitingBanner({
         {first &&
           (change ? (
             <li>
-              <Link
-                to={{ search: evalSearch(params, first.delivery) }}
-                replace
-                state={FOCUS_EVAL}
-              >
+              <Link to={{ search: evalSearch(params, first.delivery) }} replace state={FOCUS_EVAL}>
                 {first.text}
               </Link>
             </li>
