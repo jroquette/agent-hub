@@ -4,9 +4,10 @@
 run, node and attempt (from the approval's ``gate_id``, ``<run>:<node>:<attempt>``, in the run's
 session ``run:<run>``), its form (``decision``, ``choice`` or ``text``), the choices with their
 labels and whether it takes a text, read from the workflow's current definition (the run graph
-does the same, AGH-226). A policy gate (``<step>__ask``, AM-14) is in no definition: it gets a
-fixed view, approve or reject, no text; an investigation gate (``<step>__investigation``) is
-refused here (409 ``investigation_gate``): its answer is a pick, retry or stop (P-6).
+does the same, AGH-226). A gate the definition does not hold is classified by the run's own
+record (``RunGateKinds``), never by its id: a policy gate (AM-14) gets a fixed view, approve or
+reject, no text; an investigation gate is refused here (409 ``investigation_gate``): its answer
+is a pick, retry or stop (P-6). An authored approval is shown as declared, whatever its id.
 ``DecideWorkflowGate`` checks the answer against that gate (422), then,
 under the run commands' lock (``RunGuard``), refuses a run that ended, whose child still runs or
 whose issue has another live run (409), has the launcher record the decision (``hub workflow
@@ -16,13 +17,14 @@ detached. A record that refuses the decision (the gate closed or was decided mea
 run can be resumed later.
 """
 
-from typing import Annotated, Final, Literal
+from collections.abc import Mapping
+from typing import Annotated, Final, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from agent_hub.core.approvals.approval import ApprovalKind
 from agent_hub.core.approvals.decide_gate import MAX_TEXT_BYTES
-from agent_hub.core.readmodels.read_ports import EventReadModels
+from agent_hub.core.readmodels.read_ports import EntityNotFoundError, EventReadModels
 from agent_hub.core.workflows.events import issue_key
 from agent_hub.core.workflows.gates import GateAnswer, GateForm, answer_problem, gate_form
 from agent_hub.core.workflows.launch import (
@@ -35,12 +37,11 @@ from agent_hub.core.workflows.launch import (
     engine_run_target,
     refuse_busy,
 )
-from agent_hub.core.workflows.nodes import RESERVED_SUFFIXES, ApprovalNode, WaitNode
+from agent_hub.core.workflows.nodes import ApprovalNode, WaitNode
 from agent_hub.core.workflows.workflow_reads import ProjectHubs
 
 RUN_SESSION_PREFIX: Final = "run:"
 MAX_CHOICE_CHARS: Final = 64
-POLICY_GATE_SUFFIX, INVESTIGATION_SUFFIX = RESERVED_SUFFIXES
 # A policy ask (``<step>__ask``, AM-14): planner-inserted, so in no definition; always this view.
 _POLICY_GATE: Final = ApprovalNode.model_validate(
     {"id": "policy-gate", "type": "approval", "message": "policy ask"}
@@ -107,11 +108,25 @@ class ResumeAfterDecisionError(RunLaunchError):
     """The decision is recorded, but the run's resume could not start (answers 502)."""
 
 
+class RunGateKinds(Protocol):
+    def gate_kinds(self, hub_path: str, run_id: str) -> Mapping[str, str]:
+        """The engine's own gates the run's record names, by gate id as recorded: ``policy``
+        or ``investigation`` (``policy_gates.recorded_gate_kinds``); empty when unreadable."""
+        ...
+
+
 class WorkflowGates:
     """The open person gates of engine runs, as hub web shows them."""
 
-    def __init__(self, runs: EventReadModels, hubs: ProjectHubs, plans: WorkflowPlans) -> None:
-        self._runs, self._hubs, self._plans = runs, hubs, plans
+    def __init__(
+        self,
+        runs: EventReadModels,
+        hubs: ProjectHubs,
+        plans: WorkflowPlans,
+        *,
+        kinds: RunGateKinds | None = None,
+    ) -> None:
+        self._runs, self._hubs, self._plans, self._kinds = runs, hubs, plans, kinds
 
     def gate(self, approval_id: str) -> WorkflowGate:
         """The open gate ``approval_id`` names; ``RunConflictError`` when it is no open gate a
@@ -135,14 +150,8 @@ class WorkflowGates:
         if approval.decided:
             reason = f"the gate is already decided ({approval.status})"
             raise RunConflictError(code="decided", reason=reason, run_id=run_id)
-        if node_id.endswith(INVESTIGATION_SUFFIX):
-            reason = "an investigation is answered on its scenario run's screen, not in Approvals"
-            raise RunConflictError(code="investigation_gate", reason=reason, run_id=run_id)
         run, hub_path = engine_run_target(self._runs, self._hubs, run_id)
-        node: object = _POLICY_GATE
-        if not node_id.endswith(POLICY_GATE_SUFFIX):
-            _, plan = self._plans.workflow_plan(run.project, run.workflow)
-            node = next((found for found in plan.all_nodes() if found.id == node_id), None)
+        node = self._node(run.project, run.workflow, hub_path, run_id=run_id, node_id=node_id)
         if not isinstance(node, ApprovalNode | WaitNode) or gate_form(node) == "timer":
             reason = f"the workflow {run.workflow} has no gate a person answers at {node_id}"
             raise RunConflictError(code="gate_not_in_workflow", reason=reason, run_id=run_id)
@@ -159,6 +168,32 @@ class WorkflowGates:
             text=_text_use(node, form),
         )
         return gate, hub_path
+
+    def _node(
+        self, project: str, workflow: str, hub_path: str, *, run_id: str, node_id: str
+    ) -> object:
+        """The gate's node: the definition's first, else the one the run's record names (a
+        policy gate's fixed view); an investigation gate is refused."""
+        node: object = None
+        missing: EntityNotFoundError | None = None
+        try:
+            _, plan = self._plans.workflow_plan(project, workflow)
+            node = next((found for found in plan.all_nodes() if found.id == node_id), None)
+        except EntityNotFoundError as error:
+            # A scenario run's label names no workflow: its record may still name the gate.
+            missing = error
+        if isinstance(node, ApprovalNode | WaitNode):
+            return node
+        kinds = {} if self._kinds is None else self._kinds.gate_kinds(hub_path, run_id)
+        kind = kinds.get(node_id)
+        if kind == "investigation":
+            reason = "an investigation is answered on its scenario run's screen, not here"
+            raise RunConflictError(code="investigation_gate", reason=reason, run_id=run_id)
+        if kind == "policy":
+            return _POLICY_GATE
+        if missing is not None:
+            raise missing
+        return node
 
 
 class DecideWorkflowGate:
