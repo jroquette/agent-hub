@@ -227,8 +227,9 @@ def _begin(folder: Path, begin: ScenarioStart) -> dict[str, JsonValue]:
 
 def resume(hub: Path, folder: Path, records: list[dict[str, JsonValue]]) -> int:
     """Continue a scenario run from its snapshot and records (the caller holds its lock and
-    checked its snapshot's hash); its gates' answers are the recorded decisions. An open
-    investigation must have its answer first."""
+    checked its snapshot's hash); its gates' answers are the recorded decisions. A recorded
+    reject of a policy gate cancels it before anything else; otherwise an open investigation
+    must have its answer first."""
     view = fold_records(records)
     pending = view.open_investigation
     last = view.investigations[-1] if view.investigations else None
@@ -236,7 +237,8 @@ def resume(hub: Path, folder: Path, records: list[dict[str, JsonValue]]) -> int:
         # A stop, or a pick whose workaround did not end ok, closed its gate and the run
         # stopped before what follows: it still cancels, or opens the next investigation.
         pending = last
-    if pending is not None and pending.choice is None and gate_recorded(records, pending):
+    waiting = pending is not None and pending.choice is None and gate_recorded(records, pending)
+    if pending is not None and waiting and rejected(records) is None:
         raise WorkflowRunError(
             f"the scenario run {folder.name} is paused at the investigation of step"
             f" {pending.step}: answer it with hub workflow respond {folder.name} --node"
@@ -302,6 +304,13 @@ def execute(
     )
     recorder = RecordedRun(folder=folder, events=events, sink=EventSink())
     roots = (hub.name, *(repo.dir for repo in effective.config.repos))
+    if resumed and (cancelled := rejected(records)) is not None:
+        # A recorded reject of a policy gate ends the run first, whatever else the record
+        # owes (an investigation's answer, a divergence) or the plan holds now.
+        recorder.run_ended(RunEnd("cancelled", now(), reason=cancelled))
+        typer.echo(f"run {run_id}: cancelled")
+        return 1
+    base = _planned(document, includes, {}) if resumed else None
     if answered is not None:
         given = AnswerPorts(
             hub=hub,
@@ -316,16 +325,14 @@ def execute(
         if (code := answer(given, answered)) is not None:
             return code
         records = read_records(folder)
-    elif resumed and header.get("mode") == INTERACTIVE:
-        base = _planned(document, includes, {})
+    elif base is not None and header.get("mode") == INTERACTIVE:
         if (owed_by := owed_investigation(base, records)) is not None:
             # A crash came between a divergence and its investigation: it opens now.
             return _owed_divergence(
                 folder, header, recorder, divergence=owed_by, opened=investigations(records)
             )
     owed = Owed()
-    if resumed:
-        base = _planned(document, includes, {})
+    if base is not None:
         owed = _owed(
             folder,
             records,
@@ -364,11 +371,6 @@ def execute(
         gates=RecordedAnswers(records),
         trace=log,
     )
-    if resumed and (cancelled := rejected(records)) is not None:
-        # A recorded reject of a policy gate ends the run, whatever the plan holds now.
-        ports.recorder.run_ended(RunEnd("cancelled", now(), reason=cancelled))
-        typer.echo(f"run {run_id}: cancelled")
-        return 1
     inputs = next((r["inputs"] for r in records if r.get("event") == "inputs"), {})
     report = run_workflow(
         plan,

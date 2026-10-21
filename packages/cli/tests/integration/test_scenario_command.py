@@ -2126,3 +2126,69 @@ def test_refuses_proposal_when_answered_after_ten_proposals(
     assert eleventh.exit_code == 1, eleventh.output
     assert "already answered (pick)" in plain(eleventh.stderr)
     assert len([line for line in records(hub) if line["event"] == "proposal"]) == 10
+
+
+# AGH-360 review round 4: a divergence and a policy pause in one pass. ``hold-send`` runs
+# ``order-held`` (failing until released) beside the write ``send-order``, which staging's
+# access ``ask`` gates; the pass pauses at that gate with the divergence recorded.
+
+HOLD_SEND = HOLD_WALK.replace("name: hold-walk", "name: hold-send") + (
+    "  - id: send-order\n    type: action\n    action: send-order\n    with: {target: api}\n"
+)
+
+
+def hold_send(hub: Path, marker: Path, held: Path) -> Result:
+    write_scenario(hub, HOLD_SEND)
+    commit_all(hub, "hold send")
+    args = ("scenario", "run", "hold-send", "--env", "staging", "--run-id", RUN)
+    started = hold_call(hub, marker, held, *args)
+    assert started.exit_code == 0, started.output
+    assert plain(started.stdout).splitlines()[-1] == f"run {RUN}: paused at send-order__ask"
+    return started
+
+
+def calls_of(hub: Path, node: str) -> int:
+    return len(
+        [line for line in records(hub) if line["event"] == "action" and line["node"] == node]
+    )
+
+
+def test_ends_cancelled_when_policy_gate_rejected_beside_owed_investigation(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_send(hub, marker, held)
+
+    rejected = hold_call(hub, marker, held, "workflow", "reject", RUN, "send-order__ask")
+
+    assert rejected.exit_code == 1, rejected.output
+    assert plain(rejected.stdout).splitlines()[-1] == f"run {RUN}: cancelled"
+    lines = records(hub)
+    assert [line["status"] for line in lines if line["event"] == "end"] == ["cancelled"]
+    assert [line for line in lines if line["event"] == "investigation"] == []
+    assert modes(marker) == ["run"]
+
+
+def test_opens_investigation_when_policy_gate_approved_beside_divergence(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    hold_send(hub, marker, held)
+
+    approved = hold_call(hub, marker, held, "workflow", "approve", RUN, "send-order__ask")
+
+    assert approved.exit_code == 0, approved.output
+    assert (
+        plain(approved.stdout)
+        .splitlines()[-1]
+        .startswith(
+            f"run {RUN}: paused at order-held (investigation): open /scenarios/hold-send/runs/{RUN}"
+        )
+    )
+    # Nothing runs again before the person answers the investigation.
+    assert modes(marker) == ["run"]
+    assert (calls_of(hub, "order-held"), calls_of(hub, "send-order")) == (1, 0)
+    held.touch()
+    retried = respond(hub, marker, held, "retry")
+    assert retried.exit_code == 0, retried.output
+    assert plain(retried.stdout).splitlines()[-1] == f"run {RUN}: done"
+    # The retry runs order-held once more; the approved write runs once.
+    assert (calls_of(hub, "order-held"), calls_of(hub, "send-order")) == (2, 1)
