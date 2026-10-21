@@ -1043,3 +1043,44 @@ def test_leaves_no_run_folder_when_snapshot_write_fails(
     assert result.exit_code != 0
     assert not (hub / ".agent-runs" / "workflows" / RUN).exists()
     assert modes(marker) == []
+
+
+# AGH-359 (F2): only a gate the run's record names as a policy gate cancels on a reject; an
+# authored body approval recorded ``<group>__ask`` is read like any approval.
+
+AUTHORED_ASK_SCENARIO = """\
+version: 1
+kind: scenario
+name: order-walk
+revision: 1
+inputs:
+  ref: {type: string, required: true}
+nodes:
+  - id: g
+    type: loop_group
+    max_iterations: 2
+    until_when: "$ask.output.decision == 'reject'"
+    nodes:
+      - id: ask
+        type: approval
+        message: Stop looping?
+  - id: check-order
+    type: action
+    depends_on: [g]
+    action: get-order
+    with: {target: api, ref: $INPUTS.ref}
+"""
+
+
+def test_reads_reject_when_authored_body_approval_named_ask_rejected(
+    hub: Path, marker: Path
+) -> None:
+    write_scenario(hub, AUTHORED_ASK_SCENARIO)
+
+    paused = run_scenario(hub, marker, "local")
+    rejected = decide_gate(hub, marker, "reject", gate="g__ask")
+
+    assert plain(paused.stdout).splitlines()[-1] == f"run {RUN}: paused at g__ask"
+    assert rejected.exit_code == 0, rejected.output
+    assert plain(rejected.stdout).splitlines()[-1] == f"run {RUN}: done"
+    assert modes(marker) == ["run"]

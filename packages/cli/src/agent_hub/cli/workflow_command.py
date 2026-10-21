@@ -91,6 +91,7 @@ from agent_hub.cli.workflow_policy import (
     gates_file,
     node_effects,
     owed,
+    record_asks,
     rejected,
     resumed_prior,
     snapshot_gates,
@@ -770,6 +771,7 @@ def _continue_in_environment(
         effects=node_effects(base, environment),
         environment=environment,
     )
+    record_asks(folder, owes.steps)
     asks = recorded | owes.steps
     if (cancelled := rejected(records)) is not None:
         events = _events(hub, folder.name, header, end_index=len(ends_of(records)))
