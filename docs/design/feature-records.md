@@ -88,7 +88,7 @@ entries until the first regular file named as the review check names a round (`<
 ### `tickets/<ticket>/` and `change-requests/`
 
 The ticket flow's records (two-level-flows S2), written by the `implement` workflow's nodes, never by the app, with
-one exception: hub web creates a request's `<n>.decision.md` when its run has no open gate (AC-2.14, D-10;
+one exception: hub web creates a request's `<n>.decision.md` when its run is gone (AC-2.14, D-10;
 [API.md](../API.md) "Plan change requests").
 `<ticket>` is the ticket's plan key or tracker id, matched in any case.
 
@@ -229,7 +229,8 @@ A15), it reads "Acceptance eval undated · evaluate again" (no usable `evaluated
 "Sign-off possible after <date-time>" (dated at or after the read; the minute after which a sign-off can follow it,
 in UTC, "21 Nov 2026, 09:01:00 UTC"), and neither reads "Waiting for you". The detail serves
 the same wait as `acceptance_eval.owner_wait` ([API.md](../API.md)). With no AC to list (no `features.json`, or every
-AC withdrawn), the step is not done, "Waiting on owner steps · no ACs listed", until a later owner SHIP of any scope
+AC withdrawn), the step is `waiting` (when it is the gate, A19), "Waiting on owner steps · no ACs listed", until a
+later owner SHIP of any scope
 exists; the app cannot write that one, so the owner writes it by hand.
 
 Each feature (list and detail) carries `waiting_on_owner`, the owner decision it waits on: `change_request` (with the
