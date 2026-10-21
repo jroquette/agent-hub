@@ -1,0 +1,30 @@
+---
+name: property-based-testing
+description: Write property-based tests (Hypothesis, fast-check or the repo's own library) for code that claims a property — parsers, serialisers, encoders, normalisers, pure transforms — each property grounded in the code's types, docs or callers, then classify every failure as a bug, a wrong property or an unclear spec. Use when example tests cover a few inputs of code that must hold for all of them.
+disable-model-invocation: true
+argument-hint: "<function, module or path>"
+---
+
+# /property-based-testing <target>
+
+Paths below are relative to the hub (the directory with `hub.json`); repos are its siblings, listed in `hub.json` → `repos`, each with its own `AGENTS.md`: read the one for the target's repo and its testing rules.
+A property test states what holds for every valid input and lets the library search for a counterexample. It pays off only where the code claims such a property; elsewhere example tests are the right tool.
+Step types: `script` (commands, no judgement), `agent` (reasoning in the session), `gate` (the user decides).
+
+1. `script` **Scope**: read the target, its types and docstrings, its callers (`rg` the repo) and its existing tests. Find the repo's property library in its dependency files. **Stop** and ask when there is none: adding the library is the user's decision.
+2. `agent` **Claims**: list what the code says it guarantees, each with its source, in this order of authority: an external spec or format, the types, the docstrings, the existing tests, the name. Test only claims the code makes; an assumed claim becomes a question for the user.
+3. `agent` **Properties**: for each claim, the strongest property it supports, weakest to strongest: no crash on valid input → output type and shape → an invariant (sorted, bounded, unique) → idempotence (`f(f(x)) == f(x)`) → round trip (`decode(encode(x)) == x`) or agreement with a simpler trusted oracle.
+   Reject a **tautology** (the test recomputes the implementation: `add(a, b) == a + b`) and a property any output satisfies.
+   **No good property** is a valid outcome: say so and leave the code to example tests.
+4. `agent` **Write** the tests in the repo's layout and names:
+   - constraints go in the input strategies; filter (`assume`, `filter`) only relations between generated values, never most of the input space;
+   - pin each known edge (empty, zero, maximum, a past bug) as an explicit example (`@example` in Hypothesis, `examples` in fast-check);
+   - catch only the documented exception, never wrap the body in `try`/`except`;
+   - keep the library's default example count locally; the deadline off for code with real work in it, so the test does not flake.
+5. `script` **Run** the new tests with the repo's test command and keep the shrunk counterexample of each failure.
+6. `agent` **Reflect** on both outcomes:
+   - a failure is a **bug** (the code breaks its own claim: write the reproduction), a **wrong property** (fix or drop the test) or an **unclear spec** (a question for the user, never a guess);
+   - a pass: would the test fail if the code were wrong? Break the function in your head (a wrong constant, a dropped branch); when nothing would fail, the property is too weak: strengthen it or drop it. `/test-strength` measures this when the repo has a mutation tool.
+7. `agent` **Report** one row per property: the claim and its source, the property, its rung on the ladder, the result and the class (bug, wrong property, unclear spec, passes). Each bug gets its counterexample and a reproduction. List the example tests each property now makes redundant: removing them is the author's call, never done here.
+
+A bug found here goes to `/fix` with its reproduction; this skill does not change production code.
