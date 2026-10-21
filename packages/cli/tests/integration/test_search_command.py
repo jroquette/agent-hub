@@ -21,6 +21,7 @@ import pytest
 from typer.testing import CliRunner, Result
 
 from agent_hub.cli.database_path import default_database_path
+from agent_hub.cli.knowledge_checkout import GitKnowledgeCheckout
 from agent_hub.cli.main import app
 from agent_hub.cli.registry_path import default_registry_path
 from agent_hub.core.json_form import dump_json
@@ -756,3 +757,136 @@ def test_reindexes_within_budget_when_hub_large(
     assert result.stdout == f"reindexed {BUDGET_FILES} files for demo (0 skipped)\n"
     # Target about 3 s; the bound leaves room for a slow machine.
     assert elapsed < 10.0
+
+
+def test_prints_no_text_line_when_note_body_empty(
+    knowledge_hub: KnowledgeHubFactory, run_command: CommandRunner
+) -> None:
+    hub = knowledge_hub({"brain/marker.md": b"---\nstatus: draft\n---\n", "brain/other.md": MARKER})
+
+    result = run_command(hub, "search", "marker")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == (
+        "brain/marker.md  doc  draft\n"
+        "marker.md\n"
+        "(no text)\n"
+        "\n"
+        "brain/other.md  doc\n"
+        "Note\n"
+        "# Note marker\n"
+    )
+
+
+ESC = "\x1b"
+RLO = "\u202e"
+CSI = "\u009b"
+HOSTILE_NOTE = (
+    f'---\nstatus: "{ESC}[31m{RLO}draft"\n---\n'
+    f"# Bad {ESC}[2J{RLO} title\n\nmarker {RLO}evil {CSI}x\n"
+).encode()
+
+
+def test_escapes_hostile_text_when_results_printed(
+    knowledge_hub: KnowledgeHubFactory, run_command: CommandRunner
+) -> None:
+    hub = knowledge_hub({"brain/hostile.md": HOSTILE_NOTE})
+
+    result = run_command(hub, "search", "marker")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == (
+        'brain/hostile.md  doc  "\\u001b[31m\\u202edraft"\n'
+        '"Bad \\u001b[2J\\u202e title"\n'
+        '"# Bad \\u001b[2J\\u202e title marker \\u202eevil \\u009bx"\n'
+    )
+
+
+def test_escapes_hostile_text_when_json_printed(
+    knowledge_hub: KnowledgeHubFactory, run_command: CommandRunner
+) -> None:
+    hub = knowledge_hub({"brain/hostile.md": HOSTILE_NOTE})
+
+    result = run_command(hub, "search", "marker", "--json")
+
+    found = json_of(result)
+    for raw in (ESC, RLO, CSI):
+        assert raw not in result.stdout
+    assert "\\u202e" in result.stdout
+    assert "\\u009b" in result.stdout
+    (hit,) = found["results"]
+    assert hit["title"] == f"Bad {ESC}[2J{RLO} title"
+    assert hit["status"] == f"{ESC}[31m{RLO}draft"
+    assert hit["snippet"] == f"# Bad {ESC}[2J{RLO} title marker {RLO}evil {CSI}x"
+
+
+def test_escapes_hostile_name_when_skip_line_printed(
+    knowledge_hub: KnowledgeHubFactory, run_command: CommandRunner
+) -> None:
+    hub = knowledge_hub({f"brain/{RLO}big.md": sized(MARKER, 262_145)})
+
+    result = run_command(hub, "search", "marker")
+
+    assert result.exit_code == 0, result.output
+    assert result.stderr == 'hub search: skipped "brain/\\u202ebig.md": larger than 256 KiB\n'
+
+
+def test_escapes_hostile_query_when_nothing_matches(
+    knowledge_hub: KnowledgeHubFactory, run_command: CommandRunner
+) -> None:
+    hub = knowledge_hub({"brain/a.md": MARKER})
+
+    result = run_command(hub, "search", f"zebra{RLO}")
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == 'no results for "zebra\\u202e"\n'
+
+
+def test_escapes_hostile_kind_when_kind_unknown(
+    knowledge_hub: KnowledgeHubFactory, run_command: CommandRunner
+) -> None:
+    hub = knowledge_hub({"brain/a.md": MARKER})
+
+    result = run_command(hub, "search", "marker", "--kind", f"{ESC}x")
+
+    assert result.exit_code == 2
+    assert result.stderr == KINDS_LINE.replace("kind nope;", 'kind "\\u001bx";')
+
+
+def test_escapes_hostile_repo_name_when_not_checked_out(
+    knowledge_hub: KnowledgeHubFactory,
+    run_command: CommandRunner,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # hub.json's schema keeps such a name out; the line stays escaped whatever the listing says.
+    hub = knowledge_hub({"brain/a.md": MARKER})
+    monkeypatch.setattr(GitKnowledgeCheckout, "not_checked_out", lambda _: (f"{RLO}evil",))
+
+    result = run_command(hub, "search", "marker")
+
+    assert result.exit_code == 0, result.output
+    assert result.stderr == (
+        '"hub search: \\u202eevil: not checked out; its docs are not searched"\n'
+    )
+
+
+def test_exits_one_when_database_busy(
+    knowledge_hub: KnowledgeHubFactory,
+    run_command: CommandRunner,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hub = knowledge_hub({"brain/a.md": MARKER})
+    assert run_command(hub, "search", "marker").exit_code == 0
+    monkeypatch.setattr(knowledge_index, "BUSY_TIMEOUT_MS", 50)
+    holder = sqlite3.connect(default_database(), isolation_level=None)
+    try:
+        holder.execute("BEGIN IMMEDIATE")
+        result = run_command(hub, "search", "marker")
+    finally:
+        holder.close()
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == (
+        "hub search: the knowledge index database is busy: database is locked\n"
+    )

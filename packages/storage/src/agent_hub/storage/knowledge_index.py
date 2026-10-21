@@ -39,10 +39,11 @@ from agent_hub.core.knowledge.knowledge_index import (
 )
 from agent_hub.core.knowledge.search_query import fts5_match, snippet_line
 from agent_hub.storage.db import knowledge_documents
-from agent_hub.storage.engine import create_sqlite_engine
+from agent_hub.storage.engine import BUSY_TIMEOUT_MS, create_sqlite_engine
 from agent_hub.storage.errors import (
     DatabaseAccessError,
     Fts5UnavailableError,
+    MigrationError,
     describe_database_error,
 )
 from agent_hub.storage.event_store import DatabaseBusyError
@@ -211,7 +212,8 @@ class SqliteKnowledgeIndex:
 
 def open_knowledge_index(path: Path, *, connect: Connect = sqlite3.connect) -> SqliteKnowledgeIndex:
     """Open the knowledge index in the database at ``path``, creating its directories and
-    upgrading it to head; ``Fts5UnavailableError`` first when SQLite has no FTS5."""
+    upgrading it to head; ``Fts5UnavailableError`` first when SQLite has no FTS5, and
+    ``DatabaseBusyError`` when another connection holds the write lock past the busy timeout."""
     if not fts5_available(connect):
         raise Fts5UnavailableError(FTS5_MISSING)
     # The path comes from the user: quoted and escaped, so a message stays on one line.
@@ -221,12 +223,23 @@ def open_knowledge_index(path: Path, *, connect: Connect = sqlite3.connect) -> S
     except OSError as error:
         msg = f"cannot create the directory of the database {quoted}: {error}"
         raise DatabaseAccessError(msg) from error
-    upgrade_to_head(path)
-    engine = create_sqlite_engine(path)
+    # Read here, not bound at import: the module's value is the tests' seam.
+    busy_timeout_ms = BUSY_TIMEOUT_MS
+    try:
+        upgrade_to_head(path, busy_timeout_ms=busy_timeout_ms)
+    except MigrationError as error:
+        cause = error.__cause__
+        # Another writer held the lock past the timeout: the line apply gives, not a schema one.
+        if isinstance(cause, SQLAlchemyError) and _is_busy(cause):
+            raise _database_error(cause, "open") from error
+        raise
+    engine = create_sqlite_engine(path, busy_timeout_ms=busy_timeout_ms)
     try:
         with engine.connect():
             pass
     except SQLAlchemyError as error:
+        if _is_busy(error):
+            raise _database_error(error, "open") from error
         msg = f"cannot open the database {quoted}: {describe_database_error(error)}"
         raise DatabaseAccessError(msg) from error
     return SqliteKnowledgeIndex(engine)

@@ -20,7 +20,7 @@ from alembic.config import CommandLine, Config
 from alembic.util import CommandError
 from sqlalchemy.exc import SQLAlchemyError
 
-from agent_hub.storage.engine import create_sqlite_engine
+from agent_hub.storage.engine import BUSY_TIMEOUT_MS, create_sqlite_engine
 from agent_hub.storage.errors import MigrationError, describe_database_error
 
 MIGRATIONS_DIR = Path(__file__).with_name("migrations")
@@ -37,13 +37,14 @@ def alembic_config(database_url: str, *, cmd_opts: Namespace | None = None) -> C
     return config
 
 
-def upgrade_to_head(path: Path) -> None:
+def upgrade_to_head(path: Path, *, busy_timeout_ms: int = BUSY_TIMEOUT_MS) -> None:
     """Upgrade the SQLite file at ``path`` to the latest revision; a no-op when already there.
+    It waits up to ``busy_timeout_ms`` for a lock another connection holds.
 
     The upgrade runs on a ``write_lock`` connection (``BEGIN IMMEDIATE``), so when several
     processes open a fresh file together, one migrates and the others then find it at head.
     """
-    engine = create_sqlite_engine(path)
+    engine = create_sqlite_engine(path, busy_timeout_ms=busy_timeout_ms)
     try:
         with (
             engine.connect().execution_options(write_lock=True) as connection,

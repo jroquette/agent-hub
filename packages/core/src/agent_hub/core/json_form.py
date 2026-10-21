@@ -37,13 +37,14 @@ class InvalidJsonError(AgentHubError):
         super().__init__(message)
 
 
-def dump_json(value: JsonValue) -> bytes:
-    """Return ``value`` in the JSON byte form.
+def dump_json(value: JsonValue, *, ensure_ascii: bool = False) -> bytes:
+    """Return ``value`` in the JSON byte form; with ``ensure_ascii`` every character outside
+    ASCII is a ``\\u`` escape (for a terminal: no bidi or C1 control reaches it raw).
 
     Raises ``ValueError`` for a NaN or infinite float: ``json`` would write ``NaN``/``Infinity``,
     which is not JSON.
     """
-    text = json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False, allow_nan=False)
+    text = json.dumps(value, indent=2, sort_keys=True, ensure_ascii=ensure_ascii, allow_nan=False)
     return (text + "\n").encode("utf-8")
 
 
