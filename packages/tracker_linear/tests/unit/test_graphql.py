@@ -1186,3 +1186,64 @@ def test_sends_team_uuid_and_texts_when_create_issue_called(
         "Plain words.",
         "Todo",
     )
+
+
+class _FailingOn:
+    """A post that answers through ``api`` but fails the request named ``operation`` with
+    ``failure``: an exception raised, or a ``(status, body)`` answered."""
+
+    def __init__(self, api: Any, operation: str, failure: BaseException | tuple[int, bytes]):
+        self._api, self._operation, self._failure = api, operation, failure
+        self.operations: list[str] = []
+
+    def __call__(
+        self, url: str, headers: Mapping[str, str], body: bytes, *, timeout_s: float
+    ) -> tuple[int, bytes]:
+        name = json.loads(body)["operationName"]
+        self.operations.append(name)
+        if name != self._operation:
+            return self._api(url, headers, body, timeout_s=timeout_s)  # type: ignore[no-any-return]
+        if isinstance(self._failure, BaseException):
+            raise self._failure
+        return self._failure
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [TimeoutError("timed out"), (503, b""), (429, b"")],
+    ids=["timeout", "http-503", "http-429"],
+)
+def test_never_suggests_retry_when_create_issue_request_fails(
+    fake_linear_api: Any,
+    synthetic_key: str,
+    *,
+    failure: BaseException | tuple[int, bytes],
+) -> None:
+    # Linear may have made the issue before the answer was lost: a retry could duplicate it.
+    post = _FailingOn(fake_linear_api, "CreateIssue", failure)
+    client = LinearGraphqlTrackerClient(environ={LINEAR_API_KEY_VARIABLE: synthetic_key}, post=post)
+
+    with pytest.raises(TrackerError) as raised:
+        client.create_issue("DEM", "A finding", "Plain words.")
+
+    assert str(raised.value).startswith("create_issue: ")
+    assert "retry" not in raised.value.fix.replace("not retried", "")
+    assert raised.value.fix == (
+        "check the team's issues in Linear: it may have been created, and it is not retried"
+    )
+    assert post.operations == ["FindTeams", "CreateIssue"]
+
+
+def test_keeps_retry_fix_when_create_issue_team_lookup_times_out(
+    fake_linear_api: Any, synthetic_key: str, tracker_backend: FakeTrackerBackend
+) -> None:
+    # Nothing is created before the team is found: retrying the lookup is safe.
+    before = copy.deepcopy(tracker_backend)
+    post = _FailingOn(fake_linear_api, "FindTeams", TimeoutError("timed out"))
+    client = LinearGraphqlTrackerClient(environ={LINEAR_API_KEY_VARIABLE: synthetic_key}, post=post)
+
+    with pytest.raises(TrackerError, match=r"retry later"):
+        client.create_issue("DEM", "A finding", "Plain words.")
+
+    assert post.operations == ["FindTeams"]
+    assert tracker_backend == before
