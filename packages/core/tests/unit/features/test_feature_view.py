@@ -86,6 +86,7 @@ def test_serializes_golden_path_when_feature_built() -> None:
         "meta": "1 of 17 merged",
         "reason": None,
         "progress": {"done": 1, "total": 17},
+        "signal": None,
     }
     assert document["golden_path"]["steps"][2]["state"] == "unrecorded"
 

@@ -124,6 +124,10 @@
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/summarize"
     },
+    ".claude/skills/test-strength": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/test-strength"
+    },
     ".claude/skills/triage": {
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/triage"
@@ -257,7 +261,7 @@
     "plugin/hub-workflow/NOTICE": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "c9f555d2560671e182f513353a4eaa33bab9c9074774634e5730e4992994c3a3"
+      "sha256": "b994353a7cd550cb24782aab8cd2e854f336bdf78733e08ef4dbf54621daaecb"
     },
     "plugin/hub-workflow/agents/architect.md": {
       "executable": false,
@@ -483,6 +487,16 @@
       "executable": false,
       "ownership": "managed",
       "sha256": "1f09f3d48095ae554ea75c842e769b3ed102ea61cad6c74d47bc1689335e5a3c"
+    },
+    "plugin/hub-workflow/skills/test-strength/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "a7e03678ff2eb0353d909246c9d0d8b404e960d34ca2168fa424ef380a7d1ab0"
+    },
+    "plugin/hub-workflow/skills/test-strength/references/tools.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "efed13cdc04349eb00212dcfca34e3dce1d8590bff1bfbf189da0b487e965654"
     },
     "plugin/hub-workflow/skills/triage/SKILL.md": {
       "executable": false,
