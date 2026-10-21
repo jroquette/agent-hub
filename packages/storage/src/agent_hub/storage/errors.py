@@ -15,6 +15,10 @@ class DatabaseAccessError(StorageError):
     """The event database could not be opened, read or written."""
 
 
+class Fts5UnavailableError(StorageError):
+    """The interpreter's SQLite has no FTS5 module, which the knowledge index needs (D-fts5)."""
+
+
 def describe_database_error(error: Exception) -> str:
     """What went wrong, on one line, without the SQL statement or its bound parameters.
 
