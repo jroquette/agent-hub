@@ -16,6 +16,7 @@ import {
   aPreflightRun,
   aTicketFlow,
   aTicketRecords,
+  anEvalRecord,
   ProblemReply,
   renderWithApi,
   type FeatureTickets,
@@ -133,14 +134,14 @@ describe("Waiting banner (AC-2.8, AC-1.10)", () => {
         (_, element) =>
           element?.tagName === "LI" &&
           element.textContent.startsWith(
-            "Plan change request 2 from AGH-202: plan v2 → v3 · affects AGH-203 · waiting since",
+            "Plan change request 2 from AGH-202: plan v2 → v3 · affects AGH-203 · waiting ",
           ),
       )
     ).closest('[role="status"]');
     if (!(banner instanceof HTMLElement)) throw new Error("no banner");
     expect(within(banner).getByText("Waiting for you")).toBeInTheDocument();
     // A20: how long the request has waited.
-    expect(banner).toHaveTextContent("waiting since");
+    expect(banner).toHaveTextContent("waiting");
     expect(screen.getByRole("list", { name: "Golden path" })).toHaveTextContent("v3 waits for you");
     expect(await seriousViolations(document.body)).toEqual([]);
   });
@@ -168,7 +169,7 @@ describe("Waiting banner (AC-2.8, AC-1.10)", () => {
 
   // U5: a request that arrives while the page is open is said once in a polite region.
   it("AC-2.8 announces a newly arrived change request once", async () => {
-    let requests: ReturnType<typeof aChangeRequest>[] = [];
+    let requests: ReturnType<typeof aChangeRequest>[] = [aChangeRequest({ n: 1 })];
     const { queryClient } = renderWithApi(<FeatureDetailScreen />, {
       routes: { [API]: () => aFeatureDetail({ change_requests: requests }) },
       path: "/features/agent-hub/control-plane?doc=acs",
@@ -178,12 +179,43 @@ describe("Waiting banner (AC-2.8, AC-1.10)", () => {
     const region = document.querySelector('[aria-live="polite"].ah-sr');
     expect(region).toHaveTextContent(/^$/);
 
-    requests = [aChangeRequest()];
+    requests = [aChangeRequest({ n: 1 }), aChangeRequest()];
     await queryClient.invalidateQueries();
 
+    // Q12: only the new one: the request open at load is the banner's.
     await vi.waitFor(() => {
-      expect(region).toHaveTextContent("AGH-202 waits for you: plan change request 2.");
+      expect(region).toHaveTextContent(/^AGH-202 waits for you: plan change request 2\.$/);
     });
+  });
+
+  // UX F2, A18/A19: a sign-off the owner writes by hand is a wait too: the banner signposts it,
+  // with no button (the Eval tab's callout says what to write).
+  it("A19 lists the hand-written sign-off in the banner, with no button", async () => {
+    const record = anEvalRecord({ delivery: "feature", tickets: [], acs: "all" });
+    const { router } = renderWithApi(<FeatureDetailScreen />, {
+      routes: {
+        [API]: aFeatureDetail({
+          evals: [record],
+          acceptance_eval: {
+            delivery: "feature",
+            verdict: "SHIP-WITH-OWNER-STEPS",
+            owner_wait: { state: "no_acs", acs: [], reopened: [] },
+          },
+        }),
+      },
+      path: "/features/agent-hub/control-plane?doc=acs",
+      route: "features/:project/:slug",
+    });
+
+    const line = await screen.findByRole("link", {
+      name: /^Acceptance: sign off by hand · no ACs listed/,
+    });
+    const banner = line.closest('[role="status"]');
+    if (!(banner instanceof HTMLElement)) throw new Error("no banner");
+    expect(within(banner).getByText("Waiting for you")).toBeInTheDocument();
+    expect(within(banner).queryByRole("button")).toBeNull();
+    await userEvent.click(line);
+    expect(router.state.location.search).toBe("?doc=eval&eval=feature");
   });
 
   it("AC-2.8 shows no banner once the request is decided", async () => {
@@ -437,16 +469,57 @@ describe("Deciding a change request in the ticket panel (AC-2.7, AC-2.12, AC-2.1
     expect(line).toHaveFocus();
   });
 
-  // The gate's own text setting does not lift A20's rule: a decline still asks for its note.
-  it("AC-2.12 asks for the decline's note even when the gate takes no text", async () => {
-    showTab(tickets({ "AGH-202": ASKING }), path, {
-      [RECORDS]: aTicketRecords({ change_requests: [aChangeRequest()] }),
-      [`${GATE_PATH}/gate`]: { ...gate, text: "off" },
+  // UX F1, Q1: after a decision through the gate, the panel says it went to the run, then focus
+  // lands on the decided line once the run records it.
+  it("AC-2.7 moves focus to the decided line after a decision through the gate", async () => {
+    let stage: "open" | "sent" | "recorded" = "open";
+    const sent = aChangeRequest({ approval_id: null, decidable_here: false });
+    const recorded = aChangeRequest({
+      status: "approved",
+      approval_id: null,
+      decision: {
+        decision: "approved",
+        decided_by: "Dana Owner",
+        decided_at: "2026-10-21",
+        note: null,
+      },
+    });
+    const { queryClient } = showTab(tickets({ "AGH-202": ASKING }), path, {
+      [RECORDS]: () =>
+        aTicketRecords({
+          change_requests: [
+            stage === "open" ? aChangeRequest() : stage === "sent" ? sent : recorded,
+          ],
+        }),
+      [`${GATE_PATH}/gate`]: gate,
+      [`POST ${GATE_PATH}/decision`]: () => {
+        stage = "sent";
+        return {
+          approval_id: GATE,
+          run_id: "implement-202",
+          project: "agent-hub",
+          decision: "approve",
+        };
+      },
     });
 
-    await userEvent.click(await within(panel()).findByRole("button", { name: "Decline" }));
+    await userEvent.click(await within(panel()).findByRole("button", { name: "Approve" }));
+    const confirm = await screen.findByRole("dialog", { name: "Approve?" });
+    await userEvent.click(within(confirm).getByRole("button", { name: "Approve" }));
+    await queryClient.invalidateQueries();
+    expect(
+      await within(panel()).findByText(
+        "Decision sent to its run; this shows it once the run records it.",
+      ),
+    ).toBeInTheDocument();
 
-    expect(screen.getByRole("dialog", { name: "Decline?" })).toBeInTheDocument();
+    stage = "recorded";
+    await queryClient.invalidateQueries();
+
+    const line = await within(panel()).findByText(
+      "Change request 2 approved by Dana Owner · 2026-10-21",
+    );
+    expect(line).toHaveFocus();
   });
 
   // A20, U13: evidence, proposal, consequences and the wait before the gate's buttons.
@@ -465,9 +538,14 @@ describe("Deciding a change request in the ticket panel (AC-2.7, AC-2.12, AC-2.1
       "Plan drift: it changes an AC, a contract or another ticket, so AGH-202 is paused until you answer.",
     );
     expect(block).toHaveTextContent("Plan v2 becomes v3 (a new amendment).");
-    expect(block).toHaveTextContent("AGH-203 run preflight again before they go on.");
+    expect(block).toHaveTextContent("AGH-203 runs preflight again before it goes on.");
     expect(block).toHaveTextContent("Nothing is merged or pushed.");
-    expect(block).toHaveTextContent("waiting since 2 h ago");
+    expect(block).toHaveTextContent("waiting 2 h");
+    // UX F4: the request is a heading, its body's headings one level below it.
+    expect(
+      within(block).getByRole("heading", { level: 4, name: "Plan change request 2: plan v2 → v3" }),
+    ).toBeInTheDocument();
+    expect(within(block).getByRole("heading", { level: 5, name: "Evidence" })).toBeInTheDocument();
     const evidence = within(block).getByText("What changes if you approve");
     const decline = await within(block).findByRole("button", { name: "Decline" });
     expect(
@@ -475,6 +553,34 @@ describe("Deciding a change request in the ticket panel (AC-2.7, AC-2.12, AC-2.1
     ).toBeTruthy();
     vi.useRealTimers();
     expect(await seriousViolations(panel())).toEqual([]);
+  });
+
+  // UX F3: the consequence agrees with how many tickets it names.
+  it("A20 says several affected tickets in the plural", async () => {
+    showTab(tickets({ "AGH-202": ASKING }), path, {
+      [RECORDS]: aTicketRecords({
+        change_requests: [aChangeRequest({ affected: ["AGH-203", "AGH-204"] })],
+      }),
+      [`${GATE_PATH}/gate`]: gate,
+    });
+
+    expect(
+      await within(panel()).findByText("AGH-203, AGH-204 run preflight again before they go on."),
+    ).toBeInTheDocument();
+  });
+
+  // Q13: a request cut at the head read says so beside its text.
+  it("A20 says a long request is cut and where to read it whole", async () => {
+    showTab(tickets({ "AGH-202": ASKING }), path, {
+      [RECORDS]: aTicketRecords({ change_requests: [aChangeRequest({ body_cut: true })] }),
+      [`${GATE_PATH}/gate`]: gate,
+    });
+
+    expect(
+      await within(panel()).findByText(
+        "The request goes on past what is shown: read the full request in Brain before deciding.",
+      ),
+    ).toBeInTheDocument();
   });
 
   // U12: the panel's one primary act opens Preflight at the request.

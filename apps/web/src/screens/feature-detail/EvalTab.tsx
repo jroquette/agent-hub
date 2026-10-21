@@ -772,7 +772,7 @@ function AcceptancePrompt({
       return (
         <Banner tone="info" boxed>
           {lines(
-            "Acceptance: waiting on owner steps · no ACs listed",
+            "Waiting for you · Acceptance: sign off by hand · no ACs listed",
             "features.json lists no live AC, so the app has nothing to sign off. Write the sign-off by hand: evals/owner-signoff.md with verdict SHIP and provenance owner, in a hub PR.",
           )}
         </Banner>

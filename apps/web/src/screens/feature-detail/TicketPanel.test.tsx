@@ -300,7 +300,8 @@ describe("TicketPanel (AC-1.10)", () => {
     await userEvent.click(await screen.findByRole("link", { name: "Settle them in the Eval tab" }));
 
     expect(await screen.findByRole("button", { name: /^AGH-202\b.*1 eval/ })).toHaveFocus();
-  });
+    // Long under the fast gate's parallel lanes, as the panel's axe test is.
+  }, 20_000);
 
   // AGH-330 F8: the Eval step's date reads as the page writes date-times.
   it("AC-1.10 dates the Eval step as the page does", () => {
