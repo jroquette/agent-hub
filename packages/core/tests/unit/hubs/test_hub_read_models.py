@@ -652,3 +652,27 @@ def test_captures_skill_units_when_capture_given() -> None:
     last = store.last("demo", unit.unit_path)
     assert last is not None
     assert last.first
+
+
+def test_resolves_item_lookups_without_doctor_when_lock_matches_pin() -> None:
+    # AGH-298 (AC-295.6, A11): the item writes' and history's lookups read the registry and
+    # hub.json only, never the hub card's lock view and its doctor drift check.
+    hub = fake_hub_of(a_skills_fixture_tree(), hub_json=hub_json_bytes(pin=RUNNING))
+    hub.lock = a_lock()
+    models, reader, _ = read_models({DEMO: hub, OTHER: a_demo_hub()}, DEMO, OTHER)
+    reader.hubs[OTHER].lock = a_lock()
+
+    assert list(models.project_hubs()) == [("demo", DEMO)]
+    names = models.skill_item_names("demo")
+    marked = models.marked_skill_unit("demo", kind=ItemKind.AGENT, source="demo", name="scout")
+    with pytest.raises(EntityNotFoundError) as unknown:
+        models.marked_skill_unit("nope", kind=ItemKind.AGENT, source="demo", name="scout")
+
+    assert (ItemKind.AGENT, "scout") in names
+    assert marked is not None
+    assert marked.unit.unit_path == "plugin/demo/agents/scout.md"
+    assert unknown.value.entity == "project"
+    assert reader.snapshots == {}
+    # The hub card still asks the doctor.
+    models.list_hubs()
+    assert reader.snapshots == {DEMO: 1, OTHER: 1}
