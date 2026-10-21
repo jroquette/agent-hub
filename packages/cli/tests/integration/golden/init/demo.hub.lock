@@ -28,6 +28,10 @@
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/agents/spec-reviewer.md"
     },
+    ".claude/agents/test-writer.md": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/agents/test-writer.md"
+    },
     ".claude/agents/ux-designer.md": {
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/agents/ux-designer.md"
@@ -87,6 +91,10 @@
     ".claude/skills/plain-language": {
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/plain-language"
+    },
+    ".claude/skills/property-based-testing": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/property-based-testing"
     },
     ".claude/skills/recall": {
       "ownership": "managed",
@@ -217,7 +225,7 @@
     "hub.schema.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "eda74ce22d1d76121070f12e27a157f1ff3523c88d18cc05350268a22441b0fa"
+      "sha256": "d015ef87a8bc78ed9cf8762a76565704b14033b90c89d49527e6530b027093f9"
     },
     "plugin/demo/.claude-plugin/plugin.json": {
       "ownership": "seeded"
@@ -249,7 +257,7 @@
     "plugin/hub-workflow/NOTICE": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "abbdefc183257342ea248bc5ee62c2805cbd078cf9de6b9e43fec1d54c61a9a3"
+      "sha256": "c9f555d2560671e182f513353a4eaa33bab9c9074774634e5730e4992994c3a3"
     },
     "plugin/hub-workflow/agents/architect.md": {
       "executable": false,
@@ -285,6 +293,11 @@
       "executable": false,
       "ownership": "managed",
       "sha256": "54ae53835b987ac549f3058736a22c4038bd41bbc4d8d59e1b20c7cb74adc451"
+    },
+    "plugin/hub-workflow/agents/test-writer.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "b1372a03d7e6f38ecefae2be9b093b70b540fa02c5c64c04018334362b6cc7af"
     },
     "plugin/hub-workflow/agents/ux-designer.md": {
       "executable": false,
@@ -430,6 +443,11 @@
       "executable": false,
       "ownership": "managed",
       "sha256": "be9a1cdcffb759374fba0f1ee0af80cd9e95421ad031f1833726c52e8127946d"
+    },
+    "plugin/hub-workflow/skills/property-based-testing/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "4be017379a1b7d7bbc269dc0ad4a753b54da2bfbc94729e40f9d7148f6af2abd"
     },
     "plugin/hub-workflow/skills/recall/SKILL.md": {
       "executable": false,

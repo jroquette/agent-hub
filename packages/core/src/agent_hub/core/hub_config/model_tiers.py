@@ -50,6 +50,7 @@ class AgentTiers(ConfigObject):
     requirements_analyst: Tier | None = absent_by_default(alias="requirements-analyst")
     researcher: Tier | None = absent_by_default()
     spec_reviewer: Tier | None = absent_by_default(alias="spec-reviewer")
+    test_writer: Tier | None = absent_by_default(alias="test-writer")
     ux_designer: Tier | None = absent_by_default(alias="ux-designer")
 
 
