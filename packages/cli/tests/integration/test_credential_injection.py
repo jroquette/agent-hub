@@ -329,3 +329,32 @@ def test_hides_secret_everywhere_when_credential_injection_scenario_runs(
     assert (tmp_path / "events.db").exists()
     records = (run / "records.jsonl").read_text()
     assert "<credential DEMO_TOKEN>" in records
+
+
+# AGH-359 (P-18): a process workflow run in an environment: its agent node learns the
+# environment's name, and no node gets its credentials.
+
+
+def test_hides_credentials_from_nodes_when_credential_injection_workflow_environment(
+    tmp_path: Path, credentials_env: dict[str, str]
+) -> None:
+    hub = a_credentials_hub(tmp_path)
+    document = json.loads((hub / "hub.json").read_text())
+    document["environments"]["staging"]["access"] = "write"
+    (hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
+
+    result = run_hub(
+        hub, "workflow", "run", "creds", "--live", "--env", "staging", env=credentials_env
+    )
+
+    assert result.exit_code == 0, result.output
+    dumps = sorted(path.name for path in (tmp_path / "dump").iterdir())
+    assert dumps == ["claude.env", "script.env", "shell.env", "until.env"]
+    for dump in dumps:
+        seen = variables(tmp_path / "dump" / dump)
+        assert "DEMO_DB_URL" not in seen, dump
+        assert "AWS_PROFILE" not in seen, dump
+    assert variables(tmp_path / "dump" / "claude.env")["HUB_RUN_ENVIRONMENT"] == "staging"
+    assert "HUB_RUN_ENVIRONMENT" not in variables(tmp_path / "dump" / "shell.env")
+    assert SECRET not in result.output
+    assert stored_anywhere(SECRET, hub / ".agent-runs", tmp_path / "events.db") == []

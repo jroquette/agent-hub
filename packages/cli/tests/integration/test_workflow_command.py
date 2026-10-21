@@ -12,7 +12,9 @@ import fcntl
 import json
 import os
 import shutil
+import signal
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -1340,3 +1342,267 @@ def test_notes_the_unwatched_checkouts_on_the_start_record_when_one_is_not_a_rep
 
     start = sample.records("l2")[0]
     assert start["checkout_unwatched"] == [str(sample.hub)]
+
+
+# AGH-359 (P-18, AC-350.24, AC-350.9): a process workflow that declares an environment.
+
+ENVY_YAML = """\
+version: 1
+name: envy
+revision: 1
+environment: staging
+nodes:
+  - id: build
+    type: shell
+    command: [make, check]
+"""
+SHIP_YAML = """\
+version: 1
+name: envy
+revision: 1
+environment: staging
+nodes:
+  - id: ship
+    type: script
+    runtime: sh
+    script: ship.sh
+"""
+THINK_YAML = """\
+version: 1
+name: envy
+revision: 1
+environment: staging
+nodes:
+  - id: think
+    type: agent
+    prompt: Say done.
+"""
+
+
+def declare_environments(sample: SampleRun, **access: str) -> None:
+    """``hub.json`` declares each environment of ``access`` with that access."""
+    path = sample.hub / "hub.json"
+    document = json.loads(path.read_text())
+    document["environments"] = {name: {"access": value} for name, value in access.items()}
+    path.write_text(json.dumps(document, indent=2) + "\n")
+
+
+def envy(sample: SampleRun, text: str, *args: str) -> Result:
+    write(sample.hub, "workflows/envy/envy.yaml", text)
+    write(sample.hub, "workflows/envy/scripts/ship.sh", "printf shipped\n")
+    return sample.run("envy", *(args or ("--live", "--run-id", RUN_ID)))
+
+
+def test_refuses_start_when_workflow_environment_read_and_shell_default(
+    sample: SampleRun,
+) -> None:
+    declare_environments(sample, staging="read")
+
+    result = envy(sample, ENVY_YAML)
+    dry = envy(sample, ENVY_YAML, "--run-id", RUN_ID)
+
+    assert result.exit_code == 1, result.output
+    assert unstyle(result.stderr).splitlines() == [
+        "hub workflow run: step build: deny (access read in staging does not allow write)"
+    ]
+    assert (dry.exit_code, unstyle(dry.stderr)) == (1, unstyle(result.stderr))
+    assert not run_path(sample).exists()
+    assert sample.fakes.calls("make") == []
+
+
+def test_refuses_start_when_workflow_environment_undeclared(sample: SampleRun) -> None:
+    declare_environments(sample, local="write")
+    agent_only = THINK_YAML
+
+    result = envy(sample, agent_only)
+
+    assert result.exit_code == 1, result.output
+    assert unstyle(result.stderr).splitlines() == [
+        "hub workflow run: environment staging is not declared"
+    ]
+    assert not run_path(sample).exists()
+    assert sample.fakes.calls("claude") == []
+
+
+def test_runs_read_shell_when_workflow_environment_read(sample: SampleRun) -> None:
+    declare_environments(sample, staging="read")
+
+    result = envy(
+        sample,
+        ENVY_YAML.replace("command: [make, check]", "command: [make, check]\n    effect: read"),
+    )
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.splitlines()[-1] == "run r1: done"
+    assert [call["argv"] for call in sample.fakes.calls("make")] == [["check"]]
+    header = sample.records()[0]
+    assert (header["environment"], header["policy_gates"]) == ("staging", [])
+    assert (run_path(sample, "snapshot", "policy_gates.json")).read_text() == "{}"
+
+
+def test_opens_gate_when_workflow_environment_ask_and_script_default(
+    sample: SampleRun, tmp_path: Path
+) -> None:
+    declare_environments(sample, staging="ask")
+
+    paused = envy(sample, SHIP_YAML)
+    approved = sample.run_command("approve", RUN_ID, "ship__ask")
+
+    assert paused.exit_code == 0, paused.output
+    assert paused.stdout.splitlines()[-1] == "run r1: paused at ship__ask"
+    [gate] = [record for record in sample.records() if record["event"] == "gate"]
+    assert gate["node"] == "ship__ask"
+    assert gate["message"] == (
+        "policy ask: step ship runs script (write) in staging; approve to run it"
+    )
+    assert approved.exit_code == 0, approved.output
+    assert approved.stdout.splitlines()[-1] == "run r1: done"
+    assert sample.ends() == [("ship__ask", "ok"), ("ship", "ok")]
+    stored = open_event_store(tmp_path / "events.db").read_all()
+    [request] = [event for event in stored if event.type == "gate.request"]
+    assert request.payload["gate_id"] == "r1:ship__ask:1"
+
+
+def test_sets_run_environment_when_workflow_environment_agent_node(sample: SampleRun) -> None:
+    declare_environments(sample, staging="read")
+    sample.run("sample", "--input", "issue=DEM-1", "--live", "--run-id", "r0")
+
+    result = envy(sample, THINK_YAML)
+
+    assert result.exit_code == 0, result.output
+    *plain, think = sample.fakes.calls("claude")
+    assert think["values"]["HUB_RUN_ENVIRONMENT"] == "staging"
+    assert plain
+    assert all("HUB_RUN_ENVIRONMENT" not in call["env"] for call in plain)
+
+
+def test_overrides_environment_when_workflow_environment_env_flag(sample: SampleRun) -> None:
+    declare_environments(sample, staging="read", local="write")
+
+    result = envy(sample, ENVY_YAML, "--live", "--run-id", RUN_ID, "--env", "local")
+    plain = CHECK_YAML.replace("name: check", "name: plain")
+    write(sample.hub, "workflows/envy/plain.yaml", plain)
+    denied = sample.run("plain", "--live", "--run-id", "r2", "--env", "staging")
+    resumed = sample.run("--resume", RUN_ID, "--env", "staging")
+
+    assert result.exit_code == 0, result.output
+    assert sample.records()[0]["environment"] == "local"
+    assert [call["argv"] for call in sample.fakes.calls("make")] == [["check"]]
+    assert denied.exit_code == 1, denied.output
+    assert "step lint: deny (access read in staging does not allow write)" in unstyle(denied.stderr)
+    assert resumed.exit_code == 2
+
+
+CRASH_ONCE_SH = """\
+printf 'run\\n' >> "$MARKER"
+if [ ! -e "$MARKER.crashed" ]; then
+  : > "$MARKER.crashed"
+  kill -9 $PPID
+fi
+"""
+
+
+def test_asks_again_when_workflow_environment_write_started_and_never_ended(
+    sample: SampleRun, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    declare_environments(sample, local="write")
+    marker = tmp_path / "marker"
+    write(sample.hub, "workflows/envy/scripts/ship.sh", CRASH_ONCE_SH)
+    write(sample.hub, "workflows/envy/envy.yaml", SHIP_YAML.replace("staging", "local"))
+    environ = {**os.environ, "AGENT_HUB_ROOT": str(sample.hub), "MARKER": str(marker)}
+    command = [sys.executable, "-m", "agent_hub.cli", "workflow", "run", "envy", "--live"]
+    crashed = subprocess.run(  # noqa: S603 - this interpreter, fixed arguments
+        [*command, "--run-id", RUN_ID], env=environ, capture_output=True, check=False
+    )
+    monkeypatch.setenv("MARKER", str(marker))
+
+    resumed = sample.run("--resume", RUN_ID)
+    approved = sample.run_command("approve", RUN_ID, "ship__ask")
+
+    assert crashed.returncode == -signal.SIGKILL
+    assert resumed.exit_code == 0, resumed.output
+    assert resumed.stdout.splitlines()[-1] == "run r1: paused at ship__ask"
+    [gate] = [record for record in sample.records() if record["event"] == "gate"]
+    assert "may have run" in gate["message"]
+    assert approved.exit_code == 0, approved.output
+    assert approved.stdout.splitlines()[-1] == "run r1: done"
+    assert marker.read_text() == "run\nrun\n"
+
+
+DELIVERY_YAML = """\
+version: 1
+name: issue-to-pr
+revision: 1
+environment: local
+inputs:
+  issue: {type: string, required: true}
+  repo: {type: string, required: true}
+  issue_text: {type: string}
+nodes:
+  - id: stop
+    type: halt
+    reason: never
+"""
+
+
+def test_refuses_issue_to_pr_when_workflow_environment_declared(sample: SampleRun) -> None:
+    declare_environments(sample, local="write")
+    write(sample.hub, "workflows/issue-to-pr/issue-to-pr.yaml", DELIVERY_YAML)
+
+    result = sample.run("issue-to-pr", "--input", "issue=DEM-1", "--input", "repo=demo-api")
+
+    assert result.exit_code == 2, result.output
+    assert "issue-to-pr runs in no environment" in " ".join(unstyle(result.stderr).split())
+    assert not (sample.hub / ".agent-runs" / "workflows").exists()
+
+
+def test_refuses_start_when_workflow_environment_only_on_include(sample: SampleRun) -> None:
+    declare_environments(sample, local="write")
+    write(
+        sample.hub,
+        "workflows/envy/check.yaml",
+        CHECK_YAML.replace("revision: 1", "revision: 1\nenvironment: local"),
+    )
+    write(sample.hub, "workflows/envy/main.yaml", MAIN_YAML)
+
+    result = sample.run("main", "--live", "--run-id", RUN_ID)
+    given = sample.run("main", "--live", "--run-id", RUN_ID, "--env", "local")
+
+    assert result.exit_code == 1, result.output
+    assert unstyle(result.stderr).splitlines() == [
+        "hub workflow run: the included workflow check declares an environment: declare one"
+        " on main or give --env"
+    ]
+    assert given.exit_code == 0, given.output
+    assert sample.records()[0]["environment"] == "local"
+
+
+def test_cancels_run_when_workflow_environment_gate_rejected(sample: SampleRun) -> None:
+    declare_environments(sample, staging="ask")
+    envy(sample, SHIP_YAML)
+
+    rejected = sample.run_command("reject", RUN_ID, "ship__ask")
+
+    assert rejected.exit_code == 1, rejected.output
+    assert rejected.stdout.splitlines()[-1] == "run r1: cancelled"
+    assert ("ship", "ok") not in sample.ends()
+
+
+def test_fails_node_when_workflow_environment_tightened_before_it_runs(
+    sample: SampleRun,
+) -> None:
+    declare_environments(sample, staging="ask")
+    envy(sample, SHIP_YAML)
+    declare_environments(sample, staging="read")
+
+    approved = sample.run_command("approve", RUN_ID, "ship__ask")
+
+    assert approved.exit_code == 1, approved.output
+    assert approved.stdout.splitlines()[-1] == "run r1: failed"
+    [end] = [r for r in sample.records() if r["event"] == "step_end" and r["node"] == "ship"]
+    assert (end["status"], end["failure_kind"]) == ("failed", "config")
+    assert end["detail"] == (
+        "the policy denies step ship (write) in staging: access read in staging does not allow"
+        " write"
+    )
+    assert not [r for r in sample.records() if r["event"] == "node_start"]

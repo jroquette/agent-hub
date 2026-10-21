@@ -33,14 +33,8 @@ only). Each action runs in a process group of its own; an interrupted layer kill
 too (``stop_children``), and no action starts after it.
 
 A call that may have run is never repeated silently. The ``action_start`` line of a write or
-destroy is synced to disk before its process starts. On resume, a step outside a loop_group
-whose write started and that never ended after, and a loop_group with a write of its body
-started after its last clean point (its end, or a pause recorded with it held), owe a re-ask:
-it is recorded once as a durable ``reask_owed`` line and read back from the record (never from
-attempt numbers). An owed step asks through a ``<step>__ask`` gate whose message says it may
-have run, until the step ends; an owed group asks before every write or destroy of its body,
-each iteration, until the group ends. A read step simply runs again. A recorded reject of any
-policy gate ends the run ``cancelled`` on resume, whatever the plan holds now.
+destroy is synced to disk before its process starts; on resume, the re-asks it owes and a
+recorded reject of a policy gate are ``workflow_policy``'s rules, shared with process workflows.
 
 The run's folder is removed when anything fails before its start record is written; the
 snapshot keeps the includes the plan resolved, not a second read.
@@ -51,7 +45,6 @@ Only ``regression`` mode runs here: no agent starts, and a divergence (a failed 
 """
 
 import contextlib
-import dataclasses
 import json
 import os
 import random
@@ -61,7 +54,7 @@ import threading
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Final, get_args
+from typing import Final
 
 import typer
 
@@ -73,6 +66,16 @@ from agent_hub.cli.init_report import shown_text
 from agent_hub.cli.run_log import now
 from agent_hub.cli.workflow_command import own_hub_program
 from agent_hub.cli.workflow_executors import WorkflowExecutors
+from agent_hub.cli.workflow_policy import (
+    GATES,
+    Owed,
+    gated_run_plan,
+    gates_file,
+    read_gates,
+    rejected,
+    resumed_prior,
+)
+from agent_hub.cli.workflow_policy import owed as _owed
 from agent_hub.cli.workflow_runs import (
     ACTION_START,
     DOCUMENT,
@@ -87,7 +90,6 @@ from agent_hub.cli.workflow_runs import (
     ends_of,
     held_record,
     make_run,
-    prior_state,
     read_records,
     run_folder,
     run_lock,
@@ -109,11 +111,8 @@ from agent_hub.core.scenarios.action_call import ActionCallError, ActionCallPlan
 from agent_hub.core.scenarios.action_catalog import ActionEntry, ActionRefError, resolve_action
 from agent_hub.core.scenarios.credentials import CredentialNames
 from agent_hub.core.scenarios.policy_gates import (
-    ASK_SUFFIX,
     PolicyAsk,
-    PolicyGateError,
     ask_gate,
-    gated_plan,
 )
 from agent_hub.core.scenarios.scenario_events import ActionFacts, ScenarioEvents
 from agent_hub.core.scenarios.scenario_plan import ScenarioPlan
@@ -122,7 +121,7 @@ from agent_hub.core.workflows.engine import EnginePorts, run_workflow
 from agent_hub.core.workflows.events import WorkflowEvents
 from agent_hub.core.workflows.failures import NodeFailedError
 from agent_hub.core.workflows.includes import IncludeResolver
-from agent_hub.core.workflows.nodes import ActionNode, ExpectNode, LoopGroupNode
+from agent_hub.core.workflows.nodes import ActionNode, ExpectNode
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
 from agent_hub.core.workflows.ports import (
     ContextCapture,
@@ -131,7 +130,6 @@ from agent_hub.core.workflows.ports import (
     NodeReply,
     RunEnd,
 )
-from agent_hub.core.workflows.run_state import RunState
 from agent_hub.generator.action_discovery import ActionDiscovery, discover_actions
 from agent_hub.generator.scenario_discovery import discover_scenarios
 from agent_hub.generator.workflow_discovery import DiscoveredWorkflow, pack_resolver
@@ -144,12 +142,8 @@ INTERACTIVE: Final = "interactive"
 MODES: Final = (INTERACTIVE, REGRESSION)
 # Release gate (O-6): interactive mode lands with the investigation (T9).
 INTERACTIVE_NOT_YET: Final = "interactive mode is not available yet: use --mode regression"
-GATES: Final = "policy_gates.json"
-# A re-ask the run owes after a call that may have run (``_owed``).
-REASK_OWED: Final = "reask_owed"
 CONTEXT_CAPTURE: Final = "context.capture"
 ACTION_CALL: Final = "action"
-_EFFECTS: Final[tuple[Effect, ...]] = get_args(Effect)
 # A retry's jitter: spread, not secrecy.
 _JITTER: Final = random.SystemRandom()
 
@@ -247,7 +241,7 @@ def execute(hub: Path, folder: Path, records: list[dict[str, JsonValue]], *, res
     environment, pack = str(header.get("environment")), str(header.get("pack"))
     pinned = _pinned(snapshot, header)
     document, includes, recorded = _snapshot_parts(snapshot)
-    owed = _Owed()
+    owed = Owed()
     if resumed:
         base = _planned(document, includes, {})
         owed = _owed(
@@ -312,9 +306,9 @@ def execute(hub: Path, folder: Path, records: list[dict[str, JsonValue]], *, res
         gates=RecordedAnswers(records),
         trace=log,
     )
-    if resumed and (rejected := _rejected(records)) is not None:
+    if resumed and (cancelled := rejected(records)) is not None:
         # A recorded reject of a policy gate ends the run, whatever the plan holds now.
-        ports.recorder.run_ended(RunEnd("cancelled", now(), reason=rejected))
+        ports.recorder.run_ended(RunEnd("cancelled", now(), reason=cancelled))
         typer.echo(f"run {run_id}: cancelled")
         return 1
     inputs = next((r["inputs"] for r in records if r.get("event") == "inputs"), {})
@@ -322,7 +316,7 @@ def execute(hub: Path, folder: Path, records: list[dict[str, JsonValue]], *, res
         plan,
         inputs if isinstance(inputs, dict) else {},
         ports,
-        prior=_prior(records, owed.reopen) if resumed else None,
+        prior=resumed_prior(records, owed.reopen) if resumed else None,
     )
     append_record(folder, {"event": "sessions", "sessions": dict(report.state.sessions)})
     if report.status == "paused":
@@ -366,11 +360,7 @@ def _snapshot(folder: Path, begin: ScenarioStart) -> str:
     for entry in begin.actions.actions:
         if entry.ref in used:
             pinned.update(begin.actions.files[entry.document_path])
-    gates = {
-        step: {"action": ask.action, "effect": ask.effect, "environment": ask.environment}
-        for step, ask in _asks(begin.planned).items()
-    }
-    pinned[GATES] = json.dumps(gates, sort_keys=True).encode()
+    pinned[GATES] = gates_file(_asks(begin.planned))
     _, content_hash = snapshot_run(
         folder,
         document=dict(begin.found.document),
@@ -380,100 +370,6 @@ def _snapshot(folder: Path, begin: ScenarioStart) -> str:
         pinned=pinned,
     )
     return content_hash
-
-
-@dataclass(frozen=True, kw_only=True, slots=True)
-class _Owed:
-    """The re-asks a resume owes: each step asked again (by its id as recorded), and the gates
-    whose earlier answer no longer counts."""
-
-    steps: dict[str, PolicyAsk] = field(default_factory=dict)
-    reopen: frozenset[str] = frozenset()
-
-
-def _owed(
-    folder: Path,
-    records: list[dict[str, JsonValue]],
-    *,
-    plan: WorkflowPlan,
-    effects: Mapping[str, tuple[str, Effect]],
-    environment: str,
-) -> _Owed:
-    """The re-asks this resume owes, each first recorded as a durable ``reask_owed`` line.
-
-    A step outside a loop_group is owed when a write or destroy call of it started and the
-    step never ended after; it stays owed until the step ends, and its earlier gate answer
-    counts only once a gate was opened after the owed line. A loop_group is owed when a write
-    or destroy call of its body started after its last clean point (its end, or a pause
-    recorded with it held): the group may run that body again, so every write or destroy of
-    its body asks first until the group ends. Nothing is derived from attempt numbers."""
-    bodies = {
-        group.id: tuple(body.id for body in group.nodes)
-        for group in plan.document.nodes
-        if isinstance(group, LoopGroupNode)
-    }
-    owner = {body: group for group, ids in bodies.items() for body in ids}
-    marks = _Marks.of(records)
-    for node in [*bodies, *(step for step in effects if step not in owner)]:
-        if _newly_owed(node, marks, bodies.get(node)):
-            line: dict[str, JsonValue] = {"event": REASK_OWED, "node": node}
-            append_record(folder, line, durable=True)
-            marks.owed[node] = len(records) + len(marks.added)
-            marks.added.append(node)
-    steps: dict[str, PolicyAsk] = {}
-    reopen: set[str] = set()
-    for node, at in marks.owed.items():
-        if at <= marks.ended.get(node, -1):
-            continue
-        owed_steps = bodies.get(node, (node,))
-        for step in owed_steps:
-            if step in effects and effects[step][1] != "read":
-                action, effect = effects[step]
-                steps[step] = PolicyAsk(
-                    action=action, effect=effect, environment=environment, again=True
-                )
-        if node not in bodies and marks.gates.get(ask_gate(node), -1) < at:
-            reopen.add(ask_gate(node))
-    return _Owed(steps=steps, reopen=frozenset(reopen))
-
-
-@dataclass(kw_only=True)
-class _Marks:
-    """Where things last happened in a run's record, by line index and node as recorded."""
-
-    ended: dict[str, int] = field(default_factory=dict)
-    held: dict[str, int] = field(default_factory=dict)
-    owed: dict[str, int] = field(default_factory=dict)
-    gates: dict[str, int] = field(default_factory=dict)
-    # The last write or destroy call started of each node.
-    writes: dict[str, int] = field(default_factory=dict)
-    added: list[str] = field(default_factory=list)
-
-    @classmethod
-    def of(cls, records: list[dict[str, JsonValue]]) -> _Marks:
-        marks = cls()
-        for index, record in enumerate(records):
-            node, event = record.get("node"), record.get("event")
-            if event == "held" and isinstance(groups := record.get("groups"), dict):
-                marks.held |= dict.fromkeys(groups, index)
-            if not isinstance(node, str):
-                continue
-            if event == ACTION_START and record.get("effect") in ("write", "destroy"):
-                marks.writes[node] = index
-            found = {"step_end": marks.ended, REASK_OWED: marks.owed, "gate": marks.gates}
-            if (where := found.get(str(event))) is not None:
-                where[node] = index
-        return marks
-
-
-def _newly_owed(node: str, marks: _Marks, body: tuple[str, ...] | None) -> bool:
-    """Whether ``node`` owes a re-ask its record does not hold yet."""
-    if body is None:
-        started = marks.writes.get(node, -1)
-        return started > marks.ended.get(node, -1) and marks.owed.get(node, -1) < started
-    clean = max(marks.ended.get(node, -1), marks.held.get(node, -1))
-    started = max((marks.writes.get(step, -1) for step in body), default=-1)
-    return started > clean and marks.owed.get(node, -1) <= clean
 
 
 def _effects(plan: WorkflowPlan, pinned: PinnedActions, pack: str) -> dict[str, tuple[str, Effect]]:
@@ -489,36 +385,13 @@ def _effects(plan: WorkflowPlan, pinned: PinnedActions, pack: str) -> dict[str, 
     return found
 
 
-def _rejected(records: list[dict[str, JsonValue]]) -> str | None:
-    """A policy gate a recorded decision rejected, if any."""
-    return next(
-        (
-            str(record.get("node"))
-            for record in records
-            if record.get("event") == "decision"
-            and record.get("choice") == "reject"
-            and str(record.get("node")).endswith(ASK_SUFFIX)
-        ),
-        None,
-    )
-
-
-def _prior(records: list[dict[str, JsonValue]], reopen: frozenset[str]) -> RunState:
-    """The run's state for a resume, without the earlier answer of each gate in ``reopen``."""
-    prior = prior_state(records)
-    if not reopen:
-        return prior
-    nodes = {node: result for node, result in prior.nodes.items() if node not in reopen}
-    return dataclasses.replace(prior, nodes=nodes)
-
-
 def _snapshot_parts(
     snapshot: Path,
 ) -> tuple[WorkflowDocument, IncludeResolver, dict[str, PolicyAsk]]:
     """The snapshot's document, its includes and the gates ``policy_gates.json`` names."""
     try:
         document = parse_workflow(json.loads((snapshot / DOCUMENT).read_bytes()))
-        asks = _read_asks(json.loads((snapshot / GATES).read_bytes()))
+        asks = read_gates(json.loads((snapshot / GATES).read_bytes()))
     except (OSError, ValueError, WorkflowLoadError) as error:
         raise WorkflowRunError(f"cannot load the scenario run's snapshot: {error}") from None
     return document, snapshot_includes(snapshot), asks
@@ -528,26 +401,7 @@ def _planned(
     document: WorkflowDocument, includes: IncludeResolver, asks: Mapping[str, PolicyAsk]
 ) -> WorkflowPlan:
     """The run's plan, a gate before each step of ``asks``."""
-    try:
-        return gated_plan(document, includes=includes, asks=asks)
-    except (WorkflowLoadError, PolicyGateError) as error:
-        raise WorkflowRunError(f"cannot load the scenario run's snapshot: {error}") from None
-
-
-def _read_asks(value: object) -> dict[str, PolicyAsk]:
-    if not isinstance(value, dict):
-        msg = f"{GATES} is not an object"
-        raise ValueError(msg)
-    asks: dict[str, PolicyAsk] = {}
-    for step, ask in value.items():
-        given = ask if isinstance(ask, dict) else {}
-        action, effect, where = given.get("action"), given.get("effect"), given.get("environment")
-        known = next((item for item in _EFFECTS if item == effect), None)
-        if not (isinstance(action, str) and known is not None and isinstance(where, str)):
-            msg = f"{GATES}: the gate of {step} is malformed"
-            raise ValueError(msg)
-        asks[step] = PolicyAsk(action=action, effect=known, environment=where)
-    return asks
+    return gated_run_plan(document, includes, asks)
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
