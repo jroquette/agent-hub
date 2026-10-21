@@ -48,21 +48,26 @@ describe("StepsPanel", () => {
   it("shows each call with its output's first lines, the rest on demand", async () => {
     render(<StepsPanel steps={stepsOf(turn)} onClose={vi.fn()} />);
     expect(screen.getByRole("heading", { name: "Steps" })).toHaveFocus();
-    expect(screen.getByText("(make test)")).toBeInTheDocument();
-    // A failed call reads calmly, not as an alarm.
-    expect(screen.getByText("didn't work, Claude moved on")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "… +2 lines" }));
-    expect(screen.getByRole("button", { name: "Collapse" })).toBeInTheDocument();
+    expect(screen.getByText("make test")).toBeInTheDocument();
+    // A failed call reads calmly, not as an alarm, and opens on its output's first lines.
+    expect(screen.getByText("Failed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Error output · 6 lines/ })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(document.querySelector(".as-feed-pre")?.textContent).toBe("1\n2\n3\n4");
+    await userEvent.click(screen.getByRole("button", { name: "Show all 6 lines" }));
+    expect(screen.getByRole("button", { name: "Show less" })).toBeInTheDocument();
     expect(document.querySelector(".as-feed-full")?.textContent).toBe("1\n2\n3\n4\n5\n6");
   });
 
   it("opens a running subagent on its calls and folds it on demand", async () => {
     render(<StepsPanel steps={stepsOf(turn)} onClose={vi.fn()} />);
-    const group = screen.getByRole("button", { name: /Agent/ });
+    const group = screen.getByRole("button", { name: /explore/ });
     expect(group).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText("(cost)")).toBeInTheDocument();
+    expect(screen.getByText("cost")).toBeInTheDocument();
     await userEvent.click(group);
-    expect(screen.queryByText("(cost)")).toBeNull();
+    expect(screen.queryByText("cost")).toBeNull();
   });
 
   it("closes on Esc", async () => {
@@ -209,7 +214,7 @@ describe("LiveActivityBar", () => {
 
   it("AC-PG-32.3: a failed call is not shown in alarming red", () => {
     render(<StepsPanel steps={stepsOf(turn)} onClose={vi.fn()} />);
-    const failed = screen.getByText("didn't work, Claude moved on");
+    const failed = screen.getByText("Failed");
     expect(failed).toHaveClass("ah-subtle");
     expect(failed.closest("li")).toHaveClass("as-feed-error");
     expect(
