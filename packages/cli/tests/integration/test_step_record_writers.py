@@ -207,8 +207,9 @@ class Hub:
         assert self.decide("--decision", "approved", "--by", "Dana").exit_code == 0
 
     def amend(self, *extra: str) -> dict[str, Any]:
-        return self.ok("amend-plan", "--feature", "demo-flow", "--request", "1", *extra,
-                       "--summary", "Go.")
+        return self.ok(
+            "amend-plan", "--feature", "demo-flow", "--request", "1", *extra, "--summary", "Go."
+        )
 
     def lock_held_while(self, monkeypatch: pytest.MonkeyPatch) -> list[str]:
         """Each file ``_replace`` writes, after checking the feature's lock is held then."""
@@ -315,8 +316,9 @@ class TestTicketBrief:
     ) -> None:
         hub.ok("ticket-brief", *TICKET)
 
-        output = hub.ok("preflight", "--feature", "demo-flow", "--ticket", given,
-                        "--run", json.dumps(RUN))
+        output = hub.ok(
+            "preflight", "--feature", "demo-flow", "--ticket", given, "--run", json.dumps(RUN)
+        )
 
         assert output["path"] == f"{FEATURE}/tickets/DEM-8/preflight.json"
         assert sorted(p.name for p in (hub.feature / "tickets").iterdir()) == ["DEM-7", "DEM-8"]
@@ -414,7 +416,7 @@ class TestPreflight:
         assert (tmp_path / "old.json").read_bytes() == before
         assert path.read_bytes() != before
 
-    def test_writes_the_record_under_the_feature_lock_and_refuses_while_held(
+    def test_writes_under_the_feature_lock_and_refuses_when_another_run_holds_it(
         self, hub: Hub, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         with monkeypatch.context() as patched:
@@ -483,8 +485,15 @@ class TestChangeRequest:
             *("--run-id", "r1", "--evidence", "e", "--proposal", "p"),
         )
         decided = hub.refused(
-            "decide", "--feature", "demo-flow", "--request", "1", "--decision", "approved",
-            "--by", "Dana",
+            "decide",
+            "--feature",
+            "demo-flow",
+            "--request",
+            "1",
+            "--decision",
+            "approved",
+            "--by",
+            "Dana",
         )
 
         assert line == "hub step change-request: change-requests is a link; no link is followed"
