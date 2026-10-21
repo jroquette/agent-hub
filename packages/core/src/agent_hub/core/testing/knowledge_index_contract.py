@@ -4,8 +4,8 @@ An implementation's ``tests/contract/`` provides a ``knowledge_index`` fixture (
 and declares ``class Test<Implementation>(KnowledgeIndexContract)``. Checks raise
 ``AssertionError`` by hand: core ships this suite without depending on pytest.
 
-Words are uninflected English, so an index that stems them (FTS5's ``porter``) and one that does
-not answer alike.
+Each query word appears in the documents in the same form, so an index that stems words (FTS5's
+``porter``) and one that does not answer alike.
 """
 
 import hashlib
@@ -21,7 +21,7 @@ from agent_hub.core.knowledge.knowledge_index import (
     SkippedFile,
     StoredFile,
 )
-from agent_hub.core.knowledge.search_query import MAX_RESULTS
+from agent_hub.core.knowledge.search_query import MAX_RESULTS, MAX_SNIPPET_CHARS
 
 HUB: Final = "/hubs/demo"
 OTHER_HUB: Final = "/hubs/other"
@@ -100,6 +100,33 @@ class KnowledgeIndexContract:
         _check((hits[1].status, hits[1].provenance) == (None, None), "absent fields are None")
         _check("worktrees" in hits[1].snippet, f"the snippet holds the word: {hits[1].snippet}")
         _check("\n" not in hits[1].snippet, "the snippet is one line")
+
+    def test_shows_match_in_snippet_when_body_long(self, knowledge_index: KnowledgeIndex) -> None:
+        body = "filler words\n" * 20 + "the marker sits here\n" + "tail words\n" * 20
+        _index(knowledge_index, _document("brain/long.md", body=body))
+
+        hits = knowledge_index.search(HUB, ("marker",), limit=MAX_RESULTS)
+
+        snippet = hits[0].snippet
+        _check(body.index("marker") > MAX_SNIPPET_CHARS, "the word is past the first line's end")
+        _check("marker" in snippet, f"the snippet holds the word: {snippet}")
+        _check(len(snippet) <= MAX_SNIPPET_CHARS, f"at most the limit: {len(snippet)}")
+        _check("\n" not in snippet, "the snippet is one line")
+
+    def test_orders_by_path_when_scores_equal(self, knowledge_index: KnowledgeIndex) -> None:
+        paths = ("brain/c.md", "brain/a.md", "docs/b.md", "brain/b.md")
+        _index(knowledge_index, *(_document(path, body="marker text") for path in paths))
+
+        found = _paths(knowledge_index, "marker")
+
+        _check(found == sorted(paths), f"equal scores in path order: {found}")
+
+    def test_returns_nothing_when_no_words_given(self, knowledge_index: KnowledgeIndex) -> None:
+        _index(knowledge_index, _document("brain/now.md", body="marker text"))
+
+        hits = knowledge_index.search(HUB, (), limit=MAX_RESULTS)
+
+        _check(hits == (), f"no word, no result: {hits}")
 
     def test_returns_only_documents_with_every_word_when_several_given(
         self, knowledge_index: KnowledgeIndex

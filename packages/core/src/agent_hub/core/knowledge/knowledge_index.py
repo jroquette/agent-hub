@@ -12,15 +12,14 @@ Synchronous (SQLite FTS5 in production). ``KnowledgeIndexContract`` checks every
   its text and gets the new fingerprint; a dropped path loses its row. Every row the change writes
   gets the change's ``version``. A skipped file keeps no text, so a search never returns it.
 - ``search`` answers the hub's documents holding every word, a title match weighted above a body
-  match, best first and then by path, at most ``limit``, of the listed kinds only when given.
+  match, best first and then by path, at most ``limit``, of the listed kinds only when given;
+  none when no word is given. A hit's snippet is one line around the first match in the body.
 """
 
 from collections.abc import Mapping
-from typing import Annotated, Final, Literal, Protocol
+from typing import Annotated, Final, Literal, Protocol, Self, get_args
 
-from pydantic import BaseModel, ConfigDict, Field
-
-from agent_hub.core.errors import AgentHubError
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # What a document is, from its folder (D-kind).
 type Kind = Literal[
@@ -36,18 +35,7 @@ type Kind = Literal[
     "system",
 ]
 
-KINDS: Final[tuple[Kind, ...]] = (
-    "adr",
-    "decision",
-    "doc",
-    "domain",
-    "feature",
-    "inbox",
-    "journal",
-    "learning",
-    "playbook",
-    "system",
-)
+KINDS: Final[tuple[Kind, ...]] = get_args(Kind.__value__)
 
 # Bumped by any change to what is indexed or how (D-version): a hub whose rows hold another
 # version is rebuilt by the next search.
@@ -75,6 +63,13 @@ class StoredFile(_Frozen):
     fingerprint: Fingerprint
     sha256: TextHash | None = None
     skip_reason: str | None = None
+
+    @model_validator(mode="after")
+    def _indexed_or_skipped(self) -> Self:
+        if (self.sha256 is None) == (self.skip_reason is None):
+            msg = "a stored file has exactly one of sha256 and skip_reason"
+            raise ValueError(msg)
+        return self
 
 
 class StoredIndex(_Frozen):
@@ -134,10 +129,6 @@ class SearchHit(_Frozen):
     snippet: str
 
 
-class KnowledgeIndexError(AgentHubError):
-    """The knowledge index could not be read or written."""
-
-
 class KnowledgeIndex(Protocol):
     """Where the documents of each hub are indexed for search."""
 
@@ -152,5 +143,7 @@ class KnowledgeIndex(Protocol):
     def search(
         self, hub: str, words: tuple[str, ...], *, kinds: tuple[Kind, ...] = (), limit: int
     ) -> tuple[SearchHit, ...]:
-        """The hub's documents holding every word, best first, of ``kinds`` when not empty."""
+        """The hub's documents holding every word, best first, of ``kinds`` when not empty.
+
+        ``words`` are the non-empty output of ``query_words``; with no word the answer is ``()``."""
         ...

@@ -31,10 +31,6 @@ def test_quotes_each_word_when_query_has_fts_syntax(
     assert fts5_match(query_words(query)) == match
 
 
-def test_doubles_inner_quote_when_word_holds_one() -> None:
-    assert fts5_match(('a"b', "c")) == '"a""b" "c"'
-
-
 @pytest.mark.parametrize("query", ["", "   ", "!!!"])
 def test_finds_no_words_when_query_blank_or_punctuation(query: str) -> None:
     assert query_words(query) == ()
@@ -42,6 +38,10 @@ def test_finds_no_words_when_query_blank_or_punctuation(query: str) -> None:
 
 def test_keeps_letters_and_digits_when_query_mixes_scripts() -> None:
     assert query_words("café_2x-ü") == ("café", "2x", "ü")
+
+
+def test_composes_accents_when_query_decomposed() -> None:
+    assert query_words("e\u0301clair") == ("\u00e9clair",)
 
 
 def test_cuts_snippet_to_one_line_when_text_long() -> None:

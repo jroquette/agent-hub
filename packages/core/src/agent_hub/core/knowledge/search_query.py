@@ -1,11 +1,14 @@
 """The words of a ``hub search`` query and how they reach FTS5 (AGH-391, D-query).
 
-A word is a run of Unicode letters and digits, the split of FTS5's ``unicode61`` tokenizer; every
-other character separates words. Each word reaches FTS5 as a quoted string and the strings are
-joined with FTS5's implicit AND, so no caller text is FTS5 syntax and no query is a syntax error.
+A word is a run of Unicode letters and digits in the NFC-composed text, and every other character
+separates words: FTS5's ``unicode61`` split, except that it keeps private-use characters inside a
+word where this split does not (a known gap). Each word reaches FTS5 as a quoted string and the
+strings are joined with FTS5's implicit AND, so no caller text is FTS5 syntax and no query is a
+syntax error.
 """
 
 import re
+import unicodedata
 from typing import Final
 
 # At most this many results per search (D-query).
@@ -17,13 +20,15 @@ _WORD: Final = re.compile(r"[^\W_]+")
 
 
 def query_words(text: str) -> tuple[str, ...]:
-    """The words of ``text``, in order; empty when it holds no letter or digit."""
-    return tuple(_WORD.findall(text))
+    """The words of ``text`` once NFC-composed (a decomposed accent stays in its word), in order;
+    empty when it holds no letter or digit."""
+    return tuple(_WORD.findall(unicodedata.normalize("NFC", text)))
 
 
 def fts5_match(words: tuple[str, ...]) -> str:
-    """The FTS5 ``MATCH`` expression requiring every word: each one quoted, inner ``"`` doubled."""
-    return " ".join('"' + word.replace('"', '""') + '"' for word in words)
+    """The FTS5 ``MATCH`` expression requiring every word of ``words``, the non-empty output of
+    ``query_words`` (so no word holds a ``"``): each one quoted."""
+    return " ".join(f'"{word}"' for word in words)
 
 
 def snippet_line(text: str) -> str:
