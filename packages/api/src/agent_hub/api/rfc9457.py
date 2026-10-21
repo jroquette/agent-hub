@@ -25,6 +25,7 @@ from agent_hub.core.agent_sessions.errors import (
     CloudTimeoutError,
     CloudUnavailableError,
     HubLocalInvalidError,
+    HubRegistryUnreadableError,
     InvalidDecisionError,
     InvalidScreenshotError,
     InvalidWorkdirError,
@@ -559,13 +560,21 @@ def _hub_local_invalid_problem(error: HubLocalInvalidError) -> Problem:
     return Problem(409, "hub.local.json cannot be read", str(error), members)
 
 
-def _session_restriction_problem(_: SessionRestrictionError) -> Problem:
+def _hub_registry_unreadable_problem(error: HubRegistryUnreadableError) -> Problem:
+    """No driven session starts while the hub registry cannot be read (E-8)."""
+    members: dict[str, JsonValue] = {
+        "type": "urn:agent-hub:problem:hub-registry-unreadable",
+        "code": "hub_registry_unreadable",
+    }
+    return Problem(409, "The hub registry cannot be read", str(error), members)
+
+
+def _session_restriction_problem(error: SessionRestrictionError) -> Problem:
     return _agent_session_problem(
         409,
         "restriction-unavailable",
-        "Investigation session cannot be reopened",
-        detail="The investigation session's tool policy cannot be rebuilt from its scenario run,"
-        " so it is not reopened; open the run's investigation again.",
+        "Agent session not reopened",
+        detail=f"The session is not reopened: {error.reason}.",
     )
 
 
@@ -725,6 +734,7 @@ AGENT_SESSION_PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
     LiveLimitError: _live_limit_problem,
     LogFullError: _log_full_problem,
     HubLocalInvalidError: _hub_local_invalid_problem,
+    HubRegistryUnreadableError: _hub_registry_unreadable_problem,
     SessionRestrictionError: _session_restriction_problem,
     PermissionAnsweredError: _permission_answered_problem,
     UnknownPermissionError: _unknown_permission_problem,

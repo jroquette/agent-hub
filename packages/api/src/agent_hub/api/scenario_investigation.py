@@ -49,7 +49,11 @@ from agent_hub.core.errors import AgentHubError
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.readmodels.view_types import ViewModel
-from agent_hub.core.scenarios.investigation import ToolPolicy, investigation_prompt
+from agent_hub.core.scenarios.investigation import (
+    ToolPolicy,
+    WorkspaceRootError,
+    investigation_prompt,
+)
 from agent_hub.core.scenarios.run_record import (
     InvestigationView,
     RecordTooLargeError,
@@ -111,8 +115,14 @@ class InvestigationRestrictions:
             raise HubLocalInvalidError(project)
         header = records[0]
         run_id = str(header.get("run"))
+        try:
+            policy = ToolPolicy.of(hub=hub, env_files=declared.env_files, run_id=run_id)
+        except WorkspaceRootError as error:
+            raise RunConflictError(
+                code="workspace_root", reason=str(error), run_id=run_id
+            ) from None
         return SessionRestriction(
-            tool_policy=ToolPolicy.of(hub=hub, env_files=declared.env_files, run_id=run_id),
+            tool_policy=policy,
             system_prompt=investigation_prompt(
                 run_id=run_id,
                 scenario=str(header.get("scenario")),
@@ -127,7 +137,10 @@ class InvestigationRestrictions:
         try:
             found = self._linked(session)
         except OSError as error:
-            reason = "the scenario runs cannot be read to find the session's investigation"
+            reason = (
+                "the hub's scenario runs cannot be read to tell whether this session is held"
+                " to a scenario run's tool policy"
+            )
             raise SessionRestrictionError(session.id, reason) from error
         if found is None:
             return None
@@ -147,18 +160,28 @@ class InvestigationRestrictions:
             raise SessionRestrictionError(session.id, reason) from error
 
     def _linked(self, session: AgentSession) -> tuple[str, Path, int] | None:
-        """The hub, run folder and investigation number of the link naming ``session``."""
+        """The hub, run folder and investigation number of the link naming ``session``. Only
+        folders holding an ``investigation-<n>.session`` are read; one that vanishes while
+        read is skipped; any other read error (an unreadable link included) raises
+        ``OSError``, so the caller refuses rather than reopen unrestricted."""
         for project, hub in self._credentials.project_hubs():
             runs = Path(hub) / RUN_FOLDERS
             if project != session.project or not runs.is_dir() or runs.is_symlink():
                 continue
-            for folder in sorted(runs.iterdir()):
+            for folder in _entries(runs):
                 if not folder.is_dir() or folder.is_symlink():
                     continue
-                for link in sorted(folder.iterdir()):
-                    named = LINK_PATTERN.fullmatch(link.name)
-                    if named and _linked_id(link) == session.id:
-                        return hub, folder, int(named.group(1))
+                try:
+                    links = [
+                        (link, named)
+                        for link in _entries(folder)
+                        if (named := LINK_PATTERN.fullmatch(link.name))
+                    ]
+                    for link, named in links:
+                        if _read_link(link) == session.id:
+                            return hub, folder, int(named.group(1))
+                except FileNotFoundError:
+                    continue
         return None
 
 
@@ -210,7 +233,8 @@ class ScenarioInvestigations:
         )
 
     async def _usable(self, session_id: str) -> bool:
-        """Whether the linked session is known and live, or ended and still resumable."""
+        """Whether the linked session is known and live, or ended and still resumable; an
+        error reading what can be resumed is raised, never taken as "not resumable"."""
         try:
             session = await self._control.snapshot(session_id)
         except EntityNotFoundError:
@@ -220,10 +244,7 @@ class ScenarioInvestigations:
         claude = session.claude_session_id
         if claude is None or session.end_reason == EndReason.LOG_FULL:
             return False
-        try:
-            listed = await self._control.resumable(session.project, session.workdir_id)
-        except AgentHubError:
-            return False
+        listed = await self._control.resumable(session.project, session.workdir_id)
         return any(past.session_id == claude for past in listed.items)
 
     async def _start(
@@ -318,12 +339,9 @@ def _read_link(link: Path) -> str | None:
     return text if _SESSION_ID.fullmatch(text) else None
 
 
-def _linked_id(link: Path) -> str | None:
-    """The session id a link file names; None when it cannot be read (a link included)."""
-    try:
-        return _read_link(link)
-    except OSError:
-        return None
+def _entries(folder: Path) -> list[Path]:
+    """The entries of ``folder``, sorted; ``OSError`` when it cannot be listed."""
+    return sorted(folder.iterdir())
 
 
 def _write_link(link: Path, session_id: str) -> None:

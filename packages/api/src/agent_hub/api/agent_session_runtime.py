@@ -42,7 +42,11 @@ from agent_hub.core.agent_sessions.driver import (
     PermissionMode,
     StartSpec,
 )
-from agent_hub.core.agent_sessions.errors import HubLocalInvalidError, SessionsUnavailableError
+from agent_hub.core.agent_sessions.errors import (
+    HubLocalInvalidError,
+    HubRegistryUnreadableError,
+    SessionsUnavailableError,
+)
 from agent_hub.core.hub_config.effective_environments import (
     declared_env_files,
     effective_environments,
@@ -266,11 +270,11 @@ class HubCredentials:
 
     def names(self, project: str) -> CredentialNames:
         """The credential names ``project``'s hub declares; ``HubLocalInvalidError`` when they
-        cannot all be read."""
+        cannot all be read (``HubRegistryUnreadableError`` when the registry cannot)."""
         try:
             entries = self._registry.entries()
         except HubRegistryError:
-            raise HubLocalInvalidError(project) from None
+            raise HubRegistryUnreadableError(project) from None
         for entry in entries:
             document = read_hub_document(
                 self._reader.read_hub_json(entry.path), running_version=self._running
