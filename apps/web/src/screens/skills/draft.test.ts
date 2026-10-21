@@ -20,14 +20,13 @@ import {
   insideDraft,
   newDraftId,
   projectPluginDir,
-  publishEditPrompt,
-  publishPrompt,
   readDocument,
   readHooks,
   skillMode,
   studioPrompt,
   summarize,
 } from "./draft";
+import * as draft from "./draft";
 
 const HUB = "/home/owner/hubs/demo";
 const DRAFT = "skill-abc123";
@@ -316,10 +315,31 @@ describe("prompts", () => {
     expect(discardPrompt(DRAFT)).toContain("starting with DISCARDED");
   });
 
-  it("asks to move the draft into place and delete it, without committing", () => {
-    const prompt = publishPrompt("skill", DRAFT, "plugin/demo/skills/x/");
-    expect(prompt).toContain(`Move the folder .hub-drafts/${DRAFT}/ to plugin/demo/skills/x/`);
-    expect(prompt).toContain("do not commit");
+  it("publish_route prompts tell Claude to edit only the draft", () => {
+    const create = studioPrompt(
+      { project: "demo", kind: "hook", draftId: DRAFT, pluginDir: null, taken: [] },
+      "Block .env reads",
+    );
+    const edit = editPrompt(
+      {
+        project: "demo",
+        kind: "agent",
+        draftId: DRAFT,
+        name: "reviewer",
+        sourcePath: "plugin/demo/agents/reviewer.md",
+        managed: true,
+        hookText: null,
+      },
+      "Narrow its tools",
+    );
+    for (const prompt of [create, edit]) {
+      expect(prompt).toContain("Edit only the draft; never publish, copy or move it.");
+      expect(prompt).toContain("the web app publishes the draft itself");
+      expect(prompt).not.toMatch(/PUBLISHED/);
+    }
+    // The server publishes (AGH-295): no prompt asks Claude to, and no marker confirms it.
+    expect(Object.keys(draft)).not.toContain("publishPrompt");
+    expect(Object.keys(draft)).not.toContain("publishEditPrompt");
   });
 });
 
@@ -348,13 +368,14 @@ describe("confirmedReply", () => {
   });
 
   it("waits for the message sent, then reads a reply line starting with the marker", () => {
-    const earlier = [user(1, "Publish"), reply(2, "PUBLISHED old")];
-    expect(confirmedReply(earlier, "Publish", 2, "PUBLISHED")).toBeNull();
-    const entries = [...earlier, user(3, "Publish"), reply(4, "Done:\n- **PUBLISHED** a/SKILL.md")];
-    expect(confirmedReply(entries, "Publish", 2, "PUBLISHED")).toBe(true);
-    expect(confirmedReply(entries, "Publish", 2, "DISCARDED")).toBe(false);
+    const earlier = [user(1, "Discard"), reply(2, "DISCARDED old")];
+    expect(confirmedReply(earlier, "Discard", 2, "DISCARDED")).toBeNull();
+    const entries = [...earlier, user(3, "Discard"), reply(4, "Done:\n- **DISCARDED** a/")];
+    expect(confirmedReply(entries, "Discard", 2, "DISCARDED")).toBe(true);
+    const other = [...earlier, user(3, "Discard"), reply(4, "Done:\n- **DELETED** a/")];
+    expect(confirmedReply(other, "Discard", 2, "DISCARDED")).toBe(false);
     expect(
-      confirmedReply([user(3, "Publish"), reply(4, "Not PUBLISHED.")], "Publish", 0, "PUBLISHED"),
+      confirmedReply([user(3, "Discard"), reply(4, "Not DISCARDED.")], "Discard", 0, "DISCARDED"),
     ).toBe(false);
   });
 });
@@ -451,13 +472,5 @@ describe("an edit draft", () => {
     expect(prompt).toContain(`writing it unchanged, whole, to .hub-drafts/${DRAFT}/SKILL.md`);
     expect(prompt).toContain("Do not touch the original");
     expect(prompt.endsWith("What I want to change:\nShorten it")).toBe(true);
-  });
-
-  it("publishes the draft's files over the item's", () => {
-    const prompt = publishEditPrompt("skill", DRAFT, "plugin/demo/skills/changelog/SKILL.md", null);
-    expect(prompt).toContain(
-      `Copy every file of .hub-drafts/${DRAFT}/ over its counterpart in plugin/demo/skills/changelog/`,
-    );
-    expect(prompt).toContain(`Then delete .hub-drafts/${DRAFT}/`);
   });
 });

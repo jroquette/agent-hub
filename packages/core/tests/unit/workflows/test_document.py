@@ -277,3 +277,44 @@ def test_refuses_id_when_reserved_suffix_or_self_used(node_id: str, message: str
         assert parse_workflow(a_document(nodes=[approval])).nodes[0].id == "self"
     else:
         assert problems_of(a_document(nodes=[approval])) == [("nodes[0].id", message)]
+
+
+# AGH-359 (P-18): a process workflow's environment and its shell and script nodes' effect.
+
+
+def test_loads_environment_and_effect_when_workflow_environment_declared() -> None:
+    shell = {"id": "test", "type": "shell", "command": ["make"], "effect": "read"}
+    script = {"id": "ship", "type": "script", "runtime": "sh", "script": "a.sh"}
+
+    document = parse_workflow(a_document(environment="staging", nodes=[shell, script]))
+
+    assert document.environment == "staging"
+    assert [getattr(node, "effect", None) for node in document.nodes] == ["read", None]
+    assert parse_workflow(a_document()).environment is None
+
+
+@pytest.mark.parametrize(
+    ("overrides", "key"),
+    [
+        ({"environment": "../live"}, "environment"),
+        ({"environment": 1}, "environment"),
+        (
+            {"nodes": [{"id": "t", "type": "shell", "command": ["x"], "effect": "delete"}]},
+            "nodes[0].effect",
+        ),
+        (
+            {"nodes": [{"id": "t", "type": "halt", "reason": "x", "effect": "read"}]},
+            "nodes[0].effect",
+        ),
+    ],
+)
+def test_refuses_value_when_workflow_environment_key_malformed(
+    overrides: dict[str, object], key: str
+) -> None:
+    assert [found for found, _ in problems_of(a_document(**overrides))] == [key]
+
+
+def test_refuses_environment_when_scenario_kind_declares_workflow_environment() -> None:
+    assert problems_of(a_scenario(environment="staging")) == [
+        ("environment", "a scenario takes its environment from --env, never from the document")
+    ]

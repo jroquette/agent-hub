@@ -85,6 +85,23 @@ describe("apiGet", () => {
     expect(await named("y")).toMatchObject({ code: null, reason: null });
   });
 
+  it("keeps a failed publish's published member only when it is true", async () => {
+    stubApi({
+      "/api/v1/sessions/x": aProblem({ status: 500, title: "Draft not removed", published: true }),
+      "/api/v1/sessions/y": aProblem({ status: 500, title: "Item write failed", published: "yes" }),
+      "/api/v1/sessions/z": aProblem({ status: 500, title: "Item write failed" }),
+    });
+
+    const named = (id: string) =>
+      apiGet("/api/v1/sessions/{session_id}", { path: { session_id: id } }).catch(
+        (e: unknown) => e,
+      );
+
+    expect(await named("x")).toMatchObject({ published: true });
+    expect(await named("y")).toMatchObject({ published: false });
+    expect(await named("z")).toMatchObject({ published: false });
+  });
+
   it("rejects with a status-based problem when the error body is not a problem", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response("oops", { status: 502, statusText: "Bad Gateway" }),

@@ -1,0 +1,473 @@
+"""Policy gates on a run, for scenario runs and process workflows alike (P-4, P-18, E-9;
+docs/design/scenarios.md § Policy).
+
+A run that has policy gates keeps its authored document in its snapshot, and beside it
+``policy_gates.json``: each step the policy asked before at the start, with what runs there, its
+effect and the environment (``gates_file``, ``read_gates``). ``parse_workflow`` refuses an id
+ending ``__ask``, so the gated plan is never snapshotted: ``gated_run_plan`` rebuilds it from those
+two files at the start and on every resume.
+
+A step that may have run is never repeated silently. Before a write or destroy starts, the
+runner writes a durable start line (``action_start`` for an action call, ``node_start`` for a
+process workflow's shell or script node). On resume (``owed``), a step outside a loop_group whose
+write started and that never ended after, and a loop_group with a write of its body started after
+its last clean point (its end, or a pause recorded with it held), owe a re-ask: it is recorded
+once as a durable ``reask_owed`` line and read back from the record (never from attempt numbers).
+An owed step asks through a ``<step>__ask`` gate whose message says it may have run, until the
+step ends; an owed group asks before every write or destroy of its body, each iteration, until
+the group ends; the steps it gates again are recorded as a ``policy_asks`` line. A read step
+simply runs again. A recorded reject of a policy gate (``rejected``) ends the run ``cancelled``
+on resume, whatever the plan holds now. Which gates are policy gates comes from the run's record
+alone (``policy_gate_ids``), never from an id's ``__ask`` suffix.
+
+A process workflow run in an environment runs its nodes through ``NodePolicyRunner``: each
+``shell`` and ``script`` node, and each ``until_bash`` (a read), is decided again just before it
+starts, with the effective config as loaded when this process started or resumed the run
+(origin ``author``; a ``policy.decision`` event each), and a ``deny``, or an ``ask`` the run has
+no gate for (the config tightened since the start), fails it ``config`` before any process. Its
+action and expect calls go to ``action_runs.ActionExecutors``, as a scenario run's do. It starts
+no process of its own: the executors it wraps do, and its ``stop_children`` stops theirs.
+"""
+
+import dataclasses
+import json
+import threading
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Final, get_args
+
+from agent_hub.cli.action_command import deny_reason
+from agent_hub.cli.action_runs import ActionExecutors, ActionLog
+from agent_hub.cli.workflow_executors import WorkflowExecutors
+from agent_hub.cli.workflow_runs import (
+    ACTION_START,
+    WorkflowRunError,
+    append_record,
+    prior_state,
+)
+from agent_hub.core.hub_config.effective_environments import EffectiveEnvironments
+from agent_hub.core.json_form import JsonValue
+from agent_hub.core.scenarios.access_policy import Effect, PolicyDecision, decide, find_environment
+from agent_hub.core.scenarios.policy_gates import (
+    POLICY_ASKS,
+    UNTIL_BASH,
+    NodeDecision,
+    PolicyAsk,
+    PolicyGateError,
+    ask_gate,
+    gated_plan,
+    node_asks,
+    node_decisions,
+    node_effect,
+    recorded_gate_kinds,
+)
+from agent_hub.core.scenarios.scenario_events import ActionFacts, ScenarioEvents
+from agent_hub.core.scenarios.scenario_plan import ScenarioPlan, plan_scenario
+from agent_hub.core.workflows.document import WorkflowDocument, WorkflowLoadError
+from agent_hub.core.workflows.failures import NodeFailedError
+from agent_hub.core.workflows.includes import IncludeResolver
+from agent_hub.core.workflows.nodes import ActionNode, ExpectNode, LoopGroupNode
+from agent_hub.core.workflows.plan import WorkflowPlan
+from agent_hub.core.workflows.ports import NodeCall, NodeReply
+from agent_hub.core.workflows.run_state import RunState
+from agent_hub.generator.action_discovery import ActionDiscovery
+
+GATES: Final = "policy_gates.json"
+# A re-ask the run owes after a call that may have run (``owed``).
+REASK_OWED: Final = "reask_owed"
+# A process workflow's write or destroy node, written before its process starts.
+NODE_START: Final = "node_start"
+# The ``source_id`` item of a start decision's ``policy.decision`` event (attempt 0).
+START_ITEM: Final = "start"
+_STARTS: Final = frozenset({ACTION_START, NODE_START})
+_EFFECTS: Final[tuple[Effect, ...]] = get_args(Effect)
+
+type Record = dict[str, JsonValue]
+
+
+def gates_file(asks: Mapping[str, PolicyAsk]) -> bytes:
+    """``policy_gates.json``'s bytes: each gated step's action, effect and environment."""
+    gates = {
+        step: {"action": ask.action, "effect": ask.effect, "environment": ask.environment}
+        for step, ask in asks.items()
+    }
+    return json.dumps(gates, sort_keys=True).encode()
+
+
+def read_gates(value: object) -> dict[str, PolicyAsk]:
+    """The gates ``policy_gates.json`` (parsed) names; ``ValueError`` when it is malformed."""
+    if not isinstance(value, dict):
+        msg = f"{GATES} is not an object"
+        raise ValueError(msg)
+    asks: dict[str, PolicyAsk] = {}
+    for step, ask in value.items():
+        given = ask if isinstance(ask, dict) else {}
+        action, effect, where = given.get("action"), given.get("effect"), given.get("environment")
+        known = next((item for item in _EFFECTS if item == effect), None)
+        if not (isinstance(action, str) and known is not None and isinstance(where, str)):
+            msg = f"{GATES}: the gate of {step} is malformed"
+            raise ValueError(msg)
+        asks[step] = PolicyAsk(action=action, effect=known, environment=where)
+    return asks
+
+
+def snapshot_gates(snapshot: Path) -> dict[str, PolicyAsk]:
+    """The gates a run's snapshot holds; ``WorkflowRunError`` when they cannot be read."""
+    try:
+        return read_gates(json.loads((snapshot / GATES).read_bytes()))
+    except (OSError, ValueError) as error:
+        raise WorkflowRunError(f"cannot load the run's snapshot: {error}") from None
+
+
+def gated_run_plan(
+    document: WorkflowDocument, includes: IncludeResolver | None, asks: Mapping[str, PolicyAsk]
+) -> WorkflowPlan:
+    """The run's plan, a gate before each step of ``asks``; ``WorkflowRunError`` when it does
+    not plan (two unordered gates, a gate naming no step)."""
+    try:
+        return gated_plan(document, includes=includes, asks=asks)
+    except (WorkflowLoadError, PolicyGateError) as error:
+        raise WorkflowRunError(f"cannot plan the run's policy gates: {error}") from None
+
+
+def node_effects(plan: WorkflowPlan, environment: str) -> dict[str, tuple[str, Effect]]:
+    """Each shell and script node's type and effect in ``environment``, by its id as
+    recorded (what ``owed`` asks again for a process workflow)."""
+    found: dict[str, tuple[str, Effect]] = {}
+    for node in plan.all_nodes():
+        if (effect := node_effect(node, environment=environment)) is not None:
+            found[node.id] = (node.type, effect)
+    return found
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class Owed:
+    """The re-asks a resume owes: each step asked again (by its id as recorded), and the gates
+    whose earlier answer no longer counts."""
+
+    steps: dict[str, PolicyAsk] = field(default_factory=dict)
+    reopen: frozenset[str] = frozenset()
+
+
+def owed(
+    folder: Path,
+    records: list[Record],
+    *,
+    plan: WorkflowPlan,
+    effects: Mapping[str, tuple[str, Effect]],
+    environment: str,
+) -> Owed:
+    """The re-asks this resume owes, each first recorded as a durable ``reask_owed`` line.
+
+    A step outside a loop_group is owed when a write or destroy of it started and the step
+    never ended after; it stays owed until the step ends, and its earlier gate answer counts
+    only once a gate was opened after the owed line. A loop_group is owed when a write or
+    destroy of its body started after its last clean point (its end, or a pause recorded with
+    it held): the group may run that body again, so every write or destroy of its body asks
+    first until the group ends. Nothing is derived from attempt numbers."""
+    bodies = {
+        group.id: tuple(body.id for body in group.nodes)
+        for group in plan.document.nodes
+        if isinstance(group, LoopGroupNode)
+    }
+    owner = {body: group for group, ids in bodies.items() for body in ids}
+    owed_steps = frozenset(
+        node
+        for record in records
+        if record.get("event") == REASK_OWED
+        and isinstance(node := record.get("node"), str)
+        and node not in bodies
+    )
+    marks = _Marks.of(records, policy=policy_gate_ids(records, owed_steps=owed_steps))
+    for node in [*bodies, *(step for step in effects if step not in owner)]:
+        if _newly_owed(node, marks, bodies.get(node)):
+            line: Record = {"event": REASK_OWED, "node": node}
+            append_record(folder, line, durable=True)
+            marks.owed[node] = len(records) + len(marks.added)
+            marks.added.append(node)
+    steps: dict[str, PolicyAsk] = {}
+    reopen: set[str] = set()
+    for node, at in marks.owed.items():
+        if at <= marks.ended.get(node, -1):
+            continue
+        for step in bodies.get(node, (node,)):
+            if step in effects and effects[step][1] != "read":
+                action, effect = effects[step]
+                steps[step] = PolicyAsk(
+                    action=action, effect=effect, environment=environment, again=True
+                )
+        if node not in bodies and marks.gates.get(ask_gate(node), -1) < at:
+            reopen.add(ask_gate(node))
+    return Owed(steps=steps, reopen=frozenset(reopen))
+
+
+@dataclass(kw_only=True)
+class _Marks:
+    """Where things last happened in a run's record, by line index and node as recorded."""
+
+    ended: dict[str, int] = field(default_factory=dict)
+    held: dict[str, int] = field(default_factory=dict)
+    owed: dict[str, int] = field(default_factory=dict)
+    gates: dict[str, int] = field(default_factory=dict)
+    # The last write or destroy started of each node.
+    writes: dict[str, int] = field(default_factory=dict)
+    added: list[str] = field(default_factory=list)
+
+    @classmethod
+    def of(cls, records: list[Record], *, policy: frozenset[str]) -> _Marks:
+        """The marks; a ``gate`` line counts only for a gate in ``policy``."""
+        marks = cls()
+        for index, record in enumerate(records):
+            node, event = record.get("node"), record.get("event")
+            if event == "held" and isinstance(groups := record.get("groups"), dict):
+                marks.held |= dict.fromkeys(groups, index)
+            if not isinstance(node, str):
+                continue
+            if event in _STARTS and record.get("effect") in ("write", "destroy"):
+                marks.writes[node] = index
+            found = {"step_end": marks.ended, REASK_OWED: marks.owed, "gate": marks.gates}
+            if event == "gate" and node not in policy:
+                continue
+            if (where := found.get(str(event))) is not None:
+                where[node] = index
+        return marks
+
+
+def _newly_owed(node: str, marks: _Marks, body: tuple[str, ...] | None) -> bool:
+    """Whether ``node`` owes a re-ask its record does not hold yet."""
+    if body is None:
+        started = marks.writes.get(node, -1)
+        return started > marks.ended.get(node, -1) and marks.owed.get(node, -1) < started
+    clean = max(marks.ended.get(node, -1), marks.held.get(node, -1))
+    started = max((marks.writes.get(step, -1) for step in body), default=-1)
+    return started > clean and marks.owed.get(node, -1) <= clean
+
+
+def policy_gate_ids(
+    records: list[Record], *, owed_steps: frozenset[str] = frozenset()
+) -> frozenset[str]:
+    """The run's policy gates, from its record alone and only ever built from a step's id
+    (never from an id's suffix, nor from a loop_group's or an include's id: an authored body
+    approval ``ask`` is recorded ``<group>__ask``): before each step of the start record's
+    ``policy_gates`` and of each ``policy_asks`` line (``recorded_gate_kinds``), and before each
+    of ``owed_steps`` (steps a ``reask_owed`` line names, which ``owed`` tells from groups)."""
+    kinds = recorded_gate_kinds(records)
+    policy = {gate for gate, kind in kinds.items() if kind == "policy"}
+    return frozenset(policy | {ask_gate(step) for step in owed_steps})
+
+
+def record_asks(folder: Path, steps: Mapping[str, PolicyAsk]) -> None:
+    """Record, before the run goes on, the steps this resume gates again (a ``policy_asks``
+    line), so their gates are known as policy gates from the record alone."""
+    if steps:
+        line: Record = {"event": POLICY_ASKS, "steps": list[JsonValue](sorted(steps))}
+        append_record(folder, line, durable=True)
+
+
+def rejected(records: list[Record]) -> str | None:
+    """A policy gate (``policy_gate_ids``) a recorded decision rejected, if any."""
+    policy = policy_gate_ids(records)
+    return next(
+        (
+            str(record.get("node"))
+            for record in records
+            if record.get("event") == "decision"
+            and record.get("choice") == "reject"
+            and record.get("node") in policy
+        ),
+        None,
+    )
+
+
+def resumed_prior(records: list[Record], reopen: frozenset[str]) -> RunState:
+    """The run's state for a resume, without the earlier answer of each gate in ``reopen``."""
+    prior = prior_state(records)
+    if not reopen:
+        return prior
+    nodes = {node: result for node, result in prior.nodes.items() if node not in reopen}
+    return dataclasses.replace(prior, nodes=nodes)
+
+
+@dataclass(frozen=True, kw_only=True)
+class StartPolicy:
+    """A process workflow's start in an environment: each node's decision, its action steps'
+    plan (``None`` without action nodes), the gates its asks need, and why it may not start."""
+
+    environment: str
+    decided: tuple[NodeDecision, ...]
+    planned: ScenarioPlan | None
+    asks: dict[str, PolicyAsk]
+    refusals: tuple[str, ...]
+
+    @property
+    def pins(self) -> dict[str, JsonValue]:
+        """Each used action's pinned ``content_hash`` (the start record's ``actions``)."""
+        rows = () if self.planned is None else self.planned.rows
+        return {row.action: row.content_hash for row in rows}
+
+    def emit(self, events: ScenarioEvents, *, at: datetime) -> None:
+        """One ``policy.decision`` per decided node and action step: attempt 0, item
+        ``start``."""
+        for decided in self.decided:
+            events.node_decided(decided, attempt=0, at=at, item=START_ITEM)
+        for row in () if self.planned is None else self.planned.rows:
+            facts = ActionFacts(
+                step=row.step,
+                attempt=0,
+                action=row.action,
+                content_hash=row.content_hash,
+                environment=self.environment,
+                services=(),
+                effect=row.effect,
+                origin="author",
+                decision=row.decision,
+            )
+            events.policy_decided(facts, reason_kind=row.reason_kind, at=at, item=START_ITEM)
+
+
+def decide_start(
+    plan: WorkflowPlan,
+    *,
+    environment: str,
+    view: EffectiveEnvironments,
+    actions: ActionDiscovery | None,
+    pack: str,
+    inputs: Mapping[str, JsonValue],
+) -> StartPolicy:
+    """Decide a process workflow's start in ``environment``: its shell, script and
+    ``until_bash`` nodes (``node_decisions``) and, with ``actions``, its action and expect steps
+    as a scenario's are planned (``plan_scenario``: an unresolved action, a draft, a service
+    with no endpoint there). An undeclared environment is one refusal, not one per step."""
+    declared = find_environment(view, environment)
+    decided = node_decisions(plan, environment=environment, declared=declared)
+    planned = None
+    if actions is not None:
+        planned = plan_scenario(
+            plan,
+            pack=pack,
+            actions=actions.actions,
+            view=view,
+            environment=environment,
+            inputs=inputs,
+        )
+    refusals = [] if declared is not None else [f"environment {environment} is not declared"]
+    refusals += [] if planned is None else planned.problems
+    access = None if declared is None else declared.access
+    for item in decided:
+        if item.decision.decision == "deny" and item.decision.reason_kind != "undeclared":
+            what = f"step {item.step}" + (" until_bash" if item.node_type == UNTIL_BASH else "")
+            reason = deny_reason(
+                item.decision, effect=item.effect, environment=environment, access=access
+            )
+            refusals.append(f"{what}: deny ({reason})")
+    for row in () if planned is None else planned.rows:
+        if row.decision == "deny" and row.reason_kind != "undeclared":
+            decision = PolicyDecision(decision=row.decision, reason_kind=row.reason_kind)
+            reason = deny_reason(
+                decision, effect=row.effect, environment=environment, access=access
+            )
+            refusals.append(f"step {row.step}: deny ({reason})")
+    asks = node_asks(decided, environment=environment)
+    for row in () if planned is None else planned.rows:
+        if row.decision == "ask":
+            asks[row.step] = PolicyAsk(
+                action=row.action, effect=row.effect, environment=environment
+            )
+    return StartPolicy(
+        environment=environment,
+        decided=decided,
+        planned=planned,
+        asks=asks,
+        refusals=tuple(dict.fromkeys(refusals)),
+    )
+
+
+@dataclass(frozen=True, kw_only=True)
+class NodePolicyRunner:
+    """The engine's ``NodeRunner`` for a process workflow run in an environment: each shell and
+    script node and each ``until_bash`` decided again before it starts, then run by ``inner``;
+    each action or expect call run by ``actions`` (decided there)."""
+
+    inner: WorkflowExecutors
+    # The run's action calls; ``None`` when it pinned no action.
+    actions: ActionExecutors | None
+    log: ActionLog
+    folder: Path
+    environment: str
+    view: EffectiveEnvironments
+    # The steps (as recorded) the run has a policy gate before.
+    asks: frozenset[str]
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+    @property
+    def max_parallel(self) -> int:
+        return self.inner.max_parallel
+
+    def stop_children(self) -> None:
+        """Kill the running actions' groups and the wrapped executors' children (an
+        interrupted layer)."""
+        if self.actions is not None:
+            self.actions.stop_children()
+        else:
+            self.inner.stop_children()
+
+    def run(self, call: NodeCall) -> NodeReply:
+        node = call.node
+        if isinstance(node, ActionNode | ExpectNode):
+            if self.actions is None:
+                raise NodeFailedError("config", f"the run pinned no action {node.action}")
+            return self.actions.run(call)
+        effect = node_effect(node, environment=self.environment)
+        if effect is not None:
+            self._check(node.id, node.type, effect, attempt=call.attempt)
+            if effect != "read":
+                # A write's start must outlive the hub: a resume reads it to ask again.
+                line: Record = {"event": NODE_START, "node": node.id, "attempt": call.attempt}
+                with self.lock:
+                    append_record(self.folder, line | {"effect": effect}, durable=True)
+        return self.inner.run(call)
+
+    def until_exit(self, argv: Sequence[str], call: NodeCall) -> int:
+        # An until_bash is a read: decided as one, run without credentials as before.
+        item = f"until{call.iteration}"
+        self._check(call.node.id, UNTIL_BASH, "read", attempt=call.attempt, item=item)
+        return self.inner.until_exit(argv, call)
+
+    def _check(
+        self, step: str, node_type: str, effect: Effect, *, attempt: int, item: str = ""
+    ) -> None:
+        """Decide the node now (a ``policy.decision`` event) with the effective config as
+        loaded when this process started or resumed the run; ``config`` failure when the
+        policy refuses it: a ``deny``, or an ``ask`` whose gate the run lacks (the engine
+        runs an asked node only once its gate is approved)."""
+        declared = find_environment(self.view, self.environment)
+        decision = decide(declared, effect, "author")
+        self.log.node_decided(
+            NodeDecision(
+                step=step,
+                node_type=node_type,
+                effect=effect,
+                environment=self.environment,
+                decision=decision,
+            ),
+            attempt=attempt,
+            item=item,
+        )
+        what = f"the until_bash of step {step}" if node_type == UNTIL_BASH else f"step {step}"
+        if decision.decision == "deny":
+            reason = deny_reason(
+                decision,
+                effect=effect,
+                environment=self.environment,
+                access=declared.access if declared is not None else None,
+            )
+            refused = f"the policy denies {what} ({effect}) in {self.environment}: {reason}"
+            raise NodeFailedError("config", refused)
+        if decision.decision == "ask" and step not in self.asks:
+            refused = (
+                f"the policy now asks before {what} ({effect}) in {self.environment} and this"
+                " run has no gate for it: start a new run"
+            )
+            raise NodeFailedError("config", refused)

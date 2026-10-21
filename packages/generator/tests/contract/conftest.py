@@ -47,6 +47,10 @@ class DiskWriterTree:
         """Make a link to ``target``."""
         write_tree(self.root, {path: Link(target)})
 
+    def make_folder(self, path: str) -> None:
+        """Make an empty folder and its parents."""
+        (self.root / path).mkdir(parents=True, exist_ok=True)
+
     def make_executable(self, path: str) -> None:
         """Set the owner's, group's and others' executable bits."""
         target = self.root / path

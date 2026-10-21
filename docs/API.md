@@ -37,7 +37,8 @@ the first routes were written ([ADR 0017](adr/0017-api-second-composition-root.m
   ([Workflow gate decisions](#workflow-gate-decisions)), and the six AGH-297 added (`ITEM_VERSION_PATHS`): `GET`
   `/projects/{project}/skills/{kind}/{source}/{name}/versions[/{version_id}]` and
   `/workflows/{project}/{name}/versions[/{version_id}]`, and `POST .../versions/{version_id}/restore` of each
-  ([Skills](#skills), [Workflows](#workflows)). A test fails on any other path.
+  ([Skills](#skills), [Workflows](#workflows)), and the one AGH-298 added to them:
+  `POST /projects/{project}/skills/drafts/{draft_id}/publish` ([Skills](#skills)). A test fails on any other path.
 - A field kept only for compatibility is marked `deprecated` in the document and stays until `/api/v2`: a session's
   and a live tile's `agent` (read `label` and `actors`) and a learning's `target` (read `note_path`).
 
@@ -100,21 +101,44 @@ Errors are RFC 9457 Problem Details, with media type `application/problem+json`:
   The version history routes (Skills and Workflows) answer the same 400s, and 400 for a `version_id` that is not a
   lowercase UUID, before anything is read; an item with no unit (a link, a built-in) → 404 (entity `item history`); a
   version id of another unit, or unknown → 404 (entity `item version`). No problem names a path.
-- The restores ([Skills](#skills), [Workflows](#workflows)): a refusal is a 409 "Item write refused" whose extension
-  members `code` and `reason` say why, nothing written and no `restore` version recorded: `hub_read_only` (the hub
+- The restores ([Skills](#skills), [Workflows](#workflows)) and the Publish ([Skills](#skills)): a refusal is a 409
+  "Item write refused" whose extension members `code` and `reason` say why, nothing written and no `restore` or
+  `publish` version recorded: `hub_read_only` (the hub
   folder is not writable, and always in the container, before the cookie is checked), `no_author` (the hub has no
   effective identity; `reason` says what is missing), `link_in_path` (a component of the unit's path is a link),
   `unit_unreadable` (the unit on disk cannot be read whole, so it could not be recorded first),
   `secret_unversioned` (the unit on disk has a secret match) or `managed_confirmation_required` (`hub.lock` manages
   the unit and the body did not say `confirm_managed: true`; only the JSON `true` confirms, `1` or `"yes"` is a
-  422). The disk's content may already be recorded as an
+  422). A Publish also refuses `draft_already_published` ("This draft was already published; discard it": a
+  version of the project already names the draft as its `publish`; it answers before any not-found, invalid-draft or
+  draft-read refusal; nothing is written, recorded or removed and the draft stays), `item_exists` (a new item, or a
+  rename, to a name its kind already has in any source, case aside; a new hook's script path holding other bytes; a
+  moved hook whose groups the file already holds) and `link_in_path` for a draft file or folder that is a link or a
+  special file; `unit_unreadable` also when the draft must merge into a unit past the bounds. The disk's content may already be recorded as an
   `external` version when a managed refusal answers. A body field the model does not know → 422. A write that fails →
-  500 "Item write failed", `code` `write_failed` and `kind` `failed` (the unit is as it was) or `rollback_failed` (a
-  folder swap could not put the old folder back; `hub doctor`'s `items.leftovers` lists what is left beside it); a
-  stored version that does not decode → 500 `corrupt_version`. A race for the unit's next version lost three times
+  500 "Item write failed", `code` `write_failed` and `kind` `failed` (the unit is as it was), `rollback_failed` (a
+  folder swap could not put the old folder back; `hub doctor`'s `items.leftovers` lists what is left beside it) or
+  `old_not_removed` (a Publish's rename: the new item is published, its old item could not be removed and stays
+  until the user removes it, and so does the draft; the body also carries `published: true` and the write's
+  `changed`, `versioned` and `reason`, and the detail reads "Published; the old item could not be removed and
+  stays. The draft is still there: discard it.", since a recorded `publish` spends it); a stored version that does not decode → 500 `corrupt_version`. A race for the unit's next version lost three times
   → 503 with `Retry-After: 1` and `written`: `false` with `code` `version_race` when nothing was written yet, `true`
   with `code` `written_not_recorded` when the unit was written but its version not stored (the race lost, or the
   database busy or unreadable, after the write; the next read records it as `external`). No problem names a path.
+- The Publish ([Skills](#skills)) also answers, before anything is written or recorded: 400 for a `draft_id` outside
+  `(skill|agent|hook)-[a-z0-9]{6}`; 422 for a body outside its shape (a `target` field or `kind` outside the catalog's,
+  an unknown field, `confirm_managed` other than a JSON boolean), before anything is read; 404 for an unknown project
+  or target item (entity `project`, `skill` or the unit's kind) and a missing or empty draft folder (entity `draft`);
+  413 "Draft too large" (`code` `draft_too_large`, `limit` the bounds in words) for a draft with a file over 256 KiB,
+  more than 201 files or deeper than 3; 422 "Draft invalid" (`code` `draft_invalid`, `reason` in words) for a draft
+  whose main file is missing (`SKILL.md`, one agent `.md`, `hooks.json`), whose frontmatter `name` is outside
+  `[A-Za-z0-9_-]{1,128}`, whose kind (its id's prefix) differs from the target's, whose `hooks.json` is not a hooks
+  object, that holds a hidden name, or that edits a hook and carries scripts. A Publish that wrote the item but could
+  not remove the draft answers 500 "Draft not removed" (`code` `draft_not_removed`, `published: true`, and the
+  write's `changed`, `versioned` and `reason`; detail "Published; the draft is still there. Discard it."): the item
+  stays published and the kept draft is spent when a `publish` was recorded. A draft that cannot be read (an I/O
+  error, not a link or the bounds) answers 500 "Draft read failed" (`code` `write_failed`, `kind`
+  `draft_unreadable`; detail "The draft could not be read; nothing was written or recorded.").
 
 ## Pagination
 
@@ -157,8 +181,9 @@ the same operation behaves the same from every entry point ([ARCHITECTURE.md](AR
 - Nested paths only for ownership (`/api/v1/sessions/{session_id}/events`). Methods keep their HTTP meaning: `GET`
   reads, `POST` creates or triggers an action (`POST /api/v1/hubs`, `POST /api/v1/events/hooks`), `PATCH` updates part
   of a resource, `DELETE` removes it. The only writes are registering and removing a hub, posting hook envelopes,
-  since AGH-201 the two learning decisions, since AGH-165 the agent-session commands, and since AGH-297 the restore
-  of an item's version, the first route that writes into a hub's working tree (see Skills). Since AGH-296 the
+  since AGH-201 the two learning decisions, since AGH-165 the agent-session commands, since AGH-297 the restore
+  of an item's version, the first route that writes into a hub's working tree, and since AGH-298 the Studio's Publish
+  of a draft (see Skills). Since AGH-296 the
   Toolkit and Workflows `GET`s also record item versions in agent-hub's database (never in the hub, see Skills).
 
 ## Sessions
@@ -387,8 +412,8 @@ text or a value the browser sent):
 
 Three GET routes (and the two version history reads below) serve a hub's skills, agents and hooks, read from its
 files on request (the hub tree under `plugin/` and `.claude/`, through `HubFileReader.skill_sources` and
-`read_skill_file`, never through a link). The GETs never write the hub (the restore below does); the catalog, the
-detail and the version list
+`read_skill_file`, never through a link). The GETs never write the hub (the restore and the publish below do); the
+catalog, the detail and the version list
 record a version of each unit they show in agent-hub's database (`item_versions`, AGH-295: a baseline the first time,
 a new version when its content changed; never a unit with a secret match or past the bounds), and a capture that
 cannot write within the database's busy timeout answers 503.
@@ -427,7 +452,25 @@ Other methods answer 405; no route runs a script, a hook or a command.
   from the last one, so a hand edit stays restorable. A version equal to the disk answers `changed: false` and writes
   and records nothing; content with a secret match or past the bounds is written with `versioned: false` and its
   `reason` (`secret`, `too_large`). A strict write that needs the launch cookie ([Local security](#local-security));
-  its refusals are listed under [Errors](#errors). It never runs git: the hub's working tree shows the change.
+  its refusals are listed under [Errors](#errors). It spawns no process (no git, and the project is resolved from
+  the registry and `hub.json` without the hub card's doctor drift check): the hub's working tree shows the change.
+- `POST /api/v1/projects/{project}/skills/drafts/{draft_id}/publish` with `{target, confirm_managed?}` → 200
+  `ItemWriteResult` `{changed, versioned, reason, version}`: lands the Studio's draft `.hub-drafts/<draft_id>/` in the
+  hub (D10, S5) and records a `publish` version naming the draft (`draft_id`), by the hub's effective identity.
+  `target` is `{kind, source, name}` (the catalog id of the item the draft edits) or `null` for a new item, always
+  stated; `confirm_managed` is as for a restore. An edit of a skill writes every draft file over its counterpart and
+  keeps the files the draft does not hold (a changed `name` publishes to the new folder, carries the old folder's
+  hidden entries, records the new unit's `publish`, then removes the old folder); an agent's file is replaced (a
+  changed name: the new file, the old removed); a hook's draft groups replace that one hook in its file, every other
+  hook and setting kept, the file written in the `dump_json` form. A new item lands in the project's own plugin,
+  `plugin/<project>/` (`skills/<name>/`, `agents/<name>.md`, or merged hook by hook into `hooks/hooks.json`, created
+  when missing, a new hook's `scripts/*` copied to `plugin/<project>/scripts/`). It goes through the restore's write
+  step (one write at a time, the disk recorded first as `external`, the same gates); then the draft is removed, also
+  when the draft equals the item (`changed: false`, nothing written or recorded). A written unit with a secret match
+  or past the bounds answers `versioned: false` with its `reason` (`secret`, `too_large`), and a write of a new hook's
+  scripts only `reason: "script_only"`. A draft some version of the project already names as its `publish` is spent
+  (409 `draft_already_published`). Claude only edits the draft; the server reads it here, never through a link. Like
+  the restore, it spawns no process (no git, no doctor drift check), also when the draft just changed the tree.
 
 Items and files are addressed by ids the server issues (`file_id` is 16 hex characters of the sha256 of the file's
 hub-relative path), never by a client path. Bounds: 500 items per kind, 200 bundled files per skill, 2,000 hooks,
@@ -545,13 +588,15 @@ it answers 404 `urn:agent-hub:problem:run-control-off`.
 CORS headers, `Cache-Control: no-store` on `/api`, and a CSP that limits scripts, styles, fonts and connections to
 `'self'`. The web app requests no other host; Linear is read by the server only ([Feature tickets](#feature-tickets)).
 The agent-session routes add a cookie and stricter Origin rules ([Agent sessions](#agent-sessions)), and the workflow
-run writes (`RUN_WRITES`: start, cancel, resume and abandon a run, and a gate's decision) and the restores
-(`ITEM_WRITES`) need that cookie too ([Workflow run commands](#workflow-run-commands), [Skills](#skills),
+run writes (`RUN_WRITES`: start, cancel, resume and abandon a run, and a gate's decision), the restores and the
+Publish (`ITEM_WRITES`) need that cookie too ([Workflow run commands](#workflow-run-commands), [Skills](#skills),
 [Workflows](#workflows)); every other route is unchanged and needs no cookie. In the container (`AGENT_HUB_IN_CONTAINER=1`, where no token is
-minted and the hubs are mounted read-only) a restore answers 409 `hub_read_only` before the cookie is checked.
+minted and the hubs are mounted read-only) a restore or a publish answers 409 `hub_read_only` before the cookie is
+checked.
 
 The two learning decisions, which reach the network, the four workflow run commands and a workflow gate's decision,
-which start or stop processes, and the two restores (`ITEM_WRITES`), which write into a hub's tree, take a strict rule
+which start or stop processes, and the two restores and the Publish (`ITEM_WRITES`), which write into a hub's tree,
+take a strict rule
 on top (`STRICT_WRITES` in `agent_hub/api/local_security.py`), checked before the route runs, so a refused request
 pushes, stores, writes and starts nothing:
 

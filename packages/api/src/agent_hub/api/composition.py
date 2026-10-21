@@ -68,6 +68,7 @@ from agent_hub.api.rfc9457 import (
     invalid_cursor_problem,
     owner_signoff_problem,
 )
+from agent_hub.api.run_gate_kinds import RecordedGateKinds
 from agent_hub.api.run_launcher import ProcessRunLauncher
 from agent_hub.api.settings import ApiSettings, utc_now
 from agent_hub.api.static_files import WEB_DIST
@@ -114,9 +115,12 @@ from agent_hub.core.ingestion.ingestion_status import IngestionCounters
 from agent_hub.core.item_versions.capture_item_versions import CaptureItemVersions
 from agent_hub.core.item_versions.hub_item_writer import HubItemWriter
 from agent_hub.core.item_versions.item_version import VersionAuthor
+from agent_hub.core.item_versions.publish_draft import PublishDraft
 from agent_hub.core.item_versions.read_item_versions import ReadItemVersions
 from agent_hub.core.item_versions.record_and_write import AuthorLookup, NoAuthor, RecordAndWrite
+from agent_hub.core.item_versions.restore_and_publish import RestoreAndPublish
 from agent_hub.core.item_versions.restore_item_version import RestoreItemVersion
+from agent_hub.core.item_versions.version_store import ItemVersionStore
 from agent_hub.core.learnings.brain_change_requests import BrainChangeRequests, CommitAuthor
 from agent_hub.core.learnings.decide_learning import DecideLearning
 from agent_hub.core.learnings.learning_ports import LearningHub
@@ -346,6 +350,29 @@ def item_author_of(hub_of: Callable[[str], LearningHub | UnavailableHub]) -> Aut
         return VersionAuthor(name=hub.author.name, email=hub.author.email)
 
     return author_of
+
+
+def _item_writes(  # noqa: PLR0913 - the shared write step's ports, all keyword-only
+    versions: ItemVersionStore,
+    *,
+    reader: HubFileReader,
+    writer: HubItemWriter,
+    author_of: AuthorLookup,
+    clock: Callable[[], datetime],
+    capture: CaptureItemVersions,
+    hubs: HubFilesReadModels,
+    workflows: ReadWorkflows,
+) -> RestoreAndPublish:
+    """Restore and Publish over one ``RecordAndWrite``: one write at a time in the app."""
+    step = RecordAndWrite(
+        versions, reader=reader, writer=writer, author_of=author_of, clock=clock, capture=capture
+    )
+    return RestoreAndPublish(
+        restore=RestoreItemVersion(
+            versions, toolkit_units=hubs, workflow_units=workflows, step=step
+        ),
+        publish=PublishDraft(step, writer=writer, reader=reader, toolkit_units=hubs, catalog=hubs),
+    )
 
 
 class CachedAvailability:
@@ -604,7 +631,7 @@ def build_app(
     time) through ``linear_post`` (default ``urllib``), or ``tracker_reader`` when given (tests).
     The agent sessions run on ``session_driver`` and ``cloud_launcher`` (default
     ``claude_adapters`` over ``environ``); none is built when ``settings.sessions_off``.
-    A Restore writes through ``item_writer`` (default ``FileSystemHubItemWriter``).
+    A Restore or a Publish writes through ``item_writer`` (default ``FileSystemHubItemWriter``).
     ``DatabaseAccessError`` when the store cannot be opened.
     """
     store = open_event_store(settings.db_path)
@@ -665,7 +692,8 @@ def build_app(
         events, reader, hub_of=facts.hub_of, availability=CachedAvailability(changes.availability)
     )
     workflows = ReadWorkflows(hubs, workflow_source_of, capture=capture)
-    gates = WorkflowGates(events, hubs, workflows)
+    # A gate the definition lacks is classified by the run's own record (AM-14, P-6).
+    gates = WorkflowGates(events, hubs, workflows, kinds=RecordedGateKinds())
     guard = None
     if not settings.sessions_off:
         env: Mapping[str, str] = os.environ if environ is None else environ
@@ -698,18 +726,15 @@ def build_app(
         item_version_reads=ReadItemVersions(
             versions, reader=reader, toolkit_units=hubs, workflow_units=workflows, capture=capture
         ),
-        item_version_writes=RestoreItemVersion(
+        item_version_writes=_item_writes(
             versions,
-            toolkit_units=hubs,
-            workflow_units=workflows,
-            step=RecordAndWrite(
-                versions,
-                reader=reader,
-                writer=FileSystemHubItemWriter() if item_writer is None else item_writer,
-                author_of=item_author_of(facts.hub_of),
-                clock=settings.clock,
-                capture=capture,
-            ),
+            reader=reader,
+            writer=FileSystemHubItemWriter() if item_writer is None else item_writer,
+            author_of=item_author_of(facts.hub_of),
+            clock=settings.clock,
+            capture=capture,
+            hubs=hubs,
+            workflows=workflows,
         ),
         owner_signoff=SignOffOwnerSteps(
             ProjectHubPaths(hubs), reader, HubEvalWriter(), clock=settings.clock

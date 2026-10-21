@@ -4,6 +4,8 @@ import agent_hub.core.events.payload_keys as payload_keys
 import agent_hub.core.scenarios.scenario_events as scenario_events
 from agent_hub.core.events.event import EventSource, EventType
 from agent_hub.core.events.payload_keys import kept_payload
+from agent_hub.core.scenarios.access_policy import PolicyDecision
+from agent_hub.core.scenarios.policy_gates import NodeDecision
 from agent_hub.core.scenarios.scenario_events import ScenarioEvents
 from agent_hub.core.testing.workflow_fakes import START
 from agent_hub.core.workflows.ports import ContextCapture, ExpectPoll
@@ -128,3 +130,37 @@ def test_keeps_one_event_per_poll_when_scenario_events_built_for_expect_calls() 
     for event in events.events:
         assert kept_payload(event.type, event.payload) == event.payload
         assert "poll" not in event.payload
+
+
+# AGH-359 (owner decision B): a process workflow node's decision, metadata only.
+
+
+def test_keeps_only_payload_keys_when_scenario_events_built_for_node_decisions() -> None:
+    events = ScenarioEvents(project="demo", run_id="1a2b3c4d", workflow="deploy")
+    decided = NodeDecision(
+        step="g__build",
+        node_type="shell",
+        effect="write",
+        environment="staging",
+        decision=PolicyDecision(decision="ask", reason_kind="table"),
+    )
+
+    events.node_decided(decided, attempt=0, at=START)
+    events.node_decided(decided, attempt=2, at=START, item="until1")
+
+    start, later = events.events
+    assert start.type == EventType.POLICY_DECISION
+    assert start.payload == {
+        "run": "1a2b3c4d",
+        "attempt": 0,
+        "node": "g__build",
+        "environment": "staging",
+        "effect": "write",
+        "origin": "author",
+        "decision": "ask",
+        "reason_kind": "table",
+    }
+    assert kept_payload(start.type, start.payload) == start.payload
+    assert (start.step, start.workflow) == ("g__build", "deploy")
+    assert start.source_id == "1a2b3c4d:g__build:0:policy.decision:"
+    assert later.source_id == "1a2b3c4d:g__build:2:policy.decision:until1"
