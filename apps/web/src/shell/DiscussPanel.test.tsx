@@ -151,6 +151,13 @@ describe("DiscussPanel", () => {
     const refs = await screen.findByRole("group", { name: "References for the next message" });
     expect(refs).toHaveTextContent("Next message is about");
     expect(refs).toHaveTextContent("AC-7");
+    // AC-422.9: they ride inside the composer card, above the message.
+    const card = refs.closest("form");
+    expect(card).toHaveClass("as-composer");
+    expect(
+      refs.compareDocumentPosition(screen.getByRole("textbox", { name: "Message Claude" })) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("starts the conversation with a starter's message in one click (AC-269.16)", async () => {

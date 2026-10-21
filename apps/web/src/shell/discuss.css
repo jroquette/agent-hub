@@ -132,23 +132,19 @@
 }
 /* The chat's column is narrower here than on its page. */
 .ah-discuss .as-column {
+  --as-gutter: var(--space-4);
   max-width: none;
-  padding-inline: var(--space-3);
 }
 .ah-discuss .as-page {
   flex: 1 1 auto;
   min-height: 0;
 }
-/* The parts the next message is about. */
+/* The parts the next message is about, inside the composer card above the text. */
 .ah-discuss-refs {
-  flex: none;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-1) var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-sunken);
 }
 .ah-discuss-ref {
   display: inline-flex;

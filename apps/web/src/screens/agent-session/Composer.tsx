@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { Button, Icon, ScreenshotThumb } from "../../components";
 import { ApiProblem } from "../../lib/api";
@@ -61,6 +69,8 @@ export interface ComposerProps {
   resumable?: boolean | undefined;
   /** Images may be pasted, dropped or picked into the message (up to `MAX_MESSAGE_IMAGES`). */
   acceptsImages?: boolean | undefined;
+  /** What rides with the next message, shown inside the card above it (the Discuss references). */
+  accessory?: ReactNode;
 }
 
 interface PastedImage {
@@ -99,6 +109,7 @@ export function Composer({
   focusOnOpen = false,
   resumable = false,
   acceptsImages = false,
+  accessory,
 }: ComposerProps) {
   const { text, setText, accepted } = useDraft(draftId);
   const [images, setImages] = useState<PastedImage[]>([]);
@@ -295,6 +306,7 @@ export function Composer({
         focusBox();
       }}
     >
+      {accessory}
       {(images.length > 0 || reading > 0) && (
         <ul className="as-composer-images" aria-label="Images in this message">
           {images.map((image, index) => (
@@ -343,7 +355,7 @@ export function Composer({
         id={inputId}
         ref={attachBox}
         className="ah-input as-composer-input"
-        rows={3}
+        rows={1}
         value={text}
         placeholder={
           reason ??
@@ -425,6 +437,9 @@ export function Composer({
                 </option>
               )}
             </select>
+            <span className="as-pill-value" aria-hidden="true">
+              {modeLabel(mode)}
+            </span>
             <Icon name="chevron-down" size="sm" className="as-pill-caret" />
           </label>
           <label htmlFor={modelId} className="as-pill" title="Model">
@@ -446,6 +461,9 @@ export function Composer({
                 </option>
               ))}
             </select>
+            <span className="as-pill-value" aria-hidden="true">
+              {currentModel}
+            </span>
             <Icon name="chevron-down" size="sm" className="as-pill-caret" />
           </label>
         </div>
@@ -481,17 +499,25 @@ export function Composer({
           )}
           <Button
             size="sm"
-            variant="ghost"
             icon="circle-stop"
-            className="as-composer-stop"
+            className="as-composer-stop as-round"
             disabled={!canStop}
             aria-disabled={stoppingShown || undefined}
+            title={stoppingShown ? "Stopping…" : "Stop (Esc)"}
             onClick={stop}
           >
-            {stoppingShown ? "Stopping…" : "Stop"}
+            <span className="ah-sr">{stoppingShown ? "Stopping…" : "Stop"}</span>
           </Button>
-          <Button type="submit" size="sm" variant="primary" icon="arrow-up" disabled={!canSend}>
-            {sending ? "Sending…" : "Send"}
+          <Button
+            type="submit"
+            size="sm"
+            variant="primary"
+            icon="arrow-up"
+            className="as-round"
+            title={sending ? "Sending…" : "Send"}
+            disabled={!canSend}
+          >
+            <span className="ah-sr">{sending ? "Sending…" : "Send"}</span>
           </Button>
         </div>
       </div>
