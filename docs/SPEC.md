@@ -68,7 +68,7 @@ hub init --config hub.json   # generates from an existing project config
 hub sync [--check]   # reapplies templates without overwriting what the project customized (--check: plan only)
 hub sync --adopt [--accept PATH]…   # joins a hand-made hub: identical files become managed, differences are listed
 hub doctor [--only RULE]… [--json]   # checks rules, links, dead references and instruction size
-hub validate-output review|eval FILE   # checks one agent JSON output: a review round or an eval
+hub validate-output review|eval|preflight FILE   # checks one agent JSON output: a review round, an eval or a ticket's preflight record
 hub setup [--yes]   # onboards this machine: clones or fetches the repos, writes hub.local.json after confirmation, lists what is missing
 hub env list|show|add|set|remove|service … [--local] [--json]   # the declared environments and services: list, show, or change hub.json (--local: hub.local.json), no prompt
 hub worktree NAME [--only REPO] [--remove] [--no-fetch] [--base BRANCH | --stack-on PR_URL]   # isolated worktrees for one task (--remove removes them; --no-fetch starts from the already-fetched base; --base starts every repo from origin/BRANCH; --stack-on starts the open pull request's repo from its head branch, read with gh, and the other repos from their default branch: a blocker still in review)
@@ -106,15 +106,16 @@ events with the same all-or-nothing rule; their events name no project of their 
 also appends its executor events to the same store as it writes each record; an unwritable store prints one
 `hub run: event store unavailable: <reason>` line and the run carries on.
 
-`hub validate-output review|eval FILE` checks one agent JSON output against its versioned schema
-(`agent-hub/review/1`, `agent-hub/eval/1`) and its cross-field rules, reporting every violation in one run. A `review`
-file is a reviewer's round, `reviews/<ticket>/<reviewer>-r<N>.json`; an `eval` file is `evals/<delivery>.json`, checked
-against its sibling `evals/<delivery>.md` (a missing sibling is a problem) and, when the folder above `evals/` holds
-one, the feature record `features.json`, whose live ACs scope the results (without it, only the document is checked).
+`hub validate-output review|eval|preflight FILE` checks one agent JSON output against its versioned schema
+(`agent-hub/review/1`, `agent-hub/eval/1`, `agent-hub/preflight/1`) and its cross-field rules, reporting every
+violation in one run. A `review` file is a reviewer's round, `reviews/<ticket>/<reviewer>-r<N>.json`; an `eval` file is
+`evals/<delivery>.json`, checked against its sibling `evals/<delivery>.md` (a missing sibling is a problem) and, when
+the folder above `evals/` holds one, the feature record `features.json`, whose live ACs scope the results (without it,
+only the document is checked); a `preflight` file is a ticket's `tickets/<ticket>/preflight.json`, checked on its own.
 Each input is read as a regular file, at most its bound, and links are never followed. Exit 0 prints `<file>: valid`;
 exit 1 prints one line per problem, `<file>: <json path>: <message>`, the first 200 then `<file>: … and <N> more
 problems (<T> in total)`, or one line naming an input that could not be read; a usage error (a kind other than
-`review` or `eval`, no file) exits 2 before any read. It needs no `hub.json`, writes nothing and makes no network call.
+`review`, `eval` or `preflight`, no file) exits 2 before any read. It needs no `hub.json`, writes nothing and makes no network call.
 
 `hub web` serves the control plane from one local process ([Layer 2](#layer-2-control-plane-and-observability)): the
 `/api/v1` REST and SSE API ([API.md](API.md)) and the committed build of the web app, from the database `hub collect`
