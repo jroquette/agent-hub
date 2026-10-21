@@ -98,23 +98,28 @@ The ticket flow's records (two-level-flows S2), written by the `implement` workf
   input, input_text, drift, local_notes[], change_request, run_id}`: `ran_at` an ISO 8601 time with an offset,
   `plan_version` a whole number ≥ 1 (the plan's `v<n>`), `commit` the main commit it checked, `blockers_read` the
   blocker tickets whose outcome it read (at most 50), `input` `none`, `discovery` or `declined_change` with its one-line
-  `input_text` (`null` for `none`), `drift` `none`, `local` or `plan`, `local_notes` one line each (at most 50),
-  `change_request` the number of the request it opened or `null`, `run_id` the workflow run's id. Every key is
-  required and unknown keys are refused. Read whole up to 64 KiB (`MAX_PREFLIGHT_BYTES`); over it, or malformed, it
-  is the Preflight step's problem.
+  `input_text` (required for those two, `null` for `none`), `drift` `none`, `local` or `plan`, `local_notes` one
+  line each (at most 50; at least one for `local`), `change_request` the number of the request it opened (required
+  for `plan`, else `null` allowed), `run_id` the workflow run's id. Every key is required and unknown keys are
+  refused. Read whole up to 64 KiB (`MAX_PREFLIGHT_BYTES`); over it, malformed, or naming another ticket than its
+  folder (ASCII case ignored), it is the Preflight step's problem.
 - `change-requests/<n>.md` (`n` 1 to 999999): a plan change request, written once with frontmatter `type:
   change-request`, `ticket` (the asking ticket), `status: open`, `plan_from`, `plan_to` (whole numbers), `affected`
   (ticket keys or ids), `opened_at`, `run_id`, then its evidence and proposal; never edited afterwards (a `status`
   other than `open` is a record problem).
 - `change-requests/<n>.decision.md`: the owner's decision, created once (D-11), frontmatter `type:
-  change-request-decision`, `decision` (`approved` or `declined`), `decided_by`, `decided_at` (ISO 8601), `note`. The
-  request's status is folded from it: `open` without one, else its `decision`.
+  change-request-decision`, `decision` (`approved` or `declined`), `decided_by` (a person: empty or `unknown`, case
+  and spaces ignored, is a record problem, A5), `decided_at` (ISO 8601), `note`. The request's status is folded from
+  it: `open` without one, else its `decision`. A decision that cannot be read leaves the request `open` (it is not
+  known to be decided) with the decision's problem on the asking ticket's Preflight.
 
-Only one feature's read (detail, tickets) opens `tickets/`: its first 500 folders by name (not hidden, UTF-8 names,
-no link followed); a ticket whose folder was left out over that cap reads Context and Preflight `unknown`.
-`change-requests/` is read by the Features list too (the golden path needs it): its first 400 `.md` files by name
-(200 requests and their decisions), heads of 16 KiB; more than that is a record problem on Plan's signal. A file that
-cannot be read or parsed reads "<file> could not be read (…). Fix it in a hub PR." on the step it feeds.
+Only the tickets route opens `tickets/` (the detail, the list and the owner sign-off never do): its first folders by
+name (not hidden, UTF-8 names, no link followed), at most 500 and no more than a full `preflight.json` (64 KiB + 1)
+each can add before the read reaches 32 MiB; a ticket whose folder was left out reads Context and Preflight
+`unknown`. `change-requests/` is read by the Features list and the detail too (the golden path's Plan signal and
+`waiting_on_owner` need it): its first 400 `.md` files by name (200 requests and their decisions), heads of 16 KiB;
+more than that is a record problem on Plan's signal. A file that cannot be read or parsed reads "<file> could not be
+read (…). Fix it in a hub PR." on the step it feeds.
 
 ### `summaries/<record>.md`
 
@@ -148,8 +153,10 @@ is required, unknown keys are refused, text is one line and non-empty.
 - Bounds, applied by core to the bytes it is given: `MAX_OUTPUT_BYTES` per output, each list's `MAX_*`, the sibling's
   first `EVAL_HEAD_BYTES`, `MAX_RECORD_BYTES` for the record; echoed values are cut to `ECHO_LIMIT`.
 
-The feature list reads at most about 32 MiB of records per call (it may go over by one folder); folders past that are
-listed unread with a record problem. The detail and the tickets route read only their own folder. A malformed record counts for
+The feature list reads at most about 32 MiB of records per call (it may go over by one folder, at most 15,572,994
+bytes, about 14.9 MiB, with the change request heads); folders past that are listed unread with a record problem.
+The detail reads only its own folder (at most those 14.9 MiB); the tickets route reads its folder and `tickets/`
+within 32 MiB in all, which in the worst case still leaves room for 274 full `preflight.json`. A malformed record counts for
 nothing and carries its problem.
 
 ### Golden path
@@ -222,8 +229,9 @@ A step with no evidence reads `unrecorded` ("Not recorded") when a later step ha
 reached"): a ticket Done in Linear with no review record reads Context, Preflight and Review "Not recorded" and Merged
 done. `current` is the first step neither `done` nor `unrecorded` (`merged` when there is none). The step bar
 reads "Merged" alone only once Merged is done; otherwise it keeps the position ("Merged · 7/7"). The flow's `signal`
-is its one line that needs attention, in this order: "Waiting for you: plan change" (its own request is open), "Held:
-plan change pending" (another ticket's open request names it as affected; not once merged), the stale Preflight's
+is its one line that needs attention, in this order: "Waiting for you: plan change" (its own request is open, whatever
+its Preflight reads), "Held: plan change pending" (another ticket's open request names it as affected and it asks
+none itself; not once merged), the stale Preflight's
 meta, the local drift meta; `null` otherwise (spec amendment A13: preflight and change requests are its first
 producers).
 

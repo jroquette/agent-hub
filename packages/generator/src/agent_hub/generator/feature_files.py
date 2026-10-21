@@ -26,19 +26,23 @@ all. ``review_round_tickets`` names the folders holding one; only ``read_feature
 feature, as the tickets view reads it) looks for them, so the listing leaves it empty.
 ``change-requests/`` is read as ``evals/`` is, at most ``MAX_CHANGE_REQUEST_FILES`` heads of
 ``CHANGE_REQUEST_HEAD_BYTES`` (requests and their decisions; ``change_requests_skipped`` counts the
-rest). Only ``read_feature_folder`` opens ``tickets/``: its first ``MAX_TICKET_FOLDERS`` folders by
-name (not hidden, UTF-8 names, never a link; ``ticket_folders_skipped`` counts the rest), in each
-``preflight.json`` whole up to ``MAX_PREFLIGHT_BYTES`` (else a one-line problem) and ``brief.md``
-and ``plan.md`` only checked as regular files.
+rest), by the listing too: the golden path's Plan signal and ``waiting_on_owner`` need them.
+Only ``read_feature_folder(..., tickets=True)`` (the tickets route) opens ``tickets/``: its first
+folders by name (not hidden, UTF-8 names, never a link), at most ``MAX_TICKET_FOLDERS`` and no
+more than a full ``preflight.json`` (``MAX_PREFLIGHT_BYTES`` + 1) each can add before the call
+reaches ``READ_BUDGET_BYTES``; ``ticket_folders_skipped`` counts the rest. In each,
+``preflight.json`` is read whole up to ``MAX_PREFLIGHT_BYTES`` (else a one-line problem), and
+``brief.md`` and ``plan.md`` are only checked as regular files.
 
-One call reads at most about ``READ_BUDGET_BYTES``: a folder is read only while the bytes read so
-far are under it, so the total goes over by one folder at most (15,572,994 bytes, about 14.9 MiB:
-``features.json`` 1 MiB + 1, ``plan.md`` 256 KiB + 1, two 64 KiB heads, 200 eval heads of 16 KiB,
-500 review heads of 8 KiB, 50 UX design heads of 4 KiB and 400 change request heads of 16 KiB);
-each folder past it is listed with ``OVER_BUDGET`` as its record problem and files unread.
-``read_feature_folder`` reads the one folder a slug names, as the listing would, plus which of its
-``reviews/`` ticket folders hold a review round and its ``tickets/`` records (up to 500 more
-``preflight.json`` of 64 KiB).
+One listing reads at most about ``READ_BUDGET_BYTES``: a folder is read only while the bytes read
+so far are under it, so the total goes over by one folder at most (15,572,994 bytes, about
+14.9 MiB: ``features.json`` 1 MiB + 1, ``plan.md`` 256 KiB + 1, two 64 KiB heads, 200 eval heads
+of 16 KiB, 500 review heads of 8 KiB, 50 UX design heads of 4 KiB and 400 change request heads of
+16 KiB); each folder past it is listed with ``OVER_BUDGET`` as its record problem and files
+unread. ``read_feature_folder`` reads the one folder a slug names, as the listing would (at most
+those 15,572,994 bytes), plus which of its ``reviews/`` ticket folders hold a review round; with
+``tickets`` the call stays within ``READ_BUDGET_BYTES`` (32 MiB) in all, which leaves room for at
+least 274 full ``preflight.json`` in the worst case.
 """
 
 import contextlib
