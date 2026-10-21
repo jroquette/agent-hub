@@ -367,19 +367,20 @@ function hintOf(id: GroupId, rows: Feature[], reasonFor: (f: Feature) => Reason)
   const hint = GROUPS.find((g) => g.id === id)?.hint ?? "";
   const needs = rows.map((f) => reasonFor(f).needs);
   const count = (kind: Reason["needs"]) => needs.filter((n) => n === kind).length;
+  // Each kind in words for one row and for several (U9).
   const warnings = (
     [
-      [count("session"), "session waits on you"],
-      [count("your-turn"), "your turn in a session"],
-      [count("change-request"), "plan change waits for you"],
-      [count("owner-steps"), "wait on your steps"],
-      [count("owner-manual"), "sign off by hand"],
-      [count("no-ship"), "no ship"],
-      [count("problem"), "record cannot be read"],
+      [count("session"), "session waits on you", "sessions wait on you"],
+      [count("your-turn"), "your turn in a session", "your turn in sessions"],
+      [count("change-request"), "plan change waits for you", "plan changes wait for you"],
+      [count("owner-steps"), "waits on your steps", "wait on your steps"],
+      [count("owner-manual"), "sign-off by hand", "sign-offs by hand"],
+      [count("no-ship"), "no ship", "no ship"],
+      [count("problem"), "record cannot be read", "records cannot be read"],
     ] as const
   )
     .filter(([n]) => n > 0)
-    .map(([n, words]) => `${String(n)} ${words}`);
+    .map(([n, one, many]) => `${String(n)} ${n === 1 ? one : many}`);
   return [hint, ...warnings].filter(Boolean).join(" · ");
 }
 

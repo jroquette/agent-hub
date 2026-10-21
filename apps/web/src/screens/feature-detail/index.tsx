@@ -1,4 +1,12 @@
-import { Fragment, useId, useRef, useState, type MutableRefObject, type ReactNode } from "react";
+import {
+  Fragment,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type MutableRefObject,
+  type ReactNode,
+} from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
@@ -42,6 +50,7 @@ import {
 import { RecordSummary, summaryRequest } from "./RecordSummary";
 import { StateBadge, ticketSearch } from "./PlanningView";
 import { TicketsTab } from "./TicketsTab";
+import { WaitAge } from "./TicketPanel";
 import { useFeature, useFeatureTickets } from "./queries";
 
 type Detail = components["schemas"]["FeatureDetail"];
@@ -486,7 +495,8 @@ type ChangeRequestView = components["schemas"]["ChangeRequestView"];
 /** An open plan change request as the banner names it (two-level-flows AC-2.8). */
 function changeText(request: ChangeRequestView): string {
   const affects = request.affected.length ? ` · affects ${request.affected.join(", ")}` : "";
-  const versions = `plan v${String(request.plan_from ?? "?")} → v${String(request.plan_to ?? "?")}`;
+  const version = (n: number | null) => (n == null ? "—" : `v${String(n)}`);
+  const versions = `plan ${version(request.plan_from)} → ${version(request.plan_to)}`;
   return `Plan change request ${String(request.n)} from ${request.ticket ?? "?"}: ${versions}${affects}`;
 }
 
@@ -565,11 +575,21 @@ function WaitingBanner({
   return (
     <Banner tone="warning" boxed icon="hand" action={action}>
       <b>Waiting for you</b>
-      {onEval && waits.length > 0 && <span className="ah-muted"> · Settle each one below.</span>}
+      {onEval && waits.length > 0 && (
+        <span className="ah-muted">
+          {change ? " · Settle the eval waits below." : " · Settle each one below."}
+        </span>
+      )}
       <ul className="ah-small" style={{ margin: "2px 0 0", paddingLeft: 18 }}>
-        {change && <li>{changeText(change)}</li>}
+        {change && (
+          <li>
+            {changeText(change)} · <WaitAge openedAt={change.opened_at} />
+          </li>
+        )}
         {moreChanges.map((request) => (
-          <li key={request.n}>{ticketLink(request)}</li>
+          <li key={request.n}>
+            {ticketLink(request)} · <WaitAge openedAt={request.opened_at} />
+          </li>
         ))}
         {first &&
           (change ? (
@@ -590,6 +610,36 @@ function WaitingBanner({
         ))}
       </ul>
     </Banner>
+  );
+}
+
+/**
+ * Says once, politely, each plan change request that arrives while the page is open (U5): those
+ * open at the first read are the banner's, not news.
+ */
+function NewRequestAnnouncer({ requests }: { requests: readonly ChangeRequestView[] }) {
+  const seen = useRef<Set<number> | null>(null);
+  const [said, setSaid] = useState("");
+  useEffect(() => {
+    if (seen.current === null) {
+      seen.current = new Set(requests.map((request) => request.n));
+      return;
+    }
+    const known = seen.current;
+    const fresh = requests.filter((request) => !known.has(request.n));
+    for (const request of fresh) known.add(request.n);
+    if (fresh.length > 0) {
+      setSaid(
+        fresh
+          .map((r) => `${r.ticket ?? ""} waits for you: plan change request ${String(r.n)}.`)
+          .join(" "),
+      );
+    }
+  }, [requests]);
+  return (
+    <div className="ah-sr" role="status" aria-live="polite">
+      {said}
+    </div>
   );
 }
 
@@ -829,6 +879,7 @@ export function FeatureDetailScreen() {
           </Banner>
         )
       )}
+      <NewRequestAnnouncer requests={changes} />
       <Tabs tabs={tabs} value={tab} onChange={setTab} label="Feature record" />
       <div style={{ paddingTop: 4 }}>{body}</div>
     </div>

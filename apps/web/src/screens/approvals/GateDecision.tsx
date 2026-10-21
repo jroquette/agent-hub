@@ -34,7 +34,7 @@ function nextStep(error: ApiProblem): string | null {
   return null;
 }
 
-function DecisionError({ error }: { error: ApiProblem }) {
+export function DecisionError({ error }: { error: ApiProblem }) {
   const step = nextStep(error);
   const title = error.status === 502 ? error.title : "Could not record the decision";
   return (
@@ -198,8 +198,10 @@ export function GateDecision({
               disabled={decide.isPending || decide.isSuccess}
               onClick={() => {
                 decide.reset();
-                if (takesText) setAsking(choice);
-                else send(choice, "");
+                // A decision that needs the text asks for it even when the gate takes none.
+                if (takesText || (choice.id !== null && requireTextFor.includes(choice.id))) {
+                  setAsking(choice);
+                } else send(choice, "");
               }}
             >
               {choice.label}

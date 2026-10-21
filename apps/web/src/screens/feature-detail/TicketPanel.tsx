@@ -1,4 +1,12 @@
-import { Fragment, useId, useRef, useState, type ReactNode, type RefObject } from "react";
+import {
+  Fragment,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { Link, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
@@ -8,12 +16,19 @@ import {
   GOLDEN_STATE_TEXT,
   GoldenPathStepper,
   Icon,
+  IdChip,
+  Markdown,
+  ProblemError,
+  ProvenanceBadge,
   SidePanel,
+  Skeleton,
+  Time,
   type StepperStep,
 } from "../../components";
 import { brainRoute } from "../../lib/brainLinks";
+import { useNow } from "../../lib/clock";
 import { fmtDateTime } from "../../lib/format";
-import { GateDecision } from "../approvals/GateDecision";
+import { DecisionError, GateDecision } from "../approvals/GateDecision";
 import {
   FOCUS_EVAL,
   evalHistory,
@@ -33,6 +48,7 @@ import {
   TicketSignal,
   signalKind,
   ticketParam,
+  ticketSearch,
   type TicketOpener,
 } from "./PlanningView";
 import { useDecideChangeRequest, useTicketRecords } from "./queries";
@@ -44,6 +60,7 @@ type TicketStepName = components["schemas"]["TicketStepName"];
 type EvalRecord = components["schemas"]["EvalRecord"];
 type AcRow = components["schemas"]["AcRow"];
 type TicketRecords = components["schemas"]["TicketRecords"];
+type TicketRecordsQuery = ReturnType<typeof useTicketRecords>;
 type ChangeRequestView = components["schemas"]["ChangeRequestView"];
 type PreflightRun = components["schemas"]["PreflightRun"];
 
@@ -57,24 +74,44 @@ const DRIFT_WORDS: Record<PreflightRun["drift"], string> = {
 
 const plural = (n: number, word: string) => `${String(n)} ${word}${n === 1 ? "" : "s"}`;
 
+/** A plan version, "—" when the record does not say. */
+const version = (n: number | null | undefined) => (n == null ? "—" : `v${String(n)}`);
+
+/** The element id of a change request's block in the panel, the target of its openers. */
+export const requestAnchor = (n: number) => `change-request-${String(n)}`;
+
 /** Whether `name` is one of `row`'s refs (its key, its tracker id), in any case. */
 function namesRow(row: TicketRow, name: string | null | undefined): boolean {
   const upper = name?.toUpperCase();
   return [row.key, row.id, row.ref].some((ref) => ref != null && ref.toUpperCase() === upper);
 }
 
+/** How long a request has waited, from its `opened_at` ("2 h ago"); null when unknown. */
+export function WaitAge({ openedAt }: { openedAt: string | null | undefined }) {
+  const now = useNow(60_000);
+  if (!openedAt || Number.isNaN(Date.parse(openedAt))) return null;
+  const seconds = Math.max(0, (now - Date.parse(openedAt)) / 1000);
+  return (
+    <span className="ah-small ah-muted">
+      waiting since <Time iso={openedAt} ago={seconds} />
+    </span>
+  );
+}
+
 /**
- * The owner's decision on a change request whose run has no open gate (two-level-flows AC-2.14):
- * Approve, or Decline with the note the next preflight follows (AC-2.12), recorded in the hub.
+ * The owner's decision on a change request whose run is gone (two-level-flows AC-2.14): Approve,
+ * or Decline with the note the next preflight follows (AC-2.12), recorded in the hub.
  */
 function LostRunDecision({
   project,
   slug,
   request,
+  onDecided,
 }: {
   project: string;
   slug: string;
   request: ChangeRequestView;
+  onDecided: () => void;
 }) {
   const decide = useDecideChangeRequest(project, slug, request.n);
   const [note, setNote] = useState("");
@@ -82,6 +119,7 @@ function LostRunDecision({
   const field = useRef<HTMLTextAreaElement>(null);
   const fieldId = useId();
   const hintId = useId();
+  const busy = decide.isPending || decide.isSuccess;
   const send = (decision: "approved" | "declined") => {
     const text = note.trim();
     if (decision === "declined" && !text) {
@@ -89,13 +127,14 @@ function LostRunDecision({
       field.current?.focus();
       return;
     }
-    decide.mutate({ decision, note: text || null });
+    decide.reset();
+    decide.mutate({ decision, note: text || null }, { onSuccess: onDecided });
   };
   return (
     <div className="ah-stack" style={{ gap: 6 }}>
       <span className="ah-small ah-muted">
-        Its run has no open gate (abandoned, or its record lost): your decision is recorded in the
-        hub, and the next /implement of {request.ticket} reads it.
+        Its run is gone (abandoned, or its record lost): your decision is recorded in the hub, and
+        the next /implement of {request.ticket} reads it.
       </span>
       <label htmlFor={fieldId} className="ah-small">
         Note (required to decline)
@@ -107,7 +146,7 @@ function LostRunDecision({
         rows={3}
         maxLength={2000}
         value={note}
-        disabled={decide.isPending}
+        disabled={busy}
         aria-invalid={needsNote || undefined}
         aria-describedby={needsNote ? hintId : undefined}
         onChange={(event) => {
@@ -130,18 +169,18 @@ function LostRunDecision({
           size="sm"
           variant="primary"
           icon="check"
-          disabled={decide.isPending}
+          disabled={busy}
           onClick={() => {
             send("approved");
           }}
         >
-          Approve plan v{request.plan_to}
+          Approve plan {version(request.plan_to)}
         </Button>
         <Button
           size="sm"
           variant="danger"
           icon="x"
-          disabled={decide.isPending}
+          disabled={busy}
           onClick={() => {
             send("declined");
           }}
@@ -149,18 +188,61 @@ function LostRunDecision({
           Decline
         </Button>
       </div>
-      {decide.isError && (
-        <span role="alert" className="ah-small">
-          Could not record your decision: {decide.error.detail ?? decide.error.title}
+      {decide.isPending && (
+        <span role="status" className="ah-small">
+          Recording your decision…
         </span>
       )}
+      {decide.isSuccess && (
+        <span role="status" className="ah-small">
+          Decision recorded in the hub. The next /implement of {request.ticket} reads it.
+        </span>
+      )}
+      {decide.isError && <DecisionError error={decide.error} />}
     </div>
   );
 }
 
 /**
- * A plan change request the ticket asks: while open, its decision (the run's gate when it waits,
- * else the lost-run form); once decided, who decided it, when and with what note.
+ * What the owner reads before deciding (A20): the request's evidence and proposal, what plan
+ * drift means, and what approving does.
+ */
+function RequestEvidence({ request }: { request: ChangeRequestView }) {
+  return (
+    <div className="ah-stack" style={{ gap: 6 }}>
+      <span className="ah-small">
+        Plan drift: it changes an AC, a contract or another ticket, so {request.ticket} is paused
+        until you answer.
+      </span>
+      {request.body && (
+        <div className="ah-stack" style={{ gap: 4 }}>
+          <span className="ah-row" style={{ gap: 6 }}>
+            <ProvenanceBadge provenance="agent" />
+          </span>
+          <Markdown source={request.body} />
+        </div>
+      )}
+      <b className="ah-small" style={{ fontWeight: 500 }}>
+        What changes if you approve
+      </b>
+      <ul className="ah-small" style={{ margin: 0, paddingLeft: 18 }}>
+        <li>
+          Plan {version(request.plan_from)} becomes {version(request.plan_to)} (a new amendment).
+        </li>
+        <li>{request.ticket} runs preflight again on the new plan.</li>
+        {request.affected.length > 0 && (
+          <li>{request.affected.join(", ")} run preflight again before they go on.</li>
+        )}
+        <li>Nothing is merged or pushed.</li>
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * A plan change request the ticket asks: while open, what it says and its decision (the run's
+ * gate while it waits there; the lost-run form when the server says the run is gone; else a line
+ * that the run records it); once decided, who decided it, when and with what note.
  */
 function ChangeRequestBlock({
   request,
@@ -172,33 +254,65 @@ function ChangeRequestBlock({
   slug: string;
 }) {
   const { tz } = usePreferences();
+  const [decidedHere, setDecidedHere] = useState(false);
+  const decidedLine = useRef<HTMLSpanElement>(null);
   const name = `Change request ${String(request.n)}`;
   const decision = request.decision;
-  if (request.status !== "open" || decision) {
+  const settled = request.status !== "open" || decision !== null;
+  useEffect(() => {
+    // After a decision taken here, focus lands on the line that records it (U6).
+    if (settled && decidedHere) decidedLine.current?.focus();
+  }, [settled, decidedHere]);
+  if (settled) {
     return (
-      <span>
+      <span ref={decidedLine} tabIndex={-1} id={requestAnchor(request.n)}>
         {decision
           ? `${name} ${decision.decision} by ${decision.decided_by} · ${evaluatedText(decision.decided_at, tz)}${decision.note ? `: ${decision.note}` : ""}`
           : `${name}: ${request.problem ?? "could not be read"}`}
       </span>
     );
   }
+  let decide: ReactNode;
+  if (request.approval_id) {
+    decide = <GateDecision approvalId={request.approval_id} requireTextFor={["decline"]} />;
+  } else if (request.decidable_here) {
+    decide = (
+      <LostRunDecision
+        project={project}
+        slug={slug}
+        request={request}
+        onDecided={() => {
+          setDecidedHere(true);
+        }}
+      />
+    );
+  } else {
+    decide = (
+      <span className="ah-small ah-muted">
+        Its run is live and asks you at its gate; the decision shows here once the gate is open.
+      </span>
+    );
+  }
   return (
-    <div className="ah-stack" style={{ gap: 6 }}>
-      <b style={{ fontWeight: 500 }}>
-        Plan change request {request.n}: plan v{request.plan_from ?? "?"} → v{request.plan_to}
-      </b>
-      {request.affected.length > 0 && (
-        <span className="ah-small">Affects {request.affected.join(", ")}</span>
-      )}
+    <section
+      className="ah-stack"
+      style={{ gap: 6 }}
+      id={requestAnchor(request.n)}
+      tabIndex={-1}
+      aria-label={`Plan change request ${String(request.n)}`}
+    >
+      <span className="ah-row ah-wrap" style={{ gap: 8 }}>
+        <b style={{ fontWeight: 500 }}>
+          Plan change request {request.n}: plan {version(request.plan_from)} →{" "}
+          {version(request.plan_to)}
+        </b>
+        <WaitAge openedAt={request.opened_at} />
+      </span>
       {request.problem && <span className="ah-small">{request.problem}</span>}
+      <RequestEvidence request={request} />
       <Link to={brainRoute(project, request.path)}>Read the request in Brain</Link>
-      {request.approval_id ? (
-        <GateDecision approvalId={request.approval_id} requireTextFor={["decline"]} />
-      ) : (
-        <LostRunDecision project={project} slug={slug} request={request} />
-      )}
-    </div>
+      {decide}
+    </section>
   );
 }
 
@@ -219,11 +333,17 @@ function PreflightDetail({
   slug: string;
 }) {
   const { tz } = usePreferences();
+  const [params] = useSearchParams();
   const runs = [...(records.preflight?.runs ?? [])].reverse();
   const asked = records.change_requests.filter((request) => namesRow(row, request.ticket));
   const holding = records.change_requests.filter(
     (request) => request.status === "open" && !namesRow(row, request.ticket),
   );
+  const atPreflight = (ticket: string) => {
+    const next = new URLSearchParams(ticketSearch(params, ticket));
+    next.set("step", "preflight");
+    return `?${next.toString()}`;
+  };
   return (
     <div className="ah-stack" style={{ gap: 8 }}>
       {asked.map((request) => (
@@ -231,7 +351,11 @@ function PreflightDetail({
       ))}
       {holding.map((request) => (
         <span key={request.n}>
-          Held by change request {request.n} from {request.ticket}: it waits until you answer it.
+          Held by{" "}
+          <Link to={{ search: atPreflight(request.ticket ?? "") }} replace>
+            change request {request.n} from {request.ticket}
+          </Link>
+          : it waits until you answer it.
         </span>
       ))}
       {records.preflight?.problem && <span>{records.preflight.problem}</span>}
@@ -240,7 +364,8 @@ function PreflightDetail({
           {runs.map((run, index) => (
             <li key={index}>
               {fmtDateTime(run.ran_at, tz)} · checked plan v{run.plan_version} against main at{" "}
-              <span className="ah-mono">{run.commit.slice(0, 7)}</span> · {DRIFT_WORDS[run.drift]}
+              <IdChip id={run.commit} short={run.commit.slice(0, 7)} kind="commit" /> ·{" "}
+              {DRIFT_WORDS[run.drift]}
               {run.input_text && (
                 <span className="ah-small ah-muted">
                   {" "}
@@ -266,7 +391,6 @@ function PreflightDetail({
   );
 }
 
-/** What one step of a ticket says it is, from the records S1 reads (Addendum 1). */
 function StepDetail({
   step,
   row,
@@ -281,29 +405,42 @@ function StepDetail({
   slug: string;
   /** The newest eval naming the ticket, with its label ("Eval 1"). */
   latest: { record: EvalRecord; label: string } | undefined;
-  /** Its records from the per-ticket route (A7); undefined until read, or when not read. */
-  records?: TicketRecords | undefined;
+  /** Its records from the per-ticket route (A7), as the query holds them. */
+  records: TicketRecordsQuery;
 }) {
   const [params] = useSearchParams();
   const { tz } = usePreferences();
   const unrecorded = step.state === "unrecorded";
   const id = row.id ?? row.ref;
-  const discoveries = (records?.preflight?.runs ?? []).filter((run) => run.input === "discovery");
-  if (
-    step.name === "preflight" &&
-    records &&
-    (records.preflight || records.change_requests.length)
-  ) {
-    return <PreflightDetail row={row} records={records} project={project} slug={slug} />;
+  const found = records.data;
+  const discoveries = (found?.preflight?.runs ?? []).filter((run) => run.input === "discovery");
+  if (step.name === "preflight" && step.state !== "pending" && step.state !== "unrecorded") {
+    // The ticket's own records say more than its step: wait for them, or say why they failed.
+    if (records.isPending) return <Skeleton width="80%" height={16} />;
+    if (records.isError) {
+      return (
+        <ProblemError
+          compact
+          title="Could not load this ticket's records"
+          detail={records.error.detail ?? undefined}
+          status={records.error.status}
+          onRetry={() => void records.refetch()}
+        />
+      );
+    }
+  }
+  if (step.name === "preflight" && found && (found.preflight || found.change_requests.length)) {
+    return <PreflightDetail row={row} records={found} project={project} slug={slug} />;
   }
   switch (step.name) {
     case "context":
     case "preflight":
-      return unrecorded ? (
-        <>Not recorded: tickets picked up before /implement have no context brief or preflight.</>
-      ) : (
-        <>{NOT_REACHED}</>
-      );
+      if (unrecorded) {
+        return (
+          <>Not recorded: tickets picked up before /implement have no context brief or preflight.</>
+        );
+      }
+      return <>{step.state === "pending" ? NOT_REACHED : (step.meta ?? NOT_REACHED)}</>;
     case "implement":
       return (
         <>
@@ -488,6 +625,10 @@ export function TicketPanel({
     };
   const waiting = ownerStepsWaiting(evals, ids, data.planning.epics).find((w) => w.scope === id);
   const open = params.has("step") ? (params.get("step") as TicketStepName) : flow.current;
+  // The ticket's own open plan change request: the panel's one primary act (U12).
+  const asking = records.data?.change_requests.find(
+    (request) => request.status === "open" && namesRow(row, request.ticket),
+  );
   const toggle = (step: TicketStepName) => {
     setParams(
       (current) => {
@@ -509,6 +650,31 @@ export function TicketPanel({
           {row.assignee && <span>{row.assignee}</span>}
         </span>
         <ReadinessText row={row} rows={data.tickets} external={data.planning.external_blockers} />
+        {asking && (
+          <span>
+            <Button
+              size="sm"
+              variant="primary"
+              icon="arrow-right"
+              onClick={() => {
+                setParams(
+                  (current) => {
+                    const next = new URLSearchParams(current);
+                    next.set("step", "preflight");
+                    return next;
+                  },
+                  { replace: true },
+                );
+                // The request's block is drawn once Preflight opens: focus it then (U12).
+                requestAnimationFrame(() => {
+                  document.getElementById(requestAnchor(asking.n))?.focus();
+                });
+              }}
+            >
+              Review change request
+            </Button>
+          </span>
+        )}
       </div>
       {signalKind(flow) !== null && signalKind(flow) !== "local" && (
         <p className="ah-small" style={{ margin: 0 }}>
@@ -540,7 +706,9 @@ export function TicketPanel({
           selectLabel={(name) => {
             const step = flow.steps.find((s) => s.name === name);
             const state = step ? GOLDEN_STATE_TEXT[step.state].toLowerCase() : "";
-            const meta = step?.meta ? `, ${step.meta.toLowerCase()}` : "";
+            // A meta that only repeats the state's word is said once (U8).
+            const meta =
+              step?.meta && step.meta.toLowerCase() !== state ? `, ${step.meta.toLowerCase()}` : "";
             return `${TICKET_STEP_LABEL[name]}, ${state}${meta}, ${name === open ? "hide" : "show"} details`;
           }}
           detail={(step) => (
@@ -550,7 +718,7 @@ export function TicketPanel({
               project={project}
               slug={slug}
               latest={latest}
-              records={records.data}
+              records={records}
             />
           )}
         />

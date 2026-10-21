@@ -175,6 +175,10 @@ function useTicketSessions(project: string, row: TicketRow) {
  * What a ticket's card offers next to its readiness: its newest session, one click from its
  * dialogue, and Start while the ticket is free to pick up and no session of it is still open.
  */
+/** Whether a ticket's own plan change waits for the owner: Start is then no view's primary. */
+const changeWaits = (rows: readonly TicketRow[]) =>
+  rows.some((row) => row.flow != null && signalKind(row.flow) === "waiting");
+
 function CardAction({
   project,
   slug,
@@ -190,7 +194,13 @@ function CardAction({
   const newest = sessions.data?.items[0];
   const open = newest != null && newest.status !== "ended";
   const start = canStartTicket(row, rows) && !open && (
-    <StartTicketButton project={project} slug={slug} row={row} rows={rows} />
+    <StartTicketButton
+      project={project}
+      slug={slug}
+      row={row}
+      rows={rows}
+      quiet={changeWaits(rows)}
+    />
   );
   if (!newest) return start ? <span className="ah-flow-card-action">{start}</span> : null;
   return (
@@ -734,7 +744,13 @@ export function TicketsTab({
   if (!data) return <Loading />;
   const ticketAction: TicketAction = (row) =>
     canStartTicket(row, data.tickets) ? (
-      <StartTicketButton project={project} slug={slug} row={row} rows={data.tickets} />
+      <StartTicketButton
+        project={project}
+        slug={slug}
+        row={row}
+        rows={data.tickets}
+        quiet={changeWaits(data.tickets)}
+      />
     ) : null;
   const cardAction: TicketAction = (row) => (
     <CardAction project={project} slug={slug} row={row} rows={data.tickets} />
