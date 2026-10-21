@@ -200,6 +200,7 @@ class TestPlanReads:
 
         assert plan_ids("S2-T3-T4") == ("S2-T3-T4", "S2-T3", "S2-T4")
         assert plan_ids("T2") == ("T2",)
+        assert plan_section("text | S2-T3 | x\n", ("S2-T3",)) == ""
         assert section == (
             "| S2-T3 | `core/a.py` | AC-2.7 |\n| S2-T4 | writers | AC-2.2, AC-2.3 |\n"
             "| S2-T3, S2-T4 | AGH-403 | `S2-T3-T4` |\n"
@@ -220,6 +221,7 @@ class TestPlanReads:
         found = ticket_acs(acs, ("S2-T3-T4", "AGH-403"), "| S2-T4 | AC-2.2, AC-2.7 |\n")
 
         assert [ac.id for ac in found] == ["AC-2.2", "AC-2.3"]
+        assert ticket_acs(acs[:2], ("S2-T4",), "| S2-T4 | AC-2.20 |\n") == ()
 
     def test_lists_the_paths_and_adrs_a_section_names_when_read(self) -> None:
         section = plan_section(PLAN.decode(), ("DEM-8",))
@@ -391,6 +393,17 @@ class TestDecision:
         with pytest.raises(TicketRecordError, match="a declined change needs a note"):
             a_decision(decision="declined", note=note)
 
+    @pytest.mark.parametrize("decision", ["approved\ndecision: declined", "maybe", "Approved"])
+    def test_refuses_a_decision_when_it_is_not_exactly_approved_or_declined(
+        self, decision: str
+    ) -> None:
+        with pytest.raises(TicketRecordError, match="the decision must be approved or declined"):
+            a_decision(decision=decision, note="")
+
+    def test_refuses_a_decision_when_its_text_would_pass_the_read_cap(self) -> None:
+        with pytest.raises(TicketRecordError, match=f"larger than {MAX_REQUEST_BYTES} bytes"):
+            a_decision(note="n" * MAX_REQUEST_BYTES)
+
     def test_takes_an_approval_when_it_has_no_note(self) -> None:
         assert b"decision: approved\n" in a_decision(note=None)
 
@@ -431,6 +444,15 @@ class TestAmendment:
 
         assert hashlib.sha256(written[: len(plan)]).hexdigest() == prefix
         assert plan_version(written).version == 3
+
+    def test_names_the_approver_on_one_line_when_it_spans_lines(self) -> None:
+        decision = a_decision(2, decided_by="Dana\nSmith")
+
+        written, _ = amended_plan(
+            PLAN, n=2, request=a_request(2), decision=decision, summary="Go."
+        )
+
+        assert written[len(PLAN) :].startswith(b"- A2 (2026-10-21, Dana Smith): Go.")
 
     def test_takes_the_number_after_the_highest_when_the_ids_have_a_gap(self) -> None:
         plan = PLAN + b"- A3 (2026-10-20, Dana Owner): Third.\n"

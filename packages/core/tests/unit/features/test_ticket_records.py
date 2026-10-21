@@ -12,6 +12,7 @@ from agent_hub.core.features.ticket_records import (
     ChangeRequest,
     change_requests,
     preflight_record,
+    ticket_folder,
 )
 
 
@@ -230,3 +231,11 @@ def test_names_mismatch_when_preflight_ticket_differs_from_folder() -> None:
         "Fix it in a hub PR."
     )
     assert not isinstance(preflight_record(a_preflight(), folder="dem-8"), str)
+
+
+def test_picks_the_folder_the_flow_reads_when_key_and_id_folders_differ_in_case() -> None:
+    folders = ["T2", "dem-8", "DEM-8x", "t2", "DEM-7"]
+
+    assert ticket_folder(folders, ("T2", "DEM-8")) == "dem-8"
+    assert ticket_folder(folders, ("T2",)) == "T2"
+    assert ticket_folder(folders, ("T9",)) is None

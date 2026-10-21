@@ -297,6 +297,8 @@ def decision_text(
     note: str | None,
 ) -> bytes:
     """``change-requests/<n>.decision.md`` for ``request`` (the bytes of ``<n>.md``)."""
+    if decision not in ("approved", "declined"):
+        raise TicketRecordError("the decision must be approved or declined")
     note = (note or "").strip()
     if decision == "declined" and not note:
         raise TicketRecordError("a declined change needs a note")
@@ -310,6 +312,8 @@ def decision_text(
         f"decided_by: {scalar(decided_by.strip())}\ndecided_at: {decided_at.isoformat()}\n"
         f"note: {line}\n---\n\n# Change request {n}: {decision}\n" + (f"\n{note}\n" if note else "")
     ).encode()
+    if len(text) > MAX_REQUEST_BYTES:
+        raise TicketRecordError(f"the decision would be larger than {MAX_REQUEST_BYTES} bytes")
     _read_back(n, request, text)
     return text
 
