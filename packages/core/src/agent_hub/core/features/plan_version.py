@@ -37,7 +37,7 @@ def plan_version(text: bytes) -> PlanView:
         if heading is not None:
             level, title = heading
             if level <= 2:
-                opens = level == 2 and title.casefold().startswith("amendments")
+                opens = level == 2 and opens_amendments(title)
                 section = title if opens else None
             continue
         entry = None if section is None else _ENTRY.fullmatch(line)
@@ -45,6 +45,22 @@ def plan_version(text: bytes) -> PlanView:
             found[entry.group(1)] = _amendment(entry, section)
     amendments = tuple(found.values())
     return PlanView(version=len(amendments) + 1, amendments=amendments)
+
+
+def last_section(text: bytes) -> str | None:
+    """The text of the plan's last level-1 or level-2 heading (outside fenced code blocks); None
+    without one. An amendment appended at the end belongs to that section."""
+    last = None
+    for line in _prose(text.decode("utf-8", "replace")):
+        heading = _heading(line)
+        if heading is not None and heading[0] <= 2:
+            last = heading[1]
+    return last
+
+
+def opens_amendments(title: str) -> bool:
+    """Whether a level-2 heading's ``title`` opens an ``## Amendments…`` section."""
+    return title.casefold().startswith("amendments")
 
 
 def _heading(line: str) -> tuple[int, str] | None:

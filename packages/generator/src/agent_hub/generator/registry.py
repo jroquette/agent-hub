@@ -162,6 +162,7 @@ _BASE_AGENTS: Final = (
     "quality-reviewer",
     "requirements-analyst",
     "researcher",
+    "security-reviewer",
     "spec-reviewer",
     "test-writer",
     "ux-designer",
@@ -169,8 +170,10 @@ _BASE_AGENTS: Final = (
 # The base plugin's skills, one folder each (sorted).
 _BASE_SKILLS: Final = (
     "adr",
+    "context-audit",
     "create-plan",
     "deliver",
+    "design-fit",
     "feature",
     "fix",
     "handoff",
@@ -180,6 +183,7 @@ _BASE_SKILLS: Final = (
     "onboard",
     "overengineering-review",
     "plain-language",
+    "premortem",
     "property-based-testing",
     "recall",
     "refactor",

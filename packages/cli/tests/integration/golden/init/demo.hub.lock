@@ -24,6 +24,10 @@
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/agents/researcher.md"
     },
+    ".claude/agents/security-reviewer.md": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/agents/security-reviewer.md"
+    },
     ".claude/agents/spec-reviewer.md": {
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/agents/spec-reviewer.md"
@@ -48,6 +52,10 @@
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/adr"
     },
+    ".claude/skills/context-audit": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/context-audit"
+    },
     ".claude/skills/create-plan": {
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/create-plan"
@@ -55,6 +63,10 @@
     ".claude/skills/deliver": {
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/deliver"
+    },
+    ".claude/skills/design-fit": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/design-fit"
     },
     ".claude/skills/feature": {
       "ownership": "managed",
@@ -91,6 +103,10 @@
     ".claude/skills/plain-language": {
       "ownership": "managed",
       "symlink": "../../plugin/hub-workflow/skills/plain-language"
+    },
+    ".claude/skills/premortem": {
+      "ownership": "managed",
+      "symlink": "../../plugin/hub-workflow/skills/premortem"
     },
     ".claude/skills/property-based-testing": {
       "ownership": "managed",
@@ -229,7 +245,7 @@
     "hub.schema.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "d015ef87a8bc78ed9cf8762a76565704b14033b90c89d49527e6530b027093f9"
+      "sha256": "1f45d32a28f477f21ea264367623f37aaf00cf502406f1b9443c8e21fa63f4d1"
     },
     "plugin/demo/.claude-plugin/plugin.json": {
       "ownership": "seeded"
@@ -261,7 +277,7 @@
     "plugin/hub-workflow/NOTICE": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "b994353a7cd550cb24782aab8cd2e854f336bdf78733e08ef4dbf54621daaecb"
+      "sha256": "974fe714df8c04176e1996ee2a6486f8c67250937f870b6be50d7e2cae05a59d"
     },
     "plugin/hub-workflow/agents/architect.md": {
       "executable": false,
@@ -292,6 +308,11 @@
       "executable": false,
       "ownership": "managed",
       "sha256": "f4859e0b694dff6cea2a69d29074d111c9374971f544289b134a8f0a620da9cf"
+    },
+    "plugin/hub-workflow/agents/security-reviewer.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "1fe3ab6edd2241ad3a9e41ec3fd45abf0bfbfe93fed0eb708a18941f18fb454d"
     },
     "plugin/hub-workflow/agents/spec-reviewer.md": {
       "executable": false,
@@ -383,6 +404,11 @@
       "ownership": "managed",
       "sha256": "9ce7c41cbc0843192921b609073bc0f7e3230f4b1aeb87a6b77d63bf4bd83ca9"
     },
+    "plugin/hub-workflow/skills/context-audit/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "663fb974044fd4259bd492204c6b192103b36ff0552a407559f0d4d06ae48267"
+    },
     "plugin/hub-workflow/skills/create-plan/SKILL.md": {
       "executable": false,
       "ownership": "managed",
@@ -392,6 +418,11 @@
       "executable": false,
       "ownership": "managed",
       "sha256": "8290c651c1d84161dc1c5614f7fefb857b2c50bc9c3396c270f92687ebdeba6d"
+    },
+    "plugin/hub-workflow/skills/design-fit/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "45451b136b256d0927a4318b7627863be5ca9e3fc3a008efadf231bd7e6fb0de"
     },
     "plugin/hub-workflow/skills/feature/SKILL.md": {
       "executable": false,
@@ -447,6 +478,11 @@
       "executable": false,
       "ownership": "managed",
       "sha256": "be9a1cdcffb759374fba0f1ee0af80cd9e95421ad031f1833726c52e8127946d"
+    },
+    "plugin/hub-workflow/skills/premortem/SKILL.md": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "5f2c9f99289a1ef2880f8965b5aac0f6a5b71310a5a2245e732bfd97f5aadef2"
     },
     "plugin/hub-workflow/skills/property-based-testing/SKILL.md": {
       "executable": false,

@@ -1,0 +1,29 @@
+---
+name: context-audit
+description: Estimate how much of every session's context the hub's always-loaded text takes — CLAUDE.md and AGENTS.md files with their imports, skill and agent descriptions — flag what is past known limits or duplicated, and rank the cuts by tokens saved. Read-only. Use when sessions feel crowded, after adding skills or rules, or before a retro.
+disable-model-invocation: true
+argument-hint: "[repo dir] (default: the hub and every repo in hub.json)"
+---
+
+# /context-audit [repo]
+
+Paths below are relative to the hub (the directory with `hub.json`); repos are its siblings, listed in `hub.json` → `repos`.
+Every session loads some text before the first prompt: memory files, and the descriptions of every skill and agent. The more of it there is, the less of it the model follows. This skill measures that text and proposes cuts; it edits nothing. For the live numbers of a running session, `/context` shows each part.
+Step types: `script` (commands, no judgement), `agent` (reasoning in the session), `gate` (the user decides).
+
+1. `script` **Inventory**, only under the hub and the repos in `hub.json` (never the home folder, never transcripts):
+   - each `CLAUDE.md` and `AGENTS.md`, with the files they import (`@path`, followed up to four levels), and the always-loaded rules in `.claude/rules/` (those without a `paths:` filter);
+   - each skill's frontmatter `description` (and `when_to_use`), marking those with `disable-model-invocation: true`, which do not load until typed;
+   - each agent's frontmatter `description`.
+   Skill and agent bodies load only when used: list their size apart, never in the always-loaded total.
+2. `script` **Estimate** tokens as characters divided by four, per file and in total, and say so: every number in the report is an **estimate**, not a measurement.
+3. `agent` **Flag**, citing `path:line`:
+   - a memory file over 200 lines;
+   - a skill description over 1,024 characters, or an agent description holding examples;
+   - agent descriptions together near 15,000 tokens, where Claude Code warns;
+   - the same rule stated in two always-loaded files (keep it in one, link from the other);
+   - a skill only people start that lacks `disable-model-invocation: true`;
+   - text needed only for some files that could move to a rule with `paths:`, or into a skill.
+   Never flag a skill description's trigger words as waste: they are what makes it load when needed.
+4. `agent` **Report**: the always-loaded total and its five largest parts; then one row per proposed cut: the file, what to cut or move and where, and the tokens saved, largest first. Name what you could not read.
+5. `gate` **The user picks** the cuts. This skill edits nothing: a managed file changes through its source (for a hub, `hub.json` or a seeded sibling file, then `hub sync`), the others in a PR.

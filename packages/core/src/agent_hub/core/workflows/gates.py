@@ -7,7 +7,8 @@ the run pauses again on the same gate. A gate's ``form`` says what answers it: `
 approval's decision id), ``choice`` (an attention wait's option id), ``text`` (an attention wait
 without options) or ``timer`` (``duration`` or ``until``: no person answers it).
 
-The output is ``{decision}`` (plus ``text`` under ``capture_response``), ``{at}``, ``{text}`` or
+The output is ``{decision}`` (plus ``text`` under ``capture_response``, and the ``approver`` a
+person's recorded decision names, two-level-flows A5), ``{at}``, ``{text}`` or
 ``{choice, text}``; ``when:`` and ``until_when`` read it like any other output. A ``reject`` of an
 approval with the default decisions cancels the run, unless a ``when:`` or ``until_when`` reads
 its decision (the workflow then routes the reject itself). An ``until`` is at most 7 days after
@@ -52,11 +53,13 @@ def gate_id(run: str, node: str, attempt: int) -> str:
 
 @dataclass(frozen=True)
 class GateAnswer:
-    """What a person answered: ``choice`` (a decision or option id) and ``text``. A dry run's
-    ``{}`` stub is an answer with neither: it ends a timed wait."""
+    """What a person answered: ``choice`` (a decision or option id) and ``text``, and who
+    (``approver``, as the decision was recorded). A dry run's ``{}`` stub is an answer with
+    neither: it ends a timed wait."""
 
     choice: str | None = None
     text: str | None = None
+    approver: str | None = None
 
 
 @dataclass(frozen=True)
@@ -186,4 +189,6 @@ def gate_output(
     output: dict[str, JsonValue] = {"decision": answer.choice}
     if isinstance(node, ApprovalNode) and node.capture_response:
         output["text"] = text
+    if answer.approver is not None:
+        output["approver"] = answer.approver
     return output
