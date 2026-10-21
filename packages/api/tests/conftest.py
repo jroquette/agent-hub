@@ -203,6 +203,9 @@ class FakeEventReadModels:
 
     def list_approvals(self, approval_filter: ApprovalFilter) -> Page[Approval]:
         self._call("list_approvals", approval_filter)
+        # As the read model does: an open filter lists the undecided ones.
+        if approval_filter.status == "open":
+            return _page([item for item in self.approvals if not item.decided])
         return _page(self.approvals)
 
     def get_approval(self, approval_id: str) -> Approval:

@@ -591,7 +591,8 @@ export interface paths {
     /**
      * Get Feature
      * @description One feature with its acceptance criteria; each open change request carries the open gate
-     *     of its run that answers it (``approval_id``), null when the run has none.
+     *     of its run that answers it (``approval_id``), and whether its run is gone, so hub web
+     *     decides it (``decidable_here``).
      */
     get: operations["get_feature_api_v1_features__project___slug__get"];
     put?: never;
@@ -634,11 +635,11 @@ export interface paths {
     put?: never;
     /**
      * Decide Change Request
-     * @description The owner decides a plan change request whose run has no open gate (abandoned, or its
-     *     record lost): creates ``change-requests/<n>.decision.md`` once with the hub's person as
+     * @description The owner decides a plan change request whose run is gone (lost, or ended, and held by no
+     *     child): creates ``change-requests/<n>.decision.md`` once with the hub's person as
      *     ``decided_by``, never editing the request; the next ``/implement`` of its ticket reads it.
-     *     409 while the run's gate is open (answer it through ``approval_id``), once decided, or with
-     *     no person to record; 422 for a decline without a note.
+     *     409 while the run's gate is open (answer it through ``approval_id``), while the run lives,
+     *     once decided, or with no person to record; 422 for a decline without a note.
      */
     post: operations["decide_change_request_api_v1_features__project___slug__change_requests__n__decision_post"];
     delete?: never;
@@ -2182,15 +2183,23 @@ export interface components {
      * @description A plan change request (``change-requests/<n>.md``, two-level-flows S2): its asking
      *     ``ticket``, ``status`` folded from its decision (None when the request cannot be read,
      *     ``problem`` then says why), the plan versions, the tickets it affects, when it was opened and
-     *     by which ``run_id``. ``approval_id`` is the open gate of that run that answers it (P8, A5),
-     *     None when the run has none: hub web then records the decision itself (AC-2.14). ``path`` is
-     *     relative to the hub's ``brain/``.
+     *     by which ``run_id``. ``approval_id`` is the open gate of that run that answers it (P8, A5);
+     *     ``decidable_here`` says the run is gone (lost, or ended), so hub web records the decision
+     *     itself (AC-2.14). ``path`` is relative to the hub's ``brain/``; ``body`` (the ticket route
+     *     only) is the request's evidence and proposal, as markdown within its 16 KiB head.
      */
     ChangeRequestView: {
       /** Affected */
       affected: string[];
       /** Approval Id */
       approval_id?: string | null;
+      /** Body */
+      body?: string | null;
+      /**
+       * Decidable Here
+       * @default false
+       */
+      decidable_here: boolean;
       decision: components["schemas"]["ChangeDecisionView"] | null;
       /** N */
       n: number;
@@ -3973,12 +3982,10 @@ export interface components {
     };
     /**
      * PreflightView
-     * @description A ticket's ``preflight.json`` (``path`` relative to the hub's ``brain/``): every run,
-     *     oldest first, or why it could not be read (``runs`` then empty).
+     * @description A ticket's ``preflight.json``: every run, oldest first, or why it could not be read
+     *     (``runs`` then empty).
      */
     PreflightView: {
-      /** Path */
-      path: string;
       /** Problem */
       problem: string | null;
       /** Runs */
@@ -5372,14 +5379,12 @@ export interface components {
     };
     /**
      * TicketRecords
-     * @description ``GET /features/{project}/{slug}/tickets/{ticket}`` (two-level-flows A7): what the ticket
-     *     panel shows that no tickets row carries. ``brief`` and ``plan`` are the brain paths of the
-     *     ticket's context brief and ticket plan when they exist; ``preflight`` its record (None
-     *     without one); ``change_requests`` the plan change requests it asks or is held by.
+     * @description ``GET /features/{project}/{slug}/tickets/{ticket}`` (two-level-flows A7, A20): what the
+     *     ticket panel shows that no tickets row carries: ``preflight``, its record (None without one),
+     *     and ``change_requests``, the plan change requests it asks or is held by, each with its
+     *     evidence and proposal (``body``).
      */
     TicketRecords: {
-      /** Brief */
-      brief: string | null;
       /** Change Requests */
       change_requests: components["schemas"]["ChangeRequestView"][];
       /**
@@ -5387,8 +5392,6 @@ export interface components {
        * @default true
        */
       derived: boolean;
-      /** Plan */
-      plan: string | null;
       preflight: components["schemas"]["PreflightView"] | null;
       /** Project */
       project: string;

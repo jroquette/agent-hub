@@ -87,7 +87,7 @@ from agent_hub.core.agent_sessions.driver import SessionDriver
 from agent_hub.core.agent_sessions.links import AgentSessionLinks, ObservedSessionLookup
 from agent_hub.core.agent_sessions.repo_changes import RepoChangesReader
 from agent_hub.core.agent_sessions.store import AgentSessionStore
-from agent_hub.core.features.change_request_decision import DecideChangeRequest, OpenRunGates
+from agent_hub.core.features.change_request_decision import DecideChangeRequest
 from agent_hub.core.features.owner_signoff import OwnerSignOffError, SignOffOwnerSteps
 from agent_hub.core.features.ticket_snapshots import (
     SnapshotRequest,
@@ -755,11 +755,13 @@ def build_app(
         owner_signoff=SignOffOwnerSteps(
             ProjectHubPaths(hubs), reader, HubEvalWriter(), clock=settings.clock
         ),
-        change_request_decisions=DecideChangeRequest(
+        change_request_decisions=None
+        if guard is None
+        else DecideChangeRequest(
             ProjectHubPaths(hubs),
             reader,
             writer=HubDecisionWriter(),
-            gates=OpenRunGates(events),
+            guard=guard,
             decider=decider_of(facts.hub_of),
             clock=settings.clock,
         ),
