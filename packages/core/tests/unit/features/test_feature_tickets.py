@@ -16,6 +16,7 @@ from agent_hub.core.features.feature_tickets import (
     NOT_LOADED_NOTICE,
     PROBLEM_TYPE_PREFIX,
     feature_tickets,
+    ticket_records,
 )
 from agent_hub.core.features.golden_path import LINEAR_NOT_CONNECTED, LINEAR_NOT_LOADED
 from agent_hub.core.features.ticket_records import TicketFiles
@@ -324,3 +325,85 @@ def test_folds_eval_verdict_once_when_one_eval_names_every_ticket(
 
     assert [row.flow.steps[4].state for row in tickets.tickets if row.flow] == ["done", "done"]
     assert len(calls) == 1
+
+
+def a_preflight_run(**fields: object) -> dict[str, object]:
+    return {
+        "ran_at": "2026-10-21T09:30:00Z",
+        "plan_version": 2,
+        "commit": "4e1a9c2",
+        "blockers_read": [],
+        "input": "none",
+        "input_text": None,
+        "drift": "none",
+        "local_notes": [],
+        "change_request": None,
+        "run_id": "implement-8",
+    } | fields
+
+
+def a_request_head(n: int, ticket: str, affected: str = "[]") -> RecordHead:
+    text = (
+        f"---\ntype: change-request\nticket: {ticket}\nstatus: open\nplan_from: 2\nplan_to: 3\n"
+        f"affected: {affected}\nopened_at: 2026-10-21\nrun_id: implement-{n}\n---\n"
+    )
+    return RecordHead(name=f"{n}.md", head=text.encode(), problem=None)
+
+
+# two-level-flows A7 (AGH-405): the per-ticket route serves what only it does: the brief, every
+# preflight run (local notes, discoveries) and the change requests the ticket asks or is held by.
+def test_serves_ticket_records_when_ticket_named_by_key_or_id() -> None:
+    preflight = {
+        "schema": "agent-hub/preflight/1",
+        "ticket": "DEM-8",
+        "runs": [
+            a_preflight_run(drift="local", local_notes=["Reuse the shared form."]),
+            a_preflight_run(input="discovery", input_text="Auth headers are needed."),
+        ],
+    }
+    folder = replace(
+        a_folder(),
+        ticket_folders=(
+            TicketFiles(name="dem-8", brief=True, plan=True, preflight=json.dumps(preflight).encode()),
+        ),
+        change_requests=(
+            a_request_head(1, "DEM-8"),
+            a_request_head(2, "DEM-7", affected="[T2]"),
+            a_request_head(3, "DEM-7"),
+        ),
+    )
+
+    by_key = ticket_records(folder, "t2", project="demo")
+    by_id = ticket_records(folder, "DEM-8", project="demo")
+
+    assert by_key is not None
+    assert by_key.model_dump(exclude={"ticket"}) == (
+        by_id.model_dump(exclude={"ticket"}) if by_id else None
+    )
+    assert (by_key.project, by_key.slug, by_key.ticket) == ("demo", "demo-feature", "t2")
+    assert by_key.brief == "features/demo-feature/tickets/dem-8/brief.md"
+    assert by_key.plan == "features/demo-feature/tickets/dem-8/plan.md"
+    assert by_key.preflight is not None
+    assert by_key.preflight.path == "features/demo-feature/tickets/dem-8/preflight.json"
+    assert [run.local_notes for run in by_key.preflight.runs] == [("Reuse the shared form.",), ()]
+    assert by_key.preflight.runs[1].input_text == "Auth headers are needed."
+    assert [request.n for request in by_key.change_requests] == [1, 2]
+
+
+def test_serves_preflight_problem_when_record_malformed() -> None:
+    folder = replace(
+        a_folder(), ticket_folders=(TicketFiles(name="DEM-7", preflight=b"{"),)
+    )
+
+    found = ticket_records(folder, "DEM-7", project="demo")
+
+    assert found is not None
+    assert found.preflight is not None
+    assert found.preflight.runs == ()
+    assert found.preflight.problem is not None
+    assert found.preflight.problem.startswith("preflight.json could not be read")
+    assert (found.brief, found.plan, found.change_requests) == (None, None, ())
+
+
+def test_serves_nothing_when_ticket_not_in_feature() -> None:
+    assert ticket_records(a_folder(), "DEM-99", project="demo") is None
