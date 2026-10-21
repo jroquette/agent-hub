@@ -30,8 +30,9 @@ NO_SHIP = "the ticket eval is NO-SHIP: no PR was opened"
 
 def changed(folder: str) -> list[str]:
     """The paths under ``folder`` git shows changed or new, relative to it."""
+    argv = ["git", "status", "--porcelain", "-z", "--no-renames", "--untracked-files=all"]
     done = subprocess.run(  # noqa: S603 - git from PATH, fixed arguments
-        ["git", "status", "--porcelain", "-z", "--no-renames", "--untracked-files=all", "--", folder],  # noqa: S607
+        [*argv, "--", folder],
         capture_output=True,
         check=True,
         timeout=60,
@@ -40,7 +41,9 @@ def changed(folder: str) -> list[str]:
     return [entry[3:].removeprefix(folder) for entry in entries if entry]
 
 
-def ours(path: str, *, ticket: str, evals: set[str], requests: set[int], run_id: str, folder: str) -> bool:
+def ours(
+    path: str, *, ticket: str, evals: set[str], requests: set[int], run_id: str, folder: str
+) -> bool:
     if path == "plan.md" or path.startswith(f"{ticket}/") or path in evals:
         return True
     found = REQUEST.fullmatch(path)
@@ -75,7 +78,9 @@ def main(argv: list[str]) -> int:
         return 2
     folder = f"brain/features/{given.feature}/"
     ticket = str(PurePosixPath(given.brief).parent.relative_to(folder))
-    evals = {f"evals/{given.eval_delivery}.{kind}" for kind in ("md", "json") if given.eval_delivery}
+    evals = {
+        f"evals/{given.eval_delivery}.{kind}" for kind in ("md", "json") if given.eval_delivery
+    }
     requests = {int(given.request)} if given.request.isdecimal() else set()
     run_id = os.environ.get("AGENT_HUB_RUN_ID", "")
     try:
