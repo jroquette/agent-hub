@@ -361,12 +361,15 @@ def test_marks_acceptance_done_when_owner_steps_signed_off() -> None:
 
 
 def test_waits_on_owner_in_acceptance_when_owner_steps_unsigned() -> None:
-    gate = EvalGate(evals=1, covered=6, owner_steps=2, acceptance="SHIP-WITH-OWNER-STEPS")
+    gate = EvalGate(
+        evals=1, covered=6, wait="sign_off", owner_steps=2, acceptance="SHIP-WITH-OWNER-STEPS"
+    )
 
     path = golden_path(_all_done(coverage=gate))
 
     acceptance = _step(path, "acceptance")
-    assert (acceptance.state, acceptance.meta) == ("current", "Waiting on you: sign off 2 ACs")
+    # A18 (AGH-405): the typed waiting state, in the words "Waiting for you".
+    assert (acceptance.state, acceptance.meta) == ("waiting", "Waiting for you: sign off 2 ACs")
     assert acceptance.reason == "2 ACs wait on owner steps (SHIP-WITH-OWNER-STEPS)"
     assert (_step(path, "shipped").state, path.phase) == ("pending", "acceptance")
     assert _step(path, "shipped").reason == "Acceptance is not done"
@@ -374,11 +377,13 @@ def test_waits_on_owner_in_acceptance_when_owner_steps_unsigned() -> None:
 
 # two-level-flows A9 (AGH-325 R2-m1): the meta names what is counted, singular for one AC.
 def test_waits_on_one_ac_in_singular_when_one_owner_step_unsigned() -> None:
-    gate = EvalGate(evals=1, covered=6, owner_steps=1, acceptance="SHIP-WITH-OWNER-STEPS")
+    gate = EvalGate(
+        evals=1, covered=6, wait="sign_off", owner_steps=1, acceptance="SHIP-WITH-OWNER-STEPS"
+    )
 
     acceptance = _step(golden_path(_all_done(coverage=gate)), "acceptance")
 
-    assert acceptance.meta == "Waiting on you: sign off 1 AC"
+    assert acceptance.meta == "Waiting for you: sign off 1 AC"
     assert acceptance.reason == "1 AC waits on owner steps (SHIP-WITH-OWNER-STEPS)"
 
 
@@ -391,24 +396,29 @@ def test_asks_for_new_evaluation_in_acceptance_when_waiting_acs_reopened(
     reopened: int, meta: str
 ) -> None:
     gate = EvalGate(
-        evals=2, covered=4, owner_steps=3, reopened=reopened, acceptance="SHIP-WITH-OWNER-STEPS"
+        evals=2,
+        covered=4,
+        wait="reopened",
+        owner_steps=3,
+        reopened=reopened,
+        acceptance="SHIP-WITH-OWNER-STEPS",
     )
 
     acceptance = _step(golden_path(_all_done(coverage=gate)), "acceptance")
 
     assert (acceptance.state, acceptance.meta) == ("current", meta)
-    assert not acceptance.meta.startswith("Waiting on you")
+    assert not acceptance.meta.startswith("Waiting for you")
 
 
-# two-level-flows A15: no "Waiting on you" while no sign-off can be recorded after the eval;
+# two-level-flows A15: no "Waiting for you" while no sign-off can be recorded after the eval;
 # an undated acceptance eval asks for a new evaluation even when ACs are reopened too.
 def test_asks_for_new_evaluation_in_acceptance_when_acceptance_eval_undated() -> None:
     gate = EvalGate(
         evals=2,
         covered=6,
+        wait="undated",
         owner_steps=2,
         reopened=1,
-        undated=True,
         acceptance="SHIP-WITH-OWNER-STEPS",
     )
 
@@ -425,6 +435,7 @@ def test_says_when_signoff_possible_in_acceptance_when_acceptance_eval_dated_in_
     gate = EvalGate(
         evals=1,
         covered=6,
+        wait="future",
         owner_steps=2,
         signable_after="21 Nov 2026, 09:01:00 UTC",
         acceptance="SHIP-WITH-OWNER-STEPS",
@@ -701,7 +712,8 @@ def _feature_inputs(draw: st.DrawFn) -> GoldenInputs:
         coverage=EvalGate(
             evals=draw(st.integers(min_value=0, max_value=3)),
             covered=draw(st.integers(min_value=0, max_value=total)),
-            owner_steps=draw(st.sampled_from((None, 0, 1))),
+            wait=draw(st.sampled_from((None, "no_acs", "sign_off", "reopened"))),
+            owner_steps=draw(st.sampled_from((0, 1))),
             reopened=draw(st.sampled_from((0, 0, 1))),
             skipped=draw(st.sampled_from((0, 0, 0, 1))),
             acceptance=draw(st.sampled_from(_VERDICTS)),
@@ -816,7 +828,7 @@ def test_marks_acceptance_done_when_owner_signoff_follows_whole_feature_eval() -
     signed = feature_parts(_folder(_WHOLE_OWNER, _SIGNOFF), _MERGED, now=READ_TIME).golden_path
 
     waiting = _step(unsigned, "acceptance")
-    assert (waiting.state, waiting.meta) == ("current", "Waiting on you: sign off 3 ACs")
+    assert (waiting.state, waiting.meta) == ("waiting", "Waiting for you: sign off 3 ACs")
     done = _step(signed, "acceptance")
     assert (done.state, done.meta) == ("done", "Owner steps signed off")
     assert signed.phase == "shipped"
@@ -833,7 +845,7 @@ def test_keeps_acceptance_waiting_when_owner_signoff_predates_whole_feature_eval
 
     path = feature_parts(_folder(_WHOLE_OWNER, early), _MERGED, now=READ_TIME).golden_path
 
-    assert _step(path, "acceptance").meta == "Waiting on you: sign off 3 ACs"
+    assert _step(path, "acceptance").meta == "Waiting for you: sign off 3 ACs"
 
 
 # two-level-flows AC-1.6: ticket evals never sign the owner steps off.
@@ -845,7 +857,7 @@ def test_keeps_acceptance_waiting_when_ticket_evals_ship_after_whole_feature_eva
     path = feature_parts(_folder(_WHOLE_OWNER, ticket_ship), _MERGED, now=READ_TIME).golden_path
 
     acceptance = _step(path, "acceptance")
-    assert (acceptance.state, acceptance.meta) == ("current", "Waiting on you: sign off 3 ACs")
+    assert (acceptance.state, acceptance.meta) == ("waiting", "Waiting for you: sign off 3 ACs")
 
 
 # two-level-flows A6: a legacy eval.md without scope is whole-feature; it needs a sign-off too.
@@ -857,7 +869,7 @@ def test_keeps_acceptance_waiting_when_legacy_eval_ships_with_owner_steps() -> N
     )
 
     acceptance = _step(path.golden_path, "acceptance")
-    assert (acceptance.state, acceptance.meta) == ("current", "Waiting on you: sign off 3 ACs")
+    assert (acceptance.state, acceptance.meta) == ("waiting", "Waiting for you: sign off 3 ACs")
 
 
 # two-level-flows A10: no AC to count is no sign-off, so the owner steps still wait.
