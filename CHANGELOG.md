@@ -52,6 +52,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Changed
 
+- The hub guard denies, instead of asking, a call it would ask about when the session runs in Claude Code's
+  `auto` mode, with the same reason and a note, so the agent takes another way; other modes still ask (AGH-430). It
+  arrives with `hub sync` after you bump `platform.version`.
 - `make playground-export`: a session is credited with the hub files of a Studio Publish through the draft it
   wrote (the `draft_id` a `publish` version names, read from the conductor's item versions), instead of a
   `PUBLISHED <path>` line in Claude's reply, which the server publish no longer gives (AGH-298). A conductor older
