@@ -67,7 +67,102 @@ const runs = aPage([
   }),
 ]);
 
+function sourced(value: string | null, source: string, where: string) {
+  return { value, source, where, team_value: null };
+}
+
+function environment(name: string, live = false) {
+  return {
+    name,
+    access: "write",
+    production: live,
+    description: null,
+    credentials: null,
+    source: "hub.json",
+    team_access: "write",
+  };
+}
+
+const commitTitle = {
+  pattern: "{ISSUE}: {type}({scope}): {summary}",
+  source: "project",
+  where: "hub.json → project.conventions.commit_title",
+  example: "TIP-42: feat(api): add the hub config view",
+};
+
+const hubConfig = {
+  project: "agent-hub",
+  hub_path: "/hubs/agent-hub",
+  hub_repo: "acme/agent-hub",
+  team_file: { name: "hub.json", path: "/hubs/agent-hub/hub.json", problems: [] },
+  local_file: { name: "hub.local.json", path: "/hubs/agent-hub/hub.local.json", problems: [] },
+  author_name: sourced("Jane Doe", "local", "hub.local.json → project.author_name"),
+  author_email: sourced(null, "default", "built-in default"),
+  branch_prefix: sourced("jdoe/", "local", "hub.local.json → project.branch_prefix"),
+  default_branch: sourced("main", "default", "built-in default (main)"),
+  conventions: [
+    {
+      pattern: "{ISSUE}-{slug}",
+      source: "project",
+      where: "hub.json → project.conventions.branch",
+      example: "TIP-42-hub-config",
+    },
+    commitTitle,
+    { ...commitTitle, source: "commit_title", where: "follows the commit title" },
+  ],
+  repos: [
+    {
+      index: 0,
+      dir: "demo-api",
+      github: "acme/demo-api",
+      role: "app",
+      default_branch: sourced("main", "default", "built-in default (main)"),
+      branch: commitTitle,
+      commit_title: commitTitle,
+      pr_title: commitTitle,
+      check_fast: "make check-fast",
+      check_fast_timeout: 120,
+      check: "make check",
+    },
+  ],
+  tracker: {
+    kind: "linear",
+    teams: ["TIP"],
+    transport: sourced("api", "default", "built-in default (api)"),
+    ready_label: "agent-ready",
+    failed_label: "agent-failed",
+    blocked_label: null,
+    started_state: "In Progress",
+    review_state: "In Review",
+    team_set: [],
+  },
+  guard: {
+    blocked_words: { team: ["acme-secret"], local: ["my-client"] },
+    blocked_words_files: { team: [], local: [] },
+    blocked_words_env: { team: [], local: [] },
+    deny_paths: [],
+    ask_before_edit: ["demo-api/docs/adr"],
+    deny_hosts: [],
+    secret_env_files: [],
+    readable_env_files: [],
+    infra_on: false,
+  },
+  model_tiers: { small: "haiku", medium: "sonnet", large: "opus" },
+  model_tiers_set: [],
+  agent_models: [],
+  modules: ["bench", "cloud"],
+  platform_version: "0.4.0",
+  environments: {
+    environments: [environment("local"), environment("shared", true)],
+    services: [],
+    blocked_words: [],
+    blocked_files: [],
+    blocked_env: [],
+  },
+};
+
 const routes: ApiRoutes = {
+  "/api/v1/projects/agent-hub/config": hubConfig,
   "/api/v1/projects/agent-hub": aProjectDetail({
     lock_state: "sync_pending",
     lock_version: "0.3.0",
@@ -289,9 +384,29 @@ describe("ProjectOverviewScreen", () => {
     expect(within(table).getAllByText("make check-fast")).toHaveLength(3);
     expect(within(table).getByText("Missing")).toBeInTheDocument();
     expect(within(table).getByText("132 lines")).toBeInTheDocument();
+  });
 
-    expect(scope.getByText("Sync pending (lock 0.3.0, pin 0.4.0)")).toBeInTheDocument();
-    expect(scope.getByText("bench")).toBeInTheDocument();
+  it("shows what the hub configuration sets, and who set it, without opening Hub config", async () => {
+    renderProject();
+
+    const section = within(
+      await screen.findByRole("region", { name: "How this project is set up" }),
+    );
+    expect(await section.findByText("Sync pending (lock 0.3.0, pin 0.4.0)")).toBeInTheDocument();
+    expect(section.getByText("bench")).toBeInTheDocument();
+    expect(section.getByText("demo-api")).toBeInTheDocument();
+    expect(section.getByText("agent-ready")).toBeInTheDocument();
+    // The commit title and the PR title that follows it.
+    expect(section.getAllByText("TIP-42: feat(api): add the hub config view")).toHaveLength(2);
+    expect(section.getByText("jdoe/")).toBeInTheDocument();
+    expect(section.getAllByText("Set by you").length).toBeGreaterThan(0);
+    expect(section.getByText("local")).toBeInTheDocument();
+    expect(section.getByText("1 marked live")).toBeInTheDocument();
+    expect(section.getByText("2 words")).toBeInTheDocument();
+    expect(section.getByRole("link", { name: /Open hub config/ })).toHaveAttribute(
+      "href",
+      "/projects/agent-hub/config",
+    );
   });
 
   it("AC-PG-38.7 links Setup and health to the hub configuration and each repo's conventions", async () => {

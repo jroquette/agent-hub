@@ -38,3 +38,8 @@ export function useRecentSessions(project: string) {
 export function useFindings(project: string) {
   return useApi("/api/v1/doctor/findings", { query: { project } });
 }
+
+/** The project's effective hub configuration, the same query the Hub config screen reads. */
+export function useProjectConfig(project: string) {
+  return useApi("/api/v1/projects/{project}/config", path(project));
+}

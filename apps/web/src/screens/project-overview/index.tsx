@@ -32,6 +32,8 @@ import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { NEEDS_MAX, costDelta, needsEntry, orderNeeds } from "../portfolio/model";
 import { useNeedsYou, useRefreshOnCounts } from "../portfolio/queries";
 import { StaleStamp } from "../portfolio/StaleStamp";
+import { ConfigSource } from "../hub-config";
+import type { Source } from "../hub-config/parts";
 import { budgetOf, durationSeconds, finishedCosts, median } from "../runs-list/model";
 import type { WorkflowRun } from "../runs-list/queries";
 import {
@@ -51,6 +53,7 @@ import {
   useProjectNow,
   useProjectRepos,
   useProjectRuns,
+  useProjectConfig,
   useProjectSummary,
   useRecentSessions,
   type NowItem,
@@ -792,6 +795,223 @@ function ReposBlock({ project }: { project: string }) {
   );
 }
 
+type HubConfig = NonNullable<ReturnType<typeof useProjectConfig>["data"]>;
+
+/** One line of a config card: what it is, its value, and who set it when the hub says so. */
+function ConfigLine({
+  label,
+  children,
+  source,
+}: {
+  label: string;
+  children: ReactNode;
+  source?: { source: Source; where: string } | undefined;
+}) {
+  return (
+    <>
+      <dt>{label}</dt>
+      <dd>
+        <span className="po-config-value">{children}</span>
+        {source && <ConfigSource source={source.source} where={source.where} />}
+      </dd>
+    </>
+  );
+}
+
+function Mono({ children }: { children: ReactNode }) {
+  return <code className="ah-mono">{children}</code>;
+}
+
+function Chips({ items }: { items: readonly string[] }) {
+  if (items.length === 0) return <span className="ah-muted">None</span>;
+  return (
+    <>
+      {items.map((item) => (
+        <span key={item} className="ah-fm-chip">
+          {item}
+        </span>
+      ))}
+    </>
+  );
+}
+
+function ConfigCard({
+  icon,
+  title,
+  children,
+}: {
+  icon: IconName;
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="ah-card po-config-card">
+      <div className="po-focus-title">
+        <Icon name={icon} size="sm" />
+        {title}
+      </div>
+      <dl className="po-meta po-config-list">{children}</dl>
+    </div>
+  );
+}
+
+function HubCard({ project, config }: { project: ProjectDetail; config: HubConfig }) {
+  const pending = project.lock_state === "sync_pending" || project.lock_state === "drift";
+  const tiers = Object.entries(config.model_tiers).map(([tier, model]) => `${tier} · ${model}`);
+  return (
+    <ConfigCard icon="box" title="Hub">
+      <ConfigLine label="Repository">
+        <span className="ah-mono" title={project.hub_path}>
+          {project.hub_repo}
+        </span>
+      </ConfigLine>
+      <ConfigLine label="Platform">
+        <Mono>{project.platform_version}</Mono> pinned
+        {pending && (
+          <Tooltip label="hub.lock records what hub sync last wrote. Run ./hub sync, review the diff, open a hub PR.">
+            <StatusBadge
+              status="waiting"
+              label={`${project.lock_state === "drift" ? "Drift" : "Sync pending"} (lock ${project.lock_version ?? "—"}, pin ${project.platform_version})`}
+            />
+          </Tooltip>
+        )}
+      </ConfigLine>
+      <ConfigLine label="Repos">
+        <Chips items={config.repos.map((r) => r.dir)} />
+      </ConfigLine>
+      {project.modules.length > 0 && (
+        <ConfigLine label="Modules">
+          <Chips items={project.modules} />
+        </ConfigLine>
+      )}
+      {tiers.length > 0 && (
+        <ConfigLine
+          label="Models"
+          source={
+            config.model_tiers_set.length > 0
+              ? { source: "team", where: "hub.json → models.tiers" }
+              : { source: "default", where: "models.tiers" }
+          }
+        >
+          <Chips items={tiers} />
+        </ConfigLine>
+      )}
+    </ConfigCard>
+  );
+}
+
+function TrackerCard({ config }: { config: HubConfig }) {
+  const { tracker } = config;
+  return (
+    <ConfigCard icon="list-checks" title="Tracker">
+      <ConfigLine label="Where">
+        {tracker.kind === "linear" ? "Linear" : tracker.kind} team{" "}
+        <Mono>{tracker.teams.join(", ") || "—"}</Mono>
+      </ConfigLine>
+      <ConfigLine label="Agents pick up">
+        tickets labelled <Mono>{tracker.ready_label}</Mono>
+      </ConfigLine>
+      <ConfigLine label="Moves them to">
+        <Mono>{tracker.started_state}</Mono> → <Mono>{tracker.review_state}</Mono>
+      </ConfigLine>
+      <ConfigLine label="On failure">
+        labels <Mono>{tracker.failed_label}</Mono>
+      </ConfigLine>
+      <ConfigLine
+        label="Reached through"
+        source={{ source: tracker.transport.source, where: tracker.transport.where }}
+      >
+        <Mono>{tracker.transport.value ?? "—"}</Mono>
+      </ConfigLine>
+    </ConfigCard>
+  );
+}
+
+const PATTERN_LABELS = ["Branch", "Commit title", "PR title"] as const;
+
+function ConventionsCard({ config }: { config: HubConfig }) {
+  const sourced = (v: HubConfig["author_name"]) =>
+    v.value ? { source: v.source, where: v.where } : undefined;
+  return (
+    <ConfigCard icon="git-branch" title="Conventions">
+      {config.conventions.map((c, i) => (
+        <ConfigLine
+          key={c.where}
+          label={PATTERN_LABELS[i] ?? c.where}
+          source={{ source: c.source, where: c.where }}
+        >
+          <span title={c.pattern}>
+            <Mono>{c.example ?? c.pattern}</Mono>
+          </span>
+        </ConfigLine>
+      ))}
+      <ConfigLine label="Branch prefix" source={sourced(config.branch_prefix)}>
+        {config.branch_prefix.value ? (
+          <Mono>{config.branch_prefix.value}</Mono>
+        ) : (
+          <span className="ah-muted">Not set</span>
+        )}
+      </ConfigLine>
+      <ConfigLine label="Author" source={sourced(config.author_name)}>
+        {config.author_name.value ?? <span className="ah-muted">Not set</span>}
+      </ConfigLine>
+    </ConfigCard>
+  );
+}
+
+function GuardCard({ config }: { config: HubConfig }) {
+  const { guard, environments } = config;
+  const blocked = guard.blocked_words.team.length + guard.blocked_words.local.length;
+  const live = environments.environments.filter((e) => e.production).length;
+  return (
+    <ConfigCard icon="shield" title="Guardrails">
+      <ConfigLine label="Environments">
+        <Chips items={environments.environments.map((e) => e.name)} />
+        {live > 0 && <StatusBadge status="waiting" label={`${String(live)} marked live`} />}
+      </ConfigLine>
+      <ConfigLine label="Services">{plural(environments.services.length, "service")}</ConfigLine>
+      <ConfigLine label="Ask before editing">
+        {plural(guard.ask_before_edit.length, "path")}
+      </ConfigLine>
+      <ConfigLine label="Denied">
+        {plural(guard.deny_paths.length, "path")} · {plural(guard.deny_hosts.length, "host")}
+      </ConfigLine>
+      <ConfigLine label="Blocked words">{plural(blocked, "word")}</ConfigLine>
+      <ConfigLine label="Infra commands">{guard.infra_on ? "Allowed" : "Off"}</ConfigLine>
+    </ConfigCard>
+  );
+}
+
+/** What hub.json (and my hub.local.json) set for this project, readable at a glance. */
+function ConfigSection({ project }: { project: ProjectDetail }) {
+  const config = useProjectConfig(project.name);
+  return (
+    <Section
+      id="config"
+      title="How this project is set up"
+      sub="From hub.json and your hub.local.json"
+      action={
+        <OpenLink href={`/projects/${encodeURIComponent(project.name)}/config`}>
+          Open hub config
+        </OpenLink>
+      }
+    >
+      <Region query={config} title="the hub configuration" lines={4}>
+        {() =>
+          config.data && (
+            <div className="po-config">
+              <HubCard project={project} config={config.data} />
+              <TrackerCard config={config.data} />
+              <ConventionsCard config={config.data} />
+              <GuardCard config={config.data} />
+            </div>
+          )
+        }
+      </Region>
+    </Section>
+  );
+}
+
 function SetupSection({
   project,
   findings,
@@ -801,14 +1021,13 @@ function SetupSection({
 }) {
   const summary = findings.data ? healthSummary(findings.data.items) : null;
   const problems = summary ? summary.error + summary.warning : 0;
-  const pending = project.lock_state === "sync_pending" || project.lock_state === "drift";
   return (
     <details id="po-setup" className="ah-card po-details">
       <summary>
         <Icon name="chevron-right" size="sm" className="po-chevron" />
         Setup and health
         <span className="ah-small ah-subtle" style={{ fontWeight: 400 }}>
-          for engineers · repositories, checks and hub configuration
+          for engineers · repositories and checks
         </span>
         <span className="ah-grow" />
         {summary && problems > 0 && (
@@ -821,44 +1040,6 @@ function SetupSection({
       <div className="po-details-body">
         <HealthBlock project={project.name} findings={findings} />
         <ReposBlock project={project.name} />
-        <div>
-          <h3>Hub</h3>
-          <dl className="po-meta">
-            <dt>Hub repository</dt>
-            <dd className="ah-mono" title={project.hub_path}>
-              {project.hub_repo}
-            </dd>
-            <dt>Tracker</dt>
-            <dd>
-              {project.tracker.kind === "linear" ? "Linear" : project.tracker.kind} team{" "}
-              <span className="ah-mono">{project.tracker.teams.join(", ") || "—"}</span>
-            </dd>
-            <dt>Platform</dt>
-            <dd className="ah-row" style={{ gap: 8 }}>
-              <span className="ah-mono">{project.platform_version}</span> pinned
-              {pending && (
-                <Tooltip label="hub.lock records what hub sync last wrote. Run ./hub sync, review the diff, open a hub PR.">
-                  <StatusBadge
-                    status="waiting"
-                    label={`${project.lock_state === "drift" ? "Drift" : "Sync pending"} (lock ${project.lock_version ?? "—"}, pin ${project.platform_version})`}
-                  />
-                </Tooltip>
-              )}
-            </dd>
-            {project.modules.length > 0 && (
-              <>
-                <dt>Modules</dt>
-                <dd className="ah-row" style={{ gap: 4 }}>
-                  {project.modules.map((m) => (
-                    <span key={m} className="ah-fm-chip">
-                      {m}
-                    </span>
-                  ))}
-                </dd>
-              </>
-            )}
-          </dl>
-        </div>
       </div>
     </details>
   );
@@ -947,6 +1128,7 @@ export function ProjectOverviewScreen() {
       <FocusSection project={name} />
       <TasksSection project={name} />
       <RecentWorkSection project={name} hubPath={project.data.hub_path} />
+      <ConfigSection project={project.data} />
       <SetupSection project={project.data} findings={findings} />
     </div>
   );
