@@ -573,9 +573,18 @@ def _continue(hub: Path, folder: Path) -> int:
             f"the run {folder.name}'s snapshot no longer matches its content_hash"
         )
     try:
-        document = (folder / SNAPSHOT / DOCUMENT).read_bytes()
+        document = parse_workflow(_json((folder / SNAPSHOT / DOCUMENT).read_bytes()))
+    except (OSError, WorkflowLoadError) as error:
+        raise WorkflowRunError(f"cannot load the run's snapshot: {error}") from None
+    if document.kind == "scenario":
+        # A scenario run resumes on its pinned actions, behind its policy gates; imported here,
+        # as scenario_runs builds on this module.
+        from agent_hub.cli import scenario_runs
+
+        return scenario_runs.resume(hub, folder, records)
+    try:
         includes = snapshot_includes(folder / SNAPSHOT)
-        plan = plan_workflow(parse_workflow(_json(document)), includes=includes)
+        plan = plan_workflow(document, includes=includes)
     except (OSError, WorkflowLoadError) as error:
         raise WorkflowRunError(f"cannot load the run's snapshot: {error}") from None
     inputs = next((r["inputs"] for r in records if r.get("event") == "inputs"), {})
