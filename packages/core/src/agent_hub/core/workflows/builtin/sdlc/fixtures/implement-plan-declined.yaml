@@ -1,6 +1,6 @@
 # The owner declines the plan change with a note, through the gate (capture_response): the run
-# records the decline, re-checks the ticket with the note as a constraint, finds only local drift
-# and goes on to the PR; plan.md is not amended (AC-2.12).
+# records the decline and its note, re-checks the ticket with the note as a constraint, finds only
+# local drift and goes on to the PR; plan.md is not amended (AC-2.12).
 workflow: implement
 inputs:
   feature: demo-flow
@@ -9,10 +9,38 @@ inputs:
   issue_text: "```text\nid: DEM-1\n```"
 stubs:
   context:
-    output: {path: brain/features/demo-flow/tickets/DEM-1/brief.md, version: 1}
+    output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-1/brief.md, hub: /ws/hub, base: origin/trunk}
   pending:
     output: {request: null, decision: '', input: none, note: '', summary: ''}
-  worktree:
+  pass-1__preflight:
+    output:
+      drift: plan
+      local_notes: []
+      blockers_read: []
+      evidence: The handler moved to src/api/routes.py.
+      proposal: Route T2 through routes.py.
+      affected: T3
+      summary: T2 goes through routes.py
+  pass-1__request:
+    output: {n: 1, plan_from: 1, plan_to: 2}
+  pass-1__record:
+    output: {runs: 1}
+  pass-1__gate: {decision: decline, approver: Dana Owner, text: Keep the handler where the plan says;
+      add the route there.}
+  pass-1__declined:
+    output: {decision: declined}
+  pass-1__recheck:
+    output:
+      drift: local
+      local_notes: [The route goes in the planned handler.]
+      blockers_read: []
+      evidence: ''
+      proposal: ''
+      affected: ''
+      summary: ''
+  pass-1__rerecord:
+    output: {runs: 2}
+  pass-1__worktree:
     output:
       path: /ws/demo-api/.claude/worktrees/dem-1
       branch: jdoe/dem-1
@@ -22,69 +50,12 @@ stubs:
       check: make check
       prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
       target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
-  pass-1__preflight:
-    output:
-      plan_version: 1
-      commit: 0a1b2c3d
-      blockers_read: []
-      drift: plan
-      local_notes: []
-      evidence: The handler moved to src/api/routes.py.
-      proposal: Route T2 through routes.py.
-      affected: T3
-      summary: T2 goes through routes.py
-  pass-1__request:
-    output: {path: brain/features/demo-flow/change-requests/1.md, n: 1, plan_from: 1, plan_to: 2}
-  pass-1__entry:
-    output:
-      ran_at: '2026-10-21T10:00:00+00:00'
-      plan_version: 1
-      commit: 0a1b2c3d
-      blockers_read: []
-      input: none
-      input_text: null
-      drift: plan
-      local_notes: []
-      change_request: 1
-      run_id: implement-1
-  pass-1__record:
-    output: {path: brain/features/demo-flow/tickets/DEM-1/preflight.json, runs: 1}
-  pass-1__gate: {decision: decline, text: Keep the handler where the plan says; add the route there.}
-  pass-1__declined:
-    output: {path: brain/features/demo-flow/change-requests/1.decision.md, decision: declined}
-  pass-1__recheck:
-    output:
-      plan_version: 1
-      commit: 0a1b2c3d
-      blockers_read: []
-      drift: local
-      local_notes: [The route goes in the planned handler.]
-      evidence: ''
-      proposal: ''
-      affected: ''
-      summary: ''
-  pass-1__reentry:
-    output:
-      ran_at: '2026-10-21T10:00:00+00:00'
-      plan_version: 1
-      commit: 0a1b2c3d
-      blockers_read: []
-      input: declined_change
-      input_text: Keep the handler where the plan says; add the route there.
-      drift: local
-      local_notes: [The route goes in the planned handler.]
-      change_request: null
-      run_id: implement-1
-  pass-1__rerecord:
-    output: {path: brain/features/demo-flow/tickets/DEM-1/preflight.json, runs: 2}
   pass-1__plan:
-    output: {path: brain/features/demo-flow/tickets/DEM-1/plan.md, tasks: 2}
+    output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-1/plan.md}
   pass-1__rounds__implement: {text: '{"status": "done", "summary": "Adds the change.", "tests": "make
       test", "discovery": ""}'}
   pass-1__rounds__verdict:
-    output: {status: done, summary: Adds the change., question: ''}
-  pass-1__rounds__discovery:
-    output: {discovery: ''}
+    output: {status: done, summary: Adds the change., question: '', discovery: ''}
   pass-1__rounds__check:
     output:
       passed: true
@@ -132,9 +103,23 @@ stubs:
       findings: []
       omitted: 0
   pass-1__outcome:
-    output: {status: done, question: '', discovery: '', verdict: PASS}
+    output:
+      status: done
+      question: ''
+      discovery: ''
+      verdict: PASS
+      path: /ws/demo-api/.claude/worktrees/dem-1
+      base: origin/trunk
+      target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
   last:
-    output: {status: done, question: '', verdict: PASS, pass: 1}
+    output:
+      status: done
+      question: ''
+      verdict: PASS
+      pass: 1
+      path: /ws/demo-api/.claude/worktrees/dem-1
+      base: origin/trunk
+      target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
   eval:
     output:
       schema: agent-hub/eval/1
@@ -150,14 +135,9 @@ stubs:
       red_on_parent: []
       owner_steps: []
   commits:
-    output:
-      count: 1
-      subjects: ['feat(api): change (DEM-1)']
-      summary: Adds the change.
-      dirty: false
+    output: {count: 1, dirty: false}
   pr:
-    output: {url: 'https://github.com/acme/demo-api/pull/99', found: false, summary: Adds the change.,
-      title_unmatched: null}
+    output: {url: 'https://github.com/acme/demo-api/pull/99', summary: Adds the change.}
   report:
     output: {delivery: delivered, stage: '', reason: '', question: '', pr: 'https://github.com/acme/demo-api/pull/99',
       summary: Adds the change.}
@@ -169,12 +149,10 @@ stubs:
       question: ''
       pr: https://github.com/acme/demo-api/pull/99
       summary: Adds the change.
-      hub_files: [brain/features/demo-flow/change-requests/1.decision.md, brain/features/demo-flow/change-requests/1.md,
-        brain/features/demo-flow/tickets/DEM-1/brief.md, brain/features/demo-flow/tickets/DEM-1/plan.md,
-        brain/features/demo-flow/tickets/DEM-1/preflight.json]
+      hub_files: [change-requests/1.decision.md, change-requests/1.md, tickets/DEM-1/brief.md, tickets/DEM-1/plan.md,
+        tickets/DEM-1/preflight.json]
 expect: {status: done, outcome: delivered}
-reached: [context, pending, worktree, pass-1__preflight, pass-1__request, pass-1__entry, pass-1__record,
-  pass-1__gate, pass-1__declined, pass-1__recheck, pass-1__reentry, pass-1__rerecord, pass-1__plan, pass-1__rounds,
-  pass-1__rounds__implement, pass-1__rounds__verdict, pass-1__rounds__discovery, pass-1__rounds__check,
-  pass-1__rounds__spec, pass-1__rounds__quality, pass-1__rounds__review, pass-1__rounds__notes, pass-1__rounds__feedback,
-  pass-1__outcome, last, eval, commits, pr, report, delivery]
+reached: [context, pending, pass-1__preflight, pass-1__request, pass-1__record, pass-1__gate, pass-1__declined,
+  pass-1__recheck, pass-1__rerecord, pass-1__worktree, pass-1__plan, pass-1__rounds, pass-1__rounds__implement,
+  pass-1__rounds__verdict, pass-1__rounds__check, pass-1__rounds__spec, pass-1__rounds__quality, pass-1__rounds__review,
+  pass-1__rounds__notes, pass-1__rounds__feedback, pass-1__outcome, last, eval, commits, pr, report, delivery]

@@ -6,6 +6,7 @@ their fixtures pass from a hub that holds a seeded ``sdlc`` pack (the built-in o
 the ticket eval declares the eval JSON, the gate captures a decline's note, and their scripts.
 """
 
+import itertools
 import json
 import os
 import subprocess
@@ -19,12 +20,19 @@ from click import unstyle
 from typer.testing import Result
 
 from agent_hub.core.features.agent_outputs import review_problems
-from agent_hub.core.features.output_models import PreflightRun
 from agent_hub.core.runner.issue_block import issue_block
 from agent_hub.core.testing.builders import an_issue
+from agent_hub.core.workflows import dry_run
 from agent_hub.core.workflows.document import parse_workflow
+from agent_hub.core.workflows.fixtures import parse_fixture, run_fixture
+from agent_hub.core.workflows.plan import plan_workflow
+from agent_hub.core.workflows.ports import NodeCall
 from agent_hub.core.workflows.substitution import NodeResult, RefContext, render
-from agent_hub.generator.workflow_discovery import BUILTIN_WORKFLOWS, discover_workflows
+from agent_hub.generator.workflow_discovery import (
+    BUILTIN_WORKFLOWS,
+    discover_workflows,
+    pack_resolver,
+)
 from agent_hub.generator.workflow_outputs import JsonSchemaOutputs
 from agent_hub.generator.workflow_yaml import load_workflow_bytes
 
@@ -44,11 +52,13 @@ IMPLEMENT_FIXTURES = (
     "implement-drift-none",
     "implement-drift-plan",
     "implement-eval-no-ship",
+    "implement-eval-owner-steps",
     "implement-pending-decision-approved",
     "implement-pending-decision-declined",
     "implement-pending-declined-still-plan",
     "implement-plan-approved",
     "implement-plan-declined",
+    "implement-plan-moved",
     "implement-pr-failure",
     "implement-rounds-exhausted",
 )
@@ -175,13 +185,13 @@ def test_reaches_the_built_in_fixtures_when_implement_tested_from_a_hub_with_a_s
     tested = run_command(demo_workspace.hub, "workflow", "test", "implement")
 
     assert (demo_workspace.hub / "workflows/sdlc/deliver.yaml").is_file()
-    assert passes.stdout == "ticket-pass: valid (14 nodes in 13 layers)\n", passes.output
-    assert validated.stdout == "implement: valid (52 nodes in 49 layers)\n", validated.output
+    assert passes.stdout == "ticket-pass: valid (13 nodes in 12 layers)\n", passes.output
+    assert validated.stdout == "implement: valid (48 nodes in 45 layers)\n", validated.output
     assert tested.exit_code == 0, tested.output
     for fixture in IMPLEMENT_FIXTURES:
         assert f"<builtin>/sdlc/fixtures/{fixture}.yaml: ok" in tested.stdout
     assert "warning" not in tested.stdout
-    assert tested.stdout.endswith("14 fixtures: 14 passed, 0 failed\n")
+    assert tested.stdout.endswith("16 fixtures: 16 passed, 0 failed\n")
 
 
 def test_captures_a_decline_note_when_the_owner_answers_the_plan_change_gate() -> None:
@@ -208,6 +218,8 @@ def test_checks_afresh_and_read_only_when_ticket_pass_runs_a_preflight() -> None
     for name in ("preflight", "recheck"):
         assert (nodes[name].mutates_checkout, nodes[name].context) == (False, "fresh")
         assert nodes[name].prompt_file == "preflight.md"
+        # The repo's main checkout, read at origin/<base>: no worktree, no branch (A22).
+        assert nodes[name].cwd == "../$INPUTS.repo"
     assert "context" not in nodes["rounds__implement"].model_fields_set
     assert nodes["rounds"].max_iterations == 3
 
@@ -472,13 +484,12 @@ def test_stays_under_the_prompt_cap_when_both_reviews_are_schema_max(tmp_path: P
 
 
 def a_script(
-    name: str, *args: str, cwd: Path, stdin: str = "", env: dict[str, str] | None = None
+    name: str, *args: str, cwd: Path, env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
     path = PACK / "scripts" / name
     return subprocess.run(  # noqa: S603 - this interpreter, a pack script, fixed arguments
         [sys.executable, "-I", str(path), *args],
         cwd=cwd,
-        input=stdin,
         env=env,
         capture_output=True,
         text=True,
@@ -493,141 +504,134 @@ def checked(output: str, workflow: str, node: str) -> Any:
     return value
 
 
-@pytest.mark.parametrize(
-    ("reply", "expected"),
-    [
-        (
-            'Done.\n`{"status": "done", "discovery": "T3 returns\\na list."}`\n',
-            "T3 returns a list.",
-        ),
-        ('{"status": "done", "discovery": ""}', ""),
-        ('{"status": "done", "discovery": 3}', ""),
-        ("BLOCKED: which endpoint?", ""),
-    ],
-)
-def test_reads_the_last_json_line_when_discovery_script_reads_a_reply(
-    tmp_path: Path, *, reply: str, expected: str
-) -> None:
-    result = a_script("discovery.py", cwd=tmp_path, stdin=reply)
+def rendered_argv(fixture: str, monkeypatch: pytest.MonkeyPatch) -> dict[str, set[tuple[str, str]]]:
+    """Each node's rendered argv in ``fixture``'s dry run, as its pairs of neighbouring items."""
+    seen: dict[str, set[tuple[str, str]]] = {}
+    original = dry_run._StubRunner.run
 
-    assert result.returncode == 0, result.stderr
-    assert checked(result.stdout, "ticket-pass", "rounds__discovery") == {"discovery": expected}
+    def recording(self: Any, call: NodeCall) -> Any:
+        seen[call.node.id] = set(itertools.pairwise(call.argv))
+        return original(self, call)
+
+    monkeypatch.setattr(dry_run._StubRunner, "run", recording)
+    discovery = discover_workflows(PACK, builtin_root=BUILTIN_WORKFLOWS)
+    (workflow,) = [item for item in discovery.workflows if item.name == "implement"]
+    includes = pack_resolver(discovery, workflow.pack_root)
+    plan = plan_workflow(parse_workflow(workflow.document), includes=includes)
+    path = PACK / "fixtures" / f"{fixture}.yaml"
+    document = load_workflow_bytes(path.read_bytes(), source=str(path)).document
+    result = run_fixture(plan, parse_fixture(document), outputs=JsonSchemaOutputs())
+    assert result.passed, result.problems
+    return seen
 
 
-AGENT_FINDINGS = {
-    "plan_version": 2,
-    "commit": "0a1b2c3d",
-    "blockers_read": ["DEM-7"],
-    "drift": "plan",
-    "local_notes": [],
-    "evidence": "The handler moved.",
-    "proposal": "Follow it.",
-    "affected": "T3",
-    "summary": "T2 follows the handler",
-}
+NOTE = "Keep the handler where the plan says; add the route there."
 
 
 @pytest.mark.parametrize(
-    ("args", "drift", "expected"),
+    ("fixture", "expected"),
     [
         (
-            (
-                "--input",
-                "decline",
-                "--text",
-                "Keep\n\tthe plan.",
-                "--request",
-                "",
-                "--request",
-                "3",
-            ),
-            "plan",
-            {"input": "declined_change", "input_text": "Keep the plan.", "change_request": 3},
+            "implement-plan-approved",
+            {
+                # The request the run opened is the run's, and the gate's approver decides it.
+                "pass-1__record": {("--request", "1"), ("--input", "none")},
+                "pass-1__approved": {("--decision", "approved"), ("--by", "Dana Owner")},
+                "pass-1__amend": {("--request", "1"), ("--summary", "T2 goes through routes.py")},
+                "pass-1__rerecord": {("--input", "approve"), ("--request", "1")},
+            },
         ),
         (
-            ("--input", "approve", "--text", "Fine.", "--request", "1"),
-            "none",
-            {"input": "none", "input_text": None, "change_request": None},
+            "implement-plan-declined",
+            {
+                # The decline's note reaches the decision and the re-check (capture_response).
+                "pass-1__declined": {("--by", "Dana Owner"), ("--note", NOTE)},
+                "pass-1__rerecord": {("--input", "decline"), ("--input-text", NOTE)},
+            },
         ),
         (
-            ("--input", "discovery", "--text", "T3 returns a list."),
-            "local",
-            {"input": "discovery", "input_text": "T3 returns a list.", "change_request": None},
+            "implement-discovery-once",
+            {
+                "pass-2__record": {
+                    ("--input", "discovery"),
+                    ("--input-text", "The plan's T3 contract returns a list, not a page."),
+                },
+            },
+        ),
+        (
+            "implement-pending-declined-still-plan",
+            {
+                "pass-1__record": {
+                    ("--input", "declined_change"),
+                    ("--input-text", "Keep T2 on the current handler."),
+                },
+            },
+        ),
+        (
+            "implement-eval-no-ship",
+            {"delivery": {("--eval", "NO-SHIP"), ("--eval-delivery", "dem-1")}},
         ),
     ],
 )
-def test_prints_one_valid_preflight_run_when_preflight_run_script_gets_findings(
-    tmp_path: Path, *, args: tuple[str, ...], drift: str, expected: dict[str, Any]
+def test_renders_what_the_steps_need_when_implement_fixtures_run(
+    monkeypatch: pytest.MonkeyPatch, fixture: str, expected: dict[str, set[tuple[str, str]]]
 ) -> None:
-    findings = AGENT_FINDINGS | {"drift": drift, "local_notes": ["x"] if drift == "local" else []}
-    env = {"PATH": os.environ.get("PATH", ""), "AGENT_HUB_RUN_ID": "implement-1"}
+    seen = rendered_argv(fixture, monkeypatch)
 
-    result = a_script(
-        "preflight_run.py", "--agent", json.dumps(findings), *args, cwd=tmp_path, env=env
-    )
-
-    assert result.returncode == 0, result.stderr
-    run = json.loads(result.stdout)
-    PreflightRun.model_validate(run)
-    assert {key: run[key] for key in expected} == expected
-    assert (run["run_id"], run["plan_version"], run["drift"]) == ("implement-1", 2, drift)
+    for node, pairs in expected.items():
+        assert pairs <= seen[node], node
 
 
-def test_exits_two_when_preflight_run_script_has_no_run_id(tmp_path: Path) -> None:
-    env = {"PATH": os.environ.get("PATH", "")}
-
-    result = a_script("preflight_run.py", "--agent", "{}", "--input", "none", cwd=tmp_path, env=env)
-
-    assert (result.returncode, result.stdout) == (2, "")
+WORKTREE = {"path": "/ws/dem-1", "base": "origin/trunk", "target": {"path": "/ws/dem-1"}}
 
 
 def a_rounds(*, status: str = "done", discovery: str = "", verdict: str | None = "PASS") -> str:
     rounds: dict[str, Any] = {
-        "verdict": {"status": status, "summary": "", "question": "which endpoint?"},
-        "discovery": {"discovery": discovery},
+        "verdict": {"status": status, "question": "which endpoint?", "discovery": discovery},
         "review": None if verdict is None else {"verdict": verdict},
     }
     return json.dumps(rounds)
 
 
 @pytest.mark.parametrize(
-    ("rounds", "expected"),
+    ("rounds", "worktree", "expected"),
     [
         (
             "",
+            "",
             {
                 "status": "blocked",
-                "question": "plan drift remains after the owner's decision on change request 4:"
+                "question": "plan drift remains after the owner's decision on the plan change:"
                 " the next /implement opens a new change request",
+                "target": None,
             },
         ),
         (
             a_rounds(status="blocked", verdict=None),
-            {"status": "blocked", "question": "which endpoint?"},
+            json.dumps(WORKTREE),
+            {"status": "blocked", "question": "which endpoint?", **WORKTREE},
         ),
         (
-            a_rounds(discovery="T3 returns a list.", verdict=None),
-            {"status": "discovery", "discovery": "T3 returns a list."},
+            a_rounds(discovery="T3 lists.", verdict=None),
+            json.dumps(WORKTREE),
+            {"status": "discovery", "discovery": "T3 lists.", **WORKTREE},
         ),
-        (a_rounds(), {"status": "done", "verdict": "PASS"}),
+        (a_rounds(), json.dumps(WORKTREE), {"status": "done", "verdict": "PASS", **WORKTREE}),
     ],
 )
 def test_says_how_the_pass_ended_when_pass_outcome_script_reads_the_rounds(
-    tmp_path: Path, *, rounds: str, expected: dict[str, str]
+    tmp_path: Path, *, rounds: str, worktree: str, expected: dict[str, Any]
 ) -> None:
-    result = a_script(
-        "pass_outcome.py", "--rounds", rounds, "--request", "", "--request", "4", cwd=tmp_path
-    )
+    result = a_script("pass_outcome.py", "--rounds", rounds, "--worktree", worktree, cwd=tmp_path)
 
     assert result.returncode == 0, result.stderr
-    empty = {"status": "", "question": "", "discovery": "", "verdict": ""}
+    empty = {"status": "", "question": "", "discovery": "", "verdict": "", "path": "", "base": ""}
     assert checked(result.stdout, "ticket-pass", "outcome") == empty | expected
 
 
 def a_pass(status: str, *, discovery: str = "", verdict: str = "") -> str:
-    return json.dumps(
-        {"status": status, "question": "", "discovery": discovery, "verdict": verdict}
-    )
+    found = {"status": status, "question": "", "discovery": discovery, "verdict": verdict}
+    return json.dumps(found | WORKTREE)
 
 
 @pytest.mark.parametrize(
@@ -655,7 +659,7 @@ def test_reads_the_last_pass_and_blocks_a_third_discovery_when_last_pass_script_
     result = a_script("last_pass.py", *args, cwd=tmp_path)
 
     assert result.returncode == 0, result.stderr
-    empty = {"question": "", "verdict": ""}
+    empty = {"question": "", "verdict": "", **WORKTREE}
     assert checked(result.stdout, "implement", "last") == empty | expected
 
 
@@ -665,27 +669,38 @@ def test_exits_two_when_last_pass_script_gets_no_pass(tmp_path: Path) -> None:
     assert (result.returncode, result.stdout) == (2, "")
 
 
-def test_names_the_changed_hub_files_and_a_no_ship_when_delivery_script_runs(
+def test_names_only_this_runs_hub_files_and_a_no_ship_when_delivery_script_runs(
     tmp_path: Path,
 ) -> None:
     def git(*args: str) -> None:
         subprocess.run(  # noqa: S603 - git from PATH, fixed arguments
-            ["git", *args],  # noqa: S607
+            ["git", "-c", "user.name=T", "-c", "user.email=t@example.com", *args],  # noqa: S607
             cwd=tmp_path,
             check=True,
             capture_output=True,
         )
 
     feature = tmp_path / "brain/features/demo-flow"
-    (feature / "tickets/DEM-1").mkdir(parents=True)
-    (tmp_path / "brain/features/other").mkdir()
+    (feature / "tickets").mkdir(parents=True)
     (feature / "plan.md").write_text("# Plan\n")
     git("init", "-q")
-    git("-c", "user.name=T", "-c", "user.email=t@example.com", "add", ".")
-    git("-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-qm", "base")
-    (feature / "plan.md").write_text("# Plan\n\n## Amendments\n")
-    (feature / "tickets/DEM-1/brief.md").write_text("x\n")
-    (tmp_path / "brain/features/other/plan.md").write_text("y\n")
+    git("add", ".")
+    git("commit", "-qm", "base")
+    files = {
+        "plan.md": "# Plan\n\n## Amendments\n",
+        "tickets/DEM-1/brief.md": "x\n",
+        "tickets/DEM-2/brief.md": "another ticket's\n",
+        "change-requests/1.md": "---\nrun_id: run-1\n---\n",
+        "change-requests/1.decision.md": "---\ndecision: approved\n---\n",
+        "change-requests/2.md": "---\nrun_id: run-2\n---\n",
+        "change-requests/3.md": "---\nrun_id: run-0\n---\n",
+        "change-requests/3.decision.md": "---\ndecision: declined\n---\n",
+        "evals/dem-1.json": "{}\n",
+        "evals/dem-2.json": "{}\n",
+    }
+    for name, text in files.items():
+        (feature / name).parent.mkdir(parents=True, exist_ok=True)
+        (feature / name).write_text(text)
     report = {
         "delivery": "failed",
         "stage": "pr_open",
@@ -694,19 +709,26 @@ def test_names_the_changed_hub_files_and_a_no_ship_when_delivery_script_runs(
         "pr": "",
         "summary": "",
     }
-
-    result = a_script(
-        "delivery.py",
-        *("--report", json.dumps(report), "--feature", "demo-flow", "--eval", "NO-SHIP"),
-        cwd=tmp_path,
+    args = (
+        *("--report", json.dumps(report), "--feature", "demo-flow"),
+        *("--brief", "brain/features/demo-flow/tickets/DEM-1/brief.md"),
+        *("--eval", "NO-SHIP", "--eval-delivery", "dem-1", "--request", "3"),
     )
+    env = {"PATH": os.environ.get("PATH", ""), "AGENT_HUB_RUN_ID": "run-1"}
+
+    result = a_script("delivery.py", *args, cwd=tmp_path, env=env)
 
     assert result.returncode == 0, result.stderr
     assert checked(result.stdout, "implement", "delivery") == report | {
         "stage": "evaluating",
         "reason": "the ticket eval is NO-SHIP: no PR was opened",
         "hub_files": [
-            "brain/features/demo-flow/plan.md",
-            "brain/features/demo-flow/tickets/DEM-1/brief.md",
+            "change-requests/1.decision.md",
+            "change-requests/1.md",
+            "change-requests/3.decision.md",
+            "change-requests/3.md",
+            "evals/dem-1.json",
+            "plan.md",
+            "tickets/DEM-1/brief.md",
         ],
     }

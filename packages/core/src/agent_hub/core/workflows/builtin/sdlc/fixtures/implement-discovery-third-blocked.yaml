@@ -8,10 +8,21 @@ inputs:
   issue_text: "```text\nid: DEM-1\n```"
 stubs:
   context:
-    output: {path: brain/features/demo-flow/tickets/DEM-1/brief.md, version: 1}
+    output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-1/brief.md, hub: /ws/hub, base: origin/trunk}
   pending:
     output: {request: null, decision: '', input: none, note: '', summary: ''}
-  worktree:
+  pass-1__preflight:
+    output:
+      drift: local
+      local_notes: [Adjusts to main.]
+      blockers_read: []
+      evidence: ''
+      proposal: ''
+      affected: ''
+      summary: ''
+  pass-1__record:
+    output: {runs: 1}
+  pass-1__worktree:
     output:
       path: /ws/demo-api/.claude/worktrees/dem-1
       branch: jdoe/dem-1
@@ -21,123 +32,106 @@ stubs:
       check: make check
       prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
       target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
-  pass-1__preflight:
-    output:
-      plan_version: 1
-      commit: 0a1b2c3d
-      blockers_read: []
-      drift: local
-      local_notes: [Adjusts to main.]
-      evidence: ''
-      proposal: ''
-      affected: ''
-      summary: ''
-  pass-1__entry:
-    output:
-      ran_at: '2026-10-21T10:00:00+00:00'
-      plan_version: 1
-      commit: 0a1b2c3d
-      blockers_read: []
-      input: none
-      input_text: null
-      drift: local
-      local_notes: [Adjusts to main.]
-      change_request: null
-      run_id: implement-1
-  pass-1__record:
-    output: {path: brain/features/demo-flow/tickets/DEM-1/preflight.json, runs: 1}
   pass-1__plan:
-    output: {path: brain/features/demo-flow/tickets/DEM-1/plan.md, tasks: 2}
+    output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-1/plan.md}
   pass-1__rounds__implement: {text: '{"status": "done", "summary": "Stops at a broken assumption.", "tests":
       "", "discovery": "Discovery 1: the plan''s T3 contract is not what main holds."}'}
   pass-1__rounds__verdict:
-    output: {status: done, summary: Stops at a broken assumption., question: ''}
-  pass-1__rounds__discovery:
-    output: {discovery: 'Discovery 1: the plan''s T3 contract is not what main holds.'}
+    output: {status: done, summary: Stops at a broken assumption., question: '', discovery: 'Discovery
+        1: the plan''s T3 contract is not what main holds.'}
   pass-1__outcome:
-    output: {status: discovery, question: '', discovery: 'Discovery 1: the plan''s T3 contract is not
-        what main holds.', verdict: ''}
+    output:
+      status: discovery
+      question: ''
+      discovery: 'Discovery 1: the plan''s T3 contract is not what main holds.'
+      verdict: ''
+      path: /ws/demo-api/.claude/worktrees/dem-1
+      base: origin/trunk
+      target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
   pass-2__preflight:
     output:
-      plan_version: 1
-      commit: 0a1b2c3d
-      blockers_read: []
       drift: local
       local_notes: [Adjusts to main.]
+      blockers_read: []
       evidence: ''
       proposal: ''
       affected: ''
       summary: ''
-  pass-2__entry:
-    output:
-      ran_at: '2026-10-21T10:00:00+00:00'
-      plan_version: 1
-      commit: 0a1b2c3d
-      blockers_read: []
-      input: discovery
-      input_text: 'Discovery 1: the plan''s T3 contract is not what main holds.'
-      drift: local
-      local_notes: [Adjusts to main.]
-      change_request: null
-      run_id: implement-1
   pass-2__record:
-    output: {path: brain/features/demo-flow/tickets/DEM-1/preflight.json, runs: 2}
+    output: {runs: 2}
+  pass-2__worktree:
+    output:
+      path: /ws/demo-api/.claude/worktrees/dem-1
+      branch: jdoe/dem-1
+      base: origin/trunk
+      hub: /ws/hub
+      hub_name: hub
+      check: make check
+      prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
+      target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
   pass-2__plan:
-    output: {path: brain/features/demo-flow/tickets/DEM-1/plan.md, tasks: 2}
+    output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-1/plan.md}
   pass-2__rounds__implement: {text: '{"status": "done", "summary": "Stops at a broken assumption.", "tests":
       "", "discovery": "Discovery 2: the plan''s T3 contract is not what main holds."}'}
   pass-2__rounds__verdict:
-    output: {status: done, summary: Stops at a broken assumption., question: ''}
-  pass-2__rounds__discovery:
-    output: {discovery: 'Discovery 2: the plan''s T3 contract is not what main holds.'}
+    output: {status: done, summary: Stops at a broken assumption., question: '', discovery: 'Discovery
+        2: the plan''s T3 contract is not what main holds.'}
   pass-2__outcome:
-    output: {status: discovery, question: '', discovery: 'Discovery 2: the plan''s T3 contract is not
-        what main holds.', verdict: ''}
+    output:
+      status: discovery
+      question: ''
+      discovery: 'Discovery 2: the plan''s T3 contract is not what main holds.'
+      verdict: ''
+      path: /ws/demo-api/.claude/worktrees/dem-1
+      base: origin/trunk
+      target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
   pass-3__preflight:
     output:
-      plan_version: 1
-      commit: 0a1b2c3d
-      blockers_read: []
       drift: local
       local_notes: [Adjusts to main.]
+      blockers_read: []
       evidence: ''
       proposal: ''
       affected: ''
       summary: ''
-  pass-3__entry:
-    output:
-      ran_at: '2026-10-21T10:00:00+00:00'
-      plan_version: 1
-      commit: 0a1b2c3d
-      blockers_read: []
-      input: discovery
-      input_text: 'Discovery 2: the plan''s T3 contract is not what main holds.'
-      drift: local
-      local_notes: [Adjusts to main.]
-      change_request: null
-      run_id: implement-1
   pass-3__record:
-    output: {path: brain/features/demo-flow/tickets/DEM-1/preflight.json, runs: 3}
+    output: {runs: 3}
+  pass-3__worktree:
+    output:
+      path: /ws/demo-api/.claude/worktrees/dem-1
+      branch: jdoe/dem-1
+      base: origin/trunk
+      hub: /ws/hub
+      hub_name: hub
+      check: make check
+      prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
+      target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
   pass-3__plan:
-    output: {path: brain/features/demo-flow/tickets/DEM-1/plan.md, tasks: 2}
+    output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-1/plan.md}
   pass-3__rounds__implement: {text: '{"status": "done", "summary": "Stops at a broken assumption.", "tests":
       "", "discovery": "Discovery 3: the plan''s T3 contract is not what main holds."}'}
   pass-3__rounds__verdict:
-    output: {status: done, summary: Stops at a broken assumption., question: ''}
-  pass-3__rounds__discovery:
-    output: {discovery: 'Discovery 3: the plan''s T3 contract is not what main holds.'}
+    output: {status: done, summary: Stops at a broken assumption., question: '', discovery: 'Discovery
+        3: the plan''s T3 contract is not what main holds.'}
   pass-3__outcome:
-    output: {status: discovery, question: '', discovery: 'Discovery 3: the plan''s T3 contract is not
-        what main holds.', verdict: ''}
-  last:
-    output: {status: blocked, question: 'a discovery in pass 3, the last one: Discovery 3: the plan''s
-        T3 contract is not what main holds.', verdict: '', pass: 3}
-  commits:
     output:
-      count: 1
-      subjects: ['feat(api): change (DEM-1)']
-      summary: Adds the change.
-      dirty: false
+      status: discovery
+      question: ''
+      discovery: 'Discovery 3: the plan''s T3 contract is not what main holds.'
+      verdict: ''
+      path: /ws/demo-api/.claude/worktrees/dem-1
+      base: origin/trunk
+      target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
+  last:
+    output:
+      status: blocked
+      question: 'a discovery in pass 3, the last one: Discovery 3: the plan''s T3 contract is not what
+        main holds.'
+      verdict: ''
+      pass: 3
+      path: /ws/demo-api/.claude/worktrees/dem-1
+      base: origin/trunk
+      target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
   report:
     output: {delivery: blocked, stage: implementing, reason: 'the implementing session stopped: a discovery
         in pass 3, the last one: Discovery 3: the plan''s T3 contract is not what main holds.', question: 'a
@@ -153,12 +147,10 @@ stubs:
         main holds.'
       pr: ''
       summary: ''
-      hub_files: [brain/features/demo-flow/tickets/DEM-1/brief.md, brain/features/demo-flow/tickets/DEM-1/plan.md,
-        brain/features/demo-flow/tickets/DEM-1/preflight.json]
+      hub_files: [tickets/DEM-1/brief.md, tickets/DEM-1/plan.md, tickets/DEM-1/preflight.json]
 expect: {status: done, outcome: blocked}
-reached: [context, pending, worktree, pass-1__preflight, pass-1__entry, pass-1__record, pass-1__plan,
-  pass-1__rounds, pass-1__rounds__implement, pass-1__rounds__verdict, pass-1__rounds__discovery, pass-1__outcome,
-  pass-2__preflight, pass-2__entry, pass-2__record, pass-2__plan, pass-2__rounds, pass-2__rounds__implement,
-  pass-2__rounds__verdict, pass-2__rounds__discovery, pass-2__outcome, pass-3__preflight, pass-3__entry,
-  pass-3__record, pass-3__plan, pass-3__rounds, pass-3__rounds__implement, pass-3__rounds__verdict, pass-3__rounds__discovery,
-  pass-3__outcome, last, commits, report, delivery]
+reached: [context, pending, pass-1__preflight, pass-1__record, pass-1__worktree, pass-1__plan, pass-1__rounds,
+  pass-1__rounds__implement, pass-1__rounds__verdict, pass-1__outcome, pass-2__preflight, pass-2__record,
+  pass-2__worktree, pass-2__plan, pass-2__rounds, pass-2__rounds__implement, pass-2__rounds__verdict,
+  pass-2__outcome, pass-3__preflight, pass-3__record, pass-3__worktree, pass-3__plan, pass-3__rounds,
+  pass-3__rounds__implement, pass-3__rounds__verdict, pass-3__outcome, last, report, delivery]
