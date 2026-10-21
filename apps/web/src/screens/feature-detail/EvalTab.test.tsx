@@ -291,6 +291,76 @@ describe("EvalTab rows", () => {
     );
   });
 
+  // AGH-330 r4 F1: after a remount, Back to a signpost's entry is still no arrival.
+  it("neither focuses nor opens the list on Back to a signpost's entry after a remount", async () => {
+    window.localStorage.setItem("agent-hub:eval-list-open", "false");
+    function Remount() {
+      const [mount, setMount] = useState(0);
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              setMount((n) => n + 1);
+            }}
+          >
+            Remount
+          </button>
+          <EvalTab
+            key={mount}
+            project="agent-hub"
+            slug="control-plane"
+            tickets={["AGH-201", "AGH-202"]}
+            evals={runs}
+            selected={runs[1]}
+            onSelect={() => undefined}
+          />
+        </>
+      );
+    }
+    const { router } = renderWithApi(<Remount />);
+    await act(() => router.navigate("/?doc=eval&eval=agh-201-r2", { state: FOCUS_EVAL }));
+    await userEvent.click(screen.getByRole("button", { name: "Hide list" }));
+    await act(() => router.navigate("/?doc=acs"));
+    await userEvent.click(screen.getByRole("button", { name: "Remount" }));
+
+    await act(() => router.navigate(-1));
+
+    expect(router.state.historyAction).toBe("POP");
+    expect(screen.queryByRole("table", { name: "Evals" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Remount" })).toHaveFocus();
+  });
+
+  // AGH-330 r4 F2: a regrouping under the same arrival does not take focus back.
+  it("does not refocus when the selected eval's group changes under the same arrival", async () => {
+    function Regroup() {
+      const [epics, setEpics] = useState<string[]>([]);
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              setEpics(["AGH-201"]);
+            }}
+          >
+            Regroup
+          </button>
+          {tab({ evals: runs, selected: runs[1], epics })}
+        </>
+      );
+    }
+    const { router } = renderWithApi(<Regroup />);
+    await act(() =>
+      router.navigate("/?doc=eval&eval=agh-201-r2", { replace: true, state: FOCUS_EVAL }),
+    );
+    expect(screen.getByRole("button", { name: /^AGH-201\b.*2 evals/ })).toHaveFocus();
+
+    await userEvent.click(screen.getByRole("button", { name: "Regroup" }));
+
+    expect(screen.getByRole("button", { name: /^Whole feature\b.*2 evals/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Regroup" })).toHaveFocus();
+  });
+
   it("names runs by number, the group by its ticket's title, the newest as latest", () => {
     renderWithApi(
       tab({ evals: runs, ticketRows: [aTicketRow({ id: "AGH-201", title: "Claim lifecycle" })] }),
