@@ -266,7 +266,9 @@ class TestPreflight:
 
         assert "change_request is required when drift is plan" in line
 
-    def test_refuses_without_writing_when_the_record_is_a_link(self, hub: Hub, tmp_path: Path) -> None:
+    def test_refuses_without_writing_when_the_record_is_a_link(
+        self, hub: Hub, tmp_path: Path
+    ) -> None:
         elsewhere = tmp_path / "elsewhere.json"
         elsewhere.write_text("{}")
         (hub.feature / "tickets/DEM-8").mkdir(parents=True)
@@ -277,7 +279,9 @@ class TestPreflight:
         assert line == "hub step preflight: preflight.json is a link; no link is followed"
         assert elsewhere.read_text() == "{}"
 
-    def test_refuses_without_writing_when_the_feature_folder_is_a_link(self, hub: Hub, tmp_path: Path) -> None:
+    def test_refuses_without_writing_when_the_feature_folder_is_a_link(
+        self, hub: Hub, tmp_path: Path
+    ) -> None:
         (hub.root / "brain/features/linked").symlink_to(hub.feature)
 
         result = hub.step("preflight", "--feature", "linked", "--ticket", "DEM-8", "--run", "{}")
