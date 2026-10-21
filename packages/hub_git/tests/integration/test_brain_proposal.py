@@ -110,46 +110,19 @@ def test_passes_title_and_body_to_gh_when_proposed(
     assert (pull.title, pull.body) == (proposal.title, proposal.body)
 
 
-def _logging_git(world: GitWorld, *, before_push: str = "") -> GitRunner:
-    """A runner whose git logs each argv to ``world.root/git-calls`` and runs ``before_push``
-    (shell) just before a push that is not a delete."""
-    log = world.root / "git-calls"
-    wrapper = world.root / "git-logged"
-    wrapper.write_text(
-        f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{log}"\n'
-        f'case " $* " in *" --delete "*) ;; *" push "*) {before_push}:;; esac\n'
-        'exec git "$@"\n'
-    )
-    wrapper.chmod(0o755)
-    return GitRunner(git=str(wrapper), environ=world.environ)
-
-
-def _git_calls(world: GitWorld) -> list[str]:
-    log = world.root / "git-calls"
-    return log.read_text().splitlines() if log.exists() else []
-
-
-def _adapter(world: GitWorld, runner: GitRunner) -> GitBrainChangeRequests:
-    temp = world.root / "temp"
-    temp.mkdir(exist_ok=True)
-    return GitBrainChangeRequests(runner, temp_root=temp)
-
-
 def test_leaves_origin_without_branch_and_deletes_nothing_when_push_rejected(
     git_world: GitWorld, origin: GitBrainOrigin
 ) -> None:
-    hook = git_world.bare / "hooks" / "pre-receive"
-    hook.write_text("#!/bin/sh\nexit 1\n")
-    hook.chmod(0o755)
+    git_world.reject_pushes()
     proposal = _proposal(git_world)
 
     with pytest.raises(ChangeRequestFailedError) as failed:
-        _adapter(git_world, _logging_git(git_world)).propose(proposal)
+        git_world.adapter(git_world.logging_runner()).propose(proposal)
 
     assert failed.value.step == "push"
     assert origin.branch_names() == {"main"}
     assert origin.pull_requests() == ()
-    assert [call for call in _git_calls(git_world) if " push " in f" {call} "] == [
+    assert [call for call in git_world.git_calls() if " push " in f" {call} "] == [
         "-c core.askPass= push --no-verify origin "
         f"refs/heads/{proposal.branch}:refs/heads/{proposal.branch}"
     ]
@@ -172,12 +145,12 @@ def test_keeps_branch_another_session_pushed_when_push_rejected(
     race = f'git --git-dir="{git_world.bare}" update-ref refs/heads/{proposal.branch} {theirs}; '
 
     with pytest.raises(ChangeRequestFailedError) as failed:
-        _adapter(git_world, _logging_git(git_world, before_push=race)).propose(proposal)
+        git_world.adapter(git_world.logging_runner(before_push=race)).propose(proposal)
 
     assert failed.value.step == "push"
     head = git_world.origin_git("rev-parse", f"refs/heads/{proposal.branch}").stdout.strip()
     assert head == theirs
-    assert [call for call in _git_calls(git_world) if "--delete" in call] == []
+    assert [call for call in git_world.git_calls() if "--delete" in call] == []
     assert origin.pull_requests() == ()
     assert _temp_folders(git_world) == []
 
