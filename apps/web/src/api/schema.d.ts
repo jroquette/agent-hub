@@ -1077,6 +1077,27 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/projects/{project}/skills/drafts/{draft_id}/publish": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Publish Draft
+     * @description Land the Studio draft on its target (``null``: a new item), record a ``publish``
+     *     version naming the draft, then remove the draft.
+     */
+    post: operations["publish_draft_api_v1_projects__project__skills_drafts__draft_id__publish_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/projects/{project}/skills/{kind}/{source}/{name}": {
     parameters: {
       query?: never;
@@ -3978,6 +3999,31 @@ export interface components {
       tracker_teams: string[];
     };
     /**
+     * PublishDraftBody
+     * @description ``POST .../skills/drafts/{draft_id}/publish``: ``target`` the item the draft edits, or
+     *     ``null`` for a new item (stated, never left out); ``confirm_managed`` as for a restore (S9),
+     *     only JSON ``true`` confirms.
+     */
+    PublishDraftBody: {
+      /**
+       * Confirm Managed
+       * @default false
+       */
+      confirm_managed: boolean;
+      target: components["schemas"]["PublishTarget"] | null;
+    };
+    /**
+     * PublishTarget
+     * @description The item a Publish edits, by its catalog id (``kind/source/name``).
+     */
+    PublishTarget: {
+      kind: components["schemas"]["ItemKind"];
+      /** Name */
+      name: string;
+      /** Source */
+      source: string;
+    };
+    /**
      * PullRequestRef
      * @description A pull request; GitHub is not connected in Phase 2, so sessions carry ``null``.
      */
@@ -5366,7 +5412,7 @@ export interface components {
      */
     UnitState: "ok" | "too_large" | "secret" | "unreadable";
     /** @enum {string} */
-    UnversionedReason: "secret" | "too_large";
+    UnversionedReason: "secret" | "too_large" | "script_only";
     /**
      * Usage
      * @description How often a skill or agent was used in the window: counts and a time only (D6, ADR 0019).
@@ -8130,6 +8176,114 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["SkillCatalog"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  publish_draft_api_v1_projects__project__skills_drafts__draft_id__publish_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        draft_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["PublishDraftBody"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ItemWriteResult"];
+        };
+      };
+      /** @description No launch cookie (open hub web's address) */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Unknown project or target item, or the draft folder missing or empty */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Publish refused, with a code: hub_read_only, no_author, link_in_path, unit_unreadable, item_exists, draft_already_published or managed_confirmation_required */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description The draft is past the bounds (limit) */
+      413: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description The body is not application/json */
+      415: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description The draft is not a valid item (draft_invalid), or the body is outside its shape */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description Write failed (write_failed: failed, rollback_failed, old_not_removed, draft_unreadable) or published with the draft kept (draft_not_removed) */
+      500: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */

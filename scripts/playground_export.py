@@ -20,6 +20,7 @@ import argparse
 import hashlib
 import json
 import os
+import posixpath
 import re
 import shutil
 import socket
@@ -27,12 +28,13 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -61,8 +63,13 @@ SOURCES_ONLY = (".", ":(exclude,attr:linguist-generated)")
 LOCAL_FILE = re.compile(r"(^|/)[^/]*\.local\.[^/]+$")
 NO_SESSION = "Not made by a playground session"
 UNTITLED = "Untitled session"
-# The Studio's publish reply: one line per file written in the hub (apps/web/.../skills/draft.ts).
-PUBLISHED = re.compile(r"^PUBLISHED\s+(\S+)", re.MULTILINE)
+# A file of a Studio draft, relative to the hub (.hub-drafts/<draft_id>/<file>); a publish
+# version names the draft.
+DRAFT_PATH = re.compile(r"\.hub-drafts/((?:skill|agent|hook)-[a-z0-9]{6})/(.+)")
+# Where the server's Publish puts a new hook's scripts/<file>: the project's own plugin (S5).
+PLUGIN_SCRIPTS = f"plugin/{PROJECT}/scripts/"
+VERSIONS_PAGE = 200
+MAX_VERSION_PAGES = 50
 WRITING_TOOLS = ("Write", "Edit", "MultiEdit", "NotebookEdit")
 
 
@@ -148,7 +155,7 @@ class Session:
     turns: list[Turn]
     # The paths its Write and Edit calls wrote, absolute or as given.
     written: list[str] = field(default_factory=list)
-    # The hub paths a Studio publish reply listed.
+    # The hub units (a skill's folder, an agent's or a hook's file) a publish of its drafts wrote.
     published: list[str] = field(default_factory=list)
 
 
@@ -375,8 +382,8 @@ def conductor_token(log: Path) -> str | None:
 
 def read_session(
     events: Sequence[Mapping[str, Any]], commits: Sequence[Commit]
-) -> tuple[list[Turn], list[str], list[str]]:
-    """A session's turns, the paths it wrote and the hub paths it published.
+) -> tuple[list[Turn], list[str]]:
+    """A session's turns and the paths it wrote.
 
     A turn opens on each owner message and takes the answers they gave and the commits of
     ``commits`` made until the next one. A commit is the session's when its subject ends a line
@@ -385,7 +392,6 @@ def read_session(
     """
     turns: list[Turn] = []
     written: list[str] = []
-    published: list[str] = []
     for event in events:
         kind, body = event.get("kind"), event.get("body") or {}
         if kind == "user.message":
@@ -413,9 +419,124 @@ def read_session(
                     if commit.sha not in turns[-1].commits
                     and re.search(re.escape(commit.subject) + r"""(?=["'\n\\]|$)""", command)
                 ]
-        elif kind == "text":
-            published += PUBLISHED.findall(str(body.get("text", "")))
-    return turns, written, published
+    return turns, written
+
+
+def drafts_of(written: Sequence[str], hub: Path | None) -> dict[str, list[str]]:
+    """The Studio drafts among the paths a session wrote, each with the files written in it
+    (relative to the draft). A path counts once normalized (``..`` resolved), when relative or
+    under ``hub``: a draft folder of another checkout, or a path leaving one, credits nothing."""
+    root = posixpath.normpath(str(hub.absolute())) if hub else None
+    drafts: dict[str, list[str]] = {}
+    for path in written:
+        normal = posixpath.normpath(path)
+        if posixpath.isabs(normal):
+            if root is None or not normal.startswith(f"{root}/"):
+                continue
+            normal = normal.removeprefix(f"{root}/")
+        if found := DRAFT_PATH.fullmatch(normal):
+            files = drafts.setdefault(found.group(1), [])
+            if found.group(2) not in files:
+                files.append(found.group(2))
+    return drafts
+
+
+def published_units(
+    client: httpx.Client, drafts: Collection[str], *, since: datetime | None = None
+) -> dict[str, str]:
+    """The hub unit each of ``drafts`` was published to: the ``publish`` versions of the
+    project's items (``GET .../skills``, then each item's ``.../versions`` by its pages) that
+    name one. Only the kinds of the drafts still unresolved are read, and the reads stop once
+    every draft is; ``_version_pages`` bounds each item's. An item whose versions cannot be read,
+    or a server whose versions carry no ``draft_id`` (older than AGH-298), credits nothing; a
+    catalog the server fails to give raises."""
+    pending = set(drafts)
+    if not pending:
+        return {}
+    catalog = client.get(f"/api/v1/projects/{PROJECT}/skills")
+    if catalog.status_code == httpx.codes.NOT_FOUND:
+        return {}
+    catalog.raise_for_status()
+    units: dict[str, str] = {}
+    for item in catalog.json().get("items", []):
+        if not pending:
+            break
+        if item.get("kind") not in {draft.split("-", 1)[0] for draft in pending}:
+            continue
+        ids = (item["kind"], item["source"], item["name"])
+        url = f"/api/v1/projects/{PROJECT}/skills/" + "/".join(quote(str(p), safe="") for p in ids)
+        for page in _version_pages(client, f"{url}/versions", since=since):
+            found = _published_in(page, pending)
+            units |= found
+            pending -= found.keys()
+    return units
+
+
+def _published_in(page: Mapping[str, Any], drafts: Collection[str]) -> dict[str, str]:
+    """The drafts of ``drafts`` a ``publish`` version of ``page`` names, to the page's unit."""
+    return {
+        version["draft_id"]: str(page["unit_path"])
+        for version in page.get("items", [])
+        if version.get("origin") == "publish" and version.get("draft_id") in drafts
+    }
+
+
+def _version_pages(
+    client: httpx.Client, url: str, *, since: datetime | None
+) -> Iterator[dict[str, Any]]:
+    """An item's versions pages, newest first, by their cursor: none when the item has no
+    history or the server fails it (a 404 or a 5xx), and no further page once a cursor repeats,
+    ``MAX_VERSION_PAGES`` were read, or a page reaches a version older than ``since``."""
+    cursor: str | None = None
+    asked: set[str] = set()
+    for _ in range(MAX_VERSION_PAGES):
+        params: dict[str, str | int] = {"limit": VERSIONS_PAGE}
+        if cursor:
+            params["cursor"] = cursor
+        reply = client.get(url, params=params)
+        if reply.status_code == httpx.codes.NOT_FOUND or reply.is_server_error:
+            return
+        reply.raise_for_status()
+        page = reply.json()
+        yield page
+        cursor = page.get("next_cursor")
+        if not cursor or cursor in asked or _reaches(page, since):
+            return
+        asked.add(cursor)
+
+
+def _reaches(page: Mapping[str, Any], since: datetime | None) -> bool:
+    """Whether ``page`` holds a version recorded before ``since``."""
+    if since is None:
+        return False
+    instants = (_instant(version.get("recorded_at")) for version in page.get("items", []))
+    return any(instant is not None and instant < since for instant in instants)
+
+
+def credit_published(
+    client: httpx.Client, sessions: Sequence[Session], *, hub: Path | None
+) -> None:
+    """Give each session the hub units its Studio drafts were published to (``published``),
+    and for a hook draft the plugin's copy of each ``scripts/<file>`` it wrote in it: only a
+    draft it wrote credits it. Publishes before the sessions (less ``REQUEST_LEAD``) are not
+    read."""
+    writers: dict[str, list[tuple[Session, list[str]]]] = {}
+    for session in sessions:
+        for draft, files in drafts_of(session.written, hub).items():
+            writers.setdefault(draft, []).append((session, files))
+    if not writers:
+        return
+    since = min(session.created_at for each in writers.values() for session, _ in each)
+    for draft, unit in published_units(client, writers, since=since - REQUEST_LEAD).items():
+        for session, files in writers[draft]:
+            scripts = [
+                PLUGIN_SCRIPTS + file.removeprefix("scripts/")
+                for file in files
+                if draft.startswith("hook-") and file.startswith("scripts/")
+            ]
+            for path in (unit, *scripts):
+                if path not in session.published:
+                    session.published.append(path)
 
 
 def _session_events(client: httpx.Client, session_id: str) -> list[dict[str, Any]]:
@@ -434,9 +555,16 @@ def _session_events(client: httpx.Client, session_id: str) -> list[dict[str, Any
 
 
 def owner_sessions(
-    start: datetime, *, commits: Sequence[Commit], logs: Sequence[Path]
+    start: datetime,
+    *,
+    commits: Sequence[Commit],
+    logs: Sequence[Path],
+    hub: Path | None = None,
+    transport: httpx.BaseTransport | None = None,
 ) -> list[Session]:
-    """The playground sessions active since ``start - lead``, or that made one of ``commits``.
+    """The playground sessions active since ``start - lead``, or that made one of ``commits``,
+    each with the hub units its Studio drafts in ``hub`` were published to
+    (``credit_published``).
 
     Raises RequestsUnavailableError when the conductor cannot be read.
     """
@@ -449,7 +577,9 @@ def owner_sessions(
         )
     sessions = []
     try:
-        with httpx.Client(base_url=CONDUCTOR, timeout=CONDUCTOR_TIMEOUT) as client:
+        with httpx.Client(
+            base_url=CONDUCTOR, timeout=CONDUCTOR_TIMEOUT, transport=transport
+        ) as client:
             client.get("/", params={"token": token})
             reply = client.get("/api/v1/agent-sessions", params={"project": PROJECT})
             reply.raise_for_status()
@@ -458,9 +588,7 @@ def owner_sessions(
                 updated = _instant(item.get("updated_at")) or created
                 if created is None or updated is None or updated < start - REQUEST_LEAD:
                     continue
-                turns, written, published = read_session(
-                    _session_events(client, str(item["id"])), commits
-                )
+                turns, written = read_session(_session_events(client, str(item["id"])), commits)
                 if created < start - REQUEST_LEAD and not any(turn.commits for turn in turns):
                     continue
                 sessions.append(
@@ -471,9 +599,9 @@ def owner_sessions(
                         created_at=created,
                         turns=turns,
                         written=written,
-                        published=published,
                     )
                 )
+            credit_published(client, sessions, hub=hub)
     except (httpx.HTTPError, ValueError, KeyError) as error:
         raise RequestsUnavailableError(f"the conductor at {CONDUCTOR} failed: {error!r}") from error
     return sorted(sessions, key=lambda session: session.created_at)
@@ -486,10 +614,14 @@ def _instant(value: object) -> datetime | None:
         return None
 
 
+def _published(session: Session, path: str) -> bool:
+    """Whether a publish of the session's drafts wrote the hub path ``path`` (its unit, or a
+    file of its folder)."""
+    return any(path == unit or path.startswith(f"{unit}/") for unit in session.published)
+
+
 def _wrote(session: Session, path: str, roots: Sequence[Path]) -> bool:
-    """Whether the session wrote ``path`` (relative to one of ``roots``) or published it."""
-    if path in session.published:
-        return True
+    """Whether the session wrote ``path`` (relative to one of ``roots``)."""
     targets = {str(root / path) for root in roots}
     return any(written in targets or written == path for written in session.written)
 
@@ -535,7 +667,10 @@ def build_requests(
         request.hub_files = [
             path
             for path in hub_files
-            if any(_wrote(session, path, hub_roots) for session in owners[key])
+            if any(
+                _published(session, path) or _wrote(session, path, hub_roots)
+                for session in owners[key]
+            )
         ]
         request.in_progress = [
             path
@@ -1077,7 +1212,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     try:
         sessions = owner_sessions(
-            start, commits=everything, logs=conductor_logs(args.conductor_log, os.environ)
+            start,
+            commits=everything,
+            logs=conductor_logs(args.conductor_log, os.environ),
+            hub=args.hub,
         )
     except RequestsUnavailableError as error:
         print(f"cannot read the owner's requests, nothing exported: {error}", file=sys.stderr)

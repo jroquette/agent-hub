@@ -6607,6 +6607,58 @@
         "title": "ProjectSummary",
         "type": "object"
       },
+      "PublishDraftBody": {
+        "additionalProperties": false,
+        "description": "``POST .../skills/drafts/{draft_id}/publish``: ``target`` the item the draft edits, or\n``null`` for a new item (stated, never left out); ``confirm_managed`` as for a restore (S9),\nonly JSON ``true`` confirms.",
+        "properties": {
+          "confirm_managed": {
+            "default": false,
+            "title": "Confirm Managed",
+            "type": "boolean"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PublishTarget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "target"
+        ],
+        "title": "PublishDraftBody",
+        "type": "object"
+      },
+      "PublishTarget": {
+        "additionalProperties": false,
+        "description": "The item a Publish edits, by its catalog id (``kind/source/name``).",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/ItemKind"
+          },
+          "name": {
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "source": {
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "source",
+          "name"
+        ],
+        "title": "PublishTarget",
+        "type": "object"
+      },
       "PullRequestRef": {
         "additionalProperties": false,
         "description": "A pull request; GitHub is not connected in Phase 2, so sessions carry ``null``.",
@@ -10305,7 +10357,8 @@
       "UnversionedReason": {
         "enum": [
           "secret",
-          "too_large"
+          "too_large",
+          "script_only"
         ],
         "type": "string"
       },
@@ -14954,6 +15007,151 @@
         "summary": "Get Skill Catalog",
         "tags": [
           "skills"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/skills/drafts/{draft_id}/publish": {
+      "post": {
+        "description": "Land the Studio draft on its target (``null``: a new item), record a ``publish``\nversion naming the draft, then remove the draft.",
+        "operationId": "publish_draft_api_v1_projects__project__skills_drafts__draft_id__publish_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "draft_id",
+            "required": true,
+            "schema": {
+              "pattern": "^(skill|agent|hook)-[a-z0-9]{6}$",
+              "title": "Draft Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishDraftBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ItemWriteResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "No launch cookie (open hub web's address)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Unknown project or target item, or the draft folder missing or empty"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Publish refused, with a code: hub_read_only, no_author, link_in_path, unit_unreadable, item_exists, draft_already_published or managed_confirmation_required"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The draft is past the bounds (limit)"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The body is not application/json"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The draft is not a valid item (draft_invalid), or the body is outside its shape"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "Write failed (write_failed: failed, rollback_failed, old_not_removed, draft_unreadable) or published with the draft kept (draft_not_removed)"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Publish Draft",
+        "tags": [
+          "item versions"
         ]
       }
     },

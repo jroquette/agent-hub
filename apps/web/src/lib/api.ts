@@ -77,6 +77,9 @@ export class ApiProblem extends Error {
   readonly reason: string | null;
   /** The field problems of a 422 (`errors`: a JSON path and a message each), when it lists them. */
   readonly errors: readonly { pointer: string; message: string }[];
+  /** The extension member `published`: true when a failed Publish still landed the item (its
+   * draft stayed, AGH-298), so the draft is spent. */
+  readonly published: boolean;
 
   constructor(problem: {
     status: number;
@@ -87,6 +90,7 @@ export class ApiProblem extends Error {
     code?: string | null | undefined;
     reason?: string | null | undefined;
     errors?: readonly { pointer: string; message: string }[] | undefined;
+    published?: boolean | undefined;
   }) {
     super(problem.detail ? `${problem.title}: ${problem.detail}` : problem.title);
     this.name = "ApiProblem";
@@ -98,6 +102,7 @@ export class ApiProblem extends Error {
     this.code = problem.code ?? null;
     this.reason = problem.reason ?? null;
     this.errors = problem.errors ?? [];
+    this.published = problem.published ?? false;
   }
 }
 
@@ -141,6 +146,7 @@ function problemFrom(response: Response, body: unknown): ApiProblem {
       code: typeof body.code === "string" ? body.code : null,
       reason: typeof body.reason === "string" ? body.reason : null,
       errors: fieldErrors(body),
+      published: body.published === true,
     });
   }
   return new ApiProblem({

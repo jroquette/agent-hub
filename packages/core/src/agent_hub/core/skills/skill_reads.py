@@ -8,7 +8,8 @@ of every entry, ``hub.lock`` and the settings files included; a changed fingerpr
 entry), so a warm read is one listing walk plus the usage join. Items and bundled files are
 found by id only: an id the fold did not issue is ``EntityNotFoundError`` (entity ``skill`` or
 ``skill file``); on a cold memo an item the listing alone rules out (``may_hold``) answers so
-before any file is read.
+before any file is read. ``item_names`` gives the fold's item kinds and names alone, with no
+capture and no usage.
 
 With ``capture`` (AGH-295, D2), the catalog hands every unit its items are versioned in (each
 once: the hooks of one file share it) to ``CaptureItemVersions`` with the unit's stat mark, and
@@ -140,6 +141,12 @@ class SkillReads:
             for item in folded.catalog.items
         )
         return folded.catalog.model_copy(update={"items": items})
+
+    def item_names(self, *, project: str, hub_path: str) -> frozenset[tuple[ItemKind, str]]:
+        """The kind and name of each catalog item, from the (memoized) fold alone: no unit is
+        captured and no usage is asked (a Publish's name check, AGH-295)."""
+        _, folded = self._folded(project, hub_path)
+        return frozenset((item.kind, item.name) for item in folded.catalog.items)
 
     def detail(
         self, *, project: str, hub_path: str, kind: ItemKind, source: str, name: str

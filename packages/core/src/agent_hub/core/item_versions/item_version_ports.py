@@ -140,8 +140,9 @@ class ItemVersionReads(Protocol):
         ...
 
 
-# Why a written unit was not versioned (A2).
-type UnversionedReason = Literal["secret", "too_large"]
+# Why a written unit was not versioned (A2): a secret match, past the bounds, or only a new
+# hook's scripts were written (A13).
+type UnversionedReason = Literal["secret", "too_large", "script_only"]
 
 
 class ItemWriteResult(ViewModel):
@@ -156,8 +157,16 @@ class ItemWriteResult(ViewModel):
 
 
 class ItemVersionWrites(Protocol):
-    """The history routes' writes (``POST .../versions/{version_id}/restore``; Publish in PR 3)."""
+    """The item routes' writes: ``POST .../versions/{version_id}/restore`` and
+    ``POST .../skills/drafts/{draft_id}/publish``."""
 
     def restore(self, ref: ItemRef, version_id: str, *, confirm_managed: bool) -> ItemWriteResult:
         """Write the version of the item's own unit back and record a ``restore`` version."""
+        ...
+
+    def publish(
+        self, project: str, draft_id: str, target: ToolkitRef | None, *, confirm_managed: bool
+    ) -> ItemWriteResult:
+        """Land the draft on ``target`` (None: a new item), record a ``publish`` version naming
+        the draft, then remove the draft."""
         ...

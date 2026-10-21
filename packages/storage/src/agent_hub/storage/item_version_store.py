@@ -4,7 +4,8 @@ Versions live in the ``item_versions`` table of the hub web database (migration 
 append runs in one ``BEGIN IMMEDIATE`` transaction that reads the unit's last ``seq`` before
 inserting, so writers queue on the write lock and a loser finds the winner's row: its ``seq`` is
 refused with ``ItemVersionSequenceError``, as is a duplicate the unique constraint catches. The
-store only inserts and selects: nothing is updated or deleted.
+store only inserts and selects: nothing is updated or deleted. ``has_publish`` reads the
+``draft_id`` column a ``publish`` fills (A5, A20).
 
 Database errors leave as ``DatabaseAccessError`` (``DatabaseBusyError`` past the busy
 timeout); their messages carry no content (the engine hides bound parameters).
@@ -21,7 +22,12 @@ from typing import Any
 from sqlalchemy import Connection, Engine, RowMapping, func, insert, select
 from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
 
-from agent_hub.core.item_versions.item_version import ItemVersion, ItemVersionMeta, NewItemVersion
+from agent_hub.core.item_versions.item_version import (
+    ItemVersion,
+    ItemVersionMeta,
+    NewItemVersion,
+    VersionOrigin,
+)
 from agent_hub.core.item_versions.version_store import ItemVersionSequenceError
 from agent_hub.storage.db import item_versions
 from agent_hub.storage.engine import create_sqlite_engine
@@ -89,6 +95,21 @@ class SqliteItemVersionStore:
         with self._reading() as connection:
             row = connection.execute(statement).mappings().first()
         return None if row is None else ItemVersion.model_validate(_to_fields(row))
+
+    def has_publish(self, project: str, draft_id: str) -> bool:
+        """Whether a version of the project is a ``publish`` of ``draft_id``."""
+        table = item_versions
+        statement = (
+            select(table.c.id)
+            .where(
+                table.c.project == project,
+                table.c.origin == VersionOrigin.PUBLISH.value,
+                table.c.draft_id == draft_id,
+            )
+            .limit(1)
+        )
+        with self._reading() as connection:
+            return connection.execute(statement).first() is not None
 
     @contextmanager
     def _writing(self) -> Iterator[Connection]:
