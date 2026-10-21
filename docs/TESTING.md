@@ -183,7 +183,7 @@ Docker daemon it skips, and under `CI` it fails. `make test-e2e` selects `e2e an
 `serial` marks a test that asserts a wall-clock budget (a p95 in milliseconds, a hook that must answer within 1 s, the
 web smoke's 2 s page): under parallel workers the machine is loaded and such a bound flakes. The test targets run
 everything else first with pytest-xdist (`-n $(PYTEST_N)`, one worker per CPU by default; `PYTEST_N=0` runs in one
-process), then the `serial` tests alone. Mark a test `serial` only for a wall-clock bound, never to hide shared state:
+process), then the `serial` tests alone (`make check` runs them after all its lanes; CI on a runner of their own). Mark a test `serial` only for a wall-clock bound, never to hide shared state:
 every test must pass beside any other.
 
 Select a level with `-m`: `$R pytest -m unit`, `$R pytest -m "unit or contract"`, `$R pytest -m integration`,
@@ -271,33 +271,59 @@ per package directory:
 
 - `make test-fast` erases the coverage data, then measures unit and contract tests with branch coverage for every
   `agent_hub` package (the Makefile `COV` list).
-- `make test-integration` appends integration tests to the same data. e2e tests run in subprocesses and are not counted.
+- `make test-integration` appends integration tests to the same data. `make test-suite` measures unit, contract and
+  integration tests in one run, and `make test-suite-serial` appends the serial ones. e2e tests run in subprocesses and
+  are not counted.
 - Alembic loads the migration scripts by path, under module names no package source matches, so the migrations
   directory is a source of its own in `COV` (`--cov=packages/storage/src/agent_hub/storage/migrations`) and counts
   towards the storage floor.
 - `make coverage` writes `coverage.json` and runs `python -m scripts.check_coverage coverage.json`. It prints one line
   per package and fails when a package is under its floor or has no data, when a `packages/*/src/agent_hub/**/*.py` file
-  is missing from the report, or when the report has no branch data. Run it after `test-fast` and `test-integration`,
-  as `make check` does; on its own it checks stale data.
+  is missing from the report, or when the report has no branch data. Run it after `test-suite` and
+  `test-suite-serial`, as `make check` does (or after `test-fast` and `test-integration`); on its own it checks stale
+  data. CI's shards each write `.coverage.<shard>` (`COVERAGE_FILE`); its `coverage` job runs `coverage combine` first.
 
 coverage.py and pytest-cov only offer a global `--fail-under`, which is why the floors are a script.
 
 ## Gates
 
-`make check-fast` (while working) runs, in order: `format` (`ruff format --check`), `lint`
-(`ruff check`), `typecheck` (`mypy`, strict), `layout` (the layout checker), `lockstep` (the cli and meta versions are
-equal), `openapi-check` (the committed `openapi.json` and `schema.d.ts` match the app), `test-fast` (unit and contract
-tests with coverage) and `web-fast` (`npm ci`, then typecheck, ESLint, Prettier check, tokens drift and Vitest with
-coverage).
+Both gates install the web app's dependencies first (`web-install`: `npm ci` only when `package-lock.json` is newer
+than the install), then run two lanes at once (`make -j2`): the checks, and the test runners. pytest-xdist and Vitest
+each use every CPU, so they share the tests lane and never overlap; the checks (mostly one CPU each) run beside them.
+Inside a lane the steps run in order and stop at the first failure; each lane's output is printed when it ends.
 
-`make check` (before a PR, and in CI) runs `check-fast`, then `test-integration`, `test-e2e`, `imports`
-(`lint-imports`), `migrations` (upgrade a scratch SQLite database to head, then `alembic check`), `coverage` (the
-floors) and `web-dist-check` (rebuild the web app in a scratch folder and diff it with the committed `web_dist/`).
-The API's integration tests (including `test_performance.py`, the NFR budgets on 10,000 synthetic events) run in
-`test-integration`, and the web smoke in `test-e2e`.
+`make check-fast` (while working):
 
-Make runs the steps left to right and stops at the first failure. Never run the gate targets with `-j`: the tests
-are already parallel inside each target (pytest-xdist, see [Markers](#markers)).
+- Checks: `format` (`ruff format --check`), `lint` (`ruff check`), `typecheck` (`mypy`, strict), `layout` (the layout
+  checker), `lockstep` (the cli and meta versions are equal), `web-static` (typecheck, ESLint, Prettier check, tokens
+  drift) and `openapi-check` (the committed `openapi.json` and `schema.d.ts` match the app).
+- Tests: `test-fast` (unit and contract tests with coverage), then `web-test` (Vitest with coverage).
+- `web-static` and `web-test` (together `web-fast`, about 5 minutes) run only when a file under `apps/web/` differs
+  from `origin/main` (committed, staged, unstaged or new), or with `WEB_FAST=1`; `WEB_FAST=0` skips them.
+  `openapi-check` always runs.
+
+`make check` (before a PR; CI runs the same steps as parallel jobs):
+
+- Checks: the ones above (web included), `imports` (`lint-imports`), `migrations` (upgrade a scratch SQLite database
+  to head, then `alembic check`) and `web-dist-check` (bundle the web app in a scratch folder and diff it with the
+  committed `web_dist/`).
+- Tests: `test-suite` (unit, contract and integration tests in one pytest-xdist session, with coverage), then
+  `test-e2e-parallel`, then `web-test`.
+- Then, alone: `test-suite-serial` and `test-e2e-serial` (the `serial` tests, see [Markers](#markers)), and `coverage`
+  (the floors).
+
+The API's integration tests (including `test_performance.py`, the NFR budgets on 10,000 synthetic events, `serial`)
+run in `test-suite` and `test-suite-serial`, and the web smoke in `test-e2e-serial`. `test-fast`,
+`test-integration` and `test-e2e` stay for running one level by hand.
+
+Never run the gate targets with `-j`: they set it themselves, and the tests are already parallel inside each target
+(pytest-xdist).
+
+CI (`.github/workflows/ci.yml`) runs the same make targets as separate jobs at once: `checks`, `web`, `tests` (three
+shards set by `TESTS`: `packages/generator`, `packages/cli`, and the rest, each running its own serial tests after its
+parallel ones), `coverage` (combines the shards' data, then the floors), `e2e`, and `e2e-serial` (the visual file and
+the rest, each on its own runner). The required `check` job passes only when all of them did. PR titles are not checked
+in CI: run `make pr-title TITLE="<title>"` before opening the PR ([CONTRIBUTING.md](CONTRIBUTING.md)).
 
 Notes:
 

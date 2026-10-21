@@ -334,6 +334,11 @@ class HubFilesReadModels:
         found = self._project(project)
         return self._skills.catalog(project=found.name, hub_path=found.path)
 
+    def skill_item_names(self, project: str) -> frozenset[tuple[ItemKind, str]]:
+        """The kind and name of each of the project's items (``SkillReads.item_names``); the
+        project resolved without the doctor (``_hub_path``)."""
+        return self._skills.item_names(project=project, hub_path=self._hub_path(project))
+
     def skill_detail(self, project: str, *, kind: ItemKind, source: str, name: str) -> SkillDetail:
         """One item of the catalog by its id; ``EntityNotFoundError`` (``skill``) when unknown."""
         found = self._project(project)
@@ -344,9 +349,10 @@ class HubFilesReadModels:
     def marked_skill_unit(
         self, project: str, *, kind: ItemKind, source: str, name: str
     ) -> MarkedUnit | None:
-        """The item's unit with its capture mark, or None (``SkillReads.marked_unit``)."""
-        found = self._project(project)
-        return self._skills.marked_unit(found.name, found.path, kind=kind, source=source, name=name)
+        """The item's unit with its capture mark, or None (``SkillReads.marked_unit``); the
+        project resolved without the doctor (``_hub_path``)."""
+        hub_path = self._hub_path(project)
+        return self._skills.marked_unit(project, hub_path, kind=kind, source=source, name=name)
 
     def skill_file(
         self, project: str, *, kind: ItemKind, source: str, name: str, file_id: str
@@ -364,8 +370,23 @@ class HubFilesReadModels:
         )
 
     def project_hubs(self) -> Iterator[tuple[str, str]]:
-        """Each project and its hub folder (``ProjectHubs``, the workflow reads)."""
-        return ((found.name, found.path) for found in self._projects())
+        """Each project and its hub folder (``ProjectHubs``: the workflow reads, the item
+        writes), from the registry and each ``hub.json`` alone: no lock view, so no doctor drift
+        check runs and no process is spawned (AC-295.6, A11)."""
+        seen: set[str] = set()
+        for entry, document in self._hubs.documents():
+            config = document.config
+            if config is not None and config.project.name not in seen:
+                seen.add(config.project.name)
+                yield config.project.name, entry.path
+
+    def _hub_path(self, project: str) -> str:
+        """The project's hub folder, as ``project_hubs`` names it; raises ``EntityNotFoundError``
+        when no registered hub names ``project``."""
+        for name, hub_path in self.project_hubs():
+            if name == project:
+                return hub_path
+        raise EntityNotFoundError(entity="project", entity_id=project)
 
     def _feature(
         self, project: str, slug: str, *, tickets: bool = False

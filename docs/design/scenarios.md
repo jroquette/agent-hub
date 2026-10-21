@@ -23,8 +23,8 @@ one example action (`effect: read`) and scenario; `hub sync` never adds them and
   `timeout`; one JSON value out. `expect`: the same, plus `every`, `timeout` (both required), `until_when`.
 - `capture: {<name>: <ref>}` gives `$CTX.<name>` to downstream nodes; a name not captured upstream, or by two nodes, is
   a load error, as is `$CTX` in a capture. `$self.output[.path]` (own output) reads only in `until_when` and `capture`.
-- A process workflow may declare `environment: <name>` (`hub workflow run --env` overrides it); its `shell` and `script`
-  nodes then take `effect` (default `write`). Ids ending `__ask` or `__investigation`, and `self`, are reserved.
+- A process workflow may declare `environment: <name>` (`--env` overrides it): `shell`, `script` take `effect` (default
+  `write`), `until_bash` is a `read`, an `action` needs one. Ids ending `__ask` or `__investigation`, `self`, are reserved.
 
 ### Actions and the script contract
 

@@ -33,7 +33,8 @@ passed to ``--resume`` only when it matches ``SESSION_ID``.
 Environments: an agent gets ``session_env`` (its step is the node id as recorded, its attempt the
 run-wide one), a ``hub step`` node runs this hub's own executable with ``child_env`` (hub step
 narrows it per call), any other command ``untrusted_env`` plus its ``env``, which may not name a
-token. No child gets ``LINEAR_API_KEY``, nor (``hidden``) the hub's declared credential names
+token; in a run that declares an environment, an agent also gets ``HUB_RUN_ENVIRONMENT``. No
+child gets ``LINEAR_API_KEY``, nor (``hidden``) the hub's declared credential names
 and an ``AWS_PROFILE`` naming a declared profile: only an action's process gets credentials. A
 failure's kind comes from where it happened: the exit code (``kind_for_exit``), a timeout,
 claude's ``is_error`` field, or a child that cannot start (``config``); never from message text.
@@ -134,6 +135,8 @@ class WorkflowExecutors:
     session: RunOptions | None = None
     # The hub's declared credential names: no node's child gets them (only an action's does).
     hidden: CredentialNames = NO_CREDENTIALS
+    # The environment the run declares (or ``--env``): its agents get ``HUB_RUN_ENVIRONMENT``.
+    environment: str | None = None
     # The process groups of the children running now: ``stop_children`` kills them.
     running: set[int] = field(default_factory=set)
     # Set by ``stop_children``: no child starts after it, and one starting as it lands is killed.
@@ -155,8 +158,11 @@ class WorkflowExecutors:
     def run(self, call: NodeCall) -> NodeReply:
         node = call.node
         if isinstance(node, ActionNode | ExpectNode):
-            # Actions need the access policy and their pinned content: a scenario run's.
-            raise NodeFailedError("config", f"{node.type} nodes run only in a scenario run")
+            # Actions need the access policy and their pinned content: a run in an environment's
+            # (a scenario run, or a process workflow's through workflow_policy).
+            raise NodeFailedError(
+                "config", f"{node.type} nodes run only in a scenario run or in an environment"
+            )
         if isinstance(node, AgentNode | LoopNode):
             return self._agent(call, node)
         stdin = None
@@ -232,6 +238,7 @@ class WorkflowExecutors:
             attempt=call.attempt,
             step=node.id,
             hidden=self.hidden,
+            environment=self.environment,
         )
         result = self._spawn(
             argv,

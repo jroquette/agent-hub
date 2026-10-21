@@ -306,3 +306,15 @@
   font: 400 12.5px/18px var(--font-mono);
   word-break: break-all;
 }
+
+/* A publish's result (or its problem) takes focus when it settles, so it is read next. */
+.ah-studio-result {
+  border-radius: var(--radius-lg);
+}
+.ah-studio-result:focus {
+  outline: none;
+}
+.ah-studio-result:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}

@@ -10,6 +10,7 @@ sees which mode ran, if any. Output is read without colour codes (CI forces a te
 import json
 import os
 import re
+import select
 import shutil
 import signal
 import subprocess
@@ -1043,3 +1044,370 @@ def test_leaves_no_run_folder_when_snapshot_write_fails(
     assert result.exit_code != 0
     assert not (hub / ".agent-runs" / "workflows" / RUN).exists()
     assert modes(marker) == []
+
+
+# AGH-359 (F2): only a gate the run's record names as a policy gate cancels on a reject; an
+# authored body approval recorded ``<group>__ask`` is read like any approval.
+
+AUTHORED_ASK_SCENARIO = """\
+version: 1
+kind: scenario
+name: order-walk
+revision: 1
+inputs:
+  ref: {type: string, required: true}
+nodes:
+  - id: g
+    type: loop_group
+    max_iterations: 2
+    until_when: "$ask.output.decision == 'reject'"
+    nodes:
+      - id: ask
+        type: approval
+        message: Stop looping?
+  - id: check-order
+    type: action
+    depends_on: [g]
+    action: get-order
+    with: {target: api, ref: $INPUTS.ref}
+"""
+
+
+def test_reads_reject_when_authored_body_approval_named_ask_rejected(
+    hub: Path, marker: Path
+) -> None:
+    write_scenario(hub, AUTHORED_ASK_SCENARIO)
+
+    paused = run_scenario(hub, marker, "local")
+    rejected = decide_gate(hub, marker, "reject", gate="g__ask")
+
+    assert plain(paused.stdout).splitlines()[-1] == f"run {RUN}: paused at g__ask"
+    assert rejected.exit_code == 0, rejected.output
+    assert plain(rejected.stdout).splitlines()[-1] == f"run {RUN}: done"
+    assert modes(marker) == ["run"]
+
+
+# AGH-359 (owner decisions A to C): a process workflow's action nodes, decided like a
+# scenario's, its nodes' decisions as policy.decision events, and its until_bash as a read.
+
+FLOW = """\
+version: 1
+name: ship-flow
+revision: 1
+environment: {env}
+nodes:
+  - id: look
+    type: shell
+    command: [sh, -c, "exit 0"]
+    effect: read
+  - id: send
+    type: action
+    action: send-order
+    depends_on: [look]
+    with: {{target: api, ref: T-1}}
+"""
+
+
+def write_flow(hub: Path, text: str) -> None:
+    path = hub / "workflows" / "demo" / "ship-flow.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+
+
+def run_flow(hub: Path, marker: Path, *extra: str) -> Result:
+    args = ("workflow", "run", "ship-flow", "--live", "--run-id", RUN, *extra)
+    return run_hub(hub, marker, *args)
+
+
+def decisions(hub: Path) -> set[tuple[Any, ...]]:
+    return {
+        (
+            event.step,
+            event.payload.get("node"),
+            event.payload.get("action"),
+            event.payload["effect"],
+            event.payload["decision"],
+            event.payload["reason_kind"],
+            event.payload["attempt"],
+        )
+        for event in stored(hub)
+        if event.type == "policy.decision"
+    }
+
+
+def test_runs_action_node_when_workflow_environment_allows_it(hub: Path, marker: Path) -> None:
+    write_flow(hub, FLOW.format(env="local"))
+
+    result = run_flow(hub, marker)
+
+    assert result.exit_code == 0, result.output
+    assert plain(result.stdout).splitlines()[-1] == f"run {RUN}: done"
+    assert modes(marker) == ["run"]
+    assert '"endpoint": {"target": {"url": "http://localhost:8000"' in marker.read_text()
+    assert records(hub)[0]["actions"] == {"demo/send-order": content_hash(hub, "send-order")}
+    started = [event for event in stored(hub) if event.type == "action.start"]
+    assert [(event.step, event.workflow) for event in started] == [("send", "ship-flow")]
+    assert decisions(hub) == {
+        ("look", "look", None, "read", "allow", "table", 0),
+        ("send", None, "demo/send-order", "write", "allow", "table", 0),
+        ("look", "look", None, "read", "allow", "table", 1),
+        ("send", None, "demo/send-order", "write", "allow", "table", 1),
+    }
+
+
+def test_opens_gate_when_workflow_environment_asks_for_action(hub: Path, marker: Path) -> None:
+    write_flow(hub, FLOW.format(env="staging"))
+
+    paused = run_flow(hub, marker)
+    approved = decide_gate(hub, marker, "approve", gate="send__ask")
+
+    assert plain(paused.stdout).splitlines()[-1] == f"run {RUN}: paused at send__ask"
+    assert approved.exit_code == 0, approved.output
+    assert plain(approved.stdout).splitlines()[-1] == f"run {RUN}: done"
+    assert modes(marker) == ["run"]
+
+
+def test_refuses_start_when_workflow_environment_denies_action(hub: Path, marker: Path) -> None:
+    write_flow(hub, FLOW.format(env="live"))
+
+    result = run_flow(hub, marker)
+
+    assert result.exit_code == 1, result.output
+    assert plain(result.stderr).splitlines() == [
+        "hub workflow run: step send: deny (live is a production environment: writes and"
+        " destroys are denied)"
+    ]
+    assert not (hub / ".agent-runs" / "workflows" / RUN).exists()
+    assert not marker.exists()
+    assert ("send", None, "demo/send-order", "write", "deny", "production", 0) in decisions(hub)
+
+
+def test_keeps_action_content_hash_when_workflow_environment_action_edited(
+    hub: Path, marker: Path
+) -> None:
+    pinned = content_hash(hub, "send-order")
+    write_flow(hub, FLOW.format(env="staging"))
+    run_flow(hub, marker)
+    (hub / "actions" / "demo" / "scripts" / "send-order.sh").write_text(EDITED_SCRIPT)
+    commit_all(hub, "edit send-order")
+
+    approved = decide_gate(hub, marker, "approve", gate="send__ask")
+
+    assert approved.exit_code == 0, approved.output
+    assert "edited" not in marker.read_text()
+    assert records(hub)[0]["actions"]["demo/send-order"] == pinned
+    sent = [event.payload["content_hash"] for event in stored(hub) if event.type == "action.start"]
+    assert sent == [pinned]
+
+
+def test_refuses_start_when_action_node_has_no_workflow_environment(
+    hub: Path, marker: Path
+) -> None:
+    write_flow(hub, FLOW.format(env="local").replace("environment: local\n", ""))
+
+    result = run_flow(hub, marker)
+    dry = run_hub(hub, marker, "workflow", "run", "ship-flow")
+
+    assert result.exit_code == 1, result.output
+    assert plain(result.stderr).splitlines() == [
+        "hub workflow run: step send is an action node: actions run only in an environment;"
+        " declare environment in ship-flow or give --env"
+    ]
+    assert (dry.exit_code, plain(dry.stderr)) == (1, plain(result.stderr))
+    assert not (hub / ".agent-runs" / "workflows" / RUN).exists()
+    assert run_flow(hub, marker, "--env", "local").exit_code == 0
+
+
+UNTIL_FLOW = """\
+version: 1
+name: ship-flow
+revision: 1
+environment: {env}
+inputs:
+  go: {{type: boolean, default: false}}
+nodes:
+  - id: hold
+    type: approval
+    message: Go?
+  - id: g
+    type: loop_group
+    depends_on: [hold]
+    max_iterations: 1
+    until_bash: [sh, -c, "echo until >> \\"$MARKER\\""]
+    nodes:
+      - id: look
+        type: shell
+        command: [sh, -c, "exit 0"]
+        effect: read
+        when: "$INPUTS.go == true"
+"""
+
+
+def test_runs_until_bash_as_read_when_workflow_environment_read(hub: Path, marker: Path) -> None:
+    write_flow(hub, UNTIL_FLOW.format(env="live"))
+    run_flow(hub, marker)
+
+    approved = decide_gate(hub, marker, "approve", gate="hold")
+
+    assert approved.exit_code == 0, approved.output
+    assert plain(approved.stdout).splitlines()[-1] == f"run {RUN}: done"
+    assert marker.read_text() == "until\n"
+    assert ("g", "g", None, "read", "allow", "table", 0) in decisions(hub)
+    assert ("g", "g", None, "read", "allow", "table", 1) in decisions(hub)
+
+
+def test_fails_until_bash_when_workflow_environment_removed_before_it_runs(
+    hub: Path, marker: Path
+) -> None:
+    write_flow(hub, UNTIL_FLOW.format(env="local"))
+    run_flow(hub, marker)
+    document = json.loads((hub / "hub.json").read_text())
+    del document["environments"]["local"]
+    del document["repos"][0]["services"]["api"]["endpoints"]["local"]
+    (hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n")
+
+    approved = decide_gate(hub, marker, "approve", gate="hold")
+
+    assert approved.exit_code == 1, approved.output
+    assert plain(approved.stdout).splitlines()[-1] == f"run {RUN}: failed"
+    [end] = [r for r in records(hub) if r["event"] == "step_end" and r["node"] == "g"]
+    assert end["failure_kind"] == "config"
+    assert "until_bash" in end["detail"]
+    assert "environment local is not declared" in end["detail"]
+    assert not marker.exists()
+
+
+SLOW_FLOW = """\
+version: 1
+name: ship-flow
+revision: 1
+environment: local
+nodes:
+  - id: slow-a
+    type: action
+    action: slow-order
+    with: {target: api}
+  - id: slow-b
+    type: script
+    runtime: sh
+    script: slow.sh
+    effect: read
+"""
+SLOW_NODE = """\
+echo $$ >> "$MARKER.groups"
+sleep 4
+echo late >> "$MARKER.late"
+"""
+
+
+@pytest.mark.skipif(not Path("/proc/self/stat").exists(), reason="reads /proc")
+def test_kills_child_groups_when_workflow_environment_run_interrupted(
+    hub: Path, marker: Path
+) -> None:
+    write_action(hub, "slow-order", "read")
+    (hub / "actions" / "demo" / "scripts" / "slow-order.sh").write_text(SLOW_SCRIPT)
+    commit_all(hub, "slow order")
+    write_flow(hub, SLOW_FLOW)
+    (hub / "workflows" / "demo" / "scripts").mkdir()
+    (hub / "workflows" / "demo" / "scripts" / "slow.sh").write_text(SLOW_NODE)
+    groups_file = Path(f"{marker}.groups")
+    os.mkfifo(groups_file)
+    # Read and write: the reader never sees an end of file between the two children.
+    reader = os.open(groups_file, os.O_RDWR | os.O_NONBLOCK)
+
+    process = hub_process(hub, marker, "workflow", "run", "ship-flow", "--live", "--run-id", RUN)
+    groups: list[int] = []
+    pending = b""
+    poller = select.poll()
+    poller.register(reader, select.POLLIN)
+    while len(groups) < 2 and poller.poll(30_000):
+        pending += os.read(reader, 64)
+        *done, pending = pending.split(b"\n")
+        groups += [int(line) for line in done]
+    process.send_signal(signal.SIGINT)
+    process.communicate(timeout=30)
+    os.close(reader)
+
+    assert len(groups) == 2
+    assert all(live_members(group) == [] for group in groups)
+    assert not Path(f"{marker}.late").exists()
+
+
+def test_asks_again_when_workflow_environment_action_write_never_ended(
+    hub: Path, marker: Path
+) -> None:
+    (hub / "actions" / "demo" / "scripts" / "send-order.sh").write_text(CRASH_ONCE)
+    commit_all(hub, "send-order crashes once")
+    write_flow(hub, FLOW.format(env="local"))
+    process = hub_process(hub, marker, "workflow", "run", "ship-flow", "--live", "--run-id", RUN)
+    process.communicate(timeout=60)
+
+    resumed = run_hub(hub, marker, "workflow", "run", "--resume", RUN)
+    approved = decide_gate(hub, marker, "approve", gate="send__ask")
+
+    assert process.returncode == -signal.SIGKILL
+    assert plain(resumed.stdout).splitlines()[-1] == f"run {RUN}: paused at send__ask"
+    [gate] = [line for line in records(hub) if line["event"] == "gate"]
+    assert "may have run" in gate["message"]
+    assert plain(approved.stdout).splitlines()[-1] == f"run {RUN}: done"
+    assert modes(marker) == ["run", "run"]
+
+
+# AGH-359 (R2-F1): the same in a scenario run: an owed group's id is never a policy gate.
+
+GROUP_OWED_SCENARIO = """\
+version: 1
+kind: scenario
+name: order-walk
+revision: 1
+inputs:
+  ref: {type: string, required: true}
+nodes:
+  - id: g
+    type: loop_group
+    max_iterations: 3
+    until_when: "$ask.output.decision == 'reject'"
+    nodes:
+      - id: send-order
+        type: action
+        action: send-order
+        with: {target: api, ref: $INPUTS.ref}
+      - id: ask
+        type: approval
+        message: Stop looping?
+        depends_on: [send-order]
+"""
+
+
+def test_reads_body_reject_when_owed_group_holds_approval_named_ask(
+    hub: Path, marker: Path
+) -> None:
+    write_scenario(hub, GROUP_OWED_SCENARIO)
+    crash_once(hub, marker, "send-order")
+
+    resumed = run_hub(hub, marker, "workflow", "run", "--resume", RUN)
+    approved = decide_gate(hub, marker, "approve", gate="g__send-order__ask")
+    rejected = decide_gate(hub, marker, "reject", gate="g__ask")
+
+    assert plain(resumed.stdout).splitlines()[-1] == f"run {RUN}: paused at g__send-order__ask"
+    assert plain(approved.stdout).splitlines()[-1] == f"run {RUN}: paused at g__ask"
+    assert rejected.exit_code == 0, rejected.output
+    assert plain(rejected.stdout).splitlines()[-1] == f"run {RUN}: done"
+
+
+def test_marks_start_decisions_when_workflow_environment_run_starts(
+    hub: Path, marker: Path
+) -> None:
+    write_flow(hub, FLOW.format(env="local"))
+
+    run_flow(hub, marker)
+
+    sources = sorted(
+        event.source_id
+        for event in stored(hub)
+        if event.type == "policy.decision" and event.payload["attempt"] == 0
+    )
+    assert sources == [
+        f"{RUN}:look:0:policy.decision:start",
+        f"{RUN}:send:0:policy.decision:start",
+    ]

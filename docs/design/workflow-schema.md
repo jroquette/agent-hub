@@ -24,6 +24,7 @@ cap) or JSON, then a frozen Pydantic model that forbids unknown keys. A load err
 | `inputs` | map `^[a-z][a-z0-9_]*$` → `{type, required, default, description}` | `type`: `string` (default), `integer`, `number`, `boolean`; `required` excludes `default` |
 | `returns` | node id, optional | the node whose output is the workflow's (and an include's) output |
 | `outcome_field` | string, optional | a `required` property of `returns`' `output_format`, `boolean` or a `string` with `enum` |
+| `environment` | a declared environment's name, optional (refused in a scenario) | the run's environment (`hub workflow run --env` overrides it): before the start the access policy decides each `shell` and `script` node by its `effect`, each `until_bash` as a `read`, and each `action` and `expect` as a scenario's (pinned at the start, credentials only to the action); an undeclared environment, a plan problem or a `deny` refuses the start, an `ask` is a `<step>__ask` approval (a policy gate, known from the run's record), and each node is decided again before it runs (a write that started and never ended asks again on resume); each decision is a `policy.decision` event; an include declaring another environment refuses the start, and `issue-to-pr` takes none; agents get `HUB_RUN_ENVIRONMENT`. Agent steps are checked on a best-effort basis; deterministic steps are enforced ([scenarios.md](scenarios.md)) |
 | `nodes` | list, at least one | ids `^[a-z][a-z0-9_-]*$`, unique, never containing `__` (nor, in a scenario, `self`) |
 
 ### Nodes
@@ -35,15 +36,15 @@ Every node has `id`, `type` and optional `description`, `depends_on`, `trigger_r
 | `type` | Keys | What happens |
 |---|---|---|
 | `agent` | `prompt` or `prompt_file` (one), `with`, `model`, `limits`, `context`, `cwd` | one `claude -p` session under the hub's hooks (a repo `cwd`: through `--settings`) |
-| `shell` | `command` (argv list), `cwd`, `env`, `stdin` | runs the program, never through a shell; exit 0 passes |
-| `script` | `runtime` (`sh` or `python`), `script`, `args`, `cwd`, `env`, `stdin` | `sh <file>` or `uv run <file>`; exit 0 passes |
+| `shell` | `command` (argv list), `cwd`, `env`, `stdin`, `effect` (`read`, `write`, `destroy`: under an `environment`, the policy's input, `write` when absent) | runs the program, never through a shell; exit 0 passes |
+| `script` | `runtime` (`sh` or `python`), `script`, `args`, `cwd`, `env`, `stdin`, `effect` (as `shell`'s) | `sh <file>` or `uv run <file>`; exit 0 passes |
 | `loop` | the `agent` keys, `max_iterations`, `until`, `until_field`, `until_bash`, `fresh_context` | repeats one agent turn until done |
 | `loop_group` | `nodes`, `max_iterations`, `until_bash`, `until_when`, `fresh_context` | repeats a body sub-graph until done |
 | `approval` | `message`, `decisions`, `capture_response` | pauses the run for a human decision |
 | `wait` | one of `duration`, `until`, `attention` (with `options`) | pauses the run until its condition holds |
 | `halt` | `reason` | ends the run `cancelled`; nodes not yet run never run |
 | `include` | `include` (a workflow name), `with` | replaced at load by that workflow's nodes |
-| `action` | `action` (`<name>` or `<pack>/<name>`), `with`, `capture` (`{<name>: <ref>}`: `$CTX.<name>` downstream, one capture per name), `retry` (none by default), `timeout` (≤ 1h) | one action call, its output one JSON value; outside a scenario run it fails `config` ([scenarios.md](scenarios.md)) |
+| `action` | `action` (`<name>` or `<pack>/<name>`), `with`, `capture` (`{<name>: <ref>}`: `$CTX.<name>` downstream, one capture per name), `retry` (none by default), `timeout` (≤ 1h) | one action call, its output one JSON value; only in a scenario run or a workflow with an `environment` (else the start is refused) ([scenarios.md](scenarios.md)) |
 | `expect` | the `action` keys, `every` (≥ 5s), `timeout` (≤ 24h), `until_when` (the `when:` grammar; it and `capture` read `$self.output[.path]`) | polls a read action until `until_when` holds (≤ 1000 polls a run, retries and resumes included), else `timeout` |
 
 - `prompt_file` and `script` are paths inside the pack's `prompts/` and `scripts/` (no `..`, not absolute). `with` maps
@@ -142,8 +143,7 @@ that runs out, fails the test, but an approval or wait with none pauses the run 
 
 ## Decisions
 
-- [ADR 0032](../adr/0032-workflow-engine.md) (format, engine), [ADR 0030](../adr/0030-run-outcomes-in-the-tracker.md)
-  (outcomes, tracker writes), [ADR 0019](../adr/0019-metadata-only-events-and-redaction.md) (metadata-only events).
+- [ADR 0032](../adr/0032-workflow-engine.md) (format, engine), [ADR 0030](../adr/0030-run-outcomes-in-the-tracker.md) (outcomes, tracker writes), [ADR 0019](../adr/0019-metadata-only-events-and-redaction.md) (metadata-only events), [ADR 0041](../adr/0041-scenarios-actions-and-enforced-access.md) (`environment`, `effect`).
 
 ## Open questions
 
