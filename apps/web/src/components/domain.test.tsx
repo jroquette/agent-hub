@@ -1,4 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { describe, expect, it, vi } from "vitest";
@@ -593,6 +594,51 @@ describe("GoldenPathStepper", () => {
     expect(
       goldenStepSummary(aGoldenStep({ name: "spec", state: "done", meta: null, progress: null })),
     ).toBe("Spec: done");
+  });
+
+  it("draws a given step list with given labels, vertically, its open step disclosed", async () => {
+    const onSelect = vi.fn();
+    render(
+      <GoldenPathStepper
+        steps={[
+          { name: "context", state: "unrecorded", meta: null },
+          { name: "implement", state: "done", meta: null },
+          { name: "review", state: "current", meta: "Changes requested" },
+        ]}
+        labels={{ context: "Context", implement: "Implement", review: "Review" }}
+        label="Ticket steps"
+        open="review"
+        detail={(step) => `Details of ${step.name}`}
+        onSelect={onSelect}
+        selectLabel={(step) => `${step}, show details`}
+      />,
+    );
+
+    const list = screen.getByRole("list", { name: "Ticket steps" });
+    expect(list).toHaveAttribute("data-orientation", "vertical");
+    const steps = within(list).getAllByRole("listitem");
+    // A step left without a record before later evidence is no gate: Implement stays done.
+    expect(steps.map((li) => li.dataset.state)).toEqual(["unrecorded", "done", "current"]);
+    // Vertically, every step says its state and meta.
+    const metaOf = (li: HTMLElement | undefined) =>
+      [...(li?.querySelectorAll(".ah-golden-meta") ?? [])].map((m) => m.textContent);
+    expect(steps.map((li) => li.querySelector(".ah-golden-name")?.textContent)).toEqual([
+      "Context",
+      "Implement",
+      "Review",
+    ]);
+    expect(metaOf(steps[0])).toEqual(["Not recorded"]);
+    expect(metaOf(steps[2])).toEqual(["In progress", "Changes requested"]);
+    const review = screen.getByRole("button", { name: "review, show details" });
+    expect(review).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "context, show details" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(screen.getByText("Details of review")).toBeInTheDocument();
+    expect(screen.queryByText("Details of context")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "context, show details" }));
+    expect(onSelect).toHaveBeenCalledWith("context");
   });
 
   it("has no serious axe violation (golden a11y)", async () => {

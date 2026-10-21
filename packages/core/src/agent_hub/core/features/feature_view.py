@@ -1,5 +1,6 @@
 """Feature views (D23): a feature folder's phase, golden path, acceptance criteria and evals."""
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import Field
@@ -143,12 +144,31 @@ class PlanView(ViewModel):
     problem: str | None = None
 
 
+type OwnerWaitState = Literal["sign_off", "reopened", "undated", "future", "no_acs"]
+
+
+class OwnerWaitView(ViewModel):
+    """What the acceptance eval waits on from the owner (A9-A11, A15), the state the Eval tab's
+    prompt shows: ``sign_off`` (the one state a sign-off can be recorded in), ``reopened`` (a
+    later eval says NO-SHIP for ``reopened``: only "more work" can be recorded), ``undated`` and
+    ``future`` (no sign-off can rank newer than an eval with no ``evaluated_at``, or one dated
+    after the read), ``no_acs`` (no live AC to sign off, A10). ``acs`` are the ACs it waits on;
+    ``signable_after`` (``future`` only) the whole minute after which a sign-off can follow it."""
+
+    state: OwnerWaitState
+    acs: tuple[str, ...] = ()
+    reopened: tuple[str, ...] = ()
+    signable_after: datetime | None = None
+
+
 class AcceptanceEval(ViewModel):
     """The feature's acceptance eval (AC-1.6): the latest whole-feature eval (``acs: all``, or a
-    legacy ``eval.md`` with no scope), by its ``delivery`` (``legacy`` for ``eval.md``)."""
+    legacy ``eval.md`` with no scope), by its ``delivery`` (``legacy`` for ``eval.md``);
+    ``owner_wait`` is None when it waits on no owner decision the app can take."""
 
     delivery: str
     verdict: Verdict
+    owner_wait: OwnerWaitView | None = None
 
 
 class FeatureDetail(FeatureView):

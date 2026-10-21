@@ -24,7 +24,7 @@ none. Withdrawn ACs are left out of every count.
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Final, Literal, cast, get_args
 
 from agent_hub.core.brain.brain_note import FrontmatterValue
@@ -50,6 +50,8 @@ MAX_EVAL_FILES: Final = 200
 EVAL_HEAD_BYTES: Final = 16_384
 LEGACY_DELIVERY: Final = "legacy"
 NOTE_SUFFIX: Final = ".md"
+# The owner's sign-off note, ``evals/owner-signoff.md`` (a re-run is ``owner-signoff-r2``...).
+SIGNOFF_DELIVERY: Final = "owner-signoff"
 # A delivery: a lower-case ticket id, ``pr-<repo>-<n>``, ``feature``; a re-run adds ``-r2``...
 DELIVERY_PATTERN: Final = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
 # The first ``Verdict`` line of a legacy ``eval.md`` (``**Verdict:** SHIP`` too).
@@ -243,6 +245,19 @@ def ranks_newer(record: EvalRecord, *, delivery: str, at: datetime) -> bool:
     """Whether a new eval ``delivery`` dated ``at`` is known to be newer than ``record`` (the
     module's order): False when ``record`` has no usable date or one later than ``at`` (A9)."""
     return _newer(_key(delivery, at.astimezone(UTC), legacy=False), _order_key(record))
+
+
+def signoff_block(record: EvalRecord, *, now: datetime) -> Literal["undated"] | datetime | None:
+    """Why no owner sign-off dated ``now`` (to the second, as the write dates it) would rank newer
+    than ``record`` (A9, A15): ``undated`` when it has no usable ``evaluated_at`` (a legacy
+    ``eval.md`` never blocks one), else, when it is dated at or after ``now``, the whole minute
+    from which a sign-off can follow it (its instant rounded up); None when one would."""
+    if ranks_newer(record, delivery=SIGNOFF_DELIVERY, at=now.replace(microsecond=0)):
+        return None
+    instant = _instant(record.evaluated_at)
+    if instant is None:
+        return "undated"
+    return (instant + timedelta(minutes=1, microseconds=-1)).replace(second=0, microsecond=0)
 
 
 def _whole_feature(record: EvalRecord) -> bool:

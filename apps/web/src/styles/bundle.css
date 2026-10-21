@@ -2502,6 +2502,34 @@ pre {
   color: var(--text-subtle);
   padding-right: var(--space-2);
 }
+/* Vertical (a ticket's steps in its panel, AGH-330): one row per step, its detail under it. */
+.ah-golden[data-orientation="vertical"] {
+  flex-direction: column;
+}
+.ah-golden[data-orientation="vertical"] .ah-golden-step {
+  flex: none;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: 6px 0 6px 26px;
+}
+.ah-golden[data-orientation="vertical"] .ah-golden-step::before {
+  top: 0;
+  bottom: 0;
+  left: 7px;
+  right: auto;
+  width: 2px;
+  height: auto;
+}
+.ah-golden[data-orientation="vertical"] .ah-golden-dot {
+  top: 7px;
+}
+.ah-golden-detail {
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--text-muted);
+}
 
 /* Finding row */
 .ah-finding {
