@@ -196,3 +196,16 @@ class SessionRestrictionError(AgentHubError):
         self.agent_session_id = agent_session_id
         self.reason = reason
         super().__init__(reason)
+
+
+class HubRegistryUnreadableError(HubLocalInvalidError):
+    """The hub registry cannot be read, so which hub (and credentials) a project has is
+    unknown: no driven session starts (409, E-8)."""
+
+    def __init__(self, project: str) -> None:
+        self.project = project
+        AgentHubError.__init__(
+            self,
+            f"project {project}: the hub registry cannot be read, so the hub's credentials are"
+            " unknown; fix the registry (hub list) before starting a session",
+        )

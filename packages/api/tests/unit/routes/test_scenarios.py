@@ -7,17 +7,20 @@ from typing import Any
 
 import pytest
 
+from agent_hub.api import scenario_investigation
 from agent_hub.api.agent_session_runtime import HubCredentials
 from agent_hub.api.scenario_investigation import InvestigationRestrictions, ScenarioInvestigations
-from agent_hub.core.agent_sessions.agent_session import EndReason
+from agent_hub.core.agent_sessions.agent_session import AgentSessionStatus, EndReason
 from agent_hub.core.agent_sessions.driver import PastSession, StartSpec
 from agent_hub.core.agent_sessions.errors import SessionsUnavailableError
 from agent_hub.core.hub_config.problems import ConfigProblem
+from agent_hub.core.hubs.hub_registry import HubRegistryError
 from agent_hub.core.scenarios.investigation import tool_verdict
 from agent_hub.core.testing.agent_session_rig import Rig, build_rig
 from agent_hub.core.testing.agent_session_store_fakes import InMemoryAgentSessionStore
 from agent_hub.core.testing.builders import an_environments_document
 from agent_hub.core.testing.hub_fakes import FakeHub, FakeHubFileReader, InMemoryHubRegistry
+from agent_hub.core.testing.read_model_builders import WORKDIR_ID
 from agent_hub.core.testing.session_driver_fakes import InMemorySessionDriver
 
 RUNNING = "0.9.0"
@@ -287,12 +290,23 @@ def test_denies_other_tools_when_investigation_session_policy_built(
 
 
 def _restart(rig: Rig, session_id: str) -> tuple[InMemorySessionDriver, InMemoryAgentSessionStore]:
-    """The store as a restarted server finds it (the session ended ``server_stopped``) and a
-    driver that still lists its Claude conversation."""
-    store = rig.store
-    store.end_unfinished(rig.clock(), EndReason.SERVER_STOPPED)
-    claude = store.get(session_id).claude_session_id
+    """A restarted server's store and driver: a fresh store holding only the session's row,
+    ended ``server_stopped`` (so the first control's pump, still running, never touches it),
+    and a driver that still lists its Claude conversation."""
+    row = rig.store.get(session_id)
+    claude = row.claude_session_id
     assert claude is not None
+    ended = row.model_copy(
+        update={
+            "status": AgentSessionStatus.ENDED,
+            "end_reason": EndReason.SERVER_STOPPED,
+            "ended_at": rig.clock(),
+            "last_seq": 0,
+            "open_permission": None,
+        }
+    )
+    store = InMemoryAgentSessionStore()
+    store.create(ended)
     past = PastSession(session_id=claude, last_activity=rig.clock(), cwd="/hubs/demo-hub")
     return InMemorySessionDriver(past_sessions=[past]), store
 
@@ -344,3 +358,162 @@ def test_refuses_reopen_when_investigation_restriction_cannot_be_rebuilt(
     assert sent.status_code == 409
     assert sent.json()["type"] == "urn:agent-hub:problem:agent-session-restriction-unavailable"
     assert _starts(fresh) == []
+
+
+def _start_and_restart(wired: Any, investigation: Any, **wiring: Any) -> tuple[str, Rig, Path]:
+    """Start the investigation, then wire a restarted server (``wiring`` changes it)."""
+    first, hub = investigation(a_record())
+    session_id = wired.client.post(ROUTE, json={}, headers=_origin(wired)).json()[
+        "agent_session_id"
+    ]
+    driver, store = _restart(first, session_id)
+    wiring.setdefault("driver", driver)
+    fresh, _hub = investigation(a_record(), store=store, hub=hub, **wiring)
+    return session_id, fresh, hub
+
+
+def _message(wired: Any, session_id: str) -> Any:
+    return wired.client.post(
+        f"/api/v1/agent-sessions/{session_id}/messages",
+        json={"text": "Go on."},
+        headers=_origin(wired),
+    )
+
+
+LOCAL_PROBLEM = ConfigProblem(path="hub.local.json", message="not valid JSON")
+
+
+def test_refuses_reopen_when_investigation_hub_local_invalid(
+    wired: Any, investigation: Any
+) -> None:
+    session_id, fresh, _hub = _start_and_restart(wired, investigation, local=(LOCAL_PROBLEM,))
+
+    sent = _message(wired, session_id)
+
+    assert sent.status_code == 409
+    assert sent.json()["code"] == "hub_local_invalid"
+    assert _starts(fresh) == []
+    assert fresh.store.get(session_id).status == "ended"
+
+
+def test_refuses_reopen_when_ordinary_session_hub_local_invalid(
+    wired: Any, investigation: Any
+) -> None:
+    first, hub = investigation(a_record())
+    created = wired.client.post(
+        "/api/v1/agent-sessions",
+        json={"project": "demo", "workdir_id": WORKDIR_ID, "prompt": "Hello."},
+        headers=_origin(wired),
+    )
+    session_id = created.json()["id"]
+    driver, store = _restart(first, session_id)
+    fresh, _hub = investigation(
+        a_record(), store=store, hub=hub, driver=driver, local=(LOCAL_PROBLEM,)
+    )
+
+    sent = _message(wired, session_id)
+
+    assert sent.status_code == 409
+    assert sent.json()["code"] == "hub_local_invalid"
+    assert _starts(fresh) == []
+    assert fresh.store.get(session_id).status == "ended"
+
+
+def test_refuses_reopen_when_investigation_runs_folder_unreadable(
+    wired: Any, investigation: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session_id, fresh, hub = _start_and_restart(wired, investigation)
+    runs = hub / ".agent-runs" / "workflows"
+    listed = scenario_investigation._entries
+
+    def refuse(folder: Path) -> list[Path]:
+        if folder == runs:
+            raise PermissionError(13, "Permission denied")
+        return listed(folder)
+
+    monkeypatch.setattr(scenario_investigation, "_entries", refuse)
+
+    sent = _message(wired, session_id)
+
+    assert sent.status_code == 409
+    assert sent.json()["type"] == "urn:agent-hub:problem:agent-session-restriction-unavailable"
+    assert "investigation session" not in sent.json()["detail"]
+    assert _starts(fresh) == []
+
+
+def test_skips_vanished_run_folder_when_investigation_restriction_scanned(
+    wired: Any, investigation: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    session_id, fresh, hub = _start_and_restart(wired, investigation)
+    gone = hub / ".agent-runs" / "workflows" / "gone-run"
+    gone.mkdir()
+    (gone / "investigation-1.session").write_text(f"{UNKNOWN_SESSION}\n", encoding="utf-8")
+    listed = scenario_investigation._entries
+
+    def vanish(folder: Path) -> list[Path]:
+        if folder == gone:
+            raise FileNotFoundError(2, "No such file or directory")
+        return listed(folder)
+
+    monkeypatch.setattr(scenario_investigation, "_entries", vanish)
+
+    sent = _message(wired, session_id)
+
+    assert sent.status_code == 202
+    (spec,) = _starts(fresh)
+    assert spec.tool_policy is not None
+
+
+def test_refuses_reopen_when_investigation_link_unreadable(
+    wired: Any, investigation: Any, tmp_path: Path
+) -> None:
+    session_id, fresh, hub = _start_and_restart(wired, investigation)
+    other = hub / ".agent-runs" / "workflows" / "other-run"
+    other.mkdir()
+    (other / "investigation-1.session").symlink_to(tmp_path / "elsewhere")
+
+    sent = _message(wired, session_id)
+
+    assert sent.status_code == 409
+    assert sent.json()["type"] == "urn:agent-hub:problem:agent-session-restriction-unavailable"
+    assert _starts(fresh) == []
+
+
+class _UnlistingDriver(InMemorySessionDriver):
+    async def list_resumable(self, cwd: str) -> Any:  # noqa: ARG002 -- the port's signature
+        raise SessionsUnavailableError("claude is not installed")
+
+
+def test_keeps_link_when_investigation_resumable_unreadable(wired: Any, investigation: Any) -> None:
+    session_id, fresh, hub = _start_and_restart(wired, investigation, driver=_UnlistingDriver())
+
+    response = wired.client.post(ROUTE, json={}, headers=_origin(wired))
+
+    assert response.status_code == 503
+    assert _starts(fresh) == []
+    assert (hub / LINK).read_text(encoding="utf-8").strip() == session_id
+
+
+class _UnreadableRegistry(InMemoryHubRegistry):
+    def entries(self) -> Any:
+        raise HubRegistryError("the hub registry is not valid JSON")
+
+
+def test_names_registry_when_credential_injection_registry_unreadable(wired: Any) -> None:
+    credentials = HubCredentials(
+        registry=_UnreadableRegistry(), reader=FakeHubFileReader({}), running_version=RUNNING
+    )
+    rig = build_rig(hidden_environment=credentials.names)
+    wired.wire(agent_sessions=rig.control)
+
+    response = wired.client.post(
+        "/api/v1/agent-sessions",
+        json={"project": "demo", "workdir_id": WORKDIR_ID},
+        headers=_origin(wired),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "hub_registry_unreadable"
+    assert "registry" in response.json()["detail"]
+    assert "hub.local.json" not in response.json()["detail"]
+    assert _starts(rig) == []
