@@ -35,4 +35,11 @@ describe("DiscussChat", () => {
 
     expect(await screen.findByRole("combobox", { name: "Mode" })).toBeInTheDocument();
   });
+
+  it("focuses the composer on open when nothing is pending", async () => {
+    renderChat(false);
+
+    const composer = await screen.findByRole("textbox", { name: "Message Claude" });
+    expect(composer).toHaveFocus();
+  });
 });

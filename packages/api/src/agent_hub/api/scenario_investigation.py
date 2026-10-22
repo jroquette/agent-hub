@@ -149,7 +149,7 @@ class InvestigationRestrictions:
                 "the hub's scenario runs cannot be read to tell whether this session is held"
                 " to a scenario run's tool policy"
             )
-            raise RestrictionUnreadableError(session.id, reason, refuses_reopen=True) from error
+            raise RestrictionUnreadableError(session.id, reason) from error
         if found is None:
             return None
         hub, folder, number = found
@@ -178,7 +178,7 @@ class InvestigationRestrictions:
         if all(project != session.project for project, _hub in hubs):
             # The registry cannot be read, or names no hub of the project: unknown, not "none".
             reason = "no registered hub names the session's project"
-            raise RestrictionUnreadableError(session.id, reason, refuses_reopen=False)
+            raise RestrictionUnreadableError(session.id, reason)
         for project, hub in hubs:
             runs = Path(hub) / RUN_FOLDERS
             if project != session.project or not runs.is_dir() or runs.is_symlink():
