@@ -613,6 +613,9 @@
     "workflows/issue-to-pr/prompts/implement.md": {
       "ownership": "seeded"
     },
+    "workflows/release/scripts/since.py": {
+      "ownership": "seeded"
+    },
     "workflows/sdlc/deliver.yaml": {
       "ownership": "seeded"
     },
