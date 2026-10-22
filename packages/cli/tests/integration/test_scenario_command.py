@@ -2560,3 +2560,22 @@ def test_escapes_controls_when_findings_json(hub: Path, marker: Path, held: Path
     assert result.stdout.isascii()
     assert raw_controls(result.stdout.replace("\n", "")) == []
     assert json.loads(result.stdout)["findings"][0]["title"] == text
+
+
+def test_creates_nothing_when_findings_issue_already_marked(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    # The terminal and hub web share one marker per finding: at most one issue (AGH-363 Q7).
+    found_run(hub, marker, held)
+    env = a_tracker(hub)
+    issue = {"id": "DEM-7", "url": "https://linear.example.com/demo/issue/DEM-7"}
+    marked = hub / ".agent-runs" / "workflows" / RUN / "finding-f1.issue"
+    marked.write_text(json.dumps(issue), encoding="utf-8")
+
+    code, shown = findings_in_terminal(hub, env, RUN, "--issue", "f1", answer="y")
+
+    assert code == 1, shown
+    assert "finding f1 already has the issue DEM-7" in plain(shown)
+    assert "[y/N]" not in shown
+    assert tracker_calls(hub) == []
+    assert json.loads(marked.read_text(encoding="utf-8")) == issue
