@@ -114,10 +114,12 @@ SCRIPT_RUNNERS: Final[Mapping[str, tuple[str, ...]]] = {"sh": ("sh",), "python":
 
 type ChildRunner = Callable[..., ChildResult]
 
-# A ``mutates_checkout: false`` agent's tools: reading, and git's and the shell's read-only
-# commands; no gate. ``--allowedTools`` only adds to the user's and the project's allow rules, so
-# the edit tools are also denied; a Bash rule those allow stays allowed (the probe then compares
-# the checkout's status and HEAD after the attempt).
+# A ``mutates_checkout: false`` agent's tools: the Read, Glob and Grep tools, and git's read
+# forms; no gate, and no shell reader that can run or write (``rg --pre``, a redirect).
+# ``--allowedTools`` only adds to the user's and the project's allow rules, so the edit tools
+# are denied, and so is any git command holding ``--output`` (git's read forms write a file with
+# it). Limit: a Bash rule those settings allow stays allowed; the probe then compares the
+# checkout's status and HEAD after the attempt (``workflow_checkout``).
 READ_ONLY_TOOLS: Final = (
     "Read",
     "Glob",
@@ -126,12 +128,10 @@ READ_ONLY_TOOLS: Final = (
     "Bash(git diff:*)",
     "Bash(git log:*)",
     "Bash(git show:*)",
-    "Bash(ls:*)",
-    "Bash(cat:*)",
-    "Bash(rg:*)",
-    "Bash(grep:*)",
+    "Bash(git cat-file:*)",
+    "Bash(git ls-tree:*)",
 )
-EDIT_TOOLS: Final = ("Edit", "Write", "NotebookEdit")
+EDIT_TOOLS: Final = ("Edit", "Write", "NotebookEdit", "Bash(git *--output*)")
 
 
 @dataclass(frozen=True, kw_only=True)

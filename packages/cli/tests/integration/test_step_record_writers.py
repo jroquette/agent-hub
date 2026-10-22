@@ -935,7 +935,7 @@ class TestPendingDecision:
             )
         if case == "re-checked":
             # A declined change re-checked and still plan: the next run opens a new request (A2).
-            self.preflight(hub, drift="plan", input_kind="declined_change", text="No.")
+            self.preflight(hub, drift="plan", input_kind="declined_change", text="No.", request="1")
         if case == "later run":
             self.preflight(hub, drift="none", input_kind="declined_change", text="No.")
 

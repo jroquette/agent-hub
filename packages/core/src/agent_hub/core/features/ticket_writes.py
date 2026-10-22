@@ -249,14 +249,16 @@ class PreflightFacts:
     input: str
     input_text: str
     request: int | None
+    # The declined request a declined change's first check re-checks (the pending one).
+    declined_request: int | None = None
 
 
-def preflight_run(findings: bytes, facts: PreflightFacts, record: PreflightRecord | None) -> bytes:
+def preflight_run(findings: bytes, facts: PreflightFacts) -> bytes:
     """The run ``hub step preflight`` appends: the agent's ``drift``, ``local_notes`` and
     ``blockers_read``, and the writer's facts. The input text is one line of at most
     ``MAX_INPUT_TEXT`` characters: a plain check (``none``) keeps its note (A23), an approval's
     text is dropped. ``change_request`` is kept for ``plan`` drift only; a declined change
-    re-checked with none named takes the one the ticket's last run named.
+    re-checked with none named takes ``declined_request``.
     ``appended_preflight`` checks the result."""
     found = parse_document(findings)
     if not isinstance(found, dict):
@@ -265,13 +267,13 @@ def preflight_run(findings: bytes, facts: PreflightFacts, record: PreflightRecor
     if kind is None:
         raise TicketRecordError(f"no preflight input {one_line(facts.input)[:64]}")
     drift, request = found.get("drift"), facts.request
-    if drift == "plan" and request is None and kind == "declined_change" and record is not None:
-        request = record.runs[-1].change_request if record.runs else None
+    if request is None and kind == "declined_change":
+        request = facts.declined_request
     kept = "".join(c for c in facts.input_text if c.isprintable() or c.isspace())
     # A gate's approval text is no input; a plain check may carry a note (A23).
     text = "" if facts.input == "approve" else " ".join(kept.split())[:MAX_INPUT_TEXT]
     run = {
-        "ran_at": facts.ran_at.isoformat(timespec="seconds"),
+        "ran_at": facts.ran_at.isoformat(),
         "plan_version": facts.plan_version,
         "commit": facts.commit,
         "blockers_read": found.get("blockers_read"),

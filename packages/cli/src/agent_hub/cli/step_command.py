@@ -45,7 +45,7 @@ import shutil
 import sys
 from collections.abc import Callable, Sequence
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Final, NoReturn, TextIO
@@ -111,6 +111,7 @@ STOPPED: Final = "the implementing session stopped: "
 # A discovery (a broken plan assumption, implement's loop back to preflight) is one line.
 MAX_DISCOVERY_CHARS: Final = 1000
 FENCE_RUN: Final = re.compile("`{3,}")
+COMMIT: Final = re.compile("[0-9a-f]{7,40}")
 
 step_app = typer.Typer(name=COMMAND, no_args_is_help=True, help="Run one stage of hub run.")
 
@@ -178,8 +179,19 @@ def run_in_process(
 
 
 @step_app.command("worktree")
-def worktree(context: typer.Context, *, issue: Issue, repo: Repo) -> None:
+def worktree(
+    context: typer.Context,
+    *,
+    issue: Issue,
+    repo: Repo,
+    commit: Annotated[
+        str,
+        typer.Option("--commit", help="Start a new branch here (the commit a preflight checked)."),
+    ] = "",
+) -> None:
     """Make (or keep) the issue's worktree in the repo; print its path, branch and prompt texts."""
+    if commit and not COMMIT.fullmatch(commit):
+        raise typer.BadParameter("use a commit id (7 to 40 hex digits)", param_hint="--commit")
     children = _children(context, issue=issue, repo=repo)
     name = "worktree"
     git = shutil.which("git", path=os.environ.get("PATH", ""))
@@ -204,6 +216,9 @@ def worktree(context: typer.Context, *, issue: Issue, repo: Repo) -> None:
             git_timeout=WORKTREE_GIT_TIMEOUT,
             runner=bounded_child,
         )
+        if commit:
+            # The fetch still runs; the branch starts at the commit the preflight checked.
+            task = replace(task, bases={**task.bases, repo: commit})
         check_branches(task)
         path = create_worktree(task, repo, echo=_note)
     except (WorktreeError, ChildTimedOutError) as error:
@@ -223,12 +238,12 @@ def worktree(context: typer.Context, *, issue: Issue, repo: Repo) -> None:
         {
             "path": str(path),
             "branch": children.branch,
-            "base": children.base,
+            "base": commit or children.base,
             "hub": str(children.hub),
             "hub_name": children.hub.name,
             "check": children.gate,
             "prompt": dict(parts),
-            "target": _target_value(children, path),
+            "target": _target_value(children, path, base=commit or children.base),
         }
     )
 
@@ -420,10 +435,17 @@ def preflight(
     request: Annotated[
         str, typer.Option("--request", help="The change request it opened or re-checked.")
     ] = "",
+    declined: Annotated[
+        str,
+        typer.Option(
+            "--declined-request", help="The declined request a declined change re-checks."
+        ),
+    ] = "",
 ) -> None:
     """Append one run to tickets/<ticket>/preflight.json, from the preflight's findings."""
-    if request and not (request.isascii() and request.isdecimal()):
-        raise typer.BadParameter("use a request number, or nothing", param_hint="--request")
+    for value, hint in ((request, "--request"), (declined, "--declined-request")):
+        if value and not (value.isascii() and value.isdecimal()):
+            raise typer.BadParameter("use a request number, or nothing", param_hint=hint)
     hub = _hub()
     facts = PreflightFacts(
         ran_at=datetime.now(UTC),
@@ -433,6 +455,7 @@ def preflight(
         input=kind,
         input_text=text,
         request=int(request) if request else None,
+        declined_request=int(declined) if declined else None,
     )
     _record(
         "preflight",
@@ -566,12 +589,12 @@ class StepTarget:
     conventions: EffectiveConventions
 
 
-def _target_value(children: RunChildren, path: Path) -> dict[str, JsonValue]:
+def _target_value(children: RunChildren, path: Path, *, base: str) -> dict[str, JsonValue]:
     conventions = children.conventions
     return {
         "path": str(path),
         "branch": children.branch,
-        "base": children.base,
+        "base": base,
         "default_branch": children.default_branch,
         "github": children.github,
         "gate": children.gate,

@@ -23,7 +23,8 @@ from agent_hub.cli.errors import ChildTimedOutError
 from agent_hub.cli.run_children import SESSION_HIDDEN, without
 from agent_hub.core.workflows.failures import NodeFailedError
 
-# ``--branch`` adds the HEAD commit and branch, so a switch or a commit on a clean tree shows.
+# ``--branch`` adds the HEAD commit and branch, so a switch or a commit on a clean tree shows;
+# its upstream lines (``# branch.upstream``, ``# branch.ab``) are dropped: a fetch moves them.
 # The feature records under brain/features/ are left out: other runs of a feature write them into
 # the hub while a node runs (implement's ticket records), and they are no node's checkout.
 STATUS_ARGV: Final = (
@@ -64,5 +65,13 @@ class GitCheckoutProbe:
             if result.returncode != 0:
                 said = " ".join(result.stderr.decode(errors="replace").split())[-MAX_DETAIL:]
                 raise NodeFailedError("config", f"git status failed in {root.name}: {said}")
-            parts.append(f"{root}\0{result.stdout.decode(errors='replace')}")
+            parts.append(f"{root}\0{_compared(result.stdout.decode(errors='replace'))}")
         return "\0\0".join(parts)
+
+
+_UPSTREAM: Final = ("# branch.upstream ", "# branch.ab ")
+
+
+def _compared(status: str) -> str:
+    """``status`` without the lines a fetch changes (the upstream and its ahead/behind count)."""
+    return "\0".join(entry for entry in status.split("\0") if not entry.startswith(_UPSTREAM))
