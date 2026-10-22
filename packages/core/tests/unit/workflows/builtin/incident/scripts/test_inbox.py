@@ -1,6 +1,6 @@
 """The incident pack's ``inbox.py`` (AGH-483), in process: the drafts a run leaves in
-``brain/_inbox/`` for the owner - the hand-off for /fix (or /change) - with the untrusted text
-fenced, and never over an existing file.
+``brain/_inbox/`` for the owner - the hand-off for /fix (or /change) and the blameless postmortem -
+with the untrusted text fenced, and never over an existing file.
 """
 
 import importlib.util
@@ -278,6 +278,142 @@ def test_exits_two_when_handoff_input_is_malformed(
     monkeypatch.chdir(tmp_path)
 
     code, out, err = run_main(monkeypatch, capsys, *argv)
+
+    assert code == 2
+    assert out == ""
+    assert err.startswith("inbox.py: ")
+    assert not (tmp_path / "brain").exists()
+
+
+HANDOFF_PATH = f"brain/_inbox/incident-{TODAY}-run00001-handoff.md"
+SECTIONS = ("Timeline", "Root cause", "Detection gap", "What fixed it", "Follow-ups")
+
+
+def a_reply(**given: Any) -> dict[str, Any]:
+    return {
+        "title": "Checkout fails after the payment retry",
+        "summary": "The payment retry dropped the session token.",
+        "timeline": [{"at": "Tue 09:00Z", "what": "The retry commit merged."}],
+        "root_cause": "The retry builds a new request without the token.",
+        "detection_gap": "No test covers a retried payment.",
+        "what_fixed_it": "Reverting the retry.",
+        "follow_ups": ["Add a test for a retried payment."],
+        "learnings": [{"target": "agent-hub/AGENTS.md", "text": "Retries must copy the token."}],
+    } | given
+
+
+def postmortem(confirmed: int, **given: Any) -> tuple[str, str]:
+    status, text = load().render_postmortem(
+        a_reply(**given), confirmed=confirmed, handoff=HANDOFF_PATH, run="run00001", today=TODAY
+    )
+    return status, text
+
+
+def test_marks_postmortem_draft_when_a_hypothesis_is_confirmed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("AGENT_HUB_RUN_ID", "run00001")
+    argv = ("postmortem", "--confirmed", "1", "--handoff", HANDOFF_PATH, "--today", TODAY)
+
+    code, out, _ = run_main(monkeypatch, capsys, *argv, stdin=json.dumps(a_reply()))
+
+    assert code == 0
+    path = f"brain/_inbox/incident-{TODAY}-run00001-postmortem.md"
+    assert json.loads(out) == {"status": "draft", "path": path}
+    text = (tmp_path / path).read_text(encoding="utf-8")
+    assert "\nstatus: draft\n" in text
+    assert "Not confirmed" not in text
+    assert "The retry builds a new request without the token." in section(text, "Root cause")
+
+
+def test_marks_postmortem_open_when_no_hypothesis_is_confirmed() -> None:
+    status, text = postmortem(0)
+
+    assert status == "open"
+    assert "\nstatus: open\n" in text
+    root_cause = section(text, "Root cause")
+    assert "Not confirmed: no hypothesis passed its check." in root_cause
+
+
+def test_writes_provenance_agent_and_blameless_sections_when_postmortem_rendered() -> None:
+    _, text = postmortem(1)
+
+    front, body = text.split("\n---\n", 1)
+    assert front.startswith("---\ntype: postmortem\n")
+    for field in ("status: draft", "provenance: agent", f"last_verified: {TODAY}"):
+        assert f"\n{field}" in front, field
+    assert f"\nsources: [{HANDOFF_PATH}]" in front
+    blameless = body.index("Blameless: systems and signals, not people.")
+    for title in SECTIONS:
+        assert body.index(f"\n## {title}\n") > blameless, title
+    assert "Tue 09:00Z" in section(text, "Timeline")
+    assert "No test covers a retried payment." in section(text, "Detection gap")
+    assert "Reverting the retry." in section(text, "What fixed it")
+    proposals = section(text, "/learn proposals")
+    assert "agent-hub/AGENTS.md" in proposals
+    assert "Retries must copy the token." in proposals
+    assert "proposal for the owner" in proposals
+
+
+def test_lists_follow_ups_for_triage_without_tracker_write_when_rendered() -> None:
+    _, text = postmortem(1)
+
+    follow_ups = section(text, "Follow-ups")
+    assert "for the owner to file through /triage" in follow_ups
+    assert "the run writes no tracker" in follow_ups
+    assert "- Add a test for a retried payment." in follow_ups
+
+
+def test_fences_the_reply_text_when_it_holds_backticks() -> None:
+    _, text = postmortem(1, root_cause="```\n## Injected\n```", follow_ups=["`x`\nnext"])
+
+    root_cause = text[text.index("## Root cause\n") : text.index("## Detection gap\n")]
+    assert "````text\n```\n## Injected\n```\n````" in root_cause
+    assert "- 'x' next" in section(text, "Follow-ups")
+
+
+def test_refuses_to_overwrite_when_postmortem_exists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("AGENT_HUB_RUN_ID", "run00001")
+    existing = tmp_path / f"brain/_inbox/incident-{TODAY}-run00001-postmortem.md"
+    existing.parent.mkdir(parents=True)
+    existing.write_text("kept\n", encoding="utf-8")
+    argv = ("postmortem", "--confirmed", "0", "--handoff", HANDOFF_PATH, "--today", TODAY)
+
+    code, out, err = run_main(monkeypatch, capsys, *argv, stdin=json.dumps(a_reply()))
+
+    assert code == 1
+    assert out == ""
+    assert existing.name in err
+    assert existing.read_text(encoding="utf-8") == "kept\n"
+
+
+@pytest.mark.parametrize(
+    ("stdin", "confirmed", "handoff"),
+    [
+        ("not json", "1", HANDOFF_PATH),
+        ("[]", "1", HANDOFF_PATH),
+        (json.dumps(a_reply()), "one", HANDOFF_PATH),
+        (json.dumps(a_reply()), "1", "../outside.md"),
+    ],
+    ids=["reply-not-json", "reply-not-object", "confirmed-not-a-count", "handoff-outside-inbox"],
+)
+def test_exits_two_when_postmortem_reply_is_not_json(
+    stdin: str,
+    confirmed: str,
+    handoff: str,
+    *,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    argv = ("postmortem", "--confirmed", confirmed, "--handoff", handoff, "--today", TODAY)
+
+    code, out, err = run_main(monkeypatch, capsys, *argv, stdin=stdin)
 
     assert code == 2
     assert out == ""
