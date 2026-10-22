@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { useParams, useSearchParams } from "react-router";
 
 import {
@@ -502,10 +510,14 @@ function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void
   }, [paused]);
   // A new investigation (a failed workaround reopened one) starts with nothing picked, even
   // when its proposal reuses the ids, and focus on the heading (review round 4, F1, F3).
-  const [, setParams] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const [reopened, setReopened] = useState(false);
+  // The router lands the cleared URL after paint: until then the old option is not shown.
+  const [ignoreOption, setIgnoreOption] = useState(false);
+  if (ignoreOption && !params.has("option")) setIgnoreOption(false);
   const lastInvestigation = useRef(run.open_investigation);
-  useEffect(() => {
+  // Before paint, so the reopened investigation never shows the failed option picked.
+  useLayoutEffect(() => {
     const now = run.open_investigation;
     // A running stage (null) keeps the last investigation, so 1 → running → 2 still reopens.
     if (now === null) {
@@ -525,6 +537,7 @@ function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void
       { replace: true },
     );
     setReopened(true);
+    setIgnoreOption(true);
     heading.current?.focus();
   }, [run.open_investigation, setParams]);
   const announcement =
@@ -586,6 +599,7 @@ function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void
           onAnswered={onAnswered}
           onRefetch={refetch}
           reopened={reopened}
+          ignoreOption={ignoreOption}
           findings={findings}
         />
       ) : (
