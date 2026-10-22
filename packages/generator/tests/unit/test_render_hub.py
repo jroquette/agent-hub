@@ -167,6 +167,7 @@ DESIGN_PATHS = (
     "workflows/issue-to-pr/fixtures/pr-failure.yaml",
     "workflows/issue-to-pr/issue-to-pr.yaml",
     "workflows/issue-to-pr/prompts/implement.md",
+    "workflows/release/scripts/since.py",
     "workflows/sdlc/deliver.yaml",
     "workflows/sdlc/fixtures/deliver-blocked.yaml",
     "workflows/sdlc/fixtures/deliver-check-error.yaml",
@@ -836,6 +837,8 @@ def test_parses_as_python39_when_rendered(demo_render: dict[str, RenderedFile]) 
         "plugin/demo/hooks",
         "plugin/hub-workflow/hooks",
         "scripts",
+        # The release pack's helpers (AGH-494), as the sdlc pack's.
+        "workflows/release/scripts",
         # The sdlc pack's helpers (AGH-229), run by uv on its Python, also parse as 3.9.
         "workflows/sdlc/scripts",
     }
