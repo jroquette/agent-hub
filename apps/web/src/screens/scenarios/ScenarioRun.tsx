@@ -500,6 +500,28 @@ function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void
     if (wasPaused.current && !paused) heading.current?.focus();
     wasPaused.current = paused;
   }, [paused]);
+  // A new investigation (a failed workaround reopened one) starts with nothing picked, even
+  // when its proposal reuses the ids, and focus on the heading (review round 4, F1, F3).
+  const [, setParams] = useSearchParams();
+  const [reopened, setReopened] = useState(false);
+  const lastInvestigation = useRef(run.open_investigation);
+  useEffect(() => {
+    const before = lastInvestigation.current;
+    lastInvestigation.current = run.open_investigation;
+    if (before === null || run.open_investigation === null || before === run.open_investigation) {
+      return;
+    }
+    setParams(
+      (current) => {
+        const copy = new URLSearchParams(current);
+        copy.delete("option");
+        return copy;
+      },
+      { replace: true },
+    );
+    setReopened(true);
+    heading.current?.focus();
+  }, [run.open_investigation, setParams]);
   const announcement =
     answered !== null
       ? "Answer recorded"
@@ -558,6 +580,7 @@ function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void
           onControlOff={markControlOff}
           onAnswered={onAnswered}
           onRefetch={refetch}
+          reopened={reopened}
           findings={findings}
         />
       ) : (

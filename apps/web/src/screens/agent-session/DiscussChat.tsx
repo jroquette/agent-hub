@@ -35,6 +35,8 @@ export interface DiscussChatProps {
   /** Keeps the session's permission mode fixed: no mode switch (a scenario investigation, whose
    * allowed writes and `./hub` commands must keep asking, E-13, E-15). */
   lockMode?: boolean | undefined;
+  /** False keeps focus where the page put it (a reopened scenario investigation). */
+  focusComposer?: boolean | undefined;
 }
 
 export interface DiscussChatViewProps extends DiscussChatProps {
@@ -59,6 +61,7 @@ export function DiscussChatView({
   prepareMessage,
   onSent,
   lockMode = false,
+  focusComposer = true,
 }: DiscussChatViewProps) {
   const snapshot = useAgentSession(agentSessionId);
   const capabilities = useCapabilities();
@@ -131,7 +134,7 @@ export function DiscussChatView({
             maxBytes={DEFAULT_MESSAGE_MAX_BYTES}
             commands={slashOptions}
             draftId={agentSessionId}
-            focusOnOpen={pending.length === 0}
+            focusOnOpen={focusComposer && pending.length === 0}
             resumable={resumable(session, endReason)}
             modeLocked={lockMode || session.restricted === true}
           />
