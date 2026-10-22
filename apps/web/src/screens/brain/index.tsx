@@ -1,36 +1,21 @@
 import "./Brain.css";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import type { ReactNode } from "react";
-import { Link, Navigate, useParams } from "react-router";
+import { Navigate, useParams, useSearchParams } from "react-router";
 
-import {
-  AppLink,
-  Banner,
-  Button,
-  EmptyState,
-  Icon,
-  ProblemError,
-  Skeleton,
-} from "../../components";
-import { brainRoute } from "../../lib/brainLinks";
+import { AppLink, Banner, EmptyState, Icon, ProblemError, Skeleton } from "../../components";
 import { useScope } from "../../lib/scope";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
 import { CountCell, KnowledgeProjectIndex, PickFoot } from "../knowledge-index";
 import { useProjectNow } from "../project-overview/queries";
 import { BRAIN_NOTE_STARTERS } from "../learnings/discussLearning";
+import { BrainSearch, NOTE_PATH_ID, focusFirstResult, useSearchTerm } from "./BrainSearch";
+import { NoteLink } from "./NoteLink";
 import { NoteView } from "./NoteView";
 import { useBrainTree } from "./queries";
-import {
-  INBOX_FOLDER,
-  START_NOTES,
-  buildTree,
-  countNotes,
-  matchNotes,
-  noteName,
-  type BrainFolder,
-} from "./tree";
+import { INBOX_FOLDER, START_NOTES, buildTree, countNotes, type BrainFolder } from "./tree";
 
 /** The note a project's Brain opens when the URL names none (AC-201.38). */
 export const DEFAULT_NOTE = "index.md";
@@ -38,33 +23,6 @@ export const DEFAULT_NOTE = "index.md";
 /** The in-app route of a project's Brain, on its default note. */
 export function brainHome(project: string): string {
   return `/projects/${encodeURIComponent(project)}/brain`;
-}
-
-function NoteLink({
-  project,
-  path,
-  selected,
-  label,
-  folder,
-}: {
-  project: string;
-  path: string;
-  selected: string;
-  label?: string | undefined;
-  folder?: string | undefined;
-}) {
-  return (
-    <Link
-      to={brainRoute(project, path)}
-      className="ah-brain-link"
-      aria-current={path === selected ? "page" : undefined}
-      title={path}
-    >
-      <Icon name="file-text" size="sm" />
-      <span className="ah-brain-link-name">{label ?? noteName(path)}</span>
-      {folder && <span className="ah-brain-link-folder">{folder}</span>}
-    </Link>
-  );
 }
 
 function Folder({
@@ -193,15 +151,37 @@ function typingIn(target: EventTarget | null): boolean {
   );
 }
 
+/** The Brain search's query, kept in `?q=` and written with `replace` so typing fills no history. */
+function useBrainQuery(): [string, (value: string) => void] {
+  const [params, setParams] = useSearchParams();
+  const setQuery = (value: string) => {
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        if (value === "") next.delete("q");
+        else next.set("q", value);
+        return next;
+      },
+      { replace: true },
+    );
+  };
+  return [params.get("q") ?? "", setQuery];
+}
+
+/** The search field's bound: the knowledge route's longest query. */
+const MAX_QUERY_CHARS = 500;
+
 function BrainTreePanel({ project, selected }: { project: string; selected: string }) {
   const tree = useBrainTree(project);
-  const [query, setQuery] = useState("");
-  const filterRef = useRef<HTMLInputElement>(null);
+  const [query, setQuery] = useBrainQuery();
+  const [term, searchNow] = useSearchTerm(query.trim());
+  const fieldRef = useRef<HTMLInputElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "/" || event.defaultPrevented || typingIn(event.target)) return;
       event.preventDefault();
-      filterRef.current?.focus();
+      fieldRef.current?.focus();
     };
     document.addEventListener("keydown", onKey);
     return () => {
@@ -234,51 +214,17 @@ function BrainTreePanel({ project, selected }: { project: string; selected: stri
       </EmptyState>
     );
   }
-  const matches = matchNotes(entries, query);
-  let list;
-  if (query.trim() === "") {
-    list = <GroupedTree root={buildTree(entries)} project={project} selected={selected} />;
-  } else if (matches.length === 0) {
-    list = (
-      <div className="ah-stack" style={{ gap: 8, alignItems: "flex-start" }}>
-        <p className="ah-small ah-muted" style={{ margin: 0 }}>
-          No note matches &ldquo;{query.trim()}&rdquo;.
-        </p>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() => {
-            setQuery("");
-          }}
-        >
-          Clear filter
-        </Button>
-      </div>
-    );
-  } else {
-    list = (
-      <ul className="ah-brain-tree" data-root aria-label="Matching notes">
-        {matches.map((entry) => {
-          const folder = entry.path.slice(0, entry.path.length - noteName(entry.path).length);
-          return (
-            <li key={entry.path}>
-              <NoteLink project={project} path={entry.path} selected={selected} folder={folder} />
-            </li>
-          );
-        })}
-      </ul>
-    );
-  }
   return (
-    <div className="ah-stack" style={{ gap: 12 }}>
+    <div ref={panelRef} className="ah-stack" style={{ gap: 12 }}>
       <div className="ah-search">
         <Icon name="search" size="sm" />
         <input
-          ref={filterRef}
+          ref={fieldRef}
           type="search"
           className="ah-input"
-          aria-label="Filter brain notes"
-          placeholder="Filter notes"
+          aria-label="Search brain notes and repo docs"
+          placeholder="Search notes and repo docs"
+          maxLength={MAX_QUERY_CHARS}
           value={query}
           onChange={(event) => {
             setQuery(event.target.value);
@@ -288,6 +234,11 @@ function BrainTreePanel({ project, selected }: { project: string; selected: stri
               event.preventDefault();
               event.stopPropagation();
               setQuery("");
+            } else if (event.key === "Enter") {
+              event.preventDefault();
+              searchNow();
+            } else if (event.key === "ArrowDown" && focusFirstResult(panelRef.current)) {
+              event.preventDefault();
             }
           }}
         />
@@ -299,7 +250,22 @@ function BrainTreePanel({ project, selected }: { project: string; selected: stri
             `${String(skipped)} ${skipped === 1 ? "entry was" : "entries were"} skipped (unreadable or past a limit).`}
         </Banner>
       )}
-      {list}
+      {query.trim() === "" ? (
+        <GroupedTree root={buildTree(entries)} project={project} selected={selected} />
+      ) : (
+        <BrainSearch
+          project={project}
+          entries={entries}
+          query={query}
+          term={term}
+          selected={selected}
+          field={fieldRef}
+          onClear={() => {
+            setQuery("");
+            fieldRef.current?.focus();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -345,7 +311,9 @@ export function BrainScreen() {
         >
           <div className="ah-row" style={{ gap: 8 }}>
             <Icon name="file-text" size="sm" />
-            <span className="ah-mono ah-small">brain/{path}</span>
+            <span id={NOTE_PATH_ID} className="ah-mono ah-small" tabIndex={-1}>
+              brain/{path}
+            </span>
             <span className="ah-grow" />
             <DiscussButton />
           </div>

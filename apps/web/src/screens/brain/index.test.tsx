@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -6,6 +6,8 @@ import { seriousViolations } from "../../testing/axe";
 import {
   aBrainNote,
   aBrainTree,
+  aKnowledgeResult,
+  aKnowledgeSearch,
   aPage,
   aProblem,
   aProjectNow,
@@ -17,6 +19,7 @@ import { BrainPickerScreen, BrainScreen, brainHome } from "./index";
 
 const TREE = "/api/v1/projects/agent-hub/brain";
 const NOTE = "/api/v1/projects/agent-hub/brain/note";
+const SEARCH = "/api/v1/projects/agent-hub/knowledge/search";
 const route = "projects/:project/brain/*";
 
 /** Answers each note path with a note titled by its path. */
@@ -30,7 +33,7 @@ function notes(request: Request) {
 
 function open(path = "/projects/agent-hub/brain", routes: ApiRoutes = {}) {
   return renderWithApi(<BrainScreen />, {
-    routes: { [TREE]: aBrainTree(), [NOTE]: notes, ...routes },
+    routes: { [TREE]: aBrainTree(), [NOTE]: notes, [SEARCH]: aKnowledgeSearch(), ...routes },
     path,
     route,
   });
@@ -175,20 +178,22 @@ describe("BrainScreen", () => {
     const tree = screen.getByRole("navigation", { name: "Brain notes" });
     await within(tree).findByRole("link", { name: "Index" });
     await userEvent.keyboard("/");
-    const filter = within(tree).getByRole("searchbox", { name: "Filter brain notes" });
+    const filter = within(tree).getByRole("searchbox", {
+      name: "Search brain notes and repo docs",
+    });
     expect(filter).toHaveFocus();
 
     await userEvent.type(filter, "plan");
     const matches = within(tree).getByRole("list", { name: "Matching notes" });
     expect(within(matches).getByRole("link")).toHaveAttribute(
       "href",
-      "/projects/agent-hub/brain/features/control-plane/plan.md",
+      "/projects/agent-hub/brain/features/control-plane/plan.md?q=plan",
     );
 
     await userEvent.type(filter, "zzz");
-    expect(within(tree).getByText(/No note matches/)).toBeInTheDocument();
+    expect(await within(tree).findByText(/Nothing matches/, { selector: "p" })).toBeInTheDocument();
 
-    await userEvent.click(within(tree).getByRole("button", { name: "Clear filter" }));
+    await userEvent.click(within(tree).getByRole("button", { name: "Clear search" }));
     expect(filter).toHaveValue("");
     await userEvent.type(filter, "plan");
 
@@ -222,6 +227,398 @@ describe("BrainScreen", () => {
     await screen.findByRole("link", { name: "plan.md" });
 
     expect(await seriousViolations(container)).toEqual([]);
+  });
+});
+
+const DEMO_TREE = "/api/v1/projects/demo/brain";
+const DEMO_NOTE = "/api/v1/projects/demo/brain/note";
+const DEMO_SEARCH = "/api/v1/projects/demo/knowledge/search";
+const NO_REPO_DOC = "Repo docs are not opened in the app";
+
+/** AC-393.3's answer: the decision, a playbook and a repo doc, best first. */
+function worktreeResults() {
+  return [
+    aKnowledgeResult(),
+    aKnowledgeResult({
+      path: "brain/playbooks/cleanup.md",
+      kind: "playbook",
+      title: "Cleanup after merge",
+      status: null,
+      snippet: "remove the worktrees once the branch is merged",
+    }),
+    aKnowledgeResult({
+      path: "demo-api/docs/guide.md",
+      kind: "doc",
+      title: "Repo guide",
+      status: null,
+      snippet: "create worktrees with make worktree",
+    }),
+  ];
+}
+
+/** Project demo's Brain: a small tree, every note served, and the search answered by `search`. */
+function openDemo(
+  search: ApiRoutes[string],
+  path = "/projects/demo/brain",
+  routes: ApiRoutes = {},
+) {
+  return renderWithApi(<BrainScreen />, {
+    routes: {
+      [DEMO_TREE]: aBrainTree({
+        project: "demo",
+        entries: [
+          { path: "decisions/0001-worktrees.md", size: 120 },
+          { path: "index.md", size: 80 },
+          { path: "playbooks/cleanup.md", size: 90 },
+        ],
+      }),
+      [DEMO_NOTE]: notes,
+      [DEMO_SEARCH]: search,
+      ...routes,
+    },
+    path,
+    route,
+  });
+}
+
+function searchQueries(requests: Request[]): (string | null)[] {
+  return requests
+    .map((request) => new URL(request.url))
+    .filter((url) => url.pathname === DEMO_SEARCH)
+    .map((url) => url.searchParams.get("q"));
+}
+
+async function typeQuery(text: string): Promise<HTMLElement> {
+  const tree = screen.getByRole("navigation", { name: "Brain notes" });
+  await within(tree).findByRole("link", { name: "Index" });
+  await userEvent.keyboard("/");
+  const field = within(tree).getByRole("searchbox", { name: "Search brain notes and repo docs" });
+  expect(field).toHaveFocus();
+  await userEvent.type(field, text);
+  return field;
+}
+
+function textSection(query: string, count: string): Promise<HTMLElement> {
+  return screen.findByRole("region", { name: `Text matching “${query}” · ${count}` });
+}
+
+describe("BrainScreen search", () => {
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  it("search: shows path and text matches after the debounce", async () => {
+    const { requests, router } = openDemo(aKnowledgeSearch({ results: worktreeResults() }));
+
+    const field = await typeQuery("worktrees");
+
+    expect(field).toHaveAttribute("placeholder", "Search notes and repo docs");
+    expect(field).toHaveAttribute("maxlength", "500");
+    expect(router.state.location.search).toBe("?q=worktrees");
+    const paths = screen.getByRole("region", { name: "Paths matching “worktrees” · 1" });
+    expect(within(paths).getByRole("link", { name: /0001-worktrees\.md/ })).toHaveAttribute(
+      "href",
+      "/projects/demo/brain/decisions/0001-worktrees.md?q=worktrees",
+    );
+    const text = await textSection("worktrees", "3");
+    expect(searchQueries(requests)).toEqual(["worktrees"]);
+    expect(
+      new URL(requests.find((r) => r.url.includes("knowledge"))?.url ?? "").searchParams.has(
+        "limit",
+      ),
+    ).toBe(false);
+    const decision = within(text).getByRole("link", { name: "Worktrees from origin" });
+    expect(decision).toHaveAccessibleDescription(
+      /brain\/decisions\/0001-worktrees\.md.*decision · accepted.*every task runs in its own worktrees/,
+    );
+    expect(
+      within(text).getByRole("link", { name: "Cleanup after merge" }),
+    ).toHaveAccessibleDescription(/playbook/);
+    expect(within(text).queryByRole("link", { name: /Repo guide/ })).not.toBeInTheDocument();
+    const guide = within(text).getByText("Repo guide").closest("li");
+    expect(guide).toHaveTextContent("demo-api/docs/guide.md");
+    expect(guide).toHaveTextContent("doc · repo doc, not opened here");
+    expect(guide).toHaveTextContent("create worktrees with make worktree");
+    expect(within(guide as HTMLElement).getByRole("tooltip", { hidden: true })).toHaveTextContent(
+      NO_REPO_DOC,
+    );
+    expect(await screen.findByText("1 path and 3 text matches for “worktrees”.")).toHaveClass(
+      "ah-sr",
+    );
+
+    await userEvent.click(decision);
+
+    expect(router.state.location.pathname).toBe("/projects/demo/brain/decisions/0001-worktrees.md");
+    expect(router.state.location.search).toBe("?q=worktrees");
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Note decisions/0001-worktrees.md" }),
+    ).toBeInTheDocument();
+    expect(decision).toHaveAttribute("aria-current", "page");
+    expect(decision).toHaveFocus();
+    expect(field).toHaveValue("worktrees");
+  });
+
+  it("search: keeps the query when a link inside the note is followed", async () => {
+    const { router } = openDemo(aKnowledgeSearch(), "/projects/demo/brain/index.md?q=worktrees");
+
+    expect(
+      await screen.findByRole("searchbox", { name: "Search brain notes and repo docs" }),
+    ).toHaveValue("worktrees");
+    await userEvent.click(await screen.findByRole("link", { name: "the decisions" }));
+
+    expect(router.state.location.pathname).toBe("/projects/demo/brain/decisions/index.md");
+    expect(router.state.location.search).toBe("?q=worktrees");
+    expect(router.state.location.hash).toBe("#d3");
+  });
+
+  it("search: shows the first 8 path matches, then Show all", async () => {
+    const entries = Array.from({ length: 10 }, (_, i) => ({
+      path: `guides/topic-${String(i).padStart(2, "0")}.md`,
+      size: 10,
+    }));
+    openDemo(aKnowledgeSearch(), "/projects/demo/brain", {
+      [DEMO_TREE]: aBrainTree({
+        project: "demo",
+        entries: [{ path: "index.md", size: 1 }, ...entries],
+      }),
+    });
+
+    await typeQuery("topic");
+
+    const paths = screen.getByRole("region", { name: "Paths matching “topic” · 10" });
+    expect(within(paths).getAllByRole("link")).toHaveLength(8);
+    const more = within(paths).getByRole("button", { name: "Show all 10 path matches" });
+    await userEvent.click(more);
+    expect(within(paths).getAllByRole("link")).toHaveLength(10);
+    expect(more).toHaveAccessibleName("Show the first 8");
+    expect(more).toHaveFocus();
+  });
+
+  it("search: keeps the path filter narrowing the tree", async () => {
+    openDemo(aKnowledgeSearch({ query: "cleanup", results: [] }));
+
+    await typeQuery("cleanup");
+
+    const tree = screen.getByRole("navigation", { name: "Brain notes" });
+    expect(within(tree).queryByRole("region", { name: "Folders" })).not.toBeInTheDocument();
+    const matches = within(tree).getByRole("list", { name: "Matching notes" });
+    expect(
+      within(matches)
+        .getAllByRole("link")
+        .map((link) => link.textContent),
+    ).toEqual(["cleanup.mdplaybooks/"]);
+    await vi.waitFor(() => {
+      expect(screen.getByText("1 path and 0 text matches for “cleanup”.")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("region", { name: /Text matching/ })).not.toBeInTheDocument();
+  });
+
+  it("search: says nothing matches, with a hint for several words", async () => {
+    openDemo(aKnowledgeSearch({ results: [] }));
+
+    const field = await typeQuery("zebra crossing");
+
+    const tree = screen.getByRole("navigation", { name: "Brain notes" });
+    expect(
+      await within(tree).findByText("Nothing matches “zebra crossing”.", { selector: "p" }),
+    ).toBeInTheDocument();
+    expect(within(tree).getByText("Every word must appear: try fewer words.")).toBeInTheDocument();
+    await userEvent.clear(field);
+    await userEvent.type(field, "zebra");
+    expect(await within(tree).findByText("No note path or text contains it.")).toBeInTheDocument();
+  });
+
+  it("search: says the query has no word", async () => {
+    const { requests } = openDemo(aKnowledgeSearch());
+
+    await typeQuery("!!!");
+
+    expect(
+      await screen.findByText("Type a letter or a digit to search the text of notes."),
+    ).toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(searchQueries(requests)).toEqual([]);
+  });
+
+  it("search: shows the problem with Try again when the search fails", async () => {
+    let calls = 0;
+    openDemo(() => {
+      calls += 1;
+      return calls === 1
+        ? aProblem({
+            status: 502,
+            title: "Could not read the hub's files",
+            detail: "brain: git exited with 128: fatal: not a git repository",
+          })
+        : aKnowledgeSearch({ query: "cleanup", results: worktreeResults().slice(1, 2) });
+    });
+
+    await typeQuery("cleanup");
+
+    const tree = screen.getByRole("navigation", { name: "Brain notes" });
+    const problem = await within(tree).findByRole("alert");
+    expect(problem).toHaveTextContent("Could not read the hub's files");
+    expect(problem).toHaveTextContent("brain: git exited with 128: fatal: not a git repository");
+    expect(within(tree).getByRole("list", { name: "Matching notes" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Note index.md" })).toBeInTheDocument();
+
+    await userEvent.click(within(problem).getByRole("button", { name: "Try again" }));
+
+    const text = await textSection("cleanup", "1");
+    expect(within(text).getByRole("link", { name: "Cleanup after merge" })).toBeInTheDocument();
+  });
+
+  it("search: says the server is not responding when the request gets no answer", async () => {
+    openDemo(aKnowledgeSearch());
+    vi.mocked(globalThis.fetch).mockRejectedValue(new TypeError("Failed to fetch"));
+
+    await typeQuery("cleanup");
+
+    const problem = await screen.findByRole("alert");
+    expect(problem).toHaveTextContent("The app's server is not responding");
+    expect(problem).toHaveTextContent("Check that hub web is still running, then try again.");
+  });
+
+  it("search: shows each warning and the skipped files", async () => {
+    openDemo(
+      aKnowledgeSearch({
+        results: [aKnowledgeResult({ provenance: "agent-from-external" })],
+        warnings: ["demo-web: not checked out; its docs are not searched"],
+        skipped: [
+          { path: "brain/_inbox/leak.md", reason: "secret" },
+          { path: "brain/big.md", reason: "too large" },
+        ],
+      }),
+    );
+
+    await typeQuery("worktrees");
+
+    const text = await textSection("worktrees", "1");
+    const warning = within(text).getByText("demo-web: not checked out; its docs are not searched");
+    expect(warning.closest(".ah-banner")).not.toHaveAttribute("role");
+    expect(within(text).getByText("External content · not verified")).toBeInTheDocument();
+    expect(
+      within(text).getByText(
+        "2 files were not searched (a secret rule matched, too large, or unreadable).",
+      ),
+    ).toBeInTheDocument();
+    const which = within(text).getByRole("button", { name: "Show which" });
+    expect(which).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(which);
+    expect(which).toHaveAttribute("aria-expanded", "true");
+    expect(within(text).getByText("brain/_inbox/leak.md · secret")).toBeInTheDocument();
+    expect(within(text).getByText("brain/big.md · too large")).toBeInTheDocument();
+  });
+
+  it("search: says the 50 best are shown", async () => {
+    const results = Array.from({ length: 50 }, (_, i) =>
+      aKnowledgeResult({ path: `brain/notes/n${String(i)}.md`, title: `Note ${String(i)}` }),
+    );
+    openDemo(aKnowledgeSearch({ results }));
+
+    await typeQuery("worktrees");
+
+    const text = await textSection("worktrees", "50 best");
+    expect(
+      within(text).getByText("Showing the 50 best matches. Add a word to narrow the search."),
+    ).toBeInTheDocument();
+  });
+
+  it("search: shows a skeleton, then says a first search can take a few seconds", async () => {
+    openDemo("pending");
+
+    await typeQuery("worktrees");
+
+    const tree = screen.getByRole("navigation", { name: "Brain notes" });
+    await vi.waitFor(() => {
+      expect(tree.querySelector("[aria-busy='true'] .ah-skel")).not.toBeNull();
+    });
+    expect(
+      await within(tree).findByText(
+        "Reading the hub's notes for this search. A first search after an update can take a few seconds.",
+        {},
+        { timeout: 3000 },
+      ),
+    ).toBeInTheDocument();
+    expect(within(tree).getByText("Searching notes")).toHaveClass("ah-sr");
+  });
+
+  it("search: moves between results with the arrow keys and j k", async () => {
+    const { router } = openDemo(aKnowledgeSearch({ results: worktreeResults() }));
+
+    const field = await typeQuery("worktrees");
+    const text = await textSection("worktrees", "3");
+    const paths = screen.getByRole("region", { name: "Paths matching “worktrees” · 1" });
+    const pathRow = within(paths).getByRole("link");
+    const decision = within(text).getByRole("link", { name: "Worktrees from origin" });
+    const cleanup = within(text).getByRole("link", { name: "Cleanup after merge" });
+    const guide = within(text).getByText("Repo guide").closest("li");
+
+    await userEvent.keyboard("{ArrowDown}");
+    expect(pathRow).toHaveFocus();
+    await userEvent.keyboard("j");
+    expect(decision).toHaveFocus();
+    await userEvent.keyboard("{ArrowDown}");
+    expect(cleanup).toHaveFocus();
+    await userEvent.keyboard("j");
+    expect(guide).toHaveFocus();
+    await userEvent.keyboard("k");
+    expect(cleanup).toHaveFocus();
+    await userEvent.keyboard("{ArrowUp}");
+    expect(decision).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+    expect(field).toHaveFocus();
+    expect(field).toHaveValue("worktrees");
+    await userEvent.keyboard("{ArrowDown}");
+    await userEvent.keyboard("{ArrowUp}");
+    expect(field).toHaveFocus();
+
+    await userEvent.keyboard("{ArrowDown}");
+    await userEvent.keyboard("j");
+    await userEvent.keyboard("{Enter}");
+    expect(router.state.location.pathname).toBe("/projects/demo/brain/decisions/0001-worktrees.md");
+  });
+
+  it("search: sends the search at once when Enter is pressed in the field", async () => {
+    const { requests } = openDemo(aKnowledgeSearch({ results: worktreeResults() }));
+    const tree = screen.getByRole("navigation", { name: "Brain notes" });
+    await within(tree).findByRole("link", { name: "Index" });
+    const field = within(tree).getByRole("searchbox", { name: "Search brain notes and repo docs" });
+
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    try {
+      fireEvent.change(field, { target: { value: "worktrees" } });
+      fireEvent.keyDown(field, { key: "Enter" });
+      await vi.advanceTimersByTimeAsync(10);
+      expect(searchQueries(requests)).toEqual(["worktrees"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("search panel has no serious a11y violations (a11y)", async () => {
+    const results = openDemo(
+      aKnowledgeSearch({
+        results: worktreeResults(),
+        warnings: ["demo-web: not checked out; its docs are not searched"],
+        skipped: [{ path: "brain/big.md", reason: "too large" }],
+      }),
+    );
+    await typeQuery("worktrees");
+    await textSection("worktrees", "3");
+    expect(await seriousViolations(results.container)).toEqual([]);
+    results.unmount();
+
+    const none = openDemo(aKnowledgeSearch());
+    await typeQuery("zebra");
+    await screen.findByText("Nothing matches “zebra”.", { selector: "p" });
+    expect(await seriousViolations(none.container)).toEqual([]);
+    none.unmount();
+
+    const failed = openDemo(aProblem({ status: 502, title: "Could not read the hub's files" }));
+    await typeQuery("cleanup");
+    await screen.findByRole("alert");
+    expect(await seriousViolations(failed.container)).toEqual([]);
   });
 });
 
