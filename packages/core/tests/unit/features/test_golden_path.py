@@ -32,7 +32,7 @@ from agent_hub.core.features.golden_path import (
     own_conditions,
 )
 from agent_hub.core.features.ticket_planning import ticket_board
-from agent_hub.core.features.ticket_records import ChangeRequests, change_requests
+from agent_hub.core.features.ticket_records import ChangeRequests, OutcomeFile, change_requests
 from agent_hub.core.features.ticket_snapshots import SnapshotRead
 from agent_hub.core.features.ticket_view import TicketRow
 from agent_hub.core.testing.read_model_builders import (
@@ -1101,3 +1101,55 @@ def test_serves_no_wait_when_owner_signed_off_or_found_more_work() -> None:
 
     assert _owner_wait(_WHOLE_OWNER, _SIGNOFF) is None
     assert _owner_wait(_WHOLE_OWNER, _TICKET_NO_SHIP, more_work) is None
+
+
+def _outcome_file(name: str, *, merged_at: str = "2026-10-22T08:00:00Z") -> OutcomeFile:
+    text = (
+        f"---\ntype: ticket-outcome\nticket: {name}\nmerged_at: {merged_at}\n"
+        "pr: demo-api#4\ndependents: []\n---\n# Outcome\n"
+    )
+    return OutcomeFile(name=name, read=text.encode())
+
+
+# two-level-flows AC-3.1, D-5: Build counts a ticket merged when its outcome exists.
+def test_counts_a_ticket_with_an_outcome_as_merged_when_linear_has_it_open() -> None:
+    rows = (_ticket(1, state=_DONE), _ticket(2, state=_STARTED), _ticket(3, state=_BACKLOG))
+    requests = _request(1, "ACME-1520", "T2, T3")
+
+    path = golden_path(_inputs(rows=rows, merged=frozenset({"T2"}), requests=requests))
+
+    build = _step(path, "build")
+    # T2 is merged by its outcome: no longer in progress, nor paused.
+    assert (build.state, build.meta) == ("current", "2 of 3 merged · 1 paused for a plan change")
+    assert build.progress is not None
+    assert (build.progress.done, build.progress.total) == (2, 3)
+
+
+def test_marks_build_done_without_linear_when_every_ticket_has_an_outcome() -> None:
+    rows = tuple(_ticket(number, state=None, reviewed=None) for number in range(1, 3))
+    every = frozenset({"ACME-1520", "T2"})
+
+    done = golden_path(_all_done(rows=rows, source="plan", merged=every))
+    some = golden_path(_all_done(rows=rows, source="plan", merged=frozenset({"T2"})))
+
+    assert (_step(done, "build").state, _step(done, "build").meta) == ("done", "2 of 2 merged")
+    assert done.phase == "shipped"
+    assert (_step(some, "build").state, _step(some, "build").meta) == (
+        "unknown",
+        LINEAR_NOT_CONNECTED,
+    )
+
+
+# The list, the detail and the tickets route fold the same outcomes; a malformed one counts nothing.
+def test_counts_only_readable_outcomes_when_feature_folder_holds_them() -> None:
+    read = _linear(_summary("ACME-1520", _STARTED), _summary("ACME-1521", _STARTED))
+    folder = _folder(
+        outcomes=(
+            _outcome_file("t1"),
+            _outcome_file("ACME-1521", merged_at="tomorrow"),
+        )
+    )
+
+    build = _step(feature_parts(folder, read, now=READ_TIME).golden_path, "build")
+
+    assert build.meta == "1 of 2 merged · 1 in progress"
