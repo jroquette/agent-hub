@@ -2,13 +2,17 @@
 
 Documents live in the ``knowledge_documents`` table of the hub web database and their title and
 body in the FTS5 table ``knowledge_text`` (migration 0008, ``rowid = knowledge_documents.id``).
+Each document's links to brain notes live in ``knowledge_links`` (migration 0009, AGH-393), one
+row per ``(hub, source, target)``.
 ``open_knowledge_index`` first checks that the interpreter's SQLite has FTS5, before any
 directory, migration or engine is touched, so a missing module is reported as itself and no
 database file is created (D-fts5).
 
 An ``apply`` runs in one ``BEGIN IMMEDIATE`` transaction (P-5): a row is upserted by its unique
 ``(hub, path)``, so concurrent syncs converge, and its text is deleted and, for a document,
-inserted again under its id. A search binds the hub, the kinds and an FTS5 ``MATCH`` string built
+inserted again under its id. A row's links are cleared with its text and, for a document,
+inserted again; a dropped row and a rebuilt hub lose theirs, a touched row keeps them (no foreign
+key does it). A search binds the hub, the kinds and an FTS5 ``MATCH`` string built
 only by ``fts5_match`` (each word quoted), so no caller text is SQL or FTS5 syntax.
 
 Database errors leave as ``DatabaseAccessError`` (``DatabaseBusyError`` past the busy
@@ -22,12 +26,14 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Final, Protocol
 
-from sqlalchemy import Connection, Engine, bindparam, delete, select, text, update
+from sqlalchemy import Connection, Engine, bindparam, delete, func, select, text, update
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
 from agent_hub.core.knowledge.knowledge_index import (
     KINDS,
+    Backlink,
+    Backlinks,
     Fingerprint,
     IndexChange,
     IndexedDocument,
@@ -38,7 +44,7 @@ from agent_hub.core.knowledge.knowledge_index import (
     StoredIndex,
 )
 from agent_hub.core.knowledge.search_query import fts5_match, snippet_line
-from agent_hub.storage.db import knowledge_documents
+from agent_hub.storage.db import knowledge_documents, knowledge_links
 from agent_hub.storage.engine import BUSY_TIMEOUT_MS, create_sqlite_engine
 from agent_hub.storage.errors import (
     DatabaseAccessError,
@@ -73,6 +79,17 @@ _DELETE_PATH_TEXT: Final = text(
 _DELETE_PATH: Final = delete(knowledge_documents).where(
     knowledge_documents.c.hub == bindparam("hub"),
     knowledge_documents.c.path == bindparam("path"),
+)
+_DELETE_LINKS: Final = delete(knowledge_links).where(
+    knowledge_links.c.hub == bindparam("hub"),
+    knowledge_links.c.source == bindparam("path"),
+)
+_INSERT_LINK: Final = (
+    insert(knowledge_links)
+    .values(hub=bindparam("hub"), source=bindparam("source"), target=bindparam("target"))
+    .on_conflict_do_nothing(
+        index_elements=[knowledge_links.c.hub, knowledge_links.c.source, knowledge_links.c.target]
+    )
 )
 _DELETE_HUB_TEXT: Final = text(
     "DELETE FROM knowledge_text WHERE rowid IN "
@@ -141,11 +158,13 @@ class SqliteKnowledgeIndex:
             if change.rebuild:
                 connection.execute(_DELETE_HUB_TEXT, {"hub": hub})
                 connection.execute(delete(table).where(table.c.hub == hub))
+                connection.execute(delete(knowledge_links).where(knowledge_links.c.hub == hub))
             for document in change.documents:
                 row_id = _upsert(connection, hub, _document_row(document, version))
                 connection.execute(
                     _INSERT_TEXT, {"id": row_id, "title": document.title, "body": document.body}
                 )
+                _insert_links(connection, hub, document)
             for skipped in change.skipped:
                 if skipped.fingerprint is None:
                     _drop(connection, hub, (skipped.path,))
@@ -189,6 +208,30 @@ class SqliteKnowledgeIndex:
             )
             for row in rows
         )
+
+    def backlinks(self, hub: str, target: str, *, limit: int) -> Backlinks:
+        """The hub's documents linking to ``target``, by path, at most ``limit``, all counted."""
+        links = knowledge_links
+        documents = knowledge_documents
+        joined = links.join(
+            documents, (documents.c.hub == links.c.hub) & (documents.c.path == links.c.source)
+        )
+        linking = (links.c.hub == hub) & (links.c.target == target)
+        page = (
+            select(documents.c.path, documents.c.kind, documents.c.title)
+            .select_from(joined)
+            .where(linking)
+            .order_by(documents.c.path)
+            .limit(limit)
+        )
+        count = select(func.count()).select_from(joined).where(linking)
+        with self._reading() as connection:
+            rows = connection.execute(page).mappings().all()
+            total = int(connection.execute(count).scalar_one())
+        items = tuple(
+            Backlink(path=row["path"], kind=row["kind"], title=row["title"]) for row in rows
+        )
+        return Backlinks(items=items, total=total)
 
     @contextmanager
     def _writing(self) -> Iterator[Connection]:
@@ -276,7 +319,7 @@ def _skipped_row(skipped: SkippedFile, fingerprint: Fingerprint, version: int) -
 
 
 def _upsert(connection: Connection, hub: str, row: dict[str, Any]) -> int:
-    """Write the row of ``(hub, row["path"])`` and drop its text; its id."""
+    """Write the row of ``(hub, row["path"])`` and drop its text and links; its id."""
     table = knowledge_documents
     statement = (
         insert(table)
@@ -286,17 +329,28 @@ def _upsert(connection: Connection, hub: str, row: dict[str, Any]) -> int:
     )
     row_id = int(connection.execute(statement).scalar_one())
     connection.execute(_DELETE_TEXT, {"id": row_id})
+    connection.execute(_DELETE_LINKS, {"hub": hub, "path": row["path"]})
     return row_id
 
 
+def _insert_links(connection: Connection, hub: str, document: IndexedDocument) -> None:
+    """Write the document's distinct links, each once, in reading order."""
+    if not document.links:
+        return
+    targets = dict.fromkeys(document.links)
+    rows = [{"hub": hub, "source": document.path, "target": target} for target in targets]
+    connection.execute(_INSERT_LINK, rows)
+
+
 def _drop(connection: Connection, hub: str, paths: tuple[str, ...]) -> None:
-    """Delete the rows of ``paths`` in the hub, and their text."""
+    """Delete the rows of ``paths`` in the hub, and their text and links."""
     if not paths:
         return
     # One statement per path (executemany), never ``path IN (…)``: a list of paths can be
     # longer than the variables SQLite binds in one statement.
     rows = [{"hub": hub, "path": path} for path in paths]
     connection.execute(_DELETE_PATH_TEXT, rows)
+    connection.execute(_DELETE_LINKS, rows)
     connection.execute(_DELETE_PATH, rows)
 
 

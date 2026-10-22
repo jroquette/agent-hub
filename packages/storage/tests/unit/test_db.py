@@ -13,6 +13,7 @@ from agent_hub.storage.db import (
     is_declared_table,
     item_versions,
     knowledge_documents,
+    knowledge_links,
     metadata,
 )
 
@@ -24,6 +25,7 @@ def test_declares_events_table_when_metadata_loaded() -> None:
         "agent_session_records",
         "item_versions",
         "knowledge_documents",
+        "knowledge_links",
     }
     required = {
         "id",
@@ -183,6 +185,25 @@ def test_declares_knowledge_documents_when_metadata_read() -> None:
     assert [(item.name, [column.name for column in item.columns]) for item in unique] == [
         ("uq_knowledge_documents_hub_path", ["hub", "path"])
     ]
+
+
+def test_declares_knowledge_links_when_metadata_read() -> None:
+    columns = [column.name for column in knowledge_links.columns]
+    assert columns == ["id", "hub", "source", "target"]
+    assert not any(column.nullable for column in knowledge_links.columns)
+    assert [column.name for column in knowledge_links.primary_key] == ["id"]
+    assert isinstance(knowledge_links.c.id.type, Integer)
+    assert all(
+        isinstance(column.type, String) for column in knowledge_links.columns if column.name != "id"
+    )
+    assert not knowledge_links.foreign_keys
+    unique = [item for item in knowledge_links.constraints if isinstance(item, UniqueConstraint)]
+    assert [(item.name, [column.name for column in item.columns]) for item in unique] == [
+        ("uq_knowledge_links_hub_source_target", ["hub", "source", "target"])
+    ]
+    assert {
+        index.name: [column.name for column in index.columns] for index in knowledge_links.indexes
+    } == {"ix_knowledge_links_hub_target": ["hub", "target"]}
 
 
 def test_skips_fts_tables_when_names_reflected() -> None:

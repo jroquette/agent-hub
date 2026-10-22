@@ -1,6 +1,6 @@
 """The SQLite knowledge index on a real file: the FTS5 probe, an unusable path, porter stemming,
 the snippet FTS5 cuts, drops past SQLite's variable limit, an apply that fails partway, and syncs
-through it (a version rebuild, two syncs at once)."""
+through it (a version rebuild, two syncs at once), with each document's links."""
 
 import hashlib
 import sqlite3
@@ -14,6 +14,7 @@ import pytest
 
 from agent_hub.core.knowledge.knowledge_index import (
     INDEX_VERSION,
+    MAX_BACKLINKS,
     Fingerprint,
     IndexChange,
     IndexedDocument,
@@ -23,7 +24,11 @@ from agent_hub.core.knowledge.search_query import MAX_RESULTS, MAX_SNIPPET_CHARS
 from agent_hub.core.knowledge.sync_knowledge import sync_knowledge
 from agent_hub.core.testing.knowledge_fakes import FakeKnowledgeCheckout
 from agent_hub.storage.errors import DatabaseAccessError, Fts5UnavailableError, StorageError
-from agent_hub.storage.knowledge_index import fts5_available, open_knowledge_index
+from agent_hub.storage.knowledge_index import (
+    SqliteKnowledgeIndex,
+    fts5_available,
+    open_knowledge_index,
+)
 
 NO_FTS5: Final = "no such module: fts5"
 HUB: Final = "/hubs/demo"
@@ -223,6 +228,98 @@ def test_keeps_one_row_per_file_when_syncs_run_concurrently(tmp_path: Path) -> N
     assert rowids == ids
     hits = indexes[0].search(HUB, ("changed",), limit=MAX_RESULTS)
     assert [hit.path for hit in hits] == ["brain/playbooks/b.md"]
+
+
+NOW: Final = "brain/now.md"
+CLEANUP: Final = "brain/playbooks/c.md"
+
+
+def _a_linked_checkout(before_read: Callable[[str], None] | None = None) -> FakeKnowledgeCheckout:
+    checkout = FakeKnowledgeCheckout(before_read=before_read)
+    checkout.write("brain/playbooks/a.md", b"marker a, see [now](../now.md)")
+    checkout.write("brain/playbooks/b.md", b"marker b, see [now](../now.md) and [c](c.md)")
+    checkout.write(CLEANUP, b"marker c")
+    return checkout
+
+
+def _backlinks(index: SqliteKnowledgeIndex, target: str) -> list[str]:
+    return [item.path for item in index.backlinks(HUB, target, limit=MAX_BACKLINKS).items]
+
+
+def _rows_per_link(path: Path) -> dict[tuple[str, str], int]:
+    connection = sqlite3.connect(path)
+    try:
+        rows = connection.execute(
+            "SELECT source, target, COUNT(*) FROM knowledge_links WHERE hub = ? "
+            "GROUP BY source, target",
+            (HUB,),
+        ).fetchall()
+    finally:
+        connection.close()
+    return {(source, target): count for source, target, count in rows}
+
+
+def test_rebuilds_links_when_stored_version_older(tmp_path: Path) -> None:
+    path = tmp_path / "events.db"
+    index = open_knowledge_index(path)
+    checkout = _a_linked_checkout()
+    sync_knowledge(index, checkout, HUB)
+    connection = sqlite3.connect(path)
+    try:
+        with connection:
+            # A hub indexed before links were stored: version 1 rows, no link rows.
+            connection.execute("UPDATE knowledge_documents SET index_version = ?", (1,))
+            connection.execute("DELETE FROM knowledge_links")
+    finally:
+        connection.close()
+    assert _backlinks(index, NOW) == []
+
+    report = sync_knowledge(index, checkout, HUB)
+
+    assert report.read == report.listed == 3
+    assert index.stored(HUB).version == INDEX_VERSION == 2
+    assert _backlinks(index, NOW) == ["brain/playbooks/a.md", "brain/playbooks/b.md"]
+    assert _backlinks(index, CLEANUP) == ["brain/playbooks/b.md"]
+
+
+def test_converges_links_when_syncs_run_concurrently(tmp_path: Path) -> None:
+    path = tmp_path / "events.db"
+    barrier = threading.Barrier(2)
+    armed = threading.Event()
+
+    def meet(_: str) -> None:
+        # Both syncs have planned the same reads before either writes.
+        if armed.is_set():
+            barrier.wait(timeout=10)
+
+    checkout = _a_linked_checkout(meet)
+    sync_knowledge(open_knowledge_index(path), checkout, HUB)
+    expected = {
+        ("brain/playbooks/a.md", NOW): 1,
+        ("brain/playbooks/b.md", NOW): 1,
+        ("brain/playbooks/b.md", CLEANUP): 1,
+    }
+    assert _rows_per_link(path) == expected
+    checkout.write("brain/playbooks/b.md", b"marker changed, see [now](../now.md) and [c](c.md)")
+    indexes = (open_knowledge_index(path), open_knowledge_index(path))
+
+    armed.set()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        running = [pool.submit(sync_knowledge, index, checkout, HUB) for index in indexes]
+        reports = [future.result(timeout=30) for future in running]
+    synced = _rows_per_link(path)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        running = [
+            pool.submit(sync_knowledge, index, checkout, HUB, rebuild=True) for index in indexes
+        ]
+        rebuilt = [future.result(timeout=30) for future in running]
+
+    assert [(report.read, report.indexed) for report in reports] == [(1, 1), (1, 1)]
+    assert [(report.read, report.indexed) for report in rebuilt] == [(3, 3), (3, 3)]
+    assert synced == expected
+    assert _rows_per_link(path) == expected
+    assert _backlinks(indexes[0], NOW) == ["brain/playbooks/a.md", "brain/playbooks/b.md"]
+    assert _backlinks(indexes[1], CLEANUP) == ["brain/playbooks/b.md"]
 
 
 def test_drops_rows_and_text_when_paths_exceed_sql_variable_limit(tmp_path: Path) -> None:

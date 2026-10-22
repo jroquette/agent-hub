@@ -34,7 +34,7 @@ def test_states_bounds_when_constants_read() -> None:
     assert MAX_META_CHARS == 200
     assert MAX_LISTED_FILES == 20_000
     assert MAX_LISTING_BYTES == 64 * 1024 * 1024
-    assert INDEX_VERSION == 1
+    assert INDEX_VERSION == 2
     assert MAX_RESULTS == 50
     assert MAX_SNIPPET_CHARS == 160
     assert len(KINDS) == 10
