@@ -613,6 +613,33 @@
     "workflows/issue-to-pr/prompts/implement.md": {
       "ownership": "seeded"
     },
+    "workflows/review-incoming/prompts/draft.md": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/prompts/quality-lens.md": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/prompts/security-lens.md": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/prompts/spec-lens.md": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/review-incoming.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/scripts/check.py": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/scripts/fetch.py": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/scripts/review.py": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/scripts/surface.py": {
+      "ownership": "seeded"
+    },
     "workflows/sdlc/deliver.yaml": {
       "ownership": "seeded"
     },

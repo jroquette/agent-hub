@@ -167,6 +167,15 @@ DESIGN_PATHS = (
     "workflows/issue-to-pr/fixtures/pr-failure.yaml",
     "workflows/issue-to-pr/issue-to-pr.yaml",
     "workflows/issue-to-pr/prompts/implement.md",
+    "workflows/review-incoming/prompts/draft.md",
+    "workflows/review-incoming/prompts/quality-lens.md",
+    "workflows/review-incoming/prompts/security-lens.md",
+    "workflows/review-incoming/prompts/spec-lens.md",
+    "workflows/review-incoming/review-incoming.yaml",
+    "workflows/review-incoming/scripts/check.py",
+    "workflows/review-incoming/scripts/fetch.py",
+    "workflows/review-incoming/scripts/review.py",
+    "workflows/review-incoming/scripts/surface.py",
     "workflows/sdlc/deliver.yaml",
     "workflows/sdlc/fixtures/deliver-blocked.yaml",
     "workflows/sdlc/fixtures/deliver-check-error.yaml",
@@ -836,6 +845,8 @@ def test_parses_as_python39_when_rendered(demo_render: dict[str, RenderedFile]) 
         "plugin/demo/hooks",
         "plugin/hub-workflow/hooks",
         "scripts",
+        # The review-incoming pack's helpers (AGH-493), as the sdlc pack's, parse as 3.9.
+        "workflows/review-incoming/scripts",
         # The sdlc pack's helpers (AGH-229), run by uv on its Python, also parse as 3.9.
         "workflows/sdlc/scripts",
     }
