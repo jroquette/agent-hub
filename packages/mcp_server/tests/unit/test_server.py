@@ -484,8 +484,56 @@ def test_refuses_input_before_port_when_out_of_bounds() -> None:
         "propose: the title has no letters or digits for a file name",
         "propose: the body is empty",
     ]
-    assert texts[5].startswith("Error executing tool propose:")
+    assert texts[5] == "propose: invalid arguments (kind)"
     assert hub.change_requests.calls == []
+
+
+def test_answers_field_names_only_when_schema_rejects_arguments() -> None:
+    hub = _Hub()
+    title, body, query = "Quokkamarker title", "Wombatmarker body", "zebracornmarker" * 34
+    no_external = {"title": title, "body": body, "kind": "playbook"}
+
+    answers = hub.run(
+        _calls(
+            ("propose", no_external),
+            ("propose", {"title": title}),
+            ("search", {"query": query}),
+            ("read", {"path": 42}),
+            ("read", {}),
+            ("search", {"query": "fetch"}),
+        )
+    )
+
+    assert [result.is_error for result in answers] == [True] * 5 + [False]
+    assert [_text(result) for result in answers[:5]] == [
+        "propose: invalid arguments (external)",
+        "propose: invalid arguments (body, external, kind)",
+        "search: invalid arguments (query)",
+        "read: invalid arguments (path)",
+        "read: invalid arguments (path)",
+    ]
+    dumped = "\n".join(result.model_dump_json() for result in answers[:5])
+    assert not any(marker in dumped for marker in ("Quokkamarker", "Wombatmarker", "zebracorn"))
+    assert "Error executing" not in dumped
+    assert hub.change_requests.calls == []
+
+
+def test_logs_error_line_when_schema_rejects_call() -> None:
+    hub = _Hub()
+
+    hub.run(
+        _calls(
+            ("propose", {"title": "Quokkamarker title", "body": "Wombatmarker body"}),
+            ("read", {"path": 42}),
+        )
+    )
+
+    log = hub.log.getvalue()
+    assert [re.sub(r"\d+ms$", "<n>ms", line) for line in log.splitlines()] == [
+        "hub mcp: propose error <n>ms",
+        "hub mcp: read error <n>ms",
+    ]
+    assert "marker" not in log
 
 
 def test_returns_one_line_error_when_tool_refuses() -> None:
