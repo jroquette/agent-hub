@@ -598,6 +598,9 @@
     "workflows/doc-drift/fixtures/drift-renamed-command.yaml": {
       "ownership": "seeded"
     },
+    "workflows/doc-drift/prompts/judge.md": {
+      "ownership": "seeded"
+    },
     "workflows/doc-drift/scripts/branch.py": {
       "ownership": "seeded"
     },
