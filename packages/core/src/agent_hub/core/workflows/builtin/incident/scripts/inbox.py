@@ -18,16 +18,20 @@ the owner. A draft never replaces a file: one already there exits 1 and names it
 input exits 2.
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
 import re
 import sys
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 INBOX = Path("brain", "_inbox")
+# Not datetime.UTC: the hub's copy also imports on Python 3.9.
+UTC = timezone.utc  # noqa: UP017
 OWNER_APPLIES = (
     "The pack records the chosen mitigation; applying it is the owner's step through /fix"
     " (or /change)."

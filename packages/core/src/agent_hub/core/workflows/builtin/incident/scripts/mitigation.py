@@ -16,6 +16,8 @@ owner's own text. Exit 0; exit 2 on malformed input or when a blank text finds n
 mitigation.
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import re
