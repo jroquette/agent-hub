@@ -221,9 +221,9 @@ DESIGN_PATHS = (
     "workflows/security-sweep/fixtures/sweep-nothing-new.yaml",
     "workflows/security-sweep/fixtures/sweep-triage-failed.yaml",
     "workflows/security-sweep/prompts/triage.md",
-    "workflows/security-sweep/scripts/new.py",
     "workflows/security-sweep/scripts/report.py",
     "workflows/security-sweep/scripts/scan.py",
+    "workflows/security-sweep/scripts/unseen.py",
     "workflows/security-sweep/security-sweep.yaml",
 )
 # AGH-19 spec "The rendered set": the base plugin's agents, by file stem, and its skills, by

@@ -93,9 +93,9 @@ SEEDED_PACK_FILES = (
     "security-sweep/fixtures/sweep-nothing-new.yaml",
     "security-sweep/fixtures/sweep-triage-failed.yaml",
     "security-sweep/prompts/triage.md",
-    "security-sweep/scripts/new.py",
     "security-sweep/scripts/report.py",
     "security-sweep/scripts/scan.py",
+    "security-sweep/scripts/unseen.py",
     "security-sweep/security-sweep.yaml",
 )
 CORE_SOURCES |= {
