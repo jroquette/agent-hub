@@ -49,7 +49,7 @@ class InMemoryAgentSessionStore:
     def update(self, agent_session_id: str, **fields: Unpack[AgentSessionFields]) -> AgentSession:
         """Change some fields, validated as the model says."""
         session = self.get(agent_session_id)
-        updated = AgentSession.model_validate(session.model_dump() | dict(fields))
+        updated = session.with_fields(fields)
         self._sessions[agent_session_id] = updated
         return updated
 

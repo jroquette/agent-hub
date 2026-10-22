@@ -46,6 +46,7 @@ from agent_hub.claude_sessions.process_tree import terminate
 from agent_hub.claude_sessions.resumable import SessionLister, list_resumable, sdk_lister
 from agent_hub.core.agent_sessions.driver import (
     ACTIVITY_EVENTS,
+    READ_ONLY_TOOLS,
     DriverAnswer,
     DriverCapabilities,
     DriverError,
@@ -166,7 +167,8 @@ class ClaudeSdkSessionDriver:
         if cli is None:
             raise SessionsUnavailableError(NO_CLAUDE)
         queue: asyncio.Queue[DriverEvent] = asyncio.Queue()
-        bridge = PermissionBridge(queue.put_nowait)
+        allowed = frozenset(READ_ONLY_TOOLS) if spec.tool_access == "read_only" else None
+        bridge = PermissionBridge(queue.put_nowait, allowed=allowed)
         options = sdk_options(
             spec,
             can_use_tool=bridge.can_use_tool,
