@@ -116,7 +116,9 @@ class InvestigationRestrictions:
         header = records[0]
         run_id = str(header.get("run"))
         try:
-            policy = ToolPolicy.of(hub=hub, env_files=declared.env_files, run_id=run_id)
+            policy = ToolPolicy.of(
+                hub=hub, repos=declared.repos, env_files=declared.env_files, run_id=run_id
+            )
         except WorkspaceRootError as error:
             raise RunConflictError(
                 code="workspace_root", reason=str(error), run_id=run_id
@@ -161,8 +163,8 @@ class InvestigationRestrictions:
 
     def _linked(self, session: AgentSession) -> tuple[str, Path, int] | None:
         """The hub, run folder and investigation number of the link naming ``session``. Only
-        folders holding an ``investigation-<n>.session`` are read; one that vanishes while
-        read is skipped; any other read error (an unreadable link included) raises
+        folders holding an ``investigation-<n>.session`` are read; a folder or a link that
+        vanishes while read is skipped; any other read error (an unreadable link included) raises
         ``OSError``, so the caller refuses rather than reopen unrestricted."""
         for project, hub in self._credentials.project_hubs():
             runs = Path(hub) / RUN_FOLDERS
@@ -171,17 +173,9 @@ class InvestigationRestrictions:
             for folder in _entries(runs):
                 if not folder.is_dir() or folder.is_symlink():
                     continue
-                try:
-                    links = [
-                        (link, named)
-                        for link in _entries(folder)
-                        if (named := LINK_PATTERN.fullmatch(link.name))
-                    ]
-                    for link, named in links:
-                        if _read_link(link) == session.id:
-                            return hub, folder, int(named.group(1))
-                except FileNotFoundError:
-                    continue
+                number = _link_in(folder, session.id)
+                if number is not None:
+                    return hub, folder, number
         return None
 
 
@@ -337,6 +331,26 @@ def _read_link(link: Path) -> str | None:
     with os.fdopen(descriptor, "rb") as file:
         text = file.read(_LINK_BYTES).decode("ascii", errors="replace").strip()
     return text if _SESSION_ID.fullmatch(text) else None
+
+
+def _link_in(folder: Path, session_id: str) -> int | None:
+    """The number of the ``investigation-<n>.session`` in ``folder`` naming ``session_id``; a
+    folder or a link that vanishes while read is skipped, other read errors raise."""
+    try:
+        entries = _entries(folder)
+    except FileNotFoundError:
+        return None
+    for link in entries:
+        named = LINK_PATTERN.fullmatch(link.name)
+        if named is None:
+            continue
+        try:
+            linked = _read_link(link)
+        except FileNotFoundError:
+            continue
+        if linked == session_id:
+            return int(named.group(1))
+    return None
 
 
 def _entries(folder: Path) -> list[Path]:

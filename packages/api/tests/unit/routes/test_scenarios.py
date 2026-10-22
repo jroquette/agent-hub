@@ -145,6 +145,11 @@ def test_starts_one_read_only_session_when_investigation_requested_twice(
     assert spec.tool_policy.env_files == (str(env_file),)
     assert spec.tool_policy.run_id == RUN
     assert spec.tool_policy.workdir == str(hub.resolve())
+    # Reads stay in the hub and its declared repos, never the folder holding them (E-13).
+    assert spec.tool_policy.read_roots == (
+        str(hub.resolve()),
+        str((hub.parent / "demo-api").resolve()),
+    )
     assert spec.hidden_environment.env == frozenset({"DEMO_DB_URL", "DEMO_LIVE_DB_URL"})
     assert "demo-staging" in spec.hidden_environment.aws_profiles
     assert spec.system_prompt is not None
@@ -517,3 +522,63 @@ def test_names_registry_when_credential_injection_registry_unreadable(wired: Any
     assert "registry" in response.json()["detail"]
     assert "hub.local.json" not in response.json()["detail"]
     assert _starts(rig) == []
+
+
+def test_returns_409_conflict_when_investigation_policy_refused(
+    wired: Any, investigation: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rig, hub = investigation(a_record())
+    # A hub that is the home folder: reads there would reach the developer's own credentials.
+    monkeypatch.setenv("HOME", str(hub))
+
+    response = wired.client.post(ROUTE, json={}, headers=_origin(wired))
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "workspace_root"
+    assert response.json()["type"] == "urn:agent-hub:problem:workflow-run-workspace-root"
+    assert _starts(rig) == []
+    assert not (hub / LINK).exists()
+
+
+def a_second_investigation_record() -> list[dict[str, Any]]:
+    """A scenario run whose first investigation was retried and whose second is open."""
+    return [
+        *a_record(),
+        {"event": "decision", "node": GATE, "attempt": 1, "choice": "retry"},
+        {"event": "step_end", "node": GATE, "attempt": 1, "status": "ok"},
+        {"event": "step_start", "node": STEP, "attempt": 2},
+        {"event": "step_end", "node": STEP, "attempt": 2, "status": "failed"}
+        | {"failure_kind": "timeout"},
+        {"event": "investigation", "step": STEP, "gate": GATE, "number": 2}
+        | {"step_attempt": 2, "failure_kind": "timeout"},
+        {"event": "gate", "node": GATE, "attempt": 2, "form": "choice"},
+    ]
+
+
+def test_finds_later_link_when_investigation_earlier_link_vanishes(
+    wired: Any, investigation: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    record = a_second_investigation_record()
+    first, hub = investigation(record)
+    started = wired.client.post(ROUTE, json={}, headers=_origin(wired)).json()
+    assert started["investigation"] == 2
+    folder = hub / ".agent-runs" / "workflows" / RUN
+    vanishing = folder / "investigation-1.session"
+    vanishing.write_text(f"{UNKNOWN_SESSION}\n", encoding="utf-8")
+    driver, store = _restart(first, started["agent_session_id"])
+    fresh, _hub = investigation(record, store=store, hub=hub, driver=driver)
+    read = scenario_investigation._read_link
+
+    def vanish(link: Path) -> str | None:
+        if link == vanishing:
+            raise FileNotFoundError(2, "No such file or directory")
+        return read(link)
+
+    monkeypatch.setattr(scenario_investigation, "_read_link", vanish)
+
+    sent = _message(wired, started["agent_session_id"])
+
+    assert sent.status_code == 202
+    (spec,) = _starts(fresh)
+    assert spec.tool_policy is not None
+    assert spec.tool_policy.run_id == RUN
