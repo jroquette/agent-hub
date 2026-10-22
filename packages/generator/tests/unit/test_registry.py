@@ -45,6 +45,7 @@ SEEDED_PACK_FILES = (
     "post-merge-verify/fixtures/verify-regression.yaml",
     "post-merge-verify/post-merge-verify.yaml",
     "post-merge-verify/scripts/selection.py",
+    "post-merge-verify/scripts/verify.py",
     "sdlc/deliver.yaml",
     "sdlc/fixtures/deliver-blocked.yaml",
     "sdlc/fixtures/deliver-check-error.yaml",
