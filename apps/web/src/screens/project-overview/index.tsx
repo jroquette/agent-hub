@@ -711,8 +711,13 @@ function RecentWorkSection({ project, hubPath }: { project: string; hubPath: str
 
   const sessionItems = sessions.data?.items ?? [];
   const featureItems = features.data?.items ?? [];
-  const featureIssues = new Set(
-    featureItems.flatMap((f) => f.issues.map((i) => issueId(i).toUpperCase())),
+  const featureIssues = new Map(
+    featureItems.flatMap((f) =>
+      f.issues.map(
+        (i) =>
+          [issueId(i).toUpperCase(), { project: f.project, slug: f.slug, title: null }] as const,
+      ),
+    ),
   );
   // Only the runs listed in "Tickets the agents are working on" are left out here.
   const runIssues = new Set(

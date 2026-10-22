@@ -615,3 +615,34 @@
     display: none;
   }
 }
+
+/* Tickets list: the sessions of one ticket, opened from its row's "N sessions" toggle. */
+.tk-row-meta {
+  grid-template-columns: auto 72px;
+}
+.tk-sessions-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.tk-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-left: 2px solid var(--border);
+  cursor: default;
+}
+.tk-session {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.tk-session-what {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

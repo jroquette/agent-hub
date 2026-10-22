@@ -147,6 +147,9 @@ export function recentTickets(
   now: number,
 ): TicketRow[] {
   return rows.filter(
-    (row) => now - Date.parse(row.lastActivityAt) <= WEEK_MS && !runIssues.has(row.issue),
+    (row) =>
+      row.kind !== "feature" &&
+      now - Date.parse(row.lastActivityAt) <= WEEK_MS &&
+      !runIssues.has(row.issue),
   );
 }
