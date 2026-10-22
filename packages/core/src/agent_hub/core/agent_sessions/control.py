@@ -99,6 +99,7 @@ from agent_hub.core.agent_sessions.errors import (
     LogFullError,
     MessageTooLargeError,
     PermissionAnsweredError,
+    RestrictionUnreadableError,
     SessionLiveError,
     SessionModeLockedError,
     SessionRestrictionError,
@@ -706,13 +707,18 @@ class AgentSessionControl:
 
     async def _learn_restriction(self, session: AgentSession) -> None:
         """Whether a session this server forgot (a restart) is held to a restriction, asked of
-        ``restriction_of`` once per session, so its page offers no mode switch before a reopen
-        (E-15). A link that names it but cannot be rebuilt still marks it; an answer of none
-        is remembered (a session is linked only when it starts)."""
-        if self._restriction_of is None or session.id in self._unrestricted:
+        ``restriction_of`` so its page offers no mode switch before a reopen (E-15). A link
+        that names it but cannot be rebuilt marks it, and is not asked again; an answer of
+        none is remembered (a session is linked only when it starts); a read that could not
+        tell (``RestrictionUnreadableError``) marks and remembers nothing, so it is asked
+        again on the next read."""
+        known = session.id in self._unrestricted or session.id in self._restricted_unbuilt
+        if self._restriction_of is None or known:
             return
         try:
             kept = await self._restriction(session)
+        except RestrictionUnreadableError:
+            return
         except SessionRestrictionError:
             self._restricted_unbuilt.add(session.id)
             return
@@ -726,6 +732,9 @@ class AgentSessionControl:
             kept = await asyncio.to_thread(self._restriction_of, session)
             if kept is not None:
                 self._restrictions[session.id] = kept
+            else:
+                # Rebuilt as free (a reopen): an earlier unbuilt mark no longer holds.
+                self._restricted_unbuilt.discard(session.id)
         return kept
 
     async def _hidden(self, project: str) -> CredentialNames:
@@ -1153,7 +1162,13 @@ class AgentSessionControl:
                 **digest.fields(),
             }
             hidden = await self._hidden(session.project)
-            kept = await self._restriction(session)
+            try:
+                kept = await self._restriction(session)
+            except RestrictionUnreadableError as error:
+                # No registered hub names its project: nothing links it; a failed read refuses.
+                if error.refuses_reopen:
+                    raise
+                kept = None
             reopened = await asyncio.to_thread(lambda: self._store.update(session.id, **fields))
             spec = StartSpec(
                 cwd=resolved.path,
