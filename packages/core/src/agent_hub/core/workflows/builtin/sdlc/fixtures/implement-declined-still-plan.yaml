@@ -4,13 +4,13 @@ workflow: implement
 inputs:
   feature: demo-flow
   issue: DEM-1
-  repo: demo-api
   issue_text: "```text\nid: DEM-1\n```"
 stubs:
   context:
-    output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-1/brief.md, hub: /ws/hub, base: origin/trunk}
+    output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-1/brief.md, hub: /ws/hub, repo: demo-api,
+      commit: 0a1b2c3d4e}
   pending:
-    output: {request: null, decision: '', input: none, note: '', summary: ''}
+    output: {request: null, decision: '', input: none, note: '', summary: '', superseded: ''}
   pass-1__preflight:
     output:
       drift: plan
@@ -41,11 +41,12 @@ stubs:
     output: {runs: 2}
   pass-1__outcome:
     output: {status: blocked, question: 'plan drift remains after the owner''s decision on the plan change:
-        the next /implement opens a new change request', discovery: '', verdict: '', path: '', base: '',
-      target: null}
+        the next /implement opens a new change request', verdict: '', next_input: '', next_text: '', superseded: '',
+      path: '', base: '', target: null}
   last:
     output: {status: blocked, question: 'plan drift remains after the owner''s decision on the plan change:
-        the next /implement opens a new change request', verdict: '', pass: 1, path: '', base: '', target: null}
+        the next /implement opens a new change request', verdict: '', pass: 1, path: '', base: '', target: null,
+      superseded: ''}
   report:
     output: {delivery: blocked, stage: implementing, reason: 'the implementing session stopped: plan drift
         remains after the owner''s decision on the plan change: the next /implement opens a new change
@@ -62,6 +63,7 @@ stubs:
       pr: ''
       summary: ''
       hub_files: [change-requests/1.decision.md, change-requests/1.md, tickets/DEM-1/brief.md, tickets/DEM-1/preflight.json]
+      superseded: ''
 expect: {status: done, outcome: blocked}
 reached: [context, pending, pass-1__preflight, pass-1__request, pass-1__record, pass-1__gate, pass-1__declined,
   pass-1__recheck, pass-1__rerecord, pass-1__outcome, last, report, delivery]

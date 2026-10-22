@@ -5,13 +5,13 @@ workflow: implement
 inputs:
   feature: demo-flow
   issue: DEM-1
-  repo: demo-api
   issue_text: "```text\nid: DEM-1\n```"
 stubs:
   context:
-    output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-1/brief.md, hub: /ws/hub, base: origin/trunk}
+    output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-1/brief.md, hub: /ws/hub, repo: demo-api,
+      commit: 0a1b2c3d4e}
   pending:
-    output: {request: null, decision: '', input: none, note: '', summary: ''}
+    output: {request: null, decision: '', input: none, note: '', summary: '', superseded: ''}
   pass-1__preflight:
     output:
       drift: plan

@@ -56,6 +56,7 @@ IMPLEMENT_FIXTURES = (
     "implement-pending-decision-approved",
     "implement-pending-decision-declined",
     "implement-pending-declined-still-plan",
+    "implement-pending-superseded",
     "implement-plan-approved",
     "implement-plan-declined",
     "implement-plan-moved",
@@ -191,7 +192,7 @@ def test_reaches_the_built_in_fixtures_when_implement_tested_from_a_hub_with_a_s
     for fixture in IMPLEMENT_FIXTURES:
         assert f"<builtin>/sdlc/fixtures/{fixture}.yaml: ok" in tested.stdout
     assert "warning" not in tested.stdout
-    assert tested.stdout.endswith("16 fixtures: 16 passed, 0 failed\n")
+    assert tested.stdout.endswith("17 fixtures: 17 passed, 0 failed\n")
 
 
 def test_captures_a_decline_note_when_the_owner_answers_the_plan_change_gate() -> None:
@@ -505,12 +506,14 @@ def checked(output: str, workflow: str, node: str) -> Any:
 
 
 def rendered_argv(fixture: str, monkeypatch: pytest.MonkeyPatch) -> dict[str, set[tuple[str, str]]]:
-    """Each node's rendered argv in ``fixture``'s dry run, as its pairs of neighbouring items."""
+    """Each node's rendered argv in ``fixture``'s dry run, as its pairs of neighbouring items,
+    and an agent's ``with`` values as ``($WITH.<name>, value)``."""
     seen: dict[str, set[tuple[str, str]]] = {}
     original = dry_run._StubRunner.run
 
     def recording(self: Any, call: NodeCall) -> Any:
-        seen[call.node.id] = set(itertools.pairwise(call.argv))
+        bound = {(f"$WITH.{name}", str(value)) for name, value in call.context.with_values.items()}
+        seen[call.node.id] = set(itertools.pairwise(call.argv)) | bound
         return original(self, call)
 
     monkeypatch.setattr(dry_run._StubRunner, "run", recording)
@@ -526,6 +529,7 @@ def rendered_argv(fixture: str, monkeypatch: pytest.MonkeyPatch) -> dict[str, se
 
 
 NOTE = "Keep the handler where the plan says; add the route there."
+SUPERSEDED = "change request 1 approved but superseded by plan v2: not applied"
 
 
 @pytest.mark.parametrize(
@@ -535,10 +539,37 @@ NOTE = "Keep the handler where the plan says; add the route there."
             "implement-plan-approved",
             {
                 # The request the run opened is the run's, and the gate's approver decides it.
-                "pass-1__record": {("--request", "1"), ("--input", "none")},
+                # Main's commit ticket-brief read is what the preflight reads and records.
+                "pass-1__preflight": {("$WITH.base", "0a1b2c3d4e"), ("$WITH.input", "none")},
+                "pass-1__record": {
+                    ("--request", "1"),
+                    ("--input", "none"),
+                    ("--commit", "0a1b2c3d4e"),
+                },
+                "pass-1__request": {("--commit", "0a1b2c3d4e")},
+                "pass-1__worktree": {("--repo", "demo-api")},
                 "pass-1__approved": {("--decision", "approved"), ("--by", "Dana Owner")},
                 "pass-1__amend": {("--request", "1"), ("--summary", "T2 goes through routes.py")},
                 "pass-1__rerecord": {("--input", "approve"), ("--request", "1")},
+                "pass-1__recheck": {("$WITH.input", "approve")},
+            },
+        ),
+        (
+            "implement-plan-moved",
+            {
+                # The approval the plan moved past reaches the next check and the report (A23).
+                "pass-1__outcome": {("--superseded", SUPERSEDED)},
+                "pass-2__preflight": {("$WITH.input", "none"), ("$WITH.note", SUPERSEDED)},
+                "pass-2__record": {("--input", "none"), ("--input-text", SUPERSEDED)},
+                "delivery": {("--superseded", SUPERSEDED)},
+            },
+        ),
+        (
+            "implement-pending-superseded",
+            {
+                "pass-1__preflight": {("$WITH.note", SUPERSEDED)},
+                "pass-1__record": {("--input", "none"), ("--input-text", SUPERSEDED)},
+                "last": {("--superseded", SUPERSEDED)},
             },
         ),
         (
@@ -547,6 +578,7 @@ NOTE = "Keep the handler where the plan says; add the route there."
                 # The decline's note reaches the decision and the re-check (capture_response).
                 "pass-1__declined": {("--by", "Dana Owner"), ("--note", NOTE)},
                 "pass-1__rerecord": {("--input", "decline"), ("--input-text", NOTE)},
+                "pass-1__recheck": {("$WITH.input", "decline"), ("$WITH.note", NOTE)},
             },
         ),
         (
@@ -593,44 +625,79 @@ def a_rounds(*, status: str = "done", discovery: str = "", verdict: str | None =
     return json.dumps(rounds)
 
 
+STILL_PLAN = (
+    "plan drift remains after the owner's decision on the plan change:"
+    " the next /implement opens a new change request"
+)
+
+
 @pytest.mark.parametrize(
-    ("rounds", "worktree", "expected"),
+    ("rounds", "worktree", "superseded", "expected"),
     [
+        ("", "", "", {"status": "blocked", "question": STILL_PLAN, "target": None}),
         (
             "",
             "",
+            SUPERSEDED,
             {
-                "status": "blocked",
-                "question": "plan drift remains after the owner's decision on the plan change:"
-                " the next /implement opens a new change request",
+                "status": "superseded",
+                "next_input": "none",
+                "next_text": SUPERSEDED,
+                "superseded": SUPERSEDED,
                 "target": None,
             },
         ),
         (
             a_rounds(status="blocked", verdict=None),
             json.dumps(WORKTREE),
+            "",
             {"status": "blocked", "question": "which endpoint?", **WORKTREE},
         ),
         (
             a_rounds(discovery="T3 lists.", verdict=None),
             json.dumps(WORKTREE),
-            {"status": "discovery", "discovery": "T3 lists.", **WORKTREE},
+            "",
+            {
+                "status": "discovery",
+                "next_input": "discovery",
+                "next_text": "T3 lists.",
+                **WORKTREE,
+            },
         ),
-        (a_rounds(), json.dumps(WORKTREE), {"status": "done", "verdict": "PASS", **WORKTREE}),
+        (a_rounds(), json.dumps(WORKTREE), "", {"status": "done", "verdict": "PASS", **WORKTREE}),
     ],
 )
 def test_says_how_the_pass_ended_when_pass_outcome_script_reads_the_rounds(
-    tmp_path: Path, *, rounds: str, worktree: str, expected: dict[str, Any]
+    tmp_path: Path, *, rounds: str, worktree: str, superseded: str, expected: dict[str, Any]
 ) -> None:
-    result = a_script("pass_outcome.py", "--rounds", rounds, "--worktree", worktree, cwd=tmp_path)
+    args = ("--rounds", rounds, "--worktree", worktree, "--superseded", superseded)
+
+    result = a_script("pass_outcome.py", *args, cwd=tmp_path)
 
     assert result.returncode == 0, result.stderr
-    empty = {"status": "", "question": "", "discovery": "", "verdict": "", "path": "", "base": ""}
+    empty = {
+        "status": "",
+        "question": "",
+        "verdict": "",
+        "next_input": "",
+        "next_text": "",
+        "superseded": "",
+        "path": "",
+        "base": "",
+    }
     assert checked(result.stdout, "ticket-pass", "outcome") == empty | expected
 
 
-def a_pass(status: str, *, discovery: str = "", verdict: str = "") -> str:
-    found = {"status": status, "question": "", "discovery": discovery, "verdict": verdict}
+def a_pass(status: str, *, text: str = "", verdict: str = "", superseded: str = "") -> str:
+    following = {"discovery": "discovery", "superseded": "none"}.get(status, "")
+    found = {
+        "status": status,
+        "question": "",
+        "verdict": verdict,
+        "next_input": following,
+        "next_text": text,
+        "superseded": superseded,
+    }
     return json.dumps(found | WORKTREE)
 
 
@@ -642,24 +709,30 @@ def a_pass(status: str, *, discovery: str = "", verdict: str = "") -> str:
             {"status": "done", "verdict": "PASS", "pass": 1},
         ),
         (
-            (a_pass("discovery", discovery="A."), a_pass("done", verdict="PASS"), ""),
-            {"status": "done", "verdict": "PASS", "pass": 2},
+            (a_pass("superseded", text=SUPERSEDED, superseded=SUPERSEDED), a_pass("done"), ""),
+            {"status": "done", "pass": 2, "superseded": f"{SUPERSEDED}; {SUPERSEDED}"},
         ),
         (
-            (a_pass("discovery"), a_pass("discovery"), a_pass("discovery", discovery="C.")),
-            {"status": "blocked", "question": "a discovery in pass 3, the last one: C.", "pass": 3},
+            (a_pass("discovery"), a_pass("discovery"), a_pass("discovery", text="C.")),
+            {
+                "status": "blocked",
+                "question": "pass 3, the last one, asks for another: C.",
+                "pass": 3,
+            },
         ),
     ],
 )
-def test_reads_the_last_pass_and_blocks_a_third_discovery_when_last_pass_script_runs(
+def test_reads_the_last_pass_and_blocks_a_third_loop_when_last_pass_script_runs(
     tmp_path: Path, *, passes: tuple[str, ...], expected: dict[str, Any]
 ) -> None:
-    args = [item for text in passes for item in ("--pass", text)]
+    # The pending decision's superseded approval comes first.
+    args = ["--superseded", SUPERSEDED if "superseded" in expected else ""]
+    args += [item for text in passes for item in ("--pass", text)]
 
     result = a_script("last_pass.py", *args, cwd=tmp_path)
 
     assert result.returncode == 0, result.stderr
-    empty = {"question": "", "verdict": "", **WORKTREE}
+    empty = {"question": "", "verdict": "", "superseded": "", **WORKTREE}
     assert checked(result.stdout, "implement", "last") == empty | expected
 
 
@@ -713,6 +786,7 @@ def test_names_only_this_runs_hub_files_and_a_no_ship_when_delivery_script_runs(
         *("--report", json.dumps(report), "--feature", "demo-flow"),
         *("--brief", "brain/features/demo-flow/tickets/DEM-1/brief.md"),
         *("--eval", "NO-SHIP", "--eval-delivery", "dem-1", "--request", "3"),
+        *("--superseded", SUPERSEDED),
     )
     env = {"PATH": os.environ.get("PATH", ""), "AGENT_HUB_RUN_ID": "run-1"}
 
@@ -722,6 +796,7 @@ def test_names_only_this_runs_hub_files_and_a_no_ship_when_delivery_script_runs(
     assert checked(result.stdout, "implement", "delivery") == report | {
         "stage": "evaluating",
         "reason": "the ticket eval is NO-SHIP: no PR was opened",
+        "superseded": SUPERSEDED,
         "hub_files": [
             "change-requests/1.decision.md",
             "change-requests/1.md",

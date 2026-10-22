@@ -3,13 +3,13 @@ workflow: implement
 inputs:
   feature: demo-flow
   issue: DEM-1
-  repo: demo-api
   issue_text: "```text\nid: DEM-1\n```"
 stubs:
   context:
-    output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-1/brief.md, hub: /ws/hub, base: origin/trunk}
+    output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-1/brief.md, hub: /ws/hub, repo: demo-api,
+      commit: 0a1b2c3d4e}
   pending:
-    output: {request: null, decision: '', input: none, note: '', summary: ''}
+    output: {request: null, decision: '', input: none, note: '', summary: '', superseded: ''}
   pass-1__preflight:
     output:
       drift: none
@@ -87,8 +87,10 @@ stubs:
     output:
       status: done
       question: ''
-      discovery: ''
       verdict: PASS
+      next_input: ''
+      next_text: ''
+      superseded: ''
       path: /ws/demo-api/.claude/worktrees/dem-1
       base: origin/trunk
       target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
@@ -101,6 +103,7 @@ stubs:
       path: /ws/demo-api/.claude/worktrees/dem-1
       base: origin/trunk
       target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
+      superseded: ''
   eval:
     output:
       schema: agent-hub/eval/1
