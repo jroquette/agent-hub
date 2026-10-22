@@ -613,6 +613,12 @@
     "workflows/issue-to-pr/prompts/implement.md": {
       "ownership": "seeded"
     },
+    "workflows/retro/prompts/changes.md": {
+      "ownership": "seeded"
+    },
+    "workflows/retro/retro.yaml": {
+      "ownership": "seeded"
+    },
     "workflows/retro/scripts/drafts.py": {
       "ownership": "seeded"
     },

@@ -167,6 +167,8 @@ DESIGN_PATHS = (
     "workflows/issue-to-pr/fixtures/pr-failure.yaml",
     "workflows/issue-to-pr/issue-to-pr.yaml",
     "workflows/issue-to-pr/prompts/implement.md",
+    "workflows/retro/prompts/changes.md",
+    "workflows/retro/retro.yaml",
     "workflows/retro/scripts/drafts.py",
     "workflows/retro/scripts/metrics.py",
     "workflows/retro/scripts/vet.py",
