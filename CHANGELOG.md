@@ -13,6 +13,20 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- `hub web` has an Environments page, in the sidebar's Work group (AGH-417): a table of the project's environments
+  (what agents may do, secrets by name, services, who set them) whose rows open each environment's own page. There
+  you change the access (for the team, or stricter for you only), where the secrets live and the description in place,
+  one section at a time; see its services and open one in a side panel to change its kind, description and every
+  address at once; and read a short summary of what agents see. Removing an environment in use is one confirmation.
+  Step-by-step pages add an environment or a service by plain questions, including where an environment's secrets
+  live; for an env file, hub web lists its variable names, never a value (`GET /projects/{project}/env-file-keys`).
+  A long address, and a long name in the chat's files list, is shown whole when it fits, else cut in the middle with
+  the whole text on hover. The Hub config screen keeps a summary row that opens the page.
+- `hub web` reads and edits the declared environments and services (AGH-416). The Hub config view carries every
+  effective environment and repo service with the file it comes from (and hub.json's access of a tightened one), and
+  `POST /projects/{project}/config/environments` adds, changes, renames and removes environments, services and
+  endpoints in `hub.json` or `hub.local.json`, one edit or a batch written together, checked as a read checks them and
+  never committed. A team rename also renames your own `hub.local.json` entries; other developers rename theirs.
 - Feature detail shows plan change requests (AGH-405): a "Waiting for you" banner names each open request and opens
   its ticket's panel at Preflight, Plan carries "v3 waits for you", tickets read "Waiting for you: plan change",
   "Held: plan change pending", a re-run or their local drift, and the panel lists every preflight run, local note and

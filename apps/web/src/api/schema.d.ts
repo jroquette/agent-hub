@@ -2027,7 +2027,8 @@ export interface components {
      *     ``last_prompt`` and ``last_reply`` are the latest ``user.message`` and assistant ``text`` of
      *     the stored (redacted) log as one line of at most 280 characters, the reply's markdown
      *     marks dropped; ``changed_files`` the files changed, latest change first, at most 200
-     *     (``digest``).
+     *     (``digest``). ``tool_access`` is the tools it may use, kept so a reopened session keeps
+     *     them; it is the server's own (``exclude``: never in an answer, so the contract is unchanged).
      */
     AgentSession: {
       /**

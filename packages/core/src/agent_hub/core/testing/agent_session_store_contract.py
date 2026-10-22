@@ -193,6 +193,14 @@ class AgentSessionStoreContract:
         _check(updated == agent_session_store.get(FIRST), "update answers the stored session")
         _check(updated.review_targets == targets, f"the targets read back: {updated}")
 
+    def test_keeps_tool_access_when_updated(self, agent_session_store: AgentSessionStore) -> None:
+        agent_session_store.create(_session(FIRST).model_copy(update={"tool_access": "read_only"}))
+
+        updated = agent_session_store.update(FIRST, title="Find services")
+
+        _check(updated.tool_access == "read_only", "update keeps the tool access")
+        _check(agent_session_store.get(FIRST).tool_access == "read_only", "get reads it back")
+
     def test_starts_with_empty_digest_when_created(
         self, agent_session_store: AgentSessionStore
     ) -> None:

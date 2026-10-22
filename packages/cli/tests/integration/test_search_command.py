@@ -740,7 +740,7 @@ def test_writes_index_to_database_when_db_option_or_variable_given(
     assert collected.exit_code == 0, collected.output
     assert rows_of(database, "SELECT path FROM knowledge_documents") == [("brain/a.md",)]
     assert rows_of(database, "SELECT count(*) FROM events") == [(1,)]
-    assert rows_of(database, "SELECT version_num FROM alembic_version") == [("0008",)]
+    assert rows_of(database, "SELECT version_num FROM alembic_version") == [("0009",)]
 
 
 def test_exits_one_when_database_unusable(

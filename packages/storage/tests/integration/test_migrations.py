@@ -20,7 +20,7 @@ PHASE_ZERO_INSERT = (
     "VALUES ('demo', 'session-1', 'tool.call', 'claude_code', ?, "
     "'2026-09-27 08:00:00.000000', '{}')"
 )
-HEAD = "0008"
+HEAD = "0009"
 AGENT_SESSION_TABLES = {"agent_sessions", "agent_session_records"}
 ITEM_VERSION_TABLES = {"item_versions"}
 KNOWLEDGE_TABLES = {
@@ -545,3 +545,27 @@ def test_keeps_rows_when_upgraded_to_knowledge_index(tmp_path: Path) -> None:
     assert _table_names(db_path).isdisjoint(KNOWLEDGE_TABLES)
     assert {table: _schema(db_path, table) for table in tables} == schema_before
     assert {table: _all_rows(db_path, table) for table in tables} == rows_before
+
+
+# AC-418.1
+def test_keeps_sessions_as_all_tools_when_tool_access_added_and_dropped(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0005")
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(SESSION_INSERT)
+    finally:
+        engine.dispose()
+    upgrade(config, "0008")
+    before = _all_session_rows(db_path)
+
+    upgrade(config, "0009")
+    at_head = _all_session_rows(db_path)
+    columns = [name for name, _, _ in _schema(db_path, "agent_sessions")["columns"]]
+    downgrade(config, "0008")
+
+    assert columns[-1] == "tool_access"
+    assert at_head == [(*before[0], "all")]
+    assert _all_session_rows(db_path) == before

@@ -98,7 +98,7 @@ class SqliteAgentSessionStore:
         """Change some fields, validated as ``AgentSession`` says; answers the stored session."""
         with self._writing() as connection:
             current = _to_session(_session_row(connection, agent_session_id))
-            updated = AgentSession.model_validate(current.model_dump() | dict(fields))
+            updated = current.with_fields(fields)
             changed = {name: _to_row(updated)[name] for name in fields}
             connection.execute(
                 update(agent_sessions)
@@ -289,6 +289,7 @@ def _to_row(session: AgentSession) -> dict[str, Any]:
         "last_reply": session.last_reply,
         "changed_files": [item.model_dump(mode="json") for item in session.changed_files],
         "review_targets": [item.model_dump(mode="json") for item in session.review_targets],
+        "tool_access": session.tool_access,
     }
 
 
