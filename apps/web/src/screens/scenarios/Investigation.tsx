@@ -100,6 +100,36 @@ function LimitsList({ environment, pack }: { environment: string; pack: string }
   );
 }
 
+export const RUN_CONTROL_OFF = "urn:agent-hub:problem:run-control-off";
+
+export function isRunControlOff(error: ApiProblem): boolean {
+  return error.status === 404 && error.type === RUN_CONTROL_OFF;
+}
+
+/** The open investigation's gate as the run's record names it (E-10); never built from the
+ * step's id. */
+export function recordedGate(run: ScenarioRunDetail): string | null {
+  return run.investigations.find((item) => item.number === run.open_investigation)?.gate ?? null;
+}
+
+/** What the container says (run control off): answer from a terminal, on the recorded gate. */
+export function containerProblem(run: ScenarioRunDetail): {
+  title: string;
+  detail: string;
+  command?: string;
+} {
+  const gate = recordedGate(run);
+  return {
+    title: "This scenario run cannot be answered from the agent-hub container",
+    detail: gate
+      ? "Run hub web on your machine to talk with the agent and decide, or answer from a terminal:"
+      : "Run hub web on your machine to talk with the agent and decide.",
+    ...(gate
+      ? { command: `./hub workflow respond ${run.run_id} --node ${gate} --choice retry` }
+      : {}),
+  };
+}
+
 function sessionProblem(
   error: ApiProblem,
   run: ScenarioRunDetail,
@@ -108,14 +138,7 @@ function sessionProblem(
   detail?: string;
   command?: string;
 } {
-  if (error.status === 404 && error.type === "urn:agent-hub:problem:run-control-off") {
-    return {
-      title: "This scenario run cannot be answered from the agent-hub container",
-      detail:
-        "Run hub web on your machine to talk with the agent and decide, or answer from a terminal:",
-      command: `./hub workflow respond ${run.run_id} --node ${run.paused_step ?? "<step>"}__investigation --choice retry`,
-    };
-  }
+  if (isRunControlOff(error)) return containerProblem(run);
   if (error.type.endsWith("restriction-unavailable")) {
     return {
       title: "The investigation session cannot be reopened with its limits, so it stays closed.",
@@ -150,8 +173,20 @@ function sessionProblem(
 }
 
 /** The chat: started (or rejoined) once per investigation on load; started again when gone. */
-function InvestigationChat({ run, number }: { run: ScenarioRunDetail; number: number }) {
+function InvestigationChat({
+  run,
+  number,
+  onControlOff,
+}: {
+  run: ScenarioRunDetail;
+  number: number;
+  onControlOff: () => void;
+}) {
   const open = useOpenInvestigation(run.run_id);
+  const off = open.isError && isRunControlOff(open.error);
+  useEffect(() => {
+    if (off) onControlOff();
+  }, [off, onControlOff]);
   const asked = useRef<number | null>(null);
   const { mutate } = open;
   useEffect(() => {
@@ -310,13 +345,16 @@ function AnswerProblem({
   } else if (error.status === 502 || error.status === 0) {
     title = "Could not record the answer";
     const text = answer.option ? ` --text ${answer.option}` : "";
-    lines = [
-      "hub web could not start hub workflow decide. Answer from a terminal:",
-      <CodeBlock
-        key="cmd"
-        code={`./hub workflow respond ${run.run_id} --node ${gate} --choice ${answer.choice}${text}`}
-      />,
-    ];
+    lines =
+      gate === ""
+        ? ["hub web could not start hub workflow decide. Answer from a terminal."]
+        : [
+            "hub web could not start hub workflow decide. Answer from a terminal:",
+            <CodeBlock
+              key="cmd"
+              code={`./hub workflow respond ${run.run_id} --node ${gate} --choice ${answer.choice}${text}`}
+            />,
+          ];
   }
   return (
     <div
@@ -345,6 +383,7 @@ function OptionsColumn({
   step,
   gate,
   controlOff,
+  onControlOff,
   onRefetch,
   children,
 }: {
@@ -352,6 +391,7 @@ function OptionsColumn({
   step: string;
   gate: string;
   controlOff: boolean;
+  onControlOff: () => void;
   onRefetch: () => void;
   children?: ReactNode;
 }) {
@@ -378,6 +418,7 @@ function OptionsColumn({
     answer.mutate(body, {
       onError: (error) => {
         if (error.code === "pick_refused") onRefetch();
+        if (isRunControlOff(error)) onControlOff();
       },
     });
   };
@@ -568,17 +609,19 @@ function pickBody(option: ScenarioOption, environment: string, step: string): st
 export function PausedView({
   run,
   controlOff,
+  onControlOff,
   onRefetch,
   findings,
 }: {
   run: ScenarioRunDetail;
   controlOff: boolean;
+  onControlOff: () => void;
   onRefetch: () => void;
   findings: ReactNode;
 }) {
   const number = run.open_investigation ?? 1;
   const step = run.paused_step ?? "";
-  const gate = run.investigations.find((item) => item.number === number)?.gate ?? step;
+  const gate = recordedGate(run) ?? "";
   return (
     <div
       style={{
@@ -593,13 +636,14 @@ export function PausedView({
           <span className="ah-small ah-muted">The chat needs hub web on your machine.</span>
         </section>
       ) : (
-        <InvestigationChat run={run} number={number} />
+        <InvestigationChat run={run} number={number} onControlOff={onControlOff} />
       )}
       <OptionsColumn
         run={run}
         step={step}
         gate={gate}
         controlOff={controlOff}
+        onControlOff={onControlOff}
         onRefetch={onRefetch}
       >
         {findings}
