@@ -77,12 +77,15 @@ OUTCOME = "---\nmerged_at: 2026-01-20T10:00:00Z\npr: '#4'\n---\n# Outcome\n"
 LOCK = ".agent-runs/locks/demo-flow.lock"
 HELD = "are being written by another run; run again"
 FINDINGS = {"drift": "none", "local_notes": [], "blockers_read": ["DEM-7"]}
-FOUND = ("--findings", json.dumps(FINDINGS), "--input", "none")
+# The commit of main the preflight read, as ticket-brief printed it.
+COMMIT = "4e1a9c2d"
+FOUND = ("--findings", json.dumps(FINDINGS), "--input", "none", "--commit", COMMIT)
 RUN_ID = "implement-8"
+SUPERSEDED = "change request 1 approved but superseded by plan v3: not applied"
 
 
 def found(**findings: Any) -> tuple[str, ...]:
-    return ("--findings", json.dumps(FINDINGS | findings), "--input", "none")
+    return ("--findings", json.dumps(FINDINGS | findings), "--input", "none", "--commit", COMMIT)
 
 
 class Hub:
@@ -254,7 +257,9 @@ class TestTicketBrief:
             "version": 1,
             # Where the preflight reads the hub and main (AGH-404).
             "hub": str(hub.root),
-            "base": "origin/trunk",
+            "repo": "demo-api",
+            # Main as last fetched, read once: the preflight reads it and its run records it.
+            "commit": hub.unnamed,
         }
         text = (hub.root / output["path"]).read_text()
         fields = json.loads(text.split("```json\n", 1)[1].split("\n```", 1)[0])
@@ -365,6 +370,17 @@ class TestTicketBrief:
         assert written == ["brief.md"]
 
 
+class TestTicketRepo:
+    def test_refuses_the_brief_when_the_tickets_repo_is_not_in_hub_json(self, hub: Hub) -> None:
+        record = json.loads((hub.feature / "features.json").read_text())
+        record["tickets"][1]["repo"] = "demo-nope"
+        (hub.feature / "features.json").write_text(json.dumps(record))
+
+        line = hub.refused("ticket-brief", *TICKET)
+
+        assert line == "hub step ticket-brief: the ticket's repo demo-nope is not in hub.json"
+
+
 class TestPreflight:
     def test_fills_the_run_from_the_findings_the_plan_main_and_the_run_when_appended(
         self, hub: Hub
@@ -375,8 +391,7 @@ class TestPreflight:
         assert datetime.fromisoformat(run.pop("ran_at")).tzinfo is not None
         assert run == {
             "plan_version": 2,
-            # origin's main of the ticket's repo as last fetched, never a worktree's HEAD.
-            "commit": hub.unnamed,
+            "commit": COMMIT,
             "blockers_read": ["DEM-7"],
             "input": "none",
             "input_text": None,
@@ -409,11 +424,34 @@ class TestPreflight:
         if not given[-1]:
             # A declined change re-checked names the request the last run opened.
             hub.ok("preflight", *TICKET, *found(drift="plan"), "--request", "1")
-        findings = ("--findings", json.dumps(FINDINGS | {"drift": "plan"}))
+        findings = ("--findings", json.dumps(FINDINGS | {"drift": "plan"}), "--commit", COMMIT)
 
         output = hub.ok("preflight", *TICKET, *findings, *given)
 
         run = json.loads((hub.root / output["path"]).read_bytes())["runs"][-1]
+        assert {key: run[key] for key in expected} == expected
+
+    @pytest.mark.parametrize(
+        ("given", "expected"),
+        [
+            # A re-check that passed names no request, whatever request it was given.
+            (("--input", "approve", "--request", "1"), {"input_text": None}),
+            # A superseded approval reaches the run as a note on a plain check (A23).
+            (("--input", "none", "--input-text", SUPERSEDED), {"input_text": SUPERSEDED}),
+        ],
+    )
+    def test_keeps_no_request_and_the_note_when_a_check_with_no_drift_is_recorded(
+        self, hub: Hub, given: tuple[str, ...], expected: dict[str, Any]
+    ) -> None:
+        findings = ("--findings", json.dumps(FINDINGS), "--commit", COMMIT)
+
+        output = hub.ok("preflight", *TICKET, *findings, *given)
+
+        run = json.loads((hub.root / output["path"]).read_bytes())["runs"][-1]
+        assert {"input": run["input"], "change_request": run["change_request"]} == {
+            "input": "none",
+            "change_request": None,
+        }
         assert {key: run[key] for key in expected} == expected
 
     def test_refuses_without_writing_when_the_run_gives_no_run_id(
@@ -571,6 +609,20 @@ class TestChangeRequest:
         text = (hub.root / output["path"]).read_text()
         assert f"affected: {listed}\n" in text
         assert f"run_id: {RUN_ID}\n" in text
+
+    def test_refuses_without_writing_when_the_preflight_run_would_be_refused(
+        self, hub: Hub
+    ) -> None:
+        # Checked before the request exists: no request is left that no preflight run names.
+        bad = json.dumps(FINDINGS | {"drift": "local", "local_notes": []})
+
+        line = hub.refused(
+            "change-request",
+            *TICKET,
+            *("--evidence", "e", "--proposal", "p", "--findings", bad, "--commit", COMMIT),
+        )
+
+        assert "local_notes" in line
 
     def test_refuses_without_writing_when_the_run_gives_no_run_id(
         self, hub: Hub, monkeypatch: pytest.MonkeyPatch
@@ -777,7 +829,7 @@ class TestDecideAndAmend:
             "path": f"{FEATURE}/plan.md",
             "amendment": None,
             "already": None,
-            "moved": "plan.md is v3; change request 1 asks v2 to v3: re-run preflight",
+            "moved": SUPERSEDED,
         }
         assert plan.read_bytes() == before
 
@@ -792,7 +844,14 @@ class TestDecideAndAmend:
 
 
 class TestPendingDecision:
-    NONE = {"request": None, "decision": "", "input": "none", "note": "", "summary": ""}
+    NONE = {
+        "request": None,
+        "decision": "",
+        "input": "none",
+        "note": "",
+        "summary": "",
+        "superseded": "",
+    }
 
     def preflight(
         self, hub: Hub, *, drift: str, input_kind: str = "none", text: str = "", request: str = ""
@@ -827,7 +886,7 @@ class TestPendingDecision:
 
         output = hub.ok("pending-decision", *TICKET)
 
-        assert output == {"request": 1, "summary": "Follow it.", **expected}
+        assert output == {"request": 1, "summary": "Follow it.", "superseded": "", **expected}
 
     @pytest.mark.parametrize(
         "case",
@@ -850,7 +909,7 @@ class TestPendingDecision:
 
         assert hub.ok("pending-decision", *TICKET) == self.NONE
 
-    def test_reads_nothing_pending_when_the_approved_plan_change_no_longer_fits_the_plan(
+    def test_reads_the_superseded_approval_when_the_approved_plan_change_no_longer_fits_the_plan(
         self, hub: Hub
     ) -> None:
         hub.request()
@@ -860,4 +919,21 @@ class TestPendingDecision:
         # Another ticket's change amended the plan first: v2 is now v3.
         plan.write_text(plan.read_text() + "- A2 (2026-02-03, Dana Owner): Other.\n")
 
-        assert hub.ok("pending-decision", *TICKET) == self.NONE
+        # Not amended: the next run checks the current plan, told why (A23).
+        assert hub.ok("pending-decision", *TICKET) == self.NONE | {
+            "request": 1,
+            "note": SUPERSEDED,
+            "summary": "Follow it.",
+            "superseded": SUPERSEDED,
+        }
+
+    def test_reads_a_decided_request_no_preflight_run_names_when_its_run_failed(
+        self, hub: Hub
+    ) -> None:
+        # The run opened the request, then failed before its preflight run named it.
+        hub.request()
+        assert hub.decide("--decision", "declined", "--by", "Dana", "--note", "No.").exit_code == 0
+
+        output = hub.ok("pending-decision", *TICKET)
+
+        assert (output["request"], output["input"], output["note"]) == (1, "declined_change", "No.")
