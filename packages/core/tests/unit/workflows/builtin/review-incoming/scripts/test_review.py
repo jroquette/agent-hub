@@ -350,7 +350,7 @@ def test_separates_blocking_and_optional_in_body_and_comments_when_payload_built
     assert "Optional (2)\n- `app/run.py:4` Name it.\n- `app/run.py:5` Also here." in sent["body"]
 
 
-def test_skips_held_minor_section_unless_owner_renamed_it(
+def test_skips_held_minor_section_when_owner_left_its_heading(
     clone: Clone, compose: Any, final: Any
 ) -> None:
     minor = a_comment(line=4, severity="minor", body="Name it.", sources=["quality:F2"])
