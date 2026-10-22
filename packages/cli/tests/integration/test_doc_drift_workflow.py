@@ -5,8 +5,11 @@ push and PR comes after the owner's approval.
 
 import importlib.util
 import json
+import os
+import subprocess
 import sys
 from collections.abc import Callable
+from pathlib import Path
 from types import ModuleType
 from typing import Any
 
@@ -221,3 +224,137 @@ def test_stays_under_the_prompt_cap_when_mentions_are_at_their_bound() -> None:
     assert len(prompt.encode()) < 131072
     assert len(json.dumps(judged, ensure_ascii=False).encode()) < 1024 * 1024
     assert len(json.dumps(planned, ensure_ascii=False).encode()) < 512 * 1024
+
+
+CLI = (
+    'import typer\napp = typer.Typer()\n\n\n@app.command("{name}")\ndef run() -> None:\n    pass\n'
+)
+ADR_TEXT = "# 1. X\n\n- Status: accepted\n\nWe add `hub old-cmd`.\n"
+CHANGELOG = "- Adds `hub old-cmd`.\n"
+
+
+def chain_script(
+    name: str, *args: str, cwd: Path, stdin: str = "", env: dict[str, str] | None = None
+) -> dict[str, Any]:
+    """Run a pack script as the engine does (stdin, args, the hub as cwd); its JSON output."""
+    done = subprocess.run(  # noqa: S603 - this interpreter, a pack script, fixed arguments
+        [sys.executable, "-I", str(PACK / "scripts" / name), *args],
+        cwd=cwd,
+        input=stdin,
+        env={**os.environ, **(env or {})},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    assert done.returncode == 0, done.stderr
+    output: dict[str, Any] = json.loads(done.stdout)
+    return output
+
+
+def merged(workspace: Workspace, base_files: dict[str, str], change: dict[str, str]) -> str:
+    """``demo-api``'s trunk merges a branch writing ``change``; ``origin/trunk`` is the merge."""
+    repo = workspace.ws / "demo-api"
+    for files_ in (base_files, change):
+        if files_ is change:
+            workspace.git(repo, "checkout", "-qb", "feature")
+        for name, text in files_.items():
+            (repo / name).parent.mkdir(parents=True, exist_ok=True)
+            (repo / name).write_text(text, encoding="utf-8")
+        workspace.git(repo, "add", "-A")
+        workspace.git(repo, "commit", "-qm", "base" if files_ is base_files else "change")
+    workspace.git(repo, "checkout", "-q", "trunk")
+    workspace.git(repo, "merge", "-q", "--no-ff", "-m", "merge", "feature")
+    workspace.git(repo, "update-ref", "refs/remotes/origin/trunk", "HEAD")
+    sha: str = workspace.git(repo, "rev-parse", "HEAD")
+    return sha
+
+
+DOCS = {
+    # As in a repo hub worktree uses: the run's worktree is ignored by the main checkout.
+    ".gitignore": ".claude/worktrees/\n",
+    "src/demo/cli.py": CLI.format(name="old-cmd"),
+    "docs/USING.md": "# Using\n\nRun `hub old-cmd` to start.\n",
+    "README.md": "# demo-api\n\n- `hub old-cmd`: starts it.\n",
+    "docs/adr/0001-x.md": ADR_TEXT,
+    "CHANGELOG.md": CHANGELOG,
+}
+
+
+def test_opens_doc_only_commit_and_reports_adr_when_merge_renames_command(
+    demo_workspace: Workspace, run_command: CommandRunner
+) -> None:
+    hub, repo = demo_workspace.hub, demo_workspace.ws / "demo-api"
+    sha = merged(demo_workspace, DOCS, {"src/demo/cli.py": CLI.format(name="new-cmd")})
+    head, status = (
+        demo_workspace.git(repo, "rev-parse", "HEAD"),
+        demo_workspace.git(repo, "status", "--porcelain"),
+    )
+    env = {
+        "AGENT_HUB_RUN_ID": "r1",
+        "GIT_AUTHOR_NAME": "Jo",
+        "GIT_AUTHOR_EMAIL": "jo@example.com",
+        "GIT_COMMITTER_NAME": "Jo",
+        "GIT_COMMITTER_EMAIL": "jo@example.com",
+    }
+
+    contract = chain_script("contract.py", "--repo", "demo-api", "--sha", sha, cwd=hub)
+    found = chain_script("mentions.py", cwd=hub, stdin=json.dumps(contract))
+    judge: Any = {
+        "fixes": [
+            {
+                **line,
+                "old": line["text"],
+                "new": line["text"].replace("old-cmd", "new-cmd"),
+                "reason": "The command was renamed.",
+            }
+            for line in [*found["fixable"], *found["adr"]]
+        ],
+        "kept": [],
+        "more": 0,
+    }
+    for fix in judge["fixes"]:
+        del fix["text"], fix["names"]
+        fix.pop("status", None)
+    plan_args = ["plan", "--repo-path", contract["repo_path"], "--base", contract["base"]]
+    plan_args += ["--names", json.dumps(contract["names"]), "--adr", json.dumps(found["adr"])]
+    plan_args += ["--notes", json.dumps(found["notes"]), "--names-truncated", "0"]
+    plan_args += ["--patch-truncated", "false", "--mentions-truncated", "0"]
+    plan = chain_script("doc_fix.py", *plan_args, cwd=hub, stdin=json.dumps(judge))
+    branch = chain_script(
+        "branch.py", "--repo", "demo-api", "--base", contract["base"], cwd=hub, env=env
+    )
+    apply_args = ["apply", "--worktree", branch["path"], "--base", branch["base"]]
+    apply_args += ["--label", contract["label"], "--subject-prefix", "docs(repo): ", "--note", ""]
+    applied = chain_script("doc_fix.py", *apply_args, cwd=hub, stdin=json.dumps(plan), env=env)
+    commits = run_command(hub, "step", "commits", "--target", json.dumps(branch["target"]))
+
+    worktree = Path(branch["path"])
+    assert [n["name"] for n in contract["names"]] == ["old-cmd"]
+    assert (plan["verdict"], plan["fixes"]) == ("proposed", 2)
+    changed = demo_workspace.git(worktree, "diff", "--name-only", f"{contract['base']}..HEAD")
+    assert changed.splitlines() == ["README.md", "docs/USING.md"]
+    assert (worktree / "docs/adr/0001-x.md").read_text() == ADR_TEXT
+    assert (worktree / "CHANGELOG.md").read_text() == CHANGELOG
+    assert [(s["path"], s["line"]) for s in plan["superseded"]] == [("docs/adr/0001-x.md", 5)]
+    assert "Superseded wording (accepted ADRs, not edited)" in applied["summary"]
+    assert commits.exit_code == 0, commits.output
+    assert (json.loads(commits.stdout)["count"], json.loads(commits.stdout)["dirty"]) == (1, False)
+    assert demo_workspace.git(repo, "rev-parse", "HEAD") == head
+    assert demo_workspace.git(repo, "status", "--porcelain") == status
+
+
+def test_ends_clean_when_merge_touches_no_contract(demo_workspace: Workspace) -> None:
+    hub = demo_workspace.hub
+    body = {"src/demo/cli.py": CLI.format(name="old-cmd").replace("pass", "return None")}
+    sha = merged(demo_workspace, DOCS, body)
+
+    contract = chain_script("contract.py", "--repo", "demo-api", "--sha", sha, cwd=hub)
+    plan_args = ["plan", "--repo-path", contract["repo_path"], "--base", contract["base"]]
+    plan_args += ["--names", json.dumps(contract["names"]), "--adr", "", "--notes", ""]
+    plan_args += ["--names-truncated", "0", "--patch-truncated", "false"]
+    plan_args += ["--mentions-truncated", ""]
+    plan = chain_script("doc_fix.py", *plan_args, cwd=hub, stdin="")
+
+    assert (contract["count"], contract["names"]) == (0, [])
+    assert (plan["verdict"], plan["fixes"], plan["message"]) == ("clean", 0, "")
