@@ -51,6 +51,8 @@ export type PermissionAnswer = components["schemas"]["PermissionDecision"];
 
 /** The longest deny message the API takes (2 KiB, plan "Inputs, bounds and budget"). */
 export const MAX_DENY_MESSAGE = 2048;
+/** The longest "Other" answer; the server takes up to 8192 characters per answer. */
+export const MAX_OTHER_ANSWER = 4096;
 /** The only destination "Always allow" may write to (D5). */
 export const ALWAYS_DESTINATION = "localSettings";
 
@@ -266,7 +268,7 @@ function QuestionField({
               aria-label="Your answer"
               placeholder="Your answer"
               value={other}
-              maxLength={1024}
+              maxLength={MAX_OTHER_ANSWER}
               onChange={(event) => {
                 emit(picked, event.target.value);
               }}

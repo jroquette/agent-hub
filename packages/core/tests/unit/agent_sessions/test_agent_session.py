@@ -2,6 +2,8 @@ import pytest
 from pydantic import ValidationError
 
 from agent_hub.core.agent_sessions.agent_session import (
+    MAX_ANSWER_KEY_CHARS,
+    MAX_ANSWER_VALUE_CHARS,
     MAX_MESSAGE_SCREENSHOTS,
     TERMINAL_STATUSES,
     AgentSessionStatus,
@@ -52,6 +54,27 @@ def test_refuses_decision_when_fields_do_not_fit(body: dict[str, object]) -> Non
 )
 def test_accepts_decision_when_fields_fit(body: dict[str, object]) -> None:
     assert PermissionDecision.model_validate(body).decision == body["decision"]
+
+
+def test_accepts_answers_when_question_and_answer_are_long() -> None:
+    question = "Can I apply this simplification? " * 10
+    answer = "Yes, and also " * 100
+
+    decision = PermissionDecision(decision="allow", answers={question: answer})
+
+    assert decision.answers == {question: answer}
+
+
+@pytest.mark.parametrize(
+    "answers",
+    [
+        {"x" * (MAX_ANSWER_KEY_CHARS + 1): "A"},
+        {"Which?": "x" * (MAX_ANSWER_VALUE_CHARS + 1)},
+    ],
+)
+def test_refuses_answers_when_over_limit(answers: dict[str, str]) -> None:
+    with pytest.raises(ValidationError):
+        PermissionDecision(decision="allow", answers=answers)
 
 
 def test_refuses_create_when_workdir_is_a_path() -> None:
