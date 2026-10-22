@@ -1241,3 +1241,23 @@ describe("FeatureDetailScreen", () => {
     expect(await seriousViolations(container)).toEqual([]);
   });
 });
+
+describe("FeatureDetailScreen and the feature's own session (AGH-422)", () => {
+  it("AC-422.1 names the session that wrote the spec in the header, one click from the panel", async () => {
+    const writer = anAgentSession({
+      id: anId(9, "0192a5e9"),
+      title: "Write the layered memory spec",
+    });
+    open({
+      "/api/v1/agent-sessions": (request: Request) => ({
+        items: new URL(request.url).searchParams.get("wrote")?.endsWith("/spec.md") ? [writer] : [],
+      }),
+    });
+
+    const chip = await screen.findByRole("button", { name: "Write the layered memory spec" });
+    expect(chip).toHaveAttribute(
+      "title",
+      "Talk with the session that wrote this feature's records: Write the layered memory spec",
+    );
+  });
+});

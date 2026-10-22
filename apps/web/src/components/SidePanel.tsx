@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 
 import { IconButton } from "./core";
+import { usePanelDismiss } from "./usePanelDismiss";
 
 /** Where side panels dock instead of overlaying the page (`31-responsive.md`, Wide). */
 const WIDE = "(min-width: 1600px)";
@@ -59,40 +60,14 @@ export function SidePanel({
   const panel = useRef<HTMLElement>(null);
   const wide = useWide();
   const opening = useRef(initialFocus);
-  // Opening focuses the heading (or the `initialFocus` control); closing, by any path (Esc, the X, a Close button inside), gives
-  // focus back to the opener, unless the reader already moved it elsewhere on the page.
+  // Opening focuses the heading (or the `initialFocus` control); closing, by any path (Esc, the X,
+  // a Close button inside), gives focus back to the opener as it is at close (a panel switched in
+  // place, or a toggled view, updates it), unless the reader already moved it elsewhere on the page.
   useEffect(() => {
-    const node = panel.current;
-    const chosen = opening.current ? node?.querySelector<HTMLElement>(opening.current) : null;
+    const chosen = opening.current ? panel.current?.querySelector<HTMLElement>(opening.current) : null;
     (chosen ?? heading.current)?.focus({ preventScroll: true });
-    return () => {
-      const active = document.activeElement;
-      const lost = active === null || active === document.body || node?.contains(active) === true;
-      // The opener as it is at close: a panel switched in place, or a toggled view, updates it.
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-      const opener = openerRef.current;
-      if (lost && opener?.isConnected) opener.focus({ preventScroll: true });
-    };
-  }, [openerRef]);
-
-  const closing = useRef(onClose);
-  useEffect(() => {
-    closing.current = onClose;
-  });
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented) return;
-      // A modal layer above the page (a dialog, the palette) answers its own Escape.
-      if (document.querySelector('[aria-modal="true"]')) return;
-      event.preventDefault();
-      closing.current();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-    };
   }, []);
+  usePanelDismiss(panel, onClose, { opener: () => openerRef.current });
 
   return (
     <aside
