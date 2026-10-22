@@ -247,13 +247,18 @@ A workflow is data: a YAML (or JSON) file in the hub's `workflows/<pack>/` folde
 `script`, `loop`, `loop_group`, `include`, `approval`, `wait`, `halt`) depend on each other and run in layers
 ([format](docs/design/workflow-schema.md), [ADR 0032](docs/adr/0032-workflow-engine.md)). `hub init` and `hub sync`
 seed the built-in packs once: `issue-to-pr` (what `hub run` runs) and `sdlc` (`deliver`: implement, validate and
-review in a loop until green, then the PR; `review`: a spec lens and a quality lens side by side, then one verdict). A hub's own file
-overrides a built-in of the same name.
+review in a loop until green, then the PR; `review`: a spec lens and a quality lens side by side, then one verdict), and
+`doc-drift` (after a merge, or monthly with `sha` blank: the contract names the change removed, such as commands,
+make targets, flags, config keys, skills, workflows, paths, tables and columns, then the doc lines that still name
+them, a read-only judge's corrected lines, the owner's approval, and a docs-only PR in the repo; ADR lines are reported,
+never edited; nothing writes the tracker). Fetch the repo first: `doc-drift` reads `origin/<default branch>` as last
+fetched. A hub's own file overrides a built-in of the same name.
 
 ```bash
 ./hub workflow list                          # the workflows that load; problems as <file>:<line>: <key>: <message>
 ./hub workflow run deliver --input issue=DEM-7 --input repo=api --input issue_text="..."  # dry: what would run
 ./hub workflow run deliver --input issue=DEM-7 --input repo=api --input issue_text="..." --live
+./hub workflow run doc-drift --input repo=api --input sha=<merge sha> --live  # sha blank: the last month
 ./hub workflow run --resume <run>            # continue a failed or paused run; --abandon ends it
 ./hub workflow approve <run>                 # or reject / respond: decide a paused gate; the run resumes
 ./hub workflow test                          # every pack's fixtures, in memory (the hub's make check runs it)

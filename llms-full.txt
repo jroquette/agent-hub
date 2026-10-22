@@ -298,6 +298,14 @@ authored as the hub's author), and nothing changes until the user merges it. Tha
 PR is opened as that `gh` account). Under Docker the hubs are mounted read-only, so both actions are disabled with
 "Hub is read-only here"; run `./hub web` locally to decide learnings. Workflows: [README](../README.md#-workflows).
 
+**Doc drift.** The built-in `doc-drift` workflow finds doc lines a contract change made wrong and, once you approve
+them at its gate, opens a docs-only PR in the repo (ADRs are reported, never edited). Fetch the repo, then run
+`./hub workflow run doc-drift --input repo=<dir> --input sha=<merge sha> --live` after a merge, or with `sha` blank
+for the last month. To run it on every merge and once a month, add to `hub.json`:
+`"events": [{"workflow": "doc-drift", "on": "merge", "repo": "<dir>", "inputs": {"repo": "<dir>"}}]` and
+`"schedules": [{"workflow": "doc-drift", "cron": "0 6 1 * *", "inputs": {"repo": "<dir>"}}]`. Known limit: a command
+renamed in one command group while another group keeps the same name is not seen as gone.
+
 **Sessions from the app.** On the Sessions screen, New session starts the user's own `claude` (on `PATH`, logged in)
 in the hub, a repo or one of their worktrees, with the hub's CLAUDE.md, hooks (the guard still applies), skills and
 agents; the chat sends messages, answers prompts, interrupts, sets mode and model, resumes an ended session in place
@@ -571,13 +579,18 @@ A workflow is data: a YAML (or JSON) file in the hub's `workflows/<pack>/` folde
 `script`, `loop`, `loop_group`, `include`, `approval`, `wait`, `halt`) depend on each other and run in layers
 ([format](docs/design/workflow-schema.md), [ADR 0032](docs/adr/0032-workflow-engine.md)). `hub init` and `hub sync`
 seed the built-in packs once: `issue-to-pr` (what `hub run` runs) and `sdlc` (`deliver`: implement, validate and
-review in a loop until green, then the PR; `review`: a spec lens and a quality lens side by side, then one verdict). A hub's own file
-overrides a built-in of the same name.
+review in a loop until green, then the PR; `review`: a spec lens and a quality lens side by side, then one verdict), and
+`doc-drift` (after a merge, or monthly with `sha` blank: the contract names the change removed, such as commands,
+make targets, flags, config keys, skills, workflows, paths, tables and columns, then the doc lines that still name
+them, a read-only judge's corrected lines, the owner's approval, and a docs-only PR in the repo; ADR lines are reported,
+never edited; nothing writes the tracker). Fetch the repo first: `doc-drift` reads `origin/<default branch>` as last
+fetched. A hub's own file overrides a built-in of the same name.
 
 ```bash
 ./hub workflow list                          # the workflows that load; problems as <file>:<line>: <key>: <message>
 ./hub workflow run deliver --input issue=DEM-7 --input repo=api --input issue_text="..."  # dry: what would run
 ./hub workflow run deliver --input issue=DEM-7 --input repo=api --input issue_text="..." --live
+./hub workflow run doc-drift --input repo=api --input sha=<merge sha> --live  # sha blank: the last month
 ./hub workflow run --resume <run>            # continue a failed or paused run; --abandon ends it
 ./hub workflow approve <run>                 # or reject / respond: decide a paused gate; the run resumes
 ./hub workflow test                          # every pack's fixtures, in memory (the hub's make check runs it)
