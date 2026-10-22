@@ -272,3 +272,42 @@ def test_answers_not_implemented_when_decisions_not_wired(wired: Any) -> None:
     )
 
     assert response.status_code == 501
+
+
+class RecordKinds:
+    """The kinds the run's record names (``RecordedGateKinds``), and the runs read."""
+
+    def __init__(self) -> None:
+        self.read: list[str] = []
+
+    def gate_kinds(self, hub_path: str, run_id: str) -> Mapping[str, str]:
+        self.read.append(run_id)
+        return {"held__investigation": "investigation", "send__ask": "policy"}
+
+
+def test_names_gate_kind_from_record_when_open_gates_listed(wired: Any) -> None:
+    """The open-gates read names a gate's kind from its run's record (AGH-350 E-10, E-15)."""
+    plans, kinds = Plans(), RecordKinds()
+    wired.wire(workflow_gates=WorkflowGates(wired.events, plans, plans, kinds=kinds))
+    # ``ok__ask`` ends like a policy gate, but the record does not name it: no kind.
+    for node in ("held__investigation", "send__ask", "ok__ask"):
+        gate = f"run-9:{node}:1"
+        wired.events.approvals.append(
+            an_approval(
+                id=gate,
+                gate_id=gate,
+                kind=ApprovalKind.HUMAN_GATE,
+                session_id="run:run-9",
+                path=None,
+                rule=None,
+            )
+        )
+    wired.events.approvals.append(an_approval())
+
+    response = wired.client.get("/api/v1/approvals", params={"status": "open"})
+
+    assert response.status_code == 200, response.text
+    items = response.json()["items"]
+    assert [item.get("gate_kind") for item in items] == ["investigation", "policy", None, None]
+    assert "gate_kind" not in items[2]
+    assert kinds.read == ["run-9"]

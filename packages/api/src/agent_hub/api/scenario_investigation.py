@@ -327,6 +327,15 @@ def _claim(link: Path, run_id: str) -> str | None:
         raise RunConflictError(code="link_in_path", reason=reason, run_id=run_id) from None
 
 
+def linked_session(folder: Path, number: int) -> str | None:
+    """The session ``investigation-<number>.session`` in a run folder names, never through a
+    link; None when there is none or it cannot be read (a read for hub web's screens)."""
+    try:
+        return _read_link(folder / f"investigation-{number}.session")
+    except OSError:
+        return None
+
+
 def _read_link(link: Path) -> str | None:
     """The session id a link file holds, never through a link; None when it holds none."""
     descriptor = os.open(link, _OPEN_READ)

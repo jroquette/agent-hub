@@ -84,6 +84,16 @@ class RunGateResult(ViewModel):
     duration_ms: int | None = None
 
 
+class RunEnvironment(ViewModel):
+    """The environment a run's own start record names (AGH-350 E-15, the best-effort banner),
+    with its access and production flag in the hub's effective config as read now; both are
+    ``None`` when that config cannot be read or no longer declares it."""
+
+    name: str
+    access: str | None
+    production: bool | None
+
+
 class IssueRef(ViewModel):
     """The tracker issue a run works on; title and url need Linear (``null`` in Phase 2)."""
 
@@ -123,6 +133,9 @@ class WorkflowRun(DerivedView):
     pr_url: str | None = None
     delivery: RunDelivery | None = None
     delivery_reason: str | None = None
+    # Only ``GET /workflow-runs/{run_id}`` reads it, from the run's record (E-15); left out of
+    # the JSON when absent, so a run without one reads as before.
+    environment: RunEnvironment | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="before")
     @classmethod
