@@ -474,10 +474,7 @@ class AgentSessionControl:
     async def snapshot(self, agent_session_id: str) -> AgentSession:
         """One session, with its open permission request while live (E10); ``restricted`` when
         this server holds it to a restriction (its mode cannot change, E-15)."""
-        view = (await self._with_twins([await self._session(agent_session_id)]))[0]
-        if view.id in self._restrictions:
-            return view.model_copy(update={"restricted": True})
-        return view
+        return self._marked((await self._with_twins([await self._session(agent_session_id)]))[0])
 
     async def repo_changes(self, agent_session_id: str) -> SessionRepoChanges:
         """Each listed repo or worktree the session started in, changed a file in or named, as
@@ -674,7 +671,7 @@ class AgentSessionControl:
         """The live view of a session, else its stored record (no twin lookup)."""
         live = self._live.get(agent_session_id)
         if live is not None:
-            return live.view()
+            return self._marked(live.view())
         return await asyncio.to_thread(self._store.get, agent_session_id)
 
     async def events(self, agent_session_id: str, *, after: int, limit: int) -> LogRecordPage:
@@ -692,6 +689,13 @@ class AgentSessionControl:
             raise SessionLiveError(agent_session_id)
         await asyncio.to_thread(self._store.delete, agent_session_id)
         self._restrictions.pop(agent_session_id, None)
+
+    def _marked(self, view: AgentSession) -> AgentSession:
+        """``view``, ``restricted`` when this server holds the session to a restriction (its
+        permission mode cannot change, E-15): every answer about it says so."""
+        if view.id in self._restrictions:
+            return view.model_copy(update={"restricted": True})
+        return view
 
     async def _restriction(self, session: AgentSession) -> SessionRestriction | None:
         """The restriction ``session`` started with: kept in memory, else rebuilt."""
@@ -781,7 +785,7 @@ class AgentSessionControl:
             except Exception:
                 await self._fail_start(live)
                 raise
-        return live.view()
+        return self._marked(live.view())
 
     async def _begin(
         self, live: LiveSession, prompt: str | None, images: tuple[DriverImage, ...]
@@ -852,7 +856,7 @@ class AgentSessionControl:
         async with live.commands:
             if task_id in live.tasks:
                 await self._driver.stop_task(live.handle, task_id)
-            return live.view()
+            return self._marked(live.view())
 
     async def interrupt(self, agent_session_id: str) -> AgentSession:
         """Interrupt the running turn: open requests are denied ``by: closed``, then the
@@ -867,7 +871,7 @@ class AgentSessionControl:
             live.state = apply(live.state, Interrupt())
             await self._sync(live)
             await self._driver.interrupt(live.handle)
-        return live.view()
+        return self._marked(live.view())
 
     async def answer(
         self, agent_session_id: str, request_id: str, decision: PermissionDecision
@@ -909,7 +913,7 @@ class AgentSessionControl:
                     live, "settings", SettingsBody(mode=decision.mode).as_body(), by="web"
                 )
                 await self._sync(live, {"mode": decision.mode})
-        return live.view()
+        return self._marked(live.view())
 
     async def change_settings(
         self, agent_session_id: str, settings: SessionSettings
@@ -932,16 +936,16 @@ class AgentSessionControl:
                 await self._driver.set_model(live.handle, settings.model)
                 fields["model"] = settings.model
             await self._sync(live, fields)
-        return live.view()
+        return self._marked(live.view())
 
     async def close(self, agent_session_id: str) -> AgentSession:
         """End the session ``closed`` (idempotent: an ended one is answered as it is)."""
         live = self._live.get(agent_session_id)
         if live is None:
-            return await asyncio.to_thread(self._store.get, agent_session_id)
+            return self._marked(await asyncio.to_thread(self._store.get, agent_session_id))
         await asyncio.shield(self._ending(live, EndReason.CLOSED, by="web"))
         await self._drain(live)
-        return await asyncio.to_thread(self._store.get, agent_session_id)
+        return self._marked(await asyncio.to_thread(self._store.get, agent_session_id))
 
     async def sweep(self, now: datetime | None = None, *, purge: bool = True) -> None:
         """Apply time (P9): deny requests past their deadline (``by: timeout``), end sessions
@@ -1079,7 +1083,7 @@ class AgentSessionControl:
 
     def _view(self, session: AgentSession) -> AgentSession:
         live = self._live.get(session.id)
-        return session if live is None else live.view()
+        return self._marked(session if live is None else live.view())
 
     async def _commandable(self, agent_session_id: str, *, reopen: bool = False) -> LiveSession:
         """The live session a command acts on; an ended (or unknown) one raises, unless
