@@ -2226,7 +2226,7 @@ def test_writes_personal_memory_when_learn_skill_rendered(
     text = skill_text(demo_render, "learn")
     fields = dict(line.split(": ", 1) for line in frontmatter_lines(text))
 
-    assert fields["argument-hint"] == '"[personal] <the learning in one sentence>"'
+    assert fields["argument-hint"] == '"[personal|promote] <the learning in one sentence>"'
     assert "personal" in fields["description"]
     assert "brain/auto/workspace/" in fields["description"]
     assert "Writes a proposal to brain/_inbox/ for human review" not in fields["description"]
