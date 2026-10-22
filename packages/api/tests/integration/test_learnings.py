@@ -2,10 +2,14 @@
 the note is read from ``brain/_inbox/`` on request, summarized in the list, and never stored."""
 
 import sqlite3
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
+
+from agent_hub.core.events.event import Event
+from agent_hub.core.testing.session_scenarios import SCENARIO_START, learning_events
 
 BODY_SENTINEL = "NOTEBODY-x8r2-read-on-demand-only"
 OUTSIDE_SENTINEL = "OUTSIDE-q2w4-never-served"
@@ -134,3 +138,78 @@ def test_reports_unavailable_when_note_unreadable(
     (item,) = [item for item in listed.json()["items"] if item["id"] == learning_id]
     assert (item["summary"], item["note_unavailable"]) == (None, body["note_unavailable"])
     assert OUTSIDE_SENTINEL not in detail.text + listed.text
+
+
+# AGH-393: ``GET /learnings?brain_path=`` (AC-393.15, AM-7) and its local-only rule (AC-393.17).
+WEB_GATES = "brain/learnings/web-gates.md"
+
+
+def _accepted_into(proposal: str, brain_path: str, *, hours: int) -> list[Event]:
+    """A learning proposed ``hours`` after the scenario start, accepted into ``brain_path``."""
+    events = learning_events(
+        proposal,
+        session=f"s-{proposal}",
+        start=SCENARIO_START + timedelta(hours=hours),
+        decisions=(("learning.accepted", 5),),
+    )
+    accepted = events[1]
+    payload = {**accepted.payload, "brain_path": brain_path}
+    return [events[0], accepted.model_copy(update={"payload": payload})]
+
+
+@pytest.fixture
+def note_learnings(composed: Any) -> Any:
+    """The composed app's database holding learnings accepted into ``web-gates.md`` (one stored
+    with the ``brain/`` prefix, one without), one into another note and one still proposed."""
+    appended = composed.store.append(
+        [
+            *_accepted_into("prefixed", WEB_GATES, hours=1),
+            *_accepted_into("bare", WEB_GATES.removeprefix("brain/"), hours=3),
+            *_accepted_into("other", "brain/learnings/other.md", hours=2),
+            *learning_events("open", session="s-open", start=SCENARIO_START),
+        ]
+    )
+    assert appended.appended == 7
+    return composed
+
+
+def test_lists_learnings_of_note_when_brain_path_filter_given(note_learnings: Any) -> None:
+    client = note_learnings.client
+
+    found = {
+        asked: client.get("/api/v1/learnings", params={"project": "demo", "brain_path": asked})
+        for asked in (WEB_GATES, WEB_GATES.removeprefix("brain/"))
+    }
+    none = client.get("/api/v1/learnings", params={"brain_path": "learnings/none.md"})
+
+    for response in found.values():
+        assert response.status_code == 200, response.text
+        assert [item["id"] for item in response.json()["items"]] == ["bare", "prefixed"]
+    assert none.status_code == 200, none.text
+    assert none.json()["items"] == []
+
+
+@pytest.mark.parametrize("brain_path", ["auto/x.md", "../x.md", "brain/auto/x.md", "x.txt"])
+def test_refuses_brain_path_filter_when_outside_brain(note_learnings: Any, brain_path: str) -> None:
+    response = note_learnings.client.get("/api/v1/learnings", params={"brain_path": brain_path})
+
+    assert response.status_code == 400
+    assert response.headers["content-type"] == "application/problem+json"
+    assert [error["parameter"] for error in response.json()["errors"]] == ["brain_path"]
+    assert brain_path not in response.text
+
+
+def test_serves_local_only_when_host_or_origin_foreign(note_learnings: Any) -> None:
+    client = note_learnings.client
+    params = {"brain_path": WEB_GATES}
+
+    foreign_host = client.get("/api/v1/learnings", params=params, headers={"Host": "evil.example"})
+    foreign_origin = client.get(
+        "/api/v1/learnings", params=params, headers={"Origin": "https://evil.example"}
+    )
+
+    assert foreign_host.status_code == 403
+    assert foreign_origin.status_code == 200, foreign_origin.text
+    assert [item["id"] for item in foreign_origin.json()["items"]] == ["bare", "prefixed"]
+    for response in (foreign_host, foreign_origin):
+        assert not [name for name in response.headers if name.lower().startswith("access-control")]

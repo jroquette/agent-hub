@@ -6,6 +6,7 @@ Each hub is ``knowledge_world``'s: the git checkout ``demo-hub`` (project ``demo
 """
 
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -392,3 +393,55 @@ def test_indexes_registered_folder_when_hub_registered_as_worktree(
     assert world.rows("SELECT DISTINCT hub FROM knowledge_documents") == [
         (os.path.realpath(worktree),)
     ]
+
+
+# AC-393.20 (NFR Latency): a hub the size of this project's own, 750 notes (21 MB, none over
+# 256 KiB) holding 345 links, as AGH-391's budget hub.
+BUDGET_FILES = 750
+BUDGET_LINKS = 345
+BUDGET_FILE_BYTES = 28_000
+
+
+def budget_note(number: int) -> bytes:
+    """Note ``number``: ``marker``, a link to ``brain/now.md`` for the first ``BUDGET_LINKS``,
+    and varied synthetic words, in lines, exactly ``BUDGET_FILE_BYTES`` long."""
+    link = "See [now](../../now.md).\n" if number < BUDGET_LINKS else ""
+    lines = [f"# Note {number}\n\nmarker: the focus moves.\n{link}"]
+    size = len(lines[0])
+    line = 0
+    while size < BUDGET_FILE_BYTES - 100:
+        words = " ".join(f"term{(number * 31 + line * 7 + word) % 4000}" for word in range(10))
+        lines.append(words + "\n")
+        size += len(words) + 1
+        line += 1
+    text = "".join(lines).encode()
+    return text + b"\n" * (BUDGET_FILE_BYTES - len(text))
+
+
+@pytest.mark.serial
+def test_answers_within_budget_when_hub_unchanged(knowledge_world: KnowledgeWorldFactory) -> None:
+    files = {
+        f"brain/features/f{number // 10:03}/note-{number:03}.md": budget_note(number)
+        for number in range(BUDGET_FILES - 1)
+    }
+    world = knowledge_world(files | {"brain/now.md": b"# Now\n\nThe focus.\n"}, commit=False)
+
+    started = time.perf_counter()
+    first = answer(world.search("marker"))
+    first_elapsed = time.perf_counter() - started
+    started = time.perf_counter()
+    again = answer(world.search("marker"))
+    search_elapsed = time.perf_counter() - started
+    started = time.perf_counter()
+    linked = answer(world.backlinks("now.md"))
+    backlinks_elapsed = time.perf_counter() - started
+
+    assert first["sync"]["indexed"] == BUDGET_FILES
+    assert again["sync"] == {"listed": BUDGET_FILES, "read": 0, "indexed": 0, "dropped": 0}
+    assert len(again["results"]) == 50
+    assert (len(linked["items"]), linked["total"]) == (100, BUDGET_LINKS)
+    assert world.rows("SELECT count(*) FROM knowledge_links") == [(BUDGET_LINKS,)]
+    # Targets about 3 s and 0.3 s; the bounds leave room for a slow machine.
+    assert first_elapsed < 10.0
+    assert search_elapsed < 1.0
+    assert backlinks_elapsed < 1.0
