@@ -190,6 +190,7 @@ DESIGN_PATHS = (
     "workflows/sdlc/fixtures/implement-pending-superseded.yaml",
     "workflows/sdlc/fixtures/implement-plan-approved.yaml",
     "workflows/sdlc/fixtures/implement-plan-declined.yaml",
+    "workflows/sdlc/fixtures/implement-plan-moved-still-plan.yaml",
     "workflows/sdlc/fixtures/implement-plan-moved.yaml",
     "workflows/sdlc/fixtures/implement-pr-failure.yaml",
     "workflows/sdlc/fixtures/implement-rounds-exhausted.yaml",

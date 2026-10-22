@@ -676,6 +676,9 @@
     "workflows/sdlc/fixtures/implement-plan-declined.yaml": {
       "ownership": "seeded"
     },
+    "workflows/sdlc/fixtures/implement-plan-moved-still-plan.yaml": {
+      "ownership": "seeded"
+    },
     "workflows/sdlc/fixtures/implement-plan-moved.yaml": {
       "ownership": "seeded"
     },
