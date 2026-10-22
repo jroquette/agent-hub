@@ -227,8 +227,18 @@ def run(given: argparse.Namespace, stdin: str) -> dict[str, object]:
     )
 
 
+def _joined(argv: list[str]) -> list[str]:
+    """``record``'s options as ``--name=value``: a value is the next argument whatever it holds
+    (the owner's note may start with ``-``), as the workflow passes each reference whole."""
+    if argv[:1] != ["record"]:
+        return argv
+    rest = argv[1:]
+    pairs = zip(rest[::2], rest[1::2], strict=False)
+    return ["record", *(f"{name}={value}" for name, value in pairs), *rest[len(rest) // 2 * 2 :]]
+
+
 def main(argv: list[str]) -> int:
-    given = _parser().parse_args(argv)
+    given = _parser().parse_args(_joined(argv))
     try:
         found = run(given, sys.stdin.read())
     except BadInputError as error:
