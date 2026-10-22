@@ -11,6 +11,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- A flow table (AGH-495): which built-in flow to use, how it starts, the gates you decide and the hub skills and
+  agents it reuses, generated from each built-in workflow's description and its pack. A new hub's `README.md` ends
+  with it, and `docs/USING.md` › Pick a flow holds the same table; an existing hub can copy it from there (`hub sync`
+  does not rewrite the README). `/kickoff` and `/triage` now route work to the flows by name.
+
 ## [0.20.1] - 2026-10-22
 
 ### Added

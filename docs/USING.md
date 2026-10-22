@@ -298,3 +298,20 @@ rewrites `hooks.json`, `.claude/settings.json` (the sensor joins eleven hook eve
 `hubhooks.py`, decisions unchanged. Read-only gate (AGH-141): adds the hook `readonly_gate.py` and rewrites
 `hooks.json`, `.claude/settings.json` and the researcher, spec-reviewer and quality-reviewer (`mutates_checkout: false`,
 which any agent may add); one that changes a checkout is held at its stop once, or the change is reported.
+
+## Pick a flow
+
+Which built-in flow to use, how it starts and what you decide in it. `/kickoff` and `/triage` route work by
+this table, and a new hub's `README.md` ends with the same one.
+
+<!-- flow-catalog:start -->
+| Flow | Use when | Start | Your gates | Skills and agents inside |
+|---|---|---|---|---|
+| `issue-to-pr` (`issue-to-pr` pack) | One tracker issue to a PR, as hub run takes it. | `./hub run <issue>` | none | own prompts |
+| `deliver` (`sdlc` pack) | One issue to a PR, implemented and reviewed in rounds until the check and both reviewers pass. | `./hub workflow run deliver` | none | own prompts |
+| `implement` (`sdlc` pack) | One ticket of a planned feature to a PR - context, preflight and plan change gate, review rounds, ticket eval. | `/implement` | The owner approves the plan change, or declines it with a note. | own prompts |
+| `review` (`sdlc` pack) | The spec and quality lenses on a checkout, then one verdict. | `./hub workflow run review` | none | own prompts |
+| `ticket-pass` (`sdlc` pack) | One ticket pass - preflight, a plan change gate on plan drift, the worktree, the ticket plan and the review rounds. | inside `implement` | The owner approves the plan change, or declines it with a note. | own prompts |
+
+Any flow can also start from `hub web` (Workflow runs › Start run; `issue-to-pr` only through `./hub run`), or by itself from `hub.json` → `schedules` (a time) and `events` (a merge, a new PR, a red CI run). Each pack's file suggests its own entries.
+<!-- flow-catalog:end -->

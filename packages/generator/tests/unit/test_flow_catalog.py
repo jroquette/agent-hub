@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.generator.flow_catalog import (
     FLOW_FOOTER,
     Flow,
@@ -15,6 +16,7 @@ from agent_hub.generator.flow_catalog import (
     flow_table,
     missing_use_when,
 )
+from agent_hub.generator.render_hub import render_hub
 from agent_hub.generator.workflow_discovery import discover_builtins
 
 HEADER = "| Flow | Use when | Start | Your gates | Skills and agents inside |"
@@ -173,3 +175,22 @@ def test_finds_use_when_for_every_builtin_flow_when_catalog_built() -> None:
 
     assert missing_use_when(flows) == ()
     assert {flow.name for flow in flows} == {w.name for w in discover_builtins().workflows}
+
+
+# AC-1: a new hub's README ends with the flow table: every built-in workflow once, with how it
+# starts and the gates the owner decides.
+def test_lists_every_builtin_flow_with_start_and_gates_when_readme_rendered(
+    demo_config: HubConfig,
+) -> None:
+    readme = next(f for f in render_hub(demo_config).files if f.path == "README.md")
+    text = readme.content.decode("utf-8")
+    section = text[text.index("\n## Pick a flow\n") :]
+    flows = {flow.name: flow for flow in builtin_flows()}
+
+    assert text.index("\n## Join this hub\n") < text.index("\n## Pick a flow\n")
+    for workflow in discover_builtins().workflows:
+        rows = [line for line in section.splitlines() if line.startswith(f"| `{workflow.name}` (")]
+        assert len(rows) == 1, workflow.name
+        cells = [cell.strip() for cell in rows[0].strip("|").split(" | ")]
+        assert cells[2], workflow.name
+        assert cells[3] == ("; ".join(flows[workflow.name].gates) or "none"), workflow.name
