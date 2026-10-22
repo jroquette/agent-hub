@@ -1,0 +1,340 @@
+# Doc lines a contract change made wrong. After a merge to a repo's default branch (or
+# once a month, with sha blank), contract.py lists the contract names the change removed and that
+# nothing at the new commit still declares: CLI commands, make targets, flags, config keys,
+# skills, workflows, paths, tables and columns. mentions.py finds the doc lines at origin/<default>
+# that still name one, inside code spans or fences. A fresh, read-only judge proposes each
+# corrected line (or keeps it, with a reason); doc_fix.py plan checks every proposal against the
+# docs (docs only, one line for one line) and the owner approves the list at the gate. Only then
+# branch.py makes the branch, doc_fix.py apply writes and commits the approved lines and checks
+# the diff, and hub step commits|pr open the PR in the repo.
+#
+# Invariants: docs only, never code; an ADR file (whatever its status) is never edited - an
+# accepted ADR is reported as superseded wording, any other ADR as wording to change by hand; the
+# branch, the commit, the push and the PR all come after the approval; nothing reads or writes the
+# tracker (ADR 0030: no issue input, hub step only for commits and pr).
+#
+# Monthly mode (sha blank): the month's net contract diff, from the last first-parent commit of
+# origin/<default> 30 days ago to origin/<default>, through the same rules. Known gap: a command
+# renamed in one Typer group while another group keeps the same name is not seen as gone.
+#
+# Fetch the repo first: the scripts get no token and read origin/<default> as last fetched.
+# Suggested hub.json entries:
+#   "events": [{"workflow": "doc-drift", "on": "merge", "repo": "<dir>", "inputs": {"repo": "<dir>"}}]
+#   "schedules": [{"workflow": "doc-drift", "cron": "0 6 1 * *", "inputs": {"repo": "<dir>"}}]
+version: 1
+name: doc-drift
+description: Doc lines a contract change made wrong, fixed in a docs-only PR the owner approves first.
+revision: 1
+inputs:
+  repo:
+    required: true
+    description: The repo to check, its dir in hub.json.
+  sha:
+    default: ""
+    description: The merge commit on the default branch; blank checks the last month.
+returns: plan
+outcome_field: verdict
+nodes:
+  - id: contract
+    type: script
+    description: The contract names the change removed that nothing still declares.
+    runtime: python
+    script: contract.py
+    args: [--repo, $INPUTS.repo, --sha, $INPUTS.sha]
+    mutates_checkout: false
+    timeout: 5m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      required: [mode, sha, base, label, hub, repo_path, count, names, skipped, truncated, patch_truncated]
+      properties:
+        mode: {type: string, enum: [merge, monthly]}
+        sha: {type: string}
+        base: {type: string}
+        label: {type: string}
+        hub: {type: string}
+        repo_path: {type: string}
+        count: {type: integer, minimum: 0}
+        names:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            required: [kind, name, new, source]
+            properties:
+              kind:
+                type: string
+                enum: [command, make-target, flag, config-key, skill, workflow, path, table, column]
+              name: {type: string, minLength: 1, maxLength: 200}
+              new: {type: array, maxItems: 5, items: {type: string}}
+              source: {type: string}
+        skipped: {type: integer, minimum: 0}
+        truncated: {type: integer, minimum: 0}
+        patch_truncated: {type: boolean}
+
+  - id: mentions
+    type: script
+    description: The doc lines at origin/<default> that still name a changed name, ADRs apart.
+    depends_on: [contract]
+    when: "$contract.output.count > 0"
+    runtime: python
+    script: mentions.py
+    stdin: $contract.output
+    mutates_checkout: false
+    timeout: 5m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      required: [fixable_count, fixable, adr, notes, truncated]
+      properties:
+        fixable_count: {type: integer, minimum: 0}
+        fixable:
+          type: array
+          items:
+            type: object
+            required: [path, line, text, names]
+            properties:
+              path: {type: string}
+              line: {type: integer, minimum: 1}
+              text: {type: string}
+              names: {type: array, items: {type: string}}
+        adr:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            required: [path, line, text, names, status]
+            properties:
+              path: {type: string}
+              line: {type: integer, minimum: 1}
+              text: {type: string, maxLength: 500}
+              names: {type: array, items: {type: string}}
+              status: {type: string}
+        notes:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            required: [path, reason]
+            properties:
+              path: {type: string}
+              reason: {type: string}
+        truncated: {type: integer, minimum: 0}
+
+  - id: judge
+    type: agent
+    description: Propose each corrected doc line, or keep it with a reason; read-only.
+    depends_on: [mentions]
+    when: "$mentions.output.fixable_count > 0"
+    prompt_file: judge.md
+    context: fresh
+    cwd: $contract.output.repo_path
+    mutates_checkout: false
+    timeout: 30m
+    retry: {max_attempts: 0}
+    with:
+      hub: $contract.output.hub
+      sha: $contract.output.sha
+      base: $contract.output.base
+      names: $contract.output.names
+      mentions: $mentions.output.fixable
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [fixes, kept, more]
+      properties:
+        fixes:
+          type: array
+          maxItems: 60
+          items:
+            type: object
+            additionalProperties: false
+            required: [path, line, old, new, reason]
+            properties:
+              path: {type: string, minLength: 1, maxLength: 512}
+              line: {type: integer, minimum: 1, maximum: 10000000}
+              old: {type: string, maxLength: 2000}
+              new: {type: string, maxLength: 2000}
+              reason: {type: string, maxLength: 300}
+        kept:
+          type: array
+          maxItems: 200
+          items:
+            type: object
+            additionalProperties: false
+            required: [path, line, reason]
+            properties:
+              path: {type: string, minLength: 1, maxLength: 512}
+              line: {type: integer, minimum: 1, maximum: 10000000}
+              reason: {type: string, maxLength: 300}
+        more: {type: integer, minimum: 0}
+
+  - id: plan
+    type: script
+    description: Check each proposed line against the docs at the base; sort out ADR lines; the verdict.
+    depends_on: [contract, mentions, judge]
+    trigger_rule: none_failed_min_one_success
+    runtime: python
+    script: doc_fix.py
+    # On stdin: the judge's reply (empty when it was skipped).
+    stdin: $judge.output
+    args:
+      - plan
+      - --repo-path
+      - $contract.output.repo_path
+      - --base
+      - $contract.output.base
+      - --names
+      - $contract.output.names
+      - --adr
+      - $mentions.output.adr
+      - --notes
+      - $mentions.output.notes
+      - --names-truncated
+      - $contract.output.truncated
+      - --patch-truncated
+      - $contract.output.patch_truncated
+      - --mentions-truncated
+      - $mentions.output.truncated
+    mutates_checkout: false
+    timeout: 5m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      required: [verdict, fixes, items, superseded, refused, notes, message]
+      properties:
+        verdict: {type: string, enum: [clean, reported, proposed]}
+        fixes: {type: integer, minimum: 0}
+        items:
+          type: array
+          maxItems: 60
+          items:
+            type: object
+            required: [n, path, line, old, new, reason]
+            properties:
+              n: {type: integer, minimum: 1}
+              path: {type: string}
+              line: {type: integer, minimum: 1}
+              old: {type: string}
+              new: {type: string}
+              reason: {type: string}
+        superseded:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            required: [path, line, text, names, status]
+            properties:
+              path: {type: string}
+              line: {type: integer, minimum: 1}
+              text: {type: string}
+              names: {type: array, items: {type: string}}
+              status: {type: string}
+        refused:
+          type: array
+          maxItems: 200
+          items:
+            type: object
+            required: [path, line, reason]
+            properties:
+              path: {type: string}
+              line: {type: integer}
+              reason: {type: string}
+        notes: {type: array, items: {type: string}}
+        message: {type: string, maxLength: 65536}
+
+  - id: approve
+    type: approval
+    description: The owner approves the proposed doc lines, or rejects them (no PR).
+    depends_on: [plan]
+    when: "$plan.output.fixes > 0"
+    message: $plan.output.message
+    capture_response: true
+
+  - id: branch
+    type: script
+    description: Make the run's worktree and branch in the repo, at the base the judge read.
+    depends_on: [approve]
+    when: "$approve.output.decision == 'approve'"
+    runtime: python
+    script: branch.py
+    args: [--repo, $INPUTS.repo, --base, $contract.output.base]
+    timeout: 5m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      required: [path, branch, base, target]
+      properties:
+        path: {type: string}
+        branch: {type: string}
+        base: {type: string}
+        target: {type: object}
+
+  - id: apply
+    type: script
+    description: Write and commit the approved lines, then check the diff holds only them.
+    depends_on: [branch]
+    runtime: python
+    script: doc_fix.py
+    stdin: $plan.output
+    args:
+      - apply
+      - --worktree
+      - $branch.output.path
+      - --base
+      - $branch.output.base
+      - --label
+      - $contract.output.label
+      - --subject-prefix
+      - "docs(repo): "
+      - --note
+      - $approve.output.text
+    timeout: 5m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      required: [changes, files, skipped, summary]
+      properties:
+        changes: {type: integer, minimum: 0}
+        files: {type: array, items: {type: string}}
+        skipped:
+          type: array
+          items:
+            type: object
+            required: [path, line, reason]
+            properties:
+              path: {type: string}
+              line: {type: integer}
+              reason: {type: string}
+        summary: {type: string, maxLength: 8000}
+
+  - id: commits
+    type: shell
+    description: The commits on the branch, and whether a tracked change sits beside them.
+    depends_on: [apply]
+    command: [hub, step, commits, --target, $branch.output.target]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        count: {type: integer, minimum: 0}
+        subjects: {type: array, items: {type: string}}
+        summary: {type: string}
+        dirty: {type: boolean}
+      required: [count, subjects, summary, dirty]
+
+  - id: pr
+    type: shell
+    description: Push the branch and open its PR in the repo, or find the one open.
+    depends_on: [commits]
+    when: "$commits.output.count > 0 && $commits.output.dirty == false"
+    command: [hub, step, pr, --issue, doc-drift, --target, $branch.output.target, --summary, $apply.output.summary]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        url: {type: string}
+        found: {type: boolean}
+        summary: {type: string}
+        title_unmatched: {type: [string, "null"]}
+      required: [url, found, summary, title_unmatched]

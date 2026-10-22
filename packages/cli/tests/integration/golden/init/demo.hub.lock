@@ -583,6 +583,21 @@
       "ownership": "managed",
       "sha256": "fdac169d0ebd59302540f442f0592e39239ede6ca87fc367184c16806f9eff21"
     },
+    "workflows/doc-drift/doc-drift.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/doc-drift/fixtures/drift-adr-only.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/doc-drift/fixtures/drift-declined.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/doc-drift/fixtures/drift-none.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/doc-drift/fixtures/drift-renamed-command.yaml": {
+      "ownership": "seeded"
+    },
     "workflows/issue-to-pr/fixtures/blocked.yaml": {
       "ownership": "seeded"
     },

@@ -1,0 +1,53 @@
+# The owner rejects the proposed lines at the gate: the reject is read by branch's when, so the
+# run ends done with no branch, no commit and no PR (not cancelled).
+workflow: doc-drift
+inputs: {repo: demo-api, sha: 0a1b2c3d4e}
+stubs:
+  contract:
+    output:
+      mode: merge
+      sha: 0a1b2c3d4e
+      base: 9f8e7d6c5b
+      label: merge 0a1b2c3
+      hub: /ws/hub
+      repo_path: /ws/demo-api
+      count: 1
+      names:
+        - {kind: command, name: old-cmd, new: [new-cmd], source: src/demo/cli.py}
+      skipped: 0
+      truncated: 0
+      patch_truncated: false
+  mentions:
+    output:
+      fixable_count: 2
+      fixable:
+        - {path: docs/USING.md, line: 12, text: "Run `demo old-cmd` to start.", names: [old-cmd]}
+        - {path: README.md, line: 30, text: "- `demo old-cmd`: starts the demo.", names: [old-cmd]}
+      adr: []
+      notes: []
+      truncated: 0
+  judge:
+    output:
+      fixes:
+        - {path: docs/USING.md, line: 12, old: "Run `demo old-cmd` to start.", new: "Run `demo new-cmd`
+            to start.", reason: The command was renamed.}
+        - {path: README.md, line: 30, old: "- `demo old-cmd`: starts the demo.", new: "- `demo new-cmd`:
+            starts the demo.", reason: The command was renamed.}
+      kept: []
+      more: 0
+  plan:
+    output:
+      verdict: proposed
+      fixes: 2
+      items:
+        - {n: 1, path: docs/USING.md, line: 12, old: "Run `demo old-cmd` to start.", new: "Run `demo
+            new-cmd` to start.", reason: The command was renamed.}
+        - {n: 2, path: README.md, line: 30, old: "- `demo old-cmd`: starts the demo.", new: "- `demo
+            new-cmd`: starts the demo.", reason: The command was renamed.}
+      superseded: []
+      refused: []
+      notes: []
+      message: "2 doc lines to fix after merge 0a1b2c3."
+  approve: {decision: reject, text: not now, approver: Jo}
+expect: {status: done, outcome: proposed}
+reached: [contract, mentions, judge, plan, approve]
