@@ -13,6 +13,15 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- Feature detail shows plan change requests (AGH-405): a "Waiting for you" banner names each open request and opens
+  its ticket's panel at Preflight, Plan carries "v3 waits for you", tickets read "Waiting for you: plan change",
+  "Held: plan change pending", a re-run or their local drift, and the panel lists every preflight run, local note and
+  discovery, shows the request's evidence, proposal and consequences, and decides it (Approve, or Decline with a
+  note) through its run's gate, or, only when the run is gone, through the new
+  `POST /features/{project}/{slug}/change-requests/{n}/decision`, which creates the request's decision file once
+  and refuses while the run lives. `GET /features/{project}/{slug}/tickets/{ticket}` serves a ticket's records, the detail's
+  `change_requests` carry their gate's `approval_id`, the Features list ranks a plan change and a hand-written
+  sign-off in Needs you, and every owner wait reads "Waiting for you".
 - `hub search QUERY [--kind KIND]… [--hub NAME] [--json] [--db PATH]` searches the hub's `brain/` (not `brain/auto/`)
   and each repo's `docs/` through a local SQLite FTS5 index in the database `hub web` and `hub collect` use, synced
   with the checkout on every search; `hub brain reindex [--hub NAME] [--db PATH]` rebuilds it. Markdown only, at most

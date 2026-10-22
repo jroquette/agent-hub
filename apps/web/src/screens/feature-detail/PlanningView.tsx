@@ -11,6 +11,7 @@ import {
   Icon,
   StatusBadge,
   StepBar,
+  type IconName,
   type Status,
 } from "../../components";
 import { curvePath, useNodeBoxes } from "../../lib/nodeBoxes";
@@ -543,6 +544,49 @@ export function ticketStepLine(flow: TicketFlow): string {
   return note ? `${head} · ${note}` : head;
 }
 
+/** What a ticket's one signal says (two-level-flows AC-2.5, AC-2.8). */
+export type SignalKind = "waiting" | "held" | "stale" | "local";
+
+/**
+ * The kind of a ticket flow's signal, read from its Preflight step's typed state, never its
+ * words: the ticket's own plan change waits for you (`waiting`), its Preflight must run again
+ * (`stale`) or carries local drift (`local`, a meta that is never a status), else another
+ * ticket's change request holds it (`held`).
+ */
+export function signalKind(flow: TicketFlow): SignalKind | null {
+  if (!flow.signal) return null;
+  const preflight = flow.steps.find((step) => step.name === "preflight");
+  if (preflight?.state === "waiting") return "waiting";
+  if (preflight?.meta === flow.signal) return preflight.state === "stale" ? "stale" : "local";
+  return "held";
+}
+
+const SIGNAL_ICON: Record<Exclude<SignalKind, "local">, IconName> = {
+  waiting: "hand",
+  held: "circle-pause",
+  stale: "clock",
+};
+
+/**
+ * A ticket's signal line: the owner's wait, a hold or a re-run in words with its icon (it takes
+ * the readiness line's place, A13); local drift as a muted meta beside it.
+ */
+export function TicketSignal({ flow }: { flow: TicketFlow }) {
+  const kind = signalKind(flow);
+  if (kind === null) return null;
+  if (kind === "local") return <span className="ah-small ah-muted">{flow.signal}</span>;
+  return (
+    <span className="ah-row" style={{ gap: 4 }}>
+      <Icon
+        name={SIGNAL_ICON[kind]}
+        size="sm"
+        style={{ color: kind === "waiting" ? "var(--waiting)" : "var(--idle)" }}
+      />
+      <b style={{ fontWeight: 500 }}>{flow.signal}</b>
+    </span>
+  );
+}
+
 /**
  * A ticket's seven steps as one bar (two-level-flows AC-1.11), labelled with its current step,
  * its position and its meta (or "Blocked"), so the state is never told by color alone ("Review ·
@@ -585,7 +629,10 @@ function FlowCard({
   onOpenTicket?: TicketOpener | undefined;
 }) {
   const action = ticketAction?.(row);
-  const note = !readinessRepeatsState(row);
+  // A plan change's wait, a hold or a re-run replaces the readiness line; local drift joins it.
+  const signal = row.flow ? signalKind(row.flow) : null;
+  const replaced = signal !== null && signal !== "local";
+  const note = !readinessRepeatsState(row) && !replaced;
   // A blocker the status line already names ("Started before X was done") is not repeated below.
   const named = note && row.readiness === "in_progress" ? row.waiting_on : [];
   const after = row.blocked_by
@@ -630,10 +677,12 @@ function FlowCard({
       </span>
       {row.flow && <TicketStepBar flow={row.flow} />}
       <div className="ah-flow-card-foot">
-        {(note || action) && (
+        {(note || action != null || signal !== null) && (
           <div className="ah-flow-card-status">
+            {replaced && row.flow && <TicketSignal flow={row.flow} />}
             {note && <ReadinessText row={row} rows={rows} external={external} brief />}
             {action}
+            {signal === "local" && row.flow && <TicketSignal flow={row.flow} />}
           </div>
         )}
         <div className="ah-flow-card-facts">

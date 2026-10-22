@@ -36,11 +36,14 @@ STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # checks above only (E9).
 # The workflow-run writes (AC-213.19) start or stop a child process: strict too, and they need
 # the launch's cookie when sessions are on (``session_access``). A workflow gate's decision
-# (AC-213.18) runs the CLI and resumes the run, so it is one of them.
+# (AC-213.18) runs the CLI and resumes the run, so it is one of them, and so is the owner's
+# decision on a plan change request whose run is gone (two-level-flows AC-2.14): it answers in
+# the run's stead.
 RUN_WRITES = re.compile(
     rf"^{re.escape(API_PREFIX)}/(workflow-runs(/[^/]+/(cancel|resume|abandon))?"
     r"|approvals/[^/]+/decision"
-    r"|features/[^/]+/[^/]+/acs/[^/]+/check-runs)$"
+    r"|features/[^/]+/[^/]+/acs/[^/]+/check-runs"
+    r"|features/[^/]+/[^/]+/change-requests/[^/]+/decision)$"
 )
 # The item writes (AGH-295, S7, D13) write into a hub's working tree: strict too, and they need
 # the launch's cookie (``session_access``, which answers 409 ``hub_read_only`` in the container).

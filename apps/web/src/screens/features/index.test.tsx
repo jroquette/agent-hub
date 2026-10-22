@@ -113,10 +113,15 @@ const waiting = aFeature({
   golden_path: aGoldenPath({
     phase: "acceptance",
     steps: [
-      aGoldenStep({ name: "acceptance", state: "current", meta: "Waiting on you: sign off 2 ACs" }),
+      aGoldenStep({
+        name: "acceptance",
+        state: "waiting",
+        meta: "Waiting for you: sign off 2 ACs",
+      }),
     ],
   }),
   phase: "acceptance",
+  waiting_on_owner: { kind: "owner_signoff", tickets: [] },
 });
 
 describe("FeaturesScreen", () => {
@@ -142,7 +147,7 @@ describe("FeaturesScreen", () => {
     expect(rowOf("broken-record")).toHaveAttribute("data-tone", "blocked");
     expect(rowOf("layered-memory")).not.toHaveAttribute("data-tone");
     expect(groupOf(/^In progress · 5$/)).toHaveTextContent(
-      "1 wait on your steps · 1 record cannot be read",
+      "1 waits on your steps · 1 record cannot be read",
     );
     expect(slugsIn(groupOf(/^Shipped · 1$/))).toEqual(["shipped-one"]);
   });
@@ -158,6 +163,38 @@ describe("FeaturesScreen", () => {
     await userEvent.click(rowOf("owner-held"));
     expect(router.state.location.pathname).toBe("/features/agent-hub/owner-held");
     expect(router.state.location.search).toBe("?doc=acs");
+  });
+
+  // two-level-flows AC-2.8: a plan change ranks the feature in Needs you and opens the ticket
+  // panel at the asking ticket's request.
+  it("ranks a plan change first among the waits and opens its ticket panel (AC-2.8)", async () => {
+    const asking = aFeature({
+      slug: "plan-change",
+      waiting_on_owner: { kind: "change_request", tickets: ["DEM-8"] },
+    });
+    const { router } = open({ "/api/v1/features": aPage([waiting, asking, ...features]) });
+
+    await screen.findByRole("link", { name: "plan-change" });
+    expect(rowOf("plan-change")).toHaveTextContent("Plan change waits for you · from DEM-8");
+    expect(rowOf("plan-change")).toHaveAttribute("data-tone", "waiting");
+    expect(slugsIn(groupOf(/^In progress · 6$/)).slice(0, 3)).toEqual([
+      "broken-record",
+      "plan-change",
+      "owner-held",
+    ]);
+    expect(groupOf(/^In progress · 6$/)).toHaveTextContent("1 plan change waits for you");
+    await userEvent.click(rowOf("plan-change"));
+    expect(router.state.location.search).toBe("?doc=tickets&ticket=DEM-8&step=preflight");
+  });
+
+  // U9: the hint counts in words that agree with the count.
+  it("says several waits in the plural in the group hint (needs)", async () => {
+    const asking = (slug: string) =>
+      aFeature({ slug, waiting_on_owner: { kind: "change_request", tickets: ["DEM-8"] } });
+    open({ "/api/v1/features": aPage([asking("plan-a"), asking("plan-b")]) });
+
+    await screen.findByRole("link", { name: "plan-a" });
+    expect(groupOf(/^In progress · 2$/)).toHaveTextContent("2 plan changes wait for you");
   });
 
   it("names the current step on the row of a feature in progress (progress)", async () => {
@@ -200,12 +237,13 @@ describe("FeaturesScreen", () => {
     const held = aFeature({
       slug: "held-by-reason",
       acs: { owner_steps: 0, passing: 12, total: 12 },
+      waiting_on_owner: { kind: "owner_signoff", tickets: [] },
       golden_path: aGoldenPath({
         steps: [
           aGoldenStep({
             name: "acceptance",
-            state: "current",
-            meta: "Waiting on you: sign off 3 ACs",
+            state: "waiting",
+            meta: "Waiting for you: sign off 3 ACs",
             reason: "3 ACs wait on owner steps (SHIP-WITH-OWNER-STEPS)",
           }),
         ],
@@ -711,7 +749,7 @@ describe("FeaturesScreen", () => {
       "owner-held",
     ]);
     expect(groupOf(/^In progress · 6$/)).toHaveTextContent(
-      "What needs you first, then furthest along and most ACs passing · 1 wait on your steps · 1 no ship · 1 record cannot be read",
+      "What needs you first, then furthest along and most ACs passing · 1 waits on your steps · 1 no ship · 1 record cannot be read",
     );
     expect(document.querySelector('.ft-summary [data-group="needs"]')).toHaveTextContent(
       "3 need you",
@@ -729,7 +767,7 @@ describe("FeaturesScreen", () => {
 
     await screen.findByRole("link", { name: "told" });
     expect(rowOf("told")).toHaveTextContent("Your steps are left · Publish the plugin release.");
-    expect(groupOf(/^In progress · 1$/)).toHaveTextContent("1 wait on your steps");
+    expect(groupOf(/^In progress · 1$/)).toHaveTextContent("1 waits on your steps");
   });
 });
 
