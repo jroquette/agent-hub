@@ -329,6 +329,13 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "Start a scenario run in personal?" });
     expect(within(dialog).getByText(/has not reported in 30 s/)).toBeInTheDocument();
+    // The first dialog is gone, and nothing on the page can send a second start (review Q1).
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(
+      screen
+        .queryAllByRole("button", { name: "Start scenario run" })
+        .filter((button) => !(button as HTMLButtonElement).disabled),
+    ).toHaveLength(0);
     expect(within(dialog).queryByRole("button", { name: "Start scenario run" })).toBeNull();
     expect(
       within(dialog).getByRole("link", { name: `Open scenario run ${SCENARIO_RUN} anyway` }),
@@ -416,5 +423,38 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
       await screen.findByText("Cannot start in personal: the plan does not allow a start there."),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Cannot start: +is denied/)).toBeNull();
+  });
+  it("scenarios detail shows a plan 422's messages that name no field of the form", async () => {
+    renderDetail({
+      [PLAN]: aProblem({
+        status: 422,
+        title: "Invalid request body",
+        errors: [
+          { pointer: "/inputs/external_ref", message: "external_ref must be a ref." },
+          { pointer: "/environment", message: "environment must name an environment." },
+        ],
+      }),
+    });
+    await planIn("personal");
+
+    expect(await screen.findByText("environment must name an environment.")).toBeInTheDocument();
+    expect(screen.getByLabelText("external_ref (required)")).toHaveAccessibleDescription(
+      /external_ref must be a ref\./,
+    );
+  });
+
+  it("scenarios detail stacks the steps and the scenario runs below 1600 px", async () => {
+    renderDetail();
+
+    const steps = await screen.findByRole("region", { name: "Step by step" });
+    expect(steps.parentElement).toHaveStyle({ gridTemplateColumns: "minmax(0, 1fr)" });
+  });
+  it("scenarios detail breaks long ids only after a slash or a dash", async () => {
+    renderDetail({ [PLAN]: denied });
+    await planIn("personal");
+
+    const table = await screen.findByRole("table", { name: "Plan of order-lifecycle in personal" });
+    const action = within(table).getByText("orders/render-invoice-pdf", { selector: ".ah-small" });
+    expect(action.querySelectorAll("wbr").length).toBe(3);
   });
 });

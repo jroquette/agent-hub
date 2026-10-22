@@ -149,7 +149,7 @@ export function WhereText({
         const where = item.url ?? item.resource;
         return (
           <span key={`${item.service}:${where ?? ""}`} className="ah-small">
-            <span className="ah-mono">{item.service}</span> →{" "}
+            <BreakId id={item.service} /> →{" "}
             {where === null ? (
               <span title={`No endpoint in ${environment}.`}>—</span>
             ) : (
@@ -343,5 +343,21 @@ export function PlanGrid({
         </tbody>
       </table>
     </div>
+  );
+}
+
+/** An id (`orders/render-invoice-pdf`) that may break only after a `/` or a `-`, never
+ * mid-word (review round 2, B1). */
+export function BreakId({ id, className = "ah-mono" }: { id: string; className?: string }) {
+  const parts = id.split(/(?<=[/-])/);
+  return (
+    <span className={className}>
+      {parts.map((part, i) => (
+        <Fragment key={i}>
+          {part}
+          {i < parts.length - 1 && <wbr />}
+        </Fragment>
+      ))}
+    </span>
   );
 }
