@@ -210,6 +210,67 @@ class StartScheduledRuns:
                 )
         return report.done()
 
+    def poll_events(self) -> StartReport:
+        """Poll each event source and start one run per event not seen before."""
+        report = _Report()
+        for hub in self._hubs.scheduled_hubs():
+            if hub.config.events:
+                self._poll_hub(hub, report)
+        return report.done()
+
+    def _poll_hub(self, hub: ScheduledHub, report: _Report) -> None:
+        # Polled outside the lock: a slow gh call never holds the ledger.
+        polled = self._polled(hub, report)
+        if not polled:
+            return
+        declared = tuple(source_key(event) for event in hub.config.events)
+        try:
+            new = self._ledger.update(
+                hub.hub_path, partial(_record_seen, polled=polled, declared=declared)
+            )
+        except StartLedgerError as error:
+            report.fail(hub.project, None, str(error))
+            return
+        for event, ref in new:
+            inputs = self._event_inputs(hub, event, ref=ref, report=report)
+            if inputs is not None:
+                self._launch(
+                    hub,
+                    workflow=event.workflow,
+                    inputs=inputs,
+                    report=report,
+                    environment=None,
+                    trigger="event",
+                )
+
+    def _polled(
+        self, hub: ScheduledHub, report: _Report
+    ) -> list[tuple[EventStart, tuple[EventRef, ...]]]:
+        config = hub.config
+        github = {repo.dir: repo.github for repo in config.repos}
+        polled: list[tuple[EventStart, tuple[EventRef, ...]]] = []
+        for event in config.events:
+            query = EventQuery(event.on, github[event.repo], config.default_branch_for(event.repo))
+            try:
+                polled.append((event, self._events.poll(query)[:EVENT_PAGE]))
+            except EventPollError as error:
+                reason = f"event poll failed: {source_key(event)}: {error}"
+                report.fail(hub.project, event.workflow, reason)
+        return polled
+
+    def _event_inputs(
+        self, hub: ScheduledHub, event: EventStart, *, ref: EventRef, report: _Report
+    ) -> dict[str, JsonValue] | None:
+        # The event's data reaches the run only as inputs the workflow declares (ADR 0048).
+        try:
+            _, plan = self._plans.workflow_plan(hub.project, event.workflow)
+        except AgentHubError as error:
+            report.fail(hub.project, event.workflow, str(error))
+            return None
+        declared = plan.document.inputs
+        offered = {name: value for name, value in ref.data.items() if name in declared}
+        return {**event.inputs, **offered}
+
     def _launch(  # noqa: PLR0913 -- one start's parts, all keyword-only
         self,
         hub: ScheduledHub,
@@ -250,3 +311,25 @@ def _record_slots(
         if last is not None:
             slots[schedule.workflow] = last
     return state.model_copy(update={"slots": slots}), tuple(due)
+
+
+def _record_seen(
+    state: StartState,
+    *,
+    polled: Sequence[tuple[EventStart, tuple[EventRef, ...]]],
+    declared: tuple[str, ...],
+) -> tuple[StartState, tuple[tuple[EventStart, EventRef], ...]]:
+    # A source no longer declared is dropped; one whose poll failed keeps what it had. A
+    # source seen for the first time records a baseline and starts nothing.
+    seen = {key: ids for key, ids in state.seen.items() if key in declared}
+    new: list[tuple[EventStart, EventRef]] = []
+    for event, refs in polled:
+        key = source_key(event)
+        known = seen.get(key)
+        if known is None:
+            seen[key] = tuple(ref.id for ref in refs)[:MAX_SEEN]
+            continue
+        fresh = [ref for ref in refs if ref.id not in known]
+        new.extend((event, ref) for ref in reversed(fresh))
+        seen[key] = (*(ref.id for ref in fresh), *known)[:MAX_SEEN]
+    return state.model_copy(update={"seen": seen}), tuple(new)
