@@ -50,7 +50,7 @@ from agent_hub.api.agent_session_runtime import (
     UnavailableCloudLauncher,
     UnavailableSessionDriver,
 )
-from agent_hub.api.app import create_app
+from agent_hub.api.app import AppLifecycle, CombinedLifecycle, create_app
 from agent_hub.api.change_feed import ChangeFeed, SystemTimer
 from agent_hub.api.change_request_files import HubDecisionWriter
 from agent_hub.api.dependencies import ApiPorts
@@ -80,7 +80,9 @@ from agent_hub.api.scenario_investigation import (
     InvestigationRestrictions,
     ScenarioInvestigations,
 )
+from agent_hub.api.scheduled_starts_runtime import ScheduledStartsRuntime
 from agent_hub.api.settings import ApiSettings, utc_now
+from agent_hub.api.start_ledger import FileStartLedger
 from agent_hub.api.static_files import WEB_DIST
 from agent_hub.api.ticket_snapshots import (
     READ_BUDGET_SECONDS,
@@ -145,6 +147,7 @@ from agent_hub.core.readmodels.cursor import InvalidCursorError
 from agent_hub.core.readmodels.event_read_models import FoldedEventReadModels
 from agent_hub.core.readmodels.settings_view import SettingsView
 from agent_hub.core.redaction.redact import KINDS as REDACTION_KINDS
+from agent_hub.core.schedules.scheduled_starts import EventSource, StartScheduledRuns
 from agent_hub.core.sessions.pricing import PRICES, PRICES_AS_OF
 from agent_hub.core.sessions.session_label import LabelRules
 from agent_hub.core.skills.skill_reads import SkillUsageSource
@@ -162,6 +165,7 @@ from agent_hub.generator.registered_hub_files import GitReaderFactory, HubFileSy
 from agent_hub.generator.workflow_source import DiscoveredWorkflowSource
 from agent_hub.hub_git.brain_change_requests import GitBrainChangeRequests
 from agent_hub.hub_git.git_runner import GitRunner
+from agent_hub.hub_git.github_events import GhEventSource
 from agent_hub.hub_git.repo_changes import GitRepoChanges
 from agent_hub.storage.agent_session_store import open_agent_session_store
 from agent_hub.storage.event_store import DatabaseBusyError, SqliteEventStore, open_event_store
@@ -685,6 +689,7 @@ def build_app(
     session_driver: SessionDriver | None = None,
     cloud_launcher: CloudLauncher | None = None,
     item_writer: HubItemWriter | None = None,
+    event_source: EventSource | None = None,
 ) -> FastAPI:
     """The app of ``hub web``: every route wired to the real adapters.
 
@@ -696,6 +701,9 @@ def build_app(
     The agent sessions run on ``session_driver`` and ``cloud_launcher`` (default
     ``claude_adapters`` over ``environ``); none is built when ``settings.sessions_off``.
     A Restore or a Publish writes through ``item_writer`` (default ``FileSystemHubItemWriter``).
+    The scheduled and event starts (ADR 0048) poll GitHub through ``event_source`` (default
+    ``GhEventSource`` over ``environ``); like the run launcher, none is built when
+    ``settings.sessions_off``.
     ``DatabaseAccessError`` when the store cannot be opened.
     """
     store = open_event_store(settings.db_path)
@@ -759,6 +767,8 @@ def build_app(
     # A gate the definition lacks is classified by the run's own record (AM-14, P-6).
     gates = WorkflowGates(events, hubs, workflows, kinds=RecordedGateKinds())
     guard = None
+    run_starts = None
+    scheduler = None
     scenario_reads = ScenarioCatalog(
         credentials=HubCredentials(
             registry=registry, reader=reader, running_version=settings.running_version
@@ -771,6 +781,17 @@ def build_app(
         launcher = ProcessRunLauncher(db_path=settings.db_path, environ=env)
         # One guard for both, so a start and a resume of one issue never race.
         guard = RunGuard(events, launcher)
+        run_starts = StartWorkflowRun(workflows, guard)
+        scheduler = ScheduledStartsRuntime(
+            StartScheduledRuns(
+                hubs=hubs,
+                plans=workflows,
+                ledger=FileStartLedger(),
+                events=GhEventSource(environ=env) if event_source is None else event_source,
+                start=run_starts,
+            ),
+            clock=settings.clock,
+        )
         scenario_commands = ScenarioCommands(
             catalog=scenario_reads,
             launcher=launcher,
@@ -797,7 +818,7 @@ def build_app(
         cloud_sessions=None if sessions is None else sessions.cloud,
         agent_session_links=None if sessions is None else sessions.links,
         workflow_reads=workflows,
-        run_starts=None if guard is None else StartWorkflowRun(workflows, guard),
+        run_starts=run_starts,
         run_control=None if guard is None else ControlWorkflowRun(hubs, guard),
         workflow_gates=gates,
         gate_decisions=None if guard is None else DecideWorkflowGate(gates, guard),
@@ -849,8 +870,14 @@ def build_app(
         ports=ports,
         problems=COMPOSED_PROBLEMS,
         web_dist=web_dist,
-        lifecycle=None if sessions is None else sessions.runtime,
+        lifecycle=_lifecycle(None if sessions is None else sessions.runtime, scheduler),
     )
+
+
+def _lifecycle(*parts: AppLifecycle | None) -> AppLifecycle | None:
+    """The parts given, as one lifecycle; None when there is none."""
+    present = [part for part in parts if part is not None]
+    return CombinedLifecycle(*present) if present else None
 
 
 def _agent_sessions(  # noqa: PLR0913 -- build_app's session options, passed on
