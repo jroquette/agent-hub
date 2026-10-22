@@ -386,9 +386,7 @@ describe("SessionsListScreen agent sessions (new-session)", () => {
     expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveValue(
       "5703fef9dd5a3894",
     );
-    expect(within(dialog).getByRole("button", { name: "Options" })).toHaveAccessibleDescription(
-      /^Auto ·/,
-    );
+    expect(within(dialog).getByRole("combobox", { name: "Mode" })).toHaveValue("auto");
   });
 
   it("starts a session from New session and opens its chat", async () => {
