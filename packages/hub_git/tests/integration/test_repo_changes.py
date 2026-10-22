@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_hub.core.agent_sessions.repo_changes import RepoChangesError
+from agent_hub.core.agent_sessions.repo_changes import REPO_DIFF_MAX_BYTES, RepoChangesError
 from agent_hub.hub_git.repo_changes import GitRepoChanges
 
 _IDENTITY = {
@@ -256,6 +256,7 @@ def test_cannot_read_when_the_commit_is_unknown(checkout: tuple[Path, dict[str, 
 
 
 def test_reads_a_file_as_the_base_has_it(checkout: tuple[Path, dict[str, str]]) -> None:
+    # AC-424.8
     work, env = checkout
     reader = GitRepoChanges(environ=env)
     base = reader.read(str(work), label="w").base_sha
@@ -269,6 +270,7 @@ def test_reads_a_file_as_the_base_has_it(checkout: tuple[Path, dict[str, str]]) 
 def test_reads_no_text_when_the_commit_has_no_such_file(
     checkout: tuple[Path, dict[str, str]],
 ) -> None:
+    # AC-424.8
     work, env = checkout
     reader = GitRepoChanges(environ=env)
     base = reader.read(str(work), label="w").base_sha
@@ -277,9 +279,29 @@ def test_reads_no_text_when_the_commit_has_no_such_file(
     assert reader.file_text(str(work), sha=base, path="new.py").text is None
 
 
+def test_reads_no_text_when_the_file_is_binary_or_too_big(
+    checkout: tuple[Path, dict[str, str]],
+) -> None:
+    # AC-424.8
+    work, env = checkout
+    (work / "logo.bin").write_bytes(b"PNG\0\1\2")
+    (work / "huge.txt").write_text("x" * (REPO_DIFF_MAX_BYTES + 1))
+    _git(work, env, "add", "logo.bin", "huge.txt")
+    _git(work, env, "commit", "-m", "add a binary and a big file")
+    reader = GitRepoChanges(environ=env)
+    head = _rev(work, env, "HEAD")
+
+    binary = reader.file_text(str(work), sha=head, path="logo.bin")
+    huge = reader.file_text(str(work), sha=head, path="huge.txt")
+
+    assert (binary.text, binary.binary) == (None, True)
+    assert (huge.text, huge.binary) == (None, False)
+
+
 def test_cannot_read_a_file_when_the_commit_is_unknown(
     checkout: tuple[Path, dict[str, str]],
 ) -> None:
+    # AC-424.9
     work, env = checkout
 
     with pytest.raises(RepoChangesError):

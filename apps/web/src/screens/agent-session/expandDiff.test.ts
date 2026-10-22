@@ -22,6 +22,7 @@ const DIFF = [
 
 const none = new Map<number, GapReveal>();
 
+// AC-424.7: the gaps a diff hides around its hunks, and the lines each press reveals.
 describe("expandDiff", () => {
   it("names what each gap hides before anything is revealed", () => {
     const expanded = expandDiff(DIFF, BASE, none);

@@ -421,6 +421,7 @@ async def test_answers_not_found_when_git_cannot_read_the_commit(make_rig: MakeR
 async def test_reads_a_file_at_a_commit_in_the_repository_that_holds_it(
     make_rig: MakeRig,
 ) -> None:
+    # AC-424.8
     reader = _Reader()
     rig, session = await _ended_session_with_files(make_rig, reader)
 
@@ -436,6 +437,7 @@ async def test_reads_a_file_at_a_commit_in_the_repository_that_holds_it(
 async def test_answers_not_found_when_a_file_is_outside_the_repositories(
     make_rig: MakeRig, path: str
 ) -> None:
+    # AC-424.9
     rig, session = await _ended_session_with_files(make_rig, _Reader())
 
     with pytest.raises(EntityNotFoundError):
@@ -445,6 +447,7 @@ async def test_answers_not_found_when_a_file_is_outside_the_repositories(
 async def test_answers_not_found_when_git_cannot_read_the_file_s_commit(
     make_rig: MakeRig,
 ) -> None:
+    # AC-424.9
     rig, session = await _ended_session_with_files(
         make_rig, _Reader(failing=frozenset({REPO_PATH}))
     )
