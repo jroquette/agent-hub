@@ -264,7 +264,7 @@ def test_reports_not_found_when_metadata_names_no_github_repo(
     assert found["reason"] == "the httpx metadata names no GitHub repository"
 
 
-def test_reports_rate_limit_when_github_answers_403(
+def test_reports_rate_limit_when_github_refuses_the_releases_read(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     module = load()
