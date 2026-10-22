@@ -45,24 +45,129 @@ const turn: StreamItem[] = [
 ];
 
 describe("StepsPanel", () => {
-  it("shows each call with its output's first lines, the rest on demand", async () => {
+  it("AC-423.5, AC-423.6: shows each call with its output's first lines, the rest on demand", async () => {
     render(<StepsPanel steps={stepsOf(turn)} onClose={vi.fn()} />);
     expect(screen.getByRole("heading", { name: "Steps" })).toHaveFocus();
-    expect(screen.getByText("(make test)")).toBeInTheDocument();
-    // A failed call reads calmly, not as an alarm.
-    expect(screen.getByText("didn't work, Claude moved on")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "… +2 lines" }));
-    expect(screen.getByRole("button", { name: "Collapse" })).toBeInTheDocument();
+    expect(screen.getByText("make test")).toBeInTheDocument();
+    // A failed call reads calmly, not as an alarm, and opens on its output's first lines.
+    expect(screen.getByText("Failed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Error output · 6 lines/ })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(document.querySelector(".as-feed-pre")?.textContent).toBe("1\n2\n3\n4");
+    await userEvent.click(screen.getByRole("button", { name: "Show all 6 lines" }));
+    expect(screen.getByRole("button", { name: "Show less" })).toBeInTheDocument();
     expect(document.querySelector(".as-feed-full")?.textContent).toBe("1\n2\n3\n4\n5\n6");
   });
 
   it("opens a running subagent on its calls and folds it on demand", async () => {
     render(<StepsPanel steps={stepsOf(turn)} onClose={vi.fn()} />);
-    const group = screen.getByRole("button", { name: /Agent/ });
+    const group = screen.getByRole("button", { name: /explore/ });
     expect(group).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText("(cost)")).toBeInTheDocument();
+    expect(screen.getByText("cost")).toBeInTheDocument();
     await userEvent.click(group);
-    expect(screen.queryByText("(cost)")).toBeNull();
+    expect(screen.queryByText("cost")).toBeNull();
+  });
+
+  it("AC-423.4: a call reads what it is for, with its tool's icon and its command below", () => {
+    const described: StreamItem[] = [
+      record("user.message", { seq: 1, body: { text: "go" } }),
+      record("thinking", { seq: 2 }),
+      record("tool.call", {
+        seq: 3,
+        body: {
+          tool_use_id: "b",
+          name: "Bash",
+          input: { command: "ls hooks", description: "List the hook scripts" },
+        },
+      }),
+      record("tool.result", { seq: 4, body: { tool_use_id: "b", content: "a.py" } }),
+      record("tool.call", {
+        seq: 5,
+        body: { tool_use_id: "g", name: "Grep", input: { pattern: "guard" } },
+      }),
+      record("tool.result", { seq: 6, body: { tool_use_id: "g", content: "a.py:1:guard" } }),
+    ];
+    render(<StepsPanel steps={stepsOf(described)} onClose={vi.fn()} />);
+
+    const bash = screen.getByText("List the hook scripts").closest("li");
+    expect(bash?.querySelector('[data-icon="terminal"]')).not.toBeNull();
+    expect(within(bash as HTMLElement).getByText("ls hooks")).toHaveClass("ah-mono", "as-feed-sub");
+    // Without a description, the tool's name and its summary.
+    const grep = screen.getByText("Grep").closest("li");
+    expect(grep?.querySelector('[data-icon="text-search"]')).not.toBeNull();
+    expect(within(grep as HTMLElement).getByText("guard")).toHaveClass("ah-mono");
+    // A thought shows a light bulb.
+    expect(
+      screen
+        .getByText(/^Thought/)
+        .closest("li")
+        ?.querySelector('[data-icon="lightbulb"]'),
+    ).not.toBeNull();
+  });
+
+  it("AC-423.5, AC-423.7: a running call shows its time and is named on the strip, a denied one reads Denied", () => {
+    const states: StreamItem[] = [
+      record("user.message", { seq: 1, body: { text: "go" } }),
+      { type: "status", status: { status: "running" } },
+      record("tool.call", {
+        seq: 2,
+        body: { tool_use_id: "w", name: "Write", input: { file_path: "a.py", content: "x" } },
+      }),
+      record("permission.request", {
+        seq: 3,
+        // A request is keyed by its call's tool_use_id.
+        body: { request_id: "w", request_kind: "tool", tool: "Write", summary: "a.py" },
+      }),
+      record("permission.decision", {
+        seq: 4,
+        body: { request_id: "w", decision: "deny", message: "no" },
+      }),
+      record("tool.result", {
+        seq: 5,
+        body: { tool_use_id: "w", content: "denied", is_error: true },
+      }),
+      record("tool.call", {
+        seq: 6,
+        body: { tool_use_id: "b", name: "Bash", input: { command: "make test" } },
+      }),
+    ];
+    render(<StepsPanel steps={stepsOf(states)} onClose={vi.fn()} />);
+
+    const denied = screen.getByText("Denied");
+    expect(denied).toHaveClass("ah-subtle");
+    expect(denied.querySelector('[data-icon="shield-x"]')).not.toBeNull();
+    const running = screen.getByText("make test", { selector: ".as-feed-summary" }).closest("li");
+    expect(running?.querySelector('.as-feed-state [data-icon="loader"]')).not.toBeNull();
+    expect(document.querySelector(".as-live-panel-now .as-live-detail")).toHaveTextContent(
+      "make test",
+    );
+  });
+
+  it("AC-423.6: a done call's output stays folded, and a digest stands for a read", async () => {
+    const done: StreamItem[] = [
+      record("user.message", { seq: 1, body: { text: "go" } }),
+      record("tool.call", {
+        seq: 2,
+        body: { tool_use_id: "b", name: "Bash", input: { command: "ls" } },
+      }),
+      record("tool.result", { seq: 3, body: { tool_use_id: "b", content: "a\nb" } }),
+      record("tool.call", {
+        seq: 4,
+        body: { tool_use_id: "r", name: "Read", input: { file_path: "a.py" } },
+      }),
+      record("tool.result", { seq: 5, body: { tool_use_id: "r", content: "1\n2\n3" } }),
+    ];
+    render(<StepsPanel steps={stepsOf(done)} onClose={vi.fn()} />);
+
+    const fold = screen.getByRole("button", { name: /^Output · 2 lines/ });
+    expect(fold).toHaveAttribute("aria-expanded", "false");
+    expect(document.querySelector(".as-feed-pre")).toBeNull();
+    await userEvent.click(fold);
+    expect(document.querySelector(".as-feed-pre")?.textContent).toBe("a\nb");
+    expect(screen.getByText("Read 3 lines")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /Output/ })).toHaveLength(1);
   });
 
   it("closes on Esc", async () => {
@@ -209,7 +314,7 @@ describe("LiveActivityBar", () => {
 
   it("AC-PG-32.3: a failed call is not shown in alarming red", () => {
     render(<StepsPanel steps={stepsOf(turn)} onClose={vi.fn()} />);
-    const failed = screen.getByText("didn't work, Claude moved on");
+    const failed = screen.getByText("Failed");
     expect(failed).toHaveClass("ah-subtle");
     expect(failed.closest("li")).toHaveClass("as-feed-error");
     expect(

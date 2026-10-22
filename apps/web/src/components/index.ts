@@ -16,3 +16,4 @@ export * from "./SidePanel";
 export * from "./status";
 export * from "./StepBar";
 export * from "./trace";
+export * from "./useHighlight";

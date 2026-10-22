@@ -71,56 +71,56 @@
   cursor: help;
 }
 /* Highlighted code (AC-234.31, ADR 0034): highlight.js scopes on design tokens, both themes. */
-.ah-md-pre .hljs-keyword,
-.ah-md-pre .hljs-selector-tag,
-.ah-md-pre .hljs-name,
-.ah-md-pre .hljs-doctag {
+.hljs .hljs-keyword,
+.hljs .hljs-selector-tag,
+.hljs .hljs-name,
+.hljs .hljs-doctag {
   color: var(--syntax-keyword);
 }
-.ah-md-pre .hljs-title,
-.ah-md-pre .hljs-type,
-.ah-md-pre .hljs-built_in,
-.ah-md-pre .hljs-section,
-.ah-md-pre .hljs-selector-id,
-.ah-md-pre .hljs-selector-class {
+.hljs .hljs-title,
+.hljs .hljs-type,
+.hljs .hljs-built_in,
+.hljs .hljs-section,
+.hljs .hljs-selector-id,
+.hljs .hljs-selector-class {
   color: var(--syntax-title);
 }
-.ah-md-pre .hljs-string,
-.ah-md-pre .hljs-regexp,
-.ah-md-pre .hljs-symbol,
-.ah-md-pre .hljs-char {
+.hljs .hljs-string,
+.hljs .hljs-regexp,
+.hljs .hljs-symbol,
+.hljs .hljs-char {
   color: var(--syntax-string);
 }
-.ah-md-pre .hljs-number,
-.ah-md-pre .hljs-literal,
-.ah-md-pre .hljs-bullet {
+.hljs .hljs-number,
+.hljs .hljs-literal,
+.hljs .hljs-bullet {
   color: var(--syntax-number);
 }
-.ah-md-pre .hljs-attr,
-.ah-md-pre .hljs-attribute,
-.ah-md-pre .hljs-property,
-.ah-md-pre .hljs-variable,
-.ah-md-pre .hljs-template-variable,
-.ah-md-pre .hljs-link {
+.hljs .hljs-attr,
+.hljs .hljs-attribute,
+.hljs .hljs-property,
+.hljs .hljs-variable,
+.hljs .hljs-template-variable,
+.hljs .hljs-link {
   color: var(--syntax-key);
 }
-.ah-md-pre .hljs-comment,
-.ah-md-pre .hljs-quote,
-.ah-md-pre .hljs-meta {
+.hljs .hljs-comment,
+.hljs .hljs-quote,
+.hljs .hljs-meta {
   color: var(--syntax-comment);
   font-style: italic;
 }
-.ah-md-pre .hljs-addition {
+.hljs .hljs-addition {
   color: var(--diff-add);
 }
-.ah-md-pre .hljs-deletion {
+.hljs .hljs-deletion {
   color: var(--diff-del);
 }
-.ah-md-pre .hljs-strong,
-.ah-md-pre .hljs-section {
+.hljs .hljs-strong,
+.hljs .hljs-section {
   font-weight: 600;
 }
-.ah-md-pre .hljs-emphasis {
+.hljs .hljs-emphasis {
   font-style: italic;
 }
 /* A ref the page opens in place (a file of the review): reads as a link, is a button. */
