@@ -11,6 +11,7 @@ from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.schema import SCHEMA_FILE, SCHEMA_PACKAGE
 from agent_hub.core.hub_files.rendered_file import Kind, Ownership, RenderedFile
 from agent_hub.core.hub_files.tree_snapshot import is_leftover_name
+from agent_hub.generator.built_json import mcp_config
 from agent_hub.generator.json_form import JsonValue
 from agent_hub.generator.registry import REGISTRY, TemplateEntry, TemplateSource
 from agent_hub.generator.render_hub import render_hub
@@ -75,6 +76,9 @@ EXPECTED: dict[str, tuple[Kind, Ownership, str | None]] = {
     # `.pre-commit-config.yaml`, `.github/workflows/ci.yml`": generic, managed.
     ".github/workflows/ci.yml": (Kind.GENERIC, Ownership.MANAGED, None),
     ".pre-commit-config.yaml": (Kind.GENERIC, Ownership.MANAGED, None),
+    # Row "`.mcp.json` (declares the `hub` stdio server, `./hub mcp`; built from code; …)":
+    # generic, managed (AGH-392 D-mcp-json).
+    ".mcp.json": (Kind.GENERIC, Ownership.MANAGED, None),
     "AGENTS.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "CLAUDE.md": (Kind.GENERIC, Ownership.MANAGED, None),
     "Makefile": (Kind.GENERIC, Ownership.MANAGED, None),
@@ -457,6 +461,17 @@ def test_matches_design_classification_when_compared() -> None:
     assert {entry.path for entry in REGISTRY if entry.executable} == (
         EXECUTABLE_PATHS | MODULE_EXECUTABLE_PATHS
     )
+
+
+def test_classifies_mcp_config_as_managed_when_registered() -> None:
+    entries = [entry for entry in REGISTRY if entry.path == ".mcp.json"]
+
+    assert len(entries) == 1
+    entry = entries[0]
+    assert (entry.kind, entry.ownership, entry.module) == (Kind.GENERIC, Ownership.MANAGED, None)
+    assert entry.source is None
+    assert entry.build is mcp_config
+    assert not entry.executable
 
 
 def test_seeds_app_repo_agents_when_registry_read() -> None:

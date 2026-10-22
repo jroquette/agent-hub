@@ -1,0 +1,19 @@
+[project]
+name = "agent-hub-mcp-server"
+version = "0.1.0"
+description = "MCP server of agent-hub: serves a hub's knowledge to agents over stdio (hub mcp)."
+license = "Apache-2.0"
+requires-python = ">=3.14"
+dependencies = ["agent-hub-core", "agent-hub-hub-git", "mcp==2.3.0"]
+
+[tool.uv.sources]
+agent-hub-core = { workspace = true }
+agent-hub-hub-git = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# agent_hub is an implicit namespace package shared by every distribution.
+packages = ["src/agent_hub"]

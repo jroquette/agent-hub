@@ -164,6 +164,11 @@
     ".gitignore": {
       "ownership": "seeded"
     },
+    ".mcp.json": {
+      "executable": false,
+      "ownership": "managed",
+      "sha256": "45233b248bc5c5d46fdcbfce71f6c773375250402b569d3b585479e2b0cf07dc"
+    },
     ".pre-commit-config.yaml": {
       "executable": false,
       "ownership": "managed",
@@ -172,7 +177,7 @@
     "AGENTS.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "0630636611536de4b977e47781e054106f2f3946589b74e7d00c0d130cffa91b"
+      "sha256": "312fd9fbbc2a1e7312fa8ca5744df930bedc59e58a5a508817401dfd2abe8a1c"
     },
     "AGENTS.project.md": {
       "ownership": "seeded"

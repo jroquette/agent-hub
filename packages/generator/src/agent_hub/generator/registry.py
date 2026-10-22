@@ -24,6 +24,7 @@ from agent_hub.generator.built_json import (
     managed_settings,
     marketplace,
     marketplace_project,
+    mcp_config,
     project_manifest,
     project_settings,
 )
@@ -275,6 +276,13 @@ REGISTRY: Final[tuple[TemplateEntry, ...]] = (
     _project_built(".claude/settings.project.json", project_settings),
     _generic_managed(".github/workflows/ci.yml", "github/workflows/ci.yml.tmpl"),
     _generic_seeded(".gitignore", "gitignore.tmpl"),
+    # The hub's MCP server for Claude Code, `./hub mcp` (AGH-392 D-mcp-json); no seeded sibling.
+    TemplateEntry(
+        path=".mcp.json",
+        build=mcp_config,
+        kind=Kind.GENERIC,
+        ownership=Ownership.MANAGED,
+    ),
     _generic_managed(".pre-commit-config.yaml", "pre-commit-config.yaml.tmpl"),
     _generic_managed("AGENTS.md", "AGENTS.md.tmpl"),
     _project_seeded("AGENTS.project.md", "AGENTS.project.md.tmpl"),
