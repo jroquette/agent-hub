@@ -34,6 +34,7 @@ from agent_hub.core.features.ticket_writes import (
     plan_ids,
     plan_section,
     ticket_acs,
+    with_blocker_read,
 )
 
 AT = datetime(2026, 10, 21, 10, 0, tzinfo=UTC)
@@ -536,3 +537,25 @@ def test_refuses_with_the_readers_problem_when_the_outcome_would_not_read_back()
     assert str(refused.value) == (
         "outcome.md could not be read (pr names no pull request: #pending). Fix it in a hub PR."
     )
+
+
+# AGH-473 review F4: an automatic preflight records the blocker it was started for.
+@pytest.mark.parametrize(
+    ("listed", "expected"),
+    [([], ["T1"]), (["dem-7"], ["dem-7"]), (["DEM-6"], ["DEM-6", "T1"])],
+)
+def test_adds_the_blocker_read_only_when_no_name_of_it_is_listed(
+    listed: list[str], expected: list[str]
+) -> None:
+    findings = json.dumps({"drift": "none", "blockers_read": listed}).encode()
+
+    added = with_blocker_read(findings, "T1", names=("T1", "DEM-7"))
+
+    assert json.loads(added) == {"drift": "none", "blockers_read": expected}
+
+
+@pytest.mark.parametrize("findings", [b"[1]", b'{"blockers_read": "T1"}', b"{"])
+def test_leaves_findings_unchanged_when_they_are_not_an_object_with_a_list(
+    findings: bytes,
+) -> None:
+    assert with_blocker_read(findings, "T1", names=("T1",)) == findings
