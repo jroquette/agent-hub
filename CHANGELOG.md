@@ -11,6 +11,15 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- The built-in `incident` pack, started by `/incident` (AGH-483): git evidence since a window (first-parent commits,
+  tags and changed files of each repo as last fetched; failing checks on main and logs are left out, so the owner pastes
+  excerpts into the report), a recall of past incidents, at most 5 ranked hypotheses each with a read-only check, run
+  as an argv on an allow-list in a throwaway worktree with an environment built from nothing, a mitigation gate, then a
+  hand-off draft for `/fix` (or `/change`) and a blameless postmortem draft (`draft`, or `open` when nothing was
+  confirmed) in `brain/_inbox/`. The pack applies nothing and writes no tracker.
+
 ## [0.20.1] - 2026-10-22
 
 ### Added
