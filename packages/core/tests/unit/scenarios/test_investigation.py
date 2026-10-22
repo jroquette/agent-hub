@@ -285,6 +285,8 @@ def test_denies_reads_when_investigation_credentials_env_file_targeted(tmp_path:
     assert all(str(env_file.resolve()) not in verdict.reason for verdict in verdicts)
     assert [verdict.allowed for verdict in passes] == [True] * len(passed)
     assert policy.env_files == (str(env_file.resolve()),)
+    # The absent repo is no root, and the folder holding the hub never is one.
+    assert policy.read_roots == (str(hub.resolve()), str((hub.parent / "demo-api").resolve()))
 
 
 def test_denies_reads_when_investigation_path_outside_workspace(tmp_path: Any) -> None:
@@ -332,9 +334,21 @@ def test_refuses_policy_when_investigation_workspace_is_root(
         (str(tmp_path / "hub"), ("..",)),  # a repo that is an ancestor of the home folder
     ]
 
+    (home / "link-home").symlink_to(home)
+    refused.append((str(home / "demo-hub"), ("link-home",)))  # a repo linking to the home folder
+
     for hub, repos in refused:
         with pytest.raises(investigation.WorkspaceRootError, match="home folder or the root"):
             investigation.ToolPolicy.of(hub=hub, repos=repos, env_files=(), run_id=RUN)
+
+    # A HOME given through a link names the same folder: compared by real path.
+    (tmp_path / "home-link").symlink_to(home)
+    monkeypatch.setenv("HOME", str(tmp_path / "home-link"))
+    with pytest.raises(investigation.WorkspaceRootError, match="home folder or the root"):
+        investigation.ToolPolicy.of(hub=str(home), repos=(), env_files=(), run_id=RUN)
+    # The repos are named on purpose, never left to a default.
+    with pytest.raises(TypeError, match="repos"):
+        investigation.ToolPolicy.of(hub=str(home / "demo-hub"), env_files=(), run_id=RUN)  # type: ignore[call-arg]
 
 
 def test_denies_home_when_investigation_roots_are_hub_and_repos(

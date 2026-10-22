@@ -7,9 +7,11 @@ link), reads its ``records.jsonl`` (at most ``MAX_RECORD_BYTES``, a torn last li
 folds it with core's ``fold_records``: the run must be a scenario run paused at an open,
 unanswered investigation, which only its record says (E-10), else 409 ``not_paused``. It then
 starts one driven session in the hub, mode ``default``, with the investigation's system prompt,
-its tool policy (P-17, E-13: the workspace, ``actions/`` and every declared env file's real
-path) and, like every driven session, without the hub's declared credentials. Chat goes through
-``POST /agent-sessions/{id}/messages`` (AM-9).
+its tool policy (P-17, E-13: reads only under the real path of the hub and of each declared
+repo, ``actions/`` and every declared env file's real path; refused, 409 ``workspace_root``,
+when a root is ``/``, the home folder or an ancestor of it) and, like every driven session,
+without the hub's declared credentials. Chat goes through ``POST /agent-sessions/{id}/messages``
+(AM-9).
 
 One session per investigation: the link file ``investigation-<n>.session`` in the run folder
 is created ``O_CREAT|O_EXCL`` (owner-only, never through a link) before the session starts and
