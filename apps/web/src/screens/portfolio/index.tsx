@@ -50,6 +50,7 @@ import {
   type ProjectSummary,
 } from "./queries";
 import { StaleStamp } from "./StaleStamp";
+import { UsageRegion } from "./UsageRegion";
 
 const VIEW_KEY = "ah.portfolio.view";
 const ACTIVITY_PAGE = 20;
@@ -433,7 +434,12 @@ export function PortfolioScreen() {
   const view = readView(params);
   const projects = useProjects(scope);
   const needs = useNeedsYou(scope);
-  useRefreshOnCounts(["/api/v1/projects", "/api/v1/needs-you", "/api/v1/activity"]);
+  useRefreshOnCounts([
+    "/api/v1/projects",
+    "/api/v1/needs-you",
+    "/api/v1/activity",
+    "/api/v1/skill-usage",
+  ]);
   const list = projects.data?.items ?? [];
   const sum = totals(list);
   const setView = (next: string) => {
@@ -494,6 +500,7 @@ export function PortfolioScreen() {
             )}
           </div>
           {list.length > 1 && <TotalsRow projects={list} />}
+          <UsageRegion project={scope} single={list.length === 1} />
         </div>
         <ActivityRegion project={scope} single={list.length === 1} />
       </div>
