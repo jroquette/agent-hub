@@ -315,8 +315,10 @@ def test_reports_mismatch_when_review_file_name_differs(
         (a_review_document(), "spec-r1.json", "agh-7"),
         (a_review_document(ticket="agh-7"), "spec-r1.json", "AGH-7"),
         (a_review_document(reviewer="quality", round=9999), "quality-r9999.json", "AGH-7"),
+        (a_review_document(reviewer="ux", round=2), "ux-r2.json", "AGH-7"),
+        (a_review_document(reviewer="overengineering"), "overengineering-r1.json", "AGH-7"),
     ],
-    ids=["lower-case folder", "lower-case ticket", "quality round 9999"],
+    ids=["lower-case folder", "lower-case ticket", "quality round 9999", "ux", "overengineering"],
 )
 def test_accepts_folder_case_when_review_file_name_matches(
     document: dict[str, object], file_name: str, folder_name: str
@@ -353,8 +355,8 @@ def test_reports_root_when_review_file_name_unknown(file_name: str, echo: str) -
     )
 
     message = (
-        f"the file name {echo} is not spec-r<N>.json or quality-r<N>.json"
-        " (N from 1 to 9999, no leading zero)"
+        f"the file name {echo} is not spec-r<N>.json, quality-r<N>.json, ux-r<N>.json or"
+        " overengineering-r<N>.json (N from 1 to 9999, no leading zero)"
     )
     assert problems == (OutputProblem("$", message),)
 
@@ -365,6 +367,52 @@ def review_check(content: bytes) -> tuple[OutputProblem, ...]:
 
 def eval_check(content: bytes) -> tuple[OutputProblem, ...]:
     return eval_problems(content, file_name=EVAL_FILE, sibling_head=a_sibling_head(), record=None)
+
+
+# Synthetic review files in the shapes the reviewers already save (AGH-474): an indented PASS
+# round with no finding, and a one-line FAIL round mixing blocking and minor findings of several
+# kinds, a null line among them. Widening ``reviewer`` must keep both valid.
+SAVED_PASS_ROUND = b"""{
+  "schema": "agent-hub/review/1",
+  "reviewer": "spec",
+  "ticket": "DEM-406",
+  "task": "S2-T9",
+  "round": 3,
+  "commit": "a5df0b916c2b61f63550036f8550932011863e43",
+  "verdict": "PASS",
+  "findings": []
+}
+"""
+SAVED_FAIL_ROUND = json.dumps(
+    a_review_document(
+        reviewer="quality",
+        ticket="DEM-406",
+        task="S2-T9",
+        round=1,
+        commit="878ad006f425469739b60c3769f706be028fc3ff",
+        verdict="FAIL",
+        findings=[
+            a_finding(id="Q1", kind="security", severity="blocking", acs=["AC-2.1"]),
+            a_finding(id="Q2", kind="quality", line=16, acs=["AC-2.1"]),
+            a_finding(id="Q3", kind="test", line=None, acs=["AC-2.11", "AC-2.1"]),
+        ],
+    )
+).encode()
+
+
+@pytest.mark.parametrize(
+    ("content", "file_name"),
+    [(SAVED_PASS_ROUND, "spec-r3.json"), (SAVED_FAIL_ROUND, "quality-r1.json")],
+    ids=["indented pass round", "one-line fail round"],
+)
+def test_accepts_saved_review_when_reviewer_list_widened(content: bytes, file_name: str) -> None:
+    assert review_problems(content, file_name=file_name, folder_name="DEM-406") == ()
+
+
+def test_lists_every_reviewer_when_review_schema_shipped() -> None:
+    reviewer = read_shipped_output_schema("review")["properties"]["reviewer"]
+
+    assert reviewer["enum"] == ["spec", "quality", "ux", "overengineering"]
 
 
 @pytest.mark.parametrize(
