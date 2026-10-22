@@ -158,6 +158,7 @@ DESIGN_PATHS = (
     "scripts/retro_metrics.py",
     # AGH-487: the built-in brain-care pack, seeded.
     "workflows/brain-care/scripts/hub_branch.py",
+    "workflows/brain-care/scripts/read_inbox.py",
     # AGH-227: the built-in issue-to-pr pack, seeded.
     "workflows/issue-to-pr/fixtures/blocked.yaml",
     "workflows/issue-to-pr/fixtures/dirty.yaml",
