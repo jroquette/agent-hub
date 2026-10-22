@@ -162,6 +162,7 @@ DESIGN_PATHS = (
     "workflows/incident/fixtures/incident-mitigation-declined.yaml",
     "workflows/incident/fixtures/incident-none-confirmed.yaml",
     "workflows/incident/incident.yaml",
+    "workflows/incident/scripts/evidence.py",
     # AGH-227: the built-in issue-to-pr pack, seeded.
     "workflows/issue-to-pr/fixtures/blocked.yaml",
     "workflows/issue-to-pr/fixtures/dirty.yaml",
@@ -844,6 +845,8 @@ def test_parses_as_python39_when_rendered(demo_render: dict[str, RenderedFile]) 
         "scripts",
         # The sdlc pack's helpers (AGH-229), run by uv on its Python, also parse as 3.9.
         "workflows/sdlc/scripts",
+        # The incident pack's helpers (AGH-483), likewise.
+        "workflows/incident/scripts",
     }
 
 
