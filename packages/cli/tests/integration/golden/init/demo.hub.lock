@@ -583,6 +583,24 @@
       "ownership": "managed",
       "sha256": "fdac169d0ebd59302540f442f0592e39239ede6ca87fc367184c16806f9eff21"
     },
+    "workflows/brain-care/fixtures/inbox-all-drop.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/fixtures/inbox-empty.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/fixtures/inbox-external-pending.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/fixtures/inbox-three-notes.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/inbox.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/prompts/group.md": {
+      "ownership": "seeded"
+    },
     "workflows/brain-care/scripts/apply.py": {
       "ownership": "seeded"
     },
