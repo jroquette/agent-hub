@@ -38,7 +38,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Final, get_args
 
-from agent_hub.cli.action_command import deny_reason
 from agent_hub.cli.action_runs import ActionExecutors, ActionLog
 from agent_hub.cli.workflow_executors import WorkflowExecutors
 from agent_hub.cli.workflow_runs import (
@@ -49,7 +48,13 @@ from agent_hub.cli.workflow_runs import (
 )
 from agent_hub.core.hub_config.effective_environments import EffectiveEnvironments
 from agent_hub.core.json_form import JsonValue
-from agent_hub.core.scenarios.access_policy import Effect, PolicyDecision, decide, find_environment
+from agent_hub.core.scenarios.access_policy import (
+    Effect,
+    PolicyDecision,
+    decide,
+    deny_reason,
+    find_environment,
+)
 from agent_hub.core.scenarios.policy_gates import (
     POLICY_ASKS,
     UNTIL_BASH,

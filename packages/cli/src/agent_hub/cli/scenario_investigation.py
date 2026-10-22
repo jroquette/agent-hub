@@ -41,7 +41,6 @@ from typing import Final
 
 import typer
 
-from agent_hub.cli.action_command import deny_reason
 from agent_hub.cli.action_runs import ActionExecutors, ActionLog, PinnedActions
 from agent_hub.cli.effective_config import load_effective_config_or_exit
 from agent_hub.cli.run_log import now
@@ -57,7 +56,6 @@ from agent_hub.core.hub_config.effective_environments import (
     effective_environments,
 )
 from agent_hub.core.json_form import JsonValue
-from agent_hub.core.scenarios.access_policy import PolicyDecision, find_environment
 from agent_hub.core.scenarios.investigation import (
     CHOICES,
     INVESTIGATION_REASON,
@@ -70,7 +68,7 @@ from agent_hub.core.scenarios.investigation import (
     investigation_gate,
     option_id,
 )
-from agent_hub.core.scenarios.policy_gates import INVESTIGATION, ask_gate, recorded_gate_kinds
+from agent_hub.core.scenarios.policy_gates import INVESTIGATION, ask_gate
 from agent_hub.core.scenarios.run_record import (
     PROPOSAL,
     WORKAROUND_END,
@@ -82,10 +80,12 @@ from agent_hub.core.scenarios.run_record import (
 from agent_hub.core.scenarios.scenario_events import ScenarioEvents, WorkaroundFacts
 from agent_hub.core.scenarios.workaround import (
     StepPlan,
-    changed_step,
     needs_acceptance,
+    pick_problem,
     pick_refusal,
     plan_option,
+    proposed_steps,
+    step_refusal,
 )
 from agent_hub.core.workflows.failures import FailureKind, NodeFailedError, RetryRecord
 from agent_hub.core.workflows.gates import GateAnswer
@@ -281,28 +281,7 @@ class Planned:
 
     def refusal(self, step: StepPlan) -> str:
         """Why ``step`` keeps its option from being picked, in plain words."""
-        if step.problem is not None or step.effect is None or step.reason_kind is None:
-            reason = step.problem or "cannot be planned"
-        else:
-            declared = find_environment(self.view, self.environment)
-            decided = PolicyDecision(decision=step.decision, reason_kind=step.reason_kind)
-            reason = deny_reason(
-                decided,
-                effect=step.effect,
-                environment=self.environment,
-                access=declared.access if declared is not None else None,
-            ) or str(step.decision)
-        return f"step {step.index} ({step.action}): {reason}"
-
-
-def proposed_steps(option: OptionView) -> tuple[ProposedStep, ...]:
-    """An option's steps as recorded, back as proposed steps."""
-    steps: list[ProposedStep] = []
-    for step in option.steps:
-        given = step.get("with")
-        inputs = given if isinstance(given, dict) else {}
-        steps.append(ProposedStep(action=str(step.get("action")), inputs=inputs))
-    return tuple(steps)
+        return step_refusal(step, view=self.view, environment=self.environment)
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -404,35 +383,18 @@ def check_answer(
 ) -> None:
     """Refuse (``GateDecisionError``) an answer to an investigation gate that cannot stand: a
     ``pick`` of no option of its latest proposal, of an option that cannot be picked, or of one
-    whose plan changed since it was shown. Any other gate passes untouched."""
-    if recorded_gate_kinds(records).get(gate.node) != "investigation" or answer.choice != PICK:
-        return
-    view = fold_records(records)
-    found = next(
-        (
-            item
-            for item in view.investigations
-            if (item.gate, item.number) == (gate.node, gate.attempt)
-        ),
-        None,
+    whose plan changed since it was shown (core's ``pick_problem``, which hub web shares). Any
+    other gate passes untouched."""
+    problem = pick_problem(
+        records,
+        node=gate.node,
+        attempt=gate.attempt,
+        choice=answer.choice,
+        text=answer.text,
+        planner=lambda: Planned.of(hub, records[0]),
     )
-    proposal = None if found is None else found.proposal
-    if proposal is None:
-        raise GateDecisionError("no option was proposed yet: retry, stop, or wait for a proposal")
-    option = proposal.option((answer.text or "").strip())
-    if option is None:
-        known = ", ".join(item.option_id for item in proposal.options) or "none"
-        raise GateDecisionError(f"pick names an option as its text: one of {known}")
-    planned = Planned.of(hub, records[0])
-    now = planned.option(proposed_steps(option))
-    if (refused := pick_refusal(now)) is not None:
-        reason = planned.refusal(refused)
-        raise GateDecisionError(f"option {option.option_id} cannot be picked: {reason}")
-    if (changed := changed_step(option.plan, now)) is not None:
-        raise GateDecisionError(
-            f"option {option.option_id} cannot be picked: the plan of step {changed.index}"
-            f" ({changed.action}) changed since it was shown; ask for a new proposal"
-        )
+    if problem is not None:
+        raise GateDecisionError(problem)
 
 
 @dataclass(frozen=True, kw_only=True)

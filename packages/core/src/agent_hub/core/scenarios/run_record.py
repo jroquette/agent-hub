@@ -19,7 +19,9 @@ The lines a scenario run's investigation writes (``cli/scenario_investigation.py
 - ``workaround_start`` and ``workaround_end``: ``workaround_id``, ``number``, ``option``, ``steps``,
   ``approver``, ``status``.
 
-The gate is answered by a ``decision`` line and closed by a ``step_end`` line on it.
+The gate is answered by a ``decision`` line and closed by a ``step_end`` line on it. The view
+also keeps each ``expect.poll`` (its node, attempt, poll and whether the condition held; never
+its output), each ``context.capture`` (its name and value) and each ``decision`` on any gate.
 """
 
 import dataclasses
@@ -36,6 +38,8 @@ PROPOSAL: Final = "proposal"
 AGENT_ACTION: Final = "agent_action"
 WORKAROUND_START: Final = "workaround_start"
 WORKAROUND_END: Final = "workaround_end"
+EXPECT_POLL: Final = "expect.poll"
+CONTEXT_CAPTURE: Final = "context.capture"
 TIMELINE_EVENTS: Final = frozenset(
     {
         "start",
@@ -133,6 +137,40 @@ class WorkaroundView:
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
+class PollView:
+    """One poll of an ``expect`` step: whether its condition held (its output is left out)."""
+
+    node: str
+    attempt: int | None
+    poll: int | None
+    held: bool | None
+    at: str | None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class CaptureView:
+    """A value a step captured into the run's context (``$CTX.<name>``)."""
+
+    node: str
+    attempt: int | None
+    name: str
+    value: JsonValue
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class DecisionView:
+    """A recorded answer to one of the run's gates: who, where and with what."""
+
+    node: str
+    attempt: int | None
+    choice: str | None
+    text: str | None
+    approver: str | None
+    where: str | None
+    at: str | None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
 class ScenarioRunView:
     """A scenario run as its record holds it; ``status`` is its last end's, ``None`` while it
     has none."""
@@ -145,6 +183,10 @@ class ScenarioRunView:
     timeline: tuple[TimelineItem, ...]
     investigations: tuple[InvestigationView, ...]
     workarounds: tuple[WorkaroundView, ...]
+    pack: str | None = None
+    polls: tuple[PollView, ...] = ()
+    captures: tuple[CaptureView, ...] = ()
+    decisions: tuple[DecisionView, ...] = ()
 
     @property
     def findings(self) -> tuple[FindingView, ...]:
@@ -196,6 +238,10 @@ def fold_records(records: Iterable[Record]) -> ScenarioRunView:
         timeline=tuple(fold.timeline),
         investigations=tuple(fold.investigations.values()),
         workarounds=tuple(fold.workarounds.values()),
+        pack=_text(header.get("pack")),
+        polls=tuple(fold.polls),
+        captures=tuple(fold.captures),
+        decisions=tuple(fold.decisions),
     )
 
 
@@ -208,6 +254,9 @@ class _Fold:
         # Each investigation's gate, so its decision and end are found by node and attempt.
         self.gates: dict[tuple[str, int], int] = {}
         self.workarounds: dict[str, WorkaroundView] = {}
+        self.polls: list[PollView] = []
+        self.captures: list[CaptureView] = []
+        self.decisions: list[DecisionView] = []
 
     def add(self, record: Record) -> None:
         event = _text(record.get("event"))
@@ -225,6 +274,8 @@ class _Fold:
             "step_end": self._gate_closed,
             WORKAROUND_START: self._workaround,
             WORKAROUND_END: self._workaround_end,
+            EXPECT_POLL: self._poll,
+            CONTEXT_CAPTURE: self._capture,
         }
         if (handler := handlers.get(event)) is not None:
             handler(record)
@@ -257,7 +308,44 @@ class _Fold:
         )
         self.investigations[found.number] = dataclasses.replace(found, proposal=view)
 
+    def _poll(self, record: Record) -> None:
+        if (node := _text(record.get("node"))) is not None:
+            held = record.get("held")
+            self.polls.append(
+                PollView(
+                    node=node,
+                    attempt=_int(record.get("attempt")),
+                    poll=_int(record.get("poll")),
+                    held=held if isinstance(held, bool) else None,
+                    at=_text(record.get("ts")),
+                )
+            )
+
+    def _capture(self, record: Record) -> None:
+        node, name = _text(record.get("node")), _text(record.get("name"))
+        if node is not None and name is not None:
+            self.captures.append(
+                CaptureView(
+                    node=node,
+                    attempt=_int(record.get("attempt")),
+                    name=name,
+                    value=record.get("value"),
+                )
+            )
+
     def _decision(self, record: Record) -> None:
+        if (node := _text(record.get("node"))) is not None:
+            self.decisions.append(
+                DecisionView(
+                    node=node,
+                    attempt=_int(record.get("attempt")),
+                    choice=_text(record.get("choice")),
+                    text=_text(record.get("text")),
+                    approver=_text(record.get("approver")),
+                    where=_text(record.get("where")),
+                    at=_text(record.get("ts")),
+                )
+            )
         if (found := self._gate_of(record)) is not None:
             self.investigations[found.number] = dataclasses.replace(
                 found,
@@ -340,3 +428,7 @@ def _list(value: JsonValue) -> list[JsonValue]:
 
 def _text(value: JsonValue) -> str | None:
     return value if isinstance(value, str) else None
+
+
+def _int(value: JsonValue) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
