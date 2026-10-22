@@ -25,6 +25,7 @@ import argparse
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -353,11 +354,105 @@ def check_target(found: Found, name: str, to: str) -> None:
         raise BumpError(f"{name} is at {found.current}, past {to}")
 
 
+def _member_flags(pin: Pin) -> list[str]:
+    flags: list[str] = []
+    if pin.manifest != "pyproject.toml":
+        if not pin.member:
+            raise BumpError(f"{pin.manifest} names no project")
+        flags += ["--package", pin.member]
+    if pin.kind is not None:
+        flags += [f"--{pin.kind}", pin.group]
+    return flags
+
+
+def commands(found: Found, name: str, to: str) -> list[tuple[list[str], str]]:
+    """Each tool call (argv and cwd) that makes the bump."""
+    if found.manager == "npm":
+        flags = [*NPM_SECTIONS[found.section], *(["--save-exact"] if version(found.spec) else [])]
+        npm = ["npm", "install", "--ignore-scripts", "--no-audit", "--no-fund"]
+        return [([*npm, *flags, f"{name}@{to}"], found.dir)]
+    exact = sorted((pin for pin in found.pins if pin.exact), key=lambda pin: pin.manifest)
+    if not exact:
+        return [(["uv", "lock", "--upgrade-package", f"{name}=={to}"], ".")]
+    return [
+        (["uv", "add", "--no-sync", *_member_flags(pin), f"{name}=={to}"], ".") for pin in exact
+    ]
+
+
+def run_tool(argv: list[str], cwd: str) -> None:
+    """Run one tool call in its own process group, killed past ``TOOL_TIMEOUT``."""
+    label = " ".join(argv[:2])
+    try:
+        child = subprocess.Popen(  # noqa: S603 - uv or npm with checked arguments, by design
+            argv,
+            cwd=cwd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            errors="replace",
+            start_new_session=True,
+        )
+    except OSError as error:
+        raise BumpError(f"{argv[0]} could not run: {error.strerror or error}", 1) from error
+    try:
+        out, err = child.communicate(timeout=TOOL_TIMEOUT)
+    except subprocess.TimeoutExpired as error:
+        os.killpg(child.pid, signal.SIGKILL)
+        child.communicate()
+        raise BumpError(f"{label} ran past {TOOL_TIMEOUT} s", 1) from error
+    if child.returncode != 0:
+        tail = (err.strip() or out.strip())[-TAIL_CHARS:]
+        raise BumpError(f"{label} failed (exit {child.returncode}): {tail}", 1)
+
+
+def changed() -> list[str]:
+    """Every path git sees changed or new, a rename's two paths included."""
+    entries = git("status", "--porcelain", "-z", "--untracked-files=all").split("\0")
+    paths, index = [], 0
+    while index < len(entries):
+        entry = entries[index]
+        index += 1
+        if not entry:
+            continue
+        paths.append(entry[3:])
+        if entry[0] in "RC":
+            paths.append(entries[index])
+            index += 1
+    return sorted(set(paths))
+
+
+def apply(found: Found, name: str, to: str) -> list[str]:
+    """Make the bump with the tool, and the manifests and lockfiles it changed."""
+    for argv, cwd in commands(found, name, to):
+        run_tool(argv, cwd)
+    paths = changed()
+    tool = found.manager
+    if not paths:
+        raise BumpError(f"{tool} changed no manifest or lockfile", 1)
+    others = [path for path in paths if PurePosixPath(path).name not in MANIFESTS | LOCKFILES]
+    if others:
+        listed = ", ".join(others[:10])
+        raise BumpError(f"{tool} changed a file that is not a manifest or lockfile: {listed}", 1)
+    return paths
+
+
+def commit(paths: list[str], subject: str) -> str:
+    git("add", "--", *paths)
+    git("-c", f"core.hooksPath={os.devnull}", "commit", "-q", "-m", subject)
+    return git("rev-parse", "HEAD").strip()
+
+
 def main(argv: list[str]) -> int:
     try:
         args = parse(argv)
         found = find(args.package)
         check_target(found, args.package, args.to)
+        paths = apply(found, args.package, args.to)
+        subject = (
+            f"chore(deps): bump {args.package} from {found.current} to {args.to} ({args.issue})"
+        )
+        head = commit(paths, subject)
     except BumpError as error:
         print(f"bump.py: {error}", file=sys.stderr)
         return error.code
@@ -367,6 +462,8 @@ def main(argv: list[str]) -> int:
         "from": found.current,
         "to": args.to,
         "major": is_major(found.current, args.to),
+        "files": paths[:100],
+        "commit": head,
     }
     print(json.dumps(result))
     return 0
