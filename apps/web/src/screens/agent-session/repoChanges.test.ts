@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { changedFiles, type ToolView } from "./model";
 import {
+  isDiscarded,
   repoSummary,
   repoState,
   withRepoChanges,
@@ -111,6 +112,13 @@ describe("withRepoChanges", () => {
 
     expect(reverted).toMatchObject({ added: 0, removed: 0 });
     expect(reverted?.repo?.unchanged).toBe(true);
+  });
+
+  it("calls a file discarded when it ends as it began, and only then", () => {
+    const files = withRepoChanges(own, [repo()]);
+
+    expect(files.filter(isDiscarded).map((one) => one.path)).toEqual(["/w/api/reverted.py"]);
+    expect(own.filter(isDiscarded)).toEqual([]);
   });
 
   it("marks a file with no diff to show as binary or too big", () => {
