@@ -526,7 +526,7 @@
     "plugin/hub-workflow/skills/retro/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "b130c905de879bfc73f867d04ea26268a5bf95acbfa95f6ff6c049e04d9ebdab"
+      "sha256": "470af1251111cfd80b49ddaf4624ac2b0c5795026055335e7c09dcd802701bd3"
     },
     "plugin/hub-workflow/skills/review/SKILL.md": {
       "executable": false,
