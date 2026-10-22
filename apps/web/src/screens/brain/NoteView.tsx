@@ -37,13 +37,21 @@ export interface NoteViewProps {
    * with `lead` (e.g. the note's path) first inside it. For views where the body is the point.
    */
   foldFrontmatter?: { lead?: ReactNode };
+  /** Frontmatter keys left out of the chips because the screen shows them elsewhere (AGH-393). */
+  hiddenFields?: readonly string[] | undefined;
 }
 
 /**
  * One brain note rendered with the safe `Markdown` (D3, AC-201.35/36): frontmatter as chips, links
  * to other notes open in the app, and the URL's `#anchor` scrolls to its heading once loaded.
  */
-export function NoteView({ project, path, missing, foldFrontmatter }: NoteViewProps) {
+export function NoteView({
+  project,
+  path,
+  missing,
+  foldFrontmatter,
+  hiddenFields = [],
+}: NoteViewProps) {
   const note = useBrainNote(project, path);
   const navigate = useNavigate();
   const { hash } = useLocation();
@@ -94,9 +102,9 @@ export function NoteView({ project, path, missing, foldFrontmatter }: NoteViewPr
   }
 
   const data = note.data;
-  const fields = Object.entries(data.frontmatter).map(
-    ([key, value]) => [key, valueText(value)] as const,
-  );
+  const fields = Object.entries(data.frontmatter)
+    .filter(([key]) => !hiddenFields.includes(key))
+    .map(([key, value]) => [key, valueText(value)] as const);
   const chips = fields.filter(([, text]) => text.length <= CHIP_MAX);
   const long = fields.filter(([, text]) => text.length > CHIP_MAX);
   const frontmatter = (

@@ -34,3 +34,24 @@ export function useKnowledgeSearch(
     { enabled },
   );
 }
+
+/**
+ * The indexed documents that link to the note at `path` (under `brain/`), sorted by path, at most
+ * 100 with `total` the full count; the route syncs the hub's index first (AGH-393).
+ */
+export function useBacklinks(project: string, path: string) {
+  return useApi("/api/v1/projects/{project}/brain/backlinks", {
+    path: { project },
+    query: { path },
+  });
+}
+
+/** How many learnings a note lists; more are said in words, not listed. */
+export const NOTE_LEARNINGS = 10;
+
+/** The 10 newest accepted learnings that put the note at `path` into the brain (AGH-393). */
+export function useNoteLearnings(project: string, path: string) {
+  return useApi("/api/v1/learnings", {
+    query: { project, brain_path: path, status: "accepted", limit: NOTE_LEARNINGS },
+  });
+}
