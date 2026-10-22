@@ -31,6 +31,7 @@ import { ChangedFilesChip, FilesPanel, useReviewed } from "./FilesPanel";
 import { useResolvedThreads } from "./ReviewDiff";
 import { reviewThreads } from "./review";
 import { SessionMenu } from "./SessionMenu";
+import { SessionRail } from "./SessionRail";
 import { useSlashOptions } from "./SlashMenu";
 import {
   isTerminal,
@@ -149,8 +150,13 @@ function useStepsKey(toggle: () => void) {
  */
 export function AgentSessionScreen() {
   const { agentSessionId = "" } = useParams();
-  // Keyed by id: another session starts from an empty transcript.
-  return <AgentSessionChat key={agentSessionId} agentSessionId={agentSessionId} />;
+  // Keyed by id: another session starts from an empty transcript; the rail stays put.
+  return (
+    <div className="as-chat-layout">
+      <SessionRail current={agentSessionId} />
+      <AgentSessionChat key={agentSessionId} agentSessionId={agentSessionId} />
+    </div>
+  );
 }
 
 function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
