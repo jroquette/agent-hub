@@ -9,8 +9,14 @@ from typing import Any
 import pytest
 from typer.testing import Result
 
+from agent_hub.core.workflows import dry_run
 from agent_hub.core.workflows.document import parse_workflow
+from agent_hub.core.workflows.fixtures import parse_fixture, run_fixture
+from agent_hub.core.workflows.plan import plan_workflow
+from agent_hub.core.workflows.ports import NodeCall
 from agent_hub.generator.workflow_discovery import BUILTIN_WORKFLOWS, discover_workflows
+from agent_hub.generator.workflow_outputs import JsonSchemaOutputs
+from agent_hub.generator.workflow_yaml import load_workflow_bytes
 
 pytestmark = pytest.mark.disable_socket
 
@@ -18,6 +24,7 @@ type CommandRunner = Callable[..., Result]
 type Workspace = Any
 
 PACK = BUILTIN_WORKFLOWS / "spike"
+FIXTURES = ("spike-more", "spike-more-paused", "spike-no-pick", "spike-pick", "spike-timebox")
 AGENTS = {
     "recall": ("20m", 30, 1.5),
     "research": ("60m", 60, 4.0),
@@ -30,6 +37,26 @@ def document() -> Any:
     found = discover_workflows(PACK, builtin_root=BUILTIN_WORKFLOWS)
     (workflow,) = [item for item in found.workflows if item.name == "spike"]
     return parse_workflow(workflow.document)
+
+
+def calls_of(fixture: str) -> tuple[Any, list[NodeCall]]:
+    """``fixture``'s dry run of the built-in spike, and each node call it made, in order."""
+    calls: list[NodeCall] = []
+    original = dry_run._StubRunner.run
+
+    def recording(self: Any, call: NodeCall) -> Any:
+        calls.append(call)
+        return original(self, call)
+
+    path = PACK / "fixtures" / f"{fixture}.yaml"
+    parsed = load_workflow_bytes(path.read_bytes(), source=str(path)).document
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(dry_run._StubRunner, "run", recording)
+        result = run_fixture(
+            plan_workflow(document()), parse_fixture(parsed), outputs=JsonSchemaOutputs()
+        )
+    assert result.passed, result.problems
+    return parsed, calls
 
 
 def nodes_of() -> dict[str, Any]:
@@ -45,9 +72,16 @@ def test_validates_and_passes_every_fixture_when_spike_tested(
     demo_workspace: Workspace, run_command: CommandRunner
 ) -> None:
     validated = run_command(demo_workspace.hub, "workflow", "validate", "spike")
+    tested = run_command(demo_workspace.hub, "workflow", "test", "spike")
 
     assert validated.exit_code == 0, validated.output
     assert validated.stdout == "spike: valid (8 nodes in 8 layers)\n"
+    assert tested.exit_code == 0, tested.output
+    for fixture in FIXTURES:
+        # The hub's seeded copy shadows the built-in (AGH-227).
+        assert f"workflows/spike/fixtures/{fixture}.yaml: ok" in tested.stdout
+    assert "warning" not in tested.stdout
+    assert tested.stdout.endswith("5 fixtures: 5 passed, 0 failed\n")
 
 
 def test_keeps_agents_read_only_and_writes_only_in_draft_when_document_loaded() -> None:
@@ -106,3 +140,21 @@ def test_matches_loop_bound_and_settle_rounds_when_document_loaded() -> None:
     assert nodes["choose__options"].when == "$t_research.output.over == false"
     assert nodes["choose__pick"].when == "$t_options.output.over == false"
     assert nodes["premortem"].when == "$choose.output.settle.go == true"
+
+
+def test_runs_options_once_more_with_the_note_when_owner_asks_for_more() -> None:
+    _, more = calls_of("spike-more")
+    _, paused = calls_of("spike-more-paused")
+
+    options = [call for call in more if call.node.id == "choose__options"]
+    assert len(options) == 2
+    assert [call.context.with_values["feedback"] for call in options] == [
+        "",
+        "Add an option without a cache.",
+    ]
+    ran = [call.node.id for call in more]
+    assert ran.index("premortem") > max(i for i, n in enumerate(ran) if n == "choose__settle")
+    waited = [call.node.id for call in paused]
+    assert waited.count("choose__options") == 2
+    assert "draft" not in waited
+    assert "premortem" not in waited
