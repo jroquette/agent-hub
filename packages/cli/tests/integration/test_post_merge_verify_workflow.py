@@ -4,7 +4,11 @@ write: ADR 0030).
 """
 
 import json
+import os
+import subprocess
+import sys
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -144,3 +148,135 @@ def test_stays_under_the_prompt_cap_when_failures_are_at_their_bound() -> None:
     # The report step reads the reply as one argument, as the engine renders it.
     argument = json.dumps(reply, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     assert len(argument.encode()) < 131072
+
+
+def script(
+    name: str, *args: str, cwd: Path, stdin: str = "", env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(  # noqa: S603 - this interpreter, a pack script, fixed arguments
+        [sys.executable, "-I", str(PACK / "scripts" / name), *args],
+        cwd=cwd,
+        input=stdin,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+
+
+def git(repo: Path, *args: str) -> str:
+    identity = ("-c", "user.name=Jane Doe", "-c", "user.email=jane@example.com")
+    return subprocess.run(  # noqa: S603 - git from PATH, fixed arguments
+        ["git", *identity, *args],  # noqa: S607 - git from PATH
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
+def test_reports_regression_and_cannot_run_when_merge_breaks_a_verification(
+    demo_workspace: Workspace,
+) -> None:
+    hub, repo = demo_workspace.hub, demo_workspace.ws / "demo-api"
+    base = git(repo, "branch", "--show-current")
+    (repo / "kept.txt").write_text("kept\n", encoding="utf-8")
+    git(repo, "add", "kept.txt")
+    git(repo, "commit", "-q", "-m", "feat(api): keep a file (DEM-6)")
+    git(repo, "checkout", "-q", "-b", "jdoe/dem-7-drop")
+    git(repo, "rm", "-q", "kept.txt")
+    git(repo, "commit", "-q", "-m", "fix(api): drop the file (DEM-7)")
+    git(repo, "checkout", "-q", base)
+    git(
+        repo,
+        "merge",
+        "-q",
+        "--no-ff",
+        "-m",
+        "Merge pull request #9 from acme/jdoe/dem-7-drop",
+        "jdoe/dem-7-drop",
+    )
+    sha = git(repo, "rev-parse", "HEAD")
+    record = hub / "brain/features/grp/DEM-7/features.json"
+    record.parent.mkdir(parents=True)
+    acs = [
+        ("AC-7.1", "test -f kept.txt"),
+        ("AC-7.2", "git log -1 --format=%s | grep -q 'Merge pull request'"),
+        ("AC-7.3", "cd /home/user/x && true"),
+    ]
+    record.write_text(
+        json.dumps(
+            {
+                "feature": "grp/DEM-7",
+                "acs": [
+                    {
+                        "id": ac,
+                        "repo": "demo-api",
+                        "verification": text,
+                        "passes": True,
+                        "evidence": "2026-01-02: passed.",
+                    }
+                    for ac, text in acs
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    before = [git(repo, "rev-parse", "HEAD"), git(repo, "status", "--porcelain")]
+
+    selected = script("selection.py", "--repo", "demo-api", "--sha", sha, cwd=hub)
+    verified = script("verify.py", cwd=hub, stdin=selected.stdout)
+    selection = json.loads(selected.stdout or "{}")
+    explain = {
+        "suspects": [
+            {
+                "feature": "grp/DEM-7",
+                "ac": "AC-7.1",
+                "merge": sha,
+                "subject": "Merge pull request #9",
+                "kind": "regression",
+                "evidence": "The merge deletes kept.txt.",
+            }
+        ]
+    }
+    reported = script(
+        "report.py",
+        "--mode",
+        selection.get("mode", ""),
+        "--sha",
+        sha,
+        "--repo",
+        "demo-api",
+        "--tickets",
+        json.dumps(selection.get("tickets", [])),
+        "--unreadable",
+        json.dumps(selection.get("unreadable", [])),
+        "--truncated",
+        str(selection.get("truncated", 0)),
+        "--explain",
+        json.dumps(explain),
+        "--today",
+        "2026-01-09",
+        cwd=hub,
+        stdin=verified.stdout,
+        env={**os.environ, "AGENT_HUB_RUN_ID": "run-9"},
+    )
+
+    assert selected.returncode == 0, selected.stderr
+    assert selection["tickets"] == ["DEM-7"]
+    assert [item["ac"] for item in selection["selected"]] == ["AC-7.1", "AC-7.2", "AC-7.3"]
+    assert verified.returncode == 0, verified.stderr
+    assert json.loads(verified.stdout)["counts"]["passed"] == 1
+    assert reported.returncode == 0, reported.stderr
+    found = json.loads(reported.stdout)
+    assert found["verdict"] == "regressed"
+    text = (hub / found["path"]).read_text(encoding="utf-8")
+    assert "#### grp/DEM-7 AC-7.1: failed, exit 1" in text
+    assert "```text\ntest -f kept.txt\n```" in text
+    assert f"Suspect: {sha[:7]} Merge pull request #9 (regression)." in text
+    cannot_run = text.split("### Cannot run after merge", 1)[1]
+    assert "- grp/DEM-7 AC-7.3 (absolute path):" in cannot_run
+    assert "AC-7.3" not in text.split("### Cannot run after merge", 1)[0]
+    assert [git(repo, "rev-parse", "HEAD"), git(repo, "status", "--porcelain")] == before
+    assert len(git(repo, "worktree", "list").splitlines()) == 1
