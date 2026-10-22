@@ -445,6 +445,12 @@ def preflight(
             "--declined-request", help="The declined request a declined change re-checks."
         ),
     ] = "",
+    read: Annotated[
+        str,
+        typer.Option(
+            "--read", metavar="TICKET", help="A blocker it read, whatever the agent lists."
+        ),
+    ] = "",
 ) -> None:
     """Append one run to tickets/<ticket>/preflight.json, from the preflight's findings."""
     for value, hint in ((request, "--request"), (declined, "--declined-request")):
@@ -464,7 +470,7 @@ def preflight(
     _record(
         "preflight",
         lambda: step_records.preflight(
-            hub, feature=feature, ticket=ticket, findings=findings.encode(), facts=facts
+            hub, feature=feature, ticket=ticket, findings=findings.encode(), facts=facts, read=read
         ),
     )
 

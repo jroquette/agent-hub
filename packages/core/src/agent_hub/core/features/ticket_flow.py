@@ -242,14 +242,15 @@ def _delivered(
 def _merged(
     outcome: TicketOutcome | str | None, *, merged: bool, unread: str | None
 ) -> _Found | None:
-    """Merged: the ticket's outcome first (its problem makes it unknown), then Linear's
-    ``completed`` (``merged``), else unknown when Linear was not read (``unread``)."""
-    if isinstance(outcome, str):
-        return "unknown", outcome
-    if outcome is not None:
+    """Merged (D-5): done when the outcome is recorded or Linear has the ticket ``completed``
+    (``merged``); an outcome that cannot be read gives its problem, as the meta of a step done
+    by Linear, else as the step's unknown; else unknown when Linear was not read (``unread``)."""
+    if isinstance(outcome, TicketOutcome):
         return "done", OUTCOME_RECORDED
     if merged:
-        return "done", None
+        return "done", outcome
+    if outcome is not None:
+        return "unknown", outcome
     return None if unread is None else ("unknown", unread)
 
 
@@ -293,8 +294,9 @@ def _stale(latest: PreflightRun, row: TicketRow, evidence: TicketEvidence) -> st
 
 
 def _merged_since(row: TicketRow, evidence: TicketEvidence, ran_at: datetime) -> str | None:
-    """The first blocker of ``row`` (in its plan's order) whose outcome was recorded after the
-    ticket's latest preflight ran at ``ran_at``; None when none was (AC-3.3)."""
+    """The first blocker of ``row`` in its ``blocked_by`` order (refs in natural order, as the
+    ticket board gives them: DEM-7 before DEM-10) whose outcome was recorded after the ticket's
+    latest preflight ran at ``ran_at``; None when none was (AC-3.3)."""
     for edge in row.blocked_by:
         names = evidence.aliases.get(edge.ref.upper(), frozenset({edge.ref.upper()}))
         outcome = _outcome(set(names), evidence)

@@ -2,8 +2,8 @@
 # AC-3.3), which /merge starts for each dependent once the blocker's outcome is recorded. Read-only
 # to every checkout: no worktree, branch, commit or PR. hub step preflight-due first says whether
 # the dependent still has to read the outcome: not when it is merged itself, nor when a preflight
-# run since the merge lists the blocker in blockers_read, so a second /merge of the same merge
-# starts no second preflight (the run ends done with nothing written). Otherwise hub step
+# run since the merge lists the blocker in blockers_read (the first run of this check records it,
+# whatever the agent lists), so a second /merge of the same merge starts no second preflight (the run ends done with nothing written). Otherwise hub step
 # ticket-brief appends the dependent's next context brief (it now lists the blocker's outcome) and
 # reads main's commit, and preflight-check runs as in each implement pass: a fresh, read-only
 # preflight agent, its run appended to preflight.json, and on `plan` drift a change request and
@@ -38,8 +38,7 @@ nodes:
         due: {type: boolean}
         reason: {type: string}
         input: {type: string, enum: [none]}
-        merged_at: {type: string}
-      required: [due, reason, input, merged_at]
+      required: [due, reason, input]
 
   - id: context
     type: shell
@@ -70,3 +69,4 @@ nodes:
       hub: $context.output.hub
       main: $context.output.commit
       input: $due.output.input
+      blocker_read: $INPUTS.blocker

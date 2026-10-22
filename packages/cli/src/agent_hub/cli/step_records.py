@@ -85,6 +85,7 @@ from agent_hub.core.features.ticket_writes import (
     plan_section,
     preflight_run,
     ticket_acs,
+    with_blocker_read,
 )
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import one_line
@@ -151,15 +152,23 @@ def preflight(
     ticket: str,
     findings: bytes,
     facts: PreflightFacts,
+    read: str = "",
 ) -> dict[str, JsonValue]:
     """Append the run built from the agent's ``findings`` to ``tickets/<ticket>/preflight.json``;
     ``facts`` gives the time, the run's id, main's commit the preflight read (``ticket-brief``'s)
     and the input, and this fills the plan's version."""
     folder = _feature(hub, feature)
-    planned = _planned_or_refuse(_record(folder).tickets, ticket)
+    tickets = _record(folder).tickets
+    planned = _planned_or_refuse(tickets, ticket)
     target = _ticket_folder(folder, planned)
     plan = _required(folder / PLAN, MAX_PLAN_BYTES)
     facts = replace(facts, plan_version=_version(plan))
+    if read:
+        # The blocker an automatic preflight was started for is read, whatever the agent listed.
+        blocking = _planned(tickets, read)
+        findings = with_blocker_read(
+            findings, read, names=_names(blocking) if blocking is not None else (read,)
+        )
     if facts.input == "approve" and facts.request is not None:
         # An approval the plan moved past is re-checked as a plain check that says so (A23).
         moved = _superseded(folder, facts.request, plan)
@@ -356,14 +365,11 @@ def outcome(
     record = _record(folder)
     planned = _planned_or_refuse(record.tickets, ticket)
     dependents = _dependents(record.tickets, planned)
-    existing = _existing_ticket_folder(folder, planned)
-    if existing is not None:
-        path = existing / OUTCOME
-        if path.is_symlink():
-            raise TicketRecordError(f"{OUTCOME} is a link; no link is followed")
-        if path.exists():
-            found: dict[str, JsonValue] = {"written": False, "merged_at": _merged_at(path)}
-            return found | {"path": _relative(hub, path), "dependents": list(dependents)}
+    existing = _existing_ticket_folder(folder, _names(planned))
+    if existing is not None and (existing / OUTCOME).is_symlink():
+        raise TicketRecordError(f"{OUTCOME} is a link; no link is followed")
+    if existing is not None and (existing / OUTCOME).exists():
+        return _kept(hub, existing, dependents)
     try:
         when = aware_time(merged_at, "merged_at")
     except RecordFieldError as error:
@@ -381,9 +387,20 @@ def outcome(
         )
     )
     target = _ticket_folder(folder, planned)
-    written = write_exclusive(target, OUTCOME, text)
-    done: dict[str, JsonValue] = {"written": written, "merged_at": when.isoformat()}
+    if not write_exclusive(target, OUTCOME, text):
+        # Another run recorded it first: its outcome stands.
+        return _kept(hub, target, dependents)
+    done: dict[str, JsonValue] = {"written": True, "merged_at": when.isoformat()}
     return done | {"path": _relative(hub, target / OUTCOME), "dependents": list(dependents)}
+
+
+def _kept(hub: Path, target: Path, dependents: Sequence[str]) -> dict[str, JsonValue]:
+    """What ``outcome`` prints for an outcome already recorded: its ``merged_at`` as recorded
+    (``""`` when its reader refuses it), nothing written."""
+    read = _outcome_of(target)
+    merged_at = read.merged_at.isoformat() if isinstance(read, TicketOutcome) else ""
+    kept: dict[str, JsonValue] = {"written": False, "merged_at": merged_at}
+    return kept | {"path": _relative(hub, target / OUTCOME), "dependents": list(dependents)}
 
 
 def preflight_due(hub: Path, *, feature: str, ticket: str, blocker: str) -> dict[str, JsonValue]:
@@ -400,14 +417,16 @@ def preflight_due(hub: Path, *, feature: str, ticket: str, blocker: str) -> dict
     if not any(name.upper() in wanted for name in planned.blocked_by):
         reason = f"{shown} is not blocked by {one_line(blocker)[:64]} in {RECORD_FILE}"
         raise TicketRecordError(reason)
-    found = _recorded_outcome(folder, names)
+    blocking_folder = _existing_ticket_folder(folder, names)
+    found = None if blocking_folder is None else _outcome_of(blocking_folder)
     if found is None:
         raise TicketRecordError(f"{one_line(blocker)[:64]} has no {OUTCOME}")
+    if isinstance(found, str):
+        raise TicketRecordError(found)
     due: dict[str, JsonValue] = {"due": True, "reason": "", "input": "none"}
-    due["merged_at"] = found.merged_at.isoformat()
-    if _recorded_outcome(folder, _names(planned), refuse=False) is not None:
+    target = _existing_ticket_folder(folder, _names(planned))
+    if target is not None and isinstance(_outcome_of(target), TicketOutcome):
         return due | {"due": False, "reason": f"{shown} is merged"}
-    target = _existing_ticket_folder(folder, planned)
     run = already_read(
         None if target is None else _preflight(target), names=names, merged_at=found.merged_at
     )
@@ -428,43 +447,20 @@ def _dependents(tickets: Sequence[PlannedTicket], planned: PlannedTicket) -> tup
     )
 
 
-def _merged_at(path: Path) -> str:
-    """The recorded outcome's ``merged_at`` as written, ``""`` when it cannot be read."""
-    try:
-        content = _read(path, MAX_OUTCOME_BYTES) or b""
-        return text_field(record_fields(content), "merged_at") or ""
-    except RecordFieldError, TicketRecordError:
-        return ""
+def _outcome_of(target: Path) -> TicketOutcome | str | None:
+    """The outcome recorded in the ticket folder ``target``, its reader's problem, or None."""
+    return outcome_record(_read(target / OUTCOME, MAX_OUTCOME_BYTES), folder=target.name)
 
 
-def _recorded_outcome(
-    folder: Path, names: Sequence[str], *, refuse: bool = True
-) -> TicketOutcome | None:
-    """The outcome of the ticket named ``names``, None when none is recorded; one its reader
-    refuses is refused (or, without ``refuse``, read as none)."""
-    tickets = folder / TICKETS_FOLDER
+def _existing_ticket_folder(feature: Path, names: Sequence[str]) -> Path | None:
+    """The folder of the ticket named ``names`` as ``_ticket_folder`` finds it, None when there
+    is none (nothing is created); refused through a link."""
+    tickets = feature / TICKETS_FOLDER
     if tickets.is_symlink():
         raise TicketRecordError(f"{TICKETS_FOLDER} is a link; no link is followed")
     if not tickets.is_dir():
         return None
     found = ticket_folder(os.listdir(tickets), names)
-    if found is None or (tickets / found).is_symlink():
-        return None
-    read = outcome_record(_read(tickets / found / OUTCOME, MAX_OUTCOME_BYTES), folder=found)
-    if isinstance(read, str):
-        if refuse:
-            raise TicketRecordError(read)
-        return None
-    return read
-
-
-def _existing_ticket_folder(feature: Path, planned: PlannedTicket) -> Path | None:
-    """The ticket's folder as ``_ticket_folder`` finds it, None when there is none (nothing
-    is created)."""
-    tickets = feature / TICKETS_FOLDER
-    if tickets.is_symlink() or not tickets.is_dir():
-        return None
-    found = ticket_folder(os.listdir(tickets), _names(planned))
     if found is None:
         return None
     if (tickets / found).is_symlink():

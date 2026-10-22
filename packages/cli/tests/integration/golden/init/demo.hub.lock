@@ -706,9 +706,6 @@
     "workflows/sdlc/fixtures/preflight-already-read.yaml": {
       "ownership": "seeded"
     },
-    "workflows/sdlc/fixtures/preflight-drift-local.yaml": {
-      "ownership": "seeded"
-    },
     "workflows/sdlc/fixtures/preflight-drift-none.yaml": {
       "ownership": "seeded"
     },

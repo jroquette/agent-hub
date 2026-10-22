@@ -24,7 +24,7 @@ stubs:
   pass-1__check__record:
     output: {runs: 1}
   pass-1__check__result:
-    output: {status: passed, drift: none, superseded: ''}
+    output: {status: passed, superseded: ''}
   pass-1__worktree:
     output:
       path: /ws/demo-api/.claude/worktrees/dem-1
@@ -65,7 +65,7 @@ stubs:
   pass-2__check__record:
     output: {runs: 2}
   pass-2__check__result:
-    output: {status: passed, drift: local, superseded: ''}
+    output: {status: passed, superseded: ''}
   pass-2__worktree:
     output:
       path: /ws/demo-api/.claude/worktrees/dem-1

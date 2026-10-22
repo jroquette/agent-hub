@@ -198,7 +198,6 @@ DESIGN_PATHS = (
     "workflows/sdlc/fixtures/implement-superseded-in-last-pass.yaml",
     "workflows/sdlc/fixtures/implement-superseded-then-discoveries.yaml",
     "workflows/sdlc/fixtures/preflight-already-read.yaml",
-    "workflows/sdlc/fixtures/preflight-drift-local.yaml",
     "workflows/sdlc/fixtures/preflight-drift-none.yaml",
     "workflows/sdlc/fixtures/preflight-drift-plan.yaml",
     "workflows/sdlc/fixtures/preflight-plan-declined-still-plan.yaml",

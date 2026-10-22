@@ -7,7 +7,7 @@ inputs:
   blocker: DEM-7
 stubs:
   due:
-    output: {due: true, reason: '', input: none, merged_at: ''}
+    output: {due: true, reason: '', input: none}
   context:
     output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-8/brief.md, hub: /ws/hub, repo: demo-api,
       commit: 0a1b2c3d4e}

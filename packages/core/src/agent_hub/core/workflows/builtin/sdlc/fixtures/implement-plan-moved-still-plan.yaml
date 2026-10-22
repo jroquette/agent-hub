@@ -44,7 +44,7 @@ stubs:
   pass-1__check__rerecord:
     output: {runs: 2}
   pass-1__check__result:
-    output: {status: blocked, drift: plan, superseded: 'change request 1 approved but superseded by plan v2: not applied'}
+    output: {status: blocked, superseded: 'change request 1 approved but superseded by plan v2: not applied'}
   pass-1__outcome:
     output: {status: blocked, question: 'change request 1 approved but superseded by plan v2: not applied;
         the next /implement opens a new change request', verdict: '', next_input: '', next_text: '', superseded: 'change

@@ -8,7 +8,7 @@ inputs:
   blocker: DEM-7
 stubs:
   due:
-    output: {due: true, reason: '', input: none, merged_at: ''}
+    output: {due: true, reason: '', input: none}
   context:
     output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-8/brief.md, hub: /ws/hub, repo: demo-api,
       commit: 0a1b2c3d4e}
@@ -24,6 +24,6 @@ stubs:
   check__record:
     output: {runs: 2}
   check__result:
-    output: {status: passed, drift: none, superseded: ''}
+    output: {status: passed, superseded: ''}
 expect: {status: done, outcome: passed}
 reached: [due, context, check__preflight, check__record, check__result]

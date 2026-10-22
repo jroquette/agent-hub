@@ -70,7 +70,6 @@ SEEDED_PACK_FILES = (
     "sdlc/fixtures/implement-superseded-in-last-pass.yaml",
     "sdlc/fixtures/implement-superseded-then-discoveries.yaml",
     "sdlc/fixtures/preflight-already-read.yaml",
-    "sdlc/fixtures/preflight-drift-local.yaml",
     "sdlc/fixtures/preflight-drift-none.yaml",
     "sdlc/fixtures/preflight-drift-plan.yaml",
     "sdlc/fixtures/preflight-plan-declined-still-plan.yaml",
