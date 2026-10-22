@@ -243,7 +243,7 @@ def test_notes_file_when_doc_is_large_or_not_utf8(
     assert output["notes"] == [
         {"path": "docs/big.md", "reason": "larger than 1 MiB"},
         {"path": "docs/latin.md", "reason": "not UTF-8"},
-        {"path": "docs/long.md", "reason": "line 1 longer than 2000 characters"},
+        {"path": "docs/long.md", "reason": "line 1 longer than 1000 characters"},
     ]
 
 
@@ -271,3 +271,14 @@ def test_exits_two_when_stdin_is_not_a_contract(
 
     assert mentions.main([]) == 2
     assert capsys.readouterr().err.startswith("mentions.py: stdin: ")
+
+
+def test_shrinks_fixable_budget_when_names_are_large() -> None:
+    small = [{"kind": "command", "name": "old-cmd", "new": [], "source": "a.py"}]
+    large = [{"kind": "path", "name": "x" * 200, "new": ["y" * 200] * 5, "source": "z" * 200}] * 50
+
+    assert mentions.fixable_budget(small) == mentions.MAX_FIXABLE_BYTES
+    assert mentions.fixable_budget(large) == (
+        mentions.MAX_PROMPT_DATA - len(json.dumps(large).encode())
+    )
+    assert mentions.fixable_budget(large) < mentions.MAX_FIXABLE_BYTES

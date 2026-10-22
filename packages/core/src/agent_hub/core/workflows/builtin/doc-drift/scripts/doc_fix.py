@@ -9,7 +9,7 @@
 on stdin (empty when the judge was skipped). A fix is kept only when its path is a doc this run
 may change (never an ADR, a ``CHANGELOG``, a hidden path or a non-``.md`` file), the line at
 ``base`` equals its ``old`` text, ``old`` names a changed name as a whole token, ``new`` is one
-different line of at most 2000 characters, and no earlier fix targets the same line. A fix aimed
+different line of at most 1000 characters, and no earlier fix targets the same line. A fix aimed
 at an ADR line joins the ADR lines ``mentions.py`` found: never edited, they are listed as
 superseded wording (an accepted ADR) or as wording to change by hand (any other status). Prints
 ``{"verdict": "clean" | "reported" | "proposed", "fixes", "items": [{"n", "path", "line", "old",
@@ -40,10 +40,13 @@ from pathlib import Path
 PROG = "doc_fix.py"
 MAX_STDIN = 1024 * 1024
 MAX_FILE_BYTES = 1024 * 1024
-MAX_LINE = 2000
+MAX_LINE = 1000
 MAX_ITEMS = 60
 MAX_SUPERSEDED = 50
 MAX_REFUSED = 200
+# Byte budgets that keep plan's output within a script's 512 KiB of stdout.
+MAX_LIST_BYTES = 64 * 1024
+MAX_NOTES_BYTES = 32 * 1024
 MAX_MESSAGE = 64 * 1024
 MESSAGE_RESERVE = 16 * 1024
 MAX_SUMMARY = 8000
@@ -221,16 +224,28 @@ class Planner:
         self.superseded: list[dict[str, object]] = []
         self.refused: list[dict[str, object]] = []
         self.seen: set[tuple[str, int]] = set()
+        self.refused_bytes = self.adr_bytes = self.dropped = 0
 
     def refuse(self, path: str, line: int, reason: str) -> None:
-        if len(self.refused) < MAX_REFUSED:
-            self.refused.append({"path": path, "line": line, "reason": reason})
+        entry = {"path": path[:MAX_SHOWN], "line": line, "reason": reason}
+        size = len(json.dumps(entry).encode()) + 2
+        if len(self.refused) < MAX_REFUSED and self.refused_bytes + size <= MAX_LIST_BYTES:
+            self.refused.append(entry)
+            self.refused_bytes += size
+        else:
+            self.dropped += 1
 
     def add_adr(self, entry: dict[str, object]) -> None:
         where = (str(entry.get("path")), entry.get("line"))
         known = {(str(item["path"]), item["line"]) for item in self.superseded}
-        if where not in known and len(self.superseded) < MAX_SUPERSEDED:
+        size = len(json.dumps(entry).encode()) + 2
+        if where in known:
+            return
+        if len(self.superseded) < MAX_SUPERSEDED and self.adr_bytes + size <= MAX_LIST_BYTES:
             self.superseded.append(entry)
+            self.adr_bytes += size
+        else:
+            self.dropped += 1
 
     def _reason(self, path: str, line: int, *, old: str, new: str) -> str:
         if doc_role(path) != "edit":
@@ -373,19 +388,25 @@ def _notes(given: argparse.Namespace, more: int) -> list[str]:
         notes.append(f"{lines_cut} doc lines past the prompt budget were not judged")
     if more:
         notes.append(f"the judge had {more} more fixes than it could list")
-    return notes
+    return _within(notes, MAX_NOTES_BYTES)
 
 
-def plan(given: argparse.Namespace) -> dict[str, object]:
-    fixes, more = _judge(_stdin())
-    names = _json_list(given.names, "--names")
-    planner = Planner(BaseDocs(Path(given.repo_path), given.base), names)
-    for entry in _json_list(given.adr, "--adr"):
-        planner.add_adr(entry)
-    for fix in fixes:
-        planner.take(fix)
-    notes = _notes(given, more)
+def _within(notes: list[str], budget: int) -> list[str]:
+    kept: list[str] = []
+    size = 2
+    for note in notes:
+        size += len(json.dumps(note).encode()) + 2
+        if size > budget:
+            return [*kept, f"{len(notes) - len(kept)} more notes not shown"]
+        kept.append(note)
+    return kept
+
+
+def plan_output(planner: Planner, notes: list[str]) -> dict[str, object]:
+    """``plan``'s output from the sorted fixes: the gate message, the verdict, the lists."""
     message = render_message(planner, notes)
+    if planner.dropped:
+        notes = [*notes, f"{planner.dropped} more refused or ADR lines not listed"]
     reported = planner.superseded or planner.refused or notes
     verdict = "proposed" if planner.items else ("reported" if reported else "clean")
     return {
@@ -397,6 +418,17 @@ def plan(given: argparse.Namespace) -> dict[str, object]:
         "notes": notes,
         "message": message,
     }
+
+
+def plan(given: argparse.Namespace) -> dict[str, object]:
+    fixes, more = _judge(_stdin())
+    names = _json_list(given.names, "--names")
+    planner = Planner(BaseDocs(Path(given.repo_path), given.base), names)
+    for entry in _json_list(given.adr, "--adr"):
+        planner.add_adr(entry)
+    for fix in fixes:
+        planner.take(fix)
+    return plan_output(planner, _notes(given, more))
 
 
 def _split_keeping_ends(text: str) -> list[str]:

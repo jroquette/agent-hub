@@ -19,9 +19,10 @@ fix, whatever its status: its lines are listed apart with the ADR's status word.
 
 Prints ``{"fixable_count", "fixable": [{"path", "line", "text", "names"}], "adr": [{"path",
 "line", "text", "names", "status"}], "notes": [{"path", "reason"}], "truncated"}``: files not
-read (larger than 1 MiB, not UTF-8, the read budget spent) and lines too long to fix go to
-``notes``; mentions past the prompt budget are counted in ``truncated``. Bad input on stdin exits
-2; a git failure exits 1. Both say why on stderr.
+read (larger than 1 MiB, not UTF-8, the read budget spent) and lines longer than 1000
+characters go to ``notes``; mentions past the prompt budget (what the names leave of 120 KiB)
+are counted in ``truncated``. Bad input on stdin exits 2; a git failure exits 1. Both say why
+on stderr.
 """
 
 import json
@@ -37,8 +38,10 @@ MAX_STDIN = 1024 * 1024
 MAX_FILES = 2000
 MAX_FILE_BYTES = 1024 * 1024
 MAX_READ_BYTES = 64 * 1024 * 1024
-MAX_LINE = 2000
+MAX_LINE = 1000
 MAX_FIXABLE_BYTES = 96 * 1024
+# The judge's prompt holds the names and the fixable lines: together within 120 KiB of its 128.
+MAX_PROMPT_DATA = 120 * 1024
 MAX_ADR = 50
 MAX_ADR_TEXT = 500
 MAX_NOTES = 50
@@ -230,10 +233,17 @@ def candidates(repo: Path, base: str, names: list[dict[str, object]]) -> list[tu
     return [(path, role) for path, role in roles if role is not None][:MAX_FILES]
 
 
+def fixable_budget(names: list[dict[str, object]]) -> int:
+    """The bytes the fixable lines may take: what the names leave of the prompt's data budget
+    (sizes as ``json.dumps`` writes them, never smaller than the prompt's compact form)."""
+    return min(MAX_FIXABLE_BYTES, MAX_PROMPT_DATA - len(json.dumps(names).encode()))
+
+
 class Scan:
     """The output under construction, within its bounds."""
 
-    def __init__(self) -> None:
+    def __init__(self, budget: int = MAX_FIXABLE_BYTES) -> None:
+        self.budget = budget
         self.fixable: list[dict[str, object]] = []
         self.adr: list[dict[str, object]] = []
         self.notes: list[dict[str, object]] = []
@@ -253,7 +263,7 @@ class Scan:
             return
         entry = mention._asdict()
         self.size += len(json.dumps(entry).encode()) + 2
-        if self.size > MAX_FIXABLE_BYTES:
+        if self.size > self.budget:
             self.truncated += 1
         else:
             self.fixable.append(entry)
@@ -293,7 +303,7 @@ def _text(repo: Path, base: str, *, path: str, scan: Scan) -> str | None:
 
 
 def scan_docs(repo: Path, base: str, names: list[dict[str, object]]) -> dict[str, object]:
-    scan = Scan()
+    scan = Scan(fixable_budget(names))
     for path, role in candidates(repo, base, names):
         text = _text(repo, base, path=path, scan=scan)
         if text is None:

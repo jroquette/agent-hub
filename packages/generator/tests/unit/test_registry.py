@@ -34,6 +34,7 @@ SEEDED_PACK_FILES = (
     "doc-drift/fixtures/drift-declined.yaml",
     "doc-drift/fixtures/drift-none.yaml",
     "doc-drift/fixtures/drift-renamed-command.yaml",
+    "doc-drift/prompts/judge.md",
     "doc-drift/scripts/branch.py",
     "doc-drift/scripts/contract.py",
     "doc-drift/scripts/doc_fix.py",

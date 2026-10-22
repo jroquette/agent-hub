@@ -151,22 +151,22 @@ nodes:
             additionalProperties: false
             required: [path, line, old, new, reason]
             properties:
-              path: {type: string, minLength: 1, maxLength: 512}
+              path: {type: string, minLength: 1, maxLength: 300}
               line: {type: integer, minimum: 1, maximum: 10000000}
-              old: {type: string, maxLength: 2000}
-              new: {type: string, maxLength: 2000}
-              reason: {type: string, maxLength: 300}
+              old: {type: string, maxLength: 1000}
+              new: {type: string, maxLength: 1000}
+              reason: {type: string, maxLength: 200}
         kept:
           type: array
-          maxItems: 200
+          maxItems: 100
           items:
             type: object
             additionalProperties: false
             required: [path, line, reason]
             properties:
-              path: {type: string, minLength: 1, maxLength: 512}
+              path: {type: string, minLength: 1, maxLength: 300}
               line: {type: integer, minimum: 1, maximum: 10000000}
-              reason: {type: string, maxLength: 300}
+              reason: {type: string, maxLength: 200}
         more: {type: integer, minimum: 0}
 
   - id: plan
