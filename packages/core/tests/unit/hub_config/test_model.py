@@ -1956,9 +1956,10 @@ def test_rejects_ui_paths_when_not_list_of_one_to_fifty(value: object) -> None:
     ids=["negated bracket", "bracket", "closing bracket", "four stars", "four spread stars"],
 )
 def test_rejects_ui_paths_when_glob_has_bracket_or_too_many_stars(glob: str) -> None:
-    [(loc, kind)] = error_types(with_value(("repos", 0, "ui_paths"), [glob]))
+    # A valid glob first: a one-item list whose item fails is also reported too_short.
+    [(loc, kind)] = error_types(with_value(("repos", 0, "ui_paths"), ["apps/web/**", glob]))
 
-    assert loc == ("repos", 0, "ui_paths", 0)
+    assert loc == ("repos", 0, "ui_paths", 1)
     assert kind in {"ui_path_bracket", "ui_path_wildcards"}
 
 
@@ -1975,7 +1976,9 @@ def test_accepts_ui_paths_when_three_stars_per_segment(glob: str) -> None:
 
 def test_names_cap_when_ui_paths_glob_has_too_many_stars() -> None:
     with pytest.raises(ValidationError) as caught:
-        HubConfig.model_validate(with_value(("repos", 0, "ui_paths"), ["a/*b*c*d*/**"]))
+        HubConfig.model_validate(
+            with_value(("repos", 0, "ui_paths"), ["apps/web/**", "a/*b*c*d*/**"])
+        )
 
     [error] = caught.value.errors()
     assert error["type"] == "ui_path_wildcards"
