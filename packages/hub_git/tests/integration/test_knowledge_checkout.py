@@ -541,7 +541,8 @@ def test_lists_without_waiting_when_git_reads_stdin(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     git = _fake_git(tmp_path, "read line\nexit 0\n")
-    monkeypatch.setattr(knowledge_checkout, "GIT_TIMEOUT_SECONDS", 0.5)
+    # Far above any machine's run time, so only an inherited open stdin can make git wait.
+    monkeypatch.setattr(knowledge_checkout, "GIT_TIMEOUT_SECONDS", 10.0)
     checkout = GitKnowledgeCheckout(_bare_hub(tmp_path), (), git=git, environ=dict(os.environ))
     # The test's own stdin is a pipe nobody writes to: a git that inherited it would block.
     reader, writer = os.pipe()
