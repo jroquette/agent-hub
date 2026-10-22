@@ -2,53 +2,22 @@
 file, runs with real git against a local bare remote. The remote decides, whatever kind of tag the
 checkout holds, since actions/checkout may fetch an annotated tag as lightweight."""
 
-import os
 import shutil
 import subprocess
-import textwrap
 from pathlib import Path
 
 import pytest
 
-from tests.e2e.conftest import REPO_ROOT
+from tests.e2e.conftest import REPO_ROOT, isolated_git_env, workflow_step_script
 
-WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
 STEP_NAME = "- name: Check the tag form, that it is annotated, and the cli and meta versions"
 TAG = "v0.2.0"
 TIMEOUT_SECONDS = 120
-# `git rev-parse --local-env-vars`: each would point git at another repository than its cwd's.
-GIT_LOCAL_VARIABLES = frozenset(
-    {
-        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-        "GIT_OBJECT_DIRECTORY",
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_IMPLICIT_WORK_TREE",
-        "GIT_GRAFT_FILE",
-        "GIT_INDEX_FILE",
-        "GIT_NO_REPLACE_OBJECTS",
-        "GIT_REPLACE_REF_BASE",
-        "GIT_PREFIX",
-        "GIT_SHALLOW_FILE",
-        "GIT_COMMON_DIR",
-    }
-)
 
 
 def step_script() -> str:
     """The ``run: |`` block of the annotation step in release.yml, dedented."""
-    lines = WORKFLOW.read_text(encoding="utf-8").splitlines()
-    start = next(index for index, line in enumerate(lines) if line.strip() == STEP_NAME)
-    run_index = next(
-        index for index in range(start, len(lines)) if lines[index].strip() == "run: |"
-    )
-    run_indent = len(lines[run_index]) - len(lines[run_index].lstrip())
-    block: list[str] = []
-    for line in lines[run_index + 1 :]:
-        if line.strip() and len(line) - len(line.lstrip()) <= run_indent:
-            break
-        block.append(line)
-    return textwrap.dedent("\n".join(block))
+    return workflow_step_script(STEP_NAME)
 
 
 def git(cwd: Path, *arguments: str) -> None:
@@ -67,17 +36,6 @@ def git(cwd: Path, *arguments: str) -> None:
         env=isolated_git_env(),
         timeout=TIMEOUT_SECONDS,
     )
-
-
-def isolated_git_env() -> dict[str, str]:
-    """The environment without the user's git config (tag signing, url rewrites), and without a
-    caller's ``GIT_DIR``-style or ``GIT_CONFIG_*`` variables (a hook or ``git -c`` parent)."""
-    kept = {
-        name: value
-        for name, value in os.environ.items()
-        if not (name in GIT_LOCAL_VARIABLES or name.startswith("GIT_CONFIG"))
-    }
-    return {**kept, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
 
 
 def make_tag(cwd: Path, kind: str) -> None:
