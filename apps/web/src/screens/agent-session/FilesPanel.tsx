@@ -281,6 +281,8 @@ function OpenThreads({ path }: { path: string }) {
 
 /** The drawer is wide enough for the list beside the file (px). */
 export const SPLIT_MIN = 720;
+/** Below this width the file list wraps its names and folders instead of cutting them (px). */
+export const LIST_COMPACT = 360;
 
 /** How wide `element` is, followed as it resizes (0 without a ResizeObserver: the narrow,
  * one-pane layout). */
@@ -297,6 +299,18 @@ function useWidth(element: HTMLElement | null): number {
     };
   }, [element]);
   return width;
+}
+
+/** A folder on one narrow line: its own name first, then where it sits, dimmed and cut at its
+ * end; the whole path on hover. */
+function FolderLine({ folder }: { folder: string }) {
+  const at = folder.lastIndexOf("/");
+  return (
+    <span className="as-files-folder-line" title={folder}>
+      <span className="as-files-folder-leaf as-files-cut">{folder.slice(at + 1)}</span>
+      {at > 0 && <span className="as-files-folder-parent as-files-cut">{folder.slice(0, at)}</span>}
+    </span>
+  );
 }
 
 /** A path or name that wraps after its separators (`/ _ - .`) instead of being cut: in the
@@ -351,8 +365,28 @@ const HOME = /^(?:\/Users\/[^/]+|\/home\/[^/]+)(?=\/|$)/;
 /** The folder every listed file is under, on one line: a worktree as its repo and its name (the
  * branch's folder, in bold), else the session's folder in bold when the root is inside it, else
  * the path with the home folder as `~`. The full path on hover and one click away. */
-function RootLine({ base, workdirLabel }: { base: string; workdirLabel: string | undefined }) {
+function RootLine({
+  base,
+  workdirLabel,
+  compact = false,
+}: {
+  base: string;
+  workdirLabel: string | undefined;
+  compact?: boolean;
+}) {
   const path = base.slice(0, -1);
+  if (compact) {
+    // Narrow: only the folder's own name (the branch's, in a worktree), cut at its end.
+    const worktree = WORKTREE.exec(path);
+    const lead = worktree?.[3] ?? path.slice(path.lastIndexOf("/") + 1);
+    return (
+      <div className="as-files-root ah-small" title={path}>
+        <Icon name={worktree ? "git-branch" : "folder"} size="sm" />
+        <span className="as-files-root-lead as-files-cut">{lead}</span>
+        <CopyButton text={path} label="Copy folder path" className="as-files-copy" compact />
+      </div>
+    );
+  }
   const worktree = WORKTREE.exec(path);
   let body;
   if (worktree) {
@@ -582,13 +616,22 @@ function FileList({
   review: ReviewState;
   onSelect: (path: string) => void;
 }) {
+  // Narrow, every line stays one line and is cut at its end, never over its neighbour: a folder
+  // leads with its own name, a file drops its line counts (they are on the open file).
+  const [nav, setNav] = useState<HTMLElement | null>(null);
+  const navWidth = useWidth(nav);
+  const compact = navWidth > 0 && navWidth < LIST_COMPACT;
   // Only the code is reviewed: Claude's own files carry no viewed mark and no progress.
   const reviewable = files.filter((file) => isReviewable(file.path));
   const viewedCount = reviewable.filter(
     (file) => review.reviewed[file.path] === file.lastChangeId,
   ).length;
   return (
-    <nav className="as-files-nav" aria-label="Files">
+    <nav
+      ref={setNav}
+      className={cx("as-files-nav", compact && "as-files-nav-compact")}
+      aria-label="Files"
+    >
       {reviewable.length > 0 && (
         <div className="as-files-progress ah-small">
           <span>
@@ -599,13 +642,17 @@ function FileList({
           </span>
         </div>
       )}
-      {base && <RootLine base={base} workdirLabel={workdirLabel} />}
+      {base && <RootLine base={base} workdirLabel={workdirLabel} compact={compact} />}
       {byFolder(files, nameOf).map(([folder, inFolder]) => (
         <div key={folder} className="as-files-group">
           {folder && (
             <div className="as-files-folder ah-small">
               <Icon name="folder" size="sm" />
-              <FitText text={folder.slice(0, -1)} tail={folderTail(folder.slice(0, -1))} />
+              {compact ? (
+                <FolderLine folder={folder.slice(0, -1)} />
+              ) : (
+                <FitText text={folder.slice(0, -1)} tail={folderTail(folder.slice(0, -1))} />
+              )}
             </div>
           )}
           <ul aria-label={folder ? `Folder ${folder.slice(0, -1)}` : undefined}>
@@ -633,13 +680,24 @@ function FileList({
                     }}
                   >
                     <KindBadge created={file.created} status={file.repo?.status} />
-                    <FitText
-                      text={name.slice(name.lastIndexOf("/") + 1)}
-                      tail={nameTail(name.slice(name.lastIndexOf("/") + 1))}
-                      className="as-files-nav-name"
-                    />
-                    <OpenThreads path={file.path} />
-                    <Stats added={file.added} removed={file.removed} />
+                    {compact ? (
+                      <>
+                        <span className="as-files-nav-name as-files-cut">
+                          {name.slice(name.lastIndexOf("/") + 1)}
+                        </span>
+                        <OpenThreads path={file.path} />
+                      </>
+                    ) : (
+                      <>
+                        <FitText
+                          text={name.slice(name.lastIndexOf("/") + 1)}
+                          tail={nameTail(name.slice(name.lastIndexOf("/") + 1))}
+                          className="as-files-nav-name"
+                        />
+                        <OpenThreads path={file.path} />
+                        <Stats added={file.added} removed={file.removed} />
+                      </>
+                    )}
                   </button>
                   {isReviewable(file.path) && (
                     <ViewedToggle
