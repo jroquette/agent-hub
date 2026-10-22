@@ -31,6 +31,7 @@ decisions' ``hub_of`` (a hub without one refuses with ``no_author``, O2).
 
 import ipaddress
 import os
+import shutil
 import threading
 import time
 from collections.abc import Callable, Iterable, Mapping
@@ -64,6 +65,7 @@ from agent_hub.api.owner_signoff_files import HubEvalWriter, ProjectHubPaths
 from agent_hub.api.rfc9457 import (
     ProblemFactory,
     busy_problem,
+    fts5_unavailable_problem,
     hub_conflict_problem,
     hub_invalid_problem,
     hub_registry_problem,
@@ -128,6 +130,9 @@ from agent_hub.core.item_versions.record_and_write import AuthorLookup, NoAuthor
 from agent_hub.core.item_versions.restore_and_publish import RestoreAndPublish
 from agent_hub.core.item_versions.restore_item_version import RestoreItemVersion
 from agent_hub.core.item_versions.version_store import ItemVersionStore
+from agent_hub.core.knowledge.knowledge_index import KnowledgeIndex
+from agent_hub.core.knowledge.knowledge_reads import KnowledgeSources, ReadKnowledge
+from agent_hub.core.knowledge.sync_knowledge import KnowledgeCheckoutError
 from agent_hub.core.learnings.brain_change_requests import BrainChangeRequests, CommitAuthor
 from agent_hub.core.learnings.decide_learning import DecideLearning
 from agent_hub.core.learnings.learning_ports import LearningHub
@@ -153,11 +158,14 @@ from agent_hub.generator.registered_hub_files import GitReaderFactory, HubFileSy
 from agent_hub.generator.workflow_source import DiscoveredWorkflowSource
 from agent_hub.hub_git.brain_change_requests import GitBrainChangeRequests
 from agent_hub.hub_git.git_runner import GitRunner
+from agent_hub.hub_git.knowledge_checkout import GitKnowledgeCheckout
 from agent_hub.hub_git.repo_changes import GitRepoChanges
 from agent_hub.storage.agent_session_store import open_agent_session_store
+from agent_hub.storage.errors import Fts5UnavailableError
 from agent_hub.storage.event_store import DatabaseBusyError, SqliteEventStore, open_event_store
 from agent_hub.storage.hub_registry import JsonHubRegistry
 from agent_hub.storage.item_version_store import open_item_version_store
+from agent_hub.storage.knowledge_index import open_knowledge_index
 from agent_hub.tracker_linear.graphql_reader import LinearGraphqlTrackerReader
 from agent_hub.tracker_linear.graphql_transport import LINEAR_API_KEY_VARIABLE, Post
 
@@ -170,6 +178,7 @@ COMPOSED_PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
     HubInvalidError: hub_invalid_problem,
     HubConflictError: hub_conflict_problem,
     HubRegistryError: hub_registry_problem,
+    Fts5UnavailableError: fts5_unavailable_problem,
 }
 
 
@@ -785,6 +794,7 @@ def build_app(
         feature_names=FeatureNames(settings.registry_path.parent / FEATURE_NAMES_FILE),
         ac_checks=AcCheckRunner(hubs),
         scenario_investigations=None if sessions is None else sessions.investigations,
+        knowledge_reads=_knowledge_reads(settings, hubs, environ=environ),
         linear=LinearConnection(
             linear_environ,
             key_file,
@@ -799,6 +809,46 @@ def build_app(
         web_dist=web_dist,
         lifecycle=None if sessions is None else sessions.runtime,
     )
+
+
+# Why a knowledge read fails when the server's PATH has no git (AGH-391's line, no prefix).
+NO_GIT: Final = "git is not on PATH; install git"
+
+
+class _LazyKnowledgeIndex:
+    """The knowledge index in the web's database, opened by the first knowledge read and kept
+    (P-10): ``build_app`` starts on a Python without FTS5, and an open that fails (no FTS5, the
+    database busy) is tried again by the next read."""
+
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = db_path
+        self._lock = threading.Lock()
+        self._index: KnowledgeIndex | None = None
+
+    def __call__(self) -> KnowledgeIndex:
+        with self._lock:
+            if self._index is None:
+                self._index = open_knowledge_index(self._db_path)
+            return self._index
+
+
+def _knowledge_reads(
+    settings: ApiSettings, hubs: HubReadModels, *, environ: Mapping[str, str] | None
+) -> ReadKnowledge:
+    """The knowledge search and backlinks over the registered hubs (AGH-393): each read lists the
+    hub with ``git`` found on ``environ``'s ``PATH`` at that call, keyed by the registered hub's
+    path (AM-6), in the lazily opened index."""
+
+    def sources(hub_path: str, repo_dirs: tuple[str, ...]) -> KnowledgeSources:
+        env: Mapping[str, str] = os.environ if environ is None else environ
+        found = shutil.which("git", path=env.get("PATH", os.defpath))
+        if found is None:
+            raise KnowledgeCheckoutError(NO_GIT)
+        return GitKnowledgeCheckout(
+            Path(hub_path), repo_dirs, git=os.path.abspath(found), environ=env
+        )
+
+    return ReadKnowledge(hubs, sources=sources, index=_LazyKnowledgeIndex(settings.db_path))
 
 
 def _agent_sessions(  # noqa: PLR0913 -- build_app's session options, passed on

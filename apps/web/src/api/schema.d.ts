@@ -813,7 +813,8 @@ export interface paths {
     };
     /**
      * List Learnings
-     * @description Learnings, newest first, each with its note's summary or why the note is unavailable.
+     * @description Learnings, newest first, each with its note's summary or why the note is unavailable;
+     *     with ``brain_path`` (with or without ``brain/``), only those whose note is that one.
      */
     get: operations["list_learnings_api_v1_learnings_get"];
     put?: never;
@@ -1005,6 +1006,27 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/projects/{project}/brain/backlinks": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Brain Backlinks
+     * @description The documents linking to the note at ``path`` under ``brain/``, by path, at most 100,
+     *     with the full count; the note need not exist.
+     */
+    get: operations["get_brain_backlinks_api_v1_projects__project__brain_backlinks_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/projects/{project}/brain/note": {
     parameters: {
       query?: never;
@@ -1058,6 +1080,27 @@ export interface paths {
      * @description Save this developer's ``hub.local.json`` values; the team's ``hub.json`` is untouched.
      */
     put: operations["put_project_local_config_api_v1_projects__project__config_local_put"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/projects/{project}/knowledge/search": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Search Project Knowledge
+     * @description The hub's notes and repo docs holding every word of ``q``, best first, after the index
+     *     is brought up to date with the checkout; ``q``'s words only, never search syntax.
+     */
+    get: operations["search_project_knowledge_api_v1_projects__project__knowledge_search_get"];
+    put?: never;
     post?: never;
     delete?: never;
     options?: never;
@@ -3238,6 +3281,77 @@ export interface components {
     "JsonValue-Input": unknown;
     /** @enum {string} */
     KeySource: "environment" | "settings";
+    /** @enum {string} */
+    Kind:
+      | "adr"
+      | "decision"
+      | "doc"
+      | "domain"
+      | "feature"
+      | "inbox"
+      | "journal"
+      | "learning"
+      | "playbook"
+      | "system";
+    /**
+     * KnowledgeResult
+     * @description One search result: the document and a one-line plain-text snippet of its body.
+     */
+    KnowledgeResult: {
+      kind: components["schemas"]["Kind"];
+      /** Path */
+      path: string;
+      /** Provenance */
+      provenance: string | null;
+      /** Snippet */
+      snippet: string;
+      /** Status */
+      status: string | null;
+      /** Title */
+      title: string;
+    };
+    /**
+     * KnowledgeSearch
+     * @description A search of the project's hub: ``hub search --json``'s object, ``project`` for ``hub``,
+     *     plus a warning per repo that is not checked out.
+     */
+    KnowledgeSearch: {
+      /** Project */
+      project: string;
+      /** Query */
+      query: string;
+      /** Results */
+      results: components["schemas"]["KnowledgeResult"][];
+      /** Skipped */
+      skipped: components["schemas"]["KnowledgeSkip"][];
+      sync: components["schemas"]["KnowledgeSyncCounts"];
+      /** Warnings */
+      warnings: string[];
+    };
+    /**
+     * KnowledgeSkip
+     * @description A listed file the index left out, and why.
+     */
+    KnowledgeSkip: {
+      /** Path */
+      path: string;
+      /** Reason */
+      reason: string;
+    };
+    /**
+     * KnowledgeSyncCounts
+     * @description What the sync before the read did: files listed, read, indexed and rows dropped.
+     */
+    KnowledgeSyncCounts: {
+      /** Dropped */
+      dropped: number;
+      /** Indexed */
+      indexed: number;
+      /** Listed */
+      listed: number;
+      /** Read */
+      read: number;
+    };
     /**
      * LayeredList
      * @description A list the team sets and this developer adds to.
@@ -3648,6 +3762,32 @@ export interface components {
     };
     /** @enum {string} */
     NeedsYouKind: "approval" | "failed" | "waiting" | "blocked" | "doctor" | "learning";
+    /**
+     * NoteBacklink
+     * @description A document holding a link to the note: its hub-relative path, kind and title.
+     */
+    NoteBacklink: {
+      kind: components["schemas"]["Kind"];
+      /** Path */
+      path: string;
+      /** Title */
+      title: string;
+    };
+    /**
+     * NoteBacklinks
+     * @description The documents linking to the note at ``path`` (under ``brain/``), by path, at most
+     *     ``MAX_BACKLINKS``; ``total`` counts them all.
+     */
+    NoteBacklinks: {
+      /** Items */
+      items: components["schemas"]["NoteBacklink"][];
+      /** Path */
+      path: string;
+      /** Project */
+      project: string;
+      /** Total */
+      total: number;
+    };
     /**
      * NowItem
      * @description One line of ``brain/now.md``.
@@ -7851,6 +7991,7 @@ export interface operations {
         status?: components["schemas"]["LearningStatus"] | null;
         cursor?: string | null;
         limit?: number;
+        brain_path?: string | null;
       };
       header?: never;
       path?: never;
@@ -8327,6 +8468,48 @@ export interface operations {
       };
     };
   };
+  get_brain_backlinks_api_v1_projects__project__brain_backlinks_get: {
+    parameters: {
+      query: {
+        path: string;
+      };
+      header?: never;
+      path: {
+        project: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["NoteBacklinks"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
   get_brain_note_api_v1_projects__project__brain_note_get: {
     parameters: {
       query: {
@@ -8431,6 +8614,50 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["HubConfigView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  search_project_knowledge_api_v1_projects__project__knowledge_search_get: {
+    parameters: {
+      query: {
+        q: string;
+        kind?: components["schemas"]["Kind"][] | null;
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        project: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["KnowledgeSearch"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */

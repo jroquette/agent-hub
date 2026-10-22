@@ -28,6 +28,7 @@ from agent_hub.core.features.owner_signoff import SignOffOwnerSteps
 from agent_hub.core.ingestion.ingest_hook import IngestHook
 from agent_hub.core.ingestion.ingestion_status import IngestionCounters
 from agent_hub.core.item_versions.item_version_ports import ItemVersionReads, ItemVersionWrites
+from agent_hub.core.knowledge.knowledge_reads import KnowledgeReads
 from agent_hub.core.learnings.learning import Learning, LearningDetail
 from agent_hub.core.learnings.learning_ports import LearningDecisions, LearningReads
 from agent_hub.core.readmodels.filters import LearningFilter
@@ -66,6 +67,7 @@ class ApiPorts:
     feature_names: FeatureNames | None = None
     ac_checks: AcCheckRunner | None = None
     scenario_investigations: ScenarioInvestigations | None = None
+    knowledge_reads: KnowledgeReads | None = None
 
 
 def _ports(request: Request) -> ApiPorts:
@@ -89,6 +91,14 @@ def event_read_models(request: Request) -> EventReadModels:
 def hub_read_models(request: Request) -> HubReadModels:
     """The hub read models, or 501 when not wired."""
     port = _ports(request).hub_read_models
+    if port is None:
+        raise _unwired(request)
+    return port
+
+
+def knowledge_reads(request: Request) -> KnowledgeReads:
+    """The knowledge search and backlinks reads, or 501 when not wired."""
+    port = _ports(request).knowledge_reads
     if port is None:
         raise _unwired(request)
     return port
@@ -326,6 +336,7 @@ def parse_filter[M: BaseModel](model: type[M], **fields: object) -> M:
 
 EventReadModelsDep = Annotated[EventReadModels, Depends(event_read_models)]
 HubReadModelsDep = Annotated[HubReadModels, Depends(hub_read_models)]
+KnowledgeReadsDep = Annotated[KnowledgeReads, Depends(knowledge_reads)]
 OwnerSignOffDep = Annotated[SignOffOwnerSteps, Depends(owner_signoff)]
 ChangeRequestDecisionsDep = Annotated[DecideChangeRequest, Depends(change_request_decisions)]
 OptionalChangeRequestDecisionsDep = Annotated[
