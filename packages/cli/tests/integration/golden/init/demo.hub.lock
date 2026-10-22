@@ -610,6 +610,9 @@
     "workflows/brain-care/scripts/hub_branch.py": {
       "ownership": "seeded"
     },
+    "workflows/brain-care/scripts/inventory.py": {
+      "ownership": "seeded"
+    },
     "workflows/brain-care/scripts/read_inbox.py": {
       "ownership": "seeded"
     },

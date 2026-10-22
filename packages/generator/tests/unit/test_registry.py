@@ -38,6 +38,7 @@ SEEDED_PACK_FILES = (
     "brain-care/scripts/apply.py",
     "brain-care/scripts/groups.py",
     "brain-care/scripts/hub_branch.py",
+    "brain-care/scripts/inventory.py",
     "brain-care/scripts/read_inbox.py",
     "issue-to-pr/fixtures/blocked.yaml",
     "issue-to-pr/fixtures/dirty.yaml",
