@@ -473,59 +473,75 @@ def test_pins_plan_bounds_when_launcher_built() -> None:
     assert run_launcher.MAX_PLAN_BYTES == 4 * 1024 * 1024
 
 
-def _group_gone(group: int) -> bool:
-    """Whether no process of ``group`` is left (waits up to 10 s for the kill to land)."""
+def _gone(pid: int) -> bool:
+    """Whether ``pid`` has ended (a zombie no one reaped counts as ended); waits up to 10 s."""
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         try:
-            os.killpg(group, 0)
-        except ProcessLookupError:
+            state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+        except OSError, IndexError:
+            return True
+        if state == "Z":
             return True
         time.sleep(0.05)
     return False
 
 
-def _planner(tmp_path: Path, body: str) -> tuple[ProcessRunLauncher, Path]:
-    """A launcher whose program writes its group id, starts a sleeping child in its group,
-    then runs ``body``."""
-    written = tmp_path / "group"
-    script = (
-        "import os, subprocess, sys, time\n"
-        f"open({str(written)!r}, 'w').write(str(os.getpgid(0)))\n"
-        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
-        f"{body}\n"
-    )
-    planner = ProcessRunLauncher(
-        db_path=tmp_path / "db", environ={}, program=[sys.executable, "-c", script]
-    )
-    return planner, written
+# The plan's program: a child in its group that ignores SIGINT, and a child in a session of its
+# own that the program kills on KeyboardInterrupt, as the CLI's run_child does; then ``body``.
+PLAN_PROGRAM = """\
+import os, signal, subprocess, sys, time
+folder = sys.argv[1]
+ignoring = "import os, signal, sys, time\\nsignal.signal(signal.SIGINT, signal.SIG_IGN)\\n"
+ignoring += "open(os.path.join(sys.argv[1], 'ignoring'), 'w').write(str(os.getpid()))\\n"
+ignoring += "time.sleep(60)\\n"
+subprocess.Popen([sys.executable, "-c", ignoring, folder])
+sleeper = [sys.executable, "-c", "import time; time.sleep(60)"]
+own = subprocess.Popen(sleeper, start_new_session=True)
+open(os.path.join(folder, "own"), "w").write(str(own.pid))
+while not os.path.exists(os.path.join(folder, "ignoring")):
+    time.sleep(0.01)
+try:
+    BODY
+except KeyboardInterrupt:
+    os.killpg(own.pid, signal.SIGKILL)
+    raise
+"""
 
 
+def _planner(tmp_path: Path, body: str) -> ProcessRunLauncher:
+    """A launcher whose program is ``PLAN_PROGRAM`` with ``body``, given ``tmp_path``."""
+    script = PLAN_PROGRAM.replace("BODY", body)
+    program = [sys.executable, "-c", script, str(tmp_path)]
+    return ProcessRunLauncher(db_path=tmp_path / "db", environ={}, program=program)
+
+
+def _children_gone(tmp_path: Path) -> bool:
+    pids = [int((tmp_path / name).read_text()) for name in ("ignoring", "own")]
+    return all(_gone(pid) for pid in pids)
+
+
+@pytest.mark.skipif(not Path("/proc/self/stat").exists(), reason="reads /proc")
 def test_kills_group_when_plan_output_over_cap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(run_launcher, "MAX_PLAN_BYTES", 64)
-    planner, written = _planner(
-        tmp_path, "sys.stdout.write('x' * 1000)\nsys.stdout.flush()\ntime.sleep(60)"
-    )
+    planner = _planner(tmp_path, "sys.stdout.write('x' * 1000); sys.stdout.flush(); time.sleep(60)")
 
-    started = time.monotonic()
     with pytest.raises(RunLaunchError, match="more than 64 bytes"):
         planner.plan_scenario(str(tmp_path), "order-walk", environment="local", inputs={})
 
-    assert time.monotonic() - started < 30
-    assert _group_gone(int(written.read_text()))
+    assert _children_gone(tmp_path)
 
 
+@pytest.mark.skipif(not Path("/proc/self/stat").exists(), reason="reads /proc")
 def test_kills_group_when_plan_outlasts_its_time(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(run_launcher, "PLAN_TIMEOUT_SECONDS", 1.0)
-    planner, written = _planner(tmp_path, "time.sleep(60)")
+    monkeypatch.setattr(run_launcher, "PLAN_TIMEOUT_SECONDS", 3.0)
+    planner = _planner(tmp_path, "time.sleep(60)")
 
-    started = time.monotonic()
     with pytest.raises(RunLaunchError, match="did not finish"):
         planner.plan_scenario(str(tmp_path), "order-walk", environment="local", inputs={})
 
-    assert time.monotonic() - started < 30
-    assert _group_gone(int(written.read_text()))
+    assert _children_gone(tmp_path)

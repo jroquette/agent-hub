@@ -40,7 +40,7 @@ import json
 import logging
 import os
 import secrets
-import select
+import selectors
 import shutil
 import signal
 import subprocess
@@ -663,20 +663,22 @@ def _bounded_output(process: subprocess.Popen[bytes], *, timeout: float, cap: in
     descriptor = process.stdout.fileno()
     chunks: list[bytes] = []
     size = 0
-    while True:
-        left = deadline - time.monotonic()
-        if left <= 0:
-            raise RunLaunchError("hub scenario plan did not finish in time")
-        ready, _, _ = select.select([descriptor], [], [], left)
-        if not ready:
-            continue
-        chunk = os.read(descriptor, _PLAN_CHUNK)
-        if not chunk:
-            break
-        size += len(chunk)
-        if size > cap:
-            raise RunLaunchError(f"hub scenario plan printed more than {cap} bytes")
-        chunks.append(chunk)
+    # A selector, not select(): it has no limit on the descriptor's number.
+    with selectors.DefaultSelector() as selector:
+        selector.register(descriptor, selectors.EVENT_READ)
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise RunLaunchError("hub scenario plan did not finish in time")
+            if not selector.select(left):
+                continue
+            chunk = os.read(descriptor, _PLAN_CHUNK)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > cap:
+                raise RunLaunchError(f"hub scenario plan printed more than {cap} bytes")
+            chunks.append(chunk)
     try:
         process.wait(timeout=max(deadline - time.monotonic(), 0.0))
     except subprocess.TimeoutExpired:
