@@ -16,7 +16,7 @@ from agent_hub.generator.workflow_yaml import load_workflow_bytes
 
 IMPLEMENT = "plugin/hub-workflow/skills/implement/SKILL.md"
 WORKFLOW = BUILTIN_WORKFLOWS / "sdlc" / "implement.yaml"
-TEXT_FILE = '--input issue_text="$(cat "$TMPDIR/'
+TEXT_FILE = '--input issue_text="$(cat "<file>")"'
 
 
 @pytest.fixture
@@ -54,9 +54,13 @@ def test_passes_the_ticket_text_through_a_file_when_implement_rendered(raw: str,
     line = run_line(raw)
 
     assert TEXT_FILE in line
-    assert 'issue_text="<' not in text
+    assert 'issue_text="<' not in text.replace(TEXT_FILE, "")
+    assert '"$TMPDIR/' not in text
+    # One absolute path, resolved once, for both the Write call and the command.
+    assert '`echo "${TMPDIR:-/tmp}"`' in text
     assert "with the Write tool" in text
-    assert "`$TMPDIR`" in text
+    assert "`test -s <file>`" in text
+    assert text.index("`test -s <file>`") < text.index("`./hub workflow run implement")
 
 
 def test_runs_no_spec_research_plan_or_tickets_step_when_implement_rendered(text: str) -> None:
@@ -85,5 +89,7 @@ def test_reports_paused_blocked_and_delivered_when_implement_rendered(text: str)
 def test_reads_the_delivery_from_the_run_records_when_implement_rendered(text: str) -> None:
     assert "`.agent-runs/workflows/<run>/records.jsonl`" in text
     assert '`"node": "delivery"`' in text
-    for field in ("`question`", "`pr`", "`stage`", "`reason`", "`hub_files`"):
+    for field in ("`question`", "`pr`", "`stage`", "`reason`", "`hub_files`", "`superseded`"):
         assert field in text, field
+    # A23: an approval the plan moved past is told to the owner.
+    assert "`superseded` whenever it is not empty" in text

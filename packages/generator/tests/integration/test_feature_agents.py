@@ -488,3 +488,17 @@ def test_sends_a_no_ship_to_implement_and_finishes_in_line_only_when_feature_bui
         " its failing `results` name" in verify
     )
     assert finish.startswith("**Finish** (the in-line path of step 6 only;")
+
+
+# AGH-406: step 3's `/adr` reference agrees with `/adr` on both paths: in-line on the feature's
+# worktree (its PR carries the ADR), on the Build path through `/adr`'s own step 6.
+def test_records_adrs_on_both_paths_when_feature_step_three_rendered_with_implement(
+    texts: dict[str, str],
+) -> None:
+    research = step(texts[FEATURE], 3)
+
+    assert "on this issue and worktree" not in research
+    assert (
+        "(its steps 1–5 on this issue; in-line on the feature's worktree, and on the Build"
+        " path its step 6 too)" in research
+    )
