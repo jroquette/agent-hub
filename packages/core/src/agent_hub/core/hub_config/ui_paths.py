@@ -6,13 +6,19 @@ the whole path from the repo root, case-sensitive: ``*`` and ``?`` stay inside o
 ``**`` segment spans any number of folders, and hidden names match like any other. So
 ``apps/web/**`` matches every file under ``apps/web``, and ``*.vue`` only the root's.
 
-Two shapes are refused on top: ``[`` and ``]`` (a negated class such as ``[!a]`` matches ``/``,
-so one segment's pattern could cross folders), and more than ``MAX_SEGMENT_STARS`` ``*`` in one
-segment, a ``**`` segment counting as one (the translated regex backtracks badly on many).
+Matching goes segment by segment: each segment that is not ``**`` is matched with
+``fnmatchcase`` against one path segment, and the ``**`` segments by one pass over (glob
+segment, path segment), so a failing match costs at most one segment match per pair. A middle
+or leading ``**`` matches zero or more folders; a trailing one at least one name, so a folder
+alone (``apps/web`` for ``apps/web/**``) never matches.
+
+Two shapes are refused on top: ``[`` and ``]`` (a negated class such as ``[!a]`` would match
+``/`` in a whole-path matcher, and the rule keeps globs portable to one), and more than
+``MAX_SEGMENT_STARS`` ``*`` in one segment, a ``**`` segment counting as one, which bounds the
+cost of each segment match.
 """
 
-import glob
-import re
+from fnmatch import fnmatchcase
 from typing import Annotated, Final
 
 from pydantic import AfterValidator, Field
@@ -42,6 +48,27 @@ UiPathGlob = Annotated[WordFileGlob, AfterValidator(_plain_wildcards)]
 UiPaths = Annotated[tuple[UiPathGlob, ...], Field(min_length=1, max_length=MAX_UI_PATHS)]
 
 
-def ui_path_pattern(ui_path: str) -> re.Pattern[str]:
-    """The regex a ``ui_paths`` glob matches a repo-relative POSIX path with (``fullmatch``)."""
-    return re.compile(glob.translate(ui_path, recursive=True, include_hidden=True, seps="/"))
+RECURSIVE: Final = "**"
+
+
+def ui_path_matches(ui_path: str, path: str) -> bool:
+    """Whether a ``ui_paths`` glob matches a repo-relative POSIX path, segment by segment."""
+    globs = ui_path.split("/")
+    names = path.split("/")
+    last = len(globs) - 1
+    # ``reach[j]``: the globs from the current index on match ``names[j:]``; filled from the end.
+    reach = [False] * len(names) + [True]
+    for index in range(last, -1, -1):
+        segment = globs[index]
+        row = [False] * (len(names) + 1)
+        for start in range(len(names), -1, -1):
+            if segment == RECURSIVE and index == last:
+                row[start] = start < len(names)
+            elif segment == RECURSIVE:
+                row[start] = reach[start] or (start < len(names) and row[start + 1])
+            else:
+                row[start] = (
+                    start < len(names) and reach[start + 1] and fnmatchcase(names[start], segment)
+                )
+        reach = row
+    return reach[0]
