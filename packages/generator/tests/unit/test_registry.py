@@ -95,6 +95,7 @@ SEEDED_PACK_FILES = (
     "upgrade/scripts/bump.py",
     "upgrade/scripts/check.py",
     "upgrade/scripts/fast_gate.py",
+    "upgrade/scripts/outcome.py",
     "upgrade/scripts/release_notes.py",
     "upgrade/scripts/strength.py",
     "upgrade/upgrade.yaml",
