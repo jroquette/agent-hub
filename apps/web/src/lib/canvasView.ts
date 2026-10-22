@@ -56,3 +56,28 @@ export function zoomAround(
   const ratio = k / view.k;
   return { k, x: point.x - (point.x - view.x) * ratio, y: point.y - (point.y - view.y) * ratio };
 }
+
+/** A line through `points` with its corners rounded to radius `r` (an edge routed around cards). */
+export function roundedPath(points: readonly (readonly [number, number])[], r = 10): string {
+  const [first] = points;
+  let d = first ? `M ${String(first[0])} ${String(first[1])}` : "";
+  for (let i = 1; i < points.length - 1; i += 1) {
+    const prev = points[i - 1];
+    const cur = points[i];
+    const nxt = points[i + 1];
+    if (!prev || !cur || !nxt) continue;
+    const [px, py] = prev;
+    const [cx, cy] = cur;
+    const [nx, ny] = nxt;
+    const inLen = Math.hypot(cx - px, cy - py);
+    const outLen = Math.hypot(nx - cx, ny - cy);
+    const rr = Math.min(r, inLen / 2, outLen / 2);
+    const sx = cx - ((cx - px) / (inLen || 1)) * rr;
+    const sy = cy - ((cy - py) / (inLen || 1)) * rr;
+    const ex = cx + ((nx - cx) / (outLen || 1)) * rr;
+    const ey = cy + ((ny - cy) / (outLen || 1)) * rr;
+    d += ` L ${String(sx)} ${String(sy)} Q ${String(cx)} ${String(cy)}, ${String(ex)} ${String(ey)}`;
+  }
+  const last = points.at(-1) ?? [0, 0];
+  return `${d} L ${String(last[0])} ${String(last[1])}`;
+}

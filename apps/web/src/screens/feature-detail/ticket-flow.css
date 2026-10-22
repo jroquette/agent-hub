@@ -117,6 +117,9 @@
 .ah-flow-canvas {
   min-height: 240px;
 }
+.ah-flow.ah-canvas-world {
+  padding-top: 52px;
+}
 .ah-flow-cols {
   position: relative;
   display: flex;
@@ -284,10 +287,13 @@
   color: var(--accent);
   text-decoration: underline;
 }
+/* The ring of a focused title goes round its whole card. */
 .ah-flow-card-title a:focus-visible {
+  outline: none;
+}
+.ah-flow-card:has(.ah-flow-card-title a:focus-visible) {
   outline: calc(2px / var(--k, 1)) solid var(--focus-ring);
   outline-offset: calc(2px / var(--k, 1));
-  border-radius: var(--radius-sm);
 }
 /* The card's "now": what the readiness adds to the Linear status, and the session or Start. */
 .ah-flow-card-status {
@@ -299,6 +305,10 @@
   min-height: var(--control-sm);
   font-size: 12.5px;
   line-height: 18px;
+}
+.ah-flow-card-status:empty,
+.ah-flow-card-status:not(:has(*)) {
+  display: none;
 }
 .ah-flow-card-ready {
   display: inline-flex;
