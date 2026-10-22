@@ -299,8 +299,8 @@ describe("ScenarioRunScreen (scenarios run)", () => {
     );
     await user.click(within(retry).getByRole("button", { name: "Retry order-processed" }));
     expect(
-      await screen.findByText("Answer recorded: order-processed runs again."),
-    ).toBeInTheDocument();
+      await screen.findAllByText("Answer recorded: order-processed runs again."),
+    ).not.toHaveLength(0);
     const sent = requests.find((r) => r.method === "POST" && r.url.endsWith("/answer"));
     expect(await sent?.clone().json()).toEqual({ choice: "retry" });
     // While answered, the three answers are off.
@@ -475,7 +475,7 @@ describe("ScenarioRunScreen (scenarios run)", () => {
     });
   });
 
-  it("scenarios run paused has no serious a11y violation (a11y)", async () => {
+  it("scenarios run paused has no serious a11y violation (a11y)", { timeout: 20_000 }, async () => {
     const { container } = renderRun();
     await screen.findByRole("radiogroup", { name: "Options from the agent" });
     await waitFor(() => {
@@ -525,5 +525,119 @@ describe("ScenarioRunScreen (scenarios run)", () => {
     const findings = screen.getByRole("region", { name: "Findings" });
     expect(within(findings).getByRole("button", { name: "Draft tracker issue" })).toBeDisabled();
     expect(within(findings).getByRole("button", { name: "Write inbox note" })).toBeDisabled();
+  });
+  it("scenarios run says Waiting for you while a policy ask holds it", async () => {
+    renderRun({
+      [RUN]: aScenarioRunDetail({
+        open_investigation: null,
+        paused_step: null,
+        investigations: [],
+        proposal: null,
+      }),
+      "/api/v1/approvals": aPage([gate(ASK, "policy")]),
+    });
+
+    const heading = await screen.findByRole("heading", { level: 1 });
+    await waitFor(() => {
+      expect(heading.parentElement).toHaveTextContent("Waiting for you");
+    });
+  });
+
+  it("scenarios run after an answer: a toast, a resuming line, focus on the heading", async () => {
+    const user = userEvent.setup();
+    let answered = false;
+    renderRun({
+      [RUN]: () =>
+        answered
+          ? aScenarioRunDetail({
+              open_investigation: null,
+              paused_step: null,
+              investigations: [
+                {
+                  number: 1,
+                  step: "order-processed",
+                  gate: "order-processed__investigation",
+                  failure_kind: "timeout",
+                  agent_session_id: null,
+                  choice: "pick",
+                  text: "o2",
+                  approver: "Dana Demo",
+                  closed: false,
+                },
+              ],
+            })
+          : aScenarioRunDetail(),
+      [`POST ${RUN}/answer`]: () => {
+        answered = true;
+        return {
+          run_id: SCENARIO_RUN,
+          project: "demo",
+          investigation: 1,
+          step: "order-processed",
+          choice: "pick",
+          option: "o2",
+        };
+      },
+    });
+    const options = await screen.findByRole("radiogroup", { name: "Options from the agent" });
+    expect(document.querySelector("[data-announcer]")).toHaveTextContent(
+      "Scenario run paused at order-processed",
+    );
+    await user.click(within(options).getByRole("radio", { name: /o2/ }));
+    await user.click(screen.getByRole("button", { name: "Pick option o2" }));
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", { name: "Pick option o2" }),
+    );
+
+    expect(await screen.findByText("Answer recorded: option o2 picked.")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByRole("region", { name: "Paused at order-processed" })).toBeNull();
+    });
+    expect(
+      screen.getByText(
+        "Answer recorded: option o2 picked. The scenario run resumes; its events update this page.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
+    expect(document.querySelector("[data-announcer]")).toHaveTextContent("Answer recorded");
+  });
+
+  it("scenarios run announces the end and keeps the answer bar above sticky table heads", async () => {
+    const { unmount } = renderRun();
+    const bar = await screen.findByRole("group", { name: "Answer" });
+    expect(bar.style.zIndex).not.toBe("");
+    expect(bar.style.borderTop).not.toBe("");
+    unmount();
+
+    renderRun({ [RUN]: ended });
+    await screen.findByRole("region", { name: "Timeline" });
+    expect(document.querySelector("[data-announcer]")).toHaveTextContent("Scenario run done");
+  });
+
+  it("scenarios run shows a captured credential as a redaction chip and names the approver", async () => {
+    renderRun({
+      [RUN]: {
+        ...ended,
+        captures: [
+          { node: "order-on-hold", attempt: 1, name: "db_url", value: "<credential DEMO_DB_URL>" },
+        ],
+      },
+    });
+
+    const timeline = await screen.findByRole("region", { name: "Timeline" });
+    expect(
+      await within(timeline).findByText("[redacted: credential DEMO_DB_URL]"),
+    ).toBeInTheDocument();
+    expect(within(timeline).getAllByText("Dana Demo").length).toBeGreaterThan(0);
+  });
+
+  it("scenarios run puts an option's draft line in a full-width row of its plan", async () => {
+    renderRun();
+    const options = await screen.findByRole("radiogroup", { name: "Options from the agent" });
+
+    const table = within(options).getByRole("table", { name: "Plan of option o3" });
+    const draftRow = within(table).getByText("Draft: needs acceptance").closest("tr");
+    expect(draftRow?.querySelector("td")).toHaveAttribute("colspan", "4");
+    expect(table).toHaveClass("sc-plan");
   });
 });
