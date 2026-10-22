@@ -8089,6 +8089,13 @@
         "pattern": "^[a-z0-9][a-z0-9-]{0,31}$",
         "type": "string"
       },
+      "RunKind": {
+        "enum": [
+          "workflow",
+          "scenario"
+        ],
+        "type": "string"
+      },
       "RunStatus": {
         "enum": [
           "done",
@@ -11568,6 +11575,10 @@
                 "type": "null"
               }
             ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RunKind",
+            "default": "workflow"
           },
           "last_activity_at": {
             "$ref": "#/components/schemas/ApiTimestamp"
@@ -17532,7 +17543,7 @@
     },
     "/api/v1/workflow-runs": {
       "get": {
-        "description": "Workflow runs matching the filters, newest first.",
+        "description": "Workflow runs matching the filters, newest first; ``kind`` keeps scenario runs or\nworkflow runs only (absent: both).",
         "operationId": "list_runs_api_v1_workflow_runs_get",
         "parameters": [
           {
@@ -17693,6 +17704,22 @@
                 }
               ],
               "title": "Failure Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/RunKind"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
             }
           },
           {
