@@ -22,6 +22,19 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   and refuses while the run lives. `GET /features/{project}/{slug}/tickets/{ticket}` serves a ticket's records, the detail's
   `change_requests` carry their gate's `approval_id`, the Features list ranks a plan change and a hand-written
   sign-off in Needs you, and every owner wait reads "Waiting for you".
+- `hub search QUERY [--kind KIND]… [--hub NAME] [--json] [--db PATH]` searches the hub's `brain/` (not `brain/auto/`)
+  and each repo's `docs/` through a local SQLite FTS5 index in the database `hub web` and `hub collect` use, synced
+  with the checkout on every search; `hub brain reindex [--hub NAME] [--db PATH]` rebuilds it. Markdown only, at most
+  256 KiB, no link followed, no file a secret rule matches; each skipped file is named once (a file that cannot be
+  read, on every search). A query with no word (`!!!`) exits 2, and a query that starts with `-` goes after `--`
+  (`hub search -- -foo`). The database gains migration 0008; a Python whose SQLite lacks FTS5 can no longer migrate
+  it (ADR 0044) (AGH-391).
+
+### Changed
+
+- Redaction `r1` skips its four `secret` rules on a text with no name word followed by `=` or a JSON key's `:`,
+  which no `secret` rule can match: the same rule set with identical results, about three times faster on note-sized
+  prose (AGH-391).
 
 ## [0.19.0] - 2026-10-21
 

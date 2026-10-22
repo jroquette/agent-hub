@@ -4,6 +4,7 @@ import pytest
 
 from agent_hub.core.events.event_store import EventStore
 from agent_hub.core.item_versions.version_store import ItemVersionStore
+from agent_hub.core.knowledge.knowledge_index import KnowledgeIndex
 from agent_hub.core.testing.builders import a_seeded_tracker_backend
 from agent_hub.core.testing.fakes import (
     FakeTrackerBackend,
@@ -12,6 +13,7 @@ from agent_hub.core.testing.fakes import (
 )
 from agent_hub.core.testing.hub_item_writer_contract import WriterTree
 from agent_hub.core.testing.item_version_fakes import InMemoryItemVersionStore, InMemoryWriterTree
+from agent_hub.core.testing.knowledge_fakes import InMemoryKnowledgeIndex
 from agent_hub.core.testing.skill_sources_contract import SkillTree
 from agent_hub.core.testing.skill_trees import InMemorySkillTree
 from agent_hub.core.testing.tracker_reader_fakes import (
@@ -61,3 +63,8 @@ def item_version_store() -> ItemVersionStore:
 @pytest.fixture
 def writer_tree() -> WriterTree:
     return InMemoryWriterTree()
+
+
+@pytest.fixture
+def knowledge_index() -> KnowledgeIndex:
+    return InMemoryKnowledgeIndex()
