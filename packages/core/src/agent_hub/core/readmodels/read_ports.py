@@ -149,8 +149,9 @@ class EventReadModels(Protocol):
         ...
 
     def skill_usage(self, project: str) -> SkillUsage:
-        """How often each skill and agent of the project was used over the last 30 days:
-        names, counts and times only (D6, S8); a project with no event has empty maps."""
+        """How often each skill and agent of the project was used over the last 30 days, and
+        the 7/30/90-day windows: names, counts and times only (D6, S8, AGH-482); a project with
+        no event has empty maps."""
         ...
 
 
