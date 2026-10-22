@@ -90,6 +90,8 @@ def test_refuses_query_when_wordless_or_out_of_bounds(
     wired: Any, checkout: FakeKnowledgeCheckout, case: tuple[dict[str, Any], str]
 ) -> None:
     params, parameter = case
+    # A note to read: a refused query that synced would read it.
+    checkout.write("brain/a.md", f"# A\n\n{QUERY}\n".encode())
     response = wired.client.get("/api/v1/projects/demo/knowledge/search", params=params)
 
     assert response.status_code == 400

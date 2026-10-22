@@ -70,6 +70,7 @@ from agent_hub.api.rfc9457 import (
     hub_invalid_problem,
     hub_registry_problem,
     invalid_cursor_problem,
+    migration_problem,
     owner_signoff_problem,
 )
 from agent_hub.api.run_gate_kinds import RecordedGateKinds
@@ -161,7 +162,7 @@ from agent_hub.hub_git.git_runner import GitRunner
 from agent_hub.hub_git.knowledge_checkout import GitKnowledgeCheckout
 from agent_hub.hub_git.repo_changes import GitRepoChanges
 from agent_hub.storage.agent_session_store import open_agent_session_store
-from agent_hub.storage.errors import Fts5UnavailableError
+from agent_hub.storage.errors import Fts5UnavailableError, MigrationError
 from agent_hub.storage.event_store import DatabaseBusyError, SqliteEventStore, open_event_store
 from agent_hub.storage.hub_registry import JsonHubRegistry
 from agent_hub.storage.item_version_store import open_item_version_store
@@ -179,6 +180,7 @@ COMPOSED_PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
     HubConflictError: hub_conflict_problem,
     HubRegistryError: hub_registry_problem,
     Fts5UnavailableError: fts5_unavailable_problem,
+    MigrationError: migration_problem,
 }
 
 

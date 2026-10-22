@@ -268,6 +268,14 @@ def _knowledge_checkout_problem(error: KnowledgeCheckoutError) -> Problem:
     return Problem(502, "Could not read the hub's files", str(error))
 
 
+def migration_problem(_: Exception) -> Problem:
+    """``MigrationError`` (storage), from the knowledge index's lazy open: 503 with a fixed
+    detail, since the adapter's line names the database file."""
+    return Problem(
+        503, "Database upgrade failed", "The database could not be upgraded to the latest schema."
+    )
+
+
 def fts5_unavailable_problem(error: Exception) -> Problem:
     """``Fts5UnavailableError`` (storage): 503, the line that says SQLite has no FTS5 (AM-5)."""
     return Problem(503, "Search unavailable", str(error))
