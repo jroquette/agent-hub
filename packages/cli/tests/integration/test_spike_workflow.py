@@ -3,7 +3,13 @@ and only its ``draft`` step writes, it declares no tracker side (ADR 0030), and 
 is bounded by the same number of rounds ``settle`` counts.
 """
 
+import json
+import os
+import re
+import subprocess
+import sys
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -295,3 +301,43 @@ def test_stays_under_the_argument_cap_when_outputs_are_schema_max() -> None:
     assert max(len(item.encode()) for item in draft.argv) > 40000
     assert draft.stdin is not None
     assert len(draft.stdin.encode()) < 1048576
+
+
+@pytest.mark.parametrize("fixture", ["spike-pick", "spike-timebox"])
+def test_writes_research_and_adr_draft_when_spike_pick_stubs_feed_the_draft(
+    tmp_path: Path, fixture: str
+) -> None:
+    parsed, calls = calls_of(fixture)
+    (draft,) = [call for call in calls if call.node.id == "draft"]
+
+    result = subprocess.run(  # noqa: S603 - this interpreter, a pack script, rendered arguments
+        [sys.executable, "-I", str(PACK / "scripts" / "draft.py"), *draft.argv],
+        cwd=tmp_path,
+        input=draft.stdin,
+        env={"AGENT_HUB_RUN_ID": "run-1", "PATH": os.environ.get("PATH", "")},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, result.stderr
+    output = json.loads(result.stdout)
+    JsonSchemaOutputs().check(nodes_of()["draft"].output_format, output)
+    assert output["result"] == parsed["expect"]["outcome"]
+    folder = tmp_path.resolve() / "brain/features/brief-cache"
+    research = (folder / "research.md").read_text(encoding="utf-8")
+    assert output["research"] == str(folder / "research.md")
+    if fixture == "spike-pick":
+        adr = (folder / "adr-draft-brief-cache.md").read_text(encoding="utf-8")
+        premortem = adr.split("\n## Premortem\n", 1)[1]
+        assert len(re.findall(r"^### \d\. ", premortem, re.MULTILINE)) == 3
+        assert "status: draft" in adr
+        assert "Go with A, keep the cache small." in adr
+        assert "> Incomplete" not in research
+    else:
+        body = research.split("\n---\n", 1)[1].lstrip("\n")
+        assert body.startswith("> Incomplete: timebox 2h reached after research.")
+        assert output["adr"] == ""
+        assert sorted(path.name for path in folder.iterdir()) == ["research.md"]
+    assert not (tmp_path / "docs").exists()
