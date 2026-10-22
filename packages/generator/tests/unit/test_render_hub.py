@@ -157,6 +157,7 @@ DESIGN_PATHS = (
     "scripts/recall_transcripts.py",
     "scripts/retro_metrics.py",
     # AGH-487: the built-in brain-care pack, seeded.
+    "workflows/brain-care/scripts/apply.py",
     "workflows/brain-care/scripts/groups.py",
     "workflows/brain-care/scripts/hub_branch.py",
     "workflows/brain-care/scripts/read_inbox.py",
