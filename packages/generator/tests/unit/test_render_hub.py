@@ -221,6 +221,7 @@ DESIGN_PATHS = (
     "workflows/spike/fixtures/spike-no-pick.yaml",
     "workflows/spike/fixtures/spike-pick.yaml",
     "workflows/spike/fixtures/spike-timebox.yaml",
+    "workflows/spike/scripts/budget.py",
     "workflows/spike/spike.yaml",
 )
 # AGH-19 spec "The rendered set": the base plugin's agents, by file stem, and its skills, by
@@ -844,6 +845,8 @@ def test_parses_as_python39_when_rendered(demo_render: dict[str, RenderedFile]) 
         "scripts",
         # The sdlc pack's helpers (AGH-229), run by uv on its Python, also parse as 3.9.
         "workflows/sdlc/scripts",
+        # The spike pack's helpers (AGH-492), likewise.
+        "workflows/spike/scripts",
     }
 
 

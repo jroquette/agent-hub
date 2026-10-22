@@ -775,6 +775,9 @@
     "workflows/spike/fixtures/spike-timebox.yaml": {
       "ownership": "seeded"
     },
+    "workflows/spike/scripts/budget.py": {
+      "ownership": "seeded"
+    },
     "workflows/spike/spike.yaml": {
       "ownership": "seeded"
     }

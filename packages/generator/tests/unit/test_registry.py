@@ -93,6 +93,7 @@ SEEDED_PACK_FILES = (
     "spike/fixtures/spike-no-pick.yaml",
     "spike/fixtures/spike-pick.yaml",
     "spike/fixtures/spike-timebox.yaml",
+    "spike/scripts/budget.py",
     "spike/spike.yaml",
 )
 CORE_SOURCES |= {

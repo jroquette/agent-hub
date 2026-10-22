@@ -176,6 +176,55 @@ def tick(
     return ticked
 
 
+def clean(text: str, limit: int) -> str:
+    """``text`` on one line, without control characters, cut to ``limit`` characters."""
+    return CONTROL.sub("", SPACES.sub(" ", text))[:limit]
+
+
+def listed_options(text: str) -> dict[str, dict[str, Any]]:
+    """The options a round listed, by id (none when the options step did not run)."""
+    if text == "":
+        return {}
+    try:
+        value = json.loads(text)
+    except ValueError:
+        msg = "options is not JSON"
+        raise InputError(msg) from None
+    found = value.get("options") if isinstance(value, dict) else None
+    if not isinstance(found, list):
+        msg = "options lacks options"
+        raise InputError(msg)
+    return {
+        item["id"]: item
+        for item in found
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+
+
+def settle(
+    state: dict[str, Any],
+    listed: dict[str, dict[str, Any]],
+    *,
+    decision: str,
+    note: str,
+    approver: str,
+    max_rounds: int,
+    now: float,
+) -> dict[str, Any]:
+    """The pick read: ``state`` restarted at ``now``, and whether the rounds are done."""
+    picked = decision if decision in listed else ""
+    go = picked != "" and not state["over"]
+    return state | {
+        "at": now,
+        "picked": picked,
+        "go": go,
+        "done": go or state["over"] or state["round"] >= max_rounds,
+        "note": clean(note, MAX_NOTE),
+        "approver": clean(approver, MAX_APPROVER),
+        "option": listed.get(picked, {}),
+    }
+
+
 def joined(argv: Sequence[str]) -> list[str]:
     """``argv`` with each valued option joined to its value, so a value may start with ``-``."""
     out: list[str] = []
@@ -198,7 +247,14 @@ def parser() -> argparse.ArgumentParser:
     step.add_argument("--loop-prev", default="")
     step.add_argument("--cap", required=True)
     step.add_argument("--round", action="store_true")
-    for command in (begin, step):
+    pick = commands.add_parser("settle")
+    pick.add_argument("--state", required=True)
+    pick.add_argument("--options", default="")
+    pick.add_argument("--decision", default="")
+    pick.add_argument("--note", default="")
+    pick.add_argument("--approver", default="")
+    pick.add_argument("--max-rounds", type=int, required=True)
+    for command in (begin, step, pick):
         command.add_argument("--now", type=float, default=None)
     return found
 
@@ -207,9 +263,21 @@ def run(given: argparse.Namespace) -> dict[str, Any]:
     now = time.time() if given.now is None else given.now
     if given.command == "start":
         return start(given.question, given.timebox, given.slug, now=now)
-    base = read_state(given.loop_prev, "loop-prev") if given.loop_prev else None
-    state = base if base is not None else read_state(given.state)
-    return tick(state, now, parse_cap(given.cap), next_round=given.round)
+    if given.command == "tick":
+        base = read_state(given.loop_prev, "loop-prev") if given.loop_prev else None
+        state = base if base is not None else read_state(given.state)
+        return tick(state, now, parse_cap(given.cap), next_round=given.round)
+    state = read_state(given.state)
+    listed = listed_options(given.options)
+    return settle(
+        state,
+        listed,
+        decision=given.decision,
+        note=given.note,
+        approver=given.approver,
+        max_rounds=given.max_rounds,
+        now=now,
+    )
 
 
 def main(argv: Sequence[str]) -> int:
