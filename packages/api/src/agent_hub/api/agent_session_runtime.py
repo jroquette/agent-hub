@@ -49,12 +49,17 @@ from agent_hub.core.agent_sessions.errors import (
     SessionsUnavailableError,
 )
 from agent_hub.core.hub_config.effective_environments import (
+    EffectiveEnvironments,
     declared_env_files,
     effective_environments,
+    local_environment_problems,
 )
+from agent_hub.core.hub_config.effective_identity import effective_config
 from agent_hub.core.hub_config.local_config import LocalConfig
+from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hubs.hub_document import read_hub_document
 from agent_hub.core.hubs.hub_registry import HubFileReader, HubRegistry, HubRegistryError
+from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.scenarios.credentials import NO_CREDENTIALS, CredentialNames
 
 SWEEP_SECONDS: Final = 0.5
@@ -286,9 +291,40 @@ class HubCredentials:
             if document.config is not None and document.config.project.name == project:
                 declared = self.of_hub(entry.path)
                 if not declared.complete:
-                    raise HubLocalInvalidError(project)
+                    raise HubLocalInvalidError(project, before="starting a session")
                 return declared.names
         return NO_CREDENTIALS
+
+    def config_of(self, hub_path: str) -> HubConfig | None:
+        """The hub's ``hub.json`` at ``hub_path``, read now; None when it is not valid."""
+        return read_hub_document(
+            self._reader.read_hub_json(hub_path), running_version=self._running
+        ).config
+
+    def environments_of(self, hub_path: str, project: str) -> EffectiveEnvironments:
+        """The effective environments of ``project``'s hub (``hub.json`` tightened by
+        ``hub.local.json``, read now); ``HubLocalInvalidError`` when ``hub.local.json`` cannot be
+        read (fail closed, E-8), ``EntityNotFoundError`` when ``hub.json`` is not valid."""
+        config, local = self._files(hub_path, project)
+        return effective_environments(config, local)
+
+    def effective_config_of(self, hub_path: str, project: str) -> HubConfig:
+        """``project``'s ``hub.json`` with its ``hub.local.json`` over it, as the CLI merges
+        them (``effective_config``: a local ``tracker.transport`` wins); raises as
+        ``environments_of``."""
+        config, local = self._files(hub_path, project)
+        return effective_config(config, local)
+
+    def _files(self, hub_path: str, project: str) -> tuple[HubConfig, LocalConfig]:
+        """Both files, read now; a local file with a problem of its own or against
+        ``hub.json`` is ``HubLocalInvalidError``, as the CLI refuses it."""
+        config = self.config_of(hub_path)
+        if config is None:
+            raise EntityNotFoundError(entity="project", entity_id=project)
+        local = self._reader.read_local(hub_path)
+        if not isinstance(local, LocalConfig) or local_environment_problems(config, local):
+            raise HubLocalInvalidError(project)
+        return config, local
 
     def of_hub(self, hub_path: str) -> DeclaredCredentials:
         """What the hub at ``hub_path`` declares."""

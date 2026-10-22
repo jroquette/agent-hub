@@ -10,11 +10,15 @@ from agent_hub.core.scenarios.action_catalog import ActionEntry
 from agent_hub.core.scenarios.action_document import parse_action
 from agent_hub.core.scenarios.investigation import ProposedStep
 from agent_hub.core.scenarios.workaround import (
+    StepPlan,
+    accept_command,
     changed_step,
     needs_acceptance,
+    pick_problem,
     pick_refusal,
     plan_changed,
     plan_option,
+    step_refusal,
 )
 from agent_hub.core.testing.builders import an_environments_document
 
@@ -122,3 +126,81 @@ def test_detects_change_when_workaround_plan_differs() -> None:
     changed = changed_step(recorded, now)
     assert changed is not None
     assert changed.index == 2
+
+
+class Planner:
+    """Plans an option against ``entries`` in ``local``, as the CLI and hub web do."""
+
+    def __init__(self, entries: tuple[ActionEntry, ...]) -> None:
+        self.entries = entries
+
+    def option(self, steps: tuple[ProposedStep, ...]) -> tuple[StepPlan, ...]:
+        return plan_option(
+            steps, entries=self.entries, pack="demo", view=a_view(), environment="local"
+        )
+
+    def refusal(self, step: StepPlan) -> str:
+        return step_refusal(step, view=a_view(), environment="local")
+
+
+GATE = "order-held__investigation"
+
+
+def paused_with(plan: tuple[StepPlan, ...]) -> list[dict[str, object]]:
+    option = {
+        "option_id": "o1",
+        "summary": "Read again",
+        "steps": [{"action": "get-order", "with": {"target": "api"}}],
+        "plan": [step.model_dump(mode="json") for step in plan],
+    }
+    return [
+        {"event": "start", "run": "walk-1", "kind": "scenario", "environment": "local"},
+        {"event": "investigation", "step": "order-held", "gate": GATE, "number": 1},
+        {"event": "gate", "node": GATE, "attempt": 1, "form": "choice"},
+        {"event": "proposal", "gate": GATE, "number": 1, "proposal": 1}
+        | {"findings": [], "options": [option]},
+    ]
+
+
+def test_names_reason_when_workaround_pick_problem_found() -> None:
+    planner = Planner(ENTRIES)
+    shown = planner.option((READ_STEP,))
+    records = paused_with(shown)
+    drafted = Planner((an_entry("get-order", "read", draft=True),))
+
+    def problem(choice: str, text: str | None, found: Planner = planner) -> str | None:
+        return pick_problem(
+            records, node=GATE, attempt=1, choice=choice, text=text, planner=lambda: found
+        )
+
+    assert problem("pick", "o1") is None
+    assert problem("retry", None) is None
+    assert problem("pick", "o9") == "pick names an option as its text: one of o1"
+    assert problem("pick", "o1", drafted) == (
+        "option o1 cannot be picked: step 1 (demo/get-order): draft action: commit it to run"
+    )
+    edited = Planner((an_entry("get-order", "read", content="sha256:1"),))
+    assert problem("pick", "o1", edited) == (
+        "option o1 cannot be picked: the plan of step 1 (demo/get-order) changed since it was"
+        " shown; ask for a new proposal"
+    )
+    # A gate the record does not name an investigation is never judged here (E-10).
+    unasked = Planner(ENTRIES)
+    assert (
+        pick_problem(
+            records, node="ask", attempt=1, choice="pick", text="", planner=lambda: unasked
+        )
+        is None
+    )
+
+
+def test_quotes_paths_when_accept_command_built() -> None:
+    command = accept_command(
+        ("actions/demo/render-invoice-pdf.yaml", "actions/demo/scripts/it's.sh"),
+        "demo/render-invoice-pdf",
+    )
+
+    assert command == (
+        "git add -- actions/demo/render-invoice-pdf.yaml 'actions/demo/scripts/it'\"'\"'s.sh'"
+        " && git commit -m 'Accept action demo/render-invoice-pdf'"
+    )

@@ -108,6 +108,7 @@ from agent_hub.core.hub_config.effective_environments import (
     effective_environments,
 )
 from agent_hub.core.json_form import JsonValue
+from agent_hub.core.runs.workflow_run import scenario_label
 from agent_hub.core.scenarios.credentials import CredentialNames
 from agent_hub.core.scenarios.investigation import CHOICES, MAX_INVESTIGATIONS, PICK, STOP
 from agent_hub.core.scenarios.policy_gates import (
@@ -143,11 +144,6 @@ CONTEXT_CAPTURE: Final = "context.capture"
 ACTION_CALL: Final = "action"
 # A retry's jitter: spread, not secrecy.
 _JITTER: Final = random.SystemRandom()
-
-
-def scenario_label(name: str) -> str:
-    """The ``workflow`` a scenario run's records and events carry: ``scenario:<name>``."""
-    return f"{KIND}:{name}"
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)

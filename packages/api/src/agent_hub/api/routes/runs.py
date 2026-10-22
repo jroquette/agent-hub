@@ -21,7 +21,7 @@ from agent_hub.api.schemas import (
 from agent_hub.core.readmodels.filters import RunFilter
 from agent_hub.core.readmodels.page import Page
 from agent_hub.core.runner.run_record import Stage
-from agent_hub.core.runs.workflow_run import WorkflowRun
+from agent_hub.core.runs.workflow_run import RunKind, WorkflowRun
 from agent_hub.core.workflows.failures import FailureKind
 from agent_hub.core.workflows.launch import RUN_ID_TEXT, RunAccepted, StartRunRequest
 
@@ -44,10 +44,12 @@ def list_runs(  # noqa: PLR0913 -- one keyword per documented filter of the endp
     issue: TextParam = None,
     workflow: TextParam = None,
     failure_kind: FailureKind | None = None,
+    kind: RunKind | None = None,
     cursor: CursorParam = None,
     limit: LimitParam = DEFAULT_LIMIT,
 ) -> Page[WorkflowRun]:
-    """Workflow runs matching the filters, newest first."""
+    """Workflow runs matching the filters, newest first; ``kind`` keeps scenario runs or
+    workflow runs only (absent: both)."""
     run_filter = parse_filter(
         RunFilter,
         project=project,
@@ -59,6 +61,7 @@ def list_runs(  # noqa: PLR0913 -- one keyword per documented filter of the endp
         issue=issue,
         workflow=workflow,
         failure_kind=failure_kind,
+        kind=kind,
         cursor=cursor,
         limit=limit,
     )
