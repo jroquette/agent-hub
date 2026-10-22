@@ -11,6 +11,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-22
+
 ### Added
 
 - `/implement <ticket>` takes one ticket of a planned feature to a PR through the built-in `implement` workflow
@@ -912,7 +914,8 @@ Includes 0.3.0, which was never tagged.
 - The `hub.json` config model and schema, the generator templates, `hub init` and `hub sync`.
 - The release check on `v*` tags.
 
-[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/jroquette/agent-hub/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/jroquette/agent-hub/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/jroquette/agent-hub/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/jroquette/agent-hub/compare/v0.16.1...v0.17.0
