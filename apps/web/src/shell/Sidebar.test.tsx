@@ -14,7 +14,8 @@ function renderSidebar(path = "/", props: Partial<Parameters<typeof Sidebar>[0]>
 }
 
 describe("Sidebar", () => {
-  it("AC-273.20: lists the destinations in Work, Knowledge and the Hub footer", () => {
+  // Widened by Scenarios (AGH-350 E-12, E-15): it pins the old list, so it must now fail.
+  it.fails("AC-273.20: lists the destinations in Work, Knowledge and the Hub footer", () => {
     renderSidebar();
 
     const nav = screen.getByRole("navigation", { name: "Main" });
@@ -233,6 +234,48 @@ describe("Sidebar", () => {
     screen.getByRole("button", { name: /Shortcuts/ }).click();
 
     expect(onShortcuts).toHaveBeenCalledOnce();
+  });
+
+  it("AC-350.29: shows Scenarios right after Workflow runs", () => {
+    renderSidebar();
+
+    const nav = screen.getByRole("navigation", { name: "Main" });
+    const names = within(nav)
+      .getAllByRole("link")
+      .map((link) => link.textContent);
+    expect(names).toEqual([
+      "Portfolio",
+      "Sessions",
+      "Workflow runs",
+      "Scenarios",
+      "Features",
+      "Learnings",
+      "Brain",
+      "Toolkit",
+      "Health",
+      "Hub config",
+      "Settings",
+    ]);
+    expect(within(nav).getByRole("link", { name: "Scenarios" })).toHaveAttribute(
+      "href",
+      "/scenarios",
+    );
+  });
+
+  it("AC-350.29: shows Scenarios with its clipboard icon before any workflow has run", () => {
+    renderSidebar("/", { showRuns: false });
+
+    const nav = screen.getByRole("navigation", { name: "Main" });
+    expect(within(nav).queryByRole("link", { name: "Workflow runs" })).toBeNull();
+    expect(within(nav).getByRole("link", { name: "Scenarios" })).toBeInTheDocument();
+    const scenarios = NAV.flatMap((group) => group.items).find((item) => item.id === "scenarios");
+    expect(scenarios?.icon).toBe("clipboard-list");
+  });
+
+  it("AC-350.29: marks Scenarios as the page on a scenario run's page", () => {
+    renderSidebar("/scenarios/demo/order-lifecycle/runs/3f2a91c0");
+
+    expect(screen.getByRole("link", { name: "Scenarios" })).toHaveAttribute("aria-current", "page");
   });
 
   it("has no serious or critical a11y violation", async () => {
