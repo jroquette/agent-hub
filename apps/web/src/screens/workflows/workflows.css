@@ -13,7 +13,7 @@
   min-height: 640px;
   padding-bottom: var(--space-6);
 }
-.wf-detail[data-view="graph"] > .wf-canvas {
+.wf-detail[data-view="graph"] > .ah-canvas {
   flex: 1 1 auto;
   min-height: 480px;
 }
@@ -270,63 +270,8 @@
 }
 
 /* ---------- The canvas: a pan and zoom world on a dot grid, with a docked details panel. ---------- */
-.wf-canvas {
-  position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  overflow: hidden;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-}
-.wf-canvas[data-panel] {
-  grid-template-columns: minmax(0, 1fr) 320px;
-}
-@media (min-width: 1600px) {
-  .wf-canvas[data-panel] {
-    grid-template-columns: minmax(0, 1fr) 360px;
-  }
-}
-.wf-canvas-run {
+.ah-canvas-run {
   height: clamp(420px, 62vh, 760px);
-}
-.wf-canvas-viewport {
-  position: relative;
-  overflow: hidden;
-  min-height: 0;
-  background: var(--surface-sunken);
-  cursor: grab;
-  touch-action: none;
-  user-select: none;
-}
-.wf-canvas-viewport[data-dragging] {
-  cursor: grabbing;
-}
-.wf-grid {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-}
-.wf-grid circle {
-  fill: var(--border-strong);
-}
-.wf-world {
-  position: absolute;
-  left: 0;
-  top: 0;
-  transform-origin: 0 0;
-  padding: 32px;
-  width: max-content;
-}
-.wf-world[data-animate] {
-  transition: transform var(--dur-base) ease-out;
-}
-@media (prefers-reduced-motion: reduce) {
-  .wf-world[data-animate] {
-    transition: none;
-  }
 }
 .wf-rows {
   display: flex;
@@ -380,10 +325,10 @@
 .wf-edges path[data-dim] {
   opacity: 0.25;
 }
-.wf-arrow-plain path {
+.ah-canvas-arrow[data-tone="plain"] path {
   fill: var(--border-control);
 }
-.wf-arrow-hot path {
+.ah-canvas-arrow[data-tone="hot"] path {
   fill: var(--accent);
 }
 
@@ -499,8 +444,8 @@
   line-height: 16px;
   color: var(--text-muted);
 }
-.wf-world[data-zoom="far"] .wf-node-caption,
-.wf-world[data-zoom="far"] .wf-node-badges {
+.ah-canvas-world[data-zoom="far"] .wf-node-caption,
+.ah-canvas-world[data-zoom="far"] .wf-node-badges {
   display: none;
 }
 
@@ -580,113 +525,7 @@
   padding: 16px;
 }
 
-/* Controls, minimap, overlay and the empty state, floating in the viewport. */
-.wf-canvas-controls {
-  position: absolute;
-  left: var(--space-3);
-  bottom: var(--space-3);
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-overlay);
-  box-shadow: var(--shadow-popover);
-  cursor: default;
-}
-.wf-zoom-pct {
-  min-width: 52px;
-  justify-content: center;
-  font-variant-numeric: tabular-nums;
-}
-.wf-controls-sep {
-  width: 1px;
-  height: 16px;
-  margin: 0 2px;
-  background: var(--border);
-}
-.wf-minimap {
-  position: absolute;
-  right: var(--space-3);
-  bottom: var(--space-3);
-  z-index: 3;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-overlay);
-  box-shadow: var(--shadow-popover);
-  cursor: pointer;
-}
-.wf-mini-node {
-  --kind: var(--ev-lifecycle);
-  fill: var(--kind);
-  opacity: 0.8;
-}
-.wf-mini-node[data-kind="agent"] {
-  --kind: var(--ev-message);
-}
-.wf-mini-node[data-kind="command"] {
-  --kind: var(--ev-tool);
-}
-.wf-mini-node[data-kind="approval"],
-.wf-mini-node[data-kind="wait"] {
-  --kind: var(--ev-gate);
-}
-.wf-mini-node[data-state="ok"],
-.wf-mini-node[data-state="cached"] {
-  --kind: var(--done);
-}
-.wf-mini-node[data-state="running"] {
-  --kind: var(--live);
-}
-.wf-mini-node[data-state="waiting"] {
-  --kind: var(--waiting);
-}
-.wf-mini-node[data-state="failed"] {
-  --kind: var(--failed);
-}
-.wf-mini-node[data-state="pending"],
-.wf-mini-node[data-state="skipped"] {
-  --kind: var(--idle);
-}
-.wf-mini-group {
-  fill: none;
-  stroke: var(--border-strong);
-}
-.wf-mini-view {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 1.5;
-}
-.wf-canvas-overlay {
-  position: absolute;
-  top: var(--space-3);
-  right: var(--space-3);
-  z-index: 3;
-  cursor: default;
-}
-.wf-canvas-empty {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  padding: var(--space-6);
-  text-align: center;
-}
-
-/* The details panel: About, or the chosen step. */
-.wf-panel {
-  min-height: 0;
-  overflow: auto;
-  border-left: 1px solid var(--border);
-  background: var(--surface);
-  cursor: auto;
-}
-.wf-panel .ah-skill-rail-section:first-child {
+.ah-canvas-panel .ah-skill-rail-section:first-child {
   padding-top: var(--space-4);
 }
 .wf-inspector {
@@ -774,35 +613,16 @@
 
 /* Under the laptop width the chosen step overlays the canvas instead of docking. */
 @media (max-width: 1279px) {
-  .wf-canvas[data-panel] {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .wf-canvas[data-panel] > .wf-panel {
-    position: absolute;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 4;
-    width: min(360px, 100%);
-    background: var(--surface-overlay);
-    box-shadow: var(--shadow-overlay);
-  }
-  .wf-minimap {
-    display: none;
-  }
   .wf-list-with-panel[data-panel] {
     grid-template-columns: minmax(0, 1fr);
   }
 }
 
 @media (forced-colors: active) {
-  .wf-grid {
-    display: none;
-  }
   .wf-edges path {
     stroke: CanvasText;
   }
-  .wf-arrow path {
+  .ah-canvas-arrow path {
     fill: CanvasText;
   }
   .wf-node[aria-pressed="true"],
@@ -834,7 +654,7 @@
   flex-direction: column;
   gap: var(--space-3);
 }
-.wf-loading > .wf-canvas {
+.wf-loading > .ah-canvas {
   flex: 1 1 auto;
   min-height: 480px;
 }
@@ -854,7 +674,15 @@
   min-width: 0;
   max-width: 100%;
 }
-.wf-canvas-controls [aria-pressed="true"] {
-  background: var(--surface-hover);
-  color: var(--accent);
+
+/* The minimap's rects in each step's kind colour (a run's state wins, in Canvas.css). */
+[data-canvas="workflow"] .ah-canvas-mini-node[data-kind="agent"] {
+  --mini: var(--ev-message);
+}
+[data-canvas="workflow"] .ah-canvas-mini-node[data-kind="command"] {
+  --mini: var(--ev-tool);
+}
+[data-canvas="workflow"] .ah-canvas-mini-node[data-kind="approval"],
+[data-canvas="workflow"] .ah-canvas-mini-node[data-kind="wait"] {
+  --mini: var(--ev-gate);
 }

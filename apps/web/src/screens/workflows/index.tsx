@@ -670,8 +670,8 @@ export function WorkflowDetailScreen() {
           <Skeleton width={320} height={28} />
           <Skeleton lines={1} />
           <Skeleton width={220} height={32} />
-          <div className="wf-canvas" data-panel="">
-            <div className="wf-canvas-viewport wf-loading-canvas">
+          <div className="ah-canvas" data-panel="">
+            <div className="ah-canvas-viewport wf-loading-canvas">
               {[1, 2, 1].map((n, i) => (
                 <div key={i} className="wf-col">
                   {Array.from({ length: n }, (_, j) => (
@@ -680,7 +680,7 @@ export function WorkflowDetailScreen() {
                 </div>
               ))}
             </div>
-            <div className="wf-panel" style={{ padding: 16 }}>
+            <div className="ah-canvas-panel" style={{ padding: 16 }}>
               <Skeleton lines={8} />
             </div>
           </div>

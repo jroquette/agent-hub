@@ -603,7 +603,7 @@ describe("WorkflowDetailScreen, starting and reading (AC-PG-13)", () => {
 
     const panel = await screen.findByRole("complementary", { name: "Node review" });
     expect(screen.queryByRole("complementary", { name: "About this workflow" })).toBeNull();
-    expect(panel.closest(".wf-canvas")).toContainElement(
+    expect(panel.closest(".ah-canvas")).toContainElement(
       screen.getByRole("group", { name: "Workflow graph" }),
     );
     expect(panel).toHaveTextContent("Approval by you");
