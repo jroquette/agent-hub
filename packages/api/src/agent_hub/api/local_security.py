@@ -7,10 +7,10 @@ actions, the workflow-run writes, a workflow gate's decision and the item writes
 Publish into a hub's tree) also need that ``Origin``, a same-origin fetch and a JSON body (S7),
 so do the hub registry writes (``POST /hubs``, ``DELETE /hubs/{id}``; a missing ``Origin`` is
 refused too, A11: a registered hub is a folder sessions may start in), bodies stop at 1 MiB
-(8 MiB for ``POST /agent-sessions``, which may carry a screenshot), API answers are never
-cached, a CSP keeps the app to its own origin, and no CORS header is ever sent. No route
-speaks WebSocket (ADR 0031, D3): any ``websocket`` scope is closed with 1008 before it is
-accepted, so an upgrade never skips these checks (P7, AC-165.54).
+(160 MiB for ``POST /agent-sessions`` and its messages, which may carry images and files), API
+answers are never cached, a CSP keeps the app to its own origin, and no CORS header is ever
+sent. No route speaks WebSocket (ADR 0031, D3): any ``websocket`` scope is closed with 1008
+before it is accepted, so an upgrade never skips these checks (P7, AC-165.54).
 
 ``AGENT_HUB_ALLOWED_HOSTS`` (read by ``hub web``, parsed here) may add exact ``host[:port]``
 names, for example the host port a container publishes; never a wildcard.
@@ -71,14 +71,16 @@ HUB_REGISTRY_WRITES = (
     # Rewrites hub.json or hub.local.json's environments and services (the Hub config screen).
     ("POST", re.compile(rf"^{re.escape(API_PREFIX)}/projects/[^/]+/config/environments$")),
 )
-# The routes with a larger body cap: a session's first prompt may carry a PNG screenshot (at
-# most ``MAX_SCREENSHOT_BYTES`` decoded, 5 MiB of base64), and a later message up to
-# ``MAX_MESSAGE_SCREENSHOTS`` of them; either one also carries a text of up to the largest
+# The routes with a larger body cap: a session's first prompt and a later message may carry
+# PNG images (at most ``MAX_SCREENSHOT_BYTES`` decoded, 5 MiB of base64, each; the first
+# prompt also the screen's capture) up to ``MAX_MESSAGE_SCREENSHOTS`` of them, and
+# ``MAX_MESSAGE_FILES`` files (5 MiB decoded each, about 6.7 MiB of base64); either one also
+# carries a text of up to the largest
 # ``--message-max-bytes`` (4 MiB), which JSON escaping may grow. Every other route keeps
 # ``max_body_bytes``.
-AGENT_SESSION_CREATE_BODY_BYTES: Final = 16 * 1024 * 1024
+AGENT_SESSION_CREATE_BODY_BYTES: Final = 160 * 1024 * 1024
 AGENT_SESSION_CREATE_PATH: Final = f"{API_PREFIX}/agent-sessions"
-AGENT_SESSION_MESSAGE_BODY_BYTES: Final = 64 * 1024 * 1024
+AGENT_SESSION_MESSAGE_BODY_BYTES: Final = 160 * 1024 * 1024
 AGENT_SESSION_MESSAGE_PATH: Final = re.compile(
     rf"^{re.escape(API_PREFIX)}/agent-sessions/[^/]+/messages$"
 )

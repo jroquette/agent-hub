@@ -2484,9 +2484,12 @@ export interface components {
      * CreateAgentSession
      * @description ``POST /agent-sessions``: where, how, and an optional first prompt (its byte size is
      *     checked against the message limit, 413), or a past session to resume (and fork).
-     *     ``screenshot`` goes with the first prompt as an image, so it needs one.
+     *     ``screenshot`` (the screen's capture), ``screenshots`` (images pasted in the first
+     *     message) and ``files`` go with the first prompt, so they need one.
      */
     CreateAgentSession: {
+      /** Files */
+      files?: components["schemas"]["MessageFile"][] | null;
       /**
        * Fork
        * @default false
@@ -2502,6 +2505,8 @@ export interface components {
       /** Resume Session Id */
       resume_session_id?: string | null;
       screenshot?: components["schemas"]["Screenshot"] | null;
+      /** Screenshots */
+      screenshots?: components["schemas"]["Screenshot"][] | null;
       /** Workdir Id */
       workdir_id: string;
     };
@@ -3826,6 +3831,22 @@ export interface components {
       seq: number;
     };
     /**
+     * MessageFile
+     * @description A file attached to a message for Claude to read: a PDF or a UTF-8 text, base64-encoded;
+     *     its decoded size and content are checked by ``decode_message_file`` (413, 422).
+     */
+    MessageFile: {
+      /** Data */
+      data: string;
+      /**
+       * Media Type
+       * @enum {string}
+       */
+      media_type: "application/pdf" | "text/plain";
+      /** Name */
+      name: string;
+    };
+    /**
      * Mode
      * @description Who can invoke a skill (S5, L2); ``neither`` reads "Hidden" in the UI.
      * @enum {string}
@@ -4962,10 +4983,12 @@ export interface components {
       "session" | "run" | "approval" | "learning" | "feature" | "file" | "command" | "tool";
     /**
      * SendMessage
-     * @description ``POST /{id}/messages``: one user message (byte limit checked, 413), with the images
-     *     pasted in it, sent to Claude before the text.
+     * @description ``POST /{id}/messages``: one user message (byte limit checked, 413), with the files and
+     *     images attached to it, sent to Claude before the text.
      */
     SendMessage: {
+      /** Files */
+      files?: components["schemas"]["MessageFile"][] | null;
       /** Screenshots */
       screenshots?: components["schemas"]["Screenshot"][] | null;
       /** Text */
