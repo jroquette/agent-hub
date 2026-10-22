@@ -377,8 +377,9 @@ class Repo(ConfigObject):
         " (docs/design/environments.md).",
     )
     ui_paths: UiPaths | None = absent_by_default(
-        description="Globs of the repo's screen paths, from the repo root (** spans folders): a"
-        " review round whose diff touches one runs the UX lens. Absent: the repo has no UI."
+        description="Globs of the repo's screen paths, from the repo root (** spans folders; no"
+        " [ or ], at most 3 * per segment): a review round whose diff touches one runs the UX"
+        " lens. Absent: the repo has no UI."
     )
 
 

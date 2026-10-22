@@ -4,7 +4,7 @@ The UX lens runs when a review round's diff touches a repo's ``ui_paths`` (two-l
 D-12), so a glob that matches nothing (a typo, a moved folder) silently turns the lens off.
 
 - Only the checkout's listing is read, as for the other repo rules: with a ``.git`` it is git's,
-  so a gitignored file does not count. A glob is matched as ``ui_paths.ui_path_pattern`` reads
+  so a gitignored file does not count. A glob is matched as ``ui_paths.ui_path_matches`` reads
   it, against the whole path from the checkout root; a folder alone is never a match.
 - One warning per glob that matches no listed path, at ``hub.json``, in ``hub.json`` order. The
   glob is echoed cut (it may hold 200 characters).
@@ -19,7 +19,7 @@ from agent_hub.core.doctor.config_rules import CONFIG_PATH
 from agent_hub.core.doctor.finding import Finding, Read, Rule
 from agent_hub.core.doctor.snapshot import ConfigFailure, DoctorSnapshot
 from agent_hub.core.hub_config.doctor_rules import REPOS_UI_PATHS_RULE, RULE_MODULES, Severity
-from agent_hub.core.hub_config.ui_paths import ui_path_pattern
+from agent_hub.core.hub_config.ui_paths import ui_path_matches
 from agent_hub.core.hub_config.versions import cut_echo
 
 MESSAGE: Final = "repos[{index}].ui_paths[{glob_index}]: {glob} matches no file in ../{dir}"
@@ -38,8 +38,7 @@ def _repo_ui_paths(snapshot: DoctorSnapshot) -> Iterator[Finding]:
         if repo.ui_paths is None or files is None or files.problem is not None:
             continue
         for glob_index, ui_path in enumerate(repo.ui_paths):
-            pattern = ui_path_pattern(ui_path)
-            if any(pattern.fullmatch(path) for path in files.listed):
+            if any(ui_path_matches(ui_path, path) for path in files.listed):
                 continue
             message = MESSAGE.format(
                 index=index, glob_index=glob_index, glob=cut_echo(ui_path), dir=repo.dir
