@@ -50,8 +50,8 @@ RUNS_FOLDER = (".agent-runs", "workflows")
 RECORDS = "records.jsonl"
 # What the numbers do not cover, said in the output and in the summary the owner reads.
 LEFT_OUT = (
-    "per-workflow cost (AGH-303)",
-    "per-workflow numbers from AGH-450 (folded here from the run records instead)",
+    "per-workflow cost (not recorded per workflow yet)",
+    "per-workflow numbers from the event store (folded here from the run records instead)",
     "guard denies from the event store (no command prints them;"
     " transcript blocks are counted instead)",
     "GitHub review rounds on PRs (scripts get no GitHub token; workflow review rounds are counted)",

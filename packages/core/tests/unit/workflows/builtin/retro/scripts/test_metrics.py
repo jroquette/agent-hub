@@ -261,8 +261,8 @@ def test_names_left_out_metrics_when_assembled() -> None:
     found = metrics.assemble([], days=7, since=SINCE, until=date(2026, 10, 22))
 
     assert found["left_out"] == [
-        "per-workflow cost (AGH-303)",
-        "per-workflow numbers from AGH-450 (folded here from the run records instead)",
+        "per-workflow cost (not recorded per workflow yet)",
+        "per-workflow numbers from the event store (folded here from the run records instead)",
         "guard denies from the event store (no command prints them;"
         " transcript blocks are counted instead)",
         "GitHub review rounds on PRs (scripts get no GitHub token;"
