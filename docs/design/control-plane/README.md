@@ -87,6 +87,16 @@ AGH-201 (control-plane clarity) changes the design further
   which also need the server's own `Origin`), the same workflow run writes and the restores
   ([API.md](../../API.md#local-security)); the CSP is unchanged.
 
+AGH-422 (the chat redesign: the Discuss panel, the reading anatomy, the composer, the chat's header and the sessions
+rail, [specs/20-chat.md](specs/20-chat.md)) records the owner's answers to its design:
+
+- **Principle 1 and the chat.** Principle 1 ("Observe, don't replace. No chat and no 'talk to the agent' box,
+  anywhere.") predates [ADR 0031](../../adr/0031-driving-claude-code-sessions-from-the-app.md) and
+  [ADR 0033](../../adr/0033-sessions-and-chat-interaction-model.md), which already put a chat in the app: the owner
+  drives the sessions he starts from it. The owner chose to do the redesign now on that basis; principle 1 reads as
+  "observe every session; drive only the ones the owner starts here, and nothing in the app talks to an agent on its
+  own" until a principle change says it in its own words.
+
 ## Design system
 
 The control plane of agent-hub is an observability and governance console for teams of AI coding agents. It answers five questions: how are my projects doing (Portfolio), what are the agents doing right now (Live sessions), why did the agent do that (Session timeline), what does it know and what did it learn (Knowledge), and how should work flow and where does it get stuck (Workflows). A busy engineering lead should understand any screen in five seconds and be able to trust it.
