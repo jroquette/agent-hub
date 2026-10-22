@@ -34,14 +34,14 @@ def load() -> ModuleType:
 @pytest.mark.parametrize(
     ("first", "recheck", "superseded", "expected"),
     [
-        ("none", "", "", {"status": "passed", "drift": "none"}),
-        ("local", "", "", {"status": "passed", "drift": "local"}),
+        ("none", "", "", {"status": "passed"}),
+        ("local", "", "", {"status": "passed"}),
         # Plan drift with no re-check: a declined change given as input that still finds it.
-        ("plan", "", "", {"status": "blocked", "drift": "plan"}),
+        ("plan", "", "", {"status": "blocked"}),
         # After the owner's decision, the re-check decides.
-        ("plan", "none", "", {"status": "passed", "drift": "none"}),
-        ("plan", "local", SUPERSEDED, {"status": "passed", "drift": "local"}),
-        ("plan", "plan", SUPERSEDED, {"status": "blocked", "drift": "plan"}),
+        ("plan", "none", "", {"status": "passed"}),
+        ("plan", "local", SUPERSEDED, {"status": "passed"}),
+        ("plan", "plan", SUPERSEDED, {"status": "blocked"}),
     ],
 )
 def test_says_whether_a_preflight_passed_when_its_checks_are_read(

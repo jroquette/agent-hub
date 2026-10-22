@@ -20,7 +20,7 @@ from agent_hub.core.features.ticket_records import (
     TicketFiles,
     change_requests,
 )
-from agent_hub.core.features.ticket_view import TicketFlow, TicketRow
+from agent_hub.core.features.ticket_view import TicketEdge, TicketFlow, TicketRow
 from agent_hub.core.testing.read_model_builders import a_ticket_row, an_eval_record
 from agent_hub.core.tracker.tracker_reader import IssueState
 
@@ -654,7 +654,7 @@ def test_finds_the_outcome_when_its_folder_names_the_plan_key() -> None:
 # NFR Robustness: a malformed outcome turns only its own step unknown.
 def test_marks_only_merged_unknown_when_outcome_malformed() -> None:
     flow = _flow(
-        _row(state=_DONE),
+        _row(state=_STARTED),
         reviews=(_review(),),
         outcomes=(_outcome(merged_at="yesterday"),),
     )
@@ -735,3 +735,77 @@ def test_ignores_a_malformed_blocker_outcome_when_preflight_read() -> None:
     )
 
     assert _step(flow, "preflight") == ("done", None)
+
+
+# AGH-473 review Q2: a blocker merged at 10:00Z (07:00-03:00) is after a run at 09:30Z.
+@pytest.mark.parametrize(
+    ("merged_at", "state"),
+    [("2026-10-21T07:00:00-03:00", "stale"), ("2026-10-21T06:00:00-03:00", "done")],
+)
+def test_compares_instants_when_outcome_and_run_have_different_offsets(
+    merged_at: str, state: str
+) -> None:
+    flow = _flow(
+        tickets=(_files(preflight=_preflight()),),
+        outcomes=(_outcome("DEM-7", merged_at=merged_at),),
+    )
+
+    assert _step(flow, "preflight")[0] == state
+
+
+# AGH-473 review Q3: a newer approved plan is named before a merged blocker.
+def test_names_the_approved_plan_when_a_blocker_also_merged_since() -> None:
+    flow = _flow(
+        tickets=(_files(preflight=_preflight()),),
+        outcomes=(_outcome("DEM-7", merged_at="2026-10-22T09:00:00Z"),),
+        plan_version=4,
+    )
+
+    assert _step(flow, "preflight") == ("stale", "Plan v4 approved: re-run preflight")
+
+
+# AGH-473 review Q4: of two blockers merged since, the first in blocked_by (refs in natural
+# order, as the ticket board gives them) is named.
+def test_names_the_first_blocker_in_blocked_by_order_when_two_merged_since() -> None:
+    row = _row(
+        blocked_by=(
+            TicketEdge(ref="DEM-7", source="plan"),
+            TicketEdge(ref="DEM-10", source="plan"),
+        )
+    )
+
+    flow = _flow(
+        row,
+        tickets=(_files(preflight=_preflight()),),
+        outcomes=(
+            _outcome("DEM-10", merged_at="2026-10-22T07:00:00Z"),
+            _outcome("DEM-7", merged_at="2026-10-22T09:00:00Z"),
+        ),
+    )
+
+    assert _step(flow, "preflight") == ("stale", "DEM-7 merged: re-run preflight")
+
+
+# AGH-473 review Q5: the ticket's own malformed outcome does not make it merged.
+def test_keeps_the_blocker_stale_when_the_tickets_own_outcome_is_malformed() -> None:
+    flow = _flow(
+        _row(state=_STARTED),
+        tickets=(_files(preflight=_preflight()),),
+        outcomes=(
+            _outcome("DEM-8", merged_at="later"),
+            _outcome("DEM-7", merged_at="2026-10-22T09:00:00Z"),
+        ),
+    )
+
+    assert _step(flow, "preflight") == ("stale", "DEM-7 merged: re-run preflight")
+    assert _step(flow, "merged")[0] == "unknown"
+
+
+# AGH-473 review Q6, D-5: Done in Linear is merged, and a malformed outcome still says why.
+def test_marks_merged_done_with_the_problem_when_linear_completed_and_outcome_malformed() -> None:
+    flow = _flow(_row(state=_DONE), outcomes=(_outcome(merged_at="later"),))
+
+    assert _step(flow, "merged") == (
+        "done",
+        "outcome.md could not be read (merged_at needs a time with an offset). Fix it in a hub PR.",
+    )

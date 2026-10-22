@@ -11,6 +11,7 @@ from agent_hub.core.features.feature_record import RecordAc
 from agent_hub.core.features.feature_status import RecordHead
 from agent_hub.core.features.plan_version import plan_version
 from agent_hub.core.features.ticket_records import (
+    MAX_OUTCOME_BYTES,
     MAX_PREFLIGHT_BYTES,
     change_requests,
     preflight_record,
@@ -19,6 +20,7 @@ from agent_hub.core.features.ticket_writes import (
     MAX_REQUEST_BYTES,
     Blocker,
     TicketBrief,
+    TicketOutcomeText,
     TicketRecordError,
     amended_plan,
     appended_brief,
@@ -28,6 +30,7 @@ from agent_hub.core.features.ticket_writes import (
     decision_text,
     named_paths,
     next_request,
+    outcome_text,
     plan_ids,
     plan_section,
     ticket_acs,
@@ -502,3 +505,34 @@ class TestAmendment:
 
         with pytest.raises(TicketRecordError, match="would not read as A2"):
             self.amend(PLAN, decision=odd)
+
+
+def an_outcome_text(built: str = "The reader.", pr: str = "demo-api#4") -> TicketOutcomeText:
+    return TicketOutcomeText(
+        ticket="DEM-7",
+        merged_at=datetime(2026, 10, 22, 8, 0, tzinfo=UTC),
+        pr=pr,
+        dependents=("DEM-8",),
+        built=built,
+        changes="None.",
+        interfaces="None.",
+    )
+
+
+# AC-3.1, NFR read budgets: the writer keeps an outcome within what its readers read.
+def test_accepts_the_outcome_only_when_it_fits_its_read_cap_exactly() -> None:
+    base = len(outcome_text(an_outcome_text("x")))
+    fits = an_outcome_text("x" * (MAX_OUTCOME_BYTES - base + 1))
+
+    assert len(outcome_text(fits)) == MAX_OUTCOME_BYTES
+    with pytest.raises(TicketRecordError, match="larger than 16384 bytes"):
+        outcome_text(an_outcome_text("x" * (MAX_OUTCOME_BYTES - base + 2)))
+
+
+def test_refuses_with_the_readers_problem_when_the_outcome_would_not_read_back() -> None:
+    with pytest.raises(TicketRecordError) as refused:
+        outcome_text(an_outcome_text(pr="#pending"))
+
+    assert str(refused.value) == (
+        "outcome.md could not be read (pr names no pull request: #pending). Fix it in a hub PR."
+    )

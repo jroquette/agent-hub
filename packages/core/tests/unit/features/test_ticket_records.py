@@ -413,3 +413,18 @@ def test_finds_the_run_that_read_the_outcome_when_blockers_read_name_the_blocker
         run = already_read(record, names=("T1", "DEM-7"), merged_at=merged)
         assert (run is not None) is found
     assert already_read(None, names=("DEM-7",), merged_at=merged) is None
+
+
+# AGH-473 review Q2: times compare as instants, whatever their offsets.
+@pytest.mark.parametrize(
+    ("ran_at", "found"), [("2026-10-21T06:30:00-03:00", True), ("2026-10-21T05:30:00-03:00", False)]
+)
+def test_compares_instants_when_run_and_merge_have_different_offsets(
+    ran_at: str, found: bool
+) -> None:
+    record = preflight_record(a_preflight(ran_at=ran_at, blockers_read=["DEM-7"]), folder="DEM-8")
+    assert not isinstance(record, str)
+
+    run = already_read(record, names=("DEM-7",), merged_at=datetime(2026, 10, 21, 9, 0, tzinfo=UTC))
+
+    assert (run is not None) is found
