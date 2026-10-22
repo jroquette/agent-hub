@@ -598,6 +598,15 @@
     "workflows/incident/incident.yaml": {
       "ownership": "seeded"
     },
+    "workflows/incident/prompts/hypotheses.md": {
+      "ownership": "seeded"
+    },
+    "workflows/incident/prompts/postmortem.md": {
+      "ownership": "seeded"
+    },
+    "workflows/incident/prompts/recall.md": {
+      "ownership": "seeded"
+    },
     "workflows/incident/scripts/check.py": {
       "ownership": "seeded"
     },
