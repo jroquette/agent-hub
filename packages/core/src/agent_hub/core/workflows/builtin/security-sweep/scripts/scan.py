@@ -27,6 +27,9 @@ Exit 0 with the JSON; 2 when ``hub.json`` cannot be read or ``--repo`` is not in
 ``--timeout``, ``--budget`` and ``--max-files`` are for tests.
 """
 
+# The hub runs pack scripts with uv, but they still import on the hooks' Python 3.9 floor.
+from __future__ import annotations
+
 import argparse
 import contextlib
 import importlib.util
