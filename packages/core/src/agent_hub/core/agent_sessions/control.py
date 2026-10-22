@@ -100,6 +100,7 @@ from agent_hub.core.agent_sessions.errors import (
     MessageTooLargeError,
     PermissionAnsweredError,
     SessionLiveError,
+    SessionModeLockedError,
     SessionsUnavailableError,
     SessionTerminalError,
     UnknownPermissionError,
@@ -471,8 +472,12 @@ class AgentSessionControl:
         return AgentSessionList(items=tuple(await self._with_twins(views)))
 
     async def snapshot(self, agent_session_id: str) -> AgentSession:
-        """One session, with its open permission request while live (E10)."""
-        return (await self._with_twins([await self._session(agent_session_id)]))[0]
+        """One session, with its open permission request while live (E10); ``restricted`` when
+        this server holds it to a restriction (its mode cannot change, E-15)."""
+        view = (await self._with_twins([await self._session(agent_session_id)]))[0]
+        if view.id in self._restrictions:
+            return view.model_copy(update={"restricted": True})
+        return view
 
     async def repo_changes(self, agent_session_id: str) -> SessionRepoChanges:
         """Each listed repo or worktree the session started in, changed a file in or named, as
@@ -909,10 +914,13 @@ class AgentSessionControl:
     async def change_settings(
         self, agent_session_id: str, settings: SessionSettings
     ) -> AgentSession:
-        """Change the mode or the model, logged as ``settings``."""
+        """Change the mode or the model, logged as ``settings``. A session held to a restriction
+        keeps its mode (``SessionModeLockedError``, nothing logged or changed)."""
         live = await self._commandable(agent_session_id)
         async with live.commands:
             self._refuse(live, ChangeSettings())
+            if settings.mode is not None and agent_session_id in self._restrictions:
+                raise SessionModeLockedError(agent_session_id)
             body = SettingsBody(mode=settings.mode, model=settings.model).as_body()
             if await self._emit(live, "settings", body, by="web") is None:
                 raise await self._log_full(live)

@@ -685,6 +685,17 @@
             "title": "Project",
             "type": "string"
           },
+          "restricted": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restricted"
+          },
           "review_targets": {
             "default": [],
             "items": {

@@ -201,6 +201,16 @@ class SessionRestrictionError(AgentHubError):
         super().__init__(reason)
 
 
+class SessionModeLockedError(AgentHubError):
+    """A permission-mode change asked of a session held to a ``SessionRestriction`` (an
+    investigation session, E-13, E-15): its mode stays as started, so the calls its policy
+    allows keep asking (409)."""
+
+    def __init__(self, agent_session_id: str) -> None:
+        self.agent_session_id = agent_session_id
+        super().__init__(f"agent session {agent_session_id}: its permission mode is fixed")
+
+
 class HubRegistryUnreadableError(HubLocalInvalidError):
     """The hub registry cannot be read, so which hub (and credentials) a project has is
     unknown: no driven session starts (409, E-8)."""

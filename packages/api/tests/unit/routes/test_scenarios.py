@@ -1551,3 +1551,28 @@ def test_shows_run_environment_and_access_when_workflow_run_environment_recorded
     # No record, or a record without an environment: the run reads as before.
     assert "environment" not in without.json()
     assert undeclared.json()["environment"] == {"name": "gone", "access": None, "production": None}
+
+
+def test_refuses_mode_change_when_investigation_session_settings_posted(
+    wired: Any, investigation: Any
+) -> None:
+    """An investigation session keeps mode ``default``: allowed writes keep asking (E-13, E-15)."""
+    rig, _hub = investigation(a_record())
+    started = wired.client.post(ROUTE, json={}, headers=_origin(wired)).json()
+    session = f"/api/v1/agent-sessions/{started['agent_session_id']}"
+
+    mode = wired.client.post(
+        f"{session}/settings", json={"mode": "acceptEdits"}, headers=_origin(wired)
+    )
+    model = wired.client.post(
+        f"{session}/settings", json={"model": "sonnet"}, headers=_origin(wired)
+    )
+    shown = wired.client.get(session)
+
+    assert mode.status_code == 409, mode.text
+    assert mode.headers["content-type"] == "application/problem+json"
+    assert mode.json()["type"] == "urn:agent-hub:problem:agent-session-mode-locked"
+    assert model.status_code == 200, model.text
+    assert shown.json()["restricted"] is True
+    assert shown.json()["mode"] == "default"
+    assert not [call for call in rig.driver.calls if call.method == "set_mode"]
