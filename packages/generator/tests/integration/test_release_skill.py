@@ -2,7 +2,8 @@
 
 The text is what a hub's session follows, so each acceptance criterion a text can show is
 checked on the demo render: the seven steps in order with their SPEC "Defined directions" §1
-type, the gates it stops at, the tag it never touches and the authorship it keeps. The size
+type, the gates it stops at, the version PR it opens itself, the tag the platform repo's release
+workflow creates (ADR 0047) and the session never touches, and the authorship it keeps. The size
 and reference rules run on the same text through ``hub doctor`` on a fresh ``hub init``.
 """
 
@@ -23,7 +24,7 @@ STEP_TYPES = [
     (2, "gate"),
     (3, "script"),
     (4, "agent"),
-    (5, "human"),
+    (5, "agent"),
     (6, "script"),
     (7, "agent"),
 ]
@@ -40,8 +41,18 @@ STEP_PHRASES = {
     ),
     # AC-1: the run stops at the version and SHA gate.
     2: ("full SHA", "Stop here", "confirms"),
-    # AC-2: check on the confirmed SHA, never the working tree, stops with the log path.
-    3: ("clean checkout of the confirmed SHA", "not the working tree", "`$?`", "log path"),
+    # AC-2: check on the confirmed SHA, never the working tree, stops with the log path; a
+    # version mismatch opens the version PR, waits for its merge and gates the merge commit.
+    3: (
+        "clean checkout of the confirmed SHA",
+        "not the working tree",
+        "`$?`",
+        "log path",
+        "open the version PR yourself",
+        "waits for the user to merge it",
+        "merge commit",
+        "new step 2 gate",
+    ),
     # AC-3: the sync section computed by rendering both versions.
     4: (
         "Features",
@@ -54,14 +65,28 @@ STEP_PHRASES = {
         "notes file",
         "tag message",
     ),
-    # AC-4: the user tags and pushes; the skill prints the commands only.
+    # The platform repo's release workflow tags on dispatch and is watched (ADR 0047); without
+    # one, the skill prints the commands for the user, as before.
     5: (
+        "`workflow_dispatch`",
+        "gh workflow run",
+        "-f version=<version>",
+        "-f sha=<full sha>",
+        '-f notes="$(cat <notes file>)"',
+        "gh run watch",
+        "red run stops here with its URL",
+        "No such workflow",
         "git tag -a v<version> --cleanup=verbatim -F <notes file> <full sha>",
         "git push origin v<version>",
         "prints",
     ),
     # AC-5: the peeled SHA and the lightweight tag fail loudly.
-    6: ('git ls-remote --tags origin "refs/tags/v<version>^{}"', "lightweight", "Fail loudly"),
+    6: (
+        'git ls-remote --tags origin "refs/tags/v<version>^{}"',
+        "confirmed SHA",
+        "lightweight",
+        "Fail loudly",
+    ),
     # AC-6: the hub PR with the pin, sync, doctor, and the shipped issues' comments.
     7: (
         "`bump-platform` as the description slug",
@@ -73,7 +98,9 @@ STEP_PHRASES = {
     ),
 }
 NEVER_DO = (
-    "never creates, moves, deletes or pushes a tag",
+    "never creates, moves, deletes or pushes a tag itself",
+    "the platform repo's release workflow creates it after the gate",
+    "a wrong tag is never moved, and the fix is a new patch release",
     'no AI co-author trailer, no "Generated with", no 🤖',
     "No push to the default branch, no force-push",
     "never goes straight into `brain/`",
@@ -132,6 +159,13 @@ def test_stops_before_tag_when_check_or_gate_fails(release_text: str) -> None:
     assert "On failure stop and print the log path" in paragraphs[3]
     assert "Stop here" in paragraphs[2]
     assert "never pushes" in paragraphs[5]
+
+
+def test_opens_version_pr_not_restart_when_versions_mismatch(release_text: str) -> None:
+    paragraph = step_paragraphs(release_text)[3]
+
+    assert "`/fix`" not in paragraph
+    assert "restarts at step 1" not in paragraph
 
 
 def test_names_bump_branch_by_shape_when_hub_sets_conventions() -> None:
