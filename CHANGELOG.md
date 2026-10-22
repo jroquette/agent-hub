@@ -11,6 +11,17 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- The built-in `post-merge-verify` pack (AGH-490) runs the merged tickets' AC verifications again on the default
+  branch: `./hub workflow run post-merge-verify --input repo=<dir> --input sha=<merge sha> --live` (a blank `sha`
+  verifies every passing AC at `ref`, default `origin/main`; fetch first). Each verification runs once, in a throwaway
+  worktree at the commit with `WT` set to it; one with a machine path is listed as "cannot run after merge", never as a
+  failure. A read-only agent names the merge likely behind each failure, and the report goes to
+  `brain/_inbox/verify-<date>.md` (nothing when all pass); no tracker write. To run it on each merge and every Sunday,
+  add to `hub.json` `"events": [{"workflow": "post-merge-verify", "on": "merge", "repo": "<dir>", "inputs": {"repo":
+  "<dir>"}}]` and `"schedules": [{"workflow": "post-merge-verify", "cron": "0 6 * * 0", "inputs": {"repo": "<dir>"}}]`.
+
 ## [0.20.1] - 2026-10-22
 
 ### Added
