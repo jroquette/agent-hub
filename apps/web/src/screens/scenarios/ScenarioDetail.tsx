@@ -26,6 +26,7 @@ import { InputField, parsed, type InputSpec } from "../runs-list/StartRun";
 import { STEP_KINDS, stepKind } from "../workflows/steps";
 import {
   DraftLine,
+  BreakId,
   EffectBadge,
   Page,
   PlanGrid,
@@ -211,11 +212,11 @@ function PlanTable({ plan, scenario }: { plan: ScenarioPlan; scenario: string })
               style={{ gap: 2 }}
               title={`Pinned when the scenario run starts: ${row.content_hash}`}
             >
-              <span className="ah-mono">{row.step}</span>
+              <BreakId id={row.step} />
               <Values row={row} />
             </span>
           ),
-          action: <span className="ah-mono ah-small">{row.action}</span>,
+          action: <BreakId id={row.action} className="ah-mono ah-small" />,
           effect: <EffectBadge effect={row.effect} />,
           where: (
             <span className="ah-stack" style={{ gap: 2 }}>
@@ -499,13 +500,20 @@ function PlanCard({ scenario }: { scenario: ScenarioDetail }) {
 
   // A plan's 422 names its inputs by pointer (`/inputs/<name>`): each message goes to its field.
   const serverErrors = new Map<string, string>();
+  const otherErrors: string[] = [];
   if (plan.isError && plan.error.status === 422) {
+    const fields = new Set(specs.map((spec) => spec.name));
     for (const item of plan.error.errors) {
       const name = /^\/inputs\/([^/]+)$/.exec(item.pointer)?.[1];
-      if (name !== undefined && !serverErrors.has(name)) serverErrors.set(name, item.message);
+      if (name !== undefined && fields.has(name)) {
+        if (!serverErrors.has(name)) serverErrors.set(name, item.message);
+      } else {
+        otherErrors.push(item.message);
+      }
     }
   }
-  const inputProblems = serverErrors.size > 0;
+  // PlanProblem stays away only when every message sits at a field of the form (review Q6).
+  const inputProblems = serverErrors.size > 0 && otherErrors.length === 0;
   const formKey = JSON.stringify([environment, values]);
   const request = (): PlanRequest | null => {
     const inputs: Record<string, InputValue> = {};
@@ -649,6 +657,13 @@ function PlanCard({ scenario }: { scenario: ScenarioDetail }) {
           Planning in {environment}… each step&apos;s script runs in plan mode.
           {slow && " Still planning. A plan stops after 5 min."}
         </span>
+      )}
+      {serverErrors.size > 0 && otherErrors.length > 0 && (
+        <ul role="alert" className="ah-small" style={{ margin: 0, color: "var(--failed)" }}>
+          {otherErrors.map((message) => (
+            <li key={message}>{message}</li>
+          ))}
+        </ul>
       )}
       {plan.isError && !controlOff && !inputProblems && (
         <PlanProblem
@@ -872,6 +887,7 @@ function Header({ scenario }: { scenario: ScenarioDetail }) {
 }
 
 function DetailBody({ scenario }: { scenario: ScenarioDetail }) {
+  const wide = useMediaQuery("(min-width: 1600px)");
   const { rows } = useWaitingRows(scenario.project);
   const mine = rows.filter((row) => row.scenario === scenario.name);
   return (
@@ -882,7 +898,9 @@ function DetailBody({ scenario }: { scenario: ScenarioDetail }) {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))",
+          // Side by side only from 1600 px, so the Scenario runs table keeps its Started column
+          // (review N1).
+          gridTemplateColumns: wide ? "minmax(0, 1fr) minmax(0, 1fr)" : "minmax(0, 1fr)",
           gap: 16,
           alignItems: "start",
         }}

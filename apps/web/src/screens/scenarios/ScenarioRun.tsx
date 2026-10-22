@@ -12,7 +12,6 @@ import {
   Skeleton,
   Time,
   TimelineEvent,
-  Toast,
 } from "../../components";
 import { useNow } from "../../lib/clock";
 import { fmtClock, fmtDuration } from "../../lib/format";
@@ -54,15 +53,23 @@ import {
  * waiting on a policy ask: approve or reject here (AM-14, AM-17). */
 
 const MAX_INVESTIGATIONS = 10;
-const CREDENTIAL = /^<credential ([A-Za-z0-9_]+)>$/;
+const TOAST_MS = 6000;
 
+const CREDENTIAL_MARK = /<credential ([A-Za-z0-9_]+)>/g;
+
+/** A captured value; each `<credential NAME>` mark in it, alone or inside other text, is a
+ * RedactionChip (principle 5, review Q7). */
 function CaptureValue({ value }: { value: unknown }) {
-  if (typeof value === "string") {
-    const match = CREDENTIAL.exec(value);
-    if (match) return <RedactionChip kind={`credential ${match[1] ?? ""}`} />;
-    return <span className="ah-mono">{value}</span>;
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  const parts: ReactNode[] = [];
+  let last = 0;
+  for (const match of text.matchAll(CREDENTIAL_MARK)) {
+    if (match.index > last) parts.push(text.slice(last, match.index));
+    parts.push(<RedactionChip key={match.index} kind={`credential ${match[1] ?? ""}`} />);
+    last = match.index + match[0].length;
   }
-  return <span className="ah-mono">{JSON.stringify(value)}</span>;
+  if (last < text.length) parts.push(text.slice(last));
+  return <span className="ah-mono">{parts}</span>;
 }
 
 function Fact({ k, children }: { k: string; children: ReactNode }) {
@@ -438,20 +445,43 @@ function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void
   const asks = useOpenPolicyAsks(run);
   const heading = useRef<HTMLHeadingElement>(null);
   // An answer recorded here: its toast, and a resuming line until the record moves on (B3).
+  const [toast, setToast] = useState<string | null>(null);
   const [answered, setAnswered] = useState<{ answer: Answer; step: string; mark: number } | null>(
     null,
   );
   const onAnswered = useCallback(
     (answer: Answer) => {
       setAnswered({ answer, step: run.paused_step ?? "", mark: run.timeline.length });
+      setToast(answerShort(answer, run.paused_step ?? ""));
     },
     [run.paused_step, run.timeline.length],
   );
-  const moved = answered !== null && (run.timeline.length > answered.mark || ended);
+  // The answer's own lines (its decision, the gate's end, a workaround's start) do not move
+  // the run on; the next step's start or the run's end does (review round 2, B3).
+  const moved =
+    answered !== null &&
+    (ended ||
+      run.timeline
+        .slice(answered.mark)
+        .some(
+          (entry) =>
+            entry.event === "end" ||
+            (entry.event === "step_start" && !investigationGates(run).has(entry.node ?? "")),
+        ));
   if (moved) {
-    // The record moved on: the resuming line and the toast end (state adjusted while rendering).
+    // The record moved on: the resuming line ends (state adjusted while rendering).
     setAnswered(null);
   }
+  // The toast ends on its own, a few seconds after the answer.
+  useEffect(() => {
+    if (toast === null) return;
+    const timer = setTimeout(() => {
+      setToast(null);
+    }, TOAST_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [toast]);
   // The paused view leaves after an answer: focus goes to the page's heading.
   const wasPaused = useRef(paused);
   useEffect(() => {
@@ -497,12 +527,19 @@ function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void
       </div>
       {paused && <PauseBanner run={run} steps={steps} />}
       {!paused && answered !== null && (
-        <div role="status" className="ah-row ah-small" style={{ gap: 6 }}>
+        // Plain text: the page's announcer says "Answer recorded" once (review N2).
+        <div className="ah-row ah-small" style={{ gap: 6 }}>
           <Icon name="rotate-ccw" size="sm" />
           {answerDone(answered.answer, answered.step)}
         </div>
       )}
-      {answered !== null && <Toast>{answerShort(answered.answer, answered.step)}</Toast>}
+      {toast !== null && (
+        // The Toast look, without its live role: the announcer has already said it.
+        <div className="ah-toast ah-toast-ok">
+          <Icon name="circle-check" />
+          <span className="ah-grow">{toast}</span>
+        </div>
+      )}
       <EndLine run={run} steps={steps} />
       <PolicyAsks asks={asks} />
       {paused ? (

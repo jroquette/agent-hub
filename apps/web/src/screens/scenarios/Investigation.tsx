@@ -15,7 +15,15 @@ import { apiCommand, type ApiProblem } from "../../lib/api";
 import { readStored, writeStored } from "../../lib/storage";
 import { DiscussChat } from "../agent-session/DiscussChat";
 import { sessionControlUnavailable } from "../sessions-list/control";
-import { DraftLine, EffectBadge, PlanGrid, PolicyBadge, sentence, WhereText } from "./parts";
+import {
+  BreakId,
+  DraftLine,
+  EffectBadge,
+  PlanGrid,
+  PolicyBadge,
+  sentence,
+  WhereText,
+} from "./parts";
 import {
   useAnswerInvestigation,
   useOpenInvestigation,
@@ -248,11 +256,11 @@ function InvestigationChat({
   );
 }
 
+// Two lines a step (review round 2, B1): the step and its policy, then its effect and where it
+// acts, so the option column never hides or clips a value.
 const OPTION_COLUMNS = [
-  { id: "step", label: "Step", width: "34%" },
-  { id: "effect", label: "Effect", width: 88 },
-  { id: "where", label: "Where" },
-  { id: "policy", label: "Policy", width: 112 },
+  { id: "step", label: "Step" },
+  { id: "policy", label: "Policy", width: 120 },
 ] as const;
 
 function OptionPlan({
@@ -275,9 +283,15 @@ function OptionPlan({
       rows={steps.map((step) => ({
         key: String(step.index),
         cells: {
-          step: <span className="ah-mono ah-small">{step.action}</span>,
-          effect: <EffectBadge effect={step.effect} />,
-          where: <WhereText endpoints={step.endpoint} environment={environment} />,
+          step: (
+            <span className="ah-stack" style={{ gap: 4 }}>
+              <BreakId id={step.action} className="ah-mono ah-small" />
+              <span className="ah-row ah-wrap" style={{ gap: 8, alignItems: "flex-start" }}>
+                <EffectBadge effect={step.effect} />
+                <WhereText endpoints={step.endpoint} environment={environment} />
+              </span>
+            </span>
+          ),
           policy: <PolicyBadge decision={step.decision} asksTooltip={ASKS_IN_OPTION} />,
         },
         ...(draft !== undefined && step === drafted ? { extra: draft } : {}),
@@ -562,7 +576,8 @@ function OptionsColumn({
         </Button>
       </div>
       {/* Takes focus once an answer is sent: its trigger is off by then (review B3). */}
-      <span ref={statusLine} role="status" className="ah-small" tabIndex={-1}>
+      {/* Plain text: the page's announcer says "Answer recorded" once (review N2). */}
+      <span ref={statusLine} className="ah-small" tabIndex={-1}>
         {answer.isPending
           ? "Recording your answer and resuming the scenario run…"
           : answer.isSuccess
