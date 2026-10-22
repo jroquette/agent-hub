@@ -315,6 +315,16 @@ function textSection(query: string, count: string): Promise<HTMLElement> {
   return screen.findByRole("region", { name: `Text matching “${query}” · ${count}` });
 }
 
+/** A layout below 900 px, where the note is stacked under the search (`(max-width: 899px)`). */
+function stackedLayout() {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query === "(max-width: 899px)",
+    media: query,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  }));
+}
+
 describe("BrainScreen search", () => {
   beforeEach(() => {
     Element.prototype.scrollIntoView = vi.fn();
@@ -479,6 +489,55 @@ describe("BrainScreen search", () => {
 
     const text = await textSection("cleanup", "1");
     expect(within(text).getByRole("link", { name: "Cleanup after merge" })).toBeInTheDocument();
+  });
+
+  it("search: says to type a letter or a digit when the route refuses the query", async () => {
+    openDemo(aProblem({ status: 400, title: "Invalid parameter", detail: "q: no words" }));
+
+    await typeQuery("cleanup");
+
+    const tree = screen.getByRole("navigation", { name: "Brain notes" });
+    expect(
+      await within(tree).findByText("Type a letter or a digit to search the text of notes."),
+    ).toBeInTheDocument();
+    expect(within(tree).queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("search: moves the focus to the note when a result opens below 900 px", async () => {
+    stackedLayout();
+    try {
+      openDemo(aKnowledgeSearch({ results: worktreeResults() }));
+      await typeQuery("worktrees");
+      const text = await textSection("worktrees", "3");
+
+      await userEvent.click(within(text).getByRole("link", { name: "Cleanup after merge" }));
+
+      await vi.waitFor(() => {
+        expect(document.getElementById("brain-note-path")).toHaveFocus();
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("search: says an inbox result is unreviewed", async () => {
+    openDemo(
+      aKnowledgeSearch({
+        results: [
+          aKnowledgeResult({
+            path: "brain/_inbox/web-gates.md",
+            kind: "inbox",
+            title: "Web gates",
+            status: "proposed",
+          }),
+        ],
+      }),
+    );
+
+    await typeQuery("gates");
+
+    const text = await textSection("gates", "1");
+    expect(within(text).getByText("inbox · unreviewed")).toBeInTheDocument();
   });
 
   it("search: says the server is not responding when the request gets no answer", async () => {
