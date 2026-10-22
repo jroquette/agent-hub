@@ -150,3 +150,69 @@ def test_reports_and_ignores_local_file_when_invalid_over_composed_app(
         "jane@example.com",
         "team",
     )
+
+
+# AC-416.10: the composed POST /projects/{project}/config/environments writes the registered hub's
+# files and answers the new Hub config view; a team rename also renames the local tightening.
+def test_renames_team_environment_and_answers_view_when_edit_posted(
+    composed: Any, make_hub: Callable[..., Path]
+) -> None:
+    hub = make_hub()
+    document = json.loads((hub / "hub.json").read_text(encoding="utf-8"))
+    document["environments"] = {"staging": {"access": "write"}}
+    (hub / "hub.json").write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    (hub / "hub.local.json").write_text(
+        json.dumps({"environments": {"staging": {"access": "read"}}}), encoding="utf-8"
+    )
+    assert composed.client.post(HUBS, json={"path": str(hub)}, headers=OWN).status_code == 201
+
+    response = composed.client.post(
+        "/api/v1/projects/demo/config/environments",
+        json={
+            "op": "batch",
+            "ops": [
+                {"op": "rename_environment", "scope": "team", "name": "staging", "new_name": "qa"},
+                {"op": "set_environment", "scope": "team", "name": "qa", "description": "QA"},
+            ],
+        },
+        headers=OWN,
+    )
+
+    assert response.status_code == 200, response.text
+    [environment] = response.json()["environments"]["environments"]
+    assert (environment["name"], environment["access"], environment["team_access"]) == (
+        "qa",
+        "read",
+        "write",
+    )
+    assert environment["description"] == "QA"
+    assert json.loads((hub / "hub.local.json").read_text(encoding="utf-8")) == {
+        "environments": {"qa": {"access": "read"}}
+    }
+
+
+# AC-416.9, AC-416.10: a refused edit answers a problem naming it and writes nothing.
+def test_refuses_unprocessable_and_writes_nothing_when_edit_refused(
+    composed: Any, make_hub: Callable[..., Path]
+) -> None:
+    hub = make_hub()
+    before = (hub / "hub.json").read_bytes()
+    assert composed.client.post(HUBS, json={"path": str(hub)}, headers=OWN).status_code == 201
+
+    response = composed.client.post(
+        "/api/v1/projects/demo/config/environments",
+        json={
+            "op": "batch",
+            "ops": [
+                {"op": "add_environment", "scope": "team", "name": "qa", "access": "read"},
+                {"op": "remove_environment", "scope": "team", "name": "missing"},
+            ],
+        },
+        headers=OWN,
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.headers["content-type"] == "application/problem+json"
+    assert response.json()["title"] == "This change was not saved"
+    assert (hub / "hub.json").read_bytes() == before
+    assert not (hub / "hub.local.json").exists()
