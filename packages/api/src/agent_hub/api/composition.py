@@ -21,7 +21,9 @@ container (``settings.sessions_off``, L2) none of it is built.
 
 The workflow-run commands (AC-213.19) start ``hub workflow run`` children through
 ``ProcessRunLauncher`` with ``environ`` (minus ``LINEAR_API_KEY``) and the web's database; like
-the sessions, they are not built inside the container.
+the sessions, they are not built inside the container. So are the scenario writes (AGH-350
+plan T12), which share the launcher and the run commands' lock; a finding's issue goes to the
+hub's tracker (``tracker_client_of``). The scenario reads are always built.
 
 An item's history (AGH-295) captures through one ``CaptureItemVersions`` shared by the reads
 and the write step; a Restore writes through ``FileSystemHubItemWriter`` (or the
@@ -72,6 +74,7 @@ from agent_hub.api.rfc9457 import (
 )
 from agent_hub.api.run_gate_kinds import RecordedGateKinds
 from agent_hub.api.run_launcher import ProcessRunLauncher
+from agent_hub.api.scenario_catalog import ScenarioCatalog, ScenarioCommands, TrackerOf
 from agent_hub.api.scenario_investigation import (
     InvestigationRestrictions,
     ScenarioInvestigations,
@@ -144,6 +147,7 @@ from agent_hub.core.redaction.redact import KINDS as REDACTION_KINDS
 from agent_hub.core.sessions.pricing import PRICES, PRICES_AS_OF
 from agent_hub.core.sessions.session_label import LabelRules
 from agent_hub.core.skills.skill_reads import SkillUsageSource
+from agent_hub.core.tracker.tracker_client import TrackerClient
 from agent_hub.core.tracker.tracker_reader import TrackerReader
 from agent_hub.core.workflows.gate_decisions import DecideWorkflowGate, WorkflowGates
 from agent_hub.core.workflows.launch import ControlWorkflowRun, RunGuard, StartWorkflowRun
@@ -158,8 +162,10 @@ from agent_hub.storage.agent_session_store import open_agent_session_store
 from agent_hub.storage.event_store import DatabaseBusyError, SqliteEventStore, open_event_store
 from agent_hub.storage.hub_registry import JsonHubRegistry
 from agent_hub.storage.item_version_store import open_item_version_store
+from agent_hub.tracker_linear.graphql import LinearGraphqlTrackerClient
 from agent_hub.tracker_linear.graphql_reader import LinearGraphqlTrackerReader
 from agent_hub.tracker_linear.graphql_transport import LINEAR_API_KEY_VARIABLE, Post
+from agent_hub.tracker_linear.mcp import McpTrackerClient
 
 # The errors of the wired adapters, each answered by its problem (API.md "Error mapping").
 COMPOSED_PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
@@ -479,6 +485,24 @@ def ticket_snapshots(
     return CachedTicketSnapshots(TicketReaders(facts, environ=env, reader=reader), clock=clock)
 
 
+def tracker_client_of(environ: Mapping[str, str], linear_environ: Mapping[str, str]) -> TrackerOf:
+    """A hub's tracker client for a finding's issue, given its effective config (``hub.json``
+    with ``hub.local.json`` over it, so a local ``tracker.transport`` wins): for transport
+    ``mcp``, the Linear MCP server through ``claude -p`` in the hub, with ``environ``; else
+    Linear's GraphQL API with ``LINEAR_API_KEY`` from ``linear_environ`` (the environment, then
+    Settings' key file), None when no key is there (not connected). The key is read at call
+    time, never shown."""
+
+    def of(config: HubConfig, hub_path: str) -> TrackerClient | None:
+        if config.tracker.transport == "mcp":
+            return McpTrackerClient(environ=environ, cwd=Path(hub_path))
+        if not linear_environ.get(LINEAR_API_KEY_VARIABLE):
+            return None
+        return LinearGraphqlTrackerClient(environ=linear_environ)
+
+    return of
+
+
 def workflow_source_of(hub_path: str) -> ListedWorkflowSource:
     """The workflows of the hub at ``hub_path``: its ``workflows/``, then the built-ins."""
     return DiscoveredWorkflowSource(Path(hub_path))
@@ -728,11 +752,25 @@ def build_app(
     # A gate the definition lacks is classified by the run's own record (AM-14, P-6).
     gates = WorkflowGates(events, hubs, workflows, kinds=RecordedGateKinds())
     guard = None
+    scenario_reads = ScenarioCatalog(
+        credentials=HubCredentials(
+            registry=registry, reader=reader, running_version=settings.running_version
+        ),
+        runs=events,
+    )
+    scenario_commands = None
     if not settings.sessions_off:
         env: Mapping[str, str] = os.environ if environ is None else environ
         launcher = ProcessRunLauncher(db_path=settings.db_path, environ=env)
         # One guard for both, so a start and a resume of one issue never race.
         guard = RunGuard(events, launcher)
+        scenario_commands = ScenarioCommands(
+            catalog=scenario_reads,
+            launcher=launcher,
+            lock=guard.lock,
+            tracker_of=tracker_client_of(env, linear_environ),
+            today=lambda: settings.clock().astimezone().date(),
+        )
     ports = ApiPorts(
         event_read_models=events,
         hub_read_models=hubs,
@@ -785,6 +823,8 @@ def build_app(
         feature_names=FeatureNames(settings.registry_path.parent / FEATURE_NAMES_FILE),
         ac_checks=AcCheckRunner(hubs),
         scenario_investigations=None if sessions is None else sessions.investigations,
+        scenario_reads=scenario_reads,
+        scenario_commands=scenario_commands,
         linear=LinearConnection(
             linear_environ,
             key_file,

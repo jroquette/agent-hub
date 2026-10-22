@@ -1079,6 +1079,7 @@ def _run_matches(run: WorkflowRun, wanted: RunFilter) -> bool:
         wanted.workflow is None or run.workflow == wanted.workflow,
         wanted.failure_kind is None or failure_kind == wanted.failure_kind,
         wanted.issue is None or (run.issue is not None and run.issue.key == wanted.issue),
+        wanted.keeps(run),
     )
     return all(checks)
 

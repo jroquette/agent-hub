@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
 
-from agent_hub.cli.action_command import call_credentials, deny_reason
+from agent_hub.cli.action_command import call_credentials
 from agent_hub.cli.action_process import ActionCall, run_action
 from agent_hub.cli.workflow_executors import WorkflowExecutors
 from agent_hub.cli.workflow_runs import (
@@ -52,6 +52,7 @@ from agent_hub.core.scenarios.access_policy import (
     Origin,
     PolicyDecision,
     decide,
+    deny_reason,
     find_environment,
 )
 from agent_hub.core.scenarios.action_call import ActionCallError, ActionCallPlan, plan_action_call

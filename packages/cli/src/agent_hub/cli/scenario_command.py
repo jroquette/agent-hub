@@ -47,13 +47,20 @@ raw. ``--issue F`` prints finding F's tracker issue draft (core's ``findings``: 
 description) and, on a terminal, asks
 ``create this issue in <team>?``: after a ``y`` it calls the tracker's ``create_issue`` once, in
 ``tracker.team`` (the first of ``tracker.teams``), and prints ``created <id>  <url>``; the
-question is asked only once the tracker's key is there and its client resolved. Without a
+question is asked only once the tracker's key is there and its client resolved, and only while
+no issue of that finding was claimed: the marker ``finding-<id>.issue`` in the run folder,
+shared with hub web (generator's ``finding_issues``), is claimed before the create, so the
+terminal and hub web together create at most one issue per finding: a marker naming an issue
+exits 1 before the question; after a failed or unfinished create (which hub web refuses), the
+terminal says so, warns that the issue may already exist in the tracker, and asks again; a
+``y`` takes the marker again atomically, then creates and records the issue. Without a
 terminal it creates nothing and says so (exit 0: the draft is the output). ``--inbox F`` writes
 ``brain/_inbox/<date>-scenario-<name>-<F>.md`` in the hub, never over an existing note (exit 1).
 An unknown run or finding id exits 1; ``--issue`` with ``--inbox``, or ``--json`` with either,
 exits 2.
 """
 
+import contextlib
 import json
 import os
 import sys
@@ -64,12 +71,10 @@ from typing import Annotated, Final, NoReturn
 import typer
 
 from agent_hub.cli.action_command import (
-    DRAFT_REASON,
     Environment,
     Inputs,
     action_hub,
     confirmed,
-    deny_reason,
     given_texts,
     has_terminal,
 )
@@ -104,10 +109,16 @@ from agent_hub.cli.workflow_runs import (
 from agent_hub.core.errors import TrackerError
 from agent_hub.core.hub_config.effective_environments import effective_environments
 from agent_hub.core.json_form import JsonValue, dump_json
-from agent_hub.core.scenarios.access_policy import PolicyDecision
+from agent_hub.core.scenarios.access_policy import DRAFT_REASON, PolicyDecision, deny_reason
 from agent_hub.core.scenarios.action_catalog import resolve_action
 from agent_hub.core.scenarios.credentials import CredentialNames
-from agent_hub.core.scenarios.findings import FindingsError, finding_of, inbox_note, issue_draft
+from agent_hub.core.scenarios.findings import (
+    FindingsError,
+    IssueDraft,
+    finding_of,
+    inbox_note,
+    issue_draft,
+)
 from agent_hub.core.scenarios.investigation import (
     MAX_PROPOSAL_BYTES,
     ProposalError,
@@ -116,10 +127,18 @@ from agent_hub.core.scenarios.investigation import (
 from agent_hub.core.scenarios.run_record import FindingView, ScenarioRunView, fold_records
 from agent_hub.core.scenarios.scenario_events import ScenarioEvents
 from agent_hub.core.scenarios.scenario_plan import PlanRow, ScenarioPlan, plan_scenario
+from agent_hub.core.tracker.tracker_client import Issue, TrackerClient
 from agent_hub.core.workflows.catalog import WorkflowCatalog, check_workflows
 from agent_hub.core.workflows.engine import WorkflowEngineError, start_inputs
 from agent_hub.core.workflows.plan import WorkflowPlan
 from agent_hub.generator.action_discovery import ActionDiscovery, discover_actions
+from agent_hub.generator.finding_issues import (
+    HeldIssue,
+    IssueMarked,
+    claim_issue,
+    marked_issue,
+    retake_issue,
+)
 from agent_hub.generator.scenario_discovery import HUB_SCENARIOS, DiscoveredScenarioSource
 from agent_hub.generator.workflow_discovery import DiscoveredWorkflow
 
@@ -134,6 +153,10 @@ NO_TERMINAL: Final = (
     "no terminal: the issue was not created; run this command on a terminal to create it"
 )
 INBOX_FOLDER: Final = Path("brain", "_inbox")
+MARK_FAILED: Final = "cannot mark the finding's issue"
+RETRY_WARNING: Final = (
+    "the issue may already exist in the tracker; check it before creating it again"
+)
 
 scenario_app = typer.Typer(
     name=COMMAND, no_args_is_help=True, help="List, plan and run the hub's scenarios."
@@ -404,6 +427,10 @@ def _issue(hub: Path, view: ScenarioRunView, finding: FindingView, *, run: str) 
     if not has_terminal():
         typer.echo(NO_TERMINAL)
         return
+    # One marker per finding, shared with hub web: an issue it names refuses every create; a
+    # failed or unfinished create may be taken again here only, after the warning (E-14).
+    folder = run_folder(hub, run)
+    earlier = _earlier(folder, finding.finding_id)
     config = load_effective_config_or_exit(hub).config
     team = config.tracker.team_keys[0]
     # The question is asked only when a create can run: the key is there, the client resolved.
@@ -411,15 +438,65 @@ def _issue(hub: Path, view: ScenarioRunView, finding: FindingView, *, run: str) 
     if missing is not None:
         fail(missing)
     client = resolve_tracker_client(config, os.environ, hub_root=hub)
+    if earlier is not None:
+        typer.echo(f"{earlier.state}: {RETRY_WARNING}")
     if not confirmed(f"create this issue in {team}?"):
         typer.echo("the issue was not created")
         return
-    typer.echo(transport_line(config), err=True)
+    # The claim's lock is held across the create, so nothing retakes a running create.
+    claim = _claim(folder, finding.finding_id, earlier)
+    try:
+        typer.echo(transport_line(config), err=True)
+        created = _create(claim, client, team=team, draft=draft)
+    finally:
+        claim.release()
+    typer.echo(f"created {shown_text(created.id)}  {shown_text(created.url)}")
+
+
+def _earlier(folder: Path, finding_id: str) -> IssueMarked | None:
+    """The finding's earlier claim, read as hub web reads it; exit 1 when it names an issue
+    or a create runs now (E-14: never taken again), or when it cannot be read."""
+    try:
+        earlier = marked_issue(folder, finding_id)
+    except OSError as error:
+        fail(f"{_FINDINGS_PREFIX}: {MARK_FAILED}: {error.strerror or error}")
+    if earlier is not None and (earlier.issue_id is not None or earlier.running or earlier.busy):
+        fail(f"{_FINDINGS_PREFIX}: {earlier.reason}")
+    return earlier
+
+
+def _create(claim: HeldIssue, client: TrackerClient, *, team: str, draft: IssueDraft) -> Issue:
+    """Create the issue under ``claim`` and record it; exit 1 when the tracker refuses (the
+    failure recorded) or when the created issue cannot be recorded (do not create it again)."""
     try:
         created = client.create_issue(team, draft.title, draft.description)
     except TrackerError as error:
+        with contextlib.suppress(OSError):
+            claim.fail()
         fail(f"{_FINDINGS_PREFIX}: {error}")
-    typer.echo(f"created {shown_text(created.id)}  {shown_text(created.url)}")
+    try:
+        claim.record(issue_id=created.id, url=created.url)
+    except OSError as error:
+        fail(
+            f"{_FINDINGS_PREFIX}: the issue {shown_text(created.id)} was created but could"
+            f" not be recorded: {error.strerror or error}; do not create it again"
+        )
+    return created
+
+
+def _claim(folder: Path, finding_id: str, earlier: IssueMarked | None) -> HeldIssue:
+    """Claim the finding's issue marker before the create (take a failed or unfinished one
+    again when ``earlier`` names it); else exit 1 naming the claim that stands."""
+    try:
+        if earlier is None:
+            standing = claim_issue(folder, finding_id)
+        else:
+            standing = retake_issue(folder, earlier)
+    except OSError as error:
+        fail(f"{_FINDINGS_PREFIX}: {MARK_FAILED}: {error.strerror or error}")
+    if isinstance(standing, IssueMarked):
+        fail(f"{_FINDINGS_PREFIX}: {standing.reason}")
+    return standing
 
 
 def _inbox(hub: Path, view: ScenarioRunView, finding: FindingView, *, run: str) -> None:

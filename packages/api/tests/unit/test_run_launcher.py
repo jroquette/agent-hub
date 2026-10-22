@@ -423,3 +423,125 @@ def test_leaves_no_temporary_file_when_launch_succeeds_or_fails(tmp_path: Path) 
         launcher(tmp_path).start(spec_of(tmp_path))  # the program does not exist
     assert temporaries(tmp_path) == []
     assert not (web(tmp_path) / "run-1.pid").exists()
+
+
+# AGH-350 plan T12: a scenario run starts as ``hub scenario run`` and is planned by ``hub
+# scenario plan --json``; the program here echoes its arguments instead.
+ECHO_ARGV = "import json, sys\nprint(json.dumps(sys.argv[1:]))\nsys.exit(1)\n"
+
+
+def test_runs_scenario_commands_when_scenario_planned_or_started(tmp_path: Path) -> None:
+    written = tmp_path / "argv.json"
+    record = f"import json, sys\nopen({str(written)!r}, 'w').write(json.dumps(sys.argv[1:]))\n"
+    planner = ProcessRunLauncher(
+        db_path=tmp_path / "db", environ={}, program=[sys.executable, "-c", ECHO_ARGV]
+    )
+    starter = ProcessRunLauncher(
+        db_path=tmp_path / "db", environ={}, program=[sys.executable, "-c", record]
+    )
+
+    code, printed = planner.plan_scenario(
+        str(tmp_path), "order-walk", environment="local", inputs={"ref": "T-1"}
+    )
+    starter.start_scenario(
+        run_launcher.ScenarioLaunch(
+            run_id="walk-1",
+            project="demo",
+            hub_path=str(tmp_path),
+            name="order-walk",
+            environment="staging",
+            mode="regression",
+            inputs={"ref": "T-1", "count": 2},
+        )
+    )
+    deadline = time.monotonic() + 10
+    while not written.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+
+    assert code == 1
+    assert json.loads(printed) == [
+        *("scenario", "plan", "order-walk", "--env", "local", "--json", "--input", "ref=T-1")
+    ]
+    assert json.loads(written.read_text()) == [
+        *("scenario", "run", "order-walk", "--env", "staging", "--mode", "regression"),
+        *("--run-id", "walk-1", "--input", "ref=T-1", "--input", "count=2"),
+    ]
+
+
+def test_pins_plan_bounds_when_launcher_built() -> None:
+    assert run_launcher.PLAN_TIMEOUT_SECONDS == 300
+    assert run_launcher.MAX_PLAN_BYTES == 4 * 1024 * 1024
+
+
+def _gone(pid: int) -> bool:
+    """Whether ``pid`` has ended (a zombie no one reaped counts as ended); waits up to 10 s."""
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        try:
+            state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+        except OSError, IndexError:
+            return True
+        if state == "Z":
+            return True
+        time.sleep(0.05)
+    return False
+
+
+# The plan's program: a child in its group that ignores SIGINT, and a child in a session of its
+# own that the program kills on KeyboardInterrupt, as the CLI's run_child does; then ``body``.
+PLAN_PROGRAM = """\
+import os, signal, subprocess, sys, time
+folder = sys.argv[1]
+ignoring = "import os, signal, sys, time\\nsignal.signal(signal.SIGINT, signal.SIG_IGN)\\n"
+ignoring += "open(os.path.join(sys.argv[1], 'ignoring'), 'w').write(str(os.getpid()))\\n"
+ignoring += "time.sleep(60)\\n"
+subprocess.Popen([sys.executable, "-c", ignoring, folder])
+sleeper = [sys.executable, "-c", "import time; time.sleep(60)"]
+own = subprocess.Popen(sleeper, start_new_session=True)
+open(os.path.join(folder, "own"), "w").write(str(own.pid))
+while not os.path.exists(os.path.join(folder, "ignoring")):
+    time.sleep(0.01)
+try:
+    BODY
+except KeyboardInterrupt:
+    os.killpg(own.pid, signal.SIGKILL)
+    raise
+"""
+
+
+def _planner(tmp_path: Path, body: str) -> ProcessRunLauncher:
+    """A launcher whose program is ``PLAN_PROGRAM`` with ``body``, given ``tmp_path``."""
+    script = PLAN_PROGRAM.replace("BODY", body)
+    program = [sys.executable, "-c", script, str(tmp_path)]
+    return ProcessRunLauncher(db_path=tmp_path / "db", environ={}, program=program)
+
+
+def _children_gone(tmp_path: Path) -> bool:
+    pids = [int((tmp_path / name).read_text()) for name in ("ignoring", "own")]
+    return all(_gone(pid) for pid in pids)
+
+
+@pytest.mark.skipif(not Path("/proc/self/stat").exists(), reason="reads /proc")
+def test_kills_group_when_plan_output_over_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(run_launcher, "MAX_PLAN_BYTES", 64)
+    planner = _planner(tmp_path, "sys.stdout.write('x' * 1000); sys.stdout.flush(); time.sleep(60)")
+
+    with pytest.raises(RunLaunchError, match="more than 64 bytes"):
+        planner.plan_scenario(str(tmp_path), "order-walk", environment="local", inputs={})
+
+    assert _children_gone(tmp_path)
+
+
+@pytest.mark.skipif(not Path("/proc/self/stat").exists(), reason="reads /proc")
+def test_kills_group_when_plan_outlasts_its_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(run_launcher, "PLAN_TIMEOUT_SECONDS", 3.0)
+    planner = _planner(tmp_path, "time.sleep(60)")
+
+    with pytest.raises(RunLaunchError, match="did not finish"):
+        planner.plan_scenario(str(tmp_path), "order-walk", environment="local", inputs={})
+
+    assert _children_gone(tmp_path)

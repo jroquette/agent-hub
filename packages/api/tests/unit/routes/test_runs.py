@@ -45,6 +45,22 @@ def test_maps_workflow_and_failure_kind_when_runs_filtered_by_them(wired: Any) -
     assert wired.events.calls == [("list_runs", RunFilter(workflow="ship", failure_kind="timeout"))]
 
 
+def test_lists_all_runs_when_kind_absent(wired: Any) -> None:
+    # AM-7: absent, every run as before; kind=workflow|scenario narrows to one kind.
+    wired.events.runs.append(a_run(workflow="scenario:order-walk"))
+
+    every = wired.client.get("/api/v1/workflow-runs")
+    scenarios = wired.client.get("/api/v1/workflow-runs", params={"kind": "scenario"})
+    unknown = wired.client.get("/api/v1/workflow-runs", params={"kind": "both"})
+
+    assert (every.status_code, scenarios.status_code, unknown.status_code) == (200, 200, 400)
+    assert every.json()["items"][0]["kind"] == "scenario"
+    assert wired.events.calls == [
+        ("list_runs", RunFilter()),
+        ("list_runs", RunFilter(kind="scenario")),
+    ]
+
+
 def test_refuses_failure_kind_when_kind_unknown(wired: Any) -> None:
     response = wired.client.get("/api/v1/workflow-runs", params={"failure_kind": "boom"})
 

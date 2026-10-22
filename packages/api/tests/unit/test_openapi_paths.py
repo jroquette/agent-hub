@@ -1,3 +1,5 @@
+import pytest
+
 from agent_hub.api.app import create_app
 from agent_hub.api.openapi_paths import (
     AC_CHECK_PATHS,
@@ -12,6 +14,7 @@ from agent_hub.api.openapi_paths import (
     P2_PATHS,
     PLATFORM_SYNC_PATHS,
     RUN_COMMAND_PATHS,
+    SCENARIO_PATHS,
     SERVED_PATHS,
     SKILL_PATHS,
     TICKET_FLOW_PATHS,
@@ -123,6 +126,10 @@ AGENT_SESSION_SPEC_PATHS = {
 }
 
 
+# The scenario paths left AC_CHECK_PATHS for their own group (AGH-350 plan T12 12.4): the
+# union pinned here no longer holds them, so it stays as a strict xfail (E-12's rule) and
+# test_lists_scenario_paths_when_document_built pins the widened union.
+@pytest.mark.xfail(strict=True, reason="SCENARIO_PATHS is its own group since AGH-363")
 def test_lists_agent_session_paths_when_document_built(api_settings: ApiSettings) -> None:
     # AC-165.48: today's paths plus exactly the agent-session pairs
     # (17, then the task stop and the two repo-changes reads).
@@ -149,6 +156,10 @@ def test_lists_agent_session_paths_when_document_built(api_settings: ApiSettings
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
 
+# The scenario paths left AC_CHECK_PATHS for their own group (AGH-350 plan T12 12.4): the
+# union pinned here no longer holds them, so it stays as a strict xfail (E-12's rule) and
+# test_lists_scenario_paths_when_document_built pins the widened union.
+@pytest.mark.xfail(strict=True, reason="SCENARIO_PATHS is its own group since AGH-363")
 def test_lists_skill_paths_when_document_built(api_settings: ApiSettings) -> None:
     # AC-164.11: today's paths plus the three skills reads, all GET, and nothing else.
     assert SKILL_PATHS == SKILL_SPEC_PATHS
@@ -288,3 +299,51 @@ def test_documents_screenshot_when_create_schema_read(api_settings: ApiSettings)
     assert "#/components/schemas/Screenshot" in refs
     # Pydantic writes a one-value Literal as ``const`` (the plan said ``enum: ["image/png"]``).
     assert schemas["Screenshot"]["properties"]["media_type"]["const"] == "image/png"
+
+
+# The nine route-method pairs the scenarios add (AGH-350 plan T12, AC-350.30).
+SCENARIO_SPEC_PATHS = {
+    ("get", "/api/v1/scenarios"),
+    ("get", "/api/v1/scenarios/{project}/{name}"),
+    ("post", "/api/v1/scenarios/{project}/{name}/plan"),
+    ("post", "/api/v1/scenarios/{project}/{name}/runs"),
+    ("get", "/api/v1/scenario-runs/{run_id}"),
+    ("post", "/api/v1/scenario-runs/{run_id}/investigation"),
+    ("post", "/api/v1/scenario-runs/{run_id}/answer"),
+    ("post", "/api/v1/scenario-runs/{run_id}/findings/{finding_id}/issue"),
+    ("post", "/api/v1/scenario-runs/{run_id}/findings/{finding_id}/inbox"),
+}
+
+
+def test_lists_scenario_paths_when_document_built(api_settings: ApiSettings) -> None:
+    # Today's groups, the scenarios' own one last, and nothing else.
+    assert SCENARIO_PATHS == SCENARIO_SPEC_PATHS
+    assert {("post", "/api/v1/features/{project}/{slug}/acs/{ac}/check-runs")} == AC_CHECK_PATHS
+    assert SERVED_PATHS == (
+        P2_PATHS
+        | CLARITY_PATHS
+        | TICKET_PATHS
+        | SKILL_PATHS
+        | AGENT_SESSION_PATHS
+        | WORKFLOW_PATHS
+        | RUN_COMMAND_PATHS
+        | GATE_PATHS
+        | ITEM_VERSION_PATHS
+        | LINEAR_PATHS
+        | OWNER_SIGNOFF_PATHS
+        | TICKET_FLOW_PATHS
+        | FEATURE_NAME_PATHS
+        | PLATFORM_SYNC_PATHS
+        | DOCTOR_FIX_PATHS
+        | AC_CHECK_PATHS
+        | SCENARIO_PATHS
+    )
+    assert document_paths(create_app(api_settings)) == SERVED_PATHS
+
+
+def test_keeps_group_pins_when_scenario_paths_grouped(api_settings: ApiSettings) -> None:
+    # What the two strict-xfailed union pins also held, which AGH-363 did not widen.
+    assert len(AGENT_SESSION_SPEC_PATHS) == 20
+    assert AGENT_SESSION_PATHS == AGENT_SESSION_SPEC_PATHS
+    assert SKILL_PATHS == SKILL_SPEC_PATHS
+    assert document_paths(create_app(api_settings)) >= AGENT_SESSION_PATHS | SKILL_PATHS
