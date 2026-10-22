@@ -172,6 +172,7 @@ DESIGN_PATHS = (
     "workflows/post-merge-verify/fixtures/verify-explain-failed.yaml",
     "workflows/post-merge-verify/fixtures/verify-regression.yaml",
     "workflows/post-merge-verify/post-merge-verify.yaml",
+    "workflows/post-merge-verify/scripts/selection.py",
     "workflows/sdlc/deliver.yaml",
     "workflows/sdlc/fixtures/deliver-blocked.yaml",
     "workflows/sdlc/fixtures/deliver-check-error.yaml",
@@ -841,6 +842,8 @@ def test_parses_as_python39_when_rendered(demo_render: dict[str, RenderedFile]) 
         "plugin/demo/hooks",
         "plugin/hub-workflow/hooks",
         "scripts",
+        # The post-merge-verify pack's scripts (AGH-490), run by uv as the sdlc pack's are.
+        "workflows/post-merge-verify/scripts",
         # The sdlc pack's helpers (AGH-229), run by uv on its Python, also parse as 3.9.
         "workflows/sdlc/scripts",
     }
