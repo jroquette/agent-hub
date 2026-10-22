@@ -21,12 +21,14 @@ on. ``left_out`` names what the evidence does not hold (failing checks on main, 
 Exit 0 with the JSON; exit 2 on bad input (the report, ``--since``, an unreadable ``hub.json``).
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import re
 import subprocess
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +44,8 @@ MAX_REASON = 300
 # The printed JSON and its newline stay within 48 KiB.
 MAX_BYTES = 48 * 1024 - 1
 MAX_HOURS = 90 * 24
+# Not datetime.UTC: the hub's copy also imports on Python 3.9.
+UTC = timezone.utc  # noqa: UP017
 GIT_TIMEOUT = 60
 SINCE = re.compile(r"[1-9][0-9]{0,3}[hd]")
 DIR = re.compile(r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*")
