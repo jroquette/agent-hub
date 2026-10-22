@@ -1246,6 +1246,27 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/scenario-runs/{run_id}/investigation": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Open Investigation
+     * @description Start the investigation session of a scenario run paused at an open investigation, or
+     *     answer the one already started (200); 409 when the run is not paused there.
+     */
+    post: operations["open_investigation_api_v1_scenario_runs__run_id__investigation_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/search": {
     parameters: {
       query?: never;
@@ -3098,6 +3119,25 @@ export interface components {
     InputText: string;
     InputValue:
       boolean | number | components["schemas"]["InputNumber"] | components["schemas"]["InputText"];
+    /**
+     * InvestigationSession
+     * @description The session of a scenario run's open investigation: ``started`` when this call
+     *     started it.
+     */
+    InvestigationSession: {
+      /** Agent Session Id */
+      agent_session_id: string;
+      /** Investigation */
+      investigation: number;
+      /** Project */
+      project: string;
+      /** Run Id */
+      run_id: string;
+      /** Started */
+      started: boolean;
+      /** Step */
+      step: string;
+    };
     /**
      * IssueRef
      * @description The tracker issue a run works on; title and url need Linear (``null`` in Phase 2).
@@ -8869,6 +8909,55 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  open_investigation_api_v1_scenario_runs__run_id__investigation_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The session already started */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["InvestigationSession"];
+        };
+      };
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["InvestigationSession"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */

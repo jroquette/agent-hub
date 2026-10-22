@@ -1,9 +1,12 @@
+import json
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
 
 import pytest
 
+from agent_hub.api.agent_session_runtime import HubCredentials
 from agent_hub.core.agent_sessions.agent_session import (
     AgentSessionList,
     AgentSessionStatus,
@@ -16,8 +19,11 @@ from agent_hub.core.agent_sessions.cloud import CloudSessionCommands
 from agent_hub.core.agent_sessions.control import AgentSessionCommands
 from agent_hub.core.agent_sessions.driver import DriverCapabilities
 from agent_hub.core.agent_sessions.records import LogRecord, LogRecordPage
+from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.testing.agent_session_rig import build_rig
 from agent_hub.core.testing.agent_session_store_fakes import InMemoryAgentSessionStore
+from agent_hub.core.testing.builders import an_environments_document
+from agent_hub.core.testing.hub_fakes import FakeHub, FakeHubFileReader, InMemoryHubRegistry
 from agent_hub.core.testing.read_model_builders import (
     AGENT_SESSION_ID,
     STARTED,
@@ -31,6 +37,7 @@ from agent_hub.core.testing.read_model_builders import (
 # Writes need the server's own Origin (local_security.py).
 OWN_ORIGIN = {"Origin": "http://127.0.0.1:7420"}
 BASE = "/api/v1/agent-sessions"
+RUNNING = "0.9.0"
 ONE = f"{BASE}/{AGENT_SESSION_ID}"
 
 
@@ -279,3 +286,65 @@ def test_refuses_wrote_when_empty_or_too_long(
 
     assert response.status_code == 400
     assert control.list_sessions.await_count == 0
+
+
+def _hub_with_credentials(
+    tmp_path: Path, *, local: tuple[ConfigProblem, ...] | None = None
+) -> HubCredentials:
+    """A registered hub ``demo`` whose ``staging`` declares a profile, a name and an env file."""
+    hub = tmp_path / "work" / "demo-hub"
+    hub.mkdir(parents=True)
+    document = an_environments_document()
+    document["platform"]["version"] = RUNNING
+    document["environments"]["staging"]["credentials"] = {
+        "aws_profile": "demo-staging",
+        "env": ["DEMO_DB_URL"],
+        "env_file": "demo-api/environment/.env.staging",
+    }
+    registry = InMemoryHubRegistry()
+    registry.add(str(hub))
+    fake = FakeHub(hub_json=json.dumps(document).encode())
+    if local is not None:
+        fake.local = local
+    reader = FakeHubFileReader({str(hub): fake})
+    return HubCredentials(registry=registry, reader=reader, running_version=RUNNING)
+
+
+def test_hides_credentials_when_credential_injection_any_session(
+    wired: Any, tmp_path: Path
+) -> None:
+    rig = build_rig(hidden_environment=_hub_with_credentials(tmp_path).names)
+    wired.wire(agent_sessions=rig.control)
+
+    response = wired.client.post(
+        BASE, json={"project": "demo", "workdir_id": WORKDIR_ID}, headers=OWN_ORIGIN
+    )
+
+    assert response.status_code == 201
+    (start,) = [call for call in rig.driver.calls if call.method == "start"]
+    hidden = start.args[0].hidden_environment
+    assert hidden.env == frozenset({"DEMO_DB_URL", "DEMO_LIVE_DB_URL"})
+    assert hidden.aws_profiles == frozenset({"demo-staging", "demo-live-ro"})
+    assert start.args[0].tool_policy is None
+    assert start.args[0].system_prompt is None
+
+
+def test_refuses_start_when_credential_injection_local_config_unreadable(
+    wired: Any, tmp_path: Path
+) -> None:
+    problem = ConfigProblem(path="hub.local.json", message="not valid JSON")
+    credentials = _hub_with_credentials(tmp_path, local=(problem,))
+    rig = build_rig(hidden_environment=credentials.names)
+    wired.wire(agent_sessions=rig.control)
+
+    response = wired.client.post(
+        BASE, json={"project": "demo", "workdir_id": WORKDIR_ID}, headers=OWN_ORIGIN
+    )
+
+    assert response.status_code == 409
+    assert response.headers["content-type"] == "application/problem+json"
+    assert response.json()["type"] == "urn:agent-hub:problem:hub-local-invalid"
+    assert response.json()["code"] == "hub_local_invalid"
+    assert "hub.local.json" in response.json()["detail"]
+    assert [call for call in rig.driver.calls if call.method == "start"] == []
+    assert rig.store.list(project=None, status=None, kind="local") == ()
