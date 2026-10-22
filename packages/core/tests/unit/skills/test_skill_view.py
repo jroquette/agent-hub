@@ -19,9 +19,11 @@ from agent_hub.core.skills.skill_view import (
     Origin,
     SkillFileTooLargeError,
     Usage,
+    UsageRow,
     bare_name,
     item_id,
 )
+from agent_hub.core.testing.read_model_builders import a_usage_report, a_usage_row
 
 
 @pytest.mark.parametrize(
@@ -110,3 +112,31 @@ def test_serializes_usage_time_when_used() -> None:
     )
 
     assert usage.model_dump(mode="json")["last_used_at"] == "2026-10-01T00:00:00.000Z"
+
+
+def test_rejects_negative_runs_when_usage_row_built() -> None:
+    with pytest.raises(ValidationError):
+        UsageRow(
+            project="demo",
+            kind=ItemKind.SKILL,
+            name="feature",
+            runs_7d=-1,
+            runs_30d=0,
+            runs_90d=0,
+            last_used_at=None,
+        )
+
+
+def test_holds_only_names_counts_and_times_when_usage_row_dumped() -> None:
+    row = a_usage_row(last_used_at=datetime(2026, 10, 12, 9, 30, tzinfo=UTC))
+
+    assert set(row.model_dump()) == {
+        "project",
+        "kind",
+        "name",
+        "runs_7d",
+        "runs_30d",
+        "runs_90d",
+        "last_used_at",
+    }
+    assert a_usage_report().days == 30
