@@ -140,7 +140,7 @@ def test_marks_managed_when_hub_lock_says_managed(
     assert files["CLAUDE.md"]["managed"] is False
 
 
-def test_estimates_tokens_as_chars_over_four(
+def test_estimates_tokens_as_chars_over_four_when_file_measured(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     write(tmp_path, "CLAUDE.md", "x" * 9)
