@@ -616,10 +616,16 @@
     "workflows/release/scripts/bump.py": {
       "ownership": "seeded"
     },
+    "workflows/release/scripts/hub_branch.py": {
+      "ownership": "seeded"
+    },
     "workflows/release/scripts/pin.py": {
       "ownership": "seeded"
     },
     "workflows/release/scripts/since.py": {
+      "ownership": "seeded"
+    },
+    "workflows/release/scripts/tagged.py": {
       "ownership": "seeded"
     },
     "workflows/sdlc/deliver.yaml": {

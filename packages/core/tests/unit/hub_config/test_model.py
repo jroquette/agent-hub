@@ -648,6 +648,9 @@ PROJECT_BRANCH_READERS = {
     # the release pack's pin.py (AGH-494) names the key it needs for the hub copy's base (a pack
     # script reads hub.json itself)
     "core/src/agent_hub/core/workflows/builtin/release/scripts/pin.py": 1,
+    # the release pack's hub_branch.py (AGH-494) names the key it needs for the hub worktree's
+    # base, as pin.py
+    "core/src/agent_hub/core/workflows/builtin/release/scripts/hub_branch.py": 1,
 }
 
 
