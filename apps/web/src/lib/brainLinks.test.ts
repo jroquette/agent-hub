@@ -92,6 +92,12 @@ describe("resolveBrainLink", () => {
     expect(resolveBrainLink("https://example.com", null, null).kind).toBe("external");
   });
 
+  it("renders a link as text when the note route would refuse its decoded path", () => {
+    expect(resolve("a%07b.md").kind).toBe("text");
+    expect(resolve("a%5Cb.md").kind).toBe("text");
+    expect(resolveBrainLink("#top", "playbooks//cloud.md", "agent-hub").kind).toBe("text");
+  });
+
   it("renders a link as text when its path is over the bounds", () => {
     expect(resolve(`${"a/".repeat(20)}x.md`).kind).toBe("text");
     expect(resolve(`${"a".repeat(600)}.md`).kind).toBe("text");

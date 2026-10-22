@@ -5,8 +5,6 @@ import type { useBacklinks } from "./queries";
 
 /** The id of the section's heading, which the note header's jump button focuses. */
 export const LINKED_FROM_ID = "brain-linked-from";
-/** The route's most items; past it the section says how many more link here. */
-const MAX_BACKLINKS = 100;
 const SAY_SLOW_MS = 2_000;
 
 /** The header's name of the section: its total once known (`Linked from · 2`). */
@@ -89,6 +87,7 @@ export function LinkedFrom({
       </p>
     );
   } else {
+    const more = data.total - data.items.length;
     body = (
       <>
         <ul className="ah-know-list">
@@ -103,9 +102,9 @@ export function LinkedFrom({
             />
           ))}
         </ul>
-        {data.total > MAX_BACKLINKS && (
+        {more > 0 && (
           <p className="ah-small ah-muted" style={{ margin: 0 }}>
-            and {data.total - MAX_BACKLINKS} more
+            and {more} more
           </p>
         )}
       </>

@@ -292,13 +292,11 @@ function jumpTo(id: string) {
 
 /** The note header's in-page buttons to the sections after the body (AGH-393). */
 function NoteJumps({ total }: { total: number | undefined }) {
-  const notes = total === undefined ? "" : `, ${String(total)} ${total === 1 ? "note" : "notes"}`;
   return (
     <span className="ah-row ah-brain-jumps" style={{ gap: 4 }}>
       <Button
         size="sm"
         variant="ghost"
-        aria-label="Go to Where this note came from"
         onClick={() => {
           jumpTo(NOTE_ORIGIN_ID);
         }}
@@ -308,7 +306,6 @@ function NoteJumps({ total }: { total: number | undefined }) {
       <Button
         size="sm"
         variant="ghost"
-        aria-label={`Go to Linked from${notes}`}
         onClick={() => {
           jumpTo(LINKED_FROM_ID);
         }}
@@ -377,7 +374,7 @@ export function BrainScreen() {
             <NoteView
               project={project}
               path={path}
-              hiddenFields={note ? originFields(note.frontmatter) : undefined}
+              hiddenFields={note ? originFields(note.frontmatter, learnings) : undefined}
             />
             {note && (
               <>

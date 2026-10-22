@@ -117,6 +117,24 @@ describe("BrainScreen Where this note came from", () => {
     expect(screen.getByRole("list", { name: "Frontmatter" })).not.toHaveTextContent("session");
   });
 
+  it("came from: keeps the session chip when a learning names the session", async () => {
+    open({ type: "learning", session: "s-123" }, aPage([accepted()]));
+
+    const section = await origin();
+    await within(section).findByRole("link", { name: "Session s1" });
+    expect(screen.getByRole("list", { name: "Frontmatter" })).toHaveTextContent("session: s-123");
+  });
+
+  it("came from: links only the learning's session when the frontmatter names another", async () => {
+    open({ session: "s-123" }, aPage([accepted()]));
+
+    const section = await origin();
+    await within(section).findByRole("link", { name: "Session s1" });
+    const hrefs = screen.getAllByRole("link").map((link) => link.getAttribute("href"));
+    expect(hrefs).toContain("/sessions/s1");
+    expect(hrefs).not.toContain("/sessions/s-123");
+  });
+
   it("came from: shows no session for a malformed id", async () => {
     open({ type: "learning", session: "bad id!" });
 
@@ -228,9 +246,7 @@ describe("BrainScreen Where this note came from", () => {
   it("came from: the header button moves focus to the section", async () => {
     open({ provenance: "agent" });
 
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Go to Where this note came from" }),
-    );
+    await userEvent.click(await screen.findByRole("button", { name: "Where it came from" }));
 
     expect(within(await origin()).getByRole("heading", { level: 2, name: ORIGIN })).toHaveFocus();
   });
@@ -241,7 +257,9 @@ describe("BrainScreen Where this note came from", () => {
     expect(await screen.findByText("No note index.md in the agent-hub brain.")).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: ORIGIN })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: /^Linked from/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Go to/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^(Where it came from|Linked from)/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("came from has no serious a11y violations (a11y)", async () => {
