@@ -354,6 +354,47 @@ export function ProvenanceBadge({ provenance }: { provenance: Provenance }) {
   );
 }
 
+/** One step of a `ProvenanceLineage`: its name, a decorative icon, then what the record holds. */
+export interface LineageStep {
+  id: string;
+  icon: IconName;
+  name: string;
+  children?: ReactNode;
+}
+
+export interface ProvenanceLineageProps {
+  /** The list's accessible name, e.g. "Trail from session to note". */
+  label: string;
+  steps: readonly LineageStep[];
+  /** Vertical only: the one form with a consumer (a narrow detail column). */
+  orientation?: "vertical";
+}
+
+/**
+ * Where a record came from, step by step in the order things happened (README principle 4,
+ * AGH-393): an ordered list, each step starting with its visible name; icons and the connector are
+ * decorative. No status colour and no dashed node: what a step waits for is said in words.
+ */
+export function ProvenanceLineage({
+  label,
+  steps,
+  orientation = "vertical",
+}: ProvenanceLineageProps) {
+  return (
+    <ol className="ah-lineage" data-orientation={orientation} aria-label={label}>
+      {steps.map((step) => (
+        <li key={step.id} className="ah-lin-node">
+          <span className="ah-lin-kind">
+            <Icon name={step.icon} />
+            <span>{step.name}</span>
+          </span>
+          <div className="ah-lin-body">{step.children}</div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 export function ExternalLabel({ source = "External content" }: { source?: string }) {
   return (
     <span className="ah-external">
