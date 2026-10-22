@@ -30,8 +30,10 @@ BUILTIN_PACKAGE = "agent_hub.core"
 BUILTIN_FOLDER = "workflows/builtin"
 SEEDED_PACK_FILES = (
     "backlog-care/scripts/drafts.py",
+    "backlog-care/scripts/gates.py",
     "backlog-care/scripts/hygiene.py",
     "backlog-care/scripts/read.py",
+    "backlog-care/scripts/report.py",
     "issue-to-pr/fixtures/blocked.yaml",
     "issue-to-pr/fixtures/dirty.yaml",
     "issue-to-pr/fixtures/done.yaml",

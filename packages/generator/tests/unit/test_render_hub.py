@@ -158,8 +158,10 @@ DESIGN_PATHS = (
     "scripts/retro_metrics.py",
     # AGH-489: the built-in backlog-care pack, seeded.
     "workflows/backlog-care/scripts/drafts.py",
+    "workflows/backlog-care/scripts/gates.py",
     "workflows/backlog-care/scripts/hygiene.py",
     "workflows/backlog-care/scripts/read.py",
+    "workflows/backlog-care/scripts/report.py",
     # AGH-227: the built-in issue-to-pr pack, seeded.
     "workflows/issue-to-pr/fixtures/blocked.yaml",
     "workflows/issue-to-pr/fixtures/dirty.yaml",
