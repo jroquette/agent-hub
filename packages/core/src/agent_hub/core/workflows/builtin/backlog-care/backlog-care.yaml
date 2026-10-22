@@ -1,4 +1,4 @@
-# The weekly backlog pass (AGH-489): read the open issues, report hygiene findings (orphans,
+# The weekly backlog pass: read the open issues, report hygiene findings (orphans,
 # stale issues, likely duplicates, dependency cycles), draft the oldest issues not yet ready
 # (/triage steps 2 and 3, at most 10 a run), then one approval per issue: never several issues in
 # one gate. The tracker is read by /triage --backlog before the run and handed over as
