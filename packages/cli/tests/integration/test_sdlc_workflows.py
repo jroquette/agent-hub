@@ -5,6 +5,9 @@ their nodes declare. ``implement`` and its ``ticket-pass`` (two-level-flows S2, 
 their fixtures pass from a hub that holds a seeded ``sdlc`` pack (the built-in ones are reached),
 the ticket eval declares the eval JSON, the gate captures a decline's note, and their scripts.
 A stubbed live ``implement`` run in a temp hub writes only its ticket's records (AC-2.1).
+``preflight`` and its ``preflight-check``, which ``ticket-pass`` includes (S3, AC-3.2, AC-3.3):
+their fixtures pass, and a stubbed live run for a dependent is read-only to every checkout
+(no branch, commit or PR) and adds no second preflight for an outcome it already read.
 """
 
 import itertools
@@ -67,6 +70,13 @@ IMPLEMENT_FIXTURES = (
     "implement-rounds-exhausted",
     "implement-superseded-in-last-pass",
     "implement-superseded-then-discoveries",
+)
+PREFLIGHT_FIXTURES = (
+    "preflight-already-read",
+    "preflight-drift-local",
+    "preflight-drift-none",
+    "preflight-drift-plan",
+    "preflight-plan-declined-still-plan",
 )
 FIXTURES = (
     "deliver-blocked",
@@ -183,25 +193,32 @@ def test_reaches_the_built_in_fixtures_when_implement_tested_from_a_hub_with_a_s
     for name in (
         "implement.yaml",
         "ticket-pass.yaml",
-        *(f"fixtures/{f}.yaml" for f in IMPLEMENT_FIXTURES),
+        "preflight.yaml",
+        "preflight-check.yaml",
+        "scripts/preflight_result.py",
+        *(f"fixtures/{f}.yaml" for f in (*IMPLEMENT_FIXTURES, *PREFLIGHT_FIXTURES)),
     ):
-        (seeded / name).unlink()
+        (seeded / name).unlink(missing_ok=True)
+    checks = run_command(demo_workspace.hub, "workflow", "validate", "preflight-check")
     passes = run_command(demo_workspace.hub, "workflow", "validate", "ticket-pass")
     validated = run_command(demo_workspace.hub, "workflow", "validate", "implement")
-    tested = run_command(demo_workspace.hub, "workflow", "test", "implement")
+    preflight = run_command(demo_workspace.hub, "workflow", "validate", "preflight")
+    tested = run_command(demo_workspace.hub, "workflow", "test", "implement", "preflight")
 
     assert (demo_workspace.hub / "workflows/sdlc/deliver.yaml").is_file()
-    assert passes.stdout == "ticket-pass: valid (13 nodes in 12 layers)\n", passes.output
-    assert validated.stdout == "implement: valid (48 nodes in 45 layers)\n", validated.output
+    assert checks.stdout == "preflight-check: valid (10 nodes in 9 layers)\n", checks.output
+    assert passes.stdout == "ticket-pass: valid (14 nodes in 13 layers)\n", passes.output
+    assert validated.stdout == "implement: valid (51 nodes in 48 layers)\n", validated.output
+    assert preflight.stdout == "preflight: valid (12 nodes in 11 layers)\n", preflight.output
     assert tested.exit_code == 0, tested.output
-    for fixture in IMPLEMENT_FIXTURES:
+    for fixture in (*IMPLEMENT_FIXTURES, *PREFLIGHT_FIXTURES):
         assert f"<builtin>/sdlc/fixtures/{fixture}.yaml: ok" in tested.stdout
     assert "warning" not in tested.stdout
-    assert tested.stdout.endswith("20 fixtures: 20 passed, 0 failed\n")
+    assert tested.stdout.endswith("25 fixtures: 25 passed, 0 failed\n")
 
 
 def test_captures_a_decline_note_when_the_owner_answers_the_plan_change_gate() -> None:
-    gate = nodes_of("ticket-pass")["gate"]
+    gate = nodes_of("preflight-check")["gate"]
 
     assert [decision.id for decision in gate.decisions] == ["approve", "decline"]
     assert gate.capture_response is True
@@ -218,8 +235,12 @@ def test_declares_the_eval_schema_when_the_ticket_eval_runs() -> None:
 
 
 def test_checks_afresh_and_read_only_when_ticket_pass_runs_a_preflight() -> None:
-    nodes = nodes_of("ticket-pass")
+    checks = nodes_of("preflight-check")
+    nodes = nodes_of("ticket-pass") | checks
 
+    # ticket-pass and preflight include the same check (S3).
+    assert nodes_of("ticket-pass")["check"].include == "preflight-check"
+    assert nodes_of("preflight")["check"].include == "preflight-check"
     assert nodes["preflight"].output_format == nodes["recheck"].output_format
     for name in ("preflight", "recheck"):
         assert (nodes[name].mutates_checkout, nodes[name].context) == (False, "fresh")
@@ -545,19 +566,19 @@ SUPERSEDED = "change request 1 approved but superseded by plan v2: not applied"
             {
                 # The request the run opened is the run's, and the gate's approver decides it.
                 # Main's commit ticket-brief read is what the preflight reads and records.
-                "pass-1__preflight": {("$WITH.base", "0a1b2c3d4e"), ("$WITH.input", "none")},
-                "pass-1__record": {
+                "pass-1__check__preflight": {("$WITH.base", "0a1b2c3d4e"), ("$WITH.input", "none")},
+                "pass-1__check__record": {
                     ("--request", "1"),
                     ("--input", "none"),
                     ("--commit", "0a1b2c3d4e"),
                 },
-                "pass-1__request": {("--commit", "0a1b2c3d4e")},
+                "pass-1__check__request": {("--commit", "0a1b2c3d4e")},
                 # The branch starts at the commit the preflight checked, not a newer main.
                 "pass-1__worktree": {("--repo", "demo-api"), ("--commit", "0a1b2c3d4e")},
-                "pass-1__approved": {("--decision", "approved"), ("--by", "Dana Owner")},
-                "pass-1__amend": {("--request", "1"), ("--summary", "T2 goes through routes.py")},
-                "pass-1__rerecord": {("--input", "approve"), ("--request", "1")},
-                "pass-1__recheck": {("$WITH.input", "approve")},
+                "pass-1__check__approved": {("--decision", "approved"), ("--by", "Dana Owner")},
+                "pass-1__check__amend": {("--request", "1"), ("--summary", "T2 goes through routes.py")},
+                "pass-1__check__rerecord": {("--input", "approve"), ("--request", "1")},
+                "pass-1__check__recheck": {("$WITH.input", "approve")},
             },
         ),
         (
@@ -565,8 +586,8 @@ SUPERSEDED = "change request 1 approved but superseded by plan v2: not applied"
             {
                 # The approval the plan moved past is re-checked in its pass, told why (A23); the
                 # writer records it (the request named), and the report says it.
-                "pass-1__recheck": {("$WITH.input", "approve"), ("$WITH.superseded", SUPERSEDED)},
-                "pass-1__rerecord": {("--input", "approve"), ("--request", "1")},
+                "pass-1__check__recheck": {("$WITH.input", "approve"), ("$WITH.superseded", SUPERSEDED)},
+                "pass-1__check__rerecord": {("--input", "approve"), ("--request", "1")},
                 "pass-1__outcome": {("--superseded", SUPERSEDED)},
                 "delivery": {("--superseded", SUPERSEDED)},
             },
@@ -574,8 +595,8 @@ SUPERSEDED = "change request 1 approved but superseded by plan v2: not applied"
         (
             "implement-pending-superseded",
             {
-                "pass-1__preflight": {("$WITH.note", SUPERSEDED)},
-                "pass-1__record": {("--input", "none"), ("--input-text", SUPERSEDED)},
+                "pass-1__check__preflight": {("$WITH.note", SUPERSEDED)},
+                "pass-1__check__record": {("--input", "none"), ("--input-text", SUPERSEDED)},
                 "last": {("--superseded", SUPERSEDED)},
             },
         ),
@@ -583,15 +604,15 @@ SUPERSEDED = "change request 1 approved but superseded by plan v2: not applied"
             "implement-plan-declined",
             {
                 # The decline's note reaches the decision and the re-check (capture_response).
-                "pass-1__declined": {("--by", "Dana Owner"), ("--note", NOTE)},
-                "pass-1__rerecord": {("--input", "decline"), ("--input-text", NOTE)},
-                "pass-1__recheck": {("$WITH.input", "decline"), ("$WITH.note", NOTE)},
+                "pass-1__check__declined": {("--by", "Dana Owner"), ("--note", NOTE)},
+                "pass-1__check__rerecord": {("--input", "decline"), ("--input-text", NOTE)},
+                "pass-1__check__recheck": {("$WITH.input", "decline"), ("$WITH.note", NOTE)},
             },
         ),
         (
             "implement-discovery-once",
             {
-                "pass-2__record": {
+                "pass-2__check__record": {
                     ("--input", "discovery"),
                     ("--input-text", "The plan's T3 contract returns a list, not a page."),
                 },
@@ -600,7 +621,7 @@ SUPERSEDED = "change request 1 approved but superseded by plan v2: not applied"
         (
             "implement-pending-declined-still-plan",
             {
-                "pass-1__record": {
+                "pass-1__check__record": {
                     ("--input", "declined_change"),
                     ("--input-text", "Keep T2 on the current handler."),
                     # The request pending found, which may be one no run named.
@@ -899,7 +920,7 @@ def test_writes_only_the_tickets_records_when_a_stubbed_implement_run_ends(
     def stubbed(self: WorkflowExecutors, call: NodeCall, node: Any) -> NodeReply:
         # Only the preflight and its re-check run: no spec, research, plan or tickets agent.
         agents.append(call.node.id)
-        if call.node.id not in {"pass-1__preflight", "pass-1__recheck"}:
+        if call.node.id not in {"pass-1__check__preflight", "pass-1__check__recheck"}:
             raise AssertionError(call.node.id)
         return NodeReply(json.dumps(PLAN_DRIFT))
 
@@ -916,7 +937,7 @@ def test_writes_only_the_tickets_records_when_a_stubbed_implement_run_ends(
 
     assert ended.exit_code == 0, ended.output
     assert unstyle(ended.stdout).splitlines()[-1] == "run implement-1: done, outcome blocked"
-    assert agents == ["pass-1__preflight", "pass-1__recheck"]
+    assert agents == ["pass-1__check__preflight", "pass-1__check__recheck"]
     status = demo_workspace.git(hub, "status", "--porcelain", "--untracked-files=all")
     changed = sorted(line.split(maxsplit=1)[-1] for line in status.splitlines())
     expected = [*RUN_CHANGED, *(("plan.md",) if changed_plan else ())]
@@ -937,3 +958,125 @@ def test_writes_only_the_tickets_records_when_a_stubbed_implement_run_ends(
     # preflight).
     assert demo_workspace.git(hub, "rev-parse", "HEAD") == head
     assert demo_workspace.git(api, "for-each-ref") == api_refs
+
+
+def test_prints_what_its_check_declares_when_preflight_result_script_runs(tmp_path: Path) -> None:
+    args = ("--first", "plan", "--recheck", "local", "--superseded", SUPERSEDED)
+
+    result = a_script("preflight_result.py", *args, cwd=tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert checked(result.stdout, "preflight-check", "result") == {
+        "status": "passed",
+        "drift": "local",
+        "superseded": SUPERSEDED,
+    }
+
+
+# AC-3.2, AC-3.3: a dependent's automatic preflight after its blocker merged, its agent stubbed
+# and its hub steps real. It reads every checkout and changes none (no branch, commit or PR): only
+# the dependent's brief and preflight records (and, on plan drift, its change request) appear in
+# the hub, uncommitted. A second run for the same merge reads that the outcome was read and
+# writes nothing.
+PREFLIGHT_OUTCOME = (
+    "---\ntype: ticket-outcome\nticket: DEM-7\nmerged_at: 2026-01-25T10:00:00+00:00\n"
+    "pr: https://github.com/acme/demo-api/pull/4\ndependents: [DEM-8]\n---\n\n"
+    "# Outcome: DEM-7\n\n## What was built\n\nThe reader.\n"
+)
+NO_DRIFT = PLAN_DRIFT | {
+    "drift": "none",
+    "evidence": "",
+    "proposal": "",
+    "summary": "",
+}
+
+
+def checkouts(workspace: Workspace) -> dict[str, tuple[str, str, str, str]]:
+    """Each checkout's HEAD, ``git status`` (the hub's outside its feature folders), refs, and
+    its origin's refs: a branch, commit or push would show."""
+    found = {}
+    for name in ("hub", "demo-api", "demo-web"):
+        folder = workspace.ws / name
+        status = workspace.git(folder, "status", "--porcelain", "--untracked-files=all")
+        if name == "hub":
+            status = "\n".join(
+                line
+                for line in status.splitlines()
+                if not line.split(maxsplit=1)[-1].startswith("brain/features/")
+            )
+        origin = "" if name == "hub" else workspace.git(workspace.origin(name), "for-each-ref")
+        found[name] = (
+            workspace.git(folder, "rev-parse", "HEAD"),
+            status,
+            workspace.git(folder, "for-each-ref"),
+            origin,
+        )
+    return found
+
+
+@pytest.mark.parametrize("drift", ["none", "plan"])
+def test_changes_no_checkout_and_reads_an_outcome_once_when_a_stubbed_preflight_run_ends(
+    demo_workspace: Workspace,
+    run_command: CommandRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    drift: str,
+) -> None:
+    hub = demo_workspace.hub
+    feature = hub / RUN_FEATURE
+    (feature / "tickets/DEM-7").mkdir(parents=True)
+    (feature / "features.json").write_text(json.dumps(RUN_FEATURES_JSON))
+    (feature / "plan.md").write_text(RUN_PLAN)
+    (feature / "tickets/DEM-7/outcome.md").write_text(PREFLIGHT_OUTCOME)
+    demo_workspace.init_hub_repo(None)
+    demo_workspace.git(demo_workspace.ws / "demo-api", "fetch", "-q", "origin")
+    before = checkouts(demo_workspace)
+    agents: list[str] = []
+
+    def stubbed(self: WorkflowExecutors, call: NodeCall, node: Any) -> NodeReply:
+        agents.append(call.node.id)
+        if call.node.id != "check__preflight":
+            raise AssertionError(call.node.id)
+        return NodeReply(json.dumps(PLAN_DRIFT if drift == "plan" else NO_DRIFT))
+
+    monkeypatch.setattr(WorkflowExecutors, "_agent", stubbed)
+    given = ("--input", "feature=demo-flow", "--input", "ticket=DEM-8", "--input", "blocker=T1")
+
+    first = run_command(hub, "workflow", "run", "preflight", *given, "--live", "--run-id", "pf-1")
+
+    assert first.exit_code == 0, first.output
+    last = unstyle(first.stdout).splitlines()[-1]
+    if drift == "plan":
+        # The owner's gate, as AC-2.6: the change request is open and the run waits.
+        assert "run pf-1: paused at " in unstyle(first.stdout)
+    else:
+        assert last == "run pf-1: done, outcome passed"
+    assert agents == ["check__preflight"]
+    assert checkouts(demo_workspace) == before
+    status = demo_workspace.git(hub, "status", "--porcelain", "--untracked-files=all")
+    changed = sorted(line.split(maxsplit=1)[-1] for line in status.splitlines())
+    expected = ["tickets/DEM-8/brief.md", "tickets/DEM-8/preflight.json"]
+    if drift == "plan":
+        expected = ["change-requests/1.md", *expected]
+    assert changed == [f"{RUN_FEATURE}/{path}" for path in expected]
+    records = (hub / ".agent-runs/workflows/pf-1/records.jsonl").read_text().splitlines()
+    ran = {
+        line["node"]
+        for line in map(json.loads, records)
+        if line.get("event") == "step_end" and line.get("status") != "skipped"
+    }
+    # The workflow holds no worktree, commits, PR or report node; these are all that ran.
+    reads = {"due", "context", "check__preflight", "check__record"}
+    assert ran == reads | ({"check__request"} if drift == "plan" else {"check__result"})
+    preflight = json.loads((feature / "tickets/DEM-8/preflight.json").read_text())
+    assert [run["blockers_read"] for run in preflight["runs"]] == [["DEM-7"]]
+    written = {path: (hub / path).read_bytes() for path in changed}
+
+    second = run_command(hub, "workflow", "run", "preflight", *given, "--live", "--run-id", "pf-2")
+
+    assert second.exit_code == 0, second.output
+    assert unstyle(second.stdout).splitlines()[-1] == "run pf-2: done"
+    # No second automatic preflight: the agent did not run again and nothing was appended.
+    assert agents == ["check__preflight"]
+    assert {path: (hub / path).read_bytes() for path in changed} == written
+    assert checkouts(demo_workspace) == before
