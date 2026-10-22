@@ -24,14 +24,14 @@ that accepts it, AM-5) and whether it can be picked now (core's ``option_refusal
   workaround first);
 - ``finding_issue`` shows a finding's tracker issue draft (core's ``findings``, the CLI's text)
   and creates it only when the body confirms it (``confirm: true``, the terminal's ``y``), once:
-  a marker file in the run folder, made exclusively before the call, refuses a second create,
+  the marker ``finding-<id>.issue`` in the run folder (generator's ``finding_issues``, which
+  ``hub scenario findings --issue`` claims too), made exclusively before the call, refuses a
+  second create from either side,
   and a failed create is never retried here;
 - ``finding_inbox`` writes the finding's ``brain/_inbox/`` note, never over another.
 """
 
-import contextlib
 import dataclasses
-import json
 import os
 import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -115,6 +115,7 @@ from agent_hub.core.workflows.launch import (
 from agent_hub.core.workflows.plan import WorkflowPlan
 from agent_hub.core.workflows.workflow_reads import WorkflowInputView, WorkflowProblemView
 from agent_hub.generator.action_discovery import ActionDiscovery, discover_actions
+from agent_hub.generator.finding_issues import claim_issue, record_failure, record_issue
 from agent_hub.generator.scenario_discovery import DiscoveredScenarioSource
 
 if TYPE_CHECKING:
@@ -125,8 +126,6 @@ RUN_PAGE: Final = 50
 INBOX_FOLDER: Final = Path("brain", "_inbox")
 FINDING_ID_TEXT: Final = r"^f[0-9]{1,6}$"
 _NEW_FILE: Final = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
-_READ_FILE: Final = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
-_MARKER_BYTES: Final = 4096
 ANSWERED: Final = "the investigation is answered; its options can no longer be picked"
 LOCAL_UNREADABLE: Final = "hub.local.json cannot be read, so the options cannot be planned now"
 CONFIG_UNREADABLE: Final = "hub.json cannot be read, so the options cannot be planned now"
@@ -888,18 +887,17 @@ class ScenarioCommands:
                 ' Settings, or set tracker.transport "mcp" in hub.json'
             )
             raise RunConflictError(code="tracker_not_connected", reason=reason, run_id=run_id)
-        marker = run.folder / f"finding-{finding_id}.issue"
-        _claim_issue(marker, run_id, finding_id)
+        _claim_issue(run.folder, run_id, finding_id)
         try:
             created = client.create_issue(team, draft.title, draft.description)
         except TrackerError:
-            _write_marker(marker, {"failed": True})
+            record_failure(run.folder, finding_id)
             msg = (
                 f"the tracker did not create the issue of finding {finding_id}; it may exist:"
                 " check the tracker"
             )
             raise FindingIssueError(msg) from None
-        _write_marker(marker, {"id": created.id, "url": created.url})
+        record_issue(run.folder, finding_id, issue_id=created.id, url=created.url)
         return issue.model_copy(update={"created": CreatedIssue(id=created.id, url=created.url)})
 
     def finding_inbox(self, run_id: str, finding_id: str) -> FindingNote:
@@ -971,41 +969,15 @@ def _record(run_id: str) -> str:
     return (RUN_FOLDERS / run_id / RECORDS).as_posix()
 
 
-def _claim_issue(marker: Path, run_id: str, finding_id: str) -> None:
-    """Make the finding's issue marker, exclusively; 409 ``issue_exists`` when one is there."""
+def _claim_issue(folder: Path, run_id: str, finding_id: str) -> None:
+    """Claim the finding's issue marker (shared with ``hub scenario findings --issue``); 409
+    ``issue_exists`` when either side claimed it before."""
     try:
-        os.close(os.open(marker, _NEW_FILE, 0o600))
-    except FileExistsError:
-        known = _read_marker(marker)
-        if isinstance(known.get("id"), str):
-            reason = f"finding {finding_id} already has the issue {known['id']}"
-            if isinstance(known.get("url"), str):
-                reason += f": {known['url']}"
-        else:
-            reason = (
-                f"an earlier create of finding {finding_id}'s issue did not finish; check the"
-                " tracker (it is not tried again)"
-            )
-        raise RunConflictError(code="issue_exists", reason=reason, run_id=run_id) from None
+        earlier = claim_issue(folder, finding_id)
     except OSError as error:
         raise RunLaunchError(f"cannot mark the finding's issue: {error.strerror}") from None
-
-
-def _read_marker(marker: Path) -> dict[str, JsonValue]:
-    with contextlib.suppress(OSError, ValueError):
-        descriptor = os.open(marker, _READ_FILE)
-        with os.fdopen(descriptor, "rb") as file:
-            value = json.loads(file.read(_MARKER_BYTES) or b"{}")
-        if isinstance(value, dict):
-            return value
-    return {}
-
-
-def _write_marker(marker: Path, value: dict[str, JsonValue]) -> None:
-    with contextlib.suppress(OSError):
-        descriptor = os.open(marker, os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC)
-        with os.fdopen(descriptor, "wb") as file:
-            file.write(json.dumps(value).encode())
+    if earlier is not None:
+        raise RunConflictError(code="issue_exists", reason=earlier.reason, run_id=run_id)
 
 
 def _inbox_folder(hub: Path, run_id: str) -> Path:
