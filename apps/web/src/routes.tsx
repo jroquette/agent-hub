@@ -7,6 +7,7 @@ import { BrainPickerScreen, BrainScreen } from "./screens/brain";
 import { FeatureDetailScreen } from "./screens/feature-detail";
 import { FeaturesScreen } from "./screens/features";
 import { NewFeatureScreen } from "./screens/features/NewFeature";
+import { TicketsScreen } from "./screens/tickets";
 import { HealthScreen } from "./screens/health";
 import { EnvironmentsPickerScreen, EnvironmentsScreen } from "./screens/environments";
 import { EnvironmentScreen } from "./screens/environments/EnvironmentPage";
@@ -100,6 +101,7 @@ export const appRoutes: RouteObject[] = [
           { path: "features", element: <FeaturesScreen /> },
           { path: "features/new", element: <NewFeatureScreen /> },
           { path: "features/:project/:slug", element: <FeatureDetailScreen /> },
+          { path: "tickets", element: <TicketsScreen /> },
           // Older links: Workflows moved into the Toolkit.
           { path: "workflows", element: <WorkflowsScreen /> },
           { path: "workflows/new", element: <NewWorkflowScreen /> },

@@ -5,6 +5,7 @@
   gap: var(--space-1);
   margin-bottom: var(--space-2);
 }
+/* The page title with its action at the right (New feature; the Tickets list's Start ticket). */
 .ft-title {
   display: flex;
   align-items: center;

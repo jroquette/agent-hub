@@ -27,6 +27,8 @@ export interface StartSessionDialogProps {
   note?: string | undefined;
   /** An ended session to fork (AC-234.15). */
   forkOf?: AgentSession | undefined;
+  title?: string | undefined;
+  initialPrompt?: string | undefined;
   onClose: () => void;
 }
 
@@ -45,6 +47,8 @@ export function StartSessionDialog({
   initialMode,
   note,
   forkOf,
+  title,
+  initialPrompt,
   onClose,
 }: StartSessionDialogProps) {
   const navigate = useNavigate();
@@ -77,6 +81,8 @@ export function StartSessionDialog({
       initialMode={initialMode}
       note={note}
       forkOf={forkOf}
+      title={title}
+      initialPrompt={initialPrompt}
       onSubmit={(body) => {
         create.mutate(body, {
           onSuccess: (created) => {
