@@ -1,4 +1,4 @@
-import { useId, useMemo, useRef, useState } from "react";
+import { useId, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
   Button,
@@ -11,6 +11,7 @@ import {
   type IconName,
 } from "../../components";
 import { cx } from "../../lib/cx";
+import { useDiffSyntax } from "./diffSyntax";
 import { StoredCopyLabel } from "./SessionStatus";
 import {
   isRedacted,
@@ -18,6 +19,7 @@ import {
   toolSummary,
   asArray,
   asObject,
+  str,
   toolState,
   type PermissionView,
   type ToolResultView,
@@ -68,24 +70,50 @@ export function diffLines(diff: string): DiffLine[] {
   });
 }
 
+/** A diff line's text as a pull request shows it: the sign in the line's colour, the code in
+ * the syntax colours of its language (`code`, from `useDiffSyntax`) or plain. */
+export function DiffLineText({
+  line,
+  code,
+}: {
+  line: DiffLine;
+  code: ReactNode[] | null | undefined;
+}) {
+  if (!code) return <>{line.text}</>;
+  return (
+    <>
+      <span className="as-diff-sign">{line.text.slice(0, 1)}</span>
+      {code}
+    </>
+  );
+}
+
 /**
  * A unified diff as text (`<pre>`), each line tinted by its sign. `numbered`, for a diff with the
  * file's real line numbers, adds git's two gutters (old, new) and leaves the file headers out.
+ * With the file's `path`, the code is coloured in its language.
  */
 export function DiffText({
   diff,
   label,
   numbered = false,
+  path,
 }: {
   diff: string;
   label: string;
   numbered?: boolean;
+  path?: string | undefined;
 }) {
-  const lines = diffLines(diff);
+  const lines = useMemo(() => diffLines(diff), [diff]);
+  const syntax = useDiffSyntax(lines, path);
   return (
-    // A diff can scroll sideways, so the keyboard must reach it.
-    // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
-    <pre className={cx("as-diff", numbered && "as-diff-numbered")} tabIndex={0} aria-label={label}>
+    <pre
+      className={cx("as-diff", numbered && "as-diff-numbered", syntax && "hljs as-diff-syntax")}
+      // A diff can scroll sideways, so the keyboard must reach it.
+      // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+      tabIndex={0}
+      aria-label={label}
+    >
       {lines.map((line, i) =>
         numbered ? (
           line.kind === "head" ? null : (
@@ -97,14 +125,14 @@ export function DiffText({
                 {line.newNo ?? ""}
               </span>
               <span className="as-diff-code">
-                {line.text}
+                <DiffLineText line={line} code={syntax?.[i]} />
                 {"\n"}
               </span>
             </span>
           )
         ) : (
           <span key={i} className={`as-diff-${line.kind}`}>
-            {line.text}
+            <DiffLineText line={line} code={syntax?.[i]} />
             {"\n"}
           </span>
         ),
@@ -322,6 +350,7 @@ function InputBody({ tool }: { tool: ToolView }) {
           diff={diff}
           label={`Diff of ${toolSummary(tool.input) || tool.name}`}
           numbered={reported !== null}
+          path={str(tool.input, "file_path") ?? undefined}
         />
       ) : command !== null ? (
         <CommandText command={command} description={description} />

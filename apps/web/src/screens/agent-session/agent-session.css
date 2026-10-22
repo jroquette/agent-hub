@@ -733,6 +733,31 @@
 .as-diff-head {
   color: var(--text-subtle);
 }
+/* A diff coloured in its file's language, as a pull request reads: the line's ground and its sign
+ * say added or removed, the code keeps the text and syntax colours, and the number gutters carry
+ * a stronger tint so the eye finds the changed lines. */
+.as-diff-syntax .as-diff-add,
+.as-diff-syntax .as-diff-del,
+.as-diff-syntax .as-diff-ctx {
+  color: var(--text);
+}
+.as-diff-syntax .as-diff-add .as-diff-sign {
+  color: var(--diff-add);
+}
+.as-diff-syntax .as-diff-del .as-diff-sign {
+  color: var(--diff-del);
+}
+.as-diff-sign {
+  user-select: none;
+}
+.as-diff-syntax .as-diff-line.as-diff-add .as-diff-no {
+  background: color-mix(in srgb, var(--diff-add) 22%, var(--code-bg));
+  color: var(--text-muted);
+}
+.as-diff-syntax .as-diff-line.as-diff-del .as-diff-no {
+  background: color-mix(in srgb, var(--diff-del) 22%, var(--code-bg));
+  color: var(--text-muted);
+}
 /* A request waiting for you: a raised card with an amber halo, so it reads as "your turn". */
 .as-perm {
   --perm-tint: var(--waiting);
@@ -2011,6 +2036,28 @@ body.as-resizing .as-drawer {
 .as-files-nav-name {
   flex: 1;
   font-family: var(--font-mono);
+}
+/* A narrow list: one line per item, each cut at its end (never over its neighbour). */
+.as-files-cut {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.as-files-folder-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.as-files-folder-leaf {
+  flex: 0 1 auto;
+  color: var(--text-muted);
+}
+.as-files-folder-parent {
+  flex: 1 1 0;
+  color: var(--text-subtle);
+  opacity: 0.75;
 }
 .as-files-stats {
   display: inline-flex;
@@ -3488,4 +3535,11 @@ button.as-bg-head {
 }
 .as-rail-strip-item .as-rail-dot {
   margin-top: 0;
+}
+.as-files-codesplit {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) 0;
 }

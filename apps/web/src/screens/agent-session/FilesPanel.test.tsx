@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ChangedFilesChip, FilesPanel, reviewedKey } from "./FilesPanel";
+import { CODE_SPLIT_KEY, ChangedFilesChip, FilesPanel, reviewedKey } from "./FilesPanel";
 import { changedFiles, type ToolView } from "./model";
 import { withRepoChanges } from "./repoChanges";
 import { commentMessage } from "./review";
@@ -700,6 +700,70 @@ describe("FilesPanel (pull request)", () => {
   });
 });
 
+describe("FilesPanel (discarded files)", () => {
+  // Claude wrote scratch.py and then deleted it: git lists it nowhere, so it ends as on the base.
+  const files = () =>
+    withRepoChanges(
+      filesOf([
+        tool("t1", "Edit", { file_path: "/w/api/app.py", old_string: "b", new_string: "B" }),
+        tool("t2", "Write", { file_path: "/w/api/scratch.py", content: "x = 1" }),
+      ]),
+      [
+        {
+          source: "worktree",
+          root: "/w/api",
+          label: "api",
+          branch: "dem-1",
+          base: "origin/main",
+          base_sha: "f0",
+          commits: [],
+          files: [
+            {
+              path: "/w/api/app.py",
+              status: "modified",
+              added: 1,
+              removed: 1,
+              diff: "--- a/app.py\n+++ b/app.py\n@@ -1 +1 @@\n-b\n+B",
+              binary: false,
+              fingerprint: "fp1",
+              commits: [],
+              uncommitted: true,
+            },
+          ],
+          truncated: false,
+        },
+      ],
+    );
+
+  it("shows a file that ends as on the base in its own Discarded tab, out of the review (AC-424.6)", async () => {
+    render(<FilesPanel files={files()} sessionId="s1" onClose={vi.fn()} />);
+
+    const kinds = screen.getByRole("tablist", { name: "Kind of file" });
+    expect(within(kinds).getByRole("tab", { name: /Code/ })).toHaveTextContent("1");
+    expect(screen.getByText("0 of 1 viewed")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /scratch\.py/ })).toBeNull();
+
+    await userEvent.click(within(kinds).getByRole("tab", { name: /Discarded/ }));
+
+    expect(screen.getByText(/none of it goes in the pull request/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /scratch\.py/ })).toBeInTheDocument();
+    expect(screen.queryByText(/viewed$/)).toBeNull();
+  });
+
+  it("leaves a discarded file out of the chip's count and what waits for review (AC-424.6)", () => {
+    render(
+      <ChangedFilesChip
+        files={files()}
+        review={{ reviewed: {}, toggle: vi.fn() }}
+        open={false}
+        onToggle={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /Review changes: 1 file,/ })).toBeInTheDocument();
+  });
+});
+
 describe("FilesPanel (repositories)", () => {
   it("names each repository's branch, base, pull request and where it stands", () => {
     render(
@@ -736,5 +800,104 @@ describe("FilesPanel (repositories)", () => {
       "https://github.com/acme/api/pull/7",
     );
     expect(repos).toHaveTextContent("In sync with the pull request");
+  });
+});
+
+describe("FilesPanel (code and tests)", () => {
+  const MIXED = [
+    tool("c1", "Write", { file_path: "/repo/src/provider.py", content: "x = 1" }),
+    tool("c2", "Write", { file_path: "/repo/tests/test_provider.py", content: "def test(): ..." }),
+    tool("c3", "Write", { file_path: "/repo/src/ui/app.test.ts", content: "it()" }),
+  ];
+  const rows = () =>
+    within(screen.getByRole("navigation", { name: "Files" }))
+      .getAllByRole("button")
+      .map((button) => button.dataset.filePath)
+      .filter(Boolean);
+
+  it("shows everything together, then the code or its tests apart, and remembers the choice (AC-424.1)", async () => {
+    const { unmount } = render(
+      <FilesPanel files={filesOf(MIXED)} sessionId="s1" onClose={vi.fn()} />,
+    );
+    const split = screen.getByRole("group", { name: "Show the code and its tests" });
+    expect(within(split).getByRole("button", { name: "All 3" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(rows()).toHaveLength(3);
+
+    await userEvent.click(within(split).getByRole("button", { name: "Tests 2" }));
+    expect(rows()).toEqual(["/repo/tests/test_provider.py", "/repo/src/ui/app.test.ts"]);
+
+    await userEvent.click(within(split).getByRole("button", { name: "Code 1" }));
+    expect(rows()).toEqual(["/repo/src/provider.py"]);
+    expect(window.localStorage.getItem(CODE_SPLIT_KEY)).toBe("source");
+
+    unmount();
+    render(<FilesPanel files={filesOf(MIXED)} sessionId="s2" onClose={vi.fn()} />);
+    expect(rows()).toEqual(["/repo/src/provider.py"]);
+  });
+
+  it("shows a file a card asked for, even on the side the split hides (AC-424.2)", () => {
+    window.localStorage.setItem(CODE_SPLIT_KEY, "source");
+    render(
+      <FilesPanel
+        files={filesOf(MIXED)}
+        sessionId="s1"
+        onClose={vi.fn()}
+        initialPath="/repo/tests/test_provider.py"
+      />,
+    );
+    expect(screen.getByRole("region", { name: /test_provider\.py/ })).toBeInTheDocument();
+  });
+
+  it("offers no split when the code has no tests (AC-424.2)", () => {
+    render(<FilesPanel files={filesOf(TWO_FILES)} sessionId="s1" onClose={vi.fn()} />);
+    expect(screen.queryByRole("group", { name: "Show the code and its tests" })).toBeNull();
+  });
+});
+
+describe("FilesPanel (narrow list)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function stubWidth(width: number) {
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(private readonly callback: ResizeObserverCallback) {}
+        observe = (target: Element) => {
+          this.callback(
+            [{ target, contentRect: { width } } as unknown as ResizeObserverEntry],
+            this as unknown as ResizeObserver,
+          );
+        };
+        disconnect = vi.fn();
+      },
+    );
+  }
+
+  it("keeps each item on one line, cut at its end, a folder led by its own name (AC-424.3)", () => {
+    stubWidth(300);
+    render(<FilesPanel files={filesOf(TWO_FILES)} sessionId="s1" onClose={vi.fn()} />);
+
+    const list = screen.getByRole("navigation", { name: "Files" });
+    expect(list).toHaveClass("as-files-nav-compact");
+    const row = within(list).getByRole("button", { name: /app\.ts/ });
+    // No cut in the middle (its tail never shrinks), no line counts beside the name.
+    expect(row.querySelector(".as-fit")).toBeNull();
+    expect(row.querySelector(".as-files-stats")).toBeNull();
+    expect(row.querySelector(".as-files-cut")).toHaveTextContent("app.ts");
+    expect(within(list).getByTitle("ui")).toBeInTheDocument();
+  });
+
+  it("keeps one line per file when the list is wide enough (AC-424.3)", () => {
+    stubWidth(500);
+    render(<FilesPanel files={filesOf(TWO_FILES)} sessionId="s1" onClose={vi.fn()} />);
+
+    const list = screen.getByRole("navigation", { name: "Files" });
+    expect(list).not.toHaveClass("as-files-nav-compact");
+    expect(list.querySelector(".as-files-cut")).toBeNull();
   });
 });

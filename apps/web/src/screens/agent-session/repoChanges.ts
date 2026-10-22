@@ -121,6 +121,14 @@ function unchanged(repo: RepoChanges, own: ChangedFile): ChangedFile {
   };
 }
 
+/** A file the session touched that ends as it began: git lists it nowhere (created then deleted,
+ * or changed then put back), or, without git, its changes cancel out. Nothing of it goes in the
+ * pull request, so the review shows it apart and does not wait on it. */
+export function isDiscarded(file: ChangedFile): boolean {
+  if (file.repo) return file.repo.unchanged;
+  return file.net !== null && file.net.added === 0 && file.net.removed === 0;
+}
+
 /**
  * The session's `files` with git's `repos` laid over them (see the module comment): a file in a
  * repository git compared with a base takes git's view; the repositories' files come first, by

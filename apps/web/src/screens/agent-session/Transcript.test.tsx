@@ -270,8 +270,9 @@ describe("Transcript (transcript)", () => {
     const diff = screen.getByLabelText("Diff of src/app.py");
     expect(diff.tagName).toBe("PRE");
     expect(diff).toHaveTextContent("--- a/src/app.py");
-    expect(within(diff).getByText("-a = 1")).toHaveClass("as-diff-del");
-    expect(within(diff).getByText("+a = 2")).toHaveClass("as-diff-add");
+    // Each line whole, plain or coloured in the file's language (AC-424.4), tinted by its sign.
+    expect(diffRow(diff, "-a = 1")).toHaveClass("as-diff-del");
+    expect(diffRow(diff, "+a = 2")).toHaveClass("as-diff-add");
     expect(screen.getByText("edited")).toBeInTheDocument();
 
     await userEvent.click(head);
@@ -981,3 +982,10 @@ describe("Transcript (message-meta)", () => {
     expect(renders.markdown).toBe(0);
   });
 });
+
+/** The row of a diff whose whole text is `text` (its code may be split into syntax spans). */
+function diffRow(diff: HTMLElement, text: string): HTMLElement {
+  const row = Array.from(diff.children).find((child) => child.textContent.trim() === text);
+  if (!(row instanceof HTMLElement)) throw new Error(`no diff row ${text}`);
+  return row;
+}

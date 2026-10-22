@@ -70,7 +70,7 @@
   text-decoration: underline dotted;
   cursor: help;
 }
-/* Highlighted code (AC-234.31, ADR 0034): highlight.js scopes on design tokens, both themes. */
+/* Highlighted code (AC-234.31, ADR 0034; diffs AC-424.4): highlight.js scopes on design tokens, both themes. */
 .hljs .hljs-keyword,
 .hljs .hljs-selector-tag,
 .hljs .hljs-name,
