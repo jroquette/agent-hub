@@ -186,6 +186,7 @@ def test_refuses_commit_diff_when_file_or_commit_malformed(
 
 
 def test_passes_file_and_commit_when_file_at_commit_read(recorded_app: Any) -> None:
+    # AC-424.8
     response = recorded_app.client.get(
         f"{ONE}/repo-changes/file", params={"path": "/hubs/api/a.py", "sha": "abc1234"}
     )
@@ -209,6 +210,7 @@ def test_passes_file_and_commit_when_file_at_commit_read(recorded_app: Any) -> N
 def test_refuses_file_at_commit_when_file_or_commit_malformed(
     recorded_app: Any, params: dict[str, str]
 ) -> None:
+    # AC-424.9
     response = recorded_app.client.get(f"{ONE}/repo-changes/file", params=params)
 
     assert response.status_code == 400, response.text

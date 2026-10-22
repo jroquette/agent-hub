@@ -699,7 +699,7 @@ describe("FilesPanel (pull request)", () => {
     expect(commitReads()).toHaveLength(1);
   });
 
-  it("expands git's diff around its hunks with the file as the base has it, as on GitHub", async () => {
+  it("expands git's diff around its hunks with the file as the base has it, as on GitHub (AC-424.7)", async () => {
     // The base's app.py: 60 lines, "l1" to "l60"; the diff shows lines 40 to 42.
     const base = Array.from({ length: 60 }, (_, i) => `l${String(i + 1)}`).join("\n") + "\n";
     const view = renderWithApi(<FilesPanel files={prFiles()} sessionId="s1" onClose={vi.fn()} />, {
