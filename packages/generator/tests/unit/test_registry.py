@@ -34,6 +34,7 @@ SEEDED_PACK_FILES = (
     "doc-drift/fixtures/drift-declined.yaml",
     "doc-drift/fixtures/drift-none.yaml",
     "doc-drift/fixtures/drift-renamed-command.yaml",
+    "doc-drift/scripts/contract.py",
     "issue-to-pr/fixtures/blocked.yaml",
     "issue-to-pr/fixtures/dirty.yaml",
     "issue-to-pr/fixtures/done.yaml",
