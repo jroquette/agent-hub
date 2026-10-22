@@ -601,6 +601,9 @@
     "workflows/doc-drift/scripts/contract.py": {
       "ownership": "seeded"
     },
+    "workflows/doc-drift/scripts/mentions.py": {
+      "ownership": "seeded"
+    },
     "workflows/issue-to-pr/fixtures/blocked.yaml": {
       "ownership": "seeded"
     },
