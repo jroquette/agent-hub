@@ -427,3 +427,18 @@ def test_launches_once_when_start_and_resume_of_issue_race() -> None:
 
     assert outcomes == ["launched", "live_run"]
     assert len(launcher.calls) == 1
+
+
+def test_passes_schedule_trigger_and_environment_to_the_launch_spec_when_given() -> None:
+    launcher = Launcher()
+    guard = RunGuard(Runs(), launcher)  # type: ignore[arg-type]
+    use_case = StartWorkflowRun(Plans(), guard, mint=lambda: "run-1")
+
+    use_case(
+        StartRunRequest(project="demo", workflow="lint"), trigger="schedule", environment="staging"
+    )
+    use_case(StartRunRequest(project="demo", workflow="lint"))
+
+    [(_, scheduled), (_, by_hand)] = launcher.calls
+    assert (scheduled.trigger, scheduled.environment) == ("schedule", "staging")
+    assert (by_hand.trigger, by_hand.environment) == (None, None)

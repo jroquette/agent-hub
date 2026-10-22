@@ -113,7 +113,8 @@ class DecisionUnknownError(RunLaunchError):
 
 @dataclass(frozen=True)
 class LaunchSpec:
-    """A live run to start: its id, hub folder, workflow, the inputs given and its issue."""
+    """A live run to start: its id, hub folder, workflow, the inputs given and its issue; a
+    run ``hub web`` started by itself also has its ``trigger`` and maybe an ``environment``."""
 
     run_id: str
     project: str
@@ -121,6 +122,8 @@ class LaunchSpec:
     workflow: str
     inputs: Mapping[str, JsonValue]
     issue: str | None
+    trigger: RunTrigger | None = None
+    environment: str | None = None
 
 
 class RunLauncher(Protocol):
@@ -232,7 +235,15 @@ class StartWorkflowRun:
     ) -> None:
         self._plans, self._guard, self._mint = plans, guard, mint
 
-    def __call__(self, request: StartRunRequest) -> RunAccepted:
+    def __call__(
+        self,
+        request: StartRunRequest,
+        *,
+        trigger: RunTrigger | None = None,
+        environment: str | None = None,
+    ) -> RunAccepted:
+        """Start ``request``'s run; ``trigger`` and ``environment`` come from a scheduled or
+        event start (ADR 0048), never from the API body."""
         run_id = self._mint()
         if request.workflow in TRACKER_WORKFLOWS:
             reason = f"{request.workflow} writes to the tracker; start it with hub run"
@@ -248,6 +259,8 @@ class StartWorkflowRun:
             workflow=plan.document.name,
             inputs=dict(request.inputs),
             issue=issue,
+            trigger=trigger,
+            environment=environment,
         )
         with self._guard.lock:
             if issue is not None:
