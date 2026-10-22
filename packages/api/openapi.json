@@ -2150,6 +2150,63 @@
         "title": "DiagnosticSeverity",
         "type": "string"
       },
+      "DiscoveryProposal": {
+        "additionalProperties": false,
+        "description": "What Claude proposed, as the server checked it.",
+        "properties": {
+          "dropped": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Dropped"
+            },
+            "title": "Dropped",
+            "type": "array"
+          },
+          "environments": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ProposedEnvironment"
+            },
+            "title": "Environments",
+            "type": "array"
+          },
+          "missing": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/MissingService"
+            },
+            "title": "Missing",
+            "type": "array"
+          },
+          "not_read": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/NotRead"
+            },
+            "title": "Not Read",
+            "type": "array"
+          },
+          "services": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ProposedService"
+            },
+            "title": "Services",
+            "type": "array"
+          }
+        },
+        "title": "DiscoveryProposal",
+        "type": "object"
+      },
+      "DiscoveryState": {
+        "enum": [
+          "running",
+          "finished",
+          "failed",
+          "stopped"
+        ],
+        "type": "string"
+      },
       "DoctorFixRequest": {
         "additionalProperties": false,
         "description": "The empty JSON body of the fix: a cross-site form cannot send one (S7).",
@@ -2291,6 +2348,26 @@
           "available"
         ],
         "title": "DriverCapabilities",
+        "type": "object"
+      },
+      "Dropped": {
+        "additionalProperties": false,
+        "description": "An item, or one field of it, the server refused while checking the proposal.",
+        "properties": {
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "what": {
+            "title": "What",
+            "type": "string"
+          }
+        },
+        "required": [
+          "what",
+          "reason"
+        ],
+        "title": "Dropped",
         "type": "object"
       },
       "EdgeSource": {
@@ -2498,6 +2575,81 @@
           "ignored"
         ],
         "title": "EnvFileKeys",
+        "type": "object"
+      },
+      "EnvironmentDiscovery": {
+        "additionalProperties": false,
+        "description": "``/projects/{project}/environment-discoveries``: a discovery, where its session is, and\nits checked proposal once there is one; ``problem`` says in plain words why it failed.",
+        "properties": {
+          "agent_session_id": {
+            "title": "Agent Session Id",
+            "type": "string"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "environments": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Environments",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "problem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Problem"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "proposal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DiscoveryProposal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "repos": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Repos",
+            "type": "array"
+          },
+          "state": {
+            "$ref": "#/components/schemas/DiscoveryState"
+          },
+          "suggest_environments": {
+            "title": "Suggest Environments",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "project",
+          "agent_session_id",
+          "repos",
+          "environments",
+          "suggest_environments",
+          "created_at",
+          "state"
+        ],
+        "title": "EnvironmentDiscovery",
         "type": "object"
       },
       "EnvironmentEdit": {
@@ -2709,6 +2861,32 @@
         ],
         "title": "EventType",
         "type": "string"
+      },
+      "Evidence": {
+        "additionalProperties": false,
+        "description": "Where Claude saw something: a file relative to the workspace, inside a picked repo.",
+        "properties": {
+          "line": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "Evidence",
+        "type": "object"
       },
       "ExternalBlocker": {
         "additionalProperties": false,
@@ -4405,6 +4583,14 @@
         "title": "ItemKind",
         "type": "string"
       },
+      "ItemStatus": {
+        "enum": [
+          "new",
+          "differs",
+          "declared"
+        ],
+        "type": "string"
+      },
       "ItemVersionContent": {
         "additionalProperties": false,
         "description": "A version's content: a file unit's one file, or a folder's files in path order (S6).",
@@ -5911,6 +6097,50 @@
         "title": "MessageFile",
         "type": "object"
       },
+      "MissingService": {
+        "additionalProperties": false,
+        "description": "A service Claude saw a sign of but could not place: no address it could read.",
+        "properties": {
+          "evidence": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "repo": {
+            "title": "Repo",
+            "type": "string"
+          },
+          "why": {
+            "title": "Why",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo",
+          "name",
+          "why"
+        ],
+        "title": "MissingService",
+        "type": "object"
+      },
       "Mode": {
         "description": "Who can invoke a skill (S5, L2); ``neither`` reads \"Hidden\" in the UI.",
         "enum": [
@@ -5984,6 +6214,26 @@
           "learning"
         ],
         "type": "string"
+      },
+      "NotRead": {
+        "additionalProperties": false,
+        "description": "A file Claude could not read, and why.",
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "reason"
+        ],
+        "title": "NotRead",
+        "type": "object"
       },
       "NowItem": {
         "additionalProperties": false,
@@ -6296,6 +6546,41 @@
           "total_estimate"
         ],
         "title": "Page[Approval]",
+        "type": "object"
+      },
+      "Page_EnvironmentDiscovery_": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentDiscovery"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total_estimate": {
+            "minimum": 0.0,
+            "title": "Total Estimate",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total_estimate"
+        ],
+        "title": "Page[EnvironmentDiscovery]",
         "type": "object"
       },
       "Page_FeatureView_": {
@@ -7176,6 +7461,16 @@
         "title": "PreflightView",
         "type": "object"
       },
+      "Preset": {
+        "enum": [
+          "local",
+          "staging",
+          "production",
+          "mine",
+          "other"
+        ],
+        "type": "string"
+      },
       "Problem": {
         "additionalProperties": false,
         "description": "One problem of a session and the event it comes from.\n\n``where`` is the command head, path, pattern, URL, MCP tool or skill of the paired tool\ncall (derived on read, at most 120 characters); ``message`` is the stored ``error_message``,\nelse ``error_line``, else the rule or the gate's command and exit code.",
@@ -7681,6 +7976,216 @@
           "cost_previous_period"
         ],
         "title": "ProjectSummary",
+        "type": "object"
+      },
+      "ProposedAccess": {
+        "enum": [
+          "read",
+          "ask",
+          "write"
+        ],
+        "type": "string"
+      },
+      "ProposedAddress": {
+        "additionalProperties": false,
+        "description": "A service's address in one environment: a URL or a resource name.",
+        "properties": {
+          "address": {
+            "title": "Address",
+            "type": "string"
+          },
+          "environment": {
+            "title": "Environment",
+            "type": "string"
+          },
+          "evidence": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ItemStatus"
+          },
+          "yours": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Yours"
+          }
+        },
+        "required": [
+          "environment",
+          "address",
+          "status",
+          "yours"
+        ],
+        "title": "ProposedAddress",
+        "type": "object"
+      },
+      "ProposedEnvironment": {
+        "additionalProperties": false,
+        "description": "An environment Claude found. ``access`` and ``production`` come from ``preset``, never\nfrom Claude alone; ``yours`` describes the declared one when ``status`` is ``differs``.",
+        "properties": {
+          "access": {
+            "$ref": "#/components/schemas/ProposedAccess"
+          },
+          "aws_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aws Profile"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "env_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Env File"
+          },
+          "evidence": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "preset": {
+            "$ref": "#/components/schemas/Preset"
+          },
+          "production": {
+            "title": "Production",
+            "type": "boolean"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ItemStatus"
+          },
+          "yours": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Yours"
+          }
+        },
+        "required": [
+          "name",
+          "preset",
+          "access",
+          "production",
+          "status",
+          "yours"
+        ],
+        "title": "ProposedEnvironment",
+        "type": "object"
+      },
+      "ProposedService": {
+        "additionalProperties": false,
+        "description": "A service of a picked repo; ``declared`` when it and every address are declared already,\n``differs`` when it is declared but an address is new or different.",
+        "properties": {
+          "addresses": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ProposedAddress"
+            },
+            "title": "Addresses",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "evidence": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "repo": {
+            "title": "Repo",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ItemStatus"
+          }
+        },
+        "required": [
+          "repo",
+          "name",
+          "status"
+        ],
+        "title": "ProposedService",
         "type": "object"
       },
       "PublishDraftBody": {
@@ -10945,6 +11450,44 @@
           "task"
         ],
         "title": "StartCloud",
+        "type": "object"
+      },
+      "StartEnvironmentDiscovery": {
+        "additionalProperties": false,
+        "description": "``POST /projects/{project}/environment-discoveries``: the repos to read (``hub.json``\nrepo folders), the declared environments to look for, and whether Claude may suggest\nenvironments not declared yet.",
+        "properties": {
+          "environments": {
+            "default": [],
+            "items": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Environments",
+            "type": "array"
+          },
+          "repos": {
+            "items": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Repos",
+            "type": "array"
+          },
+          "suggest_environments": {
+            "default": false,
+            "title": "Suggest Environments",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "repos"
+        ],
+        "title": "StartEnvironmentDiscovery",
         "type": "object"
       },
       "StartRunRequest": {
@@ -16952,6 +17495,245 @@
         "summary": "Get Env File Keys",
         "tags": [
           "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/environment-discoveries": {
+      "get": {
+        "description": "The project's discoveries not discarded, newest first.",
+        "operationId": "list_environment_discoveries_api_v1_projects__project__environment_discoveries_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_EnvironmentDiscovery_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "List Environment Discoveries",
+        "tags": [
+          "environment-discoveries"
+        ]
+      },
+      "post": {
+        "description": "Start a read-only Claude session that reads the picked repos and proposes environments,\nservices and addresses; 422 naming each repo or environment the config does not hold.",
+        "operationId": "start_environment_discovery_api_v1_projects__project__environment_discoveries_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartEnvironmentDiscovery"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentDiscovery"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Start Environment Discovery",
+        "tags": [
+          "environment-discoveries"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/environment-discoveries/{discovery_id}": {
+      "delete": {
+        "description": "Discard a discovery (its session is ended when it still works).",
+        "operationId": "discard_environment_discovery_api_v1_projects__project__environment_discoveries__discovery_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "discovery_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{12}$",
+              "title": "Discovery Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Discard Environment Discovery",
+        "tags": [
+          "environment-discoveries"
+        ]
+      },
+      "get": {
+        "description": "One discovery: its session's state and, once Claude finished, the checked proposal with\neach item's status against the config of now.",
+        "operationId": "get_environment_discovery_api_v1_projects__project__environment_discoveries__discovery_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "discovery_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{12}$",
+              "title": "Discovery Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentDiscovery"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Environment Discovery",
+        "tags": [
+          "environment-discoveries"
         ]
       }
     },
