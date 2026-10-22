@@ -10,6 +10,7 @@ import shlex
 import shutil
 import signal
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -482,3 +483,75 @@ def test_names_last_line_when_stderr_longer_than_tail(tmp_path: Path) -> None:
         checkout.listed()
 
     assert str(raised.value) == "brain: git exited with 128: fatal: the last line"
+
+
+class _CountingFile:
+    """A temporary file that counts the bytes read back from it."""
+
+    def __init__(self, file: Any) -> None:
+        self._file = file
+        self.read_bytes = 0
+
+    def fileno(self) -> int:
+        return int(self._file.fileno())
+
+    def seek(self, *args: Any) -> int:
+        return int(self._file.seek(*args))
+
+    def read(self, size: int = -1) -> bytes:
+        data: bytes = self._file.read(size)
+        self.read_bytes += len(data)
+        return data
+
+    def __enter__(self) -> _CountingFile:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self._file.close()
+
+
+def test_reads_only_stderr_tail_when_stderr_long(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    git = _fake_git(
+        tmp_path,
+        "i=0\nwhile [ $i -lt 400 ]; do echo 'noise noise noise noise noise noise' >&2;"
+        " i=$((i+1)); done\necho 'fatal: the last line' >&2\nexit 128\n",
+    )
+    opened: list[_CountingFile] = []
+    real_temporary = tempfile.TemporaryFile
+
+    def counted(*args: Any, **kwargs: Any) -> _CountingFile:
+        opened.append(_CountingFile(real_temporary(*args, **kwargs)))
+        return opened[-1]
+
+    monkeypatch.setattr(tempfile, "TemporaryFile", counted)
+    checkout = GitKnowledgeCheckout(_bare_hub(tmp_path), (), git=git, environ=dict(os.environ))
+
+    with pytest.raises(KnowledgeCheckoutError) as raised:
+        checkout.listed()
+
+    assert str(raised.value) == "brain: git exited with 128: fatal: the last line"
+    stdout, stderr = opened
+    assert stdout.read_bytes == 0
+    assert stderr.read_bytes == 4096
+
+
+def test_lists_without_waiting_when_git_reads_stdin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    git = _fake_git(tmp_path, "read line\nexit 0\n")
+    monkeypatch.setattr(knowledge_checkout, "GIT_TIMEOUT_SECONDS", 0.5)
+    checkout = GitKnowledgeCheckout(_bare_hub(tmp_path), (), git=git, environ=dict(os.environ))
+    # The test's own stdin is a pipe nobody writes to: a git that inherited it would block.
+    reader, writer = os.pipe()
+    saved = os.dup(0)
+    os.dup2(reader, 0)
+    try:
+        listed = checkout.listed()
+    finally:
+        os.dup2(saved, 0)
+        for descriptor in (saved, reader, writer):
+            os.close(descriptor)
+
+    assert listed == ()
