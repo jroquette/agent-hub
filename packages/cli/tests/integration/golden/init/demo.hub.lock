@@ -613,6 +613,27 @@
     "workflows/issue-to-pr/prompts/implement.md": {
       "ownership": "seeded"
     },
+    "workflows/release/fixtures/release-check-red.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/release/fixtures/release-declined.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/release/fixtures/release-minor.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/release/fixtures/release-nothing.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/release/fixtures/release-pin-declined.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/release/fixtures/release-pin.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/release/fixtures/release-tag-missing.yaml": {
+      "ownership": "seeded"
+    },
     "workflows/release/prompts/notes.md": {
       "ownership": "seeded"
     },
