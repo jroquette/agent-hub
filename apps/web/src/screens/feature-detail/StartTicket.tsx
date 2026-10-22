@@ -83,11 +83,14 @@ export function StartTicketButton({
   slug,
   row,
   rows,
+  quiet = false,
 }: {
   project: string;
   slug: string;
   row: TicketRow & { id: string };
   rows: readonly TicketRow[];
+  /** Not the view's primary: a plan change request waits for the owner first (U7). */
+  quiet?: boolean;
 }) {
   const start = useHubSessionStart(project);
   const create = useCreateAgentSession();
@@ -97,7 +100,7 @@ export function StartTicketButton({
   const label = base
     ? `Start ${row.id} on ${base.id}'s branch (${base.id} is in review, not merged)`
     : `Start ${row.id}`;
-  const variant = base ? "default" : "primary";
+  const variant = base || quiet ? "default" : "primary";
 
   const begin = async () => {
     if (!start.hubWorkdirId) return;

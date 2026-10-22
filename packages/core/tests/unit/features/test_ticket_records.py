@@ -6,17 +6,22 @@ import json
 import pytest
 
 from agent_hub.core.features.feature_status import RecordHead
+from agent_hub.core.features.feature_view import ChangeDecisionView
 from agent_hub.core.features.ticket_records import (
+    CHANGE_REQUEST_HEAD_BYTES,
     MAX_CHANGE_REQUEST_FILES,
     MAX_PREFLIGHT_BYTES,
     ChangeRequest,
     change_requests,
     preflight_record,
+    request_view,
     ticket_folder,
 )
 
 
-def a_request(n: int = 1, *, ticket: str = "DEM-8", **fields: str) -> RecordHead:
+def a_request(
+    n: int = 1, *, ticket: str = "DEM-8", proposal: str = "", **fields: str
+) -> RecordHead:
     values = {
         "type": "change-request",
         "ticket": ticket,
@@ -28,7 +33,7 @@ def a_request(n: int = 1, *, ticket: str = "DEM-8", **fields: str) -> RecordHead
         "run_id": "implement-8",
     } | fields
     front = "".join(f"{key}: {value}\n" for key, value in values.items())
-    text = f"---\n{front}---\n# Plan change request {n}\n"
+    text = f"---\n{front}---\n# Plan change request {n}\n{proposal}"
     return RecordHead(name=f"{n}.md", head=text.encode(), problem=None)
 
 
@@ -67,10 +72,79 @@ def test_reads_open_when_request_has_no_decision() -> None:
 
     assert found.requests == (
         ChangeRequest(
-            n=1, ticket="DEM-8", status="open", plan_to=3, affected=("DEM-9",), problem=None
+            n=1,
+            ticket="DEM-8",
+            status="open",
+            plan_to=3,
+            affected=("DEM-9",),
+            problem=None,
+            plan_from=2,
+            opened_at="2026-10-21T09:30:00Z",
+            run_id="implement-8",
+            body="# Plan change request 1\n",
         ),
     )
     assert found.problem is None
+
+
+# Q13: a request longer than the head read says so: the panel never shows a cut one as whole.
+def test_marks_body_cut_when_head_full() -> None:
+    long = a_request(proposal="x" * CHANGE_REQUEST_HEAD_BYTES)
+    head = long.head[:CHANGE_REQUEST_HEAD_BYTES] if long.head else b""
+    cut = RecordHead(name=long.name, head=head, problem=None)
+
+    (whole,) = change_requests((a_request(),), skipped=0).requests
+    (request,) = change_requests((cut,), skipped=0).requests
+
+    assert (whole.body_cut, request.body_cut) == (False, True)
+
+
+# Q15: the ticket route's view carries the cut flag with the body; the detail serves neither.
+def test_serves_body_cut_only_with_body_when_viewed() -> None:
+    long = a_request(proposal="x" * CHANGE_REQUEST_HEAD_BYTES)
+    cut = RecordHead(
+        name=long.name, head=(long.head or b"")[:CHANGE_REQUEST_HEAD_BYTES], problem=None
+    )
+    (request,) = change_requests((cut,), skipped=0).requests
+
+    assert request_view(request, slug="demo", body=True).body_cut is True
+    assert request_view(request, slug="demo").body_cut is False
+
+
+# Q19: only a cut head drops the replacement mark a split character leaves; a whole body keeps it.
+def test_strips_split_character_only_when_head_cut() -> None:
+    prefix = len(a_request().head or b"")
+    # The head ends inside the two-byte "é": its first byte alone decodes to U+FFFD.
+    long = a_request(proposal="x" * (CHANGE_REQUEST_HEAD_BYTES - prefix - 1) + "éé")
+    cut = RecordHead(
+        name=long.name, head=(long.head or b"")[:CHANGE_REQUEST_HEAD_BYTES], problem=None
+    )
+    whole = a_request(proposal="ends with \ufffd")
+
+    (cut_request,) = change_requests((cut,), skipped=0).requests
+    (whole_request,) = change_requests((whole,), skipped=0).requests
+
+    assert cut_request.body is not None and not cut_request.body.rstrip().endswith("\ufffd")
+    assert whole_request.body is not None and whole_request.body.rstrip().endswith("\ufffd")
+
+
+# AGH-405 (S2-T7): hub web shows who decided a request, when and with what note.
+def test_reads_decision_when_decision_file_exists() -> None:
+    (request,) = change_requests((a_request(), a_decision(decision="declined")), skipped=0).requests
+
+    assert request.decision == ChangeDecisionView(
+        decision="declined",
+        decided_by="Dana Owner",
+        decided_at="2026-10-21T10:00:00Z",
+        note="Go ahead.",
+    )
+
+
+def test_reads_no_note_when_decision_note_empty() -> None:
+    (request,) = change_requests((a_request(), a_decision(note='""')), skipped=0).requests
+
+    assert request.decision is not None
+    assert request.decision.note is None
 
 
 def test_folds_decision_into_status_when_decision_file_exists() -> None:

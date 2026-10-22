@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Final
 
 from agent_hub.core.errors import TrackerFailure
+from agent_hub.core.features.feature_record import FeatureRecordFile, record_from_bytes
 from agent_hub.core.features.feature_reviews import review_records
 from agent_hub.core.features.feature_status import FeatureFolder, feature_parts, plan_view
 from agent_hub.core.features.golden_path import (
@@ -23,9 +24,20 @@ from agent_hub.core.features.golden_path import (
     LINEAR_NOT_LOADED,
     LINEAR_NOT_LOADED_REASON,
 )
+from agent_hub.core.features.scope_rules import ticket_aliases
 from agent_hub.core.features.ticket_flow import ticket_evidence, ticket_flow
+from agent_hub.core.features.ticket_records import (
+    change_requests,
+    preflight_record,
+    request_view,
+)
 from agent_hub.core.features.ticket_snapshots import SnapshotRead
-from agent_hub.core.features.ticket_view import FeatureTickets, TrackerProblem
+from agent_hub.core.features.ticket_view import (
+    FeatureTickets,
+    PreflightView,
+    TicketRecords,
+    TrackerProblem,
+)
 from agent_hub.core.hub_config.model import Tracker
 from agent_hub.core.hub_config.problems import one_line
 from agent_hub.core.redaction.redact import clip, redact_text
@@ -102,6 +114,43 @@ def feature_tickets(
         ),
         planning=parts.board.plan,
         golden_path=parts.golden_path,
+    )
+
+
+def ticket_records(folder: FeatureFolder, ticket: str, *, project: str) -> TicketRecords | None:
+    """The records of ``ticket`` (its plan key or tracker id, any case); None when the feature's
+    ``features.json`` neither plans it nor lists it in ``linear``."""
+    raw = folder.features_json
+    record = record_from_bytes(raw) if isinstance(raw, bytes) else None
+    if not isinstance(record, FeatureRecordFile):
+        return None
+    listed = {name.upper() for name in record.linear}
+    names = ticket_aliases(record.tickets).get(ticket.upper()) or (
+        frozenset({ticket.upper()}) if ticket.upper() in listed else None
+    )
+    if names is None:
+        return None
+    files = next((found for found in folder.ticket_folders if found.name.upper() in names), None)
+    parsed = None if files is None else preflight_record(files.preflight, folder=files.name)
+    preflight = (
+        None
+        if parsed is None
+        else PreflightView(
+            runs=() if isinstance(parsed, str) else parsed.runs,
+            problem=parsed if isinstance(parsed, str) else None,
+        )
+    )
+    requests = change_requests(folder.change_requests, skipped=folder.change_requests_skipped)
+    return TicketRecords(
+        project=project,
+        slug=folder.slug,
+        ticket=ticket,
+        preflight=preflight,
+        change_requests=tuple(
+            request_view(request, slug=folder.slug, body=True)
+            for request in requests.requests
+            if any(name.upper() in names for name in (request.ticket or "", *request.affected))
+        ),
     )
 
 

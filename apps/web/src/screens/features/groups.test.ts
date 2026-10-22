@@ -73,28 +73,58 @@ describe("reasonOf", () => {
     expect(reasonOf(shipped, wait)).toMatchObject({ group: "shipped", needs: null });
   });
 
-  it("does not count owner steps with no AC listed as needing you: the row names the wait (A10)", () => {
+  // two-level-flows A17: a sign-off only the owner can write by hand needs the owner, with no button.
+  it("counts a hand-written sign-off as needing you (A17)", () => {
     const unlisted = aFeature({
       phase: "acceptance",
       verdict: "SHIP-WITH-OWNER-STEPS",
+      waiting_on_owner: { kind: "owner_signoff_manual", tickets: [] },
+    });
+
+    expect(reasonOf(unlisted)).toMatchObject({
+      group: "progress",
+      needs: "owner-manual",
+      icon: "hand",
+      line: "Sign off by hand · no ACs listed",
+      doc: "eval",
+    });
+  });
+
+  // two-level-flows AC-2.8: a plan change request ranks the feature in Needs you, from its ticket.
+  it("names the asking tickets when a plan change waits for you (AC-2.8)", () => {
+    const one = aFeature({ waiting_on_owner: { kind: "change_request", tickets: ["DEM-8"] } });
+    const two = aFeature({
+      waiting_on_owner: { kind: "change_request", tickets: ["DEM-8", "DEM-9"] },
+    });
+
+    expect(reasonOf(one)).toMatchObject({
+      needs: "change-request",
+      icon: "hand",
+      tone: "waiting",
+      line: "Plan change waits for you · from DEM-8",
+      doc: "tickets&ticket=DEM-8&step=preflight",
+    });
+    expect(reasonOf(two).line).toBe("2 plan changes wait for you · from DEM-8, DEM-9");
+  });
+
+  // P5 retired: only the typed wait ranks a feature, never the step's words.
+  it("does not count an Acceptance meta that reads like a wait without the typed wait", () => {
+    const worded = aFeature({
+      phase: "acceptance",
       golden_path: aGoldenPath({
         phase: "acceptance",
         steps: [
           aGoldenStep({
             name: "acceptance",
             state: "current",
-            meta: "Waiting on owner steps · no ACs listed",
-            reason: "the whole-feature eval leaves owner steps and lists no AC to sign off",
+            meta: "Waiting for you: sign off 2 ACs",
             progress: null,
           }),
         ],
       }),
     });
 
-    const reason = reasonOf(unlisted);
-
-    expect(reason).toMatchObject({ group: "progress", needs: null });
-    expect(reason.line).toMatch(/^Acceptance · Waiting on owner steps · no ACs listed · /);
+    expect(reasonOf(worded).needs).toBeNull();
   });
 
   // two-level-flows A12, A15 (AGH-330 Q10): no sign-off can be recorded yet, so no Needs you.
@@ -130,21 +160,21 @@ describe("reasonOf", () => {
 });
 
 describe("byGroupOrder", () => {
-  it("leads with a waiting session, your turn, a broken record, NO-SHIP, owner steps, then the rest", () => {
+  it("leads with a waiting session, your turn, a broken record, NO-SHIP, a plan change, owner steps, a hand sign-off, then the rest", () => {
     const owner = aFeature({
       slug: "a-owner",
       phase: "acceptance",
       verdict: "SHIP-WITH-OWNER-STEPS",
-      golden_path: aGoldenPath({
-        phase: "acceptance",
-        steps: [
-          aGoldenStep({
-            name: "acceptance",
-            state: "current",
-            meta: "Waiting on you: sign off 2 ACs",
-          }),
-        ],
-      }),
+      waiting_on_owner: { kind: "owner_signoff", tickets: [] },
+    });
+    const change = aFeature({
+      slug: "a-plan",
+      waiting_on_owner: { kind: "change_request", tickets: ["DEM-8"] },
+    });
+    const manual = aFeature({
+      slug: "a-manual",
+      phase: "acceptance",
+      waiting_on_owner: { kind: "owner_signoff_manual", tickets: [] },
     });
     const noShip = aFeature({ slug: "b-no-ship", verdict: "NO-SHIP" });
     const broken = aFeature({ slug: "c-broken", phase: "spec", problem: "features.json is empty" });
@@ -157,7 +187,7 @@ describe("byGroupOrder", () => {
     ];
     const reason = (f: typeof plain) => reasonOf(f, sessionWaitOf(f, tiles));
 
-    const sorted = [plain, owner, noShip, broken, turn, session].sort((a, b) =>
+    const sorted = [plain, manual, owner, change, noShip, broken, turn, session].sort((a, b) =>
       byGroupOrder(a, b, reason),
     );
 
@@ -167,7 +197,9 @@ describe("byGroupOrder", () => {
       "d-turn",
       "c-broken",
       "b-no-ship",
+      "a-plan",
       "a-owner",
+      "a-manual",
       "f-plain",
     ]);
   });

@@ -46,14 +46,18 @@ from agent_hub.core.features.feature_status import (
     feature_view,
     ticket_ids,
 )
-from agent_hub.core.features.feature_tickets import NOT_CONNECTED_READ, feature_tickets
+from agent_hub.core.features.feature_tickets import (
+    NOT_CONNECTED_READ,
+    feature_tickets,
+    ticket_records,
+)
 from agent_hub.core.features.feature_view import FeatureDetail, FeatureView
 from agent_hub.core.features.ticket_snapshots import (
     SnapshotRead,
     SnapshotRequest,
     TicketSnapshots,
 )
-from agent_hub.core.features.ticket_view import FeatureTickets
+from agent_hub.core.features.ticket_view import FeatureTickets, TicketRecords
 from agent_hub.core.hub_config.config_view import HubConfigView, hub_config_view
 from agent_hub.core.hub_config.doctor_rules import LOCK_DRIFT_RULE, Severity
 from agent_hub.core.hub_config.effective_identity import GitReader
@@ -252,6 +256,14 @@ class HubFilesReadModels:
         return feature_tickets(
             folder, read, project=found.name, tracker=tracker, now=self._clock(), repos=repos
         )
+
+    def ticket_records(self, project: str, slug: str, ticket: str) -> TicketRecords:
+        """One ticket's records (two-level-flows A7); never reads the tracker."""
+        found, folder = self._feature(project, slug, tickets=True)
+        records = ticket_records(folder, ticket, project=found.name)
+        if records is None:
+            raise EntityNotFoundError(entity="ticket", entity_id=f"{project}/{slug}/{ticket}")
+        return records
 
     def doctor_findings(self, scope: Scope) -> Page[FindingView]:
         """Doctor findings of every scoped hub that names its project, in ``hub doctor`` order.
