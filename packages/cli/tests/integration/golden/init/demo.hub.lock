@@ -586,10 +586,16 @@
     "workflows/backlog-care/scripts/drafts.py": {
       "ownership": "seeded"
     },
+    "workflows/backlog-care/scripts/gates.py": {
+      "ownership": "seeded"
+    },
     "workflows/backlog-care/scripts/hygiene.py": {
       "ownership": "seeded"
     },
     "workflows/backlog-care/scripts/read.py": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/scripts/report.py": {
       "ownership": "seeded"
     },
     "workflows/issue-to-pr/fixtures/blocked.yaml": {
