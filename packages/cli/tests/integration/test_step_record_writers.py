@@ -1,6 +1,8 @@
 """``hub step ticket-brief|preflight|change-request|decide|amend-plan`` (two-level-flows AC-2.2,
-AC-2.3, AC-2.7, AC-2.12, P7): the ticket records an ``implement`` run writes into the hub; and
-``pending-decision`` (AC-2.14), the decision a new run follows.
+AC-2.3, AC-2.7, AC-2.12, P7): the ticket records an ``implement`` run writes into the hub;
+``pending-decision`` (AC-2.14), the decision a new run follows; ``outcome`` (AC-3.1), a merged
+ticket's outcome, written once; and ``preflight-due`` (AC-3.3), whether a dependent still has to
+read a blocker's outcome.
 
 Each runs in process in a copy of the ``DEMO`` workspace whose hub is a git repo holding one
 feature folder; the repo checkouts are real clones. Every case checks that nothing was committed
@@ -24,7 +26,12 @@ from typer.testing import CliRunner, Result
 from agent_hub.cli import step_records
 from agent_hub.cli.main import app
 from agent_hub.core.features.output_models import PreflightRecord
-from agent_hub.core.features.ticket_records import preflight_record
+from agent_hub.core.features.ticket_records import (
+    MAX_OUTCOME_BYTES,
+    TicketOutcome,
+    outcome_record,
+    preflight_record,
+)
 
 pytestmark = pytest.mark.disable_socket
 
@@ -1000,3 +1007,181 @@ class TestPendingDecision:
         output = hub.ok("pending-decision", *TICKET)
 
         assert (output["request"], output["input"], output["note"]) == (1, "declined_change", "No.")
+
+
+MERGED_AT = "2026-01-25T10:00:00+00:00"
+PR_URL = "https://github.com/acme/demo-api/pull/12"
+OUTCOME_TEXTS = (
+    *("--pr", PR_URL, "--merged-at", MERGED_AT),
+    *("--built", "The other module."),
+    *("--changes", "None against the plan."),
+    *("--interfaces", "`other.run()` returns a list."),
+)
+
+
+class TestOutcome:
+    def test_writes_the_outcome_once_with_its_dependents_when_the_ticket_merged(
+        self, hub: Hub
+    ) -> None:
+        output = hub.ok("outcome", "--feature", "demo-flow", "--ticket", "t3", *OUTCOME_TEXTS)
+
+        assert output == {
+            "path": f"{FEATURE}/tickets/T3/outcome.md",
+            "written": True,
+            "merged_at": MERGED_AT,
+            # The tickets features.json blocks on it, by id once they have one.
+            "dependents": ["DEM-8"],
+        }
+        content = (hub.root / output["path"]).read_bytes()
+        assert outcome_record(content, folder="T3") == TicketOutcome(
+            ticket="T3",
+            merged_at=datetime.fromisoformat(MERGED_AT),
+            pr=PR_URL,
+            dependents=("DEM-8",),
+        )
+        text = content.decode()
+        for heading, body in (
+            ("## What was built", "The other module."),
+            ("## What changed against the plan", "None against the plan."),
+            ("## Final interfaces", "`other.run()` returns a list."),
+        ):
+            assert f"{heading}\n\n{body}\n" in text
+
+    def test_writes_nothing_when_the_outcome_is_already_recorded(self, hub: Hub) -> None:
+        first = hub.ok("outcome", "--feature", "demo-flow", "--ticket", "T3", *OUTCOME_TEXTS)
+        path = hub.root / first["path"]
+        before = path.read_bytes()
+
+        again = hub.ok(
+            "outcome",
+            *("--feature", "demo-flow", "--ticket", "T3", "--pr", "demo-api#99"),
+            *("--built", "Something else.", "--changes", "x", "--interfaces", "y"),
+        )
+
+        assert again == first | {"written": False}
+        assert path.read_bytes() == before
+
+    def test_keeps_the_outcome_an_earlier_merge_recorded_when_named_by_key(self, hub: Hub) -> None:
+        before = hub.tree()
+
+        output = hub.ok("outcome", "--feature", "demo-flow", "--ticket", "T1", *OUTCOME_TEXTS)
+
+        assert (output["path"], output["written"]) == (f"{FEATURE}/tickets/DEM-7/outcome.md", False)
+        assert output["dependents"] == ["DEM-8"]
+        assert hub.tree() == before
+
+    @pytest.mark.parametrize(
+        ("change", "reason"),
+        [
+            (("--ticket", "DEM-99"), "DEM-99 is not a ticket of features.json"),
+            (("--pr", "#pending"), "pr names no pull request: #pending"),
+            (("--merged-at", "2026-01-25T10:00:00"), "merged_at needs a time with an offset"),
+            (("--merged-at", "soon"), "merged_at needs a time with an offset"),
+            (("--built", " "), "what was built is empty"),
+            (("--interfaces", ""), "the final interfaces are empty"),
+            (("--feature", "../hub"), "not a feature folder name: ../hub"),
+        ],
+    )
+    def test_refuses_and_writes_nothing_when_a_field_would_not_read_back(
+        self, hub: Hub, change: tuple[str, str], reason: str
+    ) -> None:
+        given = dict(zip(OUTCOME_TEXTS[::2], OUTCOME_TEXTS[1::2], strict=True))
+        given |= {"--feature": "demo-flow", "--ticket": "T3"} | {change[0]: change[1]}
+        args = [item for pair in given.items() for item in pair]
+
+        line = hub.refused("outcome", *args)
+
+        assert line == f"hub step outcome: {reason}"
+
+    def test_refuses_an_outcome_over_its_read_cap(self, hub: Hub) -> None:
+        line = hub.refused(
+            "outcome",
+            *("--feature", "demo-flow", "--ticket", "T3"),
+            *OUTCOME_TEXTS,
+            *("--built", "x" * MAX_OUTCOME_BYTES),
+        )
+
+        assert line == f"hub step outcome: the outcome would be larger than {MAX_OUTCOME_BYTES} bytes"
+
+    @pytest.mark.parametrize("name", ["tickets", "tickets/T3"])
+    def test_refuses_a_linked_folder_when_the_outcome_would_go_through_it(
+        self, hub: Hub, tmp_path: Path, name: str
+    ) -> None:
+        target = hub.link(name, tmp_path)
+        before = hub.tree()
+
+        result = hub.step("outcome", "--feature", "demo-flow", "--ticket", "T3", *OUTCOME_TEXTS)
+
+        assert result.exit_code == 1, result.output
+        assert result.stderr.startswith("hub step outcome: ")
+        assert "is a link; no link is followed" in result.stderr
+        assert list(target.iterdir()) == []
+        assert hub.tree() == before
+
+    def test_refuses_an_outcome_file_that_is_a_link(self, hub: Hub, tmp_path: Path) -> None:
+        outside = tmp_path / "outcome.md"
+        outside.write_text("x")
+        (hub.feature / "tickets" / "T3").mkdir(parents=True)
+        (hub.feature / "tickets" / "T3" / "outcome.md").symlink_to(outside)
+
+        line = hub.refused("outcome", "--feature", "demo-flow", "--ticket", "T3", *OUTCOME_TEXTS)
+
+        assert line == "hub step outcome: outcome.md is a link; no link is followed"
+        assert outside.read_text() == "x"
+        (hub.feature / "tickets" / "T3" / "outcome.md").unlink()
+
+
+class TestPreflightDue:
+    DUE = ("preflight-due", "--feature", "demo-flow", "--ticket", "DEM-8")
+
+    def merged(self, hub: Hub, ticket: str = "T3") -> None:
+        hub.ok("outcome", "--feature", "demo-flow", "--ticket", ticket, *OUTCOME_TEXTS)
+
+    def test_says_due_when_the_dependent_has_not_read_the_outcome(self, hub: Hub) -> None:
+        self.merged(hub)
+        # A run before the merge read no outcome of it.
+        hub.ok("preflight", *TICKET, *found(blockers_read=[]))
+
+        assert hub.ok(*self.DUE, "--blocker", "t3") == {
+            "due": True,
+            "reason": "",
+            "input": "none",
+            "merged_at": MERGED_AT,
+        }
+
+    def test_says_not_due_when_a_preflight_since_the_merge_read_the_outcome(
+        self, hub: Hub
+    ) -> None:
+        self.merged(hub)
+        hub.ok("preflight", *TICKET, *found(blockers_read=["T3"]))
+        before = hub.tree()
+
+        output = hub.ok(*self.DUE, "--blocker", "T3")
+
+        assert (output["due"], output["input"]) == (False, "none")
+        assert output["reason"].startswith("DEM-8 already read T3's outcome (preflight run at ")
+        assert hub.tree() == before
+
+    def test_says_not_due_when_the_dependent_is_merged_itself(self, hub: Hub) -> None:
+        self.merged(hub)
+        self.merged(hub, "DEM-8")
+
+        output = hub.ok(*self.DUE, "--blocker", "T3")
+
+        assert (output["due"], output["reason"]) == (False, "DEM-8 is merged")
+
+    @pytest.mark.parametrize(
+        ("blocker", "reason"),
+        [
+            ("DEM-9", "DEM-8 is not blocked by DEM-9 in features.json"),
+            ("T3", "T3 has no outcome.md"),
+            # An outcome its reader refuses: no ticket in its frontmatter.
+            ("T1", "outcome.md could not be read (ticket is missing). Fix it in a hub PR."),
+        ],
+    )
+    def test_refuses_when_there_is_no_blocker_outcome_to_read(
+        self, hub: Hub, blocker: str, reason: str
+    ) -> None:
+        line = hub.refused(*self.DUE, "--blocker", blocker)
+
+        assert line == f"hub step preflight-due: {reason}"
