@@ -140,7 +140,9 @@ def test_breaks_core_contract_when_core_imports_adapter(
     assert f"{SCRATCH_ROOT}.core -> {SCRATCH_ROOT}.{imported}" in result.stdout
 
 
-@pytest.mark.parametrize("imported", ["storage", "collector", "generator", "tracker_linear"])
+@pytest.mark.parametrize(
+    "imported", ["storage", "collector", "generator", "hub_git", "tracker_linear"]
+)
 def test_keeps_every_contract_when_cli_wires_adapter(
     lint_imports: Callable[[str, str], CompletedProcess[str]], imported: str
 ) -> None:
