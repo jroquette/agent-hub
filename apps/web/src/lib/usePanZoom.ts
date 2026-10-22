@@ -97,8 +97,12 @@ export function usePanZoom(
     null,
   );
 
+  // Whether the last press dragged: a click that ends a drag is no choice.
+  const dragged = useRef(false);
+
   const onPointerDown = useCallback((event: ReactPointerEvent<HTMLElement>) => {
     if (event.button !== 0) return;
+    dragged.current = false;
     if (event.target instanceof Element && event.target.closest(NO_PAN)) return;
     press.current = {
       id: event.pointerId,
@@ -118,6 +122,7 @@ export function usePanZoom(
       if (!p.moved) {
         if (Math.hypot(dx, dy) < DRAG_PX) return;
         p.moved = true;
+        dragged.current = true;
         setDragging(true);
         capture(event.currentTarget, event.pointerId);
       }
@@ -136,6 +141,8 @@ export function usePanZoom(
     view,
     animated,
     dragging,
+    /** Whether the last press on the viewport dragged (read in a click handler). */
+    wasDrag: () => dragged.current,
     setView,
     zoomBy,
     zoomTo,

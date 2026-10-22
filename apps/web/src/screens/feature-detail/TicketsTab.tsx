@@ -202,15 +202,11 @@ function CardAction({
       quiet={changeWaits(rows)}
     />
   );
-  if (!newest) return start ? <span className="ah-flow-card-action">{start}</span> : null;
+  // An ended session is in the ticket's panel; the card shows one only while it is live.
+  if (!open) return start ? <span className="ah-flow-card-action">{start}</span> : null;
   return (
     <span className="ah-flow-card-action">
-      <span className="ah-flow-card-fact">
-        <Icon name="square-terminal" size="sm" />
-        Session
-      </span>
-      <SessionLink session={newest} context="Newest session" />
-      {start}
+      <SessionLink session={newest} context="Session running" />
     </span>
   );
 }
@@ -788,6 +784,7 @@ export function TicketsTab({
                   acPasses={acPasses}
                   ticketAction={cardAction}
                   onOpenTicket={remember}
+                  chosen={shown?.ref ?? null}
                 />
               ) : (
                 <TicketsTable

@@ -1,4 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
@@ -70,7 +72,7 @@ describe("PlanningView", () => {
     expect(card).toHaveTextContent("1/2 child tickets done");
     expect(card).toHaveTextContent("1 in progress");
     expect(card).toHaveTextContent("1/2 ACs passing");
-    const flow = screen.getByRole("list", { name: "Ticket flow" });
+    const flow = screen.getByRole("group", { name: "Ticket flow" });
     expect(within(flow).queryByRole("listitem", { name: /ACME-1 ·/ })).not.toBeInTheDocument();
     expect(screen.getByRole("list", { name: "Tickets by readiness" })).not.toHaveTextContent(
       "epic",
@@ -81,9 +83,7 @@ describe("PlanningView", () => {
     render(<PlanningView tickets={rows} planning={plan} />);
 
     expect(screen.getByRole("heading", { name: "Ticket flow" })).toBeInTheDocument();
-    const steps = within(screen.getByRole("list", { name: "Ticket flow" }))
-      .getAllByRole("listitem")
-      .filter((li) => li.tagName === "SECTION");
+    const steps = within(screen.getByRole("group", { name: "Ticket flow" })).getAllByRole("region");
     expect(steps.map((s) => s.getAttribute("aria-label"))).toEqual([
       "Group 1 · in parallel",
       "Group 2 · after group 1",
@@ -147,9 +147,7 @@ describe("PlanningView", () => {
       />,
     );
 
-    const steps = within(screen.getByRole("list", { name: "Ticket flow" }))
-      .getAllByRole("listitem")
-      .filter((li) => li.tagName === "SECTION");
+    const steps = within(screen.getByRole("group", { name: "Ticket flow" })).getAllByRole("region");
     expect(steps.map((s) => s.getAttribute("aria-label"))).toEqual([
       "Group 1 · done",
       "Group 2 · after group 1",
@@ -440,5 +438,152 @@ describe("PlanningView", () => {
     );
 
     expect(await seriousViolations(container)).toEqual([]);
+  });
+
+  describe("on the canvas", () => {
+    // T3 waits on T1 and T2; T5 waits on T3 and T4.
+    const linked = rows.map((row) => {
+      if (row.ref === "T3") {
+        return {
+          ...row,
+          blocked_by: [
+            { ref: "T1", source: "both" as const },
+            { ref: "T2", source: "both" as const },
+          ],
+        };
+      }
+      if (row.ref === "T5") {
+        return {
+          ...row,
+          blocked_by: [
+            { ref: "T3", source: "both" as const },
+            { ref: "T4", source: "both" as const },
+          ],
+        };
+      }
+      return row;
+    });
+
+    it("AC-TF.1 lights the chosen ticket's whole chain above the cards and fades the rest", () => {
+      const { container } = render(<PlanningView tickets={linked} planning={plan} chosen="T3" />);
+
+      const edge = (id: string) => container.querySelector(`.ah-flow-edges [data-edge="${id}"]`);
+      for (const id of ["T1→T3", "T2→T3", "T3→T5"]) expect(edge(id)).toHaveAttribute("data-hot");
+      expect(edge("T4→T5")).toHaveAttribute("data-dim");
+      expect(container.querySelectorAll(".ah-flow-edges-top path")).toHaveLength(3);
+      expect(screen.getByRole("listitem", { name: "T3 · Ticket T3" })).toHaveAttribute(
+        "aria-current",
+        "true",
+      );
+      expect(screen.getByRole("listitem", { name: "T5 · Ticket T5" })).toHaveAttribute(
+        "data-chain",
+        "true",
+      );
+      expect(screen.getByRole("listitem", { name: "T4 · Ticket T4" })).not.toHaveAttribute(
+        "data-chain",
+      );
+    });
+
+    it("draws no edge into or inside Held back, whose cards name what they wait on", () => {
+      const cycle = [
+        ...rows.slice(0, 2),
+        aTicketRow({
+          ref: "C1",
+          key: "C1",
+          id: null,
+          title: "Cycle one",
+          url: null,
+          readiness: "in_cycle",
+          blocked_by: [
+            { ref: "C2", source: "plan" },
+            { ref: "T1", source: "plan" },
+          ],
+          waiting_on: ["C2"],
+        }),
+        aTicketRow({
+          ref: "C2",
+          key: "C2",
+          id: null,
+          title: "Cycle two",
+          url: null,
+          readiness: "in_cycle",
+          blocked_by: [{ ref: "C1", source: "plan" }],
+          waiting_on: ["C1"],
+        }),
+      ];
+      const { container } = render(
+        <PlanningView
+          tickets={cycle}
+          planning={aTicketPlan({
+            layers: [["T1", "T2"]],
+            can_start: ["T1", "T2"],
+            order: ["T1", "T2"],
+            waiting: [],
+            critical_path: [],
+            cycles: [["C1", "C2"]],
+          })}
+        />,
+      );
+
+      expect(screen.getByRole("region", { name: /^Held back/ })).toBeInTheDocument();
+      expect(container.querySelectorAll("[data-edge]")).toHaveLength(0);
+      expect(screen.getByRole("listitem", { name: "C1 · Cycle one" })).toHaveTextContent(
+        "Waiting: cycle with C2",
+      );
+    });
+
+    it("AC-TF.3 is one Tab stop whose arrows follow the edges and the columns", async () => {
+      const user = userEvent.setup();
+      render(
+        <MemoryRouter>
+          <PlanningView tickets={linked} planning={plan} onOpenTicket={() => undefined} />
+        </MemoryRouter>,
+      );
+
+      const title = (ref: string) =>
+        document.querySelector<HTMLElement>(`[data-node-id="${ref}"] [data-ticket-open]`);
+      expect(title("T1")?.tabIndex).toBe(0);
+      expect(title("T2")?.tabIndex).toBe(-1);
+      title("T1")?.focus();
+      await user.keyboard("{ArrowRight}");
+      expect(title("T3")).toHaveFocus();
+      await user.keyboard("{ArrowRight}");
+      expect(title("T5")).toHaveFocus();
+      await user.keyboard("{ArrowLeft}");
+      expect(title("T3")).toHaveFocus();
+      await user.keyboard("{ArrowLeft}");
+      await user.keyboard("{ArrowDown}");
+      expect(title("T2")).toHaveFocus();
+      expect(title("T2")?.tabIndex).toBe(0);
+      await user.keyboard("k");
+      expect(title("T1")).toHaveFocus();
+    });
+
+    it("AC-TF.2 zooms from the toolbar and keeps the legend in the canvas", async () => {
+      const user = userEvent.setup();
+      render(<PlanningView tickets={linked} planning={plan} />);
+
+      const controls = screen.getByRole("toolbar", { name: "Graph view" });
+      await user.click(within(controls).getByRole("button", { name: "Zoom in (+)" }));
+      expect(
+        within(controls).getByRole("button", { name: "Reset zoom to 100%" }),
+      ).toHaveTextContent("120%");
+      expect(screen.getByText("How to read").closest(".ah-canvas")).not.toBeNull();
+    });
+
+    it("has no serious axe violation with a ticket chosen (a11y)", async () => {
+      const { container } = render(
+        <MemoryRouter>
+          <PlanningView
+            tickets={linked}
+            planning={plan}
+            chosen="T3"
+            onOpenTicket={() => undefined}
+          />
+        </MemoryRouter>,
+      );
+
+      expect(await seriousViolations(container)).toEqual([]);
+    });
   });
 });

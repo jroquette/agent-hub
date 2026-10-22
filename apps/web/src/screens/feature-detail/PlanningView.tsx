@@ -1,20 +1,29 @@
 import "./ticket-flow.css";
 
-import { Fragment, useRef } from "react";
-import type { ReactNode } from "react";
+import { Fragment, useId, useLayoutEffect, useRef, useState } from "react";
+import type { CSSProperties, KeyboardEvent, ReactNode } from "react";
 import { Link, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
 import {
+  ArrowMarkers,
   Banner,
+  CANVAS_ZOOM_STEP,
+  CanvasControls,
+  CanvasGrid,
+  CanvasMinimap,
   GOLDEN_STATE_TEXT,
   Icon,
   StatusBadge,
   StepBar,
   type IconName,
   type Status,
+  useViewportSize,
 } from "../../components";
+import { fitView } from "../../lib/canvasView";
 import { curvePath, useNodeBoxes } from "../../lib/nodeBoxes";
+import { usePanZoom } from "../../lib/usePanZoom";
+import { goSequencePending, typingIn } from "../../shell/goSequence";
 import { githubPullHref, linearHref } from "../../lib/safeHref";
 
 type TicketRow = components["schemas"]["TicketRow"];
@@ -233,17 +242,21 @@ export function TicketOpenLink({
   children,
   className,
   title,
+  tabIndex,
 }: {
   row: TicketRow;
   onOpen: TicketOpener;
   children: ReactNode;
   className?: string | undefined;
   title?: string | undefined;
+  /** A roving Tab stop (the flow's cards): -1 off the current card. */
+  tabIndex?: number | undefined;
 }) {
   const [params] = useSearchParams();
   return (
     <Link
       className={className}
+      tabIndex={tabIndex}
       to={{ search: ticketSearch(params, ticketParam(row)) }}
       replace
       title={title}
@@ -608,11 +621,51 @@ export function TicketStepBar({ flow }: { flow: TicketFlow }) {
   );
 }
 
+/** The icon before a card's readiness words, in the colour the words use (no coloured borders). */
+const READINESS_ICON: Partial<Record<Readiness, { icon: IconName; color: string }>> = {
+  can_start: { icon: "circle-play", color: "var(--done)" },
+  in_progress: { icon: "circle-dot", color: "var(--live)" },
+  waiting: { icon: "hourglass", color: "var(--waiting)" },
+  in_cycle: { icon: "octagon-x", color: "var(--failed)" },
+};
+
+/** "3/7 ACs" (all passing in `done`), or "4 ACs" when passing is not known. */
+function AcFact({
+  row,
+  acPasses,
+}: {
+  row: TicketRow;
+  acPasses?: Readonly<Record<string, boolean>> | undefined;
+}) {
+  if (row.acs.length === 0) return null;
+  if (!acPasses) return <span>{row.acs.length} ACs</span>;
+  const passing = row.acs.filter((ac) => acPasses[ac]).length;
+  const all = passing === row.acs.length;
+  return (
+    <span
+      className="ah-flow-card-fact"
+      style={all ? { color: "var(--done)" } : undefined}
+      title={`${String(passing)} of ${String(row.acs.length)} ACs passing`}
+    >
+      {all && <Icon name="circle-check" size="sm" />}
+      {passing}/{row.acs.length} ACs
+    </span>
+  );
+}
+
+/**
+ * A ticket as a compact card on the flow: its id and Linear status, its title (it opens the
+ * ticket's panel), what to do with it now (readiness or signal, and Start), then its facts. The
+ * step bar, the AC bar, the assignee and its blockers outside the flow are in the panel.
+ */
 function FlowCard({
   row,
   rows,
   external,
   critical,
+  chosen,
+  onChain,
+  current,
   inFlow,
   acPasses,
   ticketAction,
@@ -624,6 +677,10 @@ function FlowCard({
   critical: boolean;
   /** The refs drawn in the flow: a blocker among them is shown by its edge, not in words. */
   inFlow: ReadonlySet<string>;
+  chosen: boolean;
+  onChain: boolean;
+  /** The card that holds the flow's one Tab stop (its title). */
+  current: boolean;
   acPasses?: Readonly<Record<string, boolean>> | undefined;
   ticketAction?: TicketAction | undefined;
   onOpenTicket?: TicketOpener | undefined;
@@ -633,15 +690,16 @@ function FlowCard({
   const signal = row.flow ? signalKind(row.flow) : null;
   const replaced = signal !== null && signal !== "local";
   const note = !readinessRepeatsState(row) && !replaced;
-  // A blocker the status line already names ("Started before X was done") is not repeated below.
-  const named = note && row.readiness === "in_progress" ? row.waiting_on : [];
+  const look = READINESS_ICON[row.readiness];
+  const reviewedNote = row.readiness === "in_progress" && row.reviewed === true;
+  const showReviewed =
+    row.reviewed === true && row.readiness !== "done" && row.readiness !== "in_progress";
+  const title = row.title ? splitTitle(row.title).text : row.ref;
+  // A blocker the status line already names ("Waiting on X") is not repeated in the facts.
+  const named = note ? row.waiting_on : [];
   const after = row.blocked_by
     .map((edge) => edge.ref)
     .filter((ref) => !inFlow.has(ref) && !named.includes(ref));
-  const showAfter = after.length > 0 && row.readiness !== "waiting";
-  const showReviewed =
-    row.reviewed === true && row.readiness !== "done" && row.readiness !== "in_progress";
-  const hasEnd = row.pr_url != null || showReviewed;
   return (
     <li
       id={ticketAnchor(row.ref)}
@@ -649,6 +707,9 @@ function FlowCard({
       data-node-id={row.ref}
       data-readiness={row.readiness}
       data-critical={critical || undefined}
+      data-chain={onChain || undefined}
+      data-signal={signal ?? undefined}
+      aria-current={chosen || undefined}
       aria-label={[row.ref, row.title, row.flow && ticketStepLine(row.flow)]
         .filter(Boolean)
         .join(" · ")}
@@ -668,59 +729,62 @@ function FlowCard({
       </div>
       <span className="ah-flow-card-title" title={row.title ?? undefined}>
         {onOpenTicket ? (
-          <TicketOpenLink row={row} onOpen={onOpenTicket}>
-            {row.title ? splitTitle(row.title).text : row.ref}
+          <TicketOpenLink row={row} onOpen={onOpenTicket} tabIndex={current ? 0 : -1}>
+            {title}
           </TicketOpenLink>
         ) : (
-          <span>{row.title ? splitTitle(row.title).text : row.ref}</span>
+          <span>{title}</span>
         )}
       </span>
-      {row.flow && <TicketStepBar flow={row.flow} />}
-      <div className="ah-flow-card-foot">
-        {(note || action != null || signal !== null) && (
-          <div className="ah-flow-card-status">
-            {replaced && row.flow && <TicketSignal flow={row.flow} />}
-            {note && <ReadinessText row={row} rows={rows} external={external} brief />}
-            {action}
-            {signal === "local" && row.flow && <TicketSignal flow={row.flow} />}
-          </div>
-        )}
-        <div className="ah-flow-card-facts">
-          <AcCount row={row} acPasses={acPasses} />
-          {hasEnd && (
-            <span className="ah-flow-card-end">
-              <TicketPrLink row={row} />
-              {showReviewed && (
-                <span className="ah-flow-card-fact" style={{ color: "var(--done)" }}>
-                  <Icon name="circle-check" size="sm" />
-                  Reviewed
-                </span>
+      {(note || action != null || signal !== null) && (
+        <div className="ah-flow-card-status">
+          {replaced && row.flow && <TicketSignal flow={row.flow} />}
+          {note && (
+            <span className="ah-flow-card-ready">
+              {look && !reviewedNote && (
+                <Icon name={look.icon} size="sm" style={{ color: look.color }} />
+              )}
+              {reviewedNote && (
+                <Icon name="check-check" size="sm" style={{ color: "var(--done)" }} />
+              )}
+              {row.readiness === "in_cycle" ? (
+                <b style={{ fontWeight: 500, color: "var(--failed)" }}>
+                  Waiting: cycle
+                  {row.waiting_on.length > 0 && (
+                    <>
+                      {" with "}
+                      <RefList refs={row.waiting_on} rows={rows} external={external} />
+                    </>
+                  )}
+                </b>
+              ) : (
+                <ReadinessText row={row} rows={rows} external={external} brief />
               )}
             </span>
           )}
+          {action}
+          {signal === "local" && row.flow && <TicketSignal flow={row.flow} />}
         </div>
-        {(Boolean(row.assignee) || showAfter || critical) && (
-          <div className="ah-flow-card-facts">
-            {row.assignee && (
-              <span className="ah-flow-card-fact">
-                <Icon name="user" size="sm" />
-                {row.assignee}
-              </span>
-            )}
-            {showAfter && (
-              <span>
-                After <RefList refs={after} rows={rows} external={external} />
-              </span>
-            )}
-            {critical && (
-              <span
-                className="ah-flow-critical ah-flow-card-end"
-                title="On the longest chain of tickets not done"
-              >
-                Critical path
-              </span>
-            )}
-          </div>
+      )}
+      <div className="ah-flow-card-facts">
+        {row.flow && <span>{ticketStepLine(row.flow)}</span>}
+        <AcFact row={row} acPasses={acPasses} />
+        <TicketPrLink row={row} />
+        {showReviewed && (
+          <span className="ah-flow-card-fact" style={{ color: "var(--done)" }}>
+            <Icon name="circle-check" size="sm" />
+            Reviewed
+          </span>
+        )}
+        {after.length > 0 && (
+          <span>
+            After <RefList refs={after} rows={rows} external={external} />
+          </span>
+        )}
+        {critical && (
+          <span className="ah-flow-critical" title="On the longest chain of tickets not done">
+            Critical path
+          </span>
         )}
       </div>
     </li>
@@ -949,7 +1013,47 @@ function flowEdges(
     );
 }
 
-/** The columns with an SVG layer of edges under them: who blocks whom, at a glance. */
+/** The steps of a ticket that is chosen or hovered: its chain, as nodes and edge keys. */
+function chainOf(edges: readonly FlowEdge[], ref: string, whole: boolean) {
+  const nodes = new Set([ref]);
+  const hot = new Set<string>();
+  const walk = (forward: boolean) => {
+    const queue = [ref];
+    const seen = new Set([ref]);
+    for (let at = queue.shift(); at !== undefined; at = queue.shift()) {
+      for (const e of edges) {
+        const [near, far] = forward ? [e.from, e.to] : [e.to, e.from];
+        if (near !== at) continue;
+        hot.add(`${e.from}→${e.to}`);
+        nodes.add(far);
+        if (whole && !seen.has(far)) {
+          seen.add(far);
+          queue.push(far);
+        }
+      }
+    }
+  };
+  walk(true);
+  walk(false);
+  return { nodes, edges: hot };
+}
+
+/** Below this zoom the cards show only their id, status and title. */
+const FAR = 0.6;
+const PAD = 32;
+
+/** The tallest the canvas grows: 75% of the window, between 320 and 900 px. */
+function heightCap(): number {
+  return Math.min(900, Math.max(320, window.innerHeight * 0.75));
+}
+
+/**
+ * The flow on a pan and zoom canvas: the groups as columns in the world, left to right, each with
+ * its header; an edge from each blocker to the ticket it holds back. The chosen ticket (its panel
+ * is open) lights its whole chain, drawn again above the cards; hover lights the direct edges.
+ * Held back and Done draw no edges: their cards name what they wait on. One Tab stop: the arrow
+ * keys follow the edges, up and down move in a column.
+ */
 function FlowGraph({
   columns,
   byRef,
@@ -957,9 +1061,11 @@ function FlowGraph({
   external,
   critical,
   criticalPath,
+  chosen,
   acPasses,
   ticketAction,
   onOpenTicket,
+  legend,
 }: {
   columns: readonly FlowColumn[];
   byRef: ReadonlyMap<string, TicketRow>;
@@ -967,91 +1073,333 @@ function FlowGraph({
   external: readonly ExternalBlocker[];
   critical: ReadonlySet<string>;
   criticalPath: readonly string[];
+  chosen: string | null;
   acPasses?: Readonly<Record<string, boolean>> | undefined;
   ticketAction?: TicketAction | undefined;
   onOpenTicket?: TicketOpener | undefined;
+  legend: ReactNode;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const inFlow = new Set(columns.flatMap((c) => c.refs));
-  const edges = flowEdges(tickets, inFlow, criticalPath);
-  const shape = `${columns.map((c) => c.refs.join(",")).join("|")}#${edges
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const worldRef = useRef<HTMLDivElement>(null);
+  const hintId = useId();
+  const arrowId = `ah-flow-arrow-${useId().replace(/:/g, "")}`;
+  // Held back and the settled Done column draw no edges: their cards name what they wait on.
+  const drawn = new Set(
+    columns.filter(({ key }) => key !== "held" && key !== "done").flatMap((column) => column.refs),
+  );
+  const inFlow = new Set(columns.flatMap((column) => column.refs));
+  const edges = flowEdges(tickets, drawn, criticalPath);
+  const order = columns.flatMap((column) => column.refs);
+  const pz = usePanZoom(viewportRef, { wheel: "page" });
+  const { view } = pz;
+  const far = view.k < FAR;
+  const shape = `${columns.map((column) => column.refs.join(",")).join("|")}#${edges
     .map((e) => `${e.from}>${e.to}`)
-    .join(",")}`;
-  const { boxes, size } = useNodeBoxes(ref, shape);
+    .join(",")}|${far ? "far" : "near"}`;
+  const viewport = useViewportSize(viewportRef);
+  const { boxes, size } = useNodeBoxes(worldRef, shape);
+  const [height, setHeight] = useState(320);
+  const [hover, setHover] = useState<string | null>(null);
+  const [focusRef, setFocusRef] = useState<string | null>(null);
+  const shown = chosen !== null && drawn.has(chosen) ? chosen : null;
+  const chain = shown ? chainOf(edges, shown, true) : null;
+  const near = !chain && hover ? chainOf(edges, hover, false) : null;
+  const hotEdges = chain?.edges ?? near?.edges ?? new Set<string>();
+  const current =
+    focusRef && inFlow.has(focusRef) ? focusRef : chosen && inFlow.has(chosen) ? chosen : order[0];
+
+  // The first view, once: fit when it reads (60% or more), else 100% from the left; the canvas's
+  // height follows it. Live refreshes never move it.
+  const placed = useRef(false);
+  useLayoutEffect(() => {
+    if (placed.current || size.width === 0 || viewport.width === 0) return;
+    const cap = heightCap();
+    let k = Math.min(1, (viewport.width - 2 * PAD) / size.width, (cap - 2 * PAD) / size.height);
+    if (k < FAR) k = 1;
+    const h = Math.round(Math.max(240, Math.min(cap, size.height * k + 2)));
+    setHeight(h);
+    const box = shown ? boxes[shown] : undefined;
+    if (box && size.width * k > viewport.width) {
+      pz.setView({ k, x: viewport.width / 2 - ((box.left + box.right) / 2) * k, y: 0 });
+    } else {
+      pz.setView({
+        k,
+        x: size.width * k <= viewport.width ? (viewport.width - size.width * k) / 2 : 0,
+        y: size.height * k <= h ? (h - size.height * k) / 2 : 0,
+      });
+    }
+    placed.current = true;
+  }, [boxes, size, viewport, shown, pz]);
+
+  /** Keep a focused card on screen, with a margin. */
+  const reveal = (ref: string) => {
+    const box = boxes[ref];
+    if (!box || viewport.width === 0) return;
+    const m = 48;
+    const { x, y, k } = pz.view;
+    let nx = x;
+    let ny = y;
+    const left = box.left * k + x;
+    const right = box.right * k + x;
+    const top = box.top * k + y;
+    const bottom = box.bottom * k + y;
+    if (left < m) nx += m - left;
+    else if (right > viewport.width - m) nx -= right - (viewport.width - m);
+    if (top < m) ny += m - top;
+    else if (bottom > viewport.height - m) ny -= bottom - (viewport.height - m);
+    if (nx !== x || ny !== y) pz.setView({ k, x: nx, y: ny }, true);
+  };
+
+  const fit = () => {
+    pz.setView(fitView(size, viewport, { max: 1 }), true);
+  };
+
+  const moveTo = (ref: string | undefined) => {
+    if (!ref) return;
+    const card = window.document.getElementById(ticketAnchor(ref));
+    setFocusRef(ref);
+    card?.querySelector<HTMLElement>("[data-ticket-open]")?.focus({ preventScroll: true });
+    reveal(ref);
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+    if (typingIn(event.target) || goSequencePending()) return;
+    const ref = (event.target as HTMLElement).closest<HTMLElement>(".ah-flow-card")?.dataset.nodeId;
+    switch (event.key) {
+      case "+":
+      case "=":
+        event.preventDefault();
+        pz.zoomBy(CANVAS_ZOOM_STEP);
+        return;
+      case "-":
+        event.preventDefault();
+        pz.zoomBy(1 / CANVAS_ZOOM_STEP);
+        return;
+      case "0":
+        event.preventDefault();
+        fit();
+        return;
+      case "1":
+        event.preventDefault();
+        pz.zoomTo(1);
+        return;
+    }
+    if (!ref) return;
+    const col = columns.findIndex((column) => column.refs.includes(ref));
+    const at = columns[col]?.refs.indexOf(ref) ?? 0;
+    const sideways = (step: number) => {
+      const next = columns[col + step];
+      return next?.refs[Math.min(at, next.refs.length - 1)];
+    };
+    let to: string | undefined;
+    switch (event.key) {
+      case "ArrowRight":
+        to = edges.find((e) => e.from === ref)?.to ?? sideways(1);
+        break;
+      case "ArrowLeft":
+        to = edges.find((e) => e.to === ref)?.from ?? sideways(-1);
+        break;
+      case "ArrowDown":
+      case "ArrowUp":
+        to = columns[col]?.refs[at + (event.key === "ArrowDown" ? 1 : -1)];
+        break;
+      case "j":
+      case "k":
+        to = order[order.indexOf(ref) + (event.key === "j" ? 1 : -1)];
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+    moveTo(to);
+  };
+
+  const path = (e: FlowEdge) => curvePath(boxes[e.from], boxes[e.to]);
+  const cardOf = (target: EventTarget) =>
+    target instanceof Element ? target.closest<HTMLElement>(".ah-flow-card") : null;
+  const overflow =
+    size.width * view.k > viewport.width + 1 || size.height * view.k > viewport.height + 1;
+  const worldStyle: CSSProperties & Record<"--k", string> = {
+    transform: `translate(${String(view.x)}px, ${String(view.y)}px) scale(${String(view.k)})`,
+    "--k": String(view.k),
+  };
+  const tone = (e: FlowEdge) => (e.early ? "early" : e.critical ? "critical" : "plain");
   return (
-    <div ref={ref} className="ah-flow" role="list" aria-label="Ticket flow">
-      <svg className="ah-flow-edges" aria-hidden="true" width={size.width} height={size.height}>
-        <defs>
-          {(["plain", "critical", "early"] as const).map((kind) => (
-            <marker
-              key={kind}
-              id={`ah-flow-arrow-${kind}`}
-              className="ah-flow-arrowhead"
-              data-kind={kind}
-              viewBox="0 0 8 8"
-              refX="7"
-              refY="4"
-              markerWidth="7"
-              markerHeight="7"
-              orient="auto-start-reverse"
-            >
-              <path d="M0 0 L8 4 L0 8 z" />
-            </marker>
-          ))}
-        </defs>
-        {edges.map((e) => (
-          <path
-            key={`${e.from}→${e.to}`}
-            data-edge={`${e.from}→${e.to}`}
-            data-source={e.source}
-            data-critical={e.critical || undefined}
-            data-early={e.early || undefined}
-            data-settled={e.settled || undefined}
-            d={curvePath(boxes[e.from], boxes[e.to])}
-            markerEnd={`url(#ah-flow-arrow-${e.early ? "early" : e.critical ? "critical" : "plain"})`}
-          />
-        ))}
-      </svg>
-      {columns.map((col) => (
-        <section
-          key={col.key}
-          className="ah-flow-col"
-          data-kind={col.kind}
-          role="listitem"
-          aria-label={`${col.title} · ${col.hint}`}
+    // The flow's keys (arrows, zoom) bubble here from its cards' links and buttons; hover and a
+    // press on a card's background are pointer extras (the title link is the keyboard's way in).
+    // eslint-disable-next-line jsx-a11y/no-static-element-interactions
+    <div
+      className="ah-canvas ah-flow-canvas"
+      data-canvas="ticket-flow"
+      style={{ height }}
+      onKeyDown={onKeyDown}
+      onFocus={(event) => {
+        const ref = cardOf(event.target)?.dataset.nodeId;
+        if (ref) setFocusRef(ref);
+      }}
+      onMouseOver={(event) => {
+        setHover(cardOf(event.target)?.dataset.nodeId ?? null);
+      }}
+      onMouseLeave={() => {
+        setHover(null);
+      }}
+      onClick={(event) => {
+        // A press on a card's background opens its panel as its title does; a drag does not.
+        const target = event.target as HTMLElement;
+        if (pz.wasDrag() || target.closest("a, button, summary, input")) return;
+        cardOf(target)?.querySelector<HTMLElement>("[data-ticket-open]")?.click();
+      }}
+    >
+      <div
+        ref={viewportRef}
+        className="ah-canvas-viewport"
+        data-dragging={pz.dragging ? "" : undefined}
+        {...pz.handlers}
+      >
+        <CanvasGrid view={view} />
+        <div
+          ref={worldRef}
+          className="ah-canvas-world ah-flow"
+          role="group"
+          aria-label="Ticket flow"
+          aria-describedby={hintId}
+          data-zoom={far ? "far" : undefined}
+          data-animate={pz.animated ? "" : undefined}
+          data-chosen={chain ? "" : undefined}
+          style={worldStyle}
         >
-          <div className="ah-flow-col-head">
-            <b>{col.title}</b>
-            <span>{col.hint}</span>
-            <span className="ah-flow-col-n">{col.refs.length}</span>
-          </div>
-          <ul className="ah-flow-col-list">
-            {col.refs.map((r) => {
-              const row = byRef.get(r);
-              if (!row) return null;
+          <svg className="ah-flow-edges" aria-hidden="true" data-edges="" width={1} height={1}>
+            <ArrowMarkers id={arrowId} tones={["plain", "critical", "early", "hot"]} />
+            {edges.map((e) => {
+              const key = `${e.from}→${e.to}`;
+              const hot = hotEdges.has(key);
               return (
-                <FlowCard
-                  key={r}
-                  row={row}
-                  rows={tickets}
-                  external={external}
-                  critical={critical.has(r)}
-                  inFlow={inFlow}
-                  acPasses={acPasses}
-                  ticketAction={ticketAction}
-                  onOpenTicket={onOpenTicket}
+                <path
+                  key={key}
+                  data-edge={key}
+                  data-source={e.source}
+                  data-critical={e.critical || undefined}
+                  data-early={e.early || undefined}
+                  data-settled={e.settled || undefined}
+                  data-hot={hot ? "" : undefined}
+                  data-dim={chain && !hot ? "" : undefined}
+                  d={path(e)}
+                  markerEnd={`url(#${arrowId}-${tone(e)})`}
                 />
               );
             })}
-          </ul>
-        </section>
-      ))}
+          </svg>
+          <div className="ah-flow-cols">
+            {columns.map((column) => (
+              <section
+                key={column.key}
+                className="ah-flow-col"
+                data-kind={column.kind}
+                aria-label={`${column.title} · ${column.hint}`}
+              >
+                <div className="ah-flow-col-head">
+                  {column.kind === "done" && (
+                    <Icon name="circle-check" size="sm" style={{ color: "var(--done)" }} />
+                  )}
+                  {column.kind === "held" && (
+                    <Icon name="circle-pause" size="sm" style={{ color: "var(--idle)" }} />
+                  )}
+                  <b>{column.title}</b>
+                  <span>{column.hint}</span>
+                  <span className="ah-flow-col-n">{column.refs.length}</span>
+                </div>
+                <ol
+                  className="ah-flow-col-list"
+                  aria-label={`${column.title} · ${column.hint} · ${String(column.refs.length)} tickets`}
+                >
+                  {column.refs.map((r) => {
+                    const row = byRef.get(r);
+                    if (!row) return null;
+                    return (
+                      <FlowCard
+                        key={r}
+                        row={row}
+                        rows={tickets}
+                        external={external}
+                        critical={critical.has(r)}
+                        chosen={chosen === r}
+                        onChain={chain?.nodes.has(r) ?? false}
+                        current={current === r}
+                        inFlow={inFlow}
+                        acPasses={acPasses}
+                        ticketAction={ticketAction}
+                        onOpenTicket={onOpenTicket}
+                      />
+                    );
+                  })}
+                </ol>
+              </section>
+            ))}
+          </div>
+          {/* The lit edges again, above the cards, so a blocker two groups back is never hidden. */}
+          <svg className="ah-flow-edges ah-flow-edges-top" aria-hidden="true" width={1} height={1}>
+            {edges
+              .filter((e) => hotEdges.has(`${e.from}→${e.to}`))
+              .map((e) => (
+                <path
+                  key={`${e.from}→${e.to}`}
+                  data-source={e.source}
+                  data-early={e.early || undefined}
+                  data-hot=""
+                  d={path(e)}
+                  markerEnd={`url(#${arrowId}-${e.early ? "early" : "hot"})`}
+                />
+              ))}
+          </svg>
+        </div>
+        <span id={hintId} className="ah-sr">
+          Arrow keys follow the arrows, up and down move in a group, Enter opens a ticket, plus and
+          minus zoom, 0 fits the flow, v shows the same tickets as a table.
+        </span>
+        <div className="ah-canvas-overlay">{legend}</div>
+        <CanvasControls
+          view={view}
+          onZoomBy={(f) => {
+            pz.zoomBy(f);
+          }}
+          onZoomTo={(k) => {
+            pz.zoomTo(k);
+          }}
+          onFit={fit}
+        />
+        {overflow && size.width > 0 && (
+          <CanvasMinimap
+            boxes={boxes}
+            size={size}
+            view={view}
+            viewport={viewport}
+            look={(id) => {
+              const row = byRef.get(id);
+              return row ? { frame: false, state: row.readiness } : null;
+            }}
+            onCentre={(x, y) => {
+              pz.setView({
+                k: view.k,
+                x: viewport.width / 2 - x * view.k,
+                y: viewport.height / 2 - y * view.k,
+              });
+            }}
+          />
+        )}
+      </div>
     </div>
   );
 }
 
-/** How to read the flow, folded next to its title so it stays one click away. */
+/** How to read the flow, folded at the canvas's top right so it stays one click away. */
 function FlowLegend({ showCritical }: { showCritical: boolean }) {
+  const lines: [Readiness, string][] = [
+    ["can_start", "Can start: not started, blockers done"],
+    ["in_progress", "In progress: started in Linear"],
+    ["waiting", "Waiting: a blocker is not done"],
+    ["in_cycle", "Waiting: a cycle of blockers"],
+  ];
   return (
     <details className="ah-flow-legend">
       <summary>
@@ -1059,20 +1407,17 @@ function FlowLegend({ showCritical }: { showCritical: boolean }) {
         How to read
       </summary>
       <div className="ah-flow-legend-body" aria-label="Legend">
-        {(["can_start", "in_progress", "waiting", "done"] as const).map((r) => (
-          <span key={r} title={READINESS_HELP[r]}>
-            <span className="ah-flow-dot" data-tone={r} aria-hidden="true" />
-            {r === "can_start"
-              ? "Can start: not started, blockers done"
-              : r === "in_progress"
-                ? "In progress: started in Linear"
-                : r === "waiting"
-                  ? "Waiting: a blocker is not done"
-                  : "Done in Linear"}
-          </span>
-        ))}
+        {lines.map(([r, text]) => {
+          const look = READINESS_ICON[r];
+          return (
+            <span key={r} title={READINESS_HELP[r]}>
+              {look && <Icon name={look.icon} size="sm" style={{ color: look.color }} />}
+              {text}
+            </span>
+          );
+        })}
         <span title={READINESS_HELP.waiting}>
-          <span className="ah-flow-dot" data-tone="waiting" aria-hidden="true" />
+          <Icon name="git-branch" size="sm" style={{ color: "var(--text-muted)" }} />
           Can start on a blocker's branch: its only blocker is in review
         </span>
         <span>
@@ -1084,15 +1429,27 @@ function FlowLegend({ showCritical }: { showCritical: boolean }) {
           From the plan only
         </span>
         <span>
+          <span className="ah-flow-line" data-source="linear" aria-hidden="true" />
+          From Linear only
+        </span>
+        <span>
           <span className="ah-flow-line" data-early="true" aria-hidden="true" />
           Started before its blocker was done
         </span>
-        {showCritical && (
-          <span>
-            <span className="ah-flow-line" data-critical="true" aria-hidden="true" />
-            Critical path: the longest chain not done
-          </span>
-        )}
+        <span>
+          <span className="ah-flow-line" data-settled="true" aria-hidden="true" />
+          Faded: its blocker is done
+        </span>
+        <span>
+          <span className="ah-flow-line" data-critical="true" aria-hidden="true" />
+          {showCritical
+            ? "Accent: the critical path (the longest chain not done), or the chosen ticket's chain"
+            : "Accent: the chosen ticket's chain"}
+        </span>
+        <span>
+          Drag to move · Shift + scroll moves sideways · ⌘ or Ctrl + scroll zooms · arrow keys
+          follow the arrows · v shows the table
+        </span>
       </div>
     </details>
   );
@@ -1107,6 +1464,8 @@ export interface PlanningViewProps {
   ticketAction?: TicketAction | undefined;
   /** Given, each card's title opens the ticket's panel (two-level-flows AC-1.10). */
   onOpenTicket?: TicketOpener | undefined;
+  /** The ticket whose panel is open (its ref): the flow lights its chain. */
+  chosen?: string | null | undefined;
 }
 
 /** The control a ticket's card or row shows next to its readiness, or null for none. */
@@ -1125,6 +1484,7 @@ export function PlanningView({
   acPasses,
   ticketAction,
   onOpenTicket,
+  chosen = null,
 }: PlanningViewProps) {
   const external = planning.external_blockers;
   const byRef = new Map(tickets.map((t) => [t.ref, t]));
@@ -1141,13 +1501,12 @@ export function PlanningView({
           </h2>
           <span className="ah-small ah-subtle">
             Groups run left to right; tickets in one group can run in parallel. Each line goes from
-            a blocker to the ticket it holds back.
+            a blocker to the ticket it holds back. Choose a ticket to see its whole chain.
             {epics.length > 0 && " The epic only tracks them, so it is in no group."}
           </span>
         </div>
         <div className="ah-row" style={{ gap: 8, alignItems: "flex-start" }}>
           <ReadinessSummary tickets={work} />
-          <FlowLegend showCritical={critical.size > 0} />
         </div>
       </div>
       {planning.cycles.length > 0 && (
@@ -1204,6 +1563,8 @@ export function PlanningView({
           acPasses={acPasses}
           ticketAction={ticketAction}
           onOpenTicket={onOpenTicket}
+          chosen={chosen}
+          legend={<FlowLegend showCritical={critical.size > 0} />}
         />
       )}
     </section>

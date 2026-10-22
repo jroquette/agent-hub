@@ -290,13 +290,14 @@ describe("TicketsTab", () => {
     expect(screen.getByRole("heading", { name: "Ticket flow" })).toBeInTheDocument();
   });
 
-  it("shows each ticket's step bar and step line on its card and its row (views)", async () => {
+  it("shows each ticket's step line on its card and its step bar on its row (views)", async () => {
     const data = aFeatureTickets();
     const flowing = data.tickets.map((t) => ({ ...t, flow: aTicketFlow() }));
     show({ ...data, tickets: flowing }, { path: "/" });
 
+    // The card says the step in words; its bar is in the ticket's panel and the table.
     const card = screen.getByRole("listitem", { name: /^AGH-202 · / });
-    expect(within(card).getByRole("img", { name: /^Ticket steps: Review\. / })).toBeInTheDocument();
+    expect(within(card).queryByRole("img", { name: /^Ticket steps/ })).toBeNull();
     expect(card).toHaveTextContent("Review · 4/7");
 
     await userEvent.click(screen.getByRole("button", { name: "Table" }));
@@ -611,17 +612,17 @@ describe("TicketsTab", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeps the step bar out of the tab order: one tab stop per card (keys)", () => {
+  it("makes the flow one Tab stop: only the current card's title is in the tab order (keys)", () => {
     const data = aFeatureTickets();
     show(
       { ...data, tickets: data.tickets.map((t) => ({ ...t, flow: aTicketFlow() })) },
       { path: "/" },
     );
 
-    const card = screen.getByRole("listitem", { name: /^AGH-202 · / });
-    const bar = within(card).getByRole("img", { name: /^Ticket steps/ });
-    expect(bar.closest("[tabindex]")).toBeNull();
-    expect(bar.querySelector("[tabindex], a, button")).toBeNull();
+    const flow = screen.getByRole("group", { name: "Ticket flow" });
+    const titles = [...flow.querySelectorAll<HTMLElement>("[data-ticket-open]")];
+    expect(titles.filter((a) => a.tabIndex === 0)).toHaveLength(1);
+    expect(titles.filter((a) => a.tabIndex === -1)).toHaveLength(titles.length - 1);
   });
 
   it("explains the epic's empty Stage cell in a focusable tooltip (names)", () => {
