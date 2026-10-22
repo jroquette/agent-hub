@@ -519,7 +519,7 @@ const DECISION: Record<OwnerDecision, { action: string; title: string; detail: s
 /**
  * An eval waits on the owner: a callout under its row (principle 2), where the owner says the
  * steps are done or that more work is needed, with an optional note. It offers only `decisions`
- * (the ones the server would record, A11); without Done it is not a "Waiting on you" (info tone).
+ * (the ones the server would record, A11); without Done it is not a "Waiting for you" (info tone).
  */
 function OwnerStepsCallout({
   project,
@@ -733,7 +733,7 @@ function AcceptancePrompt({
       return callout(
         ["more_work", "done"],
         lines(
-          `Waiting on you · Acceptance: sign off ${acCount(wait.acs.length)}`,
+          `Waiting for you · Acceptance: sign off ${acCount(wait.acs.length)}`,
           `${label} passed the whole feature with owner steps. Did you do them?`,
           <OwnerAcs ids={wait.acs} />,
         ),
@@ -769,10 +769,11 @@ function AcceptancePrompt({
       );
     }
     case "no_acs":
+      // A wait for the owner (A18, A19): the waiting tone, as the sign-off's; no button.
       return (
-        <Banner tone="info" boxed>
+        <Banner tone="warning" boxed icon="hand">
           {lines(
-            "Acceptance: waiting on owner steps · no ACs listed",
+            "Waiting for you · Acceptance: sign off by hand · no ACs listed",
             "features.json lists no live AC, so the app has nothing to sign off. Write the sign-off by hand: evals/owner-signoff.md with verdict SHIP and provenance owner, in a hub PR.",
           )}
         </Banner>
@@ -1281,7 +1282,7 @@ export function EvalTab({
                         >
                           <span className="ah-stack" style={{ gap: 2 }}>
                             <span>
-                              <b>Waiting on you</b>
+                              <b>Waiting for you</b>
                               <span className="ah-muted">
                                 {" "}
                                 ·{" "}

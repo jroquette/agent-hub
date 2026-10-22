@@ -30,6 +30,7 @@ from agent_hub.core.features.feature_view import (
     FeaturePhase,
     GoldenPath,
     GoldenStep,
+    OwnerWaitState,
     PlanView,
     StepProgress,
     StepState,
@@ -68,21 +69,19 @@ class EvalGate:
 
     ``evals`` counts the eval records read (the legacy ``eval.md`` included); ``covered`` the
     non-withdrawn ACs whose latest eval is SHIP or SHIP-WITH-OWNER-STEPS; ``acceptance`` the
-    verdict of the acceptance eval (the latest whole-feature one), None without one;
-    ``owner_steps`` the ACs a SHIP-WITH-OWNER-STEPS acceptance eval leaves as owner steps that
-    the owner has not signed off yet (``feature_evals.owner_wait``): None when nothing waits,
-    0 when it waits with no AC to count; ``reopened`` those of them whose latest eval is NO-SHIP
-    (a sign-off would be refused until an agent evaluates them again, A9, A11); ``undated`` and
-    ``signable_after`` say no sign-off can be recorded after that eval (A15): it has no
-    ``evaluated_at``, or it is dated after the read (when a sign-off becomes possible);
-    ``skipped`` the eval files over the cap, left unread.
+    verdict of the acceptance eval (the latest whole-feature one), None without one; ``wait``
+    the state of what a SHIP-WITH-OWNER-STEPS acceptance eval waits on from the owner
+    (``OwnerWaitState``, A9-A11, A15), None when the owner signed its steps off; ``owner_steps``
+    the ACs it leaves as owner steps not signed off yet (``feature_evals.owner_wait``),
+    ``reopened`` those of them whose latest eval is NO-SHIP, ``signable_after`` (``future``) when
+    a sign-off becomes possible; ``skipped`` the eval files over the cap, left unread.
     """
 
     evals: int
     covered: int
-    owner_steps: int | None = None
+    wait: OwnerWaitState | None = None
+    owner_steps: int = 0
     reopened: int = 0
-    undated: bool = False
     signable_after: str | None = None
     skipped: int = 0
     acceptance: Verdict | None = None
@@ -119,7 +118,8 @@ class GoldenInputs:
 class _Own:
     """A step judged alone: whether its own condition ``holds`` (None: cannot tell, ``reason``
     says why), its texts, whether part of it is recorded (``started``) and whether, as the gate,
-    its record was never written (``unrecorded``)."""
+    its record was never written (``unrecorded``) or it waits on the owner's decision
+    (``waiting``)."""
 
     holds: bool | None
     meta: str | None = None
@@ -129,6 +129,7 @@ class _Own:
     started: bool = False
     skippable: bool = False
     unrecorded: bool = False
+    waiting: bool = False
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -185,6 +186,8 @@ def _before_gate(own: _Own) -> tuple[StepState, str | None]:
         return "skipped", None
     if own.holds is None:
         return "unknown", own.reason
+    if own.waiting:
+        return "waiting", own.reason
     return ("unrecorded" if own.unrecorded else "current"), own.reason
 
 
@@ -367,48 +370,52 @@ def _acceptance(facts: _Facts) -> _Own:
 
 
 def _owner_steps(gate: EvalGate) -> _Own:
-    """Acceptance over a SHIP-WITH-OWNER-STEPS acceptance eval, in the order the sign-off refuses
-    (A9-A11, A15): signed off, no AC listed, no sign-off able to follow it, reopened, waiting."""
-    if gate.owner_steps is None:
-        return _Own(holds=True, meta="Owner steps signed off")
-    if not gate.owner_steps:
-        return _Own(
-            holds=False,
-            meta="Waiting on owner steps · no ACs listed",
-            reason="the whole-feature eval leaves owner steps and lists no AC to sign off",
-            started=True,
-        )
-    if gate.undated:
-        return _Own(
-            holds=False,
-            meta="Acceptance eval undated · evaluate again",
-            reason="the whole-feature eval has no evaluated_at: no sign-off can follow it",
-            started=True,
-        )
-    if gate.signable_after:
-        return _Own(
-            holds=False,
-            meta=f"Sign-off possible after {gate.signable_after}",
-            reason="the whole-feature eval is dated after now: no sign-off can follow it yet",
-            started=True,
-        )
-    if gate.reopened:
-        one = gate.reopened == 1
-        acs = f"{gate.reopened} AC{'' if one else 's'}"
-        return _Own(
-            holds=False,
-            meta=f"{acs} reopened · evaluate again",
-            reason=f"the latest eval of {acs} waiting on owner steps is NO-SHIP",
-            started=True,
-        )
+    """Acceptance over a SHIP-WITH-OWNER-STEPS acceptance eval, by the state of its wait (A9-A11,
+    A15, A18, A19): signed off, no AC listed (``waiting`` for a sign-off the owner writes by hand),
+    no sign-off able to follow it, reopened, or waiting for the owner's sign-off (``waiting``)."""
     one = gate.owner_steps == 1
     acs = f"{gate.owner_steps} AC{'' if one else 's'}"
-    return _Own(
-        holds=False,
-        meta=f"Waiting on you: sign off {acs}",
-        reason=f"{acs} wait{'s' if one else ''} on owner steps (SHIP-WITH-OWNER-STEPS)",
-        started=True,
-    )
+    match gate.wait:
+        case None:
+            return _Own(holds=True, meta="Owner steps signed off")
+        case "no_acs":
+            return _Own(
+                holds=False,
+                meta="Sign off by hand · no ACs listed",
+                reason="the whole-feature eval leaves owner steps and lists no AC to sign off",
+                started=True,
+                waiting=True,
+            )
+        case "undated":
+            return _Own(
+                holds=False,
+                meta="Acceptance eval undated · evaluate again",
+                reason="the whole-feature eval has no evaluated_at: no sign-off can follow it",
+                started=True,
+            )
+        case "future":
+            return _Own(
+                holds=False,
+                meta=f"Sign-off possible after {gate.signable_after}",
+                reason="the whole-feature eval is dated after now: no sign-off can follow it yet",
+                started=True,
+            )
+        case "reopened":
+            reopened = f"{gate.reopened} AC{'' if gate.reopened == 1 else 's'}"
+            return _Own(
+                holds=False,
+                meta=f"{reopened} reopened · evaluate again",
+                reason=f"the latest eval of {reopened} waiting on owner steps is NO-SHIP",
+                started=True,
+            )
+        case "sign_off":
+            return _Own(
+                holds=False,
+                meta=f"Sign off {acs}",
+                reason=f"{acs} wait{'s' if one else ''} on owner steps (SHIP-WITH-OWNER-STEPS)",
+                started=True,
+                waiting=True,
+            )
 
 
 def _shipped(build: _Own, acceptance: _Own) -> _Own:
