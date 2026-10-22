@@ -162,6 +162,12 @@ describe("ScenarioRunScreen (scenarios run)", () => {
     const facts = screen.getByRole("complementary", { name: "Scenario run facts" });
     expect(facts).toHaveTextContent("Investigations1 of at most 10");
     expect(facts).toHaveTextContent("Capturesorder_id = 81234");
+    await userEvent.click(within(timeline).getByText(/Workaround 1 ended ok/));
+    expect(
+      within(timeline)
+        .getByText(/Workaround 1 ended ok/)
+        .closest(".ah-ev"),
+    ).toHaveAttribute("aria-current", "true");
     // No chat and no options once the pause is over.
     expect(screen.queryByRole("region", { name: "Investigation chat" })).toBeNull();
     expect(screen.queryByRole("button", { name: /Cancel/ })).toBeNull();

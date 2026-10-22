@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useParams } from "react-router";
+import { useParams, useSearchParams } from "react-router";
 
 import {
   AppLink,
@@ -138,7 +138,19 @@ function Timeline({
   steps: readonly ScenarioStep[] | undefined;
 }) {
   const { tz } = usePreferences();
+  const [params, setParams] = useSearchParams();
+  const selected = params.get("event");
   const rows = timelineRows(run, steps);
+  const select = (id: string) => {
+    setParams(
+      (current) => {
+        const copy = new URLSearchParams(current);
+        copy.set("event", id);
+        return copy;
+      },
+      { replace: true },
+    );
+  };
   return (
     <section aria-label="Timeline" className="ah-stack" style={{ gap: 8, minWidth: 0 }}>
       <h2 className="ah-h3" style={{ margin: 0 }}>
@@ -148,6 +160,10 @@ function Timeline({
         {rows.map((row) => (
           <TimelineEvent
             key={row.id}
+            current={selected === row.id}
+            onSelect={() => {
+              select(row.id);
+            }}
             ev={{
               id: row.id,
               time: row.at ? fmtClock(row.at, tz) : "",
