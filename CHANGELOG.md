@@ -11,8 +11,6 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
-## [0.20.0] - 2026-10-22
-
 ### Added
 
 - An environment's page in `hub web` offers "Find services with Claude" (AGH-418): pick the repos and environments,
@@ -41,27 +39,6 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `POST /projects/{project}/config/environments` adds, changes, renames and removes environments, services and
   endpoints in `hub.json` or `hub.local.json`, one edit or a batch written together, checked as a read checks them and
   never committed. A team rename also renames your own `hub.local.json` entries; other developers rename theirs.
-- `/implement <ticket>` takes one ticket of a planned feature to a PR through the built-in `implement` workflow
-  (`hub workflow run implement`), with no spec, research or plan step; a ticket in no feature is sent to `hub run`
-  (`issue-to-pr`) or `/fix`. `/feature`'s Build step now follows `/implement`'s steps once per can-start ticket,
-  one ticket at a time, and `/feature <id>` for a ticket of a planned feature points to `/implement <id>`. Arrives
-  after you bump `platform.version` and run `hub sync` (AGH-406).
-- Feature detail shows plan change requests (AGH-405): a "Waiting for you" banner names each open request and opens
-  its ticket's panel at Preflight, Plan carries "v3 waits for you", tickets read "Waiting for you: plan change",
-  "Held: plan change pending", a re-run or their local drift, and the panel lists every preflight run, local note and
-  discovery, shows the request's evidence, proposal and consequences, and decides it (Approve, or Decline with a
-  note) through its run's gate, or, only when the run is gone, through the new
-  `POST /features/{project}/{slug}/change-requests/{n}/decision`, which creates the request's decision file once
-  and refuses while the run lives. `GET /features/{project}/{slug}/tickets/{ticket}` serves a ticket's records, the detail's
-  `change_requests` carry their gate's `approval_id`, the Features list ranks a plan change and a hand-written
-  sign-off in Needs you, and every owner wait reads "Waiting for you".
-- `hub search QUERY [--kind KIND]… [--hub NAME] [--json] [--db PATH]` searches the hub's `brain/` (not `brain/auto/`)
-  and each repo's `docs/` through a local SQLite FTS5 index in the database `hub web` and `hub collect` use, synced
-  with the checkout on every search; `hub brain reindex [--hub NAME] [--db PATH]` rebuilds it. Markdown only, at most
-  256 KiB, no link followed, no file a secret rule matches; each skipped file is named once (a file that cannot be
-  read, on every search). A query with no word (`!!!`) exits 2, and a query that starts with `-` goes after `--`
-  (`hub search -- -foo`). The database gains migration 0008; a Python whose SQLite lacks FTS5 can no longer migrate
-  it (ADR 0044) (AGH-391).
 - Session review in `hub web` (AGH-424): the Code tab shows the code and its tests together or apart (kept per
   browser); a narrow file list keeps each name on one line, cut at its end; diffs (review, transcript edits, commits,
   item history) are coloured in the file's language as on GitHub, and highlighted code takes GitHub's syntax palette;
@@ -71,98 +48,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   changes the sessions worked on outside a feature (`/fix`, `/refactor`, `/upgrade`, `/incident`, `/triage`,
   `/deliver`, `/review`, hub runs), one row per tracker issue under Needs you, In progress and Ended, with a Kind
   filter and search. **Start ticket** opens the New session dialog on the hub folder with `/fix` in the prompt.
-- `hub mcp` serves the hub's knowledge to Claude Code as a local stdio MCP server (ADR 0044): `search` (the
-  `hub search` index, at most 50 results, 10 by default), `read` (one file of `brain/` or a repo's `docs/`, under the
-  index's file rules) and `propose` (a hub pull request adding one `brain/_inbox/` note on
-  `<prefix>learning-propose-<slug>`, from a temporary clone; needs `gh`). `hub sync` now renders a managed `.mcp.json`
-  declaring it: a hub that already has its own `.mcp.json` gets a sync conflict (exit 3); move its servers to your
-  user scope (`claude mcp add --scope user`) first. Claude Code asks once to approve the `hub` server. Arrives after
-  you bump `platform.version` and run `hub sync` (AGH-392).
-
-### Changed
-
-- The chat's side drawers (Activity, Steps, Background tasks, the review) close on a click outside them. The Steps
-  drawer reads as a timeline: each call's icon, what it is for with its command below, a calm Failed or Denied, its
-  output folded behind one line. An expanded tool call reads like a terminal: a `$` command line with its
-  description and Copy, a JSON reply in the JSON viewer, grep output with coloured paths and line numbers, a line
-  count, Copy and "No output" (AGH-423).
-- hub web: a workflow's page reads as a step timeline beside a sticky About rail, capped at 1280 px: each step
-  leads with what it does, then its kind, id and what it waits for; conditions and a rounds step's real stop rule
-  are visible text, commands have Copy, prompts fold with Copy, and `j`/`k` move across steps. A node chosen in the
-  graph opens under it at full width. The Toolkit's Workflows tab shows catalog cards like its other tabs (AGH-427).
-- hub web: with All projects in scope, Toolkit, Brain and Hub config let you pick a project from cards that carry
-  the Portfolio card's head (name, team, hub, repos, platform, health), the section's figures and a foot line for
-  what needs a look, with a Retry when that project's source fails; `j`/`k`/`o` move across the cards (AGH-427).
-- Redaction `r1` skips its four `secret` rules on a text with no name word followed by `=` or a JSON key's `:`,
-  which no `secret` rule can match: the same rule set with identical results, about three times faster on note-sized
-  prose (AGH-391).
-- `hub web`: the owner can mark an acceptance criterion they checked by hand as passing, from its card in the
-  Acceptance criteria tab (AGH-425). It writes an owner sign-off eval over that AC only; the AC then reads "Signed
-  off" and counts as passing even though `features.json` still says it does not. `POST .../owner-signoff` takes
-  `acs` for it, with the sign-off's usual refusals.
-- The `/summarize` skill repeats every open question of a record in its summary, in plain words with its context and
-  options, and `hub web` shows those questions above the Approve bar while the summary is current (AGH-425). It
-  arrives with `hub sync` after you bump `platform.version`.
-
-### Changed
-
-- `hub web` feature page (AGH-425): an approved spec, research or plan says it is approved instead of offering the
-  approval again; the tabs read Spec, Research, Plan, Acceptance criteria, Tickets, Eval; the header no longer shows
-  ticket chips (the Tickets tab has them); each feature's fixed label, its slug, shows beside its name on its page
-  and in the Features list.
-- hub web: the project overview shows the hub configuration at a glance in four plain-sentence cards (where the
-  work comes from, how work is named, what agents may touch, the hub), Recent work as the features and tickets
-  worked on in the last 7 days instead of sessions, and a plainer Repositories table (checks and agent instructions
-  in words, commands in a tooltip). Tooltips are reachable by keyboard, a failed sessions read says so in each
-  column, and the header's setup badge opens Setup and health (AGH-427).
-- The built-in `sdlc` pack gains the `implement` workflow and its `ticket-pass` (AGH-404): one planned ticket of a
-  feature to a PR without redoing spec, research or plan. It writes the context brief, then runs a fresh read-only
-  preflight against `origin/<base>` (no checkout, no branch) and appends it to `preflight.json`. On plan drift it
-  opens a change request and pauses for the owner (approve, or decline with a note), writes the decision and the
-  plan's `A<k>` amendment, and checks the ticket again; an approval the plan moved past since is checked again rather
-  than failing. Only once a preflight passed does it make the worktree and branch, write the ticket plan, run the
-  review rounds, loop back to preflight on a discovery (at most twice), evaluate the ticket and open the PR on SHIP or
-  SHIP-WITH-OWNER-STEPS. Its report lists this run's hub files for your hub PR; it never commits them (a failed run's
-  files are left for you to collect with `git status`). A hub that already holds `workflows/sdlc/` runs it from the
-  release.
-- `hub step pending-decision` reads a decision given in `hub web` after a run was lost, and the next run follows it.
-  `hub step preflight` now takes the agent's findings and main's commit (`--findings`, `--commit`, `--input`,
-  `--input-text`, `--request`) and fills the run's time, id and plan version itself (it no longer takes `--run`). `hub step change-request`
-  takes the run's id only from `AGENT_HUB_RUN_ID`, which a workflow's steps and scripts now get (`--run-id` is gone),
-  and `--affected` is one comma-separated value. `hub step verdict` also prints the reply's `discovery`, and
-  `ticket-brief` the hub's path, the ticket's repo and main's commit. A fixture's approval stub may name its `approver`.
-- An approval another amendment overtook is not applied (A23): `amend-plan` says "change request <n> approved but
-  superseded by plan v<k>: not applied", the `implement` run re-checks the ticket in the same pass against the current
-  plan, told so (no discovery loop is spent), records it in the preflight run and lists it in its report under
-  `superseded`; if plan drift remains, the run ends blocked and the next `/implement` opens a new change request
-  (A24). `ticket-brief` reads main's commit once (the preflight reads it, its run records it and the branch
-  starts from it: `hub step worktree --commit`, which needs no fetch) and refuses a ticket whose repo `hub.json` lacks; the run takes the
-  ticket's repo from `features.json`, not an input. A workflow agent marked `mutates_checkout: false` gets the Read,
-  Glob and Grep tools and git's read forms only (no `--output`), and its check compares HEAD too, ignoring the
-  upstream lines a fetch moves and `brain/features/`, which parallel runs write.
-
-## [0.19.0] - 2026-10-21
-
-### Added
-
 - `hub web` lists an env file's variable names, never a value (AGH-417): `GET /projects/{project}/env-file-keys`
   reads only a regular file of at most 64 KiB that the hub or a declared repo holds, reached through no link, and says
   whether git ignores it. A long name in the chat's files list is shown whole when it fits, else cut in the middle with
   the whole text on hover.
-- `hub web` has an Environments page, in the sidebar's Work group (AGH-417): a table of the project's environments
-  (what agents may do, secrets by name, services, who set them) whose rows open each environment's own page. There
-  you change the access (for the team, or stricter for you only), where the secrets live and the description in place,
-  one section at a time; see its services and open one in a side panel to change its kind, description and every
-  address at once; and read a short summary of what agents see. Removing an environment in use is one confirmation.
-  Step-by-step pages add an environment or a service by plain questions, including where an environment's secrets
-  live; for an env file, hub web lists its variable names, never a value (`GET /projects/{project}/env-file-keys`).
-  A long address, and a long name in the chat's files list, is shown whole when it fits, else cut in the middle with
-  the whole text on hover. The Hub config screen keeps a summary row that opens the page.
-- `hub web` reads and edits the declared environments and services (AGH-416). The Hub config view carries every
-  effective environment and repo service with the file it comes from (and hub.json's access of a tightened one), and
-  `POST /projects/{project}/config/environments` adds, changes, renames and removes environments, services and
-  endpoints in `hub.json` or `hub.local.json`, one edit or a batch written together, checked as a read checks them and
-  never committed. A team rename also renames your own `hub.local.json` entries; other developers rename theirs.
 - `hub web`'s agent-session API takes PDF and text files with a message for Claude to read, up to 10 per message and
   5 MB each (AGH-419): a PDF goes to Claude as a document, a text file as text that names it. The server keeps no
   file byte, only each file's name and size in the log. A session's first prompt may carry pasted images and files
@@ -195,11 +84,123 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   browser), docks beside the page from 1280 px and lays over it below, closes with Escape and gives focus back; its
   header is two quiet rows with one menu, it shows what Claude is doing and full errors, and it starts with a short
   title and the starters as rows.
-- `hub web`'s chat takes PDF and text files with a message for Claude to read, up to 10 per message and 5 MB each
-  (AGH-419): Attach, a paste or a drop adds them as chips with name and size beside the images, and a sent message
-  lists them. The server keeps no file byte, only each file's name and size in the log. A session's first prompt may
-  carry pasted images and files too, so the Discuss panel takes them from its first message. The agent-session
-  routes' body cap goes to 160 MiB.
+
+### Changed
+
+- The chat's side drawers (Activity, Steps, Background tasks, the review) close on a click outside them. The Steps
+  drawer reads as a timeline: each call's icon, what it is for with its command below, a calm Failed or Denied, its
+  output folded behind one line. An expanded tool call reads like a terminal: a `$` command line with its
+  description and Copy, a JSON reply in the JSON viewer, grep output with coloured paths and line numbers, a line
+  count, Copy and "No output" (AGH-423).
+- hub web: a workflow's page reads as a step timeline beside a sticky About rail, capped at 1280 px: each step
+  leads with what it does, then its kind, id and what it waits for; conditions and a rounds step's real stop rule
+  are visible text, commands have Copy, prompts fold with Copy, and `j`/`k` move across steps. A node chosen in the
+  graph opens under it at full width. The Toolkit's Workflows tab shows catalog cards like its other tabs (AGH-427).
+- hub web: with All projects in scope, Toolkit, Brain and Hub config let you pick a project from cards that carry
+  the Portfolio card's head (name, team, hub, repos, platform, health), the section's figures and a foot line for
+  what needs a look, with a Retry when that project's source fails; `j`/`k`/`o` move across the cards (AGH-427).
+- `hub web`: the owner can mark an acceptance criterion they checked by hand as passing, from its card in the
+  Acceptance criteria tab (AGH-425). It writes an owner sign-off eval over that AC only; the AC then reads "Signed
+  off" and counts as passing even though `features.json` still says it does not. `POST .../owner-signoff` takes
+  `acs` for it, with the sign-off's usual refusals.
+- The `/summarize` skill repeats every open question of a record in its summary, in plain words with its context and
+  options, and `hub web` shows those questions above the Approve bar while the summary is current (AGH-425). It
+  arrives with `hub sync` after you bump `platform.version`.
+- `hub web` feature page (AGH-425): an approved spec, research or plan says it is approved instead of offering the
+  approval again; the tabs read Spec, Research, Plan, Acceptance criteria, Tickets, Eval; the header no longer shows
+  ticket chips (the Tickets tab has them); each feature's fixed label, its slug, shows beside its name on its page
+  and in the Features list.
+- hub web: the project overview shows the hub configuration at a glance in four plain-sentence cards (where the
+  work comes from, how work is named, what agents may touch, the hub), Recent work as the features and tickets
+  worked on in the last 7 days instead of sessions, and a plainer Repositories table (checks and agent instructions
+  in words, commands in a tooltip). Tooltips are reachable by keyboard, a failed sessions read says so in each
+  column, and the header's setup badge opens Setup and health (AGH-427).
+- The light theme of `hub web` uses warm sand off-whites for its grounds instead of bright white (AGH-428). The
+  dark theme is unchanged.
+- `hub web` opens a session much faster on a busy store: a session is folded again only when the clock crosses one
+  of its status thresholds, and a project's hub path is found without running its doctor (AGH-429).
+- The hub guard denies, instead of asking, a call it would ask about when the session runs in Claude Code's
+  `auto` mode, with the same reason and a note, so the agent takes another way; other modes still ask (AGH-430). It
+  arrives with `hub sync` after you bump `platform.version`.
+- hub web's New session writes its first prompt in the chat's message card (AGH-421): images, PDFs and text files
+  pasted, dropped or attached go with it, `/` lists the folder's skills, and the mode and model are pills in the
+  card's bar, sized to their value, instead of an Options section. A shake's screenshot sits in the same attachments
+  row, and the chat shows the first prompt's images.
+
+### Fixed
+
+- `make playground` selects the web app's Node before it starts the conductor, so the sessions' Stop gate no
+  longer fails on an older Node; `make playground-export` maps the Environments and Tickets screens; tests no longer
+  depend on the interpreter's stack depth or on GNU make 4 (AGH-431).
+
+## [0.20.0] - 2026-10-22
+
+### Added
+
+- `/implement <ticket>` takes one ticket of a planned feature to a PR through the built-in `implement` workflow
+  (`hub workflow run implement`), with no spec, research or plan step; a ticket in no feature is sent to `hub run`
+  (`issue-to-pr`) or `/fix`. `/feature`'s Build step now follows `/implement`'s steps once per can-start ticket,
+  one ticket at a time, and `/feature <id>` for a ticket of a planned feature points to `/implement <id>`. Arrives
+  after you bump `platform.version` and run `hub sync` (AGH-406).
+- Feature detail shows plan change requests (AGH-405): a "Waiting for you" banner names each open request and opens
+  its ticket's panel at Preflight, Plan carries "v3 waits for you", tickets read "Waiting for you: plan change",
+  "Held: plan change pending", a re-run or their local drift, and the panel lists every preflight run, local note and
+  discovery, shows the request's evidence, proposal and consequences, and decides it (Approve, or Decline with a
+  note) through its run's gate, or, only when the run is gone, through the new
+  `POST /features/{project}/{slug}/change-requests/{n}/decision`, which creates the request's decision file once
+  and refuses while the run lives. `GET /features/{project}/{slug}/tickets/{ticket}` serves a ticket's records, the detail's
+  `change_requests` carry their gate's `approval_id`, the Features list ranks a plan change and a hand-written
+  sign-off in Needs you, and every owner wait reads "Waiting for you".
+- `hub search QUERY [--kind KIND]… [--hub NAME] [--json] [--db PATH]` searches the hub's `brain/` (not `brain/auto/`)
+  and each repo's `docs/` through a local SQLite FTS5 index in the database `hub web` and `hub collect` use, synced
+  with the checkout on every search; `hub brain reindex [--hub NAME] [--db PATH]` rebuilds it. Markdown only, at most
+  256 KiB, no link followed, no file a secret rule matches; each skipped file is named once (a file that cannot be
+  read, on every search). A query with no word (`!!!`) exits 2, and a query that starts with `-` goes after `--`
+  (`hub search -- -foo`). The database gains migration 0008; a Python whose SQLite lacks FTS5 can no longer migrate
+  it (ADR 0044) (AGH-391).
+- `hub mcp` serves the hub's knowledge to Claude Code as a local stdio MCP server (ADR 0044): `search` (the
+  `hub search` index, at most 50 results, 10 by default), `read` (one file of `brain/` or a repo's `docs/`, under the
+  index's file rules) and `propose` (a hub pull request adding one `brain/_inbox/` note on
+  `<prefix>learning-propose-<slug>`, from a temporary clone; needs `gh`). `hub sync` now renders a managed `.mcp.json`
+  declaring it: a hub that already has its own `.mcp.json` gets a sync conflict (exit 3); move its servers to your
+  user scope (`claude mcp add --scope user`) first. Claude Code asks once to approve the `hub` server. Arrives after
+  you bump `platform.version` and run `hub sync` (AGH-392).
+
+### Changed
+
+- Redaction `r1` skips its four `secret` rules on a text with no name word followed by `=` or a JSON key's `:`,
+  which no `secret` rule can match: the same rule set with identical results, about three times faster on note-sized
+  prose (AGH-391).
+- The built-in `sdlc` pack gains the `implement` workflow and its `ticket-pass` (AGH-404): one planned ticket of a
+  feature to a PR without redoing spec, research or plan. It writes the context brief, then runs a fresh read-only
+  preflight against `origin/<base>` (no checkout, no branch) and appends it to `preflight.json`. On plan drift it
+  opens a change request and pauses for the owner (approve, or decline with a note), writes the decision and the
+  plan's `A<k>` amendment, and checks the ticket again; an approval the plan moved past since is checked again rather
+  than failing. Only once a preflight passed does it make the worktree and branch, write the ticket plan, run the
+  review rounds, loop back to preflight on a discovery (at most twice), evaluate the ticket and open the PR on SHIP or
+  SHIP-WITH-OWNER-STEPS. Its report lists this run's hub files for your hub PR; it never commits them (a failed run's
+  files are left for you to collect with `git status`). A hub that already holds `workflows/sdlc/` runs it from the
+  release.
+- `hub step pending-decision` reads a decision given in `hub web` after a run was lost, and the next run follows it.
+  `hub step preflight` now takes the agent's findings and main's commit (`--findings`, `--commit`, `--input`,
+  `--input-text`, `--request`) and fills the run's time, id and plan version itself (it no longer takes `--run`). `hub step change-request`
+  takes the run's id only from `AGENT_HUB_RUN_ID`, which a workflow's steps and scripts now get (`--run-id` is gone),
+  and `--affected` is one comma-separated value. `hub step verdict` also prints the reply's `discovery`, and
+  `ticket-brief` the hub's path, the ticket's repo and main's commit. A fixture's approval stub may name its `approver`.
+- An approval another amendment overtook is not applied (A23): `amend-plan` says "change request <n> approved but
+  superseded by plan v<k>: not applied", the `implement` run re-checks the ticket in the same pass against the current
+  plan, told so (no discovery loop is spent), records it in the preflight run and lists it in its report under
+  `superseded`; if plan drift remains, the run ends blocked and the next `/implement` opens a new change request
+  (A24). `ticket-brief` reads main's commit once (the preflight reads it, its run records it and the branch
+  starts from it: `hub step worktree --commit`, which needs no fetch) and refuses a ticket whose repo `hub.json` lacks; the run takes the
+  ticket's repo from `features.json`, not an input. A workflow agent marked `mutates_checkout: false` gets the Read,
+  Glob and Grep tools and git's read forms only (no `--output`), and its check compares HEAD too, ignoring the
+  upstream lines a fetch moves and `brain/features/`, which parallel runs write.
+
+## [0.19.0] - 2026-10-21
+
+### Added
+
 - The base plugin gains the `/premortem` and `/context-audit` skills (AGH-414). `/premortem` assumes a decision
   already failed and gives its top three causes an early-warning sign and the cheapest experiment that could prove the
   choice wrong. `/context-audit` estimates the always-loaded context of a hub and its repos and ranks the cuts by
@@ -244,17 +245,6 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Changed
 
-- The light theme of `hub web` uses warm sand off-whites for its grounds instead of bright white (AGH-428). The
-  dark theme is unchanged.
-- `hub web` opens a session much faster on a busy store: a session is folded again only when the clock crosses one
-  of its status thresholds, and a project's hub path is found without running its doctor (AGH-429).
-- The hub guard denies, instead of asking, a call it would ask about when the session runs in Claude Code's
-  `auto` mode, with the same reason and a note, so the agent takes another way; other modes still ask (AGH-430). It
-  arrives with `hub sync` after you bump `platform.version`.
-- hub web's New session writes its first prompt in the chat's message card (AGH-421): images, PDFs and text files
-  pasted, dropped or attached go with it, `/` lists the folder's skills, and the mode and model are pills in the
-  card's bar, sized to their value, instead of an Options section. A shake's screenshot sits in the same attachments
-  row, and the chat shows the first prompt's images.
 - `make playground-export`: a session is credited with the hub files of a Studio Publish through the draft it
   wrote (the `draft_id` a `publish` version names, read from the conductor's item versions), instead of a
   `PUBLISHED <path>` line in Claude's reply, which the server publish no longer gives (AGH-298). A conductor older
@@ -288,12 +278,6 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   above the tabs is gone: one "Waiting on you" banner points to each prompt, and the Acceptance step opens the
   acceptance eval; each of them moves focus to that eval. The feature detail's `acceptance_eval` gains `owner_wait`,
   with `signable_after` for a future-dated eval (AGH-330).
-
-### Fixed
-
-- `make playground` selects the web app's Node before it starts the conductor, so the sessions' Stop gate no
-  longer fails on an older Node; `make playground-export` maps the Environments and Tickets screens; tests no longer
-  depend on the interpreter's stack depth or on GNU make 4 (AGH-431).
 
 ## [0.18.0] - 2026-10-20
 
