@@ -133,7 +133,6 @@ from agent_hub.core.learnings.read_learnings import (
 )
 from agent_hub.core.readmodels.cursor import InvalidCursorError
 from agent_hub.core.readmodels.event_read_models import FoldedEventReadModels
-from agent_hub.core.readmodels.read_ports import EntityNotFoundError, HubReadModels
 from agent_hub.core.readmodels.settings_view import SettingsView
 from agent_hub.core.redaction.redact import KINDS as REDACTION_KINDS
 from agent_hub.core.sessions.pricing import PRICES, PRICES_AS_OF
@@ -142,7 +141,11 @@ from agent_hub.core.skills.skill_reads import SkillUsageSource
 from agent_hub.core.tracker.tracker_reader import TrackerReader
 from agent_hub.core.workflows.gate_decisions import DecideWorkflowGate, WorkflowGates
 from agent_hub.core.workflows.launch import ControlWorkflowRun, RunGuard, StartWorkflowRun
-from agent_hub.core.workflows.workflow_reads import ListedWorkflowSource, ReadWorkflows
+from agent_hub.core.workflows.workflow_reads import (
+    ListedWorkflowSource,
+    ProjectHubs,
+    ReadWorkflows,
+)
 from agent_hub.generator.hub_item_writer import FileSystemHubItemWriter
 from agent_hub.generator.registered_hub_files import GitReaderFactory, HubFileSystem
 from agent_hub.generator.workflow_source import DiscoveredWorkflowSource
@@ -186,18 +189,20 @@ def default_projects_root() -> Path:
 class _HubPaths:
     """A project's hub path for "How to decide"; None when no valid registered hub names it.
 
-    Bound after the hub read models exist, which themselves read the event read models.
+    Bound after the hub read models exist, which themselves read the event read models. Asked
+    on every fold of the events, so it reads only where the hubs are (``project_hubs``), never
+    a project's detail, whose lock state may run the doctor over a hub's whole tree.
     """
 
     def __init__(self) -> None:
-        self.hubs: HubReadModels | None = None
+        self.hubs: ProjectHubs | None = None
 
     def __call__(self, project: str) -> str | None:
         if self.hubs is None:
             return None
         try:
-            return self.hubs.get_project(project).hub_path
-        except EntityNotFoundError, HubRegistryError:
+            return next((path for name, path in self.hubs.project_hubs() if name == project), None)
+        except HubRegistryError:
             return None
 
 

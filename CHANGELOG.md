@@ -86,6 +86,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 - The light theme of `hub web` uses warm sand off-whites for its grounds instead of bright white (AGH-428). The
   dark theme is unchanged.
+- `hub web` opens a session much faster on a busy store: a session is folded again only when the clock crosses one
+  of its status thresholds, and a project's hub path is found without running its doctor (AGH-429).
 - `make playground-export`: a session is credited with the hub files of a Studio Publish through the draft it
   wrote (the `draft_id` a `publish` version names, read from the conductor's item versions), instead of a
   `PUBLISHED <path>` line in Claude's reply, which the server publish no longer gives (AGH-298). A conductor older

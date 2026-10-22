@@ -52,6 +52,16 @@ class _OpenSegment:
         )
 
 
+def clock_phase(last_activity_at: datetime, now: datetime) -> tuple[bool, bool]:
+    """Which of the clock's thresholds ``now`` has passed since the session's last event: no
+    event for ``LIVE_WINDOW`` (live turns idle), no event for ``END_AFTER`` (the open segment
+    ends, inferred). For the same events, ``session_segments`` and ``session_status`` give the
+    same result at any two ``now`` with the same phase, so a fold may be kept until it changes.
+    """
+    quiet_for = now - last_activity_at
+    return quiet_for >= LIVE_WINDOW, quiet_for >= END_AFTER
+
+
 def session_segments(activity: Sequence[Activity], *, now: datetime) -> tuple[SessionSegment, ...]:
     """The segments of a session whose ``activity`` is sorted by time."""
     segments: list[SessionSegment] = []
