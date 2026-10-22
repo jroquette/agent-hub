@@ -1503,8 +1503,28 @@ def test_reports_root_when_preflight_bytes_not_object() -> None:
             {"drift": "plan", "local_notes": [], "change_request": None},
             "Value error, change_request is required when drift is plan",
         ),
+        # Only a plain check with a note (a superseded approval's re-check, A24) may name none.
+        (
+            {"drift": "plan", "change_request": None, "input": "discovery", "input_text": "A."},
+            "Value error, change_request is required when drift is plan",
+        ),
+        (
+            {
+                "drift": "plan",
+                "change_request": None,
+                "input": "declined_change",
+                "input_text": "No.",
+            },
+            "Value error, change_request is required when drift is plan",
+        ),
     ],
-    ids=["discovery without text", "local without notes", "plan without request"],
+    ids=[
+        "discovery without text",
+        "local without notes",
+        "plan without request",
+        "plan without request after a discovery",
+        "plan without request after a decline",
+    ],
 )
 def test_reports_run_when_preflight_fields_disagree(run: dict[str, object], message: str) -> None:
     document = a_preflight_document(runs=[a_preflight_run(**run)])
