@@ -28,7 +28,9 @@ header.
   cannot be decided here, and its state, provenance, external label and project.
 - **Detail.** Title, state badge, provenance (from the event, else the note's frontmatter), "proposed {age} ago by
   {agent}" (the exact time on hover); a **Frontmatter** section with `FrontmatterChips` (type, repos, last verified)
-  when the note has any; the **Note** section; Target, Source, Pull request and Decision as before; the action bar.
+  when the note has any; the **Note** section; **Review**; **Project**; the **Trail** (AGH-393, below), which
+  replaces the Source, In the brain, Pull request and Decision rows; **Target in brain/** (decidable proposals only,
+  next to the action bar); the action bar.
   A proposal that cannot be decided shows, under the disabled buttons, a warning `Banner` "Cannot be decided here."
   with the reason. A note missing from the hub checkout says that the agent recorded that path, that it was likely
   written in another worktree and never pushed, and that pulling the hub brings it in.
@@ -54,6 +56,22 @@ header.
   recommendation · you decide", each check with an icon and a word, "Use Claude's revision" (it becomes the edit
   draft) and "Use target brain/{target}" (it fills Target), "Open the conversation" and "Review again". The link
   between a learning and its review session is kept in this browser.
+- **Trail** (AGH-393). One `Section` labelled "Trail" holds a vertical `ProvenanceLineage`, an `ol` named "Trail
+  from session to note": one step per `li`, each starting with its visible name, a decorative 16 px icon and a 1 px
+  connector; no node is dashed or coloured, so what a step waits for is said in words. Nothing after the note is
+  claimed (Q16). The trail renders from the learning already loaded; no new request.
+
+  | Step | Content | Link |
+  |---|---|---|
+  | **Session** (`square-terminal`) | "Session <short id>" (the full id in a tooltip); none: "No source session recorded." | `/sessions/<source_session_id>` |
+  | **Proposal** (`lightbulb`) | "Open at that moment" (no event id: "Open the session timeline"), then the inbox path as text, `brain/` once; no session and no path: "No proposal event recorded." | `/sessions/<id>?event=<source_event_id>` (the default `?tab=timeline` omitted, AM-1), else `/sessions/<id>` |
+  | **Decision** (`split`) | proposed: "Not decided yet"; with a `pr_url`: "Accepted <time> by <person>" (or "Rejected …"), the app's absolute time format; without one: "Decided outside the app", with a muted "Accepted <time> by <person>" line under it when recorded; a rejection's reason under it; then `git-pull-request` "Pull request #<n> in <owner>/<repo>" (the URL itself when it is not a GitHub pull request), through `safeHref`, a new tab ("(opens in a new tab)" for assistive tech) | the PR |
+  | **Note** (`file-text`, accepted only) | `brain/<rest>` once (D-brain-path: one leading `brain/` removed from `brain_path`), then "In the brain"; `accepted_pr_open`: the path as text, then "In the brain once the pull request is merged and pulled"; no path: "No note path recorded." | `/projects/<project>/brain/<rest>` when `state` is `in_brain` and the note route serves the path |
+
+  A rejected or proposed learning has no Note step. Right after an accept or a reject on this page, the Decision step
+  reads "Accepted just now · pull request opened" (or "Rejected just now · pull request opened") with its link; after
+  an accept the Note step shows the path the typed target gives, as text, with the "once merged" line, until the
+  refetched learning says more.
 - **Discuss.** The learning and a Brain note register a Discuss target with one-click starters (the Discuss panel's
   "Start with" group): a proposal offers "Is this worth keeping?", "Improve the note", "Duplicate or overlap?" and
   opens Discuss on arrival; an accepted note offers "Is this still true?", "Improve the note", "Duplicate or
@@ -103,3 +121,4 @@ header.
 | AC-272.21 | Given one project with decidable unreviewed proposals, when the owner clicks Triage with Claude, then one session starts in the hub folder over at most 15 of them, each linked to its own draft folder | `triage.test.tsx` "starts one session over the decidable learnings and links each to its folder" |
 | AC-272.22 | Given a queue over several projects, when triage is offered, then it asks for one project | `triage.test.tsx` "asks for one project when the queue spans several" |
 | AC-272.23 | Given a running triage, when the queue shows, then each row carries Claude's verdict or where the review stands (current, queued, needs you), the Claude facet filters by it, and a finished run gives no verdict to learnings it never reviewed | `triage.test.tsx` "shows Claude's verdict on each row and filters by it", "marks the learnings behind the current one as queued and says when Claude needs you", "gives no verdict to the learnings a finished session never reviewed"; `filters.test.ts` "keeps the learnings Claude recommends when the Claude facet is picked" |
+| AC-393.14 | Given a learning with `source_session_id` `s1`, `source_event_id` `e1`, a pull request, accepted and in the brain at `brain/learnings/web-gates.md`, when the detail renders, then the trail shows Session, Proposal, Decision and Note in order, linking to `/sessions/s1`, the session at event `e1`, the PR (new tab) and the note, the path reading `brain/` once (also with `brain_path` `learnings/web-gates.md`); `accepted_pr_open` → the Note step is text with the "once merged" sentence; no `pr_url` → "Decided outside the app"; no session → "No source session recorded."; a rejected learning has no Note step; axe finds no serious or critical violation | `LearningDetail.test.tsx` "trail: …" and "trail has no serious a11y violations (a11y)"; `status.test.tsx` "ProvenanceLineage …" |
