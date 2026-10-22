@@ -5,22 +5,21 @@
 """Say how the ``implement`` run's passes ended, from each pass's outcome, as JSON.
 
 ``implement.yaml`` includes ``ticket-pass`` up to three times; a pass runs only when the one
-before it ended with a discovery or a superseded approval. ``last_pass.py [--superseded TEXT]
+before it ended with a discovery. ``last_pass.py [--superseded TEXT]
 --pass JSON...`` takes each pass's ``pass_outcome.py`` output in order (blank: it did not run)
 and prints ``{"status", "question", "verdict", "pass", "path", "base", "target", "superseded"}``
 for the last one that ran: ``status`` ``blocked`` or ``done`` (what ``hub step report
 --status`` reads), its question, review verdict and number, and its worktree (the eval, the
 commits and the PR read it). ``superseded`` joins every approval the plan moved past (A23): the
-pending decision's ``TEXT`` and each pass's, for the report. A last pass given that asks for
-another (a discovery or a superseded approval: two loops back at most, D-3) is ``blocked``,
-naming it. Text that is not JSON, or no pass, exits 2.
+pending decision's ``TEXT`` and each pass's, for the report. A discovery in the last pass given
+is the one too many (two loops back at most, D-3): ``blocked``, naming it. Text that is not JSON, or no pass, exits 2.
 """
 
 import argparse
 import json
 import sys
 
-TOO_MANY = "pass {n}, the last one, asks for another: {text}"
+TOO_MANY = "a discovery in pass {n}, the last one: {text}"
 
 
 def main(argv: list[str]) -> int:
