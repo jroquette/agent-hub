@@ -4,15 +4,22 @@ An implementation's ``tests/contract/`` provides a ``knowledge_index`` fixture (
 and declares ``class Test<Implementation>(KnowledgeIndexContract)``. Checks raise
 ``AssertionError`` by hand: core ships this suite without depending on pytest.
 
+``KnowledgeLinksContract`` holds the clauses on each document's links and the backlinks they
+answer (AGH-393, U-3); an implementation adopts it beside ``KnowledgeIndexContract`` once it
+answers ``backlinks``.
+
 Each query word appears in the documents in the same form, so an index that stems words (FTS5's
 ``porter``) and one that does not answer alike.
 """
 
 import hashlib
-from typing import Final
+from typing import Final, Protocol
 
 from agent_hub.core.knowledge.knowledge_index import (
     INDEX_VERSION,
+    MAX_BACKLINKS,
+    Backlink,
+    Backlinks,
     Fingerprint,
     IndexChange,
     IndexedDocument,
@@ -41,6 +48,7 @@ def _document(
     kind: Kind = "doc",
     status: str | None = None,
     provenance: str | None = None,
+    links: tuple[str, ...] = (),
 ) -> IndexedDocument:
     return IndexedDocument(
         path=path,
@@ -51,6 +59,7 @@ def _document(
         fingerprint=Fingerprint(size=len(body.encode()), mtime_ns=_MTIME_NS),
         sha256=hashlib.sha256(body.encode()).hexdigest(),
         body=body,
+        links=links,
     )
 
 
@@ -290,3 +299,142 @@ class KnowledgeIndexContract:
         knowledge_index.apply(HUB, IndexChange(version=newer, rebuild=True, documents=(first,)))
         _check(knowledge_index.stored(HUB).version == newer, "a rebuild sets every row's")
         _check(knowledge_index.stored(OTHER_HUB).version is None, "another hub has none")
+
+
+NOW: Final = "brain/now.md"
+
+
+class LinkedKnowledgeIndex(KnowledgeIndex, Protocol):
+    """An index that also answers the backlinks of a brain note."""
+
+    def backlinks(self, hub: str, target: str, *, limit: int) -> Backlinks:
+        """The hub's documents linking to ``target`` (``brain/<rest>``), by path, at most
+        ``limit``, with the full count."""
+        ...
+
+
+def _sources(index: LinkedKnowledgeIndex, target: str = NOW, *, hub: str = HUB) -> list[str]:
+    return [item.path for item in index.backlinks(hub, target, limit=MAX_BACKLINKS).items]
+
+
+class KnowledgeLinksContract:
+    """Links are written with their document, replaced, kept, dropped and rebuilt with it, per
+    hub; backlinks are sorted by path and bounded, with their full count."""
+
+    def test_writes_links_with_document_when_applied(
+        self, knowledge_index: LinkedKnowledgeIndex
+    ) -> None:
+        source = _document(
+            "brain/playbooks/cleanup.md",
+            title="Cleanup",
+            body="see now",
+            kind="playbook",
+            links=(NOW, "brain/decisions/x.md"),
+        )
+        _index(knowledge_index, source, _document(NOW, body="the note itself"))
+
+        answer = knowledge_index.backlinks(HUB, NOW, limit=MAX_BACKLINKS)
+
+        expected = Backlinks(
+            items=(Backlink(path=source.path, kind="playbook", title="Cleanup"),), total=1
+        )
+        _check(answer == expected, f"the document's link is answered: {answer}")
+        _check(_sources(knowledge_index, "brain/decisions/x.md") == [source.path], "each link")
+        _check(_sources(knowledge_index, "brain/none.md") == [], "no link, no backlink")
+
+    def test_replaces_links_when_document_reindexed(
+        self, knowledge_index: LinkedKnowledgeIndex
+    ) -> None:
+        path = "brain/playbooks/cleanup.md"
+        _index(knowledge_index, _document(path, body="first", links=(NOW,)))
+
+        _index(knowledge_index, _document(path, body="second", links=("brain/other.md",)))
+
+        _check(_sources(knowledge_index) == [], "the old link is gone")
+        _check(_sources(knowledge_index, "brain/other.md") == [path], "the new link is answered")
+
+    def test_keeps_links_when_touched(self, knowledge_index: LinkedKnowledgeIndex) -> None:
+        source = _document("brain/playbooks/cleanup.md", body="text", links=(NOW,))
+        _index(knowledge_index, source)
+        touched = Fingerprint(size=source.fingerprint.size, mtime_ns=_MTIME_NS + 1)
+
+        knowledge_index.apply(
+            HUB, IndexChange(version=INDEX_VERSION, touched={source.path: touched})
+        )
+
+        _check(_sources(knowledge_index) == [source.path], "same bytes, same links")
+
+    def test_drops_links_when_document_dropped_or_skipped(
+        self, knowledge_index: LinkedKnowledgeIndex
+    ) -> None:
+        sources = [
+            _document(f"brain/playbooks/{name}.md", body="text", links=(NOW,))
+            for name in ("dropped", "leak", "gone", "kept")
+        ]
+        _index(knowledge_index, *sources)
+        dropped, leak, gone, kept = sources
+        skipped = (
+            SkippedFile(
+                path=leak.path, fingerprint=leak.fingerprint, reason="matches a secret rule"
+            ),
+            SkippedFile(path=gone.path, fingerprint=None, reason="cannot be read"),
+        )
+
+        knowledge_index.apply(
+            HUB, IndexChange(version=INDEX_VERSION, skipped=skipped, dropped=(dropped.path,))
+        )
+
+        _check(_sources(knowledge_index) == [kept.path], "only the kept document links")
+
+    def test_drops_links_when_hub_rebuilt(self, knowledge_index: LinkedKnowledgeIndex) -> None:
+        _index(knowledge_index, _document("brain/a.md", body="alpha", links=(NOW,)))
+        rebuilt = _document("brain/b.md", body="beta", links=("brain/other.md",))
+
+        knowledge_index.apply(
+            HUB, IndexChange(version=INDEX_VERSION, rebuild=True, documents=(rebuilt,))
+        )
+
+        _check(_sources(knowledge_index) == [], "the hub's old links are gone")
+        _check(_sources(knowledge_index, "brain/other.md") == [rebuilt.path], "the rebuilt's")
+
+    def test_never_returns_other_hub_backlinks_when_targets_match(
+        self, knowledge_index: LinkedKnowledgeIndex
+    ) -> None:
+        _index(knowledge_index, _document("brain/ours.md", body="ours", links=(NOW,)))
+        _index(
+            knowledge_index,
+            _document("brain/theirs.md", body="theirs", links=(NOW,)),
+            hub=OTHER_HUB,
+        )
+
+        ours = _sources(knowledge_index)
+        knowledge_index.apply(HUB, IndexChange(version=INDEX_VERSION, rebuild=True))
+
+        _check(ours == ["brain/ours.md"], f"only the hub's own sources: {ours}")
+        _check(_sources(knowledge_index) == [], "the rebuild dropped the hub's links")
+        theirs = _sources(knowledge_index, hub=OTHER_HUB)
+        _check(theirs == ["brain/theirs.md"], f"the other hub's links are untouched: {theirs}")
+        _check(_sources(knowledge_index, hub="/hubs/none") == [], "an unknown hub has none")
+
+    def test_sorts_and_bounds_backlinks_when_many_link(
+        self, knowledge_index: LinkedKnowledgeIndex
+    ) -> None:
+        count = MAX_BACKLINKS + 20
+        dead = "brain/gone.md"
+        # Indexed in reverse, so an answer in insertion order is not sorted by path.
+        sources = [
+            _document(f"brain/learnings/l{number:03}.md", body="text", links=(dead,))
+            for number in reversed(range(count))
+        ]
+        _index(knowledge_index, *sources)
+
+        answer = knowledge_index.backlinks(HUB, dead, limit=MAX_BACKLINKS)
+
+        paths = [item.path for item in answer.items]
+        expected = [f"brain/learnings/l{number:03}.md" for number in range(MAX_BACKLINKS)]
+        _check(MAX_BACKLINKS == 100, f"the bound: {MAX_BACKLINKS}")
+        _check(paths == expected, f"the first {MAX_BACKLINKS} by path: {paths[:3]}…")
+        _check(answer.total == count, f"the full count of a dead target's sources: {answer.total}")
+        few = knowledge_index.backlinks(HUB, dead, limit=2)
+        _check([item.path for item in few.items] == expected[:2], f"the limit: {few}")
+        _check(few.total == count, f"the full count whatever the limit: {few.total}")

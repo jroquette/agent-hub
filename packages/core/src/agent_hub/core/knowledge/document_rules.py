@@ -14,6 +14,7 @@ from agent_hub.core.brain.brain_path import BRAIN_FOLDER, NOTE_SUFFIX, is_person
 from agent_hub.core.brain.frontmatter import split_frontmatter
 from agent_hub.core.item_versions.secret_match import has_secret_match
 from agent_hub.core.item_versions.unit_content import UnitContent, UnitFile
+from agent_hub.core.knowledge.document_links import document_links
 from agent_hub.core.knowledge.knowledge_index import (
     Fingerprint,
     IndexedDocument,
@@ -115,11 +116,12 @@ def document_meta(text: str, name: str) -> DocumentMeta:
 
 
 def document_from(
-    path: str, data: bytes, fingerprint: Fingerprint
+    path: str, data: bytes, fingerprint: Fingerprint, *, hub_folder: str | None = None
 ) -> IndexedDocument | SkippedFile:
     """The file at ``path`` as a document to index, or as a skipped file and why: larger than
     ``MAX_DOCUMENT_BYTES``, not UTF-8, or matched by a secret rule of r1 (P-4). A skipped file
-    keeps nothing of ``data``."""
+    keeps nothing of ``data``. With ``hub_folder`` (the name of the hub's folder in the
+    workspace) the document keeps its links into the brain (``document_links``); without, none."""
     if len(data) > MAX_DOCUMENT_BYTES:
         return SkippedFile(path=path, fingerprint=fingerprint, reason=TOO_LARGE)
     try:
@@ -139,6 +141,7 @@ def document_from(
         fingerprint=fingerprint,
         sha256=hashlib.sha256(data).hexdigest(),
         body=meta.body,
+        links=() if hub_folder is None else document_links(path, text, hub_folder=hub_folder),
     )
 
 
