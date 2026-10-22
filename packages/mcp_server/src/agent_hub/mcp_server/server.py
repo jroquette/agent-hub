@@ -6,11 +6,14 @@ import time
 import traceback
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
-from typing import Annotated, Final, TextIO
+from functools import partial
+from typing import Annotated, Any, Final, NoReturn, TextIO
 
-from mcp.server.mcpserver import MCPServer
-from mcp.types import CallToolResult, TextContent, ToolAnnotations
-from pydantic import Field
+import anyio
+from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+from mcp.types import CallToolResult, InputRequiredResult, TextContent, ToolAnnotations
+from pydantic import Field, ValidationError
 
 from agent_hub.core.json_form import JsonValue, dump_json
 from agent_hub.core.knowledge.knowledge_index import Kind
@@ -56,8 +59,8 @@ def build_server(
     log: TextIO,
 ) -> MCPServer:
     """The server for ``hub``: ``search``, ``read`` and ``propose``."""
-    server: MCPServer = MCPServer(name=SERVER_NAME, version=hub.version, log_level="WARNING")
     answer = _Answers(log)
+    server = _HubServer(answer, name=SERVER_NAME, version=hub.version, log_level="WARNING")
     knowledge = KnowledgeTools(hub)
     proposals = ProposeTool(hub, change_requests=change_requests, clock=clock)
 
@@ -107,6 +110,42 @@ def serve(hub: HubContext, *, environ: Mapping[str, str]) -> None:
 def _shown(text: str) -> str:
     """``text`` on one line: each character that is not printable as its ``\\x``/``\\u`` escape."""
     return "".join(c if c.isprintable() else c.encode("unicode_escape").decode() for c in text)
+
+
+class _HubServer(MCPServer):
+    """The SDK's server, except that a call whose arguments fail the tool's input schema is
+    answered like a refusal: ``<tool>: invalid arguments (<fields>)``, the field names only
+    (the SDK's own text is pydantic's, which quotes the caller's values), through ``_Answers``
+    so it takes the lock and writes its log line as every other call does."""
+
+    def __init__(self, answer: _Answers, **settings: Any) -> None:
+        super().__init__(**settings)
+        self._answer = answer
+
+    async def call_tool(
+        self, name: str, arguments: dict[str, Any], context: Context[Any, Any] | None = None
+    ) -> CallToolResult | InputRequiredResult:
+        try:
+            return await super().call_tool(name, arguments, context)
+        except ToolError as error:
+            # ``Tool.run`` raises a ``ToolError`` caused by the ``ValidationError`` when the
+            # arguments fail its model; anything else keeps the SDK's handling.
+            rejected = error.__cause__
+            if isinstance(error, UnexpectedToolError) or not isinstance(rejected, ValidationError):
+                raise
+        line = f"{name}: invalid arguments ({', '.join(_fields(rejected))})"
+        # In a worker thread, as the SDK runs the sync tools, so the lock never blocks the loop.
+        return await anyio.to_thread.run_sync(self._answer, name, partial(_refuse, line))
+
+
+def _fields(rejected: ValidationError) -> list[str]:
+    """The top-level fields ``rejected`` names: the SDK's argument model ignores unknown keys,
+    so each is one of the tool's own parameters, never a caller's key or value."""
+    return sorted({str(error["loc"][0]) for error in rejected.errors() if error["loc"]})
+
+
+def _refuse(line: str) -> NoReturn:
+    raise ToolRefusal(line)
 
 
 class _Answers:
