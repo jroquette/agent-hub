@@ -10,6 +10,8 @@
 # A tag is never moved or deleted: release-tag refuses one that exists, and a wrong tag is fixed by a new patch release.
 # Inputs and the tag go through env, never ${{ }} inside run: (script injection).
 name: release
+# The /release skill finds its dispatched run by this name: the version and the SHA it asked for.
+run-name: ${{ github.event_name == 'workflow_dispatch' && format('release v{0} at {1}', inputs.version, inputs.sha) || format('release check {0}', github.ref_name) }}
 
 on:
   push:
@@ -42,7 +44,7 @@ defaults:
 
 jobs:
   release-tag:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # The only job that writes: it pushes the one tag.
@@ -58,12 +60,31 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           version: "0.12.19"
-      # The checks come first, so nothing is tagged on a bad input, and later lines only print validated
-      # values. The versions are read from the commit to tag (git archive), not from this checkout. The
-      # tagger is github-actions[bot]: the workflow makes the tag, not the owner; commits stay the owner's.
-      # The token reaches git only through the GIT_CONFIG_* rewrite (never in the URL, never printed).
-      # tests/e2e/test_release_dispatch_tag.py runs this run: block by the step name; rename both together.
-      - name: Check the inputs, then create and push the annotated tag
+      # The checks come first, with no token, so nothing is tagged on a bad input and later lines only
+      # print validated values. check_release.py checks the version's form (v + X.Y.Z, ASCII digits) and
+      # that the commit to tag declares it: its files come from git archive, not from this checkout.
+      # tests/e2e/test_release_dispatch_tag.py runs this step and the next by name; rename them together.
+      - name: Check the inputs, that the commit is on main, and its declared versions
+        env:
+          VERSION: ${{ inputs.version }}
+          SHA: ${{ inputs.sha }}
+          NOTES: ${{ inputs.notes }}
+        run: |
+          export LC_ALL=C
+          fail() { echo "release tag: $*" >&2; exit 1; }
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || fail "sha must be a full 40-character commit SHA in lowercase hex"
+          [ -n "$NOTES" ] || fail "the notes are empty; they become the tag message"
+          git rev-parse --verify -q origin/main > /dev/null || fail "origin/main is missing from the checkout"
+          git cat-file -e "$SHA^{commit}" 2> /dev/null || fail "commit $SHA not found in the checkout"
+          git merge-base --is-ancestor "$SHA" origin/main || fail "commit $SHA is not on main"
+          at_sha="$(mktemp -d)"
+          trap 'rm -rf "$at_sha"' EXIT
+          git archive "$SHA" | tar -x -C "$at_sha"
+          uv run --no-project --python 3.14 python scripts/check_release.py --root="$at_sha" --tag="v$VERSION"
+      # The only step with the token, which reaches git only through the GIT_CONFIG_* rewrite (never in
+      # the URL, never printed). The tagger is github-actions[bot]: the workflow makes the tag, not the
+      # owner; commits stay the owner's. A tag that exists is refused: a tag is never moved.
+      - name: Create and push the annotated tag, unless it exists
         env:
           VERSION: ${{ inputs.version }}
           SHA: ${{ inputs.sha }}
@@ -72,23 +93,13 @@ jobs:
           GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/.insteadOf
           GIT_CONFIG_VALUE_0: https://github.com/
         run: |
-          export LC_ALL=C
           fail() { echo "release tag: $*" >&2; exit 1; }
-          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "version must be X.Y.Z with ASCII digits"
-          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || fail "sha must be a full 40-character commit SHA in lowercase hex"
-          [ -n "$NOTES" ] || fail "the notes are empty; they become the tag message"
           tag="v$VERSION"
-          git rev-parse --verify -q origin/main > /dev/null || fail "origin/main is missing from the checkout"
-          git cat-file -e "$SHA^{commit}" 2> /dev/null || fail "commit $SHA not found in the checkout"
-          git merge-base --is-ancestor "$SHA" origin/main || fail "commit $SHA is not on main"
-          at_sha="$(mktemp -d)"
-          notes_file="$(mktemp)"
-          trap 'rm -rf "$at_sha" "$notes_file"' EXIT
-          git archive "$SHA" | tar -x -C "$at_sha"
-          uv run --no-project --python 3.14 python scripts/check_release.py --root="$at_sha" --tag="$tag"
           existing="$(git ls-remote --tags origin "refs/tags/$tag")" \
             || fail "git ls-remote failed (see git's error above)"
           [ -z "$existing" ] || fail "tag $tag already exists on the remote; a tag is never moved: cut the next patch release"
+          notes_file="$(mktemp)"
+          trap 'rm -f "$notes_file"' EXIT
           printf '%s\n' "$NOTES" > "$notes_file"
           git -c user.name="github-actions[bot]" \
             -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
