@@ -2,12 +2,15 @@
 
 A node that declares ``mutates_checkout: false`` is checked around each attempt: the engine reads
 ``status`` before and after, and a change fails the node ``config``. ``status`` runs ``git status
---porcelain=v1 -z --untracked-files=all`` in each checkout with no optional lock, so it never
-contends with the user's own git or with a node running beside it, and without the tracker key
-or a GitHub token. A checkout git cannot read fails the node ``config``.
+--porcelain=v2 --branch -z --untracked-files=all`` (HEAD included) in each checkout, leaving out
+``brain/features/`` (the feature records other runs write meanwhile), with no optional lock, so
+it never contends with the user's own git or with a node running beside it, and without the
+tracker key or a GitHub token. A checkout git cannot read fails the node ``config``.
 
 Limit: git status names the paths that differ from ``HEAD``, not their content, so a node that
-edits a file already changed before it ran leaves the status as it was.
+edits a file already changed before it ran leaves the status as it was; and a change under
+``brain/features/`` is not seen. A read-only agent is also given read-only tools and denied the
+edit tools (``workflow_executors``).
 """
 
 from collections.abc import Callable, Mapping
@@ -20,7 +23,20 @@ from agent_hub.cli.errors import ChildTimedOutError
 from agent_hub.cli.run_children import SESSION_HIDDEN, without
 from agent_hub.core.workflows.failures import NodeFailedError
 
-STATUS_ARGV: Final = ("git", "status", "--porcelain=v1", "-z", "--untracked-files=all")
+# ``--branch`` adds the HEAD commit and branch, so a switch or a commit on a clean tree shows.
+# The feature records under brain/features/ are left out: other runs of a feature write them into
+# the hub while a node runs (implement's ticket records), and they are no node's checkout.
+STATUS_ARGV: Final = (
+    "git",
+    "status",
+    "--porcelain=v2",
+    "--branch",
+    "-z",
+    "--untracked-files=all",
+    "--",
+    ".",
+    ":(exclude)brain/features/",
+)
 STATUS_TIMEOUT: Final = 60.0
 # The end of git's stderr kept in a failure's detail (the run's record, never events).
 MAX_DETAIL: Final = 300
