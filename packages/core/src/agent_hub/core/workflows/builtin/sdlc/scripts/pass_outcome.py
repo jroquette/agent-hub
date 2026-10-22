@@ -4,13 +4,15 @@
 # ///
 """Say how one ``ticket-pass`` ended, from its review rounds' output, as JSON.
 
-``pass_outcome.py --rounds JSON --worktree JSON`` prints ``{"status", "question", "discovery",
-"verdict", "path", "base", "target"}``. Blank rounds (they did not run: no preflight passed, as a
-re-check after the owner's decision, or of a declined change, still found plan drift) is
-``blocked``. Otherwise the last round's session ``blocked`` (its question), its ``discovery``
-(the run starts the next pass with it) or ``done`` with the review's verdict. ``path``, ``base``
-and ``target`` are the pass's worktree's (``""``, ``""`` and null when it made none). Text that
-is not JSON exits 2.
+``pass_outcome.py --rounds JSON --worktree JSON --superseded TEXT`` prints ``{"status",
+"question", "verdict", "next_input", "next_text", "superseded", "path", "base", "target"}``.
+``TEXT`` is amend-plan's ``moved``: an approval the plan moved past (A23); the pass then ends
+``superseded``, and the run starts the next pass with input ``none`` and that text. Other blank
+rounds (no preflight passed: a re-check after the owner's decision, or of a declined change,
+still found plan drift) is ``blocked``. Otherwise the last round's session ``blocked`` (its
+question), its ``discovery`` (the next pass's input, with its text) or ``done`` with the
+review's verdict. ``path``, ``base`` and ``target`` are the pass's worktree's (``""``, ``""``
+and null when it made none). Text that is not JSON exits 2.
 """
 
 import argparse
@@ -45,6 +47,7 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="pass_outcome.py")
     parser.add_argument("--rounds", default="")
     parser.add_argument("--worktree", default="")
+    parser.add_argument("--superseded", default="")
     given = parser.parse_args(argv)
     try:
         rounds, worktree = loaded(given.rounds, "--rounds"), loaded(given.worktree, "--worktree")
@@ -54,18 +57,23 @@ def main(argv: list[str]) -> int:
     outcome = {
         "status": "done",
         "question": "",
-        "discovery": "",
         "verdict": "",
+        "next_input": "",
+        "next_text": "",
+        "superseded": given.superseded,
         "path": worktree.get("path", ""),
         "base": worktree.get("base", ""),
         "target": worktree.get("target"),
     }
-    if not rounds:
+    if not rounds and given.superseded:
+        superseded = {"next_input": "none", "next_text": given.superseded}
+        outcome |= {"status": "superseded", **superseded}
+    elif not rounds:
         outcome |= {"status": "blocked", "question": STILL_PLAN}
     elif part(rounds, "verdict", "status") == "blocked":
         outcome |= {"status": "blocked", "question": part(rounds, "verdict", "question")}
     elif discovery := part(rounds, "verdict", "discovery"):
-        outcome |= {"status": "discovery", "discovery": discovery}
+        outcome |= {"status": "discovery", "next_input": "discovery", "next_text": discovery}
     else:
         outcome["verdict"] = part(rounds, "review", "verdict")
     print(json.dumps(outcome))

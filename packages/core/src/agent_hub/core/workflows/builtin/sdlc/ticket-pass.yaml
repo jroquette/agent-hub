@@ -1,13 +1,14 @@
 # One pass of the ticket flow (two-level-flows S2, A2, A22), included up to three times by
-# implement. A fresh, read-only preflight checks the ticket against the plan and origin/<base> in
-# the ticket repo's main checkout (no checkout change, no branch); hub step preflight appends its
-# findings as one agent-hub/preflight/1 run, filling the time, the run's id, main's commit and
-# the plan's version. On `plan` drift: a change request (hub step change-request) and the
-# owner's gate (approve, or decline with a note); approved, the decision and the plan's A<k>
-# amendment (hub step decide, amend-plan; a plan that moved since is not amended: the re-check
-# reads the current plan), declined, the decision with the note; then a re-preflight against the
-# new plan, or with the note as a constraint. Drift still `plan` there, or on a declined change
-# given as input, ends the pass blocked (pass_outcome.py). Only a preflight that passed makes the
+# implement. A fresh, read-only preflight checks the ticket against the plan and main's commit
+# ticket-brief read (in the ticket repo's main checkout: no checkout change, no branch); hub step
+# preflight appends its findings as one agent-hub/preflight/1 run, filling the time, the run's id
+# and the plan's version, and recording that commit. On `plan` drift: a change request (hub step
+# change-request, which checks that run first) and the owner's gate (approve, or decline with a
+# note); approved, the decision and the plan's A<k> amendment (hub step decide, amend-plan),
+# declined, the decision with the note; then a re-preflight against the new plan, or with the
+# note as a constraint. An approval the plan moved past is not amended (A23): the pass ends
+# superseded and the next one checks the current plan, told so. Drift still `plan` after a
+# decision, or on a declined change given as input, ends the pass blocked (pass_outcome.py). Only a preflight that passed makes the
 # worktree and branch (hub step worktree), then the ticket plan (tickets/<ticket>/plan.md) and
 # deliver's review rounds (at most three, until PASS, the session blocked or its discovery, which
 # hub step verdict reads; three without fail the group, max_iterations). The writers create or
@@ -35,9 +36,9 @@ inputs:
   hub:
     required: true
     description: The hub's main checkout.
-  base:
+  main:
     required: true
-    description: The ticket repo's origin/<default branch>, which the preflight reads.
+    description: Main's commit the preflight reads and its run records (ticket-brief's).
   input:
     default: none
     description: What the pass is given - none, discovery or declined_change; a when reads it, so give a reference.
@@ -58,7 +59,7 @@ nodes:
       ticket: $INPUTS.ticket
       brief: $INPUTS.brief
       hub: $INPUTS.hub
-      base: $INPUTS.base
+      base: $INPUTS.main
       input: $INPUTS.input
       note: $INPUTS.input_text
     output_format:
@@ -85,7 +86,7 @@ nodes:
     description: On plan drift, open the change request against the plan's current version.
     depends_on: [preflight]
     when: "$preflight.output.drift == 'plan' && $INPUTS.input != 'declined_change'"
-    command: [hub, step, change-request, --feature, $INPUTS.feature, --ticket, $INPUTS.ticket, --evidence, $preflight.output.evidence, --proposal, $preflight.output.proposal, --affected, $preflight.output.affected]
+    command: [hub, step, change-request, --feature, $INPUTS.feature, --ticket, $INPUTS.ticket, --evidence, $preflight.output.evidence, --proposal, $preflight.output.proposal, --affected, $preflight.output.affected, --findings, $preflight.output, --commit, $INPUTS.main]
     retry: {max_attempts: 0}
     output_format:
       type: object
@@ -100,7 +101,7 @@ nodes:
     description: Append the preflight's run to tickets/<ticket>/preflight.json.
     depends_on: [preflight, request]
     trigger_rule: none_failed_min_one_success
-    command: [hub, step, preflight, --feature, $INPUTS.feature, --ticket, $INPUTS.ticket, --findings, $preflight.output, --input, $INPUTS.input, --input-text, $INPUTS.input_text, --request, $request.output.n]
+    command: [hub, step, preflight, --feature, $INPUTS.feature, --ticket, $INPUTS.ticket, --findings, $preflight.output, --commit, $INPUTS.main, --input, $INPUTS.input, --input-text, $INPUTS.input_text, --request, $request.output.n]
     retry: {max_attempts: 0}
     output_format: {type: object}
 
@@ -130,11 +131,15 @@ nodes:
 
   - id: amend
     type: shell
-    description: Append the approved change's A<k> entry to plan.md's Amendments (nothing when the plan moved since).
+    description: Append the approved change's A<k> entry to plan.md's Amendments; none when the plan moved past it (A23).
     depends_on: [approved]
     command: [hub, step, amend-plan, --feature, $INPUTS.feature, --request, $request.output.n, --summary, $preflight.output.summary]
     retry: {max_attempts: 0}
-    output_format: {type: object}
+    output_format:
+      type: object
+      properties:
+        moved: {type: [string, "null"]}
+      required: [moved]
 
   - id: declined
     type: shell
@@ -150,6 +155,8 @@ nodes:
     description: The preflight again - against the current plan, or with the owner's note as a constraint.
     depends_on: [amend, declined]
     trigger_rule: none_failed_min_one_success
+    # Not after an approval the plan moved past: the next pass checks the current plan (A23).
+    when: "$amend.output.moved == ''"
     prompt_file: preflight.md
     cwd: ../$INPUTS.repo
     context: fresh
@@ -159,7 +166,7 @@ nodes:
       ticket: $INPUTS.ticket
       brief: $INPUTS.brief
       hub: $INPUTS.hub
-      base: $INPUTS.base
+      base: $INPUTS.main
       input: $gate.output.decision
       note: $gate.output.text
     output_format:
@@ -185,7 +192,7 @@ nodes:
     type: shell
     description: Append the re-preflight's run to tickets/<ticket>/preflight.json.
     depends_on: [recheck]
-    command: [hub, step, preflight, --feature, $INPUTS.feature, --ticket, $INPUTS.ticket, --findings, $recheck.output, --input, $gate.output.decision, --input-text, $gate.output.text, --request, $request.output.n]
+    command: [hub, step, preflight, --feature, $INPUTS.feature, --ticket, $INPUTS.ticket, --findings, $recheck.output, --commit, $INPUTS.main, --input, $gate.output.decision, --input-text, $gate.output.text, --request, $request.output.n]
     retry: {max_attempts: 0}
     output_format: {type: object}
 
@@ -439,21 +446,23 @@ nodes:
 
   - id: outcome
     type: script
-    description: How the pass ended - blocked, a discovery, or done with the review's verdict - and its worktree.
+    description: How the pass ended - blocked, a discovery, superseded, or done with the review's verdict - and its worktree.
     depends_on: [rounds, record, rerecord]
     trigger_rule: none_failed_min_one_success
     runtime: python
     script: pass_outcome.py
-    args: [--rounds, $rounds.output, --worktree, $worktree.output]
+    args: [--rounds, $rounds.output, --worktree, $worktree.output, --superseded, $amend.output.moved]
     retry: {max_attempts: 0}
     output_format:
       type: object
       properties:
-        status: {type: string, enum: [done, blocked, discovery]}
+        status: {type: string, enum: [done, blocked, discovery, superseded]}
         question: {type: string}
-        discovery: {type: string}
         verdict: {type: string}
+        next_input: {type: string, enum: ["", none, discovery]}
+        next_text: {type: string}
+        superseded: {type: string}
         path: {type: string}
         base: {type: string}
         target: {type: [object, "null"]}
-      required: [status, question, discovery, verdict, path, base, target]
+      required: [status, question, verdict, next_input, next_text, superseded, path, base, target]
