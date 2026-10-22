@@ -53,6 +53,7 @@ PIN = re.compile(r'("version"\s*:\s*)"[^"\\]*"')
 WOULD = re.compile(r"would (create|restore|update|delete) (.+)")
 DONE = re.compile(r"(created|restored|updated|deleted) (.+)")
 HUB_LOCK = "hub.lock"
+HUB_JSON = "hub.json"
 # hub sync --check: up to date, a conflict, changes pending.
 UP_TO_DATE, CONFLICT, PENDING = 0, 3, 4
 
@@ -146,7 +147,7 @@ def sync_list(copy: Path, cli: list[str]) -> tuple[list[dict[str, str]], list[st
 
 
 def list_changes(hub: Path, *, repo: Path, version: str, cli: list[str]) -> dict[str, object]:
-    _, value, previous = read_hub_json(hub / "hub.json")
+    _, value, previous = read_hub_json(hub / HUB_JSON)
     project = value.get("project")
     default = project.get("default_branch") if isinstance(project, dict) else None
     if not isinstance(default, str) or not default:
@@ -157,8 +158,8 @@ def list_changes(hub: Path, *, repo: Path, version: str, cli: list[str]) -> dict
     try:
         _git(hub, "worktree", "add", "-q", "--detach", str(copy), f"origin/{default}")
         try:
-            copy_text, _, _ = read_hub_json(copy / "hub.json")
-            (copy / "hub.json").write_text(set_pin(copy_text, version), encoding="utf-8")
+            copy_text, _, _ = read_hub_json(copy / HUB_JSON)
+            (copy / HUB_JSON).write_text(set_pin(copy_text, version), encoding="utf-8")
             files, conflicts = sync_list(copy, command)
         finally:
             _git(hub, "worktree", "remove", "--force", str(copy))
@@ -189,12 +190,12 @@ def summary_of(*, previous: str, version: str, files: list[dict[str, str]]) -> s
 
 
 def apply_pin(worktree: Path, *, version: str, issue: str, cli: list[str]) -> dict[str, object]:
-    if not (worktree / "hub.json").is_file():
+    if not (worktree / HUB_JSON).is_file():
         raise RefusedError(f"--worktree: no hub.json in {worktree}")
-    text, _, previous = read_hub_json(worktree / "hub.json")
+    text, _, previous = read_hub_json(worktree / HUB_JSON)
     if _git(worktree, "status", "--porcelain", "--untracked-files=all").strip():
         raise FailedError("the hub worktree is not clean")
-    (worktree / "hub.json").write_text(set_pin(text, version), encoding="utf-8")
+    (worktree / HUB_JSON).write_text(set_pin(text, version), encoding="utf-8")
     command = cli or ["./hub"]
     _, synced, _ = _run([*command, "sync"], worktree)
     _, checked, _ = _run(

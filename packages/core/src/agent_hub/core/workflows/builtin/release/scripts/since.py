@@ -19,6 +19,8 @@ Prints ``{"last_tag", "previous", "version", "bump", "reason", "count", "prs", "
 ``MAX_COMMITS`` commits, no ``v*`` tag or a bad version exits 2; a git failure exits 1.
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import re
