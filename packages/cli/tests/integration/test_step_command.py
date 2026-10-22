@@ -107,6 +107,20 @@ class TestWorktree:
         assert "created" in result.stderr
         assert workspace.git(worktree, "rev-parse", "HEAD") == base
 
+    def test_starts_the_branch_from_the_commit_the_preflight_checked_when_given_one(
+        self, run_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        workspace = run_workspace.workspace
+        checked = workspace.origin_head("demo-api")
+        workspace.advance("demo-api")
+
+        result = step(run_command, workspace, "worktree", *ISSUE, "--commit", checked)
+
+        # The fetch brings the newer main; the branch still starts where the preflight looked.
+        output = output_of(result)
+        assert workspace.git(worktree_of(workspace), "rev-parse", "HEAD") == checked
+        assert (output["base"], output["target"]["base"]) == (checked, checked)
+
     def test_keeps_worktree_when_it_exists(
         self, run_workspace: Workspace, run_command: CommandRunner
     ) -> None:

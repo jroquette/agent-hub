@@ -413,7 +413,7 @@ class TestPreflight:
                 {"input": "none", "input_text": None, "change_request": 1},
             ),
             (
-                ("--input", "declined_change", "--input-text", "No.", "--request", ""),
+                ("--input", "declined_change", "--input-text", "No.", "--declined-request", "1"),
                 {"input": "declined_change", "input_text": "No.", "change_request": 1},
             ),
         ],
@@ -421,9 +421,6 @@ class TestPreflight:
     def test_records_the_input_and_the_request_when_a_gate_or_a_discovery_gave_them(
         self, hub: Hub, given: tuple[str, ...], expected: dict[str, Any]
     ) -> None:
-        if not given[-1]:
-            # A declined change re-checked names the request the last run opened.
-            hub.ok("preflight", *TICKET, *found(drift="plan"), "--request", "1")
         findings = ("--findings", json.dumps(FINDINGS | {"drift": "plan"}), "--commit", COMMIT)
 
         output = hub.ok("preflight", *TICKET, *findings, *given)
@@ -453,6 +450,32 @@ class TestPreflight:
             "change_request": None,
         }
         assert {key: run[key] for key in expected} == expected
+
+    def test_names_the_declined_request_pending_gave_when_its_recheck_still_finds_plan_drift(
+        self, hub: Hub
+    ) -> None:
+        # A request no run named (its run failed), declined: pass-1 gets its number from pending.
+        hub.request()
+        findings = ("--findings", json.dumps(FINDINGS | {"drift": "plan"}), "--commit", COMMIT)
+        given = ("--input", "declined_change", "--input-text", "No.", "--declined-request", "1")
+
+        output = hub.ok("preflight", *TICKET, *findings, *given)
+
+        run = json.loads((hub.root / output["path"]).read_bytes())["runs"][-1]
+        assert (run["input"], run["change_request"]) == ("declined_change", 1)
+
+    def test_records_the_superseded_approval_when_a_recheck_follows_a_moved_plan(
+        self, hub: Hub
+    ) -> None:
+        hub.approved()
+        plan = hub.feature / "plan.md"
+        plan.write_text(plan.read_text() + "- A2 (2026-02-03, Dana Owner): Other.\n")
+        given = ("--input", "approve", "--input-text", "Go.", "--request", "1", "--commit", COMMIT)
+
+        output = hub.ok("preflight", *TICKET, "--findings", json.dumps(FINDINGS), *given)
+
+        run = json.loads((hub.root / output["path"]).read_bytes())["runs"][-1]
+        assert (run["input"], run["input_text"]) == ("none", SUPERSEDED)
 
     def test_refuses_without_writing_when_the_run_gives_no_run_id(
         self, hub: Hub, monkeypatch: pytest.MonkeyPatch
@@ -935,6 +958,30 @@ class TestPendingDecision:
             "summary": "Follow it.",
             "superseded": SUPERSEDED,
         }
+
+    def test_reads_only_this_tickets_newest_unnamed_request_opened_since_its_last_run(
+        self, hub: Hub, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def declined(n: str) -> None:
+            given = ("--decision", "declined", "--by", "Dana", "--note", f"No {n}.")
+            assert (
+                hub.step("decide", "--feature", "demo-flow", "--request", n, *given).exit_code == 0
+            )
+
+        hub.request()  # 1: opened before the ticket's last run, which does not name it
+        declined("1")
+        self.preflight(hub, drift="none")
+        other = ("--feature", "demo-flow", "--ticket", "DEM-7")
+        hub.ok("change-request", *other, "--evidence", "e", "--proposal", "p")  # 2: DEM-7's
+        declined("2")
+        assert hub.ok("pending-decision", *TICKET) == self.NONE
+
+        hub.request()  # 3 and 4: unnamed, since the last run; the newer one is read
+        hub.request()
+        declined("3")
+        declined("4")
+
+        assert hub.ok("pending-decision", *TICKET)["request"] == 4
 
     def test_reads_a_decided_request_no_preflight_run_names_when_its_run_failed(
         self, hub: Hub

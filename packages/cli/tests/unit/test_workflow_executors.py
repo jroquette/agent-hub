@@ -134,7 +134,10 @@ def test_gives_read_only_tools_and_denies_edits_when_agent_node_is_read_only(
     assert not {"Edit", "Write", "Bash(git commit:*)", "Bash(git add:*)", "Bash(make:*)"} & set(
         allowed
     )
-    assert {"Edit", "Write", "NotebookEdit"} <= set(denied)
+    # No shell reader that can run or write (rg --pre, cat > file): the Read and Grep tools read.
+    assert not [tool for tool in allowed if tool.startswith(("Bash(rg", "Bash(grep", "Bash(cat"))]
+    # git's read forms can write with --output: denied wherever it stands.
+    assert {"Edit", "Write", "NotebookEdit", "Bash(git *--output*)"} <= set(denied)
 
 
 def test_gives_session_env_with_node_step_when_agent_node_called(
