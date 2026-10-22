@@ -94,7 +94,7 @@ from agent_hub.core.features.ticket_records import (
     TICKETS_FOLDER,
     TicketFiles,
 )
-from agent_hub.generator.regular_files import read_regular
+from agent_hub.core.regular_files import read_regular
 
 MAX_FEATURE_FOLDERS: Final = 500
 READ_BUDGET_BYTES: Final = 32 * 1_048_576

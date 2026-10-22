@@ -5001,7 +5001,6 @@ ADAPTER_MODULES = frozenset(
         "hub_config_files.py",
         "feature_files.py",
         "output_files.py",
-        "regular_files.py",
         "brain_files.py",
         "skill_files.py",
         "unit_files.py",
