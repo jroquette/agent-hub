@@ -1,0 +1,19 @@
+---
+name: premortem
+description: Stress-test a decision before committing to it — assume the chosen option has already failed, name the specific causes, rank them, and for the top three give an early-warning sign and the cheapest experiment that could prove the choice wrong. Read-only. Use before accepting an ADR, a plan's key choice, or any decision that is hard to reverse.
+disable-model-invocation: true
+argument-hint: "<decision, ADR draft or plan>"
+---
+
+# /premortem <decision>
+
+Paths below are relative to the hub (the directory with `hub.json`); repos are its siblings, listed in `hub.json` → `repos`, each with its own `AGENTS.md`.
+Asking "what could go wrong?" gets cautious generalities; assuming the failure has already happened and asking why gets specific causes. This skill does that once, in the session, and edits nothing: its report feeds `/adr` or the plan gate.
+Step types: `script` (commands, no judgement), `agent` (reasoning in the session), `gate` (the user decides).
+
+1. `agent` **The decision**: state the choice, the options it beat, what it must achieve and by when, from the ADR draft, `plan.md` or the conversation; read the code and the brain notes it touches (`brain/decisions/index.md`, the feature's records). **Stop** and ask when the choice or its goal is vague: a premortem of a vague decision lists vague risks.
+2. `agent` **It failed**: "It is three months later and this choice failed." Write 5 to 8 specific causes, each one a story tied to this codebase, its users or its constraints: what happened, how it was noticed, why it was not caught earlier. Look from several sides: the technical bet, operations, scope and people, reversibility, how late the failure would show. Drop a cause that would fit any project ("bugs", "bad estimates").
+3. `agent` **Rank** the causes by likelihood and impact, each in words (high, moderate, low or unknown; no percentages: invented numbers look precise and are not). Put next to the top causes the rejected options and doing nothing: does the same cause sink them too? A cause that sinks every option does not separate them.
+4. `agent` **Experiments**: for each of the top three causes, an early-warning sign to watch after the choice ships, and the **cheapest experiment** that could show the cause is real before committing: a spike, a query against real data, a test, a benchmark, a question to the person who knows. Phrase each as "if <cause>, then <experiment> shows <result> within <time or cost>". An experiment that cannot come out against the choice is not one: rewrite it.
+5. `agent` **Report**: the top three causes with their rank, sign and experiment; the other causes in one line each; the assumptions the choice rests on, marked checked or unchecked; which experiment to run first and why. The report is the only output: this skill edits nothing.
+6. `gate` **The user decides**: run an experiment first, adjust the choice, or accept the risks as they stand. A choice that goes ahead records the accepted risks and their signs in its ADR's consequences (through `/adr`) or in the plan.

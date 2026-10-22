@@ -87,11 +87,24 @@ entries until the first regular file named as the review check names a round (`<
 
 ### `tickets/<ticket>/` and `change-requests/`
 
-The ticket flow's records (two-level-flows S2), written by the `implement` workflow's nodes, never by the app.
+The ticket flow's records (two-level-flows S2), written by the `implement` workflow's nodes, never by the app, with
+one exception: hub web creates a request's `<n>.decision.md` when its run is gone (AC-2.14, D-10;
+[API.md](../API.md) "Plan change requests").
 `<ticket>` is the ticket's plan key or tracker id, matched in any case.
 
 - `tickets/<ticket>/brief.md` (the context brief) and `tickets/<ticket>/plan.md` (the ticket plan) are checked
-  present, never read.
+  present, never read. The brief opens with frontmatter `type: ticket-brief` and `ticket`, then holds one section per
+  context run, `## Brief v<n> (<ISO time>)`, appended and never rewritten: a re-run adds `v<n+1>` and keeps every
+  earlier byte. Each section starts with its fields as a JSON block, `{"plan_version", "blockers": [{"id",
+  "outcome_path", "recorded_at"}], "adrs": []}` (a flat frontmatter could not hold the blockers, and frontmatter at the
+  top could not change without a rewrite), then `### Acceptance criteria` (the live ACs of `features.json` keyed to the
+  ticket or named in its plan section), `### Plan section` (each section of `plan.md` whose heading names the
+  ticket's key, id or plan ids, and each table row whose first cell lists one of them, quoted with `> `; a key joining
+  plan ids, `S2-T3-T4`, names `S2-T3` and `S2-T4`),
+  `### Blockers` (each `blocked_by` ticket with its `tickets/<key or id>/outcome.md` and `merged_at`, or "none
+  recorded"), `### Main commits since the plan` (the ticket's repo checkout's `origin/<default branch>` as last
+  fetched, after the hub's last commit of `plan.md`, on the files the plan section names in code spans; at most 50, or
+  the reason none were read) and `### ADRs cited` (`ADR NNNN` or `docs/adr/NNNN-…` in the plan section).
 - `tickets/<ticket>/preflight.json`: schema `agent-hub/preflight/1` (`PreflightRecord` in `output_models.py`, exported
   as `preflight.v1.json`, checked by `hub validate-output preflight FILE`): `{"schema", "ticket", "runs": [...]}`,
   at most 200 runs, oldest first, only ever appended. Each run is `{ran_at, plan_version, commit, blockers_read[],
@@ -120,6 +133,22 @@ each can add before the read reaches 32 MiB; a ticket whose folder was left out 
 `waiting_on_owner` need it): its first 400 `.md` files by name (200 requests and their decisions), heads of 16 KiB;
 more than that is a record problem on Plan's signal. A file that cannot be read or parsed reads "<file> could not be
 read (…). Fix it in a hub PR." on the step it feeds.
+
+The `implement` run writes them with `hub step` (P7), in the hub's main checkout, never committing (its report names
+the files for the owner's hub PR). Every writer checks its record as the readers above read it, follows no link (the
+feature folder, `tickets/`, `change-requests/` and each file) and writes nothing when it refuses
+(`agent_hub.core.features.ticket_writes`, `agent_hub.cli.step_records`). A ticket must be planned in `features.json`,
+and its records go to one folder whatever name the run gives: the existing `tickets/` folder the ticket flow reads for
+its key or id (`ticket_records.ticket_folder`), else its id (its key while it has none). `brief.md`, `preflight.json` and `plan.md` are read and replaced
+under the feature's lock `.agent-runs/locks/<slug>.lock` (never committed); a run that finds it held is refused.
+
+| Command | Writes | Refuses |
+|---|---|---|
+| `ticket-brief --feature --ticket` | the next `## Brief v<n>` of `brief.md` (temp file, then rename) | a ticket `features.json` does not plan, no `plan.md`, a `brief.md` that is not this ticket's brief |
+| `preflight --feature --ticket --run JSON` | `preflight.json` with one run appended: earlier runs copied as parsed JSON, so each stays equal in canonical form; the file is new or replaced whole (temp file, then rename) | a run `PreflightRun` refuses (cross-field rules included), a record there that is malformed or names another ticket, a result over 64 KiB |
+| `change-request --feature --ticket --run-id --evidence --proposal [--affected]…` | `change-requests/<n>.md`, `n` the next free number, `status: open`, `plan_from` the plan's current version, `plan_to` the next; created exclusively | a field its reader could not read, an empty evidence or proposal, a text over 256 KiB (what `decide` and `amend-plan` read) |
+| `decide --feature --request N --decision approved\|declined --by WHO [--note]` | `change-requests/<n>.decision.md`, `decided_by` the gate's approver, `decided_at` now, `note` on one line (cut at 1,000 characters; the whole note is the body); created exclusively | a decision other than exactly `approved` or `declined`, a text over 256 KiB, a second decision, an approver that names no person (empty or `unknown`, A5), an approval whose approver `amend-plan` could not write (a `(` or `)`), a decline without a note, no request `n` |
+| `amend-plan --feature --request N --summary` | one entry `- A<k> (<decided_at date>, <decided_by>): <summary> ([change request n](change-requests/n.md))` at the end of `plan.md`, after a new `## Amendments` heading when the last section is another; every earlier byte kept; a re-run once the plan holds the request's entry writes nothing and answers `already amended as A<k>` | a request not decided `approved`, a plan whose version is no longer the request's `plan_from`, an entry that would not read as `A<k>`, a lock another run holds |
 
 ### `summaries/<record>.md`
 
@@ -183,8 +212,9 @@ States: the first step that does not hold is `current` (or `unknown` when its ev
 "Ticket evals cover 6 of 23 ACs"). After it, a step whose own condition holds is `blocked` with a `reason` naming that
 earlier step; one with evidence for part of the feature (created or merged tickets, ticket evals covering some ACs, a
 design written) is `partial`; one that cannot be read is `unknown`; the rest are `pending`. A SHIP-WITH-OWNER-STEPS
-acceptance eval not signed off reads "Waiting on you: sign off n ACs" ("1 AC" for one). One rule decides which ACs
-wait (`feature_evals.owner_wait`), for the step and the sign-off alike: the acceptance eval is whole-feature, so every
+acceptance eval not signed off is `waiting` ("Waiting for you", when it is the gate) with the meta "Sign off n ACs"
+("1 AC" for one; spec amendment A18). The step folds the wait's typed state (`OwnerWaitState`), never its words.
+One rule decides which ACs wait (`feature_evals.owner_wait`), for the step and the sign-off alike: the acceptance eval is whole-feature, so every
 non-withdrawn AC is an owner step (a legacy `eval.md` without scope too, failing ACs included) until a later SHIP with
 `provenance: owner` names it (ticket evals never do); the sign-off lists exactly those. The sign-off is refused,
 writing nothing, with a one-line reason: when any of those ACs has a NO-SHIP as its latest eval (it names them: fix
@@ -197,9 +227,10 @@ of one). While waiting ACs have a NO-SHIP as their latest eval, the step reads "
 instead of a sign-off prompt; ahead of that, while no sign-off can rank newer than the acceptance eval (spec amendment
 A15), it reads "Acceptance eval undated · evaluate again" (no usable `evaluated_at`; a legacy `eval.md` never is) or
 "Sign-off possible after <date-time>" (dated at or after the read; the minute after which a sign-off can follow it,
-in UTC, "21 Nov 2026, 09:01:00 UTC"), and neither reads "Waiting on you". The detail serves
+in UTC, "21 Nov 2026, 09:01:00 UTC"), and neither reads "Waiting for you". The detail serves
 the same wait as `acceptance_eval.owner_wait` ([API.md](../API.md)). With no AC to list (no `features.json`, or every
-AC withdrawn), the step is not done, "Waiting on owner steps · no ACs listed", until a later owner SHIP of any scope
+AC withdrawn), the step is `waiting` (when it is the gate, A19), "Sign off by hand · no ACs listed", until a
+later owner SHIP of any scope
 exists; the app cannot write that one, so the owner writes it by hand.
 
 Each feature (list and detail) carries `waiting_on_owner`, the owner decision it waits on: `change_request` (with the

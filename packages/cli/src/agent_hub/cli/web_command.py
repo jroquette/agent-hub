@@ -37,13 +37,12 @@ from agent_hub.api.settings import DEFAULT_PORT, ApiSettings
 from agent_hub.cli.command_exits import fail
 from agent_hub.cli.database_path import account_home_directory, default_database_path
 from agent_hub.cli.effective_config import git_identity_reader
-from agent_hub.cli.errors import CliError, HomeDirectoryNotFoundError, ProjectsRootError
+from agent_hub.cli.errors import CliError, ProjectsRootError
+from agent_hub.cli.registry_path import default_registry_path, home_directory
 from agent_hub.core.agent_sessions.limits import SessionLimits
 from agent_hub.core.hub_config.effective_identity import GitReader
 from agent_hub.storage.errors import DatabaseAccessError
 
-REGISTRY_DIR = "agent-hub"
-REGISTRY_FILE = "hubs.json"
 PROJECTS_VARIABLE = "AGENT_HUB_CLAUDE_PROJECTS"
 CONTAINER_VARIABLE = "AGENT_HUB_IN_CONTAINER"
 LOCALHOST = "localhost"
@@ -51,26 +50,6 @@ IPV6_LOOPBACK = "::1"
 OUTSIDE_LOOPBACK = f"error: binding outside loopback needs {CONTAINER_VARIABLE}=1"
 NOT_AN_ADDRESS = "error: --host must be an IP address or localhost"
 USAGE = 2
-
-
-def _home(environ: Mapping[str, str]) -> Path:
-    """``HOME`` when absolute, else the account's home, as for the event database."""
-    for home in (environ.get("HOME", ""), account_home_directory() or ""):
-        if home and Path(home).is_absolute():
-            return Path(home)
-    raise HomeDirectoryNotFoundError
-
-
-def default_registry_path(environ: Mapping[str, str]) -> Path:
-    """``$XDG_CONFIG_HOME/agent-hub/hubs.json``, else ``~/.config/agent-hub/hubs.json`` (D18).
-
-    ``XDG_CONFIG_HOME`` counts only when absolute; the home directory is found as for the
-    event database (``HOME`` when absolute, else the account's home).
-    """
-    config_home = environ.get("XDG_CONFIG_HOME", "")
-    if config_home and Path(config_home).is_absolute():
-        return Path(config_home) / REGISTRY_DIR / REGISTRY_FILE
-    return _home(environ) / ".config" / REGISTRY_DIR / REGISTRY_FILE
 
 
 def claude_projects_root(environ: Mapping[str, str]) -> Path:
@@ -81,7 +60,7 @@ def claude_projects_root(environ: Mapping[str, str]) -> Path:
         if not Path(configured).is_absolute():
             raise ProjectsRootError
         return Path(configured)
-    return _home(environ) / ".claude" / "projects"
+    return home_directory(environ, account_home=account_home_directory) / ".claude" / "projects"
 
 
 def _usage_error(message: str) -> NoReturn:
@@ -291,7 +270,8 @@ def web(
     extra_hosts = _allowed_hosts_or_exit(os.environ, port)
     try:
         db_path = db or default_database_path(os.environ)
-        registry_path = default_registry_path(os.environ)
+        # This module's account lookup, as for the projects root: one seam for both.
+        registry_path = default_registry_path(os.environ, account_home=account_home_directory)
         projects_root = claude_projects_root(os.environ)
     except CliError as error:
         fail(f"error: {error}")

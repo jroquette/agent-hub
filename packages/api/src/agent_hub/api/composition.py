@@ -50,6 +50,7 @@ from agent_hub.api.agent_session_runtime import (
 )
 from agent_hub.api.app import create_app
 from agent_hub.api.change_feed import ChangeFeed, SystemTimer
+from agent_hub.api.change_request_files import HubDecisionWriter
 from agent_hub.api.dependencies import ApiPorts
 from agent_hub.api.feature_names import FILE_NAME as FEATURE_NAMES_FILE
 from agent_hub.api.feature_names import FeatureNames
@@ -91,6 +92,7 @@ from agent_hub.core.agent_sessions.driver import SessionDriver
 from agent_hub.core.agent_sessions.links import AgentSessionLinks, ObservedSessionLookup
 from agent_hub.core.agent_sessions.repo_changes import RepoChangesReader
 from agent_hub.core.agent_sessions.store import AgentSessionStore
+from agent_hub.core.features.change_request_decision import DecideChangeRequest
 from agent_hub.core.features.owner_signoff import OwnerSignOffError, SignOffOwnerSteps
 from agent_hub.core.features.ticket_snapshots import (
     SnapshotRequest,
@@ -355,6 +357,20 @@ def item_author_of(hub_of: Callable[[str], LearningHub | UnavailableHub]) -> Aut
         return VersionAuthor(name=hub.author.name, email=hub.author.email)
 
     return author_of
+
+
+def decider_of(
+    hub_of: Callable[[str], LearningHub | UnavailableHub],
+) -> Callable[[str], str | None]:
+    """Who decides a change request in hub web: the person the project's hub commits as (the
+    item writes' author, ADR 0016), None when the hub names none."""
+    author_of = item_author_of(hub_of)
+
+    def decider(project: str) -> str | None:
+        author = author_of(project)
+        return author.name if isinstance(author, VersionAuthor) else None
+
+    return decider
 
 
 def _item_writes(  # noqa: PLR0913 - the shared write step's ports, all keyword-only
@@ -755,6 +771,16 @@ def build_app(
         ),
         owner_signoff=SignOffOwnerSteps(
             ProjectHubPaths(hubs), reader, HubEvalWriter(), clock=settings.clock
+        ),
+        change_request_decisions=None
+        if guard is None
+        else DecideChangeRequest(
+            ProjectHubPaths(hubs),
+            reader,
+            writer=HubDecisionWriter(),
+            guard=guard,
+            decider=decider_of(facts.hub_of),
+            clock=settings.clock,
         ),
         feature_names=FeatureNames(settings.registry_path.parent / FEATURE_NAMES_FILE),
         ac_checks=AcCheckRunner(hubs),

@@ -1,7 +1,8 @@
 import { useEffect, useRef } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 
-import { apiKey, useApi } from "../../lib/api";
+import type { components } from "../../api/schema";
+import { apiKey, apiPost, useApi, type ApiProblem } from "../../lib/api";
 
 /**
  * How often an open feature screen rereads its record (local files: cheap) and, on the Tickets
@@ -45,4 +46,44 @@ export function useFeatureTickets(project: string, slug: string, enabled: boolea
     void client.invalidateQueries({ queryKey: ["api", "/api/v1/features"] });
   }, [client, project, slug, updatedAt]);
   return tickets;
+}
+
+/**
+ * One ticket's records the ticket panel shows (two-level-flows A7): its brief, every preflight
+ * run and the change requests it asks or is held by, kept fresh as the feature is.
+ */
+export function useTicketRecords(project: string, slug: string, ticket: string) {
+  return useApi(
+    "/api/v1/features/{project}/{slug}/tickets/{ticket}",
+    { path: { project, slug, ticket } },
+    { refetchInterval: FEATURE_REFRESH_MS, retry: false },
+  );
+}
+
+type ChangeRequestView = components["schemas"]["ChangeRequestView"];
+type ChangeRequestDecisionBody = components["schemas"]["ChangeRequestDecisionBody"];
+
+/**
+ * The owner's decision on a change request whose run has no open gate (AC-2.14): recorded in the
+ * hub, then the feature, its tickets and the ticket's records are read again.
+ */
+export function useDecideChangeRequest(project: string, slug: string, n: number) {
+  const client = useQueryClient();
+  return useMutation<ChangeRequestView, ApiProblem, ChangeRequestDecisionBody>({
+    mutationFn: (body) =>
+      apiPost("/api/v1/features/{project}/{slug}/change-requests/{n}/decision", body, {
+        path: { project, slug, n },
+      }),
+    onSuccess: () => {
+      const path = { path: { project, slug } };
+      for (const key of [
+        apiKey("/api/v1/features"),
+        apiKey("/api/v1/features/{project}/{slug}", path),
+        apiKey("/api/v1/features/{project}/{slug}/tickets", path),
+        ["api", "/api/v1/features/{project}/{slug}/tickets/{ticket}"],
+      ]) {
+        void client.invalidateQueries({ queryKey: key });
+      }
+    },
+  });
 }

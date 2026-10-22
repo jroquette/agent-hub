@@ -38,7 +38,10 @@ the first routes were written ([ADR 0017](adr/0017-api-second-composition-root.m
   `/projects/{project}/skills/{kind}/{source}/{name}/versions[/{version_id}]` and
   `/workflows/{project}/{name}/versions[/{version_id}]`, and `POST .../versions/{version_id}/restore` of each
   ([Skills](#skills), [Workflows](#workflows)), and the one AGH-298 added to them:
-  `POST /projects/{project}/skills/drafts/{draft_id}/publish` ([Skills](#skills)). A test fails on any other path.
+  `POST /projects/{project}/skills/drafts/{draft_id}/publish` ([Skills](#skills)), and the two AGH-405 added
+  (`TICKET_FLOW_PATHS`): `GET /features/{project}/{slug}/tickets/{ticket}` and
+  `POST /features/{project}/{slug}/change-requests/{n}/decision` ([Plan change requests](#plan-change-requests)). A
+  test fails on any other path.
 - A field kept only for compatibility is marked `deprecated` in the document and stays until `/api/v2`: a session's
   and a live tile's `agent` (read `label` and `actors`) and a learning's `target` (read `note_path`).
 
@@ -258,6 +261,18 @@ acceptance criteria rows, the records and every eval, it carries:
   requests), else `owner_signoff` while the acceptance eval's `owner_wait` is `sign_off`, or `owner_signoff_manual`
   while it is `no_acs` (a sign-off only the owner can write by hand, two-level-flows A17); `tickets` is empty for
   both.
+- `change_requests`: the plan change requests (`change-requests/<n>.md`, two-level-flows S2) by number, each with
+  `n`, its asking `ticket`, `status` (`open`, `approved` or `declined`, folded from its decision; `null` when the
+  request cannot be read, `problem` then says why), `plan_from`, `plan_to`, `affected`, `opened_at`, `run_id`,
+  `decision` (`null`, or `decision`, `decided_by`, `decided_at` and `note`), `path` (relative to the hub's
+  `brain/`) and `approval_id`: the id of the open gate of its run that answers it (an open `human_gate` approval in
+  the run's session `run:<run_id>`), `null` when the request is not open or its run has no open gate, and
+  `decidable_here`: `true` for an open request whose run has no open gate and is gone by the decision route's own
+  test (no `run_id`, no run folded under it, or one that ended `done`, `failed` or `cancelled`, and no child hub web
+  started holds it); always `false` where the decision route is not wired (sessions off). With an `approval_id`, hub web decides through
+  `POST /approvals/{approval_id}/decision` and the run writes the records; with `decidable_here`, through
+  [the decision route](#plan-change-requests) below; with neither, the run is live and asks at its gate when it
+  gets there (P8, A5).
 
 ## Feature tickets
 
@@ -301,6 +316,36 @@ served without a call, concurrent reads of one key share one call (a read waits 
 the app refetches the route; the cache still applies (`as_of` shows its age). `GET /features` and
 `GET /features/{project}/{slug}` never call Linear: they use a warm cache entry, else the plan, and say so in their
 `golden_path` and `tickets_source`.
+
+## Plan change requests
+
+- `GET /api/v1/features/{project}/{slug}/tickets/{ticket}` serves what the ticket panel shows that no tickets row
+  carries (`TicketRecords`, two-level-flows A7, A20): `ticket` as asked (its plan key or tracker id, any case),
+  `preflight` (`null` without `preflight.json`, else every run oldest first, each as `agent-hub/preflight/1` writes
+  it with its `local_notes` and its `input`/`input_text` for a discovery or a declined change, and the `problem`
+  when it cannot be read, `runs` then empty), and `change_requests`, the requests the ticket asks or is affected
+  by, as the detail serves them (with `approval_id` and `decidable_here`) plus each one's `body`: its markdown after
+  the frontmatter (evidence and proposal), within the 16 KiB head the reader reads, and `body_cut`, `true` when the
+  file goes on past that head; the detail's `body` is `null`. It never calls Linear. A ticket the feature's `features.json` neither plans
+  nor lists in `linear` is a 404.
+- `POST /api/v1/features/{project}/{slug}/change-requests/{n}/decision` with `{decision, note?}` → 201 with the
+  decided `ChangeRequestView`. It answers a request whose run is gone (the run abandoned, ended, or its record
+  lost, AC-2.14, D-10): it creates `change-requests/<n>.decision.md` once (`type: change-request-decision`,
+  `decision` `approved` or `declined`, `decided_by`, `decided_at`, `note`, each on one line; D-11), never editing the
+  request, and the next `/implement` of its ticket reads it. `decided_by` is the person the project's hub commits as
+  (`author_name` from `hub.json` with `hub.local.json`, else git config, as the item writes' author). It refuses,
+  writing nothing: a decline without a note, 422 `urn:agent-hub:problem:change-request-note-required` (D-2); while
+  the run's gate is open, 409 `change-request-gate-open` (answer it through the detail's `approval_id`); while the
+  run lives (folded `running`, paused at a gate just decided or not opened yet, or held by a child hub web
+  started), 409 `change-request-live-run`: the run records the decision; these two are checked, and the file
+  created, holding the run commands' lock; a request
+  already decided, or a decision file (or link) of that name already there, 409 `change-request-decided`; no person
+  to name (none, empty or `unknown`), 409 `change-request-no-person` (A5); a request that cannot be read, 409
+  `change-request-unreadable`; a folder that is a link or went away, 409 `change-request-unwritable`. Each carries
+  `code`. An unknown feature or request is a 404, a body with another key or decision a 422, `n` outside 1 to 999999
+  a 422. No link is followed: each folder below the hub (`brain/`, `features/`, the feature, `change-requests/`) is
+  opened without following one, and the file is created exclusively there. It is a strict write that needs
+  the launch cookie, as a gate's decision (`RUN_WRITES`, [Local security](#local-security)).
 
 ## Agent sessions
 
@@ -640,8 +685,8 @@ problems are `urn:agent-hub:problem:scenario-run-record-too-large` and `-record-
 CORS headers, `Cache-Control: no-store` on `/api`, and a CSP that limits scripts, styles, fonts and connections to
 `'self'`. The web app requests no other host; Linear is read by the server only ([Feature tickets](#feature-tickets)).
 The agent-session routes add a cookie and stricter Origin rules ([Agent sessions](#agent-sessions)), and the workflow
-run writes (`RUN_WRITES`: start, cancel, resume and abandon a run, a gate's decision, and a scenario run's
-investigation session), the restores and the
+run writes (`RUN_WRITES`: start, cancel, resume and abandon a run, a gate's decision, an AC's check run, a
+change request's decision and a scenario run's investigation session), the restores and the
 Publish (`ITEM_WRITES`) need that cookie too ([Workflow run commands](#workflow-run-commands), [Skills](#skills),
 [Workflows](#workflows)); every other route is unchanged and needs no cookie. In the container (`AGENT_HUB_IN_CONTAINER=1`, where no token is
 minted and the hubs are mounted read-only) a restore or a publish answers 409 `hub_read_only` before the cookie is

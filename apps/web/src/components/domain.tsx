@@ -857,6 +857,8 @@ const GOLDEN_STATE_ICON: Partial<Record<GoldenStepState, IconName>> = {
   done: "check",
   blocked: "octagon-x",
   unknown: "circle-dashed",
+  waiting: "hand",
+  stale: "clock",
 };
 
 /** A step the stepper draws: a feature's golden path step, or a ticket's (two-level-flows). */
@@ -866,6 +868,8 @@ export interface StepperStep<N extends string = FeaturePhase> {
   meta: string | null;
   reason?: string | null | undefined;
   progress?: components["schemas"]["StepProgress"] | null | undefined;
+  /** The one line that needs attention, whatever the state (Plan: "v3 waits for you"). */
+  signal?: string | null | undefined;
 }
 
 /** States a later step may follow without being blocked: an unrecorded step had later evidence. */
@@ -898,24 +902,27 @@ export function goldenStepSummary(
   const progress = step.progress
     ? `${String(step.progress.done)}/${String(step.progress.total)}`
     : null;
-  const meta = step.meta ?? progress;
-  const head = `${labels[step.name] ?? step.name}: ${GOLDEN_STATE_TEXT[step.state].toLowerCase()}`;
+  const word = GOLDEN_STATE_TEXT[step.state];
+  // A meta that only repeats the state's word is said once.
+  const meta = step.meta === word ? progress : (step.meta ?? progress);
+  const head = `${labels[step.name] ?? step.name}: ${word.toLowerCase()}`;
   const reason = step.state !== "done" && step.reason ? ` (${step.reason})` : "";
-  return `${head}${meta ? ` · ${meta}` : ""}${reason}`;
+  const signal = step.signal ? ` · ${step.signal}` : "";
+  return `${head}${meta ? ` · ${meta}` : ""}${signal}${reason}`;
 }
 
 /**
- * The Acceptance step while it waits on the owner's steps (a SHIP-WITH-OWNER-STEPS eval not signed
- * off yet), else null: the one place that reads the server's "Waiting on you" meta.
+ * The Acceptance step while it waits for the owner's sign-off (its typed `waiting` state, A18),
+ * else null.
  */
 export function ownerWaitStep(steps: readonly GoldenStep[]): GoldenStep | null {
   const step = steps.find((s) => s.name === "acceptance");
-  return step?.meta?.startsWith("Waiting on you") ? step : null;
+  return step?.state === "waiting" ? step : null;
 }
 
-/** The one short line the step in focus shows under its state. */
+/** The one short line the step in focus shows under its state (never the state's word again). */
 function focusMeta(step: StepperStep<string>): string | null {
-  if (step.meta) return step.meta;
+  if (step.meta && step.meta !== GOLDEN_STATE_TEXT[step.state]) return step.meta;
   return step.progress ? `${String(step.progress.done)}/${String(step.progress.total)}` : null;
 }
 
@@ -928,6 +935,8 @@ const DOT_STYLE: Partial<Record<GoldenStepState, CSSProperties>> = {
   skipped: { borderStyle: "dashed", opacity: 0.7 },
   unknown: { borderStyle: "dashed", opacity: 0.7 },
   unrecorded: { borderStyle: "dashed", opacity: 0.7 },
+  waiting: { borderColor: "var(--waiting)", color: "var(--waiting)" },
+  stale: { borderColor: "var(--idle)", color: "var(--idle)" },
 };
 
 /**
@@ -1013,6 +1022,11 @@ export function GoldenPathStepper<N extends string = FeaturePhase>({
             {meta && (
               <span className="ah-golden-meta" style={{ fontSize: 11 }}>
                 {meta}
+              </span>
+            )}
+            {step.signal && (
+              <span className="ah-golden-meta ah-golden-signal" style={{ fontSize: 11 }}>
+                <Icon name="hand" size="sm" style={{ color: "var(--waiting)" }} /> {step.signal}
               </span>
             )}
             {expanded && detail && <div className="ah-golden-detail">{detail(step)}</div>}

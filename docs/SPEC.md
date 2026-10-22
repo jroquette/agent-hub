@@ -79,6 +79,7 @@ hub next   # the tracker's ready issues, one line each
 hub run ISSUE --repo REPO [--live] [--budget USD] [--from implement|verify] …   # one issue with a complete brief to a PR through the tracker port
 hub ship [ISSUE] [--draft] [--dry-run]   # each changed repo's check, push and PR, PRs linked, the issue to review
 hub step worktree|verdict|commits|pr|report …   # one hub run stage as JSON, for the issue-to-pr workflow's nodes
+hub step ticket-brief|preflight|change-request|decide|amend-plan --feature SLUG …   # a ticket record written into the hub, never committed
 hub bench [--validate] [--runs N] [--cases IDS] [--budget USD] …   # configuration benchmark (module bench)
 hub collect [FILE|-] [--db PATH]   # ingests canonical events from JSON Lines (stdin when FILE is omitted or -)
 hub collect --transcript FILE [--project NAME]   # a Claude Code transcript, as metadata-only events
@@ -193,6 +194,13 @@ the session's reply on stdin as `hub run` does (done, or blocked, with its quest
 `report` computes the delivery (`delivered`, `no_changes`, `blocked`, `failed`) from the other steps' outputs. A
 failure is one `hub step <name>: <reason>` stderr line and exit 1. No step reads or writes the tracker; only the
 fetch, the push and `gh` get a GitHub token.
+
+The `implement` run's hub writes are `hub step` writers too (two-level-flows P7): `ticket-brief --feature --ticket`,
+`preflight --feature --ticket --run JSON`, `change-request --feature --ticket --run-id --evidence --proposal
+[--affected]…`, `decide --feature --request N --decision approved|declined --by WHO [--note]` and `amend-plan --feature
+--request N --summary`. Each writes one record under the hub's `brain/features/<slug>/`, checked as its reader reads it,
+prints the hub-relative `path` it wrote, follows no link and never commits; a refusal writes nothing. The records and
+their rules are in [feature-records.md](design/feature-records.md).
 
 `hub start ISSUE` reads the issue once, then looks for its task worktrees in every repo: a name found there resumes the
 task, else the task is named `<issue lower>-<title slug>`. It checks the branches, creates the missing worktrees of the
@@ -432,9 +440,11 @@ A web app reads the hubs and the agents' events and answers five questions, one 
 Git stays the source of truth. Each developer's database holds a derived full-text index (SQLite FTS5) of the hub's
 `brain/` (except `brain/auto/`) and each repo's `docs/`, synced with the checkout on every search and rebuilt by
 `hub brain reindex`. `hub search` and the MCP server `hub mcp` (tools `search`, `read`, `propose`) query it; every
-result names its path and a snippet. `propose` writes a new `brain/_inbox/` note on a branch and opens a hub pull
-request through `hub_git`, never the default branch. The knowledge view gains the same search, links between notes and
-the provenance path above. Transcripts are never indexed or shared; embeddings and hosting are out of scope.
+result names its path and a snippet. A query is its runs of letters and digits, all required, never FTS5 syntax: one
+with no word (`!!!`, `(`) exits 2, and one that starts with `-` goes after `--` (`hub search -- -foo`). `propose`
+writes a new `brain/_inbox/` note on a branch and opens a hub pull request through `hub_git`, never the default branch.
+The knowledge view gains the same search, links between notes and the provenance path above. Transcripts are never
+indexed or shared; embeddings and hosting are out of scope.
 
 **Actions, not just reading (after v1).** Start a workflow on an issue, approve a gate, pause or cancel a session, accept a learning (built early, through a hub PR: AGH-201 below).
 
@@ -715,8 +725,11 @@ Workflow runs list filters by workflow and failure kind.
   message folded into it. An ended terminal session can be continued in the chat from its detail.
 - **Features** groups In progress (the features that need you first) and Shipped with search and filters; a feature
   can get a nickname kept on this machine (`GET`/`PUT /feature-names`). **Feature detail**: a calm golden path, one
-  Waiting on you banner pointing to each owner wait, whose one prompt is on the Eval tab (the owner sign-off, `POST
-  /features/{project}/{slug}/owner-signoff`, a SHIP eval with `provenance: owner`), a ticket panel per ticket, an
+  Waiting for you banner pointing to each owner wait (a plan change request first, which opens its ticket's panel;
+  each acceptance prompt is on the Eval tab: the owner sign-off, `POST /features/{project}/{slug}/owner-signoff`, a
+  SHIP eval with `provenance: owner`), a ticket panel per ticket (its preflight runs, local notes and discoveries from
+  `GET …/tickets/{ticket}`, and a plan change request's Approve or Decline with a note: through its run's gate, or,
+  when the run is gone, `POST …/change-requests/{n}/decision`, which creates the request's decision file once), an
   Eval tab with history per scope and who ran each eval, Approve at the end of the spec, research and plan
   with the spec's open questions, ticket sessions on each ticket, and Run on an AC's recorded check (with Claude by
   default, or `POST …/acs/{ac}/check-runs`, never recorded).
@@ -739,7 +752,7 @@ change; the live-session limit is [ADR 0042](adr/0042-no-live-session-limit-in-t
 - **Features** leads In progress with the features that need you (a warning, or a live session waiting on you), and
   the sidebar badges Features with their count. **Feature detail**: per ticket an AC meter and a last PR column
   (`TicketRow.pr_url`, from its review record), AC links into Criteria with a hover preview, the evals folded by
-  ticket as a tree with a Waiting on you callout, and the owner sign-off of one eval's owner steps (SHIP or NO-SHIP
+  ticket as a tree with a Waiting for you callout, and the owner sign-off of one eval's owner steps (SHIP or NO-SHIP
   with a note). A ticket blocked only by one in review starts on the blocker's branch:
   `hub worktree --stack-on <PR url>` creates that repo's worktree from the pull request's head branch and the other repos' from their default
   branch (`--base BRANCH` starts every repo from one branch); a session belongs to the issue its first prompt names.
@@ -826,7 +839,8 @@ before anything is appended, and the data stays on the machine in v1:
 - **Outside the events** (not an exception to the rules above, which are about what sessions and hooks send): the
   database also keeps the text of hub files in two derived stores, item versions ([ADR 0039](adr/0039-item-versions-and-server-writes-to-the-hub.md))
   and the knowledge index ([ADR 0044](adr/0044-team-memory-git-source-local-index-and-hub-mcp.md)), both read from
-  files the developer already has and gated by the guard's secret rules; no transcript or session content enters them.
+  files the developer already has and kept out when a rule of the redaction set `r1` matches (`has_secret_match`); no
+  transcript or session content enters them.
 
 **Payload kept** (every short text is redacted, then truncated; "chars" are characters):
 
@@ -912,7 +926,7 @@ The MVP goes up to Phase 2: generate hubs from Loki and see the agents' sessions
 | 3 · Knowledge and decisions | Provenance in the brain, inbox triage in the UI (accept and reject moved to Phase 2 by AGH-201; snooze stays here), extracted decisions, learning metrics | One learning traced from the session to the rule |
 | 4 · Workflows as data and actions | Generic executor reading the workflow ([ADR 0032](adr/0032-workflow-engine.md)), gates approved from the UI, adapters for other agents | — |
 
-Status (2026-10-20, latest release v0.18.0; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
+Status (2026-10-21, latest release v0.19.0; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
 Phase 1 in progress: `init`, `sync` (`--adopt`), `doctor`, `worktree`, `brief`, `agent`, `next`, `run` and `bench`
 shipped in v0.8.0, and `setup`, `start` and `ship` in v0.9.0. Phase 2's first slice is shipped too: the control plane
 `hub web` (AGH-200) in v0.9.0 and its clarity pass (AGH-201: session labels, problems, learning accept and reject
@@ -926,7 +940,10 @@ history with Compare and Restore (AGH-296, AGH-297), the delivered playground sc
 environments with blocked words in the guard (ADR 0038), and v0.18.0 `hub env` and environments in `hub setup` and
 `hub brief`, the hub's hooks on `hub run` and workflow sessions (AGH-278), the guard reading MCP, WebSearch and
 Agent inputs (AGH-293), the plan version and acceptance eval on the feature (AGH-323) and the second delivered
-playground (AGH-384); other agents' adapters stay in Phase 4. The Phase 1 gate (Loki hub recreated) is open;
+playground (AGH-384), and v0.19.0 the two-level feature and ticket flows on screen (AGH-321 slice 1: the eight
+feature steps, ticket step bars, the ticket panel), the ticket records and their `hub step` writers (AGH-402,
+AGH-403), scenarios with `hub scenario` and `hub action` (AGH-355 to AGH-360), the Studio's server publish
+(AGH-298) and new review skills and agents (AGH-411 to AGH-414); other agents' adapters stay in Phase 4. The Phase 1 gate (Loki hub recreated) is open;
 pilot: AGH-54.
 
 The order follows dogfooding: the first generated hub is the platform's own, and the second replaces `loki-trader-hub`. Editable workflows come later because they depend on observation already showing where the current flow gets stuck.

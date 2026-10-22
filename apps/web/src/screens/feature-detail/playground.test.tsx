@@ -43,8 +43,8 @@ const detail = aFeatureDetail({
       aGoldenStep({ name: "spec", state: "done", meta: null, progress: null }),
       aGoldenStep({
         name: "acceptance",
-        state: "current",
-        meta: "Waiting on you: sign off 1 AC",
+        state: "waiting",
+        meta: "Waiting for you: sign off 1 AC",
         reason: "1 AC waits on owner steps (SHIP-WITH-OWNER-STEPS)",
         progress: null,
       }),
@@ -156,9 +156,9 @@ describe("owner sign-off on the feature page", () => {
 
     // AC-PG-31.2 (AGH-330): the decision lives in the one prompt, on the Eval tab; the banner
     // above the tabs only points to it.
-    const callout = (await screen.findByText("Waiting on you · Acceptance: sign off 1 AC")).closest(
-      '[role="status"]',
-    );
+    const callout = (
+      await screen.findByText("Waiting for you · Acceptance: sign off 1 AC")
+    ).closest('[role="status"]');
     if (!(callout instanceof HTMLElement)) throw new Error("no callout");
     await userEvent.click(within(callout).getByRole("button", { name: "Mark owner steps done" }));
     await userEvent.click(within(callout).getByRole("button", { name: "Mark owner steps done" }));

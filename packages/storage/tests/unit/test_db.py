@@ -1,15 +1,18 @@
 from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import JSON, LargeBinary, String, UniqueConstraint
+from sqlalchemy import JSON, Integer, LargeBinary, String, UniqueConstraint
 from sqlalchemy.dialects import sqlite
 
 from agent_hub.storage.db import (
+    KNOWLEDGE_TEXT,
     UtcDateTime,
     agent_session_records,
     agent_sessions,
     events,
+    is_declared_table,
     item_versions,
+    knowledge_documents,
     metadata,
 )
 
@@ -20,6 +23,7 @@ def test_declares_events_table_when_metadata_loaded() -> None:
         "agent_sessions",
         "agent_session_records",
         "item_versions",
+        "knowledge_documents",
     }
     required = {
         "id",
@@ -143,3 +147,50 @@ def test_declares_item_versions_when_metadata_read() -> None:
     assert [(item.name, [column.name for column in item.columns]) for item in unique] == [
         ("uq_item_versions_project_unit_path_seq", ["project", "unit_path", "seq"])
     ]
+
+
+def test_declares_knowledge_documents_when_metadata_read() -> None:
+    columns = [column.name for column in knowledge_documents.columns]
+    assert columns == [
+        "id",
+        "hub",
+        "path",
+        "kind",
+        "title",
+        "status",
+        "provenance",
+        "size",
+        "mtime_ns",
+        "sha256",
+        "skip_reason",
+        "index_version",
+    ]
+    nullable = {column.name for column in knowledge_documents.columns if column.nullable}
+    assert nullable == {"kind", "title", "status", "provenance", "sha256", "skip_reason"}
+    assert [column.name for column in knowledge_documents.primary_key] == ["id"]
+    integers = {"id", "size", "mtime_ns", "index_version"}
+    assert {
+        column.name for column in knowledge_documents.columns if isinstance(column.type, Integer)
+    } == integers
+    assert all(
+        isinstance(column.type, String)
+        for column in knowledge_documents.columns
+        if column.name not in integers
+    )
+    unique = [
+        item for item in knowledge_documents.constraints if isinstance(item, UniqueConstraint)
+    ]
+    assert [(item.name, [column.name for column in item.columns]) for item in unique] == [
+        ("uq_knowledge_documents_hub_path", ["hub", "path"])
+    ]
+
+
+def test_skips_fts_tables_when_names_reflected() -> None:
+    assert KNOWLEDGE_TEXT == "knowledge_text"
+    assert not is_declared_table("knowledge_text")
+    assert not is_declared_table("knowledge_text_data")
+    assert is_declared_table("knowledge_documents")
+    assert is_declared_table("knowledge_textual")
+    for shadow in ("data", "idx", "content", "docsize", "config"):
+        assert not is_declared_table(f"knowledge_text_{shadow}")
+    assert is_declared_table("knowledge_text_meta")

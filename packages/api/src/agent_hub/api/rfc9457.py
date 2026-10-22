@@ -45,6 +45,7 @@ from agent_hub.core.agent_sessions.errors import (
 from agent_hub.core.brain.brain_note import BrainNoteNotFoundError, BrainNoteTooLargeError
 from agent_hub.core.brain.brain_path import BrainPathError
 from agent_hub.core.errors import AgentHubError, EventConflictError
+from agent_hub.core.features.change_request_decision import ChangeRequestDecisionError
 from agent_hub.core.item_versions.hub_item_writer import (
     DraftTooLargeError,
     HubItemWriteError,
@@ -196,6 +197,20 @@ def hub_conflict_problem(error: Any) -> Problem:
 def owner_signoff_problem(error: Any) -> Problem:
     """``OwnerSignOffError`` (core/features): 409, nothing to sign off and why."""
     return Problem(409, "Owner steps cannot be signed off", error.reason)
+
+
+CHANGE_REQUEST_DECISION_PREFIX = "urn:agent-hub:problem:change-request-"
+
+
+def _change_request_decision_problem(error: ChangeRequestDecisionError) -> Problem:
+    """422 for a decline without the owner's note, else 409: the request's state refuses it."""
+    members: dict[str, JsonValue] = {
+        "type": f"{CHANGE_REQUEST_DECISION_PREFIX}{error.code.replace('_', '-')}",
+        "code": error.code,
+    }
+    if error.code == "note_required":
+        return Problem(422, "A decline needs your note", error.reason, members)
+    return Problem(409, "Change request cannot be decided", error.reason, members)
 
 
 def hub_registry_problem(_: Any) -> Problem:
@@ -768,6 +783,7 @@ PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
     RunInputError: _run_input_problem,
     RunConflictError: _run_conflict_problem,
     RunRecordError: _run_record_problem,
+    ChangeRequestDecisionError: _change_request_decision_problem,
     RunLaunchError: _run_launch_problem,
     ResumeAfterDecisionError: _resume_after_decision_problem,
     DecisionUnknownError: _decision_unknown_problem,

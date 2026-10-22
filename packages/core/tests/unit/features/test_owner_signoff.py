@@ -193,7 +193,7 @@ def test_signs_off_counted_owner_steps_when_ticket_ship_follows_whole_feature_ev
 
     written = sign_off("demo", SLUG)
 
-    assert waiting.meta == "Waiting on you: sign off 3 ACs"
+    assert waiting.meta == "Sign off 3 ACs"
     assert written.acs == ("AC-7.1", "AC-7.2", "AC-7.3")
     assert "the owner steps listed in feature are done" in writer.written["owner-signoff.md"]
     after = acceptance_of(signed(folder, writer))
@@ -209,7 +209,7 @@ def test_signs_off_every_ac_when_legacy_eval_without_scope_ships_with_owner_step
 
     written = sign_off("demo", SLUG)
 
-    assert waiting.meta == "Waiting on you: sign off 3 ACs"
+    assert waiting.meta == "Sign off 3 ACs"
     assert written.acs == ("AC-7.1", "AC-7.2", "AC-7.3")
     assert acceptance_of(signed(folder, writer)).state == "done"
 
