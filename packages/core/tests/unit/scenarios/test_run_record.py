@@ -134,3 +134,30 @@ def test_drops_torn_line_when_record_cut() -> None:
 def test_refuses_line_when_record_holds_non_object() -> None:
     with pytest.raises(RunRecordError):
         record_lines(b'{"event": "start"}\n[1, 2]\n')
+
+
+def test_keeps_polls_captures_and_decisions_when_records_folded() -> None:
+    record = [
+        *a_record(),
+        {"event": "expect.poll", "node": "order-held", "attempt": 2, "poll": 1, "held": True}
+        | {"output": {"status": "ON_HOLD"}, "ts": "2026-10-21T10:01:00+00:00"},
+        {"event": "context.capture", "node": "order-held", "attempt": 2, "name": "order_id"}
+        | {"value": "o-1"},
+        {"event": "decision", "node": GATE, "attempt": 1, "choice": "retry", "text": None}
+        | {"approver": "demo", "where": "web", "ts": "2026-10-21T10:02:00+00:00"},
+    ]
+
+    view = fold_records(record)
+
+    (poll,) = view.polls
+    assert (poll.node, poll.attempt, poll.poll, poll.held) == ("order-held", 2, 1, True)
+    assert "output" not in repr(poll)
+    (capture,) = view.captures
+    assert (capture.name, capture.value) == ("order_id", "o-1")
+    (decision,) = view.decisions
+    assert (decision.node, decision.choice, decision.approver, decision.where) == (
+        GATE,
+        "retry",
+        "demo",
+        "web",
+    )

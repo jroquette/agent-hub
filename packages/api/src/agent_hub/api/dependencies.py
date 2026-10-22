@@ -16,6 +16,7 @@ from agent_hub.api.change_feed import ChangeFeed
 from agent_hub.api.feature_names import FeatureNames
 from agent_hub.api.linear_connection import LinearConnection
 from agent_hub.api.rfc9457 import InvalidParameterError, NotImplementedInBuildError
+from agent_hub.api.scenario_catalog import ScenarioCatalog, ScenarioCommands
 from agent_hub.api.scenario_investigation import ScenarioInvestigations
 from agent_hub.api.settings import ApiSettings
 from agent_hub.core.agent_sessions.cloud import CloudSessionCommands
@@ -68,6 +69,8 @@ class ApiPorts:
     ac_checks: AcCheckRunner | None = None
     environment_discoveries: EnvironmentDiscoveries | None = None
     scenario_investigations: ScenarioInvestigations | None = None
+    scenario_reads: ScenarioCatalog | None = None
+    scenario_commands: ScenarioCommands | None = None
 
 
 def _ports(request: Request) -> ApiPorts:
@@ -144,6 +147,22 @@ def run_control(request: Request) -> ControlWorkflowRun:
 def scenario_investigations(request: Request) -> ScenarioInvestigations:
     """A scenario run's investigation session, or 501 when not wired."""
     port = _ports(request).scenario_investigations
+    if port is None:
+        raise _unwired(request)
+    return port
+
+
+def scenario_reads(request: Request) -> ScenarioCatalog:
+    """The scenario reads, or 501 when not wired."""
+    port = _ports(request).scenario_reads
+    if port is None:
+        raise _unwired(request)
+    return port
+
+
+def scenario_commands(request: Request) -> ScenarioCommands:
+    """The scenario writes (plan, start, answer, findings), or 501 when not wired."""
+    port = _ports(request).scenario_commands
     if port is None:
         raise _unwired(request)
     return port
@@ -345,6 +364,8 @@ WorkflowReadsDep = Annotated[WorkflowReads, Depends(workflow_reads)]
 RunStartsDep = Annotated[StartWorkflowRun, Depends(run_starts)]
 RunControlDep = Annotated[ControlWorkflowRun, Depends(run_control)]
 ScenarioInvestigationsDep = Annotated[ScenarioInvestigations, Depends(scenario_investigations)]
+ScenarioReadsDep = Annotated[ScenarioCatalog, Depends(scenario_reads)]
+ScenarioCommandsDep = Annotated[ScenarioCommands, Depends(scenario_commands)]
 WorkflowGatesDep = Annotated[WorkflowGates, Depends(workflow_gates)]
 GateDecisionsDep = Annotated[DecideWorkflowGate, Depends(gate_decisions)]
 ItemVersionReadsDep = Annotated[ItemVersionReads, Depends(item_version_reads)]

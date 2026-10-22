@@ -126,3 +126,17 @@ def test_takes_project_values_from_the_config_when_rendered(
 def test_names_no_project_value_when_rendered(skill_body: str, value: str) -> None:
     assert value not in skill_body
     assert "This workflow is not written yet" not in skill_body
+
+
+# AGH-406: on `/feature`'s Build path (tickets built by `/implement`) no feature PR exists, so
+# the ADR ships on its own; in-line, `/feature`'s PR carries it.
+def test_ships_its_own_pr_on_the_build_path_when_adr_runs_inside_feature_with_implement(
+    demo_config: HubConfig,
+) -> None:
+    rendered = {file.path: file.content for file in render_hub(demo_config).files}
+    content = rendered["plugin/hub-workflow/skills/adr/SKILL.md"]
+    assert content is not None
+    text = " ".join(content.decode("utf-8").split())
+
+    assert "step 6 is then `/feature`'s own" not in text
+    assert "when its Build step hands the tickets to `/implement`, run step 6 too" in text

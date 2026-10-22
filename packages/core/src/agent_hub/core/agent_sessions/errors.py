@@ -196,14 +196,17 @@ class MessageFileTooLargeError(AgentHubError):
 
 
 class HubLocalInvalidError(AgentHubError):
-    """The hub's ``hub.local.json`` cannot be read, so the credentials it may declare are
-    unknown and no driven session starts in that project (409, E-8, AM-13)."""
+    """The hub's ``hub.local.json`` cannot be read, or conflicts with ``hub.json``, so the
+    credentials and environments it may declare are unknown: no driven session starts in that
+    project (409, E-8, AM-13), and no scenario plan, start, pick or issue create runs (E-14).
+    ``before`` names what waits for the fix (a session), else nothing is named."""
 
-    def __init__(self, project: str) -> None:
+    def __init__(self, project: str, *, before: str | None = None) -> None:
         self.project = project
+        waiting = f" before {before}" if before else ""
         super().__init__(
-            f"project {project}: hub.local.json cannot be read, so the credentials it declares"
-            " are unknown; fix it (hub doctor) before starting a session"
+            f"project {project}: hub.local.json cannot be read or conflicts with hub.json, so the"
+            f" credentials and environments it declares are unknown; fix it (hub doctor){waiting}"
         )
 
 
