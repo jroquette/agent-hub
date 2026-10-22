@@ -29,7 +29,7 @@ from datetime import UTC, datetime, timedelta
 from importlib.metadata import version
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from fastapi.testclient import TestClient
@@ -991,6 +991,8 @@ class KnowledgeWorld:
     app: Composed
     hub: Path
     environ: dict[str, str]
+    # The app's own ``Origin``, which its writes (registering or forgetting a hub) need.
+    origin: ClassVar[str] = COMPOSED_URL
 
     def search(self, q: str, **params: Any) -> Any:
         return self.app.client.get(
@@ -1053,12 +1055,12 @@ def knowledge_world(
     isolated_home: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> KnowledgeWorldFactory:
-    """``knowledge_world(files, *, repos=("demo-api",), commit=True, change=None)``: a git
-    checkout ``demo-hub`` whose ``hub.json`` (``change`` may edit it) names the project ``demo``
-    and its repos, each of ``repos`` checked out beside it, registered in the composed app.
+    """``knowledge_world(files, *, commit=True, change=None)``: a git checkout ``demo-hub``
+    whose ``hub.json`` (``change`` may edit it) names the project ``demo`` and its repos, with
+    the repo ``demo-api`` checked out beside it, registered in the composed app.
 
-    ``files`` maps a path as the index names it to its bytes: under ``<dir>/`` for a repo in
-    ``repos``, else in the hub. With ``commit`` they are committed, else left untracked. Git
+    ``files`` maps a path as the index names it to its bytes: under ``demo-api/`` for the repo,
+    else in the hub. With ``commit`` they are committed, else left untracked. Git
     reads the test's own ``HOME`` only and never looks above ``tmp_path``.
     """
     monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
@@ -1067,7 +1069,6 @@ def knowledge_world(
     def build(
         files: Mapping[str, bytes],
         *,
-        repos: tuple[str, ...] = ("demo-api",),
         commit: bool = True,
         change: Callable[[dict[str, Any]], None] | None = None,
     ) -> KnowledgeWorld:
@@ -1081,7 +1082,7 @@ def knowledge_world(
         (hub / "hub.json").write_bytes(dump_json(document))
         environ = dict(os.environ)
         world = KnowledgeWorld(app=open_composed(environ=environ), hub=hub, environ=environ)
-        roots = (hub, *(tmp_path / name for name in repos))
+        roots = (hub, tmp_path / "demo-api")
         for root in roots:
             root.mkdir(exist_ok=True)
             (root / "README.md").write_bytes(f"# {root.name}\n".encode())
@@ -1092,7 +1093,7 @@ def knowledge_world(
             world.git("commit", "--quiet", "-m", "init", cwd=root)
         world.put({} if commit else files)
         registered = world.app.client.post(
-            "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": COMPOSED_URL}
+            "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": world.origin}
         )
         assert registered.status_code == 201, registered.text
         return world

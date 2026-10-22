@@ -24,7 +24,6 @@ UNRELATED = b"# Release\n\nTag the release.\n"
 GUIDE = b"# Guide\n\nThe api keeps its worktrees small.\n"
 MARKER = b"# Note\n\nmarker\n"
 MAX_SNIPPET = 160
-LOOPBACK = "http://127.0.0.1:7420"
 
 
 def ranked_files() -> dict[str, bytes]:
@@ -334,10 +333,9 @@ def test_answers_problem_when_sqlite_lacks_fts5(
     knowledge_world: KnowledgeWorldFactory, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     world = knowledge_world({"brain/a.md": b"# A\n\nmarker [b](b.md)\n", "brain/b.md": MARKER})
-    monkeypatch.setattr(knowledge_index, "fts5_available", lambda *_: False)
-
-    refused = [world.search("marker"), world.backlinks("b.md")]
-    monkeypatch.undo()
+    with monkeypatch.context() as patch:
+        patch.setattr(knowledge_index, "fts5_available", lambda *_: False)
+        refused = [world.search("marker"), world.backlinks("b.md")]
     searched, linked = world.search("marker"), world.backlinks("b.md")
 
     for response in refused:
@@ -380,10 +378,12 @@ def test_indexes_registered_folder_when_hub_registered_as_worktree(
     world.git("worktree", "add", "--quiet", "-b", "wt", str(worktree))
     (worktree / "brain" / "only-here.md").write_bytes(MARKER)
     (main,) = world.app.client.get("/api/v1/hubs").json()["items"]
-    forgotten = world.app.client.delete(f"/api/v1/hubs/{main['id']}", headers={"Origin": LOOPBACK})
+    forgotten = world.app.client.delete(
+        f"/api/v1/hubs/{main['id']}", headers={"Origin": world.origin}
+    )
     assert forgotten.status_code == 204, forgotten.text
     registered = world.app.client.post(
-        "/api/v1/hubs", json={"path": str(worktree)}, headers={"Origin": LOOPBACK}
+        "/api/v1/hubs", json={"path": str(worktree)}, headers={"Origin": world.origin}
     )
     assert registered.status_code == 201, registered.text
 
