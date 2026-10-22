@@ -21,6 +21,8 @@ and grep follow a symlink committed in the repo to outside the checkout, and the
 ``.git/config`` still applies.
 """
 
+from __future__ import annotations
+
 import re
 import sys
 
