@@ -159,13 +159,13 @@ def backlinks_knowledge(
     hub: str,
     *,
     target: str,
-    limit: int = MAX_BACKLINKS,
 ) -> BacklinksOutcome:
     """Sync the hub's rows (``sync_knowledge``, D-sync-on-read), then answer the documents
-    linking to ``target`` (``brain/<rest>``), by path, at most ``limit``, with the full count.
-    The target need not be indexed: a dead link still lists its sources."""
+    linking to ``target`` (``brain/<rest>``), by path, at most ``MAX_BACKLINKS``, with the full
+    count. The target need not be indexed: a dead link still lists its sources."""
     report = sync_knowledge(index, checkout, hub)
-    return BacklinksOutcome(backlinks=index.backlinks(hub, target, limit=limit), report=report)
+    backlinks = index.backlinks(hub, target, limit=MAX_BACKLINKS)
+    return BacklinksOutcome(backlinks=backlinks, report=report)
 
 
 def _read(

@@ -76,7 +76,7 @@ from agent_hub.core.testing.tracker_reader_fakes import (
 from agent_hub.core.workflows.catalog import WorkflowFile
 from agent_hub.core.workflows.workflow_reads import ReadWorkflows
 from agent_hub.storage.agent_session_store import open_agent_session_store
-from agent_hub.storage.errors import Fts5UnavailableError
+from agent_hub.storage.errors import Fts5UnavailableError, MigrationError
 from agent_hub.storage.event_store import open_event_store
 from agent_hub.storage.item_version_store import SqliteItemVersionStore
 from agent_hub.storage.knowledge_index import FTS5_MISSING
@@ -702,3 +702,29 @@ def test_finds_git_per_call_when_path_changes(
     assert missing.json()["detail"] == "git is not on PATH; install git"
     assert no_backlinks.status_code == 502
     assert found.status_code == 200
+
+
+def test_answers_problem_when_lazy_index_open_fails_migration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    adapter_line = "cannot upgrade /private/path/agent-hub.db: disk image is malformed"
+
+    def failing_open(_path: Path) -> Any:
+        raise MigrationError(adapter_line)
+
+    monkeypatch.setattr(composition, "open_knowledge_index", failing_open)
+    client, _ = _knowledge_app(tmp_path, monkeypatch, {"PATH": _git_folder(tmp_path)})
+
+    responses = [
+        client.get("/api/v1/projects/demo/knowledge/search?q=marker"),
+        client.get("/api/v1/projects/demo/brain/backlinks?path=now.md"),
+    ]
+
+    for response in responses:
+        assert response.status_code == 503
+        assert response.headers["content-type"] == "application/problem+json"
+        assert response.json()["title"] == "Database upgrade failed"
+        assert response.json()["detail"] == (
+            "The database could not be upgraded to the latest schema."
+        )
+        assert "/private/path" not in response.text
