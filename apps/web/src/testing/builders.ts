@@ -36,6 +36,8 @@ export type BrainTree = Schemas["BrainTree"];
 export type BrainNote = Schemas["BrainNote"];
 export type KnowledgeResult = Schemas["KnowledgeResult"];
 export type KnowledgeSearch = Schemas["KnowledgeSearch"];
+export type NoteBacklink = Schemas["NoteBacklink"];
+export type NoteBacklinks = Schemas["NoteBacklinks"];
 export type FeatureRecord = Schemas["FeatureRecord"];
 export type GoldenStep = Schemas["GoldenStep"];
 export type GoldenPath = Schemas["GoldenPath"];
@@ -505,6 +507,22 @@ export function aKnowledgeSearch(overrides: Partial<KnowledgeSearch> = {}): Know
     warnings: [],
     ...overrides,
   };
+}
+
+/** One source linking to a note: the playbook on cleanup by default. */
+export function aBacklink(overrides: Partial<NoteBacklink> = {}): NoteBacklink {
+  return {
+    path: "brain/playbooks/cleanup.md",
+    kind: "playbook",
+    title: "Cleanup after merge",
+    ...overrides,
+  };
+}
+
+/** The backlinks of `index.md` in project `agent-hub`, none by default. */
+export function aNoteBacklinks(overrides: Partial<NoteBacklinks> = {}): NoteBacklinks {
+  const items = overrides.items ?? [];
+  return { project: "agent-hub", path: "index.md", items, total: items.length, ...overrides };
 }
 
 export function aProjectSummary(overrides: Partial<ProjectSummary> = {}): ProjectSummary {

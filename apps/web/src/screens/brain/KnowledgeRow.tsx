@@ -3,12 +3,14 @@ import type { MouseEvent } from "react";
 import { Link } from "react-router";
 
 import { ExternalLabel, Icon, PathText, Tooltip } from "../../components";
-import { brainRoute, withBrainQuery } from "../../lib/brainLinks";
+import { brainRoute, isServedNote, withBrainQuery } from "../../lib/brainLinks";
 
 /** Where the index's brain notes live; any other path is a repo's doc. */
 export const BRAIN_PREFIX = "brain/";
 /** Why a repo doc is listed but not opened (D-results-web). */
 export const REPO_DOC_TOOLTIP = "Repo docs are not opened in the app";
+/** Why a path under `brain/` that the note route refuses is listed but not opened (AM-8). */
+export const UNSERVED_NOTE_TOOLTIP = "This note is not opened in the app";
 const EXTERNAL = "agent-from-external";
 /** The path's room in the 280 px panel, in characters. */
 const PATH_CHARS = 34;
@@ -55,6 +57,7 @@ function kindLine(item: KnowledgeItem, repoDoc: boolean): string {
 export function KnowledgeRow({ item, project, query, selected, onOpen }: KnowledgeRowProps) {
   const id = useId();
   const repoDoc = !item.path.startsWith(BRAIN_PREFIX);
+  const note = item.path.slice(BRAIN_PREFIX.length);
   const title = item.title || fileName(item.path);
   const details = (
     <span id={`${id}-details`} className="ah-know-details">
@@ -74,19 +77,18 @@ export function KnowledgeRow({ item, project, query, selected, onOpen }: Knowled
       </span>
     </span>
   );
-  if (repoDoc) {
+  if (repoDoc || !isServedNote(note)) {
     return (
       <li className="ah-know-row" data-search-row="" tabIndex={-1} aria-describedby={`${id}-tip`}>
-        <Tooltip label={REPO_DOC_TOOLTIP} id={`${id}-tip`} block>
+        <Tooltip label={repoDoc ? REPO_DOC_TOOLTIP : UNSERVED_NOTE_TOOLTIP} id={`${id}-tip`} block>
           <span className="ah-know-body">
-            {heading("book")}
+            {heading(repoDoc ? "book" : "file-text")}
             {details}
           </span>
         </Tooltip>
       </li>
     );
   }
-  const note = item.path.slice(BRAIN_PREFIX.length);
   return (
     <li>
       <Link

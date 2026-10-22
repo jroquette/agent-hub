@@ -181,3 +181,56 @@
   padding-left: var(--space-4);
   color: var(--text-muted);
 }
+/* The note column's sections after the body (AGH-393): Where this note came from, Linked from. */
+.ah-note-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+.ah-note-section > h2:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+@media (max-width: 899px) {
+  .ah-brain-note-head {
+    flex-wrap: wrap;
+  }
+  .ah-brain-jumps {
+    order: 3;
+    flex-basis: 100%;
+  }
+}
+.ah-origin {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+}
+.ah-origin-row {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: var(--space-3);
+}
+.ah-origin-row > dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ah-origin-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ah-origin-learning {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ah-origin-learning .ah-icon {
+  color: var(--text-subtle);
+}

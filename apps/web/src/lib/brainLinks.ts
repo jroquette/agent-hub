@@ -41,6 +41,22 @@ export function withBrainQuery(route: string, query: string | null): string {
   return hash < 0 ? route + search : route.slice(0, hash) + search + route.slice(hash);
 }
 
+/**
+ * Whether the note route serves `path` (under `brain/`, without the prefix): at most 16 segments
+ * and 512 characters, `.md`, not under `auto/`, no empty or hidden segment (AM-8).
+ */
+export function isServedNote(path: string): boolean {
+  const segments = path.split("/");
+  return (
+    segments.length <= MAX_SEGMENTS &&
+    path.length <= MAX_PATH_CHARS &&
+    path.endsWith(".md") &&
+    !CONTROL_OR_BACKSLASH.test(path) &&
+    segments[0]?.toLowerCase() !== "auto" &&
+    !segments.some((segment) => segment === "" || segment.startsWith("."))
+  );
+}
+
 /** A GitHub-style heading slug: lower case, letters, digits, `-` and `_`, spaces as `-`. */
 export function headingSlug(text: string): string {
   return text
@@ -148,14 +164,7 @@ export function resolveBrainLink(
     }
   }
   const full = resolved.join("/");
-  if (
-    resolved.length === 0 ||
-    resolved.length > MAX_SEGMENTS ||
-    full.length > MAX_PATH_CHARS ||
-    !full.endsWith(".md") ||
-    resolved[0]?.toLowerCase() === "auto" ||
-    resolved.some((segment) => segment.startsWith("."))
-  ) {
+  if (resolved.length === 0 || !isServedNote(full)) {
     return { kind: "text", title: NOT_A_NOTE };
   }
   const fragment = anchor === "" ? null : anchor;

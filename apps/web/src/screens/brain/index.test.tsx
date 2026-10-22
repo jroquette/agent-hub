@@ -8,6 +8,7 @@ import {
   aBrainTree,
   aKnowledgeResult,
   aKnowledgeSearch,
+  aNoteBacklinks,
   aPage,
   aProblem,
   aProjectNow,
@@ -20,6 +21,8 @@ import { BrainPickerScreen, BrainScreen, brainHome } from "./index";
 const TREE = "/api/v1/projects/agent-hub/brain";
 const NOTE = "/api/v1/projects/agent-hub/brain/note";
 const SEARCH = "/api/v1/projects/agent-hub/knowledge/search";
+const BACKLINKS = "/api/v1/projects/agent-hub/brain/backlinks";
+const LEARNINGS = "/api/v1/learnings";
 const route = "projects/:project/brain/*";
 
 /** Answers each note path with a note titled by its path. */
@@ -33,7 +36,14 @@ function notes(request: Request) {
 
 function open(path = "/projects/agent-hub/brain", routes: ApiRoutes = {}) {
   return renderWithApi(<BrainScreen />, {
-    routes: { [TREE]: aBrainTree(), [NOTE]: notes, [SEARCH]: aKnowledgeSearch(), ...routes },
+    routes: {
+      [TREE]: aBrainTree(),
+      [NOTE]: notes,
+      [SEARCH]: aKnowledgeSearch(),
+      [BACKLINKS]: aNoteBacklinks(),
+      [LEARNINGS]: aPage([]),
+      ...routes,
+    },
     path,
     route,
   });
@@ -233,6 +243,7 @@ describe("BrainScreen", () => {
 const DEMO_TREE = "/api/v1/projects/demo/brain";
 const DEMO_NOTE = "/api/v1/projects/demo/brain/note";
 const DEMO_SEARCH = "/api/v1/projects/demo/knowledge/search";
+const DEMO_BACKLINKS = "/api/v1/projects/demo/brain/backlinks";
 const NO_REPO_DOC = "Repo docs are not opened in the app";
 
 /** AC-393.3's answer: the decision, a playbook and a repo doc, best first. */
@@ -274,6 +285,8 @@ function openDemo(
       }),
       [DEMO_NOTE]: notes,
       [DEMO_SEARCH]: search,
+      [DEMO_BACKLINKS]: aNoteBacklinks({ project: "demo" }),
+      [LEARNINGS]: aPage([]),
       ...routes,
     },
     path,
@@ -474,7 +487,8 @@ describe("BrainScreen search", () => {
 
     await typeQuery("cleanup");
 
-    const problem = await screen.findByRole("alert");
+    const tree = screen.getByRole("navigation", { name: "Brain notes" });
+    const problem = await within(tree).findByRole("alert");
     expect(problem).toHaveTextContent("The app's server is not responding");
     expect(problem).toHaveTextContent("Check that hub web is still running, then try again.");
   });
