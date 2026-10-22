@@ -7,7 +7,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from agent_hub.core.agent_sessions.agent_session import AgentSession, CreateAgentSession
-from agent_hub.core.agent_sessions.control import AgentSessionControl, WorkdirSource
+from agent_hub.core.agent_sessions.control import (
+    AgentSessionControl,
+    SessionRestriction,
+    WorkdirSource,
+)
 from agent_hub.core.agent_sessions.driver import DriverHandle, PastSession
 from agent_hub.core.agent_sessions.limits import SessionLimits
 from agent_hub.core.agent_sessions.links import ObservedSessionLookup
@@ -15,6 +19,7 @@ from agent_hub.core.agent_sessions.records import LogRecord
 from agent_hub.core.agent_sessions.repo_changes import RepoChangesReader
 from agent_hub.core.agent_sessions.workdirs import ResolvedWorkdir, WorkdirListing
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
+from agent_hub.core.scenarios.credentials import CredentialNames
 from agent_hub.core.testing.agent_session_store_fakes import InMemoryAgentSessionStore
 from agent_hub.core.testing.read_model_builders import WORKDIR_ID, a_workdir
 from agent_hub.core.testing.session_driver_fakes import InMemorySessionDriver, Turn
@@ -103,11 +108,14 @@ def build_rig(
     session_title: Callable[[str, str], str | None] | None = None,
     workdirs: WorkdirSource = demo_workdirs,
     repo_changes: RepoChangesReader | None = None,
+    hidden_environment: Callable[[str], CredentialNames] | None = None,
+    restriction_of: Callable[[AgentSession], SessionRestriction | None] | None = None,
 ) -> Rig:
     """A rig; ``replies`` script the fake driver per user message; ``observed_sessions`` says
     which Claude sessions have an observed twin; ``session_title`` the title Claude Code gave
     a session; ``workdirs`` lists the projects' folders (the demo hub by default);
-    ``repo_changes`` reads their repositories."""
+    ``repo_changes`` reads their repositories; ``hidden_environment`` names each project's
+    declared credentials; ``restriction_of`` rebuilds a reopened session's restriction."""
     fake = driver or InMemorySessionDriver(replies=replies, past_sessions=past_sessions)
     store = store or InMemoryAgentSessionStore()
     clock = Clock()
@@ -121,5 +129,7 @@ def build_rig(
         observed_sessions=observed_sessions,
         session_title=session_title,
         repo_changes=repo_changes,
+        hidden_environment=hidden_environment,
+        restriction_of=restriction_of,
     )
     return Rig(control=control, driver=fake, store=store, clock=clock)

@@ -24,6 +24,8 @@ from agent_hub.core.agent_sessions.errors import (
     CloudFailedError,
     CloudTimeoutError,
     CloudUnavailableError,
+    HubLocalInvalidError,
+    HubRegistryUnreadableError,
     InvalidDecisionError,
     InvalidScreenshotError,
     InvalidWorkdirError,
@@ -33,6 +35,7 @@ from agent_hub.core.agent_sessions.errors import (
     PermissionAnsweredError,
     ScreenshotTooLargeError,
     SessionBusyError,
+    SessionRestrictionError,
     SessionsOffError,
     SessionsUnavailableError,
     SessionTerminalError,
@@ -42,6 +45,7 @@ from agent_hub.core.agent_sessions.errors import (
 from agent_hub.core.brain.brain_note import BrainNoteNotFoundError, BrainNoteTooLargeError
 from agent_hub.core.brain.brain_path import BrainPathError
 from agent_hub.core.errors import AgentHubError, EventConflictError
+from agent_hub.core.features.change_request_decision import ChangeRequestDecisionError
 from agent_hub.core.item_versions.hub_item_writer import (
     DraftTooLargeError,
     HubItemWriteError,
@@ -66,6 +70,7 @@ from agent_hub.core.learnings.brain_change_requests import (
 )
 from agent_hub.core.learnings.learning_ports import HubReadOnlyError, LearningConflictError
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
+from agent_hub.core.scenarios.run_record import RecordTooLargeError, RunRecordError
 from agent_hub.core.skills.skill_view import SkillFileTooLargeError
 from agent_hub.core.workflows.gate_decisions import ResumeAfterDecisionError
 from agent_hub.core.workflows.launch import (
@@ -192,6 +197,20 @@ def hub_conflict_problem(error: Any) -> Problem:
 def owner_signoff_problem(error: Any) -> Problem:
     """``OwnerSignOffError`` (core/features): 409, nothing to sign off and why."""
     return Problem(409, "Owner steps cannot be signed off", error.reason)
+
+
+CHANGE_REQUEST_DECISION_PREFIX = "urn:agent-hub:problem:change-request-"
+
+
+def _change_request_decision_problem(error: ChangeRequestDecisionError) -> Problem:
+    """422 for a decline without the owner's note, else 409: the request's state refuses it."""
+    members: dict[str, JsonValue] = {
+        "type": f"{CHANGE_REQUEST_DECISION_PREFIX}{error.code.replace('_', '-')}",
+        "code": error.code,
+    }
+    if error.code == "note_required":
+        return Problem(422, "A decline needs your note", error.reason, members)
+    return Problem(409, "Change request cannot be decided", error.reason, members)
 
 
 def hub_registry_problem(_: Any) -> Problem:
@@ -455,6 +474,16 @@ def _run_conflict_problem(error: RunConflictError) -> Problem:
     return Problem(409, "Workflow run command refused", error.reason, members)
 
 
+def _run_record_problem(error: RunRecordError) -> Problem:
+    """A scenario run's record the API cannot read whole: 422 with ``code``."""
+    code = "record_too_large" if isinstance(error, RecordTooLargeError) else "record_unreadable"
+    members: dict[str, JsonValue] = {
+        "type": f"urn:agent-hub:problem:scenario-run-{code.replace('_', '-')}",
+        "code": code,
+    }
+    return Problem(422, "Scenario run record unreadable", str(error), members)
+
+
 def _run_launch_problem(_: RunLaunchError) -> Problem:
     members: dict[str, JsonValue] = {"type": f"{WORKFLOW_RUN_PROBLEM_PREFIX}launch-failed"}
     detail = "The hub workflow command could not be started or did not finish; nothing was changed."
@@ -534,6 +563,33 @@ def _live_limit_problem(error: LiveLimitError) -> Problem:
         "Too many live agent sessions",
         detail=f"At most {error.limit} agent sessions can be live; close one to start another.",
         members={"limit": error.limit},
+    )
+
+
+def _hub_local_invalid_problem(error: HubLocalInvalidError) -> Problem:
+    """No driven session starts while the hub's ``hub.local.json`` cannot be read (E-8)."""
+    members: dict[str, JsonValue] = {
+        "type": "urn:agent-hub:problem:hub-local-invalid",
+        "code": "hub_local_invalid",
+    }
+    return Problem(409, "hub.local.json cannot be read", str(error), members)
+
+
+def _hub_registry_unreadable_problem(error: HubRegistryUnreadableError) -> Problem:
+    """No driven session starts while the hub registry cannot be read (E-8)."""
+    members: dict[str, JsonValue] = {
+        "type": "urn:agent-hub:problem:hub-registry-unreadable",
+        "code": "hub_registry_unreadable",
+    }
+    return Problem(409, "The hub registry cannot be read", str(error), members)
+
+
+def _session_restriction_problem(error: SessionRestrictionError) -> Problem:
+    return _agent_session_problem(
+        409,
+        "restriction-unavailable",
+        "Agent session not reopened",
+        detail=f"The session is not reopened: {error.reason}.",
     )
 
 
@@ -692,6 +748,9 @@ AGENT_SESSION_PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
     SessionBusyError: _session_busy_problem,
     LiveLimitError: _live_limit_problem,
     LogFullError: _log_full_problem,
+    HubLocalInvalidError: _hub_local_invalid_problem,
+    HubRegistryUnreadableError: _hub_registry_unreadable_problem,
+    SessionRestrictionError: _session_restriction_problem,
     PermissionAnsweredError: _permission_answered_problem,
     UnknownPermissionError: _unknown_permission_problem,
     InvalidDecisionError: _invalid_decision_problem,
@@ -723,6 +782,8 @@ PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
     SkillFileTooLargeError: _skill_file_too_large_problem,
     RunInputError: _run_input_problem,
     RunConflictError: _run_conflict_problem,
+    RunRecordError: _run_record_problem,
+    ChangeRequestDecisionError: _change_request_decision_problem,
     RunLaunchError: _run_launch_problem,
     ResumeAfterDecisionError: _resume_after_decision_problem,
     DecisionUnknownError: _decision_unknown_problem,

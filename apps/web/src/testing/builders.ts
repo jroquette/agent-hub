@@ -794,6 +794,66 @@ export function aFeatureDetail(
     evals: [anEvalRecord()],
     plan: null,
     acceptance_eval: null,
+    change_requests: [],
+    ...overrides,
+  };
+}
+
+/** Plan change request 2 of `control-plane`, asked by AGH-202 and open, its run waiting at its gate. */
+export function aChangeRequest(
+  overrides: Partial<Schemas["ChangeRequestView"]> = {},
+): Schemas["ChangeRequestView"] {
+  return {
+    n: 2,
+    ticket: "AGH-202",
+    status: "open",
+    plan_from: 2,
+    plan_to: 3,
+    affected: ["AGH-203"],
+    opened_at: "2026-10-21T09:30:00Z",
+    run_id: "implement-202",
+    approval_id: "implement-202:approve-change:1",
+    decidable_here: false,
+    body_cut: false,
+    decision: null,
+    path: "features/control-plane/change-requests/2.md",
+    problem: null,
+    body: "## Evidence\n\nAGH-201 shipped `policyRef` instead of `policyId`.\n\n## Proposal\n\nRead `policyRef`.\n",
+    ...overrides,
+  };
+}
+
+/** One preflight run of a ticket: no drift, plan v2. */
+export function aPreflightRun(
+  overrides: Partial<Schemas["PreflightRun"]> = {},
+): Schemas["PreflightRun"] {
+  return {
+    ran_at: "2026-10-21T09:30:00Z",
+    plan_version: 2,
+    commit: "4e1a9c2",
+    blockers_read: [],
+    input: "none",
+    input_text: null,
+    drift: "none",
+    local_notes: [],
+    change_request: null,
+    run_id: "implement-202",
+    ...overrides,
+  };
+}
+
+/** AGH-202's records from the per-ticket route (A7): no brief, no preflight, no request. */
+export function aTicketRecords(
+  overrides: Partial<Schemas["TicketRecords"]> = {},
+): Schemas["TicketRecords"] {
+  return {
+    derived: true,
+    sources_missing: [],
+    project: "agent-hub",
+    slug: "control-plane",
+    ticket: "AGH-202",
+    preflight: null,
+    change_requests: [],
     ...overrides,
   };
 }

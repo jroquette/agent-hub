@@ -13,6 +13,7 @@ import {
   FindingRow,
   FrontmatterChips,
   GOLDEN_STEP_LABEL,
+  GOLDEN_STATE_TEXT,
   GoldenPathStepper,
   goldenStepSummary,
   ownerWaitStep,
@@ -466,20 +467,48 @@ describe("GoldenPathStepper", () => {
     expect(screen.getByRole("listitem")).toHaveTextContent("2/8");
   });
 
-  it("reads an owner wait as waiting on you", () => {
+  it("reads an owner wait as waiting for you (A18)", () => {
     render(
       <GoldenPathStepper
         steps={[
           aGoldenStep({
             name: "acceptance",
-            state: "current",
-            meta: "Waiting on you: sign off 2 ACs",
+            state: "waiting",
+            meta: "Waiting for you: sign off 2 ACs",
           }),
         ]}
       />,
     );
 
-    expect(screen.getByText("Waiting on you: sign off 2 ACs")).toBeInTheDocument();
+    const step = screen.getByRole("listitem");
+    expect(step).toHaveTextContent("Waiting for you");
+    expect(screen.getByText("Waiting for you: sign off 2 ACs")).toBeInTheDocument();
+  });
+
+  // two-level-flows AC-2.8: Plan stays done while its signal says the next version waits.
+  it("shows a step's signal beside its state, out of focus too (AC-2.8)", () => {
+    render(
+      <GoldenPathStepper
+        steps={[
+          aGoldenStep({ name: "plan", state: "done", meta: "v2", signal: "v3 waits for you" }),
+          aGoldenStep({ name: "tickets", state: "current", meta: null, reason: null }),
+        ]}
+      />,
+    );
+
+    const [plan] = screen.getAllByRole("listitem");
+    expect(plan).toHaveTextContent("Done");
+    expect(plan).toHaveTextContent("v3 waits for you");
+    expect(screen.getByText("Plan", { selector: ".ah-golden-name" })).toHaveAccessibleDescription(
+      "Plan: done · v2 · v3 waits for you",
+    );
+  });
+
+  it("names the waiting and stale states in words (A16)", () => {
+    expect([GOLDEN_STATE_TEXT.waiting, GOLDEN_STATE_TEXT.stale]).toEqual([
+      "Waiting for you",
+      "Re-run needed",
+    ]);
   });
 
   it("labels the eight feature steps (AC-1.1)", () => {
@@ -520,11 +549,12 @@ describe("GoldenPathStepper", () => {
     );
   });
 
-  it("finds the acceptance step waiting on the owner (ownerWaitStep)", () => {
+  // P5 retired: the typed waiting state finds the wait, never the meta's words.
+  it("finds the acceptance step waiting for the owner by its state (ownerWaitStep)", () => {
     const waiting = aGoldenStep({
       name: "acceptance",
-      state: "current",
-      meta: "Waiting on you: sign off 2 ACs",
+      state: "waiting",
+      meta: "Sign off 2 ACs",
       reason: "2 ACs wait on owner steps (SHIP-WITH-OWNER-STEPS)",
     });
 
@@ -534,24 +564,14 @@ describe("GoldenPathStepper", () => {
         aGoldenStep({ name: "acceptance", state: "done", meta: "Owner steps signed off" }),
       ]),
     ).toBeNull();
-    expect(ownerWaitStep([aGoldenStep({ meta: "Waiting on you: sign off 2 ACs" })])).toBeNull();
-    // No AC to sign off: the step waits, but there is nothing for the sign-off to write.
+    expect(ownerWaitStep([aGoldenStep({ name: "build", state: "waiting" })])).toBeNull();
+    // The words alone never make a wait.
     expect(
       ownerWaitStep([
         aGoldenStep({
           name: "acceptance",
           state: "current",
-          meta: "Waiting on owner steps · no ACs listed",
-        }),
-      ]),
-    ).toBeNull();
-    // Reopened ACs need a new evaluation (A11): no sign-off that the API would refuse.
-    expect(
-      ownerWaitStep([
-        aGoldenStep({
-          name: "acceptance",
-          state: "current",
-          meta: "3 ACs reopened · evaluate again",
+          meta: "Waiting for you: sign off 2 ACs",
         }),
       ]),
     ).toBeNull();

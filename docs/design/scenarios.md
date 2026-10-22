@@ -100,19 +100,17 @@ pins its action files and gates, labels events `workflow: scenario:<name>`, and 
 
 ### Investigation, answers and workarounds
 
-Opening the paused scenario run in hub web (`POST /scenario-runs/{id}/investigation`) starts one driven session per
-gate, its tools held by a PreToolUse hook: `Read`, `Glob`, `Grep` except on a declared env file, `Write` only under
-`actions/<pack>/` (draft actions), Bash only for `./hub action list|plan|run …` and `./hub scenario propose --run <id>`
-and no shell metacharacter. `hub action run --run <id>` needs that run paused at an open investigation, uses its
-environment and env file, records origin `agent`, and runs only `read` actions (a write exits 1 and records `policy.decision`
-`deny`). The agent records findings and options (a summary and `{action, with}` steps each) with `./hub scenario propose`
-(JSON on stdin, secret shapes redacted); each option is shown with its plan. The answer is `pick` (`--text <option id>`),
-`retry` or `stop`: `hub workflow respond <run> --node <step>__investigation --choice …`, `hub workflow decide` from hub web,
-or the Scenarios screen (Approvals sends the gate there). An option holding a `deny`, a draft action or a plan changed since
-shown cannot be picked (refused with its reason, nothing recorded). A pick answers its steps' asks: `workaround.start`, its
-actions (origin `agent`), `workaround.end`, then the diverged step as a new attempt; a failed or cut-short workaround (never
-re-run) opens a new investigation. `retry` skips it; `stop` ends it `cancelled`, findings kept. Nothing rewinds the system.
-`hub scenario findings <run>` lists them; `--issue <id>` creates a tracker issue after a terminal `y`, never retried (the MCP
+Opening a paused run in hub web starts one session per gate (none when the hub or a declared repo is `/`, home or an ancestor
+of it), held by a PreToolUse hook: reads only in the hub and its declared repos, never of an env file, `Write` only under
+`actions/<pack>/`, Bash only for `./hub action …` and `./hub scenario propose`; `hub action run --run <id>` needs an open
+investigation, runs only `read` actions with its environment's env file (origin `agent`, writes denied). The agent records
+findings and options (a summary and `{action, with}` steps) with `propose` (secret shapes redacted); each option is shown with
+its plan. The answer is `pick` (`--text <option id>`), `retry` or `stop`: `hub workflow respond`, `hub workflow decide` (hub
+web) or the Scenarios screen (Approvals sends the gate there). An option holding a `deny`, a draft action or a plan changed
+since shown cannot be picked (refused, nothing recorded). A pick answers its steps' asks: `workaround.start`, its actions
+(origin `agent`), `workaround.end`, then the diverged step as a new attempt; a failed or cut-short workaround (never re-run)
+opens a new investigation. `retry` skips it; `stop` ends it `cancelled`, findings kept. Nothing rewinds the system. `hub
+scenario findings <run>` lists them; `--issue <id>` creates a tracker issue after a terminal `y`, never retried (the MCP
 `create_issue` call uses only `save_issue`); `--inbox <id>` writes a `brain/_inbox/` note (`provenance: agent-from-external`).
 
 ### Events and bounds
@@ -129,13 +127,15 @@ proposal ≤ 256 KiB, 20 findings, 5 options of ≤ 10 steps; ≤ 10 proposals p
 ### Known limits
 
 1. Agent nodes of a process workflow get a best-effort guard check (`environment_endpoint`); a hidden host passes.
-2. The guard and the investigation hook are not a sandbox: a process outside the guarded tools can read an env file.
+2. The guard and the investigation hook are not a sandbox: a process outside the guarded tools can read an env file, and
+   the hook judges the path it is given, not the links a recursive walk inside a root may follow.
 3. A process that fakes a terminal bypasses `hub action run`'s terminal rule.
 4. After a divergence, independent steps still run in that pass; a `loop_group` body step is not investigated.
 5. Local only: cloud sessions have no `hub.local.json`, no env files and no credentials.
 6. Policy gates (`<step>__ask`) of a process workflow run show in the run's steps but not in its graph.
 7. Redaction replaces each injected value of 4 characters or more exactly as written; a shorter one, or an encoded or
    transformed form (base64 as in a Basic auth header, URL-encoded, escaped in stderr, split across strings), passes.
+8. Investigation sessions run unheld with no link or run folder, or as a `resume_session_id`/`fork`; one per `hub web`.
 
 ## Invariants
 

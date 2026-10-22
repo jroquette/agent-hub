@@ -27,6 +27,8 @@ from typing import Annotated, Final, Literal, NewType, Protocol
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from agent_hub.core.readmodels.view_types import ApiTimestamp, Money
+from agent_hub.core.scenarios.credentials import NO_CREDENTIALS, CredentialNames
+from agent_hub.core.scenarios.investigation import ToolPolicy
 from agent_hub.core.sessions.session import TokenUsage
 
 # The modes the web offers (D5); never bypassPermissions or dontAsk. ``auto`` (Claude Code's
@@ -83,7 +85,12 @@ class StartSpec(DriverModel):
     environment (``AGENT_HUB_WEB_URL``; never the access token, L5), the hub's plugin
     folders a session outside the hub loads (resolved by the workdir listing), the tools it may
     use (``tool_access``) and the folders it may read besides its own (``add_dirs``, absolute
-    paths the server resolved)."""
+    paths the server resolved).
+
+    ``hidden_environment`` names the hub's declared credentials, which the child's environment
+    loses (every session, AM-13): the names only, never a value. An investigation session also
+    has a ``tool_policy`` (its tools and the hook that holds them, P-17) and a
+    ``system_prompt`` appended to Claude Code's own; other sessions have neither."""
 
     cwd: str = Field(min_length=1)
     mode: PermissionMode
@@ -93,6 +100,9 @@ class StartSpec(DriverModel):
     session_id: str | None = None
     environment_extra: Mapping[str, str] = Field(default_factory=dict)
     plugin_dirs: tuple[str, ...] = ()
+    hidden_environment: CredentialNames = NO_CREDENTIALS
+    tool_policy: ToolPolicy | None = None
+    system_prompt: str | None = None
     tool_access: ToolAccess = "all"
     add_dirs: tuple[str, ...] = ()
 
