@@ -59,6 +59,8 @@ def test_passes_the_ticket_text_through_a_file_when_implement_rendered(raw: str,
     # One absolute path, resolved once, for both the Write call and the command.
     assert '`echo "${TMPDIR:-/tmp}"`' in text
     assert "with the Write tool" in text
+    # A run after `blocked` writes the ticket again: the old file is replaced, never reused.
+    assert "replacing a file left by an earlier run" in text
     assert "`test -s <file>`" in text
     assert text.index("`test -s <file>`") < text.index("`./hub workflow run implement")
 
