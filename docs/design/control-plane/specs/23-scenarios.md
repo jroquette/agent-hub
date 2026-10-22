@@ -48,8 +48,9 @@ scenarios/orders/returns.yaml:14   nodes[2].type   shell nodes are not allowed i
 - **Data:** `GET /api/v1/scenarios?project=`; waiting from open human gates on `run:<id>` (as Run detail's
   `OpenGates`).
 - **Table:** compact `DataTable`; Last scenario run is a `StatusBadge` (Waiting for you, Running, Done, Failed,
-  Cancelled) + time + `IdChip`. Column priority: Scenario, Last scenario run, Steps, Pack, Project (only with several
-  projects).
+  Cancelled) + time + the short id as a link. Column priority: Scenario, Last scenario run, Steps, Pack, Project
+  (only with several projects). Not built yet (AGH-458): the `IdChip` (copy the full id) and the badge's "since" time
+  ("Waiting for you since 10:42").
 - **Keys:** `j`/`k`, `Enter`/`o`, `/`.
 
 | State | Copy |
@@ -164,8 +165,11 @@ investigation · investigation reads · proposals · workarounds · end      | S
   unfinished create says: "The issue may already exist in the tracker. The create failed or did not finish, so it is
   not retried here. Check DEMO first. To try again, run in a terminal:" `./hub scenario findings 3f2a91c0 --issue f1`.
   "Write inbox note" writes `brain/_inbox/<date>-scenario-<name>-<finding>.md` once, never over a note.
-- **Timeline:** `TimelineEvent` rows; keys `j`/`k`, `Enter`, `c`. A captured `<credential NAME>` shows as a
-  `RedactionChip`.
+- **Timeline:** `TimelineEvent` rows; a click selects a row (`?event=`, replace). A captured `<credential NAME>`
+  shows as a `RedactionChip`. Not built yet (AGH-458): the timeline keys `j`/`k`, `Enter`, `c`, and "Show all N
+  polls" (a row lists its last 20 polls).
+- **After an answer:** a toast ("Answer recorded: option o2 picked."), the resuming line in place of the pause banner
+  until the record moves on, and focus on the page's heading once the paused view goes.
 
 | State | Copy |
 |---|---|
@@ -184,11 +188,17 @@ investigation · investigation reads · proposals · workarounds · end      | S
 
 ## Responsive
 
+Built: at 1280 and wider nothing hides (the plan tables' cells wrap, so Step and Policy stay in view), the chat and
+the options sit side by side, and the step list and the scenario runs stack when they do not fit side by side. On a
+tablet (768–1279) the detail plans but its start bar says "Starting a scenario run needs a desktop screen."
+
+Not built yet (AGH-458), the target:
+
 | Width | Scenarios | Detail | Scenario run |
 |---|---|---|---|
 | ≥ 1600 | as drawn | as drawn | chat 1fr, options 560 |
-| 1280–1599 | all columns | steps and scenario runs stack; the start bar is sticky in the plan card | chat ≥ 480, options 440; facts fold under the timeline |
-| 768–1279 | Pack hides | plan only; "Starting a scenario run needs a desktop screen." | options first; the chat opens in a `SidePanel` |
+| 1280–1599 | all columns | the start bar is sticky in the plan card; the Scenario runs table's Duration column and "Show all 12" | chat ≥ 480, options 440; facts fold under the timeline |
+| 768–1279 | Pack hides | columns by priority | options first; the chat opens in a `SidePanel` |
 | < 768 | "This view needs a wider screen." | same | same |
 
 ## Accessibility
