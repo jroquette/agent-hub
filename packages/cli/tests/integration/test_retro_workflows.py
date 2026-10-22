@@ -3,11 +3,13 @@ propose at most five changes, each citing step 1's numbers, and reads read-only 
 writes the tracker; the metrics reach the prompt fenced, after its instructions; its fixtures pass.
 """
 
+import importlib.util
 import json
 import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import pytest
@@ -151,3 +153,97 @@ def test_passes_every_fixture_without_warning_when_retro_tested(
         assert f"workflows/retro/fixtures/{fixture}.yaml: ok" in tested.stdout
     assert "warning" not in tested.output
     assert tested.stdout.endswith("5 fixtures: 5 passed, 0 failed\n")
+
+
+def load_script(name: str) -> ModuleType:
+    """A pack script in process, by path; no __pycache__ beside the pack's files."""
+    spec = importlib.util.spec_from_file_location(f"retro_{name}", PACK / "scripts" / f"{name}.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    writes, sys.dont_write_bytecode = sys.dont_write_bytecode, True
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.dont_write_bytecode = writes
+    return module
+
+
+def test_parses_real_skill_usage_output_when_metrics_reads_it(
+    demo_workspace: Workspace, run_command: CommandRunner
+) -> None:
+    usage = run_command(demo_workspace.hub, "skill-usage", "--days", "7")
+
+    reading = load_script("metrics").parse_skill_usage(
+        usage.exit_code, usage.stdout, usage.stderr, days=7
+    )
+
+    assert usage.exit_code == 0, usage.output
+    assert reading.sources == [{"name": "skill_usage", "status": "ok", "reason": ""}]
+    skills = sorted(path.name for path in (demo_workspace.hub / ".claude/skills").iterdir())
+    assert skills
+    for name in skills:
+        assert reading.metrics[f"skill.{name}.runs_7d"] == 0, name
+    rows = [line for line in usage.stdout.splitlines() if line.startswith("| demo")]
+    keyed = [key for key in reading.metrics if key.startswith(("skill.", "agent."))]
+    assert len(keyed) == len(rows)
+    assert set(reading.extras["skills"]) >= set(skills)
+
+
+HUB_STUB = """#!/bin/sh
+printf 'Skills and agents: runs in the last 7 days, never used first.\\n\\n'
+printf '| Project | Kind | Name | 7 d | 30 d | 90 d | Last used |\\n'
+printf '| --- | --- | --- | --- | --- | --- | --- |\\n'
+"""
+EMPTY_REPORT = {
+    "window": "",
+    "prs": {},
+    "agent_runs": {"outcomes": {}, "cost_per_issue": {}},
+    "ci": {},
+    "memory": {"inbox_pending": 0, "learnings_added_or_changed": 0},
+}
+NO_SESSIONS = (
+    "# Transcript mining\n\n"
+    "Sessions: 0 · cost (sessions with cost records): $0 · Stop-gate blocks: 0\n\n"
+    "## Guard / hook / permission blocks\n\n- none\n"
+)
+
+
+def test_reports_no_runs_when_metrics_runs_in_empty_hub(tmp_path: Path) -> None:
+    (tmp_path / "scripts").mkdir()
+    report = json.dumps(EMPTY_REPORT)
+    (tmp_path / "scripts/retro_metrics.py").write_text(f"print({report!r})\n")
+    (tmp_path / "scripts/mine_transcripts.py").write_text(f"print({NO_SESSIONS!r}, end='')\n")
+    (tmp_path / "hub").write_text(HUB_STUB)
+    (tmp_path / "hub").chmod(0o755)
+    (tmp_path / ".agent-runs/workflows").mkdir(parents=True)
+
+    done = script("metrics.py", "--days", "7", cwd=tmp_path)
+
+    assert done.returncode == 0, done.stderr
+    found = json.loads(done.stdout)
+    assert (found["runs"], found["nothing"]) == (0, True)
+    assert {item["name"]: item["status"] for item in found["sources"]} == {
+        "runs": "ok",
+        "issue_runs": "ok",
+        "github": "ok",
+        "skill_usage": "ok",
+        "transcripts": "ok",
+    }
+    assert found["metrics"]["transcripts.sessions"] == 0
+    JsonSchemaOutputs().check(nodes_of("retro")["metrics"].output_format, found)
+
+
+def test_writes_no_file_when_drafts_runs_with_none(tmp_path: Path) -> None:
+    inbox = tmp_path / "brain/_inbox"
+    inbox.mkdir(parents=True)
+    (inbox / "note.md").write_text("an inbox note\n")
+    vetted = {"count": 1, "kept": [{"n": 1, **a_change(1)}], "dropped": [], "message": "1."}
+    args = ("--nothing", "false", "--count", "1", "--decision", "none", "--note", "1")
+
+    done = script("drafts.py", *args, "--summary", "s", cwd=tmp_path, stdin=json.dumps(vetted))
+
+    assert done.returncode == 0, done.stderr
+    found = json.loads(done.stdout)
+    assert (found["outcome"], found["kept"], found["path"]) == ("none kept", 0, "")
+    JsonSchemaOutputs().check(nodes_of("retro")["drafts"].output_format, found)
+    assert sorted(path.name for path in inbox.iterdir()) == ["note.md"]
