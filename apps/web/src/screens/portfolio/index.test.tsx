@@ -14,6 +14,7 @@ import {
   aProblem,
   aProjectSummary,
   aStreamCounts,
+  aUsageReport,
   at,
   renderWithApi,
   type ApiRoutes,
@@ -328,10 +329,13 @@ describe("PortfolioScreen", () => {
   });
 
   it("has no serious a11y violations (a11y)", async () => {
-    const { container } = renderWithApi(<PortfolioScreen />, { routes });
+    const { container } = renderWithApi(<PortfolioScreen />, {
+      routes: { ...routes, "/api/v1/skill-usage": aUsageReport() },
+    });
 
     await screen.findByRole("article", { name: "Project agent-hub" });
     await screen.findByText("Run AGH-79 failed at Verifying");
+    await screen.findByRole("table", { name: "Skills and agents" });
     expect(await seriousViolations(container)).toEqual([]);
   });
 });

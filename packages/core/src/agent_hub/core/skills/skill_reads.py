@@ -9,7 +9,8 @@ entry), so a warm read is one listing walk plus the usage join. Items and bundle
 found by id only: an id the fold did not issue is ``EntityNotFoundError`` (entity ``skill`` or
 ``skill file``); on a cold memo an item the listing alone rules out (``may_hold``) answers so
 before any file is read. ``item_names`` gives the fold's item kinds and names alone, with no
-capture and no usage.
+capture and no usage. ``usage_rows`` gives the usage report's rows of the hub's own skills and
+agents (a real ``.claude/`` entry or one a ``.claude/`` link points at), also with no capture.
 
 With ``capture`` (AGH-295, D2), the catalog hands every unit its items are versioned in (each
 once: the hooks of one file share it) to ``CaptureItemVersions`` with the unit's stat mark, and
@@ -33,9 +34,16 @@ from agent_hub.core.item_versions.item_units import (
 )
 from agent_hub.core.item_versions.item_version_ports import MarkedUnit
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
-from agent_hub.core.skills.skill_catalog import build_catalog, catalog_reads, may_hold
+from agent_hub.core.skills.skill_catalog import (
+    EMPTY_NOTICE,
+    LOCK_UNREAD_NOTICE,
+    build_catalog,
+    catalog_reads,
+    may_hold,
+)
 from agent_hub.core.skills.skill_sources import (
     CATALOG_BUDGET_BYTES,
+    CLAUDE_SOURCE,
     MAX_SKILL_FILE_BYTES,
     MAX_SKILL_JSON_BYTES,
     CatalogInputs,
@@ -54,9 +62,11 @@ from agent_hub.core.skills.skill_view import (
     SkillFileTooLargeError,
     SkillUsage,
     Usage,
+    UsageRow,
     item_id,
     text_of,
 )
+from agent_hub.core.skills.usage_report import usage_rows
 
 MEMO_ENTRIES: Final = 16
 SKILL_ENTITY: Final = "skill"
@@ -65,6 +75,9 @@ _JSON_SUFFIX: Final = ".json"
 _NAME: Final = re.compile(ITEM_NAME)
 _FILE_ID: Final = re.compile(FILE_ID)
 _ZERO: Final = Usage(count=0, user_count=0, model_count=0, last_used_at=None)
+# Catalog notices that say nothing was left unread: an empty hub, origins from folder names.
+_COMPLETE_NOTICES: Final = frozenset({EMPTY_NOTICE, LOCK_UNREAD_NOTICE})
+_NOTICE_SEPARATOR: Final = "; "
 
 type _Fingerprint = tuple[bool, int, tuple[tuple[str, int, int, bool, str | None], ...]]
 
@@ -147,6 +160,24 @@ class SkillReads:
         captured and no usage is asked (a Publish's name check, AGH-295)."""
         _, folded = self._folded(project, hub_path)
         return frozenset((item.kind, item.name) for item in folded.catalog.items)
+
+    def usage_rows(self, *, project: str, hub_path: str) -> tuple[tuple[UsageRow, ...], bool]:
+        """The usage report's rows of the skills and agents in the hub's ``.claude/skills`` and
+        ``.claude/agents`` (a real entry, or a plugin item a link there points at), 0 runs when
+        unused, from the (memoized) fold: no unit is captured. The flag is true when the catalog
+        or the usage was cut or a file was not read (AGH-482)."""
+        _, folded = self._folded(project, hub_path)
+        catalog = folded.catalog
+        names: dict[tuple[ItemKind, str], None] = {}
+        for item in catalog.items:
+            in_claude = item.source == CLAUDE_SOURCE or bool(item.linked_from)
+            if item.kind is not ItemKind.HOOK and in_claude:
+                names[(item.kind, item.name)] = None
+        usage = self._project_usage(project)
+        truncated = catalog.truncated or _left_unread(catalog.notice)
+        return usage_rows(project, names, usage), truncated or (
+            usage is not None and usage.truncated
+        )
 
     def detail(
         self, *, project: str, hub_path: str, kind: ItemKind, source: str, name: str
@@ -289,6 +320,13 @@ class SkillReads:
             lock=self._reader.read_lock(hub_path),
             over_budget=frozenset(over_budget),
         )
+
+
+def _left_unread(notice: str | None) -> bool:
+    """Whether a catalog notice says some entry or file was skipped or not read."""
+    if notice is None:
+        return False
+    return any(part not in _COMPLETE_NOTICES for part in notice.split(_NOTICE_SEPARATOR))
 
 
 def _frozen(texts: dict[str, bytes | UnreadHubFile]) -> Mapping[str, bytes | UnreadHubFile]:

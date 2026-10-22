@@ -32,7 +32,7 @@ from agent_hub.core.readmodels.filters import Scope
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError, HubReadModels
 from agent_hub.core.readmodels.settings_view import SettingsView
 from agent_hub.core.runner.run_record import Stage
-from agent_hub.core.skills.skill_view import ItemKind, SkillUsage
+from agent_hub.core.skills.skill_view import ItemKind, SkillUsage, UsageWindows
 from agent_hub.core.testing.hub_fakes import (
     FakeHub,
     FakeHubFileReader,
@@ -734,3 +734,60 @@ def test_reads_clock_once_when_features_listed() -> None:
 
     assert len(models.list_features(Scope()).items) == 2
     assert len(reads) == 1
+
+
+def _usage_models(hubs: dict[str, FakeHub]) -> HubFilesReadModels:
+    usage = a_skill_usage(
+        windows_by_skill={
+            "alpha": UsageWindows(runs_7d=1, runs_30d=3, runs_90d=4, last_used_at=NOW),
+        }
+    )
+
+    class Usage:
+        def skill_usage(self, project: str) -> SkillUsage:
+            return usage if project == "demo" else a_skill_usage()
+
+    registry = InMemoryHubRegistry(clock=lambda: NOW)
+    for path in hubs:
+        registry.add(path)
+    return HubFilesReadModels(
+        registry=registry,
+        reader=FakeHubFileReader(hubs),
+        activity=FakeActivity(),
+        running_version=RUNNING,
+        settings=SETTINGS,
+        clock=lambda: NOW,
+        usage=Usage(),
+    )
+
+
+def test_reports_usage_of_every_project_when_no_scope() -> None:
+    demo = fake_hub_of(a_skills_fixture_tree(), hub_json=hub_json_bytes(pin=RUNNING))
+    other = fake_hub_of(
+        {".claude/agents/scout.md": b"---\nname: scout\ndescription: Looks.\n---\nGo.\n"},
+        hub_json=hub_json_bytes(pin=RUNNING, name="other"),
+    )
+    models = _usage_models({DEMO: demo, OTHER: other})
+
+    report = models.skill_usage_report(Scope(), days=30)
+    scoped = models.skill_usage_report(Scope(project="other"), days=7)
+
+    assert report.days == 30
+    assert [(row.project, row.kind, row.name, row.runs_30d) for row in report.items] == [
+        ("demo", ItemKind.AGENT, "local-agent", 0),
+        ("demo", ItemKind.SKILL, "local-one", 0),
+        ("other", ItemKind.AGENT, "scout", 0),
+        ("demo", ItemKind.SKILL, "alpha", 3),
+    ]
+    assert not report.truncated
+    assert [(row.project, row.name) for row in scoped.items] == [("other", "scout")]
+    assert scoped.days == 7
+
+
+def test_reports_no_usage_when_scope_names_unknown_project() -> None:
+    demo = fake_hub_of(a_skills_fixture_tree(), hub_json=hub_json_bytes(pin=RUNNING))
+    models = _usage_models({DEMO: demo})
+
+    report = models.skill_usage_report(Scope(project="nope"), days=90)
+
+    assert (report.days, report.items, report.truncated) == (90, (), False)

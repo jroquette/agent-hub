@@ -814,7 +814,8 @@ class FoldedEventReadModels:
 
     def skill_usage(self, project: str) -> SkillUsage:
         """How often each skill and agent of ``project`` was used over the last ``USAGE_DAYS``
-        of the snapshot's ``now``: names, counts and times only (L7 dedupe in the fold)."""
+        of the snapshot's ``now``, and its 7/30/90-day windows: names, counts and times only
+        (L7 dedupe in the fold, AGH-482)."""
         snapshot = self._snapshot()
         key = (snapshot.hwm, snapshot.now.replace(microsecond=0), project)
         return self._usage.get(

@@ -62,6 +62,8 @@ export type WorkflowProblem = Schemas["WorkflowProblemView"];
 export type ItemVersion = Schemas["ItemVersionView"];
 export type ItemVersionPage = Schemas["ItemVersionPage"];
 export type ItemVersionContent = Schemas["ItemVersionContent"];
+export type UsageRow = Schemas["UsageRow"];
+export type UsageReport = Schemas["UsageReport"];
 
 /** The synthetic clock every builder uses. */
 export const T0 = "2026-10-11T14:00:00.000Z";
@@ -1284,6 +1286,33 @@ export function aFeatureShapedBody(): string {
 }
 
 /** The card of the managed skill `feature` of project `demo`: used 3 times in 30 days. */
+/** Project `demo`'s skill `refactor`, never used (as `a_usage_row` in core). */
+export function aUsageRow(overrides: Partial<UsageRow> = {}): UsageRow {
+  return {
+    project: "demo",
+    kind: "skill",
+    name: "refactor",
+    runs_7d: 0,
+    runs_30d: 0,
+    runs_90d: 0,
+    last_used_at: null,
+    ...overrides,
+  };
+}
+
+/** Project `demo`'s 30-day report: `refactor` never used, then `feature` run twice. */
+export function aUsageReport(overrides: Partial<UsageReport> = {}): UsageReport {
+  return {
+    days: 30,
+    items: [
+      aUsageRow(),
+      aUsageRow({ name: "feature", runs_7d: 1, runs_30d: 2, runs_90d: 2, last_used_at: at(-3600) }),
+    ],
+    truncated: false,
+    ...overrides,
+  };
+}
+
 export function aCatalogItem(overrides: Partial<CatalogItem> = {}): CatalogItem {
   const name = overrides.name ?? "feature";
   const source = overrides.source ?? "hub-workflow";

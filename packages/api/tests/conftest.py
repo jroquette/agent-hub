@@ -77,6 +77,8 @@ from agent_hub.core.skills.skill_view import (
     SkillCatalog,
     SkillDetail,
     SkillUsage,
+    UsageDays,
+    UsageReport,
 )
 
 FIXED_NOW = datetime(2026, 10, 11, 12, 0, tzinfo=UTC)
@@ -274,6 +276,7 @@ class FakeHubReadModels:
     skill_catalogs: dict[str, SkillCatalog] = field(default_factory=dict)
     skill_details: dict[tuple[str, str], SkillDetail] = field(default_factory=dict)
     skill_texts: dict[tuple[str, str, str], BundledFileText] = field(default_factory=dict)
+    skill_usage_reports: dict[str | None, UsageReport] = field(default_factory=dict)
     calls: list[tuple[str, object]] = field(default_factory=list)
     failure: Exception | None = None
 
@@ -357,6 +360,12 @@ class FakeHubReadModels:
     def skill_catalog(self, project: str) -> SkillCatalog:
         self._call("skill_catalog", project)
         return _found(self.skill_catalogs, "project", project)
+
+    def skill_usage_report(self, scope: Scope, *, days: UsageDays) -> UsageReport:
+        """By the scope's project (None for every project); no report gives no items."""
+        self._call("skill_usage_report", (scope, days))
+        found = self.skill_usage_reports.get(scope.project)
+        return UsageReport(days=days, items=()) if found is None else found
 
     def skill_detail(self, project: str, *, kind: ItemKind, source: str, name: str) -> SkillDetail:
         """By ``(project, item id)``."""
