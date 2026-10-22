@@ -66,6 +66,10 @@ export type FeedItem =
       summary: string;
       /** The first lines of its output, else a one-line digest ("Read 120 lines", "+3 -1"). */
       preview: string[];
+      /** The one-line digest that stands for the output, when there is one. */
+      digest: string | null;
+      /** How many lines the output has (0 without output). */
+      lines: number;
       /** Lines of the output not in `preview`. */
       more: number;
       /** The whole output, for the expanded view. */
@@ -157,6 +161,8 @@ function toolItem(state: TranscriptState, tool: ToolView, live: boolean): FeedIt
     state: status,
     summary: SUBAGENT.has(tool.name) ? subagentLabel(tool) : toolSummary(tool.input),
     preview,
+    digest: short,
+    lines: lines.length,
     more,
     output,
     children,
