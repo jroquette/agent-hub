@@ -1220,6 +1220,19 @@ class TestPreflightDue:
         runs = json.loads((hub.feature / "tickets/DEM-8/preflight.json").read_text())["runs"]
         assert runs[0]["blockers_read"] == ["dem-7"]
 
+    # AGH-473 review Q14: a blocker outside the plan matches blocked_by in any case too.
+    def test_records_a_blocker_read_when_an_outside_blocker_is_named_in_another_case(
+        self, hub: Hub
+    ) -> None:
+        record = json.loads(json.dumps(FEATURES_JSON))
+        record["tickets"][1]["blocked_by"] = ["T1", "OPS-9"]
+        (hub.feature / "features.json").write_text(json.dumps(record))
+
+        hub.ok("preflight", *TICKET, *found(blockers_read=[]), "--read", "ops-9")
+
+        runs = json.loads((hub.feature / "tickets/DEM-8/preflight.json").read_text())["runs"]
+        assert runs[0]["blockers_read"] == ["ops-9"]
+
     # AGH-473 review Q11: a linked tickets/ folder is refused and named.
     @pytest.mark.parametrize("step", ["outcome", "preflight-due"])
     def test_refuses_and_names_the_link_when_tickets_is_a_link(
