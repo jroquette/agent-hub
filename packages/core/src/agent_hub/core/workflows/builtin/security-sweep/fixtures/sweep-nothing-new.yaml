@@ -1,0 +1,31 @@
+# A second run on the same scan: every finding is already seen, so triage is skipped, the note
+# says nothing is new, and the run ends clean.
+workflow: security-sweep
+stubs:
+  scan:
+    output:
+      repos:
+        - repo: demo-api
+          ref: origin/trunk
+          head: 0a1b2c3d4e5f60718293a4b5c6d7e8f901234567
+          date: "YYYY-MM-DDT10:00:00+00:00"
+          status: scanned
+          note: ""
+          scanners:
+            - {name: semgrep, status: ran, note: "", count: 1}
+      findings:
+        - {repo: demo-api, scanner: semgrep, rule: python.flask.security.injection.tainted-sql-string, path: api/db.py, line: 40, severity: high, cwe: CWE-89, secret: false, package: "", version: "", advisory: "", fixed: "", title: ""}
+      more: 0
+      trimmed: false
+  new:
+    output:
+      findings: []
+      listed: 0
+      counts: {new: 0, seen: 1, more: 0}
+      ran: [{repo: demo-api, scanner: semgrep}]
+      current: [demo-api/semgrep/1123456789abcdef]
+      store_problem: ""
+  report: {output: {path: brain/_inbox/security-YYYY-MM-DD.md, kept: 0, secrets: 0, missing: [], status: clean}}
+  mark: {output: {status: clean, marked: 0, store_size: 1}}
+expect: {status: done, outcome: clean}
+reached: [scan, new, report, mark]

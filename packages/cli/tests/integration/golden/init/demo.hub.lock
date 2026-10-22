@@ -760,6 +760,18 @@
     "workflows/sdlc/ticket-pass.yaml": {
       "ownership": "seeded"
     },
+    "workflows/security-sweep/fixtures/sweep-findings.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/security-sweep/fixtures/sweep-no-scanners.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/security-sweep/fixtures/sweep-nothing-new.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/security-sweep/fixtures/sweep-triage-failed.yaml": {
+      "ownership": "seeded"
+    },
     "workflows/security-sweep/prompts/triage.md": {
       "ownership": "seeded"
     },
