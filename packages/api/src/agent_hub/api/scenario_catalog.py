@@ -127,7 +127,9 @@ INBOX_FOLDER: Final = Path("brain", "_inbox")
 FINDING_ID_TEXT: Final = r"^f[0-9]{1,6}$"
 _NEW_FILE: Final = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
 ANSWERED: Final = "the investigation is answered; its options can no longer be picked"
-LOCAL_UNREADABLE: Final = "hub.local.json cannot be read, so the options cannot be planned now"
+LOCAL_UNREADABLE: Final = (
+    "hub.local.json cannot be read or conflicts with hub.json, so the options cannot be planned now"
+)
 CONFIG_UNREADABLE: Final = "hub.json cannot be read, so the options cannot be planned now"
 
 type ScenarioMode = Literal["interactive", "regression"]

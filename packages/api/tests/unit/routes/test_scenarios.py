@@ -1294,12 +1294,19 @@ def test_returns_409_conflict_when_scenarios_local_file_loosens_environment(
     fake.local = LocalConfig.model_validate({"environments": {"staging": {"access": "write"}}})
     body = {"environment": "staging", "inputs": {"ref": "T-1"}}
 
+    hub = scenarios.hub
+    write_records(hub, a_paused_walk(hub, option_line(hub, "o1", READ_OPTION, environment="live")))
     planned = _post(scenarios, "/scenarios/demo/order-walk/plan", body)
     started = _post(scenarios, "/scenarios/demo/order-walk/runs", body)
+    shown = scenarios.client.get(f"/api/v1/scenario-runs/{WALK_RUN}")
 
     assert (planned.status_code, planned.json()["code"]) == (409, "hub_local_invalid")
     assert (started.status_code, started.json()["code"]) == (409, "hub_local_invalid")
     assert scenarios.launcher.calls == []
+    # E-14: the run's detail stays readable, its options shown, not pickable, with a reason.
+    assert shown.status_code == 200, shown.text
+    (option,) = shown.json()["proposal"]["options"]
+    assert (option["pickable"], option["refusal"]) == (False, scenario_catalog_unreadable())
 
 
 class PeekingTracker(InMemoryTrackerClient):
@@ -1329,3 +1336,38 @@ def test_holds_claim_when_scenarios_finding_issue_create_running(scenarios: Any)
     assert created.status_code == 201, created.text
     assert peeking.seen == ["a create of finding f1's issue is running"]
     assert len(scenarios.backend.issues) == 1
+
+
+def test_names_conflict_when_scenarios_local_file_invalid(scenarios: Any) -> None:
+    # The problem covers a file that cannot be read and one that conflicts with hub.json,
+    # and names no session when a plan, a start or an issue refuses (E-14).
+    hub = scenarios.hub
+    write_records(hub, a_paused_walk(hub, option_line(hub, "o1", READ_OPTION, environment="live")))
+    fake = scenarios.reader.hubs[str(hub)]
+    fake.local = LocalConfig.model_validate({"environments": {"staging": {"access": "write"}}})
+    body = {"environment": "staging", "inputs": {"ref": "T-1"}}
+
+    planned = _post(scenarios, "/scenarios/demo/order-walk/plan", body)
+    issued = _post(scenarios, f"/scenario-runs/{WALK_RUN}/findings/f1/issue", {"confirm": True})
+    shown = scenarios.client.get(f"/api/v1/scenario-runs/{WALK_RUN}")
+
+    for refused in (planned, issued):
+        assert refused.status_code == 409, refused.text
+        assert refused.json()["title"] == "hub.local.json cannot be read or conflicts with hub.json"
+        assert "conflicts with hub.json" in refused.json()["detail"]
+        assert "session" not in refused.json()["detail"]
+    # The run's detail stays readable: options shown, not pickable, with the reason.
+    assert shown.status_code == 200, shown.text
+    (option,) = shown.json()["proposal"]["options"]
+    assert option["pickable"] is False
+    assert option["refusal"] == (
+        "hub.local.json cannot be read or conflicts with hub.json, so the options cannot be"
+        " planned now"
+    )
+
+
+def scenario_catalog_unreadable() -> str:
+    return (
+        "hub.local.json cannot be read or conflicts with hub.json, so the options cannot be"
+        " planned now"
+    )

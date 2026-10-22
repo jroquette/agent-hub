@@ -114,7 +114,7 @@ class InvestigationRestrictions:
         ``HubLocalInvalidError`` when the hub's declared env files cannot all be read."""
         declared = self._credentials.of_hub(hub)
         if not declared.complete:
-            raise HubLocalInvalidError(project)
+            raise HubLocalInvalidError(project, before="starting a session")
         header = records[0]
         run_id = str(header.get("run"))
         try:
