@@ -14,7 +14,7 @@ steps: the owner bumped the versions through a PR, then created and pushed the a
 went out lightweight, so the release check in `release.yml` failed, and since a tag is never moved, the only fix is a
 new patch release. The `/release` skill already proposes the version, checks the exact commit and writes the notes; the
 hand-made tag is the step that keeps going wrong. Who creates the tag, and how, so that an agent can run the whole
-release without ever holding a credential that can push a tag?
+release without ever creating or pushing a tag itself?
 
 ## Considered Options
 
@@ -28,14 +28,18 @@ release without ever holding a credential that can push a tag?
 
 Chosen option: **a `workflow_dispatch` job in `release.yml` creates the annotated tag**, because the tag is then always
 made the same way (annotated, the notes verbatim as its message, on the confirmed commit), its checks run before and
-after it in one place, and the session only dispatches a workflow: it never holds a credential that can push a tag.
+after it in one place, and the session only dispatches a workflow: by rule, the agent never creates or pushes a tag
+itself; only the dispatched workflow does. A `v*` tag ruleset that lets only the workflow create tags would enforce
+this rule; it is not set up yet (the owner's choice), so today the rule and the workflow's refusals hold it.
 
 - `release.yml` gains a `workflow_dispatch` trigger with three inputs: `version` (`X.Y.Z`), `sha` (the full commit)
   and `notes` (the release notes, the tag message). The inputs reach the shell only through `env:`.
-- Its `release-tag` job runs only on a dispatch, with `contents: write`. It refuses a malformed version or SHA, empty
-  notes, a commit that is not on `main`, a commit whose declared versions differ from `version`
-  (`scripts/check_release.py` on that commit's files), and a tag that already exists on the remote, because a tag is
-  never moved. Then it runs `git tag -a "v$VERSION" --cleanup=verbatim -F <notes> "$SHA"` and pushes that one tag.
+- Its `release-tag` job runs only on a dispatch from `main`, with `contents: write`. It refuses a malformed version or
+  SHA, empty notes, a commit that is not on `main`, a commit whose declared versions differ from `version`
+  (`scripts/check_release.py` on that commit's files, in a step without the token), and a tag that already exists on
+  the remote, because a tag is never moved. Then it runs `git tag -a "v$VERSION" --cleanup=verbatim -F <notes> "$SHA"`
+  and pushes that one tag, from the only step that holds the token.
+- The run is named `release v<version> at <sha>` (`run-name`), so the `/release` skill finds the run it dispatched.
 - The tagger is `github-actions[bot]`: the workflow makes the tag, so the tag says so, while commits and PRs stay the
   owner's. The owner's act is the confirmation at the gate and the dispatch it authorizes, not the tag object.
 - A tag pushed with `GITHUB_TOKEN` starts no other workflow, so the existing `release-check` job runs after
@@ -49,8 +53,11 @@ after it in one place, and the session only dispatches a workflow: it never hold
 ### Consequences
 
 - Good: no lightweight or hand-typed tag again; the tag message is the reviewed notes, verbatim.
-- Good: the session needs no tag-writing credential; only the workflow's `GITHUB_TOKEN` can push the tag.
+- Good: the session never needs a tag-writing credential; the workflow's `GITHUB_TOKEN` pushes the tag, from the one
+  step that holds it.
 - Good: the refusal of an existing tag puts "a tag is never moved" in code, not only in the written rule.
+- Bad: until a `v*` tag ruleset limits tag creation to the workflow, a session whose git credentials can push could
+  still push a tag; only the rule stops it.
 - Bad: anyone who can dispatch workflows on the repository can cut a release; the gate is the `/release` flow and the
   checks, not a GitHub environment approval.
 - Neutral: by hand stays possible and checked; the GitHub Releases UI stays rejected, as it makes a lightweight tag.
