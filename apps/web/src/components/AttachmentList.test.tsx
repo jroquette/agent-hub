@@ -10,7 +10,13 @@ import {
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import { AttachmentList, useMessageAttachments } from "./AttachmentList";
+import {
+  AttachButton,
+  AttachmentList,
+  useAttachmentDrop,
+  useMessageAttachments,
+  type MessageAttachments,
+} from "./AttachmentList";
 
 vi.mock("../lib/pastedImage", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/pastedImage")>();
@@ -134,6 +140,96 @@ describe("AttachmentList (AC-419.11, AC-419.12)", () => {
     expect(screen.getByText("Reading…")).toBeInTheDocument();
 
     rerender(<AttachmentList images={[]} files={[]} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+});
+
+/** A drop zone and its picker over real attachments, as the chat and New feature use them. */
+function DropZone({
+  acceptsFiles = true,
+  onAdded = () => undefined,
+}: {
+  acceptsFiles?: boolean;
+  onAdded?: () => void;
+}) {
+  const attachments = useMessageAttachments({
+    acceptsImages: true,
+    acceptsFiles,
+    onError: () => undefined,
+  });
+  const { dragging, dropProps } = useAttachmentDrop(attachments, { onAdded });
+  return (
+    <div data-testid="zone" data-dragging={dragging || undefined} {...dropProps}>
+      <AttachButton attachments={attachments} onAdded={onAdded} />
+      <output aria-label="count">{attachments.count + attachments.reading}</output>
+    </div>
+  );
+}
+
+const dataTransfer = (types: string[], files: File[] = []) => ({
+  types,
+  files,
+  dropEffect: "none",
+});
+
+describe("useAttachmentDrop and AttachButton (AC-420.10)", () => {
+  it("takes dropped files with the highlight while they are dragged over", async () => {
+    const onAdded = vi.fn();
+    render(<DropZone onAdded={onAdded} />);
+    const zone = screen.getByTestId("zone");
+
+    fireEvent.dragOver(zone, { dataTransfer: dataTransfer(["Files"]) });
+    expect(zone).toHaveAttribute("data-dragging", "true");
+    fireEvent.drop(zone, { dataTransfer: dataTransfer(["Files"], [text("notes.txt")]) });
+
+    expect(zone).not.toHaveAttribute("data-dragging");
+    expect(onAdded).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(screen.getByRole("status", { name: "count" })).toHaveTextContent("1");
+    });
+  });
+
+  it("leaves a drag of anything but files to the browser (AC-420.3)", () => {
+    const onAdded = vi.fn();
+    render(<DropZone onAdded={onAdded} />);
+    const zone = screen.getByTestId("zone");
+
+    fireEvent.dragOver(zone, { dataTransfer: dataTransfer(["text/plain"]) });
+    expect(zone).not.toHaveAttribute("data-dragging");
+    fireEvent.drop(zone, { dataTransfer: dataTransfer(["text/plain"]) });
+
+    expect(onAdded).not.toHaveBeenCalled();
+  });
+
+  it("picks images, PDFs and text files with Attach, or only images with Image", async () => {
+    const user = userEvent.setup();
+    const { container, unmount } = render(<DropZone />);
+
+    const attach = screen.getByRole("button", { name: "Attach a file" });
+    expect(attach).toHaveTextContent("Attach");
+    const picker = container.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(picker).not.toHaveAttribute("accept");
+    if (!picker) throw new Error("no picker");
+    await user.upload(picker, text("notes.txt"));
+    await waitFor(() => {
+      expect(screen.getByRole("status", { name: "count" })).toHaveTextContent("1");
+    });
+    unmount();
+
+    const images = render(<DropZone acceptsFiles={false} />);
+    expect(screen.getByRole("button", { name: "Add an image" })).toHaveTextContent("Image");
+    expect(images.container.querySelector('input[type="file"]')).toHaveAttribute(
+      "accept",
+      "image/*",
+    );
+  });
+
+  it("renders no picker when nothing is accepted", () => {
+    const none = {
+      acceptsFiles: false,
+      acceptsImages: false,
+    } as unknown as MessageAttachments;
+    const { container } = render(<AttachButton attachments={none} />);
     expect(container).toBeEmptyDOMElement();
   });
 });

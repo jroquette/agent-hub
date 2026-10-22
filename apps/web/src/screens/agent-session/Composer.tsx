@@ -1,10 +1,18 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
-import { AttachmentList, Button, Icon, useMessageAttachments } from "../../components";
+import {
+  AttachButton,
+  AttachmentList,
+  Button,
+  Icon,
+  useAttachmentDrop,
+  useMessageAttachments,
+} from "../../components";
 import { ApiProblem } from "../../lib/api";
 import { cx } from "../../lib/cx";
 import type { MessageFile } from "../../lib/messageFile";
 import { servedCheckout } from "../../lib/devCheckout";
+import { useAutoGrow } from "../../lib/useAutoGrow";
 import { useSlashMenu, type SlashOption } from "./SlashMenu";
 import { useDraft } from "./useDraft";
 import { modeLabel, type AgentSessionStatus, type PermissionMode } from "./model";
@@ -104,8 +112,6 @@ export function Composer({
   acceptsFiles = false,
 }: ComposerProps) {
   const { text, setText, accepted } = useDraft(draftId);
-  const [dragging, setDragging] = useState(false);
-  const filePicker = useRef<HTMLInputElement | null>(null);
   const [sending, setSending] = useState(false);
   // Shown, not only guarded: a POST that never settles leaves a visibly pending Stop.
   const [stoppingShown, setStoppingShown] = useState(false);
@@ -135,9 +141,14 @@ export function Composer({
     onError: setError,
   });
   const { images, files, reading } = attachments;
+  const { dragging, dropProps } = useAttachmentDrop(attachments, {
+    disabled: reason !== null,
+    onAdded: () => {
+      box.current?.focus({ preventScroll: true });
+    },
+  });
   const canSend = reason === null && !sending && !tooLong && reading === 0 && text.trim() !== "";
   const needsText = attachments.count > 0 && text.trim() === "";
-  const attaches = acceptsImages || acceptsFiles;
   const canStop = status === "running" || status === "waiting_permission";
   const currentModel = model ?? "default";
   const modelOptions = models.includes(currentModel) ? models : [...models, currentModel];
@@ -178,23 +189,7 @@ export function Composer({
     if (focusOnMount.current) box.current?.focus({ preventScroll: true });
   }, []);
 
-  // One layout read per fit; a window resize moves the 40vh cap, so it fits again.
-  const fit = useCallback(() => {
-    const element = box.current;
-    if (!element) return;
-    const max = Math.floor(window.innerHeight * MAX_HEIGHT_SHARE);
-    element.style.height = "auto";
-    const content = element.scrollHeight;
-    element.style.height = `${String(Math.min(content, max))}px`;
-    element.style.overflowY = content > max ? "auto" : "hidden";
-  }, []);
-  useLayoutEffect(fit, [fit, text]);
-  useEffect(() => {
-    window.addEventListener("resize", fit);
-    return () => {
-      window.removeEventListener("resize", fit);
-    };
-  }, [fit]);
+  useAutoGrow(box, text, MAX_HEIGHT_SHARE);
 
   const run = (action: () => Promise<unknown> | undefined, what: string, done?: () => void) => {
     setError(null);
@@ -251,8 +246,7 @@ export function Composer({
   };
 
   return (
-    // An image dropped anywhere on the composer joins the message; the keyboard has the picker.
-    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
+    // A file dropped anywhere on the composer joins the message; the keyboard has the picker.
     <form
       className={cx("as-composer", dragging && "as-composer-drop")}
       aria-label="Message composer"
@@ -260,22 +254,7 @@ export function Composer({
         event.preventDefault();
         send();
       }}
-      onDragOver={(event) => {
-        if (!attaches || reason !== null || !event.dataTransfer.types.includes("Files")) return;
-        event.preventDefault();
-        event.dataTransfer.dropEffect = "copy";
-        setDragging(true);
-      }}
-      onDragLeave={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false);
-      }}
-      onDrop={(event) => {
-        if (!attaches) return;
-        event.preventDefault();
-        setDragging(false);
-        attachments.add(event.dataTransfer);
-        focusBox();
-      }}
+      {...dropProps}
     >
       <AttachmentList
         images={images}
@@ -411,39 +390,12 @@ export function Composer({
           </label>
         </div>
         <div className="as-composer-actions">
-          {attaches && (
-            <>
-              <input
-                ref={filePicker}
-                type="file"
-                accept={acceptsFiles ? undefined : "image/*"}
-                multiple
-                hidden
-                tabIndex={-1}
-                onChange={(event) => {
-                  attachments.add(event.target);
-                  event.target.value = "";
-                  focusBox();
-                }}
-              />
-              <Button
-                size="sm"
-                variant="ghost"
-                icon="plus"
-                className="as-composer-attach"
-                disabled={reason !== null || attachments.full}
-                aria-label={acceptsFiles ? "Attach a file" : "Add an image"}
-                title={
-                  acceptsFiles
-                    ? "Attach images, PDFs or text files up to 5 MB (or paste or drop them in the box)"
-                    : "Add an image (or paste or drop one in the box)"
-                }
-                onClick={() => filePicker.current?.click()}
-              >
-                {acceptsFiles ? "Attach" : "Image"}
-              </Button>
-            </>
-          )}
+          <AttachButton
+            attachments={attachments}
+            disabled={reason !== null}
+            className="as-composer-attach"
+            onAdded={focusBox}
+          />
           <Button
             size="sm"
             variant="ghost"
