@@ -1589,10 +1589,13 @@ def test_keeps_restricted_in_every_view_when_investigation_session_commanded(
     model = wired.client.post(
         f"{session}/settings", json={"model": "sonnet"}, headers=_origin(wired)
     )
+    listed = wired.client.get("/api/v1/agent-sessions")
     closed = wired.client.post(f"{session}/close", json={}, headers=_origin(wired))
 
     assert model.status_code == 200, model.text
     assert model.json()["restricted"] is True
+    (item,) = [row for row in listed.json()["items"] if row["id"] == started["agent_session_id"]]
+    assert item["restricted"] is True
     assert closed.status_code == 200, closed.text
     assert closed.json()["restricted"] is True
 
@@ -1615,3 +1618,20 @@ def test_refuses_mode_change_when_investigation_session_reopened_after_restart(
     assert mode.status_code == 409, mode.text
     assert mode.json()["type"] == "urn:agent-hub:problem:agent-session-mode-locked"
     assert not [call for call in fresh.driver.calls if call.method == "set_mode"]
+
+
+def test_marks_restricted_before_reopen_when_investigation_session_read_after_restart(
+    wired: Any, investigation: Any
+) -> None:
+    """After a restart, an ended investigation session reads restricted before any reopen,
+    so its page offers no mode switch (review round 3, Q7)."""
+    session_id, fresh, _hub = _start_and_restart(wired, investigation)
+
+    shown = wired.client.get(f"/api/v1/agent-sessions/{session_id}")
+    again = wired.client.get(f"/api/v1/agent-sessions/{session_id}")
+
+    assert shown.status_code == 200, shown.text
+    assert shown.json()["status"] == "ended"
+    assert shown.json()["restricted"] is True
+    assert again.json()["restricted"] is True
+    assert _starts(fresh) == []
