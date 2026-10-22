@@ -43,7 +43,7 @@ def test_prints_the_repo_fast_gate_when_hub_json_names_one(
     hub_json(tmp_path, {"dir": "demo-api", "check_fast": "make check-fast", "check": FULL})
     monkeypatch.chdir(tmp_path)
 
-    assert load().main(["--repo", "demo-api", "--full", FULL]) == 0
+    assert load().main(["--config", "hub.json", "--repo", "demo-api", "--full", FULL]) == 0
 
     assert json.loads(capsys.readouterr().out) == {
         "check_fast": "make check-fast",
@@ -63,7 +63,7 @@ def test_reports_and_runs_the_full_gate_when_check_fast_is_missing_or_empty(
     hub_json(tmp_path, {"dir": "demo-api", "check": FULL, **given})
     monkeypatch.chdir(tmp_path)
 
-    assert load().main(["--repo", "demo-api", "--full", FULL]) == 0
+    assert load().main(["--config", "hub.json", "--repo", "demo-api", "--full", FULL]) == 0
 
     found = json.loads(capsys.readouterr().out)
     assert (found["check_fast"], found["source"]) == (FULL, "check")
@@ -92,7 +92,7 @@ def test_reports_and_runs_the_full_gate_when_hub_json_is_unreadable(
         (tmp_path / "hub.json").write_text(text, encoding="utf-8")
     monkeypatch.chdir(tmp_path)
 
-    assert load().main(["--repo", "demo-api", "--full", FULL]) == 0
+    assert load().main(["--config", "hub.json", "--repo", "demo-api", "--full", FULL]) == 0
 
     found = json.loads(capsys.readouterr().out)
     assert found == {
@@ -104,7 +104,13 @@ def test_reports_and_runs_the_full_gate_when_hub_json_is_unreadable(
 
 @pytest.mark.parametrize(
     "argv",
-    [[], ["--repo", "demo-api"], ["--repo", "", "--full", FULL], ["--repo", "a", "--full", " "]],
+    [
+        [],
+        ["--config", "hub.json", "--repo", "demo-api"],
+        ["--config", "hub.json", "--repo", "", "--full", FULL],
+        ["--config", "hub.json", "--repo", "a", "--full", " "],
+        ["--config", "", "--repo", "a", "--full", FULL],
+    ],
 )
 def test_exits_two_when_the_arguments_are_bad(
     tmp_path: Path,
