@@ -50,8 +50,10 @@ description) and, on a terminal, asks
 question is asked only once the tracker's key is there and its client resolved, and only while
 no issue of that finding was claimed: the marker ``finding-<id>.issue`` in the run folder,
 shared with hub web (generator's ``finding_issues``), is claimed before the create, so the
-terminal and hub web together create at most one issue per finding, and a failed create is
-never retried (exit 1 naming the issue, or saying the earlier create did not finish). Without a
+terminal and hub web together create at most one issue per finding: a marker naming an issue
+exits 1 before the question; after a failed or unfinished create (which hub web refuses), the
+terminal says so, warns that the issue may already exist in the tracker, and asks again; a
+``y`` takes the marker again atomically, then creates and records the issue. Without a
 terminal it creates nothing and says so (exit 0: the draft is the output). ``--inbox F`` writes
 ``brain/_inbox/<date>-scenario-<name>-<F>.md`` in the hub, never over an existing note (exit 1).
 An unknown run or finding id exits 1; ``--issue`` with ``--inbox``, or ``--json`` with either,
@@ -123,10 +125,12 @@ from agent_hub.core.workflows.engine import WorkflowEngineError, start_inputs
 from agent_hub.core.workflows.plan import WorkflowPlan
 from agent_hub.generator.action_discovery import ActionDiscovery, discover_actions
 from agent_hub.generator.finding_issues import (
+    IssueMarked,
     claim_issue,
     marked_issue,
     record_failure,
     record_issue,
+    retake_issue,
 )
 from agent_hub.generator.scenario_discovery import HUB_SCENARIOS, DiscoveredScenarioSource
 from agent_hub.generator.workflow_discovery import DiscoveredWorkflow
@@ -142,6 +146,9 @@ NO_TERMINAL: Final = (
     "no terminal: the issue was not created; run this command on a terminal to create it"
 )
 INBOX_FOLDER: Final = Path("brain", "_inbox")
+RETRY_WARNING: Final = (
+    "the issue may already exist in the tracker; check it before creating it again"
+)
 
 scenario_app = typer.Typer(
     name=COMMAND, no_args_is_help=True, help="List, plan and run the hub's scenarios."
@@ -412,10 +419,11 @@ def _issue(hub: Path, view: ScenarioRunView, finding: FindingView, *, run: str) 
     if not has_terminal():
         typer.echo(NO_TERMINAL)
         return
-    # One marker per finding, shared with hub web: at most one issue, never retried.
+    # One marker per finding, shared with hub web: an issue it names refuses every create; a
+    # failed or unfinished create may be taken again here only, after the warning (E-14).
     folder = run_folder(hub, run)
     earlier = marked_issue(folder, finding.finding_id)
-    if earlier is not None:
+    if earlier is not None and earlier.issue_id is not None:
         fail(f"{_FINDINGS_PREFIX}: {earlier.reason}")
     config = load_effective_config_or_exit(hub).config
     team = config.tracker.team_keys[0]
@@ -424,10 +432,12 @@ def _issue(hub: Path, view: ScenarioRunView, finding: FindingView, *, run: str) 
     if missing is not None:
         fail(missing)
     client = resolve_tracker_client(config, os.environ, hub_root=hub)
+    if earlier is not None:
+        typer.echo(f"{earlier.state}: {RETRY_WARNING}")
     if not confirmed(f"create this issue in {team}?"):
         typer.echo("the issue was not created")
         return
-    _claim(folder, finding.finding_id)
+    _claim(folder, finding.finding_id, earlier)
     typer.echo(transport_line(config), err=True)
     try:
         created = client.create_issue(team, draft.title, draft.description)
@@ -438,14 +448,18 @@ def _issue(hub: Path, view: ScenarioRunView, finding: FindingView, *, run: str) 
     typer.echo(f"created {shown_text(created.id)}  {shown_text(created.url)}")
 
 
-def _claim(folder: Path, finding_id: str) -> None:
-    """Claim the finding's issue marker before the create; else exit 1 naming the earlier one."""
+def _claim(folder: Path, finding_id: str, earlier: IssueMarked | None) -> None:
+    """Claim the finding's issue marker before the create (take a failed or unfinished one
+    again when ``earlier`` names it); else exit 1 naming the claim that stands."""
     try:
-        earlier = claim_issue(folder, finding_id)
+        if earlier is None:
+            standing = claim_issue(folder, finding_id)
+        else:
+            standing = retake_issue(folder, earlier)
     except OSError as error:
         fail(f"{_FINDINGS_PREFIX}: cannot mark the finding's issue: {error.strerror or error}")
-    if earlier is not None:
-        fail(f"{_FINDINGS_PREFIX}: {earlier.reason}")
+    if standing is not None:
+        fail(f"{_FINDINGS_PREFIX}: {standing.reason}")
 
 
 def _inbox(hub: Path, view: ScenarioRunView, finding: FindingView, *, run: str) -> None:
