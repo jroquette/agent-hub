@@ -77,6 +77,11 @@ class TicketRecordError(AgentHubError):
     """A record refused, nothing written; the message says why in one line."""
 
 
+def superseded(n: int, version: int | None) -> str:
+    """What the run says of approved request ``n`` the plan moved past (A23)."""
+    return f"change request {n} approved but superseded by plan v{version}: not applied"
+
+
 class PlanMovedError(TicketRecordError):
     """An approved request's plan version is no longer the plan's: the ticket is checked again
     against the current plan instead (its amendment would not read as the next version)."""
@@ -249,9 +254,10 @@ class PreflightFacts:
 def preflight_run(findings: bytes, facts: PreflightFacts, record: PreflightRecord | None) -> bytes:
     """The run ``hub step preflight`` appends: the agent's ``drift``, ``local_notes`` and
     ``blockers_read``, and the writer's facts. The input text is one line of at most
-    ``MAX_INPUT_TEXT`` characters (null for ``none``). ``change_request`` is kept for ``plan``
-    drift only; a declined change re-checked with none named takes the one the ticket's last run
-    named. ``appended_preflight`` checks the result."""
+    ``MAX_INPUT_TEXT`` characters: a plain check (``none``) keeps its note (A23), an approval's
+    text is dropped. ``change_request`` is kept for ``plan`` drift only; a declined change
+    re-checked with none named takes the one the ticket's last run named.
+    ``appended_preflight`` checks the result."""
     found = parse_document(findings)
     if not isinstance(found, dict):
         raise TicketRecordError("the findings are not a JSON object")
@@ -262,14 +268,15 @@ def preflight_run(findings: bytes, facts: PreflightFacts, record: PreflightRecor
     if drift == "plan" and request is None and kind == "declined_change" and record is not None:
         request = record.runs[-1].change_request if record.runs else None
     kept = "".join(c for c in facts.input_text if c.isprintable() or c.isspace())
-    text = " ".join(kept.split())[:MAX_INPUT_TEXT]
+    # A gate's approval text is no input; a plain check may carry a note (A23).
+    text = "" if facts.input == "approve" else " ".join(kept.split())[:MAX_INPUT_TEXT]
     run = {
         "ran_at": facts.ran_at.isoformat(timespec="seconds"),
         "plan_version": facts.plan_version,
         "commit": facts.commit,
         "blockers_read": found.get("blockers_read"),
         "input": kind,
-        "input_text": None if kind == "none" else text or None,
+        "input_text": text or None,
         "drift": drift,
         "local_notes": found.get("local_notes"),
         "change_request": request if drift == "plan" else None,
@@ -399,11 +406,7 @@ def amended_plan(
     plan_from = int(_field(request, "plan_from"))
     view = plan_version(plan)
     if view.version != plan_from:
-        why = (
-            f"plan.md is v{view.version}; change request {n} asks v{plan_from} to "
-            f"v{plan_from + 1}: re-run preflight"
-        )
-        raise PlanMovedError(why)
+        raise PlanMovedError(superseded(n, view.version))
     if not summary.strip():
         raise TicketRecordError("the amendment's summary is empty")
     numbers = [int(found[1]) for a in view.amendments if (found := _AMENDMENT_ID.fullmatch(a.id))]
@@ -457,6 +460,8 @@ class PendingDecision:
     decision: str = ""
     note: str = ""
     summary: str = ""
+    # An approval the plan moved past: not amended, said to the run and its report (A23).
+    superseded: str = ""
 
     @property
     def input(self) -> str:
@@ -489,12 +494,18 @@ def pending_decision(n: int, *, request: bytes, decision: bytes, plan: bytes) ->
     if status == "approved":
         try:
             amended_plan(plan, n=n, request=request, decision=decision, summary="x")
-        except PlanMovedError:
-            return NO_PENDING
+        except PlanMovedError as moved:
+            why = str(moved)
+            return PendingDecision(
+                request=n, note=why, summary=_summary(n, request), superseded=why
+            )
     try:
         note = text_field(record_fields(decision[:CHANGE_REQUEST_HEAD_BYTES]), "note") or ""
     except RecordFieldError as error:
         raise TicketRecordError(str(error)) from None
+    return PendingDecision(request=n, decision=status, note=note, summary=_summary(n, request))
+
+
+def _summary(n: int, request: bytes) -> str:
     proposal = _PROPOSAL.search(request.decode("utf-8", "replace"))
-    summary = one_line(proposal[1])[:MAX_SUMMARY_CHARS] if proposal else f"change request {n}"
-    return PendingDecision(request=n, decision=status, note=note, summary=summary)
+    return one_line(proposal[1])[:MAX_SUMMARY_CHARS] if proposal else f"change request {n}"
