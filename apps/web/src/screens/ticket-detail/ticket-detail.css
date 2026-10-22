@@ -1,0 +1,115 @@
+/* Ticket detail: the code, sessions and records behind one ticket. */
+.td-title {
+  font-size: 15px;
+  color: var(--text-muted);
+}
+.td-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin: 0;
+}
+.td-pad {
+  margin: 0;
+  padding: 0 var(--space-4) var(--space-3);
+}
+.td-changes-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  min-width: 0;
+}
+.td-open {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+.td-repo {
+  border-top: 1px solid var(--border);
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.td-repo-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+.td-state[data-tone="done"] {
+  color: var(--done);
+}
+.td-state[data-tone="waiting"] {
+  color: var(--waiting);
+}
+.td-state[data-tone="muted"] {
+  color: var(--text-subtle);
+}
+.td-list-title {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.td-list ul,
+.td-summary,
+.td-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.td-summary li::before {
+  content: "· ";
+  color: var(--text-subtle);
+}
+.td-summary {
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.td-commit,
+.td-file {
+  display: grid;
+  gap: var(--space-3);
+  font-size: 13px;
+  line-height: 22px;
+}
+.td-commit {
+  grid-template-columns: 64px minmax(0, 1fr);
+}
+.td-file {
+  grid-template-columns: minmax(0, 1fr) 72px 48px 48px;
+}
+.td-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.td-added {
+  color: var(--done);
+}
+.td-removed {
+  color: var(--failed);
+}
+.td-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.td-record {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+.td-record:last-child {
+  border-bottom: 0;
+}

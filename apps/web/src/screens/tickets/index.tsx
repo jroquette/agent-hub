@@ -16,7 +16,7 @@ import { useApi } from "../../lib/api";
 import { fmtAgo, fmtMoney } from "../../lib/format";
 import { useScope } from "../../lib/scope";
 import { useRowKeys } from "../../lib/useRowKeys";
-import { rowHref } from "../sessions-list/drivenRows";
+import { ticketHref } from "../ticket-detail";
 import { SessionLink } from "../feature-detail/TicketsTab";
 import { useTicketLookup } from "../features/queries";
 import { StartTicketControl } from "./StartTicket";
@@ -60,7 +60,7 @@ export function TicketItem({
   now: number;
   onOpen: (href: string) => void;
 }) {
-  const href = rowHref(row.latest);
+  const href = ticketHref(row.project, row.issue);
   const [expanded, setExpanded] = useState(false);
   const sessionsId = useId();
   const featureHref = row.feature
