@@ -775,6 +775,9 @@ class ScenarioCommands:
         """The scenario planned in the asked environment, with its plan-mode summaries."""
         hub, plan, _pack = self._catalog.scenario(project, name)
         launch_inputs(plan, request.inputs)
+        # As the CLI's plan, which exits on it: a local file that cannot be read or conflicts
+        # with hub.json refuses before any child runs.
+        self._catalog.credentials.environments_of(hub, project)
         texts = {key: argv_text(value) for key, value in request.inputs.items()}
         code, printed = self._launcher.plan_scenario(
             hub, name, environment=request.environment, inputs=texts
@@ -866,10 +869,9 @@ class ScenarioCommands:
             raise RunConflictError(
                 code="finding_unusable", reason=str(error), run_id=run_id
             ) from None
-        # As the CLI: hub.json with hub.local.json over it (a local tracker.transport wins);
-        # an unreadable local file refuses (fail closed).
-        config = self._catalog.credentials.effective_config_of(run.hub, run.project)
-        team = config.tracker.team_keys[0]
+        # The draft needs only hub.json (its team); the create, the effective config.
+        committed = self._catalog.credentials.config_of(run.hub)
+        team = committed.tracker.team_keys[0] if committed is not None else None
         issue = FindingIssue(
             run_id=run_id,
             finding_id=finding_id,
@@ -880,6 +882,11 @@ class ScenarioCommands:
         )
         if not request.confirm:
             return issue
+        # As the CLI: hub.json with hub.local.json over it (a local tracker.transport wins);
+        # a local file that cannot be read or conflicts with hub.json refuses (fail closed).
+        config = self._catalog.credentials.effective_config_of(run.hub, run.project)
+        team = config.tracker.team_keys[0]
+        issue = issue.model_copy(update={"team": team})
         client = self._tracker_of(config, run.hub)
         if client is None:
             reason = (
