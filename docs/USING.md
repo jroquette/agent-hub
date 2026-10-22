@@ -231,6 +231,11 @@ A human then reads the proposal and sets its `status` to `approved`, and `/onboa
 `./hub sync`, and commit that change through a PR. If the newest release has no `.claude/skills/onboard` either, stop
 and tell the user; do not try other versions.
 
+To review someone else's PR, type `/review <PR>` in a session. It reads the PR with `gh` and starts the built-in
+`review-incoming` workflow, which drafts one review in `.agent-runs/review-incoming/<run>.md` and pauses; you edit that
+file and answer `./hub workflow respond <run> --choice comment|request-changes|approve` (or `--choice reject`), and only
+then does `/review` post it. The repo's check runs at the PR's head in a throwaway worktree, never for a fork.
+
 ### Run the control plane
 
 The control plane (`hub web`) shows the hub's sessions, runs, approvals and health; old `/live` links open the Sessions

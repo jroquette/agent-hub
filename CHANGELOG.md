@@ -11,6 +11,21 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- The built-in `review-incoming` workflow pack (AGH-493): someone else's PR through the spec, quality and security
+  lenses (the security lens when a script finds the diff touches input handling, auth, secrets, subprocesses, file
+  paths or parsing), the repo's `check` at the head in a throwaway worktree (never for a fork), then one draft in
+  `.agent-runs/review-incoming/<run>.md` that you edit and answer with `./hub workflow respond <run> --choice
+  comment|request-changes|approve|reject`. The run never posts: it writes the payload `/review` posts. A new pack
+  folder: `./hub sync` seeds it into an existing hub.
+
+### Changed
+
+- `/review` reads the PR into files, fetches its head to `refs/agent-hub/review/<n>` (never a branch) and starts
+  `review-incoming`; it posts only when the run ended with an outcome, after the payload's sha256 matches the run's
+  record, and deletes the ref once the run ended (AGH-493).
+
 ## [0.20.1] - 2026-10-22
 
 ### Added
