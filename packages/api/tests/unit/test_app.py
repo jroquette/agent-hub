@@ -46,6 +46,7 @@ BODIES: dict[tuple[str, str], object] = {
     ("post", "/api/v1/workflow-runs/{run_id}/cancel"): {},
     ("post", "/api/v1/workflow-runs/{run_id}/resume"): {},
     ("post", "/api/v1/workflow-runs/{run_id}/abandon"): {},
+    ("post", "/api/v1/scenario-runs/{run_id}/investigation"): {},
     # A restore and a publish are strict writes too (AGH-295, D13).
     (
         "post",
@@ -59,6 +60,10 @@ BODIES: dict[tuple[str, str], object] = {
         "name": "staging",
     },
     ("post", "/api/v1/projects/{project}/environment-discoveries"): {"repos": ["api"]},
+    # A change request's decision is a strict write (two-level-flows AC-2.14).
+    ("post", "/api/v1/features/{project}/{slug}/change-requests/{n}/decision"): {
+        "decision": "approved"
+    },
 }
 OWN_ORIGIN = {"Origin": "http://127.0.0.1:7420"}
 QUERIES = {
@@ -74,7 +79,7 @@ DISCOVERY_ID = "0123456789ab"
 
 
 def _concrete(path: str) -> str:
-    path = path.replace("{agent_session_id}", AGENT_SESSION_ID)
+    path = path.replace("{agent_session_id}", AGENT_SESSION_ID).replace("{n}", "2")
     path = path.replace("{discovery_id}", DISCOVERY_ID)
     # Run commands take the CLI's run ids only.
     if path.endswith(("/cancel", "/resume", "/abandon")):
@@ -88,6 +93,7 @@ def _concrete(path: str) -> str:
         "learning_id",
         "slug",
         "ac",
+        "ticket",
     )
     for name in (*names, "request_id", "cloud_id"):
         path = path.replace(f"{{{name}}}", f"{name}-1")

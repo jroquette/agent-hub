@@ -11,7 +11,11 @@ from uuid import uuid4
 from agent_hub.core.events.event import Event
 from agent_hub.core.item_versions.item_version import ItemVersion, UnitKind, VersionOrigin
 from agent_hub.core.item_versions.unit_hash import file_hash
-from agent_hub.core.learnings.brain_change_requests import BrainChange, CommitAuthor
+from agent_hub.core.learnings.brain_change_requests import (
+    BrainChange,
+    BrainProposal,
+    CommitAuthor,
+)
 from agent_hub.core.runner.brief import BRIEF_SECTIONS
 from agent_hub.core.testing.fakes import FakeTrackerBackend, TrackerState
 from agent_hub.core.tracker.tracker_client import Issue
@@ -369,6 +373,29 @@ def a_brain_change(**overrides: object) -> BrainChange:
         "commit_message": "docs(brain): accept learning testing-x",
     }
     return BrainChange.model_validate(fields | overrides)
+
+
+def a_brain_proposal(**overrides: object) -> BrainProposal:
+    """A synthetic proposal of ``brain/_inbox/2026-10-21-testing-x.md`` on
+    ``demo/learning-propose-testing-x``, its text in the inbox note layout."""
+    fields: dict[str, object] = {
+        "hub_path": "/home/demo/demo-hub",
+        "hub_repo": "acme/demo-hub",
+        "default_branch": "main",
+        "branch_prefix": "demo/",
+        "slug": "testing-x",
+        "note": "_inbox/2026-10-21-testing-x.md",
+        "text": (
+            "---\ntype: learning-proposal\nstatus: proposed\nprovenance: agent\n"
+            "target: brain/learnings/\ncreated: 2026-10-21\n---\n\n# Testing x\n\n"
+            "Run it first.\n"
+        ),
+        "author": CommitAuthor(name="Demo Owner", email="owner@example.com"),
+        "title": "Learning proposal: Testing x",
+        "body": "Adds brain/_inbox/2026-10-21-testing-x.md (provenance agent).\n\n> Run it first.",
+        "commit_message": "docs(brain): propose learning testing-x",
+    }
+    return BrainProposal.model_validate(fields | overrides)
 
 
 def an_item_version(**overrides: object) -> ItemVersion:

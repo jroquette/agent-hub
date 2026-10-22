@@ -174,3 +174,38 @@ class ScreenshotTooLargeError(AgentHubError):
         self.size = size
         self.limit = limit
         super().__init__(f"screenshot of {size} bytes is over the {limit} byte limit")
+
+
+class HubLocalInvalidError(AgentHubError):
+    """The hub's ``hub.local.json`` cannot be read, so the credentials it may declare are
+    unknown and no driven session starts in that project (409, E-8, AM-13)."""
+
+    def __init__(self, project: str) -> None:
+        self.project = project
+        super().__init__(
+            f"project {project}: hub.local.json cannot be read, so the credentials it declares"
+            " are unknown; fix it (hub doctor) before starting a session"
+        )
+
+
+class SessionRestrictionError(AgentHubError):
+    """An investigation session whose tool policy cannot be rebuilt: it is not reopened (409,
+    E-13)."""
+
+    def __init__(self, agent_session_id: str, reason: str) -> None:
+        self.agent_session_id = agent_session_id
+        self.reason = reason
+        super().__init__(reason)
+
+
+class HubRegistryUnreadableError(HubLocalInvalidError):
+    """The hub registry cannot be read, so which hub (and credentials) a project has is
+    unknown: no driven session starts (409, E-8)."""
+
+    def __init__(self, project: str) -> None:
+        self.project = project
+        AgentHubError.__init__(
+            self,
+            f"project {project}: the hub registry cannot be read, so the hub's credentials are"
+            " unknown; fix the registry (hub list) before starting a session",
+        )

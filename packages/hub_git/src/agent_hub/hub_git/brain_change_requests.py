@@ -7,12 +7,22 @@ worktree list stay as they were. It takes the note from ``origin/<default_branch
 only read); it checks that the destination and the branch are free; builds one commit with plumbing
 (no checkout, no hook) that moves the note and sets its frontmatter, as the change's author; pushes
 that one new branch through the push guard; and opens the pull request with ``gh pr create``. When
-the push or ``gh`` fails (a timeout may come after GitHub accepted the ref), the branch is deleted
-again so a retry starts clean. A retry that still finds the branch on ``origin`` (the action got as
-far as the pull request, or its cleanup failed) adopts the branch's open pull request and returns
-it; with none open it deletes the branch, which can only be this action's
-(``<prefix>learning-<action>-<slug>``), and goes on. The temporary folder is always removed, and no
-git or gh output is logged, kept or put in an error.
+``gh`` fails, or the push fails after GitHub took the ref (a lost answer: ``origin`` has the branch
+at this action's commit), the branch is deleted again so a retry starts clean; a push ``origin``
+rejected deletes nothing (a proposal's branch there may be another session's). A retry that still
+finds the branch on ``origin`` (the action got as far as the pull request, or its cleanup failed)
+adopts the branch's open pull request and returns it; with none open it deletes the branch, which
+can only be this action's (``<prefix>learning-<action>-<slug>``), and goes on. The temporary
+folder is always removed, and no git or gh output is logged, kept or put in an error.
+
+The third action, ``propose`` (``hub mcp``, ADR 0044), adds one new note to ``brain/_inbox/`` in the
+same kind of clone: one commit off ``origin/<default_branch>`` that adds only the note, pushed on
+``<prefix>learning-propose-<slug>``. That name differs from ADR 0044's example
+``<prefix>brain-inbox-<slug>`` because the push guard allows only ``<prefix>learning-…`` and is not
+widened. A proposal never adopts: its branch already on ``origin`` (``branch exists: <branch>``) or
+its note already on the default branch (``note exists: brain/<note>``) is refused, so a repeated
+call never opens a second pull request. Accept, reject and propose share the clone, push, pull
+request and cleanup steps (``_Workspace``).
 """
 
 import contextlib
@@ -35,6 +45,7 @@ from agent_hub.core.brain.brain_path import (
 from agent_hub.core.brain.frontmatter import FrontmatterError, with_body, with_frontmatter
 from agent_hub.core.learnings.brain_change_requests import (
     BrainChange,
+    BrainProposal,
     ChangeRequestConflictError,
     ChangeRequestError,
     ChangeRequestFailedError,
@@ -135,6 +146,21 @@ class GitBrainChangeRequests:
         """Push a branch that archives the note with the reason and open its PR."""
         return self._open(change)
 
+    def propose(self, proposal: BrainProposal) -> ChangeRequestResult:
+        """Push a new branch ``<prefix>learning-propose-<slug>`` that adds the inbox note, and
+        open its PR. A branch already on ``origin`` is refused, never adopted."""
+        prefix = proposal.branch_prefix
+        push_argv(proposal.branch, default_branch=proposal.default_branch, prefix=prefix)
+        hub = Path(proposal.hub_path)
+        session = self._runner.start()
+        url = self._checked_origin(hub, proposal.hub_repo, session)
+        work = Path(tempfile.mkdtemp(prefix="hub-learning-", dir=self._temp_root))
+        try:
+            action = _Proposal(self._runner, session, change=proposal, work=work, prefix=prefix)
+            return action.run(url=url, hub=hub)
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+
     def _unavailable(self, hub: Path, session: GitSession) -> str | None:
         runner = self._runner
         if runner.environ.get(CONTAINER_VARIABLE) == "1":
@@ -160,18 +186,24 @@ class GitBrainChangeRequests:
         found = session.git(args, cwd=hub, step="origin", check=False)
         return _text(found.stdout) if found.returncode == 0 else ""
 
+    def _checked_origin(self, hub: Path, hub_repo: str, session: GitSession) -> str:
+        """The url of the hub's ``origin``, once the hub is available and ``origin`` is the
+        GitHub repo ``hub_repo``; else ``ChangeRequestConflictError`` naming the reason."""
+        reason = self._unavailable(hub, session)
+        if reason is not None:
+            raise _conflict(reason)
+        url = self._origin_url(hub, session)
+        if (github_repo(url) or "").lower() != hub_repo.lower():
+            raise _conflict(f"Hub remote is not {hub_repo}")
+        return url
+
     def _open(self, change: BrainChange) -> ChangeRequestResult:
         note = _checked_note(change)
         _check_destination(change, note)
         prefix = _branch_prefix(change, note)
         hub = Path(change.hub_path)
         session = self._runner.start()
-        reason = self._unavailable(hub, session)
-        if reason is not None:
-            raise _conflict(reason)
-        url = self._origin_url(hub, session)
-        if (github_repo(url) or "").lower() != change.hub_repo.lower():
-            raise _conflict(f"Hub remote is not {change.hub_repo}")
+        url = self._checked_origin(hub, change.hub_repo, session)
         work = Path(tempfile.mkdtemp(prefix="hub-learning-", dir=self._temp_root))
         try:
             action = _Action(self._runner, session, change=change, work=work, prefix=prefix)
@@ -180,15 +212,16 @@ class GitBrainChangeRequests:
             shutil.rmtree(work, ignore_errors=True)
 
 
-class _Action:
-    """One accept or reject in the temporary folder ``work`` (the clone is ``work/clone``)."""
+class _Workspace[R: BrainChange | BrainProposal]:
+    """One action in the temporary folder ``work`` (the clone is ``work/clone``): the steps
+    accept, reject and propose share (clone, read the base, push, open and clean up the PR)."""
 
     def __init__(
         self,
         runner: GitRunner,
         session: GitSession,
         *,
-        change: BrainChange,
+        change: R,
         work: Path,
         prefix: str,
     ) -> None:
@@ -199,21 +232,19 @@ class _Action:
         self._clone = work / _CLONE
         self._prefix = prefix
 
-    def run(self, *, url: str, hub: Path) -> ChangeRequestResult:
+    def _publish(self, commit: str) -> ChangeRequestResult:
+        """Point the change's new branch at ``commit``, push it and open its pull request; when
+        the pull request fails, delete the branch again and re-raise. When the push fails, the
+        branch is deleted only if ``origin`` has it at ``commit`` (the push landed and its answer
+        was lost): a push origin rejected leaves a branch someone else wrote as it is."""
         change = self._change
-        self._clone_origin(url, hub)
-        base = self._base()
-        if self._branch_on_origin():
-            adopted = self._open_pull_request_of_branch()
-            if adopted is not None:
-                return ChangeRequestResult(pr_url=adopted, branch=change.branch)
-            self._push(delete=True)
-        self._refuse_taken(base)
-        mode, text = self._note(base)
-        commit = self._commit(base, mode, text)
         self._git(["update-ref", f"refs/heads/{change.branch}", commit, ""], step="branch")
         try:
             self._push()
+        except ChangeRequestError:
+            self._delete_branch(only_at=commit)
+            raise
+        try:
             pr_url = self._open_pull_request()
         except ChangeRequestError:
             self._delete_branch()
@@ -264,6 +295,76 @@ class _Action:
     def _branch_on_origin(self) -> bool:
         heads = ["ls-remote", "--heads", "origin", f"refs/heads/{self._change.branch}"]
         return bool(_text(self._git(heads, step="branch")))
+
+    def _commit_tree(self, tree: str, base: str) -> str:
+        """A commit of ``tree`` on ``base`` with the change's message, authored and committed
+        by the change's author."""
+        change = self._change
+        author = change.author
+        identity = {
+            "GIT_AUTHOR_NAME": author.name,
+            "GIT_AUTHOR_EMAIL": author.email,
+            "GIT_COMMITTER_NAME": author.name,
+            "GIT_COMMITTER_EMAIL": author.email,
+        }
+        args = ["commit-tree", tree, "-p", base, "-m", change.commit_message]
+        made = self._session.git(args, cwd=self._clone, step="commit", extra_env=identity)
+        return _text(made.stdout)
+
+    def _open_pull_request(self) -> str:
+        change = self._change
+        body_file = self._work / "body.md"
+        body_file.write_text(change.body, encoding="utf-8")
+        args = [
+            "pr",
+            "create",
+            f"--repo={change.hub_repo}",
+            f"--base={change.default_branch}",
+            f"--head={change.branch}",
+            f"--title={change.title}",
+            f"--body-file={body_file}",
+        ]
+        created = self._session.gh(args, cwd=self._clone, step="pr")
+        pr_url = pull_request_url(created.stdout, hub_repo=change.hub_repo)
+        if pr_url is None:
+            raise ChangeRequestFailedError(step="pr")
+        return pr_url
+
+    def _delete_branch(self, *, only_at: str | None = None) -> None:
+        """Delete the change's branch on ``origin`` (best effort, on a budget of its own); with
+        ``only_at``, only when ``origin``'s branch points at that commit."""
+        change = self._change
+        cleanup = self._runner.start(seconds=CLEANUP_SECONDS)
+        with contextlib.suppress(ChangeRequestError):
+            if only_at is not None:
+                heads = ["ls-remote", "--heads", "origin", f"refs/heads/{change.branch}"]
+                listed = cleanup.git(heads, cwd=self._clone, step="delete branch")
+                if _text(listed.stdout).split("\t", 1)[0] != only_at:
+                    return
+            cleanup.push(
+                change.branch,
+                cwd=self._clone,
+                default_branch=change.default_branch,
+                prefix=self._prefix,
+                delete=True,
+            )
+
+
+class _Action(_Workspace[BrainChange]):
+    """One accept or reject: adopts the open pull request of a branch already pushed."""
+
+    def run(self, *, url: str, hub: Path) -> ChangeRequestResult:
+        change = self._change
+        self._clone_origin(url, hub)
+        base = self._base()
+        if self._branch_on_origin():
+            adopted = self._open_pull_request_of_branch()
+            if adopted is not None:
+                return ChangeRequestResult(pr_url=adopted, branch=change.branch)
+            self._push(delete=True)
+        self._refuse_taken(base)
+        mode, text = self._note(base)
+        return self._publish(self._commit(base, mode, text))
 
     def _open_pull_request_of_branch(self) -> str | None:
         """The url of the open pull request whose head is the change's branch, or None."""
@@ -345,44 +446,31 @@ class _Action:
         cacheinfo = f"{mode},{blob},brain/{change.destination}"
         self._git(["update-index", "--add", "--cacheinfo", cacheinfo], step="commit")
         tree = _text(self._git(["write-tree"], step="commit"))
-        author = change.author
-        identity = {
-            "GIT_AUTHOR_NAME": author.name,
-            "GIT_AUTHOR_EMAIL": author.email,
-            "GIT_COMMITTER_NAME": author.name,
-            "GIT_COMMITTER_EMAIL": author.email,
-        }
-        args = ["commit-tree", tree, "-p", base, "-m", change.commit_message]
-        made = self._session.git(args, cwd=self._clone, step="commit", extra_env=identity)
-        return _text(made.stdout)
+        return self._commit_tree(tree, base)
 
-    def _open_pull_request(self) -> str:
-        change = self._change
-        body_file = self._work / "body.md"
-        body_file.write_text(change.body, encoding="utf-8")
-        args = [
-            "pr",
-            "create",
-            f"--repo={change.hub_repo}",
-            f"--base={change.default_branch}",
-            f"--head={change.branch}",
-            f"--title={change.title}",
-            f"--body-file={body_file}",
-        ]
-        created = self._session.gh(args, cwd=self._clone, step="pr")
-        pr_url = pull_request_url(created.stdout, hub_repo=change.hub_repo)
-        if pr_url is None:
-            raise ChangeRequestFailedError(step="pr")
-        return pr_url
 
-    def _delete_branch(self) -> None:
-        change = self._change
-        cleanup = self._runner.start(seconds=CLEANUP_SECONDS)
-        with contextlib.suppress(ChangeRequestError):
-            cleanup.push(
-                change.branch,
-                cwd=self._clone,
-                default_branch=change.default_branch,
-                prefix=self._prefix,
-                delete=True,
-            )
+class _Proposal(_Workspace[BrainProposal]):
+    """One proposal: refuses a branch already on ``origin`` or a note already on the default
+    branch, then commits only the new note."""
+
+    def run(self, *, url: str, hub: Path) -> ChangeRequestResult:
+        proposal = self._change
+        self._clone_origin(url, hub)
+        base = self._base()
+        if self._branch_on_origin():
+            raise _conflict(f"branch exists: {proposal.branch}")
+        if self._entry(base, proposal.note) is not None:
+            raise _conflict(f"note exists: brain/{proposal.note}")
+        return self._publish(self._commit(base))
+
+    def _commit(self, base: str) -> str:
+        proposal = self._change
+        note_file = self._work / "note.md"
+        note_file.write_bytes(proposal.text.encode("utf-8"))
+        hashed = ["hash-object", "-w", "--no-filters", "--", str(note_file)]
+        blob = _text(self._git(hashed, step="commit"))
+        self._git(["read-tree", base], step="commit")
+        cacheinfo = f"{_NEW_FILE_MODE},{blob},{BRAIN_FOLDER}/{proposal.note}"
+        self._git(["update-index", "--add", "--cacheinfo", cacheinfo], step="commit")
+        tree = _text(self._git(["write-tree"], step="commit"))
+        return self._commit_tree(tree, base)

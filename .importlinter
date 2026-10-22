@@ -21,6 +21,7 @@ forbidden_modules =
     agent_hub.claude_sessions
     agent_hub.cli
     agent_hub.api
+    agent_hub.mcp_server
     sqlalchemy
     alembic
     typer
@@ -30,16 +31,18 @@ forbidden_modules =
     jsonschema
     referencing
     yaml
+    mcp
 
 # cli is the composition root (ADR 0008): it may import the adapters to wire them into core use cases, nothing
 # imports it, and the adapters below it stay independent of each other ("|"). api (Phase 2) is a second
 # composition root, one layer down: it wires the adapters for the web server and never imports cli.
+# mcp_server (hub mcp, ADR 0044) sits beside api, independent of it: it wires hub_git for its tools.
 [importlinter:contract:composition-root]
 name = cli is the composition root
 type = layers
 layers =
     agent_hub.cli
-    agent_hub.api
+    agent_hub.api | agent_hub.mcp_server
     agent_hub.storage | agent_hub.collector | agent_hub.generator | agent_hub.tracker_linear | agent_hub.hub_git | agent_hub.claude_sessions
 
 # `hub web` is the one command that starts the API server; every other cli module stays free of it.
@@ -70,6 +73,7 @@ source_modules =
     agent_hub.hub_git
     agent_hub.cli
     agent_hub.api
+    agent_hub.mcp_server
 forbidden_modules =
     claude_agent_sdk
 # api reaches the SDK only through claude_sessions (composition's guarded import): indirect imports pass.
@@ -84,4 +88,37 @@ source_modules =
 forbidden_modules =
     agent_hub.claude_sessions
 # web_command reaches it only through api's composition.
+allow_indirect_imports = True
+
+# `hub mcp` is the one command that starts the MCP server; every other cli module stays free of it.
+[importlinter:contract:cli-mcp-server-mcp-command]
+name = cli reaches mcp_server only through mcp_command
+type = forbidden
+source_modules =
+    agent_hub.cli
+forbidden_modules =
+    agent_hub.mcp_server
+ignore_imports =
+    agent_hub.cli.mcp_command -> agent_hub.mcp_server
+    agent_hub.cli.mcp_command -> agent_hub.mcp_server.**
+# mcp_command may import the package or its modules, so one of the two lines can stay unmatched.
+unmatched_ignore_imports_alerting = none
+
+# The MCP SDK stays inside mcp_server (hub mcp, ADR 0044); no other package imports it itself.
+[importlinter:contract:mcp-sdk-confined]
+name = only mcp_server imports the MCP SDK
+type = forbidden
+source_modules =
+    agent_hub.core
+    agent_hub.storage
+    agent_hub.collector
+    agent_hub.generator
+    agent_hub.tracker_linear
+    agent_hub.hub_git
+    agent_hub.claude_sessions
+    agent_hub.cli
+    agent_hub.api
+forbidden_modules =
+    mcp
+# cli's mcp_command reaches the SDK only through mcp_server: indirect imports pass.
 allow_indirect_imports = True

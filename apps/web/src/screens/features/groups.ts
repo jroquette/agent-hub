@@ -46,17 +46,27 @@ export interface Reason {
   group: GroupId;
   /**
    * Why the row needs the owner, shown as a warning on it: a session that waits on you (a permission
-   * or your reply), a broken record, NO-SHIP, or owner steps.
+   * or your reply), a broken record, NO-SHIP, a plan change request, owner steps to sign off, or a
+   * sign-off to write by hand.
    */
   needs: Needs | null;
   icon: IconName | null;
   tone: Tone | null;
   line: string;
+  /** The row's link query after `doc=` (a tab, or the ticket panel at a change request). */
   doc: string | null;
 }
 
 /** The kinds of warning, in the order they lead In progress. */
-export const NEEDS_ORDER = ["session", "your-turn", "problem", "no-ship", "owner-steps"] as const;
+export const NEEDS_ORDER = [
+  "session",
+  "your-turn",
+  "problem",
+  "no-ship",
+  "change-request",
+  "owner-steps",
+  "owner-manual",
+] as const;
 export type Needs = (typeof NEEDS_ORDER)[number];
 
 /** A live session working on a feature that waits on you: a permission prompt, or your reply. */
@@ -117,7 +127,7 @@ export const plainVerdictLine = (line: string) => line.replace(/\*\*|`/g, "").tr
 
 const plural = (n: number, word: string) => `${String(n)} ${word}${n === 1 ? "" : "s"}`;
 
-/** How many ACs wait on the owner: the AC counts, else the Acceptance step's reason ("3 ACs wait on owner steps …"). */
+/** How many ACs wait on the owner: the AC counts, else the waiting Acceptance step's reason ("3 ACs wait on owner steps …"). */
 export function ownerStepCount(f: Feature): number {
   if (f.acs?.owner_steps) return f.acs.owner_steps;
   const reason = ownerWaitStep(f.golden_path.steps)?.reason ?? "";
@@ -180,7 +190,23 @@ export function reasonOf(f: Feature, wait: SessionWait | null = null): Reason {
       doc: "eval",
     };
   }
-  if (f.phase !== "shipped" && ownerWaitStep(f.golden_path.steps)) {
+  const kind = f.phase !== "shipped" ? f.waiting_on_owner?.kind : undefined;
+  if (kind === "change_request") {
+    const tickets = f.waiting_on_owner?.tickets ?? [];
+    const [first = ""] = tickets;
+    return {
+      group: "progress",
+      needs: "change-request",
+      icon: "hand",
+      tone: "waiting",
+      line:
+        tickets.length > 1
+          ? `${String(tickets.length)} plan changes wait for you · from ${tickets.join(", ")}`
+          : `Plan change waits for you · from ${first}`,
+      doc: `tickets&ticket=${encodeURIComponent(first)}&step=preflight`,
+    };
+  }
+  if (kind === "owner_signoff") {
     return {
       group: "progress",
       needs: "owner-steps",
@@ -188,6 +214,16 @@ export function reasonOf(f: Feature, wait: SessionWait | null = null): Reason {
       tone: "waiting",
       line: ownerLine(f),
       doc: "acs",
+    };
+  }
+  if (kind === "owner_signoff_manual") {
+    return {
+      group: "progress",
+      needs: "owner-manual",
+      icon: "hand",
+      tone: "waiting",
+      line: "Sign off by hand · no ACs listed",
+      doc: "eval",
     };
   }
   if (f.phase === "shipped") {
