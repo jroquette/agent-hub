@@ -2704,3 +2704,50 @@ def test_refuses_before_asking_when_findings_issue_create_running(
     assert "a create of finding f1's issue is running" in plain(shown)
     assert "[y/N]" not in shown
     assert tracker_calls(hub) == []
+
+
+# Review round 4: a lock file that is a link, and a created issue that cannot be recorded.
+
+
+def test_exits_one_when_findings_issue_lock_is_link(hub: Path, marker: Path, held: Path) -> None:
+    found_run(hub, marker, held)
+    env = a_tracker(hub)
+    issue_file(hub).write_text('{"failed": true}', encoding="utf-8")
+    issue_file(hub).with_name("finding-f1.issue.lock").symlink_to(hub / "elsewhere")
+
+    code, shown = findings_in_terminal(hub, env, RUN, "--issue", "f1", answer="y")
+
+    assert code == 1, shown
+    assert "cannot mark the finding's issue: Too many levels of symbolic links" in plain(shown)
+    assert "[y/N]" not in shown
+    assert tracker_calls(hub) == []
+    assert not (hub / "elsewhere").exists()
+
+
+# The fake tracker, turning the marker into a folder while it creates the issue.
+UNRECORDABLE_CLAUDE = (
+    "import os\n"
+    "marker = os.environ['ISSUE_MARKER']\n"
+    "os.remove(marker)\n"
+    "os.mkdir(marker)\n" + TRACKER_CLAUDE
+)
+
+
+def test_warns_not_recorded_when_findings_issue_record_fails(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    found_run(hub, marker, held)
+    env = a_tracker(hub) | {"ISSUE_MARKER": str(issue_file(hub))}
+    (hub.parent.parent / "tracker-bin" / "claude").write_text(
+        f"#!{sys.executable}\n{UNRECORDABLE_CLAUDE}"
+    )
+
+    code, shown = findings_in_terminal(hub, env, RUN, "--issue", "f1", answer="y")
+
+    assert code == 1, shown
+    text = plain(shown).replace("\r\n", "\n")
+    assert (
+        "the issue DEM-42 was created but could not be recorded: Is a directory;"
+        " do not create it again"
+    ) in text
+    assert len(tracker_calls(hub)) == 1

@@ -117,21 +117,6 @@ def test_refuses_retake_when_finding_issue_create_running(tmp_path: Path) -> Non
     assert json.loads(issue_marker(tmp_path, "f1").read_text())["id"] == "DEM-7"
 
 
-def test_retakes_when_finding_issue_generation_lock_left(tmp_path: Path) -> None:
-    # A retry stopped after its generation file and before the replace (an older layout).
-    issue_marker(tmp_path, "f1").write_text('{"failed": true}', encoding="utf-8")
-    leftover = tmp_path / "finding-f1.issue.1"
-    leftover.write_text("", encoding="utf-8")
-    failed = marked_issue(tmp_path, "f1")
-    assert failed is not None
-
-    retaken = held(retake_issue(tmp_path, failed))
-    retaken.record(issue_id="DEM-7", url=URL)
-
-    assert not leftover.exists()
-    assert json.loads(issue_marker(tmp_path, "f1").read_text())["id"] == "DEM-7"
-
-
 def test_keeps_marker_when_finding_issue_replace_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -151,3 +136,34 @@ def test_keeps_marker_when_finding_issue_replace_fails(
     assert json.loads(issue_marker(tmp_path, "f1").read_text()) == {"failed": True}
     # The lock is not left held: a later retake proceeds.
     assert isinstance(retake_issue(tmp_path, failed), HeldIssue)
+
+
+def test_reports_busy_not_running_when_finding_issue_lock_held_without_marker(
+    tmp_path: Path,
+) -> None:
+    # A lock held with no marker (another process between its lock and its marker, or a probe
+    # that outlived the one retry): busy, never "a create is running".
+    lock = os.open(tmp_path / "finding-f1.issue.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    try:
+        busy = refused(claim_issue(tmp_path, "f1"))
+    finally:
+        os.close(lock)
+    after = claim_issue(tmp_path, "f1")
+
+    assert (busy.running, busy.busy) == (False, True)
+    assert busy.reason == "finding f1's issue is busy in another process; try again"
+    held(after).release()
+
+
+def test_raises_and_releases_when_finding_issue_record_fails(tmp_path: Path) -> None:
+    claim = held(claim_issue(tmp_path, "f1"))
+    # The marker became a folder meanwhile: the record cannot be written.
+    issue_marker(tmp_path, "f1").unlink()
+    issue_marker(tmp_path, "f1").mkdir()
+
+    with pytest.raises(IsADirectoryError):
+        claim.record(issue_id="DEM-7", url=URL)
+
+    assert claim.done
+    assert refused(claim_issue(tmp_path, "f1")).running is False

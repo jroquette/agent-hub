@@ -723,7 +723,10 @@ folder, the server's environment minus `LINEAR_API_KEY`); no problem quotes its 
   The marker `finding-<id>.issue` in the run folder, shared with `hub scenario findings --issue`, is claimed
   exclusively before the call and then holds the issue or the failure; the claimer holds `flock` on
   `finding-<id>.issue.lock` from the claim until the result is recorded, so a running create is never retaken (409
-  `workflow-run-issue-exists`, "a create of finding <id>'s issue is running"), and a crash releases it. A marker naming an issue refuses every later
+  `workflow-run-issue-exists`, "a create of finding <id>'s issue is running"; held with no marker yet, "busy …; try
+  again"), and a crash releases it. A created issue answers `recorded: true`; one whose marker could not be written
+  answers 201 with `recorded: false` and a `warning` ("the issue <id> was created but could not be recorded: …; do
+  not create it again"). A marker naming an issue refuses every later
   create on both sides (409 `workflow-run-issue-exists`, naming it). A create the tracker refuses or does not answer
   is 502 `urn:agent-hub:problem:scenario-run-issue-failed`; that marker, or the empty one a crash leaves, is also 409
   `workflow-run-issue-exists` here (the issue may exist), and only a terminal retries it: `hub scenario findings

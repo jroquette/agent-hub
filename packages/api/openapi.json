@@ -3031,7 +3031,7 @@
       },
       "FindingIssue": {
         "additionalProperties": false,
-        "description": "A finding's tracker issue: its draft, the team it goes to, and the issue once created.",
+        "description": "A finding's tracker issue: its draft, the team it goes to, and the issue once created.\n``recorded`` is whether the created issue reached its marker (``None`` before a create);\nwhen it did not, ``warning`` says so: the issue exists, do not create it again.",
         "properties": {
           "created": {
             "anyOf": [
@@ -3051,6 +3051,17 @@
             "title": "Finding Id",
             "type": "string"
           },
+          "recorded": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recorded"
+          },
           "run_id": {
             "title": "Run Id",
             "type": "string"
@@ -3069,6 +3080,17 @@
           "title": {
             "title": "Title",
             "type": "string"
+          },
+          "warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warning"
           }
         },
         "required": [

@@ -43,6 +43,7 @@ from agent_hub.core.testing.read_model_builders import WORKDIR_ID
 from agent_hub.core.testing.session_driver_fakes import InMemorySessionDriver
 from agent_hub.core.workflows.gates import GateAnswer
 from agent_hub.generator.action_discovery import discover_actions
+from agent_hub.generator.finding_issues import HeldIssue as HeldFindingIssue
 from agent_hub.generator.finding_issues import IssueMarked, marked_issue, retake_issue
 
 RUNNING = "0.9.0"
@@ -1371,3 +1372,63 @@ def scenario_catalog_unreadable() -> str:
         "hub.local.json cannot be read or conflicts with hub.json, so the options cannot be"
         " planned now"
     )
+
+
+# Review round 4: a create whose record fails, and a tracker that raises anything else.
+
+
+class UnrecordableTracker(InMemoryTrackerClient):
+    """A tracker that creates the issue, while its marker turns into a folder."""
+
+    def __init__(self, backend: FakeTrackerBackend, folder: Path) -> None:
+        super().__init__(backend)
+        self.folder = folder
+
+    def create_issue(self, team: str, title: str, description: str) -> Any:
+        marker = self.folder / "finding-f1.issue"
+        marker.unlink()
+        marker.mkdir()
+        return super().create_issue(team, title, description)
+
+
+def test_answers_unrecorded_issue_when_scenarios_finding_issue_record_fails(
+    scenarios: Any,
+) -> None:
+    write_records(scenarios.hub, a_paused_walk(scenarios.hub))
+    folder = (scenarios.hub / WALK_RECORDS).parent
+    rewire_tracker(scenarios, lambda _config, _hub: UnrecordableTracker(scenarios.backend, folder))
+
+    created = _post(scenarios, f"/scenario-runs/{WALK_RUN}/findings/f1/issue", {"confirm": True})
+
+    assert created.status_code == 201, created.text
+    body = created.json()
+    (stored,) = scenarios.backend.issues.values()
+    assert body["created"]["id"] == stored.id
+    assert body["recorded"] is False
+    assert body["warning"].startswith(
+        f"the issue {stored.id} was created but could not be recorded"
+    )
+    assert body["warning"].endswith("do not create it again")
+
+
+class BrokenTracker(InMemoryTrackerClient):
+    def create_issue(self, team: str, title: str, description: str) -> Any:
+        raise RuntimeError("the adapter broke")
+
+
+def test_leaves_retryable_marker_when_scenarios_tracker_raises_other_error(
+    scenarios: Any,
+) -> None:
+    write_records(scenarios.hub, a_paused_walk(scenarios.hub))
+    folder = (scenarios.hub / WALK_RECORDS).parent
+    rewire_tracker(scenarios, lambda _config, _hub: BrokenTracker(scenarios.backend))
+
+    broken = _post(scenarios, f"/scenario-runs/{WALK_RUN}/findings/f1/issue", {"confirm": True})
+    unfinished = marked_issue(folder, "f1")
+
+    assert broken.status_code == 500
+    assert unfinished is not None
+    assert (unfinished.issue_id, unfinished.failed, unfinished.running) == (None, False, False)
+    retaken = retake_issue(folder, unfinished)
+    assert isinstance(retaken, HeldFindingIssue)
+    retaken.release()

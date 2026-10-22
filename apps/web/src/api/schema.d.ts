@@ -3035,6 +3035,8 @@ export interface components {
     /**
      * FindingIssue
      * @description A finding's tracker issue: its draft, the team it goes to, and the issue once created.
+     *     ``recorded`` is whether the created issue reached its marker (``None`` before a create);
+     *     when it did not, ``warning`` says so: the issue exists, do not create it again.
      */
     FindingIssue: {
       created: components["schemas"]["CreatedIssue"] | null;
@@ -3042,12 +3044,16 @@ export interface components {
       description: string;
       /** Finding Id */
       finding_id: string;
+      /** Recorded */
+      recorded?: boolean | null;
       /** Run Id */
       run_id: string;
       /** Team */
       team: string | null;
       /** Title */
       title: string;
+      /** Warning */
+      warning?: string | null;
     };
     /**
      * FindingIssueRequest
