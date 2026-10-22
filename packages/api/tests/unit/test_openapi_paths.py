@@ -339,3 +339,11 @@ def test_lists_scenario_paths_when_document_built(api_settings: ApiSettings) -> 
         | SCENARIO_PATHS
     )
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
+
+
+def test_keeps_group_pins_when_scenario_paths_grouped(api_settings: ApiSettings) -> None:
+    # What the two strict-xfailed union pins also held, which AGH-363 did not widen.
+    assert len(AGENT_SESSION_SPEC_PATHS) == 20
+    assert AGENT_SESSION_PATHS == AGENT_SESSION_SPEC_PATHS
+    assert SKILL_PATHS == SKILL_SPEC_PATHS
+    assert document_paths(create_app(api_settings)) >= AGENT_SESSION_PATHS | SKILL_PATHS
