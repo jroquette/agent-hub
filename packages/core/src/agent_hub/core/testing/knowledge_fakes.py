@@ -158,7 +158,7 @@ class FakeKnowledgeCheckout:
     only the mtime, ``remove`` deletes it. ``skip_when_listed`` lists a path with a skip reason,
     ``answer_read`` makes its read return a reason (a ``str``) or None (gone since the listing).
     ``reads`` holds the paths read, in order; ``before_read`` runs before each read (a test's
-    barrier).
+    barrier). ``missing`` names the repo folders ``not_checked_out`` reports.
     """
 
     def __init__(self, *, before_read: Callable[[str], None] | None = None) -> None:
@@ -169,6 +169,7 @@ class FakeKnowledgeCheckout:
         self._read_answers: dict[str, str | None] = {}
         self._before_read = before_read
         self.reads: list[str] = []
+        self.missing: tuple[str, ...] = ()
 
     def write(self, path: str, data: bytes, *, mtime_ns: int | None = None) -> None:
         """Set the file's bytes; its mtime moves on unless ``mtime_ns`` is given."""
@@ -199,6 +200,10 @@ class FakeKnowledgeCheckout:
     def answer_read(self, path: str, answer: str | None) -> None:
         """Make the read of ``path`` return ``answer`` instead of its bytes."""
         self._read_answers[path] = answer
+
+    def not_checked_out(self) -> tuple[str, ...]:
+        """The repo folders set in ``missing``, as a checkout that cannot find them names them."""
+        return self.missing
 
     def listed(self) -> tuple[ListedFile, ...]:
         """Every file and listed skip, sorted by path."""

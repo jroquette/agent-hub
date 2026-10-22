@@ -4,9 +4,15 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from agent_hub.core.approvals.approval import ApprovalKind
+from agent_hub.core.brain.brain_path import (
+    BRAIN_FOLDER,
+    MAX_PATH_CHARS,
+    BrainPathError,
+    brain_relative,
+)
 from agent_hub.core.events.event import UtcTimestamp
 from agent_hub.core.learnings.learning import LearningStatus
 from agent_hub.core.readmodels.page import MAX_CURSOR_CHARS
@@ -100,6 +106,23 @@ class ApprovalFilter(PageRequest):
 
 
 class LearningFilter(PageRequest):
-    """Filters of ``GET /learnings``."""
+    """Filters of ``GET /learnings``.
+
+    ``brain_path`` keeps the learnings whose note is that one (D-learning-lookup): given with or
+    without the ``brain/`` prefix, it is held without it, and a path the note route refuses
+    (``auto/``, ``..``, not ``.md``) is invalid (400 naming it).
+    """
 
     status: LearningStatus | None = None
+    brain_path: str | None = Field(default=None, max_length=MAX_PATH_CHARS)
+
+    @field_validator("brain_path")
+    @classmethod
+    def _note_under_brain(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        relative = value.removeprefix(f"{BRAIN_FOLDER}/")
+        try:
+            return str(brain_relative(relative))
+        except BrainPathError as error:
+            raise ValueError(error.reason) from None

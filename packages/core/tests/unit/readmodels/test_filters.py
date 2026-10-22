@@ -80,3 +80,20 @@ def test_rejects_learning_status_when_unknown() -> None:
 def test_rejects_approval_kind_when_unknown() -> None:
     with pytest.raises(ValidationError, match="kind"):
         ApprovalFilter.model_validate({"kind": "deploy"})
+
+
+@pytest.mark.parametrize("brain_path", ["brain/learnings/web-gates.md", "learnings/web-gates.md"])
+def test_normalizes_brain_path_when_prefix_given_or_not(brain_path: str) -> None:
+    assert LearningFilter(brain_path=brain_path).brain_path == "learnings/web-gates.md"
+    assert LearningFilter().brain_path is None
+
+
+@pytest.mark.parametrize(
+    "brain_path",
+    ["auto/x.md", "brain/auto/x.md", "../x.md", "brain/../x.md", "x.txt", "brain/", "/x.md"],
+)
+def test_refuses_brain_path_when_auto_or_climbing(brain_path: str) -> None:
+    with pytest.raises(ValidationError) as refused:
+        LearningFilter(brain_path=brain_path)
+
+    assert refused.value.errors()[0]["loc"] == ("brain_path",)
