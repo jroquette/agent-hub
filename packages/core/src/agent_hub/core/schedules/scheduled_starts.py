@@ -11,20 +11,24 @@ its guards (``issue-to-pr`` refused, one live run per issue). Nothing is logged 
 says what started and what failed, and the caller logs it.
 """
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
+from functools import partial
 from typing import Annotated, Final, Literal, Protocol
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.hub_config.model import HubConfig
-from agent_hub.core.hub_config.schedules import EventKind
+from agent_hub.core.hub_config.schedules import EventKind, EventStart, Schedule
 from agent_hub.core.json_form import JsonValue
+from agent_hub.core.schedules.cron import parse_cron
 from agent_hub.core.workflows.launch import (
     RunAccepted,
     RunTrigger,
     StartRunRequest,
+    WorkflowPlans,
 )
 
 # The items one poll reads, newest first.
@@ -147,3 +151,102 @@ class StartReport:
 
     started: tuple[StartedRun, ...] = ()
     failures: tuple[StartFailure, ...] = ()
+
+
+class _Report:
+    def __init__(self) -> None:
+        self.started: list[StartedRun] = []
+        self.failures: list[StartFailure] = []
+
+    def fail(self, project: str, workflow: str | None, reason: str) -> None:
+        self.failures.append(StartFailure(project=project, workflow=workflow, reason=reason))
+
+    def done(self) -> StartReport:
+        return StartReport(started=tuple(self.started), failures=tuple(self.failures))
+
+
+def source_key(event: EventStart) -> str:
+    """The ledger's key of an event source: ``<workflow> <on> <repo>``."""
+    return f"{event.workflow} {event.on} {event.repo}"
+
+
+class StartScheduledRuns:
+    """The scheduled and event starts of every registered hub (see the module docstring)."""
+
+    def __init__(
+        self,
+        *,
+        hubs: ScheduledHubs,
+        plans: WorkflowPlans,
+        ledger: StartLedger,
+        events: EventSource,
+        start: RunStarter,
+    ) -> None:
+        self._hubs, self._plans, self._ledger = hubs, plans, ledger
+        self._events, self._start = events, start
+
+    def start_due_slots(self, now: datetime) -> StartReport:
+        """Start each schedule whose most recent slot at or before ``now`` has not started."""
+        report = _Report()
+        for hub in self._hubs.scheduled_hubs():
+            schedules = hub.config.schedules
+            if not schedules:
+                continue
+            try:
+                due = self._ledger.update(
+                    hub.hub_path, partial(_record_slots, schedules=schedules, now=now)
+                )
+            except StartLedgerError as error:
+                report.fail(hub.project, None, str(error))
+                continue
+            for schedule in due:
+                self._launch(
+                    hub,
+                    workflow=schedule.workflow,
+                    inputs=dict(schedule.inputs),
+                    report=report,
+                    environment=schedule.environment,
+                    trigger="schedule",
+                )
+        return report.done()
+
+    def _launch(  # noqa: PLR0913 -- one start's parts, all keyword-only
+        self,
+        hub: ScheduledHub,
+        *,
+        workflow: str,
+        inputs: Mapping[str, JsonValue],
+        report: _Report,
+        environment: str | None,
+        trigger: RunTrigger,
+    ) -> None:
+        try:
+            request = StartRunRequest.model_validate(
+                {"project": hub.project, "workflow": workflow, "inputs": dict(inputs)}
+            )
+            accepted = self._start(request, trigger=trigger, environment=environment)
+        except (AgentHubError, ValueError) as error:
+            report.fail(hub.project, workflow, str(error))
+            return
+        report.started.append(
+            StartedRun(
+                project=hub.project, workflow=workflow, run_id=accepted.run_id, trigger=trigger
+            )
+        )
+
+
+def _record_slots(
+    state: StartState, *, schedules: Sequence[Schedule], now: datetime
+) -> tuple[StartState, tuple[Schedule, ...]]:
+    # Only the hub's current schedules are kept, so the ledger stays within its bounds.
+    slots = {}
+    due = []
+    for schedule in schedules:
+        latest = parse_cron(schedule.cron).latest_at_or_before(now)
+        last = state.slots.get(schedule.workflow)
+        if latest is not None and (last is None or latest > last):
+            due.append(schedule)
+            last = latest
+        if last is not None:
+            slots[schedule.workflow] = last
+    return state.model_copy(update={"slots": slots}), tuple(due)
