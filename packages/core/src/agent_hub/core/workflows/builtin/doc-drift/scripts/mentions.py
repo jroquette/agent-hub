@@ -67,6 +67,14 @@ class Mention(NamedTuple):
 
 # The doc rules below are the same in doc_fix.py (a parity test holds them equal): a pack
 # script cannot import another.
+def doc_lines(text: str) -> list[str]:
+    """A doc's lines as git numbers them: split on ``\\n`` only, a final ``\\r`` dropped."""
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return [line.removesuffix("\r") for line in lines]
+
+
 def doc_role(path: str) -> str | None:
     """``edit`` for a doc a fix may change, ``adr`` for an ADR file (read, never changed)."""
     parts = path.split("/")
@@ -85,7 +93,7 @@ def doc_role(path: str) -> str | None:
 def adr_status(head: str) -> str:
     """The ADR's status word, lowercased: the first ``Status:`` line, or the word after a
     ``## Status`` heading, in the first 40 lines; empty when there is none."""
-    lines = head.splitlines()[:HEAD_LINES]
+    lines = doc_lines(head)[:HEAD_LINES]
     for index, line in enumerate(lines):
         if found := STATUS_LINE.match(line):
             return found.group(1).lower()
@@ -121,7 +129,7 @@ def _code_spans(line: str) -> list[str]:
 def _code_lines(text: str) -> Iterator[tuple[int, str, list[str]]]:
     """Each line (1-based) with the code it holds: all of it inside a fence, else its spans."""
     fence = ""
-    for number, line in enumerate(text.splitlines(), start=1):
+    for number, line in enumerate(doc_lines(text), start=1):
         marker = FENCE.match(line)
         if fence:
             if marker and marker.group(1)[0] == fence[0] and len(marker.group(1)) >= len(fence):
@@ -290,7 +298,7 @@ def scan_docs(repo: Path, base: str, names: list[dict[str, object]]) -> dict[str
         text = _text(repo, base, path=path, scan=scan)
         if text is None:
             continue
-        lines = text.splitlines()
+        lines = doc_lines(text)
         status = adr_status(text) if role == "adr" else ""
         for number, held in mentions_in(text, names):
             mention = Mention(path, number, lines[number - 1], held)

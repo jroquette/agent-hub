@@ -177,6 +177,13 @@ def test_ignores_prose_word_when_name_outside_code() -> None:
     assert mentions.mentions_in(text, names) == [(2, ["run"]), (4, ["run"])]
 
 
+def test_numbers_lines_as_git_when_line_holds_a_unicode_separator() -> None:
+    names = [{"kind": "command", "name": "old-cmd"}]
+    text = "Intro\u2028still line one.\r\nRun `old-cmd`.\n"
+
+    assert mentions.mentions_in(text, names) == [(2, ["old-cmd"])]
+
+
 def test_finds_path_in_link_when_file_renamed() -> None:
     names = [{"kind": "path", "name": "docs/guide-old.md"}]
     text = "See [the guide](docs/guide-old.md).\nOr guide-old.md alone.\nNot guide-old.mdx.\n"

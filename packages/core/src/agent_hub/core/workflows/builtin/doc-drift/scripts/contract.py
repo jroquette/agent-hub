@@ -240,7 +240,7 @@ class _PatchReader:
 def split_patch(patch: str) -> dict[str, FileChange]:
     """A ``git diff -U0`` patch, file by file (the new path; the old one for a deletion)."""
     reader = _PatchReader()
-    for line in patch.splitlines():
+    for line in patch.split("\n"):
         reader.read(line)
     return reader.changes
 
@@ -490,7 +490,7 @@ def _grep(repo: Path, at: str, name: str) -> dict[str, str]:
     """The lines at ``at`` holding ``name``, by path (docs left out)."""
     out = _git(repo, "grep", "-I", "-F", "--null", "-e", name, at, "--", *NON_DOCS, accept=(0, 1))
     found: dict[str, list[str]] = {}
-    for line in out.splitlines():
+    for line in out.split("\n"):
         where, _, text = line.partition("\0")
         found.setdefault(where.removeprefix(f"{at}:"), []).append(text)
     return {path: "\n".join(lines) for path, lines in found.items()}
