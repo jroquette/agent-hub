@@ -266,3 +266,12 @@ def test_exits_two_when_input_not_json_or_choice_unknown(
     monkeypatch.setattr(sys, "stdin", io.StringIO(stdin))
 
     assert load().main(argv) == 2
+
+
+@pytest.mark.parametrize("note", ["- keep the first line", "-x", "--decision"])
+def test_reads_note_when_it_starts_with_a_dash(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], note: str
+) -> None:
+    found = record("apply", [], monkeypatch=monkeypatch, capsys=capsys, note=note)
+
+    assert (found["decisions"][0]["note"], found["decisions"][0]["decision"]) == (note, "apply")
