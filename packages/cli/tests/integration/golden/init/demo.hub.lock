@@ -772,6 +772,9 @@
     "workflows/upgrade/fixtures/upgrade-split.yaml": {
       "ownership": "seeded"
     },
+    "workflows/upgrade/scripts/check.py": {
+      "ownership": "seeded"
+    },
     "workflows/upgrade/scripts/fast_gate.py": {
       "ownership": "seeded"
     },

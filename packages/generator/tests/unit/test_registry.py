@@ -92,6 +92,7 @@ SEEDED_PACK_FILES = (
     "upgrade/fixtures/upgrade-major-breaking.yaml",
     "upgrade/fixtures/upgrade-patch-green.yaml",
     "upgrade/fixtures/upgrade-split.yaml",
+    "upgrade/scripts/check.py",
     "upgrade/scripts/fast_gate.py",
     "upgrade/upgrade.yaml",
 )
