@@ -121,6 +121,19 @@ def discover_workflows(
     )
 
 
+def discover_builtins(builtin_root: Path = BUILTIN_WORKFLOWS) -> WorkflowDiscovery:
+    """The built-in workflows alone, as the platform ships them (no hub's own packs)."""
+    problems: list[WorkflowProblem] = []
+    builtin = _Root(origin="builtin", problems=problems)
+    builtin.scan(builtin_root)
+    found = builtin.found
+    return WorkflowDiscovery(
+        workflows=tuple(found[name] for name in sorted(found)),
+        overridden=(),
+        problems=tuple(problems),
+    )
+
+
 def scan_root(folder: Path, *, kind: DocumentKind, problems: list[WorkflowProblem]) -> _Root:
     """The hub root ``folder`` scanned for documents of ``kind`` (a link is not read)."""
     root = _Root(origin="hub", problems=problems, kind=kind)
