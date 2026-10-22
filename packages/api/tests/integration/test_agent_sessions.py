@@ -51,6 +51,7 @@ from agent_hub.core.agent_sessions.errors import (
     UnknownResumeError,
 )
 from agent_hub.core.agent_sessions.limits import SessionLimits
+from agent_hub.core.agent_sessions.message_file import MAX_MESSAGE_FILE_BYTES
 from agent_hub.core.agent_sessions.repo_changes import RepoChanges, SessionRepoChanges
 from agent_hub.core.agent_sessions.screenshot import MAX_SCREENSHOT_BYTES
 from agent_hub.core.testing.agent_session_rig import HUB_PATH, START, WEB_URL
@@ -1064,6 +1065,132 @@ def test_sends_images_with_message_when_screenshots_pasted(agent_session_app: An
     )
     assert message.kind == "user.message"
     assert message.body == {"text": "And this?", "attachments": [marker, marker]}
+
+
+PDF = b"%PDF-1.7\n"
+PDF_BASE64 = base64.b64encode(PDF).decode()
+
+
+def _file(
+    data: bytes = PDF, media_type: str = "application/pdf", name: str = "spec.pdf"
+) -> dict[str, str]:
+    return {"name": name, "media_type": media_type, "data": base64.b64encode(data).decode()}
+
+
+def test_sends_files_with_message_when_files_attached(agent_session_app: Any) -> None:
+    # AC-419.1, AC-419.4: the files reach the driver; the record keeps a marker, never the bytes.
+    created = _created(agent_session_app, "Hello.")
+    agent_session_app.until_status(created["id"], "idle")
+
+    response = agent_session_app.client.post(
+        f"{BASE}/{created['id']}/messages", json={"text": "Read this.", "files": [_file()]}
+    )
+    agent_session_app.until_status(created["id"], "idle")
+
+    assert response.status_code == 202, response.text
+    sends = [call.args for call in agent_session_app.driver.calls if call.method == "send"]
+    text, images, files = sends[-1]
+    assert (text, images) == ("Read this.", ())
+    assert [(file.name, file.data) for file in files] == [("spec.pdf", PDF)]
+    seq = response.json()["seq"]
+    message = next(
+        record for record in agent_session_app.rig.records(created["id"]) if record.seq == seq
+    )
+    assert message.body == {
+        "text": "Read this.",
+        "attachments": [
+            {"kind": "file", "media_type": "application/pdf", "bytes": len(PDF), "name": "spec.pdf"}
+        ],
+    }
+    assert PDF_BASE64 not in response.text
+
+
+def test_starts_session_with_images_and_files_when_first_prompt_carries_them(
+    agent_session_app: Any,
+) -> None:
+    # AC-419.5: the capture, the pasted images and the files go with the first prompt.
+    created = _created(
+        agent_session_app,
+        "What about these?",
+        screenshot=_screenshot(),
+        screenshots=[_screenshot()],
+        files=[_file(), _file(b"notes", "text/plain", "notes.md")],
+    )
+
+    agent_session_app.until_status(created["id"], "idle")
+
+    sends = [call.args for call in agent_session_app.driver.calls if call.method == "send"]
+    text, images, files = sends[0]
+    assert text == "What about these?"
+    assert len(images) == 2
+    assert [(file.name, file.media_type) for file in files] == [
+        ("spec.pdf", "application/pdf"),
+        ("notes.md", "text/plain"),
+    ]
+    first = agent_session_app.rig.records(created["id"])[0]
+    assert [marker["kind"] for marker in first.body["attachments"]] == [
+        "file",
+        "file",
+        "screenshot",
+        "screenshot",
+    ]
+
+
+TOO_LARGE_TEXT = b"a" * (MAX_MESSAGE_FILE_BYTES + 1)
+
+
+@pytest.mark.parametrize(
+    ("files", "status", "code"),
+    [
+        pytest.param([_file(TOO_LARGE_TEXT, "text/plain")], 413, "file-too-large", id="too-large"),
+        pytest.param([_file()] * 11, 422, None, id="eleven"),
+    ],
+)
+def test_refuses_message_files_before_driver_when_over_a_limit(
+    agent_session_app: Any, *, files: list[dict[str, str]], status: int, code: str | None
+) -> None:
+    # AC-419.3: over 5 MiB decoded (413) or more than 10 files (422), nothing is logged or sent.
+    created = _created(agent_session_app, "Hello.")
+    agent_session_app.until_status(created["id"], "idle")
+    calls_before = len(agent_session_app.driver.calls)
+    records_before = len(agent_session_app.rig.records(created["id"]))
+
+    response = agent_session_app.client.post(
+        f"{BASE}/{created['id']}/messages", json={"text": "Read this.", "files": files}
+    )
+
+    if code is None:
+        assert response.status_code == status, response.text
+        assert response.json()["title"] == "Invalid request body"
+    else:
+        document = _problem(response, status, code)
+        assert (document["limit"], document["size"]) == (
+            MAX_MESSAGE_FILE_BYTES,
+            MAX_MESSAGE_FILE_BYTES + 1,
+        )
+    assert len(agent_session_app.driver.calls) == calls_before
+    assert len(agent_session_app.rig.records(created["id"])) == records_before
+
+
+def test_refuses_message_file_when_not_text(agent_session_app: Any) -> None:
+    # AC-419.2: refused before anything is sent, pointing at the file's data.
+    created = _created(agent_session_app, "Hello.")
+    agent_session_app.until_status(created["id"], "idle")
+    sends_before = len(agent_session_app.driver.calls)
+    binary = {
+        "name": "a.bin",
+        "media_type": "text/plain",
+        "data": base64.b64encode(b"\x00\x01").decode(),
+    }
+
+    response = agent_session_app.client.post(
+        f"{BASE}/{created['id']}/messages", json={"text": "Read this.", "files": [binary]}
+    )
+
+    document = _problem(response, 422, "invalid-file")
+    assert "/files/0/data" in response.text
+    assert document["title"] == "Invalid file"
+    assert len(agent_session_app.driver.calls) == sends_before
 
 
 def test_refuses_message_image_when_not_png(agent_session_app: Any) -> None:
