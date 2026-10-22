@@ -4,6 +4,7 @@ output_format, the review stubs are valid review outputs, and the pack's Python 
 their nodes declare. ``implement`` and its ``ticket-pass`` (two-level-flows S2, AC-2.10): they plan,
 their fixtures pass from a hub that holds a seeded ``sdlc`` pack (the built-in ones are reached),
 the ticket eval declares the eval JSON, the gate captures a decline's note, and their scripts.
+A stubbed live ``implement`` run in a temp hub writes only its ticket's records (AC-2.1).
 """
 
 import itertools
@@ -19,6 +20,7 @@ import pytest
 from click import unstyle
 from typer.testing import Result
 
+from agent_hub.cli.workflow_executors import WorkflowExecutors
 from agent_hub.core.features.agent_outputs import review_problems
 from agent_hub.core.runner.issue_block import issue_block
 from agent_hub.core.testing.builders import an_issue
@@ -26,7 +28,7 @@ from agent_hub.core.workflows import dry_run
 from agent_hub.core.workflows.document import parse_workflow
 from agent_hub.core.workflows.fixtures import parse_fixture, run_fixture
 from agent_hub.core.workflows.plan import plan_workflow
-from agent_hub.core.workflows.ports import NodeCall
+from agent_hub.core.workflows.ports import NodeCall, NodeReply
 from agent_hub.core.workflows.substitution import NodeResult, RefContext, render
 from agent_hub.generator.workflow_discovery import (
     BUILTIN_WORKFLOWS,
@@ -829,3 +831,109 @@ def test_names_only_this_runs_hub_files_and_a_no_ship_when_delivery_script_runs(
             "tickets/DEM-1/brief.md",
         ],
     }
+
+
+# AC-2.1: a live implement run of a planned ticket, its agents stubbed and its hub steps real.
+# The preflight finds plan drift, the owner declines (or approves, which amends plan.md) and the
+# re-check still finds it: the run ends blocked with the ticket's records, the request and its
+# decision in the hub, plus the amendment when approved, and nothing else.
+RUN_FEATURE = "brain/features/demo-flow"
+RUN_FEATURES_JSON = {
+    "tickets": [
+        {"key": "T1", "id": "DEM-7", "repo": "demo-api", "blocked_by": []},
+        {"key": "T2", "id": "DEM-8", "repo": "demo-api", "blocked_by": ["T1"]},
+    ],
+    "acs": [{"id": "AC-1.1", "description": "It works.", "passes": False, "ticket": "T2"}],
+}
+RUN_PLAN = "# Plan\n\n### T2 api: the handler\n\nChange `src/api/handler.py`.\n"
+PLAN_DRIFT = {
+    "drift": "plan",
+    "local_notes": [],
+    "blockers_read": ["DEM-7"],
+    "evidence": "The handler moved to src/api/routes.py.",
+    "proposal": "Route T2 through routes.py.",
+    "affected": "",
+    "summary": "T2 goes through routes.py",
+}
+
+
+RUN_CHANGED = (
+    "change-requests/1.decision.md",
+    "change-requests/1.md",
+    "tickets/DEM-8/brief.md",
+    "tickets/DEM-8/preflight.json",
+)
+
+
+@pytest.mark.parametrize(
+    ("decision", "changed_plan"),
+    [
+        (("respond", "implement-1", "--choice", "decline", "--text", "Keep the plan."), False),
+        # Approved: the run amends plan.md (A<k>); the re-check still finds plan drift, so the
+        # run ends blocked before any worktree (A2).
+        (("approve", "implement-1"), True),
+    ],
+    ids=["declined", "approved"],
+)
+def test_writes_only_the_tickets_records_when_a_stubbed_implement_run_ends(
+    demo_workspace: Workspace,
+    run_command: CommandRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    decision: tuple[str, ...],
+    changed_plan: bool,
+) -> None:
+    hub = demo_workspace.hub
+    feature = hub / RUN_FEATURE
+    feature.mkdir(parents=True)
+    (feature / "features.json").write_text(json.dumps(RUN_FEATURES_JSON))
+    (feature / "plan.md").write_text(RUN_PLAN)
+    (feature / "spec.md").write_text("# Spec\n")
+    demo_workspace.init_hub_repo(None)
+    api = demo_workspace.ws / "demo-api"
+    demo_workspace.git(api, "fetch", "-q", "origin")
+    head = demo_workspace.git(hub, "rev-parse", "HEAD")
+    api_refs = demo_workspace.git(api, "for-each-ref")
+    agents: list[str] = []
+
+    def stubbed(self: WorkflowExecutors, call: NodeCall, node: Any) -> NodeReply:
+        # Only the preflight and its re-check run: no spec, research, plan or tickets agent.
+        agents.append(call.node.id)
+        if call.node.id not in {"pass-1__preflight", "pass-1__recheck"}:
+            raise AssertionError(call.node.id)
+        return NodeReply(json.dumps(PLAN_DRIFT))
+
+    monkeypatch.setattr(WorkflowExecutors, "_agent", stubbed)
+    inputs = ("feature=demo-flow", "issue=DEM-8", "issue_text=id: DEM-8\ntitle: The handler")
+    given = [item for value in inputs for item in ("--input", value)]
+
+    started = run_command(
+        hub, "workflow", "run", "implement", *given, "--live", "--run-id", "implement-1"
+    )
+    assert started.exit_code == 0, started.output
+    assert "run implement-1: paused at " in unstyle(started.stdout)
+    ended = run_command(hub, "workflow", *decision)
+
+    assert ended.exit_code == 0, ended.output
+    assert unstyle(ended.stdout).splitlines()[-1] == "run implement-1: done, outcome blocked"
+    assert agents == ["pass-1__preflight", "pass-1__recheck"]
+    status = demo_workspace.git(hub, "status", "--porcelain", "--untracked-files=all")
+    changed = sorted(line.split(maxsplit=1)[-1] for line in status.splitlines())
+    expected = [*RUN_CHANGED, *(("plan.md",) if changed_plan else ())]
+    assert changed == sorted(f"{RUN_FEATURE}/{path}" for path in expected)
+    plan = (feature / "plan.md").read_text()
+    assert plan.startswith(RUN_PLAN)
+    assert ("## Amendments" in plan) is changed_plan
+    # The delivery /implement reports, as the run's records hold it.
+    records = (hub / ".agent-runs/workflows/implement-1/records.jsonl").read_text().splitlines()
+    [delivery] = [
+        line["output"]
+        for line in map(json.loads, records)
+        if line.get("event") == "step_end" and line.get("node") == "delivery"
+    ]
+    assert delivery["delivery"] == "blocked"
+    assert sorted(delivery["hub_files"]) == sorted(expected)
+    # No commit in the hub; no branch or worktree in the repo (A22: none before a passing
+    # preflight).
+    assert demo_workspace.git(hub, "rev-parse", "HEAD") == head
+    assert demo_workspace.git(api, "for-each-ref") == api_refs
