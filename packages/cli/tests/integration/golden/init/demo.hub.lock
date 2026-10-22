@@ -613,6 +613,9 @@
     "workflows/issue-to-pr/prompts/implement.md": {
       "ownership": "seeded"
     },
+    "workflows/retro/scripts/drafts.py": {
+      "ownership": "seeded"
+    },
     "workflows/retro/scripts/metrics.py": {
       "ownership": "seeded"
     },
