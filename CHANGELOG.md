@@ -41,6 +41,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   leads with what it does, then its kind, id and what it waits for; conditions and a rounds step's real stop rule
   are visible text, commands have Copy, prompts fold with Copy, and `j`/`k` move across steps. A node chosen in the
   graph opens under it at full width. The Toolkit's Workflows tab shows catalog cards like its other tabs (AGH-427).
+- hub web: with All projects in scope, Toolkit, Brain and Hub config let you pick a project from cards that carry
+  the Portfolio card's head (name, team, hub, repos, platform, health), the section's figures and a foot line for
+  what needs a look, with a Retry when that project's source fails; `j`/`k`/`o` move across the cards (AGH-427).
 - Redaction `r1` skips its four `secret` rules on a text with no name word followed by `=` or a JSON key's `:`,
   which no `secret` rule can match: the same rule set with identical results, about three times faster on note-sized
   prose (AGH-391).
