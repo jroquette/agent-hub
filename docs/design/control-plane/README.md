@@ -77,9 +77,11 @@ AGH-201 (control-plane clarity) changes the design further
   `state` (`proposed`, `accepted_pr_open`, `rejected_pr_open`, `in_brain`, `archived`), `summary`,
   `note_unavailable`, `actions_unavailable`, `pr_url` and `branch`; `target` is deprecated. Accept and reject answer
   201 `{state, pr_url, branch}`, not a Learning, and work in a temporary clone of the hub's `origin`, never a worktree
-  of the user's checkout (E8). There is no `/learnings/{id}/trace`.
+  of the user's checkout (E8). There is no `/learnings/{id}/trace`; the trail from session to note is in the
+  learning detail (AGH-393).
 - **Brain.** `GET /projects/{project}/brain` and `GET /projects/{project}/brain/note?path=` replace the design's
-  `/brain/notes` (no backlinks); `brain/auto/` is never listed or served. Feature detail adds Spec, Research, Plan,
+  `/brain/notes`, with backlinks through `GET /projects/{project}/brain/backlinks` (AGH-393); `brain/auto/` is never
+  listed or served. Feature detail adds Spec, Research, Plan,
   Eval and Criteria tabs over the same note route.
 - **Security.** The strict writes need the server's own `Origin`, a same-origin fetch and a JSON body (E9,
   `STRICT_WRITES`): the two learning POSTs, the workflow run writes (start, cancel, resume and abandon a run, and a
