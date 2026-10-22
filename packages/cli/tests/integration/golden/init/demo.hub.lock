@@ -628,6 +628,9 @@
     "workflows/post-merge-verify/post-merge-verify.yaml": {
       "ownership": "seeded"
     },
+    "workflows/post-merge-verify/scripts/report.py": {
+      "ownership": "seeded"
+    },
     "workflows/post-merge-verify/scripts/selection.py": {
       "ownership": "seeded"
     },
