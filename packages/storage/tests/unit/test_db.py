@@ -203,7 +203,7 @@ def test_declares_knowledge_links_when_metadata_read() -> None:
     ]
     assert {
         index.name: [column.name for column in index.columns] for index in knowledge_links.indexes
-    } == {"ix_knowledge_links_hub_target": ["hub", "target"]}
+    } == {"ix_knowledge_links_hub_target": ["hub", "target", "source"]}
 
 
 def test_skips_fts_tables_when_names_reflected() -> None:

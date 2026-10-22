@@ -221,7 +221,8 @@ class SqliteKnowledgeIndex:
             select(documents.c.path, documents.c.kind, documents.c.title)
             .select_from(joined)
             .where(linking)
-            .order_by(documents.c.path)
+            # ``source`` is the document's path through the join, and the index's own order.
+            .order_by(links.c.source)
             .limit(limit)
         )
         count = select(func.count()).select_from(joined).where(linking)

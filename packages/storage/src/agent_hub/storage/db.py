@@ -199,7 +199,8 @@ knowledge_documents = Table(
 
 # One row per brain note an indexed document links to (AGH-393, D-links-store): ``source`` is the
 # document's path and ``target`` the note's (``brain/<rest>``). Unique per ``(hub, source,
-# target)`` so concurrent syncs converge; indexed by ``(hub, target)`` for the backlinks. No
+# target)`` so concurrent syncs converge; indexed by ``(hub, target, source)``, so a note's
+# backlinks are one seek, read in path order without a sort. No
 # foreign key (SQLite enforces none here): the adapter clears a source's rows on each write path.
 knowledge_links = Table(
     "knowledge_links",
@@ -209,7 +210,7 @@ knowledge_links = Table(
     Column("source", String, nullable=False),
     Column("target", String, nullable=False),
     UniqueConstraint("hub", "source", "target", name="uq_knowledge_links_hub_source_target"),
-    Index("ix_knowledge_links_hub_target", "hub", "target"),
+    Index("ix_knowledge_links_hub_target", "hub", "target", "source"),
 )
 
 # The FTS5 virtual table over the indexed documents' title and body. Migration 0008 creates it

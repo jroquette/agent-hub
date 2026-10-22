@@ -605,7 +605,7 @@ def test_keeps_rows_when_upgraded_to_knowledge_links(tmp_path: Path) -> None:
     ]
     assert links["primary_key"] == ["id"]
     assert links["foreign_keys"] == []
-    assert links["indexes"] == {"ix_knowledge_links_hub_target": ["hub", "target"]}
+    assert links["indexes"] == {"ix_knowledge_links_hub_target": ["hub", "target", "source"]}
     assert _unique_constraints(db_path, "knowledge_links") == [
         ("uq_knowledge_links_hub_source_target", ["hub", "source", "target"])
     ]
