@@ -1093,7 +1093,7 @@ class TestOutcome:
 
         assert line == f"hub step outcome: {reason}"
 
-    def test_refuses_an_outcome_over_its_read_cap(self, hub: Hub) -> None:
+    def test_refuses_an_outcome_when_over_its_read_cap(self, hub: Hub) -> None:
         line = hub.refused(
             "outcome",
             *("--feature", "demo-flow", "--ticket", "T3"),
@@ -1120,7 +1120,7 @@ class TestOutcome:
         assert list(target.iterdir()) == []
         assert hub.tree() == before
 
-    def test_refuses_an_outcome_file_that_is_a_link(self, hub: Hub, tmp_path: Path) -> None:
+    def test_refuses_the_outcome_when_its_file_is_a_link(self, hub: Hub, tmp_path: Path) -> None:
         outside = tmp_path / "outcome.md"
         outside.write_text("x")
         (hub.feature / "tickets" / "T3").mkdir(parents=True)

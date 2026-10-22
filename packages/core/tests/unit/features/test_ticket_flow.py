@@ -699,7 +699,7 @@ def test_finds_the_blocker_outcome_when_its_folder_names_the_blocker_key() -> No
         ("2026-10-21T09:30:01Z", "stale"),
     ],
 )
-def test_keeps_preflight_done_until_outcome_newer_than_latest_run(
+def test_marks_preflight_stale_only_when_outcome_newer_than_latest_run(
     merged_at: str, state: str
 ) -> None:
     flow = _flow(
@@ -719,7 +719,7 @@ def test_keeps_preflight_done_when_merged_ticket_blocker_merged_later() -> None:
     assert _step(flow, "preflight") == ("done", None)
 
 
-def test_ignores_an_outcome_of_a_ticket_not_blocking_this_one() -> None:
+def test_ignores_an_outcome_when_its_ticket_does_not_block_this_one() -> None:
     flow = _flow(
         tickets=(_files(preflight=_preflight()),),
         outcomes=(_outcome("DEM-9", merged_at="2026-10-22T09:00:00Z"),),
