@@ -23,12 +23,15 @@ that would read as a heading is escaped. It prints ``{"path", "blocking", "minor
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
 
 BUDGET_BYTES = 40960
@@ -52,6 +55,20 @@ OPTIONAL = "# Optional (minor)"
 HELD = "# Optional (minor), not posted while a blocking finding is left"
 OFF_DIFF = "# Not on a changed line"
 LABELS = {"blocking": "**Blocking.**", "minor": "**Optional.**"}
+SECTIONS = {
+    SUMMARY: "summary",
+    BLOCKING: "blocking",
+    OPTIONAL: "minor",
+    HELD: "held",
+    OFF_DIFF: "off",
+}
+BLOCK = re.compile(r"## (.+?)(?::([1-9][0-9]{0,8}))?")
+LISTED = re.compile(r"\*\*(Blocking|Optional)\.\*\* `([^`]+)`: ?(.*)")
+EVENTS = {"comment": "COMMENT", "request-changes": "REQUEST_CHANGES", "approve": "APPROVE"}
+REVIEW_CAP = 65536
+BODY_CAP = 65536
+COMMENT_CAP = 8000
+COMMENTS_MAX = 50
 
 
 class InputError(ValueError):
@@ -355,6 +372,149 @@ def run_compose(given: argparse.Namespace) -> int:
     return 0
 
 
+@dataclass
+class Comment:
+    """One ``## <path>:<line>`` block of the review file."""
+
+    severity: str
+    path: str
+    line: int | None
+    lines: list[str] = field(default_factory=list)
+
+    @property
+    def body(self) -> str:
+        return "\n".join(self.lines).strip()
+
+
+@dataclass
+class Review:
+    """The review file as the owner left it: the held section is never read."""
+
+    summary: list[str] = field(default_factory=list)
+    comments: list[Comment] = field(default_factory=list)
+    off: list[str] = field(default_factory=list)
+
+
+def parse_review(text: str) -> Review:
+    """The edited review file: its sections, blocks and free text; ``<!--`` lines ignored."""
+    review, section = Review(), ""
+    for line in text.split("\n"):
+        if line.startswith("<!--"):
+            continue
+        if line in SECTIONS:
+            section = SECTIONS[line]
+        elif section == "summary":
+            review.summary.append(line)
+        elif section in {"blocking", "minor"} and (match := BLOCK.fullmatch(line)):
+            number = int(match.group(2)) if match.group(2) else None
+            review.comments.append(Comment(section, match.group(1).strip(), number))
+        elif section in {"blocking", "minor"} and review.comments:
+            review.comments[-1].lines.append(line)
+        elif section in {"blocking", "minor", "off"}:
+            review.off.append(line)
+    review.comments = [comment for comment in review.comments if comment.body]
+    return review
+
+
+def safe_path(path: str) -> str:
+    parts = path.split("/")
+    if not path or path.startswith("/") or ".." in parts or CONTROL.search(path) or "\\" in path:
+        raise RefusedError(f"comments.path is not a path in the repo: {one_line(path, 80)}")
+    return path
+
+
+def listing(label: str, items: list[tuple[str, str]]) -> str:
+    lines = [f"- `{where}` {body.split(chr(10), 1)[0]}" for where, body in items]
+    return "\n".join([f"{label} ({len(items)})", *lines])
+
+
+def payload(
+    review: Review, anchors: dict[str, set[int]], *, head: str
+) -> tuple[dict[str, object], dict[str, int]]:
+    """What /review posts (no event: it makes a pending review first), and its counts."""
+    comments: list[dict[str, object]] = []
+    listed_items: dict[str, list[tuple[str, str]]] = {"Blocking": [], "Optional": []}
+    off = "\n".join(review.off).strip()
+    moved: list[str] = []
+    for comment in review.comments:
+        path, label = safe_path(comment.path), LABELS[comment.severity]
+        listed_items[label[2:-3]].append((anchor(path, comment.line), comment.body))
+        if comment.line in anchors.get(path, set()):
+            body = f"{label} {comment.body}"
+            if len(body) > COMMENT_CAP:
+                raise RefusedError(f"comments.body is over {COMMENT_CAP} characters at {path}")
+            comments.append({"path": path, "line": comment.line, "side": "RIGHT", "body": body})
+        else:
+            moved.append(f"{label} `{anchor(path, comment.line)}`: {comment.body}")
+    for line in review.off:
+        if match := LISTED.fullmatch(line):
+            listed_items[match.group(1)].append((match.group(2), match.group(3)))
+    if len(comments) > COMMENTS_MAX:
+        raise RefusedError(f"comments are over {COMMENTS_MAX}")
+    parts = [
+        "\n".join(review.summary).strip(),
+        listing("Blocking", listed_items["Blocking"]),
+        listing("Optional", listed_items["Optional"]),
+        "\n".join([off, *moved]).strip(),
+    ]
+    body = "\n\n".join(part for part in parts if part)
+    if len(body) > BODY_CAP:
+        raise RefusedError(f"body is over {BODY_CAP} characters")
+    counts = {
+        "blocking": len(listed_items["Blocking"]),
+        "optional": len(listed_items["Optional"]),
+        "inline": len(comments),
+    }
+    return {"commit_id": head, "body": body, "comments": comments}, counts
+
+
+def read_review(path: Path) -> str:
+    """The review file: a regular file (not a link), at most ``REVIEW_CAP`` bytes of UTF-8."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as error:
+        raise RefusedError(f"cannot read the review: {error.strerror}") from None
+    with os.fdopen(descriptor, "rb") as handle:
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            raise RefusedError("cannot read the review: not a regular file")
+        data = handle.read(REVIEW_CAP + 1)
+    if len(data) > REVIEW_CAP:
+        raise RefusedError(f"cannot read the review: over {REVIEW_CAP} bytes")
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise RefusedError("cannot read the review: not UTF-8") from None
+
+
+def write_payload(path: Path, data: bytes) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
+    descriptor = os.open(path, flags, 0o600)
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(data)
+
+
+def run_final(given: argparse.Namespace) -> int:
+    event = EVENTS.get(given.decision)
+    if event is None:
+        raise InputError("decision must be comment, request-changes or approve")
+    if not (SHA.fullmatch(given.base) and SHA.fullmatch(given.head)):
+        raise InputError("base and head must be full commit shas")
+    run = run_id()
+    if given.file != str(FOLDER / f"{run}.md"):
+        raise RefusedError("cannot read the review: not this run's file")
+    text = read_review(FOLDER / f"{run}.md")
+    if ATTRIBUTION.search(text):
+        raise RefusedError("the review holds AI attribution: remove it and run /review again")
+    anchors = hunks(git_diff(given.path, given.base, given.head))
+    sent, counts = payload(parse_review(text), anchors, head=given.head)
+    data = (json.dumps(sent, ensure_ascii=False) + "\n").encode()
+    path = FOLDER / f"{run}.payload.json"
+    write_payload(path, data)
+    digest = hashlib.sha256(data).hexdigest()
+    print(json.dumps({"path": str(path), "sha256": digest, "event": event, **counts}))
+    return 0
+
+
 def parser_of() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="review.py")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -364,12 +524,15 @@ def parser_of() -> argparse.ArgumentParser:
     compose = commands.add_parser("compose")
     for name in ("--findings", "--path", "--base", "--head", "--repo", "--pr"):
         compose.add_argument(name, required=True)
+    final = commands.add_parser("final")
+    for name in ("--file", "--decision", "--path", "--base", "--head"):
+        final.add_argument(name, required=True)
     return parser
 
 
 def main(argv: list[str]) -> int:
     given = parser_of().parse_args(argv)
-    runs = {"merge": run_merge, "compose": run_compose}
+    runs = {"merge": run_merge, "compose": run_compose, "final": run_final}
     try:
         return runs[given.command](given)
     except InputError as error:

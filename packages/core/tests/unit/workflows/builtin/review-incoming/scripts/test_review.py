@@ -3,6 +3,7 @@ blocking first, within budget; ``compose`` writes the review file the owner edit
 finding kept and each comment checked against the diff; ``final`` parses the edited file again
 into the payload ``/review`` posts."""
 
+import hashlib
 import io
 import json
 import re
@@ -278,3 +279,217 @@ def test_exits_two_when_run_id_is_not_a_name(
     assert code == 2
     assert "AGENT_HUB_RUN_ID" in err
     assert not Path(clone.hub / ".agent-runs").exists()
+
+
+PAYLOAD_FILE = f".agent-runs/review-incoming/{RUN_ID}.payload.json"
+
+
+@pytest.fixture
+def final(review: ModuleType, *, clone: Clone, capsys: pytest.CaptureFixture[str]) -> Any:
+    def finishing(decision: str = "comment", file: str = REVIEW_FILE) -> tuple[int, Any, str]:
+        argv = ["final", "--file", file, "--decision", decision, "--path", str(clone.repo)]
+        code = review.main([*argv, "--base", clone.base, "--head", clone.head])
+        captured = capsys.readouterr()
+        return code, json.loads(captured.out) if code == 0 else None, captured.err
+
+    return finishing
+
+
+def composed(compose: Any, *comments: dict[str, Any], summary: str = "One problem.") -> None:
+    code, _, err = compose({"summary": summary, "comments": list(comments)}, merged_of())
+    assert code == 0, err
+
+
+def edit(clone: Clone, old: str, new: str) -> None:
+    path = clone.hub / REVIEW_FILE
+    text = path.read_text(encoding="utf-8")
+    assert old in text
+    path.write_text(text.replace(old, new), encoding="utf-8")
+
+
+def payload(clone: Clone) -> Any:
+    return json.loads((clone.hub / PAYLOAD_FILE).read_text(encoding="utf-8"))
+
+
+def test_builds_payload_from_owner_edits_when_file_changed(
+    clone: Clone, compose: Any, final: Any
+) -> None:
+    dropped = a_comment(line=4, body="Drop me.", sources=["quality:F2"])
+    composed(compose, a_comment(), dropped)
+    edit(clone, "One problem.", "One problem, said my way.")
+    edit(clone, "## app/run.py:4\nDrop me.\n", "")
+
+    code, result, _ = final("request-changes")
+
+    assert code == 0
+    sent = payload(clone)
+    assert sent["commit_id"] == clone.head
+    assert sent["body"].startswith("One problem, said my way.")
+    assert [comment["line"] for comment in sent["comments"]] == [5]
+    assert "Drop me." not in json.dumps(sent)
+    assert result["inline"] == 1
+
+
+def test_separates_blocking_and_optional_in_body_and_comments_when_payload_built(
+    clone: Clone, compose: Any, final: Any
+) -> None:
+    minor = a_comment(line=4, severity="minor", body="Name it.", sources=["quality:F2"])
+    composed(compose, minor, a_comment(severity="minor", body="Also here.", sources=["q:F3"]))
+
+    code, result, _ = final("comment")
+
+    assert code == 0
+    assert (result["blocking"], result["optional"], result["inline"]) == (0, 2, 2)
+    sent = payload(clone)
+    assert [c["body"] for c in sent["comments"]] == [
+        "**Optional.** Name it.",
+        "**Optional.** Also here.",
+    ]
+    assert {c["side"] for c in sent["comments"]} == {"RIGHT"}
+    assert "Blocking (0)" in sent["body"]
+    assert "Optional (2)\n- `app/run.py:4` Name it.\n- `app/run.py:5` Also here." in sent["body"]
+
+
+def test_skips_held_minor_section_unless_owner_renamed_it(
+    clone: Clone, compose: Any, final: Any
+) -> None:
+    minor = a_comment(line=4, severity="minor", body="Name it.", sources=["quality:F2"])
+    composed(compose, a_comment(body="Use a list."), minor)
+
+    code, result, _ = final("request-changes")
+    held = payload(clone)
+    (clone.hub / PAYLOAD_FILE).unlink()
+    edit(clone, HELD, "# Optional (minor)")
+    renamed_code, renamed, _ = final("request-changes")
+
+    assert (code, renamed_code) == (0, 0)
+    assert [c["body"] for c in held["comments"]] == ["**Blocking.** Use a list."]
+    assert (result["blocking"], result["optional"]) == (1, 0)
+    assert (renamed["blocking"], renamed["optional"]) == (1, 1)
+    assert "**Optional.** Name it." in [c["body"] for c in payload(clone)["comments"]]
+
+
+@pytest.mark.parametrize(
+    "case",
+    [("comment", "COMMENT"), ("request-changes", "REQUEST_CHANGES"), ("approve", "APPROVE")],
+)
+def test_maps_decision_to_event_when_final_runs(
+    clone: Clone, *, compose: Any, final: Any, case: tuple[str, str]
+) -> None:
+    decision, event = case
+    composed(compose)
+
+    code, result, _ = final(decision)
+
+    assert code == 0
+    assert result["event"] == event
+    assert "event" not in payload(clone)
+
+
+def test_exits_two_when_decision_is_reject(clone: Clone, compose: Any, final: Any) -> None:
+    composed(compose)
+
+    code, _, err = final("reject")
+
+    assert code == 2
+    assert "decision" in err
+    assert not (clone.hub / PAYLOAD_FILE).exists()
+
+
+def test_prints_sha256_of_written_payload_when_final_runs(
+    clone: Clone, compose: Any, final: Any
+) -> None:
+    composed(compose, a_comment())
+
+    code, result, _ = final("comment")
+
+    assert code == 0
+    assert result["path"] == PAYLOAD_FILE
+    data = (clone.hub / PAYLOAD_FILE).read_bytes()
+    assert result["sha256"] == hashlib.sha256(data).hexdigest()
+
+
+def test_refuses_review_file_when_it_is_a_link(clone: Clone, compose: Any, final: Any) -> None:
+    composed(compose)
+    path = clone.hub / REVIEW_FILE
+    other = path.with_name("other.md")
+    path.rename(other)
+    path.symlink_to(other)
+
+    code, _, err = final("comment")
+
+    assert code == 1
+    assert "cannot read the review" in err
+    assert not (clone.hub / PAYLOAD_FILE).exists()
+
+
+def test_refuses_review_file_when_path_is_not_this_runs(
+    clone: Clone, compose: Any, final: Any
+) -> None:
+    composed(compose)
+
+    code, _, err = final("comment", file=".agent-runs/review-incoming/run-2.md")
+
+    assert code == 1
+    assert "cannot read the review: not this run's file" in err
+
+
+def test_refuses_review_file_when_over_cap(clone: Clone, compose: Any, final: Any) -> None:
+    composed(compose)
+    edit(clone, "One problem.", "x" * 65537)
+
+    code, _, err = final("comment")
+
+    assert code == 1
+    assert "cannot read the review: over 65536 bytes" in err
+
+
+def test_refuses_review_when_owner_added_attribution(
+    clone: Clone, compose: Any, final: Any
+) -> None:
+    composed(compose)
+    edit(clone, "One problem.", "One problem.\n\U0001f916 Generated with a tool")
+
+    code, _, err = final("comment")
+
+    assert code == 1
+    assert "the review holds AI attribution: remove it and run /review again" in err
+    assert not (clone.hub / PAYLOAD_FILE).exists()
+
+
+@pytest.mark.parametrize("path", ["../secrets.txt", "/etc/passwd", "app/../../x"])
+def test_refuses_payload_when_comment_path_escapes(
+    review: ModuleType, clone: Clone, path: str
+) -> None:
+    parsed = review.parse_review(f"# Summary\nx\n# Blocking\n## {path}:5\nbody\n")
+    anchors = {path: {5}}
+
+    with pytest.raises(review.RefusedError, match="comments.path"):
+        review.payload(parsed, anchors, head=clone.head)
+
+
+def test_round_trips_compose_output_when_file_unedited(
+    clone: Clone, compose: Any, final: Any
+) -> None:
+    off = a_comment(path="app/core.py", line=1, body="Also the adder.", sources=["quality:F3"])
+    composed(compose, a_comment(body="Use a list.\n\nThen test it."), off)
+
+    code, result, _ = final("request-changes")
+
+    assert code == 0
+    sent = payload(clone)
+    assert sent["comments"] == [
+        {
+            "path": "app/run.py",
+            "line": 5,
+            "side": "RIGHT",
+            "body": "**Blocking.** Use a list.\n\nThen test it.",
+        }
+    ]
+    assert sent["body"] == (
+        "One problem.\n\n"
+        "Blocking (2)\n- `app/run.py:5` Use a list.\n- `app/core.py:1` Also the adder.\n\n"
+        "Optional (0)\n\n"
+        "**Blocking.** `app/core.py:1`: Also the adder."
+    )
+    assert (result["blocking"], result["optional"], result["inline"]) == (2, 0, 1)
