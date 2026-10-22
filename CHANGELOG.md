@@ -61,7 +61,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - An approval another amendment overtook is not applied (A23): `amend-plan` says "change request <n> approved but
   superseded by plan v<k>: not applied", the `implement` run re-checks the ticket in the same pass against the current
   plan, told so (no discovery loop is spent), records it in the preflight run and lists it in its report under
-  `superseded`. `ticket-brief` reads main's commit once (the preflight reads it, its run records it and the branch
+  `superseded`; if plan drift remains, the run ends blocked and the next `/implement` opens a new change request
+  (A24). `ticket-brief` reads main's commit once (the preflight reads it, its run records it and the branch
   starts from it: `hub step worktree --commit`, which needs no fetch) and refuses a ticket whose repo `hub.json` lacks; the run takes the
   ticket's repo from `features.json`, not an input. A workflow agent marked `mutates_checkout: false` gets the Read,
   Glob and Grep tools and git's read forms only (no `--output`), and its check compares HEAD too, ignoring the

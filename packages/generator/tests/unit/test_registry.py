@@ -63,6 +63,7 @@ SEEDED_PACK_FILES = (
     "sdlc/fixtures/implement-pending-superseded.yaml",
     "sdlc/fixtures/implement-plan-approved.yaml",
     "sdlc/fixtures/implement-plan-declined.yaml",
+    "sdlc/fixtures/implement-plan-moved-still-plan.yaml",
     "sdlc/fixtures/implement-plan-moved.yaml",
     "sdlc/fixtures/implement-pr-failure.yaml",
     "sdlc/fixtures/implement-rounds-exhausted.yaml",
