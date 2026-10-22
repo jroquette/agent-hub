@@ -35,6 +35,7 @@ from agent_hub.core.doctor.repo_agents_rule import REPOS_AGENTS
 from agent_hub.core.doctor.sandbox_rule import SANDBOX_WORKFLOW
 from agent_hub.core.doctor.settings_rules import SETTINGS_WEAKENING
 from agent_hub.core.doctor.text_rules import ATTRIBUTION_AI, SECRETS_CONFIG
+from agent_hub.core.doctor.workflow_starts_rule import WORKFLOWS_STARTS
 from agent_hub.core.doctor.workflows_rule import WORKFLOWS_VALID
 
 REGISTRY: Final[tuple[Rule, ...]] = (
@@ -62,6 +63,7 @@ REGISTRY: Final[tuple[Rule, ...]] = (
     CONFIG_STOP_GATE,
     ENVIRONMENTS_PRODUCTION,
     ENVIRONMENTS_ENV_FILE,
+    WORKFLOWS_STARTS,
     BRAIN_MEMORY,
     SANDBOX_WORKFLOW,
     WORKFLOWS_VALID,

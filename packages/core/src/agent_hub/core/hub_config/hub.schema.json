@@ -280,6 +280,9 @@
         "environments.env_file": {
           "$ref": "#/$defs/RuleSettings"
         },
+        "workflows.starts": {
+          "$ref": "#/$defs/RuleSettings"
+        },
         "repos.agents": {
           "$ref": "#/$defs/RuleSettings"
         },
