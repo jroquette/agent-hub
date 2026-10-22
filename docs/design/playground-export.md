@@ -111,6 +111,26 @@ workflow (`/feature` or the `sdlc` pack's `deliver`), on a branch from `main`, w
    a diff fails the delivery's check. Behaviors get unit or integration tests at the repo's levels.
 4. The CHANGELOG entry and, for a scope or architecture change, the SPEC or an ADR come with it.
 
+### Dev tooling (AGH-431)
+
+- **AC-431.1** Given `make playground` on a machine with nvm, when it starts, then it selects `apps/web/.node-version`
+  and prints `node --version` before the conductor starts, so the conductor's sessions (whose Stop gate runs
+  `make check-fast`, hence `npm ci`) run on the web app's Node, not the shell's. Test:
+  `tests/e2e/test_playground_script.py`.
+- **AC-431.2** Given the export's `SCREEN_ROUTES`, when its mapping test lists the screen folders, then every folder
+  of `apps/web/src/screens/` but `not-found` and hidden folders (a name starting with `.`, not a screen) has routes.
+  Test: `test_maps_every_screen_folder_when_routes_listed`.
+- **AC-431.3** Given a change under `apps/web/src/screens/environments/` or `apps/web/src/screens/tickets/`, when the
+  export captures its screen, then it captures `/projects/demo/environments` or `/tickets`. Test:
+  `test_maps_environments_and_tickets_screens_when_routes_asked`. Until those screens exist on `main` nothing changes
+  in their folders, so the mappings are never asked.
+- **AC-431.4** Given the readers' overflow handling (JSONL lines, hook settings, guard extension, Linear GraphQL), when
+  their tests run, then they simulate the parser's `RecursionError` or `MemoryError` instead of building inputs deep
+  enough to overflow the interpreter's stack, which depends on the Python version and the machine (Python 3.14 reads
+  200,000 nested levels).
+- **AC-431.5** Given GNU make 3.81 (macOS), when the `make -n` recipe test compares lines, then it ignores their
+  leading tab; and the hub path that is not UTF-8 is skipped on macOS only, whose file system refuses such names.
+
 ## Invariants
 
 - Nothing the owner asked, answered or validated in the range is dropped: every commit not in `origin/main` is in a
