@@ -88,6 +88,11 @@ SEEDED_PACK_FILES = (
     "sdlc/scripts/pass_outcome.py",
     "sdlc/scripts/verdict.py",
     "sdlc/ticket-pass.yaml",
+    "spike/fixtures/spike-more-paused.yaml",
+    "spike/fixtures/spike-more.yaml",
+    "spike/fixtures/spike-no-pick.yaml",
+    "spike/fixtures/spike-pick.yaml",
+    "spike/fixtures/spike-timebox.yaml",
     "spike/spike.yaml",
 )
 CORE_SOURCES |= {

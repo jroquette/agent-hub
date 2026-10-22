@@ -760,6 +760,21 @@
     "workflows/sdlc/ticket-pass.yaml": {
       "ownership": "seeded"
     },
+    "workflows/spike/fixtures/spike-more-paused.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/fixtures/spike-more.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/fixtures/spike-no-pick.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/fixtures/spike-pick.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/fixtures/spike-timebox.yaml": {
+      "ownership": "seeded"
+    },
     "workflows/spike/spike.yaml": {
       "ownership": "seeded"
     }
