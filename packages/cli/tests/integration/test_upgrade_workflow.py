@@ -97,7 +97,14 @@ def test_reads_the_fast_gate_from_hub_json_in_the_hub_when_document_loaded() -> 
     # The pack's own script, in the hub (no cwd), before any agent: hub step worktree's
     # output stays as it is.
     assert (gate.type, gate.script, gate.cwd) == ("script", "fast_gate.py", None)
-    assert gate.args == ("--repo", "$INPUTS.repo", "--full", "$worktree.output.check")
+    assert gate.args == (
+        "--config",
+        "hub.json",
+        "--repo",
+        "$INPUTS.repo",
+        "--full",
+        "$worktree.output.check",
+    )
     assert gate.depends_on == ("worktree",)
 
 

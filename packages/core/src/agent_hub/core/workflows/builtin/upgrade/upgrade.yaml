@@ -63,7 +63,9 @@ nodes:
     depends_on: [worktree]
     runtime: python
     script: fast_gate.py
-    args: [--repo, $INPUTS.repo, --full, $worktree.output.check]
+    # The file is named here, not in the script: the hub's hooks read hub.json only through
+    # their reader, and this script is not a hook.
+    args: [--config, hub.json, --repo, $INPUTS.repo, --full, $worktree.output.check]
     timeout: 5m
     retry: {max_attempts: 0}
     output_format:
