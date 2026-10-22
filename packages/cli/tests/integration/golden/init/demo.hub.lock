@@ -583,6 +583,18 @@
       "ownership": "managed",
       "sha256": "fdac169d0ebd59302540f442f0592e39239ede6ca87fc367184c16806f9eff21"
     },
+    "workflows/incident/fixtures/incident-awaiting-mitigation.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/incident/fixtures/incident-confirmed.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/incident/fixtures/incident-mitigation-declined.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/incident/fixtures/incident-none-confirmed.yaml": {
+      "ownership": "seeded"
+    },
     "workflows/incident/incident.yaml": {
       "ownership": "seeded"
     },
