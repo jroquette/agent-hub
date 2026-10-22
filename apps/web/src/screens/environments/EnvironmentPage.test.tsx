@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { DiscussProvider } from "../../shell/discuss";
 import { seriousViolations } from "../../testing/axe";
-import { aProblem, renderWithApi } from "../../testing/builders";
+import { aCapabilities, aProblem, renderWithApi } from "../../testing/builders";
 import type { ApiRoutes, RouteReply } from "../../testing/builders";
 import { EnvironmentScreen } from "./EnvironmentPage";
 
@@ -249,6 +249,36 @@ describe("EnvironmentScreen", () => {
       screen.getByRole("button", { name: "Copy the address of demo-api › api in staging" }),
     ).toBeInTheDocument();
     vi.unstubAllGlobals();
+  });
+
+  it("AC-418.8 offers Find services with Claude before Add service", async () => {
+    const { router } = open("staging", {
+      "/api/v1/agent-sessions/capabilities": aCapabilities(),
+    });
+
+    const head = (await screen.findByRole("heading", { level: 2, name: /Services in staging/ }))
+      .parentElement;
+    if (!head) throw new Error("no services head");
+    const buttons = within(head).getAllByRole("button");
+    expect(buttons.map((button) => button.textContent)).toEqual([
+      "Find services with Claude",
+      "Add service",
+    ]);
+    await userEvent.click(within(head).getByRole("button", { name: "Find services with Claude" }));
+
+    expect(router.state.location.pathname).toBe("/projects/demo/environments/discover");
+  });
+
+  it("AC-418.8 turns Find services with Claude off when sessions cannot start", async () => {
+    open("staging", {
+      "/api/v1/agent-sessions/capabilities": aCapabilities({
+        available: false,
+        reason: "claude is not on PATH",
+      }),
+    });
+
+    await screen.findByRole("heading", { level: 2, name: /Services in staging/ });
+    expect(await screen.findByRole("button", { name: "Find services with Claude" })).toBeDisabled();
   });
 
   it("has no serious a11y violations", async () => {

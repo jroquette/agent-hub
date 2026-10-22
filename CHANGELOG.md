@@ -13,6 +13,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- An environment's page in `hub web` offers "Find services with Claude" (AGH-418): pick the repos and environments,
+  and a read-only Claude session starts on the click; its progress shows the cost, the conversation and Stop. The
+  review lists each proposed environment and service with the file and line it came from and its status (new,
+  differs from yours, already declared); new ones start selected, production and differences wait for you, and one
+  write adds the selection to `hub.json`. Probably missing services lead to Add service, and the Environments page
+  leads back to a search still open.
 - `hub web` can find a project's services with a read-only Claude session (AGH-418, ADR 0046):
   `POST /projects/{project}/environment-discoveries` starts a session limited to `Read`, `Grep` and `Glob` (no MCP
   server; any other tool request is denied without asking) on the picked repos, and each read answers its state and
