@@ -23,6 +23,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Changed
 
+- The chat's side drawers (Activity, Steps, Background tasks, the review) close on a click outside them. The Steps
+  drawer reads as a timeline: each call's icon, what it is for with its command below, a calm Failed or Denied, its
+  output folded behind one line. An expanded tool call reads like a terminal: a `$` command line with its
+  description and Copy, a JSON reply in the JSON viewer, grep output with coloured paths and line numbers, a line
+  count, Copy and "No output" (AGH-423).
 - Redaction `r1` skips its four `secret` rules on a text with no name word followed by `=` or a JSON key's `:`,
   which no `secret` rule can match: the same rule set with identical results, about three times faster on note-sized
   prose (AGH-391).
