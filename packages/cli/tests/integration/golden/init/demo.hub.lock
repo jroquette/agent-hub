@@ -613,6 +613,21 @@
     "workflows/issue-to-pr/prompts/implement.md": {
       "ownership": "seeded"
     },
+    "workflows/review-incoming/fixtures/incoming-clean-approved.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/fixtures/incoming-clean.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/fixtures/incoming-lens-failed.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/fixtures/incoming-rejected.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/fixtures/incoming-security.yaml": {
+      "ownership": "seeded"
+    },
     "workflows/review-incoming/prompts/draft.md": {
       "ownership": "seeded"
     },
