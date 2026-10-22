@@ -11,6 +11,16 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- `hub web` starts workflows by itself (AGH-481, ADR 0048, proposed): `hub.json` declares `schedules` (a workflow, a
+  5-field cron read in UTC, inputs and an optional environment) and `events` (a workflow started on a repo's `merge`,
+  `ci_red` or `pr_opened`, polled through `gh` every 5 minutes, the first poll a baseline). Each slot and each event
+  starts at most once, kept in `<hub>/.agent-runs/schedules/state.json`; a slot missed while `hub web` was down runs
+  once when it comes back. Such a run records `trigger` in its start record. `hub workflow schedule list` prints each
+  schedule's next start, and the `hub doctor` rule `workflows.starts` reports an entry that names an unknown workflow
+  or `issue-to-pr`.
+
 ## [0.20.1] - 2026-10-22
 
 ### Added
