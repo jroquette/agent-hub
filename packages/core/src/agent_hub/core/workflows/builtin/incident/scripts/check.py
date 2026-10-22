@@ -114,6 +114,8 @@ DIR = re.compile(r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*")
 SHA = re.compile(r"[0-9a-f]{40}")
 DEFAULT_PATH = "/usr/local/bin:/usr/bin:/bin"
 WORKTREE_TIMEOUT = 120
+# A name, not a bare tuple: the hub's copy must parse on Python 3.9 (no PEP 758 form).
+GIT_ERRORS = (OSError, subprocess.SubprocessError)
 WORKTREE_GIT = ("git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false")
 
 
@@ -247,7 +249,7 @@ class Sandbox:
                 timeout=WORKTREE_TIMEOUT,
                 check=False,
             )
-        except OSError, subprocess.SubprocessError:
+        except GIT_ERRORS:
             return False
         return done.returncode == 0
 
