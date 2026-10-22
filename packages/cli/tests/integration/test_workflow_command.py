@@ -1748,3 +1748,39 @@ def test_reads_body_reject_when_workflow_environment_group_owed_after_crash(
     assert approved.stdout.splitlines()[-1] == "run r1: paused at g__ask"
     assert rejected.exit_code == 0, rejected.output
     assert rejected.stdout.splitlines()[-1] == "run r1: done"
+
+
+def test_writes_schedule_trigger_in_start_record_when_run_with_trigger(sample: SampleRun) -> None:
+    result = started(sample, "--trigger", "schedule")
+
+    assert result.exit_code == 0, result.output
+    header = sample.records()[0]
+    assert (header["event"], header["trigger"]) == ("start", "schedule")
+
+
+def test_leaves_trigger_out_of_start_record_when_run_by_hand_not_schedule(
+    sample: SampleRun,
+) -> None:
+    result = started(sample)
+
+    assert result.exit_code == 0, result.output
+    assert "trigger" not in sample.records()[0]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("sample", "--input", "issue=DEM-1", "--live", "--trigger", "cron"),
+        ("--resume", RUN_ID, "--trigger", "schedule"),
+    ],
+    ids=["unknown", "without-name"],
+)
+def test_exits_two_when_schedule_trigger_is_unknown(
+    sample: SampleRun, args: tuple[str, ...]
+) -> None:
+    result = sample.run(*args)
+
+    assert result.exit_code == 2, result.output
+    assert "--trigger" in result.stderr
+    assert sample.fakes.calls("claude") == []
+    assert not (sample.hub / ".agent-runs").exists()
