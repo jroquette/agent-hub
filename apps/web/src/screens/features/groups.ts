@@ -1,6 +1,6 @@
 /* The Features list: what is moving (with a warning on the rows that need the owner) and what shipped. */
 import type { components } from "../../api/schema";
-import { GOLDEN_STEP_LABEL, ownerWaitStep, type IconName } from "../../components";
+import { GOLDEN_STATE_TEXT, ownerWaitStep, type IconName } from "../../components";
 import { phaseIndex } from "./parts";
 
 type Feature = components["schemas"]["FeatureView"];
@@ -237,8 +237,8 @@ export function reasonOf(f: Feature, wait: SessionWait | null = null): Reason {
     };
   }
   const step = f.golden_path.steps.find((s) => s.name === f.phase);
-  // The Golden path column shows where the step sits; the line says only what happens in it.
-  const parts = [GOLDEN_STEP_LABEL[f.phase]];
+  // The Stage column names the step; the line says only what happens in it.
+  const parts: string[] = [];
   // Build's meta says when Linear was not read: the page says it once, not every row.
   const meta = step?.meta && !isLinearGap(step.meta) ? step.meta : null;
   if (meta) parts.push(meta);
@@ -250,7 +250,12 @@ export function reasonOf(f: Feature, wait: SessionWait | null = null): Reason {
     needs: null,
     icon: null,
     tone: null,
-    line: parts.join(" · "),
+    // With nothing else to say, the step's state; an unknown one is explained once above the list.
+    line: parts.length
+      ? parts.join(" · ")
+      : step && step.state !== "unknown"
+        ? GOLDEN_STATE_TEXT[step.state]
+        : "",
     doc: null,
   };
 }
