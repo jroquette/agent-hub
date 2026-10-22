@@ -294,8 +294,7 @@ def test_fails_naming_git_when_git_init_fails(capsys: pytest.CaptureFixture[str]
     assert "error: git init failed: git: not found" in capsys.readouterr().err
 
 
-def test_runs_git_init_when_local_target_runs_git(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("scripts.seed_demo.shutil.which", lambda name: f"/usr/bin/{name}")
+def test_runs_git_init_when_local_target_runs_git() -> None:
     calls: list[list[str]] = []
 
     def runner(command: list[str], stdin: str | None) -> subprocess.CompletedProcess[str]:
@@ -310,27 +309,16 @@ def test_runs_git_init_when_local_target_runs_git(monkeypatch: pytest.MonkeyPatc
     assert calls == [["git", "init", "-q", "/x/demo-hub"]]
 
 
-def test_fails_naming_git_when_git_not_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("scripts.seed_demo.shutil.which", lambda name: None)
+def test_fails_naming_git_when_git_not_found() -> None:
     calls: list[list[str]] = []
 
     def runner(command: list[str], stdin: str | None) -> subprocess.CompletedProcess[str]:
         calls.append(command)
-        return subprocess.CompletedProcess(command, 0, "", "")
-
-    with pytest.raises(SeedError, match="^git init failed: git not found$"):
-        LocalTarget(workdir=PurePosixPath("/x"), runner=runner).git(["init", "-q", "/x/hub"])
-    assert calls == []
-
-
-def test_fails_naming_git_when_git_vanishes_before_run(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("scripts.seed_demo.shutil.which", lambda name: f"/usr/bin/{name}")
-
-    def runner(command: list[str], stdin: str | None) -> subprocess.CompletedProcess[str]:
         raise FileNotFoundError(command[0])
 
     with pytest.raises(SeedError, match="^git init failed: git not found$"):
         LocalTarget(workdir=PurePosixPath("/x"), runner=runner).git(["init", "-q", "/x/hub"])
+    assert calls == [["git", "init", "-q", "/x/hub"]]
 
 
 def test_runs_git_in_service_when_compose_target_runs_git() -> None:
