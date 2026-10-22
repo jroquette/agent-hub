@@ -138,3 +138,64 @@ font (Geist stays), any Claude brand colour.
 The panel is an `aside` named "Discuss with Claude" (a landmark, no focus trap). The edge is a full separator, its
 hit area the panel's full height; Widen is the single-pointer way. The status keeps icon and label. The shell's axe
 test runs with the panel open (`AppShell.test.tsx`, a11y).
+
+## Reading anatomy
+
+Shared by the panel and the page (AC-422.8, AC-422.10, AC-422.12 in
+[agent-sessions.md](../../agent-sessions.md#chat-redesign-reading-anatomy-and-composer-agh-422)).
+
+```
+reading ground: surface                                   column: 768 px + gutters, centred
+                                     ╭──────────────────────────────────────╮
+                                     │ Can you check why the guard denies    │  your turn: surface-turn,
+                                     │ the Edit in docs/adr?                 │  radius-2xl 16, padding 12/16,
+                                     ╰──────────────────────────────────────╯  max 85%, right-aligned
+                                                              3 min ago  [⧉]   on hover/focus, over the gap
+   ↕ 24 px (your turn → the reply)
+  ⌄ Ran 3 commands, read 2 files, thought 12 s                                 activity line
+   ↕ 12 px
+  The guard reads `brain_memory_rule.py` and refuses any write under          Claude's prose: reading 15/24,
+  `docs/adr/` unless the plan names it.                                       max 68ch, no bubble, no avatar
+  ┌ code-bg, radius-lg ─────────────────────────────────────────── python [⧉] ┐
+  │ if path.startswith("docs/adr/") and path not in plan.files:            │  mono 13/20
+  └────────────────────────────────────────────────────────────────────────┘
+  ●  (a breathing dot while it streams)
+   ↕ 32 px (above each of your turns)
+                         ░░░░░ 24 px fade (transparency, no colour) ░░░░░
+  ● Running make check · 12 s                       Steps 4  ›                 live bar
+  ╭─────────────────────────────────────────────────────────────────────────╮
+  │ [ref: § Acceptance criteria ×]  [img]                                    │  what rides with it
+  │ Message Claude                                                          │  the message, full width
+  │ (+) (🛡 Ask before edits ⌄) (cpu opus ⌄)                       (■)  (↑)  │  one row of controls
+  ╰─────────────────────────────────────────────────────────────────────────╯  surface-overlay, radius-2xl 16
+    Enter to send, Shift+Enter for a new line            (only while focused)
+```
+
+| Element | Wide chat (≥ 560 px) | Narrow chat (< 560 px, the panel) |
+|---|---|---|
+| Prose | `reading` 15/24 | `body` 14/22 |
+| Prose headings h1 / h2 / h3 | 20/28 · 16/24 · 15/24 600 | as `.ah-md` |
+| Code | `mono` 13/20 | `mono` 13/20 |
+| Hint, labels, step numbers, key hints | `caption` 12/16 (no 10 or 11 px) | same |
+| Line length | prose 68ch | the container |
+| Turn gap / your turn → reply | 32 / 24 | 24 / 16 |
+
+**Planes:** `bg` (the app's frame) → `surface` (the reading ground, the panel, the page) → `surface-overlay` with a
+soft shadow (the composer, the one thing that floats). The thinking block, the recap and the review bubble lose their
+coloured left bars (italics, a sunken ground and a border carry them); the review avatar takes `surface-sunken` and
+`text` instead of a brand orange.
+
+**Tokens** (README, AGH-422): `surface-turn` (light `gray-100`, dark `gray-200`; `text` 15.5 / 13.8:1, `text-subtle`
+4.8 / 5.4:1), `radius-2xl` 16, the type style `reading` 15/24, `chat-column` 768.
+
+## Composer
+
+AC-422.9 and AC-422.11. One card (`.as-composer`, a grid): references and images on top, the message across the full
+width (one line to start, it grows to its cap), then one row of controls. The "+" (attach), Stop and Send are round
+32 px icon buttons with their names in the tooltip and for screen readers; Stop shows only while a turn can be
+stopped. The mode and model read as quiet text with a caret (a soft capsule under the pointer, the hover capsule on
+focus, never a ring left after a click); a mode that runs on its own (accept edits, plan, auto) colours its icon. Each
+picker is as wide as its value: the native select lies invisible over the pill and a span shows the value. The keys
+to send show under the card only while it has focus. The card is reused by every chat composer (the full chat, the
+Discuss panel, its start state) through `Composer`'s `accessory` slot, so a new caller passes what rides with the
+message and keeps the card.

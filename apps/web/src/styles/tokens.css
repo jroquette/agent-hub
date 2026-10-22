@@ -15,6 +15,7 @@
   --surface: #f8f5ef;
   --surface-sunken: #ebe6dc;
   --surface-hover: #f0ebe2;
+  --surface-turn: var(--gray-100);
   --surface-overlay: #faf8f3;
   --border: #ddd6c8;
   --border-strong: #c9c1b1;
@@ -89,6 +90,7 @@
   --surface: #121519;
   --surface-sunken: #0e1014;
   --surface-hover: #191d23;
+  --surface-turn: var(--gray-200);
   --surface-overlay: #171a20;
   --border: #232830;
   --border-strong: #2f353f;
@@ -162,6 +164,7 @@
   --radius-md: 6px;
   --radius-lg: 8px;
   --radius-xl: 12px;
+  --radius-2xl: 16px;
   --radius-full: 9999px;
   --sidebar: 240px;
   --sidebar-collapsed: 56px;
@@ -173,6 +176,7 @@
   --icon: 16px;
   --minimap: 56px;
   --panel: 480px;
+  --chat-column: 768px;
   --z-sticky: 10;
   --z-sidebar: 20;
   --z-banner: 30;

@@ -96,6 +96,15 @@ rail, [specs/20-chat.md](specs/20-chat.md)) records the owner's answers to its d
   drives the sessions he starts from it. The owner chose to do the redesign now on that basis; principle 1 reads as
   "observe every session; drive only the ones the owner starts here, and nothing in the app talks to an agent on its
   own" until a principle change says it in its own words.
+- **D-chat-1 · Chat shape.** The composer and the owner's turn use `radius-2xl` (16 px, new, chat only), and Send,
+  Stop and the composer's "+" are round (`radius-full`): Shape's "radii are small" and "radius-full only for status
+  badges and dots" do not apply inside the chat's composer and turns.
+- **D-chat-2 · Reading type.** The chat's prose uses the new type style `reading` (15/24) when its container is at
+  least 560 px wide; narrower it keeps `body` 14/22.
+- **D-chat-3 · Scroll-edge fade.** The transcript fades its last 24 px with a transparency `mask-image` (no colour),
+  so text passes under the floating composer: the one gradient, and it means "there is more below".
+- **Tokens.** `surface-turn` (an alias: light `gray-100`, dark `gray-200`; the owner's turn card, never a hover or a
+  selection), `radius-2xl` (16 px) and `chat-column` (768 px) join `tokens.json`.
 
 ## Design system
 

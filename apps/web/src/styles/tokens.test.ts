@@ -181,3 +181,21 @@ describe("Warm sand light theme (AC-428.*)", () => {
     });
   });
 });
+
+// AGH-422: the chat's reading ground and the owner's turn card (surface-turn), in both themes.
+describe("Chat colour pairs (AGH-422)", () => {
+  it.each(["light", "dark"])(
+    "AC-422.8 text reads at 4.5:1 on the owner's turn card (%s)",
+    (theme) => {
+      for (const text of ["text", "text-muted", "text-subtle", "accent"]) {
+        expect({
+          text,
+          ok: contrast(value(text, theme), value("surface-turn", theme)) >= 4.5,
+        }).toEqual({
+          text,
+          ok: true,
+        });
+      }
+    },
+  );
+});
