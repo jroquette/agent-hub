@@ -11,6 +11,15 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- `hub skill-usage [--days 7|30|90]` prints the hub's own skills and agents (its `.claude/skills` and `.claude/agents`)
+  with their runs over 7, 30 and 90 days and their last use, never-used first, as a Markdown table read from the
+  local event store (AGH-482). `/retro` gathers it when the pinned CLI has it; `GET /api/v1/skill-usage` serves the
+  same report.
+- The Portfolio shows the hub's skills and agents with their runs over 7, 30 or 90 days (a switch, 30 days by
+  default), never-used first, with the last use; the first 10 rows, then "Show all" (AGH-482).
+
 ## [0.20.1] - 2026-10-22
 
 ### Added
