@@ -128,7 +128,7 @@ environment; a committed write prints `run ./hub sync to update AGENTS.md`. The 
 
 ### From hub web
 
-The Hub config screen reads and makes the same edits as `hub env` through `GET /projects/{project}/config` (its
+The Environments screens (AGH-417) read and make the same edits as `hub env` through `GET /projects/{project}/config` (its
 `environments`) and `POST /projects/{project}/config/environments` (AGH-416). The edit is checked as a read checks
 both files (each file, then the rules across them) before anything is written, refuses a file changed since it was
 read or a symlinked one, replaces the file through a temporary one, and is never committed: a `hub.json` change waits

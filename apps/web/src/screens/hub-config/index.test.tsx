@@ -113,8 +113,67 @@ function aConfig(overrides: Record<string, unknown> = {}) {
     agent_models: [],
     modules: ["cloud"],
     platform_version: "0.2.0",
+    environments: {
+      environments: [],
+      services: [],
+      blocked_words: [],
+      blocked_files: [],
+      blocked_env: [],
+    },
     ...overrides,
   };
+}
+
+function environment(name: string, access: string, source: string, extra = {}) {
+  return {
+    name,
+    access,
+    production: false,
+    description: null,
+    credentials: null,
+    source,
+    team_access: source === "hub.json" ? access : null,
+    ...extra,
+  };
+}
+
+function withEnvironments() {
+  return aConfig({
+    environments: {
+      environments: [
+        environment("local", "write", "hub.json", { description: "docker compose stack" }),
+        environment("live", "read", "hub.json", {
+          production: true,
+          credentials: { aws_profile: "demo-live-ro", env: ["DEMO_LIVE_DB_URL"] },
+        }),
+        environment("staging", "read", "hub.local.json", { team_access: "write" }),
+        environment("jane-cloud", "write", "hub.local.json"),
+      ],
+      services: [
+        {
+          repo: "demo-api",
+          name: "api",
+          kind: "api",
+          description: null,
+          endpoints: [
+            {
+              environment: "local",
+              endpoint: { url: "http://localhost:8000" },
+              source: "hub.json",
+            },
+            {
+              environment: "jane-cloud",
+              endpoint: { url: "https://api.jane.example.com" },
+              source: "hub.local.json",
+            },
+          ],
+        },
+      ],
+      blocked_words: [],
+      blocked_files: [],
+      blocked_env: [],
+    },
+  });
 }
 
 function References() {
@@ -449,6 +508,23 @@ describe("HubConfigScreen", () => {
 
     // One axe pass once the screen has loaded, as the other screens' checks: inside waitFor its
     // 1 s budget timed a slow pass out on a busy machine.
+    expect(await seriousViolations(container)).toEqual([]);
+  });
+  it("AC-417.11 summarises the environments and links to their page", async () => {
+    open("/projects/demo/config", { [CONFIG]: withEnvironments() });
+
+    const section = await screen.findByRole("region", { name: /Environments/ });
+    expect(within(section).getByText(/4 environments · 1 service/)).toBeVisible();
+    expect(within(section).getByRole("link", { name: "Open Environments" })).toHaveAttribute(
+      "href",
+      "/projects/demo/environments",
+    );
+  });
+
+  it("has no serious a11y violations with environments", async () => {
+    const { container } = open("/projects/demo/config", { [CONFIG]: withEnvironments() });
+    await screen.findByRole("region", { name: /Environments/ });
+
     expect(await seriousViolations(container)).toEqual([]);
   });
 });

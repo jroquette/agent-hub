@@ -7,6 +7,8 @@ import { BrainPickerScreen, BrainScreen } from "./screens/brain";
 import { FeatureDetailScreen } from "./screens/feature-detail";
 import { FeaturesScreen } from "./screens/features";
 import { HealthScreen } from "./screens/health";
+import { EnvironmentsPickerScreen, EnvironmentsScreen } from "./screens/environments";
+import { EnvironmentScreen } from "./screens/environments/EnvironmentPage";
 import { HubConfigPickerScreen, HubConfigScreen } from "./screens/hub-config";
 import { KnowledgePhase3Screen } from "./screens/knowledge-phase3";
 import { LearningsScreen } from "./screens/learnings";
@@ -60,6 +62,9 @@ export const appRoutes: RouteObject[] = [
           { path: "projects/:project/brain/*", element: <BrainScreen /> },
           { path: "projects/:project/config", element: <HubConfigScreen /> },
           { path: "config", element: <HubConfigPickerScreen /> },
+          { path: "projects/:project/environments", element: <EnvironmentsScreen /> },
+          { path: "projects/:project/environment/:name", element: <EnvironmentScreen /> },
+          { path: "environments", element: <EnvironmentsPickerScreen /> },
           { path: "projects/:project/skills", element: <SkillsScreen /> },
           { path: "projects/:project/skills/new/:kind", element: <NewDraftScreen /> },
           { path: "projects/:project/skills/drafts/:draftId", element: <StudioScreen /> },
