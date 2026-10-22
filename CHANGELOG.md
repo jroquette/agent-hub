@@ -11,6 +11,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- The built-in `spike` pack (AGH-492): `/feature` runs a spike as the `spike` workflow (recall, research, 2 or 3
+  options, the owner's pick or a request for more, a premortem of the pick), which writes
+  `brain/features/<slug>/research.md` and an unnumbered ADR draft for `/adr`, changes no code, and ends done, marked
+  incomplete, when its timebox of agent time (`--input timebox=2h` by default) runs out.
+
 ## [0.20.1] - 2026-10-22
 
 ### Added
