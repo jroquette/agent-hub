@@ -407,6 +407,21 @@
   letter-spacing: 0.04em;
   color: var(--text-subtle);
   margin-bottom: 4px;
+  gap: 6px;
+  min-height: 24px;
+}
+.as-tool-meta {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.as-tool-description {
+  margin: 0 0 var(--space-2);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.as-tool-empty {
+  margin: 0;
 }
 .as-tool + .as-perm {
   margin-top: var(--space-2);
@@ -437,6 +452,31 @@
 }
 .as-pre-error {
   color: var(--failed);
+}
+/* Output and commands wrap as a terminal does: no sideways scroll hiding the end of a line. */
+.as-pre-wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* The command as a terminal line (as the permission card's): a `$` prompt the copy leaves out. */
+.as-command {
+  border-left: 2px solid var(--done);
+  font-size: 12.5px;
+}
+.as-command-prompt {
+  color: var(--done);
+  font-weight: 600;
+  user-select: none;
+}
+/* grep/rg output: the path and line number read apart from the matched text. */
+.as-grep-path {
+  color: var(--syntax-title);
+}
+.as-grep-no {
+  color: var(--syntax-number);
+}
+.as-grep-sep {
+  color: var(--text-subtle);
 }
 /* A diff with the file's line numbers: git's two gutters (old, new), kept in view while the code
  * scrolls sideways; each line's tint spans the widest line. */
