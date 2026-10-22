@@ -162,6 +162,7 @@ DESIGN_PATHS = (
     "workflows/incident/fixtures/incident-mitigation-declined.yaml",
     "workflows/incident/fixtures/incident-none-confirmed.yaml",
     "workflows/incident/incident.yaml",
+    "workflows/incident/scripts/check.py",
     "workflows/incident/scripts/evidence.py",
     # AGH-227: the built-in issue-to-pr pack, seeded.
     "workflows/issue-to-pr/fixtures/blocked.yaml",

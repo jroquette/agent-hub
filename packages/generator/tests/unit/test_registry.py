@@ -34,6 +34,7 @@ SEEDED_PACK_FILES = (
     "incident/fixtures/incident-mitigation-declined.yaml",
     "incident/fixtures/incident-none-confirmed.yaml",
     "incident/incident.yaml",
+    "incident/scripts/check.py",
     "incident/scripts/evidence.py",
     "issue-to-pr/fixtures/blocked.yaml",
     "issue-to-pr/fixtures/dirty.yaml",

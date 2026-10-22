@@ -598,6 +598,9 @@
     "workflows/incident/incident.yaml": {
       "ownership": "seeded"
     },
+    "workflows/incident/scripts/check.py": {
+      "ownership": "seeded"
+    },
     "workflows/incident/scripts/evidence.py": {
       "ownership": "seeded"
     },
