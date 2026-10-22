@@ -11,6 +11,14 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- The built-in `brain-care` pack (AGH-487), seeded by `hub sync`: `inbox`, the weekly inbox review (a read-only agent
+  groups `brain/_inbox/` notes, the owner decides each group at its own gate, an external note always alone, then one
+  hub PR with only `brain/` changes), and `context`, the monthly always-loaded context audit (a script names the files
+  past `/context-audit`'s limits; a trim, in a hub PR, only after the owner's approval). `/learn promote` starts `inbox`.
+  Neither writes the tracker.
+
 ## [0.20.1] - 2026-10-22
 
 ### Added
