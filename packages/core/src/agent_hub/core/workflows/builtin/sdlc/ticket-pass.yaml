@@ -315,7 +315,7 @@ nodes:
           required: [schema, reviewer, ticket, task, round, commit, verdict, findings]
           properties:
             schema: {type: string, const: agent-hub/review/1}
-            reviewer: {type: string, enum: [spec, quality]}
+            reviewer: {type: string, enum: [spec, quality, ux, overengineering]}
             ticket: {type: string, pattern: "^[A-Za-z][A-Za-z0-9_-]{0,31}$"}
             task: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}
             round: {type: integer, minimum: 1, maximum: 9999}
@@ -365,7 +365,7 @@ nodes:
           required: [schema, reviewer, ticket, task, round, commit, verdict, findings]
           properties:
             schema: {type: string, const: agent-hub/review/1}
-            reviewer: {type: string, enum: [spec, quality]}
+            reviewer: {type: string, enum: [spec, quality, ux, overengineering]}
             ticket: {type: string, pattern: "^[A-Za-z][A-Za-z0-9_-]{0,31}$"}
             task: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}
             round: {type: integer, minimum: 1, maximum: 9999}

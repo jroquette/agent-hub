@@ -406,7 +406,7 @@
     "plugin/hub-workflow/schemas/review.v1.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "159a25ebc3c2de478e8da585579adfca44cc35129fc552a7fbd51c5607601cdb"
+      "sha256": "b977d65d9a70079ab84a92579d161f08076651b234139fa6779a389199df16df"
     },
     "plugin/hub-workflow/skills/adr/SKILL.md": {
       "executable": false,
