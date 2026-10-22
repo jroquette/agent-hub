@@ -111,12 +111,13 @@ class TestWorktree:
         self, run_workspace: Workspace, run_command: CommandRunner
     ) -> None:
         workspace = run_workspace.workspace
-        checked = workspace.origin_head("demo-api")
+        # Main as last fetched into the clone, as ticket-brief read it; origin has moved since.
+        checked = workspace.git(workspace.ws / "demo-api", "rev-parse", "origin/trunk")
         workspace.advance("demo-api")
 
         result = step(run_command, workspace, "worktree", *ISSUE, "--commit", checked)
 
-        # The fetch brings the newer main; the branch still starts where the preflight looked.
+        # No fetch, no newer main: the branch starts where the preflight looked.
         output = output_of(result)
         assert workspace.git(worktree_of(workspace), "rev-parse", "HEAD") == checked
         assert (output["base"], output["target"]["base"]) == (checked, checked)
@@ -145,7 +146,8 @@ class TestWorktree:
         assert result.exit_code == 1
         missing = "0" * 40
         assert result.stderr.splitlines()[-1] == (
-            f"hub step worktree: {missing} is not in demo-api's clone; run hub step ticket-brief again"
+            f"hub step worktree: {missing} is not in demo-api's clone;"
+            " run hub step ticket-brief again"
         )
         assert not worktree_of(workspace).exists()
 
