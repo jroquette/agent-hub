@@ -577,7 +577,7 @@ def outcome(
     changes: Annotated[str, typer.Option("--changes", help="What changed against the plan.")],
     interfaces: Annotated[str, typer.Option("--interfaces", help="The final interfaces.")],
 ) -> None:
-    """Record the merged ticket's tickets/<ticket>/outcome.md, once (a second run writes nothing)."""
+    """Record the merged ticket's tickets/<ticket>/outcome.md once; a second run writes nothing."""
     hub = _hub()
     _record(
         "outcome",

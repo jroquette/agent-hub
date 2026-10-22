@@ -2,9 +2,9 @@
 merged ticket's outcome (S3).
 
 ``hub step ticket-brief|preflight|change-request|decide|amend-plan|outcome`` call these with the
-hub's main checkout (``pending-decision`` and ``preflight-due`` too, which only read). They write under
-``brain/features/<slug>/`` only and never commit: the run's report names the changed files for
-the owner's hub PR (D-1). The texts and their checks are
+hub's main checkout (``pending-decision`` and ``preflight-due`` too, which only read). They
+write under ``brain/features/<slug>/`` only and never commit: the run's report names the changed
+files for the owner's hub PR (D-1). The texts and their checks are
 ``agent_hub.core.features.ticket_writes``'; here are the reads and writes. No link is followed:
 the feature folder, ``tickets/``, ``change-requests/`` and every file read or replaced must not
 be one. A file that is appended to (``brief.md``, ``preflight.json``, ``plan.md``) is replaced
@@ -362,8 +362,8 @@ def outcome(
         if path.is_symlink():
             raise TicketRecordError(f"{OUTCOME} is a link; no link is followed")
         if path.exists():
-            shown = {"path": _relative(hub, path), "dependents": list(dependents)}
-            return {"written": False, "merged_at": _merged_at(path)} | shown
+            found: dict[str, JsonValue] = {"written": False, "merged_at": _merged_at(path)}
+            return found | {"path": _relative(hub, path), "dependents": list(dependents)}
     try:
         when = aware_time(merged_at, "merged_at")
     except RecordFieldError as error:
@@ -382,8 +382,8 @@ def outcome(
     )
     target = _ticket_folder(folder, planned)
     written = write_exclusive(target, OUTCOME, text)
-    shown = {"path": _relative(hub, target / OUTCOME), "dependents": list(dependents)}
-    return {"written": written, "merged_at": when.isoformat()} | shown
+    done: dict[str, JsonValue] = {"written": written, "merged_at": when.isoformat()}
+    return done | {"path": _relative(hub, target / OUTCOME), "dependents": list(dependents)}
 
 
 def preflight_due(hub: Path, *, feature: str, ticket: str, blocker: str) -> dict[str, JsonValue]:

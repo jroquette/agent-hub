@@ -1101,7 +1101,9 @@ class TestOutcome:
             *("--built", "x" * MAX_OUTCOME_BYTES),
         )
 
-        assert line == f"hub step outcome: the outcome would be larger than {MAX_OUTCOME_BYTES} bytes"
+        assert (
+            line == f"hub step outcome: the outcome would be larger than {MAX_OUTCOME_BYTES} bytes"
+        )
 
     @pytest.mark.parametrize("name", ["tickets", "tickets/T3"])
     def test_refuses_a_linked_folder_when_the_outcome_would_go_through_it(
@@ -1149,9 +1151,7 @@ class TestPreflightDue:
             "merged_at": MERGED_AT,
         }
 
-    def test_says_not_due_when_a_preflight_since_the_merge_read_the_outcome(
-        self, hub: Hub
-    ) -> None:
+    def test_says_not_due_when_a_preflight_since_the_merge_read_the_outcome(self, hub: Hub) -> None:
         self.merged(hub)
         hub.ok("preflight", *TICKET, *found(blockers_read=["T3"]))
         before = hub.tree()

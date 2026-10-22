@@ -12,8 +12,9 @@ when a review record of it is ``approved`` (``current`` while its records only r
 Eval by the latest eval naming it (NO-SHIP is ``blocked``), PR when its review record or an eval
 naming it names a pull request, and Merged when Linear has it ``completed`` or its
 ``tickets/<ticket>/outcome.md`` exists ("Outcome recorded", D-5; ``unknown`` when Linear was not
-read and no outcome is recorded, or when the outcome cannot be read). The flow's one ``signal``: waiting for the owner, then held by another
-ticket's open request, then a re-run needed, then local drift. A record that cannot be read turns
+read and no outcome is recorded, or when the outcome cannot be read). The flow's one ``signal``:
+waiting for the owner, then held by another ticket's open request, then a re-run needed, then
+local drift. A record that cannot be read turns
 only the step it feeds ``unknown``, with its problem.
 
 A step with no evidence reads ``unrecorded`` ("Not recorded") when a later step has some, else
@@ -35,7 +36,7 @@ from agent_hub.core.features.feature_reviews import (
     names_pull_request,
 )
 from agent_hub.core.features.feature_view import EvalRecord, StepState, Verdict
-from agent_hub.core.features.output_models import PreflightRecord
+from agent_hub.core.features.output_models import PreflightRecord, PreflightRun
 from agent_hub.core.features.ticket_planning import DONE_TYPES
 from agent_hub.core.features.ticket_records import (
     FIX_IT,
@@ -232,15 +233,24 @@ def _delivered(
     prs = (*(review.pr for review in reviews), *(pr for record in evals for pr in record.prs))
     if any(names_pull_request(pr) for pr in prs):
         found["pr"] = ("done", None)
-    if isinstance(outcome, str):
-        found["merged"] = ("unknown", outcome)
-    elif outcome is not None:
-        found["merged"] = ("done", OUTCOME_RECORDED)
-    elif merged:
-        found["merged"] = ("done", None)
-    elif evidence.unread is not None:
-        found["merged"] = ("unknown", evidence.unread)
+    step = _merged(outcome, merged=merged, unread=evidence.unread)
+    if step is not None:
+        found["merged"] = step
     return found
+
+
+def _merged(
+    outcome: TicketOutcome | str | None, *, merged: bool, unread: str | None
+) -> _Found | None:
+    """Merged: the ticket's outcome first (its problem makes it unknown), then Linear's
+    ``completed`` (``merged``), else unknown when Linear was not read (``unread``)."""
+    if isinstance(outcome, str):
+        return "unknown", outcome
+    if outcome is not None:
+        return "done", OUTCOME_RECORDED
+    if merged:
+        return "done", None
+    return None if unread is None else ("unknown", unread)
 
 
 def _preflight(
@@ -260,13 +270,8 @@ def _preflight(
     if record is None or not record.runs:
         return None, None
     latest = record.runs[-1]
-    approved = evidence.approved
-    if not merged and approved is not None and latest.plan_version < approved:
-        stale = f"Plan v{approved} approved: re-run preflight"
-        return ("stale", stale), stale
-    blocker = None if merged else _merged_since(row, evidence, latest.ran_at)
-    if blocker is not None:
-        stale = f"{blocker} merged: re-run preflight"
+    stale = None if merged else _stale(latest, row, evidence)
+    if stale is not None:
         return ("stale", stale), stale
     if latest.drift == "plan":
         return ("blocked", "Plan drift"), None
@@ -275,6 +280,16 @@ def _preflight(
         local = f"Local drift · {count} note{'' if count == 1 else 's'}"
         return ("done", local), local
     return ("done", None), None
+
+
+def _stale(latest: PreflightRun, row: TicketRow, evidence: TicketEvidence) -> str | None:
+    """Why a ticket's latest preflight needs a re-run: a newer plan version approved than it
+    checked (AC-2.8), else a blocker merged after it ran (AC-3.3); None when neither."""
+    approved = evidence.approved
+    if approved is not None and latest.plan_version < approved:
+        return f"Plan v{approved} approved: re-run preflight"
+    blocker = _merged_since(row, evidence, latest.ran_at)
+    return None if blocker is None else f"{blocker} merged: re-run preflight"
 
 
 def _merged_since(row: TicketRow, evidence: TicketEvidence, ran_at: datetime) -> str | None:
