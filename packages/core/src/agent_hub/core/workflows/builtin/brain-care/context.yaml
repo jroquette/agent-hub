@@ -1,0 +1,169 @@
+# The monthly context audit (brain-care pack): a script measures the hub's always-loaded text
+# (CLAUDE.md, AGENTS.md and their imports, the always-on rules, skill and agent descriptions) as
+# the context-audit skill's steps 1-2 do, and names every file past a known limit; a read-only
+# agent follows the skill's steps 3-4 and proposes cuts, largest first. The owner sees the
+# script's summary (the files over the limit, verbatim) and the proposal at one gate: trim or
+# skip, with a note. Only on trim does the run add a hub worktree on
+# <branch_prefix>brain-care-context-<run id> from origin/<default branch>, let an agent make the
+# cuts the owner kept there (never a managed file: that changes through hub.json or its seeded
+# sibling), and open a hub PR he merges. The hub only: a repo's files are trimmed in that repo.
+# Nothing reads or writes the tracker (ADR 0030). Suggested schedule: day 1 of each month
+# (hub.json schedules).
+version: 1
+name: context
+description: The monthly context audit - measure the always-loaded text, the owner picks the cuts, one hub PR.
+revision: 1
+nodes:
+  - id: inventory
+    type: script
+    description: The hub's always-loaded text measured (an estimate) and the files past a limit.
+    runtime: python
+    script: inventory.py
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        total_tokens: {type: integer, minimum: 0}
+        files:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            properties:
+              path: {type: string}
+              kind: {type: string}
+              lines: {type: integer, minimum: 0}
+              chars: {type: integer, minimum: 0}
+              tokens: {type: integer, minimum: 0}
+              managed: {type: boolean}
+            required: [path, kind, lines, chars, tokens, managed]
+        over:
+          type: array
+          items:
+            type: object
+            properties:
+              path: {type: string}
+              rule: {type: string}
+              value: {type: integer}
+              limit: {type: integer}
+            required: [path, rule, value, limit]
+        unreadable: {type: array, items: {type: object}}
+        summary: {type: string}
+      required: [total_tokens, files, over, unreadable, summary]
+
+  - id: report
+    type: agent
+    description: The context-audit skill's flags and report on the inventory; it must not change the hub.
+    depends_on: [inventory]
+    context: fresh
+    prompt_file: context-report.md
+    mutates_checkout: false
+    timeout: 30m
+    retry: {max_attempts: 0}
+    with:
+      inventory: $inventory.output
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [summary, cuts]
+      properties:
+        summary: {type: string, minLength: 1, maxLength: 4000}
+        cuts:
+          type: array
+          maxItems: 20
+          items:
+            type: object
+            additionalProperties: false
+            required: [path, what, saved_tokens, managed]
+            properties:
+              path: {type: string, maxLength: 512}
+              what: {type: string, minLength: 1, maxLength: 1000}
+              saved_tokens: {type: integer, minimum: 0}
+              managed: {type: boolean}
+
+  - id: approve
+    type: approval
+    description: The owner picks the cuts (a note keeps some), or skips this month.
+    depends_on: [report]
+    message: |-
+      Context audit of the hub.
+      $inventory.output.summary
+
+      Proposed cuts:
+      $report.output.summary
+
+      trim: a hub PR makes the cuts (your note says which to keep or leave out; a managed file
+      is only reported). skip: nothing changes.
+    decisions:
+      - {id: trim, label: Trim}
+      - {id: skip, label: Skip}
+    capture_response: true
+
+  - id: branch
+    type: script
+    description: The run's hub worktree and branch, from origin's default branch; its PR target.
+    depends_on: [approve]
+    when: "$approve.output.decision == 'trim'"
+    runtime: python
+    script: hub_branch.py
+    args: [--workflow, context]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        path: {type: string}
+        branch: {type: string}
+        base: {type: string}
+        target: {type: object}
+      required: [path, branch, base, target]
+
+  - id: trim
+    type: agent
+    description: Make the cuts the owner kept, in the worktree, as one commit; managed files skipped.
+    depends_on: [branch]
+    context: fresh
+    prompt_file: context-trim.md
+    cwd: $branch.output.path
+    timeout: 30m
+    retry: {max_attempts: 0}
+    with:
+      cuts: $report.output.cuts
+      note: $approve.output.text
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [summary, skipped]
+      properties:
+        summary: {type: string, minLength: 1, maxLength: 4000}
+        skipped: {type: array, maxItems: 20, items: {type: string, maxLength: 512}}
+
+  - id: commits
+    type: shell
+    description: The commits on the branch, and whether a tracked change sits beside them.
+    depends_on: [trim]
+    command: [hub, step, commits, --target, $branch.output.target]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        count: {type: integer, minimum: 0}
+        subjects: {type: array, items: {type: string}}
+        summary: {type: string}
+        dirty: {type: boolean}
+      required: [count, subjects, summary, dirty]
+
+  - id: pr
+    type: shell
+    description: Push the branch and open the hub PR the owner merges (no tracker write).
+    depends_on: [commits]
+    when: "$commits.output.count > 0 && $commits.output.dirty == false"
+    command: [hub, step, pr, --issue, brain-care, --target, $branch.output.target, --summary, $trim.output.summary]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        url: {type: string}
+        found: {type: boolean}
+        summary: {type: string}
+        title_unmatched: {type: [string, "null"]}
+      required: [url, found, summary, title_unmatched]
