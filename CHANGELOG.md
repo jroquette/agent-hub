@@ -23,6 +23,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Changed
 
+- hub web: a workflow's page reads as a step timeline beside a sticky About rail, capped at 1280 px: each step
+  leads with what it does, then its kind, id and what it waits for; conditions and a rounds step's real stop rule
+  are visible text, commands have Copy, prompts fold with Copy, and `j`/`k` move across steps. A node chosen in the
+  graph opens under it at full width. The Toolkit's Workflows tab shows catalog cards like its other tabs (AGH-427).
 - Redaction `r1` skips its four `secret` rules on a text with no name word followed by `=` or a JSON key's `:`,
   which no `secret` rule can match: the same rule set with identical results, about three times faster on note-sized
   prose (AGH-391).

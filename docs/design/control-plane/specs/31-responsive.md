@@ -47,7 +47,7 @@ Below 768 px, every non-glance screen shows: "This view needs a wider screen." �
 | Health | Findings table + rule rail | Rail becomes filter chips row |
 | Knowledge | Tree 280 + note + rail 280 | Tree 240; rail becomes a "Backlinks (4)" popover; Provenance lineage nodes 148 px, effect panels 2 × 2 |
 | Metrics | 2-column chart grid | 1 column below 1360; KPI sparklines hidden |
-| Workflows | Graph + docked step inspector | Inspector overlays; editor panes switch via "Visual | YAML" segmented control |
+| Workflows | Steps timeline + sticky About rail (AGH-427); in Advanced, the chosen node opens under the graph at full width | Under 1200 px the rail moves above the steps; editor panes switch via "Visual | YAML" segmented control |
 | Feature detail (ticket panel, AGH-330) | Ticket panel docked beside the Tickets tab at ≥ 1600 (640 px) | Ticket panel overlays (`panel` 480, `scrim` none, `shadow-overlay`); the page keeps its scroll |
 
 ### Table column priority (hide from the end of the list first)
