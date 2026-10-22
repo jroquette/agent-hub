@@ -621,6 +621,35 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
 - **AC-380.23** Given a chat whose observed twin is on a ticket, when it opens, then its header and breadcrumb read
   the ticket's name from the twin's label (the title once read) and show the feature label.
 
+### Chat redesign: reading anatomy and composer (AGH-422)
+
+Design: [control-plane/specs/20-chat.md](control-plane/specs/20-chat.md#reading-anatomy). It amends the Layout,
+Streaming, Messages and Stop items above where they differ (the column, the caret, the action row, the buttons).
+
+- **AC-422.8 Reading anatomy.** Given a chat, then it reads on `surface` in a 768 px column (`chat-column`, gutters
+  24 px, 32 px from a 1600 px container): Claude's prose flows without a bubble or avatar and stops at 68ch (code,
+  tables and cards take the column), at `reading` 15/24 when the chat is at least 560 px wide and 14/22 narrower;
+  your turn is a `surface-turn` card at `radius-2xl` (16 px), right-aligned, at most 85% of the column (90% narrow);
+  turns keep a 12/24/32 rhythm (16/24 narrow). The time and Copy row lies over the gap under its message on hover
+  or focus (in flow under `hover: none`); thinking, the recap and the review bubble lose their coloured left bars;
+  the review avatar loses its hard-coded colour; no chat text is under 12 px; the transcript's last 24 px fade under
+  the composer (a transparency mask, no colour). Text on `surface-turn` reads at 4.5:1 in both themes.
+- **AC-422.9 Floating composer.** Given the composer, then it is one card (`surface-overlay`, `radius-2xl`, a soft
+  border, the focus shown by an accent-tinted border and halo) that stacks what rides with the message (the Discuss
+  references, the images), the message across its full width (one line to start, growing), then one row of
+  controls: the round "+" and the mode and model pickers on the left, round Stop and Send on the right, named
+  "Stop" / "Send" for screen readers and in their tooltips ("Stop (Esc)"). The send keys show under the card only
+  while it has focus (the warnings always).
+- **AC-422.10 One loop.** Given a turn running, then the chat's only looping motion is the live pulse at
+  `dur-pulse` (2 s): the streaming caret is a breathing dot, the working row, the live bar and the running activity
+  line use it, and the running activity line has no spinner.
+- **AC-422.11 Pickers sized to their value.** Given the composer's mode and model pickers, then each is as wide as
+  the value it shows (the native select lies invisible over it, still the keyboard and screen-reader control), reads
+  as quiet text with a caret, and shows focus as the hover capsule, with no ring left after a click.
+- **AC-422.12 Tall images.** Given a tall or wide image in the composer or in a sent message, then its thumbnail
+  keeps its 72 px tile (cropped, top first), and a sent screenshot shows at most 320 px of its top; the lightbox shows
+  it whole.
+
 ## Invariants
 
 - The platform implements no agent loop and calls no model; the children are the user's own `claude` with its own

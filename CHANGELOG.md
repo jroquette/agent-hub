@@ -72,6 +72,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   lists them. The server keeps no file byte, only each file's name and size in the log. A session's first prompt may
   carry pasted images and files too, so the Discuss panel takes them from its first message. The agent-session
   routes' body cap goes to 160 MiB.
+- hub web's chat reads calmer, in the panel and on its page (AGH-422): Claude's reply flows without a bubble at 15/24
+  in a 768 px column, your turn is a soft card, one pulse is the only motion, and no chat text is under 12 px. The
+  composer is one floating card with round Send, Stop and attach buttons, the Discuss references inside it and the
+  mode and model pickers sized to their value; tall images stay inside their thumbnail.
 - hub web's Discuss panel talks with a feature's own session (the one that wrote its spec, research or plan) from
   the feature's page, with a new conversation one click away (AGH-422). The panel resizes from its left edge (kept per
   browser), docks beside the page from 1280 px and lays over it below, closes with Escape and gives focus back; its

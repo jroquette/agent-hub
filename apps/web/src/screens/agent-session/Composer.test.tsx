@@ -505,6 +505,36 @@ describe("Composer (images)", () => {
   });
 });
 
+describe("Composer (the floating card, AGH-422)", () => {
+  it("AC-422.9 names its round Send and Stop in their tooltips and for screen readers", () => {
+    open({ status: "running" });
+    const send = screen.getByRole("button", { name: "Send" });
+    const stop = screen.getByRole("button", { name: "Stop" });
+    expect(send).toHaveClass("as-round");
+    expect(send).toHaveAttribute("title", "Send");
+    expect(stop).toHaveClass("as-round");
+    expect(stop).toHaveAttribute("title", "Stop (Esc)");
+  });
+
+  it("AC-422.9 shows what rides with the message inside the card, above the box", () => {
+    open({ accessory: <div data-testid="refs">AC-7</div> });
+    const refs = screen.getByTestId("refs");
+    expect(refs.closest("form")).toHaveClass("as-composer");
+    expect(
+      refs.compareDocumentPosition(screen.getByRole("textbox", { name: "Message Claude" })) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("AC-422.11 sizes the mode and model pickers to their value", () => {
+    open({ mode: "acceptEdits", model: "opus" });
+    const mode = screen.getByRole("combobox", { name: "Mode" });
+    const model = screen.getByRole("combobox", { name: "Model" });
+    expect(mode.closest("label")?.querySelector(".as-pill-value")).toHaveTextContent(/edits/i);
+    expect(model.closest("label")?.querySelector(".as-pill-value")).toHaveTextContent("opus");
+  });
+});
+
 describe("Composer (files)", () => {
   const textFile = (name: string, body = "id,name\n1,Ada\n") =>
     new File([body], name, { type: "text/csv" });

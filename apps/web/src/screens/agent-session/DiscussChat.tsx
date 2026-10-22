@@ -1,6 +1,6 @@
 import "./agent-session.css";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 import { ProblemError, Skeleton } from "../../components";
@@ -37,6 +37,8 @@ export interface DiscussChatProps {
   onSent?: (() => void) | undefined;
   /** Where the session's status and cost show, when the caller has a header for them. */
   metaSlot?: HTMLElement | null | undefined;
+  /** Shown inside the composer, above the message (the references it will carry). */
+  composerAccessory?: ReactNode;
 }
 
 export interface DiscussChatViewProps extends DiscussChatProps {
@@ -61,6 +63,7 @@ export function DiscussChatView({
   prepareMessage,
   onSent,
   metaSlot,
+  composerAccessory,
 }: DiscussChatViewProps) {
   const snapshot = useAgentSession(agentSessionId);
   const capabilities = useCapabilities();
@@ -180,6 +183,7 @@ export function DiscussChatView({
             resumable={resumable(session, endReason)}
             acceptsImages
             acceptsFiles
+            accessory={composerAccessory}
           />
         </div>
       </footer>
