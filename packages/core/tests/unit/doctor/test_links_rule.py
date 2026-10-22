@@ -12,12 +12,12 @@ from collections.abc import Callable, Iterator
 
 import pytest
 
-from agent_hub.core.doctor import links_rule
 from agent_hub.core.doctor.finding import Read
 from agent_hub.core.doctor.links_rule import LINKS_DEAD
 from agent_hub.core.doctor.snapshot import DoctorSnapshot
 from agent_hub.core.hub_config.doctor_rules import Severity
 from agent_hub.core.hub_files.tree_snapshot import FileEntry
+from agent_hub.core.knowledge import document_links
 
 type SnapshotFactory = Callable[..., DoctorSnapshot]
 type Shown = tuple[str | None, int | None, str]
@@ -470,7 +470,7 @@ class TestScale:
         self, monkeypatch: pytest.MonkeyPatch, line: str, busy: str
     ) -> None:
         counters = {
-            name: ScanCounter(getattr(links_rule, name))
+            name: ScanCounter(getattr(document_links, name))
             for name in (
                 "_OPENER",
                 "_NOT_BLANK",
@@ -482,10 +482,10 @@ class TestScale:
             )
         }
         for name, counter in counters.items():
-            monkeypatch.setattr(links_rule, name, counter)
+            monkeypatch.setattr(document_links, name, counter)
 
-        visible, _ = links_rule._visible(line, in_comment=False)
-        targets = list(links_rule._inline_targets(visible or ""))
+        visible, _ = document_links._visible(line, in_comment=False)
+        targets = list(document_links._inline_targets(visible or ""))
 
         # Destinations never overlap, so together they are no longer than the line.
         assert sum(len(target) for target in targets) <= len(line)
