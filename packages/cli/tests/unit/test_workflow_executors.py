@@ -120,6 +120,26 @@ def test_runs_claude_in_hub_when_agent_node_called(tmp_path: Path, pack: Path) -
     assert child.calls[0]["cwd"] == tmp_path / "hub"
 
 
+def test_gives_read_only_tools_and_denies_edits_when_agent_node_is_read_only(
+    tmp_path: Path, pack: Path
+) -> None:
+    child = FakeChild([claude_result("ok")])
+
+    executors(tmp_path, pack, child).run(call({**AGENT, "mutates_checkout": False}, prompt="x"))
+
+    argv = child.calls[0]["argv"]
+    allowed = argv[argv.index("--allowedTools") + 1 : argv.index("--disallowedTools")]
+    denied = argv[argv.index("--disallowedTools") + 1 :]
+    assert {"Read", "Grep", "Bash(git show:*)", "Bash(git log:*)"} <= set(allowed)
+    assert not {"Edit", "Write", "Bash(git commit:*)", "Bash(git add:*)", "Bash(make:*)"} & set(
+        allowed
+    )
+    # No shell reader that can run or write (rg --pre, cat > file): the Read and Grep tools read.
+    assert not [tool for tool in allowed if tool.startswith(("Bash(rg", "Bash(grep", "Bash(cat"))]
+    # git's read forms can write with --output: denied wherever it stands.
+    assert {"Edit", "Write", "NotebookEdit", "Bash(git *--output*)"} <= set(denied)
+
+
 def test_gives_session_env_with_node_step_when_agent_node_called(
     tmp_path: Path, pack: Path
 ) -> None:
@@ -231,6 +251,18 @@ def test_runs_own_hub_with_child_env_when_node_is_hub_step(tmp_path: Path, pack:
     assert sent["cwd"] == (tmp_path / "hub").resolve()
     assert sent["env"]["GH_TOKEN"] == GITHUB_VALUE
     assert "LINEAR_API_KEY" not in sent["env"]
+    assert sent["env"]["AGENT_HUB_RUN_ID"] == "1a2b3c4d"
+
+
+def test_gives_the_run_id_over_the_node_env_when_script_node_called(
+    tmp_path: Path, pack: Path
+) -> None:
+    child = FakeChild()
+    spec = {"id": "count", "type": "script", "runtime": "python", "script": "count.py"}
+
+    executors(tmp_path, pack, child).run(call(spec, env={"AGENT_HUB_RUN_ID": "forged"}))
+
+    assert child.calls[0]["env"]["AGENT_HUB_RUN_ID"] == "1a2b3c4d"
 
 
 @pytest.mark.parametrize("case", [("python", ["uv", "run"]), ("sh", ["sh"])])

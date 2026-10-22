@@ -1,6 +1,7 @@
 """``hub step worktree|verdict|commits|pr|report``: ``hub run``'s stages as commands; and
 ``hub step ticket-brief|preflight|change-request|decide|amend-plan``, the ticket records an
-``implement`` run writes into the hub (``step_records``).
+``implement`` run writes into the hub (``step_records``), and ``pending-decision``, the owner's
+decision a new run follows.
 
 The issue-to-pr workflow (ADR 0032) runs them as ``hub step`` nodes. Each prints one JSON object
 on stdout, the ``output_format`` its node declares, and exits 0; a failure is one
@@ -11,7 +12,8 @@ does, before the session, and prints the repo's facts as ``target`` (the worktre
 GitHub repo, gate and conventions); ``commits`` and ``pr`` take that object back as
 ``--target`` and never read ``hub.json`` again, which the session could have edited. A target
 whose path leaves the workspace is refused. ``verdict`` reads the session's reply as ``hub run``
-does (``session_outcome``), from stdin.
+does (``session_outcome``), from stdin, and the ``discovery`` its last JSON line reports (one
+line, ``""`` when none: the ``implement`` workflow loops back to preflight on one).
 
 Tokens are narrowed per call from the caller's environment, as in ``hub run``: git's reads, the
 worktree add and the repo's setup script get ``untrusted_env``; only the fetch, the push and
@@ -21,8 +23,11 @@ writes the tracker: ``report`` only computes the delivery (``delivered``, ``no_c
 parent's (``hub workflow run``, ``hub run``).
 
 The record writers run in the hub's main checkout and never commit; each prints the hub-relative
-``path`` it wrote, and a refusal (a record the readers could not read, a second decision, a
-decision without a person, a plan that moved, a link) is a failure that writes nothing.
+``path`` it wrote (``change-request`` and ``preflight`` take the run's id from
+``AGENT_HUB_RUN_ID``, which the engine gives the run's steps; ``preflight`` builds the run from
+the agent's findings), and a refusal (a record the readers could not read, a
+second decision, a decision without a person, a plan that moved, a link) is a failure that
+writes nothing.
 
 That parent runs its ``hub step`` nodes in process (``run_in_process``): the same code with
 ``hub run``'s children (in the caller's group), timeouts and lines (the worktree's on stdout, a
@@ -35,11 +40,12 @@ import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import sys
 from collections.abc import Callable, Sequence
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Final, NoReturn, TextIO
@@ -62,7 +68,14 @@ from agent_hub.cli.pr_steps import (
     titled_pr,
     unmatched_warning,
 )
-from agent_hub.cli.run_children import CHILD_HIDDEN, RunChildren, push_env, untrusted_env, without
+from agent_hub.cli.run_children import (
+    CHILD_HIDDEN,
+    RUN_ID_VARIABLE,
+    RunChildren,
+    push_env,
+    untrusted_env,
+    without,
+)
 from agent_hub.cli.run_command import refuse_usage
 from agent_hub.cli.run_steps import (
     HOOKS_OFF,
@@ -72,7 +85,7 @@ from agent_hub.cli.run_steps import (
 )
 from agent_hub.cli.ship_steps import ship_child, step_timeouts
 from agent_hub.cli.worktree_steps import check_branches, create_worktree, worktree_task
-from agent_hub.core.features.ticket_writes import TicketRecordError
+from agent_hub.core.features.ticket_writes import PreflightFacts, TicketRecordError
 from agent_hub.core.hub_config.conventions import EffectiveConventions
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.runner.run_record import RunOutcome, Stage
@@ -95,6 +108,10 @@ MAX_REPLY_BYTES: Final = SESSION_OUTPUT_LIMIT
 UNCOMMITTED: Final = "uncommitted changes in the worktree"
 TARGET_TEXTS: Final = ("branch", "base", "default_branch", "github", "gate")
 STOPPED: Final = "the implementing session stopped: "
+# A discovery (a broken plan assumption, implement's loop back to preflight) is one line.
+MAX_DISCOVERY_CHARS: Final = 1000
+FENCE_RUN: Final = re.compile("`{3,}")
+COMMIT: Final = re.compile("[0-9a-f]{7,40}")
 
 step_app = typer.Typer(name=COMMAND, no_args_is_help=True, help="Run one stage of hub run.")
 
@@ -162,15 +179,29 @@ def run_in_process(
 
 
 @step_app.command("worktree")
-def worktree(context: typer.Context, *, issue: Issue, repo: Repo) -> None:
+def worktree(
+    context: typer.Context,
+    *,
+    issue: Issue,
+    repo: Repo,
+    commit: Annotated[
+        str,
+        typer.Option("--commit", help="Start a new branch here (the commit a preflight checked)."),
+    ] = "",
+) -> None:
     """Make (or keep) the issue's worktree in the repo; print its path, branch and prompt texts."""
+    if commit and not COMMIT.fullmatch(commit):
+        raise typer.BadParameter("use a commit id (7 to 40 hex digits)", param_hint="--commit")
     children = _children(context, issue=issue, repo=repo)
     name = "worktree"
     git = shutil.which("git", path=os.environ.get("PATH", ""))
     if git is None:
         _fail(name, "git is not on PATH; install git")
     git = os.path.abspath(git)
-    if os.path.lexists(children.repo_path / ".git"):
+    if commit:
+        # The base is the local commit the preflight checked: no fetch, so no token is used.
+        _local_commit(children, commit)
+    elif os.path.lexists(children.repo_path / ".git"):
         # The fetch is the first call with the GitHub tokens: the clone's config is checked first.
         _guarded(name, children, use="a fetch would use", outcome="nothing was fetched")
     try:
@@ -188,6 +219,9 @@ def worktree(context: typer.Context, *, issue: Issue, repo: Repo) -> None:
             git_timeout=WORKTREE_GIT_TIMEOUT,
             runner=bounded_child,
         )
+        if commit:
+            # The branch starts at the commit the preflight checked, already in the clone.
+            task = replace(task, bases={**task.bases, repo: commit}, fetch=False)
         check_branches(task)
         path = create_worktree(task, repo, echo=_note)
     except (WorktreeError, ChildTimedOutError) as error:
@@ -207,12 +241,12 @@ def worktree(context: typer.Context, *, issue: Issue, repo: Repo) -> None:
         {
             "path": str(path),
             "branch": children.branch,
-            "base": children.base,
+            "base": commit or children.base,
             "hub": str(children.hub),
             "hub_name": children.hub.name,
             "check": children.gate,
             "prompt": dict(parts),
-            "target": _target_value(children, path),
+            "target": _target_value(children, path, base=commit or children.base),
         }
     )
 
@@ -237,8 +271,18 @@ def verdict() -> None:
             "status": RunOutcome.BLOCKED.value if blocked else OutcomeKind.DONE.value,
             "summary": summary if isinstance(summary, str) else "",
             "question": outcome.question,
+            "discovery": _one_line(found.get("discovery")),
         }
     )
+
+
+def _one_line(value: object) -> str:
+    """A text of the reply on one line of at most ``MAX_DISCOVERY_CHARS``, else ``""``."""
+    if not isinstance(value, str):
+        return ""
+    kept = "".join(c for c in value if c.isprintable() or c.isspace())
+    # No run of three backticks: the preflight renders it inside a fence of three.
+    return " ".join(FENCE_RUN.sub("`", kept).split())[:MAX_DISCOVERY_CHARS]
 
 
 @step_app.command("commits")
@@ -380,13 +424,47 @@ def preflight(
     *,
     feature: Feature,
     ticket: Ticket,
-    run: Annotated[str, typer.Option("--run", metavar="JSON", help="One preflight run.")],
+    findings: Annotated[
+        str,
+        typer.Option("--findings", metavar="JSON", help="The agent's drift, notes and blockers."),
+    ],
+    kind: Annotated[
+        str, typer.Option("--input", help="none, discovery, declined_change; a gate's decision.")
+    ],
+    text: Annotated[str, typer.Option("--input-text", help="The discovery, or the note.")] = "",
+    commit: Annotated[
+        str, typer.Option("--commit", help="Main's commit the preflight read (ticket-brief's).")
+    ],
+    request: Annotated[
+        str, typer.Option("--request", help="The change request it opened or re-checked.")
+    ] = "",
+    declined: Annotated[
+        str,
+        typer.Option(
+            "--declined-request", help="The declined request a declined change re-checks."
+        ),
+    ] = "",
 ) -> None:
-    """Append one run to tickets/<ticket>/preflight.json."""
+    """Append one run to tickets/<ticket>/preflight.json, from the preflight's findings."""
+    for value, hint in ((request, "--request"), (declined, "--declined-request")):
+        if value and not (value.isascii() and value.isdecimal()):
+            raise typer.BadParameter("use a request number, or nothing", param_hint=hint)
     hub = _hub()
+    facts = PreflightFacts(
+        ran_at=datetime.now(UTC),
+        plan_version=1,
+        commit=commit,
+        run_id=os.environ.get(RUN_ID_VARIABLE, ""),
+        input=kind,
+        input_text=text,
+        request=int(request) if request else None,
+        declined_request=int(declined) if declined else None,
+    )
     _record(
         "preflight",
-        lambda: step_records.preflight(hub, feature=feature, ticket=ticket, run=run.encode()),
+        lambda: step_records.preflight(
+            hub, feature=feature, ticket=ticket, findings=findings.encode(), facts=facts
+        ),
     )
 
 
@@ -395,28 +473,54 @@ def change_request(
     *,
     feature: Feature,
     ticket: Ticket,
-    run_id: Annotated[str, typer.Option("--run-id", help="The workflow run's id.")],
     evidence: Annotated[str, typer.Option("--evidence", help="What the plan got wrong.")],
     proposal: Annotated[str, typer.Option("--proposal", help="The plan change asked.")],
     affected: Annotated[
-        list[str] | None, typer.Option("--affected", metavar="TICKET", help="An affected ticket.")
-    ] = None,
+        str,
+        typer.Option("--affected", metavar="TICKETS", help="Affected tickets, comma-separated."),
+    ] = "",
+    findings: Annotated[
+        str, typer.Option("--findings", metavar="JSON", help="The preflight's, checked first.")
+    ] = "",
+    commit: Annotated[str, typer.Option("--commit", help="Main's commit it read.")] = "",
 ) -> None:
     """Open change-requests/<n>.md against the plan's current version."""
     hub = _hub()
+    names = [name.strip() for name in affected.split(",")]
+    run_id = os.environ.get(RUN_ID_VARIABLE, "")
+    facts = None
+    if findings:
+        facts = PreflightFacts(
+            ran_at=datetime.now(UTC),
+            plan_version=1,
+            commit=commit,
+            run_id=run_id,
+            input="none",
+            input_text="",
+            request=None,
+        )
     _record(
         "change-request",
         lambda: step_records.change_request(
             hub,
             feature=feature,
             ticket=ticket,
-            affected=affected or (),
+            affected=[name for name in names if name],
             run_id=run_id,
             evidence=evidence,
             proposal=proposal,
             now=datetime.now(UTC),
+            findings=findings.encode(),
+            facts=facts,
         ),
     )
+
+
+@step_app.command("pending-decision")
+def pending_decision(*, feature: Feature, ticket: Ticket) -> None:
+    """Print the owner's decision on the ticket's last change request that no run followed."""
+    hub = _hub()
+    _record("pending-decision", lambda: step_records.pending(hub, feature=feature, ticket=ticket))
 
 
 @step_app.command("decide")
@@ -488,12 +592,12 @@ class StepTarget:
     conventions: EffectiveConventions
 
 
-def _target_value(children: RunChildren, path: Path) -> dict[str, JsonValue]:
+def _target_value(children: RunChildren, path: Path, *, base: str) -> dict[str, JsonValue]:
     conventions = children.conventions
     return {
         "path": str(path),
         "branch": children.branch,
-        "base": children.base,
+        "base": base,
         "default_branch": children.default_branch,
         "github": children.github,
         "gate": children.gate,
@@ -554,6 +658,20 @@ def _children(context: typer.Context, *, issue: str, repo: str) -> RunChildren:
     return RunChildren(
         config=effective.config, hub=hub, repo=repo, issue_id=issue, branch_prefix=prefix
     )
+
+
+def _local_commit(children: RunChildren, commit: str) -> None:
+    """Refuse a ``--commit`` the repo's clone lacks (ticket-brief read it there)."""
+    try:
+        git_output(
+            ship_child(children.repo_path),
+            *("rev-parse", "--verify", "-q", f"{commit}^{{commit}}"),
+            environ=os.environ,
+            timeout=step_timeouts().git,
+        )
+    except PrStepError:
+        why = f"{commit} is not in {children.repo}'s clone; run hub step ticket-brief again"
+        _fail("worktree", why)
 
 
 def _guarded(name: str, children: RunChildren, *, use: str, outcome: str) -> None:

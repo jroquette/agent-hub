@@ -42,6 +42,31 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - Redaction `r1` skips its four `secret` rules on a text with no name word followed by `=` or a JSON key's `:`,
   which no `secret` rule can match: the same rule set with identical results, about three times faster on note-sized
   prose (AGH-391).
+- The built-in `sdlc` pack gains the `implement` workflow and its `ticket-pass` (AGH-404): one planned ticket of a
+  feature to a PR without redoing spec, research or plan. It writes the context brief, then runs a fresh read-only
+  preflight against `origin/<base>` (no checkout, no branch) and appends it to `preflight.json`. On plan drift it
+  opens a change request and pauses for the owner (approve, or decline with a note), writes the decision and the
+  plan's `A<k>` amendment, and checks the ticket again; an approval the plan moved past since is checked again rather
+  than failing. Only once a preflight passed does it make the worktree and branch, write the ticket plan, run the
+  review rounds, loop back to preflight on a discovery (at most twice), evaluate the ticket and open the PR on SHIP or
+  SHIP-WITH-OWNER-STEPS. Its report lists this run's hub files for your hub PR; it never commits them (a failed run's
+  files are left for you to collect with `git status`). A hub that already holds `workflows/sdlc/` runs it from the
+  release.
+- `hub step pending-decision` reads a decision given in `hub web` after a run was lost, and the next run follows it.
+  `hub step preflight` now takes the agent's findings and main's commit (`--findings`, `--commit`, `--input`,
+  `--input-text`, `--request`) and fills the run's time, id and plan version itself (it no longer takes `--run`). `hub step change-request`
+  takes the run's id only from `AGENT_HUB_RUN_ID`, which a workflow's steps and scripts now get (`--run-id` is gone),
+  and `--affected` is one comma-separated value. `hub step verdict` also prints the reply's `discovery`, and
+  `ticket-brief` the hub's path, the ticket's repo and main's commit. A fixture's approval stub may name its `approver`.
+- An approval another amendment overtook is not applied (A23): `amend-plan` says "change request <n> approved but
+  superseded by plan v<k>: not applied", the `implement` run re-checks the ticket in the same pass against the current
+  plan, told so (no discovery loop is spent), records it in the preflight run and lists it in its report under
+  `superseded`; if plan drift remains, the run ends blocked and the next `/implement` opens a new change request
+  (A24). `ticket-brief` reads main's commit once (the preflight reads it, its run records it and the branch
+  starts from it: `hub step worktree --commit`, which needs no fetch) and refuses a ticket whose repo `hub.json` lacks; the run takes the
+  ticket's repo from `features.json`, not an input. A workflow agent marked `mutates_checkout: false` gets the Read,
+  Glob and Grep tools and git's read forms only (no `--output`), and its check compares HEAD too, ignoring the
+  upstream lines a fetch moves and `brain/features/`, which parallel runs write.
 
 ## [0.19.0] - 2026-10-21
 
