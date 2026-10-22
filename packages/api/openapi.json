@@ -7168,6 +7168,42 @@
         ],
         "type": "string"
       },
+      "RepoFileText": {
+        "additionalProperties": false,
+        "description": "``GET /agent-sessions/{id}/repo-changes/file``: a file as it is at one commit (the base a\npull request's diff is read against), so a review can show the lines its diff leaves out.\n``text`` is null for a binary file, one past ``REPO_DIFF_MAX_BYTES`` or one the commit does\nnot have.",
+        "properties": {
+          "binary": {
+            "default": false,
+            "title": "Binary",
+            "type": "boolean"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          }
+        },
+        "required": [
+          "sha",
+          "path"
+        ],
+        "title": "RepoFileText",
+        "type": "object"
+      },
       "RepoPullRequest": {
         "additionalProperties": false,
         "description": "The branch's pull request on GitHub: its number, link, state (``OPEN``, ``MERGED``,\n``CLOSED``) and the commit it is at.",
@@ -12535,6 +12571,82 @@
           }
         },
         "summary": "Get Agent Session Repo Commit Diff",
+        "tags": [
+          "agent-sessions"
+        ]
+      }
+    },
+    "/api/v1/agent-sessions/{agent_session_id}/repo-changes/file": {
+      "get": {
+        "description": "One file of the session's repositories (``path`` absolute) as commit ``sha`` has it: the\nlines a review expands around a pull request's diff.",
+        "operationId": "get_agent_session_repo_file_api_v1_agent_sessions__agent_session_id__repo_changes_file_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "maxLength": 4096,
+              "minLength": 1,
+              "pattern": "^/",
+              "title": "Path",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sha",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{7,40}$",
+              "title": "Sha",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoFileText"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Agent Session Repo File",
         "tags": [
           "agent-sessions"
         ]

@@ -255,6 +255,37 @@ def test_cannot_read_when_the_commit_is_unknown(checkout: tuple[Path, dict[str, 
         GitRepoChanges(environ=env).commit_diff(str(work), sha="0" * 40, paths=["app.py"])
 
 
+def test_reads_a_file_as_the_base_has_it(checkout: tuple[Path, dict[str, str]]) -> None:
+    work, env = checkout
+    reader = GitRepoChanges(environ=env)
+    base = reader.read(str(work), label="w").base_sha
+    assert base is not None
+
+    found = reader.file_text(str(work), sha=base[:7], path="app.py")
+
+    assert (found.sha, found.text, found.binary) == (base, "a\nb\nc\n", False)
+
+
+def test_reads_no_text_when_the_commit_has_no_such_file(
+    checkout: tuple[Path, dict[str, str]],
+) -> None:
+    work, env = checkout
+    reader = GitRepoChanges(environ=env)
+    base = reader.read(str(work), label="w").base_sha
+    assert base is not None
+
+    assert reader.file_text(str(work), sha=base, path="new.py").text is None
+
+
+def test_cannot_read_a_file_when_the_commit_is_unknown(
+    checkout: tuple[Path, dict[str, str]],
+) -> None:
+    work, env = checkout
+
+    with pytest.raises(RepoChangesError):
+        GitRepoChanges(environ=env).file_text(str(work), sha="0" * 40, path="app.py")
+
+
 def _rev(cwd: Path, env: dict[str, str], ref: str) -> str:
     found = subprocess.run(  # noqa: S603
         ["git", "rev-parse", ref],  # noqa: S607

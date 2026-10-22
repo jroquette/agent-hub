@@ -38,7 +38,11 @@ from agent_hub.core.agent_sessions.cloud import CloudSessionCommands
 from agent_hub.core.agent_sessions.control import AgentSessionCommands
 from agent_hub.core.agent_sessions.driver import DriverCapabilities
 from agent_hub.core.agent_sessions.records import LogRecordPage, StreamItem
-from agent_hub.core.agent_sessions.repo_changes import RepoCommitDiff, SessionRepoChanges
+from agent_hub.core.agent_sessions.repo_changes import (
+    RepoCommitDiff,
+    RepoFileText,
+    SessionRepoChanges,
+)
 from agent_hub.core.testing.builders import a_png_bytes
 from agent_hub.core.testing.read_model_builders import (
     AGENT_SESSION_ID,
@@ -69,6 +73,7 @@ QUERIES: dict[str, dict[str, str]] = {
     "/workdirs": {"project": "demo"},
     "/resumable": {"project": "demo", "workdir_id": WORKDIR_ID},
     "/{agent_session_id}/repo-changes/commit": {"path": "/hubs/api/a.py", "sha": "abc1234"},
+    "/{agent_session_id}/repo-changes/file": {"path": "/hubs/api/a.py", "sha": "abc1234"},
 }
 PREFIX = "/api/v1/agent-sessions"
 ROUTES = sorted((method, path.removeprefix(PREFIX)) for method, path in AGENT_SESSION_PATHS)
@@ -114,6 +119,7 @@ def _control() -> Mock:
     control.send.return_value = MessageAccepted(seq=5)
     control.repo_changes.return_value = SessionRepoChanges()
     control.repo_commit_diff.return_value = RepoCommitDiff(sha="a" * 40, path="/hubs/api/a.py")
+    control.repo_file_text.return_value = RepoFileText(sha="a" * 40, path="/hubs/api/a.py")
     for method in ("interrupt", "stop_task", "answer", "change_settings", "close"):
         getattr(control, method).return_value = session
     return control
