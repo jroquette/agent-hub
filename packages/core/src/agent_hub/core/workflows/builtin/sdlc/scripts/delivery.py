@@ -5,8 +5,8 @@
 """The ``implement`` run's delivery: ``hub step report``'s, the ticket eval and its hub files.
 
 ``delivery.py --report JSON --feature SLUG --brief PATH [--eval VERDICT] [--eval-delivery NAME]
-[--request N] [--superseded TEXT]`` runs in the hub's main checkout and prints the report's object plus
-``hub_files``: the files under ``brain/features/<SLUG>/`` that ``git status`` shows changed or
+[--request N] [--superseded TEXT]`` runs in the hub's main checkout and prints the report's
+object plus ``hub_files``: the files under ``brain/features/<SLUG>/`` that ``git status`` shows changed or
 new and that are this run's (D-1: the run never commits them), relative to that folder, sorted.
 This run's are the ticket's folder (the brief's), the eval ``NAME``'s ``evals/`` files, the
 change requests whose ``run_id`` is this run's (``AGENT_HUB_RUN_ID``) or numbered ``N`` (the

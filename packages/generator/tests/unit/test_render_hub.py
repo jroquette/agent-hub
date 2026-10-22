@@ -187,6 +187,7 @@ DESIGN_PATHS = (
     "workflows/sdlc/fixtures/implement-pending-decision-approved.yaml",
     "workflows/sdlc/fixtures/implement-pending-decision-declined.yaml",
     "workflows/sdlc/fixtures/implement-pending-declined-still-plan.yaml",
+    "workflows/sdlc/fixtures/implement-pending-superseded.yaml",
     "workflows/sdlc/fixtures/implement-plan-approved.yaml",
     "workflows/sdlc/fixtures/implement-plan-declined.yaml",
     "workflows/sdlc/fixtures/implement-plan-moved.yaml",
