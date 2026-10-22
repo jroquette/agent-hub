@@ -18,6 +18,7 @@ import { Icon, Markdown, ScreenshotThumb, type IconName } from "../../components
 import { cx } from "../../lib/cx";
 import { fileSize } from "../../lib/messageFile";
 import { JumpToLatest } from "./JumpToLatest";
+import { useDismissDrawer } from "./useDismissDrawer";
 import { MessageMeta } from "./MessageMeta";
 import { RequestCard, type PermissionAnswer } from "./PermissionCard";
 import { OpenReviewFileContext, ReviewBubble } from "./ReviewDiff";
@@ -362,6 +363,10 @@ export function Transcript({
     ).find((element) => element.dataset.runKey === key);
     line?.focus({ preventScroll: true });
   }, [panelRun]);
+  // A click outside the run panel closes it, as it does the other drawers.
+  useDismissDrawer(panelRun !== null && !sideOpen, () => {
+    setPanelRun(null);
+  });
 
   // Opens once, on the loaded transcript (AC-234.17): at the oldest pending permission card,
   // else at the latest entry (the stick-to-bottom hook starts pinned).

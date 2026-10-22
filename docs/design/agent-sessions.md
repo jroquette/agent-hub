@@ -157,7 +157,9 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
   open permission reads "Waiting for you". Output over 10,000 characters is cut with "Show all (N characters)". What
   Claude does between two messages (its calls and the thoughts between them) folds into one activity line that
   opens the Activity side panel (below). Thinking reads "Thought for N s" (from the previous record's `at`), else
-  "Thinking"; thoughts with no call among them stay in the conversation.
+  "Thinking"; thoughts with no call among them stay in the conversation. An expanded call reads like a terminal:
+  a shell command as a `$` line with its description above it, a JSON reply in the JSON viewer, grep output with its
+  paths and line numbers told apart (AGH-423, below).
 - **Permission and question cards** (AGH-264). A pending card is raised, with a warning-tone halo, an icon tile and a
   "Waiting for you" badge; once answered it is flat and its outcome reads as a pill.
   - AC-264.1 A tool card shows what the call is for (the tool input's `description`) under its title, and the
@@ -754,6 +756,56 @@ Skills  [/fix] [/review]
 - **AC-421.7 The chat shows them.** Given a session started with images, when its chat opens, then the first
   prompt's bubble shows the capture, then the images added (kept by this browser for the log's first record, as
   Discuss does, AC-419.13).
+
+### Chat side panels (AGH-423)
+
+The chat's side drawers (Activity, Steps, Background, the review) close on a click outside them, the Steps drawer
+reads as a timeline, and an expanded tool call reads like a terminal. The tool call body's design: what changes is
+the Bash input (description above a wrapped `$` line, bash-coloured, Copy) and the text result (JSON reformatted in
+the JSON viewer, `path:line:` coloured, wrapped, a line count, Copy, "No output"); the card head, states, the diff
+(its gutters keep their sideways scroll), the 10,000-character cut and `StoredCopyLabel` stay. It reuses
+`CopyButton compact`, `JsonViewer` and the lazy highlighter of ADR 0034, moved out of `Markdown.tsx` into the shared
+`useHighlight(text, lang, enabled)` hook (same bounds, same plain fallback); the hljs colour rules apply to any
+`.hljs` element. No new token. The JSON and grep shapes are read from the text itself (a `JSON.parse`, a line
+pattern), not by lowlight guessing a language, so ADR 0034's "no auto-detection" rule for code blocks is kept.
+
+**Drawers**
+
+- **AC-423.1** Given a drawer is open (Activity, Steps, Background or the review), when the reader clicks space
+  outside it that has no action of its own (a message's text, the empty column), then the drawer closes; Escape and
+  its Close button stay the other ways out.
+- **AC-423.2** Given a drawer is open, when the click is inside it or on its resize edge, in a dialog or menu over
+  the page, on something with its own action (a button, a link, the composer, a tab), or ends a text selection, then
+  it stays open.
+- **AC-423.3** Given the Steps drawer was closed by a click outside it, when the chat is loaded again, then it stays
+  closed (`ah.chat.steps`); before the turn has a step there is no Steps drawer to close.
+
+**Steps drawer**
+
+- **AC-423.4** Given the Steps drawer lists a call, then it shows the tool's icon on the thread, what the call is for
+  in Claude's words (a command's `description`, a subagent's task) with its command or path in mono below it, or the
+  tool's name and its summary when there is no description; a thought shows a light bulb.
+- **AC-423.5** Given a call failed, was denied or runs, then its state reads calmly at the row's end: "Failed" or
+  "Denied" with the state's icon in the subtle tone (never red), or a spinner with the running time.
+- **AC-423.6** Given a call with output, then the output folds behind one line ("Output · N lines", "Error output ·
+  N lines") opened on its first lines for a failed call and closed otherwise; "Show all N lines" shows the rest and
+  "Show less" folds it back; a call whose result reads as one digest ("Read 120 lines") shows the digest, no fold.
+- **AC-423.7** Given a turn runs, when the Steps drawer shows its live strip, then the strip names the call running
+  now beside the headline.
+
+**Tool call body (the Activity drawer's expanded call)**
+
+- **AC-423.8** Given a Bash call is expanded, then its input reads "Command" with its description above (when it has
+  one) and a terminal line: a `$ ` the screen reader skips, then the command coloured as bash and wrapped, never
+  scrolled sideways; "Copy command" copies the command without the `$`.
+- **AC-423.9** Given a call's text result is a JSON object or array (after trimming, it parses, under 64 KiB) and not
+  an error, then it shows in the JSON viewer and its label reads "Result · JSON", with no character cut.
+- **AC-423.10** Given a text result where at least 80% of the non-empty lines read as grep output (`path:line:text`,
+  or `path-line-text` for context lines), then each such line shows its path and line number in their own colours,
+  colons kept; other output stays plain.
+- **AC-423.11** Given a text result, then it wraps like a terminal, its label carries the line count ("1 line",
+  "12 lines") and "Copy result" copies the whole text; an empty one reads "No output"; an error's label carries the
+  failed icon before "Error".
 
 ## Invariants
 

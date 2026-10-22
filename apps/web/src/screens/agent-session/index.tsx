@@ -28,6 +28,7 @@ import { LiveActivityBar, StepsPanel } from "./LiveActivityBar";
 import { readStored, writeStored } from "../../lib/storage";
 import { CostMeter } from "./CostMeter";
 import { ChangedFilesChip, FilesPanel, useReviewed } from "./FilesPanel";
+import { useDismissDrawer } from "./useDismissDrawer";
 import { useResolvedThreads } from "./ReviewDiff";
 import { reviewThreads } from "./review";
 import { SessionMenu } from "./SessionMenu";
@@ -227,6 +228,13 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
     setSteps(!liveOpen);
   }, [liveOpen, setSteps]);
   useStepsKey(toggleSteps);
+  // A click outside the open drawer closes it; the Steps drawer then stays closed on the next load.
+  // The Steps drawer shows only once the turn has steps: until then there is nothing to close.
+  const stepsShown = liveOpen && turnSteps(transcript.state).end !== null;
+  useDismissDrawer(filesOpen || backgroundOpen || stepsShown, () => {
+    if (stepsShown) writeStored(STEPS_OPEN_KEY, "closed");
+    closePanels();
+  });
   const openFile = useCallback((path: string | null) => {
     setFilePick((before) => ({ path, nonce: before.nonce + 1 }));
     setLiveOpen(false);

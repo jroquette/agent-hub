@@ -1239,6 +1239,27 @@ describe("AgentSessionScreen (steps-drawer)", () => {
     expect(window.localStorage.getItem("ah.chat.steps")).toBe("open");
   });
 
+  it("AC-423.1, AC-423.2, AC-423.3: a click outside closes Steps, which stays closed on the next load", async () => {
+    window.localStorage.setItem("ah.chat.steps", "open");
+    const first = renderChat();
+    await screen.findByText("Starting.");
+    expect(drawer()).toBeInTheDocument();
+
+    // Inside the drawer, or on something with its own action (the composer), it stays open.
+    await userEvent.click(screen.getByRole("heading", { name: "Steps" }));
+    await userEvent.click(box());
+    expect(drawer()).toBeInTheDocument();
+
+    await userEvent.click(screen.getByText("Starting."));
+    expect(drawer()).toBeNull();
+    expect(window.localStorage.getItem("ah.chat.steps")).toBe("closed");
+
+    first.unmount();
+    renderChat();
+    await screen.findByText("Starting.");
+    expect(drawer()).toBeNull();
+  });
+
   it("AC-PG-32.2, AC-PG-32.4: left open, Steps reopens on load and leaves the keyboard in the composer", async () => {
     window.localStorage.setItem("ah.chat.steps", "open");
     renderChat();
@@ -1498,6 +1519,27 @@ describe("AgentSessionScreen (changed-files)", () => {
     expect(screen.queryByRole("complementary", { name: "Changed files" })).toBeNull();
     expect(screen.getByRole("complementary", { name: "Activity" })).toBeInTheDocument();
   });
+
+  it("AC-423.1: a click on the conversation outside them closes the review and the Activity drawers", async () => {
+    renderChat(
+      routes({
+        [EVENTS]: {
+          items: [...log(), aLogRecord("tool.call", { seq: 4 })],
+          next_after: null,
+        },
+      }),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: /^Review changes:/ }));
+    expect(screen.getByRole("complementary", { name: "Changed files" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByText("Starting."));
+    expect(screen.queryByRole("complementary", { name: "Changed files" })).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: /^Edit/ }));
+    expect(screen.getByRole("complementary", { name: "Activity" })).toBeInTheDocument();
+    await userEvent.click(screen.getByText("Starting."));
+    expect(screen.queryByRole("complementary", { name: "Activity" })).toBeNull();
+  });
 });
 
 describe("AgentSessionScreen (run-files-card)", () => {
@@ -1693,6 +1735,18 @@ describe("AgentSessionScreen (background-tasks)", () => {
 
     const drawer = screen.getByRole("complementary", { name: "Background tasks" });
     expect(within(drawer).getByText("Rerun the checks")).toBeInTheDocument();
+  });
+
+  it("AC-423.1: a click outside the Background drawer closes it", async () => {
+    renderChat(backgroundRoutes());
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Background tasks, 1 running" }),
+    );
+    expect(screen.getByRole("complementary", { name: "Background tasks" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByText("Run the checks in the background."));
+
+    expect(screen.queryByRole("complementary", { name: "Background tasks" })).toBeNull();
   });
 
   it("stops a running task from the drawer with an empty JSON body", async () => {
