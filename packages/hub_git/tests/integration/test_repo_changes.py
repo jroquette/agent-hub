@@ -255,7 +255,9 @@ def test_cannot_read_when_the_commit_is_unknown(checkout: tuple[Path, dict[str, 
         GitRepoChanges(environ=env).commit_diff(str(work), sha="0" * 40, paths=["app.py"])
 
 
-def test_reads_a_file_as_the_base_has_it(checkout: tuple[Path, dict[str, str]]) -> None:
+def test_reads_the_base_s_text_when_a_file_is_read_at_the_base(
+    checkout: tuple[Path, dict[str, str]],
+) -> None:
     # AC-424.8
     work, env = checkout
     reader = GitRepoChanges(environ=env)
