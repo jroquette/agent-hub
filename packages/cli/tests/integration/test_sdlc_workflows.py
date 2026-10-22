@@ -62,6 +62,8 @@ IMPLEMENT_FIXTURES = (
     "implement-plan-moved",
     "implement-pr-failure",
     "implement-rounds-exhausted",
+    "implement-superseded-in-last-pass",
+    "implement-superseded-then-discoveries",
 )
 FIXTURES = (
     "deliver-blocked",
@@ -192,7 +194,7 @@ def test_reaches_the_built_in_fixtures_when_implement_tested_from_a_hub_with_a_s
     for fixture in IMPLEMENT_FIXTURES:
         assert f"<builtin>/sdlc/fixtures/{fixture}.yaml: ok" in tested.stdout
     assert "warning" not in tested.stdout
-    assert tested.stdout.endswith("17 fixtures: 17 passed, 0 failed\n")
+    assert tested.stdout.endswith("19 fixtures: 19 passed, 0 failed\n")
 
 
 def test_captures_a_decline_note_when_the_owner_answers_the_plan_change_gate() -> None:
@@ -547,7 +549,8 @@ SUPERSEDED = "change request 1 approved but superseded by plan v2: not applied"
                     ("--commit", "0a1b2c3d4e"),
                 },
                 "pass-1__request": {("--commit", "0a1b2c3d4e")},
-                "pass-1__worktree": {("--repo", "demo-api")},
+                # The branch starts at the commit the preflight checked, not a newer main.
+                "pass-1__worktree": {("--repo", "demo-api"), ("--commit", "0a1b2c3d4e")},
                 "pass-1__approved": {("--decision", "approved"), ("--by", "Dana Owner")},
                 "pass-1__amend": {("--request", "1"), ("--summary", "T2 goes through routes.py")},
                 "pass-1__rerecord": {("--input", "approve"), ("--request", "1")},
@@ -557,10 +560,11 @@ SUPERSEDED = "change request 1 approved but superseded by plan v2: not applied"
         (
             "implement-plan-moved",
             {
-                # The approval the plan moved past reaches the next check and the report (A23).
+                # The approval the plan moved past is re-checked in its pass, told why (A23); the
+                # writer records it (the request named), and the report says it.
+                "pass-1__recheck": {("$WITH.input", "approve"), ("$WITH.superseded", SUPERSEDED)},
+                "pass-1__rerecord": {("--input", "approve"), ("--request", "1")},
                 "pass-1__outcome": {("--superseded", SUPERSEDED)},
-                "pass-2__preflight": {("$WITH.input", "none"), ("$WITH.note", SUPERSEDED)},
-                "pass-2__record": {("--input", "none"), ("--input-text", SUPERSEDED)},
                 "delivery": {("--superseded", SUPERSEDED)},
             },
         ),
@@ -596,6 +600,8 @@ SUPERSEDED = "change request 1 approved but superseded by plan v2: not applied"
                 "pass-1__record": {
                     ("--input", "declined_change"),
                     ("--input-text", "Keep T2 on the current handler."),
+                    # The request pending found, which may be one no run named.
+                    ("--declined-request", "1"),
                 },
             },
         ),
@@ -636,16 +642,10 @@ STILL_PLAN = (
     [
         ("", "", "", {"status": "blocked", "question": STILL_PLAN, "target": None}),
         (
-            "",
-            "",
+            a_rounds(),
+            json.dumps(WORKTREE),
             SUPERSEDED,
-            {
-                "status": "superseded",
-                "next_input": "none",
-                "next_text": SUPERSEDED,
-                "superseded": SUPERSEDED,
-                "target": None,
-            },
+            {"status": "done", "verdict": "PASS", "superseded": SUPERSEDED, **WORKTREE},
         ),
         (
             a_rounds(status="blocked", verdict=None),
@@ -689,7 +689,7 @@ def test_says_how_the_pass_ended_when_pass_outcome_script_reads_the_rounds(
 
 
 def a_pass(status: str, *, text: str = "", verdict: str = "", superseded: str = "") -> str:
-    following = {"discovery": "discovery", "superseded": "none"}.get(status, "")
+    following = "discovery" if status == "discovery" else ""
     found = {
         "status": status,
         "question": "",
@@ -709,14 +709,23 @@ def a_pass(status: str, *, text: str = "", verdict: str = "", superseded: str = 
             {"status": "done", "verdict": "PASS", "pass": 1},
         ),
         (
-            (a_pass("superseded", text=SUPERSEDED, superseded=SUPERSEDED), a_pass("done"), ""),
+            (a_pass("discovery", text="A.", superseded=SUPERSEDED), a_pass("done"), ""),
             {"status": "done", "pass": 2, "superseded": f"{SUPERSEDED}; {SUPERSEDED}"},
+        ),
+        (
+            # A superseded approval spends no loop: only discoveries count (D-3).
+            (
+                a_pass("discovery", text="A.", superseded=SUPERSEDED),
+                a_pass("discovery", text="B."),
+                a_pass("done", verdict="PASS"),
+            ),
+            {"status": "done", "verdict": "PASS", "pass": 3, "superseded": SUPERSEDED},
         ),
         (
             (a_pass("discovery"), a_pass("discovery"), a_pass("discovery", text="C.")),
             {
                 "status": "blocked",
-                "question": "pass 3, the last one, asks for another: C.",
+                "question": "a discovery in pass 3, the last one: C.",
                 "pass": 3,
             },
         ),
@@ -726,7 +735,7 @@ def test_reads_the_last_pass_and_blocks_a_third_loop_when_last_pass_script_runs(
     tmp_path: Path, *, passes: tuple[str, ...], expected: dict[str, Any]
 ) -> None:
     # The pending decision's superseded approval comes first.
-    args = ["--superseded", SUPERSEDED if "superseded" in expected else ""]
+    args = ["--superseded", SUPERSEDED if expected.get("pass") == 2 else ""]
     args += [item for text in passes for item in ("--pass", text)]
 
     result = a_script("last_pass.py", *args, cwd=tmp_path)

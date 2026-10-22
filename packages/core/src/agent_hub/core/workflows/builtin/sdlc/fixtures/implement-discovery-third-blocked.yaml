@@ -131,7 +131,7 @@ stubs:
   last:
     output:
       status: blocked
-      question: 'pass 3, the last one, asks for another: Discovery 3: the plan''s T3 contract is not what
+      question: 'a discovery in pass 3, the last one: Discovery 3: the plan''s T3 contract is not what
         main holds.'
       verdict: ''
       pass: 3
@@ -140,17 +140,17 @@ stubs:
       target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
       superseded: ''
   report:
-    output: {delivery: blocked, stage: implementing, reason: 'the implementing session stopped: pass 3,
-        the last one, asks for another: Discovery 3: the plan''s T3 contract is not what main holds.',
-      question: 'pass 3, the last one, asks for another: Discovery 3: the plan''s T3 contract is not what
-        main holds.', pr: '', summary: ''}
+    output: {delivery: blocked, stage: implementing, reason: 'the implementing session stopped: a discovery
+        in pass 3, the last one: Discovery 3: the plan''s T3 contract is not what main holds.', question: 'a
+        discovery in pass 3, the last one: Discovery 3: the plan''s T3 contract is not what main holds.',
+      pr: '', summary: ''}
   delivery:
     output:
       delivery: blocked
       stage: implementing
-      reason: 'the implementing session stopped: pass 3, the last one, asks for another: Discovery 3:
-        the plan''s T3 contract is not what main holds.'
-      question: 'pass 3, the last one, asks for another: Discovery 3: the plan''s T3 contract is not what
+      reason: 'the implementing session stopped: a discovery in pass 3, the last one: Discovery 3: the
+        plan''s T3 contract is not what main holds.'
+      question: 'a discovery in pass 3, the last one: Discovery 3: the plan''s T3 contract is not what
         main holds.'
       pr: ''
       summary: ''
