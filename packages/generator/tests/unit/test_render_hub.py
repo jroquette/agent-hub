@@ -156,6 +156,8 @@ DESIGN_PATHS = (
     "scripts/mine_transcripts.py",
     "scripts/recall_transcripts.py",
     "scripts/retro_metrics.py",
+    # AGH-489: the built-in backlog-care pack, seeded.
+    "workflows/backlog-care/scripts/read.py",
     # AGH-227: the built-in issue-to-pr pack, seeded.
     "workflows/issue-to-pr/fixtures/blocked.yaml",
     "workflows/issue-to-pr/fixtures/dirty.yaml",
@@ -838,6 +840,8 @@ def test_parses_as_python39_when_rendered(demo_render: dict[str, RenderedFile]) 
         "scripts",
         # The sdlc pack's helpers (AGH-229), run by uv on its Python, also parse as 3.9.
         "workflows/sdlc/scripts",
+        # And the backlog-care pack's (AGH-489).
+        "workflows/backlog-care/scripts",
     }
 
 
