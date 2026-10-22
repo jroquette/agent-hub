@@ -64,7 +64,9 @@ export function SidePanel({
   // a Close button inside), gives focus back to the opener as it is at close (a panel switched in
   // place, or a toggled view, updates it), unless the reader already moved it elsewhere on the page.
   useEffect(() => {
-    const chosen = opening.current ? panel.current?.querySelector<HTMLElement>(opening.current) : null;
+    const chosen = opening.current
+      ? panel.current?.querySelector<HTMLElement>(opening.current)
+      : null;
     (chosen ?? heading.current)?.focus({ preventScroll: true });
   }, []);
   usePanelDismiss(panel, onClose, { opener: () => openerRef.current });

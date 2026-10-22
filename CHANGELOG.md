@@ -40,6 +40,20 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - Redaction `r1` skips its four `secret` rules on a text with no name word followed by `=` or a JSON key's `:`,
   which no `secret` rule can match: the same rule set with identical results, about three times faster on note-sized
   prose (AGH-391).
+- `hub web`: the owner can mark an acceptance criterion they checked by hand as passing, from its card in the
+  Acceptance criteria tab (AGH-425). It writes an owner sign-off eval over that AC only; the AC then reads "Signed
+  off" and counts as passing even though `features.json` still says it does not. `POST .../owner-signoff` takes
+  `acs` for it, with the sign-off's usual refusals.
+- The `/summarize` skill repeats every open question of a record in its summary, in plain words with its context and
+  options, and `hub web` shows those questions above the Approve bar while the summary is current (AGH-425). It
+  arrives with `hub sync` after you bump `platform.version`.
+
+### Changed
+
+- `hub web` feature page (AGH-425): an approved spec, research or plan says it is approved instead of offering the
+  approval again; the tabs read Spec, Research, Plan, Acceptance criteria, Tickets, Eval; the header no longer shows
+  ticket chips (the Tickets tab has them); each feature's fixed label, its slug, shows beside its name on its page
+  and in the Features list.
 
 ## [0.19.0] - 2026-10-21
 

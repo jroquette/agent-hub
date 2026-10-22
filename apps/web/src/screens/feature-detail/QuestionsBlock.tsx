@@ -2,14 +2,16 @@ import { useId, useMemo, useRef, useState } from "react";
 
 import { Button, Icon, Markdown, OptionRow, type IconName } from "../../components";
 import { useApi } from "../../lib/api";
-import { useBrainNote } from "../brain/queries";
+import { useBrainNote, useBrainTree } from "../brain/queries";
 import {
   openQuestions,
   outcomeOf,
+  questionsToShow,
   type Answers,
   type OpenQuestion,
   type Outcome,
 } from "./openQuestions";
+import { summaryPath, summaryState } from "./RecordSummary";
 
 import "./questions.css";
 
@@ -47,6 +49,26 @@ function clipLine(text: string, max: number): string {
 /** A text on one line, for the folded row's second line. */
 function oneLine(text: string): string {
   return text.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * A record's open questions as the owner reads them: from its human summary while that summary is
+ * current (its plain-words questions carry the context the record leaves to its AC and decision
+ * ids), else from the record. `recordPath` is under `brain/`.
+ */
+export function useOpenQuestions(project: string, recordPath: string): readonly OpenQuestion[] {
+  const record = useBrainNote(project, recordPath);
+  const path = summaryPath(recordPath);
+  const tree = useBrainTree(project);
+  const listed = tree.data?.entries.some((entry) => entry.path === path) === true;
+  const summary = useBrainNote(project, path, listed);
+  return useMemo(() => {
+    const markdown = record.data?.markdown;
+    if (!markdown) return [];
+    const own = openQuestions(markdown);
+    const current = summary.data && summaryState(summary.data, record.data) === "fresh";
+    return current ? questionsToShow(own, openQuestions(summary.data.markdown)) : own;
+  }, [record.data, summary.data]);
 }
 
 /**
@@ -312,11 +334,9 @@ function Question({
  * says it is there and takes the owner to it (scrolls to and focuses its heading).
  */
 export function QuestionsLink({ project, path }: { project: string; path: string }) {
-  const note = useBrainNote(project, path);
+  const count = useOpenQuestions(project, path).length;
   // The block shows only with session control (ApproveRecord): without it, nothing to reach.
   const sessions = useApi("/api/v1/agent-sessions", { query: { project } }, { retry: false });
-  const markdown = note.data?.markdown;
-  const count = useMemo(() => (markdown ? openQuestions(markdown).length : 0), [markdown]);
   if (count === 0 || !sessions.isSuccess) return null;
   return (
     <a

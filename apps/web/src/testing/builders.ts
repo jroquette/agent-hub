@@ -774,6 +774,7 @@ export function anAcRow(overrides: Partial<Schemas["AcRow"]> = {}): Schemas["AcR
     manual: false,
     passes: true,
     repo: "agent-hub",
+    signed_off: false,
     ...overrides,
   };
 }

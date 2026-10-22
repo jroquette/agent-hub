@@ -182,20 +182,10 @@
 .ft-row-title:hover {
   text-decoration: underline;
 }
-/* A nickname reads as a name, in the UI font; the slug follows it, mono and quiet. */
+/* A nickname reads as a name, in the UI font; the fixed label (the slug) follows it. */
 .ft-row-title[data-named] {
   font-family: var(--font-sans);
   font-weight: 600;
-}
-.ft-row-slug {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--text-subtle);
 }
 .ft-row[data-muted] .ft-row-title {
   font-weight: 400;
