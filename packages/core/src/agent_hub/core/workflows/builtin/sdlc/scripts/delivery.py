@@ -6,15 +6,15 @@
 
 ``delivery.py --report JSON --feature SLUG --brief PATH [--eval VERDICT] [--eval-delivery NAME]
 [--request N] [--superseded TEXT]`` runs in the hub's main checkout and prints the report's
-object plus ``hub_files``: the files under ``brain/features/<SLUG>/`` that ``git status`` shows changed or
-new and that are this run's (D-1: the run never commits them), relative to that folder, sorted.
-This run's are the ticket's folder (the brief's), the eval ``NAME``'s ``evals/`` files, the
-change requests whose ``run_id`` is this run's (``AGENT_HUB_RUN_ID``) or numbered ``N`` (the
-decision a lost run left), with their decisions, and ``plan.md`` (whose changes may include
-another run's amendment), and ``superseded``: ``TEXT``, each approval the plan moved past
-("change request n approved but superseded by plan vN: not applied", A23), so the owner sees
-it. A ``NO-SHIP`` eval names itself as the reason no PR was opened. Text
-that is not JSON, a bad slug or a git that fails exits 2.
+object plus ``hub_files`` and ``superseded``. ``hub_files`` are the files under
+``brain/features/<SLUG>/`` that ``git status`` shows changed or new and that are this run's (D-1:
+the run never commits them), relative to that folder, sorted: the ticket's folder (the
+brief's), the eval ``NAME``'s ``evals/`` files, the change requests whose ``run_id`` is this
+run's (``AGENT_HUB_RUN_ID``) or numbered ``N`` (the decision a lost run left), with their
+decisions, and ``plan.md`` (whose changes may include another run's amendment).
+``superseded`` is ``TEXT``: each approval the plan moved past ("change request n approved but
+superseded by plan vN: not applied", A23), so the owner sees it. A ``NO-SHIP`` eval names itself
+as the reason no PR was opened. Text that is not JSON, a bad slug or a git that fails exits 2.
 """
 
 import argparse
