@@ -182,9 +182,24 @@ function NodeCard({
   const kind = stepKind(step.type);
   const titled = step.description !== null && step.description.trim() !== "";
   const badges = badgesOf(step);
+  const describedId = useId();
+  const when = typeof step.doc?.when === "string" ? step.doc.when : null;
+  const waits = step.depends_on.map((id) => (step.group ? id.slice(step.group.length + 2) : id));
+  const described = [
+    waits.length > 0 ? `Waits for ${waits.join(", ")}.` : "",
+    when ? `Only when ${when}.` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   return (
     <li className="wf-col-item">
+      {described && (
+        <span id={describedId} hidden>
+          {described}
+        </span>
+      )}
       <button
+        aria-describedby={described ? describedId : undefined}
         type="button"
         id={nodeDomId(step.id)}
         className="wf-node"
@@ -393,9 +408,10 @@ function Minimap({
   kindOf: (id: string) => { group: boolean; kind: string; state: string | undefined };
   onCentre: (x: number, y: number) => void;
 }) {
-  const W = 176;
-  const H = 112;
-  const m = Math.min(W / size.width, H / size.height);
+  // Sized to the world's shape, within 176 x 112, so it covers no more of the canvas than it needs.
+  const m = Math.min(176 / size.width, 112 / size.height);
+  const W = Math.max(48, Math.round(size.width * m));
+  const H = Math.max(32, Math.round(size.height * m));
   const ox = (W - size.width * m) / 2;
   const oy = (H - size.height * m) / 2;
   const at = (event: ReactPointerEvent<SVGSVGElement>) => {
@@ -532,7 +548,16 @@ function GraphCanvas<N extends GraphNode>({
     const target = selected ?? focusFirst ?? null;
     const box = target ? boxes[target] : undefined;
     if (box) {
-      pz.setView(centreOn(box, viewport, 1));
+      // A rounds frame can be wider than the canvas: centre on its head, from its left edge.
+      const head = model.groups.has(target ?? "")
+        ? {
+            left: box.left,
+            right: Math.min(box.right, box.left + viewport.width * 0.8),
+            top: box.top,
+            bottom: Math.min(box.bottom, box.top + 120),
+          }
+        : box;
+      pz.setView(centreOn(head, viewport, 1));
       placed.current = true;
       return;
     }
@@ -542,6 +567,12 @@ function GraphCanvas<N extends GraphNode>({
       placed.current = true;
       return;
     }
+    if (!triedClosing.current && open.size > 0) {
+      // Too big to read whole: close the rounds and look again.
+      triedClosing.current = true;
+      closeAll();
+      return;
+    }
     if (rows.length > 1) {
       // Wrapped rows: the full width, from the top.
       const k = Math.max(MIN_ZOOM, Math.min(1, viewport.width / size.width));
@@ -549,15 +580,9 @@ function GraphCanvas<N extends GraphNode>({
       placed.current = true;
       return;
     }
-    if (!triedClosing.current && open.size > 0) {
-      // Too big to read whole: close the rounds and look again.
-      triedClosing.current = true;
-      closeAll();
-      return;
-    }
     pz.setView({ k: 0.8, x: 0, y: Math.max(0, (viewport.height - size.height * 0.8) / 2) });
     placed.current = true;
-  }, [boxes, size, viewport, selected, focusFirst, open, closeAll, pz, rows.length]);
+  }, [boxes, size, viewport, selected, focusFirst, open, closeAll, pz, rows.length, model.groups]);
 
   // The chain of the chosen step, or the direct edges of the one under the pointer or focus.
   const [hover, setHover] = useState<string | null>(null);
@@ -651,13 +676,27 @@ function GraphCanvas<N extends GraphNode>({
     switch (event.key) {
       case "ArrowRight": {
         const body = model.groups.get(id);
-        to = body && open.has(id) ? body[0]?.[0]?.id : next[0];
+        if (body && !open.has(id)) {
+          // A closed rounds frame opens first, as a tree item does.
+          event.preventDefault();
+          toggle(id);
+          return;
+        }
+        to = body ? body[0]?.[0]?.id : next[0];
         if (!to && step?.group) to = neighbours(edges, step.group).next[0];
         break;
       }
-      case "ArrowLeft":
+      case "ArrowLeft": {
+        const held = keepOpen.some((k) => k != null && model.steps.get(k)?.group === id);
+        if (model.groups.has(id) && open.has(id) && !held) {
+          // An open rounds frame closes first.
+          event.preventDefault();
+          toggle(id);
+          return;
+        }
         to = previous[0] ?? step?.group ?? undefined;
         break;
+      }
       case "ArrowDown":
       case "ArrowUp": {
         const column = columns.find((col) => col.includes(id)) ?? [];
@@ -706,6 +745,19 @@ function GraphCanvas<N extends GraphNode>({
     return <NodeCard key={step.id} {...common} />;
   };
 
+  // The lane of each edge that crosses to a later row: its rank among those leaving the same row.
+  const lanes = new Map<string, number>();
+  {
+    const perRow = new Map<number, number>();
+    for (const [from, to] of edges) {
+      const ra = rowOf.get(from);
+      const rb = rowOf.get(to);
+      if (ra === undefined || rb === undefined || rb <= ra) continue;
+      const n = perRow.get(ra) ?? 0;
+      lanes.set(`${from}→${to}`, (n % 5) - 2);
+      perRow.set(ra, n + 1);
+    }
+  }
   /** A curve within a row; a routed line back to the start of a later row. */
   const edgePath = (from: string, to: string): string => {
     const a = boxes[from];
@@ -718,8 +770,13 @@ function GraphCanvas<N extends GraphNode>({
         const below = boxes[`row:${String(r + 1)}`];
         return above && below ? (above.bottom + below.top) / 2 : a.bottom + 36;
       };
-      if (rb === ra + 1) return wrapPath(a, b, gap(ra));
-      return wrapPath(a, b, gap(ra), 10, { gapAbove: gap(rb - 1), gutter: WORLD_PAD / 2 });
+      // Parallel lines get their own lane, 5 px apart, so each can be followed.
+      const lane = (lanes.get(`${from}→${to}`) ?? 0) * 5;
+      if (rb === ra + 1) return wrapPath(a, b, gap(ra) + lane);
+      return wrapPath(a, b, gap(ra) + lane, 10, {
+        gapAbove: gap(rb - 1) - lane,
+        gutter: WORLD_PAD / 2 - lane,
+      });
     }
     return curvePath(a, b);
   };
@@ -851,7 +908,8 @@ function GraphCanvas<N extends GraphNode>({
           </div>
         )}
         <span id={hintId} className="ah-sr">
-          Arrow keys follow the arrows, Enter opens a step, plus and minus zoom, 0 fits the graph.
+          Arrow keys follow the arrows, right opens and left closes a rounds frame, Enter opens a
+          step, plus and minus zoom, 0 fits the graph.
         </span>
         {overlay && <div className="wf-canvas-overlay">{overlay}</div>}
         {!empty && (

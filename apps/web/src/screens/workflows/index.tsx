@@ -441,13 +441,23 @@ function StepInspector({
         <div>
           <dt className="ah-caption">Waits for</dt>
           <dd>
-            <StepChipList ids={previous} steps={model.steps} onOpen={onOpen} none="Starts first" />
+            <StepChipList
+              ids={previous}
+              steps={model.steps}
+              onOpen={onOpen}
+              none={step.group ? "Starts the round" : "Starts first"}
+            />
           </dd>
         </div>
         <div>
           <dt className="ah-caption">Leads to</dt>
           <dd>
-            <StepChipList ids={next} steps={model.steps} onOpen={onOpen} none="Ends the run" />
+            <StepChipList
+              ids={next}
+              steps={model.steps}
+              onOpen={onOpen}
+              none={step.group ? "Ends the round" : "Ends the run"}
+            />
           </dd>
         </div>
         {condition && (
@@ -604,6 +614,7 @@ function DetailBody({ workflow }: { workflow: WorkflowDetail }) {
             selected={selected?.id ?? null}
             onSelect={node.open}
             onClose={node.close}
+            wheel={laptop ? "pan" : "page"}
             panel={inspector ?? (laptop ? <About workflow={workflow} view={view} /> : null)}
           />
         </>
