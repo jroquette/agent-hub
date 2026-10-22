@@ -178,6 +178,7 @@ _BASE_SKILLS: Final = (
     "feature",
     "fix",
     "handoff",
+    "implement",
     "incident",
     "kickoff",
     "learn",
