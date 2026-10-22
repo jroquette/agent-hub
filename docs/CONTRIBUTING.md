@@ -208,13 +208,14 @@ gate, merge the version PR, and merge the hub pin PR. The agent does the rest:
    gh run watch <run id> --exit-status
    ```
 
-   The run id comes from the run URL `gh workflow run` prints. When it prints none, the run is the one in
-   `gh run list --workflow release.yml --event workflow_dispatch --json databaseId,displayTitle,createdAt` whose
-   title is `release vX.Y.Z at <full sha>` (the workflow's `run-name`) and that was created after the dispatch: the
-   newest run may be the previous release's. Inputs are capped at 65,535 characters: longer notes get their sync list
+   Before dispatching, record the ids of the runs in
+   `gh run list --workflow release.yml --event workflow_dispatch --json databaseId,displayTitle` whose title is
+   `release vX.Y.Z at <full sha>` (the workflow's `run-name`). The run id comes from the run URL `gh workflow run`
+   prints; when it prints none, the run is the one with that title whose id is not in that set: the newest run may be
+   the previous release's. Inputs are capped at 65,535 characters: longer notes get their sync list
    trimmed to a summary, and the hub PR keeps the full list.
 
-   Its `release-tag` job runs only on a dispatch from `main` and refuses a malformed version or SHA, empty notes, a commit not on `main`, a commit whose cli
+   Its `release-tag` job fails on a dispatch from any ref but `main` and refuses a malformed version or SHA, empty notes, a commit not on `main`, a commit whose cli
    and meta versions differ from `X.Y.Z` (`scripts/check_release.py` on that commit's files) and a tag that already
    exists. Then it runs `git tag -a vX.Y.Z --cleanup=verbatim -F <notes> <sha>` as `github-actions[bot]` and pushes
    that one tag. A tag pushed with `GITHUB_TOKEN` starts no other workflow, so `release-check` runs next in the same

@@ -15,8 +15,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 - `release.yml` creates the release tag when dispatched (AGH-455, ADR 0047): `gh workflow run release.yml -f version=X.Y.Z
   -f sha=<full sha> -f notes=…` checks the version, that the commit is on `main` and declares that version, and that
-  the tag is new, then pushes the annotated tag with the notes as its message, and runs the release checks on it. A
-  tag pushed by hand is still checked. The `/release` skill opens the version PR itself, dispatches the workflow and
+  the tag is new, then pushes the annotated tag with the notes as its message, and runs the release checks on it. The
+  tag is created only on a dispatch from `main` (any other ref fails the run), and the run is named
+  `release vX.Y.Z at <sha>`. A tag pushed by hand is still checked. The `/release` skill opens the version PR itself, dispatches the workflow and
   watches its run; a platform repo without such a workflow still gets the commands printed for the owner.
 - An environment's page in `hub web` offers "Find services with Claude" (AGH-418): pick the repos and environments,
   and a read-only Claude session starts on the click; its progress shows the cost, the conversation and Stop. The

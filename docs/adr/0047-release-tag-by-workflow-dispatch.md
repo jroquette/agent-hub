@@ -34,10 +34,10 @@ this rule; it is not set up yet (the owner's choice), so today the rule and the 
 
 - `release.yml` gains a `workflow_dispatch` trigger with three inputs: `version` (`X.Y.Z`), `sha` (the full commit)
   and `notes` (the release notes, the tag message). The inputs reach the shell only through `env:`.
-- Its `release-tag` job runs only on a dispatch from `main`, with `contents: write`. It refuses a malformed version or
-  SHA, empty notes, a commit that is not on `main`, a commit whose declared versions differ from `version`
-  (`scripts/check_release.py` on that commit's files, in a step without the token), and a tag that already exists on
-  the remote, because a tag is never moved. Then it runs `git tag -a "v$VERSION" --cleanup=verbatim -F <notes> "$SHA"`
+- Its `release-tag` job runs on a dispatch, with `contents: write`, and fails unless it comes from `main`. It refuses
+  a malformed version or SHA, empty notes, a commit that is not on `main`, a commit whose declared versions differ
+  from `version` (`scripts/check_release.py` on that commit's files, in a step without the token), and a tag that
+  already exists on the remote, because a tag is never moved. Then it runs `git tag -a "v$VERSION" --cleanup=verbatim -F <notes> "$SHA"`
   and pushes that one tag, from the only step that holds the token.
 - The run is named `release v<version> at <sha>` (`run-name`), so the `/release` skill finds the run it dispatched.
 - The tagger is `github-actions[bot]`: the workflow makes the tag, so the tag says so, while commits and PRs stay the
