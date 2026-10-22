@@ -279,6 +279,14 @@ authored as the hub's author), and nothing changes until the user merges it. Tha
 PR is opened as that `gh` account). Under Docker the hubs are mounted read-only, so both actions are disabled with
 "Hub is read-only here"; run `./hub web` locally to decide learnings. Workflows: [README](../README.md#-workflows).
 
+**Doc drift.** The built-in `doc-drift` workflow finds doc lines a contract change made wrong and, once you approve
+them at its gate, opens a docs-only PR in the repo (ADRs are reported, never edited). Fetch the repo, then run
+`./hub workflow run doc-drift --input repo=<dir> --input sha=<merge sha> --live` after a merge, or with `sha` blank
+for the last month. To run it on every merge and once a month, add to `hub.json`:
+`"events": [{"workflow": "doc-drift", "on": "merge", "repo": "<dir>", "inputs": {"repo": "<dir>"}}]` and
+`"schedules": [{"workflow": "doc-drift", "cron": "0 6 1 * *", "inputs": {"repo": "<dir>"}}]`. Known limit: a command
+renamed in one command group while another group keeps the same name is not seen as gone.
+
 **Sessions from the app.** On the Sessions screen, New session starts the user's own `claude` (on `PATH`, logged in)
 in the hub, a repo or one of their worktrees, with the hub's CLAUDE.md, hooks (the guard still applies), skills and
 agents; the chat sends messages, answers prompts, interrupts, sets mode and model, resumes an ended session in place

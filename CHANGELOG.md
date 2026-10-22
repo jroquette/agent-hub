@@ -11,6 +11,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- The built-in `doc-drift` workflow pack (AGH-491): after a merge (or monthly), it lists the contract names the change
+  removed, finds the doc lines that still name them, has a read-only judge propose each corrected line, and after the
+  owner's approval opens a docs-only PR in the repo. ADR lines are reported, never edited; nothing writes the tracker.
+
 ## [0.20.1] - 2026-10-22
 
 ### Added
