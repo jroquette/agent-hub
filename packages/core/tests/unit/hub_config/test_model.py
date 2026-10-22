@@ -1951,16 +1951,30 @@ def test_rejects_ui_paths_when_not_list_of_one_to_fifty(value: object) -> None:
 
 
 @pytest.mark.parametrize(
-    "glob",
-    ["apps/[!a]pp/**", "apps/[ab]/**", "apps/x]/**", "a/****b/**", "a/*x*y*z*/**"],
-    ids=["negated bracket", "bracket", "closing bracket", "four stars", "four spread stars"],
+    ("glob", "expected"),
+    [
+        ("apps/[!a]pp/**", "ui_path_bracket"),
+        ("apps/[ab]/**", "ui_path_bracket"),
+        ("apps/x]/**", "ui_path_bracket"),
+        ("apps/x[/**", "ui_path_bracket"),
+        ("a/****b/**", "ui_path_wildcards"),
+        ("a/*x*y*z*/**", "ui_path_wildcards"),
+    ],
+    ids=[
+        "negated bracket",
+        "bracket",
+        "closing bracket",
+        "opening bracket",
+        "four stars",
+        "four spread stars",
+    ],
 )
-def test_rejects_ui_paths_when_glob_has_bracket_or_too_many_stars(glob: str) -> None:
+def test_rejects_ui_paths_when_glob_has_bracket_or_too_many_stars(glob: str, expected: str) -> None:
     # A valid glob first: a one-item list whose item fails is also reported too_short.
     [(loc, kind)] = error_types(with_value(("repos", 0, "ui_paths"), ["apps/web/**", glob]))
 
     assert loc == ("repos", 0, "ui_paths", 1)
-    assert kind in {"ui_path_bracket", "ui_path_wildcards"}
+    assert kind == expected
 
 
 @pytest.mark.parametrize(
