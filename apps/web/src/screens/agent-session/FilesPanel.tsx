@@ -12,6 +12,7 @@ import {
 import {
   Button,
   CopyButton,
+  FitText,
   Icon,
   Markdown,
   SegmentedControl,
@@ -302,27 +303,6 @@ function Breakable({ text }: { text: string }) {
         </Fragment>
       ))}
     </>
-  );
-}
-
-/** One line that fits its width, however the list is resized: cut in the middle with an
- * ellipsis, its `tail` (a file's extension, a folder's last name) always shown; the whole text
- * on hover. Measured by the browser, not by characters, so it follows the split. */
-function FitText({
-  text,
-  tail,
-  className,
-}: {
-  text: string;
-  tail: number;
-  className?: string | undefined;
-}) {
-  const cut = Math.max(0, text.length - tail);
-  return (
-    <span className={cx("as-fit", className)} title={text}>
-      <span className="as-fit-head">{text.slice(0, cut)}</span>
-      <span className="as-fit-tail">{text.slice(cut)}</span>
-    </span>
   );
 }
 

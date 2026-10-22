@@ -40,6 +40,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- `hub web` lists an env file's variable names, never a value (AGH-417): `GET /projects/{project}/env-file-keys`
+  reads only a regular file of at most 64 KiB that the hub or a declared repo holds, reached through no link, and says
+  whether git ignores it. A long name in the chat's files list is shown whole when it fits, else cut in the middle with
+  the whole text on hover.
 - `hub web` reads and edits the declared environments and services (AGH-416). The Hub config view carries every
   effective environment and repo service with the file it comes from (and hub.json's access of a tightened one), and
   `POST /projects/{project}/config/environments` adds, changes, renames and removes environments, services and
