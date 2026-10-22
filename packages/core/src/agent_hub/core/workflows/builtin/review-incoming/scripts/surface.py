@@ -33,7 +33,7 @@ HITS_MAX = 50
 PATH_CHARS = 160
 SHA = re.compile(r"[0-9a-f]{40}")
 CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f`]")
-HUNK = re.compile(r"^@@ -[0-9,]+ \+([0-9]+)")
+HUNK = re.compile(r"^@{2} -[0-9,]+ \+([0-9]+)")
 CATEGORIES = ("input handling", "auth", "secrets", "subprocesses", "file paths", "parsing")
 PATH_RULES = (
     ("auth", re.compile(r"auth|login|session|permission|acl|oauth|jwt|csrf|cors")),
