@@ -13,13 +13,13 @@ from typing import Any
 
 import pytest
 
-from agent_hub.cli import knowledge_checkout
-from agent_hub.cli.knowledge_checkout import GitKnowledgeCheckout
 from agent_hub.core.knowledge import document_rules
 from agent_hub.core.knowledge.knowledge_index import Fingerprint
 from agent_hub.core.knowledge.sync_knowledge import KnowledgeCheckoutError, sync_knowledge
 from agent_hub.core.knowledge.sync_plan import ListedFile
 from agent_hub.core.testing.knowledge_fakes import InMemoryKnowledgeIndex
+from agent_hub.hub_git import knowledge_checkout
+from agent_hub.hub_git.knowledge_checkout import GitKnowledgeCheckout
 
 type KnowledgeHubFactory = Callable[..., Path]
 
