@@ -3,11 +3,12 @@
 ``tickets/<ticket>/`` holds a ticket's context ``brief.md``, its ``preflight.json``
 (``PreflightRecord``, runs appended), its ticket ``plan.md`` and, once merged, its ``outcome.md``
 (created once; its frontmatter says when it merged, by which pull request, and the tickets it
-unblocks); the preflight and the outcome are read, the other two are only seen present. ``change-requests/<n>.md`` is a plan change request, written
-``status: open`` and never edited; ``change-requests/<n>.decision.md``, created once, records the
-owner's decision, and the request's status is folded from it (D-11). A file that cannot be read
-or parsed is kept with its problem ("<file> could not be read (…). Fix it in a hub PR."), so only
-the step it feeds turns unknown.
+unblocks); the preflight and the outcome are read, the other two are only seen present.
+``change-requests/<n>.md`` is a plan change request, written ``status: open`` and never edited;
+``change-requests/<n>.decision.md``, created once, records the owner's decision, and the
+request's status is folded from it (D-11). A file that cannot be read or parsed is kept with
+its problem ("<file> could not be read (…). Fix it in a hub PR."), so only the step it feeds
+turns unknown.
 """
 
 import re

@@ -576,7 +576,10 @@ SUPERSEDED = "change request 1 approved but superseded by plan v2: not applied"
                 # The branch starts at the commit the preflight checked, not a newer main.
                 "pass-1__worktree": {("--repo", "demo-api"), ("--commit", "0a1b2c3d4e")},
                 "pass-1__check__approved": {("--decision", "approved"), ("--by", "Dana Owner")},
-                "pass-1__check__amend": {("--request", "1"), ("--summary", "T2 goes through routes.py")},
+                "pass-1__check__amend": {
+                    ("--request", "1"),
+                    ("--summary", "T2 goes through routes.py"),
+                },
                 "pass-1__check__rerecord": {("--input", "approve"), ("--request", "1")},
                 "pass-1__check__recheck": {("$WITH.input", "approve")},
             },
@@ -586,7 +589,10 @@ SUPERSEDED = "change request 1 approved but superseded by plan v2: not applied"
             {
                 # The approval the plan moved past is re-checked in its pass, told why (A23); the
                 # writer records it (the request named), and the report says it.
-                "pass-1__check__recheck": {("$WITH.input", "approve"), ("$WITH.superseded", SUPERSEDED)},
+                "pass-1__check__recheck": {
+                    ("$WITH.input", "approve"),
+                    ("$WITH.superseded", SUPERSEDED),
+                },
                 "pass-1__check__rerecord": {("--input", "approve"), ("--request", "1")},
                 "pass-1__outcome": {("--superseded", SUPERSEDED)},
                 "delivery": {("--superseded", SUPERSEDED)},
