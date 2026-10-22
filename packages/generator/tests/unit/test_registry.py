@@ -39,6 +39,7 @@ SEEDED_PACK_FILES = (
     "issue-to-pr/fixtures/pr-failure.yaml",
     "issue-to-pr/issue-to-pr.yaml",
     "issue-to-pr/prompts/implement.md",
+    "release/scripts/bump.py",
     "release/scripts/since.py",
     "sdlc/deliver.yaml",
     "sdlc/fixtures/deliver-blocked.yaml",
