@@ -4983,6 +4983,8 @@ ADAPTER_MODULES = frozenset(
         "workflow_source.py",
         "action_discovery.py",
         "git_answers.py",
+        # A scenario finding's issue marker, shared by the CLI and hub web (AGH-363).
+        "finding_issues.py",
     }
 )
 RENDERING_MODULES = frozenset(
