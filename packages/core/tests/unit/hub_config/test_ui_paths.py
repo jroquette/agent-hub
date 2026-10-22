@@ -92,6 +92,12 @@ def test_matches_nothing_when_pathological_glob_fails(glob: str, path: str) -> N
     assert not ui_path_matches(glob, path)
 
 
+# The smallest size that shows a multiplying matcher (a backtracking one makes 597 calls here)
+# while it still ends quickly, so a regression fails the test instead of hanging it.
+THREE_RECURSIVE = "/".join(["**", "d"] * 3) + "/y.ts"
+TWELVE_DEEP = "/".join(["d"] * 12) + "/x.ts"
+
+
 def test_bounds_segment_matches_when_recursive_globs_fail(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[str, str]] = []
     real = ui_paths.fnmatchcase
@@ -102,7 +108,6 @@ def test_bounds_segment_matches_when_recursive_globs_fail(monkeypatch: pytest.Mo
 
     monkeypatch.setattr(ui_paths, "fnmatchcase", counted)
 
-    assert not ui_path_matches(EIGHT_RECURSIVE, DEEP_PATH)
-    # At most one segment match per (glob segment, path segment) pair: 8 ``d`` and one ``y.ts``
-    # segment against 61 path segments, never a product over the ``**`` segments.
-    assert 0 < len(calls) <= 9 * 61
+    assert not ui_path_matches(THREE_RECURSIVE, TWELVE_DEEP)
+    # Filled from the end, only ``y.ts`` against ``x.ts`` is ever tried: nothing after it matches.
+    assert calls == [("x.ts", "y.ts")]
