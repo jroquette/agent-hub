@@ -476,7 +476,7 @@ def _usage_problems(out: str, *, unparsed: int, over: int) -> list[str]:
 
 
 def parse_skill_usage(code: int, out: str, err: str, *, days: int) -> Reading:
-    """The ``skill_usage`` source from ``hub skill-usage --days <days>``'s table (AGH-482)."""
+    """The ``skill_usage`` source from ``hub skill-usage --days <days>``'s table."""
     lines = [line.strip() for line in out.splitlines()]
     if code or USAGE_HEADER not in lines:
         reason = _failed(code, err) if code else "no usage table in the output"
