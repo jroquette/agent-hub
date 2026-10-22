@@ -16,17 +16,17 @@ stubs:
       descriptions_dropped: 0
       skipped: []
       issues:
-        - {id: DEM-1, title: Add the export button, url: "", state: {name: In Progress, type: started}, created_at: "2026-09-01T10:00:00Z", updated_at: "2026-10-20T10:00:00Z", labels: [agent-ready], blocked_by: [], blocks: [], links: [], branch_name: "", description: The export button.}
-        - {id: DEM-2, title: Fix the login timeout, url: "", state: {name: Todo, type: unstarted}, created_at: "2026-09-02T10:00:00Z", updated_at: "2026-09-01T10:00:00Z", labels: [needs-human], blocked_by: [], blocks: [], links: [], branch_name: "", description: Login times out.}
-        - {id: DEM-3, title: "feat(api): Add CSV export", url: "", state: {name: Todo, type: unstarted}, created_at: "2026-09-03T10:00:00Z", updated_at: "2026-10-20T10:00:00Z", labels: [], blocked_by: [], blocks: [], links: [], branch_name: "", description: Export reports as CSV.}
-        - {id: DEM-4, title: "Add  csv export!", url: "", state: {name: Backlog, type: backlog}, created_at: "2026-09-04T10:00:00Z", updated_at: "2026-10-20T10:00:00Z", labels: [], blocked_by: [], blocks: [], links: [], branch_name: "", description: CSV export please.}
-        - {id: DEM-5, title: Split the importer, url: "", state: {name: Todo, type: unstarted}, created_at: "2026-09-05T10:00:00Z", updated_at: "2026-10-20T10:00:00Z", labels: [agent-ready], blocked_by: [DEM-6], blocks: [], links: [], branch_name: "", description: Split it.}
-        - {id: DEM-6, title: Retry the importer, url: "", state: {name: Todo, type: unstarted}, created_at: "2026-09-06T10:00:00Z", updated_at: "2026-10-20T10:00:00Z", labels: [agent-ready], blocked_by: [DEM-5], blocks: [], links: [], branch_name: "", description: Retry it.}
-        - {id: DEM-7, title: Show the export size, url: "", state: {name: In Review, type: started}, created_at: "2026-09-07T10:00:00Z", updated_at: "2026-10-20T10:00:00Z", labels: [agent-ready], blocked_by: [], blocks: [], links: ["https://github.com/acme/api/pull/7"], branch_name: "", description: Show it.}
+        - {id: DEM-1, title: Add the export button, url: "", state: {name: In Progress, type: started}, created_at: "1999-09-01T10:00:00Z", updated_at: "1999-10-20T10:00:00Z", labels: [agent-ready], blocked_by: [], blocks: [], links: [], branch_name: "", description: The export button.}
+        - {id: DEM-2, title: Fix the login timeout, url: "", state: {name: Todo, type: unstarted}, created_at: "1999-09-02T10:00:00Z", updated_at: "1999-09-01T10:00:00Z", labels: [needs-human], blocked_by: [], blocks: [], links: [], branch_name: "", description: Login times out.}
+        - {id: DEM-3, title: "feat(api): Add CSV export", url: "", state: {name: Todo, type: unstarted}, created_at: "1999-09-03T10:00:00Z", updated_at: "1999-10-20T10:00:00Z", labels: [], blocked_by: [], blocks: [], links: [], branch_name: "", description: Export reports as CSV.}
+        - {id: DEM-4, title: "Add  csv export!", url: "", state: {name: Backlog, type: backlog}, created_at: "1999-09-04T10:00:00Z", updated_at: "1999-10-20T10:00:00Z", labels: [], blocked_by: [], blocks: [], links: [], branch_name: "", description: CSV export please.}
+        - {id: DEM-5, title: Split the importer, url: "", state: {name: Todo, type: unstarted}, created_at: "1999-09-05T10:00:00Z", updated_at: "1999-10-20T10:00:00Z", labels: [agent-ready], blocked_by: [DEM-6], blocks: [], links: [], branch_name: "", description: Split it.}
+        - {id: DEM-6, title: Retry the importer, url: "", state: {name: Todo, type: unstarted}, created_at: "1999-09-06T10:00:00Z", updated_at: "1999-10-20T10:00:00Z", labels: [agent-ready], blocked_by: [DEM-5], blocks: [], links: [], branch_name: "", description: Retry it.}
+        - {id: DEM-7, title: Show the export size, url: "", state: {name: In Review, type: started}, created_at: "1999-09-07T10:00:00Z", updated_at: "1999-10-20T10:00:00Z", labels: [agent-ready], blocked_by: [], blocks: [], links: ["https://github.com/acme/api/pull/7"], branch_name: "", description: Show it.}
   hygiene:
     output:
       orphans: [{id: DEM-1, state: In Progress, evidence: "state In Progress (started); no PR link; no branch ref matching (^|/)dem-1(-|$)"}]
-      stale: [{id: DEM-2, updated_at: "2026-09-01T10:00:00Z", days: 55, evidence: "updated_at 2026-09-01T10:00:00Z: 55 days without an update (stale after 14)"}]
+      stale: [{id: DEM-2, updated_at: "1999-09-01T10:00:00Z", days: 55, evidence: "updated_at 1999-09-01T10:00:00Z: 55 days without an update (stale after 14)"}]
       duplicates: [{ids: [DEM-3, DEM-4], title: add csv export, evidence: "titles DEM-3 'feat(api): Add CSV export', DEM-4 'Add  csv export!' all read as 'add csv export'"}]
       cycles: [{ids: [DEM-5, DEM-6], evidence: DEM-5 blocked by DEM-6; DEM-6 blocked by DEM-5}]
       unreadable: []
