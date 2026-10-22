@@ -34,6 +34,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   item history) are coloured in the file's language as on GitHub, and highlighted code takes GitHub's syntax palette;
   files the session touched and then put back sit in a `Discarded` tab, out of the totals and the review; a pull
   request's diff expands around its hunks, read from the new `GET /api/v1/agent-sessions/{id}/repo-changes/file`.
+- hub web gains a Tickets list (sidebar Work → Tickets, `/tickets`, AGH-426): the maintenance, fixes and small
+  changes the sessions worked on outside a feature (`/fix`, `/refactor`, `/upgrade`, `/incident`, `/triage`,
+  `/deliver`, `/review`, hub runs), one row per tracker issue under Needs you, In progress and Ended, with a Kind
+  filter and search. **Start ticket** opens the New session dialog on the hub folder with `/fix` in the prompt.
 
 ### Changed
 

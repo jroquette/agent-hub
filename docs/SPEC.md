@@ -531,6 +531,11 @@ Linear status ([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md), records
   folded from its review rounds, review record, evals and Linear and served on the tickets route; a step with no
   record before a later one with evidence reads "Not recorded". Feature detail shows them on each ticket's step bar and
   in its ticket panel.
+- **Tickets outside features (AGH-426).** The Tickets list (`/tickets`) groups the newest sessions by tracker issue
+  and shows the single-ticket work no feature plans (`/fix`, `/refactor`, `/upgrade`, `/incident`, `/triage`,
+  `/deliver`, `/review`, hub runs) by Needs you, In progress and Ended; Start ticket opens the New session dialog on
+  the hub folder with `/fix`. It is derived on the client from `GET /api/v1/sessions`, no new route
+  ([design/control-plane/specs/20-tickets.md](design/control-plane/specs/20-tickets.md)).
 - **Evals per delivery.** Each evaluation is its own file, `brain/features/<slug>/evals/<delivery>.md`, with its
   scope in frontmatter (tickets, ACs, PRs, commit); none is overwritten. For each AC the latest eval naming it
   decides. A legacy `eval.md` is read as one delivery, `legacy`. The Eval tab lists every delivery.

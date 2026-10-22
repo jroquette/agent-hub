@@ -140,6 +140,8 @@ export const NAV: readonly NavGroup[] = [
         countNoun: () => "need you",
         tone: "waiting",
       },
+      // Single-ticket work (/fix, /refactor, /upgrade, …), grouped from the sessions by issue.
+      { id: "tickets", label: "Tickets", to: "/tickets", icon: "list-todo" },
       // Where the project's systems run and what agents may do there (ADR 0038).
       { id: ENVIRONMENTS_ID, label: "Environments", to: ENVIRONMENTS_PICKER, icon: "server" },
     ],
