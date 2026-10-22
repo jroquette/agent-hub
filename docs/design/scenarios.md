@@ -97,13 +97,13 @@ pins its action files and gates, labels events `workflow: scenario:<name>`, and 
 ### Investigation, answers and workarounds
 
 Opening a paused run in hub web starts one session per gate (none if the hub or a declared repo is `/`, home or above), held by
-a PreToolUse hook: reads only in the hub and its repos, never an env file, `Write` only under `actions/<pack>/`, Bash only for
-`./hub action …` and `./hub scenario propose`; `hub action run --run <id>` needs an open investigation and runs only `read`
-actions, with the env file. The agent records findings and options (a summary, `{action, with}` steps) with `propose` (secret
-shapes redacted), each shown with its plan. The answer is `pick` (`--text <option id>`), `retry` or `stop`: `hub workflow
-respond`, `decide` (hub web) or the Scenarios screen (Approvals sends the gate there). An option holding a `deny`, a draft
-action or a plan changed since shown is refused, nothing recorded. A pick answers its steps' asks: `workaround.start`, its
-actions (origin `agent`), `workaround.end`, then the diverged step as a new attempt; a failed or cut-short workaround (never
+a PreToolUse hook: reads only in the hub and its declared repos, never an env file, `Write` only under `actions/<pack>/`, Bash
+only for `./hub action …` and `./hub scenario propose`; `hub action run --run <id>` needs an open investigation and runs only
+`read` actions with its environment's env file. The agent records findings and options (a summary, `{action, with}` steps) with
+`propose` (secret shapes redacted), each shown with its plan. The answer is `pick` (`--text <option id>`), `retry` or `stop`:
+`hub workflow respond`, `decide` (hub web) or the Scenarios screen (Approvals sends the gate there). An option holding a `deny`,
+a draft action or a plan changed since shown is refused, nothing recorded. A pick answers its steps' asks: `workaround.start`,
+its actions (origin `agent`), `workaround.end`, then the diverged step as a new attempt; a failed or cut-short workaround (never
 re-run) opens a new investigation. `retry` skips it; `stop` ends it `cancelled`, findings kept; nothing is rewound. `hub
 scenario findings <run>` lists them; `--issue <id>` creates a tracker issue after a terminal `y` (MCP: `save_issue` only);
 `--inbox <id>` writes a `brain/_inbox/` note (`provenance: agent-from-external`). A `finding-<id>.issue` marker shared with hub
