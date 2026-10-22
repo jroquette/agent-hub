@@ -49,7 +49,6 @@ import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Any
 
@@ -224,15 +223,15 @@ class BadInputError(Exception):
     """Input this script refuses: exit 2 with its message."""
 
 
-@dataclass
 class Sandbox:
     """The throwaway worktrees of one run, under one temporary folder, made when first needed."""
 
-    heads: dict[str, str]
-    timeout: float
-    deadline: float
-    root: Path = field(default_factory=lambda: Path(tempfile.mkdtemp(prefix="incident-check-")))
-    made: dict[str, Path | None] = field(default_factory=dict)
+    def __init__(self, heads: dict[str, str], *, timeout: float, deadline: float) -> None:
+        self.heads = heads
+        self.timeout = timeout
+        self.deadline = deadline
+        self.root = Path(tempfile.mkdtemp(prefix="incident-check-"))
+        self.made: dict[str, Path | None] = {}
 
     def env(self) -> dict[str, str]:
         return child_env(os.environ.get("PATH") or DEFAULT_PATH, str(self.root))
@@ -399,7 +398,7 @@ def main(argv: list[str]) -> int:
     except BadInputError as error:
         print(f"check.py: {error}", file=sys.stderr)
         return 2
-    sandbox = Sandbox(heads, args.timeout, time.monotonic() + args.budget)
+    sandbox = Sandbox(heads, timeout=args.timeout, deadline=time.monotonic() + args.budget)
     seen: set[str] = set()
     try:
         results = [check_one(hypothesis, sandbox, seen) for hypothesis in hypotheses]
