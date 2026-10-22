@@ -235,6 +235,35 @@ def test_skips_file_when_larger_than_limit() -> None:
     )
 
 
+def test_keeps_links_when_hub_folder_given() -> None:
+    data = b"# Cleanup\n\nSee [now](../now.md) and [the guide](https://example.com/guide.md).\n"
+    path = "brain/playbooks/cleanup.md"
+
+    linked = document_from(path, data, _fingerprint(data), hub_folder="demo-hub")
+    unlinked = document_from(path, data, _fingerprint(data))
+
+    assert isinstance(linked, IndexedDocument)
+    assert linked.links == ("brain/now.md",)
+    assert isinstance(unlinked, IndexedDocument)
+    assert unlinked.links == ()
+
+
+def test_keeps_no_links_when_file_skipped() -> None:
+    link = b"[now](../now.md)\n"
+    leak = link + f"Use {_token()} to push.\n".encode()
+    big = link + b"x" * MAX_DOCUMENT_BYTES
+
+    skipped = [
+        document_from(path, data, _fingerprint(data), hub_folder="demo-hub")
+        for path, data in (("brain/_inbox/leak.md", leak), ("brain/_inbox/big.md", big))
+    ]
+
+    assert skipped == [
+        SkippedFile(path="brain/_inbox/leak.md", fingerprint=_fingerprint(leak), reason=RULE_MATCH),
+        SkippedFile(path="brain/_inbox/big.md", fingerprint=_fingerprint(big), reason=TOO_LARGE),
+    ]
+
+
 def test_reads_title_in_linear_time_when_heading_holds_long_space_run() -> None:
     # A backtracking heading pattern takes minutes on this line; the bound is the file's size.
     line = "# a" + " " * (MAX_DOCUMENT_BYTES - 8) + "b ##"

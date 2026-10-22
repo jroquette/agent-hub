@@ -275,3 +275,17 @@ def test_searches_after_sync_when_query_given() -> None:
     assert outcome.report.indexed == 2
     assert [hit.path for hit in decisions.results] == ["brain/decisions/0001-x.md"]
     assert decisions.report.read == 0
+
+
+def test_indexes_links_when_note_links_brain() -> None:
+    index = _CountingIndex()
+    checkout = _checkout(cleanup="# Cleanup\n\nSee [now](../now.md).\n")
+    checkout.write("demo-api/docs/guide.md", b"[now](../../demo-hub/brain/now.md)\n")
+
+    sync_knowledge(index, checkout, "/w/demo-hub")
+
+    links = {document.path: document.links for document in index.applied[0].documents}
+    assert links == {
+        "brain/playbooks/cleanup.md": ("brain/now.md",),
+        "demo-api/docs/guide.md": ("brain/now.md",),
+    }

@@ -19,6 +19,13 @@ A text is read line by line (``config_lint.text_lines``, E29):
 
 Every scan is linear in its line: each search resumes where the last one stopped, and the
 destinations never overlap, so a hostile line never costs more than its size.
+
+``document_links`` gives an indexed document's links into the brain (D-links, AM-8): each path
+is resolved from the document's folder in the workspace, the folder holding the hub's checkout
+and its repos (``brain/…`` lies at ``<hub folder>/brain/…``, ``<dir>/docs/…`` at
+``<dir>/docs/…``), and kept as ``brain/<rest>`` when it lands in the hub's brain and the note
+route would serve ``<rest>`` (``brain_relative``). The document itself is never a target; each
+target is kept once, the first ``MAX_LINKS_PER_DOCUMENT`` in reading order.
 """
 
 import re
@@ -26,7 +33,11 @@ from collections.abc import Iterator
 from typing import Final
 from urllib.parse import unquote
 
+from agent_hub.core.brain.brain_path import BRAIN_FOLDER, BrainPathError, brain_relative
 from agent_hub.core.doctor.config_lint import text_lines, unfenced_lines
+
+# At most this many targets are kept per document (D-links), the first in reading order.
+MAX_LINKS_PER_DOCUMENT: Final = 1_000
 
 # CommonMark's bounds: a label of at most 999 characters, a definition at most 3 spaces in.
 MAX_LABEL: Final = 999
@@ -45,6 +56,8 @@ _TITLE_OPENERS: Final = ('"', "'", "(")
 _COMMENT_OPEN: Final = re.compile(r"<!--")
 _COMMENT_CLOSE: Final = re.compile(r"-->")
 _COMMENT_CLOSE_LENGTH: Final = 3
+_HERE: Final = frozenset({"", "."})
+_UP: Final = ".."
 
 
 class _Scan:
@@ -70,6 +83,45 @@ class _Scan:
             self._asked = start
             self._found = len(self._line) if match is None else match.start()
         return self._found
+
+
+def document_links(path: str, text: str, *, hub_folder: str) -> tuple[str, ...]:
+    """The brain notes the document at ``path`` (hub-relative, as indexed) links to, as
+    ``brain/<rest>``, each once, at most ``MAX_LINKS_PER_DOCUMENT``, in reading order."""
+    folder = path.split("/")[:-1]
+    if folder[:1] == [BRAIN_FOLDER]:
+        folder.insert(0, hub_folder)
+    targets: dict[str, None] = {}
+    for _, destination in link_destinations(text):
+        relative = link_path(destination)
+        target = None if relative is None else _brain_target(folder, relative, hub_folder)
+        if target is not None and target != path:
+            targets[target] = None
+            if len(targets) == MAX_LINKS_PER_DOCUMENT:
+                break
+    return tuple(targets)
+
+
+def _brain_target(folder: list[str], relative: str, hub_folder: str) -> str | None:
+    """Where ``relative`` leads from ``folder`` (workspace segments), as ``brain/<rest>`` when it
+    is a note of the hub's brain the note route serves; ``None`` otherwise, or when it climbs
+    out of the workspace."""
+    segments = list(folder)
+    for segment in relative.split("/"):
+        if segment == _UP:
+            if not segments:
+                return None
+            segments.pop()
+        elif segment not in _HERE:
+            segments.append(segment)
+    if segments[:2] != [hub_folder, BRAIN_FOLDER]:
+        return None
+    rest = "/".join(segments[2:])
+    try:
+        brain_relative(rest)
+    except BrainPathError:
+        return None
+    return f"{BRAIN_FOLDER}/{rest}"
 
 
 def link_path(destination: str) -> str | None:

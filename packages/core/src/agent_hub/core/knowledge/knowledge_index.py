@@ -41,6 +41,9 @@ KINDS: Final[tuple[Kind, ...]] = get_args(Kind.__value__)
 # version is rebuilt by the next search.
 INDEX_VERSION: Final = 1
 
+# At most this many backlinks are answered for one note (D-backlinks-route), with the full count.
+MAX_BACKLINKS: Final = 100
+
 # A file's text hash: 64 lowercase hex digits of its sha256.
 type TextHash = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
@@ -81,7 +84,8 @@ class StoredIndex(_Frozen):
 
 
 class IndexedDocument(_Frozen):
-    """A file to index: its searchable title and body, and what a result shows."""
+    """A file to index: its searchable title and body, what a result shows, and the brain notes
+    it links to (``brain/<rest>``, D-links)."""
 
     path: str = Field(min_length=1)
     kind: Kind
@@ -91,6 +95,7 @@ class IndexedDocument(_Frozen):
     fingerprint: Fingerprint
     sha256: TextHash
     body: str
+    links: tuple[str, ...] = ()
 
 
 class SkippedFile(_Frozen):
@@ -127,6 +132,21 @@ class SearchHit(_Frozen):
     status: str | None
     provenance: str | None
     snippet: str
+
+
+class Backlink(_Frozen):
+    """A document holding a link to a note: its path, kind and title."""
+
+    path: str
+    kind: Kind
+    title: str
+
+
+class Backlinks(_Frozen):
+    """The documents linking to a note, by path, at most the limit asked; ``total`` counts all."""
+
+    items: tuple[Backlink, ...]
+    total: int = Field(ge=0)
 
 
 class KnowledgeIndex(Protocol):

@@ -9,6 +9,7 @@ something changed, so a search over an unchanged hub reads and writes nothing.
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import PurePosixPath
 from typing import Final, Protocol
 
 from pydantic import BaseModel, ConfigDict
@@ -102,7 +103,10 @@ def sync_knowledge(
     rebuilding = rebuild or plan.rebuild
     # A rebuild trusts no row's text; the rows still say which vanished files lose one.
     rows = _NO_ROWS.files if rebuilding else previous.files
-    reads = _read(checkout, plan.to_read, rows, known=previous.files)
+    # The key is the hub folder's path, the only place its name in the workspace exists (P-3).
+    reads = _read(
+        checkout, plan.to_read, rows, known=previous.files, hub_folder=PurePosixPath(hub).name
+    )
     change = IndexChange(
         version=INDEX_VERSION,
         rebuild=rebuilding,
@@ -146,6 +150,7 @@ def _read(
     rows: Mapping[str, StoredFile],
     *,
     known: Mapping[str, StoredFile],
+    hub_folder: str,
 ) -> _Reads:
     """Read each planned file: a file gone since the listing loses its row (one of ``known``,
     the rows before the sync, so a rebuild counts it too); a read that fails
@@ -163,12 +168,14 @@ def _read(
                 SkippedFile(path=file.path, fingerprint=fingerprint, reason=content)
             )
         else:
-            _add_read(reads, file, content, row=rows.get(file.path))
+            _add_read(reads, file, content, row=rows.get(file.path), hub_folder=hub_folder)
     return reads
 
 
-def _add_read(reads: _Reads, file: FileToRead, data: bytes, *, row: StoredFile | None) -> None:
-    result = document_from(file.path, data, file.fingerprint)
+def _add_read(
+    reads: _Reads, file: FileToRead, data: bytes, *, row: StoredFile | None, hub_folder: str
+) -> None:
+    result = document_from(file.path, data, file.fingerprint, hub_folder=hub_folder)
     if isinstance(result, SkippedFile):
         reads.skipped.append(result)
     elif row is not None and row.sha256 == result.sha256:
