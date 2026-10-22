@@ -8,20 +8,25 @@ import {
   Button,
   ExternalLabel,
   FrontmatterChips,
-  IdChip,
   Icon,
   Markdown,
+  OutsideLink,
+  PathText,
   ProblemError,
+  ProvenanceLineage,
   SegmentedControl,
   ProvenanceBadge,
   Skeleton,
   StatusBadge,
   Time,
+  Tooltip,
   type Frontmatter,
+  type LineageStep,
   type Status,
 } from "../../components";
+import { BRAIN_PREFIX, brainRoute, isServedNote } from "../../lib/brainLinks";
 import { fmtAgo } from "../../lib/format";
-import { safeHref } from "../../lib/safeHref";
+import { githubPullHref, safeHref } from "../../lib/safeHref";
 import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
 import { DecideDialog, type DecideAction } from "./DecideDialog";
 import { learningDiscussTarget } from "./discussLearning";
@@ -146,6 +151,231 @@ function PullRequestLink({ url }: { url: string }) {
       {url} <span className="ah-sr">(opens in a new tab)</span>
     </a>
   );
+}
+
+/** A session id as the app shows it: a UUID's first 8 hex digits, any other id's first 8 characters. */
+export function shortSession(id: string): string {
+  return /^[0-9a-f]{8}-/i.test(id) ? id.replace(/-/g, "").slice(0, 8) : id.slice(0, 8);
+}
+
+/**
+ * A path under `brain/` without its one leading `brain/` (D-brain-path): app decisions store
+ * `brain/<path>`, other producers may not, and the trail shows `brain/` once.
+ */
+function brainRest(path: string): string {
+  return path.startsWith(BRAIN_PREFIX) ? path.slice(BRAIN_PREFIX.length) : path;
+}
+
+/** Where an accept to `target` moves the inbox note, as the server places it: a `.md` target, else the note's name inside that folder. */
+function acceptedPath(target: string, notePath: string | null | undefined): string | null {
+  const cleaned = target.trim();
+  if (cleaned.endsWith(".md")) return cleaned;
+  const folder = cleaned.replace(/\/+$/, "");
+  const name = notePath?.split("/").pop();
+  return folder && name ? `${folder}/${name}` : null;
+}
+
+type Decided = "accepted" | "rejected" | null;
+
+/** How the learning was decided: its status, else the place it is in (an answer just received). */
+function decisionOf(status: Learning["status"], state: LearningState): Decided {
+  if (status === "accepted" || status === "rejected") return status;
+  if (state === "accepted_pr_open" || state === "in_brain") return "accepted";
+  if (state === "rejected_pr_open" || state === "archived") return "rejected";
+  return null;
+}
+
+/** The decision's pull request: "Pull request #7 in acme/hub" for a GitHub one, else its URL; a new tab. */
+function TrailPullRequest({ url }: { url: string }) {
+  const github = githubPullHref(url);
+  const [, owner, repo, , number] = github ? new URL(github).pathname.split("/") : [];
+  return (
+    <OutsideLink href={url} className="ah-row" style={{ gap: 4 }}>
+      <Icon name="git-pull-request" size="sm" />
+      <span className={github ? undefined : "ah-mono"}>
+        {github ? `Pull request #${number ?? ""} in ${owner ?? ""}/${repo ?? ""}` : url}
+      </span>{" "}
+      <span className="ah-sr">(opens in a new tab)</span>
+    </OutsideLink>
+  );
+}
+
+function SessionStep({ id }: { id: string | null | undefined }) {
+  const tipId = useId();
+  if (!id) return <span className="ah-subtle">No source session recorded.</span>;
+  return (
+    <span>
+      <Tooltip label={id} id={tipId}>
+        <Link
+          to={`/sessions/${encodeURIComponent(id)}`}
+          aria-describedby={tipId}
+          className="ah-row"
+          style={{ gap: 4 }}
+        >
+          Session {shortSession(id)}
+          <Icon name="arrow-right" size="sm" />
+        </Link>
+      </Tooltip>
+    </span>
+  );
+}
+
+function ProposalStep({ l }: { l: Learning }) {
+  const session = l.source_session_id;
+  const event = l.source_event_id;
+  if (!session && !l.note_path) {
+    return <span className="ah-subtle">No proposal event recorded.</span>;
+  }
+  return (
+    <>
+      {session && (
+        <span>
+          <Link
+            to={`/sessions/${encodeURIComponent(session)}${event ? `?event=${encodeURIComponent(event)}` : ""}`}
+            className="ah-row"
+            style={{ gap: 4, display: "inline-flex" }}
+          >
+            {event ? "Open at that moment" : "Open the session timeline"}
+            <Icon name="arrow-right" size="sm" />
+          </Link>
+        </span>
+      )}
+      {l.note_path && <PathText path={`${BRAIN_PREFIX}${brainRest(l.note_path)}`} />}
+    </>
+  );
+}
+
+function DecisionStep({
+  l,
+  decided,
+  prUrl,
+  justNow,
+}: {
+  l: Learning;
+  decided: Decided;
+  prUrl: string | null;
+  justNow: boolean;
+}) {
+  if (decided === null) return <span className="ah-muted">Not decided yet</span>;
+  const verb = decided === "accepted" ? "Accepted" : "Rejected";
+  const by = l.decided_by ? ` by ${l.decided_by}` : "";
+  const when = l.decided_at ? (
+    <>
+      {" "}
+      <Time iso={l.decided_at} absolute />
+    </>
+  ) : null;
+  return (
+    <>
+      {justNow ? (
+        <span>{verb} just now · pull request opened</span>
+      ) : prUrl ? (
+        <span>
+          {verb}
+          {when}
+          {by}
+        </span>
+      ) : (
+        <>
+          <span>Decided outside the app</span>
+          {(when ?? by) && (
+            <span className="ah-small ah-muted">
+              {verb}
+              {when}
+              {by}
+            </span>
+          )}
+        </>
+      )}
+      {decided === "rejected" && l.rejection_reason && (
+        <span className="ah-small">{l.rejection_reason}</span>
+      )}
+      {prUrl && <TrailPullRequest url={prUrl} />}
+    </>
+  );
+}
+
+function NoteStep({
+  project,
+  path,
+  state,
+}: {
+  project: string;
+  path: string | null;
+  state: LearningState;
+}) {
+  if (!path) return <span className="ah-subtle">No note path recorded.</span>;
+  const rest = brainRest(path);
+  const shown = <PathText path={`${BRAIN_PREFIX}${rest}`} />;
+  return (
+    <>
+      {state === "in_brain" && isServedNote(rest) ? (
+        <span>
+          <Link
+            to={brainRoute(project, rest)}
+            className="ah-row"
+            style={{ gap: 4, display: "inline-flex" }}
+          >
+            {shown}
+            <Icon name="arrow-right" size="sm" />
+          </Link>
+        </span>
+      ) : (
+        <span>{shown}</span>
+      )}
+      {state === "in_brain" && <span className="ah-small ah-muted">In the brain</span>}
+      {state === "accepted_pr_open" && (
+        <span className="ah-small ah-muted">
+          In the brain once the pull request is merged and pulled
+        </span>
+      )}
+    </>
+  );
+}
+
+/**
+ * The learning's trail, in the order things happened (AGH-393, D-trail): the session, the
+ * proposal, the decision with its pull request, and the note it became. What a step waits for is
+ * said in words, and nothing after the note is claimed (Q16).
+ */
+function Trail({
+  l,
+  state,
+  prUrl,
+  justNow,
+  notePath,
+}: {
+  l: Learning;
+  state: LearningState;
+  prUrl: string | null;
+  justNow: boolean;
+  notePath: string | null;
+}) {
+  const decided = decisionOf(l.status, state);
+  const steps: LineageStep[] = [
+    {
+      id: "session",
+      icon: "square-terminal",
+      name: "Session",
+      children: <SessionStep id={l.source_session_id} />,
+    },
+    { id: "proposal", icon: "lightbulb", name: "Proposal", children: <ProposalStep l={l} /> },
+    {
+      id: "decision",
+      icon: "split",
+      name: "Decision",
+      children: <DecisionStep l={l} decided={decided} prUrl={prUrl} justNow={justNow} />,
+    },
+  ];
+  if (decided === "accepted") {
+    steps.push({
+      id: "note",
+      icon: "file-text",
+      name: "Note",
+      children: <NoteStep project={l.project} path={notePath} state={state} />,
+    });
+  }
+  return <ProvenanceLineage label="Trail from session to note" steps={steps} />;
 }
 
 const PROVENANCES = new Set(["human", "agent", "agent-from-code", "agent-from-external"]);
@@ -414,6 +644,8 @@ export function LearningDetail({ id, row, now, onDecide, claude }: LearningDetai
   const [deciding, setDeciding] = useState<DecideAction | null>(null);
   const [edited, setEdited] = useState<string | null>(null);
   const [result, setResult] = useState<LearningActionResult | null>(null);
+  // Where the accept sent from here moves the note, until the refetched learning says.
+  const [acceptedTo, setAcceptedTo] = useState<string | null>(null);
   const targetId = useId();
   const choicesId = useId();
   const reviewId = useId();
@@ -484,6 +716,7 @@ export function LearningDetail({ id, row, now, onDecide, claude }: LearningDetai
       {
         onSuccess: (answer) => {
           setResult(answer);
+          if (deciding === "accept") setAcceptedTo(acceptedPath(target, l.note_path));
           setDeciding(null);
           draft.discard();
         },
@@ -589,25 +822,16 @@ export function LearningDetail({ id, row, now, onDecide, claude }: LearningDetai
           <Section label="Project">
             <span>{l.project}</span>
           </Section>
-          <Section label="Source">
-            {l.source_session_id ? (
-              <div className="ah-row ah-wrap" style={{ gap: 8 }}>
-                <span className="ah-small">session</span>
-                <IdChip id={l.source_session_id} kind="session" />
-                <Link
-                  className="ah-small ah-row"
-                  style={{ gap: 4 }}
-                  to={`/sessions/${l.source_session_id}?tab=timeline${l.source_event_id ? `&event=${l.source_event_id}` : ""}`}
-                >
-                  Open at that moment
-                  <Icon name="arrow-right" size="sm" />
-                </Link>
-              </div>
-            ) : (
-              <span className="ah-small ah-subtle">No source session recorded.</span>
-            )}
+          <Section label="Trail">
+            <Trail
+              l={l}
+              state={state}
+              prUrl={prUrl}
+              justNow={result !== null}
+              notePath={l.brain_path ?? acceptedTo}
+            />
           </Section>
-          {canDecide ? (
+          {canDecide && (
             <Section label="Target in brain/" labelFor={targetId}>
               <input
                 id={targetId}
@@ -629,30 +853,6 @@ export function LearningDetail({ id, row, now, onDecide, claude }: LearningDetai
               <div id={`${targetId}-help`} className="ah-small ah-subtle" style={{ marginTop: 6 }}>
                 A folder (the note keeps its name) or a full <span className="ah-mono">.md</span>{" "}
                 path, relative to <span className="ah-mono">brain/</span>.
-              </div>
-            </Section>
-          ) : (
-            l.brain_path && (
-              <Section label="In the brain">
-                <span className="ah-mono ah-small">brain/{l.brain_path}</span>
-              </Section>
-            )
-          )}
-          {prUrl && (
-            <Section label="Pull request">
-              <PullRequestLink url={prUrl} />
-            </Section>
-          )}
-          {(l.decided_at ?? l.rejection_reason) && (
-            <Section label="Decision">
-              <div className="ah-stack" style={{ gap: 4 }}>
-                {l.decided_at && (
-                  <span className="ah-small ah-muted">
-                    <Time iso={l.decided_at} absolute />
-                    {l.decided_by ? ` by ${l.decided_by}` : ""}
-                  </span>
-                )}
-                {l.rejection_reason && <span className="ah-small">{l.rejection_reason}</span>}
               </div>
             </Section>
           )}

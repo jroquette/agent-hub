@@ -16,7 +16,7 @@ import {
 } from "../../components";
 import { fmtDateTime } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
-import { LearningStateBadge, Title, stateOf } from "../learnings/LearningDetail";
+import { LearningStateBadge, Title, shortSession, stateOf } from "../learnings/LearningDetail";
 import type { useNoteLearnings } from "./queries";
 
 type Frontmatter = Record<string, components["schemas"]["FrontmatterValue"]>;
@@ -46,11 +46,6 @@ export function frontmatterSession(frontmatter: Frontmatter): string | null {
 /** The frontmatter fields this section shows, which the note's chips leave out (AM-1). */
 export function originFields(frontmatter: Frontmatter): string[] {
   return ["provenance", "sources", ...(frontmatterSession(frontmatter) ? ["session"] : [])];
-}
-
-/** A session id as the app shows it: a UUID's first 8 hex digits, any other id's first 8 characters. */
-function shortSession(id: string): string {
-  return /^[0-9a-f]{8}-/i.test(id) ? id.replace(/-/g, "").slice(0, 8) : id.slice(0, 8);
 }
 
 function asList(value: Frontmatter[string] | undefined): string[] {

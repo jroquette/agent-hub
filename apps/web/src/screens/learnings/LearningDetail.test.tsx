@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { seriousViolations } from "../../testing/axe";
 import {
   aBrainNote,
+  at,
   aLearning,
   aLearningActionResult,
   aLearningDetail,
@@ -36,6 +37,37 @@ function open(extra: ApiRoutes = {}, onDecide = vi.fn()) {
   return { ...result, onDecide };
 }
 
+const TRAIL = "Trail from session to note";
+const EFFECT_WORDS = /fixed|improved|effect|impact|since|loaded in|\d+ sessions/i;
+
+/** A learning accepted into `brain/learnings/web-gates.md` from session s1, its PR merged. */
+function inBrain(overrides: Parameters<typeof aLearningDetail>[0] = {}) {
+  return aLearningDetail({
+    source_session_id: "s1",
+    source_event_id: "e1",
+    pr_url: "https://github.com/acme/hub/pull/7",
+    status: "accepted",
+    state: "in_brain",
+    brain_path: "brain/learnings/web-gates.md",
+    decided_at: at(900),
+    decided_by: "Ana Lima",
+    ...overrides,
+  });
+}
+
+/** The trail's steps, each by the step name it starts with. */
+async function trailSteps() {
+  const trail = await screen.findByRole("list", { name: TRAIL });
+  const steps = within(trail).getAllByRole("listitem");
+  const byName = new Map(steps.map((step) => [step.firstElementChild?.textContent ?? "", step]));
+  const step = (name: string) => {
+    const found = byName.get(name);
+    if (!found) throw new Error(`no ${name} step`);
+    return found;
+  };
+  return { trail, steps, names: [...byName.keys()], step };
+}
+
 async function region() {
   const detail = await screen.findByRole("region", { name: "Proposal" });
   await within(detail).findByRole("region", { name: "Note" });
@@ -63,7 +95,7 @@ describe("LearningDetail", () => {
     expect(within(detail).getByText("Proposed")).toBeInTheDocument();
     expect(within(detail).getByRole("link", { name: /Open at that moment/ })).toHaveAttribute(
       "href",
-      `/sessions/${anId(1, "5091b986")}?tab=timeline&event=${anId(10, "0192aaaa")}`,
+      `/sessions/${anId(1, "5091b986")}?event=${anId(10, "0192aaaa")}`,
     );
   });
 
@@ -362,7 +394,7 @@ describe("LearningDetail", () => {
     const detail = await region();
 
     expect(within(detail).getByText(label)).toBeInTheDocument();
-    expect(within(detail).getByRole("link", { name: /pull\/7/ })).toHaveAttribute(
+    expect(within(detail).getByRole("link", { name: /Pull request #7/ })).toHaveAttribute(
       "href",
       "https://github.com/acme/agent-hub-hub/pull/7",
     );
@@ -381,6 +413,168 @@ describe("LearningDetail", () => {
 
     expect(within(detail).getByText(label)).toBeInTheDocument();
     expect(within(detail).getByRole("button", { name: "Reject" })).toBeDisabled();
+  });
+
+  it("trail: shows Session, Proposal, Decision and Note in order with their links", async () => {
+    for (const brainPath of ["brain/learnings/web-gates.md", "learnings/web-gates.md"]) {
+      const { unmount } = open({ [DETAIL]: inBrain({ brain_path: brainPath }) });
+      const detail = await region();
+      const { trail, names, step } = await trailSteps();
+
+      expect(names).toEqual(["Session", "Proposal", "Decision", "Note"]);
+      expect(
+        within(trail)
+          .getAllByRole("link")
+          .map((link) => link.getAttribute("href")),
+      ).toEqual([
+        "/sessions/s1",
+        "/sessions/s1?event=e1",
+        "https://github.com/acme/hub/pull/7",
+        "/projects/agent-hub/brain/learnings/web-gates.md",
+      ]);
+      expect(within(step("Session")).getByRole("link")).toHaveTextContent("Session s1");
+      expect(within(step("Proposal")).getByRole("link")).toHaveTextContent("Open at that moment");
+      expect(within(step("Proposal")).getByText("brain/_inbox/web-gates.md")).toBeInTheDocument();
+      const decision = step("Decision");
+      expect(decision).toHaveTextContent(/Accepted .+ by Ana Lima/);
+      const pr = within(decision).getByRole("link", {
+        name: "Pull request #7 in acme/hub (opens in a new tab)",
+      });
+      expect(pr).toHaveAttribute("target", "_blank");
+      const note = step("Note");
+      expect(within(note).getByRole("link", { name: /brain\/learnings\/web-gates\.md/ })).toBe(
+        within(trail).getAllByRole("link")[3],
+      );
+      expect(note).toHaveTextContent("In the brain");
+      expect(within(detail).getAllByText("brain/learnings/web-gates.md")).toHaveLength(1);
+      expect(detail.textContent).not.toContain("brain/brain/");
+      for (const row of ["Source", "In the brain", "Pull request", "Decision"]) {
+        expect(within(detail).queryByText(row, { selector: ".ah-small.ah-subtle" })).toBeNull();
+      }
+      expect(within(detail).getByText("Trail", { selector: ".ah-small.ah-subtle" })).toBeVisible();
+      expect(trail.textContent).not.toMatch(EFFECT_WORDS);
+      unmount();
+    }
+
+    open({ [DETAIL]: inBrain({ source_event_id: null }) });
+    await region();
+    const { step } = await trailSteps();
+    expect(within(step("Proposal")).getByRole("link")).toHaveTextContent(
+      "Open the session timeline",
+    );
+    expect(within(step("Proposal")).getByRole("link")).toHaveAttribute("href", "/sessions/s1");
+  });
+
+  it("trail: says the note joins the brain once the pull request is merged", async () => {
+    open({ [DETAIL]: inBrain({ state: "accepted_pr_open" }) });
+    await region();
+    const { names, step } = await trailSteps();
+
+    expect(names).toEqual(["Session", "Proposal", "Decision", "Note"]);
+    const note = step("Note");
+    expect(within(note).queryByRole("link")).toBeNull();
+    expect(within(note).getByText("brain/learnings/web-gates.md")).toBeInTheDocument();
+    expect(note).toHaveTextContent("In the brain once the pull request is merged and pulled");
+    expect(
+      within(step("Decision")).getByRole("link", { name: /Pull request #7 in acme\/hub/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("trail: says Decided outside the app without a pull request", async () => {
+    open({ [DETAIL]: inBrain({ pr_url: null }) });
+    await region();
+    const { step, trail } = await trailSteps();
+
+    const decision = step("Decision");
+    expect(decision).toHaveTextContent("Decided outside the app");
+    expect(decision).toHaveTextContent("by Ana Lima");
+    expect(within(decision).queryByRole("link")).toBeNull();
+    expect(trail.textContent).not.toMatch(EFFECT_WORDS);
+  });
+
+  it("trail: says No source session recorded.", async () => {
+    const { unmount } = open({
+      [DETAIL]: inBrain({ source_session_id: null, source_event_id: null }),
+    });
+    await region();
+    let { step } = await trailSteps();
+
+    expect(step("Session")).toHaveTextContent("No source session recorded.");
+    expect(within(step("Session")).queryByRole("link")).toBeNull();
+    expect(within(step("Proposal")).queryByRole("link")).toBeNull();
+    expect(within(step("Proposal")).getByText("brain/_inbox/web-gates.md")).toBeInTheDocument();
+    unmount();
+
+    open({
+      [DETAIL]: inBrain({ source_session_id: null, source_event_id: null, note_path: null }),
+    });
+    await region();
+    ({ step } = await trailSteps());
+    expect(step("Proposal")).toHaveTextContent("No proposal event recorded.");
+  });
+
+  it("trail: has no Note step for a rejected learning", async () => {
+    open({
+      [DETAIL]: inBrain({
+        status: "rejected",
+        state: "archived",
+        brain_path: null,
+        rejection_reason: "Duplicate of the gates note",
+      }),
+    });
+    await region();
+    const { names, step, trail } = await trailSteps();
+
+    expect(names).toEqual(["Session", "Proposal", "Decision"]);
+    const decision = step("Decision");
+    expect(decision).toHaveTextContent(/Rejected .+ by Ana Lima/);
+    expect(decision).toHaveTextContent("Duplicate of the gates note");
+    expect(within(decision).getByRole("link", { name: /Pull request #7/ })).toBeInTheDocument();
+    expect(trail.textContent).not.toMatch(EFFECT_WORDS);
+  });
+
+  it("trail: follows an accept at once", async () => {
+    open({ [ACCEPT]: aLearningActionResult() });
+    const detail = await region();
+    let { names, step } = await trailSteps();
+    expect(names).toEqual(["Session", "Proposal", "Decision"]);
+    expect(step("Decision")).toHaveTextContent("Not decided yet");
+
+    const target = within(detail).getByRole("combobox", { name: "Target in brain/" });
+    await userEvent.clear(target);
+    await userEvent.type(target, "learnings/gotchas/web-gates.md");
+    await userEvent.click(within(detail).getByRole("button", { name: "Accept" }));
+    await userEvent.click(screen.getByRole("button", { name: "Open pull request" }));
+    await screen.findByText("Pull request opened");
+
+    ({ names, step } = await trailSteps());
+    expect(names).toEqual(["Session", "Proposal", "Decision", "Note"]);
+    const decision = step("Decision");
+    expect(decision).toHaveTextContent("Accepted just now · pull request opened");
+    expect(
+      within(decision).getByRole("link", { name: /Pull request #12 in acme\/agent-hub-hub/ }),
+    ).toHaveAttribute("href", "https://github.com/acme/agent-hub-hub/pull/12");
+    const note = step("Note");
+    expect(within(note).queryByRole("link")).toBeNull();
+    expect(within(note).getByText("brain/learnings/gotchas/web-gates.md")).toBeInTheDocument();
+    expect(note).toHaveTextContent("In the brain once the pull request is merged and pulled");
+  });
+
+  it("trail has no serious a11y violations (a11y)", async () => {
+    for (const learning of [
+      inBrain(),
+      inBrain({ state: "accepted_pr_open" }),
+      inBrain({ pr_url: null, source_session_id: null }),
+      inBrain({ status: "rejected", state: "archived", rejection_reason: "Duplicate" }),
+      aLearningDetail(),
+    ]) {
+      const { container, unmount } = open({ [DETAIL]: learning });
+      await region();
+      await trailSteps();
+
+      expect(await seriousViolations(container)).toEqual([]);
+      unmount();
+    }
   });
 
   it("has no serious a11y violations with the dialog open (a11y)", async () => {
