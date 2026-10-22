@@ -137,6 +137,7 @@ from agent_hub.cli.workflow_runs import (
     snapshot_includes,
     snapshot_run,
 )
+from agent_hub.cli.workflow_schedule_command import schedule_app
 from agent_hub.core.approvals.decide_gate import (
     MAX_TEXT_BYTES,
     DecideGate,
@@ -199,6 +200,7 @@ _JITTER: Final = random.SystemRandom()
 workflow_app = typer.Typer(
     name="workflow", no_args_is_help=True, help="List, check and run workflows."
 )
+workflow_app.add_typer(schedule_app, name="schedule")
 
 
 @workflow_app.command("list")
