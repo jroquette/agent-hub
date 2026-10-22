@@ -601,19 +601,21 @@ def test_logs_one_line_per_call_when_tools_called() -> None:
 
 
 def test_serializes_calls_when_client_sends_them_together() -> None:
-    active: list[int] = []
-    overlaps: list[int] = []
+    # A handshake, not a timed wait: the first read holds on until another read enters (bounded),
+    # and any later read sets ``entered``. With the lock, no read enters while the first is held.
+    entered = threading.Event()
+    starts: list[str] = []
+    overlapped: list[bool] = []
     guard = threading.Lock()
 
     def before_read(path: str) -> None:
-        del path
         with guard:
-            active.append(1)
-            overlaps.append(len(active))
-        # Long enough for an unserialized second call to start reading meanwhile.
-        threading.Event().wait(0.05)
-        with guard:
-            active.pop()
+            starts.append(path)
+            is_first = len(starts) == 1
+        if not is_first:
+            entered.set()
+            return
+        overlapped.append(entered.wait(timeout=2))
 
     hub = _Hub()
     hub.checkout = _Checkout(before_read=before_read)
@@ -633,4 +635,5 @@ def test_serializes_calls_when_client_sends_them_together() -> None:
     results = hub.run(together)
 
     assert [result.is_error for result in results] == [False] * 3
-    assert overlaps and max(overlaps) == 1
+    assert overlapped == [False]
+    assert len(starts) == 3
