@@ -89,7 +89,7 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
       "Known at run time: captured by step order-on-hold",
     );
     expect(within(table).getByText("Runs with values known at run time")).toBeInTheDocument();
-    expect(within(table).getByText(/\(every 10s, up to 5m\)/)).toBeInTheDocument();
+    expect(within(table).getByText(/\(every 10 s, up to 5 min\)/)).toBeInTheDocument();
     expect(screen.getByText("Cannot start: render-pdf is denied in personal.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Start scenario run" })).toBeDisabled();
   });
@@ -353,5 +353,68 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
     expect(await screen.findByText("Can start in personal.")).toBeInTheDocument();
     expect(screen.getByText("Starting a scenario run needs a desktop screen.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Start scenario run" })).toBeNull();
+  });
+  it("scenarios detail puts a draft's commit line in a full-width row under its step", async () => {
+    renderDetail({ [PLAN]: denied });
+    await planIn("personal");
+
+    const table = await screen.findByRole("table", { name: "Plan of order-lifecycle in personal" });
+    const header = within(table)
+      .getAllByRole("columnheader")
+      .map((th) => th.textContent);
+    expect(header).toEqual(["Step", "Action", "Effect", "Service → endpoint", "Policy"]);
+    const stepRow = within(table).getByText("render-pdf").closest("tr");
+    expect(stepRow).toHaveTextContent("Denied");
+    const draftRow = within(table).getByText("Draft: needs acceptance").closest("tr");
+    expect(draftRow).not.toBe(stepRow);
+    expect(draftRow?.querySelector("td")).toHaveAttribute("colspan", "5");
+    const command = within(table).getByText(aDraftRow().accept_command ?? "");
+    expect(command).toHaveStyle({ whiteSpace: "pre-wrap" });
+    expect(
+      within(draftRow as HTMLElement).getByRole("button", {
+        name: "Copy the commit command for orders/render-invoice-pdf",
+      }),
+    ).toBeInTheDocument();
+    expect(table).toHaveClass("sc-plan");
+  });
+
+  it("scenarios detail shows a plan's input problems at their fields", async () => {
+    renderDetail({
+      [PLAN]: aProblem({
+        status: 422,
+        title: "Invalid request body",
+        errors: [{ pointer: "/inputs/external_ref", message: "external_ref must be a ref." }],
+      }),
+    });
+    await planIn("personal");
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("external_ref (required)")).toHaveAccessibleDescription(
+        /external_ref must be a ref\./,
+      );
+    });
+  });
+
+  it("scenarios detail words a poll's pace and names the environment in the slow-plan command", async () => {
+    const { unmount } = renderDetail({ [PLAN]: aScenarioPlan() });
+    await planIn("personal");
+    expect(await screen.findByText(/\(every 10 s, up to 5 min\)/)).toBeInTheDocument();
+    unmount();
+
+    renderDetail({ [PLAN]: aProblem({ status: 502, title: "Bad gateway" }) });
+    await planIn("qa");
+    expect(
+      await screen.findByText("./hub scenario plan order-lifecycle --env qa"),
+    ).toBeInTheDocument();
+  });
+
+  it("scenarios detail names why a denied plan with no denied step cannot start", async () => {
+    renderDetail({ [PLAN]: aScenarioPlan({ denied: true }) });
+    await planIn("personal");
+
+    expect(
+      await screen.findByText("Cannot start in personal: the plan does not allow a start there."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Cannot start: +is denied/)).toBeNull();
   });
 });

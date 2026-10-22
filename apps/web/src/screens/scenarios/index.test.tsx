@@ -247,4 +247,13 @@ describe("ScenariosScreen (scenarios list)", () => {
     await screen.findByRole("region", { name: "Waiting for you" });
     expect(await seriousViolations(container)).toEqual([]);
   });
+  it("scenarios list heads the files that do not load and draws no colored card border", async () => {
+    renderList();
+
+    expect(
+      await screen.findByRole("heading", { name: "Files that do not load (1)" }),
+    ).toBeInTheDocument();
+    const card = screen.getByRole("region", { name: "Waiting for you" });
+    expect(card.style.borderLeft).toBe("");
+  });
 });
