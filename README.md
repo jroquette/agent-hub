@@ -247,7 +247,10 @@ A workflow is data: a YAML (or JSON) file in the hub's `workflows/<pack>/` folde
 `script`, `loop`, `loop_group`, `include`, `approval`, `wait`, `halt`) depend on each other and run in layers
 ([format](docs/design/workflow-schema.md), [ADR 0032](docs/adr/0032-workflow-engine.md)). `hub init` and `hub sync`
 seed the built-in packs once: `issue-to-pr` (what `hub run` runs) and `sdlc` (`deliver`: implement, validate and
-review in a loop until green, then the PR; `review`: a spec lens and a quality lens side by side, then one verdict). A hub's own file
+review in a loop until green, then the PR; `review`: a spec lens and a quality lens side by side, then one verdict) and
+`security-sweep` (the installed scanners on every repo as of `origin/<branch>`, read-only, then one security-reviewer
+triage of the new findings; the kept ones go to `brain/_inbox/security-YYYY-MM-DD.md` for `/triage`, no secret value
+and no tracker write; suggested weekly in `hub.json` `schedules`: `{"workflow": "security-sweep", "cron": "0 6 * * 1"}`). A hub's own file
 overrides a built-in of the same name.
 
 ```bash

@@ -279,6 +279,12 @@ authored as the hub's author), and nothing changes until the user merges it. Tha
 PR is opened as that `gh` account). Under Docker the hubs are mounted read-only, so both actions are disabled with
 "Hub is read-only here"; run `./hub web` locally to decide learnings. Workflows: [README](../README.md#-workflows).
 
+**Weekly security sweep.** `./hub workflow run security-sweep --live` (or a weekly `schedules` entry) runs the
+scanners found on `PATH` (Semgrep, Bandit, pip-audit, npm audit; none is installed for you, a missing one is named in
+the note) and the guard's secret-file rule on each repo as last fetched, triages the new findings with the
+security-reviewer's steps, and writes `brain/_inbox/security-YYYY-MM-DD.md`; file an issue for each finding you accept,
+then run `/triage <issue>`. Semgrep's registry rules, pip-audit and npm audit reach the network.
+
 **Sessions from the app.** On the Sessions screen, New session starts the user's own `claude` (on `PATH`, logged in)
 in the hub, a repo or one of their worktrees, with the hub's CLAUDE.md, hooks (the guard still applies), skills and
 agents; the chat sends messages, answers prompts, interrupts, sets mode and model, resumes an ended session in place
