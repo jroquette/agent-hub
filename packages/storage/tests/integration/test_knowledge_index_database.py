@@ -385,3 +385,27 @@ def test_keeps_rows_unchanged_when_change_fails_partway(tmp_path: Path) -> None:
         assert [hit.path for hit in index.search(HUB, (word,), limit=MAX_RESULTS)] == paths
     rowids, ids = _text_rowids_and_indexed_ids(path)
     assert rowids == ids
+
+
+def _linked(path: str, *targets: str) -> IndexedDocument:
+    return _document(path, f"{path} text").model_copy(update={"links": targets})
+
+
+def test_deletes_link_rows_when_path_dropped_or_hub_rebuilt(tmp_path: Path) -> None:
+    path = tmp_path / "events.db"
+    index = open_knowledge_index(path)
+    documents = (
+        _linked("brain/a.md", "brain/now.md"),
+        _linked("brain/b.md", "brain/now.md", "brain/x.md"),
+        _linked("brain/c.md", "brain/now.md"),
+    )
+    index.apply(HUB, IndexChange(version=INDEX_VERSION, documents=documents))
+    index.apply("/hubs/other", IndexChange(version=INDEX_VERSION, documents=documents[:1]))
+
+    index.apply(HUB, IndexChange(version=INDEX_VERSION, dropped=("brain/b.md",)))
+    after_drop = _rows_per_link(path)
+    index.apply(HUB, IndexChange(version=INDEX_VERSION, rebuild=True, documents=documents[:1]))
+
+    assert after_drop == {("brain/a.md", "brain/now.md"): 1, ("brain/c.md", "brain/now.md"): 1}
+    assert _rows_per_link(path) == {("brain/a.md", "brain/now.md"): 1}
+    assert index.backlinks("/hubs/other", "brain/now.md", limit=MAX_BACKLINKS).total == 1
