@@ -61,6 +61,7 @@ DESIGN_PATHS = (
     ".claude/settings.project.json",
     ".github/workflows/ci.yml",
     ".gitignore",
+    ".mcp.json",
     ".pre-commit-config.yaml",
     "AGENTS.md",
     "AGENTS.project.md",
@@ -2874,9 +2875,10 @@ def test_names_repo_branches_in_agents_when_repo_sets_one(variant_config: HubCon
 # AGH-48: re-pinned when "Brain rules" gained the routing list.
 # AGH-319: re-pinned when Cross-repo rules gained rule 6 (plain-language) and two lines
 # were shortened.
-DEMO_AGENTS_SHA256 = "8ef7ad3e57f1f54af00cd361ed373759277205464765b967aa501c4b585f9c83"
+# AGH-392: re-pinned when the managed-file list gained `.mcp.json`.
+DEMO_AGENTS_SHA256 = "5f129e52d02472f57a1bab5195ba044648281f4d8c810cab385519693d8c6aa5"
 ALL_MODULES_SHA256 = {
-    "AGENTS.md": "deb951e68e5c1f71fbf1230deab6ffc41b2649a9bc8fdf3cfd031fdbd26a4e6c",
+    "AGENTS.md": "47dcde7d8ed2be1bb3446bb8537136ef0d19f47a39925c44ce527ddd936c7c68",
     ".claude-plugin/marketplace.json": (
         "f7324911e70a0f3255274721636821a9b65a5716f04c5f6e3e470e74dc7b8ac7"
     ),
@@ -4144,6 +4146,7 @@ def test_matches_plugin_hooks_when_settings_compared(demo_render: dict[str, Rend
 BUILT_JSON_PATHS = (
     ".claude/settings.json",
     ".claude/settings.project.json",
+    ".mcp.json",
     "plugin/{project}/.claude-plugin/plugin.json",
 )
 # Built too, rendered only when module `marketplace` is selected (AGH-17 D4).
@@ -4199,9 +4202,9 @@ def test_parses_every_json_when_rendered(config_name: str, request: pytest.Fixtu
 
     json_files = [file for file in render_hub(config).files if file.path.endswith(".json")]
 
-    # The two settings files, both manifests, `hooks.json`, the schema and the two agent output
-    # schemas (AGH-139).
-    assert len(json_files) == 8
+    # The two settings files, both manifests, `hooks.json`, the schema, the two agent output
+    # schemas (AGH-139) and `.mcp.json` (AGH-392).
+    assert len(json_files) == 9
     for file in json_files:
         strict_json(file.content)
 
