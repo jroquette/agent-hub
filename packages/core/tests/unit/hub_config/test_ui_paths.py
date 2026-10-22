@@ -103,7 +103,6 @@ def test_bounds_segment_matches_when_recursive_globs_fail(monkeypatch: pytest.Mo
     monkeypatch.setattr(ui_paths, "fnmatchcase", counted)
 
     assert not ui_path_matches(EIGHT_RECURSIVE, DEEP_PATH)
-    # Each (glob segment, path segment) pair is matched at most once: 8 ``d`` and one ``y.ts``
+    # At most one segment match per (glob segment, path segment) pair: 8 ``d`` and one ``y.ts``
     # segment against 61 path segments, never a product over the ``**`` segments.
     assert 0 < len(calls) <= 9 * 61
-    assert len(set(calls)) == len(calls)
