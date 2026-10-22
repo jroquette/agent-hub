@@ -12,8 +12,8 @@ platform checkout's CLI there (``uv run --project <repo> --locked --all-packages
 <path>`` lines are the list (``hub.lock`` aside). The worktree is removed at the end. Prints
 ``{"from", "version", "count", "files", "omitted", "conflicts", "text"}``: ``files`` at most
 ``MAX_FILES`` ``{verb, path}`` (the rest counted in ``omitted``), ``conflicts`` at most
-``MAX_CONFLICTS`` lines of a conflict report (exit 3), ``text`` one ``<verb> <path>`` line each
-(``none`` when nothing changes).
+``MAX_CONFLICTS`` lines of a conflict report (exit 3), ``text`` one ``<verb> <path>`` line per
+listed file (``none`` when nothing changes).
 
 ``pin.py apply --worktree <hub worktree> --version X.Y.Z --issue <team>-<n>`` sets the pin in
 that worktree, runs its ``./hub sync``, then ``./hub sync --check`` (it must say ``up to date``),
@@ -164,7 +164,9 @@ def list_changes(hub: Path, *, repo: Path, version: str, cli: list[str]) -> dict
             _git(hub, "worktree", "remove", "--force", str(copy))
     finally:
         shutil.rmtree(folder, ignore_errors=True)
-    lines = [f"{entry['verb']} {entry['path']}" for entry in files]
+    lines = [f"{entry['verb']} {entry['path']}" for entry in files[:MAX_FILES]]
+    if len(files) > MAX_FILES:
+        lines.append(f"and {len(files) - MAX_FILES} more")
     return {
         "from": previous,
         "version": version,

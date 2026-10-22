@@ -616,10 +616,19 @@
     "workflows/release/scripts/bump.py": {
       "ownership": "seeded"
     },
+    "workflows/release/scripts/compose.py": {
+      "ownership": "seeded"
+    },
+    "workflows/release/scripts/exact_check.py": {
+      "ownership": "seeded"
+    },
     "workflows/release/scripts/hub_branch.py": {
       "ownership": "seeded"
     },
     "workflows/release/scripts/pin.py": {
+      "ownership": "seeded"
+    },
+    "workflows/release/scripts/report.py": {
       "ownership": "seeded"
     },
     "workflows/release/scripts/since.py": {

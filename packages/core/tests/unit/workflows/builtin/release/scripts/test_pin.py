@@ -255,6 +255,8 @@ def test_caps_files_when_sync_list_over_budget(
 
     assert code == 0
     assert (len(found["files"]), found["omitted"], found["count"]) == (500, 10, 510)
+    assert found["text"].splitlines()[-1] == "and 10 more"
+    assert len(found["text"].splitlines()) == 501
 
 
 def a_hub_worktree(hub: Path) -> Path:
