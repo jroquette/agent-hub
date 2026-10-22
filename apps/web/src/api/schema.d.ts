@@ -316,6 +316,27 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/agent-sessions/{agent_session_id}/repo-changes/file": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Agent Session Repo File
+     * @description One file of the session's repositories (``path`` absolute) as commit ``sha`` has it: the
+     *     lines a review expands around a pull request's diff.
+     */
+    get: operations["get_agent_session_repo_file_api_v1_agent_sessions__agent_session_id__repo_changes_file_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/agent-sessions/{agent_session_id}/settings": {
     parameters: {
       query?: never;
@@ -4759,6 +4780,26 @@ export interface components {
     /** @enum {string} */
     RepoFileStatus: "added" | "modified" | "deleted" | "renamed";
     /**
+     * RepoFileText
+     * @description ``GET /agent-sessions/{id}/repo-changes/file``: a file as it is at one commit (the base a
+     *     pull request's diff is read against), so a review can show the lines its diff leaves out.
+     *     ``text`` is null for a binary file, one past ``REPO_DIFF_MAX_BYTES`` or one the commit does
+     *     not have.
+     */
+    RepoFileText: {
+      /**
+       * Binary
+       * @default false
+       */
+      binary: boolean;
+      /** Path */
+      path: string;
+      /** Sha */
+      sha: string;
+      /** Text */
+      text?: string | null;
+    };
+    /**
      * RepoPullRequest
      * @description The branch's pull request on GitHub: its number, link, state (``OPEN``, ``MERGED``,
      *     ``CLOSED``) and the commit it is at.
@@ -7183,6 +7224,49 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["RepoCommitDiff"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_agent_session_repo_file_api_v1_agent_sessions__agent_session_id__repo_changes_file_get: {
+    parameters: {
+      query: {
+        path: string;
+        sha: string;
+      };
+      header?: never;
+      path: {
+        agent_session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RepoFileText"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */

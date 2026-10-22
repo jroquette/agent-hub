@@ -474,7 +474,7 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
 - **AC-377.42** Given the OpenAPI document, when it is built, then the two repo-changes routes are listed with the
   agent-session paths and are behind the same access check as the others.
 
-### Session review: tests apart, diff colours and discarded files (AGH-424)
+### Session review: tests apart, diff colours, discarded files and expanding a diff (AGH-424)
 
 **Code and tests**
 
@@ -514,6 +514,27 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
   `Discarded` tab, right after `Code`, with the note that none of it goes in the pull request; it leaves the Code tab,
   has no `Viewed` checkbox, and is counted neither in the file and line totals nor in what waits for review (drawer
   and header chip).
+
+**Expanding a pull request's diff**
+
+- **AC-424.7** Given a file's final diff read from git against a base commit, of a file the base has (not one the
+  branch added or a discarded one), when it shows, then each hunk header and the end of the diff have GitHub's expand
+  buttons in the gutter: a gap of 20 lines or fewer opens whole (`Expand all N hidden lines`), a bigger one 20 lines at
+  a time (`Expand 20 lines down` from the hunk above, `Expand 20 lines up` from the hunk below). The revealed lines
+  join the diff as context with their real numbers, colours and comments; two hunks merge once the gap between them is
+  all shown. The base's file is read once (`repo-changes/file`); while it loads, or when it cannot be read, the diff
+  shows as it is, without buttons; a newer diff of the file starts closed again.
+
+**API: one file at a commit (`GET /api/v1/agent-sessions/{id}/repo-changes/file?path=&sha=`)**
+
+- **AC-424.8** Given a file of one of the session's repositories (`path` absolute) and a commit, when it is read, then
+  git shows the file as that commit has it (`git show <sha>:<path>`): the full sha, the path and its `text`; `text`
+  is null when the commit has no such file, the file is past `REPO_DIFF_MAX_BYTES`, or it is binary (`binary`).
+- **AC-424.9** Given the file is outside the session's repositories, or git does not know the commit, when it is read,
+  then the answer is not found; given a ref (`HEAD`), an option (`--output=x`), a relative path or no path, then it
+  answers 400 and never calls the session control (as AC-377.37).
+- **AC-424.10** Given the OpenAPI document, when it is built, then the route is listed with the agent-session paths,
+  the third repo-changes read, behind the same access check as the others.
 
 ### Chat: opening, answers, links and the slash menu (AGH-379)
 

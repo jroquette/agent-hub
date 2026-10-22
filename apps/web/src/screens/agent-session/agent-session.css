@@ -733,6 +733,40 @@
 .as-diff-head {
   color: var(--text-subtle);
 }
+/* The buttons that reveal the lines a diff leaves out, in a hunk header's two gutters (as on
+ * GitHub): one opens a small gap whole, two open a bigger one 20 lines at a time. */
+.as-diff-no.as-diff-no-expand {
+  grid-column: span 2;
+  display: flex;
+  align-items: stretch;
+  padding: 0;
+  text-align: center;
+  user-select: none;
+  background: color-mix(in srgb, var(--accent-soft) 80%, var(--code-bg));
+}
+.as-diff-expand {
+  display: flex;
+  flex: 1;
+}
+.as-diff-expand-btn {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  min-height: 18px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.as-diff-expand-btn:hover {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.as-diff-expand-btn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
 /* A diff coloured in its file's language, as a pull request reads: the line's ground and its sign
  * say added or removed, the code keeps the text and syntax colours, and the number gutters carry
  * a stronger tint so the eye finds the changed lines. */

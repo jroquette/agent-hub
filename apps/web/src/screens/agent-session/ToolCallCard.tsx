@@ -11,6 +11,7 @@ import {
   type IconName,
 } from "../../components";
 import { cx } from "../../lib/cx";
+import { ExpandGap, type DiffExpansion } from "./DiffExpand";
 import { useDiffSyntax } from "./diffSyntax";
 import { StoredCopyLabel } from "./SessionStatus";
 import {
@@ -70,6 +71,43 @@ export function diffLines(diff: string): DiffLine[] {
   });
 }
 
+/** For each line, the number of the hunk header it is (from 0), else -1. */
+export function hunkIndexes(lines: readonly DiffLine[]): number[] {
+  let next = 0;
+  return lines.map((line) => (line.kind === "hunk" ? next++ : -1));
+}
+
+/** A numbered line's two gutters (old, new); a hunk header's hold the buttons that reveal the
+ * lines hidden above it, when there are any. */
+export function DiffGutter({
+  line,
+  hunk,
+  expansion,
+}: {
+  line: DiffLine;
+  hunk: number | undefined;
+  expansion: DiffExpansion | undefined;
+}) {
+  const gap = hunk !== undefined && hunk >= 0 ? expansion?.headers[hunk] : null;
+  if (gap && expansion) {
+    return (
+      <span className="as-diff-no as-diff-no-expand">
+        <ExpandGap gap={gap} expansion={expansion} />
+      </span>
+    );
+  }
+  return (
+    <>
+      <span className="as-diff-no" aria-hidden="true">
+        {line.oldNo ?? ""}
+      </span>
+      <span className="as-diff-no" aria-hidden="true">
+        {line.newNo ?? ""}
+      </span>
+    </>
+  );
+}
+
 /** A diff line's text as a pull request shows it: the sign in the line's colour, the code in
  * the syntax colours of its language (`code`, from `useDiffSyntax`) or plain. */
 export function DiffLineText({
@@ -98,14 +136,18 @@ export function DiffText({
   label,
   numbered = false,
   path,
+  expansion,
 }: {
   diff: string;
   label: string;
   numbered?: boolean;
   path?: string | undefined;
+  /** The lines it can reveal around its hunks (a numbered diff only). */
+  expansion?: DiffExpansion | undefined;
 }) {
   const lines = useMemo(() => diffLines(diff), [diff]);
   const syntax = useDiffSyntax(lines, path);
+  const hunkAt = useMemo(() => hunkIndexes(lines), [lines]);
   return (
     <pre
       className={cx("as-diff", numbered && "as-diff-numbered", syntax && "hljs as-diff-syntax")}
@@ -118,12 +160,7 @@ export function DiffText({
         numbered ? (
           line.kind === "head" ? null : (
             <span key={i} className={`as-diff-line as-diff-${line.kind}`}>
-              <span className="as-diff-no" aria-hidden="true">
-                {line.oldNo ?? ""}
-              </span>
-              <span className="as-diff-no" aria-hidden="true">
-                {line.newNo ?? ""}
-              </span>
+              <DiffGutter line={line} hunk={hunkAt[i]} expansion={expansion} />
               <span className="as-diff-code">
                 <DiffLineText line={line} code={syntax?.[i]} />
                 {"\n"}
@@ -136,6 +173,14 @@ export function DiffText({
             {"\n"}
           </span>
         ),
+      )}
+      {numbered && expansion?.trailing && (
+        <span className="as-diff-line as-diff-hunk">
+          <span className="as-diff-no as-diff-no-expand">
+            <ExpandGap gap={expansion.trailing} expansion={expansion} />
+          </span>
+          <span className="as-diff-code">{"\n"}</span>
+        </span>
       )}
     </pre>
   );

@@ -607,7 +607,7 @@ describe("FilesPanel (pull request)", () => {
     );
 
   it("opens a file on git's diff against the base, its commits and Claude's changes a click away", async () => {
-    render(<FilesPanel files={prFiles()} sessionId="s1" onClose={vi.fn()} />);
+    renderWithApi(<FilesPanel files={prFiles()} sessionId="s1" onClose={vi.fn()} />);
     const list = screen.getByRole("navigation", { name: "Files" });
     expect(
       within(list)
@@ -644,7 +644,7 @@ describe("FilesPanel (pull request)", () => {
   it("anchors a comment on git's diff to the file's final diff, with its real line numbers", async () => {
     const user = userEvent.setup();
     const onComment = vi.fn(() => Promise.resolve());
-    render(
+    renderWithApi(
       <FilesPanel
         files={prFiles()}
         sessionId="s1"
@@ -690,12 +690,43 @@ describe("FilesPanel (pull request)", () => {
 
     expect(row).toHaveAttribute("aria-expanded", "true");
     expect(await screen.findByLabelText("Commit c2abcde to /w/api/app.py")).toHaveTextContent("+d");
-    const [request] = view.requests;
+    // The final diff read the base's file too; only the commit's reads count here.
+    const commitReads = () => view.requests.filter((one) => one.url.includes(commitPath));
+    const [request] = commitReads();
     expect(new URL(request?.url ?? "").searchParams.get("path")).toBe("/w/api/app.py");
 
     await userEvent.click(row);
     await userEvent.click(row);
     expect(screen.getByLabelText("Commit c2abcde to /w/api/app.py")).toBeInTheDocument();
+    expect(commitReads()).toHaveLength(1);
+  });
+
+  it("expands git's diff around its hunks with the file as the base has it, as on GitHub (AC-424.7)", async () => {
+    // The base's app.py: 60 lines, "l1" to "l60"; the diff shows lines 40 to 42.
+    const base = Array.from({ length: 60 }, (_, i) => `l${String(i + 1)}`).join("\n") + "\n";
+    const view = renderWithApi(<FilesPanel files={prFiles()} sessionId="s1" onClose={vi.fn()} />, {
+      routes: {
+        "/api/v1/agent-sessions/s1/repo-changes/file": () => ({
+          sha: "f0".repeat(20),
+          path: "/w/api/app.py",
+          text: base,
+          binary: false,
+        }),
+      },
+    });
+    await userEvent.click(screen.getByRole("button", { name: /app\.py/ }));
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Expand all 18 hidden lines" }),
+    );
+    const diff = screen.getByLabelText(/Final diff of/);
+    expect(diff).toHaveTextContent("l60");
+
+    await userEvent.click(screen.getByRole("button", { name: "Expand 20 lines up" }));
+    expect(diff).toHaveTextContent("l20");
+    expect(diff).not.toHaveTextContent("l19 ");
+    const [request] = view.requests;
+    expect(new URL(request?.url ?? "").searchParams.get("sha")).toBe("f0");
     expect(view.requests).toHaveLength(1);
   });
 });
