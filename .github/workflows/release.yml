@@ -44,7 +44,8 @@ defaults:
 
 jobs:
   release-tag:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    # Dispatch-only, not main-only: a dispatch from another ref must fail loudly in the first check, not skip green.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # The only job that writes: it pushes the one tag.
@@ -72,6 +73,8 @@ jobs:
         run: |
           export LC_ALL=C
           fail() { echo "release tag: $*" >&2; exit 1; }
+          [ "$GITHUB_REF" = refs/heads/main ] \
+            || fail "dispatched from ${GITHUB_REF@Q}; a release is tagged only from main: dispatch with --ref main"
           [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || fail "sha must be a full 40-character commit SHA in lowercase hex"
           [ -n "$NOTES" ] || fail "the notes are empty; they become the tag message"
           git rev-parse --verify -q origin/main > /dev/null || fail "origin/main is missing from the checkout"
