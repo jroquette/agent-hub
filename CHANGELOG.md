@@ -70,6 +70,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   approval again; the tabs read Spec, Research, Plan, Acceptance criteria, Tickets, Eval; the header no longer shows
   ticket chips (the Tickets tab has them); each feature's fixed label, its slug, shows beside its name on its page
   and in the Features list.
+- hub web: the project overview shows the hub configuration at a glance in four plain-sentence cards (where the
+  work comes from, how work is named, what agents may touch, the hub), Recent work as the features and tickets
+  worked on in the last 7 days instead of sessions, and a plainer Repositories table (checks and agent instructions
+  in words, commands in a tooltip). Tooltips are reachable by keyboard, a failed sessions read says so in each
+  column, and the header's setup badge opens Setup and health (AGH-427).
 
 ## [0.19.0] - 2026-10-21
 

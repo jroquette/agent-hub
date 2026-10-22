@@ -238,14 +238,78 @@ folds the engineering detail away. Where the sections below say otherwise, this 
   2", "Pull request opened") and the budget bar or cost; "All tickets" opens Workflow runs. With none: "No agent is
   working on a ticket right now. Agents pick up Linear tickets labelled agent-ready."; with only finished ones the
   same line says "Here is what finished this week.".
-- **AC-273.15** "Recent work" lists the last sessions with the columns What, Status, Started, Took and Cost (no turns,
-  errors or agent).
-- **AC-273.16** "Setup and health" (for engineers) is a collapsed section whose summary badges "N things to fix"; open,
-  it holds the doctor findings, the Repos table and the hub (repository, tracker, platform pin with Sync pending or
-  Drift, modules).
+- **AC-273.15** (changed by AGH-427) "Recent work" ("What the team worked on in the last 7 days · costs estimated
+  from transcripts") shows two lists side by side, **Features** and **Tickets**, each the work active in the last 7
+  days, five rows at most, newest first; no session rows. A feature counts when a session on one of its issues was
+  active in the week: its row (the Features list's row, read only) shows the lead icon and line of `reasonOf` with
+  "worked on <when>", its name, and the week's cost of those sessions, and opens the feature. A ticket row is the
+  Tickets list's row (AGH-426, `TicketItem`) and opens its newest session; a feature's issues, feature-path work
+  (`/implement` included, ADR 0043) and the issues "Tickets the agents are working on" lists are left out. "Open
+  Features" goes to `/features?scope=<project>`, "Open Tickets" to `/tickets?scope=<project>`. Empty: "No feature
+  (ticket) was worked on in the last 7 days."; no session at all: "No sessions yet." with `cd <hub> && claude`.
+- **AC-273.16** (changed by AGH-427) "Setup and health" (for engineers) is a collapsed section whose summary badges
+  "N things to fix"; open, it holds the doctor findings (the message first, then the path, the rule id small at the
+  end, "See all N findings") and the Repositories table with six columns and no code: Repo, What it is, Main branch,
+  Open pull requests, Checks ("Fast and full", "No fast check", "No full check", "No checks", with both commands in
+  a tooltip the keyboard reaches) and Agent instructions ("58 lines", "132 lines, over 100", "Missing"); "Open hub
+  configuration" shows once, beside "Repositories".
 - **AC-273.17** A section that fails keeps its problem inside it ("Could not load the agents' tickets"); the rest of
   the screen still renders.
 
+
+### As built: the hub configuration at a glance, recent features and tickets (AGH-427)
+
+The owner validated this in the playground. The order of the sections is unchanged: header, Needs you, this week's
+numbers, focus, Tickets the agents are working on, **Recent work** (AC-273.15), **How this project is set up**, then
+**Setup and health** (AC-273.16).
+
+```
+ Recent work   What the team worked on in the last 7 days · costs estimated from transcripts
+┌ Features ────────────────────────── Open Features › ┐┌ Tickets ─────────────────────────── Open Tickets › ┐
+│ ◌ Hub config view                             $4.12 ││ ✋ ACME-7  Fix the order export   Fix       $0.84 │
+│   Build · 2/5 tickets · worked on 2 h ago           ││   /fix · 1 session · ended 18 min ago            │
+└─────────────────────────────────────────────────────┘└──────────────────────────────────────────────────┘
+ How this project is set up   From hub.json and your hub.local.json             Open hub configuration ›
+┌ Where the work comes from ─────────── See tracker › ┐┌ How work is named ─────────────── See naming › ┐
+│ Agents pick up Linear issues in team AGH labelled   ││ Branches  [issue key]-[short description]  Team │
+│ agent-ready. While working they move an issue from  ││ Commit and pull request titles                  │
+│ In Progress to In Review. When they fail …          ││ [issue key]: [summary]                          │
+├ What agents may touch ──────────────── See guard › ┤├ The hub ───────────────────────────────────────┤
+│ Agents ask you before editing 26 files and folders. ││ Rules and memory live in acme/hub ↗             │
+│ 2 words are blocked from anything the agents write. ││ 5 repositories: api, web, …                     │
+│                                                     ││ Platform 0.19.0 · up to date                    │
+└─────────────────────────────────────────────────────┘└─────────────────────────────────────────────────┘
+```
+
+- The setup cards are a fixed 2 × 2 grid of equal-height `ah-card`s (one column when the section is narrower than
+  760 px), each a question title with its icon (`list-checks`, `git-branch`, `shield-alert`, `box`), a link to the
+  matching anchor of Hub configuration, and at most a few plain sentences from `GET /projects/{p}/config` and
+  `GET /projects/{p}`. Who set a value shows as `ConfigSource` only for "Set by you" and "Set by the team".
+- A pattern reads as words: each placeholder is an `ah-fm-chip` (`{ISSUE}` "issue key", `{slug}` "short
+  description", `{prefix}` "your branch prefix", `{type}` "kind of change", `{scope}` "area", `{summary}`
+  "summary"); the API's made-up example sits only in a tooltip on a focusable span ("Example with a made-up issue:
+  …"). The pull request row folds into "Commit and pull request titles" when it follows the commit title.
+- Guard lines show only when their count is above zero; with no rule: "No rules beyond the built-in ones." The
+  design's environment and services lines wait for the config view to carry environments (AGH-416).
+- Recent work stacks (Features first) when the section is narrower than 960 px. Its rows are `ft-row`s with the meta sized to its content (`--ft-meta: auto`), and a ticket's title reads
+  as plain text, so the title keeps its width in a half-width column.
+- Not built from the design and its review: middle-truncated paths (`PathText`) in the findings, four card skeletons
+  while the config loads, hiding Repositories columns on narrow widths, one `j`/`k` scope per list.
+
+- **AC-427.18** Given a project, when "How this project is set up" renders, then it shows the four cards "Where the
+  work comes from", "How work is named", "What agents may touch" and "The hub" in plain sentences: patterns as word
+  chips with the made-up example only in a tooltip the keyboard reaches, the commit and pull request rows as one when
+  the pull request title follows the commit, the branch prefix said unused when the pattern has no `{prefix}`, guard
+  lines with a zero left out (the ask-before-edit paths as a mono list in a tooltip), the hub repository, its
+  repositories, and the platform "up to date" or Sync pending / Drift.
+- **AC-427.19** Given a Recent work read that fails, when the section shows, then the failure stays in its column:
+  "Could not load features" when the features fail, "Could not tell which features were worked on" in Features and
+  "Could not load tickets" in Tickets when the sessions fail, never an empty-week line.
+- **AC-427.20** Given the header's setup badge, when it is followed, then the folded "Setup and health" opens.
+- **AC-427.21** Given the Recent work rows, when `j` or `k` is pressed, then focus moves to the next or previous row.
+- **AC-427.22** Given an issue the agents ran, when Recent work lists tickets, then only the issues "Tickets the
+  agents are working on" shows are left out; one whose run is no longer listed stays.
+- **AC-427.23** Given the overview, when checked with axe, then it has no serious or critical violation.
 ### Purpose and primary user
 
 The owner and developers of one project. It zooms the Portfolio card into sections, each answering one question and linking to its full screen. Sample: agent-hub.

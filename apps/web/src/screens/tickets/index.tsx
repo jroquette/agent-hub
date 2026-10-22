@@ -47,7 +47,7 @@ function lineOf(row: TicketRow, now: number): string {
   return parts.filter(Boolean).join(" · ");
 }
 
-function TicketItem({
+export function TicketItem({
   row,
   showProject,
   now,
