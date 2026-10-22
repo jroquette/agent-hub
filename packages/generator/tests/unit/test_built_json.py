@@ -13,6 +13,7 @@ from agent_hub.generator.built_json import (
     managed_settings,
     marketplace,
     marketplace_project,
+    mcp_config,
     project_manifest,
     project_settings,
 )
@@ -23,6 +24,16 @@ def a_config_named(name: str) -> HubConfig:
     document = a_hub_document()
     document["project"]["name"] = name
     return HubConfig.model_validate(document)
+
+
+@pytest.mark.parametrize("project_name", ["demo", "acme-tools"])
+def test_declares_hub_server_when_mcp_config_built(project_name: str) -> None:
+    # AGH-392 D-mcp-json: every hub declares `hub mcp` through its own `./hub`, whatever its config.
+    assert mcp_config(a_config_named(project_name)) == {
+        "mcpServers": {
+            "hub": {"type": "stdio", "command": "${CLAUDE_PROJECT_DIR:-.}/hub", "args": ["mcp"]}
+        }
+    }
 
 
 @pytest.mark.parametrize("project_name", ["demo", "acme-tools"])

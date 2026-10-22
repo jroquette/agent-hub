@@ -20,6 +20,7 @@ interface Choice {
 const LOOK: Record<string, { variant: "primary" | "danger"; icon: IconName }> = {
   approve: { variant: "primary", icon: "check" },
   reject: { variant: "danger", icon: "x" },
+  decline: { variant: "danger", icon: "x" },
 };
 
 function choicesOf(gate: WorkflowGate): Choice[] {
@@ -33,7 +34,7 @@ function nextStep(error: ApiProblem): string | null {
   return null;
 }
 
-function DecisionError({ error }: { error: ApiProblem }) {
+export function DecisionError({ error }: { error: ApiProblem }) {
   const step = nextStep(error);
   const title = error.status === 502 ? error.title : "Could not record the decision";
   return (
@@ -74,7 +75,11 @@ function TextDialog({ choice, required, pending, error, onConfirm, onCancel }: T
   const trimmed = text.trim();
   const ready = !pending && (!required || trimmed.length > 0);
   const heading = choice.id === null ? "Respond to this gate?" : `${choice.label}?`;
-  const label = required ? "Response (required)" : "Reason (optional)";
+  const label = required
+    ? choice.id === null
+      ? "Response (required)"
+      : "Note (required)"
+    : "Reason (optional)";
 
   useModalFocus(dialog, { locked: pending, onEscape: onCancel, initial: "textarea" });
 
@@ -143,8 +148,22 @@ function TextDialog({ choice, required, pending, error, onConfirm, onCancel }: T
   );
 }
 
-/** The decision card of an open workflow gate, in Approvals and in Run detail. */
-export function GateDecision({ approvalId }: { approvalId: string }) {
+/**
+ * The decision card of an open workflow gate, in Approvals, in Run detail and in the ticket panel
+ * (a plan change request); `requireTextFor` names the decisions whose text is required when the
+ * gate takes one (a decline needs the owner's note, two-level-flows AC-2.12; the implement gate
+ * captures its response).
+ */
+export function GateDecision({
+  approvalId,
+  requireTextFor = [],
+  onDecided,
+}: {
+  approvalId: string;
+  requireTextFor?: readonly string[];
+  /** Called once the decision is recorded (the ticket panel moves focus when the run shows it). */
+  onDecided?: (() => void) | undefined;
+}) {
   const gate = useWorkflowGate(approvalId);
   const decide = useDecideGate(approvalId);
   const [asking, setAsking] = useState<Choice | null>(null);
@@ -164,6 +183,7 @@ export function GateDecision({ approvalId }: { approvalId: string }) {
       {
         onSuccess: () => {
           setAsking(null);
+          onDecided?.();
         },
       },
     );
@@ -206,7 +226,10 @@ export function GateDecision({ approvalId }: { approvalId: string }) {
       {asking && (
         <TextDialog
           choice={asking}
-          required={gate.data.text === "required"}
+          required={
+            gate.data.text === "required" ||
+            (asking.id !== null && requireTextFor.includes(asking.id))
+          }
           pending={decide.isPending}
           error={decide.isError ? decide.error : null}
           onConfirm={(text) => {

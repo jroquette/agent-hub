@@ -60,6 +60,10 @@ class RunRecordError(AgentHubError):
     """A record line, before its last, that is not one JSON object."""
 
 
+class RecordTooLargeError(RunRecordError):
+    """A run record larger than its reader reads (the API's bound)."""
+
+
 @dataclass(frozen=True, kw_only=True, slots=True)
 class TimelineItem:
     """One line of the timeline: its event, the node (or step, or gate) and attempt it is

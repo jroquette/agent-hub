@@ -16,6 +16,7 @@ from agent_hub.api.change_feed import ChangeFeed
 from agent_hub.api.feature_names import FeatureNames
 from agent_hub.api.linear_connection import LinearConnection
 from agent_hub.api.rfc9457 import InvalidParameterError, NotImplementedInBuildError
+from agent_hub.api.scenario_investigation import ScenarioInvestigations
 from agent_hub.api.settings import ApiSettings
 from agent_hub.core.agent_sessions.cloud import CloudSessionCommands
 from agent_hub.core.agent_sessions.control import AgentSessionCommands
@@ -23,6 +24,7 @@ from agent_hub.core.agent_sessions.links import AgentSessionLinkLookup
 from agent_hub.core.brain.brain_path import DEFAULT_ACCEPT_FOLDER
 from agent_hub.core.environment_discovery.environment_discoveries import EnvironmentDiscoveries
 from agent_hub.core.events.event_reader import EventReader
+from agent_hub.core.features.change_request_decision import DecideChangeRequest
 from agent_hub.core.features.owner_signoff import SignOffOwnerSteps
 from agent_hub.core.ingestion.ingest_hook import IngestHook
 from agent_hub.core.ingestion.ingestion_status import IngestionCounters
@@ -61,9 +63,11 @@ class ApiPorts:
     item_version_writes: ItemVersionWrites | None = None
     linear: LinearConnection | None = None
     owner_signoff: SignOffOwnerSteps | None = None
+    change_request_decisions: DecideChangeRequest | None = None
     feature_names: FeatureNames | None = None
     ac_checks: AcCheckRunner | None = None
     environment_discoveries: EnvironmentDiscoveries | None = None
+    scenario_investigations: ScenarioInvestigations | None = None
 
 
 def _ports(request: Request) -> ApiPorts:
@@ -100,6 +104,19 @@ def owner_signoff(request: Request) -> SignOffOwnerSteps:
     return port
 
 
+def change_request_decisions(request: Request) -> DecideChangeRequest:
+    """The owner's decision on a change request whose run is gone, or 501 when not wired."""
+    port = _ports(request).change_request_decisions
+    if port is None:
+        raise _unwired(request)
+    return port
+
+
+def optional_change_request_decisions(request: Request) -> DecideChangeRequest | None:
+    """The change request decision, or None when this build does not wire it (sessions off)."""
+    return _ports(request).change_request_decisions
+
+
 def workflow_reads(request: Request) -> WorkflowReads:
     """The workflow reads, or 501 when not wired."""
     port = _ports(request).workflow_reads
@@ -119,6 +136,14 @@ def run_starts(request: Request) -> StartWorkflowRun:
 def run_control(request: Request) -> ControlWorkflowRun:
     """The workflow-run cancel, resume and abandon, or 501 when not wired."""
     port = _ports(request).run_control
+    if port is None:
+        raise _unwired(request)
+    return port
+
+
+def scenario_investigations(request: Request) -> ScenarioInvestigations:
+    """A scenario run's investigation session, or 501 when not wired."""
+    port = _ports(request).scenario_investigations
     if port is None:
         raise _unwired(request)
     return port
@@ -312,9 +337,14 @@ def parse_filter[M: BaseModel](model: type[M], **fields: object) -> M:
 EventReadModelsDep = Annotated[EventReadModels, Depends(event_read_models)]
 HubReadModelsDep = Annotated[HubReadModels, Depends(hub_read_models)]
 OwnerSignOffDep = Annotated[SignOffOwnerSteps, Depends(owner_signoff)]
+ChangeRequestDecisionsDep = Annotated[DecideChangeRequest, Depends(change_request_decisions)]
+OptionalChangeRequestDecisionsDep = Annotated[
+    DecideChangeRequest | None, Depends(optional_change_request_decisions)
+]
 WorkflowReadsDep = Annotated[WorkflowReads, Depends(workflow_reads)]
 RunStartsDep = Annotated[StartWorkflowRun, Depends(run_starts)]
 RunControlDep = Annotated[ControlWorkflowRun, Depends(run_control)]
+ScenarioInvestigationsDep = Annotated[ScenarioInvestigations, Depends(scenario_investigations)]
 WorkflowGatesDep = Annotated[WorkflowGates, Depends(workflow_gates)]
 GateDecisionsDep = Annotated[DecideWorkflowGate, Depends(gate_decisions)]
 ItemVersionReadsDep = Annotated[ItemVersionReads, Depends(item_version_reads)]

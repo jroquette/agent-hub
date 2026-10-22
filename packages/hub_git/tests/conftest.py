@@ -142,11 +142,36 @@ class GitWorld:
         """A runner over the world's environment."""
         return GitRunner(environ=self.environ)
 
-    def adapter(self) -> GitBrainChangeRequests:
-        """The adapter under test, with its temporary folders under the world's root."""
+    def logging_runner(self, *, before_push: str = "") -> GitRunner:
+        """A runner whose git logs each argv to ``root/git-calls`` (``git_calls``) and runs
+        ``before_push`` (shell) just before a push that is not a delete."""
+        log = self.root / "git-calls"
+        wrapper = self.root / "git-logged"
+        wrapper.write_text(
+            f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{log}"\n'
+            f'case " $* " in *" --delete "*) ;; *" push "*) {before_push}:;; esac\n'
+            'exec git "$@"\n'
+        )
+        wrapper.chmod(0o755)
+        return GitRunner(git=str(wrapper), environ=self.environ)
+
+    def git_calls(self) -> list[str]:
+        """The argv, joined, of every git call a ``logging_runner`` made so far."""
+        log = self.root / "git-calls"
+        return log.read_text().splitlines() if log.exists() else []
+
+    def reject_pushes(self) -> None:
+        """Make ``origin`` refuse every push (a ``pre-receive`` hook that fails)."""
+        hook = self.bare / "hooks" / "pre-receive"
+        hook.write_text("#!/bin/sh\nexit 1\n")
+        hook.chmod(0o755)
+
+    def adapter(self, runner: GitRunner | None = None) -> GitBrainChangeRequests:
+        """The adapter under test over ``runner`` (default: ``runner()``), with its temporary
+        folders under the world's root."""
         temp = self.root / "temp"
         temp.mkdir(exist_ok=True)
-        return GitBrainChangeRequests(self.runner(), temp_root=temp)
+        return GitBrainChangeRequests(runner or self.runner(), temp_root=temp)
 
     def snapshot(self) -> tuple[str, ...]:
         """What the user's checkout looks like to git: HEAD, status, refs, worktrees, index."""

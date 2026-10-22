@@ -11,6 +11,7 @@ RUN := uv run --locked --all-packages
 COV := --cov=agent_hub.core --cov=agent_hub.storage --cov=agent_hub.collector \
        --cov=agent_hub.generator --cov=agent_hub.tracker_linear --cov=agent_hub.cli \
        --cov=agent_hub.hub_git --cov=agent_hub.claude_sessions --cov=agent_hub.api \
+       --cov=agent_hub.mcp_server \
        --cov=packages/storage/src/agent_hub/storage/migrations --cov-branch --cov-report=
 # pytest-xdist workers for the test targets: one per CPU by default; PYTEST_N=0 runs in one process.
 # Tests marked serial assert a wall-clock budget, so they run alone after the parallel run.
