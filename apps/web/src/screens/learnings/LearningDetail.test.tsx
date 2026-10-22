@@ -560,6 +560,46 @@ describe("LearningDetail", () => {
     expect(note).toHaveTextContent("In the brain once the pull request is merged and pulled");
   });
 
+  it("trail: places a folder target's note at once", async () => {
+    open({ [ACCEPT]: aLearningActionResult() });
+    const detail = await region();
+
+    const target = within(detail).getByRole("combobox", { name: "Target in brain/" });
+    await userEvent.clear(target);
+    await userEvent.type(target, "learnings/gotchas/");
+    await userEvent.click(within(detail).getByRole("button", { name: "Accept" }));
+    await userEvent.click(screen.getByRole("button", { name: "Open pull request" }));
+    await screen.findByText("Pull request opened");
+
+    const { step } = await trailSteps();
+    const note = step("Note");
+    expect(within(note).queryByRole("link")).toBeNull();
+    expect(within(note).getByText("brain/learnings/gotchas/web-gates.md")).toBeInTheDocument();
+  });
+
+  it("trail: shows a session's short id, the full id in its tooltip", async () => {
+    const session = "0192abcd-ef01-7a2b-8c3d-4e5f60718293";
+    open({ [DETAIL]: inBrain({ source_session_id: session }) });
+    await region();
+    const { step } = await trailSteps();
+
+    const link = within(step("Session")).getByRole("link");
+    expect(link).toHaveTextContent(/^Session 0192abcd$/);
+    expect(link).toHaveAttribute("href", `/sessions/${session}`);
+    expect(link).toHaveAccessibleDescription(session);
+  });
+
+  it("trail: shows a note path the note route refuses as text", async () => {
+    open({ [DETAIL]: inBrain({ brain_path: "brain/auto/workspace/me.md" }) });
+    await region();
+    const { step } = await trailSteps();
+
+    const note = step("Note");
+    expect(within(note).queryByRole("link")).toBeNull();
+    expect(within(note).getByText("brain/auto/workspace/me.md")).toBeInTheDocument();
+    expect(note).toHaveTextContent("In the brain");
+  });
+
   it("trail has no serious a11y violations (a11y)", async () => {
     for (const learning of [
       inBrain(),
