@@ -1421,6 +1421,7 @@ def test_imports_every_rendered_module_when_run_on_each_python(
         "plugin/hub-workflow/hooks",
         "scripts",
         "workflows/sdlc/scripts",
+        "workflows/security-sweep/scripts",
     }
 
 
