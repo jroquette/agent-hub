@@ -11,6 +11,14 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- `hub.json` → `repos[].ui_paths` (AGH-474): optional globs of a repo's screen paths, matched from the repo root
+  (`**` spans folders); absent means the repo has no UI. The new `hub doctor` rule `repos.ui_paths` warns about each
+  glob that matches no file of the repo's checkout. A hub can set the key only once its pin carries this release.
+- Review outputs accept `reviewer` `ux` and `overengineering`, saved as `reviews/<ticket>/ux-r<N>.json` and
+  `overengineering-r<N>.json` (AGH-474). Existing review files stay valid. The lenses that write them come later.
+
 ## [0.20.1] - 2026-10-22
 
 ### Added

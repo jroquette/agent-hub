@@ -203,8 +203,9 @@ out) against the models of `output_models.py`, exported as `review.v1.json` and 
 `preflight.v1.json` for the ticket record above, `preflight_problems`). Every key
 is required, unknown keys are refused, text is one line and non-empty.
 
-- Review, schema `agent-hub/review/1`: `reviewer` (`spec`, `quality`), `ticket`, `task`, `round`, `commit`,
-  `verdict` (`PASS`, `FAIL`), `findings` (`severity` `blocking` or `minor`). The file name gives `reviewer` and `round`
+- Review, schema `agent-hub/review/1`: `reviewer` (`spec`, `quality`, `ux`, `overengineering`), `ticket`, `task`,
+  `round`, `commit`, `verdict` (`PASS`, `FAIL`), `findings` (`severity` `blocking` or `minor`). The file name gives
+  `reviewer` and `round`
   (`N` 1 to 9999); `ticket` is the folder's name, ASCII case ignored; `FAIL` iff a finding is blocking; ids unique.
 - Eval, schema `agent-hub/eval/1`, beside `evals/<delivery>.md`: `delivery`, `verdict`, `commit`, `tickets`, `acs`
   (`"all"`, ids, or `[]` for the tickets' ACs), `results` and `gates` (`status` with `exit_code`), `red_on_parent`,
