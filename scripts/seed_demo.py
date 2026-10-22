@@ -159,8 +159,6 @@ class LocalTarget:
         return self._runner([sys.executable, *arguments], stdin)
 
     def git(self, arguments: Sequence[str]) -> subprocess.CompletedProcess[str]:
-        if shutil.which("git") is None:
-            raise SeedError(GIT_NOT_FOUND)
         try:
             return self._runner(["git", *arguments], None)
         except FileNotFoundError:
