@@ -168,8 +168,14 @@ describe("ToolCallCard (transcript)", () => {
     );
 
     const diff = screen.getByLabelText("Diff of a.py");
-    expect(within(diff).getByText("+y")).toBeInTheDocument();
-    expect(within(diff).getByText("+q")).toBeInTheDocument();
+    expect(diff).toHaveTextContent("+y");
+    expect(diff).toHaveTextContent("+q");
+    // The code reads in the file's colours once the highlighter loads; the sign alone in the
+    // line's (AC-424.4).
+    await waitFor(() => {
+      expect(diff).toHaveClass("as-diff-syntax");
+    });
+    expect(within(diff).getAllByText("+").length).toBe(2);
   });
 });
 

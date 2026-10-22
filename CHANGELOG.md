@@ -29,6 +29,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   read, on every search). A query with no word (`!!!`) exits 2, and a query that starts with `-` goes after `--`
   (`hub search -- -foo`). The database gains migration 0008; a Python whose SQLite lacks FTS5 can no longer migrate
   it (ADR 0044) (AGH-391).
+- Session review in `hub web` (AGH-424): the Code tab shows the code and its tests together or apart (kept per
+  browser); a narrow file list keeps each name on one line, cut at its end; diffs (review, transcript edits, commits,
+  item history) are coloured in the file's language as on GitHub, and highlighted code takes GitHub's syntax palette;
+  files the session touched and then put back sit in a `Discarded` tab, out of the totals and the review.
 
 ### Changed
 
