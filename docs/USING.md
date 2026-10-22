@@ -263,7 +263,8 @@ as `"schedules": [{"workflow": "retro", "cron": "0 9 * * 1", "inputs": {"since":
 starts `post-merge-verify` after each new commit on that repo's default branch (`on` may also be `ci_red`, a failed
 Actions run on it, or `pr_opened`, a newly opened pull request). The cron has 5 numeric fields and is read in UTC.
 Nothing starts while `hub web` is not running; when it comes back, the most recent missed slot runs once and older
-ones never do. Events are polled through `gh` every 5 minutes, so `gh` must be signed in; the first poll only records
+ones never do. Events are polled through `gh` every 5 minutes, so `gh` must be signed in; only the repo's own push runs and pull
+requests count (one from a fork never starts a run); the first poll only records
 what is there, and the run gets the event's `sha`, `pr` or `ci_run` when the workflow declares that input. Each run
 records `trigger` in its start record and is listed in Runs like any other. `./hub workflow schedule list` prints each
 schedule's next start, and `./hub doctor --only workflows.starts` flags a misspelled workflow. In Docker no run starts

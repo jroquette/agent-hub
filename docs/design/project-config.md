@@ -71,7 +71,7 @@ generated file and `hub` command takes project values from it and nowhere else. 
 | `schedules[].environment` | a declared `environments` name | absent | `hub web` (the run's `--env`) |
 | `events` | list of ≤ 32 objects, one per workflow, `on` and `repo`; not in `hub.local.json` ([ADR 0048](../adr/0048-scheduled-and-event-starts-in-hub-web.md)) | `[]` | `hub web`, `hub doctor` (`workflows.starts`) |
 | `events[].workflow` | as `schedules[].workflow` | req. | as `schedules[].workflow` |
-| `events[].on` | closed list `merge` (a new commit on the repo's default branch), `ci_red` (a failed Actions run on it), `pr_opened` (a newly opened pull request) | req. | `hub web` (`gh api`) |
+| `events[].on` | closed list `merge` (a new commit on the repo's default branch), `ci_red` (a failed push run of GitHub Actions on it, in the repo itself), `pr_opened` (a newly opened pull request whose head is in the repo itself; one from a fork, or a deleted fork, never starts a run) | req. | `hub web` (`gh api`) |
 | `events[].repo` | a `repos[].dir` (its `github` is polled) | req. | `hub web` |
 | `events[].inputs` | as `schedules[].inputs`, without `sha`, `pr` or `ci_run`, which come from the event | `{}` | `hub web` |
 
@@ -91,6 +91,11 @@ source's newest 20 items; the first successful poll is a baseline and starts not
 new merge commit, failed Actions run or opened pull request. The event's data reaches the run only as inputs the
 workflow declares: `sha` (every kind), `pr` (`pr_opened`) and `ci_run` (`ci_red`). The slots and event ids already
 started are kept in `<hub>/.agent-runs/schedules/state.json` ([ADR 0048](../adr/0048-scheduled-and-event-starts-in-hub-web.md)).
+Only the repo's own events count: `ci_red` reads push runs only and drops a run whose head repository or branch is not
+the polled repo's, and `pr_opened` drops a pull request whose head is in a fork (or a deleted fork), so no one else's
+code starts a run on your machine. The ledger keeps only what `hub.json` declares now: when a schedule or an event
+source is removed, its entry goes, so a schedule added back runs its most recent past slot once again, and a source
+added back starts from a new baseline.
 
 ### Rendered values
 
