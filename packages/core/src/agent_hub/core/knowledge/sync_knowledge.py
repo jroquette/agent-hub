@@ -19,6 +19,8 @@ from agent_hub.core.knowledge import document_rules
 from agent_hub.core.knowledge.document_rules import UNREADABLE, document_from
 from agent_hub.core.knowledge.knowledge_index import (
     INDEX_VERSION,
+    MAX_BACKLINKS,
+    Backlinks,
     Fingerprint,
     IndexChange,
     IndexedDocument,
@@ -74,6 +76,13 @@ class SearchOutcome(_Frozen):
     """A search's results and the report of the sync that ran first."""
 
     results: tuple[SearchHit, ...]
+    report: SyncReport
+
+
+class BacklinksOutcome(_Frozen):
+    """A note's backlinks and the report of the sync that ran first."""
+
+    backlinks: Backlinks
     report: SyncReport
 
 
@@ -142,6 +151,21 @@ def search_knowledge(
     report = sync_knowledge(index, checkout, hub)
     results = index.search(hub, words, kinds=kinds, limit=MAX_RESULTS) if words else ()
     return SearchOutcome(results=results, report=report)
+
+
+def backlinks_knowledge(
+    index: KnowledgeIndex,
+    checkout: KnowledgeCheckout,
+    hub: str,
+    *,
+    target: str,
+    limit: int = MAX_BACKLINKS,
+) -> BacklinksOutcome:
+    """Sync the hub's rows (``sync_knowledge``, D-sync-on-read), then answer the documents
+    linking to ``target`` (``brain/<rest>``), by path, at most ``limit``, with the full count.
+    The target need not be indexed: a dead link still lists its sources."""
+    report = sync_knowledge(index, checkout, hub)
+    return BacklinksOutcome(backlinks=index.backlinks(hub, target, limit=limit), report=report)
 
 
 def _read(

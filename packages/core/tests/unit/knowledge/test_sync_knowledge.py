@@ -7,6 +7,8 @@ from agent_hub.core.knowledge import document_rules
 from agent_hub.core.knowledge.document_rules import RULE_MATCH, THROUGH_LINK, UNREADABLE
 from agent_hub.core.knowledge.knowledge_index import (
     INDEX_VERSION,
+    MAX_BACKLINKS,
+    Backlink,
     IndexChange,
     SkippedFile,
 )
@@ -14,6 +16,7 @@ from agent_hub.core.knowledge.search_query import MAX_RESULTS
 from agent_hub.core.knowledge.sync_knowledge import (
     KnowledgeCheckoutError,
     SyncReport,
+    backlinks_knowledge,
     search_knowledge,
     sync_knowledge,
 )
@@ -289,3 +292,35 @@ def test_indexes_links_when_note_links_brain() -> None:
         "brain/playbooks/cleanup.md": ("brain/now.md",),
         "demo-api/docs/guide.md": ("brain/now.md",),
     }
+
+
+def test_syncs_before_backlinks_when_note_edited() -> None:
+    index = InMemoryKnowledgeIndex()
+    checkout = _checkout(cleanup="# Cleanup\n\nSee [now](../now.md).\n", other="# Other\n")
+    first = backlinks_knowledge(index, checkout, HUB, target="brain/now.md")
+    checkout.write("brain/playbooks/cleanup.md", b"# Cleanup\n\nNo link left.\n")
+
+    after = backlinks_knowledge(index, checkout, HUB, target="brain/now.md")
+
+    assert first.backlinks.items == (
+        Backlink(path="brain/playbooks/cleanup.md", kind="playbook", title="Cleanup"),
+    )
+    assert first.report.indexed == 2
+    assert (after.backlinks.items, after.backlinks.total) == ((), 0)
+    assert after.report == SyncReport(listed=2, read=1, indexed=1, dropped=0, skipped=())
+
+
+def test_answers_sources_when_target_missing() -> None:
+    index = InMemoryKnowledgeIndex()
+    links = "[g](../gone.md) " * 3
+    checkout = _checkout(
+        **{f"n{number:03d}": f"# N{number}\n\n{links}\n" for number in range(MAX_BACKLINKS + 5)}
+    )
+
+    outcome = backlinks_knowledge(index, checkout, HUB, target="brain/gone.md")
+
+    assert outcome.backlinks.total == MAX_BACKLINKS + 5
+    assert len(outcome.backlinks.items) == MAX_BACKLINKS
+    assert outcome.backlinks.items[0].path == "brain/playbooks/n000.md"
+    assert index.stored(HUB).files.keys() >= {"brain/playbooks/n000.md"}
+    assert "brain/gone.md" not in index.stored(HUB).files
