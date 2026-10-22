@@ -3069,3 +3069,218 @@ button.as-bg-head {
   white-space: nowrap;
   font-family: var(--font-mono);
 }
+
+/*
+ * The sessions rail, left of the chat: switch between agents as between conversations in a chat
+ * app. 260 px, quiet, on the app's bg so the chat's surface reads as the document; folds to a
+ * 48 px strip of status dots (kept per browser).
+ */
+.as-chat-layout {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  /* Nothing in the chat scrolls the page: only the transcript and the rail's list scroll. The
+     screen-reader labels (.ah-sr, absolute) anchor here and are clipped, so a long rail cannot give
+     the shell's main extra height to scroll into; clip, unlike hidden, cannot be scrolled by focus
+     or scrollIntoView. */
+  position: relative;
+  overflow: clip;
+}
+.as-chat-layout > .as-page {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.as-rail {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  width: 260px;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  /* Between the app's frame (bg) and the chat (surface): the columns step in by tone, not lines. */
+  background: var(--surface-sunken);
+}
+.as-rail-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 40px;
+  padding: 0 var(--space-2) 0 var(--space-4);
+}
+.as-rail-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.as-rail-filter {
+  position: relative;
+  display: block;
+  margin: 0 var(--space-3) var(--space-2);
+}
+.as-rail-filter > .ah-icon {
+  position: absolute;
+  top: 50%;
+  left: var(--space-3);
+  transform: translateY(-50%);
+  color: var(--text-subtle);
+  pointer-events: none;
+}
+/* The filter is a small capsule, as the composer is: filled, no frame, a halo on focus. */
+.as-rail-filter > input {
+  width: 100%;
+  height: 32px;
+  padding-left: 30px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  background: var(--surface-turn);
+  font-size: 13px;
+}
+.as-rail-filter > input:focus,
+.as-rail-filter > input:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.as-rail-scroll {
+  /* Its rows' screen-reader labels scroll with the list instead of overflowing the page. */
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 var(--space-2) var(--space-4);
+}
+.as-rail-group {
+  margin: var(--space-4) var(--space-3) var(--space-1);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--text-subtle);
+}
+.as-rail-list,
+.as-rail-strip {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.as-rail-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-xl);
+  color: var(--text);
+  text-decoration: none;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.as-rail-row:hover {
+  background: var(--surface-hover);
+  text-decoration: none;
+}
+.as-rail-row:focus-visible,
+.as-rail-strip-item:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+.as-rail-current,
+.as-rail-current:hover {
+  background: var(--surface-turn);
+}
+.as-rail-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.as-rail-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 20px;
+}
+.as-rail-current .as-rail-name {
+  font-weight: 600;
+}
+/* What the session is about: small chips for its project, ticket and feature. */
+.as-rail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.as-rail-tag {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--surface-hover);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
+}
+.as-rail-current .as-rail-tag {
+  background: var(--surface);
+}
+.as-rail-tag-ticket {
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+.as-rail-tag-feature,
+.as-rail-current .as-rail-tag-feature {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.as-rail-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: var(--radius-full);
+}
+.as-rail-dot-running {
+  color: var(--live);
+}
+.as-rail-dot-waiting {
+  color: var(--waiting);
+}
+.as-rail-dot-idle {
+  color: var(--text-subtle);
+}
+.as-rail-dot-failed {
+  color: var(--failed);
+}
+.as-rail-empty {
+  margin: var(--space-3) var(--space-2);
+  font-size: 13px;
+  color: var(--text-subtle);
+}
+.as-rail-folded {
+  width: 48px;
+  align-items: center;
+  padding-top: var(--space-2);
+  gap: var(--space-2);
+}
+.as-rail-strip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+}
+.as-rail-strip-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-xl);
+}
+.as-rail-strip-item:hover {
+  background: var(--surface-hover);
+}
+.as-rail-strip-item .as-rail-dot {
+  margin-top: 0;
+}
