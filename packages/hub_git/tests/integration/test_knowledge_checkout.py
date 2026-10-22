@@ -1,12 +1,16 @@
 """The hub checkout as the knowledge index sees it: git's listing of each source, walked
 without following a link, and each file read within its bounds (AGH-391 P-7, AM-1, AM-2)."""
 
+import contextlib
 import errno
 import faulthandler
 import os
 import re
+import shlex
 import shutil
+import signal
 import subprocess
+import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -392,3 +396,89 @@ def test_raises_checkout_error_when_source_folder_cannot_open(
         checkout.listed()
 
     assert str(raised.value) == f"brain: the folder cannot be opened: {os.strerror(errno.EACCES)}"
+
+
+# The child that lists a source (P-7): its environment, its timeout and the end of its stderr.
+
+
+def _fake_git(tmp_path: Path, body: str) -> str:
+    """An executable ``git`` script in ``tmp_path`` running ``body`` (a ``sh`` script)."""
+    script = tmp_path / "fake-bin" / "git"
+    script.parent.mkdir(exist_ok=True)
+    script.write_text(f"#!/bin/sh\n{body}", encoding="utf-8")
+    script.chmod(0o755)
+    return str(script)
+
+
+def _bare_hub(tmp_path: Path) -> Path:
+    hub = tmp_path / "bare-hub"
+    hub.mkdir()
+    return hub
+
+
+def test_hides_location_and_sets_no_locks_when_git_runs(tmp_path: Path) -> None:
+    git = _fake_git(
+        tmp_path,
+        'echo "dir=${GIT_DIR-unset} work=${GIT_WORK_TREE-unset} locks=${GIT_OPTIONAL_LOCKS-unset}"'
+        " >&2\nexit 128\n",
+    )
+    environ = {**os.environ, "GIT_DIR": "/elsewhere/.git", "GIT_WORK_TREE": "/elsewhere"}
+    environ.pop("GIT_OPTIONAL_LOCKS", None)
+    checkout = GitKnowledgeCheckout(_bare_hub(tmp_path), (), git=git, environ=environ)
+
+    with pytest.raises(KnowledgeCheckoutError) as raised:
+        checkout.listed()
+
+    assert str(raised.value) == "brain: git exited with 128: dir=unset work=unset locks=0"
+
+
+def _alive(pid: int) -> bool:
+    """Whether ``pid`` runs: a zombie waiting for its reaper counts as gone."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    stat_file = Path(f"/proc/{pid}/stat")
+    with contextlib.suppress(OSError):
+        return stat_file.read_text().rsplit(")", 1)[1].split()[0] != "Z"
+    return True
+
+
+def test_kills_git_and_its_children_when_listing_times_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pid_file = tmp_path / "grandchild.pid"
+    git = _fake_git(
+        tmp_path, f"sleep 120 &\necho $! > {shlex.quote(str(pid_file))}\nexec sleep 30\n"
+    )
+    monkeypatch.setattr(knowledge_checkout, "GIT_TIMEOUT_SECONDS", 0.5)
+    checkout = GitKnowledgeCheckout(_bare_hub(tmp_path), (), git=git, environ=dict(os.environ))
+
+    with pytest.raises(KnowledgeCheckoutError) as raised:
+        checkout.listed()
+    grandchild = int(pid_file.read_text())
+    try:
+        for _ in range(200):
+            if not _alive(grandchild):
+                break
+            time.sleep(0.05)
+        assert not _alive(grandchild)
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(grandchild, signal.SIGKILL)
+
+    assert str(raised.value) == f"brain: {git} timed out after 0.5 s"
+
+
+def test_names_last_line_when_stderr_longer_than_tail(tmp_path: Path) -> None:
+    git = _fake_git(
+        tmp_path,
+        "i=0\nwhile [ $i -lt 200 ]; do echo 'noise noise noise noise noise noise' >&2;"
+        " i=$((i+1)); done\necho 'fatal: the last line' >&2\nexit 128\n",
+    )
+    checkout = GitKnowledgeCheckout(_bare_hub(tmp_path), (), git=git, environ=dict(os.environ))
+
+    with pytest.raises(KnowledgeCheckoutError) as raised:
+        checkout.listed()
+
+    assert str(raised.value) == "brain: git exited with 128: fatal: the last line"
