@@ -53,6 +53,7 @@ Every screen carries its phase. A screen tagged P3 or P4 is not shown in the sid
 └ /knowledge/context?project=&repo=&agent=  Context inspector                        P3
 
 /features?project=                  Features list                                    P2 read-only
+├ /features/new                     New feature (brief + attachments → Discuss)      P2
 └ /features/:project/:slug          Feature detail                                   P2
     ?doc=spec|plan|research|eval&ac=:acId
 
