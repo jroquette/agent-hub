@@ -600,10 +600,10 @@ gets its agent session from hub web (AGH-350 P-7, AM-2, E-13):
   session (`started: false`). The run is found in a registered hub's `.agent-runs/workflows/<run_id>/` and must be a
   scenario run paused at an open, unanswered investigation, as its own record says. The session starts in the hub,
   mode `default`, with the investigation's system prompt, its tool policy (a `PreToolUse` hook: `Read`, `Glob`, `Grep`
-  only inside the workspace and never on a declared env file, under `/proc` or on `/`, and no `Grep` with a `glob`
-  filter under a folder holding a declared env file; `Write` under `actions/<pack>/`; Bash for the listed `./hub`
-  commands only; every other tool denied) and, like every driven session, without the credential names the hub
-  declares; no env file is read here.
+  only inside the hub and its declared repos and never on a declared env file, under `/proc` or on `/`, and no `Grep`
+  with a `glob` filter under a folder holding a declared env file; `Write` under `actions/<pack>/`; Bash for the
+  listed `./hub` commands only; every other tool denied) and, like every driven session, without the credential names
+  the hub declares; no env file is read here.
 - The link file `investigation-<n>.session` in the run folder, created exclusively and owner-only, keeps it to one
   session per investigation and per `hub web` process. A link that is empty (a start cut short), names a session the
   store does not know, or names one that ended and cannot be resumed is taken over by a new session (an error listing
@@ -623,7 +623,7 @@ Problems:
 | 404 | `urn:agent-hub:problem:run-control-off` | in the container (`AGENT_HUB_IN_CONTAINER=1`) |
 | 409 | `workflow-run-not-paused` | not a scenario run, or not paused at an open, unanswered investigation |
 | 409 | `workflow-run-link-in-path` | the link file `investigation-<n>.session` is a symbolic link |
-| 409 | `workflow-run-workspace-root` | the hub sits directly under `/`, so its workspace would be the whole file system |
+| 409 | `workflow-run-workspace-root` | a read root (the hub or a declared repo) is `/`, the home folder or one of its ancestors, where reads would reach the developer's own credentials |
 | 409 | `urn:agent-hub:problem:hub-registry-unreadable` (`hub_registry_unreadable`) | the hub registry cannot be read |
 | 409 | `urn:agent-hub:problem:hub-local-invalid` (`hub_local_invalid`) | the hub's `hub.local.json` cannot be read, so its env files and credential names are unknown |
 | 422 | `record_too_large` · `record_unreadable` | the run's record is over 8 MiB · a line before its last is not one JSON object |
