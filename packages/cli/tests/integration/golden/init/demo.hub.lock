@@ -604,6 +604,12 @@
     "workflows/incident/scripts/evidence.py": {
       "ownership": "seeded"
     },
+    "workflows/incident/scripts/inbox.py": {
+      "ownership": "seeded"
+    },
+    "workflows/incident/scripts/mitigation.py": {
+      "ownership": "seeded"
+    },
     "workflows/issue-to-pr/fixtures/blocked.yaml": {
       "ownership": "seeded"
     },

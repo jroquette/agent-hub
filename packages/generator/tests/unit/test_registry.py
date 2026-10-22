@@ -36,6 +36,8 @@ SEEDED_PACK_FILES = (
     "incident/incident.yaml",
     "incident/scripts/check.py",
     "incident/scripts/evidence.py",
+    "incident/scripts/inbox.py",
+    "incident/scripts/mitigation.py",
     "issue-to-pr/fixtures/blocked.yaml",
     "issue-to-pr/fixtures/dirty.yaml",
     "issue-to-pr/fixtures/done.yaml",
