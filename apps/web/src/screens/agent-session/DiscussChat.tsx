@@ -32,6 +32,9 @@ export interface DiscussChatProps {
   prepareMessage?: ((text: string) => string) | undefined;
   /** The message was accepted: the Discuss panel drops the references it carried. */
   onSent?: (() => void) | undefined;
+  /** Keeps the session's permission mode fixed: no mode switch (a scenario investigation, whose
+   * allowed writes and `./hub` commands must keep asking, E-13, E-15). */
+  lockMode?: boolean | undefined;
 }
 
 export interface DiscussChatViewProps extends DiscussChatProps {
@@ -55,6 +58,7 @@ export function DiscussChatView({
   transcript,
   prepareMessage,
   onSent,
+  lockMode = false,
 }: DiscussChatViewProps) {
   const snapshot = useAgentSession(agentSessionId);
   const capabilities = useCapabilities();
@@ -129,6 +133,7 @@ export function DiscussChatView({
             draftId={agentSessionId}
             focusOnOpen={pending.length === 0}
             resumable={resumable(session, endReason)}
+            modeLocked={lockMode}
           />
         </div>
       </footer>
