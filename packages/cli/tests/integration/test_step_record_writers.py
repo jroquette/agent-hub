@@ -959,7 +959,7 @@ class TestPendingDecision:
             "superseded": SUPERSEDED,
         }
 
-    def test_reads_only_this_tickets_newest_unnamed_request_opened_since_its_last_run(
+    def test_reads_only_this_tickets_newest_unnamed_request_when_requests_are_unnamed(
         self, hub: Hub, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         def declined(n: str) -> None:
