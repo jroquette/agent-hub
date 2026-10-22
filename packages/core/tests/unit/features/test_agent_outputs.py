@@ -1441,7 +1441,11 @@ def test_accepts_valid_preflight_when_every_field_valid() -> None:
     )
     # A plain check may carry a note: an approval superseded by another (A23).
     third = a_preflight_run(input_text="change request 3 approved but superseded by plan v4")
-    document = a_preflight_document(runs=[a_preflight_run(), second, third])
+    # A superseded approval's re-check that still finds plan drift opened no request (A24).
+    fourth = a_preflight_run(
+        input_text="change request 3 approved but superseded by plan v4", drift="plan"
+    )
+    document = a_preflight_document(runs=[a_preflight_run(), second, third, fourth])
 
     assert preflight_problems(review_bytes(document)) == ()
 
