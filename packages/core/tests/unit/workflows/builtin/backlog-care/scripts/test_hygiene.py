@@ -57,7 +57,8 @@ def an_issue(issue_id: str, title: str, **fields: Any) -> dict[str, Any]:
     return issue | fields
 
 
-# The issues of fixture backlog-mixed.yaml's `read` stub, as read.py prints them: one orphan
+# The findings of fixture backlog-mixed.yaml's `read` stub (labels and dates aside; the stub
+# itself is checked by test_backlog_care_workflows.py), as read.py prints them: one orphan
 # (DEM-1), one stale issue (DEM-2), one duplicate pair (DEM-3, DEM-4), one cycle (DEM-5, DEM-6),
 # and an issue in review with its PR linked (DEM-7), which is none of them.
 BACKLOG_MIXED = [

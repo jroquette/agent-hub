@@ -157,6 +157,13 @@ DESIGN_PATHS = (
     "scripts/recall_transcripts.py",
     "scripts/retro_metrics.py",
     # AGH-489: the built-in backlog-care pack, seeded.
+    "workflows/backlog-care/backlog-care.yaml",
+    "workflows/backlog-care/fixtures/backlog-approve-and-skip.yaml",
+    "workflows/backlog-care/fixtures/backlog-mixed.yaml",
+    "workflows/backlog-care/fixtures/backlog-over-limit.yaml",
+    "workflows/backlog-care/fixtures/backlog-paused.yaml",
+    "workflows/backlog-care/fixtures/backlog-read-failed.yaml",
+    "workflows/backlog-care/prompts/draft.md",
     "workflows/backlog-care/scripts/drafts.py",
     "workflows/backlog-care/scripts/gates.py",
     "workflows/backlog-care/scripts/hygiene.py",
