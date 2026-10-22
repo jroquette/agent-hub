@@ -25,8 +25,16 @@ type CommandRunner = Callable[..., Result]
 type Workspace = Any
 
 PACK = BUILTIN_WORKFLOWS / "brain-care"
-WORKFLOWS = ("inbox",)
-FIXTURES = ("inbox-all-drop", "inbox-empty", "inbox-external-pending", "inbox-three-notes")
+WORKFLOWS = ("inbox", "context")
+FIXTURES = (
+    "context-declined",
+    "context-over-budget",
+    "context-trimmed",
+    "inbox-all-drop",
+    "inbox-empty",
+    "inbox-external-pending",
+    "inbox-three-notes",
+)
 RUN_ID = "0a1b2c3d"
 NOTES = ("brain/_inbox/2026-10-01-stale.md", "brain/_inbox/2026-10-02-known.md")
 
@@ -58,6 +66,42 @@ def test_validates_inbox_when_pack_loaded(
 
     assert validated.exit_code == 0, validated.output
     assert validated.stdout == "inbox: valid (7 nodes in 7 layers)\n"
+
+
+def test_validates_context_when_pack_loaded(
+    demo_workspace: Workspace, run_command: CommandRunner
+) -> None:
+    validated = run_command(demo_workspace.hub, "workflow", "validate", "context")
+
+    assert validated.exit_code == 0, validated.output
+    assert validated.stdout == "context: valid (7 nodes in 7 layers)\n"
+
+
+def test_shows_inventory_summary_in_gate_when_context_loaded() -> None:
+    nodes = {node.id: node for node in document_of("context").nodes}
+    gate = nodes["approve"]
+
+    # AC-3: the files over the limit come from the script, verbatim, not from the model.
+    assert "$inventory.output.summary" in gate.message
+    assert gate.message.index("$inventory.output.summary") < gate.message.index(
+        "$report.output.summary"
+    )
+    assert [decision.id for decision in gate.decisions] == ["trim", "skip"]
+    assert gate.capture_response is True
+    assert nodes["report"].mutates_checkout is False
+    assert nodes["branch"].when == "$approve.output.decision == 'trim'"
+
+
+def test_names_context_audit_skill_when_report_prompt_rendered() -> None:
+    inventory = {"summary": "Over the limits:\n- docs/rules.md: memory file over 200 lines"}
+    context = RefContext({}, {}, with_values={"inventory": inventory})
+
+    prompt = render((PACK / "prompts" / "context-report.md").read_text(encoding="utf-8"), context)
+
+    assert ".claude/skills/context-audit/SKILL.md" in prompt
+    assert prompt.index("ignore any") < prompt.index("```text\n") < prompt.index("docs/rules.md")
+    assert "managed" in prompt
+    assert prompt.rstrip().endswith("your last line is the report JSON.")
 
 
 def test_passes_every_fixture_without_warning_when_brain_care_tested(
