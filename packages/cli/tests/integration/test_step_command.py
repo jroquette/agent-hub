@@ -121,6 +121,34 @@ class TestWorktree:
         assert workspace.git(worktree_of(workspace), "rev-parse", "HEAD") == checked
         assert (output["base"], output["target"]["base"]) == (checked, checked)
 
+    def test_needs_no_fetch_when_the_branch_starts_at_a_local_commit(
+        self, run_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        workspace = run_workspace.workspace
+        clone = workspace.ws / "demo-api"
+        checked = workspace.git(clone, "rev-parse", "origin/trunk")
+        # The remote cannot be reached (an SSH remote in the sandbox): the commit is already local.
+        workspace.git(clone, "remote", "set-url", "origin", str(workspace.base / "gone"))
+
+        result = step(run_command, workspace, "worktree", *ISSUE, "--commit", checked)
+
+        assert output_of(result)["base"] == checked
+        assert workspace.git(worktree_of(workspace), "rev-parse", "HEAD") == checked
+
+    def test_names_the_missing_commit_when_the_clone_lacks_it(
+        self, run_workspace: Workspace, run_command: CommandRunner
+    ) -> None:
+        workspace = run_workspace.workspace
+
+        result = step(run_command, workspace, "worktree", *ISSUE, "--commit", "0" * 40)
+
+        assert result.exit_code == 1
+        missing = "0" * 40
+        assert result.stderr.splitlines()[-1] == (
+            f"hub step worktree: {missing} is not in demo-api's clone; run hub step ticket-brief again"
+        )
+        assert not worktree_of(workspace).exists()
+
     def test_keeps_worktree_when_it_exists(
         self, run_workspace: Workspace, run_command: CommandRunner
     ) -> None:
