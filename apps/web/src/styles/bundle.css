@@ -2408,6 +2408,54 @@ pre {
   height: 1px;
   background: var(--border-strong);
 }
+/* ProvenanceLineage, vertical (AGH-393): steps down a narrow column, each led by its 16 px icon;
+   a 1 px border-strong line joins the icons. No node border, no status colour. */
+.ah-lineage[data-orientation="vertical"] {
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  overflow-x: visible;
+  list-style: none;
+}
+.ah-lineage[data-orientation="vertical"] > .ah-lin-node {
+  position: relative;
+  flex: none;
+  min-width: 0;
+  gap: var(--space-1);
+  padding: 0 0 0 calc(var(--icon) + var(--space-2));
+  background: none;
+  border: 0;
+  border-radius: 0;
+}
+.ah-lineage[data-orientation="vertical"] > .ah-lin-node:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  top: calc(var(--icon) + var(--space-1));
+  bottom: calc(var(--space-1) - var(--space-3));
+  left: calc(var(--icon) / 2);
+  width: 1px;
+  background: var(--border-strong);
+}
+.ah-lineage[data-orientation="vertical"] .ah-lin-kind {
+  min-height: var(--icon);
+  line-height: 16px;
+}
+.ah-lineage[data-orientation="vertical"] .ah-lin-kind > .ah-icon {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+.ah-lineage[data-orientation="vertical"] .ah-lin-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
 
 /* Workflow graph */
 .ah-wf text {
