@@ -1421,6 +1421,8 @@ def test_imports_every_rendered_module_when_run_on_each_python(
         "plugin/hub-workflow/hooks",
         "scripts",
         "workflows/sdlc/scripts",
+        # The incident pack's helpers (AGH-483), likewise.
+        "workflows/incident/scripts",
     }
 
 
