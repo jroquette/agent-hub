@@ -279,3 +279,82 @@ keyboard. axe reports no serious or critical violation in the panel, Compare or 
   sets and `tracker.team_set` names the labels and states it sets (empty when none).
 - **AC-382.37** Given an unreadable hub.local.json, when the config opens, then it says it "has a problem, so only the
   team's values apply" with the line, and offers Ask Claude to fix it.
+
+## Workflow page and Toolkit workflow cards (AGH-427)
+
+**Route** `/projects/:project/skills/workflows/:name` · **Answers:** "What does this workflow do, step by step, and what
+do I give it to run it?" The reader is the hub owner deciding whether to run a workflow or change it; the one action
+stays **Run this workflow** (or "Starts from `hub run`", AC-PG-13.3). The owner validated this in the playground.
+Before it, the page had no width cap and a 320 px aside that did not stick, steps were loose rows with their condition
+in a `title`, commands were faint inline code and the rounds box said "stopping as soon as they pass" for any rule.
+
+```
+Portfolio › agent-hub › Toolkit › Workflows › deliver
+deliver  [Built-in]                                    [Discuss] [▶ Run this workflow]
+One issue to a PR, implemented and reviewed in rounds until the check and both reviewers pass.
+6 steps · Claude does 3 · repeats in up to 3 rounds · runs without you
+┌─ Step by step ──────────── 3 AI agents  3 commands  rounds ─┐ ┌ What you give it ────────┐
+│ (1)  Make (or keep) the issue's worktree from a fresh fetch  │ │ issue                    │
+│  │   >_ Command · worktree                                   │ │ The tracker issue        │
+│  │   [$ hub step worktree --issue $INPUTS.issue        [⧉]] │ ├ Where it lives ──────────┤
+│ (2)  Implement, check, review, again until the verdict passes│ │ Built into agent-hub. …  │
+│  │   ⟳ Rounds, up to 3 · rounds                              │ │ Revision   r1            │
+│  │   ┌ well ─────────────────────────────────────────────┐   │ │ Runs of this workflow    │
+│  │   │ ⚑ Stops when $review.output.verdict == 'PASS'      │   │ └──────────────────────────┘
+│  │   │ If round 3 ends without stopping, this step fails. │   │   ^ sticky
+│  │   │ (2.1) The implementing session …                   │   │
+│  │   │       AI agent · implement · ▸ Read the prompt     │   │
+│  │   │ (2.2) The repo's check on the round's work         │   │
+│  │   │       ⑂ Only when $verdict.output.status != 'blocked'│ │
+│  │   └────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────┘
+┌ ▸ Advanced: graph and document ─────────────────────────────────────────────────────────┐
+  graph full width; a chosen node opens under it: its facts | a wide JSON of its document
+```
+
+- **Frame.** `.wf-detail` caps the page at 1280 px (`space-8` padding, `space-6` under 1360 px) and reuses the skill
+  detail's `.ah-skill-layout`: a reading column and a 300 px sticky `.ah-skill-rail` (AC-271.8), which moves above
+  the steps under 1200 px. Step text is at most 88ch; code blocks use the column's width.
+- **Step row.** A timeline (`ol.wf-steps`): a 24 px node numbered `N` (or `N.k` inside rounds) with its border in the
+  kind's event colour, a 1 px rail to the next node; the description is the title (the id in mono when there is
+  none); a caption line says the kind (icon and label: "AI agent", "Command", "Approval by you", "Rounds, up to N"),
+  the id and "Waits for" with one chip per step it waits on when that is not simply the step before. Colour is never
+  the only channel.
+- **Rounds** sit in a solid `surface-sunken` well (dashed means Derived) with their own timeline.
+- **Rail.** "What you give it" (each input a fact: name in mono, "(optional)", its description or type; none: "Nothing:
+  it runs as is.") and "Where it lives" (the two sentences, Revision `rN`, a "Runs of this workflow" link to
+  `/runs?workflow=`).
+- **Toolkit › Workflows tab.** Each workflow is a catalog card of the Toolkit's grid (`.ah-skills-grid`, the shape of
+  the Agents and Skills tabs): name, description, then a foot with where it comes from, what you give it and its
+  shape.
+
+- **AC-427.1** Given a workflow's page, when it renders, then the page is capped at 1280 px with the steps in a
+  reading column beside a sticky About rail holding "What you give it" and "Where it lives" (Revision `r1`, "Runs of
+  this workflow" linking to `/runs?workflow=<name>`); under 1200 px the rail moves above the steps.
+- **AC-427.2** Given a workflow's page, when its header shows, then a muted line under the description gives its
+  shape in words, and a repeat reads "repeats in up to N rounds" (also on the Toolkit card); the step kind chips sit
+  in the "Step by step" heading.
+- **AC-427.3** Given a step, when it shows, then its description is its title (else its id in mono), a kind line
+  says the kind with its icon, its id, and "Waits for" with a chip per step it waits on unless that is only the
+  step before; an `.ah-sr` "Step N: " prefix names the number for screen readers.
+- **AC-427.4** Given a step with a `when` condition, when it shows, then "Only when" and the expression are visible
+  text, not a tooltip.
+- **AC-427.5** Given a command step, when it shows, then its command is a wrapping `CodeBlock` labelled "Command of
+  <id>" with Copy; an agent step's prompt is folded under "Read the prompt", scrolls from the keyboard and has "Copy
+  prompt".
+- **AC-427.6** Given a rounds step, when it shows, then it says "Rounds, up to N" and its real stop rule ("Stops when
+  <until_when>", "Stops when <until_bash> passes", or "Runs all N rounds."), "If round N ends without stopping, this
+  step fails." when there is a rule, whether the agents remember the previous round, and "Starts afresh each round"
+  on a body agent with fresh context.
+- **AC-427.7** Given the steps, when `j` or `k` is pressed, then focus moves to the next or previous step, round
+  steps included.
+- **AC-427.8** Given a workflow that is loading, when the page shows, then a skeleton of the final shape (header,
+  steps card, rail) with "Loading <name>" shows; given a document with no steps, then the card says "This workflow
+  has no steps."
+- **AC-427.9** Given the Advanced fold with a node chosen, when it shows, then the node opens under the graph at
+  full width, its facts (Type, Waits for, Description) beside a wide JSON of its document.
+- **AC-427.10** Given the Toolkit's Workflows tab, when it lists workflows, then each is a catalog card like the other
+  tabs: the name as its only link and Tab stop, the description, "Hub" or "Built-in", what you give it ("Takes no
+  input") and its shape.
+- **AC-427.11** Given the workflow page with rounds, a condition and an open prompt, when checked with axe, then it
+  has no serious or critical violation.

@@ -1,9 +1,13 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Navigate, useParams } from "react-router";
 
 import type { components } from "../../api/schema";
 import { AppLink, DataTable, Icon, JsonViewer, ProblemError, Skeleton } from "../../components";
+import { useRowKeys } from "../../lib/useRowKeys";
 import { useScope } from "../../lib/scope";
+import { RailFact } from "../skills/RailFact";
+import "../skills/SkillDetail.css";
+import "../skills/Skills.css";
 import { skillsHome, SKILLS_PICKER } from "../skills/routes";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
@@ -43,11 +47,7 @@ export function workflowsTab(project: string): string {
 }
 
 function Page({ children }: { children: ReactNode }) {
-  return (
-    <div style={{ padding: "16px 32px 40px", minHeight: "100%" }} className="ah-stack">
-      {children}
-    </div>
-  );
+  return <div className="wf-detail ah-stack">{children}</div>;
 }
 
 /** The step kinds of a workflow as quiet chips: "3 AI agents", "5 commands". */
@@ -88,33 +88,48 @@ export function shapeInWords(steps: readonly WorkflowStep[]): string {
   walk(steps);
   const parts = [`${String(total)} ${total === 1 ? "step" : "steps"}`];
   if (claude > 0) parts.push(`Claude does ${String(claude)}`);
-  if (rounds > 0) parts.push(`retries up to ${String(rounds)} times`);
+  if (rounds > 0) parts.push(`repeats in up to ${String(rounds)} rounds`);
   parts.push(asks > 0 ? "stops to ask you" : "runs without you");
   return parts.join(" · ");
 }
 
-function WorkflowRow({ item, showProject }: { item: WorkflowSummary; showProject: boolean }) {
+/** A workflow as a catalog card, the shape of the Toolkit's other tabs: name, what it does, then
+ * where it comes from, what you give it and its shape. Only the name takes a Tab stop. */
+function WorkflowCard({ item, showProject }: { item: WorkflowSummary; showProject: boolean }) {
   const needs = item.inputs.filter((input) => input.required);
+  const headingId = `workflow-card-${item.project}-${item.name}`;
   return (
-    <li>
-      <AppLink href={workflowHref(item)} className="wf-row">
-        <span className="ah-stack" style={{ gap: 2, minWidth: 0 }}>
-          <span className="ah-row" style={{ gap: 8 }}>
-            <span className="wf-name">{item.name}</span>
-            {item.source === "builtin" && <span className="ah-small ah-subtle">built-in</span>}
-            {showProject && <span className="ah-small ah-subtle">· {item.project}</span>}
+    <li className="ah-skill-card-item">
+      <article className="ah-skill-card" aria-labelledby={headingId}>
+        <header className="ah-skill-card-head">
+          <h3 id={headingId} className="ah-skill-name">
+            <AppLink href={workflowHref(item)}>{item.name}</AppLink>
+          </h3>
+          <span className="ah-grow" />
+          {showProject && <span className="ah-skill-meta">{item.project}</span>}
+        </header>
+        <p className="ah-skill-desc" title={item.description ?? undefined}>
+          {item.description ?? "No description."}
+        </p>
+        <footer className="ah-skill-card-foot">
+          <span className="ah-skill-card-line">
+            <span className="ah-skill-meta">
+              <Icon name={item.source === "hub" ? "warehouse" : "package"} size="sm" />
+              {item.source === "hub" ? "Hub" : "Built-in"}
+            </span>
+            <span className="ah-skill-meta">
+              <Icon name="braces" size="sm" />
+              {needs.length > 0
+                ? `You give it: ${needs.map((input) => input.name).join(", ")}`
+                : "Takes no input"}
+            </span>
           </span>
-          <span className="ah-muted">{item.description ?? "No description."}</span>
-          <span className="ah-small ah-subtle">
-            {needs.length > 0
-              ? `You give it: ${needs.map((input) => input.name).join(", ")}`
-              : "Takes no input"}
-            {" · "}
+          <span className="ah-skill-meta">
+            <Icon name="list-checks" size="sm" />
             {shapeInWords(item.steps)}
           </span>
-        </span>
-        <Icon name="chevron-right" className="wf-chevron" />
-      </AppLink>
+        </footer>
+      </article>
     </li>
   );
 }
@@ -138,9 +153,9 @@ export function WorkflowList({
   return (
     <>
       {items.length > 0 && (
-        <ul className="wf-list" aria-label="Workflows">
+        <ul className="ah-skills-grid" aria-label="Workflows">
           {items.map((item) => (
-            <WorkflowRow
+            <WorkflowCard
               key={`${item.project}/${item.name}`}
               item={item}
               showProject={showProject}
@@ -215,6 +230,8 @@ function DetailBody({ workflow }: { workflow: WorkflowDetail }) {
   });
   const needs = workflow.inputs;
   const [advanced, setAdvanced] = useState(selected !== null);
+  const stepsRef = useRef<HTMLElement>(null);
+  useRowKeys(stepsRef);
   return (
     <Page>
       <Breadcrumbs
@@ -243,123 +260,105 @@ function DetailBody({ workflow }: { workflow: WorkflowDetail }) {
           </span>
         )}
       </div>
-      {workflow.description && <p style={{ margin: 0, fontSize: 16 }}>{workflow.description}</p>}
-      <StepChips types={workflow.step_types ?? {}} />
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr) 320px",
-          gap: 24,
-          alignItems: "start",
-        }}
-      >
-        <section
-          aria-label="Step by step"
-          className="ah-card ah-card-body ah-stack"
-          style={{ gap: 16 }}
-        >
-          <h2 className="ah-h3" style={{ margin: 0 }}>
-            Step by step
-          </h2>
-          <StepList layers={workflow.layers} document={workflow.document} />
-        </section>
-        <aside className="ah-stack" style={{ gap: 16 }}>
-          <section
-            aria-label="What you give it"
-            className="ah-card ah-card-body ah-stack"
-            style={{ gap: 10 }}
-          >
-            <h2 className="ah-h3" style={{ margin: 0 }}>
+      {workflow.description && <p className="ah-skill-lede">{workflow.description}</p>}
+      <p className="wf-shape">{shapeInWords(workflow.steps)}</p>
+      <div className="ah-skill-layout">
+        <div className="ah-skill-main">
+          <section aria-label="Step by step" className="ah-card ah-card-body" ref={stepsRef}>
+            <div className="wf-steps-head">
+              <h2 className="ah-h3" style={{ margin: 0 }}>
+                Step by step
+              </h2>
+              <StepChips types={workflow.step_types ?? {}} />
+            </div>
+            <StepList layers={workflow.layers} document={workflow.document} />
+          </section>
+        </div>
+        <aside className="ah-skill-rail" aria-label="About this workflow">
+          <section aria-label="What you give it" className="ah-skill-rail-section">
+            <h2 className="ah-caption" style={{ margin: "0 0 6px" }}>
               What you give it
             </h2>
             {needs.length === 0 ? (
               <span className="ah-small ah-subtle">Nothing: it runs as is.</span>
             ) : (
-              <dl className="ah-small" style={{ margin: 0, display: "grid", gap: 8 }}>
+              <dl className="ah-skill-rail-facts" style={{ margin: 0 }}>
                 {needs.map((input) => (
-                  <div key={input.name}>
-                    <dt className="ah-mono" style={{ fontWeight: 600 }}>
+                  <div key={input.name} className="ah-skill-fact">
+                    <dt className="ah-mono" style={{ color: "var(--text)", fontWeight: 600 }}>
                       {input.name}
                       {!input.required && <span className="ah-subtle"> (optional)</span>}
                     </dt>
-                    <dd style={{ margin: 0 }} className="ah-subtle">
-                      {input.description ?? input.type}
-                    </dd>
+                    <dd className="ah-muted">{input.description ?? input.type}</dd>
                   </div>
                 ))}
               </dl>
             )}
           </section>
-          <section
-            aria-label="Where it lives"
-            className="ah-card ah-card-body ah-stack"
-            style={{ gap: 6 }}
-          >
-            <h2 className="ah-h3" style={{ margin: 0 }}>
+          <section aria-label="Where it lives" className="ah-skill-rail-section">
+            <h2 className="ah-caption" style={{ margin: "0 0 6px" }}>
               Where it lives
             </h2>
-            <span className="ah-small ah-subtle">
+            <p className="ah-small ah-muted" style={{ margin: "0 0 12px" }}>
               {workflow.source === "hub"
                 ? "A YAML file in this hub's workflows/ folder. Edit the file (or ask Claude with Discuss) and this page updates."
                 : "Built into agent-hub. To change it, copy it into the hub's workflows/ folder with the same name: the hub's copy wins."}
-            </span>
-            <span className="ah-small ah-subtle">
-              Revision {workflow.revision} · started from{" "}
-              <AppLink href={`/runs?workflow=${encodeURIComponent(workflow.name)}`}>
-                Workflow runs
-              </AppLink>
-            </span>
+            </p>
+            <dl className="ah-skill-rail-facts" style={{ margin: 0 }}>
+              <RailFact term="Revision" mono>
+                r{workflow.revision}
+              </RailFact>
+            </dl>
+            <AppLink
+              className="ah-small"
+              href={`/runs?workflow=${encodeURIComponent(workflow.name)}`}
+              style={{ display: "inline-block", marginTop: 12 }}
+            >
+              Runs of this workflow
+            </AppLink>
           </section>
         </aside>
       </div>
       <details
-        className="ah-card ah-card-body"
+        className="ah-card ah-skill-fold wf-advanced"
         open={advanced}
         onToggle={(event) => {
           setAdvanced(event.currentTarget.open);
         }}
       >
-        <summary className="ah-h3" style={{ cursor: "pointer" }}>
-          Advanced: graph and document
+        <summary className="ah-card-head">
+          <Icon name="chevron-right" size="sm" />
+          <span className="ah-h3">Advanced: graph and document</span>
         </summary>
-        <div className="ah-stack" style={{ gap: 16, marginTop: 12 }}>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: selected ? "minmax(0, 1fr) 320px" : "minmax(0, 1fr)",
-              gap: 16,
-              alignItems: "start",
-            }}
-          >
-            <WorkflowGraph
-              layers={workflow.layers}
-              selected={selected?.id ?? null}
-              onSelect={node.open}
-            />
-            {selected && (
-              <NodePanel id={selected.id} focusOnOpen={node.openedByUser} onClose={node.close}>
-                <dl className="ah-small" style={{ margin: 0, display: "grid", gap: 6 }}>
-                  <dt className="ah-subtle">Type</dt>
-                  <dd style={{ margin: 0 }}>{selected.type}</dd>
-                  <dt className="ah-subtle">Waits for</dt>
-                  <dd style={{ margin: 0 }} className="ah-mono">
-                    {selected.depends_on.join(", ") || "—"}
-                  </dd>
+        <div className="ah-card-body wf-advanced-body">
+          <WorkflowGraph
+            layers={workflow.layers}
+            selected={selected?.id ?? null}
+            onSelect={node.open}
+          />
+          {selected && (
+            <NodePanel id={selected.id} focusOnOpen={node.openedByUser} onClose={node.close}>
+              <div className="wf-node-detail">
+                <dl className="wf-node-facts">
+                  <div className="ah-skill-fact">
+                    <dt>Type</dt>
+                    <dd className="ah-mono">{selected.type}</dd>
+                  </div>
+                  <div className="ah-skill-fact">
+                    <dt>Waits for</dt>
+                    <dd className="ah-mono">{selected.depends_on.join(", ") || "—"}</dd>
+                  </div>
                   {selected.description && (
-                    <>
-                      <dt className="ah-subtle">Description</dt>
-                      <dd style={{ margin: 0 }}>{selected.description}</dd>
-                    </>
+                    <div className="ah-skill-fact">
+                      <dt>Description</dt>
+                      <dd>{selected.description}</dd>
+                    </div>
                   )}
                 </dl>
-                {written && (
-                  <div style={{ marginTop: 8 }}>
-                    <JsonViewer value={written} maxHeight={240} />
-                  </div>
-                )}
-              </NodePanel>
-            )}
-          </div>
+                {written && <JsonViewer value={written} maxHeight={360} />}
+              </div>
+            </NodePanel>
+          )}
           <section aria-label="Document" className="ah-stack" style={{ gap: 8 }}>
             <h3 className="ah-h3" style={{ margin: 0 }}>
               Document
@@ -385,8 +384,18 @@ export function WorkflowDetailScreen() {
   if (workflow.isPending) {
     return (
       <Page>
-        <Skeleton width={320} height={28} />
-        <Skeleton width={560} height={160} />
+        <div aria-busy="true" aria-label={`Loading ${name}`} role="status" className="ah-stack">
+          <Skeleton width={320} height={28} />
+          <Skeleton lines={1} />
+          <div className="ah-skill-layout">
+            <div className="ah-card ah-card-body">
+              <Skeleton lines={10} />
+            </div>
+            <div className="ah-skill-rail ah-card-body">
+              <Skeleton lines={6} />
+            </div>
+          </div>
+        </div>
       </Page>
     );
   }
