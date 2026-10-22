@@ -919,7 +919,7 @@ describe("FeaturesScreen (playground delivery)", () => {
     expect(facetCount(/^bounded/)).toBe("0");
   });
 
-  it("titles a named feature with its nickname in the UI font and puts its fixed label beside it, and no label beside an unnamed one (AC-PG-28.2, AC-425.7)", async () => {
+  it("titles a named feature with its nickname in the UI font and puts its fixed label beside it (AC-PG-28.2, AC-425.7)", async () => {
     open({
       "/api/v1/feature-names": {
         items: [{ project: "agent-hub", slug: "layered-memory", name: "Layered memory" }],
@@ -933,10 +933,7 @@ describe("FeaturesScreen (playground delivery)", () => {
     expect(title.nextElementSibling).toHaveTextContent("layered-memory");
     const unnamed = screen.getByRole("link", { name: "control-plane" });
     expect(unnamed).not.toHaveAttribute("data-named");
-    // Unnamed, the title is the label: no chip repeats it.
-    expect(
-      within(rowOf("control-plane")).queryByLabelText("Feature label control-plane"),
-    ).toBeNull();
+    expect(unnamed.nextElementSibling).toHaveAccessibleName("Feature label control-plane");
 
     const css = cssOf("src/screens/features/features.css");
     expect(ruleOf(css, ".ft-row-title")).toMatch(/font-family: var\(--font-mono\);/);
