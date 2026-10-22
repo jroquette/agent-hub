@@ -10,6 +10,14 @@
 confirmed check and its output's tail), every hypothesis with its status, the chosen mitigation
 (or none chosen) and a draft for /fix. It prints ``{path, confirmed, mitigation}``.
 
+``inbox.py postmortem --confirmed <n> --handoff <hand-off path> [--today YYYY-MM-DD]`` with the
+postmortem agent's reply on stdin writes the blameless postmortem,
+``brain/_inbox/incident-YYYY-MM-DD-<run>-postmortem.md``, front matter ``type: postmortem``,
+``provenance: agent`` and ``status: draft`` (a hypothesis confirmed) or ``open`` (none): the
+timeline, the root cause (not confirmed when open), the detection gap, what fixed it, the
+follow-ups for the owner to file through /triage and the /learn proposals. It prints
+``{status, path}``.
+
 ``<run>`` is the first 8 characters of ``AGENT_HUB_RUN_ID`` (``local`` without one); ``--today``
 (UTC today by default) is for tests. Untrusted text (the report, the agents' texts, the checks'
 output) sits inside a fence longer than any backtick run it holds, its control characters other
@@ -40,6 +48,10 @@ CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 BACKTICKS = re.compile(r"`+")
 DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 RUN = re.compile(r"[^A-Za-z0-9_-]")
+HANDOFF = re.compile(r"brain/_inbox/[A-Za-z0-9_.-]+\.md")
+COUNT = re.compile(r"[0-9]{1,2}")
+BLAMELESS = "Blameless: systems and signals, not people."
+NOT_CONFIRMED = "Not confirmed: no hypothesis passed its check."
 
 
 class BadInputError(Exception):
@@ -188,6 +200,88 @@ def render_handoff(
     )
 
 
+def texts(reply: dict[str, Any], key: str) -> list[Any]:
+    found = reply.get(key)
+    return found if isinstance(found, list) else []
+
+
+def timeline(reply: dict[str, Any]) -> list[str]:
+    lines = [
+        f"- {line(item.get('at', ''), 40)}: {line(item.get('what', ''))}"
+        for item in texts(reply, "timeline")
+        if isinstance(item, dict)
+    ]
+    return lines or ["- (none given)"]
+
+
+def proposals(reply: dict[str, Any]) -> list[str]:
+    lines = [
+        f"- {line(item.get('target', ''), 200)}: {line(item.get('text', ''), 1000)}"
+        for item in texts(reply, "learnings")
+        if isinstance(item, dict)
+    ]
+    return lines or ["- (none)"]
+
+
+def render_postmortem(
+    reply: dict[str, Any], *, confirmed: int, handoff: str, run: str, today: str
+) -> tuple[str, str]:
+    """The blameless postmortem draft: its status (``draft`` or ``open``) and its Markdown."""
+    status = "draft" if confirmed > 0 else "open"
+    root = [NOT_CONFIRMED, "", "The leading suspicion, unconfirmed:", ""] if not confirmed else []
+    follow_ups = [f"- {line(item)}" for item in texts(reply, "follow_ups")] or ["- (none)"]
+    text = "\n".join(
+        [
+            "---",
+            "type: postmortem",
+            f"status: {status}",
+            "provenance: agent",
+            f"last_verified: {today}",
+            f"sources: [{handoff}]",
+            "---",
+            f"# Postmortem: {line(reply.get('title', ''), 120) or 'incident'} (run {run})",
+            "",
+            BLAMELESS,
+            "",
+            "A draft by the incident run for the owner to review; the texts below are the agent's,"
+            f" fenced. The hand-off: {handoff}.",
+            "",
+            fence(str(reply.get("summary", ""))),
+            "",
+            "## Timeline",
+            "",
+            *timeline(reply),
+            "",
+            "## Root cause",
+            "",
+            *root,
+            fence(str(reply.get("root_cause", ""))),
+            "",
+            "## Detection gap",
+            "",
+            fence(str(reply.get("detection_gap", ""))),
+            "",
+            "## What fixed it",
+            "",
+            fence(str(reply.get("what_fixed_it", ""))),
+            "",
+            "## Follow-ups",
+            "",
+            "Each one is for the owner to file through /triage; the run writes no tracker.",
+            "",
+            *follow_ups,
+            "",
+            "## /learn proposals",
+            "",
+            "Each one is a proposal for the owner to take through /learn, not a brain note yet.",
+            "",
+            *proposals(reply),
+            "",
+        ]
+    )
+    return status, text
+
+
 def loads(text: str, what: str) -> Any:
     try:
         return json.loads(text)
@@ -234,6 +328,21 @@ def handoff(args: argparse.Namespace) -> tuple[Path, str, dict[str, Any]]:
     return INBOX / f"incident-{args.today}-{run}-handoff.md", text, printed
 
 
+def postmortem(args: argparse.Namespace) -> tuple[Path, str, dict[str, Any]]:
+    reply = loads(sys.stdin.read(), "the postmortem reply")
+    if not isinstance(reply, dict):
+        raise BadInputError("the postmortem reply is not a JSON object")
+    if not COUNT.fullmatch(args.confirmed):
+        raise BadInputError(f"--confirmed is not a count: {args.confirmed[:20]!r}")
+    if not HANDOFF.fullmatch(args.handoff):
+        raise BadInputError("--handoff is not a draft in brain/_inbox/")
+    run = run_id()
+    status, text = render_postmortem(
+        reply, confirmed=int(args.confirmed), handoff=args.handoff, run=run, today=args.today
+    )
+    return INBOX / f"incident-{args.today}-{run}-postmortem.md", text, {"status": status}
+
+
 def parser() -> argparse.ArgumentParser:
     parsing = argparse.ArgumentParser(prog="inbox.py")
     commands = parsing.add_subparsers(dest="command", required=True)
@@ -242,6 +351,9 @@ def parser() -> argparse.ArgumentParser:
     drafts.add_argument("--check", required=True)
     drafts.add_argument("--mitigation", default="")
     drafts.add_argument("--decision", default="")
+    note = commands.add_parser("postmortem")
+    note.add_argument("--confirmed", required=True)
+    note.add_argument("--handoff", required=True)
     today = datetime.now(UTC).date().isoformat()
     for command in commands.choices.values():
         command.add_argument("--today", default=today)
@@ -253,14 +365,15 @@ def main(argv: list[str]) -> int:
     try:
         if not DAY.fullmatch(args.today):
             raise BadInputError(f"--today is not YYYY-MM-DD: {args.today[:20]!r}")
-        path, text, printed = handoff(args)
+        writer = handoff if args.command == "handoff" else postmortem
+        path, text, printed = writer(args)
     except BadInputError as error:
         print(f"inbox.py: {error}", file=sys.stderr)
         return 2
     if not write_new(path, text):
         print(f"inbox.py: {path.as_posix()} exists; a draft never replaces a file", file=sys.stderr)
         return 1
-    print(json.dumps({"path": path.as_posix(), **printed}))
+    print(json.dumps({**printed, "path": path.as_posix()}))
     return 0
 
 
