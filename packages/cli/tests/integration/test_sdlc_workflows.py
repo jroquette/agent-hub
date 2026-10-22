@@ -856,8 +856,31 @@ PLAN_DRIFT = {
 }
 
 
+RUN_CHANGED = (
+    "change-requests/1.decision.md",
+    "change-requests/1.md",
+    "tickets/DEM-8/brief.md",
+    "tickets/DEM-8/preflight.json",
+)
+
+
+@pytest.mark.parametrize(
+    ("decision", "changed_plan"),
+    [
+        (("respond", "implement-1", "--choice", "decline", "--text", "Keep the plan."), False),
+        # Approved: the run amends plan.md (A<k>); the re-check still finds plan drift, so the
+        # run ends blocked before any worktree (A2).
+        (("approve", "implement-1"), True),
+    ],
+    ids=["declined", "approved"],
+)
 def test_writes_only_the_tickets_records_when_a_stubbed_implement_run_ends(
-    demo_workspace: Workspace, run_command: CommandRunner, monkeypatch: pytest.MonkeyPatch
+    demo_workspace: Workspace,
+    run_command: CommandRunner,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    decision: tuple[str, ...],
+    changed_plan: bool,
 ) -> None:
     hub = demo_workspace.hub
     feature = hub / RUN_FEATURE
@@ -880,7 +903,7 @@ def test_writes_only_the_tickets_records_when_a_stubbed_implement_run_ends(
         return NodeReply(json.dumps(PLAN_DRIFT))
 
     monkeypatch.setattr(WorkflowExecutors, "_agent", stubbed)
-    inputs = ("feature=demo-flow", "issue=DEM-8", "issue_text=```text\nid: DEM-8\n```")
+    inputs = ("feature=demo-flow", "issue=DEM-8", "issue_text=id: DEM-8\ntitle: The handler")
     given = [item for value in inputs for item in ("--input", value)]
 
     started = run_command(
@@ -888,20 +911,27 @@ def test_writes_only_the_tickets_records_when_a_stubbed_implement_run_ends(
     )
     assert started.exit_code == 0, started.output
     assert "run implement-1: paused at " in unstyle(started.stdout)
-    note = ("--choice", "decline", "--text", "Keep the handler where the plan says.")
-    ended = run_command(hub, "workflow", "respond", "implement-1", *note)
+    ended = run_command(hub, "workflow", *decision)
 
     assert ended.exit_code == 0, ended.output
     assert unstyle(ended.stdout).splitlines()[-1] == "run implement-1: done, outcome blocked"
     assert agents == ["pass-1__preflight", "pass-1__recheck"]
     status = demo_workspace.git(hub, "status", "--porcelain", "--untracked-files=all")
-    changed = sorted(line[3:] for line in status.splitlines())
-    assert changed == [
-        f"{RUN_FEATURE}/change-requests/1.decision.md",
-        f"{RUN_FEATURE}/change-requests/1.md",
-        f"{RUN_FEATURE}/tickets/DEM-8/brief.md",
-        f"{RUN_FEATURE}/tickets/DEM-8/preflight.json",
+    changed = sorted(line.split(maxsplit=1)[-1] for line in status.splitlines())
+    expected = [*RUN_CHANGED, *(("plan.md",) if changed_plan else ())]
+    assert changed == sorted(f"{RUN_FEATURE}/{path}" for path in expected)
+    plan = (feature / "plan.md").read_text()
+    assert plan.startswith(RUN_PLAN)
+    assert ("## Amendments" in plan) is changed_plan
+    # The delivery /implement reports, as the run's records hold it.
+    records = (hub / ".agent-runs/workflows/implement-1/records.jsonl").read_text().splitlines()
+    [delivery] = [
+        line["output"]
+        for line in map(json.loads, records)
+        if line.get("event") == "step_end" and line.get("node") == "delivery"
     ]
+    assert delivery["delivery"] == "blocked"
+    assert sorted(delivery["hub_files"]) == sorted(expected)
     # No commit in the hub; no branch or worktree in the repo (A22: none before a passing
     # preflight).
     assert demo_workspace.git(hub, "rev-parse", "HEAD") == head
