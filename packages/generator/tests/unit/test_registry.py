@@ -89,6 +89,7 @@ SEEDED_PACK_FILES = (
     "sdlc/scripts/verdict.py",
     "sdlc/ticket-pass.yaml",
     "upgrade/scripts/fast_gate.py",
+    "upgrade/upgrade.yaml",
 )
 CORE_SOURCES |= {
     f"workflows/{name}": (BUILTIN_PACKAGE, f"{BUILTIN_FOLDER}/{name}") for name in SEEDED_PACK_FILES

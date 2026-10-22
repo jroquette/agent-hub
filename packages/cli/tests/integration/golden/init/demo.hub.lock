@@ -762,6 +762,9 @@
     },
     "workflows/upgrade/scripts/fast_gate.py": {
       "ownership": "seeded"
+    },
+    "workflows/upgrade/upgrade.yaml": {
+      "ownership": "seeded"
     }
   },
   "lock_version": 1,
