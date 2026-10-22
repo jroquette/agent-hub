@@ -4,6 +4,22 @@
 # ///
 """Run each hypothesis's read-only check; print the results as one JSON object.
 
+``check.py --repos <evidence repos JSON>`` with the hypotheses reply (``{"hypotheses": [...]}``)
+on stdin, run in the hub. The hypotheses run in rank order; each check runs, from the root of a
+detached worktree of its repo (``../<dir>``) at the evidence's ``head``, made under one
+``tempfile.mkdtemp()`` when first needed and removed at the end, so the owner's checkouts are
+never the cwd and stay as they were. Each check gets ``--timeout`` seconds (60; its process
+group is killed after), and all of them ``--budget`` seconds (300; the rest are refused). Its
+output goes to a temporary file, of which only the last ``TAIL_BYTES`` are read.
+
+Output: ``{results: [{id, rank, repo, status, exit_code, reason, tail}], confirmed, mitigations,
+menu}``. ``status`` is ``confirmed`` (exit 0), ``failed`` (another exit), ``refused`` (the rules
+below, or the budget), ``timeout`` or ``error`` (an unknown repo, a duplicate id, a head that
+cannot be checked out); only ``confirmed`` confirms. ``mitigations`` counts the confirmed
+hypotheses that propose one; ``menu`` lists each hypothesis's status, each such mitigation as
+``H<n>: <summary> (undo: <undo>)``, and the two ``hub workflow respond`` commands of the gate.
+Exit 0 with the JSON, whatever the checks did; exit 2 on malformed input.
+
 A check is an argv list that an agent wrote after reading untrusted text, so it runs only when
 ``refusal`` finds nothing: no shell; ``argv[0]`` one of ``PROGRAMS``; for git, ``argv[1]`` one of
 ``GIT_SUBCOMMANDS`` (no global option before it) and no option starting with one of
@@ -23,8 +39,19 @@ and grep follow a symlink committed in the repo to outside the checkout, and the
 
 from __future__ import annotations
 
+import argparse
+import json
+import os
 import re
+import shutil
+import signal
+import subprocess
 import sys
+import tempfile
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import IO, Any
 
 PROGRAMS = frozenset({"git", "grep", "test", "ls", "cat", "head", "tail", "wc"})
 GIT_SUBCOMMANDS = frozenset(
@@ -77,6 +104,17 @@ GIT_DEFAULTS_OFF = {
 MAX_ELEMENTS = 16
 MAX_ELEMENT = 256
 CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+TAIL_CHARS = 1000
+# A UTF-8 character is at most 4 bytes: this many bytes always hold the last TAIL_CHARS.
+TAIL_BYTES = 4 * TAIL_CHARS
+MAX_HYPOTHESES = 5
+MAX_REASON = 200
+MAX_MENU = 4096
+DIR = re.compile(r"[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*")
+SHA = re.compile(r"[0-9a-f]{40}")
+DEFAULT_PATH = "/usr/local/bin:/usr/bin:/bin"
+WORKTREE_TIMEOUT = 120
+WORKTREE_GIT = ("git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false")
 
 
 def _long_name(argument: str) -> str | None:
@@ -180,9 +218,202 @@ def child_env(path: str, home: str) -> dict[str, str]:
     }
 
 
+class BadInputError(Exception):
+    """Input this script refuses: exit 2 with its message."""
+
+
+@dataclass
+class Sandbox:
+    """The throwaway worktrees of one run, under one temporary folder, made when first needed."""
+
+    heads: dict[str, str]
+    timeout: float
+    deadline: float
+    root: Path = field(default_factory=lambda: Path(tempfile.mkdtemp(prefix="incident-check-")))
+    made: dict[str, Path | None] = field(default_factory=dict)
+
+    def env(self) -> dict[str, str]:
+        return child_env(os.environ.get("PATH") or DEFAULT_PATH, str(self.root))
+
+    def git(self, repo: str, *args: str) -> bool:
+        """``git <args>`` in the owner's checkout of ``repo``, hooks off; whether it passed."""
+        try:
+            done = subprocess.run(  # noqa: S603 - git from PATH, fixed worktree subcommands
+                [*WORKTREE_GIT, *args],
+                cwd=Path("..") / repo,
+                env=self.env(),
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=WORKTREE_TIMEOUT,
+                check=False,
+            )
+        except OSError, subprocess.SubprocessError:
+            return False
+        return done.returncode == 0
+
+    def worktree(self, repo: str) -> Path | None:
+        """The worktree of ``repo`` at its evidence head, or ``None`` when it cannot be made."""
+        if repo not in self.made:
+            path = self.root / repo
+            added = self.git(
+                repo, "worktree", "add", "--quiet", "--detach", str(path), self.heads[repo]
+            )
+            self.made[repo] = path if added else None
+        return self.made[repo]
+
+    def close(self) -> None:
+        for repo, path in self.made.items():
+            if path is not None:
+                self.git(repo, "worktree", "remove", "--force", str(path))
+                self.git(repo, "worktree", "prune")
+        shutil.rmtree(self.root, ignore_errors=True)
+
+
+def tail_of(output: IO[bytes]) -> str:
+    size = output.seek(0, 2)
+    output.seek(max(0, size - TAIL_BYTES))
+    text = output.read().decode(errors="replace")[-TAIL_CHARS:]
+    return CONTROL.sub(lambda match: match.group() if match.group() in "\n\t" else "", text)
+
+
+def execute(argv: list[str], cwd: Path, sandbox: Sandbox) -> tuple[int | None, str]:
+    """Run an allowed check: its exit code (``None`` on a timeout) and its output's tail."""
+    limit = min(sandbox.timeout, sandbox.deadline - time.monotonic())
+    with tempfile.TemporaryFile() as output:
+        child = subprocess.Popen(  # noqa: S603 - an argv on the allow-list, no shell
+            command(argv),
+            cwd=cwd,
+            env=sandbox.env(),
+            stdin=subprocess.DEVNULL,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        try:
+            code: int | None = child.wait(timeout=max(limit, 0))
+        except subprocess.TimeoutExpired:
+            os.killpg(child.pid, signal.SIGKILL)
+            child.wait()
+            code = None
+        return code, tail_of(output)
+
+
+def a_result(hypothesis: dict[str, Any], status: str, reason: str = "") -> dict[str, Any]:
+    rank = hypothesis.get("rank")
+    return {
+        "id": str(hypothesis.get("id", ""))[:8],
+        "rank": rank if isinstance(rank, int) and not isinstance(rank, bool) else 0,
+        "repo": str(hypothesis.get("repo", ""))[:64],
+        "status": status,
+        "exit_code": None,
+        "reason": CONTROL.sub("", reason)[:MAX_REASON],
+        "tail": "",
+    }
+
+
+def check_one(hypothesis: dict[str, Any], sandbox: Sandbox, seen: set[str]) -> dict[str, Any]:
+    ident, repo = hypothesis.get("id"), hypothesis.get("repo")
+    if ident in seen:
+        return a_result(hypothesis, "error", f"error: duplicate id {str(ident)[:8]}")
+    seen.add(str(ident))
+    if not isinstance(repo, str) or repo not in sandbox.heads:
+        return a_result(hypothesis, "error", f"error: unknown repo {str(repo)[:64]!r}")
+    argv = hypothesis.get("check")
+    if (refused := refusal(argv)) is not None or not isinstance(argv, list):
+        return a_result(hypothesis, "refused", refused or "refused")
+    if time.monotonic() >= sandbox.deadline:
+        return a_result(hypothesis, "refused", "refused: budget - the node's checks are spent")
+    cwd = sandbox.worktree(repo)
+    if cwd is None:
+        return a_result(hypothesis, "error", f"error: cannot check out {sandbox.heads[repo][:7]}")
+    try:
+        code, tail = execute(argv, cwd, sandbox)
+    except OSError as error:
+        return a_result(hypothesis, "error", f"error: cannot run {argv[0]}: {error.strerror}")
+    status = "timeout" if code is None else "confirmed" if code == 0 else "failed"
+    return a_result(hypothesis, status) | {"exit_code": code, "tail": tail}
+
+
+def clean(value: object, limit: int) -> str:
+    return CONTROL.sub(" ", str(value))[:limit]
+
+
+def menu_of(hypotheses: list[dict[str, Any]], results: list[dict[str, Any]]) -> str:
+    """The gate's menu: each status, each confirmed mitigation, the two respond commands."""
+    run = os.environ.get("AGENT_HUB_RUN_ID") or "<run>"
+    lines = []
+    for hypothesis, result in zip(hypotheses, results, strict=True):
+        lines.append(f"{result['id']} {result['status']}")
+        mitigation = hypothesis.get("mitigation")
+        if result["status"] == "confirmed" and isinstance(mitigation, dict):
+            summary = clean(mitigation.get("summary", ""), 300)
+            undo = clean(mitigation.get("undo", ""), 300)
+            lines.append(f"{result['id']}: {summary} (undo: {undo})")
+    commands = [
+        f"Record: hub workflow respond {run} --choice record --text H<n> (or your own mitigation)",
+        f"None: hub workflow respond {run} --choice none",
+    ]
+    room = MAX_MENU - sum(len(line) + 1 for line in commands)
+    kept: list[str] = []
+    for line in lines:
+        if sum(len(item) + 1 for item in kept) + len(line) + 1 > room:
+            break
+        kept.append(line)
+    return "\n".join([*kept, *commands])
+
+
+def read_input(repos: str) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    try:
+        reply, evidence = json.loads(sys.stdin.read()), json.loads(repos)
+    except ValueError as error:
+        raise BadInputError(f"not JSON: {error}") from None
+    hypotheses = reply.get("hypotheses") if isinstance(reply, dict) else None
+    if not isinstance(hypotheses, list) or not all(isinstance(h, dict) for h in hypotheses):
+        raise BadInputError('stdin is not {"hypotheses": [objects]}')
+    if not isinstance(evidence, list):
+        raise BadInputError("--repos is not the evidence's list of repos")
+    heads = {
+        repo["dir"]: repo["head"]
+        for repo in evidence
+        if isinstance(repo, dict)
+        and isinstance(repo.get("dir"), str)
+        and DIR.fullmatch(repo["dir"])
+        and isinstance(repo.get("head"), str)
+        and SHA.fullmatch(repo["head"])
+    }
+    ranked = sorted(hypotheses, key=lambda h: h["rank"] if isinstance(h.get("rank"), int) else 99)
+    return ranked[:MAX_HYPOTHESES], heads
+
+
 def main(argv: list[str]) -> int:
-    print("check.py: not implemented yet", file=sys.stderr)
-    return 2
+    parser = argparse.ArgumentParser(prog="check.py")
+    parser.add_argument("--repos", required=True)
+    # For tests: one check's limit and all checks' budget, in seconds.
+    parser.add_argument("--timeout", type=float, default=60.0)
+    parser.add_argument("--budget", type=float, default=300.0)
+    args = parser.parse_args(argv)
+    try:
+        hypotheses, heads = read_input(args.repos)
+    except BadInputError as error:
+        print(f"check.py: {error}", file=sys.stderr)
+        return 2
+    sandbox = Sandbox(heads, args.timeout, time.monotonic() + args.budget)
+    seen: set[str] = set()
+    try:
+        results = [check_one(hypothesis, sandbox, seen) for hypothesis in hypotheses]
+    finally:
+        sandbox.close()
+    confirmed = [h for h, r in zip(hypotheses, results, strict=True) if r["status"] == "confirmed"]
+    output = {
+        "results": results,
+        "confirmed": len(confirmed),
+        "mitigations": sum(isinstance(h.get("mitigation"), dict) for h in confirmed),
+        "menu": menu_of(hypotheses, results),
+    }
+    text = json.dumps(output, ensure_ascii=False) + "\n"
+    sys.stdout.buffer.write(text.encode())
+    sys.stdout.flush()
+    return 0
 
 
 if __name__ == "__main__":
