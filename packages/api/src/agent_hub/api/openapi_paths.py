@@ -20,6 +20,7 @@ P2_PATHS: frozenset[tuple[str, str]] = frozenset(
         ("get", "/projects/{project}/repos"),
         ("get", "/projects/{project}/config"),
         ("put", "/projects/{project}/config/local"),
+        ("post", "/projects/{project}/config/environments"),
         ("get", "/needs-you"),
         ("get", "/activity"),
         ("get", "/search"),

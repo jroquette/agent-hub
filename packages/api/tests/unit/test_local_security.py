@@ -440,6 +440,8 @@ PLAYGROUND_HUB_WRITES = (
     ("POST", "/api/v1/hubs/hub-1/platform-sync"),
     ("POST", "/api/v1/hubs/hub-1/doctor-fix"),
     ("PUT", "/api/v1/projects/demo/config/local"),
+    # AC-416.10: the environment edits are a hub registry write.
+    ("POST", "/api/v1/projects/demo/config/environments"),
 )
 CHECK_RUN = "/api/v1/features/demo/demo-feature/acs/AC-7.1/check-runs"
 

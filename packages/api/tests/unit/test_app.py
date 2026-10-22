@@ -57,6 +57,11 @@ BODIES: dict[tuple[str, str], object] = {
     ("post", "/api/v1/features/{project}/{slug}/change-requests/{n}/decision"): {
         "decision": "approved"
     },
+    ("post", "/api/v1/projects/{project}/config/environments"): {
+        "op": "remove_environment",
+        "scope": "local",
+        "name": "staging",
+    },
 }
 OWN_ORIGIN = {"Origin": "http://127.0.0.1:7420"}
 QUERIES = {
