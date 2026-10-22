@@ -205,8 +205,8 @@ is required, unknown keys are refused, text is one line and non-empty.
 
 - Review, schema `agent-hub/review/1`: `reviewer` (`spec`, `quality`, `ux`, `overengineering`), `ticket`, `task`,
   `round`, `commit`, `verdict` (`PASS`, `FAIL`), `findings` (`severity` `blocking` or `minor`). The file name gives
-  `reviewer` and `round`
-  (`N` 1 to 9999); `ticket` is the folder's name, ASCII case ignored; `FAIL` iff a finding is blocking; ids unique.
+  `reviewer` and `round` (`N` 1 to 9999); `ticket` is the folder's name, ASCII case ignored; `FAIL` iff a finding is
+  blocking; ids unique.
 - Eval, schema `agent-hub/eval/1`, beside `evals/<delivery>.md`: `delivery`, `verdict`, `commit`, `tickets`, `acs`
   (`"all"`, ids, or `[]` for the tickets' ACs), `results` and `gates` (`status` with `exit_code`), `red_on_parent`,
   `owner_steps`. `SHIP` needs `results` and `gates`, all `pass`; `SHIP-WITH-OWNER-STEPS` an owner step; `pass` exits 0,
