@@ -15,7 +15,7 @@ All optional and additive under `schema_version: 1`; a hub without them behaves,
 | Key | Shape |
 |---|---|
 | `environments.<name>` | `access` (required: `read`, `write` or `ask`), `production` (bool, `false`), `description` (≤ 80, rendered as plain text), `credentials` |
-| `…credentials` | `aws_profile` (`^[A-Za-z0-9_.-]{1,64}$`), `env` (≤ 10 names `^[A-Z_][A-Z0-9_]{0,63}$`) and `env_file` (a dotenv path relative to the workspace, ≤ 200, no `..`, no leading `/` or `~`, read only by actions: [scenarios.md](scenarios.md)): names and paths, never values |
+| `…credentials` | `aws_profile` (`^[A-Za-z0-9_.-]{1,64}$`), `env` (≤ 10 names `^[A-Z_][A-Z0-9_]{0,63}$`) and `env_file` (a dotenv path relative to the workspace, ≤ 200, no `..`, no leading `/` or `~`, its values read only by actions, its names listed by hub web: [scenarios.md](scenarios.md)): names and paths, never values |
 | `repos[].services.<name>` | `kind` (`^[a-z0-9]+(-[a-z0-9]+)*$`, ≤ 32, informational), `description`, `endpoints` |
 | `…endpoints.<env>` | `url` or `resource` (one required), `note`, `credentials`; `<env>` must be declared |
 | `guard.blocked_words` | ≤ 200 words `^[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*$`, 2-64 characters, matched literally, never a secret's shape |
@@ -182,6 +182,13 @@ a committed service, never change its `kind`, `description` or name.
 - **AC-416.10** Given a request from another origin or without an `Origin`, when it posts an environment edit, then
   it is refused as every hub registry write is; with this server's `Origin` the composed app answers the new Hub
   config view.
+
+**Acceptance criteria (AGH-417)** (the screens: [control-plane/specs/23-environments.md](control-plane/specs/23-environments.md))
+
+- **AC-417.12** Given an env file path, when `GET /projects/{project}/env-file-keys?path=` is read, then it answers
+  the file's variable names only, never a value, whether it exists, which of the hub and its repos holds it and
+  whether git ignores it there; a file outside the hub and its repos, reached through a link, not regular or over
+  64 KiB gives its reason and no names; a path with `..`, a leading `/` or `~`, or a space is refused (400).
 
 ### Known limits
 

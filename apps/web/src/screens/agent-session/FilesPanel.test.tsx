@@ -500,7 +500,7 @@ describe("FilesPanel (long names)", () => {
     render(<FilesPanel files={filesOf(DEEP)} sessionId="s1" onClose={vi.fn()} />);
     expect(screen.getByTitle("test_export.py")).toHaveTextContent("test_export.py");
     // Cut in the middle when it does not fit: the extension always shows.
-    const tail = screen.getByTitle("test_export.py").querySelector(".as-fit-tail");
+    const tail = screen.getByTitle("test_export.py").querySelector(".ah-fit-tail");
     expect(tail?.textContent).toMatch(/\.py$/);
   });
 

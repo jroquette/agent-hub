@@ -1451,21 +1451,6 @@ body.as-resizing .as-drawer {
   background: var(--done);
   transition: width var(--dur-base) var(--ease-out);
 }
-/* One line that fits: cut in the middle, its tail (extension, last folder) always whole. */
-.as-fit {
-  display: inline-flex;
-  min-width: 0;
-  max-width: 100%;
-  white-space: nowrap;
-}
-.as-fit-head {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.as-fit-tail {
-  flex: none;
-}
 /* The files' root on one line: repo, branch icon, worktree in bold, the rest; then copy. */
 .as-files-root {
   display: flex;
