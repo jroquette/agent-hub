@@ -53,7 +53,8 @@ Every node has `id`, `type` and optional `description`, `depends_on`, `trigger_r
   `context` is `fresh` (default; an explicit one in a `loop_group` body never resumes) or `{resume: <upstream agent node id>}`.
   A `cwd` (an agent's may be a reference) stays in the hub or a repo (else `config`); there an agent runs as `hub run`'s. `stdin`: a literal or one whole reference.
 - No child gets `LINEAR_API_KEY`. Agents run with `session_env`, other commands with `untrusted_env`; `env` adds no
-  token. A `hub step` node (`command[0:2]` is `[hub, step]`) runs the engine's own hub with `child_env`, refuses `env`
+  token; every child gets the run's id as `AGENT_HUB_RUN_ID` (a node's `env` cannot set it). A `hub step` node
+  (`command[0:2]` is `[hub, step]`) runs the engine's own hub with `child_env`, refuses `env`
   and a referenced `cwd`, and narrows per call (`push_env` only for fetch, push, gh). Tracker writes (ADR 0030) are the
   parent's; `hub run --live`'s (`issue-to-pr`) runs `hub step` in process: per-call tokens and timeouts, no `timeout`.
 - `loop`: `max_iterations` (1–50) and at least one channel: `until` (text the final line equals), `until_field` (a
@@ -130,8 +131,8 @@ reached: [implement, verify, report]              # exactly the nodes that ran
 ```
 
 `hub workflow test [name]...` runs a pack's `fixtures/*.yaml` in memory: no child, network, tracker write or event. A
-stub is `{output: <value>}` (fitting `output_format`), `{fail: <kind>}`, `{decision, text}`, `{text}`, `{choice}` or
-`{}` (waits); a loop iteration may add `until_exit`; an `expect`, one per poll. A reachable node with no stub, or a list
+stub is `{output: <value>}` (fitting `output_format`), `{fail: <kind>}`, `{decision, text, approver}`, `{text}`,
+`{choice}` or `{}` (waits); a loop iteration may add `until_exit`; an `expect`, one per poll. A reachable node with no stub, or a list
 that runs out, fails the test, but an approval or wait with none pauses the run (`expect.status: paused`).
 
 ## Invariants

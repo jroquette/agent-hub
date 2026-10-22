@@ -1,0 +1,29 @@
+# Preflight finds plan drift: the change request opens, its run is recorded, and the run pauses at
+# the owner's gate; no worktree (no branch), ticket plan, implement, review, eval or PR node runs
+# (AC-2.6, A22).
+workflow: implement
+inputs:
+  feature: demo-flow
+  issue: DEM-1
+  issue_text: "```text\nid: DEM-1\n```"
+stubs:
+  context:
+    output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-1/brief.md, hub: /ws/hub, repo: demo-api,
+      commit: 0a1b2c3d4e}
+  pending:
+    output: {request: null, decision: '', input: none, note: '', summary: '', superseded: ''}
+  pass-1__preflight:
+    output:
+      drift: plan
+      local_notes: []
+      blockers_read: []
+      evidence: The handler moved to src/api/routes.py.
+      proposal: Route T2 through routes.py.
+      affected: T3
+      summary: T2 goes through routes.py
+  pass-1__request:
+    output: {n: 1, plan_from: 1, plan_to: 2}
+  pass-1__record:
+    output: {runs: 1}
+expect: {status: paused}
+reached: [context, pending, pass-1__preflight, pass-1__request, pass-1__record, pass-1__gate]

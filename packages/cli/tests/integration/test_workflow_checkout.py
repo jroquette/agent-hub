@@ -64,6 +64,45 @@ def test_reads_another_status_when_a_file_is_added_or_edited(repo: Path, change:
     assert checkout.status() != before
 
 
+def test_reads_another_status_when_head_moves_on_a_clean_tree(repo: Path) -> None:
+    git(repo, "commit", "-q", "--allow-empty", "-m", "next")
+    checkout = probe(repo)
+    before = checkout.status()
+
+    git(repo, "switch", "-q", "--detach", "HEAD~1")
+
+    assert checkout.status() != before
+
+
+def test_reads_the_same_status_when_a_fetch_moves_the_upstream(repo: Path, tmp_path: Path) -> None:
+    clone = tmp_path / "clone"
+    git(tmp_path, "clone", "-q", str(repo), str(clone))
+    checkout = probe(clone)
+    before = checkout.status()
+
+    git(repo, "commit", "-q", "--allow-empty", "-m", "upstream moves")
+    git(clone, "fetch", "-q", "origin")
+
+    # HEAD and the tree are unchanged: only the ahead/behind count moved.
+    assert checkout.status() == before
+
+
+def test_reads_the_same_status_when_a_feature_record_is_written_beside_the_node(
+    repo: Path,
+) -> None:
+    # Another implement run of the feature writes its ticket's records into the hub meanwhile.
+    checkout = probe(repo)
+    before = checkout.status()
+
+    folder = repo / "brain/features/demo-flow/tickets/DEM-2"
+    folder.mkdir(parents=True)
+    (folder / "preflight.json").write_text("{}\n")
+
+    assert checkout.status() == before
+    (repo / "brain/other.md").write_text("x\n")
+    assert checkout.status() != before
+
+
 def test_fails_config_when_a_root_is_not_a_repository(tmp_path: Path) -> None:
     with pytest.raises(NodeFailedError) as caught:
         probe(tmp_path).status()
