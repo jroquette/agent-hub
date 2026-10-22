@@ -464,18 +464,25 @@ class TestPreflight:
         run = json.loads((hub.root / output["path"]).read_bytes())["runs"][-1]
         assert (run["input"], run["change_request"]) == ("declined_change", 1)
 
+    @pytest.mark.parametrize("drift", ["none", "plan"])
     def test_records_the_superseded_approval_when_a_recheck_follows_a_moved_plan(
-        self, hub: Hub
+        self, hub: Hub, drift: str
     ) -> None:
         hub.approved()
         plan = hub.feature / "plan.md"
         plan.write_text(plan.read_text() + "- A2 (2026-02-03, Dana Owner): Other.\n")
         given = ("--input", "approve", "--input-text", "Go.", "--request", "1", "--commit", COMMIT)
+        findings = json.dumps(FINDINGS | {"drift": drift})
 
-        output = hub.ok("preflight", *TICKET, "--findings", json.dumps(FINDINGS), *given)
+        output = hub.ok("preflight", *TICKET, "--findings", findings, *given)
 
+        # Still plan drift: the run ends blocked; it opened no request, and names none (A24).
         run = json.loads((hub.root / output["path"]).read_bytes())["runs"][-1]
-        assert (run["input"], run["input_text"]) == ("none", SUPERSEDED)
+        assert (run["input"], run["input_text"], run["change_request"]) == (
+            "none",
+            SUPERSEDED,
+            None,
+        )
 
     def test_refuses_without_writing_when_the_run_gives_no_run_id(
         self, hub: Hub, monkeypatch: pytest.MonkeyPatch

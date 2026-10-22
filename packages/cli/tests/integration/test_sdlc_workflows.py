@@ -60,6 +60,7 @@ IMPLEMENT_FIXTURES = (
     "implement-plan-approved",
     "implement-plan-declined",
     "implement-plan-moved",
+    "implement-plan-moved-still-plan",
     "implement-pr-failure",
     "implement-rounds-exhausted",
     "implement-superseded-in-last-pass",
@@ -194,7 +195,7 @@ def test_reaches_the_built_in_fixtures_when_implement_tested_from_a_hub_with_a_s
     for fixture in IMPLEMENT_FIXTURES:
         assert f"<builtin>/sdlc/fixtures/{fixture}.yaml: ok" in tested.stdout
     assert "warning" not in tested.stdout
-    assert tested.stdout.endswith("19 fixtures: 19 passed, 0 failed\n")
+    assert tested.stdout.endswith("20 fixtures: 20 passed, 0 failed\n")
 
 
 def test_captures_a_decline_note_when_the_owner_answers_the_plan_change_gate() -> None:
@@ -641,6 +642,18 @@ STILL_PLAN = (
     ("rounds", "worktree", "superseded", "expected"),
     [
         ("", "", "", {"status": "blocked", "question": STILL_PLAN, "target": None}),
+        (
+            # A superseded approval whose re-check still finds plan drift: blocked (A24).
+            "",
+            "",
+            SUPERSEDED,
+            {
+                "status": "blocked",
+                "question": f"{SUPERSEDED}; the next /implement opens a new change request",
+                "superseded": SUPERSEDED,
+                "target": None,
+            },
+        ),
         (
             a_rounds(),
             json.dumps(WORKTREE),
