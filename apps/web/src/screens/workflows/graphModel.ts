@@ -1,3 +1,5 @@
+import { roundedPath } from "../../lib/canvasView";
+
 /* The workflow canvas as data: a rounds group's own steps laid out in layers, the edges a view
  * draws, a step's upstream and downstream chain, run order, and the fit of a world in a viewport.
  * Pure functions, so the canvas only draws. */
@@ -307,25 +309,5 @@ export function wrapPath(
         [into, b.mid],
         [x2, b.mid],
       ];
-  const [first] = pts;
-  let d = first ? `M ${String(first[0])} ${String(first[1])}` : "";
-  for (let i = 1; i < pts.length - 1; i += 1) {
-    const prev = pts[i - 1];
-    const cur = pts[i];
-    const nxt = pts[i + 1];
-    if (!prev || !cur || !nxt) continue;
-    const [px, py] = prev;
-    const [cx, cy] = cur;
-    const [nx, ny] = nxt;
-    const inLen = Math.hypot(cx - px, cy - py);
-    const outLen = Math.hypot(nx - cx, ny - cy);
-    const rr = Math.min(r, inLen / 2, outLen / 2);
-    const sx = cx - ((cx - px) / (inLen || 1)) * rr;
-    const sy = cy - ((cy - py) / (inLen || 1)) * rr;
-    const ex = cx + ((nx - cx) / (outLen || 1)) * rr;
-    const ey = cy + ((ny - cy) / (outLen || 1)) * rr;
-    d += ` L ${String(sx)} ${String(sy)} Q ${String(cx)} ${String(cy)}, ${String(ex)} ${String(ey)}`;
-  }
-  const last = pts.at(-1) ?? [0, 0];
-  return `${d} L ${String(last[0])} ${String(last[1])}`;
+  return roundedPath(pts, r);
 }

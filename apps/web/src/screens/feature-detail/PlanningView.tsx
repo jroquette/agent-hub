@@ -1,6 +1,6 @@
 import "./ticket-flow.css";
 
-import { Fragment, useId, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, ReactNode } from "react";
 import { Link, useSearchParams } from "react-router";
 
@@ -20,7 +20,7 @@ import {
   type Status,
   useViewportSize,
 } from "../../components";
-import { fitView } from "../../lib/canvasView";
+import { fitView, roundedPath } from "../../lib/canvasView";
 import { curvePath, useNodeBoxes } from "../../lib/nodeBoxes";
 import { usePanZoom } from "../../lib/usePanZoom";
 import { goSequencePending, typingIn } from "../../shell/goSequence";
@@ -243,6 +243,7 @@ export function TicketOpenLink({
   className,
   title,
   tabIndex,
+  describedBy,
 }: {
   row: TicketRow;
   onOpen: TicketOpener;
@@ -251,12 +252,15 @@ export function TicketOpenLink({
   title?: string | undefined;
   /** A roving Tab stop (the flow's cards): -1 off the current card. */
   tabIndex?: number | undefined;
+  /** The id of a hidden description (what the ticket holds back). */
+  describedBy?: string | undefined;
 }) {
   const [params] = useSearchParams();
   return (
     <Link
       className={className}
       tabIndex={tabIndex}
+      aria-describedby={describedBy}
       to={{ search: ticketSearch(params, ticketParam(row)) }}
       replace
       title={title}
@@ -667,6 +671,7 @@ function FlowCard({
   onChain,
   current,
   inFlow,
+  holds,
   acPasses,
   ticketAction,
   onOpenTicket,
@@ -677,6 +682,8 @@ function FlowCard({
   critical: boolean;
   /** The refs drawn in the flow: a blocker among them is shown by its edge, not in words. */
   inFlow: ReadonlySet<string>;
+  /** The tickets it holds back, said to assistive tech (the edges only draw it). */
+  holds: readonly string[];
   chosen: boolean;
   onChain: boolean;
   /** The card that holds the flow's one Tab stop (its title). */
@@ -690,7 +697,10 @@ function FlowCard({
   const signal = row.flow ? signalKind(row.flow) : null;
   const replaced = signal !== null && signal !== "local";
   const note = !readinessRepeatsState(row) && !replaced;
-  const look = READINESS_ICON[row.readiness];
+  const look =
+    row.readiness === "waiting" && stackedOn(row, rows)
+      ? { icon: "git-branch" as const, color: "var(--text-muted)" }
+      : READINESS_ICON[row.readiness];
   const reviewedNote = row.readiness === "in_progress" && row.reviewed === true;
   const showReviewed =
     row.reviewed === true && row.readiness !== "done" && row.readiness !== "in_progress";
@@ -714,6 +724,11 @@ function FlowCard({
         .filter(Boolean)
         .join(" · ")}
     >
+      {holds.length > 0 && (
+        <span id={`${ticketAnchor(row.ref)}-holds`} hidden>
+          Holds back {holds.join(", ")}.
+        </span>
+      )}
       <div className="ah-flow-card-head">
         <TicketIdLine row={row} />
         {row.id != null || row.state != null ? (
@@ -729,7 +744,12 @@ function FlowCard({
       </div>
       <span className="ah-flow-card-title" title={row.title ?? undefined}>
         {onOpenTicket ? (
-          <TicketOpenLink row={row} onOpen={onOpenTicket} tabIndex={current ? 0 : -1}>
+          <TicketOpenLink
+            row={row}
+            onOpen={onOpenTicket}
+            tabIndex={current ? 0 : -1}
+            describedBy={holds.length > 0 ? `${ticketAnchor(row.ref)}-holds` : undefined}
+          >
             {title}
           </TicketOpenLink>
         ) : (
@@ -767,7 +787,7 @@ function FlowCard({
         </div>
       )}
       <div className="ah-flow-card-facts">
-        {row.flow && <span>{ticketStepLine(row.flow)}</span>}
+        {row.flow && row.readiness !== "canceled" && <span>{ticketStepLine(row.flow)}</span>}
         <AcFact row={row} acPasses={acPasses} />
         <TicketPrLink row={row} />
         {showReviewed && (
@@ -1040,7 +1060,21 @@ function chainOf(edges: readonly FlowEdge[], ref: string, whole: boolean) {
 
 /** Below this zoom the cards show only their id, status and title. */
 const FAR = 0.6;
+/** The first view fits the flow only when its text still reads (cards at 85% or more). */
+const FIRST_FIT = 0.85;
 const PAD = 32;
+
+/** A ticket's readiness as the minimap's state colours (Canvas.css). */
+const MINI_STATE: Record<Readiness, string> = {
+  can_start: "ok",
+  done: "ok",
+  in_progress: "running",
+  waiting: "waiting",
+  in_cycle: "failed",
+  canceled: "pending",
+  epic: "pending",
+  unknown: "pending",
+};
 
 /** The tallest the canvas grows: 75% of the window, between 320 and 900 px. */
 function heightCap(): number {
@@ -1101,12 +1135,30 @@ function FlowGraph({
   const [height, setHeight] = useState(320);
   const [hover, setHover] = useState<string | null>(null);
   const [focusRef, setFocusRef] = useState<string | null>(null);
+  // The card whose title holds keyboard focus now (its edges light), cleared on blur.
+  const [lit, setLit] = useState<string | null>(null);
   const shown = chosen !== null && drawn.has(chosen) ? chosen : null;
   const chain = shown ? chainOf(edges, shown, true) : null;
-  const near = !chain && hover ? chainOf(edges, hover, false) : null;
+  const pointed = hover ?? lit;
+  const near = !chain && pointed ? chainOf(edges, pointed, false) : null;
   const hotEdges = chain?.edges ?? near?.edges ?? new Set<string>();
   const current =
     focusRef && inFlow.has(focusRef) ? focusRef : chosen && inFlow.has(chosen) ? chosen : order[0];
+
+  // One Tab stop: only the current card's links and buttons are in the tab order (its title is
+  // the stop itself); the arrow keys reach the others.
+  useEffect(() => {
+    const world = worldRef.current;
+    if (!world) return;
+    for (const card of world.querySelectorAll<HTMLElement>(".ah-flow-card")) {
+      const here = card.dataset.nodeId === current;
+      for (const el of card.querySelectorAll<HTMLElement>("a, button")) {
+        if (el.matches("[data-ticket-open]")) continue;
+        if (here) el.removeAttribute("tabindex");
+        else el.setAttribute("tabindex", "-1");
+      }
+    }
+  });
 
   // The first view, once: fit when it reads (60% or more), else 100% from the left; the canvas's
   // height follows it. Live refreshes never move it.
@@ -1115,7 +1167,7 @@ function FlowGraph({
     if (placed.current || size.width === 0 || viewport.width === 0) return;
     const cap = heightCap();
     let k = Math.min(1, (viewport.width - 2 * PAD) / size.width, (cap - 2 * PAD) / size.height);
-    if (k < FAR) k = 1;
+    if (k < FIRST_FIT) k = 1;
     const h = Math.round(Math.max(240, Math.min(cap, size.height * k + 2)));
     setHeight(h);
     const box = shown ? boxes[shown] : undefined;
@@ -1215,7 +1267,32 @@ function FlowGraph({
     moveTo(to);
   };
 
-  const path = (e: FlowEdge) => curvePath(boxes[e.from], boxes[e.to]);
+  const columnOf = new Map(columns.flatMap((column, i) => column.refs.map((r) => [r, i])));
+  // The lanes of the edges that skip a column, 5 px apart over the columns.
+  const lanes = new Map<string, number>();
+  for (const e of edges) {
+    if ((columnOf.get(e.to) ?? 0) - (columnOf.get(e.from) ?? 0) > 1) {
+      lanes.set(`${e.from}→${e.to}`, lanes.size % 4);
+    }
+  }
+  /** A curve to the next column; over the columns (in their gaps) to one further on. */
+  const path = (e: FlowEdge) => {
+    const a = boxes[e.from];
+    const b = boxes[e.to];
+    const lane = lanes.get(`${e.from}→${e.to}`);
+    if (!a || !b || lane === undefined) return curvePath(a, b);
+    const top = 14 - lane * 5;
+    const out = a.right + 30 + lane * 5;
+    const into = b.left - 30 - lane * 5;
+    return roundedPath([
+      [a.right, a.mid],
+      [out, a.mid],
+      [out, top],
+      [into, top],
+      [into, b.mid],
+      [b.left, b.mid],
+    ]);
+  };
   const cardOf = (target: EventTarget) =>
     target instanceof Element ? target.closest<HTMLElement>(".ah-flow-card") : null;
   const overflow =
@@ -1235,8 +1312,17 @@ function FlowGraph({
       style={{ height }}
       onKeyDown={onKeyDown}
       onFocus={(event) => {
+        if (!(event.target instanceof HTMLElement) || !event.target.matches("[data-ticket-open]")) {
+          return;
+        }
         const ref = cardOf(event.target)?.dataset.nodeId;
-        if (ref) setFocusRef(ref);
+        if (ref) {
+          setFocusRef(ref);
+          setLit(ref);
+        }
+      }}
+      onBlur={() => {
+        setLit(null);
       }}
       onMouseOver={(event) => {
         setHover(cardOf(event.target)?.dataset.nodeId ?? null);
@@ -1283,7 +1369,7 @@ function FlowGraph({
                   data-early={e.early || undefined}
                   data-settled={e.settled || undefined}
                   data-hot={hot ? "" : undefined}
-                  data-dim={chain && !hot ? "" : undefined}
+                  data-dim={(chain ?? near) && !hot ? "" : undefined}
                   d={path(e)}
                   markerEnd={`url(#${arrowId}-${tone(e)})`}
                 />
@@ -1299,9 +1385,12 @@ function FlowGraph({
                 aria-label={`${column.title} · ${column.hint}`}
               >
                 <div className="ah-flow-col-head">
-                  {column.kind === "done" && (
-                    <Icon name="circle-check" size="sm" style={{ color: "var(--done)" }} />
-                  )}
+                  {column.kind === "done" &&
+                    (column.refs.every((r) => byRef.get(r)?.readiness === "done") ? (
+                      <Icon name="circle-check" size="sm" style={{ color: "var(--done)" }} />
+                    ) : (
+                      <Icon name="check-check" size="sm" style={{ color: "var(--idle)" }} />
+                    ))}
                   {column.kind === "held" && (
                     <Icon name="circle-pause" size="sm" style={{ color: "var(--idle)" }} />
                   )}
@@ -1326,6 +1415,7 @@ function FlowGraph({
                         chosen={chosen === r}
                         onChain={chain?.nodes.has(r) ?? false}
                         current={current === r}
+                        holds={edges.filter((e) => e.from === r).map((e) => e.to)}
                         inFlow={inFlow}
                         acPasses={acPasses}
                         ticketAction={ticketAction}
@@ -1376,7 +1466,7 @@ function FlowGraph({
             viewport={viewport}
             look={(id) => {
               const row = byRef.get(id);
-              return row ? { frame: false, state: row.readiness } : null;
+              return row ? { frame: false, state: MINI_STATE[row.readiness] } : null;
             }}
             onCentre={(x, y) => {
               pz.setView({

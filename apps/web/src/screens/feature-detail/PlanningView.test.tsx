@@ -559,6 +559,30 @@ describe("PlanningView", () => {
       expect(title("T1")).toHaveFocus();
     });
 
+    it("routes an edge that skips a group over the columns, never behind a card", () => {
+      const { container } = render(<PlanningView tickets={linked} planning={plan} />);
+
+      // T4 is in group 1 and T5 in group 3: a routed line with rounded corners, not a curve.
+      expect(container.querySelector('[data-edge="T4→T5"]')?.getAttribute("d")).toContain(" Q ");
+      expect(container.querySelector('[data-edge="T3→T5"]')?.getAttribute("d")).toContain(" C ");
+    });
+
+    it("AC-TF.3 keeps other cards' links and buttons out of the tab order", () => {
+      render(
+        <MemoryRouter>
+          <PlanningView
+            tickets={linked}
+            planning={plan}
+            onOpenTicket={() => undefined}
+            ticketAction={(row) => <button type="button">Start {row.ref}</button>}
+          />
+        </MemoryRouter>,
+      );
+
+      expect(screen.getByRole("button", { name: "Start T1" })).not.toHaveAttribute("tabindex");
+      expect(screen.getByRole("button", { name: "Start T2" })).toHaveAttribute("tabindex", "-1");
+    });
+
     it("AC-TF.2 zooms from the toolbar and keeps the legend in the canvas", async () => {
       const user = userEvent.setup();
       render(<PlanningView tickets={linked} planning={plan} />);
