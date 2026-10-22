@@ -4,13 +4,15 @@ Steps, in order: Context, Preflight, Implement, Review, Eval, PR and Merged. Eac
 evidence alone: Context is done when ``tickets/<ticket>/brief.md`` exists; Preflight by the latest
 run of ``tickets/<ticket>/preflight.json`` and the plan change requests (AC-2.5, AC-2.8: done with
 no drift or local drift, ``waiting`` while the ticket's own request is open, ``stale`` when a newer
-plan version was approved than its latest run checked, ``blocked`` on plan drift otherwise);
+plan version was approved than its latest run checked, or when a blocker's outcome was recorded
+after it, AC-3.3, ``blocked`` on plan drift otherwise);
 Implement is done when a review round of the ticket exists
 (``reviews/<ticket>/<reviewer>-r<N>.json``), current once its ticket ``plan.md`` exists; Review
 when a review record of it is ``approved`` (``current`` while its records only request changes),
 Eval by the latest eval naming it (NO-SHIP is ``blocked``), PR when its review record or an eval
-naming it names a pull request, and Merged when Linear has it ``completed`` (``unknown`` when
-Linear was not read). The flow's one ``signal``: waiting for the owner, then held by another
+naming it names a pull request, and Merged when Linear has it ``completed`` or its
+``tickets/<ticket>/outcome.md`` exists ("Outcome recorded", D-5; ``unknown`` when Linear was not
+read and no outcome is recorded, or when the outcome cannot be read). The flow's one ``signal``: waiting for the owner, then held by another
 ticket's open request, then a re-run needed, then local drift. A record that cannot be read turns
 only the step it feeds ``unknown``, with its problem.
 
@@ -23,6 +25,7 @@ partial order of ``feature_evals``, and every other step asks whether any record
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Final, get_args
 
 from agent_hub.core.features.feature_evals import latest_verdict
@@ -40,14 +43,18 @@ from agent_hub.core.features.ticket_records import (
     NO_REQUESTS,
     TICKETS_FOLDER,
     ChangeRequests,
+    OutcomeFile,
     TicketFiles,
+    TicketOutcome,
     preflight_record,
+    recorded_outcomes,
 )
 from agent_hub.core.features.ticket_view import TicketFlow, TicketRow, TicketStep, TicketStepName
 
 _STEPS: Final[tuple[TicketStepName, ...]] = get_args(TicketStepName.__value__)
 # A step the ticket is past: done, or left without a record before later evidence.
 _PASSED: Final = ("done", "unrecorded")
+OUTCOME_RECORDED: Final = "Outcome recorded"
 TICKETS_UNREAD: Final = (
     f"not every folder in {TICKETS_FOLDER}/ was read (more than {MAX_TICKET_FOLDERS}, or over the "
     f"read budget). {FIX_IT}"
@@ -66,7 +73,10 @@ class TicketEvidence:
     was. ``files`` and ``preflights`` hold each ticket folder read and its parsed preflight record
     (or its problem), by name (upper case); ``tickets_unread`` says not every ticket folder was
     read; ``requests`` are the plan change requests and ``approved`` the newest approved plan
-    version (the plan's own, or an approved request's). ``_verdicts`` caches the latest verdict of
+    version (the plan's own, or an approved request's). ``outcomes`` holds each ticket folder's
+    outcome (or its problem) by name (upper case), and ``aliases`` each row's names (upper case) by
+    its ``ref``, so a blocker's outcome is found under its key or id. ``_verdicts`` caches the
+    latest verdict of
     each set of evals already folded (no part of its value: never compared or shown).
     """
 
@@ -79,6 +89,8 @@ class TicketEvidence:
     tickets_unread: str | None
     requests: ChangeRequests
     approved: int | None
+    outcomes: Mapping[str, TicketOutcome | str] = field(default_factory=dict)
+    aliases: Mapping[str, frozenset[str]] = field(default_factory=dict)
     _verdicts: dict[tuple[EvalRecord, ...], Verdict | None] = field(
         default_factory=dict, init=False, repr=False, compare=False
     )
@@ -94,9 +106,12 @@ def ticket_evidence(
     tickets_skipped: int = 0,
     requests: ChangeRequests = NO_REQUESTS,
     plan_version: int | None = None,
+    outcomes: Iterable[OutcomeFile] = (),
+    rows: Iterable[TicketRow] = (),
 ) -> TicketEvidence:
     """The evidence of a feature's tickets, its evals indexed once by the ticket names they list
-    and each ticket folder's preflight parsed once; ``plan_version`` is the plan's version."""
+    and each ticket folder's preflight and outcome parsed once; ``plan_version`` is the plan's
+    version, ``rows`` the feature's tickets (their names find a blocker's outcome)."""
     by_ticket: dict[str, list[EvalRecord]] = {}
     for record in evals:
         if record.problem is None:
@@ -121,6 +136,11 @@ def ticket_evidence(
         tickets_unread=TICKETS_UNREAD if tickets_skipped else None,
         requests=requests,
         approved=max(versions, default=None),
+        outcomes=recorded_outcomes(outcomes),
+        aliases={
+            row.ref.upper(): frozenset(name.upper() for name in (row.ref, row.key, row.id) if name)
+            for row in rows
+        },
     )
 
 
@@ -129,9 +149,11 @@ def ticket_flow(row: TicketRow, evidence: TicketEvidence) -> TicketFlow | None:
     if row.children:
         return None
     names = {name.upper() for name in (row.key, row.id) if name}
-    merged = row.state is not None and row.state.type in DONE_TYPES
-    found, signal = _picked_up(names, evidence, merged=merged)
-    found |= _delivered(names, evidence, merged=merged)
+    outcome = _outcome(names, evidence)
+    completed = row.state is not None and row.state.type in DONE_TYPES
+    merged = completed or isinstance(outcome, TicketOutcome)
+    found, signal = _picked_up(names, evidence, merged=merged, row=row)
+    found |= _delivered(names, evidence, merged=completed, outcome=outcome)
     last = max(
         (_STEPS.index(name) for name, (state, _) in found.items() if state != "unknown"),
         default=-1,
@@ -148,8 +170,13 @@ def ticket_flow(row: TicketRow, evidence: TicketEvidence) -> TicketFlow | None:
     return TicketFlow(steps=steps, current=current, signal=signal)
 
 
+def _outcome(names: set[str], evidence: TicketEvidence) -> TicketOutcome | str | None:
+    """The outcome recorded under one of ``names`` (the first in sorted order), or its problem."""
+    return next((evidence.outcomes[n] for n in sorted(names) if n in evidence.outcomes), None)
+
+
 def _picked_up(
-    names: set[str], evidence: TicketEvidence, *, merged: bool
+    names: set[str], evidence: TicketEvidence, *, merged: bool, row: TicketRow
 ) -> tuple[dict[TicketStepName, _Found], str | None]:
     """Context, Preflight and the ticket plan's Implement from ``tickets/<ticket>/``, and the
     flow's signal; Context and Preflight unknown when its folder was left unread over the cap. A
@@ -163,7 +190,7 @@ def _picked_up(
     else:
         if files is not None and files.brief:
             found["context"] = ("done", None)
-        preflight, signal = _preflight(names, evidence, merged=merged)
+        preflight, signal = _preflight(names, evidence, merged=merged, row=row)
         if preflight is not None:
             found["preflight"] = preflight
     asking = any(
@@ -180,9 +207,14 @@ def _picked_up(
 
 
 def _delivered(
-    names: set[str], evidence: TicketEvidence, *, merged: bool
+    names: set[str],
+    evidence: TicketEvidence,
+    *,
+    merged: bool,
+    outcome: TicketOutcome | str | None,
 ) -> dict[TicketStepName, _Found]:
-    """Implement (a review round), Review, Eval, PR and Merged from the feature's records."""
+    """Implement (a review round), Review, Eval, PR and Merged from the feature's records; Merged
+    from the ticket's outcome first (its problem makes it unknown), then Linear (``merged``)."""
     reviews = [r for r in evidence.reviews if r.problem is None and r.ticket.upper() in names]
     evals = tuple(
         dict.fromkeys(record for name in sorted(names) for record in evidence.evals.get(name, ()))
@@ -200,7 +232,11 @@ def _delivered(
     prs = (*(review.pr for review in reviews), *(pr for record in evals for pr in record.prs))
     if any(names_pull_request(pr) for pr in prs):
         found["pr"] = ("done", None)
-    if merged:
+    if isinstance(outcome, str):
+        found["merged"] = ("unknown", outcome)
+    elif outcome is not None:
+        found["merged"] = ("done", OUTCOME_RECORDED)
+    elif merged:
         found["merged"] = ("done", None)
     elif evidence.unread is not None:
         found["merged"] = ("unknown", evidence.unread)
@@ -208,7 +244,7 @@ def _delivered(
 
 
 def _preflight(
-    names: set[str], evidence: TicketEvidence, *, merged: bool
+    names: set[str], evidence: TicketEvidence, *, merged: bool, row: TicketRow
 ) -> tuple[_Found | None, str | None]:
     """The Preflight step and the signal it gives, from the ticket's own change requests and the
     latest run of its preflight record; (None, None) when neither says anything."""
@@ -228,6 +264,10 @@ def _preflight(
     if not merged and approved is not None and latest.plan_version < approved:
         stale = f"Plan v{approved} approved: re-run preflight"
         return ("stale", stale), stale
+    blocker = None if merged else _merged_since(row, evidence, latest.ran_at)
+    if blocker is not None:
+        stale = f"{blocker} merged: re-run preflight"
+        return ("stale", stale), stale
     if latest.drift == "plan":
         return ("blocked", "Plan drift"), None
     if latest.drift == "local":
@@ -235,6 +275,17 @@ def _preflight(
         local = f"Local drift · {count} note{'' if count == 1 else 's'}"
         return ("done", local), local
     return ("done", None), None
+
+
+def _merged_since(row: TicketRow, evidence: TicketEvidence, ran_at: datetime) -> str | None:
+    """The first blocker of ``row`` (in its plan's order) whose outcome was recorded after the
+    ticket's latest preflight ran at ``ran_at``; None when none was (AC-3.3)."""
+    for edge in row.blocked_by:
+        names = evidence.aliases.get(edge.ref.upper(), frozenset({edge.ref.upper()}))
+        outcome = _outcome(set(names), evidence)
+        if isinstance(outcome, TicketOutcome) and outcome.merged_at > ran_at:
+            return edge.ref
+    return None
 
 
 def _verdict(

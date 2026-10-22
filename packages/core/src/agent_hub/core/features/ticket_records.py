@@ -1,8 +1,9 @@
-"""A feature's ticket records and plan change requests (two-level-flows S2): read, pure.
+"""A feature's ticket records and plan change requests (two-level-flows S2, S3): read, pure.
 
 ``tickets/<ticket>/`` holds a ticket's context ``brief.md``, its ``preflight.json``
-(``PreflightRecord``, runs appended) and its ticket ``plan.md``; only the preflight is read, the
-other two are only seen present. ``change-requests/<n>.md`` is a plan change request, written
+(``PreflightRecord``, runs appended), its ticket ``plan.md`` and, once merged, its ``outcome.md``
+(created once; its frontmatter says when it merged, by which pull request, and the tickets it
+unblocks); the preflight and the outcome are read, the other two are only seen present. ``change-requests/<n>.md`` is a plan change request, written
 ``status: open`` and never edited; ``change-requests/<n>.decision.md``, created once, records the
 owner's decision, and the request's status is folded from it (D-11). A file that cannot be read
 or parsed is kept with its problem ("<file> could not be read (…). Fix it in a hub PR."), so only
@@ -12,6 +13,7 @@ the step it feeds turns unknown.
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Final, Literal, cast
 
 from pydantic import ValidationError
@@ -26,8 +28,9 @@ from agent_hub.core.features.feature_evals import (
     text_field,
 )
 from agent_hub.core.features.feature_record import KEY_PATTERN
+from agent_hub.core.features.feature_reviews import names_pull_request
 from agent_hub.core.features.feature_view import ChangeDecisionView, ChangeRequestView
-from agent_hub.core.features.output_models import OutputProblem, PreflightRecord
+from agent_hub.core.features.output_models import OutputProblem, PreflightRecord, PreflightRun
 from agent_hub.core.features.output_shape import parse_document, shape_problems
 from agent_hub.core.hub_config.problems import one_line
 
@@ -38,6 +41,11 @@ TICKETS_FOLDER: Final = "tickets"
 TICKET_BRIEF: Final = "brief.md"
 TICKET_PLAN: Final = "plan.md"
 PREFLIGHT_FILE: Final = "preflight.json"
+OUTCOME_FILE: Final = "outcome.md"
+OUTCOME_TYPE: Final = "ticket-outcome"
+# ``outcome.md`` is read whole up to this size, by every read of a feature (Build counts it).
+MAX_OUTCOME_BYTES: Final = 16_384
+MAX_DEPENDENTS: Final = 50
 # At most this many ticket folders are read, by name; each ``preflight.json`` up to its cap.
 MAX_TICKET_FOLDERS: Final = 500
 MAX_PREFLIGHT_BYTES: Final = 65_536
@@ -64,6 +72,25 @@ class TicketFiles:
     brief: bool = False
     plan: bool = False
     preflight: bytes | str | None = None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class OutcomeFile:
+    """``tickets/<name>/outcome.md`` as read: its bytes, or why it was not read (a one-line
+    problem: a link, larger than ``MAX_OUTCOME_BYTES``)."""
+
+    name: str
+    read: bytes | str
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class TicketOutcome:
+    """A merged ticket's outcome: when it merged, its pull request and the tickets it unblocks."""
+
+    ticket: str
+    merged_at: datetime
+    pr: str
+    dependents: tuple[str, ...]
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -199,6 +226,81 @@ def preflight_record(read: bytes | str | None, *, folder: str) -> PreflightRecor
     return record
 
 
+def outcome_record(read: bytes | str | None, *, folder: str) -> TicketOutcome | str | None:
+    """The outcome of ``tickets/<folder>/``; its one-line problem when it cannot be read or its
+    frontmatter does not hold a ``ticket-outcome`` of that ticket (ASCII case ignored) with
+    ``merged_at`` (a time with an offset), ``pr`` (a pull request) and ``dependents`` (ticket keys
+    or ids); None when absent."""
+    if read is None:
+        return None
+    if isinstance(read, str):
+        return _unreadable(OUTCOME_FILE, read)
+    try:
+        fields = record_fields(read)
+        record_type(fields, OUTCOME_TYPE)
+        ticket = text_field(fields, "ticket", _TICKET)
+        if ticket is None:
+            raise RecordFieldError("ticket is missing")
+        if ticket.upper() != folder.upper():
+            raise RecordFieldError(f"ticket: {ticket} is not the folder's ticket {folder}")
+        merged_at = aware_time(text_field(fields, "merged_at"), "merged_at")
+        pr = text_field(fields, "pr")
+        if not names_pull_request(pr):
+            raise RecordFieldError(f"pr names no pull request: {(pr or 'none')[:64]}")
+        dependents = _names(fields.get("dependents"), "dependents")
+        if len(dependents) > MAX_DEPENDENTS:
+            raise RecordFieldError(f"dependents lists more than {MAX_DEPENDENTS} tickets")
+    except RecordFieldError as problem:
+        return _unreadable(OUTCOME_FILE, str(problem))
+    return TicketOutcome(
+        ticket=ticket, merged_at=merged_at, pr=cast("str", pr), dependents=dependents
+    )
+
+
+def recorded_outcomes(files: Iterable[OutcomeFile]) -> dict[str, TicketOutcome | str]:
+    """Each ticket folder's outcome (or its problem) by its name upper-cased, the first folder by
+    name when two differ only in case, as ``ticket_folder`` picks."""
+    found: dict[str, TicketOutcome | str] = {}
+    for file in sorted(files, key=lambda file: file.name):
+        if file.name.upper() not in found:
+            parsed = outcome_record(file.read, folder=file.name)
+            if parsed is not None:
+                found[file.name.upper()] = parsed
+    return found
+
+
+def already_read(
+    record: PreflightRecord | None, *, names: Iterable[str], merged_at: datetime
+) -> PreflightRun | None:
+    """The latest preflight run that read a blocker's outcome: one that ran at or after the
+    blocker's ``merged_at`` and lists the blocker (one of ``names``, any case) in
+    ``blockers_read``; None when no run did (two-level-flows AC-3.3)."""
+    wanted = {name.upper() for name in names}
+    runs = () if record is None else record.runs
+    return next(
+        (
+            run
+            for run in reversed(runs)
+            if run.ran_at >= merged_at and wanted & {name.upper() for name in run.blockers_read}
+        ),
+        None,
+    )
+
+
+def aware_time(value: str | None, name: str) -> datetime:
+    """``value`` as an ISO 8601 date and time with an offset; ``RecordFieldError`` naming
+    ``name`` otherwise."""
+    if value is None:
+        raise RecordFieldError(f"{name} is missing")
+    try:
+        found = datetime.fromisoformat(value)
+    except ValueError:
+        found = None
+    if found is None or found.tzinfo is None or "T" not in value.upper():
+        raise RecordFieldError(f"{name} needs a time with an offset")
+    return found
+
+
 def _request(n: int, head: RecordHead, decision: RecordHead | None) -> ChangeRequest:
     name = f"{CHANGE_REQUESTS_FOLDER}/{head.name}"
     ticket: str | None = None
@@ -213,7 +315,7 @@ def _request(n: int, head: RecordHead, decision: RecordHead | None) -> ChangeReq
         plan_to = int(text_field(fields, "plan_to", _VERSION) or 0)
         if not plan_to:
             raise RecordFieldError("plan_to is missing")
-        affected = _names(fields.get("affected"))
+        affected = _names(fields.get("affected"), "affected")
         plan_from = text_field(fields, "plan_from", _VERSION)
         opened_at = text_field(fields, "opened_at", ISO_TIME)
         run_id = text_field(fields, "run_id")
@@ -289,13 +391,13 @@ def _fields(head: RecordHead) -> dict[str, FrontmatterValue]:
     return record_fields(head.head)
 
 
-def _names(value: FrontmatterValue | None) -> tuple[str, ...]:
+def _names(value: FrontmatterValue | None, name: str) -> tuple[str, ...]:
     if value is None or value == "":
         return ()
     items = value if isinstance(value, list) else [value]
     for item in items:
         if _TICKET.fullmatch(item) is None:
-            raise RecordFieldError(f"affected has an invalid item: {item[:64]}")
+            raise RecordFieldError(f"{name} has an invalid item: {item[:64]}")
     return tuple(dict.fromkeys(items))
 
 
