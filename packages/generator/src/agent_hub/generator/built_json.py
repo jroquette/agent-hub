@@ -71,6 +71,10 @@ _SANDBOX_HOSTS: Final = (
 # managed settings wire the hooks themselves (docs/design/hub-generator.md § Hooks and plugin
 # wiring).
 _HOOKS_FOLDER: Final = "$CLAUDE_PROJECT_DIR/plugin/hub-workflow/hooks"
+# AGH-392 D-mcp-json: Claude Code starts `hub mcp` through the hub's own shim, so the server runs
+# the pinned release; `CLAUDE_PROJECT_DIR` is the hub when Claude Code sets it, else the cwd.
+_MCP_SERVER: Final = "hub"
+_MCP_COMMAND: Final = "${CLAUDE_PROJECT_DIR:-.}/hub"
 
 
 class HookEvent(NamedTuple):
@@ -237,6 +241,15 @@ def _hook_group(hook: HookEvent) -> JsonValue:
 def project_settings(config: HubConfig) -> JsonValue:
     """The seeded ``.claude/settings.project.json``: empty; the project adds its own settings."""
     return {}
+
+
+def mcp_config(config: HubConfig) -> JsonValue:
+    """The managed ``.mcp.json``: the one stdio server ``hub``, which runs ``./hub mcp``. It is
+    the same in every hub (the config is not read)."""
+    del config
+    return {
+        "mcpServers": {_MCP_SERVER: {"type": "stdio", "command": _MCP_COMMAND, "args": ["mcp"]}}
+    }
 
 
 def project_manifest(config: HubConfig) -> JsonValue:

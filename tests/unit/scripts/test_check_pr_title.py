@@ -9,6 +9,7 @@ from scripts.check_pr_title import main, problems
         "feat(collector): ingest hook events",
         "chore(repo): foundation workspace, gates, ADRs and English docs",
         "fix(cli)!: rename flag",
+        "build(mcp-server): add the mcp_server package to every gate",
     ],
 )
 def test_accepts_title_when_type_scope_and_subject_valid(title: str) -> None:

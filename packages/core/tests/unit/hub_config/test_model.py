@@ -631,6 +631,8 @@ PROJECT_BRANCH_READERS = {
     "core/src/agent_hub/core/hub_config/config_view.py": 2,
     # the hub repo's branch a learning decision's pull request targets (ADR 0024)
     "api/src/agent_hub/api/composition.py": 1,
+    # the hub repo's branch a learning proposal's pull request targets (hub mcp, ADR 0044)
+    "cli/src/agent_hub/cli/mcp_command.py": 1,
     # the hub checkout's branch in the brief
     "cli/src/agent_hub/cli/brief_command.py": 1,
     # project_default_branch for ci.yml, and the project branch in AGENTS.md's mentions
