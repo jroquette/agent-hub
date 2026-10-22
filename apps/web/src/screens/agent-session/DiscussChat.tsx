@@ -117,8 +117,13 @@ export function DiscussChatView({
             mode={state.mode ?? session.mode}
             model={state.model ?? session.model ?? null}
             models={capabilities.data?.models ?? DEFAULT_MODELS}
-            onSend={async (text) => {
-              await transcript.send(prepareMessage ? prepareMessage(text) : text, commands.send);
+            onSend={async (text, screenshots, files) => {
+              await transcript.send(
+                prepareMessage ? prepareMessage(text) : text,
+                (message) => commands.send(message, screenshots, files),
+                screenshots,
+                files,
+              );
               onSent?.();
             }}
             onInterrupt={commands.interrupt}
@@ -129,6 +134,8 @@ export function DiscussChatView({
             draftId={agentSessionId}
             focusOnOpen={pending.length === 0}
             resumable={resumable(session, endReason)}
+            acceptsImages
+            acceptsFiles
           />
         </div>
       </footer>
