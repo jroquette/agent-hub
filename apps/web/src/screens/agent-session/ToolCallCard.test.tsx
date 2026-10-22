@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
@@ -81,8 +81,11 @@ describe("ToolCallCard (transcript)", () => {
     const diff = screen.getByLabelText("Diff of a.py");
     expect(diff).toHaveTextContent("+y");
     expect(diff).toHaveTextContent("+q");
-    // The code reads in the file's colours; the sign alone in the line's (AC-424.4).
-    expect(diff).toHaveClass("as-diff-syntax");
+    // The code reads in the file's colours once the highlighter loads; the sign alone in the
+    // line's (AC-424.4).
+    await waitFor(() => {
+      expect(diff).toHaveClass("as-diff-syntax");
+    });
     expect(within(diff).getAllByText("+").length).toBe(2);
   });
 });
