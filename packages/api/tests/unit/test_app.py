@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from agent_hub.api.app import create_app
+from agent_hub.api.app import CombinedLifecycle, create_app
 from agent_hub.api.change_feed import ChangeFeed
 from agent_hub.api.dependencies import ApiPorts
 from agent_hub.api.openapi_paths import SERVED_PATHS
@@ -223,3 +223,39 @@ def test_closes_feed_when_exit_hook_called_without_lifecycle(
     app.state.on_exit()
 
     assert feed.is_closed
+
+
+class NamedLifecycle:
+    """An ``AppLifecycle`` that records its calls, by name, in a shared list."""
+
+    def __init__(self, name: str, calls: list[str]) -> None:
+        self.name, self.calls = name, calls
+
+    async def start(self) -> None:
+        self.calls.append(f"start {self.name}")
+
+    def begin_exit(self) -> None:
+        self.calls.append(f"exit {self.name}")
+
+    async def stop(self) -> None:
+        self.calls.append(f"stop {self.name}")
+
+
+def test_starts_in_order_and_stops_in_reverse_when_lifecycles_combined() -> None:
+    calls: list[str] = []
+    combined = CombinedLifecycle(
+        NamedLifecycle("sessions", calls), NamedLifecycle("scheduler", calls)
+    )
+
+    asyncio.run(combined.start())
+    combined.begin_exit()
+    asyncio.run(combined.stop())
+
+    assert calls == [
+        "start sessions",
+        "start scheduler",
+        "exit sessions",
+        "exit scheduler",
+        "stop scheduler",
+        "stop sessions",
+    ]
