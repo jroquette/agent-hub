@@ -685,6 +685,12 @@
     "workflows/sdlc/fixtures/implement-rounds-exhausted.yaml": {
       "ownership": "seeded"
     },
+    "workflows/sdlc/fixtures/implement-superseded-in-last-pass.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/fixtures/implement-superseded-then-discoveries.yaml": {
+      "ownership": "seeded"
+    },
     "workflows/sdlc/fixtures/review-fail.yaml": {
       "ownership": "seeded"
     },

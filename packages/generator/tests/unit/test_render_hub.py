@@ -193,6 +193,8 @@ DESIGN_PATHS = (
     "workflows/sdlc/fixtures/implement-plan-moved.yaml",
     "workflows/sdlc/fixtures/implement-pr-failure.yaml",
     "workflows/sdlc/fixtures/implement-rounds-exhausted.yaml",
+    "workflows/sdlc/fixtures/implement-superseded-in-last-pass.yaml",
+    "workflows/sdlc/fixtures/implement-superseded-then-discoveries.yaml",
     "workflows/sdlc/fixtures/review-fail.yaml",
     "workflows/sdlc/fixtures/review-lens-failed.yaml",
     "workflows/sdlc/fixtures/review-pass.yaml",

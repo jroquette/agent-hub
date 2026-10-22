@@ -111,7 +111,8 @@ one exception: hub web creates a request's `<n>.decision.md` when its run is gon
   input, input_text, drift, local_notes[], change_request, run_id}`: `ran_at` an ISO 8601 time with an offset,
   `plan_version` a whole number ≥ 1 (the plan's `v<n>`), `commit` the main commit it checked, `blockers_read` the
   blocker tickets whose outcome it read (at most 50), `input` `none`, `discovery` or `declined_change` with its one-line
-  `input_text` (required for those two, `null` for `none`), `drift` `none`, `local` or `plan`, `local_notes` one
+  `input_text` (required for those two; for `none`, `null` or a note, such as an approval another amendment
+  superseded, A23), `drift` `none`, `local` or `plan`, `local_notes` one
   line each (at most 50; at least one for `local`), `change_request` the number of the request it opened (required
   for `plan`, else `null` allowed), `run_id` the workflow run's id. Every key is required and unknown keys are
   refused. Read whole up to 64 KiB (`MAX_PREFLIGHT_BYTES`); over it, malformed, or naming another ticket than its
@@ -145,11 +146,11 @@ under the feature's lock `.agent-runs/locks/<slug>.lock` (never committed); a ru
 | Command | Writes | Refuses |
 |---|---|---|
 | `ticket-brief --feature --ticket` | the next `## Brief v<n>` of `brief.md` (temp file, then rename); prints `path`, `version`, `hub` (the hub's path), `repo` (the ticket's repo in `features.json`, the one the run changes) and `commit`: `origin/<default branch>`'s commit in that repo's checkout as last fetched, read once (no fetch), which the preflight reads and its run records | a ticket `features.json` does not plan, a ticket whose repo `hub.json` lacks, a base that cannot be read, no `plan.md`, a `brief.md` that is not this ticket's brief |
-| `preflight --feature --ticket --findings JSON --commit SHA --input KIND [--input-text] [--request N]` | `preflight.json` with one run appended, built from the preflight agent's findings (`drift`, `local_notes`, `blockers_read`): `ran_at` now, `run_id` from `AGENT_HUB_RUN_ID` (a workflow's steps get it), `commit` the one given (`ticket-brief`'s, the commit the agent read), `plan_version` the plan's (A22); `input` `none`, `discovery`, `declined_change`, or a gate's `approve` (`none`, its text dropped) or `decline` (`declined_change`), the text on one line of at most 1,000 characters (a plain check may carry a note: an approval another amendment superseded, A23); `change_request` the request named, for `plan` drift only (a declined change re-checked with none named: the one the last run named). Earlier runs are copied as parsed JSON, so each stays equal in canonical form; the file is new or replaced whole (temp file, then rename) | findings that are not a JSON object, a run `PreflightRun` refuses (cross-field rules included: no run id, `plan` drift without a request), a record there that is malformed or names another ticket, a result over 64 KiB |
+| `preflight --feature --ticket --findings JSON --commit SHA --input KIND [--input-text] [--request N] [--declined-request N]` | `preflight.json` with one run appended, built from the preflight agent's findings (`drift`, `local_notes`, `blockers_read`): `ran_at` now, `run_id` from `AGENT_HUB_RUN_ID` (a workflow's steps get it), `commit` the one given (`ticket-brief`'s, the commit the agent read), `plan_version` the plan's (A22); `input` `none`, `discovery`, `declined_change`, or a gate's `approve` (`none`, its text dropped) or `decline` (`declined_change`), the text on one line of at most 1,000 characters (a plain check may carry a note: an approval another amendment superseded, A23); `change_request` the request named, for `plan` drift only (a declined change's first check with none named: `--declined-request`, the one `pending-decision` found). A re-check given `approve` and an approved request the plan moved past records a plain check with the superseded note (A23). Earlier runs are copied as parsed JSON, so each stays equal in canonical form; the file is new or replaced whole (temp file, then rename) | findings that are not a JSON object, a run `PreflightRun` refuses (cross-field rules included: no run id, `plan` drift without a request), a record there that is malformed or names another ticket, a result over 64 KiB |
 | `change-request --feature --ticket --evidence --proposal [--affected TICKETS] [--findings JSON --commit SHA]` | `change-requests/<n>.md`, `n` the next free number, `status: open`, `plan_from` the plan's current version, `plan_to` the next, `run_id` from `AGENT_HUB_RUN_ID`, `affected` the comma-separated tickets; created exclusively. With the preflight's findings, the run that will name the request is checked first, so a run `preflight` would refuse opens no request that no run names | a field its reader could not read (no run id included), an empty evidence or proposal, a text over 256 KiB (what `decide` and `amend-plan` read), findings whose run would be refused |
 | `decide --feature --request N --decision approved\|declined --by WHO [--note]` | `change-requests/<n>.decision.md`, `decided_by` the gate's approver, `decided_at` now, `note` on one line (cut at 1,000 characters; the whole note is the body); created exclusively | a decision other than exactly `approved` or `declined`, a text over 256 KiB, a second decision, an approver that names no person (empty or `unknown`, A5), an approval whose approver `amend-plan` could not write (a `(` or `)`), a decline without a note, no request `n` |
 | `amend-plan --feature --request N --summary` | one entry `- A<k> (<decided_at date>, <decided_by>): <summary> ([change request n](change-requests/n.md))` at the end of `plan.md`, after a new `## Amendments` heading when the last section is another; every earlier byte kept; a re-run once the plan holds the request's entry writes nothing and answers `already amended as A<k>`; a plan whose version is no longer the request's `plan_from` (another amendment came first) writes nothing and answers `moved`: `change request <n> approved but superseded by plan v<k>: not applied` (A23) | a request not decided `approved`, an entry that would not read as `A<k>`, a lock another run holds |
-| `pending-decision --feature --ticket` | nothing: prints `{request, decision, input, note, summary, superseded}`, the decision on the request the ticket's last preflight run opened (`drift: plan`, its `input` not `declined_change`), or else on the ticket's newest decided request that no run names, opened since its last run (its run failed before the preflight run was written); else `request: null` and empty texts. An approval the plan moved past (A23) has an empty `decision` (nothing to amend) and its `note` and `superseded` say so; `input` is `declined_change` for a decline, else `none`; `summary` is the proposal's first line | a record the readers could not read |
+| `pending-decision --feature --ticket` | nothing: prints `{request, decision, input, note, summary, superseded}`, the decision on the request the ticket's last preflight run opened (`drift: plan`, its `input` not `declined_change`), or else on this ticket's newest decided request that no run names, opened after its last run (its run failed before the preflight run was written); else `request: null` and empty texts. An approval the plan moved past (A23) has an empty `decision` (nothing to amend) and its `note` and `superseded` say so; `input` is `declined_change` for a decline, else `none`; `summary` is the proposal's first line | a record the readers could not read |
 
 The `implement` workflow (built-in `sdlc` pack, with its `ticket-pass`; A1, A2, A22, A23) runs them in this
 order: `ticket-brief`; `pending-decision`, then `amend-plan` for a decision approved while no run waited (AC-2.14);
@@ -157,19 +158,23 @@ then each pass: the preflight agent (fresh, `mutates_checkout: false`, in the ti
 main at `ticket-brief`'s commit with git: no checkout, no branch), `change-request` on `plan` drift, `preflight`, the
 gate (`approve`, `decline` with its note, `capture_response`), `decide` (`--by` the gate's `approver`) and `amend-plan`
 or the note, a re-preflight appended the same way; only then, once a preflight passed, the worktree and its branch
-(`hub step worktree`, with a fresh fetch), the ticket plan and the review rounds (`hub step verdict` also prints the
-reply's `discovery`, one line with no run of three backticks). An approval `amend-plan` answers `moved` for ends the
-pass without a re-check; the next pass checks the current plan with that note (plan drift there opens a new request),
-and the report's `superseded` names it (A23); like a discovery, it uses one of the two loops back. A re-preflight
-still on `plan`, or a first preflight given a declined change that still finds it, ends the run `blocked` with no new
-request and no branch (A2). The run's `delivery` lists `hub_files`, relative to the feature folder, of the files
-`git status` shows changed that are this run's: the ticket's folder, its eval, the change requests whose `run_id` is
-the run's (or the pending one) with their decisions, and `plan.md` (whose changes may include another run's
-amendment). A run that fails after writing records (review rounds exhausted, the PR step failing) has no delivery:
-the owner collects its files with `git status` in the feature folder for the hub PR. A read-only agent
-(`mutates_checkout: false`) gets read-only tools with the edit tools denied, and the engine compares the checkout's
-`git status` and HEAD around it, leaving out `brain/features/`, which other runs of the feature write meanwhile; a
-Bash rule the user's or the project's settings allow stays allowed (the comparison is then the check).
+(`hub step worktree --commit`: the fetch still runs, but the branch starts at the commit the preflight checked, never
+a newer main), the ticket plan and the review rounds (`hub step verdict` also prints the reply's `discovery`, one line
+with no run of three backticks). Main is read as last fetched: nothing fetches before the preflight, so a stale main
+is checked and the branch starts from it; the PR then shows any conflict with a newer main. An approval `amend-plan`
+answers `moved` for is re-checked inside its pass against the current plan, told so (`$WITH.superseded`), and the
+re-check's run records it; it spends no loop back (D-3 counts discoveries), and the report's `superseded` names it
+(A23). A re-preflight still on `plan`, or a first preflight given a declined change that still finds it, ends the run
+`blocked` with no new request and no branch (A2); the next `/implement` opens one. The run's `delivery` lists
+`hub_files`, relative to the feature folder, of the files `git status` shows changed that are this run's: the
+ticket's folder, its eval, the change requests whose `run_id` is the run's (or the pending one) with their decisions,
+and `plan.md` (whose changes may include another run's amendment). A run that fails after writing records (review
+rounds exhausted, the PR step failing) has no delivery: the owner collects its files with `git status` in the feature
+folder for the hub PR. A read-only agent (`mutates_checkout: false`, every workflow's) gets the Read, Glob and Grep
+tools and git's read forms, with the edit tools and any git command holding `--output` denied; the engine compares
+the checkout's `git status`, HEAD and branch around it (not the upstream lines a fetch moves), leaving out
+`brain/features/`, which other runs of the feature write meanwhile. Limit: a Bash rule the user's or the project's
+settings allow stays allowed, and the comparison is then the only check.
 
 ### `summaries/<record>.md`
 
