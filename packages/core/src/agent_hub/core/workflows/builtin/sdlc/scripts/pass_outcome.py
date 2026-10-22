@@ -10,8 +10,8 @@
 passed on for the report. Blank rounds (no preflight passed: a re-check after the owner's
 decision, or of a declined change, still found plan drift) is ``blocked``. Otherwise the last
 round's session ``blocked`` (its question), its ``discovery`` (the next pass's input, with its
-text) or ``done`` with the review's verdict. ``path``, ``base`` and ``target`` are the pass's worktree's (``""``, ``""``
-and null when it made none). Text that is not JSON exits 2.
+text) or ``done`` with the review's verdict. ``path``, ``base`` and ``target`` are the pass's
+worktree's (``""``, ``""`` and null when it made none). Text that is not JSON exits 2.
 """
 
 import argparse

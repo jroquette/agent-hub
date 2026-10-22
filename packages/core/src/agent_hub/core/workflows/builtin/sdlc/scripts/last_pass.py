@@ -12,7 +12,8 @@ for the last one that ran: ``status`` ``blocked`` or ``done`` (what ``hub step r
 --status`` reads), its question, review verdict and number, and its worktree (the eval, the
 commits and the PR read it). ``superseded`` joins every approval the plan moved past (A23): the
 pending decision's ``TEXT`` and each pass's, for the report. A discovery in the last pass given
-is the one too many (two loops back at most, D-3): ``blocked``, naming it. Text that is not JSON, or no pass, exits 2.
+is the one too many (two loops back at most, D-3): ``blocked``, naming it. Text that is not
+JSON, or no pass, exits 2.
 """
 
 import argparse
