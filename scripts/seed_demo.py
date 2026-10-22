@@ -116,6 +116,9 @@ class SeedError(Exception):
     """A step failed; the message is the line to print."""
 
 
+GIT_NOT_FOUND = "git init failed: git not found"
+
+
 class Target(Protocol):
     """Where the demo's files are written and its ``hub`` commands run."""
 
@@ -156,7 +159,12 @@ class LocalTarget:
         return self._runner([sys.executable, *arguments], stdin)
 
     def git(self, arguments: Sequence[str]) -> subprocess.CompletedProcess[str]:
-        return self._runner(["git", *arguments], None)
+        if shutil.which("git") is None:
+            raise SeedError(GIT_NOT_FOUND)
+        try:
+            return self._runner(["git", *arguments], None)
+        except FileNotFoundError:
+            raise SeedError(GIT_NOT_FOUND) from None
 
 
 class ComposeTarget:
