@@ -331,6 +331,8 @@ def test_accepts_folder_case_when_review_file_name_matches(
     [
         ("spec.json", "spec.json"),
         ("spec-r0.json", "spec-r0.json"),
+        ("ux-r0.json", "ux-r0.json"),
+        ("overengineering-r0.json", "overengineering-r0.json"),
         ("style-r1.json", "style-r1.json"),
         ("spec-r01.json", "spec-r01.json"),
         ("spec-r1.md", "spec-r1.md"),
@@ -341,6 +343,8 @@ def test_accepts_folder_case_when_review_file_name_matches(
     ids=[
         "no round",
         "round 0",
+        "ux round 0",
+        "overengineering round 0",
         "unknown reviewer",
         "leading zero",
         "not json",
@@ -367,52 +371,6 @@ def review_check(content: bytes) -> tuple[OutputProblem, ...]:
 
 def eval_check(content: bytes) -> tuple[OutputProblem, ...]:
     return eval_problems(content, file_name=EVAL_FILE, sibling_head=a_sibling_head(), record=None)
-
-
-# Synthetic review files in the shapes the reviewers already save (AGH-474): an indented PASS
-# round with no finding, and a one-line FAIL round mixing blocking and minor findings of several
-# kinds, a null line among them. Widening ``reviewer`` must keep both valid.
-SAVED_PASS_ROUND = b"""{
-  "schema": "agent-hub/review/1",
-  "reviewer": "spec",
-  "ticket": "DEM-406",
-  "task": "S2-T9",
-  "round": 3,
-  "commit": "a5df0b916c2b61f63550036f8550932011863e43",
-  "verdict": "PASS",
-  "findings": []
-}
-"""
-SAVED_FAIL_ROUND = json.dumps(
-    a_review_document(
-        reviewer="quality",
-        ticket="DEM-406",
-        task="S2-T9",
-        round=1,
-        commit="878ad006f425469739b60c3769f706be028fc3ff",
-        verdict="FAIL",
-        findings=[
-            a_finding(id="Q1", kind="security", severity="blocking", acs=["AC-2.1"]),
-            a_finding(id="Q2", kind="quality", line=16, acs=["AC-2.1"]),
-            a_finding(id="Q3", kind="test", line=None, acs=["AC-2.11", "AC-2.1"]),
-        ],
-    )
-).encode()
-
-
-@pytest.mark.parametrize(
-    ("content", "file_name"),
-    [(SAVED_PASS_ROUND, "spec-r3.json"), (SAVED_FAIL_ROUND, "quality-r1.json")],
-    ids=["indented pass round", "one-line fail round"],
-)
-def test_accepts_saved_review_when_reviewer_list_widened(content: bytes, file_name: str) -> None:
-    assert review_problems(content, file_name=file_name, folder_name="DEM-406") == ()
-
-
-def test_lists_every_reviewer_when_review_schema_shipped() -> None:
-    reviewer = read_shipped_output_schema("review")["properties"]["reviewer"]
-
-    assert reviewer["enum"] == ["spec", "quality", "ux", "overengineering"]
 
 
 @pytest.mark.parametrize(

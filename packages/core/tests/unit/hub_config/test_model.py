@@ -1948,3 +1948,35 @@ def test_rejects_ui_paths_when_not_list_of_one_to_fifty(value: object) -> None:
 
     assert loc == ("repos", 0, "ui_paths")
     assert kind != "extra_forbidden"
+
+
+@pytest.mark.parametrize(
+    "glob",
+    ["apps/[!a]pp/**", "apps/[ab]/**", "apps/x]/**", "a/****b/**", "a/*x*y*z*/**"],
+    ids=["negated bracket", "bracket", "closing bracket", "four stars", "four spread stars"],
+)
+def test_rejects_ui_paths_when_glob_has_bracket_or_too_many_stars(glob: str) -> None:
+    [(loc, kind)] = error_types(with_value(("repos", 0, "ui_paths"), [glob]))
+
+    assert loc == ("repos", 0, "ui_paths", 0)
+    assert kind in {"ui_path_bracket", "ui_path_wildcards"}
+
+
+@pytest.mark.parametrize(
+    "glob",
+    ["**/a*b*c/**", "**/**/x", "a/*b*c*.tsx"],
+    ids=["three in one", "recursive twice", "three"],
+)
+def test_accepts_ui_paths_when_three_stars_per_segment(glob: str) -> None:
+    config = HubConfig.model_validate(with_value(("repos", 0, "ui_paths"), [glob]))
+
+    assert config.repos[0].ui_paths == (glob,)
+
+
+def test_names_cap_when_ui_paths_glob_has_too_many_stars() -> None:
+    with pytest.raises(ValidationError) as caught:
+        HubConfig.model_validate(with_value(("repos", 0, "ui_paths"), ["a/*b*c*d*/**"]))
+
+    [error] = caught.value.errors()
+    assert error["type"] == "ui_path_wildcards"
+    assert error["msg"] == "a path segment holds more than 3 * (a ** segment counts as one)"

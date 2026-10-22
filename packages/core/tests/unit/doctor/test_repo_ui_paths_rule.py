@@ -13,6 +13,7 @@ import pytest
 from agent_hub.core.doctor.finding import Finding, Read
 from agent_hub.core.doctor.registry import REGISTRY
 from agent_hub.core.doctor.repo_ui_paths_rule import REPOS_UI_PATHS
+from agent_hub.core.doctor.run_rules import Selection, run_rules
 from agent_hub.core.doctor.snapshot import ConfigFailure, DoctorSnapshot
 from agent_hub.core.hub_config.doctor_rules import Severity
 from agent_hub.core.hub_config.model import HubConfig
@@ -139,3 +140,38 @@ def test_skips_repo_ui_paths_when_config_failed(snapshot_of: SnapshotFactory) ->
     )
 
     assert found(snapshot) == []
+
+
+@pytest.mark.parametrize(
+    "glob",
+    ["apps/web/**", "apps/**/main.ts", "apps/web/*/main.ts"],
+    ids=["recursive", "recursive middle", "one segment"],
+)
+def test_passes_repo_ui_paths_when_only_match_is_hidden(
+    snapshot_of: SnapshotFactory, glob: str
+) -> None:
+    snapshot = snapshot_of(
+        config=a_config(("web", [glob])),
+        repos={"web": {"apps/web/.storybook/main.ts": b"x", "README.md": b"x"}},
+    )
+
+    assert found(snapshot) == []
+
+
+def test_reports_checkout_on_repo_ui_paths_when_other_repo_readers_disabled(
+    snapshot_of: SnapshotFactory,
+) -> None:
+    # Pinned (AGH-474 Q5): repos.ui_paths reads the checkouts whatever the repos set, so with
+    # brain.leak, links.dead and repos.agents off it carries the missing-checkout info, even
+    # when no repo sets ui_paths.
+    others = {"brain.leak", "links.dead", "repos.agents"}
+    rules = tuple(rule for rule in REGISTRY if rule.id not in others)
+    snapshot = snapshot_of(config=a_config(("web", None)), repos={"web": None})
+
+    at_checkout = [
+        (finding.rule, finding.severity)
+        for finding in run_rules(Selection(rules=rules, notes=(), severities={}), snapshot)
+        if finding.path == "../web"
+    ]
+
+    assert at_checkout == [("repos.ui_paths", Severity.INFO)]
