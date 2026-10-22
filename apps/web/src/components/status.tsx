@@ -375,7 +375,9 @@ export interface ProvenanceLineageProps {
  */
 export function ProvenanceLineage({ label, steps }: ProvenanceLineageProps) {
   return (
-    <ol className="ah-lineage" aria-label={label}>
+    // `role="list"` keeps the list's semantics in Safari, which drops them under `list-style: none`.
+    // eslint-disable-next-line jsx-a11y/no-redundant-roles
+    <ol className="ah-lineage" role="list" aria-label={label}>
       {steps.map((step) => (
         <li key={step.id} className="ah-lin-node">
           <span className="ah-lin-kind">

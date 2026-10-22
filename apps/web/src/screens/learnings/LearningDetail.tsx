@@ -194,8 +194,13 @@ function TrailPullRequest({ url }: { url: string }) {
       <Icon name="git-pull-request" size="sm" />
       <span className={github ? undefined : "ah-mono"}>
         {github ? `Pull request #${number ?? ""} in ${owner ?? ""}/${repo ?? ""}` : url}
-      </span>{" "}
-      <span className="ah-sr">(opens in a new tab)</span>
+      </span>
+      {safeHref(url) !== null && (
+        <>
+          {" "}
+          <span className="ah-sr">(opens in a new tab)</span>
+        </>
+      )}
     </OutsideLink>
   );
 }
@@ -716,7 +721,11 @@ export function LearningDetail({ id, row, now, onDecide, claude }: LearningDetai
       {
         onSuccess: (answer) => {
           setResult(answer);
-          if (deciding === "accept") setAcceptedTo(acceptedPath(target, l.note_path));
+          if (deciding === "accept") {
+            // The server's form (`brain/<destination>`), so the path reads the same after the refetch.
+            const placedAt = acceptedPath(target, l.note_path);
+            setAcceptedTo(placedAt === null ? null : `${BRAIN_PREFIX}${placedAt}`);
+          }
           setDeciding(null);
           draft.discard();
         },

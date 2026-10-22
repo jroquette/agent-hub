@@ -577,6 +577,33 @@ describe("LearningDetail", () => {
     expect(within(note).getByText("brain/learnings/gotchas/web-gates.md")).toBeInTheDocument();
   });
 
+  it("trail: reads a brain/ target as the refetched learning will", async () => {
+    const { unmount } = open({ [ACCEPT]: aLearningActionResult() });
+    const detail = await region();
+
+    const target = within(detail).getByRole("combobox", { name: "Target in brain/" });
+    await userEvent.clear(target);
+    await userEvent.type(target, "brain/learnings/x.md");
+    await userEvent.click(within(detail).getByRole("button", { name: "Accept" }));
+    await userEvent.click(screen.getByRole("button", { name: "Open pull request" }));
+    await screen.findByText("Pull request opened");
+    const placed = (await trailSteps()).step("Note");
+    expect(within(placed).getByText(/learnings\/x\.md$/).textContent).toBe(
+      "brain/brain/learnings/x.md",
+    );
+    unmount();
+
+    // The server places a `brain/…` target inside the brain folder: the refetch reads the same.
+    open({
+      [DETAIL]: inBrain({ state: "accepted_pr_open", brain_path: "brain/brain/learnings/x.md" }),
+    });
+    await region();
+    const { step } = await trailSteps();
+    expect(within(step("Note")).getByText(/learnings\/x\.md$/).textContent).toBe(
+      "brain/brain/learnings/x.md",
+    );
+  });
+
   it("trail: shows a session's short id, the full id in its tooltip", async () => {
     const session = "0192abcd-ef01-7a2b-8c3d-4e5f60718293";
     open({ [DETAIL]: inBrain({ source_session_id: session }) });
@@ -598,6 +625,17 @@ describe("LearningDetail", () => {
     expect(within(note).queryByRole("link")).toBeNull();
     expect(within(note).getByText("brain/auto/workspace/me.md")).toBeInTheDocument();
     expect(note).toHaveTextContent("In the brain");
+  });
+
+  it("trail: shows a refused pull request URL as text, never as a new tab", async () => {
+    open({ [DETAIL]: inBrain({ pr_url: "javascript:alert(1)" }) });
+    await region();
+    const { step } = await trailSteps();
+
+    const decision = step("Decision");
+    expect(within(decision).queryByRole("link")).toBeNull();
+    expect(decision).toHaveTextContent("javascript:alert(1)");
+    expect(decision.textContent).not.toContain("opens in a new tab");
   });
 
   it("trail has no serious a11y violations (a11y)", async () => {
