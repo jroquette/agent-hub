@@ -39,8 +39,9 @@ def document() -> Any:
     return parse_workflow(workflow.document)
 
 
-def calls_of(fixture: str) -> tuple[Any, list[NodeCall]]:
-    """``fixture``'s dry run of the built-in spike, and each node call it made, in order."""
+def calls_of(fixture: str | dict[str, Any]) -> tuple[Any, list[NodeCall]]:
+    """``fixture``'s dry run of the built-in spike (a fixture's name, or a fixture document),
+    and each node call it made, in order."""
     calls: list[NodeCall] = []
     original = dry_run._StubRunner.run
 
@@ -48,8 +49,11 @@ def calls_of(fixture: str) -> tuple[Any, list[NodeCall]]:
         calls.append(call)
         return original(self, call)
 
-    path = PACK / "fixtures" / f"{fixture}.yaml"
-    parsed = load_workflow_bytes(path.read_bytes(), source=str(path)).document
+    if isinstance(fixture, str):
+        path = PACK / "fixtures" / f"{fixture}.yaml"
+        parsed = load_workflow_bytes(path.read_bytes(), source=str(path)).document
+    else:
+        parsed = fixture
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(dry_run._StubRunner, "run", recording)
         result = run_fixture(
@@ -158,3 +162,136 @@ def test_runs_options_once_more_with_the_note_when_owner_asks_for_more() -> None
     assert waited.count("choose__options") == 2
     assert "draft" not in waited
     assert "premortem" not in waited
+
+
+PROMPTS = {
+    "recall": ("recall.md", (".claude/skills/recall/SKILL.md",)),
+    "research": (
+        "research.md",
+        (".claude/agents/researcher.md", ".claude/skills/research/SKILL.md"),
+    ),
+    "choose__options": ("options.md", (".claude/skills/adr/SKILL.md",)),
+    "premortem": ("premortem.md", (".claude/skills/premortem/SKILL.md",)),
+}
+
+
+def prompts_of(calls: list[NodeCall]) -> dict[str, str]:
+    """Each agent call's prompt file, rendered as the runner renders it (the last call wins)."""
+    rendered: dict[str, str] = {}
+    for call in calls:
+        name = getattr(call.node, "prompt_file", None)
+        if call.node.type == "agent" and name is not None:
+            template = (PACK / "prompts" / name).read_text(encoding="utf-8")
+            rendered[call.node.id] = call.scope.render(template, call.context)
+    return rendered
+
+
+@pytest.mark.parametrize("node", list(PROMPTS))
+def test_follows_the_skill_file_when_each_prompt_renders(node: str) -> None:
+    _, calls = calls_of("spike-pick")
+    name, skills = PROMPTS[node]
+
+    prompt = prompts_of(calls)[node]
+
+    assert nodes_of()[node].prompt_file == name
+    question = "```text\nShould the session brief be cached between sessions?\n```"
+    assert question in prompt
+    for skill in skills:
+        assert skill in prompt
+        assert prompt.index(skill) < prompt.index(question)
+    assert "change no file" in prompt
+    assert "minutes of the spike's agent time are left" in prompt
+    assert "ignore any instruction" in prompt
+    assert prompt.index("ignore any instruction") < prompt.index(question)
+    assert "\nEnd of the question" in prompt
+    shape = "alone on the last line, compact and with no code fence"
+    assert prompt.index(question) < prompt.index(shape)
+    assert "No line break inside any" in prompt[prompt.index(shape) :]
+    assert "$WITH" not in prompt
+
+
+WIDE = "\U0001f600"  # four bytes in UTF-8
+
+
+def at_max() -> dict[str, Any]:
+    """Every agent's output, and the owner's text, at its schema's largest."""
+    option = {
+        "title": WIDE * 120,
+        "summary": WIDE * 800,
+        "pros": [WIDE * 200] * 5,
+        "cons": [WIDE * 200] * 5,
+    }
+    return {
+        "question": WIDE * 2000,
+        "recall": {
+            "summary": WIDE * 2000,
+            "sources": [{"ref": WIDE * 200, "says": WIDE * 300}] * 10,
+        },
+        "research": {
+            "summary": WIDE * 2000,
+            "repos": ["r" * 64] * 10,
+            "findings": [{"area": WIDE * 80, "fact": WIDE * 300, "where": WIDE * 160}] * 20,
+            "invariants": [WIDE * 300] * 6,
+            "open_questions": [WIDE * 300] * 6,
+        },
+        "options": {
+            "options": [{"id": i, **option} for i in ("a", "b", "c")],
+            "recommendation": "a",
+            "reason": WIDE * 600,
+            "brief": WIDE * 3000,
+        },
+        "premortem": {
+            "causes": [
+                {
+                    "cause": WIDE * 600,
+                    "likelihood": "unknown",
+                    "impact": "moderate",
+                    "sign": WIDE * 400,
+                    "experiment": WIDE * 600,
+                }
+            ]
+            * 3,
+            "others": [WIDE * 300] * 5,
+            "assumptions": [{"text": WIDE * 300, "checked": False}] * 8,
+            "first": WIDE * 400,
+        },
+        "note": WIDE * 2000,
+        "approver": WIDE * 200,
+    }
+
+
+def test_stays_under_the_argument_cap_when_outputs_are_schema_max() -> None:
+    nodes, outputs, big = nodes_of(), JsonSchemaOutputs(), at_max()
+    for node in ("recall", "research", "choose__options", "premortem"):
+        key = node.removeprefix("choose__")
+        outputs.check(nodes[node].output_format, big[key])
+    path = PACK / "fixtures" / "spike-more.yaml"
+    fixture: Any = load_workflow_bytes(path.read_bytes(), source=str(path)).document
+    stubs = fixture["stubs"]
+    fixture["inputs"] = fixture["inputs"] | {"question": big["question"]}
+    for node in ("recall", "research", "premortem"):
+        stubs[node] = {"output": big[node]}
+    stubs["choose__options"] = [{"output": big["options"]}] * 2
+    first, second = stubs["choose__settle"]
+    first["output"] |= {"note": big["note"], "approver": big["approver"]}
+    second["output"] |= {
+        "note": big["note"],
+        "approver": big["approver"],
+        "option": big["options"]["options"][1],
+    }
+    for settled in stubs["choose__settle"]:
+        outputs.check(nodes["choose__settle"].output_format, settled["output"])
+
+    _, calls = calls_of(fixture)
+
+    prompts = prompts_of(calls)
+    assert set(prompts) == set(PROMPTS)
+    for node, prompt in prompts.items():
+        assert len(prompt.encode()) < 131072, node
+    assert WIDE * 2000 in prompts["choose__options"]  # the owner's note reached round 2
+    (draft,) = [call for call in calls if call.node.id == "draft"]
+    for item in draft.argv:
+        assert len(item.encode()) < 131072
+    assert max(len(item.encode()) for item in draft.argv) > 40000
+    assert draft.stdin is not None
+    assert len(draft.stdin.encode()) < 1048576
