@@ -515,6 +515,10 @@ function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void
   // The router lands the cleared URL after paint: until then the old option is not shown.
   const [ignoreOption, setIgnoreOption] = useState(false);
   if (ignoreOption && !params.has("option")) setIgnoreOption(false);
+  // A pick made before the cleared URL lands is the person's own: it shows (N1-R6b).
+  const clearIgnoreOption = useCallback(() => {
+    setIgnoreOption(false);
+  }, []);
   const lastInvestigation = useRef(run.open_investigation);
   // Before paint, so the reopened investigation never shows the failed option picked.
   useLayoutEffect(() => {
@@ -600,6 +604,7 @@ function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void
           onRefetch={refetch}
           reopened={reopened}
           ignoreOption={ignoreOption}
+          onPick={clearIgnoreOption}
           findings={findings}
         />
       ) : (

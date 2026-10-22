@@ -461,7 +461,7 @@ text or a value the browser sent):
 | `screenshot-too-large` | 413 | a screenshot over 3,932,160 bytes decoded (`limit`, `size`) |
 | `invalid-screenshot` | 422 | a screenshot that is not strict base64 of a PNG (`errors[]` points at `/screenshot/data`, or `/screenshots/{index}/data` for a message's image) |
 | `unavailable` | 503 | no `claude` on `PATH` or no `sessions` extra (`reason`), on every write |
-| `restriction-unavailable` | 409 | a message to an ended session that cannot be reopened safely (E-13): a scenario investigation session whose tool policy cannot be rebuilt from its run, or any session while the hub's scenario runs (or a link file in them) cannot be read to tell whether it is one (`detail` says which) |
+| `restriction-unavailable` | 409 | a message to an ended session that cannot be reopened safely (E-13): a scenario investigation session whose tool policy cannot be rebuilt from its run, any session while the hub's scenario runs (or a link file in them) cannot be read to tell whether it is one, or any session whose project no registered hub names (for example, the project was unregistered between two registry reads) (`detail` says which) |
 | `mode-locked` | 409 | a permission-mode change of a session held to a tool policy (a scenario investigation session, E-15): its mode stays `default`, so the writes and `./hub` commands its policy allows keep asking; a model change still applies. Such a session reads `restricted: true` (the member is absent for other sessions) |
 | `cloud-unavailable` · `cloud-failed` · `cloud-timeout` | 501 · 502 · 504 | link-out guidance (`guidance`) · the step that failed (`step`) · the 60 s deadline (`seconds`) |
 
