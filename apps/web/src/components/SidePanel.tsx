@@ -1,29 +1,17 @@
 import "./SidePanel.css";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef } from "react";
 import type { ReactNode, RefObject } from "react";
 
 import { IconButton } from "./core";
+import { useMediaQuery } from "../lib/useMediaQuery";
 import { usePanelDismiss } from "./usePanelDismiss";
 
 /** Where side panels dock instead of overlaying the page (`31-responsive.md`, Wide). */
 const WIDE = "(min-width: 1600px)";
 
 function useWide(): boolean {
-  const query = () => typeof window.matchMedia === "function" && window.matchMedia(WIDE).matches;
-  const [wide, setWide] = useState(query);
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") return undefined;
-    const list = window.matchMedia(WIDE);
-    const onChange = () => {
-      setWide(list.matches);
-    };
-    list.addEventListener("change", onChange);
-    return () => {
-      list.removeEventListener("change", onChange);
-    };
-  }, []);
-  return wide;
+  return useMediaQuery(WIDE);
 }
 
 /**
