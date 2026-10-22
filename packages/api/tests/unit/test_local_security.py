@@ -240,6 +240,13 @@ RUN_WRITES = (
     "/api/v1/approvals/run-1:ok:1/decision",
     # two-level-flows AC-2.14 (AGH-405): the owner answers a lost run's change request.
     "/api/v1/features/demo/demo-feature/change-requests/2/decision",
+    # AGH-350 plan T12: the scenario writes run the CLI, the tracker or write into the hub.
+    "/api/v1/scenarios/demo/order-walk/plan",
+    "/api/v1/scenarios/demo/order-walk/runs",
+    "/api/v1/scenario-runs/walk-1/investigation",
+    "/api/v1/scenario-runs/walk-1/answer",
+    "/api/v1/scenario-runs/walk-1/findings/f1/issue",
+    "/api/v1/scenario-runs/walk-1/findings/f1/inbox",
 )
 OWN_JSON = {"Origin": "http://127.0.0.1:7420", "Content-Type": "application/json"}
 
@@ -263,6 +270,10 @@ def test_marks_strict_run_write_when_post_to_run_command(path: str) -> None:
         ("POST", "/api/v1/approvals/run-1:ok:1/decision/extra"),
         ("GET", "/api/v1/features/demo/demo-feature/change-requests/2/decision"),
         ("POST", "/api/v1/features/demo/demo-feature/change-requests/2/decision/extra"),
+        ("GET", "/api/v1/scenarios"),
+        ("GET", "/api/v1/scenario-runs/walk-1"),
+        ("POST", "/api/v1/scenarios/demo/order-walk/plan/extra"),
+        ("POST", "/api/v1/scenario-runs/walk-1/findings/f1/other"),
     ],
 )
 def test_keeps_default_checks_when_not_run_command(method: str, path: str) -> None:

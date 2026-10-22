@@ -92,10 +92,12 @@ class WorkflowSummary(ViewModel):
 
 class WorkflowDetail(WorkflowSummary):
     """A workflow's layers (in run order, nodes in declaration order) and its document as
-    written (keys left out are not filled in)."""
+    written (keys left out are not filled in); ``environment`` is the one a process workflow
+    declares (P-18), None without one."""
 
     layers: tuple[tuple[WorkflowNodeView, ...], ...]
     document: dict[str, JsonValue]
+    environment: str | None = None
 
 
 class WorkflowProblemView(ViewModel):
@@ -215,7 +217,10 @@ class ReadWorkflows:
         )
         document = plan.document.model_dump(mode="json", by_alias=True, exclude_unset=True)
         return WorkflowDetail(
-            **_summary(project, plan, origins).model_dump(), layers=layers, document=document
+            **_summary(project, plan, origins).model_dump(),
+            layers=layers,
+            document=document,
+            environment=plan.document.environment,
         )
 
     def workflow_plan(self, project: str, name: str) -> tuple[str, WorkflowPlan]:

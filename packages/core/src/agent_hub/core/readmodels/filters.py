@@ -11,6 +11,7 @@ from agent_hub.core.events.event import UtcTimestamp
 from agent_hub.core.learnings.learning import LearningStatus
 from agent_hub.core.readmodels.page import MAX_CURSOR_CHARS
 from agent_hub.core.runner.run_record import Stage
+from agent_hub.core.runs.workflow_run import RunKind, WorkflowRun
 from agent_hub.core.sessions.session import Outcome, SessionStatus
 from agent_hub.core.workflows.failures import FailureKind
 
@@ -90,6 +91,12 @@ class RunFilter(PageRequest):
     issue: str | None = None
     workflow: str | None = None
     failure_kind: FailureKind | None = None
+    # A scenario run or a workflow run (AM-7); None keeps both, as before.
+    kind: RunKind | None = None
+
+    def keeps(self, run: WorkflowRun) -> bool:
+        """Whether ``run`` is of the kind asked for (every run without one)."""
+        return self.kind is None or run.kind == self.kind
 
 
 class ApprovalFilter(PageRequest):

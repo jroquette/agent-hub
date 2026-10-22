@@ -40,8 +40,11 @@ the first routes were written ([ADR 0017](adr/0017-api-second-composition-root.m
   ([Skills](#skills), [Workflows](#workflows)), and the one AGH-298 added to them:
   `POST /projects/{project}/skills/drafts/{draft_id}/publish` ([Skills](#skills)), and the two AGH-405 added
   (`TICKET_FLOW_PATHS`): `GET /features/{project}/{slug}/tickets/{ticket}` and
-  `POST /features/{project}/{slug}/change-requests/{n}/decision` ([Plan change requests](#plan-change-requests)). A
-  test fails on any other path.
+  `POST /features/{project}/{slug}/change-requests/{n}/decision` ([Plan change requests](#plan-change-requests)), and
+  the nine AGH-350 added (`SCENARIO_PATHS`): `GET /scenarios`, `GET /scenarios/{project}/{name}`, `POST
+  /scenarios/{project}/{name}/plan|runs`, `GET /scenario-runs/{run_id}` and `POST
+  /scenario-runs/{run_id}/investigation|answer|findings/{finding_id}/issue|findings/{finding_id}/inbox`
+  ([Scenarios](#scenarios)). A test fails on any other path.
 - A field kept only for compatibility is marked `deprecated` in the document and stays until `/api/v2`: a session's
   and a live tile's `agent` (read `label` and `actors`) and a learning's `target` (read `note_path`).
 
@@ -544,8 +547,8 @@ fingerprint (path, size and mtime of each entry of its `workflows/` and the buil
   with `project`, hub-relative `file` (a built-in's starts `<builtin>/`), `line` or `null`, `key` (`$` for the whole
   file) and `message`), one per file that does not load or plan. A project scope that names no project is empty.
 - `GET /api/v1/workflows/{project}/{name}` → `WorkflowDetail`: the summary fields, `layers` (in run order, each a list
-  of nodes `{id, type, depends_on, description}` in declaration order) and `document` (the file's content as written,
-  keys left out not filled in). An unknown project is a 404 (entity `project`); an unknown workflow, or one listed as a
+  of nodes `{id, type, depends_on, description}` in declaration order), `document` (the file's content as written,
+  keys left out not filled in) and `environment`, the one a process workflow declares (`null` without one). An unknown project is a 404 (entity `project`); an unknown workflow, or one listed as a
   problem, is a 404 (entity `workflow`, id `<project>/<name>`). A parameter over 200 characters is a 400. The routes
   answer 501 only in a build where the workflow reads are not wired.
 - `GET /api/v1/workflows/{project}/{name}/versions[?limit=…&cursor=…]` and `.../versions/{version_id}` → a hub
@@ -634,49 +637,131 @@ A paused engine run's `approval` or attention `wait` is an open `human_gate` app
 The decision is a strict write that needs the launch cookie, like the run commands; with `AGENT_HUB_IN_CONTAINER=1`
 it answers 404 `urn:agent-hub:problem:run-control-off`.
 
-## Scenario runs
+## Scenarios
 
-A scenario run paused at an open investigation ([design](design/scenarios.md#investigation-answers-and-workarounds))
-gets its agent session from hub web (AGH-350 P-7, AM-2, E-13):
+The hubs' scenarios and their scenario runs ([design](design/scenarios.md), AGH-350 plan T12, AC-350.21, .22, .23,
+.30). A scenario run is a WorkflowRun labelled `scenario:<name>`: `GET /api/v1/workflow-runs?kind=scenario|workflow`
+keeps one kind (absent: both, as before; `WorkflowRun.kind` says which), and its events and gates are a run's.
+The reads need no cookie; every `POST` below is a strict write ([Local security](#local-security)) that needs the
+launch cookie and answers 404 `urn:agent-hub:problem:run-control-off` in the container. The CLI does the work as a
+child, as for the [run commands](#workflow-run-commands) (`python -I -m agent_hub.cli …`, argv only, in the hub
+folder, the server's environment minus `LINEAR_API_KEY`); no problem quotes its output.
 
+- `GET /api/v1/scenarios[?project=…]` → `ScenarioCatalogView`: `items` (each `project`, `name`, `pack`, `description`,
+  `revision`, `node_count`, `inputs` and `last_run`: `{run_id, status, started_at, ended_at}` of its newest scenario
+  run, or `null`), by project then name, and `problems` (as [Workflows](#workflows)' list: a file of `scenarios/`
+  that does not load or plan). Read from the files on each request through the generator's discovery.
+- `GET /api/v1/scenarios/{project}/{name}` → `ScenarioDetail`: the summary, `steps` in declaration order (`id`,
+  `type`, `action` for an `action` or `expect` step, `depends_on`, `description`) and `runs`, its scenario runs,
+  newest first (at most 50). An unknown project is a 404 (entity `project`); an unknown scenario, or one listed as a
+  problem, a 404 (entity `scenario`, id `<project>/<name>`).
+- `POST /api/v1/scenarios/{project}/{name}/plan` with `{environment, inputs?}` → 200 `ScenarioPlanView`: what `hub
+  scenario plan NAME --env ENV --json` prints (`scenario`, `environment`, `access` (`null` when undeclared),
+  `production`, `denied`, `problems` and `rows`, each `step`, `type`, `action`, `effect`, `args` (a value known only
+  at run time as `<$CTX.<name> from <node>>`), `endpoints` (input → `{service, url, resource}`), `every`, `timeout`,
+  `content_hash`, `draft`, `decision`, `reason_kind`, `reason` and `plan`: the script's plan-mode summary, called
+  with no credential and only when every arg is known (AM-8)), plus, per row, `needs_acceptance` (a draft action) and
+  `accept_command`, the exact `git add -- … && git commit -m …` line that accepts it (AM-5: nothing commits from
+  hub web). The inputs (as a run's: at most 64, names `^[a-z][a-z0-9_]*$`) are checked against the scenario's first
+  (422 `workflow-run-invalid-inputs`), and a `hub.local.json` that cannot be read or conflicts with `hub.json` is 409
+  `hub-local-invalid` before any child runs, as for a start; the child runs in its own session, its stdout read in chunks up to 4
+  MiB and its stderr dropped; past 300 s or that cap its process group gets SIGINT (the CLI then kills its
+  plan-mode scripts' groups), SIGKILL 5 s later, and the call answers 502 `workflow-run-launch-failed`.
+- `POST /api/v1/scenarios/{project}/{name}/runs` with `{environment, inputs?, mode?}` (`interactive`, the default,
+  or `regression`) → 202 `RunAccepted` (`action` `start`) and `Location: /api/v1/scenario-runs/{run_id}`. The
+  scenario is planned first (core's `plan_scenario`, the config as read now); a plan that may not start creates no
+  run and answers 409 with `code` and every problem and denied step in `detail`: `undeclared_environment`, `denied`
+  (with `steps`, the denied steps' ids, and each step's reason) or `plan_problem` (an action or endpoint that cannot
+  be resolved, a path an action's output lacks, two unordered gates). Then `hub scenario run NAME --env ENV --mode
+  MODE --run-id RUN` starts detached, which plans and refuses again on its own.
+- `GET /api/v1/scenario-runs/{run_id}` → `ScenarioRunDetail`, read from the run's record in a registered hub's
+  `.agent-runs/workflows/<run_id>/records.jsonl` (never through a link, at most 8 MiB, a torn last line dropped):
+  `scenario`, `pack`, `environment`, `mode`, `status` (the end's, `null` while it has none), `open_investigation`
+  and `paused_step` (the investigation waiting for an answer), `timeline` (each line's `event`, `node`, `attempt`,
+  `status`, `at`), `polls` (an expect's polls: `held`, never the output), `captures` (`name`, `value`),
+  `decisions` (every gate's answer: `choice`, `text`, `approver`, `where`), `findings`, `investigations`,
+  `workarounds` and `proposal`: the latest investigation's latest proposal, each option with its `steps`, its
+  `plan` as shown, `needs_acceptance`, `accept_commands` (one per drafted action that is still a draft),
+  `pickable` and `refusal`, judged now as an answer would be (only while its investigation waits; `the
+  investigation is answered` after). A run no registered hub holds, or one that is not a scenario run, is a 404.
 - `POST /api/v1/scenario-runs/{run_id}/investigation` → 201 `InvestigationSession` (`run_id`, `project`,
   `investigation` (its number), `step`, `agent_session_id`, `started: true`) and `Location:
   /api/v1/agent-sessions/{agent_session_id}`; a later call for the same investigation answers 200 with the same
-  session (`started: false`). The run is found in a registered hub's `.agent-runs/workflows/<run_id>/` and must be a
-  scenario run paused at an open, unanswered investigation, as its own record says. The session starts in the hub,
-  mode `default`, with the investigation's system prompt, its tool policy (a `PreToolUse` hook: `Read`, `Glob`, `Grep`
-  only inside the hub and its declared repos and never on a declared env file, under `/proc` or on `/`, and no `Grep`
-  with a `glob` filter under a folder holding a declared env file; `Write` under `actions/<pack>/`; Bash for the
-  listed `./hub` commands only; every other tool denied) and, like every driven session, without the credential names
-  the hub declares; no env file is read here.
-- The link file `investigation-<n>.session` in the run folder, created exclusively and owner-only, keeps it to one
-  session per investigation and per `hub web` process. A link that is empty (a start cut short), names a session the
-  store does not know, or names one that ended and cannot be resumed is taken over by a new session (an error listing
-  what can be resumed is answered, never taken as "cannot be resumed"); a start that fails removes the link; a link
-  that cannot be written stops the session it would have named.
+  session (`started: false`). The run must be a scenario run paused at an open, unanswered investigation, as its own
+  record says. The session starts in the hub, mode `default`, with the investigation's system prompt, its tool
+  policy (a `PreToolUse` hook: `Read`, `Glob`, `Grep` only inside the hub and its declared repos and never on a
+  declared env file, under `/proc` or on `/`, and no `Grep` with a `glob` filter under a folder holding a declared env
+  file; `Write` under `actions/<pack>/`; Bash for the listed `./hub` commands only; every other tool denied) and,
+  like every driven session, without the credential names the hub declares; no env file is read here. The link file
+  `investigation-<n>.session` in the run folder, created exclusively and owner-only, keeps it to one session per
+  investigation and per `hub web` process. A link that is empty (a start cut short), names a session the store does
+  not know, or names one that ended and cannot be resumed is taken over by a new session (an error listing what can
+  be resumed is answered, never taken as "cannot be resumed"); a start that fails removes the link; a link that
+  cannot be written stops the session it would have named.
 - The chat is the agent-session routes' (`POST /api/v1/agent-sessions/{agent_session_id}/messages`, AM-9). A message
   that reopens an ended investigation session (after a restart, for example) rebuilds its tool policy and prompt from
   the link and the run's record, or is refused (409 `agent-session-restriction-unavailable`).
+- `POST /api/v1/scenario-runs/{run_id}/answer` with `{choice, option?}` (`pick` with an option id `o<n>`, `retry` or
+  `stop`; an option without a pick, or a pick without one, is 422) → 202 `InvestigationAnswered` (`run_id`,
+  `project`, `investigation`, `step`, `choice`, `option`) and `Location: /api/v1/scenario-runs/{run_id}`. The
+  investigation must be open and unanswered (409 `workflow-run-not-paused`). A pick is checked first, as `hub
+  workflow respond` checks it (core's `pick_problem`): an option of the latest proposal that holds no `deny`, no
+  draft action and whose plan is still the one shown; else 409 `workflow-run-pick-refused` with the reason in
+  `detail`, and nothing is recorded. Then, under the run commands' lock (409 `workflow-run-in-use` while the run's
+  child runs), `hub workflow decide <run> --gate <run>:<step>__investigation:<n> --choice <choice> [--text-stdin]`
+  records it, as for a [gate decision](#workflow-gate-decisions) (the same 409 `workflow-run-refused` and 502s), and
+  the run resumes in a detached child: `stop` ends it `cancelled` with its findings kept, `retry` runs the step
+  again, `pick` runs the workaround, then the step. Approvals sends an investigation gate here (409
+  `workflow-run-investigation-gate` there).
+- `POST /api/v1/scenario-runs/{run_id}/findings/{finding_id}/issue` with `{confirm?}` → 200 `FindingIssue`: the
+  draft `hub scenario findings --issue` prints (`title`, `description`) and the `team` it goes to (`hub.json`'s
+  `tracker.team`, or the first of `tracker.teams`; `null` when `hub.json` cannot be read), `created: null`; the draft
+  never reads `hub.local.json`. With `confirm: true` (the terminal's `y`; only the JSON `true` confirms, anything else
+  is 422) the tracker is resolved from the effective config, `hub.json` with `hub.local.json` over it (a local
+  `tracker.transport` wins; a `hub.local.json` that cannot be read or conflicts with `hub.json` is 409
+  `hub-local-invalid`), then its `create_issue` is called once and the answer is 201 with `created: {id, url}`.
+  The marker `finding-<id>.issue` in the run folder, shared with `hub scenario findings --issue`, is claimed
+  exclusively before the call and then holds the issue or the failure; the claimer holds `flock` on
+  `finding-<id>.issue.lock` from the claim until the result is recorded, so a running create is never retaken (409
+  `workflow-run-issue-exists`, "a create of finding <id>'s issue is running"; held with no marker yet, "busy …; try
+  again"), and a crash releases it. A created issue answers `recorded: true`; one whose marker could not be written
+  answers 201 with `recorded: false` and a `warning` ("the issue <id> was created but could not be recorded: …; do
+  not create it again"). A marker naming an issue refuses every later
+  create on both sides (409 `workflow-run-issue-exists`, naming it). A create the tracker refuses or does not answer
+  is 502 `urn:agent-hub:problem:scenario-run-issue-failed`; that marker, or the empty one a crash leaves, is also 409
+  `workflow-run-issue-exists` here (the issue may exist), and only a terminal retries it: `hub scenario findings
+  --issue` shows the state, warns that the issue may already exist in the tracker and asks again. Without a tracker
+  key (transport `api`), 409 `workflow-run-tracker-not-connected`; transport `mcp` reaches Linear through `claude -p`
+  in the hub, as the CLI does.
+- `POST /api/v1/scenario-runs/{run_id}/findings/{finding_id}/inbox` → 201 `FindingNote` (`path`, hub-relative):
+  writes `brain/_inbox/<date>-scenario-<name>-<finding>.md` (`provenance: agent-from-external`, the CLI's text),
+  never over an existing note (409 `workflow-run-note-exists`) nor through a link (409 `workflow-run-link-in-path`).
+  `finding_id` matches `^f[0-9]{1,6}$` (else 400); an unknown finding is a 404 (entity `finding`).
 
 Problems:
 
 | Status | Type or code | When |
 | --- | --- | --- |
-| 400 | "Invalid request parameter" | `run_id` does not match `^[a-z0-9][a-z0-9-]{0,31}$` |
-| 401 · 403 · 415 | as in [Local security](#local-security) | no launch cookie · a foreign `Origin` or fetch site · a body that is not JSON |
-| 404 | `about:blank` | no registered hub holds the run (or its record), or the hub has no workdir |
-| 404 | `urn:agent-hub:problem:run-control-off` | in the container (`AGENT_HUB_IN_CONTAINER=1`) |
+| 400 | "Invalid request parameter" | `run_id` does not match `^[a-z0-9][a-z0-9-]{0,31}$`, or `finding_id` does not match `^f[0-9]{1,6}$` |
+| 401 · 403 · 415 | as in [Local security](#local-security) | a `POST` without the launch cookie · a foreign `Origin` or fetch site · a body that is not JSON |
+| 404 | `about:blank` | no registered hub holds the run (or its record), the run is not a scenario run, an unknown project, scenario or finding, or the hub has no workdir |
+| 404 | `urn:agent-hub:problem:run-control-off` | a `POST` in the container (`AGENT_HUB_IN_CONTAINER=1`) |
+| 409 | `workflow-run-undeclared-environment` · `-denied` (`steps`) · `-plan-problem` | a start whose plan may not start; no run is created |
 | 409 | `workflow-run-not-paused` | not a scenario run, or not paused at an open, unanswered investigation |
+| 409 | `workflow-run-pick-refused` | a pick of no option of the latest proposal, of one holding a `deny` or a draft action, or of one whose plan changed since it was shown |
+| 409 | `workflow-run-in-use` · `-refused` | the run's child still runs · `hub workflow decide` refused the answer |
+| 409 | `workflow-run-issue-exists` · `-tracker-not-connected` · `-note-exists` · `-link-in-path` · `-finding-unusable` | a finding's issue or note cannot be made (see above) |
 | 409 | `workflow-run-link-in-path` | the link file `investigation-<n>.session` is a symbolic link |
 | 409 | `workflow-run-workspace-root` | a read root (the hub or a declared repo) is `/`, the home folder or one of its ancestors, where reads would reach the developer's own credentials |
 | 409 | `urn:agent-hub:problem:hub-registry-unreadable` (`hub_registry_unreadable`) | the hub registry cannot be read |
-| 409 | `urn:agent-hub:problem:hub-local-invalid` (`hub_local_invalid`) | the hub's `hub.local.json` cannot be read, so its env files and credential names are unknown |
+| 409 | `urn:agent-hub:problem:hub-local-invalid` (`hub_local_invalid`) | the hub's `hub.local.json` cannot be read or conflicts with `hub.json` (it loosens an environment's access, for example), so its env files, credential names and environments are unknown (an investigation session, a plan, a start, a pick or an issue's create) |
+| 422 | `workflow-run-invalid-inputs` · the body's | inputs that do not fit the scenario's · a body outside its model |
 | 422 | `record_too_large` · `record_unreadable` | the run's record is over 8 MiB · a line before its last is not one JSON object |
-| 409 · 429 · 503 | the agent-session problems | the session cannot start ([Agent sessions](#agent-sessions)) |
+| 502 | `workflow-run-launch-failed` · `-resume-failed` · `-decision-unknown` · `scenario-run-issue-failed` | a child that cannot start or finish · the answer is recorded, the resume did not start · `hub workflow decide` outlasted 60 s · the tracker's create failed |
+| 409 · 429 · 503 | the agent-session problems | the investigation session cannot start ([Agent sessions](#agent-sessions)) |
 
-The `workflow-run-*` types are `urn:agent-hub:problem:workflow-run-<code>` with `code` and `run_id`; the record
-problems are `urn:agent-hub:problem:scenario-run-record-too-large` and `-record-unreadable`. It is a strict write
-([Local security](#local-security)) that needs the launch cookie, like the run commands.
+The `workflow-run-*` types are `urn:agent-hub:problem:workflow-run-<code>` with `code` (and `run_id` when known); the
+record problems are `urn:agent-hub:problem:scenario-run-record-too-large` and `-record-unreadable`.
 
 ## Local security
 
@@ -686,7 +771,8 @@ CORS headers, `Cache-Control: no-store` on `/api`, and a CSP that limits scripts
 `'self'`. The web app requests no other host; Linear is read by the server only ([Feature tickets](#feature-tickets)).
 The agent-session routes add a cookie and stricter Origin rules ([Agent sessions](#agent-sessions)), and the workflow
 run writes (`RUN_WRITES`: start, cancel, resume and abandon a run, a gate's decision, an AC's check run, a
-change request's decision and a scenario run's investigation session), the restores and the
+change request's decision, and the scenario writes: a plan, a start, an investigation's session and answer, a
+finding's issue and inbox note), the restores and the
 Publish (`ITEM_WRITES`) need that cookie too ([Workflow run commands](#workflow-run-commands), [Skills](#skills),
 [Workflows](#workflows)); every other route is unchanged and needs no cookie. In the container (`AGENT_HUB_IN_CONTAINER=1`, where no token is
 minted and the hubs are mounted read-only) a restore or a publish answers 409 `hub_read_only` before the cookie is

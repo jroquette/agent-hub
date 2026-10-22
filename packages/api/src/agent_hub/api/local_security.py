@@ -38,11 +38,14 @@ STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # the launch's cookie when sessions are on (``session_access``). A workflow gate's decision
 # (AC-213.18) runs the CLI and resumes the run, so it is one of them, and so is the owner's
 # decision on a plan change request whose run is gone (two-level-flows AC-2.14): it answers in
-# the run's stead.
+# the run's stead. The scenario writes (AGH-350 plan T12) run the CLI too: a plan (the scripts'
+# plan mode), a start, an investigation's session and answer; a finding's issue reaches the
+# tracker and its note writes into the hub.
 RUN_WRITES = re.compile(
     rf"^{re.escape(API_PREFIX)}/(workflow-runs(/[^/]+/(cancel|resume|abandon))?"
     r"|approvals/[^/]+/decision"
-    r"|scenario-runs/[^/]+/investigation"
+    r"|scenarios/[^/]+/[^/]+/(plan|runs)"
+    r"|scenario-runs/[^/]+/(investigation|answer|findings/[^/]+/(issue|inbox))"
     r"|features/[^/]+/[^/]+/acs/[^/]+/check-runs"
     r"|features/[^/]+/[^/]+/change-requests/[^/]+/decision)$"
 )
