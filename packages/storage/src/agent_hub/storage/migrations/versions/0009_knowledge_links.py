@@ -2,10 +2,10 @@
 
 One new table (AGH-393). ``knowledge_links`` holds one row per ``(hub, source, target)``: the
 path of an indexed document and the path of a brain note (``brain/<rest>``) it links to, unique
-so concurrent syncs converge, with an index on ``(hub, target)`` for the backlinks of a note. It
-has no foreign key: the knowledge index adapter clears a document's rows itself. The rows are
-derived from the checkout like the rest of the index. No other table is touched; downgrading
-drops it.
+so concurrent syncs converge, with an index on ``(hub, target, source)`` for the backlinks of a
+note (one seek, in source order). It has no foreign key: the knowledge index adapter clears a
+document's rows itself. The rows are derived from the checkout like the rest of the index. No
+other table is touched; downgrading drops it.
 
 Revision ID: 0009
 Revises: 0008
@@ -33,7 +33,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("hub", "source", "target", name="uq_knowledge_links_hub_source_target"),
     )
-    op.create_index("ix_knowledge_links_hub_target", "knowledge_links", ["hub", "target"])
+    op.create_index("ix_knowledge_links_hub_target", "knowledge_links", ["hub", "target", "source"])
 
 
 def downgrade() -> None:

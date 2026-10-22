@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Final
 
 import pytest
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
 
 from agent_hub.core.knowledge.knowledge_index import (
     INDEX_VERSION,
@@ -409,3 +411,41 @@ def test_deletes_link_rows_when_path_dropped_or_hub_rebuilt(tmp_path: Path) -> N
     assert after_drop == {("brain/a.md", "brain/now.md"): 1, ("brain/c.md", "brain/now.md"): 1}
     assert _rows_per_link(path) == {("brain/a.md", "brain/now.md"): 1}
     assert index.backlinks("/hubs/other", "brain/now.md", limit=MAX_BACKLINKS).total == 1
+
+
+def test_searches_link_index_when_backlinks_read(tmp_path: Path) -> None:
+    """The page and the count each seek ``(hub, target)`` in the links' covering index, the
+    page in its ``source`` order: neither scans the hub's documents or links, nor sorts."""
+    path = tmp_path / "events.db"
+    index = open_knowledge_index(path)
+    documents = tuple(_linked(f"brain/{name}.md", "brain/now.md") for name in "abc")
+    index.apply(HUB, IndexChange(version=INDEX_VERSION, documents=documents))
+    statements: list[tuple[str, object]] = []
+
+    def record(*args: object) -> None:
+        statements.append((str(args[2]), args[3]))
+
+    event.listen(Engine, "before_cursor_execute", record)
+    try:
+        found = index.backlinks(HUB, "brain/now.md", limit=2)
+    finally:
+        event.remove(Engine, "before_cursor_execute", record)
+    connection = sqlite3.connect(path)
+    try:
+        plans = [
+            [row[3] for row in connection.execute(f"EXPLAIN QUERY PLAN {sql}", parameters)]
+            for sql, parameters in statements
+            if "knowledge_links" in sql
+        ]
+    finally:
+        connection.close()
+
+    assert [item.path for item in found.items] == ["brain/a.md", "brain/b.md"]
+    assert len(plans) == 2
+    seek = (
+        "SEARCH knowledge_links USING COVERING INDEX ix_knowledge_links_hub_target "
+        "(hub=? AND target=?)"
+    )
+    for plan in plans:
+        assert plan[0] == seek
+        assert not any("SCAN" in step or "TEMP B-TREE" in step for step in plan)
