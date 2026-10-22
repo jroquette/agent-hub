@@ -19,6 +19,8 @@ import { ScreenshotThumb } from "./ScreenshotLightbox";
 export interface AttachedImage {
   key: number;
   url: string;
+  /** What the image shows, for its thumbnail; "Image <n>" when absent. */
+  alt?: string | undefined;
 }
 
 /** A PDF or text file of a message, keyed for its list. */
@@ -320,7 +322,7 @@ export function AttachmentList({
           <ScreenshotThumb
             className="as-composer-thumb"
             src={image.url}
-            alt={`Image ${String(index + 1)}`}
+            alt={image.alt ?? `Image ${String(index + 1)}`}
             onSave={
               onReplaceImage
                 ? (url) => {
@@ -333,7 +335,7 @@ export function AttachmentList({
             <button
               type="button"
               className="as-composer-image-remove"
-              aria-label={`Remove image ${String(index + 1)}`}
+              aria-label={`Remove ${image.alt ?? `image ${String(index + 1)}`}`}
               title="Remove"
               onClick={() => {
                 onRemoveImage(image.key);

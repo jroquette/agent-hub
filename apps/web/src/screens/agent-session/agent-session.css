@@ -1251,6 +1251,24 @@
 .as-pill-select:focus-visible {
   outline: none;
 }
+/* A pill that shows its value in a span is as wide as that value: the native select (as wide as
+ * its longest option) lies invisible over the whole pill, still the keyboard and screen reader
+ * control, so a press anywhere on the pill opens it. */
+.as-pill:has(> .as-pill-value) .as-pill-select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  max-width: none;
+  opacity: 0;
+  cursor: pointer;
+}
+.as-pill-value {
+  overflow: hidden;
+  max-width: 160px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
 /* The mode tints its pill: edits run alone, plan only reads, auto runs everything alone. */
 .as-pill[data-mode="acceptEdits"] {
   background: var(--waiting-soft);
@@ -1318,9 +1336,101 @@
 }
 /* New session dialog, cloud panel and agent session list (sessions screen). */
 .as-new-dialog {
-  width: min(560px, calc(100vw - 32px));
+  width: min(640px, calc(100vw - 32px));
   max-height: calc(100vh - 64px);
   overflow: auto;
+}
+/* New session reads top to bottom: where it runs, the first prompt in the chat's card, extras. */
+.as-new-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.as-new-label {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.as-new-where,
+.as-new-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.as-new-fork {
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-sunken);
+}
+.as-new-where-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.as-new-project {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+}
+/* "Where" uses the composer's pills at a calmer, roomier size; the folder may take the rest. */
+.as-new-pill {
+  height: 32px;
+  padding: 0 var(--space-3);
+  font-size: 13px;
+}
+.as-new-folder {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.as-new-folder .as-pill-select {
+  flex: 1;
+  max-width: none;
+}
+/* In the dialog the card is a field, not the chat's capsule: a softer radius, a taller box. */
+.as-new-composer {
+  border-radius: var(--radius-lg);
+  padding: var(--space-2) var(--space-2) var(--space-1);
+}
+.as-new-composer > .as-composer-input {
+  min-height: 84px;
+}
+/* The `/` menu opens under the card: above it is "Where", inside a scrolling dialog. */
+.as-new-composer .as-slash {
+  top: calc(100% + var(--space-1));
+  bottom: auto;
+}
+.as-new-hint {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-subtle);
+}
+.as-new-hint[data-warn] {
+  color: var(--failed);
+}
+.as-new-hint b {
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.as-new-skills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}
+.as-new-skills .as-new-label {
+  margin-right: var(--space-1);
+}
+.as-new-skill {
+  border-radius: var(--radius-full);
+  font-family: var(--font-mono);
+  font-size: 12px;
 }
 .as-fieldset {
   border: 0;
