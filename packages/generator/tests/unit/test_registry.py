@@ -40,6 +40,7 @@ SEEDED_PACK_FILES = (
     "issue-to-pr/issue-to-pr.yaml",
     "issue-to-pr/prompts/implement.md",
     "retro/scripts/metrics.py",
+    "retro/scripts/vet.py",
     "sdlc/deliver.yaml",
     "sdlc/fixtures/deliver-blocked.yaml",
     "sdlc/fixtures/deliver-check-error.yaml",

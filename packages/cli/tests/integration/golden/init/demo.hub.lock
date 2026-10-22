@@ -616,6 +616,9 @@
     "workflows/retro/scripts/metrics.py": {
       "ownership": "seeded"
     },
+    "workflows/retro/scripts/vet.py": {
+      "ownership": "seeded"
+    },
     "workflows/sdlc/deliver.yaml": {
       "ownership": "seeded"
     },

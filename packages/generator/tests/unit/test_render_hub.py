@@ -168,6 +168,7 @@ DESIGN_PATHS = (
     "workflows/issue-to-pr/issue-to-pr.yaml",
     "workflows/issue-to-pr/prompts/implement.md",
     "workflows/retro/scripts/metrics.py",
+    "workflows/retro/scripts/vet.py",
     "workflows/sdlc/deliver.yaml",
     "workflows/sdlc/fixtures/deliver-blocked.yaml",
     "workflows/sdlc/fixtures/deliver-check-error.yaml",
