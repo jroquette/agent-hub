@@ -31,6 +31,7 @@ from agent_hub.core.agent_sessions.driver import (
     Deny,
     DriverCapabilities,
     DriverEvent,
+    DriverFile,
     DriverHandle,
     DriverImage,
     PastSession,
@@ -47,6 +48,7 @@ from agent_hub.core.agent_sessions.driver import (
 from agent_hub.core.agent_sessions.errors import (
     AgentSessionNotFoundError,
     InvalidDecisionError,
+    InvalidMessageFileError,
     InvalidScreenshotError,
     InvalidWorkdirError,
     LiveLimitError,
@@ -1165,7 +1167,12 @@ class FailingStore(InMemoryAgentSessionStore):
 
 class SendFailingDriver(InMemorySessionDriver):
     async def send(
-        self, handle: DriverHandle, text: str, *, images: tuple[DriverImage, ...] = ()
+        self,
+        handle: DriverHandle,
+        text: str,
+        *,
+        images: tuple[DriverImage, ...] = (),
+        files: tuple[DriverFile, ...] = (),
     ) -> None:
         raise RuntimeError("pipe closed")
 
@@ -1450,6 +1457,55 @@ async def test_sends_prompt_with_image_when_screenshot_sent(make_rig: MakeRig) -
     assert first.body == {"text": "Say hello.", "attachments": [SCREENSHOT_MARKER]}
 
 
+async def test_sends_prompt_with_capture_images_and_files_when_all_attached(
+    make_rig: MakeRig,
+) -> None:
+    # AC-419.5: the capture, then the images, and the files go with the first prompt.
+    rig = make_rig()
+    notes = b"# Brief\nExport orders.\n"
+    attached = {
+        "name": "brief.md",
+        "media_type": "text/plain",
+        "data": base64.b64encode(notes).decode("ascii"),
+    }
+
+    created = await rig.create(
+        "Start it.", screenshot=_screenshot(), screenshots=[_screenshot()], files=[attached]
+    )
+    await rig.until_status(created.id, "idle")
+
+    image = DriverImage(media_type="image/png", data=PNG)
+    file = DriverFile(name="brief.md", media_type="text/plain", data=notes)
+    sends = [call.args for call in rig.driver.calls if call.method == "send"]
+    assert sends == [("Start it.", (image, image), (file,))]
+    file_marker = {
+        "kind": "file",
+        "media_type": "text/plain",
+        "bytes": len(notes),
+        "name": "brief.md",
+    }
+    assert rig.records(created.id)[0].body == {
+        "text": "Start it.",
+        "attachments": [file_marker, SCREENSHOT_MARKER, SCREENSHOT_MARKER],
+    }
+
+
+async def test_refuses_before_driver_when_first_prompt_file_refused(make_rig: MakeRig) -> None:
+    # AC-419.5: a refused file stops the start before anything runs.
+    rig = make_rig()
+    fake_pdf = {
+        "name": "a.pdf",
+        "media_type": "application/pdf",
+        "data": base64.b64encode(b"hi").decode("ascii"),
+    }
+
+    with pytest.raises(InvalidMessageFileError) as refused:
+        await rig.create("Start it.", files=[fake_pdf])
+
+    assert refused.value.pointer == "/files/0/data"
+    assert [call.method for call in rig.driver.calls] == []
+
+
 @pytest.mark.parametrize(
     ("data", "refusal"),
     [
@@ -1507,6 +1563,56 @@ async def test_sends_message_with_images_when_screenshots_sent(make_rig: MakeRig
     message = next(record for record in rig.records(created.id) if record.seq == accepted.seq)
     assert message.body == {"text": "Look.", "attachments": [SCREENSHOT_MARKER] * 2}
     assert PNG_BASE64 not in message.model_dump_json()
+
+
+async def test_sends_message_with_files_when_files_attached(make_rig: MakeRig) -> None:
+    # AC-419.1, AC-419.4: sent to the driver, logged as markers.
+    rig = make_rig()
+    created = await rig.create("Say hello.")
+    await rig.until_status(created.id, "idle")
+    text = b"id,name\n1,Ada\n"
+    attached = {
+        "name": "people.csv",
+        "media_type": "text/plain",
+        "data": base64.b64encode(text).decode(),
+    }
+
+    accepted = await rig.control.send(
+        created.id, SendMessage.model_validate({"text": "Read it.", "files": [attached]})
+    )
+    await rig.until_status(created.id, "idle")
+
+    sends = [call.args for call in rig.driver.calls if call.method == "send"]
+    assert sends[-1] == (
+        "Read it.",
+        (),
+        (DriverFile(name="people.csv", media_type="text/plain", data=text),),
+    )
+    message = next(record for record in rig.records(created.id) if record.seq == accepted.seq)
+    marker = {"kind": "file", "media_type": "text/plain", "bytes": len(text), "name": "people.csv"}
+    assert message.body == {"text": "Read it.", "attachments": [marker]}
+    assert "1,Ada" not in message.model_dump_json()
+
+
+async def test_refuses_message_file_before_logging_when_not_pdf(make_rig: MakeRig) -> None:
+    # AC-419.2: refused before anything is logged or sent.
+    rig = make_rig()
+    created = await rig.create("Say hello.")
+    await rig.until_status(created.id, "idle")
+    before = rig.kinds(created.id)
+    fake_pdf = {
+        "name": "a.pdf",
+        "media_type": "application/pdf",
+        "data": base64.b64encode(b"hi").decode(),
+    }
+
+    with pytest.raises(InvalidMessageFileError) as refused:
+        await rig.control.send(
+            created.id, SendMessage.model_validate({"text": "Read it.", "files": [fake_pdf]})
+        )
+
+    assert refused.value.pointer == "/files/0/data"
+    assert rig.kinds(created.id) == before
 
 
 async def test_refuses_message_image_before_logging_when_not_png(make_rig: MakeRig) -> None:

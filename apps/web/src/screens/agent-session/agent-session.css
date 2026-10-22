@@ -1368,71 +1368,37 @@
   gap: var(--space-2);
 }
 
-/* Images pasted, dropped or picked into the composer, above the text: a thumbnail each (open it
- * to mark it up) with a remove button in its corner. */
+/* The composer while a file is dragged over it (its attachments: components/AttachmentList.css). */
 .as-composer-drop {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
-.as-composer-images {
+.as-msg-file-name {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The files a sent message carried, above its bubble. */
+.as-msg-files {
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
   gap: var(--space-2);
   margin: 0;
   padding: 0;
   list-style: none;
 }
-.as-composer-image {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 72px;
-  height: 72px;
+.as-msg-file {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 260px;
+  padding: var(--space-1) var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface-sunken);
-}
-.as-composer-image .ah-shot-button {
-  /* Pinned to the 72 px tile so a tall or wide image is cropped, never sized by its own shape. */
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-}
-.as-composer-thumb {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: top;
-  border-radius: calc(var(--radius-md) - 1px);
-}
-.as-composer-image .ah-shot-hint {
-  right: 4px;
-  bottom: 4px;
-  width: 20px;
-  height: 20px;
-}
-.as-composer-image-remove {
-  position: absolute;
-  top: -7px;
-  right: -7px;
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: 1px solid var(--border-strong);
-  border-radius: 50%;
-  background: var(--surface);
   color: var(--text-muted);
-  cursor: pointer;
-  box-shadow: var(--shadow-sm);
-}
-.as-composer-image-remove:hover {
-  color: var(--failed);
-  border-color: var(--failed);
-}
-.as-composer-image-reading {
-  color: var(--text-subtle);
 }
 /* What Claude did between two messages: one quiet line; its steps open in the side panel. */
 .as-activity {

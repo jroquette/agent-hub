@@ -16,7 +16,7 @@ import {
 import { usePanelDismiss } from "../components/usePanelDismiss";
 import { ApiProblem } from "../lib/api";
 import { captureScreen } from "../lib/screenCapture";
-import { rememberScreenshot } from "../lib/screenshotCopy";
+import type { MessageFile } from "../lib/messageFile";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "../screens/agent-session/Composer";
 import { DiscussChat } from "../screens/agent-session/DiscussChat";
 import {
@@ -26,12 +26,7 @@ import {
   type PanelBounds,
 } from "../screens/agent-session/DrawerResize";
 import type { PermissionMode } from "../screens/agent-session/model";
-import { sessionControlUnavailable } from "../screens/sessions-list/control";
-import {
-  useAgentCapabilities,
-  useCreateAgentSession,
-  useWorkdirs,
-} from "../screens/sessions-list/queries";
+import { useAgentCapabilities } from "../screens/sessions-list/queries";
 import {
   discussPrompt,
   referencedMessage,
@@ -39,28 +34,15 @@ import {
   type DiscussReference,
   type DiscussTarget,
 } from "./discuss";
+import {
+  readDiscussSession,
+  rememberDiscussSession,
+  useStartDiscussion,
+  type ScreenCapture,
+} from "./discussSession";
 import { readScreenText } from "./screenContext";
 
 const DEFAULT_MODELS = ["default", "opus", "sonnet", "haiku"];
-const storageKey = (target: DiscussTarget) => `ah.discuss.session.${target.key}`;
-
-function readStored(target: DiscussTarget): string | null {
-  try {
-    return window.localStorage.getItem(storageKey(target));
-  } catch {
-    return null;
-  }
-}
-
-function writeStored(target: DiscussTarget, id: string | null) {
-  try {
-    if (id === null) window.localStorage.removeItem(storageKey(target));
-    else window.localStorage.setItem(storageKey(target), id);
-  } catch {
-    // Without storage the conversation is only forgotten on reload.
-  }
-}
-
 /** The width the owner chose for the panel, kept in this browser. */
 export const DISCUSS_WIDTH_KEY = "ah.discuss.width";
 /** Docked from this viewport width; below it the panel lays over the page. */
@@ -298,11 +280,13 @@ function DiscussBody({ target }: { target: DiscussTarget }) {
   const { references, removeReference, clearReferences } = useDiscuss();
   const owner = target.ownerSession ?? null;
   // The owner's session comes first; the panel's own conversation is one click away.
-  const [sessionId, setSessionId] = useState<string | null>(() => owner?.id ?? readStored(target));
+  const [sessionId, setSessionId] = useState<string | null>(
+    () => owner?.id ?? readDiscussSession(target),
+  );
   const [statusSlot, setStatusSlot] = useState<HTMLSpanElement | null>(null);
   const onOwner = owner !== null && sessionId === owner.id;
   const forget = useCallback(() => {
-    if (!onOwner) writeStored(target, null);
+    if (!onOwner) rememberDiscussSession(target, null);
     setSessionId(null);
   }, [target, onOwner]);
   const what = `${target.kind} · ${target.title}`;
@@ -351,7 +335,7 @@ function DiscussBody({ target }: { target: DiscussTarget }) {
           references={references}
           accessory={chips}
           onStarted={(id) => {
-            writeStored(target, id);
+            rememberDiscussSession(target, id);
             setSessionId(id);
             clearReferences();
           }}
@@ -363,7 +347,7 @@ function DiscussBody({ target }: { target: DiscussTarget }) {
 
 interface ScreenRead {
   text: string;
-  screenshot: { dataUrl: string; body: { media_type: "image/png"; data: string } } | null;
+  screenshot: ScreenCapture | null;
 }
 
 /** What the screen shows when the conversation starts: its main column's text and a screenshot. */
@@ -405,11 +389,13 @@ function StartDiscussion({
   onStarted: (id: string) => void;
 }) {
   const capabilities = useAgentCapabilities();
-  const unavailable = sessionControlUnavailable(capabilities.error, capabilities.data);
-  const canDrive = capabilities.data !== undefined && unavailable === null;
-  const workdirs = useWorkdirs(target.project, canDrive);
-  const hub = workdirs.data?.items.find((w) => w.kind === "hub") ?? null;
-  const create = useCreateAgentSession();
+  const {
+    unavailable,
+    reason,
+    pending,
+    error,
+    start: startSession,
+  } = useStartDiscussion(target.project);
   const [mode, setMode] = useState<PermissionMode>("default");
   const [model, setModel] = useState<string | null>(null);
 
@@ -422,31 +408,26 @@ function StartDiscussion({
       </div>
     );
   }
-  const reason = !canDrive
-    ? "Checking whether this machine can drive Claude…"
-    : workdirs.isPending
-      ? "Looking for the hub folder…"
-      : hub === null
-        ? `Project ${target.project} has no hub folder to work in.`
-        : null;
-
-  const start = async (text: string) => {
-    if (!hub) return;
+  // The first message may carry images and files of its own, after the screen's capture.
+  const start = async (
+    text: string,
+    images: readonly string[] = [],
+    files: readonly MessageFile[] = [],
+  ) => {
     const screen = target.screen ? await readScreen() : null;
-    const session = await create.mutateAsync({
-      project: target.project,
-      workdir_id: hub.workdir_id,
-      mode,
-      fork: false,
-      ...(model && model !== "default" ? { model } : {}),
-      ...(screen?.screenshot ? { screenshot: screen.screenshot.body } : {}),
+    const id = await startSession({
+      target,
       prompt: discussPrompt(
         screen ? { ...target, brief: withScreenText(target.brief, screen.text) } : target,
         referencedMessage(references, text),
       ),
+      images,
+      files,
+      capture: screen?.screenshot,
+      mode,
+      model,
     });
-    if (screen?.screenshot) rememberScreenshot(session.id, screen.screenshot.dataUrl);
-    onStarted(session.id);
+    if (id) onStarted(id);
   };
 
   return (
@@ -476,9 +457,9 @@ function StartDiscussion({
               type="button"
               className="ah-discuss-starter"
               title="Sends this message now"
-              disabled={reason !== null || create.isPending}
+              disabled={reason !== null || pending}
               onClick={() => {
-                // A failure shows below the composer (create.error); nothing else to do here.
+                // A failure shows below the composer (error); nothing else to do here.
                 start(starter.message).catch(() => undefined);
               }}
             >
@@ -508,11 +489,13 @@ function StartDiscussion({
             draftId={`discuss.${target.key}`}
             focusOnOpen
             disabledReason={reason}
+            acceptsImages
+            acceptsFiles
             accessory={accessory}
           />
-          {create.error instanceof ApiProblem && (
+          {error instanceof ApiProblem && (
             <p className="ah-small as-error" role="alert">
-              {create.error.detail ?? create.error.title}
+              {error.detail ?? error.title}
             </p>
           )}
         </div>

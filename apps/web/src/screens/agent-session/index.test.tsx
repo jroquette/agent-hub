@@ -728,6 +728,38 @@ describe("AgentSessionScreen (composer)", () => {
     });
   });
 
+  it("posts an attached file with the message and lists it while it sends (AC-419.7, AC-419.10)", async () => {
+    const view = renderChat(routes({ [`POST ${SESSION}/messages`]: { seq: 4 } }));
+    await screen.findByText("Starting.");
+    const box = screen.getByRole("textbox", { name: "Message Claude" });
+    expect(screen.getByRole("button", { name: "Attach a file" })).toBeEnabled();
+
+    fireEvent.paste(box, {
+      clipboardData: { files: [new File(["# Brief"], "brief.md", { type: "text/markdown" })] },
+    });
+    await screen.findByRole("button", { name: "Remove brief.md" });
+    await userEvent.type(box, "Read it.{Enter}");
+
+    await waitFor(() => {
+      expect(posts(view.requests, "/messages")).toHaveLength(1);
+    });
+    expect(await bodyOf(posts(view.requests, "/messages")[0])).toEqual({
+      text: "Read it.",
+      files: [{ name: "brief.md", media_type: "text/plain", data: btoa("# Brief") }],
+    });
+    const sent = await screen.findByRole("list", { name: "Files sent with this message" });
+    expect(within(sent).getByText("brief.md")).toBeInTheDocument();
+  });
+
+  it("offers no Attach in a cloud session (AC-419.7)", async () => {
+    renderChat(
+      routes({ [SESSION]: anAgentSession({ status: "idle", kind: "cloud", last_seq: 3 }) }),
+    );
+    await screen.findByText("Starting.");
+
+    expect(screen.queryByRole("button", { name: "Attach a file" })).toBeNull();
+  });
+
   it("focuses the composer on open", async () => {
     renderChat();
 

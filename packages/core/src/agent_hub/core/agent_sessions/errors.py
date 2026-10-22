@@ -174,3 +174,22 @@ class ScreenshotTooLargeError(AgentHubError):
         self.size = size
         self.limit = limit
         super().__init__(f"screenshot of {size} bytes is over the {limit} byte limit")
+
+
+class InvalidMessageFileError(AgentHubError):
+    """A message's file is not valid base64, or not what its media type says (422); ``reason``
+    is fixed text, never the data. ``pointer`` is the JSON pointer of its ``data``."""
+
+    def __init__(self, reason: str, *, pointer: str) -> None:
+        self.reason = reason
+        self.pointer = pointer
+        super().__init__(f"invalid file: {reason}")
+
+
+class MessageFileTooLargeError(AgentHubError):
+    """A message's decoded file is over the byte limit (413)."""
+
+    def __init__(self, *, size: int, limit: int) -> None:
+        self.size = size
+        self.limit = limit
+        super().__init__(f"file of {size} bytes is over the {limit} byte limit")
