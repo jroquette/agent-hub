@@ -1,0 +1,165 @@
+# The owner approves, but another ticket's amendment moved the plan first: amend-plan writes no
+# A<k> and says so (A23). The re-check in the same pass reads the current plan, told that the
+# approval was not applied (its preflight run records it), finds local drift, and the run goes on to
+# the PR; the delivery says "change request 1 approved but superseded by plan v2: not applied".
+workflow: implement
+inputs:
+  feature: demo-flow
+  issue: DEM-1
+  issue_text: "```text\nid: DEM-1\n```"
+stubs:
+  context:
+    output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-1/brief.md, hub: /ws/hub, repo: demo-api,
+      commit: 0a1b2c3d4e}
+  pending:
+    output: {request: null, decision: '', input: none, note: '', summary: '', superseded: ''}
+  pass-1__preflight:
+    output:
+      drift: plan
+      local_notes: []
+      blockers_read: []
+      evidence: The handler moved to src/api/routes.py.
+      proposal: Route T2 through routes.py.
+      affected: T3
+      summary: T2 goes through routes.py
+  pass-1__request:
+    output: {n: 1, plan_from: 1, plan_to: 2}
+  pass-1__record:
+    output: {runs: 1}
+  pass-1__gate: {decision: approve, text: Go ahead., approver: Dana Owner}
+  pass-1__approved:
+    output: {decision: approved}
+  pass-1__amend:
+    output: {amendment: null, already: null, moved: 'change request 1 approved but superseded by plan
+        v2: not applied'}
+  pass-1__recheck:
+    output:
+      drift: local
+      local_notes: [T3's amendment already routes the handler.]
+      blockers_read: []
+      evidence: ''
+      proposal: ''
+      affected: ''
+      summary: ''
+  pass-1__rerecord:
+    output: {runs: 2}
+  pass-1__worktree:
+    output:
+      path: /ws/demo-api/.claude/worktrees/dem-1
+      branch: jdoe/dem-1
+      base: origin/trunk
+      hub: /ws/hub
+      hub_name: hub
+      check: make check
+      prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
+      target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
+  pass-1__plan:
+    output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-1/plan.md}
+  pass-1__rounds__implement: {text: '{"status": "done", "summary": "Adds the change.", "tests": "make
+      test", "discovery": ""}'}
+  pass-1__rounds__verdict:
+    output: {status: done, summary: Adds the change., question: '', discovery: ''}
+  pass-1__rounds__check:
+    output:
+      passed: true
+      exit_code: 0
+      round: 1
+      tail: "ok\n"
+  pass-1__rounds__spec:
+    output:
+      schema: agent-hub/review/1
+      reviewer: spec
+      ticket: DEM-1
+      task: DEM-1
+      round: 1
+      commit: 0a1b2c3d
+      verdict: PASS
+      findings: []
+  pass-1__rounds__quality:
+    output:
+      schema: agent-hub/review/1
+      reviewer: quality
+      ticket: DEM-1
+      task: DEM-1
+      round: 1
+      commit: 0a1b2c3d
+      verdict: PASS
+      findings: []
+  pass-1__rounds__review:
+    output:
+      verdict: PASS
+      lenses: {spec: PASS, quality: PASS}
+  pass-1__rounds__notes:
+    output:
+      check:
+        passed: true
+        exit_code: 0
+        tail: "ok\n"
+      findings: []
+      omitted: 0
+  pass-1__rounds__feedback:
+    output:
+      check:
+        passed: true
+        exit_code: 0
+        tail: "ok\n"
+      findings: []
+      omitted: 0
+  pass-1__outcome:
+    output:
+      status: done
+      question: ''
+      verdict: PASS
+      next_input: ''
+      next_text: ''
+      superseded: 'change request 1 approved but superseded by plan v2: not applied'
+      path: /ws/demo-api/.claude/worktrees/dem-1
+      base: origin/trunk
+      target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
+  last:
+    output:
+      status: done
+      question: ''
+      verdict: PASS
+      pass: 1
+      path: /ws/demo-api/.claude/worktrees/dem-1
+      base: origin/trunk
+      target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
+      superseded: 'change request 1 approved but superseded by plan v2: not applied'
+  eval:
+    output:
+      schema: agent-hub/eval/1
+      delivery: dem-1
+      verdict: SHIP
+      commit: 0a1b2c3d
+      tickets: [DEM-1]
+      acs: [AC-1.1]
+      results:
+      - {ac: AC-1.1, command: make test, exit_code: 0, status: pass, summary: The endpoint answers.}
+      gates:
+      - {repo: demo-api, name: check, exit_code: 0, status: pass}
+      red_on_parent: []
+      owner_steps: []
+  commits:
+    output: {count: 1, dirty: false}
+  pr:
+    output: {url: 'https://github.com/acme/demo-api/pull/99', summary: Adds the change.}
+  report:
+    output: {delivery: delivered, stage: '', reason: '', question: '', pr: 'https://github.com/acme/demo-api/pull/99',
+      summary: Adds the change.}
+  delivery:
+    output:
+      delivery: delivered
+      stage: ''
+      reason: ''
+      question: ''
+      pr: https://github.com/acme/demo-api/pull/99
+      summary: Adds the change.
+      hub_files: [change-requests/1.decision.md, change-requests/1.md, tickets/DEM-1/brief.md, tickets/DEM-1/plan.md,
+        tickets/DEM-1/preflight.json]
+      superseded: 'change request 1 approved but superseded by plan v2: not applied'
+expect: {status: done, outcome: delivered}
+reached: [context, pending, pass-1__preflight, pass-1__request, pass-1__record, pass-1__gate, pass-1__approved,
+  pass-1__amend, pass-1__recheck, pass-1__rerecord, pass-1__worktree, pass-1__plan, pass-1__rounds, pass-1__rounds__implement,
+  pass-1__rounds__verdict, pass-1__rounds__check, pass-1__rounds__spec, pass-1__rounds__quality, pass-1__rounds__review,
+  pass-1__rounds__notes, pass-1__rounds__feedback, pass-1__outcome, last, eval, commits, pr, report, delivery]

@@ -1,8 +1,9 @@
 """The ticket records an ``implement`` run writes into the hub (two-level-flows S2, P7).
 
 ``hub step ticket-brief|preflight|change-request|decide|amend-plan`` call these with the hub's
-main checkout. They write under ``brain/features/<slug>/`` only and never commit: the run's
-report names the changed files for the owner's hub PR (D-1). The texts and their checks are
+main checkout (``pending-decision`` too, which only reads). They write under
+``brain/features/<slug>/`` only and never commit: the run's report names the changed files for
+the owner's hub PR (D-1). The texts and their checks are
 ``agent_hub.core.features.ticket_writes``'; here are the reads and writes. No link is followed:
 the feature folder, ``tickets/``, ``change-requests/`` and every file read or replaced must not
 be one. A file that is appended to (``brief.md``, ``preflight.json``, ``plan.md``) is replaced
@@ -23,6 +24,7 @@ import os
 import re
 import secrets
 from collections.abc import Iterator, Sequence
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Final
@@ -40,6 +42,7 @@ from agent_hub.core.features.feature_record import (
     record_from_bytes,
 )
 from agent_hub.core.features.feature_status import MAX_PLAN_BYTES
+from agent_hub.core.features.output_models import PreflightRecord
 from agent_hub.core.features.plan_version import plan_version
 from agent_hub.core.features.ticket_records import (
     CHANGE_REQUESTS_FOLDER,
@@ -47,11 +50,15 @@ from agent_hub.core.features.ticket_records import (
     PREFLIGHT_FILE,
     TICKET_BRIEF,
     TICKETS_FOLDER,
+    preflight_record,
     ticket_folder,
 )
 from agent_hub.core.features.ticket_writes import (
     MAX_REQUEST_BYTES,
+    NO_PENDING,
     Blocker,
+    PlanMovedError,
+    PreflightFacts,
     TicketBrief,
     TicketRecordError,
     amended_plan,
@@ -62,8 +69,11 @@ from agent_hub.core.features.ticket_writes import (
     decision_text,
     named_paths,
     next_request,
+    pending_decision,
+    pending_request,
     plan_ids,
     plan_section,
+    preflight_run,
     ticket_acs,
 )
 from agent_hub.core.hub_config.model import HubConfig
@@ -89,6 +99,8 @@ def ticket_brief(
     folder = _feature(hub, feature)
     record = _record(folder)
     planned = _planned_or_refuse(record.tickets, ticket)
+    # Main as last fetched, read once: the preflight reads this commit and its run records it.
+    main = _main_commit(hub, config, planned)
     plan = _required(folder / PLAN, MAX_PLAN_BYTES)
     names = (*plan_ids(planned.key), *_names(planned)[1:])
     section = plan_section(plan.decode("utf-8", "replace"), names)
@@ -112,18 +124,77 @@ def ticket_brief(
     with _feature_lock(hub, feature):
         written, version = appended_brief(_read(target / TICKET_BRIEF, MAX_BRIEF_BYTES), brief)
         _replace(target, TICKET_BRIEF, written)
-    return {"path": _relative(hub, target / TICKET_BRIEF), "version": version}
+    # The hub, the ticket's repo (the plan's, not a caller's) and main's commit the preflight reads.
+    return {
+        "path": _relative(hub, target / TICKET_BRIEF),
+        "version": version,
+        "hub": str(hub),
+        "repo": planned.repo,
+        "commit": main,
+    }
 
 
-def preflight(hub: Path, *, feature: str, ticket: str, run: bytes) -> dict[str, JsonValue]:
-    """Append ``run`` to ``tickets/<ticket>/preflight.json``."""
+def preflight(
+    hub: Path,
+    *,
+    feature: str,
+    ticket: str,
+    findings: bytes,
+    facts: PreflightFacts,
+) -> dict[str, JsonValue]:
+    """Append the run built from the agent's ``findings`` to ``tickets/<ticket>/preflight.json``;
+    ``facts`` gives the time, the run's id, main's commit the preflight read (``ticket-brief``'s)
+    and the input, and this fills the plan's version."""
     folder = _feature(hub, feature)
-    target = _ticket_folder(folder, _planned_or_refuse(_record(folder).tickets, ticket))
+    planned = _planned_or_refuse(_record(folder).tickets, ticket)
+    target = _ticket_folder(folder, planned)
+    plan = _required(folder / PLAN, MAX_PLAN_BYTES)
+    facts = replace(facts, plan_version=_version(plan))
+    if facts.input == "approve" and facts.request is not None:
+        # An approval the plan moved past is re-checked as a plain check that says so (A23).
+        moved = _superseded(folder, facts.request, plan)
+        if moved:
+            # It opened no request: the superseded one is not named (A24).
+            facts = replace(facts, input="none", input_text=moved, request=None)
     with _feature_lock(hub, feature):
         existing = _read(target / PREFLIGHT_FILE, MAX_PREFLIGHT_BYTES)
+        run = preflight_run(findings, facts)
         written, count = appended_preflight(existing, run, folder=target.name)
         _replace(target, PREFLIGHT_FILE, written)
     return {"path": _relative(hub, target / PREFLIGHT_FILE), "runs": count}
+
+
+def _superseded(folder: Path, n: int, plan: bytes) -> str:
+    """What the run says of approved request ``n`` when the plan moved past it, else ``""``."""
+    requests = folder / CHANGE_REQUESTS_FOLDER
+    request = _read(requests / f"{n}.md", MAX_REQUEST_BYTES)
+    decision = _read(requests / f"{n}.decision.md", MAX_REQUEST_BYTES)
+    if request is None or decision is None:
+        return ""
+    return pending_decision(n, request=request, decision=decision, plan=plan).superseded
+
+
+def _main_commit(hub: Path, config: HubConfig, planned: PlannedTicket) -> str:
+    """``origin/<default branch>``'s commit in the ticket's repo checkout: main as last fetched,
+    read without a checkout."""
+    entry = next((repo for repo in config.repos if repo.dir == planned.repo), None)
+    if entry is None:
+        raise TicketRecordError(
+            f"the ticket's repo {one_line(planned.repo or 'none')} is not in hub.json"
+        )
+    base = f"origin/{config.default_branch_for(entry.dir)}"
+    try:
+        found = git_output(
+            ship_child(hub.parent / entry.dir),
+            *("rev-parse", "--verify", "--quiet", f"{base}^{{commit}}"),
+            environ=os.environ,
+            timeout=step_timeouts().git,
+        ).strip()
+    except PrStepError as error:
+        raise TicketRecordError(
+            f"{base} could not be read: {one_line(error.reason.strip())}"
+        ) from None
+    return found
 
 
 def change_request(
@@ -136,14 +207,22 @@ def change_request(
     evidence: str,
     proposal: str,
     now: datetime,
+    findings: bytes = b"",
+    facts: PreflightFacts | None = None,
 ) -> dict[str, JsonValue]:
     """Create ``change-requests/<n>.md`` (``n`` the next free number) against the plan's
-    current version."""
+    current version. With the preflight's ``findings`` and the run's ``facts``, the run
+    that will name the request is checked first: a run the writer would refuse opens no request
+    that no preflight run names."""
     folder = _feature(hub, feature)
     planned = _planned_or_refuse(_record(folder).tickets, ticket)
     plan_from = _version(_required(folder / PLAN, MAX_PLAN_BYTES))
     requests = _folder(folder, CHANGE_REQUESTS_FOLDER)
     first = next_request(os.listdir(requests))
+    if facts is not None:
+        facts = replace(facts, plan_version=plan_from, request=first)
+        run = preflight_run(findings, facts)
+        appended_preflight(None, run, folder=planned.id or planned.key)
     for n in range(first, first + MAX_REQUEST_TRIES):
         text = change_request_text(
             n=n,
@@ -197,19 +276,92 @@ def amend_plan(hub: Path, *, feature: str, request: int, summary: str) -> dict[s
     requests = _folder(folder, CHANGE_REQUESTS_FOLDER, create=False)
     with _feature_lock(hub, feature):
         plan = _required(folder / PLAN, MAX_PLAN_BYTES)
-        written, ident = amended_plan(
-            plan,
-            n=request,
-            request=_required(requests / f"{request}.md", MAX_REQUEST_BYTES),
-            decision=_required(requests / f"{request}.decision.md", MAX_REQUEST_BYTES),
-            summary=summary,
-        )
+        try:
+            written, ident = amended_plan(
+                plan,
+                n=request,
+                request=_required(requests / f"{request}.md", MAX_REQUEST_BYTES),
+                decision=_required(requests / f"{request}.decision.md", MAX_REQUEST_BYTES),
+                summary=summary,
+            )
+        except PlanMovedError as moved:
+            # The run checks the ticket against the current plan instead (AGH-404 Q1).
+            path = _relative(hub, folder / PLAN)
+            return {"path": path, "amendment": None, "already": None, "moved": str(moved)}
         if written == plan:
             already: str | None = f"already amended as {ident}"
         else:
             already = None
             _replace(folder, PLAN, written)
-    return {"path": _relative(hub, folder / PLAN), "amendment": ident, "already": already}
+    return {
+        "path": _relative(hub, folder / PLAN),
+        "amendment": ident,
+        "already": already,
+        "moved": None,
+    }
+
+
+def pending(hub: Path, *, feature: str, ticket: str) -> dict[str, JsonValue]:
+    """The owner's decision on the change request the ticket's last preflight opened, when one
+    was recorded with no run waiting for it (AC-2.14); empty values when there is none."""
+    folder = _feature(hub, feature)
+    planned = _planned_or_refuse(_record(folder).tickets, ticket)
+    target = _ticket_folder(folder, planned)
+    record = _preflight(target)
+    requests = folder / CHANGE_REQUESTS_FOLDER
+    found = pending_request(record)
+    if found is None and requests.is_dir() and not requests.is_symlink():
+        found = _unnamed_request(requests, planned, record)
+    decided = NO_PENDING
+    if found is not None and requests.is_dir() and not requests.is_symlink():
+        request = _read(requests / f"{found}.md", MAX_REQUEST_BYTES)
+        decision = _read(requests / f"{found}.decision.md", MAX_REQUEST_BYTES)
+        if request is not None and decision is not None:
+            plan = _required(folder / PLAN, MAX_PLAN_BYTES)
+            decided = pending_decision(found, request=request, decision=decision, plan=plan)
+    return {
+        "request": decided.request,
+        "decision": decided.decision,
+        "input": decided.input,
+        "note": decided.note,
+        "summary": decided.summary,
+        "superseded": decided.superseded,
+    }
+
+
+def _unnamed_request(
+    requests: Path, planned: PlannedTicket, record: PreflightRecord | None
+) -> int | None:
+    """The ticket's newest decided request that no preflight run names, opened since its last
+    run: the run that opened it failed before its preflight run was recorded."""
+    runs = record.runs if record is not None else ()
+    since = runs[-1].ran_at if runs else None
+    named = {run.change_request for run in runs}
+    names = {name.upper() for name in _names(planned)}
+    found: list[int] = []
+    for name in os.listdir(requests):
+        if not name.endswith(".decision.md") or (n := name.split(".", 1)[0]).isdecimal() is False:
+            continue
+        head = _read(requests / f"{n}.md", MAX_REQUEST_BYTES)
+        try:
+            fields = record_fields(head or b"")
+            ticket = text_field(fields, "ticket") or ""
+            opened = datetime.fromisoformat(text_field(fields, "opened_at") or "")
+        except RecordFieldError, ValueError:
+            continue
+        newer = since is None or opened > since
+        if ticket.upper() in names and int(n) not in named and newer:
+            found.append(int(n))
+    return max(found, default=None)
+
+
+def _preflight(target: Path) -> PreflightRecord | None:
+    record = preflight_record(
+        _read(target / PREFLIGHT_FILE, MAX_PREFLIGHT_BYTES), folder=target.name
+    )
+    if isinstance(record, str):
+        raise TicketRecordError(record)
+    return record
 
 
 def _version(plan: bytes) -> int:
