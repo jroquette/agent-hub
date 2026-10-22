@@ -312,4 +312,37 @@ describe("RunsListScreen", () => {
     await screen.findByText("Guard bypass");
     expect(await seriousViolations(container)).toEqual([]);
   });
+  it("asks for workflow runs only (AM-7)", async () => {
+    const { requests } = renderWithApi(<RunsListScreen />, { routes, path: "/runs" });
+
+    await screen.findByText("Guard bypass");
+    const listed = requests
+      .map((request) => new URL(request.url))
+      .filter((url) => url.pathname === "/api/v1/workflow-runs");
+    expect(listed.length).toBeGreaterThan(0);
+    for (const url of listed) {
+      if (url.searchParams.get("kind") === "scenario") continue;
+      expect(url.searchParams.get("kind")).toBe("workflow");
+    }
+    expect(listed.some((url) => url.searchParams.get("limit") !== "1")).toBe(true);
+  });
+
+  it("points to Scenarios when only scenario runs exist", async () => {
+    renderWithApi(<RunsListScreen />, {
+      routes: {
+        "/api/v1/workflow-runs": (request: Request) =>
+          new URL(request.url).searchParams.get("kind") === "scenario"
+            ? aPage([aRun({ id: "3f2a91c0", workflow: "scenario:order-lifecycle" })])
+            : aPage([]),
+      },
+      path: "/runs",
+    });
+
+    expect(await screen.findByText("No workflow runs yet.")).toBeInTheDocument();
+    expect(await screen.findByText("Scenario runs are listed in Scenarios.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open Scenarios" })).toHaveAttribute(
+      "href",
+      "/scenarios",
+    );
+  });
 });
