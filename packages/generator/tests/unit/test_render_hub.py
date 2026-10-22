@@ -173,6 +173,7 @@ DESIGN_PATHS = (
     "workflows/post-merge-verify/fixtures/verify-regression.yaml",
     "workflows/post-merge-verify/post-merge-verify.yaml",
     "workflows/post-merge-verify/scripts/selection.py",
+    "workflows/post-merge-verify/scripts/verify.py",
     "workflows/sdlc/deliver.yaml",
     "workflows/sdlc/fixtures/deliver-blocked.yaml",
     "workflows/sdlc/fixtures/deliver-check-error.yaml",
