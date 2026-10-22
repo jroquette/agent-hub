@@ -432,12 +432,18 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
         errors: [
           { pointer: "/inputs/external_ref", message: "external_ref must be a ref." },
           { pointer: "/environment", message: "environment must name an environment." },
+          {
+            pointer: "/inputs/added_later",
+            message: "added_later is not an input of the scenario.",
+          },
         ],
       }),
     });
     await planIn("personal");
 
     expect(await screen.findByText("environment must name an environment.")).toBeInTheDocument();
+    // An input the form does not show (one added later) keeps its message too (review Q4).
+    expect(screen.getByText("added_later is not an input of the scenario.")).toBeInTheDocument();
     expect(screen.getByLabelText("external_ref (required)")).toHaveAccessibleDescription(
       /external_ref must be a ref\./,
     );

@@ -12,6 +12,7 @@ import {
   Skeleton,
   Time,
   TimelineEvent,
+  Toast,
 } from "../../components";
 import { useNow } from "../../lib/clock";
 import { fmtClock, fmtDuration } from "../../lib/format";
@@ -446,21 +447,32 @@ function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void
   const heading = useRef<HTMLHeadingElement>(null);
   // An answer recorded here: its toast, and a resuming line until the record moves on (B3).
   const [toast, setToast] = useState<string | null>(null);
-  const [answered, setAnswered] = useState<{ answer: Answer; step: string; mark: number } | null>(
-    null,
-  );
+  const [answered, setAnswered] = useState<{
+    answer: Answer;
+    step: string;
+    mark: number;
+    number: number | null;
+  } | null>(null);
   const onAnswered = useCallback(
     (answer: Answer) => {
-      setAnswered({ answer, step: run.paused_step ?? "", mark: run.timeline.length });
+      setAnswered({
+        answer,
+        step: run.paused_step ?? "",
+        mark: run.timeline.length,
+        number: run.open_investigation,
+      });
       setToast(answerShort(answer, run.paused_step ?? ""));
     },
-    [run.paused_step, run.timeline.length],
+    [run.paused_step, run.timeline.length, run.open_investigation],
   );
   // The answer's own lines (its decision, the gate's end, a workaround's start) do not move
   // the run on; the next step's start or the run's end does (review round 2, B3).
+  // A failed workaround pauses the run again at a new investigation: that moves it on too
+  // (review round 3, Q1).
   const moved =
     answered !== null &&
     (ended ||
+      (paused && run.open_investigation !== answered.number) ||
       run.timeline
         .slice(answered.mark)
         .some(
@@ -533,17 +545,14 @@ function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void
           {answerDone(answered.answer, answered.step)}
         </div>
       )}
-      {toast !== null && (
-        // The Toast look, without its live role: the announcer has already said it.
-        <div className="ah-toast ah-toast-ok">
-          <Icon name="circle-check" />
-          <span className="ah-grow">{toast}</span>
-        </div>
-      )}
+      {/* Quiet: the page's announcer has already said it. */}
+      {toast !== null && <Toast live={false}>{toast}</Toast>}
       <EndLine run={run} steps={steps} />
       <PolicyAsks asks={asks} />
       {paused ? (
         <PausedView
+          // A new investigation starts its own answer (a failed workaround reopens one).
+          key={run.open_investigation}
           run={run}
           controlOff={controlOff}
           onControlOff={markControlOff}

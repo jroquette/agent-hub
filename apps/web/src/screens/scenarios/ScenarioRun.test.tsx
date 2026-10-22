@@ -1,6 +1,6 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import {
@@ -559,6 +559,8 @@ describe("ScenarioRunScreen (scenarios run)", () => {
           { event: "decision", node: gateNode, attempt: 1, status: null, at: at(1000) },
           { event: "step_end", node: gateNode, attempt: 1, status: "ok", at: at(1000) },
           { event: "workaround_start", node: null, attempt: 1, status: null, at: at(1001) },
+          // A gate's own start never moves the run on (review round 3, Q2).
+          { event: "step_start", node: gateNode, attempt: 2, status: null, at: at(1002) },
           ...(stage === "moved"
             ? [
                 {
@@ -733,5 +735,156 @@ describe("ScenarioRunScreen (scenarios run)", () => {
     expect(step).toHaveTextContent(/orders\/patch-order.*write.*demo-api\/orders-db/);
     // Ids break only after "/" or "-".
     expect(step?.querySelectorAll("wbr").length).toBeGreaterThan(0);
+  });
+  describe("after an answer (round 3)", () => {
+    const gateNode = "order-processed__investigation";
+    const answer = {
+      run_id: SCENARIO_RUN,
+      project: "demo",
+      investigation: 1,
+      step: "order-processed",
+      choice: "pick",
+      option: "o2",
+    };
+    const closedFirst = {
+      number: 1,
+      step: "order-processed",
+      gate: gateNode,
+      failure_kind: "timeout",
+      agent_session_id: null,
+      choice: "pick",
+      text: "o2",
+      approver: "Dana Demo",
+      closed: true,
+    };
+
+    async function pickO2() {
+      const fake = vi.isFakeTimers();
+      const user = userEvent.setup(
+        fake ? { advanceTimers: (ms: number) => vi.advanceTimersByTime(ms) } : {},
+      );
+      const options = await screen.findByRole("radiogroup", { name: "Options from the agent" });
+      await user.click(within(options).getByRole("radio", { name: /o2/ }));
+      await user.click(screen.getByRole("button", { name: "Pick option o2" }));
+      await user.click(
+        within(screen.getByRole("alertdialog")).getByRole("button", { name: "Pick option o2" }),
+      );
+    }
+
+    it("scenarios run announces a new pause when a failed workaround reopens the investigation", async () => {
+      let stage: "paused" | "reopened" = "paused";
+      const base = aScenarioRunDetail();
+      const { queryClient } = renderRun({
+        [RUN]: () =>
+          stage === "paused"
+            ? base
+            : {
+                ...base,
+                open_investigation: 2,
+                paused_step: "order-processed",
+                timeline: [
+                  ...base.timeline,
+                  { event: "decision", node: gateNode, attempt: 1, status: null, at: at(1000) },
+                  { event: "step_end", node: gateNode, attempt: 1, status: "ok", at: at(1000) },
+                  { event: "workaround_start", node: null, attempt: 1, status: null, at: at(1001) },
+                  {
+                    event: "workaround_end",
+                    node: null,
+                    attempt: 1,
+                    status: "failed",
+                    at: at(1050),
+                  },
+                  {
+                    event: "investigation",
+                    node: "order-processed",
+                    attempt: 2,
+                    status: null,
+                    at: at(1051),
+                  },
+                  { event: "gate", node: gateNode, attempt: 2, status: null, at: at(1051) },
+                ],
+                investigations: [
+                  closedFirst,
+                  {
+                    ...closedFirst,
+                    number: 2,
+                    choice: null,
+                    text: null,
+                    approver: null,
+                    closed: false,
+                  },
+                ],
+                proposal: null,
+                workarounds: [
+                  {
+                    workaround_id: "w1",
+                    number: 1,
+                    option: "o2",
+                    steps: 1,
+                    approver: "Dana Demo",
+                    status: "failed",
+                  },
+                ],
+              },
+        [`POST ${RUN}/answer`]: () => {
+          stage = "reopened";
+          return answer;
+        },
+      });
+      await pickO2();
+      const announcer = document.querySelector("[data-announcer]");
+      // The answer was recorded here (its toast shows), then the record reopened the pause.
+      expect(await screen.findByText("Answer recorded: option o2 picked.")).toBeInTheDocument();
+      await act(async () => {
+        await queryClient.invalidateQueries();
+      });
+
+      await waitFor(() => {
+        expect(announcer).toHaveTextContent("Scenario run paused at order-processed");
+      });
+      expect(screen.getByRole("region", { name: "Paused at order-processed" })).toBeInTheDocument();
+      expect(
+        screen.queryByText(
+          "Answer recorded: option o2 picked. The scenario run resumes; its events update this page.",
+        ),
+      ).toBeNull();
+    });
+
+    it("scenarios run makes one live announcement while the options are still shown", async () => {
+      renderRun({ [`POST ${RUN}/answer`]: answer });
+      await pickO2();
+      const announcer = document.querySelector("[data-announcer]");
+
+      await waitFor(() => {
+        expect(announcer).toHaveTextContent("Answer recorded");
+      });
+      expect(
+        screen.getByRole("radiogroup", { name: "Options from the agent" }),
+      ).toBeInTheDocument();
+      const live = [
+        ...document.querySelectorAll('[role="status"], [role="alert"], [aria-live]'),
+      ].filter((el) => el.textContent.includes("Answer recorded"));
+      expect(live).toEqual([announcer]);
+    });
+
+    it("scenarios run's answer toast ends after 6000 ms", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        renderRun({ [`POST ${RUN}/answer`]: answer });
+        await pickO2();
+        expect(await screen.findByText("Answer recorded: option o2 picked.")).toBeInTheDocument();
+
+        act(() => {
+          vi.advanceTimersByTime(5900);
+        });
+        expect(screen.getByText("Answer recorded: option o2 picked.")).toBeInTheDocument();
+        act(() => {
+          vi.advanceTimersByTime(6000);
+        });
+        expect(screen.queryByText("Answer recorded: option o2 picked.")).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });
