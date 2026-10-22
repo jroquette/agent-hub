@@ -385,6 +385,73 @@
       "title": "Environment",
       "type": "object"
     },
+    "EventKind": {
+      "enum": [
+        "merge",
+        "ci_red",
+        "pr_opened"
+      ],
+      "type": "string"
+    },
+    "EventStart": {
+      "additionalProperties": false,
+      "description": "A workflow ``hub web`` starts when a repo's event happens (GitHub, through gh).",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "workflow": {
+          "maxLength": 128,
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "title": "Workflow",
+          "type": "string"
+        },
+        "on": {
+          "$ref": "#/$defs/EventKind",
+          "description": "merge: a new commit on the default branch; ci_red: a failed Actions run on it; pr_opened: a newly opened pull request."
+        },
+        "repo": {
+          "description": "A repos[].dir.",
+          "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
+          "title": "Repo",
+          "type": "string"
+        },
+        "inputs": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "maxLength": 1000,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              }
+            ]
+          },
+          "description": "The run's inputs; sha, pr and ci_run come from the event.",
+          "maxProperties": 64,
+          "patternProperties": {
+            "^_": {}
+          },
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          },
+          "title": "Inputs",
+          "type": "object"
+        }
+      },
+      "required": [
+        "workflow",
+        "on",
+        "repo"
+      ],
+      "title": "EventStart",
+      "type": "object"
+    },
     "Guard": {
       "additionalProperties": false,
       "description": "Paths and hosts the hub's guard hook asks about or denies.",
@@ -806,6 +873,67 @@
       "title": "RuleSettings",
       "type": "object"
     },
+    "Schedule": {
+      "additionalProperties": false,
+      "description": "A workflow ``hub web`` starts at each slot of a cron (UTC).",
+      "patternProperties": {
+        "^_": {}
+      },
+      "properties": {
+        "workflow": {
+          "maxLength": 128,
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "title": "Workflow",
+          "type": "string"
+        },
+        "cron": {
+          "description": "5 numeric fields (minute hour day month weekday), read in UTC.",
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Cron",
+          "type": "string"
+        },
+        "inputs": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "maxLength": 1000,
+                "pattern": "^[^\\x00]*$",
+                "type": "string"
+              }
+            ]
+          },
+          "description": "The run's inputs.",
+          "maxProperties": 64,
+          "patternProperties": {
+            "^_": {}
+          },
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          },
+          "title": "Inputs",
+          "type": "object"
+        },
+        "environment": {
+          "description": "A declared environment the run gets (--env). Absent: none.",
+          "maxLength": 40,
+          "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "workflow",
+        "cron"
+      ],
+      "title": "Schedule",
+      "type": "object"
+    },
     "Service": {
       "additionalProperties": false,
       "description": "A service a repo runs, with its endpoint in each declared environment.",
@@ -1032,6 +1160,26 @@
       },
       "title": "Environments",
       "type": "object"
+    },
+    "schedules": {
+      "default": [],
+      "description": "Workflows hub web starts at the slots of a cron, in UTC; one per workflow (ADR 0048).",
+      "items": {
+        "$ref": "#/$defs/Schedule"
+      },
+      "maxItems": 32,
+      "title": "Schedules",
+      "type": "array"
+    },
+    "events": {
+      "default": [],
+      "description": "Workflows hub web starts on a repo's GitHub event, polled through gh (ADR 0048).",
+      "items": {
+        "$ref": "#/$defs/EventStart"
+      },
+      "maxItems": 32,
+      "title": "Events",
+      "type": "array"
     }
   },
   "required": [

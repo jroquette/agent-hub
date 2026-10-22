@@ -16,6 +16,7 @@ from pydantic import (
     StrictBool,
     StrictInt,
     Tag,
+    WithJsonSchema,
 )
 from pydantic_core import PydanticCustomError
 
@@ -73,6 +74,20 @@ StartInputValue = Annotated[
     | Annotated[float, Field(allow_inf_nan=False), Tag("float")]
     | Annotated[StartInputText, Tag("str")],
     Discriminator(_value_kind),
+    # ``anyOf``, not the ``oneOf`` pydantic exports: an integer is also a JSON Schema number.
+    WithJsonSchema(
+        {
+            "anyOf": [
+                {"type": "boolean"},
+                {"type": "number"},
+                {
+                    "type": "string",
+                    "maxLength": MAX_START_INPUT_CHARS,
+                    "pattern": "^[^\\x00]*$",
+                },
+            ]
+        }
+    ),
 ]
 StartInputs = Annotated[
     dict[StartInputName, StartInputValue],
