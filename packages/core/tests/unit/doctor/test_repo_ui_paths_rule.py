@@ -20,7 +20,10 @@ from agent_hub.core.testing.builders import a_hub_document, a_second_repo
 
 type SnapshotFactory = Callable[..., DoctorSnapshot]
 
-FIX = "fix the glob or remove it; ui_paths globs match paths from the repo root (docs/design/project-config.md)"
+FIX = (
+    "fix the glob or remove it; ui_paths globs match paths from the repo root"
+    " (docs/design/project-config.md)"
+)
 
 
 def a_config(*repos: tuple[str, list[str] | None]) -> HubConfig:
@@ -38,13 +41,13 @@ def found(snapshot: DoctorSnapshot) -> list[Finding]:
     return list(REPOS_UI_PATHS.check(snapshot))
 
 
-def unmatched(index: int, glob_index: int, glob: str, repo_dir: str) -> Finding:
+def unmatched(at: str, glob: str, repo_dir: str) -> Finding:
     return Finding(
         rule="repos.ui_paths",
         severity=Severity.WARNING,
         path="hub.json",
         line=None,
-        message=f"repos[{index}].ui_paths[{glob_index}]: {glob} matches no file in ../{repo_dir}",
+        message=f"{at}: {glob} matches no file in ../{repo_dir}",
         fix=FIX,
     )
 
@@ -89,9 +92,9 @@ def test_warns_each_unmatched_glob_when_repo_ui_paths_checked(
     )
 
     assert found(snapshot) == [
-        unmatched(1, 1, "*.tsx", "web"),
-        unmatched(1, 2, "apps/we*", "web"),
-        unmatched(1, 3, "apps/mobile/**", "web"),
+        unmatched("repos[1].ui_paths[1]", "*.tsx", "web"),
+        unmatched("repos[1].ui_paths[2]", "apps/we*", "web"),
+        unmatched("repos[1].ui_paths[3]", "apps/mobile/**", "web"),
     ]
 
 
@@ -103,7 +106,7 @@ def test_warns_repo_ui_paths_when_file_not_listed(snapshot_of: SnapshotFactory) 
         repo_listed={"web": ("README.md",)},
     )
 
-    assert found(snapshot) == [unmatched(0, 0, "dist/**", "web")]
+    assert found(snapshot) == [unmatched("repos[0].ui_paths[0]", "dist/**", "web")]
 
 
 def test_cuts_echo_when_repo_ui_paths_glob_long(snapshot_of: SnapshotFactory) -> None:
