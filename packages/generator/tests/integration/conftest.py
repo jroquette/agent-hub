@@ -21,7 +21,6 @@ import re
 import shlex
 import shutil
 import signal
-import socket
 import stat
 import subprocess
 import sys
@@ -38,6 +37,7 @@ import pytest
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.core.testing.loopback import closed_url
 from agent_hub.generator.render_hub import render_hub
 
 type HubRenderer = Callable[[HubConfig], Path]
@@ -153,7 +153,7 @@ def child_env(extra: Mapping[str, str] | None = None) -> dict[str, str]:
         "PATH": os.environ.get("PATH", os.defpath),
         "GIT_CONFIG_NOSYSTEM": "1",
         "GIT_CONFIG_GLOBAL": os.devnull,
-        SENSOR_URL_VARIABLE: f"http://127.0.0.1:{free_port()}",
+        SENSOR_URL_VARIABLE: closed_url(),
     } | dict(extra or {})
     return {name: value for name, value in env.items() if name not in DROPPED_VARIABLES}
 
@@ -1471,14 +1471,6 @@ class EventServer:
         return [json.loads(item.body) for item in self.received if item.path == HOOKS_PATH]
 
 
-def free_port() -> int:
-    """A loopback port nothing listens on (bound, then released)."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.bind(("127.0.0.1", 0))
-        port: int = probe.getsockname()[1]
-        return port
-
-
 def handler_for(server: EventServer, lock: threading.Lock) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:  # noqa: N802 - http.server's method name
@@ -1532,4 +1524,4 @@ def sensor_env(event_server: EventServer) -> dict[str, str]:
 @pytest.fixture
 def server_down_env() -> dict[str, str]:
     """The child variables that point the sensor at a loopback port nothing listens on."""
-    return {SENSOR_URL_VARIABLE: f"http://127.0.0.1:{free_port()}"}
+    return {SENSOR_URL_VARIABLE: closed_url()}

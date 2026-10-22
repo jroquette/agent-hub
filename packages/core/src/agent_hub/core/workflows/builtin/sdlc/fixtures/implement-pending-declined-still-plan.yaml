@@ -1,0 +1,53 @@
+# The owner declined after the run was lost, and the next run's first preflight, given the note,
+# still finds plan drift: no new change request, no gate and no worktree; the run ends blocked
+# (AC-2.14, AC-2.12, A2).
+workflow: implement
+inputs:
+  feature: demo-flow
+  issue: DEM-1
+  issue_text: "```text\nid: DEM-1\n```"
+stubs:
+  context:
+    output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-1/brief.md, hub: /ws/hub, repo: demo-api,
+      commit: 0a1b2c3d4e}
+  pending:
+    output: {request: 1, decision: declined, input: declined_change, note: Keep T2 on the current handler.,
+      summary: Route T2 through routes.py., superseded: ''}
+  pass-1__preflight:
+    output:
+      drift: plan
+      local_notes: []
+      blockers_read: []
+      evidence: The handler moved to src/api/routes.py.
+      proposal: Route T2 through routes.py.
+      affected: T3
+      summary: T2 goes through routes.py
+  pass-1__record:
+    output: {runs: 2}
+  pass-1__outcome:
+    output: {status: blocked, question: 'plan drift remains after the owner''s decision on the plan change:
+        the next /implement opens a new change request', verdict: '', next_input: '', next_text: '', superseded: '',
+      path: '', base: '', target: null}
+  last:
+    output: {status: blocked, question: 'plan drift remains after the owner''s decision on the plan change:
+        the next /implement opens a new change request', verdict: '', pass: 1, path: '', base: '', target: null,
+      superseded: ''}
+  report:
+    output: {delivery: blocked, stage: implementing, reason: 'the implementing session stopped: plan drift
+        remains after the owner''s decision on the plan change: the next /implement opens a new change
+        request', question: 'plan drift remains after the owner''s decision on the plan change: the next
+        /implement opens a new change request', pr: '', summary: ''}
+  delivery:
+    output:
+      delivery: blocked
+      stage: implementing
+      reason: 'the implementing session stopped: plan drift remains after the owner''s decision on the
+        plan change: the next /implement opens a new change request'
+      question: 'plan drift remains after the owner''s decision on the plan change: the next /implement
+        opens a new change request'
+      pr: ''
+      summary: ''
+      hub_files: [change-requests/1.decision.md, change-requests/1.md, tickets/DEM-1/brief.md, tickets/DEM-1/preflight.json]
+      superseded: ''
+expect: {status: done, outcome: blocked}
+reached: [context, pending, pass-1__preflight, pass-1__record, pass-1__outcome, last, report, delivery]
