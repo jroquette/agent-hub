@@ -427,7 +427,7 @@ A web app reads the hubs and the agents' events and answers five questions, one 
 
 | View | Question it answers | Content |
 | --- | --- | --- |
-| Portfolio | How are my projects doing? | Hubs, repos, tasks in progress, open PRs, CI, cost of the week |
+| Portfolio | How are my projects doing? | Hubs, repos, tasks in progress, open PRs, CI, cost of the week, skill and agent use |
 | Workflows | How should work flow? | Editor and visualization of steps and gates; which step each task is at; where it gets stuck |
 | Sessions | What are the agents doing right now, and which one needs me? | Every session, observed or driven, in status sections (waiting first) as tiles or a table: last action, accumulated turns and cost, pending approvals |
 | Session timeline | Why did the agent do that? | Messages, reasoning summaries, tool calls, files and diffs, marked decisions and the final outcome |
