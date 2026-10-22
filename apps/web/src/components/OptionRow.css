@@ -109,3 +109,11 @@ fieldset:disabled .ah-option {
     transition: none;
   }
 }
+
+/* An option that cannot be picked: its reason is in the description, never the colour alone. */
+.ah-option-disabled {
+  cursor: not-allowed;
+}
+.ah-option-disabled .ah-option-label {
+  color: var(--text-muted);
+}
