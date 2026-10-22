@@ -248,3 +248,104 @@ def test_exits_two_when_state_is_not_a_state_object(
 
     assert (code, out) == (2, "")
     assert err.startswith("budget.py: state")
+
+
+def test_excludes_gate_wait_when_settle_resets_the_clock(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    asked = a_state(spent_s=3600, left_m=60, round=1)
+    a_day_later = START + 24 * 3600
+
+    _, settled, _ = settle(capsys, asked, listed=options("a", "b"), decision="a", now=a_day_later)
+    _, ticked, _ = run(
+        capsys,
+        "tick",
+        "--state",
+        json.dumps(settled),
+        "--cap",
+        "20m",
+        "--now",
+        str(a_day_later + 300),
+    )
+
+    assert (settled["at"], settled["spent_s"], settled["over"]) == (a_day_later, 3600, False)
+    assert ticked["spent_s"] == 3900
+
+
+def test_goes_on_when_owner_picks_a_listed_option(capsys: pytest.CaptureFixture[str]) -> None:
+    asked = a_state(spent_s=3600, left_m=60, round=1)
+
+    code, settled, _ = settle(
+        capsys, asked, listed=options("a", "b"), decision="b", note="Keep it small."
+    )
+
+    assert code == 0
+    assert settled == asked | {
+        "picked": "b",
+        "go": True,
+        "done": True,
+        "note": "Keep it small.",
+        "approver": "Dana Owner",
+        "option": {"id": "b", "title": "Option b", "summary": "", "pros": [], "cons": []},
+    }
+
+
+def test_continues_when_owner_asks_for_more(capsys: pytest.CaptureFixture[str]) -> None:
+    asked = a_state(spent_s=3600, left_m=60, round=1)
+    note = "Add an option without a cache."
+
+    _, settled, _ = settle(capsys, asked, listed=options("a", "b"), decision="more", note=note)
+
+    assert (settled["picked"], settled["go"], settled["done"]) == ("", False, False)
+    assert (settled["note"], settled["option"]) == (note, {})
+
+
+def test_continues_when_owner_picks_an_option_the_round_did_not_list(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    asked = a_state(spent_s=3600, left_m=60, round=1)
+
+    _, settled, _ = settle(capsys, asked, listed=options("a", "b"), decision="c", note="C, please.")
+
+    assert (settled["picked"], settled["go"], settled["done"]) == ("", False, False)
+    assert settled["note"] == "C, please."
+
+
+def test_ends_without_pick_when_rounds_reach_the_bound(capsys: pytest.CaptureFixture[str]) -> None:
+    third = a_state(spent_s=4800, left_m=40, round=3)
+
+    _, settled, _ = settle(capsys, third, listed=options("a", "b", "c"), decision="more")
+
+    assert (settled["picked"], settled["go"], settled["done"]) == ("", False, True)
+
+
+def test_ends_without_pick_when_over_and_pick_skipped(capsys: pytest.CaptureFixture[str]) -> None:
+    over = a_state(spent_s=7300, over=True, left_m=0, round=1)
+
+    _, skipped, _ = settle(capsys, over, listed="", decision="", approver="")
+    _, late, _ = settle(capsys, over, listed=options("a", "b"), decision="")
+
+    assert (skipped["picked"], skipped["go"], skipped["done"]) == ("", False, True)
+    assert (skipped["note"], skipped["approver"], skipped["option"]) == ("", "", {})
+    assert (late["go"], late["done"]) == (False, True)
+
+
+def test_cuts_note_and_drops_control_characters_when_note_is_long(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    asked = a_state(spent_s=3600, left_m=60, round=1)
+    note = "-first line\nsecond\x00\x1b[31m line\x85" + "x" * 70000
+
+    code, settled, _ = settle(capsys, asked, listed=options("a", "b"), decision="more", note=note)
+
+    assert code == 0
+    assert settled["note"].startswith("-first line second[31m line" + "x")
+    assert len(settled["note"]) == 2000
+    assert not [c for c in settled["note"] if ord(c) < 32 or 127 <= ord(c) <= 159]
+
+
+def test_exits_two_when_settle_options_are_not_json(capsys: pytest.CaptureFixture[str]) -> None:
+    code, out, err = settle(capsys, a_state(round=1), listed="not json", decision="a")
+
+    assert (code, out) == (2, "")
+    assert err.startswith("budget.py: options")
