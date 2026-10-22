@@ -6,12 +6,11 @@
 
 ``pass_outcome.py --rounds JSON --worktree JSON --superseded TEXT`` prints ``{"status",
 "question", "verdict", "next_input", "next_text", "superseded", "path", "base", "target"}``.
-``TEXT`` is amend-plan's ``moved``: an approval the plan moved past (A23); the pass then ends
-``superseded``, and the run starts the next pass with input ``none`` and that text. Other blank
-rounds (no preflight passed: a re-check after the owner's decision, or of a declined change,
-still found plan drift) is ``blocked``. Otherwise the last round's session ``blocked`` (its
-question), its ``discovery`` (the next pass's input, with its text) or ``done`` with the
-review's verdict. ``path``, ``base`` and ``target`` are the pass's worktree's (``""``, ``""``
+``TEXT`` is amend-plan's ``moved`` (an approval the plan moved past, A23, re-checked in the pass),
+passed on for the report. Blank rounds (no preflight passed: a re-check after the owner's
+decision, or of a declined change, still found plan drift) is ``blocked``. Otherwise the last
+round's session ``blocked`` (its question), its ``discovery`` (the next pass's input, with its
+text) or ``done`` with the review's verdict. ``path``, ``base`` and ``target`` are the pass's worktree's (``""``, ``""``
 and null when it made none). Text that is not JSON exits 2.
 """
 
@@ -65,10 +64,7 @@ def main(argv: list[str]) -> int:
         "base": worktree.get("base", ""),
         "target": worktree.get("target"),
     }
-    if not rounds and given.superseded:
-        superseded = {"next_input": "none", "next_text": given.superseded}
-        outcome |= {"status": "superseded", **superseded}
-    elif not rounds:
+    if not rounds:
         outcome |= {"status": "blocked", "question": STILL_PLAN}
     elif part(rounds, "verdict", "status") == "blocked":
         outcome |= {"status": "blocked", "question": part(rounds, "verdict", "question")}

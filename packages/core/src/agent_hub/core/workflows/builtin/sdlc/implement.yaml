@@ -2,13 +2,13 @@
 # context to a PR, without redoing spec, research or plan. The context brief (hub step
 # ticket-brief, read-only to every checkout); a decision the owner gave on this ticket's last
 # change request after its run was lost (hub step pending-decision, AC-2.14: approved, the run
-# writes the A<k> amendment; declined, the note goes to the first preflight as a constraint; an
-# approval the plan moved past is not amended: the first preflight checks the current plan, told
-# so, and the report says it, A23); then
+# writes the A<k> amendment; declined, the note goes to the first preflight as a constraint, its
+# request named; an approval the plan moved past is not amended: the first preflight checks the
+# current plan, told so, and the report says it, A23); then
 # ticket-pass (preflight, the plan change gate on plan drift, the worktree once a preflight
 # passed, the ticket plan and the review rounds) up to three times, unrolled (A2): pass-2 runs
-# when pass-1 ended with a discovery or a superseded approval, pass-3 likewise, and one in
-# pass-3 ends the run blocked (D-3). The ticket's repo is the plan's (ticket-brief prints it). After a pass that passed review, the evaluator scoped to the ticket
+# when pass-1 ended with a discovery, pass-3 likewise, and a discovery in pass-3 ends the run
+# blocked (D-3; a superseded approval is re-checked inside its pass and spends no loop). The ticket's repo is the plan's (ticket-brief prints it). After a pass that passed review, the evaluator scoped to the ticket
 # (evals/<delivery>.json, agent-hub/eval/1); then the commits, the PR only on SHIP or
 # SHIP-WITH-OWNER-STEPS, and the delivery: hub step report's, plus this run's hub files for the
 # owner's hub PR (delivery.py, D-1). The run never commits in the hub and has no tracker side.
@@ -85,10 +85,11 @@ nodes:
       main: $context.output.commit
       input: $pending.output.input
       input_text: $pending.output.note
+      declined_request: $pending.output.request
 
   - id: pass-2
     type: include
-    description: The first loop back to preflight, given pass-1's discovery or superseded approval.
+    description: The first loop back to preflight, given pass-1's discovery.
     depends_on: [pass-1]
     when: "$pass-1.output.next_input != ''"
     include: ticket-pass
@@ -105,7 +106,7 @@ nodes:
 
   - id: pass-3
     type: include
-    description: The second and last loop back to preflight, given pass-2's discovery or superseded approval.
+    description: The second and last loop back to preflight, given pass-2's discovery.
     depends_on: [pass-2]
     when: "$pass-2.output.next_input != ''"
     include: ticket-pass
@@ -122,7 +123,7 @@ nodes:
 
   - id: last
     type: script
-    description: How the last pass ended, its worktree and any superseded approval; another loop asked by pass-3 is one too many - blocked.
+    description: How the last pass ended, its worktree and any superseded approval; a discovery in pass-3 is one too many - blocked.
     depends_on: [pass-1, pass-2, pass-3]
     trigger_rule: none_failed_min_one_success
     runtime: python
