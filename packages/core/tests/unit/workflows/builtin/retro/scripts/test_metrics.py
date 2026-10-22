@@ -1,12 +1,16 @@
 """The retro pack's ``metrics.py`` (AGH-488), in process: step 1's numbers for the weekly retro."""
 
 import importlib.util
+import json
+import os
 import sys
-from datetime import date
+from datetime import UTC, date, datetime
 from importlib.resources import files
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+
+import pytest
 
 SCRIPT = Path(str(files("agent_hub.core").joinpath("workflows/builtin/retro/scripts/metrics.py")))
 
@@ -137,3 +141,143 @@ def test_ignores_run_started_before_window_when_records_folded() -> None:
     found = load().fold_runs(runs, since=SINCE)
 
     assert found["workflow.deliver.runs"] == 1
+
+
+TODAY = "2026-10-22"
+IN_WINDOW = datetime(2026, 10, 20, 12, tzinfo=UTC).timestamp()
+
+
+def write_run(root: Path, run: str, lines: list[str], *, mtime: float = IN_WINDOW) -> Path:
+    folder = root / ".agent-runs" / "workflows" / run
+    folder.mkdir(parents=True)
+    (folder / "records.jsonl").write_text("".join(f"{line}\n" for line in lines))
+    os.utime(folder, (mtime, mtime))
+    return folder
+
+
+def run_lines(workflow: str) -> list[str]:
+    return [json.dumps(start(workflow)), json.dumps(end("done"))]
+
+
+def source(found: dict[str, Any], name: str) -> dict[str, Any]:
+    return next(item for item in found["sources"] if item["name"] == name)
+
+
+def run_main(argv: list[str], capsys: pytest.CaptureFixture[str]) -> tuple[int, dict[str, Any]]:
+    code = load().main(argv)
+    out = capsys.readouterr().out
+    return code, (json.loads(out) if out else {})
+
+
+def test_marks_runs_partial_when_record_large_or_bad_lines(tmp_path: Path) -> None:
+    metrics = load()
+    big = write_run(tmp_path, "big", [])
+    with (big / "records.jsonl").open("wb") as file:
+        file.truncate(metrics.MAX_RECORD_BYTES + 1)
+    write_run(tmp_path, "bad", [*run_lines("deliver"), "{not json", "[1, 2]"])
+
+    records, problems = metrics.read_runs(tmp_path, SINCE)
+
+    assert [len(run) for run in records] == [2]
+    assert problems == ["1 run records over 16 MiB", "2 bad lines"]
+    reading = metrics.runs_source(tmp_path, SINCE)
+    assert reading.sources == [
+        {"name": "runs", "status": "partial", "reason": "1 run records over 16 MiB; 2 bad lines"}
+    ]
+    assert reading.metrics["workflow.deliver.runs"] == 1
+
+
+def test_reads_newest_five_hundred_runs_when_more_in_window(tmp_path: Path) -> None:
+    metrics = load()
+    write_run(tmp_path, "oldest", run_lines("spike"), mtime=IN_WINDOW - 3600)
+    for n in range(metrics.MAX_RUNS):
+        write_run(tmp_path, f"run-{n}", run_lines("deliver"), mtime=IN_WINDOW + n)
+    write_run(tmp_path, "before", run_lines("upgrade"), mtime=IN_WINDOW - 30 * 86400)
+
+    reading = metrics.runs_source(tmp_path, SINCE)
+
+    assert reading.metrics["workflow.deliver.runs"] == 500
+    assert not any(
+        key.startswith(("workflow.spike.", "workflow.upgrade.")) for key in reading.metrics
+    )
+    assert source({"sources": reading.sources}, "runs") == {
+        "name": "runs",
+        "status": "partial",
+        "reason": "more than 500 runs; oldest left out",
+    }
+
+
+def test_skips_link_when_run_folder_is_symlink(tmp_path: Path) -> None:
+    metrics = load()
+    elsewhere = write_run(tmp_path / "other", "real", run_lines("deliver"))
+    (tmp_path / ".agent-runs" / "workflows").mkdir(parents=True)
+    (tmp_path / ".agent-runs" / "workflows" / "linked").symlink_to(elsewhere)
+    kept = write_run(tmp_path, "kept", [])
+    (kept / "records.jsonl").unlink()
+    (kept / "records.jsonl").symlink_to(elsewhere / "records.jsonl")
+
+    records, problems = metrics.read_runs(tmp_path, SINCE)
+
+    assert records == []
+    assert problems == []
+
+
+def test_caps_metrics_at_three_hundred_keys_when_sources_large() -> None:
+    metrics = load()
+    many = {f"prs.acme/r{n}.merged": n for n in range(250)}
+    workflow = {f"workflow.w{n}.runs": 1 for n in range(150)}
+    readings = [
+        metrics.Reading(many, [{"name": "github", "status": "ok", "reason": ""}], {}),
+        metrics.Reading(workflow, [{"name": "runs", "status": "ok", "reason": ""}], {}),
+    ]
+
+    found = metrics.assemble(readings, days=7, since=SINCE, until=date(2026, 10, 22))
+
+    assert len(found["metrics"]) == 300
+    assert list(found["metrics"])[:150] == list(workflow)
+    assert found["runs"] == 150
+    assert "100 metrics over the 300 cap" in found["left_out"]
+
+
+def test_says_nothing_when_no_run_in_window(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / ".agent-runs" / "workflows").mkdir(parents=True)
+
+    code, found = run_main(["--days", "7", "--root", str(tmp_path), "--today", TODAY], capsys)
+
+    assert code == 0
+    assert (found["days"], found["since"], found["until"]) == (7, "2026-10-15", TODAY)
+    assert (found["runs"], found["nothing"], found["metrics"]) == (0, True, {})
+    assert found["idle"] == {"skills": [], "agents": []}
+    assert source(found, "runs") == {"name": "runs", "status": "ok", "reason": ""}
+    assert "2026-10-15 .. 2026-10-22" in found["summary"]
+    assert "nothing to change" in found["summary"]
+
+
+def test_names_left_out_metrics_when_assembled() -> None:
+    metrics = load()
+
+    found = metrics.assemble([], days=7, since=SINCE, until=date(2026, 10, 22))
+
+    assert found["left_out"] == [
+        "per-workflow cost (AGH-303)",
+        "per-workflow numbers from AGH-450 (folded here from the run records instead)",
+        "guard denies from the event store (no command prints them;"
+        " transcript blocks are counted instead)",
+        "GitHub review rounds on PRs (scripts get no GitHub token;"
+        " workflow review rounds are counted)",
+    ]
+    assert all(line in found["summary"] for line in found["left_out"])
+
+
+@pytest.mark.parametrize("days", ["0", "91", "x"])
+def test_exits_two_when_days_outside_one_to_ninety(
+    days: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = load().main(["--days", days, "--root", str(tmp_path)])
+
+    assert code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "metrics.py: " in captured.err

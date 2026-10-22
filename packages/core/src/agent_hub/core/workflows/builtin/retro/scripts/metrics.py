@@ -18,14 +18,21 @@ source whether it was read (``ok``, ``partial`` or ``missing``, with a reason) a
 names what the numbers do not cover. A ``--days`` outside 1-90 or a bad ``--today`` exits 2.
 """
 
+import argparse
+import json
 import re
 import statistics
+import sys
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
+from typing import NamedTuple
 
 Record = dict[str, object]
+Metrics = dict[str, float]
+Source = dict[str, str]
 
 # Last week's retro is not activity; issue-to-pr runs are counted from the dated records.
 LEFT_OUT_WORKFLOWS = frozenset({"retro", "issue-to-pr"})
@@ -33,6 +40,37 @@ SHIP_VERDICTS = frozenset({"SHIP", "SHIP-WITH-OWNER-STEPS", "NO-SHIP"})
 REVIEW_NODE = "review"
 TOP_FAILED_AT = 3
 UNSAFE = re.compile(r"[^A-Za-z0-9_.:/-]")
+MIB = 1024 * 1024
+MAX_RUNS = 500
+MAX_RECORD_BYTES = 16 * MIB
+MAX_RECORDS_TOTAL = 64 * MIB
+MAX_KEYS = 300
+MAX_SUMMARY = 4000
+RUNS_FOLDER = (".agent-runs", "workflows")
+RECORDS = "records.jsonl"
+# What the numbers do not cover, said in the output and in the summary the owner reads.
+LEFT_OUT = (
+    "per-workflow cost (AGH-303)",
+    "per-workflow numbers from AGH-450 (folded here from the run records instead)",
+    "guard denies from the event store (no command prints them;"
+    " transcript blocks are counted instead)",
+    "GitHub review rounds on PRs (scripts get no GitHub token; workflow review rounds are counted)",
+)
+# The cap keeps the keys in this order: a key's rank is its first prefix's place here.
+KEY_ORDER = (
+    ("workflow.",),
+    ("issue_runs.",),
+    ("transcripts.",),
+    ("skills.", "agents.", "skill.", "agent."),
+)
+
+
+class Reading(NamedTuple):
+    """What one source gave: its keys, how each source behind it read, and its idle names."""
+
+    metrics: Metrics
+    sources: list[Source]
+    extras: dict[str, list[str]]
 
 
 def _part(text: str) -> str:
@@ -153,3 +191,172 @@ def fold_runs(records: Iterable[list[Record]], *, since: date) -> dict[str, floa
     for name in sorted(tallies):
         found |= tallies[name].metrics(f"workflow.{_part(name)}")
     return found
+
+
+def _run_folders(folder: Path, since: date) -> tuple[list[Path], list[str]]:
+    """The run folders changed since ``since`` (links left out), newest first, at most 500."""
+    start = datetime.combine(since, datetime.min.time(), UTC).timestamp()
+    found: list[tuple[float, str, Path]] = []
+    for child in folder.iterdir():
+        if child.is_symlink() or not child.is_dir():
+            continue
+        changed = child.stat().st_mtime
+        if changed >= start:
+            found.append((changed, child.name, child))
+    found.sort(reverse=True)
+    problems = ["more than 500 runs; oldest left out"] if len(found) > MAX_RUNS else []
+    return [path for _, _, path in found[:MAX_RUNS]], problems
+
+
+def _parse_lines(data: bytes) -> tuple[list[Record], int]:
+    """The JSON object lines of one record file, and how many lines were not one."""
+    lines: list[Record] = []
+    bad = 0
+    for raw in data.splitlines():
+        if not raw.strip():
+            continue
+        try:
+            line = json.loads(raw)
+        except ValueError:
+            line = None
+        if isinstance(line, dict):
+            lines.append(line)
+        else:
+            bad += 1
+    return lines, bad
+
+
+def read_runs(root: Path, since: date) -> tuple[list[list[Record]], list[str]]:
+    """Each recent run's record lines under ``root``, within the bounds, and what was left out."""
+    folders, problems = _run_folders(root.joinpath(*RUNS_FOLDER), since)
+    runs: list[list[Record]] = []
+    large = bad = total = 0
+    for folder in folders:
+        path = folder / RECORDS
+        if path.is_symlink() or not path.is_file():
+            continue
+        size = path.stat().st_size
+        if size > MAX_RECORD_BYTES:
+            large += 1
+            continue
+        if total + size > MAX_RECORDS_TOTAL:
+            problems.append("run records over 64 MiB in total; the oldest left out")
+            break
+        total += size
+        lines, skipped = _parse_lines(path.read_bytes())
+        bad += skipped
+        runs.append(lines)
+    problems += [f"{large} run records over 16 MiB"] * bool(large)
+    problems += [f"{bad} bad lines"] * bool(bad)
+    return runs, problems
+
+
+def runs_source(root: Path, since: date) -> Reading:
+    """The ``runs`` source: the fold of the run records, and how they read."""
+    folder = root.joinpath(*RUNS_FOLDER)
+    if folder.is_symlink() or not folder.is_dir():
+        return Reading({}, [_source("runs", "missing", "no .agent-runs/workflows folder")], {})
+    try:
+        runs, problems = read_runs(root, since)
+    except OSError as error:
+        return Reading({}, [_source("runs", "missing", f"cannot read the runs: {error}")], {})
+    status = "partial" if problems else "ok"
+    return Reading(fold_runs(runs, since=since), [_source("runs", status, "; ".join(problems))], {})
+
+
+def _source(name: str, status: str, reason: str) -> Source:
+    return {"name": name, "status": status, "reason": reason[:200]}
+
+
+def _rank(key: str) -> int:
+    return next(
+        (n for n, prefixes in enumerate(KEY_ORDER) if key.startswith(prefixes)), len(KEY_ORDER)
+    )
+
+
+def _count(metrics: Metrics, prefix: str, suffix: str) -> int:
+    return int(sum(v for k, v in metrics.items() if k.startswith(prefix) and k.endswith(suffix)))
+
+
+def _summary(
+    window: str, *, counts: tuple[int, int], sources: list[Source], left_out: list[str]
+) -> str:
+    """What the owner and the agent read first: the window, the runs, the sources, the gaps."""
+    workflow_runs, issue_runs = counts
+    lines = [
+        f"Retro window: {window}.",
+        f"Runs started: {workflow_runs} workflow runs, {issue_runs} issue-to-pr runs.",
+    ]
+    if not sum(counts):
+        lines.append("No run in the window: nothing to change.")
+    lines.append("Sources:")
+    lines += [
+        f"- {item['name']}: {item['status']}" + (f" ({item['reason']})" * bool(item["reason"]))
+        for item in sources
+    ]
+    lines.append("Left out:")
+    lines += [f"- {line}" for line in left_out]
+    return "\n".join(lines)[:MAX_SUMMARY]
+
+
+def assemble(readings: list[Reading], *, days: int, since: date, until: date) -> dict[str, object]:
+    """The script's output from every source's reading: capped keys, run count and summary."""
+    merged: Metrics = {}
+    sources: list[Source] = []
+    idle: dict[str, list[str]] = {"skills": [], "agents": []}
+    for reading in readings:
+        merged |= {key: value for key, value in reading.metrics.items() if key not in merged}
+        sources += reading.sources
+        for kind, names in reading.extras.items():
+            idle.setdefault(kind, []).extend(names)
+    counts = (_count(merged, "workflow.", ".runs"), _count(merged, "issue_runs.outcome.", ""))
+    ordered = sorted(merged, key=_rank)
+    left_out = list(LEFT_OUT)
+    if len(ordered) > MAX_KEYS:
+        left_out.append(f"{len(ordered) - MAX_KEYS} metrics over the {MAX_KEYS} cap")
+    found: dict[str, object] = {
+        "days": days,
+        "since": since.isoformat(),
+        "until": until.isoformat(),
+        "runs": sum(counts),
+        "nothing": sum(counts) == 0,
+        "metrics": {key: merged[key] for key in ordered[:MAX_KEYS]},
+        "idle": idle,
+        "sources": sources,
+        "left_out": left_out,
+    }
+    window = f"{since} .. {until} ({days} days)"
+    found["summary"] = _summary(window, counts=counts, sources=sources, left_out=left_out)
+    return found
+
+
+def _arguments(argv: list[str]) -> tuple[int, Path, date] | str:
+    """``(days, root, today)``, or what is wrong with the arguments."""
+    parser = argparse.ArgumentParser(prog="metrics.py")
+    parser.add_argument("--days", required=True)
+    parser.add_argument("--root", default=".")
+    parser.add_argument("--today", default="")
+    given = parser.parse_args(argv)
+    if not given.days.isdigit() or not 1 <= int(given.days) <= 90:
+        return f"--days must be a whole number from 1 to 90, not {given.days!r}"
+    try:
+        today = date.fromisoformat(given.today) if given.today else datetime.now(UTC).date()
+    except ValueError:
+        return f"--today must be YYYY-MM-DD, not {given.today!r}"
+    return int(given.days), Path(given.root), today
+
+
+def main(argv: list[str]) -> int:
+    found = _arguments(argv)
+    if isinstance(found, str):
+        print(f"metrics.py: {found}", file=sys.stderr)
+        return 2
+    days, root, today = found
+    since = today - timedelta(days=days)
+    readings = [runs_source(root, since)]
+    print(json.dumps(assemble(readings, days=days, since=since, until=today)))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
