@@ -1912,3 +1912,354 @@ export function renderWithApi(
   );
   return { ...result, requests, queryClient, router, stream };
 }
+
+/* ---------- Scenarios (AGH-350 T13) ---------- */
+
+export type ScenarioSummary = Schemas["ScenarioSummary"];
+export type ScenarioCatalog = Schemas["ScenarioCatalogView"];
+export type ScenarioDetail = Schemas["ScenarioDetail"];
+export type ScenarioRunRef = Schemas["ScenarioRunRef"];
+export type ScenarioPlan = Schemas["ScenarioPlanView"];
+export type ScenarioPlanRow = Schemas["ScenarioPlanRow"];
+export type ScenarioRunDetail = Schemas["ScenarioRunDetail"];
+export type ScenarioOption = Schemas["OptionEntry"];
+export type InvestigationSession = Schemas["InvestigationSession"];
+export type FindingIssue = Schemas["FindingIssue"];
+
+/** The synthetic scenario run every scenario builder names. */
+export const SCENARIO_RUN = "3f2a91c0";
+
+export function aScenarioRunRef(overrides: Partial<ScenarioRunRef> = {}): ScenarioRunRef {
+  return {
+    run_id: SCENARIO_RUN,
+    status: "running",
+    started_at: at(0),
+    ended_at: null,
+    environment: "personal",
+    mode: "interactive",
+    ...overrides,
+  };
+}
+
+export function aScenarioSummary(overrides: Partial<ScenarioSummary> = {}): ScenarioSummary {
+  return {
+    project: "demo",
+    name: "order-lifecycle",
+    pack: "orders",
+    description: "One order from fetch to an active cover",
+    revision: 1,
+    node_count: 9,
+    inputs: [],
+    last_run: null,
+    ...overrides,
+  };
+}
+
+export function aScenarioCatalog(overrides: Partial<ScenarioCatalog> = {}): ScenarioCatalog {
+  return { items: [aScenarioSummary()], problems: [], ...overrides };
+}
+
+export function aScenarioDetail(overrides: Partial<ScenarioDetail> = {}): ScenarioDetail {
+  return {
+    ...aScenarioSummary(),
+    node_count: 3,
+    inputs: [
+      { name: "external_ref", type: "string", required: true, description: "The order's ref." },
+    ],
+    steps: [
+      {
+        id: "fetch-order",
+        type: "action",
+        action: "send-queue-message",
+        depends_on: [],
+        description: null,
+      },
+      {
+        id: "order-on-hold",
+        type: "expect",
+        action: "get-order-by-ref",
+        depends_on: ["fetch-order"],
+        description: null,
+      },
+      {
+        id: "render-pdf",
+        type: "action",
+        action: "render-invoice-pdf",
+        depends_on: ["order-on-hold"],
+        description: null,
+      },
+    ],
+    runs: [],
+    environments: [
+      { name: "personal", access: "write", production: false },
+      { name: "qa", access: "read", production: false },
+      { name: "live", access: "read", production: true },
+    ],
+    ...overrides,
+  };
+}
+
+export function aScenarioPlanRow(overrides: Partial<ScenarioPlanRow> = {}): ScenarioPlanRow {
+  return {
+    step: "fetch-order",
+    type: "action",
+    action: "orders/send-queue-message",
+    effect: "write",
+    args: { queue: "FETCH_ORDERS", external_ref: "T-1" },
+    endpoints: {
+      queue: { service: "demo-api/queue", url: "https://queue.example.com/orders", resource: null },
+    },
+    every: null,
+    timeout: null,
+    content_hash: `sha256:${"a".repeat(64)}`,
+    draft: false,
+    decision: "allow",
+    reason_kind: "table",
+    reason: null,
+    plan: "Sends FETCH_ORDERS for T-1",
+    needs_acceptance: false,
+    accept_command: null,
+    ...overrides,
+  };
+}
+
+export function aScenarioPlan(overrides: Partial<ScenarioPlan> = {}): ScenarioPlan {
+  return {
+    project: "demo",
+    scenario: "order-lifecycle",
+    environment: "personal",
+    access: "write",
+    production: false,
+    denied: false,
+    problems: [],
+    rows: [
+      aScenarioPlanRow(),
+      aScenarioPlanRow({
+        step: "order-on-hold",
+        type: "expect",
+        action: "orders/get-order-by-ref",
+        effect: "read",
+        args: { external_ref: "T-1" },
+        endpoints: {
+          db: { service: "demo-api/orders-db", url: null, resource: "demo-orders" },
+        },
+        every: "10s",
+        timeout: "5m",
+        plan: "Reads order T-1",
+      }),
+    ],
+    ...overrides,
+  };
+}
+
+/** A plan whose draft action is denied: the row shows the commit line (AM-5). */
+export function aDraftRow(overrides: Partial<ScenarioPlanRow> = {}): ScenarioPlanRow {
+  return aScenarioPlanRow({
+    step: "render-pdf",
+    action: "orders/render-invoice-pdf",
+    args: { order: "<$CTX.order_id from order-on-hold>" },
+    endpoints: { files: { service: "demo-api/files", url: null, resource: "demo-invoices" } },
+    draft: true,
+    decision: "deny",
+    reason_kind: "draft",
+    reason: "draft action: commit it to run",
+    plan: "runs with values known at run time",
+    needs_acceptance: true,
+    accept_command:
+      "git add -- actions/orders/render-invoice-pdf.yaml actions/orders/scripts/render-invoice-pdf.sh && git commit -m 'Accept action orders/render-invoice-pdf'",
+    ...overrides,
+  });
+}
+
+export function aScenarioOption(overrides: Partial<ScenarioOption> = {}): ScenarioOption {
+  return {
+    option_id: "o1",
+    summary: "Set the order's carrier, then reprocess",
+    steps: [{ action: "patch-order", with: { ref: "T-1" } }],
+    plan: [
+      {
+        index: 1,
+        action: "orders/patch-order",
+        effect: "write",
+        decision: "ask",
+        draft: false,
+        endpoint: { db: { service: "demo-api/orders-db", url: null, resource: "demo-orders" } },
+      },
+    ],
+    needs_acceptance: false,
+    accept_commands: [],
+    pickable: true,
+    refusal: null,
+    ...overrides,
+  };
+}
+
+/** A scenario run paused at its first investigation, with a proposal of three options. */
+export function aScenarioRunDetail(overrides: Partial<ScenarioRunDetail> = {}): ScenarioRunDetail {
+  const gate = "order-processed__investigation";
+  return {
+    run_id: SCENARIO_RUN,
+    project: "demo",
+    scenario: "order-lifecycle",
+    pack: "orders",
+    environment: "personal",
+    mode: "interactive",
+    status: null,
+    open_investigation: 1,
+    paused_step: "order-processed",
+    timeline: [
+      { event: "start", node: null, attempt: null, status: null, at: at(0) },
+      { event: "step_start", node: "fetch-order", attempt: 1, status: null, at: at(5) },
+      { event: "step_end", node: "fetch-order", attempt: 1, status: "ok", at: at(10) },
+      { event: "step_start", node: "order-on-hold", attempt: 1, status: null, at: at(11) },
+      { event: "step_end", node: "order-on-hold", attempt: 1, status: "ok", at: at(40) },
+      { event: "gate", node: "resolve-cover__ask", attempt: 1, status: null, at: at(41) },
+      { event: "decision", node: "resolve-cover__ask", attempt: 1, status: null, at: at(60) },
+      { event: "step_start", node: "order-processed", attempt: 1, status: null, at: at(61) },
+      { event: "step_end", node: "order-processed", attempt: 1, status: "failed", at: at(660) },
+      { event: "investigation", node: "order-processed", attempt: 1, status: null, at: at(661) },
+      { event: "gate", node: gate, attempt: 1, status: null, at: at(661) },
+      {
+        event: "agent_action",
+        node: gate,
+        attempt: 1,
+        status: "ok",
+        at: at(780),
+        action: "orders/get-order",
+        effect: "read",
+      },
+      { event: "proposal", node: gate, attempt: 1, status: null, at: at(960) },
+    ],
+    polls: [
+      { node: "order-on-hold", attempt: 1, poll: 1, held: false, at: at(20) },
+      { node: "order-on-hold", attempt: 1, poll: 2, held: false, at: at(30) },
+      { node: "order-on-hold", attempt: 1, poll: 3, held: true, at: at(40) },
+      { node: "order-processed", attempt: 1, poll: 1, held: false, at: at(100) },
+      { node: "order-processed", attempt: 1, poll: 2, held: false, at: at(660) },
+    ],
+    captures: [{ node: "order-on-hold", attempt: 1, name: "order_id", value: "81234" }],
+    decisions: [
+      {
+        node: "resolve-cover__ask",
+        attempt: 1,
+        choice: "approve",
+        text: null,
+        approver: "Dana Demo",
+        where: "web",
+        at: at(60),
+      },
+    ],
+    findings: [
+      {
+        finding_id: "f1",
+        step: "order-processed",
+        title: "Collection orders lack tracking",
+        text: "The order came in as COLLECTION and has no carrier.",
+        evidence: "status OPEN after 40 polls",
+      },
+    ],
+    investigations: [
+      {
+        number: 1,
+        step: "order-processed",
+        gate,
+        failure_kind: "timeout",
+        choice: null,
+        text: null,
+        approver: null,
+        closed: false,
+        agent_session_id: null,
+      },
+    ],
+    proposal: {
+      proposal: 2,
+      investigation: 1,
+      options: [
+        aScenarioOption(),
+        aScenarioOption({
+          option_id: "o2",
+          summary: "Regenerate the shipments",
+          steps: [{ action: "regenerate-shipments", with: {} }],
+          plan: [
+            {
+              index: 1,
+              action: "orders/regenerate-shipments",
+              effect: "destroy",
+              decision: "ask",
+              draft: false,
+              endpoint: {},
+            },
+          ],
+        }),
+        aScenarioOption({
+          option_id: "o3",
+          summary: "Render the invoice PDF",
+          steps: [{ action: "render-invoice-pdf", with: {} }],
+          plan: [
+            {
+              index: 1,
+              action: "orders/render-invoice-pdf",
+              effect: "write",
+              decision: "deny",
+              reason_kind: "draft",
+              draft: true,
+              endpoint: {},
+            },
+          ],
+          needs_acceptance: true,
+          accept_commands: [
+            "git add -- actions/orders/render-invoice-pdf.yaml && git commit -m 'Accept action orders/render-invoice-pdf'",
+          ],
+          pickable: false,
+          refusal:
+            "option o3 cannot be picked: step 1 (orders/render-invoice-pdf): draft action: commit it to run",
+        }),
+      ],
+    },
+    workarounds: [],
+    actions: [
+      {
+        node: "fetch-order",
+        attempt: 1,
+        poll: 0,
+        action: "orders/send-queue-message",
+        effect: "write",
+        origin: "author",
+        decision: "allow",
+        reason_kind: "table",
+        content_hash: `sha256:${"a".repeat(64)}`,
+        approver: null,
+        status: "ok",
+        failure_kind: null,
+        at: at(10),
+      },
+    ],
+    ...overrides,
+  };
+}
+
+export function anInvestigationSession(
+  overrides: Partial<InvestigationSession> = {},
+): InvestigationSession {
+  return {
+    run_id: SCENARIO_RUN,
+    project: "demo",
+    investigation: 1,
+    step: "order-processed",
+    agent_session_id: anId(9, "0192f00d"),
+    started: true,
+    ...overrides,
+  };
+}
+
+export function aFindingIssue(overrides: Partial<FindingIssue> = {}): FindingIssue {
+  return {
+    run_id: SCENARIO_RUN,
+    finding_id: "f1",
+    team: "DEMO",
+    title: "Collection orders lack tracking",
+    description: "Found by scenario run 3f2a91c0 in personal.",
+    created: null,
+    ...overrides,
+  };
+}
