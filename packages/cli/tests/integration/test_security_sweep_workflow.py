@@ -20,6 +20,9 @@ type Workspace = Any
 
 PACK = BUILTIN_WORKFLOWS / "security-sweep"
 NAME = "security-sweep"
+# AC-1 (a first run keeps one, a second lists none), AC-2 (no scanner installed), and a failed
+# triage that marks nothing seen.
+FIXTURES = ("sweep-findings", "sweep-nothing-new", "sweep-no-scanners", "sweep-triage-failed")
 
 
 def document() -> Any:
@@ -36,9 +39,16 @@ def test_validates_and_passes_every_fixture_when_security_sweep_tested(
     demo_workspace: Workspace, run_command: CommandRunner
 ) -> None:
     validated = run_command(demo_workspace.hub, "workflow", "validate", NAME)
+    tested = run_command(demo_workspace.hub, "workflow", "test", NAME)
 
     assert validated.exit_code == 0, validated.output
     assert validated.stdout == "security-sweep: valid (5 nodes in 5 layers)\n"
+    assert tested.exit_code == 0, tested.output
+    for fixture in FIXTURES:
+        # The hub's seeded copy shadows the built-in (AGH-227).
+        assert f"workflows/security-sweep/fixtures/{fixture}.yaml: ok" in tested.stdout
+    assert "warning" not in tested.stdout
+    assert tested.stdout.endswith("4 fixtures: 4 passed, 0 failed\n")
 
 
 def test_declares_read_only_nodes_and_no_tracker_step_when_document_loaded() -> None:
