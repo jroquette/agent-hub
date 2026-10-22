@@ -33,8 +33,8 @@ from agent_hub.core.knowledge.document_rules import (
 from agent_hub.core.knowledge.knowledge_index import Fingerprint
 from agent_hub.core.knowledge.sync_knowledge import KnowledgeCheckoutError
 from agent_hub.core.knowledge.sync_plan import ListedFile
-from agent_hub.generator.regular_files import NOT_REGULAR as READER_NOT_REGULAR
-from agent_hub.generator.regular_files import read_regular
+from agent_hub.core.regular_files import NOT_REGULAR as READER_NOT_REGULAR
+from agent_hub.core.regular_files import read_regular
 
 GIT_TIMEOUT_SECONDS: Final = 30.0
 # Of git's last stderr line, an error shows at most this many characters.

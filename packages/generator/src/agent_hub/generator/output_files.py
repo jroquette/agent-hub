@@ -22,7 +22,7 @@ from typing import Final
 from agent_hub.core.features.feature_evals import EVAL_HEAD_BYTES
 from agent_hub.core.features.feature_record import MAX_RECORD_BYTES
 from agent_hub.core.features.output_models import MAX_OUTPUT_BYTES
-from agent_hub.generator.regular_files import NOT_REGULAR, read_regular
+from agent_hub.core.regular_files import NOT_REGULAR, read_regular
 
 NOT_READ_AS_REGULAR: Final = "not read as a regular file (links are never followed)"
 RECORD_NAME: Final = "features.json"
