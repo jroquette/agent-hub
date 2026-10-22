@@ -6,10 +6,12 @@ from typing import Any
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.schedules.scheduled_starts import (
+    EventPollError,
     EventQuery,
     EventRef,
     ScheduledHub,
     StartScheduledRuns,
+    StartState,
 )
 from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.core.testing.schedule_fakes import (
@@ -157,4 +159,75 @@ def test_leaves_ledger_untouched_when_hub_declares_no_schedule() -> None:
     scheduler = world.scheduler()
 
     assert scheduler.start_due_slots(at("2026-10-26T09:05")).failures == ()
-    assert world.ledger.writes == 0
+    assert scheduler.poll_events().failures == ()
+    assert (world.ledger.writes, world.events.queries) == (0, [])
+
+
+def test_records_baseline_and_starts_nothing_when_scheduler_polls_a_source_first() -> None:
+    world = World(events=[ON_MERGE])
+    world.events.answers[MERGES] = (merge(SHA_B), merge(SHA_A))
+
+    report = world.scheduler().poll_events()
+
+    assert (report.started, report.failures) == ((), ())
+    assert world.events.queries == [MERGES]
+    assert world.ledger.states[HUB].seen == {"verify merge demo-api": (SHA_B, SHA_A)}
+
+
+def test_starts_one_event_run_with_merge_sha_when_scheduler_polls_a_new_merge() -> None:
+    world = World(events=[ON_MERGE])
+    world.events.answers[MERGES] = (merge(SHA_A),)
+    scheduler = world.scheduler()
+    scheduler.poll_events()
+    world.events.answers[MERGES] = (merge(SHA_B), merge(SHA_A))
+
+    report = scheduler.poll_events()
+
+    assert [(run.workflow, run.trigger) for run in report.started] == [("verify", "event")]
+    [(request, trigger, _)] = world.start.calls
+    assert dict(request.inputs) == {"label": "x", "sha": SHA_B}
+    assert trigger == "event"
+
+
+def test_starts_none_twice_when_scheduler_sees_an_event_again() -> None:
+    world = World(events=[ON_MERGE])
+    world.events.answers[MERGES] = (merge(SHA_A),)
+    world.scheduler().poll_events()
+    world.events.answers[MERGES] = (merge(SHA_C), merge(SHA_B), merge(SHA_A))
+
+    first = world.scheduler().poll_events()
+    again = world.scheduler().poll_events()
+
+    # Oldest first, each once, across a restart.
+    assert [request.inputs["sha"] for request, _, _ in world.start.calls] == [SHA_B, SHA_C]
+    assert (len(first.started), again.started) == (2, ())
+    assert world.ledger.states[HUB].seen["verify merge demo-api"] == (SHA_C, SHA_B, SHA_A)
+
+
+def test_keeps_ledger_and_starts_nothing_when_scheduler_event_poll_fails() -> None:
+    world = World(events=[ON_MERGE])
+    world.events.answers[MERGES] = (merge(SHA_A),)
+    world.scheduler().poll_events()
+    world.events.answers[MERGES] = EventPollError("gh timed out")
+
+    report = world.scheduler().poll_events()
+
+    assert report.started == ()
+    assert [(f.workflow, f.reason) for f in report.failures] == [
+        ("verify", "event poll failed: verify merge demo-api: gh timed out")
+    ]
+    assert world.ledger.states[HUB] == StartState(seen={"verify merge demo-api": (SHA_A,)})
+    assert world.start.calls == []
+
+
+def test_passes_only_declared_event_inputs_when_scheduler_starts_an_event_run() -> None:
+    world = World(events=[{**ON_MERGE, "workflow": "notes"}])
+    query = MERGES
+    world.events.answers[query] = ()
+    world.scheduler().poll_events()
+    world.events.answers[query] = (merge(SHA_A),)
+
+    world.scheduler().poll_events()
+
+    # notes declares no sha: the event offers it, the run does not get it.
+    assert world.start.inputs() == [{"label": "x"}]
