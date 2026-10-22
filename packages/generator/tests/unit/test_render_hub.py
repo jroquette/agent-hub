@@ -162,6 +162,7 @@ DESIGN_PATHS = (
     "workflows/doc-drift/fixtures/drift-declined.yaml",
     "workflows/doc-drift/fixtures/drift-none.yaml",
     "workflows/doc-drift/fixtures/drift-renamed-command.yaml",
+    "workflows/doc-drift/scripts/branch.py",
     "workflows/doc-drift/scripts/contract.py",
     "workflows/doc-drift/scripts/doc_fix.py",
     "workflows/doc-drift/scripts/mentions.py",
