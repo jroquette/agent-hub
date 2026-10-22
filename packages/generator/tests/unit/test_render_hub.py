@@ -217,6 +217,7 @@ DESIGN_PATHS = (
     "workflows/sdlc/scripts/verdict.py",
     "workflows/sdlc/ticket-pass.yaml",
     "workflows/upgrade/scripts/fast_gate.py",
+    "workflows/upgrade/upgrade.yaml",
 )
 # AGH-19 spec "The rendered set": the base plugin's agents, by file stem, and its skills, by
 # folder name.
