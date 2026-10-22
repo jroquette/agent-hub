@@ -64,12 +64,33 @@ generated file and `hub` command takes project values from it and nowhere else. 
 | `models.agents.<agent>` | closed list `small`, `medium`, `large`; `<agent>` one of the 8 plugin agents (`architect`, `evaluator`, `planner`, `quality-reviewer`, `requirements-analyst`, `researcher`, `spec-reviewer`, `ux-designer`) | the template's tier | generator: the agent renders that tier's model instead; an unknown tier or agent is a schema error (`config.schema`) |
 | `environments` | object keyed by environment name (`S`, ≤ 40, unique ignoring case): `access`, `production`, `description` (≤ 80), `credentials` names ([environments.md](environments.md)) | `{}` | `AGENTS.md`, `hub brief`, `hub env`, `hub doctor`, `hub sync`, `hub setup`, guard (credential names) |
 | `environments.<name>.credentials.env_file` (and an endpoint's) | a dotenv path relative to the workspace (the hub's parent folder), printable ASCII, ≤ 200, no `..` segment, no leading `/` or `~`, no secret shape ([scenarios.md](scenarios.md)) | absent | the action runner only (never `AGENTS.md` or the brief), `hub env add\|set --env-file`, `hub doctor` (`environments.env_file`) |
+| `schedules` | list of ≤ 32 objects, one per workflow; not in `hub.local.json` ([ADR 0048](../adr/0048-scheduled-and-event-starts-in-hub-web.md)) | `[]` | `hub web`, `hub workflow schedule list`, `hub doctor` (`workflows.starts`) |
+| `schedules[].workflow` | a workflow name, kebab-case, ≤ 128 | req. | `hub web` starts it; `hub doctor` reports an unknown name or `issue-to-pr` |
+| `schedules[].cron` | 5 numeric fields (minute hour day month weekday; `*`, lists, `A-B`, `*/S`, `A-B/S`), ≤ 100 characters, read in UTC; a cron that never fires is an error | req. | `hub web`, `hub workflow schedule list` |
+| `schedules[].inputs` | object of ≤ 64 run inputs: names `^[a-z][a-z0-9_]{0,63}$`, values a boolean, a number or a text of ≤ 1 000 characters with no NUL and no secret shape | `{}` | `hub web` (checked against the workflow's declared inputs at each start) |
+| `schedules[].environment` | a declared `environments` name | absent | `hub web` (the run's `--env`) |
+| `events` | list of ≤ 32 objects, one per workflow, `on` and `repo`; not in `hub.local.json` ([ADR 0048](../adr/0048-scheduled-and-event-starts-in-hub-web.md)) | `[]` | `hub web`, `hub doctor` (`workflows.starts`) |
+| `events[].workflow` | as `schedules[].workflow` | req. | as `schedules[].workflow` |
+| `events[].on` | closed list `merge` (a new commit on the repo's default branch), `ci_red` (a failed Actions run on it), `pr_opened` (a newly opened pull request) | req. | `hub web` (`gh api`) |
+| `events[].repo` | a `repos[].dir` (its `github` is polled) | req. | `hub web` |
+| `events[].inputs` | as `schedules[].inputs`, without `sha`, `pr` or `ci_run`, which come from the event | `{}` | `hub web` |
 
 Unknown keys are an error at every object level; `_` keys (such as `_comment`) are accepted and ignored at every level,
 and the exported schema says the same ([ADR 0010](../adr/0010-hub-json-config-contract.md)). Cross-field checks are
 model validators JSON Schema cannot express, so an editor accepts what the CLI rejects: unique `repos[].dir`, team keys
 unique ignoring case, guard path roots, `doctor.rules` entries of an unselected module, `contract-sync` repos, a
-`pr_title` part (not `{ISSUE}`) the repo's effective `commit_title` lacks, `guard.infra` patterns that compile.
+`pr_title` part (not `{ISSUE}`) the repo's effective `commit_title` lacks, `guard.infra` patterns that compile, a
+`schedules[].environment` that is declared, an `events[].repo` that is a `repos[].dir`, one schedule per workflow and
+one event per workflow, `on` and `repo`, and no `sha`, `pr` or `ci_run` in `events[].inputs`.
+
+`schedules` and `events` are started by `hub web` while it runs (not with the agent sessions off, as in the container),
+each as a `hub workflow run --live` child whose start record holds `trigger` (`schedule` or `event`). A cron is read in
+UTC; each minute, the most recent slot at or before now starts once, so a slot missed while `hub web` was down runs once
+when it comes back, and older ones never do. Every 5 minutes `hub web` asks GitHub through `gh api` for each event
+source's newest 20 items; the first successful poll is a baseline and starts nothing, and later polls start one run per
+new merge commit, failed Actions run or opened pull request. The event's data reaches the run only as inputs the
+workflow declares: `sha` (every kind), `pr` (`pr_opened`) and `ci_run` (`ci_red`). The slots and event ids already
+started are kept in `<hub>/.agent-runs/schedules/state.json` ([ADR 0048](../adr/0048-scheduled-and-event-starts-in-hub-web.md)).
 
 ### Rendered values
 
