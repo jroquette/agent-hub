@@ -2,6 +2,10 @@
 doctor's ``links.dead`` reads, resolved in the workspace, kept when the note route would serve
 them, each once, at most ``MAX_LINKS_PER_DOCUMENT`` (AC-393.10)."""
 
+from collections.abc import Iterator
+from typing import SupportsIndex, overload
+
+from agent_hub.core.knowledge import document_links as links_module
 from agent_hub.core.knowledge.document_links import MAX_LINKS_PER_DOCUMENT, document_links
 
 HUB_FOLDER = "demo-hub"
@@ -72,3 +76,57 @@ def test_drops_target_when_note_route_refuses() -> None:
     assert len(deepest.split("/")) == 16
     assert len(longest) == 512
     assert links == (f"brain/{deepest}", f"brain/{longest}")
+
+
+def test_drops_target_when_link_leaves_workspace_and_returns() -> None:
+    text = "[back](../../../../demo-hub/brain/x.md) [in](../../../demo-hub/brain/x.md)\n"
+
+    links = document_links(NOTE, text, hub_folder=HUB_FOLDER)
+
+    assert links == ("brain/x.md",)
+
+
+def test_keeps_target_when_destination_has_query() -> None:
+    text = "[raw](../now.md?view=raw#top)\n"
+
+    links = document_links(NOTE, text, hub_folder=HUB_FOLDER)
+
+    assert links == ("brain/now.md",)
+
+
+class _CountingFolder(list[str]):
+    """A folder's segments that count how many of them are read, however they are read."""
+
+    def __init__(self, segments: list[str]) -> None:
+        super().__init__(segments)
+        self.reads = 0
+
+    def __iter__(self) -> Iterator[str]:
+        self.reads += len(self)
+        return super().__iter__()
+
+    @overload
+    def __getitem__(self, index: SupportsIndex, /) -> str: ...
+
+    @overload
+    def __getitem__(self, index: slice, /) -> list[str]: ...
+
+    def __getitem__(self, index: SupportsIndex | slice, /) -> str | list[str]:
+        found = super().__getitem__(index)
+        self.reads += len(found) if isinstance(found, list) else 1
+        return found
+
+
+def test_reads_no_folder_segment_when_target_too_deep_or_climbing_out() -> None:
+    depth = 10_000
+    folder = _CountingFolder([HUB_FOLDER, "brain", *(f"f{number}" for number in range(depth))])
+
+    deep = [links_module._brain_target(folder, "x.md", HUB_FOLDER) for _ in range(1_000)]
+    out = links_module._brain_target(folder, "../" * (depth + 3) + "x.md", HUB_FOLDER)
+
+    assert deep == [None] * 1_000
+    assert out is None
+    assert folder.reads == 0
+    shallow = _CountingFolder([HUB_FOLDER, "brain", "playbooks"])
+    assert links_module._brain_target(shallow, "../now.md", HUB_FOLDER) == "brain/now.md"
+    assert shallow.reads == 2
