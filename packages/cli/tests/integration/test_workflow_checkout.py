@@ -74,6 +74,19 @@ def test_reads_another_status_when_head_moves_on_a_clean_tree(repo: Path) -> Non
     assert checkout.status() != before
 
 
+def test_reads_the_same_status_when_a_fetch_moves_the_upstream(repo: Path, tmp_path: Path) -> None:
+    clone = tmp_path / "clone"
+    git(tmp_path, "clone", "-q", str(repo), str(clone))
+    checkout = probe(clone)
+    before = checkout.status()
+
+    git(repo, "commit", "-q", "--allow-empty", "-m", "upstream moves")
+    git(clone, "fetch", "-q", "origin")
+
+    # HEAD and the tree are unchanged: only the ahead/behind count moved.
+    assert checkout.status() == before
+
+
 def test_reads_the_same_status_when_a_feature_record_is_written_beside_the_node(
     repo: Path,
 ) -> None:
