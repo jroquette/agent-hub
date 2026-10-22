@@ -65,6 +65,7 @@ from agent_hub.core.agent_sessions.agent_session import (
     AgentSessionStatus,
     CreateAgentSession,
     EndReason,
+    FinalReply,
     MessageAccepted,
     OpenPermission,
     PermissionDecision,
@@ -80,6 +81,7 @@ from agent_hub.core.agent_sessions.driver import (
     DriverCapabilities,
     DriverError,
     DriverEvent,
+    DriverFile,
     DriverImage,
     Exited,
     InitEvent,
@@ -89,6 +91,7 @@ from agent_hub.core.agent_sessions.driver import (
     StartSpec,
     TaskEvent,
     TextDelta,
+    ToolAccess,
     ToolCall,
     ToolResult,
     TurnResult,
@@ -109,6 +112,7 @@ from agent_hub.core.agent_sessions.limits import SessionLimits
 from agent_hub.core.agent_sessions.links import AgentSessionLink, ObservedSessionLookup
 from agent_hub.core.agent_sessions.live_session import LiveSession, OpenRequest
 from agent_hub.core.agent_sessions.log_caps import Full, LogBudget, Truncated
+from agent_hub.core.agent_sessions.message_file import decode_message_file
 from agent_hub.core.agent_sessions.permission_policy import (
     closed_answer,
     deadline,
@@ -138,6 +142,7 @@ from agent_hub.core.agent_sessions.repo_changes import (
     RepoChangesError,
     RepoChangesReader,
     RepoCommitDiff,
+    RepoFileText,
     RepoPullRequest,
     SessionRepoChanges,
     relative_to_root,
@@ -182,6 +187,10 @@ PR_CHECK_SECONDS: Final = 60
 
 # The tool calls ``repo_changes`` reads for the worktrees a session names, a page at a time.
 CALL_KINDS: Final[frozenset[RecordKind]] = frozenset({"tool.call"})
+# The records ``final_reply`` reads: the messages, to find the last one, the replies and any
+# interrupt after it.
+REPLY_KINDS: Final[frozenset[RecordKind]] = frozenset({"user.message", "text", "interrupt"})
+REPLY_PAGE: Final = 500
 MAX_CALLS_READ: Final = 5000
 CALLS_PAGE: Final = 500
 
@@ -233,9 +242,14 @@ def _event_body(event: DriverEvent) -> dict[str, JsonValue]:
     return body
 
 
-def _user_message_body(text: str, images: tuple[DriverImage, ...]) -> UserMessageBody:
-    """A user message's record: its text and a marker per image, never the image's bytes."""
+def _user_message_body(
+    text: str, images: tuple[DriverImage, ...], files: tuple[DriverFile, ...] = ()
+) -> UserMessageBody:
+    """A user message's record: its text and a marker per file and image, never their bytes."""
     attachments = tuple(
+        Attachment(kind="file", media_type=file.media_type, bytes=len(file.data), name=file.name)
+        for file in files
+    ) + tuple(
         Attachment(kind="screenshot", media_type=image.media_type, bytes=len(image.data))
         for image in images
     )
@@ -333,6 +347,10 @@ class AgentSessionCommands(Protocol):
         self, agent_session_id: str, *, path: str, sha: str, old_path: str | None = None
     ) -> RepoCommitDiff:
         """What one commit changed in one file of the session's repositories."""
+        ...
+
+    async def repo_file_text(self, agent_session_id: str, *, path: str, sha: str) -> RepoFileText:
+        """One file of the session's repositories as one commit has it."""
         ...
 
     async def delete(self, agent_session_id: str) -> None:
@@ -643,9 +661,39 @@ class AgentSessionControl:
         a rename), read by git in the session's repository that holds it (``repo_changes``'s
         repositories, plus the listed one holding ``path``). ``EntityNotFoundError`` when no
         such repository holds the file, or git knows no such commit."""
+        missing = EntityNotFoundError(entity="commit", entity_id=sha)
+        reader, root = await self._repo_of(agent_session_id, path, missing)
+        paths = [relative_to_root(root, one) for one in (path, old_path) if one]
+        try:
+            diff = await asyncio.to_thread(
+                reader.commit_diff, root, sha=sha, paths=[one for one in paths if one]
+            )
+        except RepoChangesError as error:
+            raise missing from error
+        return diff.model_copy(update={"path": path})
+
+    async def repo_file_text(self, agent_session_id: str, *, path: str, sha: str) -> RepoFileText:
+        """The file at ``path`` as commit ``sha`` has it, read by git in the session's repository
+        that holds it (as ``repo_commit_diff``). ``EntityNotFoundError`` when no such repository
+        holds the file, or git knows no such commit."""
+        missing = EntityNotFoundError(entity="commit", entity_id=sha)
+        reader, root = await self._repo_of(agent_session_id, path, missing)
+        relative = relative_to_root(root, path)
+        if relative is None:
+            raise missing
+        try:
+            found = await asyncio.to_thread(reader.file_text, root, sha=sha, path=relative)
+        except RepoChangesError as error:
+            raise missing from error
+        return found.model_copy(update={"path": path})
+
+    async def _repo_of(
+        self, agent_session_id: str, path: str, missing: EntityNotFoundError
+    ) -> tuple[RepoChangesReader, str]:
+        """The git reader and the root of the session's listed repository that holds ``path``;
+        ``missing`` when there is no reader, or no such repository."""
         session = await self._session(agent_session_id)
         reader = self._repo_changes
-        missing = EntityNotFoundError(entity="commit", entity_id=sha)
         if reader is None:
             raise missing
         try:
@@ -656,14 +704,7 @@ class AgentSessionControl:
         root = next((one for one in roots if relative_to_root(one.path, path) is not None), None)
         if root is None:
             raise missing
-        paths = [relative_to_root(root.path, one) for one in (path, old_path) if one]
-        try:
-            diff = await asyncio.to_thread(
-                reader.commit_diff, root.path, sha=sha, paths=[one for one in paths if one]
-            )
-        except RepoChangesError as error:
-            raise missing from error
-        return diff.model_copy(update={"path": path})
+        return reader, root.path
 
     async def _session(self, agent_session_id: str) -> AgentSession:
         """The live view of a session, else its stored record (no twin lookup)."""
@@ -680,6 +721,29 @@ class AgentSessionControl:
         )
         more = len(records) == limit and records[-1].seq < session.last_seq
         return LogRecordPage(items=records, next_after=records[-1].seq if more else None)
+
+    async def final_reply(self, agent_session_id: str) -> FinalReply:
+        """The assistant's text after the session's last message, as stored (redacted), its
+        blocks joined by a blank line, and whether that turn was interrupted."""
+        await self._session(agent_session_id)
+        return await asyncio.to_thread(self._final_reply, agent_session_id)
+
+    def _final_reply(self, agent_session_id: str) -> FinalReply:
+        texts: list[str] = []
+        interrupted = False
+        after = 0
+        while page := self._store.records(
+            agent_session_id, after=after, limit=REPLY_PAGE, kinds=REPLY_KINDS
+        ):
+            for record in page:
+                if record.kind == "user.message":
+                    texts, interrupted = [], False
+                elif record.kind == "interrupt":
+                    interrupted = True
+                elif isinstance(text := record.body.get("text"), str):
+                    texts.append(text)
+            after = page[-1].seq
+        return FinalReply(text="\n\n".join(texts) if texts else None, interrupted=interrupted)
 
     async def delete(self, agent_session_id: str) -> None:
         """Remove an ended session and its log (L4); a live one raises ``SessionLiveError``."""
@@ -717,16 +781,32 @@ class AgentSessionControl:
     # Commands
 
     async def create(
-        self, request: CreateAgentSession, *, restriction: SessionRestriction | None = None
+        self,
+        request: CreateAgentSession,
+        *,
+        restriction: SessionRestriction | None = None,
+        tool_access: ToolAccess = "all",
+        add_dirs: tuple[str, ...] = (),
     ) -> AgentSession:
-        """Start a session in a listed workdir (and send its first prompt, with the screenshot
-        as an image): ``running`` with a prompt, else ``idle`` (E13). A refused screenshot
-        raises before anything starts or is stored. ``restriction`` holds the session to a
-        tool policy and a system prompt, now and when it is reopened."""
+        """Start a session in a listed workdir (and send its first prompt, with the screenshot,
+        the images and the files attached to it): ``running`` with a prompt, else ``idle``
+        (E13). A refused image or file raises before anything starts or is stored.
+        ``restriction`` holds the session to a tool policy and a system prompt, now and when it
+        is reopened.
+
+        ``tool_access`` and ``add_dirs`` are the server's own choices too (a discovery starts a
+        ``read_only`` session that reads the picked repos); the routes never pass them."""
         prompt = request.prompt
         if prompt is not None:
             self._check_size(prompt)
-        images = (decode_screenshot(request.screenshot),) if request.screenshot else ()
+        images = ((decode_screenshot(request.screenshot),) if request.screenshot else ()) + tuple(
+            decode_screenshot(screenshot, pointer=f"/screenshots/{index}/data")
+            for index, screenshot in enumerate(request.screenshots or ())
+        )
+        files = tuple(
+            decode_message_file(message_file, pointer=f"/files/{index}/data")
+            for index, message_file in enumerate(request.files or ())
+        )
         async with self._admission:
             await self._check_can_start()
             resolved = (await self._listing(request.project)).resolve(request.workdir_id)
@@ -753,6 +833,7 @@ class AgentSessionControl:
                 last_prompt=prompt_snippet(prompt) if prompt else None,
                 created_at=now,
                 updated_at=now,
+                tool_access=tool_access,
             )
             await asyncio.to_thread(self._store.create, session)
             if restriction is not None:
@@ -769,29 +850,36 @@ class AgentSessionControl:
                 hidden_environment=hidden,
                 tool_policy=None if restriction is None else restriction.tool_policy,
                 system_prompt=None if restriction is None else restriction.system_prompt,
+                tool_access=tool_access,
+                add_dirs=add_dirs,
             )
             live = await self._start(session, spec, state)
             try:
-                await self._begin(live, prompt, images)
+                await self._begin(live, prompt, images, files=files)
             except Exception:
                 await self._fail_start(live)
                 raise
         return live.view()
 
     async def _begin(
-        self, live: LiveSession, prompt: str | None, images: tuple[DriverImage, ...]
+        self,
+        live: LiveSession,
+        prompt: str | None,
+        images: tuple[DriverImage, ...],
+        *,
+        files: tuple[DriverFile, ...] = (),
     ) -> None:
-        """Log the first prompt (a marker per image, never its bytes), start the pump, then send
-        the prompt with its images."""
+        """Log the first prompt (a marker per image and file, never their bytes), start the
+        pump, then send the prompt with its images and files."""
         if prompt is not None:
-            body = _user_message_body(prompt, images)
+            body = _user_message_body(prompt, images, files)
             await self._emit(live, "user.message", body.as_body(), by="web")
         pump = asyncio.create_task(self._pump(live), name=f"agent-session-{live.id}")
         live.pump = pump
         self._pumps.add(pump)
         pump.add_done_callback(self._pumps.discard)
         if prompt is not None:
-            await self._driver.send(live.handle, prompt, images=images)
+            await self._driver.send(live.handle, prompt, images=images, files=files)
 
     async def _fail_start(self, live: LiveSession) -> None:
         """End a session whose first record or prompt failed ``failed``; the caller re-raises
@@ -827,16 +915,20 @@ class AgentSessionControl:
             decode_screenshot(screenshot, pointer=f"/screenshots/{index}/data")
             for index, screenshot in enumerate(message.screenshots or ())
         )
+        files = tuple(
+            decode_message_file(message_file, pointer=f"/files/{index}/data")
+            for index, message_file in enumerate(message.files or ())
+        )
         live = await self._commandable(agent_session_id, reopen=True)
         async with live.commands:
             self._refuse(live, Send())
-            body = _user_message_body(message.text, images)
+            body = _user_message_body(message.text, images, files)
             seq = await self._emit(live, "user.message", body.as_body(), by="web")
             if seq is None:
                 raise await self._log_full(live)
             live.state = apply(live.state, Send())
             await self._sync(live)
-            await self._driver.send(live.handle, message.text, images=images)
+            await self._driver.send(live.handle, message.text, images=images, files=files)
         return MessageAccepted(seq=seq)
 
     async def stop_task(self, agent_session_id: str, task_id: str) -> AgentSession:
@@ -1132,6 +1224,8 @@ class AgentSessionControl:
                 hidden_environment=hidden,
                 tool_policy=None if kept is None else kept.tool_policy,
                 system_prompt=None if kept is None else kept.system_prompt,
+                # A read-only session stays read-only once reopened.
+                tool_access=reopened.tool_access,
             )
             state = start_state(with_prompt=False)
             live = await self._start(reopened, spec, state)

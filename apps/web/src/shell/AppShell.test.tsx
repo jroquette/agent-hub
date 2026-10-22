@@ -309,6 +309,84 @@ describe("AppShell", () => {
 
     expect(await seriousViolations(container)).toEqual([]);
   });
+
+  const discussRoutes = {
+    ...routes,
+    "/api/v1/agent-sessions/capabilities": aCapabilities(),
+    "/api/v1/agent-sessions/workdirs": { items: [aWorkdir()], warnings: [] },
+  };
+
+  it("AC-422.2 has no serious or critical a11y violation with the Discuss panel open (a11y)", async () => {
+    window.localStorage.removeItem("ah.discuss.open");
+    const { container } = renderWithApi(<AppShell />, { path: "/health", routes: discussRoutes });
+    await userEvent.click(screen.getByRole("button", { name: "Discuss" }));
+    await screen.findByRole("complementary", { name: "Discuss with Claude" });
+
+    expect(screen.getByRole("separator", { name: "Resize the Discuss panel" })).toHaveAttribute(
+      "aria-controls",
+      "ah-discuss",
+    );
+    expect(await seriousViolations(container)).toEqual([]);
+    window.localStorage.removeItem("ah.discuss.open");
+  });
+
+  it("AC-422.3 closes the Discuss panel on Escape from inside it and gives focus back to Discuss", async () => {
+    window.localStorage.removeItem("ah.discuss.open");
+    renderWithApi(<AppShell />, { path: "/health", routes: discussRoutes });
+    const toggle = screen.getByRole("button", { name: "Discuss" });
+    await userEvent.click(toggle);
+    const panel = await screen.findByRole("complementary", { name: "Discuss with Claude" });
+    // AC-422.4: the toggle reads pressed, not accent-filled.
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    expect(toggle).not.toHaveClass("ah-btn-primary");
+    within(panel).getByRole("button", { name: "Close panel" }).focus();
+
+    await userEvent.keyboard("{Escape}");
+
+    expect(screen.queryByRole("complementary", { name: "Discuss with Claude" })).toBeNull();
+    expect(toggle).toHaveFocus();
+    window.localStorage.removeItem("ah.discuss.open");
+  });
+
+  it("AC-422.3 closes the Discuss panel over the page on Escape from anywhere (below 1280 px)", async () => {
+    window.localStorage.removeItem("ah.discuss.open");
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: false,
+      media: query,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }));
+    renderWithApi(<AppShell />, { path: "/health", routes: discussRoutes });
+    await userEvent.click(screen.getByRole("button", { name: "Discuss" }));
+    await screen.findByRole("complementary", { name: "Discuss with Claude" });
+    (document.activeElement as HTMLElement | null)?.blur();
+
+    await userEvent.keyboard("{Escape}");
+
+    expect(screen.queryByRole("complementary", { name: "Discuss with Claude" })).toBeNull();
+    vi.unstubAllGlobals();
+    window.localStorage.removeItem("ah.discuss.open");
+  });
+
+  it("AC-422.3 keeps the docked Discuss panel open on an Escape pressed on the page (from 1280 px)", async () => {
+    window.localStorage.removeItem("ah.discuss.open");
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query.includes("1280px"),
+      media: query,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }));
+    renderWithApi(<AppShell />, { path: "/health", routes: discussRoutes });
+    await userEvent.click(screen.getByRole("button", { name: "Discuss" }));
+    await screen.findByRole("complementary", { name: "Discuss with Claude" });
+    (document.activeElement as HTMLElement | null)?.blur();
+
+    await userEvent.keyboard("{Escape}");
+
+    expect(screen.getByRole("complementary", { name: "Discuss with Claude" })).toBeInTheDocument();
+    vi.unstubAllGlobals();
+    window.localStorage.removeItem("ah.discuss.open");
+  });
 });
 
 describe("AppShell scope on a project's Brain or Skills", () => {

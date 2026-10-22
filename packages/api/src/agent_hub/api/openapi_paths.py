@@ -20,6 +20,8 @@ P2_PATHS: frozenset[tuple[str, str]] = frozenset(
         ("get", "/projects/{project}/repos"),
         ("get", "/projects/{project}/config"),
         ("put", "/projects/{project}/config/local"),
+        ("post", "/projects/{project}/config/environments"),
+        ("get", "/projects/{project}/env-file-keys"),
         ("get", "/needs-you"),
         ("get", "/activity"),
         ("get", "/search"),
@@ -87,6 +89,7 @@ AGENT_SESSION_PATHS: frozenset[tuple[str, str]] = frozenset(
         ("get", "/{agent_session_id}/events"),
         ("get", "/{agent_session_id}/repo-changes"),
         ("get", "/{agent_session_id}/repo-changes/commit"),
+        ("get", "/{agent_session_id}/repo-changes/file"),
         ("get", "/{agent_session_id}/stream"),
         ("post", "/{agent_session_id}/messages"),
         ("post", "/{agent_session_id}/interrupt"),
@@ -202,6 +205,17 @@ SCENARIO_PATHS: frozenset[tuple[str, str]] = frozenset(
     )
 )
 
+# Finding services with a read-only Claude session (ADR 0046): start, list, read and discard.
+DISCOVERY_PATHS: frozenset[tuple[str, str]] = frozenset(
+    (method, f"{API_PREFIX}/projects/{{project}}/environment-discoveries{path}")
+    for method, path in (
+        ("post", ""),
+        ("get", ""),
+        ("get", "/{discovery_id}"),
+        ("delete", "/{discovery_id}"),
+    )
+)
+
 # Every path the document lists.
 SERVED_PATHS: frozenset[tuple[str, str]] = (
     P2_PATHS
@@ -220,6 +234,7 @@ SERVED_PATHS: frozenset[tuple[str, str]] = (
     | PLATFORM_SYNC_PATHS
     | DOCTOR_FIX_PATHS
     | AC_CHECK_PATHS
+    | DISCOVERY_PATHS
     | SCENARIO_PATHS
 )
 

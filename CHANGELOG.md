@@ -11,6 +11,128 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- An environment's page in `hub web` offers "Find services with Claude" (AGH-418): pick the repos and environments,
+  and a read-only Claude session starts on the click; its progress shows the cost, the conversation and Stop. The
+  review lists each proposed environment and service with the file and line it came from and its status (new,
+  differs from yours, already declared); new ones start selected, production and differences wait for you, and one
+  write adds the selection to `hub.json`. Probably missing services lead to Add service, and the Environments page
+  leads back to a search still open.
+- `hub web` can find a project's services with a read-only Claude session (AGH-418, ADR 0046):
+  `POST /projects/{project}/environment-discoveries` starts a session limited to `Read`, `Grep` and `Glob` (no MCP
+  server; any other tool request is denied without asking) on the picked repos, and each read answers its state and
+  the proposal of its final reply, every item checked with `hub.json`'s shapes, its access set from a preset and
+  marked new, differs or already declared. Nothing is written until the person applies rows through the batch edit.
+  The database gains migration 0009 (a session's tool access, kept when it is reopened).
+- `hub web` has an Environments page, in the sidebar's Work group (AGH-417): a table of the project's environments
+  (what agents may do, secrets by name, services, who set them) whose rows open each environment's own page. There
+  you change the access (for the team, or stricter for you only), where the secrets live and the description in place,
+  one section at a time; see its services and open one in a side panel to change its kind, description and every
+  address at once; and read a short summary of what agents see. Removing an environment in use is one confirmation.
+  Step-by-step pages add an environment or a service by plain questions, including where an environment's secrets
+  live; for an env file, hub web lists its variable names, never a value (`GET /projects/{project}/env-file-keys`).
+  A long address, and a long name in the chat's files list, is shown whole when it fits, else cut in the middle with
+  the whole text on hover. The Hub config screen keeps a summary row that opens the page.
+- `hub web` reads and edits the declared environments and services (AGH-416). The Hub config view carries every
+  effective environment and repo service with the file it comes from (and hub.json's access of a tightened one), and
+  `POST /projects/{project}/config/environments` adds, changes, renames and removes environments, services and
+  endpoints in `hub.json` or `hub.local.json`, one edit or a batch written together, checked as a read checks them and
+  never committed. A team rename also renames your own `hub.local.json` entries; other developers rename theirs.
+- Session review in `hub web` (AGH-424): the Code tab shows the code and its tests together or apart (kept per
+  browser); a narrow file list keeps each name on one line, cut at its end; diffs (review, transcript edits, commits,
+  item history) are coloured in the file's language as on GitHub, and highlighted code takes GitHub's syntax palette;
+  files the session touched and then put back sit in a `Discarded` tab, out of the totals and the review; a pull
+  request's diff expands around its hunks, read from the new `GET /api/v1/agent-sessions/{id}/repo-changes/file`.
+- hub web gains a Tickets list (sidebar Work → Tickets, `/tickets`, AGH-426): the maintenance, fixes and small
+  changes the sessions worked on outside a feature (`/fix`, `/refactor`, `/upgrade`, `/incident`, `/triage`,
+  `/deliver`, `/review`, hub runs), one row per tracker issue under Needs you, In progress and Ended, with a Kind
+  filter and search. **Start ticket** opens the New session dialog on the hub folder with `/fix` in the prompt.
+- `hub web` lists an env file's variable names, never a value (AGH-417): `GET /projects/{project}/env-file-keys`
+  reads only a regular file of at most 64 KiB that the hub or a declared repo holds, reached through no link, and says
+  whether git ignores it. A long name in the chat's files list is shown whole when it fits, else cut in the middle with
+  the whole text on hover.
+- `hub web`'s agent-session API takes PDF and text files with a message for Claude to read, up to 10 per message and
+  5 MB each (AGH-419): a PDF goes to Claude as a document, a text file as text that names it. The server keeps no
+  file byte, only each file's name and size in the log. A session's first prompt may carry pasted images and files
+  too. The agent-session routes' body cap goes to 160 MiB.
+- `hub web` starts a feature with Claude (AGH-420): New feature on the Features list opens `/features/new`, where
+  you describe what to build in a box that takes images, PDFs and text files like the chat, and optionally give the
+  tracker issue, a slug and a size. Start with Claude (or Ctrl/⌘+Enter) opens the Discuss panel on a conversation in
+  the hub folder that runs the hub's `feature` skill from the brief, one question at a time; the page links to the
+  feature once its record is written. Code fields such as the issue id now show in the mono face.
+- `hub web`'s chat takes PDF and text files with a message for Claude to read, up to 10 per message and 5 MB each
+  (AGH-419): Attach, a paste or a drop adds them as chips with name and size beside the images, and a sent message
+  lists them. The server keeps no file byte, only each file's name and size in the log. A session's first prompt may
+  carry pasted images and files too, so the Discuss panel takes them from its first message. The agent-session
+  routes' body cap goes to 160 MiB.
+- A sessions rail sits beside the full chat (AGH-422): the sessions waiting for you, then the open ones, then the
+  recent ended ones, each named by its ticket as the chat's header names it and tagged with its project, ticket and
+  feature; a filter narrows it and it folds to a strip of status dots. The app's sidebar and the rail take the chat's
+  softer style, and the chat page never scrolls past its own height.
+- The full chat's header is a toolbar on the window and a heading in the column (AGH-422): the breadcrumb names the
+  project and the session's short id, the title has its own line with the status, feature and cost under it, the
+  cost reads "Cost $X · estimated" with the split in its tooltip, Review changes is the only bordered button while
+  files wait, background tasks show only while they run, and "Open timeline" and "Open cost details" are one click
+  away.
+- hub web's chat reads calmer, in the panel and on its page (AGH-422): Claude's reply flows without a bubble at 15/24
+  in a 768 px column, your turn is a soft card, one pulse is the only motion, and no chat text is under 12 px. The
+  composer is one floating card with round Send, Stop and attach buttons, the Discuss references inside it and the
+  mode and model pickers sized to their value; tall images stay inside their thumbnail.
+- hub web's Discuss panel talks with a feature's own session (the one that wrote its spec, research or plan) from
+  the feature's page, with a new conversation one click away (AGH-422). The panel resizes from its left edge (kept per
+  browser), docks beside the page from 1280 px and lays over it below, closes with Escape and gives focus back; its
+  header is two quiet rows with one menu, it shows what Claude is doing and full errors, and it starts with a short
+  title and the starters as rows.
+
+### Changed
+
+- The chat's side drawers (Activity, Steps, Background tasks, the review) close on a click outside them. The Steps
+  drawer reads as a timeline: each call's icon, what it is for with its command below, a calm Failed or Denied, its
+  output folded behind one line. An expanded tool call reads like a terminal: a `$` command line with its
+  description and Copy, a JSON reply in the JSON viewer, grep output with coloured paths and line numbers, a line
+  count, Copy and "No output" (AGH-423).
+- hub web: a workflow's page reads as a step timeline beside a sticky About rail, capped at 1280 px: each step
+  leads with what it does, then its kind, id and what it waits for; conditions and a rounds step's real stop rule
+  are visible text, commands have Copy, prompts fold with Copy, and `j`/`k` move across steps. A node chosen in the
+  graph opens under it at full width. The Toolkit's Workflows tab shows catalog cards like its other tabs (AGH-427).
+- hub web: with All projects in scope, Toolkit, Brain and Hub config let you pick a project from cards that carry
+  the Portfolio card's head (name, team, hub, repos, platform, health), the section's figures and a foot line for
+  what needs a look, with a Retry when that project's source fails; `j`/`k`/`o` move across the cards (AGH-427).
+- `hub web`: the owner can mark an acceptance criterion they checked by hand as passing, from its card in the
+  Acceptance criteria tab (AGH-425). It writes an owner sign-off eval over that AC only; the AC then reads "Signed
+  off" and counts as passing even though `features.json` still says it does not. `POST .../owner-signoff` takes
+  `acs` for it, with the sign-off's usual refusals.
+- The `/summarize` skill repeats every open question of a record in its summary, in plain words with its context and
+  options, and `hub web` shows those questions above the Approve bar while the summary is current (AGH-425). It
+  arrives with `hub sync` after you bump `platform.version`.
+- `hub web` feature page (AGH-425): an approved spec, research or plan says it is approved instead of offering the
+  approval again; the tabs read Spec, Research, Plan, Acceptance criteria, Tickets, Eval; the header no longer shows
+  ticket chips (the Tickets tab has them); each feature's fixed label, its slug, shows beside its name on its page
+  and in the Features list.
+- hub web: the project overview shows the hub configuration at a glance in four plain-sentence cards (where the
+  work comes from, how work is named, what agents may touch, the hub), Recent work as the features and tickets
+  worked on in the last 7 days instead of sessions, and a plainer Repositories table (checks and agent instructions
+  in words, commands in a tooltip). Tooltips are reachable by keyboard, a failed sessions read says so in each
+  column, and the header's setup badge opens Setup and health (AGH-427).
+- The light theme of `hub web` uses warm sand off-whites for its grounds instead of bright white (AGH-428). The
+  dark theme is unchanged.
+- `hub web` opens a session much faster on a busy store: a session is folded again only when the clock crosses one
+  of its status thresholds, and a project's hub path is found without running its doctor (AGH-429).
+- The hub guard denies, instead of asking, a call it would ask about when the session runs in Claude Code's
+  `auto` mode, with the same reason and a note, so the agent takes another way; other modes still ask (AGH-430). It
+  arrives with `hub sync` after you bump `platform.version`.
+- hub web's New session writes its first prompt in the chat's message card (AGH-421): images, PDFs and text files
+  pasted, dropped or attached go with it, `/` lists the folder's skills, and the mode and model are pills in the
+  card's bar, sized to their value, instead of an Options section. A shake's screenshot sits in the same attachments
+  row, and the chat shows the first prompt's images.
+
+### Fixed
+
+- `make playground` selects the web app's Node before it starts the conductor, so the sessions' Stop gate no
+  longer fails on an older Node; `make playground-export` maps the Environments and Tickets screens; tests no longer
+  depend on the interpreter's stack depth or on GNU make 4 (AGH-431).
+
 ## [0.20.0] - 2026-10-22
 
 ### Added

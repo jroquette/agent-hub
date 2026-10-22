@@ -249,8 +249,8 @@ today), and the CLI's model and the hooks' stdlib reader accept it in the same c
 | `project.conventions`, `repos[].conventions` | Patterns for the task branch (`{prefix}`, `{ISSUE}`, `{issue_lower}`, `{slug}`; needs the issue) and the commit and PR titles (`{ISSUE}`, `{type}`, `{scope}`, `{summary}`; needs `{summary}`); a repo's keys override the project's, key by key; `hub worktree`, `hub run`, its prompt and `AGENTS.md` follow them; not settable in `hub.local.json` | Today's shapes: `{prefix}{issue_lower}-{slug}`, `{type}({scope}): {summary} ({ISSUE})`; a `pr_title` that no layer sets follows the effective `commit_title` | AGH-57 |
 | `guard.infra.allow`, `guard.infra.prod_markers` | Regexes over infra commands (`aws`, `cdk`, `terraform`, `pulumi`, `kubectl`, `helm`, `sam`, `serverless`), checked by the guard per part of the command: a prod marker anywhere denies, an environment on the part itself that `allow` matches passes (deploy, destroy and delete verbs ask), a local-only form passes, anything else is denied; `guard.infra` present, even `{}`, turns it on (rule below), and the generated `.claude/settings.json` then drops its `Bash(terraform *)` and `Bash(aws *)` denies so the guard decides (run `./hub sync` after adding or removing it; a project re-adds them in `settings.project.json`); not settable in `hub.local.json` | The fixed infra rule: `terraform apply\|destroy\|import`, any `aws` subcommand, `pulumi up\|destroy`, `kubectl apply\|delete` and `cdk deploy\|destroy` (the verb right after `cdk`) are denied | AGH-45 |
 | `guard.readable_env_files`, `guard.secret_env_files` | Env file names (`.env.<suffix>`, never `.env` itself, a path or a key file) the guard stops treating as secret, on top of its fixed list (`.env.example`, …), or always treats as secret, even when that list or `readable_env_files` names one; a name in both is a schema error. A `hub.json` named by `$HUB_CONFIG` can add secret names but never release one; `hub doctor`'s `secrets.config` shows both lists as infos | The guard's fixed list | AGH-210 |
-| `environments` | The project's environments, keyed by a name it chooses: `access` (required: `read`, `write`, or `ask` the user before any write; `write` covers data, never a deploy), `production` (a flag, not a policy), `description` and `credentials` (an AWS profile name and variable names, never values); secret-looking values are rejected. `AGENTS.md` lists them (from `hub.json` only; run `./hub sync`), the SessionStart brief shows both files', and `hub env` lists and edits them; `hub sync`, `hub setup` and `hub env` name each production environment whatever doctor's settings, and doctor's `environments.production` (an ordinary rule, which can be disabled or retuned) warns for `write` or `ask` and informs for `read`. An undeclared environment is out of bounds for the agent by instruction; like `access`, that is rendered for the agent, not enforced by the guard (Blocked words, below; [design/environments.md](design/environments.md), [ADR 0038](adr/0038-declared-environments-and-blocked-words.md)) | No section in `AGENTS.md` or the brief; the hub renders as before | AGH-277 |
-| `repos[].services` | The services a repo runs, keyed by name: `kind` (informational), `description` and `endpoints` per declared environment, each a `url` (no user info, query or fragment) or a `resource`, with a `note` and credential references; `AGENTS.md` lists the service names, the brief and `hub env show` the endpoints | No services | AGH-277 |
+| `environments` | The project's environments, keyed by a name it chooses: `access` (required: `read`, `write`, or `ask` the user before any write; `write` covers data, never a deploy), `production` (a flag, not a policy), `description` and `credentials` (an AWS profile name and variable names, never values); secret-looking values are rejected. `AGENTS.md` lists them (from `hub.json` only; run `./hub sync`), the SessionStart brief shows both files', and `hub env` and the Environments screens of `hub web` list and edit them (uncommitted, AGH-416, AGH-417; the Hub config screen summarises them), and a read-only Claude session can propose them from the repos for the person to apply row by row (AGH-418, [ADR 0046](adr/0046-read-only-discovery-sessions.md)); `hub sync`, `hub setup` and `hub env` name each production environment whatever doctor's settings, and doctor's `environments.production` (an ordinary rule, which can be disabled or retuned) warns for `write` or `ask` and informs for `read`. An undeclared environment is out of bounds for the agent by instruction; like `access`, that is rendered for the agent, not enforced by the guard (Blocked words, below; [design/environments.md](design/environments.md), [ADR 0038](adr/0038-declared-environments-and-blocked-words.md)) | No section in `AGENTS.md` or the brief; the hub renders as before | AGH-277 |
+| `repos[].services` | The services a repo runs, keyed by name: `kind` (informational), `description` and `endpoints` per declared environment, each a `url` (no user info, query or fragment) or a `resource`, with a `note` and credential references; `AGENTS.md` lists the service names, the brief and `hub env show` the endpoints; `hub web` adds, changes, renames and removes them | No services | AGH-277 |
 | `guard.blocked_words` | Words the guard denies in a Bash command, a file-tool path, a WebFetch URL, a listed file's contents, a scanned session variable or the input of MCP tools (`mcp__*`), WebSearch, Task, Agent and SendMessage (Blocked words, below): at most 200, `^[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*$`, 2 to 64 characters, matched literally; `hub.local.json` and a `hub.json` named by `$HUB_CONFIG` only add to them | No blocked-word rule | AGH-277 |
 | `guard.blocked_words_files` | Globs of files whose contents the guard checks for a blocked word, besides every `.env*` file: at most 100, each at most 200 printable ASCII characters, no leading `/`, `..` segment or space; a glob without `/` matches the last path component, one with `/` a trailing run of segments; `hub.local.json` and a `hub.json` named by `$HUB_CONFIG` only add to them | `.env*` files only | AGH-277 |
 | `guard.blocked_words_env` | Variable names whose values in the session the guard also checks, besides its fixed list and every `credentials.env` name: at most 50, `^[A-Z_][A-Z0-9_]{0,63}$`, a trailing `*` matching a prefix; `hub.local.json` and a `hub.json` named by `$HUB_CONFIG` only add to them | The fixed list and the `credentials.env` names | AGH-277 |
@@ -459,9 +459,9 @@ Cost is estimated from transcript usage times a dated price table and always lab
 are not connected in this version and their cells say so, and Linear is read only for a feature's tickets (AGH-136
 below). Actions (approving, starting, retrying, snoozing a learning) appear only as disabled, phase-tagged buttons;
 accepting and rejecting a learning are the exception below.
-The server is local only: loopback bind, `Host` and `Origin` checks, 1 MiB request bodies (16 MiB for
-`POST /agent-sessions`, which may carry a screenshot, and 64 MiB for `POST /agent-sessions/{id}/messages`, which may
-carry up to ten images pasted in the chat), no CORS, and a CSP that keeps the app on its own origin.
+The server is local only: loopback bind, `Host` and `Origin` checks, 1 MiB request bodies (160 MiB for
+`POST /agent-sessions` and `POST /agent-sessions/{id}/messages`, which may carry up to ten images and ten PDF or
+text files attached in the chat), no CORS, and a CSP that keeps the app on its own origin.
 It reaches the network in two documented cases only: the learning decisions' explicit
 pull request ([ADR 0024](adr/0024-learning-actions-from-the-app.md)), and a read-only, server-side read of Linear's
 GraphQL API for a feature's tickets, only when `LINEAR_API_KEY` is set where `hub web` runs
@@ -533,6 +533,11 @@ Linear status ([ADR 0025](adr/0025-reading-the-tracker-from-the-app.md), records
   folded from its review rounds, review record, evals and Linear and served on the tickets route; a step with no
   record before a later one with evidence reads "Not recorded". Feature detail shows them on each ticket's step bar and
   in its ticket panel.
+- **Tickets outside features (AGH-426).** The Tickets list (`/tickets`) groups the newest sessions by tracker issue
+  and shows the single-ticket work no feature plans (`/fix`, `/refactor`, `/upgrade`, `/incident`, `/triage`,
+  `/deliver`, `/review`, hub runs) by Needs you, In progress and Ended; Start ticket opens the New session dialog on
+  the hub folder with `/fix`. It is derived on the client from `GET /api/v1/sessions`, no new route
+  ([design/control-plane/specs/20-tickets.md](design/control-plane/specs/20-tickets.md)).
 - **Evals per delivery.** Each evaluation is its own file, `brain/features/<slug>/evals/<delivery>.md`, with its
   scope in frontmatter (tickets, ACs, PRs, commit); none is overwritten. For each AC the latest eval naming it
   decides. A legacy `eval.md` is read as one delivery, `legacy`. The Eval tab lists every delivery.
@@ -587,7 +592,9 @@ replaces Live sessions and the separate list of driven sessions (design in
   only. `Session` carries the tile fields `LiveTile` has, derived on read; no new route or migration, and the event payload allow-list does not change.
 - **Driven sessions in the same list.** A session `hub web` drives shows once: as its observed twin with a "Chat"
   badge, or, with no twin (`AgentSession.observed_session_id` null), in its own status section. Every tile and row
-  has a visible Open (or Open chat, Answer) and a real link. New session is a short dialog (where and the prompt).
+  has a visible Open (or Open chat, Answer) and a real link. New session is a short dialog: where, and the prompt
+  written in the chat's message card with its images and files
+  ([agent-sessions.md](design/agent-sessions.md#new-session-the-first-prompt-in-the-chats-card-agh-421)).
 - **Chat.** The chat stays a full page and behaves as a chat client: it opens at the latest entry, follows the stream
   only at the bottom, keeps header, composer and Stop on screen, and has message time and Copy, code labels, clear
   tool states, a saved draft, a `/` menu and keyboard paths for permissions
@@ -760,9 +767,11 @@ change; the live-session limit is [ADR 0042](adr/0042-no-live-session-limit-in-t
   branch (`--base BRANCH` starts every repo from one branch); a session belongs to the issue its first prompt names.
 - **Session review**: the changed files split by kind (Code, Reviews & specs, Learnings, Scratch; only code is
   reviewed and counted), read from git per repository (`GET /agent-sessions/{id}/repo-changes`: the branch against
-  the branch it was started from, files, commits, `…/repo-changes/commit` for one commit's diff of a file), with each
-  repository's pull request and state; what a read found is recorded on the session (`review_targets`, migration
-  0007), so the review outlives its worktree.
+  the branch it was started from, files, commits, `…/repo-changes/commit` for one commit's diff of a file,
+  `…/repo-changes/file` for a file as a commit has it, which a pull request's diff expands into around its hunks),
+  with each repository's pull request and state; what a read found is recorded on the session (`review_targets`,
+  migration 0007), so the review outlives its worktree. The code can show its tests apart, files that end as they
+  began sit in a Discarded tab out of the review, and diffs are coloured in the file's language, as on GitHub.
 - **Chat**: opens at the latest message or the pending card; open questions answered by options; links to URLs,
   pull requests, tickets and review files; the slash menu holds the hub's skills and agents anywhere in the message.
   Background agents and commands stay visible after a turn (task records, a Background drawer, a closing card,

@@ -11,6 +11,9 @@ import type { ProxyOptions } from "vite";
 // every other route goes to the `hub web` of the checkout being edited, which restarts on each change.
 export const API_TARGET = "http://127.0.0.1:7420";
 export const SESSIONS_PATH = "/api/v1/agent-sessions";
+// "Find services with Claude" starts and reads a Claude session: it must reach the server that
+// drives the sessions (a regex key: Vite matches a key starting with ^ as one).
+export const DISCOVERIES_PATH = "^/api/v1/projects/[^/]+/environment-discoveries";
 export const DEV_SERVER = { host: "127.0.0.1", port: 5173, strictPort: true } as const;
 // The origins a browser sends from the dev app: Vite listens on the IPv4 loopback only.
 export const DEV_ORIGINS = [
@@ -62,6 +65,7 @@ export function apiProxy(
 ): {
   [SESSION_LOGIN_PATH]?: ProxyOptions;
   [SESSIONS_PATH]?: ProxyOptions;
+  [DISCOVERIES_PATH]?: ProxyOptions;
   "/api": ProxyOptions;
 } {
   if (sessionsTarget === target) return { "/api": proxyTo(target) };
@@ -71,6 +75,7 @@ export function apiProxy(
       rewrite: (path) => path.replace(SESSION_LOGIN_PATH, "/"),
     },
     [SESSIONS_PATH]: proxyTo(sessionsTarget),
+    [DISCOVERIES_PATH]: proxyTo(sessionsTarget),
     "/api": proxyTo(target),
   };
 }

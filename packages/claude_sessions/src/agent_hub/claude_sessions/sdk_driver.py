@@ -46,10 +46,12 @@ from agent_hub.claude_sessions.process_tree import terminate
 from agent_hub.claude_sessions.resumable import SessionLister, list_resumable, sdk_lister
 from agent_hub.core.agent_sessions.driver import (
     ACTIVITY_EVENTS,
+    READ_ONLY_TOOLS,
     DriverAnswer,
     DriverCapabilities,
     DriverError,
     DriverEvent,
+    DriverFile,
     DriverHandle,
     DriverImage,
     Exited,
@@ -100,9 +102,30 @@ class _Session:
         self.queue.put_nowait(event)
 
 
-def _user_message(text: str, images: tuple[DriverImage, ...]) -> dict[str, Any]:
-    """One stream-json user message: the image blocks first, then the text."""
-    blocks: list[dict[str, Any]] = [
+def _file_block(file: DriverFile) -> dict[str, Any]:
+    """A file as a content block: a PDF as a document Claude reads page by page, a text file
+    as text wrapped in a tag that names it."""
+    if file.media_type == "application/pdf":
+        return {
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": file.media_type,
+                "data": base64.b64encode(file.data).decode("ascii"),
+            },
+            "title": file.name,
+        }
+    name = file.name.replace('"', "'")
+    content = file.data.decode("utf-8")
+    return {"type": "text", "text": f'<file name="{name}">\n{content}\n</file>'}
+
+
+def _user_message(
+    text: str, images: tuple[DriverImage, ...], files: tuple[DriverFile, ...] = ()
+) -> dict[str, Any]:
+    """One stream-json user message: the file blocks first, then the images, then the text."""
+    blocks: list[dict[str, Any]] = [_file_block(file) for file in files]
+    blocks += [
         {
             "type": "image",
             "source": {
@@ -166,7 +189,8 @@ class ClaudeSdkSessionDriver:
         if cli is None:
             raise SessionsUnavailableError(NO_CLAUDE)
         queue: asyncio.Queue[DriverEvent] = asyncio.Queue()
-        bridge = PermissionBridge(queue.put_nowait)
+        allowed = frozenset(READ_ONLY_TOOLS) if spec.tool_access == "read_only" else None
+        bridge = PermissionBridge(queue.put_nowait, allowed=allowed)
         options = sdk_options(
             spec,
             can_use_tool=bridge.can_use_tool,
@@ -193,16 +217,21 @@ class ClaudeSdkSessionDriver:
         return handle
 
     async def send(
-        self, handle: DriverHandle, text: str, *, images: tuple[DriverImage, ...] = ()
+        self,
+        handle: DriverHandle,
+        text: str,
+        *,
+        images: tuple[DriverImage, ...] = (),
+        files: tuple[DriverFile, ...] = (),
     ) -> None:
-        """Send a user message (images first, then text); the CLI queues it behind a running
-        turn."""
+        """Send a user message (files, then images, then text); the CLI queues it behind a
+        running turn."""
         session = self._open(handle)
         session.turns += 1
         text = cli_prompt(text, session.names)
         try:
-            if images:
-                await session.client.query(_single(_user_message(text, images)))
+            if images or files:
+                await session.client.query(_single(_user_message(text, images, files)))
             else:
                 await session.client.query(text)
         except CLIConnectionError as lost:

@@ -298,12 +298,33 @@ export interface MenuItemProps {
   onClick?: (() => void) | undefined;
   selected?: boolean | undefined;
   danger?: boolean | undefined;
+  /** Goes there instead of acting: the item renders as a link (it can open in a new tab). */
+  href?: string | undefined;
+  className?: string | undefined;
 }
-export function MenuItem({ icon, children, hint, onClick, selected, danger }: MenuItemProps) {
+export function MenuItem({
+  icon,
+  children,
+  hint,
+  onClick,
+  selected,
+  danger,
+  href,
+  className,
+}: MenuItemProps) {
+  if (href !== undefined) {
+    return (
+      <AppLink href={href} className={cx("ah-menu-item", className)} onClick={onClick}>
+        {icon && <Icon name={icon} />}
+        <span className="ah-grow">{children}</span>
+        {hint}
+      </AppLink>
+    );
+  }
   return (
     <button
       type="button"
-      className="ah-menu-item"
+      className={cx("ah-menu-item", className)}
       aria-current={selected ? true : undefined}
       onClick={onClick}
       style={danger ? { color: "var(--failed)" } : undefined}
@@ -396,6 +417,55 @@ export function PathText({ path, max = 48, dimDir }: PathTextProps) {
   return (
     <span className="ah-path" title={path}>
       {shown}
+    </span>
+  );
+}
+
+/* ---------- FitText: one line cut in the middle, measured by the browser ---------- */
+export interface FitTextProps {
+  text: string;
+  /** How many trailing characters always stay whole (an extension, a host's end). */
+  tail: number;
+  className?: string | undefined;
+  /** The whole text in a tooltip, shown only while the line is cut (else a native title). */
+  tooltip?: boolean | undefined;
+}
+/** One line that fits its width, however its box is resized: cut in the middle with an
+ * ellipsis, its `tail` always shown, the whole text on hover. */
+export function FitText({ text, tail, className, tooltip = false }: FitTextProps) {
+  const head = useRef<HTMLSpanElement>(null);
+  const [cut, setCut] = useState(false);
+  useEffect(() => {
+    const element = head.current;
+    if (!tooltip || !element || typeof ResizeObserver === "undefined") return;
+    const check = () => {
+      setCut(element.scrollWidth > element.clientWidth);
+    };
+    check();
+    const observer = new ResizeObserver(check);
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+    };
+  }, [tooltip, text]);
+  const at = Math.max(0, text.length - tail);
+  const line = (
+    <span className={cx("ah-fit", className)} title={tooltip ? undefined : text}>
+      <span ref={head} className="ah-fit-head">
+        {text.slice(0, at)}
+      </span>
+      <span className="ah-fit-tail">{text.slice(at)}</span>
+    </span>
+  );
+  if (!tooltip) return line;
+  return (
+    <span className="ah-tip-wrap ah-fit-wrap">
+      {line}
+      {cut && (
+        <span role="tooltip" className="ah-tip ah-tip-mono">
+          {text}
+        </span>
+      )}
     </span>
   );
 }

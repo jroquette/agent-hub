@@ -16,38 +16,83 @@ inside a project the page says where it is and what it reads.
 
 ## Project index (All projects)
 
+Changed by AGH-427 (the owner validated it in the playground): the index is a grid of project cards, not a table.
+Toolkit, Brain and Hub config (and Environments, when it lands) share it.
+
 ```
-Brain
-What each project's hub knows: current focus, decisions, playbooks and feature records. Open a project ...
-+----------------+--------------------------------+-------+----------+-----------+-----------+---------------+
-| Project        | Current focus                  | Notes | Features | Decisions | Learnings | Inbox         |
-| [] agent-hub   | Ship the playground deliveries | 112   | 9        | 14        | 21        | (i) 3 to triage|
-| [] demo        | No current focus recorded      | 4     | 0        | 0         | 1         | None          |
-+----------------+--------------------------------+-------+----------+-----------+-----------+---------------+
-Tip: pick a project in the scope switcher to open its brain directly.
+Toolkit
+What each project's agents can do: the agents, skills and hooks its hub installs. Open a project to browse them.
+
+Projects                                      [folder] To come straight here, choose a project in the top bar.
++------------------------------------------------+ +------------------------------------------------+
+| agent-hub  AGH        [Sync pending] [Healthy] >| | demo                           [Not checked] > |
+| acme/agent-hub-hub · 3 repos · platform 0.19.0  | | acme/demo-hub · 1 repo · platform 0.19.0       |
+| Agents   Skills   Hooks   Used · 30 d           | | Agents   Skills   Hooks   Used · 30 d          |
+| 12       34       5       18                    | | —        —        —        —                    |
+| (!) 4 items with problems                       | | (!) Could not read this catalog: Boom.  [Retry]|
++------------------------------------------------+ +------------------------------------------------+
 ```
 
-Skills' index has the columns Project, Hub repo, Skills, Agents, Hooks, "Used in 30 days" and Diagnostics.
+One shared component, `KnowledgeProjectIndex` (`screens/knowledge-index/`), renders every picker: a "Projects"
+section title (one project: "Project") with the screen's tip at its right beside the scope switcher's
+`folder-kanban` icon, then a list (named by the screen's caption) of `.ah-pcard` cards in a grid that fills the
+content width (`repeat(auto-fill, minmax(min(360px, 100%), 1fr))`: 3 columns at 1440, one or two projects keep a
+card's width). A card is, top to bottom:
 
-One shared component, `KnowledgeProjectIndex` (`screens/knowledge-index/`), renders both: a `DataTable` with a
-caption, one row per registered project, the project name as a link, then the screen's own columns. Each count cell
-reads the project's tree or catalog through the query the project page already uses, so the request is shared.
+1. the head of the Portfolio card (`ProjectCardHead`, extracted from `ProjectCard` in `components/domain.tsx`, which
+   still renders it): the name as an `h3` holding the link, the tracker team, `hub · n repos · platform v` with the
+   repo names in a tooltip, Sync pending and the health badge, and a `chevron-right` cue;
+2. an optional lead line (Brain: "Current focus: …"; Hub config: the repo names joined by " · ", else "No repos
+   declared yet"), one line with an ellipsis;
+3. the screen's figures as `CardStat`s (exported from `components/domain.tsx`) whose values are `CountCell`s;
+4. an optional foot line: a link to what needs a look, a quiet line when nothing does, or the read error with a
+   Retry that refetches only that project's source.
+
+Each figure or foot reads the project's tree or catalog through the query the project page already uses, so the
+request is shared and the cards show at once. Per screen:
+
+| Screen | Figures | Lead | Foot |
+|---|---|---|---|
+| Toolkit | Agents, Skills, Hooks, "Used · 30 d" | none | "<n> items with problems" (to `?diag=1`), "No problems found", or the error + Retry |
+| Brain | Notes, Features, Decisions, Learnings | "Current focus: <first line>" "+n more", else "No current focus recorded" | "<n> to triage in Learnings", "Inbox empty", or the error + Retry |
+| Hub config | none | the repo names | none |
+
+The whole-list error is a `ProblemError` "Could not load projects". The head shows the hub repo, so Toolkit has no
+Hub repo figure. Not built (left open by the design): opening the only project directly, a find field for many
+projects, and figures or a problems foot for Hub config.
 
 ## Acceptance criteria
 
-- **AC-270.1** Given All projects in scope, when Knowledge › Brain opens, then it shows the table "Projects and their
-  brains" with one row per project: Project, Current focus (the first focus line of `now.md` and "+n more", else
-  "No current focus recorded"), Notes, Features (folders under `brain/features/`), Decisions, Learnings and Inbox.
-- **AC-270.2** Given a project whose `brain/_inbox/` holds notes, when the Brain index shows it, then its Inbox cell
-  is a link "<n> to triage" to Learnings in that project's scope; with none it reads "None".
-- **AC-270.3** Given All projects in scope, when Knowledge › Skills opens, then it shows the table "Projects and their
-  skills, agents and hooks": Project, Hub repo, Skills, Agents, Hooks, "Used in 30 days" (skills and agents used at
-  least once; hooks are not counted) and Diagnostics ("<n> with problems", linking to the catalog filtered on
-  diagnostics, else "None").
-- **AC-270.4** Given a count whose source is loading, failed or over its bounds, when the index shows it, then the
-  cell is a skeleton, "—" with the reason in a tooltip, or the number followed by "+" with the reason in a tooltip.
-- **AC-270.5** Given the index, when a row or its name is activated, then the project's Brain (or Skills) opens; with
-  no project registered the index shows "No projects yet." and a link to register a hub in Settings.
+- **AC-270.1** (changed by AGH-427) Given All projects in scope, when Knowledge › Brain opens, then it shows the
+  project cards "Projects and their brains", one per project: the lead "Current focus: <the first focus line of
+  `now.md`>" and "+n more", else "No current focus recorded", then Notes, Features (folders under
+  `brain/features/`), Decisions and Learnings, and the Inbox in the foot.
+- **AC-270.2** (changed by AGH-427) Given a project whose `brain/_inbox/` holds notes, when the Brain index shows it,
+  then its foot is a link "<n> to triage in Learnings" (named "<n> to triage in Learnings for <project>") to
+  Learnings in that project's scope; with none it reads "Inbox empty".
+- **AC-270.3** (changed by AGH-427) Given All projects in scope, when the Toolkit picker opens, then it shows the
+  project cards "Projects and their agents, skills and hooks": Agents, Skills, Hooks, "Used · 30 d" (skills and
+  agents used at least once in the last 30 days; hooks are not counted), and a foot "<n> items with problems" linking
+  to the catalog filtered on diagnostics, else "No problems found".
+- **AC-270.4** (changed by AGH-427) Given a count whose source is loading, failed or over its bounds, when the index
+  shows it, then the figure is a skeleton, "—" with the reason in a tooltip, or the number followed by "+" with the
+  reason in a tooltip; a failed source also puts its reason in the card's foot with a Retry.
+- **AC-270.5** (changed by AGH-427) Given the index, when a card is clicked or its name activated, then the project's
+  Brain (or Toolkit) opens; with no project registered the index shows "No projects yet." and a link to register a
+  hub in Settings.
+- **AC-427.12** Given a picker card, when it shows, then its head is the Portfolio card's head (name as the card's
+  only opening link, team, `hub · n repos · platform v`, Sync pending, health) followed by a chevron.
+- **AC-427.13** Given a project whose catalog or tree cannot be read, when its card shows, then the foot says "Could
+  not read this catalog: <title>." (or "this brain") with a Retry that refetches only that project's source, and the
+  other cards are unaffected.
+- **AC-427.14** Given the picker, when `j` or `k` is pressed, then focus moves to the next or previous card's name;
+  `o` opens the focused card.
+- **AC-427.15** Given the picker, when it loads, then three skeleton cards show in the grid (`aria-busy`); when the
+  list fails, then "Could not load projects" shows with Retry.
+- **AC-427.16** Given the Hub config picker, when it shows, then each card's lead lists the project's repos joined by
+  " · ", else "No repos declared yet".
+- **AC-427.17** Given any picker, when it shows, then the tip "To come straight here, choose a project in the top
+  bar." sits at the right of the "Projects" title, and the page has no serious or critical axe violation.
 - **AC-270.6** Given a project's Brain or Skills page, when it renders, then it shows the breadcrumb
   Portfolio › project › Brain (Skills) and a purpose line ("What <project>'s agents know, read from brain/ in its
   hub." / "What <project>'s agents can do, read from its hub's files. Nothing here runs them.").
@@ -66,7 +111,9 @@ reads the project's tree or catalog through the query the project page already u
 
 ## Accessibility
 
-Folder rows and note links are at least 24 px high. The tree's groups are sections labelled by their headings; the
+Folder rows and note links are at least 24 px high. A picker card is an `article` labelled by its name, which is
+the one link that opens it (the card's click is a mouse convenience); the foot link and Retry are their own Tab
+stops and do not open the card. The tree's groups are sections labelled by their headings; the
 filter has the accessible name "Filter brain notes". Count cells are tabular numbers.
 
 ## UX principles applied
@@ -279,3 +326,82 @@ keyboard. axe reports no serious or critical violation in the panel, Compare or 
   sets and `tracker.team_set` names the labels and states it sets (empty when none).
 - **AC-382.37** Given an unreadable hub.local.json, when the config opens, then it says it "has a problem, so only the
   team's values apply" with the line, and offers Ask Claude to fix it.
+
+## Workflow page and Toolkit workflow cards (AGH-427)
+
+**Route** `/projects/:project/skills/workflows/:name` · **Answers:** "What does this workflow do, step by step, and what
+do I give it to run it?" The reader is the hub owner deciding whether to run a workflow or change it; the one action
+stays **Run this workflow** (or "Starts from `hub run`", AC-PG-13.3). The owner validated this in the playground.
+Before it, the page had no width cap and a 320 px aside that did not stick, steps were loose rows with their condition
+in a `title`, commands were faint inline code and the rounds box said "stopping as soon as they pass" for any rule.
+
+```
+Portfolio › agent-hub › Toolkit › Workflows › deliver
+deliver  [Built-in]                                    [Discuss] [▶ Run this workflow]
+One issue to a PR, implemented and reviewed in rounds until the check and both reviewers pass.
+6 steps · Claude does 3 · repeats in up to 3 rounds · runs without you
+┌─ Step by step ──────────── 3 AI agents  3 commands  rounds ─┐ ┌ What you give it ────────┐
+│ (1)  Make (or keep) the issue's worktree from a fresh fetch  │ │ issue                    │
+│  │   >_ Command · worktree                                   │ │ The tracker issue        │
+│  │   [$ hub step worktree --issue $INPUTS.issue        [⧉]] │ ├ Where it lives ──────────┤
+│ (2)  Implement, check, review, again until the verdict passes│ │ Built into agent-hub. …  │
+│  │   ⟳ Rounds, up to 3 · rounds                              │ │ Revision   r1            │
+│  │   ┌ well ─────────────────────────────────────────────┐   │ │ Runs of this workflow    │
+│  │   │ ⚑ Stops when $review.output.verdict == 'PASS'      │   │ └──────────────────────────┘
+│  │   │ If round 3 ends without stopping, this step fails. │   │   ^ sticky
+│  │   │ (2.1) The implementing session …                   │   │
+│  │   │       AI agent · implement · ▸ Read the prompt     │   │
+│  │   │ (2.2) The repo's check on the round's work         │   │
+│  │   │       ⑂ Only when $verdict.output.status != 'blocked'│ │
+│  │   └────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────┘
+┌ ▸ Advanced: graph and document ─────────────────────────────────────────────────────────┐
+  graph full width; a chosen node opens under it: its facts | a wide JSON of its document
+```
+
+- **Frame.** `.wf-detail` caps the page at 1280 px (`space-8` padding, `space-6` under 1360 px) and reuses the skill
+  detail's `.ah-skill-layout`: a reading column and a 300 px sticky `.ah-skill-rail` (AC-271.8), which moves above
+  the steps under 1200 px. Step text is at most 88ch; code blocks use the column's width.
+- **Step row.** A timeline (`ol.wf-steps`): a 24 px node numbered `N` (or `N.k` inside rounds) with its border in the
+  kind's event colour, a 1 px rail to the next node; the description is the title (the id in mono when there is
+  none); a caption line says the kind (icon and label: "AI agent", "Command", "Approval by you", "Rounds, up to N"),
+  the id and "Waits for" with one chip per step it waits on when that is not simply the step before. Colour is never
+  the only channel.
+- **Rounds** sit in a solid `surface-sunken` well (dashed means Derived) with their own timeline.
+- **Rail.** "What you give it" (each input a fact: name in mono, "(optional)", its description or type; none: "Nothing:
+  it runs as is.") and "Where it lives" (the two sentences, Revision `rN`, a "Runs of this workflow" link to
+  `/runs?workflow=`).
+- **Toolkit › Workflows tab.** Each workflow is a catalog card of the Toolkit's grid (`.ah-skills-grid`, the shape of
+  the Agents and Skills tabs): name, description, then a foot with where it comes from, what you give it and its
+  shape.
+
+- **AC-427.1** Given a workflow's page, when it renders, then the page is capped at 1280 px with the steps in a
+  reading column beside a sticky About rail holding "What you give it" and "Where it lives" (Revision `r1`, "Runs of
+  this workflow" linking to `/runs?workflow=<name>`); under 1200 px the rail moves above the steps.
+- **AC-427.2** Given a workflow's page, when its header shows, then a muted line under the description gives its
+  shape in words, and a repeat reads "repeats in up to N rounds" (also on the Toolkit card); the step kind chips sit
+  in the "Step by step" heading.
+- **AC-427.3** Given a step, when it shows, then its description is its title (else its id in mono), a kind line
+  says the kind with its icon, its id, and "Waits for" with a chip per step it waits on unless that is only the
+  step before; an `.ah-sr` "Step N: " prefix names the number for screen readers.
+- **AC-427.4** Given a step with a `when` condition, when it shows, then "Only when" and the expression are visible
+  text, not a tooltip.
+- **AC-427.5** Given a command step, when it shows, then its command is a wrapping `CodeBlock` labelled "Command of
+  <id>" with Copy; an agent step's prompt is folded under "Read the prompt", scrolls from the keyboard and has "Copy
+  prompt".
+- **AC-427.6** Given a rounds step, when it shows, then it says "Rounds, up to N" and its real stop rule ("Stops when
+  <until_when>", "Stops when <until_bash> passes", or "Runs all N rounds."), "If round N ends without stopping, this
+  step fails." when there is a rule, whether the agents remember the previous round, and "Starts afresh each round"
+  on a body agent with fresh context.
+- **AC-427.7** Given the steps, when `j` or `k` is pressed, then focus moves to the next or previous step, round
+  steps included.
+- **AC-427.8** Given a workflow that is loading, when the page shows, then a skeleton of the final shape (header,
+  steps card, rail) with "Loading <name>" shows; given a document with no steps, then the card says "This workflow
+  has no steps."
+- **AC-427.9** Given the Advanced fold with a node chosen, when it shows, then the node opens under the graph at
+  full width, its facts (Type, Waits for, Description) beside a wide JSON of its document.
+- **AC-427.10** Given the Toolkit's Workflows tab, when it lists workflows, then each is a catalog card like the other
+  tabs: the name as its only link and Tab stop, the description, "Hub" or "Built-in", what you give it ("Takes no
+  input") and its shape.
+- **AC-427.11** Given the workflow page with rounds, a condition and an open prompt, when checked with axe, then it
+  has no serious or critical violation.

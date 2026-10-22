@@ -53,8 +53,18 @@ Every screen carries its phase. A screen tagged P3 or P4 is not shown in the sid
 └ /knowledge/context?project=&repo=&agent=  Context inspector                        P3
 
 /features?project=                  Features list                                    P2 read-only
+├ /features/new                     New feature (brief + attachments → Discuss)      P2
 └ /features/:project/:slug          Feature detail                                   P2
     ?doc=spec|plan|research|eval&ac=:acId
+
+/tickets?project=&q=&kind=          Tickets list (AGH-426, specs/20-tickets.md)      P2 read-only · Start ticket
+/environments                       Environments: project picker (AGH-417)           P2
+└ /projects/:project/environments   Environments (specs/23-environments.md)          P2 + ADR 0040 writes
+  ├ …/environments/new              Add environment (step by step)                   P2 + ADR 0040 writes
+  ├ …/environments/services/new     Add service (step by step) ?repo=                P2 + ADR 0040 writes
+  ├ …/environments/discover         Find services with Claude ?discovery=<id>        P2 + ADR 0046 sessions
+  ├ …/environments/discover/:id     Review what Claude found                         P2 + ADR 0046 sessions
+  └ /projects/:project/environment/:name   Environment page ?service=<repo>/<name>   P2 + ADR 0040 writes
 
 /workflows                          Workflow catalog                                 P4
 └ /workflows/:workflowId            Workflow detail                                  P4
@@ -127,7 +137,8 @@ otherwise, this list wins:
 - **AC-273.20** The sidebar lists, in order: Portfolio (no caption); **Work**: Sessions (`list`, the live badge,
   ADR 0033), Workflow runs (`route`), Workflows (`workflow`), Features (`list-checks`); **Knowledge**: Learnings
   (`lightbulb`, the learnings-to-triage badge on the waiting ground), Brain (`book-open`) and Skills (`package`) as
-  flat items, Brain and Skills following the project open or in scope; and Health and Settings pinned to the footer,
+  flat items, Brain and Skills following the project open or in scope (as built, AGH-417: Work ends with
+  Environments, `server`, which follows them too: AC-417.2); and Health and Settings pinned to the footer,
   next to Shortcuts. There is no Approvals and no Live sessions entry. The command palette lists the same screens,
   Learnings with its `g k` hint.
 - **AC-273.21** There is no Approvals screen: `/approvals` is an unknown route (404), `g a` goes nowhere (and still
@@ -136,6 +147,8 @@ otherwise, this list wins:
   `/sessions/<session>`. A waiting tile with no chat says "Open session" and opens its session; the session page's
   waiting banner says "Approve in the terminal session". The project overview's "See N more" expands Needs you in
   place (`?needs=all`), as the Portfolio does; a Needs you list with nowhere to go shows no "more" line.
+- **AC-426.1** (AGH-426, [20-tickets.md](20-tickets.md)) **Work** lists Tickets (`list-todo`, no badge) right after
+  Features: the single-ticket work outside features.
 
 
 Groups appear in this order with `caption` style group labels in `text-subtle`. The selected item uses `accent-soft` ground, `accent` icon and a 2px `accent` left bar; hover uses `surface-hover`. Each item is a 32px (`size.control`) row; collapsed, each becomes a 40×40 icon button with a `Tooltip` showing the label and its shortcut.
@@ -170,6 +183,11 @@ Badge rules:
 - The accessible name includes the count: "Approvals, 2 waiting".
 
 Collapse: the `IconButton` `panel-left-close` at the bottom toggles collapse; `[` is not used (reserved for tabs). Default collapsed below 1360 px; the choice persists in local storage `ah.sidebar.collapsed`.
+
+- **Look (AGH-422).** The sidebar's rows take the chat's vocabulary: 36 px soft rounded rows (`radius-xl`) at 14 px,
+  the current page filled with `surface-turn` (its icon accent) instead of an outline, group titles at 12 px, and no
+  border lines on the sidebar, its brand row or its foot (AC-422.22 in
+  [agent-sessions.md](../../agent-sessions.md#chat-redesign-the-sessions-rail-and-the-side-columns-agh-422)).
 
 ## Top bar anatomy
 
@@ -251,8 +269,58 @@ the target, so the panel talks about any screen:
 - **AC-273.5** Given no project is registered, when the panel opens, then it says "Register a project to talk with
   Claude about any screen."
 - **AC-273.6** Given the screen as target, then the panel's note says the first message takes the screen's text and
-  a screenshot along, and that Discuss selection still points at one part.
+  a screenshot along (AGH-422 shortens it to "Your first message takes this screen's text and a screenshot. Edits ask
+  you first."; Discuss selection is unchanged and no longer repeated there).
 - **AC-273.7** Given the panel is closed, then the screen fallback is not mounted and asks the API nothing.
+
+Images and files in the panel (AGH-419, the chat's rules in
+[agent-sessions.md](../../agent-sessions.md#chat-behaviour), AC-419.7 to AC-419.12):
+
+- **AC-419.13** Given the Discuss panel before its conversation starts, when images, PDFs or text files are pasted,
+  dropped or attached in its composer and the first message is sent, then the new session carries them with its
+  first prompt (`screenshots[]`, `files[]`), after the screen's capture when the screen is the target, and the first
+  bubble shows the capture and the images.
+- **AC-419.14** Given a Discuss conversation that runs, when a message is sent with images or files, then they go
+  with the message as in the full chat.
+- **AC-419.15** Given a screen that starts a Discuss conversation itself, when it uses `useStartDiscussion`, then it
+  gets the panel's checks (whether Claude can run here, the project's hub folder) and the start with the first
+  message's images and files, and the conversation it keeps per target (`ah.discuss.session.<key>`) is the one the
+  panel opens.
+
+### The panel's size, ways out, header and start (AGH-422)
+
+Design: [20-chat.md](20-chat.md#discuss-panel). The feature's own session is AC-422.1 in
+[17-features.md](17-features.md).
+
+- **AC-422.2 Resizable.** Given the panel is open, when the owner drags its left edge or focuses that edge and
+  presses ←/→ (40 px), Home (back to 480) or End (the widest), or double-clicks it (back to 480), then the panel takes
+  that width between 320 px and the widest the window allows: docked, `min(720, viewport − sidebar − 640)`; over the
+  page, `viewport − 96`. The width chosen is kept in `ah.discuss.width`; a narrower window clamps the width shown and
+  never rewrites the kept one. The header's Widen panel / Narrow panel button toggles the widest width (the
+  single-pointer way). The edge is a `separator` named "Resize the Discuss panel" that controls the panel and always
+  carries its current and widest widths ("480 pixels wide").
+- **AC-422.3 Docked or over the page; Escape.** Given a window 1280 px wide or more, then the panel docks beside the
+  page (the page makes room) and Escape closes it only from inside it; below 1280 px it lays over the page (shadow,
+  no scrim) and Escape closes it from anywhere; below 768 px it takes the full width, with no edge and no Widen. A
+  layer above it (a dialog, the palette, the lightbox, an open menu) spends Escape first, and text typed in its
+  composer keeps its Escape. Once closed, by any way, focus goes back to the control that opened it, else to the top
+  bar's Discuss toggle, unless the reader already moved it elsewhere. `SidePanel` and the Discuss panel share this
+  (`usePanelDismiss`).
+- **AC-422.4 Two quiet rows.** Given the panel is open, then its header is two rows: "Discuss with Claude" with
+  Widen and Close; then what is discussed ("<Kind> · <title>", or "Feature session · <name>"), the session's status
+  and cost (the cost gives way below 400 px), and one menu, "More for this conversation". The top bar's Discuss
+  toggle reads pressed (`aria-pressed`, a sunken ground), not accent-filled.
+- **AC-422.5 One menu.** Given a conversation, then its menu holds "Open the full chat", "New conversation", "Back to
+  the feature session" (on another conversation of a feature with its own session) and the file under discussion,
+  which a click copies; with none of these, no menu.
+- **AC-422.6 What Claude is doing, and full errors.** Given the panel's conversation, then the live activity bar and
+  the todo list sit above its composer as on the full chat (the bar opens the turn's steps), and a conversation that
+  cannot load shows "Could not load this conversation" with the problem's detail and Try again (a 404 still starts
+  over).
+- **AC-422.7 A short start.** Given no conversation yet, then the panel says "Ask about this screen" (or "Ask about
+  this <kind>") and one line ("Your first message takes this screen's text and a screenshot. Edits ask you first.",
+  or "Claude works in the hub folder of <project>. Edits ask you first."), then the starters as full-width rows under
+  "Start with" that send at once (tooltip "Sends this message now").
 
 ## Breadcrumbs
 

@@ -5,6 +5,7 @@ from agent_hub.api.openapi_paths import (
     AC_CHECK_PATHS,
     AGENT_SESSION_PATHS,
     CLARITY_PATHS,
+    DISCOVERY_PATHS,
     DOCTOR_FIX_PATHS,
     FEATURE_NAME_PATHS,
     GATE_PATHS,
@@ -36,6 +37,8 @@ SPEC_PATHS = {
     ("get", "/api/v1/projects/{project}/repos"),
     ("get", "/api/v1/projects/{project}/config"),
     ("put", "/api/v1/projects/{project}/config/local"),
+    ("post", "/api/v1/projects/{project}/config/environments"),
+    ("get", "/api/v1/projects/{project}/env-file-keys"),
     ("get", "/api/v1/needs-you"),
     ("get", "/api/v1/activity"),
     ("get", "/api/v1/search"),
@@ -116,6 +119,7 @@ AGENT_SESSION_SPEC_PATHS = {
     ("get", "/api/v1/agent-sessions/{agent_session_id}/events"),
     ("get", "/api/v1/agent-sessions/{agent_session_id}/repo-changes"),
     ("get", "/api/v1/agent-sessions/{agent_session_id}/repo-changes/commit"),
+    ("get", "/api/v1/agent-sessions/{agent_session_id}/repo-changes/file"),
     ("get", "/api/v1/agent-sessions/{agent_session_id}/stream"),
     ("post", "/api/v1/agent-sessions/{agent_session_id}/messages"),
     ("post", "/api/v1/agent-sessions/{agent_session_id}/interrupt"),
@@ -132,8 +136,8 @@ AGENT_SESSION_SPEC_PATHS = {
 @pytest.mark.xfail(strict=True, reason="SCENARIO_PATHS is its own group since AGH-363")
 def test_lists_agent_session_paths_when_document_built(api_settings: ApiSettings) -> None:
     # AC-165.48: today's paths plus exactly the agent-session pairs
-    # (17, then the task stop and the two repo-changes reads).
-    assert len(AGENT_SESSION_SPEC_PATHS) == 20
+    # (17, then the task stop and the three repo-changes reads; the third is AC-424.10).
+    assert len(AGENT_SESSION_SPEC_PATHS) == 21
     assert AGENT_SESSION_PATHS == AGENT_SESSION_SPEC_PATHS
     assert SERVED_PATHS == (
         P2_PATHS
@@ -152,6 +156,7 @@ def test_lists_agent_session_paths_when_document_built(api_settings: ApiSettings
         | PLATFORM_SYNC_PATHS
         | DOCTOR_FIX_PATHS
         | AC_CHECK_PATHS
+        | DISCOVERY_PATHS
     )
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
@@ -180,6 +185,7 @@ def test_lists_skill_paths_when_document_built(api_settings: ApiSettings) -> Non
         | PLATFORM_SYNC_PATHS
         | DOCTOR_FIX_PATHS
         | AC_CHECK_PATHS
+        | DISCOVERY_PATHS
     )
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
@@ -301,6 +307,18 @@ def test_documents_screenshot_when_create_schema_read(api_settings: ApiSettings)
     assert schemas["Screenshot"]["properties"]["media_type"]["const"] == "image/png"
 
 
+def test_lists_discovery_paths_when_document_built(api_settings: ApiSettings) -> None:
+    # ADR 0046: start, list, read and discard a project's environment discoveries.
+    discoveries = "/api/v1/projects/{project}/environment-discoveries"
+    assert {
+        ("post", discoveries),
+        ("get", discoveries),
+        ("get", f"{discoveries}/{{discovery_id}}"),
+        ("delete", f"{discoveries}/{{discovery_id}}"),
+    } == DISCOVERY_PATHS
+    assert document_paths(create_app(api_settings)) == SERVED_PATHS
+
+
 # The nine route-method pairs the scenarios add (AGH-350 plan T12, AC-350.30).
 SCENARIO_SPEC_PATHS = {
     ("get", "/api/v1/scenarios"),
@@ -336,14 +354,16 @@ def test_lists_scenario_paths_when_document_built(api_settings: ApiSettings) -> 
         | PLATFORM_SYNC_PATHS
         | DOCTOR_FIX_PATHS
         | AC_CHECK_PATHS
+        | DISCOVERY_PATHS
         | SCENARIO_PATHS
     )
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
 
 def test_keeps_group_pins_when_scenario_paths_grouped(api_settings: ApiSettings) -> None:
-    # What the two strict-xfailed union pins also held, which AGH-363 did not widen.
-    assert len(AGENT_SESSION_SPEC_PATHS) == 20
+    # What the two strict-xfailed union pins also held, which AGH-363 did not widen (the
+    # repo-changes file read, AC-424.10, is the agent-session group's 21st pair).
+    assert len(AGENT_SESSION_SPEC_PATHS) == 21
     assert AGENT_SESSION_PATHS == AGENT_SESSION_SPEC_PATHS
     assert SKILL_PATHS == SKILL_SPEC_PATHS
     assert document_paths(create_app(api_settings)) >= AGENT_SESSION_PATHS | SKILL_PATHS

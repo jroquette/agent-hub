@@ -33,6 +33,11 @@ export interface DiscussTarget {
    * starts the conversation with that message.
    */
   starters?: readonly DiscussStarter[] | undefined;
+  /**
+   * The session that owns the artifact (the one that wrote a feature's spec, research and plan):
+   * the panel talks with it, and a new conversation stays one click away.
+   */
+  ownerSession?: { id: string; name: string } | null | undefined;
 }
 
 /** A one-click first message: `label` is what the button reads, `message` what Claude gets. */

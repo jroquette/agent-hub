@@ -221,10 +221,32 @@ def test_answers_created_with_ship_when_owner_settles_one_eval(tmp_path: Path, w
     assert "Deployed the config by hand." in text
 
 
+# The owner checked one AC by hand: the body names it, and the SHIP covers that AC only.
+def test_answers_created_with_ship_when_owner_signs_off_named_ac(
+    tmp_path: Path, wired: Any
+) -> None:
+    evals = _signoff_hub(tmp_path, wired, "SHIP-WITH-OWNER-STEPS")
+
+    response = wired.client.post(
+        "/api/v1/features/demo/demo-feature/owner-signoff",
+        json={"acs": ["AC-7.2"], "note": "Checked the page by hand."},
+    )
+
+    assert response.status_code == 201, response.text
+    assert (response.json()["verdict"], response.json()["acs"]) == ("SHIP", ["AC-7.2"])
+    text = (evals / "owner-signoff.md").read_text(encoding="utf-8")
+    assert "acs: [AC-7.2]\n" in text
+    assert "Checked the page by hand." in text
+
+
 @pytest.mark.parametrize(
     "body",
-    [{"delivery": "dem-7", "decision": "maybe"}, {"delivery": "dem-7", "verdict": "SHIP"}],
-    ids=["unknown-decision", "unknown-key"],
+    [
+        {"delivery": "dem-7", "decision": "maybe"},
+        {"delivery": "dem-7", "verdict": "SHIP"},
+        {"acs": []},
+    ],
+    ids=["unknown-decision", "unknown-key", "no-acs"],
 )
 def test_answers_unprocessable_and_writes_nothing_when_signoff_body_invalid(
     tmp_path: Path, wired: Any, body: dict[str, str]

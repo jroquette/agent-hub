@@ -119,6 +119,8 @@ agent_sessions = Table(
     Column("changed_files", JSON, nullable=False, server_default=text("'[]'")),
     # What the session's review read in each repository, so it outlives the folders.
     Column("review_targets", JSON, nullable=False, server_default=text("'[]'")),
+    # The tools the session may use (``all`` or ``read_only``), so a reopened one keeps them.
+    Column("tool_access", String, nullable=False, server_default=text("'all'")),
     Index("ix_agent_sessions_project_claude_session_id", "project", "claude_session_id"),
     Index("ix_agent_sessions_status", "status"),
     Index("ix_agent_sessions_ended_at", "ended_at"),
