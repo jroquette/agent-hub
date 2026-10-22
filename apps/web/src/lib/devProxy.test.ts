@@ -5,6 +5,7 @@ import {
   DEV_ORIGINS,
   DEV_SERVER,
   SESSION_LOGIN_PATH,
+  DISCOVERIES_PATH,
   SESSIONS_PATH,
   apiProxy,
 } from "./devProxy";
@@ -64,9 +65,24 @@ describe("apiProxy", () => {
   it("sends the agent-session routes to their own target first, the rest of /api to the API", () => {
     const proxy = apiProxy("http://127.0.0.1:7421", "http://127.0.0.1:7420");
 
-    expect(Object.keys(proxy)).toEqual([SESSION_LOGIN_PATH, SESSIONS_PATH, "/api"]);
+    expect(Object.keys(proxy)).toEqual([
+      SESSION_LOGIN_PATH,
+      SESSIONS_PATH,
+      DISCOVERIES_PATH,
+      "/api",
+    ]);
     expect(proxy[SESSIONS_PATH]?.target).toBe("http://127.0.0.1:7420");
     expect(proxy["/api"].target).toBe("http://127.0.0.1:7421");
+  });
+
+  it("AC-418.15 sends Find services with Claude to the server that drives the sessions", () => {
+    const proxy = apiProxy("http://127.0.0.1:7421", "http://127.0.0.1:7420");
+
+    expect(proxy[DISCOVERIES_PATH]?.target).toBe("http://127.0.0.1:7420");
+    expect(
+      new RegExp(DISCOVERIES_PATH).test("/api/v1/projects/demo/environment-discoveries"),
+    ).toBe(true);
+    expect(new RegExp(DISCOVERIES_PATH).test("/api/v1/projects/demo/config")).toBe(false);
   });
 
   it("sends make playground's token login to the sessions server as its own /?token=", () => {
