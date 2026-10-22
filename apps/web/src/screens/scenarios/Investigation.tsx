@@ -421,6 +421,7 @@ function OptionsColumn({
   onAnswered,
   onRefetch,
   children,
+  ignoreOption = false,
 }: {
   run: ScenarioRunDetail;
   step: string;
@@ -430,9 +431,11 @@ function OptionsColumn({
   onAnswered: (answer: Answer) => void;
   onRefetch: () => void;
   children?: ReactNode;
+  /** The URL still holds the previous investigation's option: show nothing picked. */
+  ignoreOption?: boolean;
 }) {
   const [params, setParams] = useSearchParams();
-  const selected = params.get("option");
+  const selected = ignoreOption ? null : params.get("option");
   const answer = useAnswerInvestigation(run.run_id);
   const [asking, setAsking] = useState<Asking | null>(null);
   const environment = run.environment ?? "—";
@@ -661,6 +664,7 @@ export function PausedView({
   onRefetch,
   findings,
   reopened = false,
+  ignoreOption = false,
 }: {
   run: ScenarioRunDetail;
   controlOff: boolean;
@@ -670,6 +674,8 @@ export function PausedView({
   findings: ReactNode;
   /** A failed workaround reopened this investigation: focus stays on the page's heading. */
   reopened?: boolean;
+  /** The URL still holds the previous investigation's option, until its reset lands. */
+  ignoreOption?: boolean;
 }) {
   const number = run.open_investigation ?? 1;
   const step = run.paused_step ?? "";
@@ -703,6 +709,7 @@ export function PausedView({
         onControlOff={onControlOff}
         onAnswered={onAnswered}
         onRefetch={onRefetch}
+        ignoreOption={ignoreOption}
       >
         {findings}
       </OptionsColumn>
