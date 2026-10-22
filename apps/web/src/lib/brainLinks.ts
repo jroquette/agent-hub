@@ -6,6 +6,8 @@
 import { safeHref } from "./safeHref";
 
 export const OUTSIDE_BRAIN = "outside the brain";
+/** Where the knowledge index's brain notes live; any other indexed path is a repo's doc. */
+export const BRAIN_PREFIX = "brain/";
 const NOT_A_LINK = "Link not shown: only http(s) links and brain notes are opened";
 const NOT_A_NOTE = "Link not shown: only Markdown notes of the brain open in the app";
 const NO_PLACE = "Link not shown: this note's place in the brain is unknown";

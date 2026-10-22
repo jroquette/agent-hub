@@ -7,8 +7,9 @@ import { Kbd, PathText } from "../components/core";
 import { Icon, type IconName } from "../components/Icon";
 import { SKELETON_DELAY_MS, Skeleton, useDelayed } from "../components/feedback";
 import { useApi } from "../lib/api";
-import { brainRoute } from "../lib/brainLinks";
+import { BRAIN_PREFIX, brainRoute } from "../lib/brainLinks";
 import { isInAppPath } from "../lib/safeHref";
+import { SEARCH_DEBOUNCE_MS } from "../lib/search";
 import { hasWord, useKnowledgeSearch } from "../screens/brain/queries";
 import { NAV } from "./Sidebar";
 
@@ -27,11 +28,9 @@ const GROUPS: readonly { kind: SearchKind; title: string; icon: IconName; mono?:
   { kind: "learning", title: "Learnings", icon: "lightbulb" },
 ];
 
-export const SEARCH_DEBOUNCE_MS = 120;
 /** The palette asks the knowledge route for this many notes: one group's visible rows (Q-10). */
 export const BRAIN_NOTES_LIMIT = 8;
 const BRAIN_NOTES = "Brain notes";
-const BRAIN_PREFIX = "brain/";
 const PLACEHOLDER = "Search sessions, runs, issues, files, agents, screens…";
 const PLACEHOLDER_WITH_NOTES = "Search sessions, runs, issues, files, agents, notes, screens…";
 

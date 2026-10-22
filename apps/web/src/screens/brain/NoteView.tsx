@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { ReactNode } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router";
 
@@ -57,6 +57,25 @@ export function NoteView({
   const { hash } = useLocation();
   const [params] = useSearchParams();
   const loaded = note.data !== undefined;
+  // The Brain search writes `?q=` on each key: the link handler reads it when clicked, so the note
+  // (parsed in full by Markdown) is rendered again only when its text or place changes.
+  const query = params.get("q");
+  const queryRef = useRef(query);
+  useEffect(() => {
+    queryRef.current = query;
+  }, [query]);
+  const markdown = note.data?.markdown;
+  const body = useMemo(
+    () =>
+      markdown === undefined ? null : (
+        <Markdown
+          source={markdown}
+          note={{ project, path }}
+          onBrainLink={(link) => void navigate(withBrainQuery(link.route, queryRef.current))}
+        />
+      ),
+    [markdown, project, path, navigate],
+  );
 
   useEffect(() => {
     if (!loaded) return;
@@ -152,11 +171,7 @@ export function NoteView({
       ) : (
         frontmatter
       )}
-      <Markdown
-        source={data.markdown}
-        note={{ project, path }}
-        onBrainLink={(link) => void navigate(withBrainQuery(link.route, params.get("q")))}
-      />
+      {body}
     </div>
   );
 }
