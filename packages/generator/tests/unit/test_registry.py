@@ -88,6 +88,10 @@ SEEDED_PACK_FILES = (
     "sdlc/scripts/pass_outcome.py",
     "sdlc/scripts/verdict.py",
     "sdlc/ticket-pass.yaml",
+    "upgrade/fixtures/upgrade-adapt-exhausted.yaml",
+    "upgrade/fixtures/upgrade-major-breaking.yaml",
+    "upgrade/fixtures/upgrade-patch-green.yaml",
+    "upgrade/fixtures/upgrade-split.yaml",
     "upgrade/scripts/fast_gate.py",
     "upgrade/upgrade.yaml",
 )

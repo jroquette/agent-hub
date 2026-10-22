@@ -19,6 +19,12 @@ type Workspace = Any
 
 PACK = BUILTIN_WORKFLOWS / "upgrade"
 NAME = "upgrade"
+FIXTURES = (
+    "upgrade-adapt-exhausted",
+    "upgrade-major-breaking",
+    "upgrade-patch-green",
+    "upgrade-split",
+)
 
 
 def document() -> Any:
@@ -40,9 +46,16 @@ def test_validates_and_passes_every_fixture_when_upgrade_tested(
     demo_workspace: Workspace, run_command: CommandRunner
 ) -> None:
     validated = run_command(demo_workspace.hub, "workflow", "validate", NAME)
+    tested = run_command(demo_workspace.hub, "workflow", "test", NAME)
 
     assert validated.exit_code == 0, validated.output
     assert validated.stdout == "upgrade: valid (15 nodes in 15 layers)\n"
+    assert tested.exit_code == 0, tested.output
+    for fixture in FIXTURES:
+        # The hub's seeded copy shadows the built-in.
+        assert f"workflows/upgrade/fixtures/{fixture}.yaml: ok" in tested.stdout
+    assert "warning" not in tested.stdout
+    assert tested.stdout.endswith("4 fixtures: 4 passed, 0 failed\n")
 
 
 def test_declares_one_package_and_the_size_condition_when_document_loaded() -> None:
