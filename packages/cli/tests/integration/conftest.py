@@ -16,7 +16,8 @@ logs each git call and runs the real git; ``env_traced_git`` logs the environmen
 too, and can hang on a clone or fetch. For ``hub setup``, a byte-exact text golden harness
 (``compare_text_golden``). For ``hub ship`` a scripted ``gh`` (``ship_workspace``), its tracker
 (``ship_tracker``), task worktrees (``make_task_worktree``) and a ``run_child`` spy
-(``child_calls``).
+(``child_calls``). For ``hub mcp``'s ``propose``, a ``knowledge_hub`` with a bare ``origin`` and
+a fake ``gh`` (``proposal_hub``).
 """
 
 import builtins
@@ -335,6 +336,174 @@ def knowledge_hub(tmp_path: Path, demo_checkout: CheckoutFactory) -> KnowledgeHu
         if not commit:
             write_files()
         return hub
+
+    return build
+
+
+# ``hub mcp``'s ``propose`` (AGH-392): a hub whose ``origin`` is a local bare repository behind a
+# GitHub url, and a fake ``gh``. Adapted from ``packages/hub_git/tests/conftest.py`` (a conftest
+# cannot be shared across packages).
+PROPOSAL_HUB_URL = "https://github.com/acme/demo-hub.git"
+_PROPOSAL_GH = """\
+import json, os, subprocess, sys
+
+state = os.environ["FAKE_GH_DIR"]
+args = sys.argv[1:]
+
+
+def switch(name):
+    return os.path.exists(os.path.join(state, name))
+
+
+with open(os.path.join(state, "calls.jsonl"), "a") as calls:
+    calls.write(json.dumps({"argv": args}) + "\\n")
+if args[:2] == ["auth", "token"]:
+    if switch("logged-out"):
+        sys.exit(1)
+    print("gho_not-a-real-token")
+    sys.exit(0)
+if args[:2] != ["pr", "create"] or switch("fail"):
+    sys.exit(1)
+opts = dict(arg[2:].split("=", 1) for arg in args[2:] if arg.startswith("--") and "=" in arg)
+head = subprocess.run(
+    ["git", "--git-dir", os.environ["FAKE_GH_ORIGIN"], "rev-parse", "--verify", "--quiet",
+     "refs/heads/" + opts["head"]],
+    stdout=subprocess.DEVNULL,
+)
+if head.returncode != 0:
+    sys.exit(1)
+pulls = os.path.join(state, "pulls.jsonl")
+count = sum(1 for _ in open(pulls)) if os.path.exists(pulls) else 0
+url = "https://github.com/" + opts["repo"] + "/pull/" + str(count + 1)
+with open(opts["body-file"]) as body_file:
+    body = body_file.read()
+pull = {"url": url, "body": body}
+pull.update({key: opts[key] for key in ("head", "base", "title")})
+with open(pulls, "a") as out:
+    out.write(json.dumps(pull) + "\\n")
+print(url)
+"""
+
+
+class ProposalHub(NamedTuple):
+    """A ``knowledge_hub`` pushed to a bare ``origin`` (``bare``), the environment ``hub mcp``
+    gets (``environ``: the hub named, the fake ``gh`` first on ``PATH``), the fake ``gh``'s
+    state folder and the global git config (``gitconfig``: the identity ``Seed Owner`` and the
+    url rewrite)."""
+
+    hub: Path
+    bare: Path
+    environ: dict[str, str]
+    gh_state: Path
+    gitconfig: Path
+
+    def git(self, *args: str, cwd: Path | None = None) -> str:
+        """Run git in ``cwd`` (default: the hub); its stdout."""
+        return subprocess.run(  # noqa: S603 - the test's own git, an argv list
+            [shutil.which("git") or "git", *args],
+            cwd=cwd or self.hub,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+
+    def origin_git(self, *args: str) -> str:
+        """Run git against the bare ``origin``; its stdout."""
+        return self.git("--git-dir", str(self.bare), *args)
+
+    def branches(self) -> set[str]:
+        """The origin's branches."""
+        listed = self.origin_git("for-each-ref", "--format=%(refname:short)", "refs/heads")
+        return set(listed.split())
+
+    def gh_calls(self) -> list[list[str]]:
+        """The argv of every fake ``gh`` call so far."""
+        calls = self.gh_state / "calls.jsonl"
+        if not calls.exists():
+            return []
+        return [json.loads(line)["argv"] for line in calls.read_text().splitlines()]
+
+    def pulls(self) -> list[dict[str, str]]:
+        """The pull requests the fake ``gh`` opened (url, body, head, base, title), in order."""
+        pulls = self.gh_state / "pulls.jsonl"
+        if not pulls.exists():
+            return []
+        return [json.loads(line) for line in pulls.read_text().splitlines()]
+
+    def switch(self, name: str) -> None:
+        """Turn on a fake ``gh`` switch: ``logged-out`` (``auth token`` fails) or ``fail``
+        (``pr create`` fails)."""
+        (self.gh_state / name).touch()
+
+    def reject_pushes(self) -> None:
+        """Make ``origin`` refuse every push (a ``pre-receive`` hook that fails)."""
+        hook = self.bare / "hooks" / "pre-receive"
+        hook.write_text("#!/bin/sh\nexit 1\n")
+        hook.chmod(0o755)
+
+    def snapshot(self) -> tuple[str, ...]:
+        """The developer's checkout as git sees it: HEAD, status, refs, stash, worktrees, index
+        and local config."""
+        return (
+            self.git("rev-parse", "HEAD"),
+            self.git("status", "--porcelain", "--ignored"),
+            self.git("for-each-ref"),
+            self.git("stash", "list"),
+            self.git("worktree", "list", "--porcelain"),
+            self.git("ls-files", "--stage"),
+            self.git("config", "--list", "--local"),
+        )
+
+
+type ProposalHubFactory = Callable[..., ProposalHub]
+
+
+@pytest.fixture
+def proposal_hub(
+    tmp_path: Path, knowledge_hub: KnowledgeHubFactory, monkeypatch: pytest.MonkeyPatch
+) -> ProposalHubFactory:
+    """``proposal_hub(files=...)``: ``knowledge_hub(files)`` with ``origin`` =
+    ``https://github.com/acme/demo-hub.git``, which the test's global git config rewrites to a
+    bare repository under ``tmp_path`` (git never reaches the network), ``main`` pushed to it,
+    and a fake ``gh``: ``gh auth token`` succeeds unless ``logged-out`` is on, ``gh pr create``
+    records the pull request and prints its url when the head is on ``origin``, and fails when
+    ``fail`` is on. Synthetic only: no real repository, account or token."""
+
+    def build(files: Mapping[str, bytes] | None = None) -> ProposalHub:
+        hub = knowledge_hub(dict(files or {}))
+        world = tmp_path / "proposal"
+        bin_dir, gh_state = world / "bin", world / "gh"
+        for folder in (bin_dir, gh_state):
+            folder.mkdir(parents=True)
+        bare = world / "origin.git"
+        gitconfig = world / "gitconfig"
+        gitconfig.write_text(
+            "[user]\n\tname = Seed Owner\n\temail = seed@example.com\n"
+            f'[url "{bare}"]\n\tinsteadOf = {PROPOSAL_HUB_URL}\n'
+        )
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(gitconfig))
+        source = bin_dir / "fake_gh.py"
+        source.write_text(_PROPOSAL_GH)
+        gh = bin_dir / "gh"
+        gh.write_text(
+            f'#!/bin/sh\nexec {shlex.quote(sys.executable)} -I {shlex.quote(str(source))} "$@"\n'
+        )
+        gh.chmod(0o755)
+        environ = dict(
+            os.environ,
+            PATH=f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+            FAKE_GH_DIR=str(gh_state),
+            FAKE_GH_ORIGIN=str(bare),
+            AGENT_HUB_DB=str(world / "index.db"),
+            **{HUB_ROOT_VARIABLE: str(hub)},
+        )
+        proposal = ProposalHub(
+            hub=hub, bare=bare, environ=environ, gh_state=gh_state, gitconfig=gitconfig
+        )
+        proposal.git("init", "--quiet", "--bare", "--initial-branch=main", str(bare), cwd=world)
+        proposal.git("remote", "add", "origin", PROPOSAL_HUB_URL)
+        proposal.git("push", "--quiet", "--set-upstream", "origin", "main")
+        return proposal
 
     return build
 
