@@ -247,7 +247,8 @@ A workflow is data: a YAML (or JSON) file in the hub's `workflows/<pack>/` folde
 `script`, `loop`, `loop_group`, `include`, `approval`, `wait`, `halt`) depend on each other and run in layers
 ([format](docs/design/workflow-schema.md), [ADR 0032](docs/adr/0032-workflow-engine.md)). `hub init` and `hub sync`
 seed the built-in packs once: `issue-to-pr` (what `hub run` runs) and `sdlc` (`deliver`: implement, validate and
-review in a loop until green, then the PR; `review`: a spec lens and a quality lens side by side, then one verdict). A hub's own file
+review in a loop until green, then the PR; `review`: a spec lens and a quality lens side by side, then one verdict) and `retro` (the
+week's run metrics, at most five changes each backed by those numbers, then issue drafts for the ones the owner keeps). A hub's own file
 overrides a built-in of the same name.
 
 ```bash
@@ -383,7 +384,7 @@ The size decides the ceremony:
 | `/upgrade [package or tool]` | Bumps a dependency, toolchain or plugin pin after reading its changelog, adapting to breaking changes | For dependency and toolchain bumps |
 | `/adr <question or issue>` | Records an architectural decision: options and trade-offs, your pick, a new ADR that supersedes and never edits | For a decision outside a `/feature` |
 | `/onboard [propose \| apply]` | Reads each repo read-only and proposes `hub.json` values, gates and `AGENTS.project.md` with `path:line` evidence; applies them only after your approval (`propose` only writes the proposal, for a headless run) | The first session in a new hub, or after adding a repo |
-| `/retro [period]` | Turns the period's run metrics into at most five evidence-backed changes to the workflows, filed as issues | Weekly, or after a rough stretch |
+| `/retro [period]` | Turns the period's run metrics into at most five evidence-backed changes to the workflows, drafted for /triage | Weekly, or after a rough stretch |
 | `/overengineering-review [PR \| branch \| path]` | Reads a diff or module for abstractions, options, layers and tests with no real consumer today, proving each with a search and naming the smaller shape; edits and posts nothing | Before a PR, after a feature's tasks, or when code feels heavier than the problem |
 | `/premortem <decision>` | Assumes a decision already failed, names the specific causes, ranks them in words and gives the top three an early-warning sign and the cheapest experiment that could prove the choice wrong; edits nothing | Before accepting an ADR or a plan's key choice |
 | `/context-audit [repo]` | Estimates the always-loaded context (memory files and their imports, skill and agent descriptions), flags what is past known limits or said twice, and ranks the cuts by tokens saved; edits nothing | When sessions feel crowded, after adding skills or rules |

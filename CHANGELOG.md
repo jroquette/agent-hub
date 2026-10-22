@@ -13,6 +13,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- The built-in `retro` workflow pack: the week's run metrics (per workflow from the run records, plus the retro
+  metrics, `hub skill-usage` and the transcript counts), at most five changes from an agent that a script keeps only
+  when they cite those numbers exactly, the owner's pick, and issue drafts in `brain/_inbox/retro-<date>.md` for
+  `/triage`; no node writes the tracker. `/retro` starts it when the pinned CLI has it. Left out for now: per-workflow
+  cost (AGH-303) and the event store's per-workflow numbers (AGH-450) (AGH-488).
 - `hub skill-usage [--days 7|30|90]` prints the hub's own skills and agents (its `.claude/skills` and `.claude/agents`)
   with their runs over 7, 30 and 90 days and their last use, never-used first, as a Markdown table read from the
   local event store (AGH-482). `/retro` gathers it when the pinned CLI has it; `GET /api/v1/skill-usage` serves the
