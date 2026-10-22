@@ -17,7 +17,7 @@
   gap: var(--space-2);
 }
 .ah-skills-search {
-  width: 320px;
+  width: 360px;
   max-width: 100%;
 }
 .ah-skills-group + .ah-skills-group {
