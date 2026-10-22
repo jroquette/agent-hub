@@ -781,6 +781,9 @@
     "workflows/upgrade/scripts/fast_gate.py": {
       "ownership": "seeded"
     },
+    "workflows/upgrade/scripts/release_notes.py": {
+      "ownership": "seeded"
+    },
     "workflows/upgrade/upgrade.yaml": {
       "ownership": "seeded"
     }
