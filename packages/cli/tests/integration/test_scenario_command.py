@@ -2579,3 +2579,26 @@ def test_creates_nothing_when_findings_issue_already_marked(
     assert "[y/N]" not in shown
     assert tracker_calls(hub) == []
     assert json.loads(marked.read_text(encoding="utf-8")) == issue
+
+
+@pytest.mark.skipif(not Path("/proc/self/stat").exists(), reason="reads /proc")
+def test_kills_plan_groups_when_scenario_plan_interrupted(hub: Path, marker: Path) -> None:
+    # hub web stops a plan past its time or output cap with SIGINT to the plan's group
+    # (AGH-363 Q3): the plan-mode scripts, in their own groups, end with it.
+    write_action(hub, "slow-order", "read")
+    (hub / "actions" / "demo" / "scripts" / "slow-order.sh").write_text(SLOW_SCRIPT)
+    write_scenario(hub, SLOW_WALK)
+    commit_all(hub, "slow walk")
+    groups_file = Path(f"{marker}.groups")
+
+    process = hub_process(hub, marker, "scenario", "plan", "slow-walk", "--env", "local", "--json")
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline and not _lines(groups_file):
+        time.sleep(0.05)
+    process.send_signal(signal.SIGINT)
+    process.communicate(timeout=30)
+
+    groups = [int(line) for line in _lines(groups_file)]
+    assert len(groups) == 1
+    assert live_members(groups[0]) == []
+    assert not Path(f"{marker}.late").exists()

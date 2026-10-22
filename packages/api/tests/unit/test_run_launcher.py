@@ -466,3 +466,66 @@ def test_runs_scenario_commands_when_scenario_planned_or_started(tmp_path: Path)
         *("scenario", "run", "order-walk", "--env", "staging", "--mode", "regression"),
         *("--run-id", "walk-1", "--input", "ref=T-1", "--input", "count=2"),
     ]
+
+
+def test_pins_plan_bounds_when_launcher_built() -> None:
+    assert run_launcher.PLAN_TIMEOUT_SECONDS == 300
+    assert run_launcher.MAX_PLAN_BYTES == 4 * 1024 * 1024
+
+
+def _group_gone(group: int) -> bool:
+    """Whether no process of ``group`` is left (waits up to 10 s for the kill to land)."""
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(group, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def _planner(tmp_path: Path, body: str) -> tuple[ProcessRunLauncher, Path]:
+    """A launcher whose program writes its group id, starts a sleeping child in its group,
+    then runs ``body``."""
+    written = tmp_path / "group"
+    script = (
+        "import os, subprocess, sys, time\n"
+        f"open({str(written)!r}, 'w').write(str(os.getpgid(0)))\n"
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+        f"{body}\n"
+    )
+    planner = ProcessRunLauncher(
+        db_path=tmp_path / "db", environ={}, program=[sys.executable, "-c", script]
+    )
+    return planner, written
+
+
+def test_kills_group_when_plan_output_over_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(run_launcher, "MAX_PLAN_BYTES", 64)
+    planner, written = _planner(
+        tmp_path, "sys.stdout.write('x' * 1000)\nsys.stdout.flush()\ntime.sleep(60)"
+    )
+
+    started = time.monotonic()
+    with pytest.raises(RunLaunchError, match="more than 64 bytes"):
+        planner.plan_scenario(str(tmp_path), "order-walk", environment="local", inputs={})
+
+    assert time.monotonic() - started < 30
+    assert _group_gone(int(written.read_text()))
+
+
+def test_kills_group_when_plan_outlasts_its_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(run_launcher, "PLAN_TIMEOUT_SECONDS", 1.0)
+    planner, written = _planner(tmp_path, "time.sleep(60)")
+
+    started = time.monotonic()
+    with pytest.raises(RunLaunchError, match="did not finish"):
+        planner.plan_scenario(str(tmp_path), "order-walk", environment="local", inputs={})
+
+    assert time.monotonic() - started < 30
+    assert _group_gone(int(written.read_text()))
