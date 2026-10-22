@@ -46,7 +46,13 @@ export interface ResetFrame {
 
 /** A message this page posts: shown at once, accepted with its record's seq, or failed. */
 export type SendItem =
-  | { type: "sending"; key: string; text: string; screenshots?: readonly string[] }
+  | {
+      type: "sending";
+      key: string;
+      text: string;
+      screenshots?: readonly string[];
+      files?: readonly AttachedFileView[];
+    }
   | { type: "accepted"; key: string; seq: number }
   | { type: "failed"; key: string };
 
@@ -58,6 +64,12 @@ export type StreamItem =
   | { type: "reset"; reset: ResetFrame }
   | SendItem;
 
+/** A file sent with a message: its name and size (the record's marker; its bytes are never kept). */
+export interface AttachedFileView {
+  name: string;
+  bytes: number;
+}
+
 /** A sent message until its `user.message` record (the POST's `seq`) arrives (AC-234.27). */
 export interface SendingView {
   key: string;
@@ -65,6 +77,8 @@ export interface SendingView {
   seq: number | null;
   /** The images pasted in it (PNG data URLs), shown while it sends. */
   screenshots?: readonly string[];
+  /** The files attached to it. */
+  files?: readonly AttachedFileView[];
 }
 
 export interface ToolResultView {
@@ -144,6 +158,8 @@ export type TranscriptEntry =
       screenshot: boolean;
       /** How many images went with it (one marker each). */
       screenshotCount: number;
+      /** The files that went with it (one marker each). */
+      files: readonly AttachedFileView[];
     }
   | {
       kind: "assistant";
@@ -973,6 +989,7 @@ function applySend(state: TranscriptState, item: SendItem): TranscriptState {
             text: item.text,
             seq: null,
             ...(item.screenshots?.length ? { screenshots: item.screenshots } : {}),
+            ...(item.files?.length ? { files: item.files } : {}),
           },
         ],
       };
@@ -1033,6 +1050,16 @@ function screenshotsOf(body: JsonObject): number {
   return asArray(body.attachments).filter((item) => asObject(item)?.kind === "screenshot").length;
 }
 
+/** The file markers of a user message's record. */
+function filesOf(body: JsonObject): AttachedFileView[] {
+  return asArray(body.attachments).flatMap((item) => {
+    const marker = asObject(item);
+    if (marker?.kind !== "file") return [];
+    const bytes = typeof marker.bytes === "number" ? marker.bytes : 0;
+    return [{ name: str(marker, "name") ?? "File", bytes }];
+  });
+}
+
 function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState {
   if (record.seq <= state.lastSeq) return state;
   const s = { ...state, lastSeq: record.seq, lastAt: record.at };
@@ -1057,6 +1084,7 @@ function applyRecord(state: TranscriptState, record: LogRecord): TranscriptState
           queued: s.turnOpen,
           screenshot: screenshotsOf(body) > 0,
           screenshotCount: screenshotsOf(body),
+          files: filesOf(body),
         },
       );
     }

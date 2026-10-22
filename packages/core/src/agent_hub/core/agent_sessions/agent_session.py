@@ -229,10 +229,38 @@ class Screenshot(ViewModel):
         yield "chars", len(self.data)
 
 
+# The most files one message carries: each is a PDF or a UTF-8 text of at most
+# ``MAX_MESSAGE_FILE_BYTES``.
+MAX_MESSAGE_FILES: Final = 10
+MAX_FILE_NAME_CHARS: Final = 255
+
+MessageFileMediaType = Literal["application/pdf", "text/plain"]
+
+
+class MessageFile(ViewModel):
+    """A file attached to a message for Claude to read: a PDF or a UTF-8 text, base64-encoded;
+    its decoded size and content are checked by ``decode_message_file`` (413, 422)."""
+
+    name: str = Field(min_length=1, max_length=MAX_FILE_NAME_CHARS)
+    media_type: MessageFileMediaType
+    data: str = Field(min_length=1)
+
+    # Like ``Screenshot``: a log line or a traceback never prints the data.
+    def __repr_args__(self) -> Iterator[tuple[str, object]]:
+        yield "name", self.name
+        yield "media_type", self.media_type
+        yield "chars", len(self.data)
+
+
+# The most images one message carries: each is a PNG of at most ``MAX_SCREENSHOT_BYTES``.
+MAX_MESSAGE_SCREENSHOTS: Final = 10
+
+
 class CreateAgentSession(ViewModel):
     """``POST /agent-sessions``: where, how, and an optional first prompt (its byte size is
     checked against the message limit, 413), or a past session to resume (and fork).
-    ``screenshot`` goes with the first prompt as an image, so it needs one."""
+    ``screenshot`` (the screen's capture), ``screenshots`` (images pasted in the first
+    message) and ``files`` go with the first prompt, so they need one."""
 
     project: ProjectName
     workdir_id: WorkdirId
@@ -242,6 +270,12 @@ class CreateAgentSession(ViewModel):
     resume_session_id: str | None = Field(default=None, pattern=UUID_PATTERN)
     fork: bool = False
     screenshot: Screenshot | None = None
+    screenshots: tuple[Screenshot, ...] | None = Field(
+        default=None, min_length=1, max_length=MAX_MESSAGE_SCREENSHOTS
+    )
+    files: tuple[MessageFile, ...] | None = Field(
+        default=None, min_length=1, max_length=MAX_MESSAGE_FILES
+    )
 
     @model_validator(mode="after")
     def _fork_needs_resume(self) -> CreateAgentSession:
@@ -252,23 +286,23 @@ class CreateAgentSession(ViewModel):
 
     @model_validator(mode="after")
     def _screenshot_needs_prompt(self) -> CreateAgentSession:
-        if self.screenshot is not None and self.prompt is None:
-            msg = "screenshot needs prompt"
+        attached = (self.screenshot, self.screenshots, self.files)
+        if any(item is not None for item in attached) and self.prompt is None:
+            msg = "screenshot, screenshots and files need prompt"
             raise ValueError(msg)
         return self
 
 
-# The most images one message carries: each is a PNG of at most ``MAX_SCREENSHOT_BYTES``.
-MAX_MESSAGE_SCREENSHOTS: Final = 10
-
-
 class SendMessage(ViewModel):
-    """``POST /{id}/messages``: one user message (byte limit checked, 413), with the images
-    pasted in it, sent to Claude before the text."""
+    """``POST /{id}/messages``: one user message (byte limit checked, 413), with the files and
+    images attached to it, sent to Claude before the text."""
 
     text: str = Field(min_length=1)
     screenshots: tuple[Screenshot, ...] | None = Field(
         default=None, min_length=1, max_length=MAX_MESSAGE_SCREENSHOTS
+    )
+    files: tuple[MessageFile, ...] | None = Field(
+        default=None, min_length=1, max_length=MAX_MESSAGE_FILES
     )
 
 
