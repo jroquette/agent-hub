@@ -27,6 +27,15 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `POST /projects/{project}/config/environments` adds, changes, renames and removes environments, services and
   endpoints in `hub.json` or `hub.local.json`, one edit or a batch written together, checked as a read checks them and
   never committed. A team rename also renames your own `hub.local.json` entries; other developers rename theirs.
+- Feature detail shows plan change requests (AGH-405): a "Waiting for you" banner names each open request and opens
+  its ticket's panel at Preflight, Plan carries "v3 waits for you", tickets read "Waiting for you: plan change",
+  "Held: plan change pending", a re-run or their local drift, and the panel lists every preflight run, local note and
+  discovery, shows the request's evidence, proposal and consequences, and decides it (Approve, or Decline with a
+  note) through its run's gate, or, only when the run is gone, through the new
+  `POST /features/{project}/{slug}/change-requests/{n}/decision`, which creates the request's decision file once
+  and refuses while the run lives. `GET /features/{project}/{slug}/tickets/{ticket}` serves a ticket's records, the detail's
+  `change_requests` carry their gate's `approval_id`, the Features list ranks a plan change and a hand-written
+  sign-off in Needs you, and every owner wait reads "Waiting for you".
 - `hub search QUERY [--kind KIND]… [--hub NAME] [--json] [--db PATH]` searches the hub's `brain/` (not `brain/auto/`)
   and each repo's `docs/` through a local SQLite FTS5 index in the database `hub web` and `hub collect` use, synced
   with the checkout on every search; `hub brain reindex [--hub NAME] [--db PATH]` rebuilds it. Markdown only, at most
@@ -34,6 +43,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   read, on every search). A query with no word (`!!!`) exits 2, and a query that starts with `-` goes after `--`
   (`hub search -- -foo`). The database gains migration 0008; a Python whose SQLite lacks FTS5 can no longer migrate
   it (ADR 0044) (AGH-391).
+- `hub mcp` serves the hub's knowledge to Claude Code as a local stdio MCP server (ADR 0044): `search` (the
+  `hub search` index, at most 50 results, 10 by default), `read` (one file of `brain/` or a repo's `docs/`, under the
+  index's file rules) and `propose` (a hub pull request adding one `brain/_inbox/` note on
+  `<prefix>learning-propose-<slug>`, from a temporary clone; needs `gh`). `hub sync` now renders a managed `.mcp.json`
+  declaring it: a hub that already has its own `.mcp.json` gets a sync conflict (exit 3); move its servers to your
+  user scope (`claude mcp add --scope user`) first. Claude Code asks once to approve the `hub` server. Arrives after
+  you bump `platform.version` and run `hub sync` (AGH-392).
 
 ### Changed
 

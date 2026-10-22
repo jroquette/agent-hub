@@ -590,7 +590,9 @@ export interface paths {
     };
     /**
      * Get Feature
-     * @description One feature with its acceptance criteria.
+     * @description One feature with its acceptance criteria; each open change request carries the open gate
+     *     of its run that answers it (``approval_id``), and whether its run is gone, so hub web
+     *     decides it (``decidable_here``).
      */
     get: operations["get_feature_api_v1_features__project___slug__get"];
     put?: never;
@@ -616,6 +618,30 @@ export interface paths {
      *     exit code and output (nothing is recorded; 409 for a manual AC or one with no command).
      */
     post: operations["run_ac_check_api_v1_features__project___slug__acs__ac__check_runs_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/features/{project}/{slug}/change-requests/{n}/decision": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Decide Change Request
+     * @description The owner decides a plan change request whose run is gone (lost, or ended, and held by no
+     *     child): creates ``change-requests/<n>.decision.md`` once with the hub's person as
+     *     ``decided_by``, never editing the request; the next ``/implement`` of its ticket reads it.
+     *     409 while the run's gate is open (answer it through ``approval_id``), while the run lives,
+     *     once decided, or with no person to record; 422 for a decline without a note.
+     */
+    post: operations["decide_change_request_api_v1_features__project___slug__change_requests__n__decision_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -664,6 +690,28 @@ export interface paths {
      *     the plan with a notice (always 200 for a known feature).
      */
     get: operations["get_feature_tickets_api_v1_features__project___slug__tickets_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/features/{project}/{slug}/tickets/{ticket}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Ticket Records
+     * @description One ticket's records the ticket panel shows: its context brief and ticket plan, every
+     *     preflight run (local notes, discoveries) and the change requests it asks or is held by, each
+     *     open one with its run's open gate; 404 when the feature does not list the ticket.
+     */
+    get: operations["get_ticket_records_api_v1_features__project___slug__tickets__ticket__get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -1234,6 +1282,27 @@ export interface paths {
      * @description Write the version back into the hub and record a ``restore`` version naming it.
      */
     post: operations["restore_skill_version_api_v1_projects__project__skills__kind___source___name__versions__version_id__restore_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/scenario-runs/{run_id}/investigation": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Open Investigation
+     * @description Start the investigation session of a scenario run paused at an open investigation, or
+     *     answer the one already started (200); 409 when the run is not paused there.
+     */
+    post: operations["open_investigation_api_v1_scenario_runs__run_id__investigation_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -2231,6 +2300,85 @@ export interface components {
       usage: components["schemas"]["Usage"] | null;
     };
     /**
+     * ChangeDecisionView
+     * @description The owner's decision on a plan change request (``<n>.decision.md``, D-11).
+     */
+    ChangeDecisionView: {
+      /** Decided At */
+      decided_at: string;
+      /** Decided By */
+      decided_by: string;
+      /**
+       * Decision
+       * @enum {string}
+       */
+      decision: "approved" | "declined";
+      /** Note */
+      note: string | null;
+    };
+    /**
+     * ChangeRequestDecisionBody
+     * @description ``POST .../change-requests/{n}/decision``: approved or declined, and the owner's note
+     *     (required to decline).
+     */
+    ChangeRequestDecisionBody: {
+      /**
+       * Decision
+       * @enum {string}
+       */
+      decision: "approved" | "declined";
+      /** Note */
+      note?: string | null;
+    };
+    /**
+     * ChangeRequestView
+     * @description A plan change request (``change-requests/<n>.md``, two-level-flows S2): its asking
+     *     ``ticket``, ``status`` folded from its decision (None when the request cannot be read,
+     *     ``problem`` then says why), the plan versions, the tickets it affects, when it was opened and
+     *     by which ``run_id``. ``approval_id`` is the open gate of that run that answers it (P8, A5);
+     *     ``decidable_here`` says the run is gone (lost, or ended), so hub web records the decision
+     *     itself (AC-2.14). ``path`` is relative to the hub's ``brain/``; ``body`` (the ticket route
+     *     only) is the request's evidence and proposal, as markdown within its 16 KiB head; ``body_cut``
+     *     says the file goes on past it.
+     */
+    ChangeRequestView: {
+      /** Affected */
+      affected: string[];
+      /** Approval Id */
+      approval_id?: string | null;
+      /** Body */
+      body?: string | null;
+      /**
+       * Body Cut
+       * @default false
+       */
+      body_cut: boolean;
+      /**
+       * Decidable Here
+       * @default false
+       */
+      decidable_here: boolean;
+      decision: components["schemas"]["ChangeDecisionView"] | null;
+      /** N */
+      n: number;
+      /** Opened At */
+      opened_at: string | null;
+      /** Path */
+      path: string;
+      /** Plan From */
+      plan_from: number | null;
+      /** Plan To */
+      plan_to: number | null;
+      /** Problem */
+      problem: string | null;
+      /** Run Id */
+      run_id: string | null;
+      /** Status */
+      status: ("open" | "approved" | "declined") | null;
+      /** Ticket */
+      ticket: string | null;
+    };
+    /**
      * ChangedFile
      * @description A file the session's tool calls changed (``Edit``, ``MultiEdit``, ``Write``,
      *     ``NotebookEdit``, subagents' included); ``last_change_id`` is the ``tool_use_id`` of the
@@ -2321,6 +2469,7 @@ export interface components {
       /** Transcript Refused */
       transcript_refused: number;
     };
+    Commit: string;
     /**
      * ConfigFileView
      * @description One of the two files: its path and, when it cannot be used, its problems.
@@ -2711,7 +2860,7 @@ export interface components {
      * FeatureDetail
      * @description A feature with its acceptance criteria rows, its records (D3) and every eval; ``plan``
      *     (None without ``plan.md``) and ``acceptance_eval`` (None before one exists), whose verdict is
-     *     the header's ``verdict``.
+     *     the header's ``verdict``; ``change_requests`` by number.
      */
     FeatureDetail: {
       /**
@@ -2721,6 +2870,11 @@ export interface components {
       ac_rows: components["schemas"]["AcRow"][];
       acceptance_eval?: components["schemas"]["AcceptanceEval"] | null;
       acs: components["schemas"]["AcCounts"] | null;
+      /**
+       * Change Requests
+       * @default []
+       */
+      change_requests: components["schemas"]["ChangeRequestView"][];
       /**
        * Derived
        * @default true
@@ -3199,6 +3353,25 @@ export interface components {
     InputText: string;
     InputValue:
       boolean | number | components["schemas"]["InputNumber"] | components["schemas"]["InputText"];
+    /**
+     * InvestigationSession
+     * @description The session of a scenario run's open investigation: ``started`` when this call
+     *     started it.
+     */
+    InvestigationSession: {
+      /** Agent Session Id */
+      agent_session_id: string;
+      /** Investigation */
+      investigation: number;
+      /** Project */
+      project: string;
+      /** Run Id */
+      run_id: string;
+      /** Started */
+      started: boolean;
+      /** Step */
+      step: string;
+    };
     /**
      * IssueRef
      * @description The tracker issue a run works on; title and url need Linear (``null`` in Phase 2).
@@ -3731,6 +3904,7 @@ export interface components {
       /** Text */
       text: string;
     };
+    OneLine1000: string;
     /**
      * OpenPermission
      * @description The permission request a live session waits on, as memory holds it (E10).
@@ -4059,6 +4233,53 @@ export interface components {
       previous_version: string | null;
       /** Version */
       version: string;
+    };
+    /**
+     * PreflightRun
+     * @description One preflight run of a ticket: when it ran, the plan version and commit it checked, the
+     *     blocker outcomes it read, the input it was given (a discovery or a declined change's note,
+     *     ``input_text``; null for ``none``), the drift it found with its local notes (at least one for
+     *     ``local``), the change request it opened (required for ``plan``) and the workflow
+     *     run it belongs to.
+     */
+    PreflightRun: {
+      /** Blockers Read */
+      blockers_read: components["schemas"]["TicketKey"][];
+      /** Change Request */
+      change_request: number | null;
+      commit: components["schemas"]["Commit"];
+      /**
+       * Drift
+       * @enum {string}
+       */
+      drift: "none" | "local" | "plan";
+      /**
+       * Input
+       * @enum {string}
+       */
+      input: "none" | "discovery" | "declined_change";
+      input_text: components["schemas"]["OneLine1000"] | null;
+      /** Local Notes */
+      local_notes: components["schemas"]["OneLine1000"][];
+      /** Plan Version */
+      plan_version: number;
+      /**
+       * Ran At
+       * Format: date-time
+       */
+      ran_at: string;
+      run_id: components["schemas"]["RunId"];
+    };
+    /**
+     * PreflightView
+     * @description A ticket's ``preflight.json``: every run, oldest first, or why it could not be read
+     *     (``runs`` then empty).
+     */
+    PreflightView: {
+      /** Problem */
+      problem: string | null;
+      /** Runs */
+      runs: components["schemas"]["PreflightRun"][];
     };
     /**
      * Problem
@@ -4717,6 +4938,7 @@ export interface components {
        */
       result: "passed" | "failed";
     };
+    RunId: string;
     /** @enum {string} */
     RunStatus: "done" | "failed" | "cancelled";
     /**
@@ -5577,6 +5799,7 @@ export interface components {
       /** Steps */
       steps: components["schemas"]["TicketStep"][];
     };
+    TicketKey: string;
     /**
      * TicketPlan
      * @description The planning of the feature's tickets, every ticket named by its row's ``ref``.
@@ -5610,6 +5833,34 @@ export interface components {
       waiting: string[];
       /** Warnings */
       warnings: string[];
+    };
+    /**
+     * TicketRecords
+     * @description ``GET /features/{project}/{slug}/tickets/{ticket}`` (two-level-flows A7, A20): what the
+     *     ticket panel shows that no tickets row carries: ``preflight``, its record (None without one),
+     *     and ``change_requests``, the plan change requests it asks or is held by, each with its
+     *     evidence and proposal (``body``).
+     */
+    TicketRecords: {
+      /** Change Requests */
+      change_requests: components["schemas"]["ChangeRequestView"][];
+      /**
+       * Derived
+       * @default true
+       */
+      derived: boolean;
+      preflight: components["schemas"]["PreflightView"] | null;
+      /** Project */
+      project: string;
+      /** Slug */
+      slug: string;
+      /**
+       * Sources Missing
+       * @default []
+       */
+      sources_missing: components["schemas"]["EventSource"][];
+      /** Ticket */
+      ticket: string;
     };
     /**
      * TicketRow
@@ -7622,6 +7873,52 @@ export interface operations {
       };
     };
   };
+  decide_change_request_api_v1_features__project___slug__change_requests__n__decision_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        slug: string;
+        n: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ChangeRequestDecisionBody"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ChangeRequestView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
   sign_off_owner_steps_api_v1_features__project___slug__owner_signoff_post: {
     parameters: {
       query?: never;
@@ -7686,6 +7983,48 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["FeatureTickets"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_ticket_records_api_v1_features__project___slug__tickets__ticket__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        slug: string;
+        ticket: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["TicketRecords"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */
@@ -9067,6 +9406,55 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  open_investigation_api_v1_scenario_runs__run_id__investigation_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The session already started */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["InvestigationSession"];
+        };
+      };
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["InvestigationSession"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */

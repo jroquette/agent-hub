@@ -1,4 +1,12 @@
-import { Fragment, useId, useRef, useState, type MutableRefObject, type ReactNode } from "react";
+import {
+  Fragment,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type MutableRefObject,
+  type ReactNode,
+} from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
@@ -42,6 +50,7 @@ import {
 import { RecordSummary, summaryRequest } from "./RecordSummary";
 import { StateBadge, ticketSearch } from "./PlanningView";
 import { TicketsTab } from "./TicketsTab";
+import { WaitAge } from "./TicketPanel";
 import { useFeature, useFeatureTickets } from "./queries";
 
 type Detail = components["schemas"]["FeatureDetail"];
@@ -449,6 +458,8 @@ interface OwnerWait {
   /** The eval's label in its group ("Eval 2"). */
   label: string;
   text: string;
+  /** A sign-off the app cannot record (A10, A19): a signpost with no button. */
+  byHand?: boolean;
 }
 
 /**
@@ -470,6 +481,15 @@ function ownerWaits(
       label,
       text: `Acceptance: sign off ${String(n)} AC${n === 1 ? "" : "s"} (${label})`,
     });
+  } else if (acceptance?.owner_wait?.state === "no_acs") {
+    // A19: a sign-off the owner writes by hand waits too; its callout says what to write.
+    const label = acceptanceLabel(detail, tickets, epics) ?? acceptance.delivery;
+    first.push({
+      delivery: acceptance.delivery,
+      label,
+      text: `Acceptance: sign off by hand · no ACs listed (${label})`,
+      byHand: true,
+    });
   }
   const others = ownerStepsWaiting(detail.evals, tickets, epics)
     .filter((w) => w.record.delivery !== acceptance?.delivery)
@@ -481,49 +501,117 @@ function ownerWaits(
   return [...first, ...others];
 }
 
+type ChangeRequestView = components["schemas"]["ChangeRequestView"];
+
+/** An open plan change request as the banner names it (two-level-flows AC-2.8). */
+function changeText(request: ChangeRequestView): string {
+  const affects = request.affected.length ? ` · affects ${request.affected.join(", ")}` : "";
+  const version = (n: number | null) => (n == null ? "—" : `v${String(n)}`);
+  const versions = `plan ${version(request.plan_from)} → ${version(request.plan_to)}`;
+  return `Plan change request ${String(request.n)} from ${request.ticket ?? "?"}: ${versions}${affects}`;
+}
+
 /**
- * The page's one "Waiting on you" banner: a signpost for every wait, one line each, each line
- * after the first a link to its eval; the button opens the first. The decisions are on the Eval
- * tab's prompts (ux-change-waiting-prompts.md).
+ * The page's one "Waiting for you" banner (A18): a signpost for every wait, one line each, the
+ * open plan change requests first (AC-2.8), each line after the first a link to where it is
+ * settled; the button opens the first: a request's ticket panel at its Preflight (AC-1.10, A8), or
+ * an eval's prompt. The decisions are in the ticket panel and on the Eval tab's prompts
+ * (ux-change-waiting-prompts.md).
  */
 function WaitingBanner({
+  changes,
   waits,
   onEval,
   onOpen,
+  onTicket,
 }: {
+  changes: readonly ChangeRequestView[];
   waits: readonly OwnerWait[];
-  /** The Eval tab is shown: its prompts are below, so no button. */
+  /** The Eval tab is shown: its prompts are below, so no button for an eval. */
   onEval: boolean;
   onOpen: (delivery: string) => void;
+  /** Opens the ticket panel of `ticket` at its Preflight; `opener` takes focus back on close. */
+  onTicket: (ticket: string, opener: HTMLElement) => void;
 }) {
   const [params] = useSearchParams();
+  const [change, ...moreChanges] = changes;
   const [first, ...rest] = waits;
-  if (!first) return null;
+  if (!change && !first) return null;
+  const ticketLink = (request: ChangeRequestView) => {
+    const next = new URLSearchParams(ticketSearch(params, request.ticket ?? ""));
+    next.set("step", "preflight");
+    return (
+      <Link
+        to={{ search: `?${next.toString()}` }}
+        replace
+        onClick={(event) => {
+          event.preventDefault();
+          onTicket(request.ticket ?? "", event.currentTarget);
+        }}
+      >
+        {changeText(request)}
+      </Link>
+    );
+  };
+  let action: ReactNode = null;
+  if (change) {
+    action = (
+      <Button
+        size="sm"
+        variant="primary"
+        icon="arrow-right"
+        aria-label={`Review change request ${String(change.n)} from ${change.ticket ?? ""}`}
+        onClick={(event) => {
+          onTicket(change.ticket ?? "", event.currentTarget);
+        }}
+      >
+        Review change request
+      </Button>
+    );
+  } else if (first && !onEval && !first.byHand) {
+    action = (
+      <Button
+        size="sm"
+        variant="primary"
+        icon="arrow-right"
+        aria-label={`Review owner steps of ${first.label}`}
+        onClick={() => {
+          onOpen(first.delivery);
+        }}
+      >
+        Review owner steps
+      </Button>
+    );
+  }
   return (
-    <Banner
-      tone="warning"
-      boxed
-      icon="hand"
-      action={
-        !onEval && (
-          <Button
-            size="sm"
-            variant="primary"
-            icon="arrow-right"
-            aria-label={`Review owner steps of ${first.label}`}
-            onClick={() => {
-              onOpen(first.delivery);
-            }}
-          >
-            Review owner steps
-          </Button>
-        )
-      }
-    >
-      <b>Waiting on you</b>
-      {onEval && <span className="ah-muted"> · Settle each one below.</span>}
+    <Banner tone="warning" boxed icon="hand" action={action}>
+      <b>Waiting for you</b>
+      {onEval && waits.length > 0 && (
+        <span className="ah-muted">
+          {change ? " · Settle the eval waits below." : " · Settle each one below."}
+        </span>
+      )}
       <ul className="ah-small" style={{ margin: "2px 0 0", paddingLeft: 18 }}>
-        <li>{first.text}</li>
+        {change && (
+          <li>
+            {changeText(change)} · <WaitAge openedAt={change.opened_at} />
+          </li>
+        )}
+        {moreChanges.map((request) => (
+          <li key={request.n}>
+            {ticketLink(request)} · <WaitAge openedAt={request.opened_at} />
+          </li>
+        ))}
+        {first &&
+          (change || first.byHand ? (
+            <li>
+              <Link to={{ search: evalSearch(params, first.delivery) }} replace state={FOCUS_EVAL}>
+                {first.text}
+              </Link>
+            </li>
+          ) : (
+            <li>{first.text}</li>
+          ))}
         {rest.map((wait) => (
           <li key={wait.delivery}>
             <Link to={{ search: evalSearch(params, wait.delivery) }} replace state={FOCUS_EVAL}>
@@ -533,6 +621,36 @@ function WaitingBanner({
         ))}
       </ul>
     </Banner>
+  );
+}
+
+/**
+ * Says once, politely, each plan change request that arrives while the page is open (U5): those
+ * open at the first read are the banner's, not news.
+ */
+function NewRequestAnnouncer({ requests }: { requests: readonly ChangeRequestView[] }) {
+  const seen = useRef<Set<number> | null>(null);
+  const [said, setSaid] = useState("");
+  useEffect(() => {
+    if (seen.current === null) {
+      seen.current = new Set(requests.map((request) => request.n));
+      return;
+    }
+    const known = seen.current;
+    const fresh = requests.filter((request) => !known.has(request.n));
+    for (const request of fresh) known.add(request.n);
+    if (fresh.length > 0) {
+      setSaid(
+        fresh
+          .map((r) => `${r.ticket ?? ""} waits for you: plan change request ${String(r.n)}.`)
+          .join(" "),
+      );
+    }
+  }, [requests]);
+  return (
+    <div className="ah-sr" role="status" aria-live="polite">
+      {said}
+    </div>
   );
 }
 
@@ -579,6 +697,9 @@ export function FeatureDetailScreen() {
   const issueIds = ticketIds(detail.issues);
   const epics = tickets.data?.planning.epics ?? [];
   const waits = ownerWaits(detail, issueIds, epics);
+  const changes = detail.change_requests.filter(
+    (request) => request.status === "open" && request.ticket,
+  );
   const wait = detail.acceptance_eval?.owner_wait;
   const accepted = detail.acceptance_eval && acceptanceLabel(detail, issueIds, epics);
   const setTab = (id: string) => {
@@ -590,6 +711,17 @@ export function FeatureDetailScreen() {
         // The ticket panel belongs to the Tickets tab: another tab closes it.
         next.delete("ticket");
         next.delete("step");
+        return next;
+      },
+      { replace: true },
+    );
+  };
+  const openTicket = (ticket: string, opener: HTMLElement) => {
+    openerRef.current = opener;
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(ticketSearch(current, ticket));
+        next.set("step", "preflight");
         return next;
       },
       { replace: true },
@@ -736,14 +868,20 @@ export function FeatureDetailScreen() {
           }
         />
       </section>
-      {waits.length > 0 ? (
-        <WaitingBanner waits={waits} onEval={tab === "eval"} onOpen={openEval} />
+      {waits.length > 0 || changes.length > 0 ? (
+        <WaitingBanner
+          changes={changes}
+          waits={waits}
+          onEval={tab === "eval"}
+          onOpen={openEval}
+          onTicket={openTicket}
+        />
       ) : (
         !detail.acceptance_eval &&
         owners.length > 0 && (
           <Banner tone="warning" boxed icon="hand">
             <b>
-              Waiting on you: {owners.length} owner step{owners.length === 1 ? "" : "s"} left
+              Waiting for you: {owners.length} owner step{owners.length === 1 ? "" : "s"} left
             </b>
             <span className="ah-muted">
               {" "}
@@ -752,6 +890,7 @@ export function FeatureDetailScreen() {
           </Banner>
         )
       )}
+      <NewRequestAnnouncer requests={changes} />
       <Tabs tabs={tabs} value={tab} onChange={setTab} label="Feature record" />
       <div style={{ paddingTop: 4 }}>{body}</div>
     </div>

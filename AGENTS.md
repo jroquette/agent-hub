@@ -19,14 +19,17 @@ The spec is in `docs/SPEC.md`: read it before any task. The directions already s
   | `packages/tracker_linear` (`agent-hub-tracker-linear`) | `agent_hub.tracker_linear` | Linear tracker adapters: GraphQL (`LINEAR_API_KEY`) and MCP (`McpTrackerClient`, `claude -p`, ADR 0015) |
   | `packages/hub_git` (`agent-hub-hub-git`) | `agent_hub.hub_git` | Hub pull requests for learning decisions (`git`, `gh`; ADR 0024) |
   | `packages/api` (`agent-hub-api`) | `agent_hub.api` | FastAPI control plane (`hub web`), a second composition root (ADR 0017) |
+  | `packages/mcp_server` (`agent-hub-mcp-server`) | `agent_hub.mcp_server` | `hub mcp`: the hub's knowledge as a stdio MCP server (`search`, `read`, `propose`), a third composition root (ADR 0044) |
   | `packages/cli` (`agent-hub-cli`) | `agent_hub.cli` | Typer CLI, command `hub` |
   | `packages/agent-hub` (`agent-hub`) | `agent_hub_meta` (placeholder, no code) | Meta-package: `uv tool install` gets everything |
 
 - Everything depends on `core`; `core` depends on nothing internal. `cli` is the composition root (ADR 0008): it may
   import `storage`, `collector`, `generator` and `tracker_linear`, and nothing imports `cli`. `api` is a second
   composition root (ADR 0017) that may also import `hub_git` and `tracker_linear` (ADR 0025); `cli` reaches `api`
-  only through `web_command`. The adapters (`storage`, `collector`, `generator`, `tracker_linear`, `hub_git`) never
-  import each other (import-linter).
+  only through `web_command`. `mcp_server` is a third composition root (ADR 0044) that wires `hub_git` and is the only
+  package that imports the MCP SDK `mcp`; `cli` reaches it only through `mcp_command`, and it and `api` never import
+  each other. The adapters (`storage`, `collector`, `generator`, `tracker_linear`, `hub_git`) never import each other
+  (import-linter).
 - `apps/web` is the React app; its production build is committed in `packages/api/.../web_dist` (`make web-build`).
 
 ## Gates

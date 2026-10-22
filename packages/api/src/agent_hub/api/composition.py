@@ -43,12 +43,14 @@ from fastapi import FastAPI
 
 from agent_hub.api.ac_check import AcCheckError, AcCheckRunner, ac_check_problem
 from agent_hub.api.agent_session_runtime import (
+    HubCredentials,
     SessionRuntime,
     UnavailableCloudLauncher,
     UnavailableSessionDriver,
 )
 from agent_hub.api.app import create_app
 from agent_hub.api.change_feed import ChangeFeed, SystemTimer
+from agent_hub.api.change_request_files import HubDecisionWriter
 from agent_hub.api.dependencies import ApiPorts
 from agent_hub.api.feature_names import FILE_NAME as FEATURE_NAMES_FILE
 from agent_hub.api.feature_names import FeatureNames
@@ -70,6 +72,10 @@ from agent_hub.api.rfc9457 import (
 )
 from agent_hub.api.run_gate_kinds import RecordedGateKinds
 from agent_hub.api.run_launcher import ProcessRunLauncher
+from agent_hub.api.scenario_investigation import (
+    InvestigationRestrictions,
+    ScenarioInvestigations,
+)
 from agent_hub.api.settings import ApiSettings, utc_now
 from agent_hub.api.static_files import WEB_DIST
 from agent_hub.api.ticket_snapshots import (
@@ -86,6 +92,7 @@ from agent_hub.core.agent_sessions.driver import SessionDriver
 from agent_hub.core.agent_sessions.links import AgentSessionLinks, ObservedSessionLookup
 from agent_hub.core.agent_sessions.repo_changes import RepoChangesReader
 from agent_hub.core.agent_sessions.store import AgentSessionStore
+from agent_hub.core.features.change_request_decision import DecideChangeRequest
 from agent_hub.core.features.owner_signoff import OwnerSignOffError, SignOffOwnerSteps
 from agent_hub.core.features.ticket_snapshots import (
     SnapshotRequest,
@@ -352,6 +359,20 @@ def item_author_of(hub_of: Callable[[str], LearningHub | UnavailableHub]) -> Aut
     return author_of
 
 
+def decider_of(
+    hub_of: Callable[[str], LearningHub | UnavailableHub],
+) -> Callable[[str], str | None]:
+    """Who decides a change request in hub web: the person the project's hub commits as (the
+    item writes' author, ADR 0016), None when the hub names none."""
+    author_of = item_author_of(hub_of)
+
+    def decider(project: str) -> str | None:
+        author = author_of(project)
+        return author.name if isinstance(author, VersionAuthor) else None
+
+    return decider
+
+
 def _item_writes(  # noqa: PLR0913 - the shared write step's ports, all keyword-only
     versions: ItemVersionStore,
     *,
@@ -510,6 +531,8 @@ class AgentSessionWiring:
     cloud: CloudSessions
     links: AgentSessionLinks
     runtime: SessionRuntime
+    credentials: HubCredentials | None = None
+    investigations: ScenarioInvestigations | None = None
 
 
 def wire_agent_sessions(  # noqa: PLR0913 -- the use cases' ports, all injected
@@ -523,12 +546,16 @@ def wire_agent_sessions(  # noqa: PLR0913 -- the use cases' ports, all injected
     observed_sessions: ObservedSessionLookup | None = None,
     session_title: Callable[[str, str], str | None] | None = None,
     repo_changes: RepoChangesReader | None = None,
+    credentials: HubCredentials | None = None,
 ) -> AgentSessionWiring:
     """``AgentSessionControl``, ``CloudSessions`` and ``AgentSessionLinks`` over ``driver``,
     ``launcher`` and ``store``; the children get ``AGENT_HUB_WEB_URL=url`` (never the token).
     ``observed_sessions`` fills each agent session's ``observed_session_id``; ``session_title``
     names a driven session after the title Claude Code gave it; ``repo_changes`` reads the
-    session's repositories against their base branch (``hub_git``)."""
+    session's repositories against their base branch (``hub_git``); ``credentials`` names what
+    each project's hub declares, which no session keeps (AM-13), and holds the investigation
+    sessions of paused scenario runs (their restriction rebuilt on a reopen, E-13)."""
+    restrictions = None if credentials is None else InvestigationRestrictions(credentials)
     control = AgentSessionControl(
         driver,
         store,
@@ -539,6 +566,8 @@ def wire_agent_sessions(  # noqa: PLR0913 -- the use cases' ports, all injected
         observed_sessions=observed_sessions,
         session_title=session_title,
         repo_changes=repo_changes,
+        hidden_environment=None if credentials is None else credentials.names,
+        restriction_of=None if restrictions is None else restrictions.restriction_of,
     )
     cloud = CloudSessions(
         launcher=launcher,
@@ -552,6 +581,10 @@ def wire_agent_sessions(  # noqa: PLR0913 -- the use cases' ports, all injected
         cloud=cloud,
         links=AgentSessionLinks(control.live_link, store),
         runtime=SessionRuntime(control, store, clock=settings.clock),
+        credentials=credentials,
+        investigations=None
+        if restrictions is None
+        else ScenarioInvestigations(control=control, restrictions=restrictions),
     )
 
 
@@ -739,8 +772,19 @@ def build_app(
         owner_signoff=SignOffOwnerSteps(
             ProjectHubPaths(hubs), reader, HubEvalWriter(), clock=settings.clock
         ),
+        change_request_decisions=None
+        if guard is None
+        else DecideChangeRequest(
+            ProjectHubPaths(hubs),
+            reader,
+            writer=HubDecisionWriter(),
+            guard=guard,
+            decider=decider_of(facts.hub_of),
+            clock=settings.clock,
+        ),
         feature_names=FeatureNames(settings.registry_path.parent / FEATURE_NAMES_FILE),
         ac_checks=AcCheckRunner(hubs),
+        scenario_investigations=None if sessions is None else sessions.investigations,
         linear=LinearConnection(
             linear_environ,
             key_file,
@@ -788,4 +832,7 @@ def _agent_sessions(  # noqa: PLR0913 -- build_app's session options, passed on
         observed_sessions=observed_sessions,
         session_title=session_title,
         repo_changes=GitRepoChanges(),
+        credentials=HubCredentials(
+            registry=registry, reader=reader, running_version=settings.running_version
+        ),
     )

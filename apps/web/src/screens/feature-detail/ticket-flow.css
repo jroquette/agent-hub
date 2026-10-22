@@ -588,7 +588,7 @@
   padding-top: 4px;
   padding-bottom: 4px;
 }
-/* The "Waiting on you" callout under the eval that waits on owner steps. */
+/* The "Waiting for you" callout under the eval that waits on owner steps. */
 .ah-eval-table .ah-eval-owner-row td {
   height: auto;
   /* Starts under the ticket id, so it reads as the ticket's, not the table's. */

@@ -10,6 +10,8 @@ import pytest
 from agent_hub.claude_sessions.environment import WEB_URL_VARIABLE
 from agent_hub.claude_sessions.options import MAX_BUFFER_BYTES, claude_path, sdk_options
 from agent_hub.core.agent_sessions.driver import PermissionMode, StartSpec
+from agent_hub.core.scenarios.credentials import CredentialNames
+from agent_hub.core.scenarios.investigation import ToolPolicy
 
 CLI = "/opt/claude/bin/claude"
 
@@ -140,3 +142,80 @@ def test_leaves_tools_alone_when_session_has_all_tools() -> None:
     assert options.disallowed_tools == []
     assert options.strict_mcp_config is False
     assert options.add_dirs == []
+
+
+def _investigation_policy(tmp_path: Path) -> ToolPolicy:
+    hub = tmp_path / "work" / "demo-hub"
+    (hub / "actions" / "orders").mkdir(parents=True)
+    env_file = tmp_path / "work" / "demo-api" / "environment" / ".env.staging"
+    env_file.parent.mkdir(parents=True)
+    env_file.write_text("DEMO_DB_URL=placeholder\n", encoding="utf-8")
+    return ToolPolicy.of(
+        hub=str(hub),
+        repos=("demo-api",),
+        env_files=("demo-api/environment/.env.staging",),
+        run_id="a1b2c3d4",
+    )
+
+
+async def _decide(options: Any, tool: str, tool_input: dict[str, Any]) -> Any:
+    (matcher,) = options.hooks["PreToolUse"]
+    (hook,) = matcher.hooks
+    hook_input = {
+        "hook_event_name": "PreToolUse",
+        "session_id": "s",
+        "transcript_path": "/tmp/t",  # noqa: S108 -- never opened
+        "cwd": "/hubs/demo-hub",
+        "tool_name": tool,
+        "tool_input": tool_input,
+        "tool_use_id": "toolu_1",
+    }
+    return await hook(hook_input, "toolu_1", {"signal": None})
+
+
+@pytest.mark.anyio
+async def test_sets_tools_and_hook_when_investigation_read_only_policy(tmp_path: Path) -> None:
+    policy = _investigation_policy(tmp_path)
+    spec = _spec(cwd=policy.workdir, tool_policy=policy, system_prompt="You investigate.")
+
+    options = sdk_options(spec, can_use_tool=_can_use_tool, cli_path=CLI, environ={})
+    denied = await _decide(options, "Read", {"file_path": policy.env_files[0]})
+    shell = await _decide(options, "Bash", {"command": "curl http://localhost"})
+    allowed = await _decide(options, "Read", {"file_path": "README.md"})
+
+    assert options.tools == ["Read", "Glob", "Grep", "Write", "Bash"]
+    assert list(options.hooks) == ["PreToolUse"]
+    assert options.hooks["PreToolUse"][0].matcher is None
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "env file" in denied["hookSpecificOutput"]["permissionDecisionReason"]
+    assert shell["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert allowed == {}
+    assert options.system_prompt == {
+        "type": "preset",
+        "preset": "claude_code",
+        "append": "You investigate.",
+    }
+    assert options.permission_mode == "default"
+
+
+def test_sets_no_tools_or_prompt_when_investigation_policy_absent() -> None:
+    options = sdk_options(_spec(), can_use_tool=_can_use_tool, cli_path=CLI, environ={})
+
+    assert (options.tools, options.hooks, options.system_prompt) == (None, None, None)
+
+
+def test_blanks_inherited_names_when_credential_injection_hidden() -> None:
+    # The SDK starts the child from this process's environment and only adds ``env`` on top,
+    # so a hidden name present there is overridden with an empty value.
+    secret = "x-sec" + "ret-y"
+    hidden = CredentialNames(
+        env=frozenset({"DEMO_DB_URL"}), aws_profiles=frozenset({"demo-staging"})
+    )
+    environ = {"HOME": "/home/demo", "DEMO_DB_URL": secret, "AWS_PROFILE": "demo-staging"}
+
+    options = sdk_options(
+        _spec(hidden_environment=hidden), can_use_tool=_can_use_tool, cli_path=CLI, environ=environ
+    )
+
+    assert options.env == {"HOME": "/home/demo", "DEMO_DB_URL": "", "AWS_PROFILE": ""}
+    assert secret not in options.env.values()
