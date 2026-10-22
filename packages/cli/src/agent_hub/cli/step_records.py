@@ -154,7 +154,8 @@ def preflight(
         # An approval the plan moved past is re-checked as a plain check that says so (A23).
         moved = _superseded(folder, facts.request, plan)
         if moved:
-            facts = replace(facts, input="none", input_text=moved)
+            # It opened no request: the superseded one is not named (A24).
+            facts = replace(facts, input="none", input_text=moved, request=None)
     with _feature_lock(hub, feature):
         existing = _read(target / PREFLIGHT_FILE, MAX_PREFLIGHT_BYTES)
         run = preflight_run(findings, facts)

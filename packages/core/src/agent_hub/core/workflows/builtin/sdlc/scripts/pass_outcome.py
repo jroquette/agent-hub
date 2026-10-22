@@ -7,8 +7,10 @@
 ``pass_outcome.py --rounds JSON --worktree JSON --superseded TEXT`` prints ``{"status",
 "question", "verdict", "next_input", "next_text", "superseded", "path", "base", "target"}``.
 ``TEXT`` is amend-plan's ``moved`` (an approval the plan moved past, A23, re-checked in the pass),
-passed on for the report. Blank rounds (no preflight passed: a re-check after the owner's
-decision, or of a declined change, still found plan drift) is ``blocked``. Otherwise the last
+passed on for the report; when that re-check still found plan drift the pass is ``blocked``
+with ``TEXT`` and that the next /implement opens a new change request (A24). Other blank
+rounds (no preflight passed: a re-check after the owner's decision, or of a declined change,
+still found plan drift) is ``blocked``. Otherwise the last
 round's session ``blocked`` (its question), its ``discovery`` (the next pass's input, with its
 text) or ``done`` with the review's verdict. ``path``, ``base`` and ``target`` are the pass's
 worktree's (``""``, ``""`` and null when it made none). Text that is not JSON exits 2.
@@ -18,6 +20,7 @@ import argparse
 import json
 import sys
 
+NEXT_REQUEST = "the next /implement opens a new change request"
 STILL_PLAN = (
     "plan drift remains after the owner's decision on the plan change: "
     "the next /implement opens a new change request"
@@ -64,7 +67,10 @@ def main(argv: list[str]) -> int:
         "base": worktree.get("base", ""),
         "target": worktree.get("target"),
     }
-    if not rounds:
+    if not rounds and given.superseded:
+        # Re-checked and still plan drift: the next /implement opens a new request (A24).
+        outcome |= {"status": "blocked", "question": f"{given.superseded}; {NEXT_REQUEST}"}
+    elif not rounds:
         outcome |= {"status": "blocked", "question": STILL_PLAN}
     elif part(rounds, "verdict", "status") == "blocked":
         outcome |= {"status": "blocked", "question": part(rounds, "verdict", "question")}
