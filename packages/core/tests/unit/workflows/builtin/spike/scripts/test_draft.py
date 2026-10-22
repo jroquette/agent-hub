@@ -2,12 +2,16 @@
 under brain/features/<slug>/, never over a file, and what marks them incomplete."""
 
 import importlib.util
+import io
+import json
 import re
 import sys
 from importlib.resources import files
 from pathlib import Path
 from types import ModuleType
 from typing import Any
+
+import pytest
 
 SCRIPT = Path(str(files("agent_hub.core").joinpath("workflows/builtin/spike/scripts/draft.py")))
 
@@ -231,3 +235,135 @@ def test_escapes_a_heading_when_agent_text_starts_with_one() -> None:
 
     assert "\n## Premortem" not in research
     assert "\\## Premortem" in research
+
+
+def run_main(
+    hub: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    slug: str = "brief-cache",
+    stdin: str | None = None,
+    **changes: Any,
+) -> tuple[int, Any, str]:
+    given = inputs(**changes)
+    argv = ["--slug", slug, "--question", QUESTION, "--now", str(NOW)]
+    for name in ("state", "recall", "options", "premortem"):
+        value = given[name]
+        argv += [
+            f"--{name}",
+            value if isinstance(value, str) else json.dumps(value) if value else "",
+        ]
+    research = given["research"]
+    text = stdin if stdin is not None else json.dumps(research) if research else ""
+    monkeypatch.chdir(hub)
+    monkeypatch.setenv("AGENT_HUB_RUN_ID", "run-7")
+    monkeypatch.setattr(sys, "stdin", io.StringIO(text))
+    code = load().main(argv)
+    out, err = capsys.readouterr()
+    return code, json.loads(out) if code == 0 else out, err
+
+
+def test_writes_research_and_adr_draft_with_three_causes_when_every_step_ran(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code, out, _ = run_main(tmp_path, monkeypatch, capsys)
+
+    folder = tmp_path.resolve() / FOLDER
+    assert code == 0
+    assert out == {
+        "result": "complete",
+        "research": str(folder / "research.md"),
+        "adr": str(folder / "adr-draft-brief-cache.md"),
+        "reasons": [],
+        "spent_m": 60,
+    }
+    research = Path(out["research"]).read_text(encoding="utf-8")
+    adr = Path(out["adr"]).read_text(encoding="utf-8")
+    assert research.startswith("---\ntype: research\n")
+    assert "\nrun: run-7\n" in research
+    assert len(re.findall(r"^### ", section(adr, "## Premortem"), re.MULTILINE)) == 3
+
+
+def test_writes_only_research_when_timebox_reached_before_options(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    over = a_state(over=True, spent_s=7300, picked="", go=False, note="", approver="", option={})
+
+    code, out, _ = run_main(tmp_path, monkeypatch, capsys, state=over, options=None, premortem=None)
+
+    assert code == 0
+    assert (out["result"], out["adr"]) == ("incomplete", "")
+    assert out["reasons"] == ["timebox 2h reached after research"]
+    assert sorted(p.name for p in (tmp_path / FOLDER).iterdir()) == ["research.md"]
+    research = Path(out["research"]).read_text(encoding="utf-8")
+    assert body(research).startswith("> Incomplete: timebox 2h reached after research.")
+
+
+def test_keeps_existing_files_when_research_or_draft_already_exist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    folder = tmp_path / FOLDER
+    folder.mkdir(parents=True)
+    (folder / "research.md").write_text("mine\n", encoding="utf-8")
+    (folder / "adr-draft-brief-cache.md").write_text("mine too\n", encoding="utf-8")
+
+    _, first, _ = run_main(tmp_path, monkeypatch, capsys)
+    _, second, _ = run_main(tmp_path, monkeypatch, capsys)
+
+    assert (folder / "research.md").read_text(encoding="utf-8") == "mine\n"
+    assert (folder / "adr-draft-brief-cache.md").read_text(encoding="utf-8") == "mine too\n"
+    real = tmp_path.resolve() / FOLDER
+    assert first["research"] == str(real / "research-run-7.md")
+    assert first["adr"] == str(real / "adr-draft-brief-cache-run-7.md")
+    assert second["research"] == str(real / "research-run-7-2.md")
+
+
+def test_writes_only_under_the_feature_folder_when_slug_given(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code, _, _ = run_main(tmp_path, monkeypatch, capsys)
+    refused, out, err = run_main(tmp_path, monkeypatch, capsys, slug="../../docs/adr")
+    (tmp_path / "brain/features/linked").symlink_to(tmp_path)
+    linked, _, outside = run_main(tmp_path, monkeypatch, capsys, slug="linked")
+
+    assert code == 0
+    written = sorted(str(p.relative_to(tmp_path)) for p in tmp_path.rglob("*") if p.is_file())
+    assert written == [
+        "brain/features/brief-cache/adr-draft-brief-cache.md",
+        "brain/features/brief-cache/research.md",
+    ]
+    assert (refused, out) == (2, "")
+    assert err.startswith("draft.py: slug")
+    assert linked == 2
+    assert outside.startswith("draft.py: slug")
+    assert not (tmp_path / "docs").exists()
+
+
+@pytest.mark.parametrize("name", ["state", "recall", "options", "premortem", "research"])
+def test_exits_two_when_an_input_is_not_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    name: str,
+) -> None:
+    changes: dict[str, Any] = {"stdin": "not json"} if name == "research" else {name: "not json"}
+
+    code, out, err = run_main(tmp_path, monkeypatch, capsys, **changes)
+
+    assert (code, out) == (2, "")
+    assert err.startswith(f"draft.py: {'stdin' if name == 'research' else '--' + name} is not")
+    assert not (tmp_path / "brain").exists()
+
+
+def test_exits_one_when_feature_folder_cannot_be_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "brain/features").mkdir(parents=True)
+    (tmp_path / FOLDER).write_text("a file where the folder goes\n", encoding="utf-8")
+
+    code, out, err = run_main(tmp_path, monkeypatch, capsys)
+
+    assert (code, out) == (1, "")
+    assert err.startswith("draft.py: cannot write brain/features/brief-cache")
