@@ -29,6 +29,7 @@ CORE_SOURCES: dict[str, tuple[str, str]] = {
 BUILTIN_PACKAGE = "agent_hub.core"
 BUILTIN_FOLDER = "workflows/builtin"
 SEEDED_PACK_FILES = (
+    "brain-care/scripts/hub_branch.py",
     "issue-to-pr/fixtures/blocked.yaml",
     "issue-to-pr/fixtures/dirty.yaml",
     "issue-to-pr/fixtures/done.yaml",
