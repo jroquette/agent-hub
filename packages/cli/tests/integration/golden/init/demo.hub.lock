@@ -759,6 +759,21 @@
     },
     "workflows/sdlc/ticket-pass.yaml": {
       "ownership": "seeded"
+    },
+    "workflows/security-sweep/prompts/triage.md": {
+      "ownership": "seeded"
+    },
+    "workflows/security-sweep/scripts/new.py": {
+      "ownership": "seeded"
+    },
+    "workflows/security-sweep/scripts/report.py": {
+      "ownership": "seeded"
+    },
+    "workflows/security-sweep/scripts/scan.py": {
+      "ownership": "seeded"
+    },
+    "workflows/security-sweep/security-sweep.yaml": {
+      "ownership": "seeded"
     }
   },
   "lock_version": 1,
