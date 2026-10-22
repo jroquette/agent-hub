@@ -57,6 +57,7 @@ def test_reports_and_runs_the_full_gate_when_check_fast_is_missing_or_empty(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    *,
     given: dict[str, object],
 ) -> None:
     hub_json(tmp_path, {"dir": "demo-api", "check": FULL, **given})
@@ -83,6 +84,7 @@ def test_reports_and_runs_the_full_gate_when_hub_json_is_unreadable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    *,
     text: str | None,
     reason: str,
 ) -> None:
@@ -108,6 +110,7 @@ def test_exits_two_when_the_arguments_are_bad(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    *,
     argv: list[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
