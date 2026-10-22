@@ -418,7 +418,7 @@ async def test_answers_not_found_when_git_cannot_read_the_commit(make_rig: MakeR
         await rig.control.repo_commit_diff(session.id, path=f"{REPO_PATH}/a.py", sha="abc1234")
 
 
-async def test_reads_a_file_at_a_commit_in_the_repository_that_holds_it(
+async def test_reads_the_file_from_its_own_repository_when_read_at_a_commit(
     make_rig: MakeRig,
 ) -> None:
     # AC-424.8
