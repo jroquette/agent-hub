@@ -10,6 +10,7 @@ import {
   useDelayed,
 } from "../../components";
 import type { ApiData, ApiProblem } from "../../lib/api";
+import { SEARCH_DEBOUNCE_MS } from "../../lib/search";
 import { KnowledgeRow } from "./KnowledgeRow";
 import { NoteLink } from "./NoteLink";
 import { hasWord, useKnowledgeSearch } from "./queries";
@@ -19,8 +20,6 @@ import { matchNotes, noteName } from "./tree";
 export const PATHS_SHOWN = 8;
 /** The route's default limit: at that many results the list says it shows the best only. */
 export const TEXT_LIMIT = 50;
-/** Spec 01's palette debounce, kept by the Brain's text search. */
-export const BRAIN_SEARCH_DEBOUNCE_MS = 120;
 /** The focus moves to the note instead of staying on the result when the note is below it. */
 const STACKED = "(max-width: 899px)";
 /** The id of the note column's path line, which a result opened on a narrow screen focuses. */
@@ -30,14 +29,14 @@ const SAY_SLOW_MS = 2_000;
 
 type KnowledgeSearch = ApiData<"/api/v1/projects/{project}/knowledge/search">;
 
-/** The trimmed query, sent `BRAIN_SEARCH_DEBOUNCE_MS` after the last key; `flush` sends it now. */
+/** The trimmed query, sent `SEARCH_DEBOUNCE_MS` after the last key; `flush` sends it now. */
 export function useSearchTerm(text: string): [string, () => void] {
   const [term, setTerm] = useState(text);
   useEffect(() => {
     if (term === text) return undefined;
     const timer = setTimeout(() => {
       setTerm(text);
-    }, BRAIN_SEARCH_DEBOUNCE_MS);
+    }, SEARCH_DEBOUNCE_MS);
     return () => {
       clearTimeout(timer);
     };
@@ -142,6 +141,7 @@ function PathMatches({
               folder={entry.path.slice(0, entry.path.length - noteName(entry.path).length)}
               query={query}
               searchRow
+              onOpen={focusNoteWhenStacked}
             />
           </li>
         ))}
@@ -398,8 +398,9 @@ export function BrainSearch({
   } else if (paths.length === 0) {
     textPart = <NothingMatches text={text} onClear={onClear} />;
   }
+  // Said once per settled query (the debounced term), never on each key.
   const said =
-    pending || skeleton || (search.isError && !wordless)
+    !settled || pending || skeleton || (search.isError && !wordless)
       ? ""
       : liveLine(text, paths.length, wordless ? null : (found?.results.length ?? 0));
   return (

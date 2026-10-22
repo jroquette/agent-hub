@@ -14,6 +14,7 @@ export interface NoteLinkProps {
   query?: string | null | undefined;
   /** The row is one of the search's results, which the arrow and j/k keys move between. */
   searchRow?: boolean | undefined;
+  onOpen?: (() => void) | undefined;
 }
 
 /** A note of the Brain's tree or path matches: its name (and folder), opening it beside. */
@@ -25,6 +26,7 @@ export function NoteLink({
   folder,
   query,
   searchRow,
+  onOpen,
 }: NoteLinkProps) {
   return (
     <Link
@@ -33,6 +35,7 @@ export function NoteLink({
       aria-current={path === selected ? "page" : undefined}
       title={path}
       data-search-row={searchRow ? "" : undefined}
+      onClick={onOpen}
     >
       <Icon name="file-text" size="sm" />
       <span className="ah-brain-link-name">{label ?? noteName(path)}</span>

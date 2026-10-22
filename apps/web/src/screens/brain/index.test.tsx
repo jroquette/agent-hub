@@ -16,6 +16,7 @@ import {
   renderWithApi,
   type ApiRoutes,
 } from "../../testing/builders";
+import { SEARCH_DEBOUNCE_MS } from "../../lib/search";
 import { BrainPickerScreen, BrainScreen, brainHome } from "./index";
 
 const TREE = "/api/v1/projects/agent-hub/brain";
@@ -311,6 +312,13 @@ async function typeQuery(text: string): Promise<HTMLElement> {
   return field;
 }
 
+/** The Brain's search field, once the tree has loaded. */
+async function searchField(): Promise<HTMLElement> {
+  const tree = screen.getByRole("navigation", { name: "Brain notes" });
+  await within(tree).findByRole("link", { name: "Index" });
+  return within(tree).getByRole("searchbox", { name: "Search brain notes and repo docs" });
+}
+
 function textSection(query: string, count: string): Promise<HTMLElement> {
   return screen.findByRole("region", { name: `Text matching “${query}” · ${count}` });
 }
@@ -453,14 +461,76 @@ describe("BrainScreen search", () => {
 
   it("search: says the query has no word", async () => {
     const { requests } = openDemo(aKnowledgeSearch());
+    const field = await searchField();
 
-    await typeQuery("!!!");
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    try {
+      fireEvent.change(field, { target: { value: "!!!" } });
+      await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS + 50);
+      expect(
+        screen.getByText("Type a letter or a digit to search the text of notes."),
+      ).toBeInTheDocument();
+      expect(searchQueries(requests)).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
-    expect(
-      await screen.findByText("Type a letter or a digit to search the text of notes."),
-    ).toBeInTheDocument();
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    expect(searchQueries(requests)).toEqual([]);
+  it("search: sends one request once typing pauses for the debounce", async () => {
+    const { requests } = openDemo(aKnowledgeSearch({ results: worktreeResults() }));
+    const field = await searchField();
+
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    try {
+      for (const text of ["w", "work", "worktree", "worktrees"]) {
+        fireEvent.change(field, { target: { value: text } });
+        await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS - 20);
+        expect(searchQueries(requests)).toEqual([]);
+      }
+      await vi.advanceTimersByTimeAsync(20);
+      expect(searchQueries(requests)).toEqual(["worktrees"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("search: says a wordless query once, when typing pauses", async () => {
+    openDemo(aKnowledgeSearch());
+    const field = await searchField();
+    const tree = screen.getByRole("navigation", { name: "Brain notes" });
+    const said = () =>
+      [...tree.querySelectorAll("[role='status']")].map((node) => node.textContent).join("");
+
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    try {
+      fireEvent.change(field, { target: { value: "!" } });
+      await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS - 20);
+      expect(said()).toBe("");
+      fireEvent.change(field, { target: { value: "!!" } });
+      await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS - 20);
+      expect(said()).toBe("");
+      await vi.advanceTimersByTimeAsync(20);
+      expect(said()).toBe("Nothing matches “!!”.");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("search: moves the focus to the note when a path match opens below 900 px", async () => {
+    stackedLayout();
+    try {
+      openDemo(aKnowledgeSearch());
+      await typeQuery("cleanup");
+      const paths = await screen.findByRole("region", { name: "Paths matching “cleanup” · 1" });
+
+      await userEvent.click(within(paths).getByRole("link"));
+
+      await vi.waitFor(() => {
+        expect(document.getElementById("brain-note-path")).toHaveFocus();
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("search: shows the problem with Try again when the search fails", async () => {

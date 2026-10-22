@@ -3,10 +3,8 @@ import type { MouseEvent } from "react";
 import { Link } from "react-router";
 
 import { ExternalLabel, Icon, PathText, Tooltip } from "../../components";
-import { brainRoute, isServedNote, withBrainQuery } from "../../lib/brainLinks";
+import { BRAIN_PREFIX, brainRoute, isServedNote, withBrainQuery } from "../../lib/brainLinks";
 
-/** Where the index's brain notes live; any other path is a repo's doc. */
-export const BRAIN_PREFIX = "brain/";
 /** Why a repo doc is listed but not opened (D-results-web). */
 export const REPO_DOC_TOOLTIP = "Repo docs are not opened in the app";
 /** Why a path under `brain/` that the note route refuses is listed but not opened (AM-8). */
