@@ -613,6 +613,21 @@
     "workflows/issue-to-pr/prompts/implement.md": {
       "ownership": "seeded"
     },
+    "workflows/post-merge-verify/fixtures/verify-all-green.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/post-merge-verify/fixtures/verify-cannot-run.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/post-merge-verify/fixtures/verify-explain-failed.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/post-merge-verify/fixtures/verify-regression.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/post-merge-verify/post-merge-verify.yaml": {
+      "ownership": "seeded"
+    },
     "workflows/sdlc/deliver.yaml": {
       "ownership": "seeded"
     },
