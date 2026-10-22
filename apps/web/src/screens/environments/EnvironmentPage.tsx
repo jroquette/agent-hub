@@ -26,6 +26,7 @@ import {
   AccessValue,
   CredentialLine,
   EnvironmentSource,
+  FindWithClaude,
   ProductionBadge,
 } from "../hub-config/EnvironmentsSection";
 import { ServicePanel } from "../hub-config/ServicePanel";
@@ -286,6 +287,7 @@ function EnvironmentBody({
               <ServicesHere
                 view={view}
                 environment={environment}
+                blocked={blocked}
                 onOpen={(repo, service) => {
                   opener.current =
                     document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -768,11 +770,13 @@ function DescriptionForm({ view, environment, onDone, onSaved }: FormProps) {
 function ServicesHere({
   view,
   environment,
+  blocked,
   onOpen,
   onAdd,
 }: {
   view: HubConfigView;
   environment: SourcedEnvironment;
+  blocked: string | null;
   onOpen: (repo: string, service: string) => void;
   onAdd: () => void;
 }) {
@@ -791,9 +795,12 @@ function ServicesHere({
           Services in {environment.name}{" "}
           <span className="ah-muted ah-env-count">{here.length}</span>
         </h2>
-        <Button size="sm" icon="plus" onClick={onAdd}>
-          Add service
-        </Button>
+        <span className="ah-row" style={{ gap: 8 }}>
+          <FindWithClaude project={view.project} blocked={blocked} />
+          <Button size="sm" icon="plus" onClick={onAdd}>
+            Add service
+          </Button>
+        </span>
       </div>
       {here.length === 0 ? (
         <span className="ah-muted">

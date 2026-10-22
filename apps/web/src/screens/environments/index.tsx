@@ -14,6 +14,7 @@ import { AskBlocked } from "../hub-config/parts";
 import { KnowledgeProjectIndex } from "../knowledge-index";
 import { sessionControlUnavailable } from "../sessions-list/control";
 import { useAgentCapabilities } from "../sessions-list/queries";
+import { discoverPath, reviewPath } from "./discovery";
 import "../hub-config/hub-config.css";
 
 /** Where the sidebar's Environments goes with All projects in scope: a project picker. */
@@ -158,6 +159,7 @@ export function EnvironmentsScreen() {
             {view.local_file.problems.join("; ")}
           </Banner>
         )}
+        <OpenDiscovery project={project} />
         {notices.teamChanged && (
           <UncommittedNotice blocked={blocked} onDismiss={notices.dismissTeamChanged} />
         )}
@@ -181,5 +183,59 @@ export function EnvironmentsPickerScreen() {
       tip="To come straight here, choose a project in the top bar."
       href={environmentsPage}
     />
+  );
+}
+
+/** The newest search still open: running, or finished and waiting for a review. */
+function OpenDiscovery({ project }: { project: string }) {
+  const navigate = useNavigate();
+  const found = useApi(
+    "/api/v1/projects/{project}/environment-discoveries",
+    { path: { project } },
+    {
+      refetchInterval: (query) => (query.state.data?.items[0]?.state === "running" ? 5_000 : false),
+    },
+  );
+  const latest = found.data?.items[0];
+  if (!latest || latest.state === "failed" || latest.state === "stopped") return null;
+  if (latest.state === "running")
+    return (
+      <Banner
+        tone="info"
+        icon="folder-search"
+        action={
+          <Button
+            size="sm"
+            onClick={() => {
+              void navigate(discoverPath(project, latest.id));
+            }}
+          >
+            Open progress
+          </Button>
+        }
+      >
+        Claude is reading the repos for services.
+      </Banner>
+    );
+  const items =
+    (latest.proposal?.environments.length ?? 0) + (latest.proposal?.services.length ?? 0);
+  return (
+    <Banner
+      tone="info"
+      icon="folder-search"
+      action={
+        <Button
+          size="sm"
+          variant="primary"
+          onClick={() => {
+            void navigate(reviewPath(project, latest.id));
+          }}
+        >
+          Review {items === 1 ? "1 proposal" : `${String(items)} proposals`}
+        </Button>
+      }
+    >
+      Claude found {items === 1 ? "1 item" : `${String(items)} items`} in the repos.
+    </Banner>
   );
 }

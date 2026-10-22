@@ -2,7 +2,9 @@
 
 **Phase:** P2 shell + ADR 0040 writes · **Routes:** `/environments` (project picker),
 `/projects/:project/environments`, `/projects/:project/environment/:name` (`?service=<repo>/<name>` opens the service
-panel), `/projects/:project/environments/new`, `/projects/:project/environments/services/new[?repo=]` · **Answers:**
+panel), `/projects/:project/environments/new`, `/projects/:project/environments/services/new[?repo=]`,
+`/projects/:project/environments/discover[?discovery=<id>]`, `/projects/:project/environments/discover/:discoveryId` ·
+**Answers:**
 "Where do this project's systems run, what may agents do in each, and how do I fix any of it where it is shown?"
 
 The screens of the declared environments and services (contract: [environments.md](../../environments.md), its
@@ -15,7 +17,7 @@ only make a team environment stricter).
 
 Built from the playground's UX designs v2 (overview, setup flows), v3 (environment page, service panel) and the Hub
 config change (AGH-417, in parts: the address display, the screens, then the add flows of section 6); the
-find-services part of v3 is AGH-418.
+find-services part of v3 is section 7 (AGH-418).
 
 ## One place per verb
 
@@ -147,6 +149,48 @@ for a `hub.json` write, the uncommitted notice.
   or job, Something else), which repo and its name, its address in each environment in one list, review. With no
   environment the card says to add one first.
 
+## 7 · Find services with Claude
+
+A read-only Claude session reads the picked repos and proposes environments, services and their addresses; the
+person reviews each proposal and adds the ones they pick ([ADR 0046](../../../adr/0046-read-only-discovery-sessions.md),
+contract in [environments.md](../../environments.md#discoveries)).
+
+```
+Services in staging 3                          [⌕ Find services with Claude] [+ Add service]
+```
+
+- **Entry**: the environment page's services head, "Find services with Claude" (secondary, `folder-search`) before
+  Add service; off with the reason in a tooltip when sessions cannot start (the container, no `claude`).
+- **Start** `…/environments/discover`: h1 "Find services with Claude", the intro "Claude reads the repos' config and
+  proposes environments, services and their addresses. It changes nothing: you review each proposal and choose what
+  to add." One card: "Which repos should Claude read?" (a `book` `OptionRow` per repo, all checked; none checked
+  blocks the start, "Pick at least one repo."), "Which environments should it look for?" (each declared environment
+  with its access icon and words, all checked, then "Suggest environments we have not declared"), a "What Claude
+  reads" disclosure (the files it looks at; never `.env` files or a file the guard blocks; it can only read) and the
+  honest line "Claude reads code, not your AWS account." Cancel goes back; the primary **Find services with Claude**
+  is the consent: the session starts on the click.
+- **Progress** (same route, `?discovery=<id>`, polled every 3 s while running): "Claude is reading N repos" with a
+  live "Reading" badge and the session's cost so far, the scope line, "Open the conversation" and **Stop** (ends the
+  session). Finished: a "Finished" badge, a line counting what was found (new, different from yours, probably
+  missing) and the primary **Review N proposals**. Stopped: "Stopped before Claude sent its proposal. Nothing was
+  written." and Start again. Failed: `ProblemError` "Claude could not finish reading the repos" · "{reason}. Nothing
+  was written." with a retry that opens the form again.
+- **Review** `…/environments/discover/:discoveryId`: h1 "Review what Claude found" with the "Proposed by Claude"
+  label, the repos read and "Open the conversation", Discard proposal (a confirmation: "The items you did not add are
+  dropped. Nothing in hub.json changes."). A `SegmentedControl` filters All · New · Differs · Already declared. One
+  table, caption "Proposals from Claude": a checkbox, What, Details, Found in (each evidence `path:line` with a copy
+  button) and Status (the server's: `plus` New, `git-compare` "Differs from yours" with yours, `check` Already
+  declared), grouped Environments, then Services by repo. New rows start checked; production environments and
+  differences wait for the person; already declared rows cannot be picked. A service whose environments are neither
+  declared nor selected says so and is skipped. "Probably missing" lists what Claude could not find a definition for,
+  each with Add by hand (the Add service flow for its repo); "Not read" and "Left out by agent-hub" list the files it
+  skipped and the items the server dropped, with the reason. A sticky bar counts the selection, Select all new,
+  Clear and **Add N for the team**: one batch to `hub.json` (environments first), then "Added …" and the uncommitted
+  notice; a refusal shows its reason in the bar and keeps the choices.
+- **Banner**: while the newest discovery runs, the Environments page shows "Claude is reading the repos for
+  services." with Open progress; once it has finished and is not discarded, "Claude found N items in the repos." with
+  Review N proposals. A stopped or failed one shows nothing.
+
 ## Addresses and other long values
 
 A service's address is shown **whole when it fits**; else it is cut in the middle with an ellipsis, its last 18
@@ -165,6 +209,10 @@ whole, the whole name in a native title).
 | Stale | A file changed on disk since it was read is refused; the config reloads and says so | same | same |
 | Broken hub.local.json | Warning `Banner` with "Ask Claude to fix it"; only the team's environments show | — | Only me off with the reason |
 
+Find services with Claude: loading is a `Skeleton`; a review with nothing to add is the `EmptyState` "Claude found
+nothing new"; an unknown or discarded discovery is `ProblemError` "No such search"; sessions off disable the
+primary with the reason.
+
 ## Accessibility
 
 Access, production and "Removed on save" are icon + words, never colour alone; each choice list is a `fieldset`
@@ -180,6 +228,12 @@ axe check (`npm test -- -t a11y`).
   design named.
 - A service's address on the environment page is shown whole when it fits, else cut in the middle (FitText, below),
   not `PathText` at a fixed character count.
+
+- Find services with Claude (v3 section 5) is built without: per-repo progress and partial results (the proposal comes
+  with Claude's final reply, so progress is the session's state, cost and conversation), editing a row before adding
+  it, "Only me" (proposals go to the team's `hub.json`), the Added status and "N proposals left" after an apply, and
+  the evidence line's disclosure (the `path:line` with a copy button). The entry is on the environment page's
+  services head; the Environments page has no services head since v3's later table, so it shows the banner only.
 
 ## Acceptance criteria (AGH-417)
 
@@ -230,3 +284,33 @@ axe check (`npm test -- -t a11y`).
 - **AC-417.17** Given an add flow opened from a page, when it finishes or is cancelled, then it goes back to that
   page, only within the project (else the Environments page); every choice is a one-column list of icon rows, and
   Cancel past the first step asks to discard the answers.
+
+## Acceptance criteria (AGH-418)
+
+The API's are AC-418.1 to AC-418.7 ([agent-sessions.md](../../agent-sessions.md#read-only-sessions-agh-418),
+[environments.md](../../environments.md#discoveries)).
+
+- **AC-418.8** Given an environment page, when its services head is read, then "Find services with Claude" sits
+  before Add service and opens the start form; when sessions cannot start, it is off with the reason.
+- **AC-418.9** Given the start form, when it opens, then every repo and declared environment is checked and
+  "Suggest environments we have not declared" is on; with no repo checked the start is blocked with "Pick at least
+  one repo."; pressing Find services with Claude posts the picked repos, environments and the suggestion choice at
+  once and shows the progress of the new discovery.
+- **AC-418.10** Given a discovery, when its progress is shown, then a running one says Claude is reading with its
+  cost so far, Open the conversation and Stop; a finished one counts what was found and offers Review N proposals; a
+  stopped one says nothing was written and offers Start again; a failed one shows the reason and that nothing was
+  written.
+- **AC-418.11** Given a finished discovery, when it is reviewed, then each environment and service shows what was
+  found, where (`path:line`, copyable) and the server's status; new rows start selected, production environments and
+  differences wait for the person, already declared rows cannot be picked, and the filter shows one status at a time.
+- **AC-418.12** Given selected proposals, when Add N for the team is pressed, then one batch adds them to `hub.json`,
+  environments first, a new service with only the addresses whose environment is declared or selected (a service left
+  with none is skipped and says why), a different address replaced in its environment's file, then "Added …" and the
+  uncommitted notice show.
+- **AC-418.13** Given a proposal, when it lists probably missing items, files not read or items left out, then each
+  shows its reason, and a missing service offers Add by hand in its repo; Discard proposal asks first and goes back to
+  the Environments page.
+- **AC-418.14** Given the newest discovery of a project, when the Environments page opens, then a running one shows a
+  banner with Open progress and a finished one a banner with Review N proposals; a stopped or failed one shows none.
+- **AC-418.15** Given the playground's dev proxy, when the web app calls a project's `environment-discoveries`
+  routes, then they go to the server that drives the sessions, as `/api/v1/agent-sessions` does (ADR 0036).

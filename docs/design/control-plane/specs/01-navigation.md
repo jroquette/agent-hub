@@ -62,6 +62,8 @@ Every screen carries its phase. A screen tagged P3 or P4 is not shown in the sid
 └ /projects/:project/environments   Environments (specs/23-environments.md)          P2 + ADR 0040 writes
   ├ …/environments/new              Add environment (step by step)                   P2 + ADR 0040 writes
   ├ …/environments/services/new     Add service (step by step) ?repo=                P2 + ADR 0040 writes
+  ├ …/environments/discover         Find services with Claude ?discovery=<id>        P2 + ADR 0046 sessions
+  ├ …/environments/discover/:id     Review what Claude found                         P2 + ADR 0046 sessions
   └ /projects/:project/environment/:name   Environment page ?service=<repo>/<name>   P2 + ADR 0040 writes
 
 /workflows                          Workflow catalog                                 P4

@@ -92,6 +92,22 @@ function withEnvironments() {
   return config;
 }
 
+/** A discovery as the list answers it; only the fields the banner reads matter. */
+function aDiscovery(state: string, proposal: unknown = null) {
+  return {
+    id: "abc123abc123",
+    project: "demo",
+    agent_session_id: "as-1",
+    repos: ["demo-api"],
+    environments: [],
+    suggest_environments: true,
+    created_at: "2026-10-20T10:00:00Z",
+    state,
+    problem: null,
+    proposal,
+  };
+}
+
 describe("EnvironmentsScreen", () => {
   it("AC-417.3 lists the project's environments on their own page", async () => {
     open(
@@ -293,6 +309,50 @@ describe("EnvironmentsScreen", () => {
 
     expect(screen.getByRole("alertdialog", { name: "Discard 1 change?" })).toBeVisible();
   });
+  it("AC-418.14 leads back to a search Claude is still running", async () => {
+    const { router } = open(aConfig(), {
+      "/api/v1/projects/demo/environment-discoveries": {
+        items: [aDiscovery("running")],
+        total_estimate: 1,
+      },
+    });
+
+    expect(await screen.findByText("Claude is reading the repos for services.")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Open progress" }));
+
+    expect(router.state.location.pathname).toBe("/projects/demo/environments/discover");
+    expect(router.state.location.search).toBe("?discovery=abc123abc123");
+  });
+
+  it("AC-418.14 offers the review of a finished search", async () => {
+    const { router } = open(aConfig(), {
+      "/api/v1/projects/demo/environment-discoveries": {
+        items: [aDiscovery("finished", { environments: [{}], services: [{}, {}] })],
+        total_estimate: 1,
+      },
+    });
+
+    expect(await screen.findByText("Claude found 3 items in the repos.")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Review 3 proposals" }));
+
+    expect(router.state.location.pathname).toBe(
+      "/projects/demo/environments/discover/abc123abc123",
+    );
+  });
+
+  it("AC-418.14 shows no banner for a stopped search", async () => {
+    open(aConfig(), {
+      "/api/v1/projects/demo/environment-discoveries": {
+        items: [aDiscovery("stopped")],
+        total_estimate: 1,
+      },
+    });
+
+    await screen.findByRole("heading", { level: 1, name: "Environments" });
+    expect(screen.queryByText(/Claude is reading the repos/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /Review/ })).toBeNull();
+  });
+
   it("has no serious a11y violations", async () => {
     const { container } = open();
     await screen.findByRole("heading", { level: 1, name: "Environments" });
