@@ -51,7 +51,7 @@ scenarios/orders/returns.yaml:14   nodes[2].type   shell nodes are not allowed i
   Cancelled) + time + the short id as a link. Column priority: Scenario, Last scenario run, Steps, Pack, Project
   (only with several projects). Not built yet (AGH-458): the `IdChip` (copy the full id) and the badge's "since" time
   ("Waiting for you since 10:42").
-- **Keys:** `j`/`k`, `Enter`/`o`, `/`.
+- **Keys:** `/` focuses the filter. Not built yet (AGH-458): the rows' `j`/`k` and `Enter`/`o`.
 
 | State | Copy |
 |---|---|
@@ -86,6 +86,9 @@ order-lifecycle   pack orders · revision 1                                   [D
 +---------------------------------------------------------------------------------------+
 Step by step (numbered, step-kind icons)        Scenario runs (12): id · status · started
 ```
+
+The step list and the Scenario runs card stack below 1600 px, so the Started column stays in view. Not built yet
+(AGH-458): the Scenario runs table's keys (`j`/`k`, `Enter`/`o`).
 
 - **Plan:** `POST …/plan` on the person's click only. Rows: step, action, effect (icon + label), service → endpoint
   (`PathText`), values (run-time ones as `<$CTX.<name> from <node>>`), the script's plan-mode summary, the policy
