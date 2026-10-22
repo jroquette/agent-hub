@@ -167,6 +167,7 @@ DESIGN_PATHS = (
     "workflows/issue-to-pr/fixtures/pr-failure.yaml",
     "workflows/issue-to-pr/issue-to-pr.yaml",
     "workflows/issue-to-pr/prompts/implement.md",
+    "workflows/retro/scripts/drafts.py",
     "workflows/retro/scripts/metrics.py",
     "workflows/retro/scripts/vet.py",
     "workflows/sdlc/deliver.yaml",
@@ -4424,6 +4425,8 @@ RUN_TIME_BRAIN_PATHS = {
     "brain/_inbox/runs/": "Makefile",
     # Written by `/onboard propose` (AGH-108).
     "brain/_inbox/onboard-proposal.md": "plugin/hub-workflow/skills/onboard/SKILL.md",
+    # Written by the retro pack's step 4, one issue-draft file per retro (AGH-488).
+    "brain/_inbox/retro-": "workflows/retro/scripts/drafts.py",
 }
 
 
