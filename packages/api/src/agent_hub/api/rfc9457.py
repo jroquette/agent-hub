@@ -575,12 +575,15 @@ def _live_limit_problem(error: LiveLimitError) -> Problem:
 
 
 def _hub_local_invalid_problem(error: HubLocalInvalidError) -> Problem:
-    """No driven session starts while the hub's ``hub.local.json`` cannot be read (E-8)."""
+    """No driven session starts, and no scenario plan, start, pick or issue create runs, while
+    the hub's ``hub.local.json`` cannot be read or conflicts with ``hub.json`` (E-8, E-14)."""
     members: dict[str, JsonValue] = {
         "type": "urn:agent-hub:problem:hub-local-invalid",
         "code": "hub_local_invalid",
     }
-    return Problem(409, "hub.local.json cannot be read", str(error), members)
+    return Problem(
+        409, "hub.local.json cannot be read or conflicts with hub.json", str(error), members
+    )
 
 
 def _hub_registry_unreadable_problem(error: HubRegistryUnreadableError) -> Problem:

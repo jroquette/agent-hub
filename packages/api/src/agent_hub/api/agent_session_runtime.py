@@ -289,7 +289,7 @@ class HubCredentials:
             if document.config is not None and document.config.project.name == project:
                 declared = self.of_hub(entry.path)
                 if not declared.complete:
-                    raise HubLocalInvalidError(project)
+                    raise HubLocalInvalidError(project, before="starting a session")
                 return declared.names
         return NO_CREDENTIALS
 
