@@ -188,7 +188,7 @@ export function RunGraph({ run, now }: { run: WorkflowRun; now: number }) {
       )}
       <WorkflowGraph
         label="Run graph"
-        className="wf-canvas-run"
+        className="ah-canvas-run"
         wheel="page"
         layers={layers}
         document={workflow.data?.document}

@@ -1,17 +1,26 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type {
-  CSSProperties,
-  KeyboardEvent,
-  PointerEvent as ReactPointerEvent,
-  ReactNode,
-} from "react";
+import type { CSSProperties, KeyboardEvent, ReactNode } from "react";
 import { useSearchParams } from "react-router";
 
-import { Button, DataTable, Icon, IconButton, SegmentedControl } from "../../components";
+import {
+  ArrowMarkers,
+  Button,
+  CANVAS_MAX_ZOOM as MAX_ZOOM,
+  CANVAS_MIN_ZOOM as MIN_ZOOM,
+  CANVAS_ZOOM_STEP as ZOOM_STEP,
+  CanvasControls,
+  CanvasGrid,
+  CanvasMinimap,
+  DataTable,
+  Icon,
+  IconButton,
+  SegmentedControl,
+  useViewportSize,
+} from "../../components";
 import type { IconName } from "../../components";
-import { centreOn, fitView, type Size } from "../../lib/canvasView";
-import { curvePath, useNodeBoxes, type NodeBox } from "../../lib/nodeBoxes";
-import { capture, usePanZoom, type WheelMode } from "../../lib/usePanZoom";
+import { centreOn, fitView } from "../../lib/canvasView";
+import { curvePath, useNodeBoxes } from "../../lib/nodeBoxes";
+import { usePanZoom, type WheelMode } from "../../lib/usePanZoom";
 import { goSequencePending, typingIn } from "../../shell/goSequence";
 import {
   canvasModel,
@@ -82,9 +91,6 @@ export function kindLabelOf(type: string): string {
   return `${(one[0] ?? "").toUpperCase()}${one.slice(1)}`;
 }
 
-const MIN_ZOOM = 0.25;
-const MAX_ZOOM = 2;
-const ZOOM_STEP = 1.2;
 /** Below this zoom the cards show only their kind and title. */
 const FAR = 0.6;
 
@@ -393,75 +399,6 @@ function useOpenGroups(model: CanvasModel, keep: readonly (string | null | undef
   return { open, closeAll, toggle };
 }
 
-function Minimap({
-  boxes,
-  size,
-  view,
-  viewport,
-  kindOf,
-  onCentre,
-}: {
-  boxes: Readonly<Record<string, NodeBox>>;
-  size: Size;
-  view: { x: number; y: number; k: number };
-  viewport: Size;
-  kindOf: (id: string) => { group: boolean; kind: string; state: string | undefined };
-  onCentre: (x: number, y: number) => void;
-}) {
-  // Sized to the world's shape, within 176 x 112, so it covers no more of the canvas than it needs.
-  const m = Math.min(176 / size.width, 112 / size.height);
-  const W = Math.max(48, Math.round(size.width * m));
-  const H = Math.max(32, Math.round(size.height * m));
-  const ox = (W - size.width * m) / 2;
-  const oy = (H - size.height * m) / 2;
-  const at = (event: ReactPointerEvent<SVGSVGElement>) => {
-    const r = event.currentTarget.getBoundingClientRect();
-    onCentre((event.clientX - r.left - ox) / m, (event.clientY - r.top - oy) / m);
-  };
-  return (
-    <svg
-      className="wf-minimap"
-      aria-hidden="true"
-      width={W}
-      height={H}
-      data-no-pan=""
-      onPointerDown={(event) => {
-        capture(event.currentTarget, event.pointerId);
-        at(event);
-      }}
-      onPointerMove={(event) => {
-        if (event.buttons === 1) at(event);
-      }}
-    >
-      {Object.entries(boxes)
-        .filter(([id]) => !id.startsWith("row:"))
-        .map(([id, box]) => {
-          const info = kindOf(id);
-          return (
-            <rect
-              key={id}
-              x={ox + box.left * m}
-              y={oy + box.top * m}
-              width={Math.max(2, (box.right - box.left) * m)}
-              height={Math.max(2, (box.bottom - box.top) * m)}
-              rx={1}
-              className={info.group ? "wf-mini-group" : "wf-mini-node"}
-              data-kind={info.kind}
-              data-state={info.state}
-            />
-          );
-        })}
-      <rect
-        className="wf-mini-view"
-        x={ox + (-view.x / view.k) * m}
-        y={oy + (-view.y / view.k) * m}
-        width={(viewport.width / view.k) * m}
-        height={(viewport.height / view.k) * m}
-      />
-    </svg>
-  );
-}
-
 function GraphCanvas<N extends GraphNode>({
   layers,
   document,
@@ -480,7 +417,6 @@ function GraphCanvas<N extends GraphNode>({
   const viewportRef = useRef<HTMLDivElement>(null);
   const worldRef = useRef<HTMLDivElement>(null);
   const hintId = useId();
-  const gridId = `wf-grid-${useId().replace(/:/g, "")}`;
   const arrowId = `wf-arrow-${useId().replace(/:/g, "")}`;
   const model = useMemo(() => canvasModel(layers, document), [layers, document]);
   const keepOpen = useMemo(() => [selected, focusFirst], [selected, focusFirst]);
@@ -492,21 +428,7 @@ function GraphCanvas<N extends GraphNode>({
   const { view } = pz;
   const far = view.k < FAR;
 
-  const [viewport, setViewport] = useState<Size>({ width: 0, height: 0 });
-  useLayoutEffect(() => {
-    const el = viewportRef.current;
-    if (!el) return;
-    const read = () => {
-      setViewport({ width: el.clientWidth, height: el.clientHeight });
-    };
-    read();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(read);
-    observer.observe(el);
-    return () => {
-      observer.disconnect();
-    };
-  }, []);
+  const viewport = useViewportSize(viewportRef);
 
   // Long chains wrap into rows that fit the canvas at 100%, read left to right, top to bottom.
   const [wrap, setWrap] = useState(true);
@@ -793,32 +715,20 @@ function GraphCanvas<N extends GraphNode>({
     // The keys of the canvas and its panel (arrows, zoom, Esc) bubble here from their buttons.
     // eslint-disable-next-line jsx-a11y/no-static-element-interactions
     <div
-      className={className ? `wf-canvas ${className}` : "wf-canvas"}
+      data-canvas="workflow"
+      className={className ? `ah-canvas ${className}` : "ah-canvas"}
       data-panel={panel ? "" : undefined}
       onKeyDown={onKeyDown}
     >
       <div
         ref={viewportRef}
-        className="wf-canvas-viewport"
+        className="ah-canvas-viewport"
         data-dragging={pz.dragging ? "" : undefined}
         {...pz.handlers}
       >
-        <svg className="wf-grid" aria-hidden="true">
-          <defs>
-            <pattern
-              id={gridId}
-              width={16}
-              height={16}
-              patternUnits="userSpaceOnUse"
-              patternTransform={`translate(${String(view.x)} ${String(view.y)}) scale(${String(view.k)})`}
-            >
-              <circle cx={1} cy={1} r={1} />
-            </pattern>
-          </defs>
-          <rect width="100%" height="100%" fill={`url(#${gridId})`} />
-        </svg>
+        <CanvasGrid view={view} />
         {empty ? (
-          <div className="wf-canvas-empty">
+          <div className="ah-canvas-empty">
             <span className="ah-empty-icon">
               <Icon name="workflow" size="lg" />
             </span>
@@ -833,7 +743,7 @@ function GraphCanvas<N extends GraphNode>({
         ) : (
           <div
             ref={worldRef}
-            className="wf-world"
+            className="ah-canvas-world"
             role="group"
             aria-label={label}
             aria-describedby={hintId}
@@ -851,23 +761,7 @@ function GraphCanvas<N extends GraphNode>({
               width={1}
               height={1}
             >
-              <defs>
-                {(["plain", "hot"] as const).map((tone) => (
-                  <marker
-                    key={tone}
-                    id={`${arrowId}-${tone}`}
-                    viewBox="0 0 8 8"
-                    refX="7"
-                    refY="4"
-                    markerWidth="7"
-                    markerHeight="7"
-                    orient="auto-start-reverse"
-                    className={`wf-arrow wf-arrow-${tone}`}
-                  >
-                    <path d="M 0 0 L 8 4 L 0 8 z" />
-                  </marker>
-                ))}
-              </defs>
+              <ArrowMarkers id={arrowId} tones={["plain", "hot"]} />
               {edges.map((edge) => {
                 const key = edgeKey(edge);
                 const [from, to] = edge;
@@ -911,40 +805,18 @@ function GraphCanvas<N extends GraphNode>({
           Arrow keys follow the arrows, right opens and left closes a rounds frame, Enter opens a
           step, plus and minus zoom, 0 fits the graph.
         </span>
-        {overlay && <div className="wf-canvas-overlay">{overlay}</div>}
+        {overlay && <div className="ah-canvas-overlay">{overlay}</div>}
         {!empty && (
-          <div className="wf-canvas-controls" role="toolbar" aria-label="Graph view" data-no-pan="">
-            <IconButton
-              size="sm"
-              icon="minus"
-              label="Zoom out (−)"
-              disabled={view.k <= MIN_ZOOM + 1e-6}
-              onClick={() => {
-                pz.zoomBy(1 / ZOOM_STEP);
-              }}
-            />
-            <Button
-              size="sm"
-              variant="ghost"
-              aria-label="Reset zoom to 100%"
-              className="wf-zoom-pct"
-              onClick={() => {
-                pz.zoomTo(1);
-              }}
-            >
-              {Math.round(view.k * 100)}%
-            </Button>
-            <IconButton
-              size="sm"
-              icon="plus"
-              label="Zoom in (+)"
-              disabled={view.k >= MAX_ZOOM - 1e-6}
-              onClick={() => {
-                pz.zoomBy(ZOOM_STEP);
-              }}
-            />
-            <span className="wf-controls-sep" aria-hidden="true" />
-            <IconButton size="sm" icon="maximize-2" label="Fit to view (0)" onClick={fit} />
+          <CanvasControls
+            view={view}
+            onZoomBy={(f) => {
+              pz.zoomBy(f);
+            }}
+            onZoomTo={(k) => {
+              pz.zoomTo(k);
+            }}
+            onFit={fit}
+          >
             <IconButton
               size="sm"
               icon="corner-down-right"
@@ -955,18 +827,19 @@ function GraphCanvas<N extends GraphNode>({
                 setWrap((w) => !w);
               }}
             />
-          </div>
+          </CanvasControls>
         )}
         {!empty && overflow && size.width > 0 && (
-          <Minimap
+          <CanvasMinimap
             boxes={boxes}
             size={size}
             view={view}
             viewport={viewport}
-            kindOf={(id) => {
+            look={(id) => {
+              if (id.startsWith("row:")) return null;
               const step = model.steps.get(id);
               return {
-                group: model.groups.has(id) && open.has(id),
+                frame: model.groups.has(id) && open.has(id),
                 kind: step ? stepKind(step.type) : "command",
                 state: state?.(id),
               };
@@ -981,7 +854,7 @@ function GraphCanvas<N extends GraphNode>({
           />
         )}
       </div>
-      {panel && <div className="wf-panel">{panel}</div>}
+      {panel && <div className="ah-canvas-panel">{panel}</div>}
     </div>
   );
 }
@@ -1096,7 +969,7 @@ export function useNodeParam(): {
     const active = document.activeElement;
     // Safari leaves focus on the body after a mouse click: fall back to the node then. A step
     // chosen from the panel (a "Waits for" chip) gives focus back to its own node.
-    const inPanel = active instanceof HTMLElement && active.closest(".wf-panel") !== null;
+    const inPanel = active instanceof HTMLElement && active.closest(".ah-canvas-panel") !== null;
     opener.current =
       active instanceof HTMLElement && active !== document.body && !inPanel ? active : null;
     setOpenedByUser(true);
