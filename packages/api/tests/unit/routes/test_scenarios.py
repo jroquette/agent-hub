@@ -1576,3 +1576,42 @@ def test_refuses_mode_change_when_investigation_session_settings_posted(
     assert shown.json()["restricted"] is True
     assert shown.json()["mode"] == "default"
     assert not [call for call in rig.driver.calls if call.method == "set_mode"]
+
+
+def test_keeps_restricted_in_every_view_when_investigation_session_commanded(
+    wired: Any, investigation: Any
+) -> None:
+    """Each view of a restricted session says so, not only its read (review Q2)."""
+    _rig, _hub = investigation(a_record())
+    started = wired.client.post(ROUTE, json={}, headers=_origin(wired)).json()
+    session = f"/api/v1/agent-sessions/{started['agent_session_id']}"
+
+    model = wired.client.post(
+        f"{session}/settings", json={"model": "sonnet"}, headers=_origin(wired)
+    )
+    closed = wired.client.post(f"{session}/close", json={}, headers=_origin(wired))
+
+    assert model.status_code == 200, model.text
+    assert model.json()["restricted"] is True
+    assert closed.status_code == 200, closed.text
+    assert closed.json()["restricted"] is True
+
+
+def test_refuses_mode_change_when_investigation_session_reopened_after_restart(
+    wired: Any, investigation: Any
+) -> None:
+    """A restart forgets the restriction; the reopen rebuilds it, and the mode stays fixed
+    (review Q5, E-13)."""
+    session_id, fresh, _hub = _start_and_restart(wired, investigation)
+
+    reopened = _message(wired, session_id)
+    mode = wired.client.post(
+        f"/api/v1/agent-sessions/{session_id}/settings",
+        json={"mode": "acceptEdits"},
+        headers=_origin(wired),
+    )
+
+    assert reopened.status_code == 202, reopened.text
+    assert mode.status_code == 409, mode.text
+    assert mode.json()["type"] == "urn:agent-hub:problem:agent-session-mode-locked"
+    assert not [call for call in fresh.driver.calls if call.method == "set_mode"]
