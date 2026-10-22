@@ -11,9 +11,9 @@ except under an ``all_done`` join: it gets a placeholder that fits its ``output_
 (``skeleton_stub``), is listed as tolerated, and never sets the outcome. ``until_bash`` reads
 the iteration's ``until_exit`` (default 0, done); a ``loop_group``'s ``until_bash`` has no stub
 and reads 0, so a group that loops in a fixture ends through ``until_when``. An ``approval`` or
-``wait`` takes its answer from its stub (``{decision, text}``, ``{text}``, ``{choice}``, or ``{}``
-to end a timed wait); with no stub, or a list that ran out, it pauses the run (``paused``), as a
-real run waits for a person.
+``wait`` takes its answer from its stub (``{decision, text, approver}``, ``{text}``,
+``{choice}``, or ``{}`` to end a timed wait); with no stub, or a list that ran out, it pauses
+the run (``paused``), as a real run waits for a person.
 
 A scenario's ``expect`` takes one stub per poll (a list, in order; a single stub answers every
 poll), the clock moving only by ``every``; ``captures`` and ``polls`` say what its trace saw.
@@ -76,7 +76,8 @@ _SCALARS: Final[Mapping[str, JsonValue]] = {
 class Stub(WorkflowObject):
     """One attempt's answer: ``output`` (a value), ``text`` (the raw reply) or ``fail`` (a kind);
     ``until_exit`` is a loop iteration's ``until_bash`` exit. A gate's answer is ``{decision,
-    text}`` (an approval), ``{text}`` or ``{choice, text}`` (an attention wait), or ``{}``."""
+    text, approver}`` (an approval; the approver as a recorded decision names it), ``{text}`` or
+    ``{choice, text}`` (an attention wait), or ``{}``."""
 
     output: JsonValue = None
     text: StrictStr | None = None
@@ -84,10 +85,17 @@ class Stub(WorkflowObject):
     until_exit: StrictInt | None = None
     decision: KebabId | None = None
     choice: KebabId | None = None
+    # The person an approval's recorded decision names (its output's ``approver``).
+    approver: StrictStr | None = None
 
     @model_validator(mode="after")
     def _one_answer(self) -> Self:
         given = self.model_fields_set
+        if "approver" in given:
+            if "decision" not in given:
+                msg = "give 'approver' with a 'decision' only"
+                raise ValueError(msg)
+            given = given - {"approver"}
         if given & _GATE_CHOICES:
             if len(given & _GATE_CHOICES) > 1 or given - _GATE_CHOICES - {"text"}:
                 msg = "give one of 'decision' or 'choice', with at most a 'text'"
@@ -100,7 +108,7 @@ class Stub(WorkflowObject):
     @property
     def is_gate_answer(self) -> bool:
         """Whether this stub can answer a gate: a choice, a lone text or nothing."""
-        return not self.model_fields_set - _GATE_CHOICES - {"text"}
+        return not self.model_fields_set - _GATE_CHOICES - {"text", "approver"}
 
 
 type Stubs = Stub | tuple[Stub, ...]
@@ -273,7 +281,7 @@ class _StubRunner:
             return None
         if not stub.is_gate_answer:
             raise GateError("a gate's stub is a decision, a choice, a text or {}")
-        return GateAnswer(stub.decision or stub.choice, stub.text)
+        return GateAnswer(stub.decision or stub.choice, stub.text, stub.approver)
 
     def run(self, call: NodeCall) -> NodeReply:
         node = call.node

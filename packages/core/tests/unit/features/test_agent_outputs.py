@@ -1439,7 +1439,13 @@ def test_accepts_valid_preflight_when_every_field_valid() -> None:
     second = a_preflight_run(
         input="discovery", input_text="The claim needs auth.", drift="plan", change_request=3
     )
-    document = a_preflight_document(runs=[a_preflight_run(), second])
+    # A plain check may carry a note: an approval superseded by another (A23).
+    third = a_preflight_run(input_text="change request 3 approved but superseded by plan v4")
+    # A superseded approval's re-check that still finds plan drift opened no request (A24).
+    fourth = a_preflight_run(
+        input_text="change request 3 approved but superseded by plan v4", drift="plan"
+    )
+    document = a_preflight_document(runs=[a_preflight_run(), second, third, fourth])
 
     assert preflight_problems(review_bytes(document)) == ()
 
@@ -1490,10 +1496,6 @@ def test_reports_root_when_preflight_bytes_not_object() -> None:
             "Value error, input_text is required when input is discovery",
         ),
         (
-            {"input": "none", "input_text": "A note."},
-            "Value error, input_text must be null when input is none",
-        ),
-        (
             {"drift": "local", "local_notes": []},
             "Value error, local_notes needs at least one note when drift is local",
         ),
@@ -1501,8 +1503,28 @@ def test_reports_root_when_preflight_bytes_not_object() -> None:
             {"drift": "plan", "local_notes": [], "change_request": None},
             "Value error, change_request is required when drift is plan",
         ),
+        # Only a plain check with a note (a superseded approval's re-check, A24) may name none.
+        (
+            {"drift": "plan", "change_request": None, "input": "discovery", "input_text": "A."},
+            "Value error, change_request is required when drift is plan",
+        ),
+        (
+            {
+                "drift": "plan",
+                "change_request": None,
+                "input": "declined_change",
+                "input_text": "No.",
+            },
+            "Value error, change_request is required when drift is plan",
+        ),
     ],
-    ids=["discovery without text", "none with text", "local without notes", "plan without request"],
+    ids=[
+        "discovery without text",
+        "local without notes",
+        "plan without request",
+        "plan without request after a discovery",
+        "plan without request after a decline",
+    ],
 )
 def test_reports_run_when_preflight_fields_disagree(run: dict[str, object], message: str) -> None:
     document = a_preflight_document(runs=[a_preflight_run(**run)])
