@@ -203,7 +203,7 @@ describe("FeaturesScreen", () => {
     await screen.findByRole("link", { name: "tracker-team-cap" });
     const row = rowOf("tracker-team-cap");
     expect(row.querySelector(".ft-stage")).toHaveTextContent(/^Plan\s*step 4 of 8$/);
-    expect(row.querySelector(".ft-row-line")).toHaveTextContent(/^plan\.md/);
+    expect(row.querySelector(".ft-row-line")).toHaveTextContent(/^Next: write the plan$/);
   });
 
   it("shows five shipped features until asked for more (shipped)", async () => {
@@ -273,9 +273,9 @@ describe("FeaturesScreen", () => {
     open({ "/api/v1/features": aPage([unread]) });
 
     await screen.findByRole("link", { name: "unread" });
-    expect(rowOf("unread").querySelector(".ft-row-line")).toHaveTextContent(/^$/);
+    expect(rowOf("unread").querySelector(".ft-row-line")).toHaveTextContent(/^Building$/);
     expect(screen.getByRole("note")).toHaveTextContent(
-      "Ticket status is not read from Linear on this list, so Build shows as unknown, and so does Shipped once Acceptance is done.",
+      "This list doesn't load ticket status from Linear, so some features can't show how many tickets are merged. Open a feature to see its tickets.",
     );
   });
 
@@ -345,7 +345,7 @@ describe("FeaturesScreen", () => {
         name: "20 pass their check · 1 owner step (checked by you) · 0 not passing yet",
       }),
     ).toBeInTheDocument();
-    expect(row).toHaveTextContent("evaluator says ship after your steps");
+    expect(row).toHaveTextContent("Ready to ship after your manual checks");
   });
 
   it("names the stage a row is at with its position of eight, and 'Shipped' alone once shipped (AC-1.12)", async () => {
@@ -646,9 +646,8 @@ describe("FeaturesScreen", () => {
     expect(slugsIn(groupOf(/^In progress · 6$/))).toContain("evaluated-one");
     expect(rowOf("evaluated-one")).not.toHaveAttribute("data-tone");
     expect(rowOf("evaluated-one").querySelector(".ft-row-line")).toHaveTextContent(
-      /^1 of 3 merged · 1 in progress/,
+      /^Building · 1 of 3 tickets merged · Ready to ship$/,
     );
-    expect(rowOf("evaluated-one")).toHaveTextContent("evaluator says ship");
     expect(container.querySelector(".ft-summary")).toHaveTextContent(
       /^2 need you\s*6 in progress\s*0 shipped/,
     );
@@ -735,7 +734,7 @@ describe("FeaturesScreen", () => {
       "owner-held",
     ]);
     expect(groupOf(/^In progress · 6$/)).toHaveTextContent(
-      "What needs you first, then furthest along and most ACs passing · 1 waits on your steps · 1 no ship · 1 record cannot be read",
+      "Features that need you come first, then the ones furthest along · 1 waits on your steps · 1 no ship · 1 record cannot be read",
     );
     expect(document.querySelector('.ft-summary [data-group="needs"]')).toHaveTextContent(
       "3 need you",
@@ -920,7 +919,7 @@ describe("FeaturesScreen (playground delivery)", () => {
     expect(facetCount(/^bounded/)).toBe("0");
   });
 
-  it("titles a named feature with its nickname in the UI font and puts its fixed label beside it (AC-PG-28.2, AC-425.7)", async () => {
+  it("titles a named feature with its nickname in the UI font and puts its fixed label beside it, and no label beside an unnamed one (AC-PG-28.2, AC-425.7)", async () => {
     open({
       "/api/v1/feature-names": {
         items: [{ project: "agent-hub", slug: "layered-memory", name: "Layered memory" }],
@@ -934,7 +933,10 @@ describe("FeaturesScreen (playground delivery)", () => {
     expect(title.nextElementSibling).toHaveTextContent("layered-memory");
     const unnamed = screen.getByRole("link", { name: "control-plane" });
     expect(unnamed).not.toHaveAttribute("data-named");
-    expect(unnamed.nextElementSibling).toHaveAccessibleName("Feature label control-plane");
+    // Unnamed, the title is the label: no chip repeats it.
+    expect(
+      within(rowOf("control-plane")).queryByLabelText("Feature label control-plane"),
+    ).toBeNull();
 
     const css = cssOf("src/screens/features/features.css");
     expect(ruleOf(css, ".ft-row-title")).toMatch(/font-family: var\(--font-mono\);/);

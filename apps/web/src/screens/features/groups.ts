@@ -1,6 +1,6 @@
 /* The Features list: what is moving (with a warning on the rows that need the owner) and what shipped. */
 import type { components } from "../../api/schema";
-import { GOLDEN_STATE_TEXT, ownerWaitStep, type IconName } from "../../components";
+import { ownerWaitStep, type IconName } from "../../components";
 import { phaseIndex } from "./parts";
 
 type Feature = components["schemas"]["FeatureView"];
@@ -20,7 +20,7 @@ export const GROUPS: readonly {
     id: "progress",
     title: "In progress",
     summary: "in progress",
-    hint: "What needs you first, then furthest along and most ACs passing",
+    hint: "Features that need you come first, then the ones furthest along",
     empty: "No feature in progress.",
   },
   {
@@ -34,10 +34,31 @@ export const GROUPS: readonly {
 
 /** A verdict in words, for a row's line: the codes stay in the eval. */
 export const VERDICT_WORDS: Record<NonNullable<Feature["verdict"]>, string> = {
-  SHIP: "evaluator says ship",
-  "SHIP-WITH-OWNER-STEPS": "evaluator says ship after your steps",
-  "NO-SHIP": "evaluator says no ship",
+  SHIP: "Ready to ship",
+  "SHIP-WITH-OWNER-STEPS": "Ready to ship after your manual checks",
+  "NO-SHIP": "Not ready to ship",
 };
+
+/** What happens next at each step, in plain words, for a row whose step has nothing else to say. */
+const NEXT_AT: Record<Feature["phase"], string> = {
+  spec: "Next: write the spec",
+  ux_design: "Next: design the screens",
+  research: "Next: research the code",
+  plan: "Next: write the plan",
+  tickets: "Next: create the tickets",
+  build: "Building",
+  acceptance: "Next: evaluate the whole feature",
+  shipped: "Shipped",
+};
+
+/** "3 of 10 tickets merged": the step's count in words, where it has one worth saying. */
+function progressWords(phase: Feature["phase"], done: number, total: number): string | null {
+  const n = `${String(done)} of ${String(total)}`;
+  if (phase === "build") return `${n} tickets merged`;
+  if (phase === "tickets") return `${n} tickets created`;
+  if (phase === "ux_design") return `${n} designs approved`;
+  return null;
+}
 
 export type Tone = "blocked" | "failed" | "waiting" | "done";
 
@@ -237,25 +258,27 @@ export function reasonOf(f: Feature, wait: SessionWait | null = null): Reason {
     };
   }
   const step = f.golden_path.steps.find((s) => s.name === f.phase);
-  // The Stage column names the step; the line says only what happens in it.
+  // The Stage column names the step; the line says what comes next there, in plain words.
   const parts: string[] = [];
-  // Build's meta says when Linear was not read: the page says it once, not every row.
-  const meta = step?.meta && !isLinearGap(step.meta) ? step.meta : null;
-  if (meta) parts.push(meta);
-  const why = step?.reason && step.state !== "done" ? shortReason(step.reason) : null;
-  if (why) parts.push(why);
+  if (step?.state === "blocked" && step.reason && !isLinearGap(step.reason)) {
+    parts.push(`Blocked: ${shortReason(step.reason) ?? step.reason}`);
+  } else if (step?.state === "stale") {
+    parts.push("Needs a new evaluation");
+  } else {
+    parts.push(NEXT_AT[f.phase]);
+    const p = step?.progress;
+    // An unknown step's count was not read: the notice above the list says so once.
+    const known = p && p.total > 0 && step.state !== "unknown";
+    const count = known ? progressWords(f.phase, p.done, p.total) : null;
+    if (count) parts.push(count);
+  }
   if (f.verdict) parts.push(VERDICT_WORDS[f.verdict]);
   return {
     group: "progress",
     needs: null,
     icon: null,
     tone: null,
-    // With nothing else to say, the step's state; an unknown one is explained once above the list.
-    line: parts.length
-      ? parts.join(" · ")
-      : step && step.state !== "unknown"
-        ? GOLDEN_STATE_TEXT[step.state]
-        : "",
+    line: parts.join(" · "),
     doc: null,
   };
 }
