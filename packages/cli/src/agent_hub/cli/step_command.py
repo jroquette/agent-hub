@@ -198,7 +198,10 @@ def worktree(
     if git is None:
         _fail(name, "git is not on PATH; install git")
     git = os.path.abspath(git)
-    if os.path.lexists(children.repo_path / ".git"):
+    if commit:
+        # The base is the local commit the preflight checked: no fetch, so no token is used.
+        _local_commit(children, commit)
+    elif os.path.lexists(children.repo_path / ".git"):
         # The fetch is the first call with the GitHub tokens: the clone's config is checked first.
         _guarded(name, children, use="a fetch would use", outcome="nothing was fetched")
     try:
@@ -217,8 +220,8 @@ def worktree(
             runner=bounded_child,
         )
         if commit:
-            # The fetch still runs; the branch starts at the commit the preflight checked.
-            task = replace(task, bases={**task.bases, repo: commit})
+            # The branch starts at the commit the preflight checked, already in the clone.
+            task = replace(task, bases={**task.bases, repo: commit}, fetch=False)
         check_branches(task)
         path = create_worktree(task, repo, echo=_note)
     except (WorktreeError, ChildTimedOutError) as error:
@@ -655,6 +658,20 @@ def _children(context: typer.Context, *, issue: str, repo: str) -> RunChildren:
     return RunChildren(
         config=effective.config, hub=hub, repo=repo, issue_id=issue, branch_prefix=prefix
     )
+
+
+def _local_commit(children: RunChildren, commit: str) -> None:
+    """Refuse a ``--commit`` the repo's clone lacks (ticket-brief read it there)."""
+    try:
+        git_output(
+            ship_child(children.repo_path),
+            *("rev-parse", "--verify", "-q", f"{commit}^{{commit}}"),
+            environ=os.environ,
+            timeout=step_timeouts().git,
+        )
+    except PrStepError:
+        why = f"{commit} is not in {children.repo}'s clone; run hub step ticket-brief again"
+        _fail("worktree", why)
 
 
 def _guarded(name: str, children: RunChildren, *, use: str, outcome: str) -> None:
