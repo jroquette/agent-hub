@@ -7,6 +7,7 @@ import {
   Button,
   CodeBlock,
   ConfirmDialog,
+  Dialog,
   DataTable,
   EmptyState,
   Icon,
@@ -17,6 +18,7 @@ import {
 } from "../../components";
 import type { ApiProblem } from "../../lib/api";
 import { readStored, writeStored } from "../../lib/storage";
+import { TABLET, useMediaQuery } from "../../lib/useMediaQuery";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
 import { StaleStamp } from "../portfolio/StaleStamp";
@@ -450,6 +452,7 @@ function PlanCard({ scenario }: { scenario: ScenarioDetail }) {
   const listId = useId();
   const verdictId = useId();
   const recent = recentEnvironments(scenario.project);
+  const tablet = useMediaQuery(TABLET);
   const declared = scenario.environments;
   const controlOff =
     (plan.error?.status === 404 && plan.error.type === RUN_CONTROL_OFF) ||
@@ -693,31 +696,35 @@ function PlanCard({ scenario }: { scenario: ScenarioDetail }) {
               ]}
             />
             <span className="ah-grow" />
-            <Button
-              variant="primary"
-              icon="play"
-              disabled={!canStart}
-              aria-describedby={verdictId}
-              onClick={() => {
-                start.reset();
-                setConfirming(true);
-              }}
-            >
-              Start scenario run
-            </Button>
+            {tablet ? (
+              <span className="ah-small">Starting a scenario run needs a desktop screen.</span>
+            ) : (
+              <Button
+                variant="primary"
+                icon="play"
+                disabled={!canStart || startedId !== null}
+                aria-describedby={verdictId}
+                onClick={() => {
+                  start.reset();
+                  setConfirming(true);
+                }}
+              >
+                Start scenario run
+              </Button>
+            )}
           </div>
           <span className="ah-small ah-muted">
             {MODE_LINE[mode]} Steps that ask still pause for your approval.
           </span>
         </div>
       )}
-      {confirming && shown !== null && planned !== null && (
+      {confirming && shown !== null && planned !== null && startedId === null && (
         <ConfirmDialog
           title={`Start a scenario run in ${shown.environment}?`}
           confirmLabel="Start scenario run"
           cancelLabel="Back to plan"
           tone="primary"
-          pending={start.isPending || (startedId !== null && !late)}
+          pending={start.isPending}
           onCancel={() => {
             setConfirming(false);
           }}
@@ -735,20 +742,6 @@ function PlanCard({ scenario }: { scenario: ScenarioDetail }) {
           <span className="ah-stack" style={{ gap: 8 }}>
             <span>{confirmBody(shown, mode)}</span>
             {start.isPending && <span role="status">Starting the scenario run…</span>}
-            {startedId !== null && !late && (
-              <span role="status">Started. Waiting for the scenario run&apos;s first event…</span>
-            )}
-            {startedId !== null && late && (
-              <span role="status" className="ah-stack" style={{ gap: 4 }}>
-                <span>
-                  The scenario run has not reported in 30 s. Its output is in .agent-runs/web/
-                  {startedId}.log in the hub.
-                </span>
-                <AppLink href={scenarioRunHref(scenario.project, scenario.name, startedId)}>
-                  Open scenario run {shortId(startedId)} anyway
-                </AppLink>
-              </span>
-            )}
             {start.isError && (
               <span role="alert" className="ah-stack" style={{ gap: 2, color: "var(--text)" }}>
                 <b>Could not start the scenario run</b>
@@ -769,6 +762,44 @@ function PlanCard({ scenario }: { scenario: ScenarioDetail }) {
             )}
           </span>
         </ConfirmDialog>
+      )}
+      {confirming && shown !== null && startedId !== null && (
+        // Started: no second start is ever offered (review Q1), only the way to it and Back.
+        <Dialog
+          title={`Start a scenario run in ${shown.environment}?`}
+          pending={!late}
+          onClose={
+            late
+              ? () => {
+                  setConfirming(false);
+                }
+              : undefined
+          }
+          footer={
+            <Button
+              disabled={!late}
+              onClick={() => {
+                setConfirming(false);
+              }}
+            >
+              Back to plan
+            </Button>
+          }
+        >
+          {late ? (
+            <span role="status" className="ah-stack" style={{ gap: 4 }}>
+              <span>
+                The scenario run has not reported in 30 s. Its output is in .agent-runs/web/
+                {startedId}.log in the hub.
+              </span>
+              <AppLink href={scenarioRunHref(scenario.project, scenario.name, startedId)}>
+                Open scenario run {shortId(startedId)} anyway
+              </AppLink>
+            </span>
+          ) : (
+            <span role="status">Started. Waiting for the scenario run&apos;s first event…</span>
+          )}
+        </Dialog>
       )}
     </section>
   );
