@@ -937,7 +937,7 @@ The MVP goes up to Phase 2: generate hubs from Loki and see the agents' sessions
 | 3 · Knowledge and decisions | Provenance in the brain, inbox triage in the UI (accept and reject moved to Phase 2 by AGH-201; snooze stays here), extracted decisions, learning metrics | One learning traced from the session to the rule |
 | 4 · Workflows as data and actions | Generic executor reading the workflow ([ADR 0032](adr/0032-workflow-engine.md)), gates approved from the UI, adapters for other agents | — |
 
-Status (2026-10-22, latest release v0.20.0; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
+Status (2026-10-22, latest release v0.20.1; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
 Phase 1 in progress: `init`, `sync` (`--adopt`), `doctor`, `worktree`, `brief`, `agent`, `next`, `run` and `bench`
 shipped in v0.8.0, and `setup`, `start` and `ship` in v0.9.0. Phase 2's first slice is shipped too: the control plane
 `hub web` (AGH-200) in v0.9.0 and its clarity pass (AGH-201: session labels, problems, learning accept and reject
@@ -957,7 +957,8 @@ AGH-403), scenarios with `hub scenario` and `hub action` (AGH-355 to AGH-360), t
 (AGH-298) and new review skills and agents (AGH-411 to AGH-414), and v0.20.0 the ticket flow (AGH-321 slice 2:
 `/implement` runs the built-in `implement` workflow, plan change requests decided in `hub web`), `hub search` and
 `hub mcp` over the hub's knowledge (ADR 0044), the read-only investigation session (AGH-361) and scenario findings
-and routes (AGH-362, AGH-363); other agents' adapters stay in Phase 4. The Phase 1 gate (Loki hub recreated) is open;
+and routes (AGH-362, AGH-363), and v0.20.1 the third playground delivery (AGH-415) and the release tag created by
+the dispatched release workflow (ADR 0047); other agents' adapters stay in Phase 4. The Phase 1 gate (Loki hub recreated) is open;
 pilot: AGH-54.
 
 The order follows dogfooding: the first generated hub is the platform's own, and the second replaces `loki-trader-hub`. Editable workflows come later because they depend on observation already showing where the current flow gets stuck.
