@@ -1,4 +1,6 @@
-import type { ReactNode } from "react";
+import "./scenarios.css";
+
+import { Fragment, type ReactNode } from "react";
 
 import {
   AppLink,
@@ -151,7 +153,7 @@ export function WhereText({
             {where === null ? (
               <span title={`No endpoint in ${environment}.`}>—</span>
             ) : (
-              <PathText path={where} max={36} />
+              <PathText path={where} max={28} />
             )}
           </span>
         );
@@ -185,7 +187,7 @@ export function DraftLine({
       {commands.map((command) => (
         <div key={command} className="ah-row" style={{ gap: 6, alignItems: "flex-start" }}>
           <div className="ah-grow" style={{ minWidth: 0 }}>
-            <CodeBlock code={command} noCopy label={`Commit command for ${action}`} />
+            <CodeBlock code={command} noCopy wrap label={`Commit command for ${action}`} />
           </div>
           <CopyButton text={command} label={`Copy the commit command for ${action}`} />
         </div>
@@ -214,7 +216,7 @@ export function WaitingCard({
     <section
       aria-label="Waiting for you"
       className="ah-card ah-stack"
-      style={{ gap: 10, padding: 16, borderLeft: "4px solid var(--waiting)" }}
+      style={{ gap: 10, padding: 16 }}
     >
       <div className="ah-row" style={{ gap: 6 }}>
         <Icon name="hand" size="sm" style={{ color: "var(--waiting)" }} />
@@ -276,4 +278,70 @@ export function useWaitingRows(project: string | null): {
     if (found) rows.push({ gate, ...found });
   }
   return { rows, waitingRuns: new Set(rows.map((row) => gateRun(row.gate) ?? "")) };
+}
+
+export interface PlanColumn {
+  id: string;
+  label: string;
+  /** A fixed width (the table lays out fixed, so a long value wraps, never hides a column). */
+  width?: number | string;
+}
+
+export interface PlanGridRow {
+  key: string;
+  cells: Record<string, ReactNode>;
+  /** A full-width row under this one (a draft's commit line). */
+  extra?: ReactNode;
+}
+
+/** A plan as a table whose columns never overflow: cells wrap, and a row's extra line spans
+ * the whole width under it (review B1). */
+export function PlanGrid({
+  caption,
+  columns,
+  rows,
+  compact = false,
+}: {
+  caption: string;
+  columns: readonly PlanColumn[];
+  rows: readonly PlanGridRow[];
+  compact?: boolean;
+}) {
+  return (
+    <div className="ah-table-wrap" data-density={compact ? "compact" : undefined}>
+      <table className="ah-table sc-plan">
+        <caption className="ah-sr">{caption}</caption>
+        <colgroup>
+          {columns.map((column) => (
+            <col key={column.id} style={{ width: column.width }} />
+          ))}
+        </colgroup>
+        <thead>
+          <tr>
+            {columns.map((column) => (
+              <th key={column.id} scope="col">
+                {column.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <Fragment key={row.key}>
+              <tr className="sc-plan-main">
+                {columns.map((column) => (
+                  <td key={column.id}>{row.cells[column.id]}</td>
+                ))}
+              </tr>
+              {row.extra !== undefined && (
+                <tr className="sc-plan-extra">
+                  <td colSpan={columns.length}>{row.extra}</td>
+                </tr>
+              )}
+            </Fragment>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }

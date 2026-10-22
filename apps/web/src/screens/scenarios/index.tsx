@@ -73,26 +73,31 @@ function LastRun({ item, waiting }: { item: ScenarioSummary; waiting: boolean })
 function ProblemsTable({ problems }: { problems: ScenarioCatalog["problems"] }) {
   if (problems.length === 0) return null;
   return (
-    <DataTable
-      caption={`Files that do not load (${String(problems.length)})`}
-      density="compact"
-      rows={[...problems]}
-      rowKey={(p) => `${p.project}/${p.file}/${p.key}`}
-      columns={[
-        {
-          id: "file",
-          label: "File",
-          render: (p) => (
-            <span className="ah-mono" style={{ color: "var(--failed)" }}>
-              {p.file}
-              {p.line === null ? "" : `:${String(p.line)}`}
-            </span>
-          ),
-        },
-        { id: "key", label: "Key", render: (p) => <span className="ah-mono">{p.key}</span> },
-        { id: "message", label: "Problem", render: (p) => p.message },
-      ]}
-    />
+    <section aria-labelledby="sc-problems" className="ah-stack" style={{ gap: 8 }}>
+      <h2 id="sc-problems" className="ah-h3" style={{ margin: 0 }}>
+        Files that do not load ({problems.length})
+      </h2>
+      <DataTable
+        caption={`Files that do not load (${String(problems.length)})`}
+        density="compact"
+        rows={[...problems]}
+        rowKey={(p) => `${p.project}/${p.file}/${p.key}`}
+        columns={[
+          {
+            id: "file",
+            label: "File",
+            render: (p) => (
+              <span className="ah-mono" style={{ color: "var(--failed)" }}>
+                {p.file}
+                {p.line === null ? "" : `:${String(p.line)}`}
+              </span>
+            ),
+          },
+          { id: "key", label: "Key", render: (p) => <span className="ah-mono">{p.key}</span> },
+          { id: "message", label: "Problem", render: (p) => p.message },
+        ]}
+      />
+    </section>
   );
 }
 

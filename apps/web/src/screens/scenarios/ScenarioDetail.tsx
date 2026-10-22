@@ -28,6 +28,7 @@ import {
   DraftLine,
   EffectBadge,
   Page,
+  PlanGrid,
   PolicyBadge,
   ScenarioRunBadge,
   shortId,
@@ -118,7 +119,13 @@ function verdict(plan: ScenarioPlan, stale: string | null): { ok: boolean; text:
       text: `Cannot start: the plan has ${String(n)} ${n === 1 ? "problem" : "problems"}.`,
     };
   }
-  if (denied.length > 0 || plan.denied) {
+  if (denied.length === 0 && plan.denied) {
+    return {
+      ok: false,
+      text: `Cannot start in ${plan.environment}: the plan does not allow a start there.`,
+    };
+  }
+  if (denied.length > 0) {
     const verb = denied.length > 1 ? "are" : "is";
     return {
       ok: false,
@@ -135,11 +142,21 @@ function verdict(plan: ScenarioPlan, stale: string | null): { ok: boolean; text:
   return { ok: true, text: `Can start in ${plan.environment}.${tail}` };
 }
 
+const UNIT: Readonly<Record<string, string>> = { s: "s", m: "min", h: "h", ms: "ms" };
+
+/** "10s" → "10 s", "5m" → "5 min" (Content › Formatting); anything else as written. */
+export function pace(value: string): string {
+  const match = /^(\d+)(ms|s|m|h)$/.exec(value.trim());
+  return match ? `${match[1] ?? ""} ${UNIT[match[2] ?? ""] ?? ""}` : value;
+}
+
 /** Each arg's value; a run-time one stays its placeholder, with a tooltip (principle 3). */
 function Values({ row }: { row: ScenarioPlanRow }) {
   const entries = Object.entries(row.args);
   const suffix =
-    row.every !== null && row.timeout !== null ? ` (every ${row.every}, up to ${row.timeout})` : "";
+    row.every !== null && row.timeout !== null
+      ? ` (every ${pace(row.every)}, up to ${pace(row.timeout)})`
+      : "";
   if (entries.length === 0) return <span className="ah-small ah-subtle">No values{suffix}</span>;
   return (
     <span className="ah-small">
@@ -172,17 +189,23 @@ function whatItDoes(row: ScenarioPlanRow): string {
     : row.plan;
 }
 
+const PLAN_COLUMNS = [
+  { id: "step", label: "Step", width: "24%" },
+  { id: "action", label: "Action", width: "18%" },
+  { id: "effect", label: "Effect", width: 96 },
+  { id: "where", label: "Service → endpoint" },
+  { id: "policy", label: "Policy", width: 168 },
+] as const;
+
 function PlanTable({ plan, scenario }: { plan: ScenarioPlan; scenario: string }) {
   return (
-    <DataTable
+    <PlanGrid
       caption={`Plan of ${scenario} in ${plan.environment}`}
-      rows={[...plan.rows]}
-      rowKey={(row) => row.step}
-      columns={[
-        {
-          id: "step",
-          label: "Step",
-          render: (row) => (
+      columns={PLAN_COLUMNS}
+      rows={plan.rows.map((row) => ({
+        key: row.step,
+        cells: {
+          step: (
             <span
               className="ah-stack"
               style={{ gap: 2 }}
@@ -192,42 +215,38 @@ function PlanTable({ plan, scenario }: { plan: ScenarioPlan; scenario: string })
               <Values row={row} />
             </span>
           ),
-        },
-        {
-          id: "action",
-          label: "Action",
-          render: (row) => <span className="ah-mono ah-small">{row.action}</span>,
-        },
-        { id: "effect", label: "Effect", render: (row) => <EffectBadge effect={row.effect} /> },
-        {
-          id: "where",
-          label: "Service → endpoint",
-          render: (row) => (
+          action: <span className="ah-mono ah-small">{row.action}</span>,
+          effect: <EffectBadge effect={row.effect} />,
+          where: (
             <span className="ah-stack" style={{ gap: 2 }}>
               <WhereText endpoints={row.endpoints} environment={plan.environment} />
               <span className="ah-small ah-muted">{whatItDoes(row)}</span>
             </span>
           ),
+          policy: <PolicyBadge decision={row.decision} reason={row.reason} />,
         },
-        {
-          id: "policy",
-          label: "Policy",
-          render: (row) => (
-            <span className="ah-stack" style={{ gap: 6 }}>
-              <PolicyBadge decision={row.decision} reason={row.reason} />
-              {row.needs_acceptance && row.accept_command && (
+        ...(row.needs_acceptance && row.accept_command
+          ? {
+              extra: (
                 <DraftLine commands={[row.accept_command]} action={row.action} then="plan again" />
-              )}
-            </span>
-          ),
-        },
-      ]}
+              ),
+            }
+          : {}),
+      }))}
     />
   );
 }
 
 /** Why a plan could not be made, in the design's words (states table). */
-function PlanProblem({ error, name }: { error: ApiProblem; name: string }) {
+function PlanProblem({
+  error,
+  name,
+  environment,
+}: {
+  error: ApiProblem;
+  name: string;
+  environment: string;
+}) {
   if (error.status === 401) {
     return (
       <Banner tone="error" boxed>
@@ -251,7 +270,7 @@ function PlanProblem({ error, name }: { error: ApiProblem; name: string }) {
           The plan did not finish in 5 min, so it was stopped. A plan-mode script may hang: run it
           from a terminal to see which.
         </span>
-        <CodeBlock code={`./hub scenario plan ${name} --env <environment>`} />
+        <CodeBlock code={`./hub scenario plan ${name} --env ${environment}`} />
       </div>
     );
   }
@@ -478,6 +497,15 @@ function PlanCard({ scenario }: { scenario: ScenarioDetail }) {
     );
   };
 
+  // A plan's 422 names its inputs by pointer (`/inputs/<name>`): each message goes to its field.
+  const serverErrors = new Map<string, string>();
+  if (plan.isError && plan.error.status === 422) {
+    for (const item of plan.error.errors) {
+      const name = /^\/inputs\/([^/]+)$/.exec(item.pointer)?.[1];
+      if (name !== undefined && !serverErrors.has(name)) serverErrors.set(name, item.message);
+    }
+  }
+  const inputProblems = serverErrors.size > 0;
   const formKey = JSON.stringify([environment, values]);
   const request = (): PlanRequest | null => {
     const inputs: Record<string, InputValue> = {};
@@ -520,7 +548,7 @@ function PlanCard({ scenario }: { scenario: ScenarioDetail }) {
       key={spec.name}
       spec={spec}
       value={values[spec.name] ?? ""}
-      error={fieldErrors[spec.name] ?? null}
+      error={fieldErrors[spec.name] ?? serverErrors.get(spec.name) ?? null}
       disabled={plan.isPending}
       onChange={(value, isBad) => {
         setValues((current) => ({ ...current, [spec.name]: value }));
@@ -622,7 +650,13 @@ function PlanCard({ scenario }: { scenario: ScenarioDetail }) {
           {slow && " Still planning. A plan stops after 5 min."}
         </span>
       )}
-      {plan.isError && !controlOff && <PlanProblem error={plan.error} name={scenario.name} />}
+      {plan.isError && !controlOff && !inputProblems && (
+        <PlanProblem
+          error={plan.error}
+          name={scenario.name}
+          environment={plan.variables.environment}
+        />
+      )}
       {shown === null && !plan.isPending && !plan.isError && (
         <span className="ah-small ah-muted">
           Plan the scenario to see what each step will do in an environment.
