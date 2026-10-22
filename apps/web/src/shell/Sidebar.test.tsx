@@ -260,6 +260,10 @@ describe("Sidebar", () => {
       "href",
       "/scenarios",
     );
+    for (const group of ["Work", "Knowledge"]) {
+      expect(within(nav).getByText(group)).toBeInTheDocument();
+    }
+    expect(within(nav).queryByText("Live sessions")).not.toBeInTheDocument();
   });
 
   it("AC-350.29: shows Scenarios with its clipboard icon before any workflow has run", () => {

@@ -713,4 +713,16 @@ describe("RunDetailScreen", () => {
       expect(router.state.historyAction).toBe("REPLACE");
     });
   });
+  it("keeps a workflow run whose label starts with scenario: on Run detail", async () => {
+    const run = anEngineRun({
+      id: "3f2a91c2",
+      project: "demo",
+      workflow: "scenario:order-lifecycle",
+      kind: "workflow",
+    });
+    const { router } = renderRun(run, "3f2a91c2");
+
+    expect(await screen.findAllByText("scenario:order-lifecycle")).not.toHaveLength(0);
+    expect(router.state.location.pathname).toBe("/runs/3f2a91c2");
+  });
 });
