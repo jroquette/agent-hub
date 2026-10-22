@@ -33,6 +33,9 @@ export interface RepoFileInfo {
   /** The repository's folder label and the base its branch is compared with. */
   label: string;
   base: string;
+  /** The commit the base pointed at when git compared: where the lines a diff leaves out are
+   * read from. */
+  baseSha: string | null;
   status: RepoFileStatus;
   /** The name before a rename (absolute). */
   oldPath: string | null;
@@ -88,6 +91,7 @@ function fromRepo(repo: RepoChanges, file: RepoFileChange, own: ChangedFile | un
     repo: {
       label: repo.label,
       base: repo.base ?? "",
+      baseSha: repo.base_sha ?? null,
       status: file.status,
       oldPath: file.old_path ?? null,
       commits: commitsOf(repo, file),
@@ -110,6 +114,7 @@ function unchanged(repo: RepoChanges, own: ChangedFile): ChangedFile {
     repo: {
       label: repo.label,
       base: repo.base ?? "",
+      baseSha: repo.base_sha ?? null,
       status: "modified",
       oldPath: null,
       commits: [],

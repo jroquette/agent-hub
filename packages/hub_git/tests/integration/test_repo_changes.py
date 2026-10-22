@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_hub.core.agent_sessions.repo_changes import RepoChangesError
+from agent_hub.core.agent_sessions.repo_changes import REPO_DIFF_MAX_BYTES, RepoChangesError
 from agent_hub.hub_git.repo_changes import GitRepoChanges
 
 _IDENTITY = {
@@ -253,6 +253,61 @@ def test_cannot_read_when_the_commit_is_unknown(checkout: tuple[Path, dict[str, 
 
     with pytest.raises(RepoChangesError):
         GitRepoChanges(environ=env).commit_diff(str(work), sha="0" * 40, paths=["app.py"])
+
+
+def test_reads_the_base_s_text_when_a_file_is_read_at_the_base(
+    checkout: tuple[Path, dict[str, str]],
+) -> None:
+    # AC-424.8
+    work, env = checkout
+    reader = GitRepoChanges(environ=env)
+    base = reader.read(str(work), label="w").base_sha
+    assert base is not None
+
+    found = reader.file_text(str(work), sha=base[:7], path="app.py")
+
+    assert (found.sha, found.text, found.binary) == (base, "a\nb\nc\n", False)
+
+
+def test_reads_no_text_when_the_commit_has_no_such_file(
+    checkout: tuple[Path, dict[str, str]],
+) -> None:
+    # AC-424.8
+    work, env = checkout
+    reader = GitRepoChanges(environ=env)
+    base = reader.read(str(work), label="w").base_sha
+    assert base is not None
+
+    assert reader.file_text(str(work), sha=base, path="new.py").text is None
+
+
+def test_reads_no_text_when_the_file_is_binary_or_too_big(
+    checkout: tuple[Path, dict[str, str]],
+) -> None:
+    # AC-424.8
+    work, env = checkout
+    (work / "logo.bin").write_bytes(b"PNG\0\1\2")
+    (work / "huge.txt").write_text("x" * (REPO_DIFF_MAX_BYTES + 1))
+    _git(work, env, "add", "logo.bin", "huge.txt")
+    _git(work, env, "commit", "-m", "add a binary and a big file")
+    reader = GitRepoChanges(environ=env)
+    head = _rev(work, env, "HEAD")
+
+    binary = reader.file_text(str(work), sha=head, path="logo.bin")
+    huge = reader.file_text(str(work), sha=head, path="huge.txt")
+
+    assert (binary.text, binary.binary) == (None, True)
+    assert (huge.text, huge.binary) == (None, False)
+
+
+def test_cannot_read_a_file_when_the_commit_is_unknown(
+    checkout: tuple[Path, dict[str, str]],
+) -> None:
+    # AC-424.9
+    work, env = checkout
+
+    with pytest.raises(RepoChangesError):
+        GitRepoChanges(environ=env).file_text(str(work), sha="0" * 40, path="app.py")
 
 
 def _rev(cwd: Path, env: dict[str, str], ref: str) -> str:

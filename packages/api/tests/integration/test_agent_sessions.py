@@ -186,6 +186,38 @@ def test_refuses_commit_diff_when_file_or_commit_malformed(
     assert recorded_app.control.calls == []
 
 
+def test_passes_file_and_commit_when_file_at_commit_read(recorded_app: Any) -> None:
+    # AC-424.8
+    response = recorded_app.client.get(
+        f"{ONE}/repo-changes/file", params={"path": "/hubs/api/a.py", "sha": "abc1234"}
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["text"] == "a\nb\n"
+    assert recorded_app.control.calls == [
+        ("repo_file_text", (AGENT_SESSION_ID, "/hubs/api/a.py", "abc1234"))
+    ]
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"path": "/hubs/api/a.py", "sha": "HEAD"},
+        {"path": "/hubs/api/a.py", "sha": "--output=x"},
+        {"path": "a.py", "sha": "abc1234"},
+        {"sha": "abc1234"},
+    ],
+)
+def test_refuses_file_at_commit_when_file_or_commit_malformed(
+    recorded_app: Any, params: dict[str, str]
+) -> None:
+    # AC-424.9
+    response = recorded_app.client.get(f"{ONE}/repo-changes/file", params=params)
+
+    assert response.status_code == 400, response.text
+    assert recorded_app.control.calls == []
+
+
 def test_answers_204_without_body_when_delete_called(recorded_app: Any) -> None:
     response = recorded_app.client.delete(ONE)
 

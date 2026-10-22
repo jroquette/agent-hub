@@ -134,6 +134,7 @@ from agent_hub.core.agent_sessions.repo_changes import (
     RepoChangesError,
     RepoChangesReader,
     RepoCommitDiff,
+    RepoFileText,
     RepoPullRequest,
     SessionRepoChanges,
     relative_to_root,
@@ -321,6 +322,10 @@ class AgentSessionCommands(Protocol):
         self, agent_session_id: str, *, path: str, sha: str, old_path: str | None = None
     ) -> RepoCommitDiff:
         """What one commit changed in one file of the session's repositories."""
+        ...
+
+    async def repo_file_text(self, agent_session_id: str, *, path: str, sha: str) -> RepoFileText:
+        """One file of the session's repositories as one commit has it."""
         ...
 
     async def delete(self, agent_session_id: str) -> None:
@@ -621,9 +626,39 @@ class AgentSessionControl:
         a rename), read by git in the session's repository that holds it (``repo_changes``'s
         repositories, plus the listed one holding ``path``). ``EntityNotFoundError`` when no
         such repository holds the file, or git knows no such commit."""
+        missing = EntityNotFoundError(entity="commit", entity_id=sha)
+        reader, root = await self._repo_of(agent_session_id, path, missing)
+        paths = [relative_to_root(root, one) for one in (path, old_path) if one]
+        try:
+            diff = await asyncio.to_thread(
+                reader.commit_diff, root, sha=sha, paths=[one for one in paths if one]
+            )
+        except RepoChangesError as error:
+            raise missing from error
+        return diff.model_copy(update={"path": path})
+
+    async def repo_file_text(self, agent_session_id: str, *, path: str, sha: str) -> RepoFileText:
+        """The file at ``path`` as commit ``sha`` has it, read by git in the session's repository
+        that holds it (as ``repo_commit_diff``). ``EntityNotFoundError`` when no such repository
+        holds the file, or git knows no such commit."""
+        missing = EntityNotFoundError(entity="commit", entity_id=sha)
+        reader, root = await self._repo_of(agent_session_id, path, missing)
+        relative = relative_to_root(root, path)
+        if relative is None:
+            raise missing
+        try:
+            found = await asyncio.to_thread(reader.file_text, root, sha=sha, path=relative)
+        except RepoChangesError as error:
+            raise missing from error
+        return found.model_copy(update={"path": path})
+
+    async def _repo_of(
+        self, agent_session_id: str, path: str, missing: EntityNotFoundError
+    ) -> tuple[RepoChangesReader, str]:
+        """The git reader and the root of the session's listed repository that holds ``path``;
+        ``missing`` when there is no reader, or no such repository."""
         session = await self._session(agent_session_id)
         reader = self._repo_changes
-        missing = EntityNotFoundError(entity="commit", entity_id=sha)
         if reader is None:
             raise missing
         try:
@@ -634,14 +669,7 @@ class AgentSessionControl:
         root = next((one for one in roots if relative_to_root(one.path, path) is not None), None)
         if root is None:
             raise missing
-        paths = [relative_to_root(root.path, one) for one in (path, old_path) if one]
-        try:
-            diff = await asyncio.to_thread(
-                reader.commit_diff, root.path, sha=sha, paths=[one for one in paths if one]
-            )
-        except RepoChangesError as error:
-            raise missing from error
-        return diff.model_copy(update={"path": path})
+        return reader, root.path
 
     async def _session(self, agent_session_id: str) -> AgentSession:
         """The live view of a session, else its stored record (no twin lookup)."""

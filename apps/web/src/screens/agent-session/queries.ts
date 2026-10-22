@@ -124,6 +124,20 @@ export function useRepoCommitDiff(
   );
 }
 
+/** `GET /agent-sessions/{id}/repo-changes/file`: a file as one commit has it (the base of a pull
+ * request's diff), read once and only when `enabled`. */
+export function useRepoFileText(
+  id: string,
+  { path, sha }: { path: string; sha: string },
+  enabled: boolean,
+) {
+  return useApi(
+    "/api/v1/agent-sessions/{agent_session_id}/repo-changes/file",
+    { path: { agent_session_id: id }, query: { path, sha } },
+    { retry: false, staleTime: Infinity, enabled },
+  );
+}
+
 /** What a session is about: its name and, when it is on a ticket a hub feature works on, that
  * feature. */
 export interface SessionAbout {

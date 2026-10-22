@@ -32,7 +32,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - Session review in `hub web` (AGH-424): the Code tab shows the code and its tests together or apart (kept per
   browser); a narrow file list keeps each name on one line, cut at its end; diffs (review, transcript edits, commits,
   item history) are coloured in the file's language as on GitHub, and highlighted code takes GitHub's syntax palette;
-  files the session touched and then put back sit in a `Discarded` tab, out of the totals and the review.
+  files the session touched and then put back sit in a `Discarded` tab, out of the totals and the review; a pull
+  request's diff expands around its hunks, read from the new `GET /api/v1/agent-sessions/{id}/repo-changes/file`.
 
 ### Changed
 

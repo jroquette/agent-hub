@@ -25,6 +25,7 @@ import { githubPullHref } from "../../lib/safeHref";
 import { readStored, writeStored } from "../../lib/storage";
 import { useDrawerWidth, useListWidth } from "./DrawerResize";
 import { ReviewCommentsContext, ReviewDiff, type ReviewComments } from "./ReviewDiff";
+import { canExpand, useExpandableNet, type DiffExpansion } from "./DiffExpand";
 import { DiffText, TOOL_STATE } from "./ToolCallCard";
 import {
   FILE_KINDS,
@@ -195,8 +196,15 @@ function ChangeBlock({
 }
 
 /** A file's final diff: what all its changes add up to, open to review comments (change 0). */
-function NetBlock({ file, path }: { file: ChangedFile; path: string }) {
-  const comments = useContext(ReviewCommentsContext);
+function NetBlock({
+  file,
+  path,
+  sessionId,
+}: {
+  file: ChangedFile;
+  path: string;
+  sessionId: string;
+}) {
   const net = file.net;
   const repo = file.repo;
   if (!net) {
@@ -216,6 +224,42 @@ function NetBlock({ file, path }: { file: ChangedFile; path: string }) {
       </p>
     );
   }
+  // Git's diff against the base opens wider around its hunks, as on GitHub.
+  return canExpand(file) ? (
+    <ExpandableNetDiff sessionId={sessionId} file={file} label={label} />
+  ) : (
+    <NetDiff file={file} diff={net.diff} label={label} />
+  );
+}
+
+function ExpandableNetDiff({
+  sessionId,
+  file,
+  label,
+}: {
+  sessionId: string;
+  file: ChangedFile;
+  label: string;
+}) {
+  const shown = useExpandableNet(sessionId, file);
+  if (shown.diff === null) return null;
+  return <NetDiff file={file} diff={shown.diff} label={label} expansion={shown.expansion} />;
+}
+
+/** The final diff, open to review comments when the drawer takes them. */
+function NetDiff({
+  file,
+  diff,
+  label,
+  expansion,
+}: {
+  file: ChangedFile;
+  diff: string;
+  label: string;
+  expansion?: DiffExpansion | undefined;
+}) {
+  const comments = useContext(ReviewCommentsContext);
+  const numbered = file.net?.numbered ?? false;
   const threads =
     comments?.threads.filter(
       (thread) => thread.anchor.path === file.path && thread.anchor.change === 0,
@@ -224,17 +268,24 @@ function NetBlock({ file, path }: { file: ChangedFile; path: string }) {
     <div className="as-files-change">
       {comments ? (
         <ReviewDiff
-          diff={net.diff}
+          diff={diff}
           label={label}
-          numbered={net.numbered}
+          numbered={numbered}
           path={file.path}
           change={0}
           threads={threads}
           resolved={comments.resolved}
           onComment={comments.onComment}
+          expansion={expansion}
         />
       ) : (
-        <DiffText diff={net.diff} label={label} numbered={net.numbered} path={file.path} />
+        <DiffText
+          diff={diff}
+          label={label}
+          numbered={numbered}
+          path={file.path}
+          expansion={expansion}
+        />
       )}
     </div>
   );
@@ -882,7 +933,7 @@ function FileDetail({
           </p>
         )}
         {showPreview && <PreviewBlock text={text} />}
-        {showNet && <NetBlock file={file} path={name} />}
+        {showNet && <NetBlock file={file} path={name} sessionId={sessionId} />}
         {current === "commits" && repo && (
           <CommitsBlock
             sessionId={sessionId}
