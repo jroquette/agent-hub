@@ -601,6 +601,9 @@
     "workflows/doc-drift/scripts/contract.py": {
       "ownership": "seeded"
     },
+    "workflows/doc-drift/scripts/doc_fix.py": {
+      "ownership": "seeded"
+    },
     "workflows/doc-drift/scripts/mentions.py": {
       "ownership": "seeded"
     },
