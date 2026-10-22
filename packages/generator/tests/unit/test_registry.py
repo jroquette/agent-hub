@@ -29,6 +29,11 @@ CORE_SOURCES: dict[str, tuple[str, str]] = {
 BUILTIN_PACKAGE = "agent_hub.core"
 BUILTIN_FOLDER = "workflows/builtin"
 SEEDED_PACK_FILES = (
+    "doc-drift/doc-drift.yaml",
+    "doc-drift/fixtures/drift-adr-only.yaml",
+    "doc-drift/fixtures/drift-declined.yaml",
+    "doc-drift/fixtures/drift-none.yaml",
+    "doc-drift/fixtures/drift-renamed-command.yaml",
     "issue-to-pr/fixtures/blocked.yaml",
     "issue-to-pr/fixtures/dirty.yaml",
     "issue-to-pr/fixtures/done.yaml",

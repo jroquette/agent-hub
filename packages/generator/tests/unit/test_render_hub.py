@@ -156,6 +156,12 @@ DESIGN_PATHS = (
     "scripts/mine_transcripts.py",
     "scripts/recall_transcripts.py",
     "scripts/retro_metrics.py",
+    # AGH-491: the built-in doc-drift pack, seeded.
+    "workflows/doc-drift/doc-drift.yaml",
+    "workflows/doc-drift/fixtures/drift-adr-only.yaml",
+    "workflows/doc-drift/fixtures/drift-declined.yaml",
+    "workflows/doc-drift/fixtures/drift-none.yaml",
+    "workflows/doc-drift/fixtures/drift-renamed-command.yaml",
     # AGH-227: the built-in issue-to-pr pack, seeded.
     "workflows/issue-to-pr/fixtures/blocked.yaml",
     "workflows/issue-to-pr/fixtures/dirty.yaml",
