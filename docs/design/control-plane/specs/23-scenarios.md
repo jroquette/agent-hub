@@ -75,7 +75,7 @@ order-lifecycle   pack orders · revision 1                                   [D
 | personal · access write        Planned 14:03 · 4 steps: 2 read, 2 write · 1 asks you  |
 | Step           Action              Effect  Service → endpoint          Policy          |
 |   Values                                   What it will do                             |
-| fetch-order    send-queue-message  write   queue → https://queue.exa…  (v) Allow       |
+| fetch-order    send-queue-message  write   queue → queue.example.com…  (v) Allow       |
 | render-pdf     render-invoice-pdf  write   files → demo-invoices       (o) Denied      |
 |   <$CTX.order_id from order-on-hold>       Runs with values known at run time         |
 |   Draft: needs acceptance. Commit it in the hub checkout, then plan again:            |
