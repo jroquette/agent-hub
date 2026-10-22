@@ -20,13 +20,16 @@ import pytest
 from mcp import Client
 from mcp.types import CallToolResult, TextContent
 
+from agent_hub.cli import mcp_command
 from agent_hub.cli.hub_root import HUB_ROOT_VARIABLE
 from agent_hub.cli.mcp_command import hub_context
 from agent_hub.core.json_form import dump_json
+from agent_hub.core.knowledge.knowledge_index import KnowledgeIndex
 from agent_hub.core.learnings.brain_change_requests import CommitAuthor
 from agent_hub.core.testing.brain_fakes import FakeBrainOrigin, InMemoryBrainChangeRequests
 from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.mcp_server.server import build_server
+from agent_hub.storage.knowledge_index import open_knowledge_index
 
 pytestmark = pytest.mark.disable_socket
 
@@ -143,14 +146,23 @@ def test_serves_read_when_database_unwritable(
 
 
 def test_serves_two_searches_when_index_opened_once(
-    knowledge_hub: KnowledgeHubFactory, tmp_path: Path
+    knowledge_hub: KnowledgeHubFactory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     hub = knowledge_hub({"brain/now.md": NOW_TEXT})
     env = dict(os.environ, **{HUB_ROOT_VARIABLE: str(hub), "AGENT_HUB_DB": str(tmp_path / "x.db")})
+    opened: list[Path] = []
+
+    def counted(path: Path) -> KnowledgeIndex:
+        opened.append(path)
+        return open_knowledge_index(path)
+
+    monkeypatch.setattr(mcp_command, "open_knowledge_index", counted)
 
     first, second = served(
         env, ("search", {"query": "worktrees"}), ("search", {"query": "worktrees"})
     )
+
+    assert opened == [tmp_path / "x.db"]
 
     for result in (first, second):
         assert not result.is_error, _text(result)
