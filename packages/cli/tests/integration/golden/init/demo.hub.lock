@@ -522,7 +522,7 @@
     "plugin/hub-workflow/skills/summarize/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "1f09f3d48095ae554ea75c842e769b3ed102ea61cad6c74d47bc1689335e5a3c"
+      "sha256": "5ab7200a25ede66064ab455885b6d2a7a7041bf207509fee7a0d9878a26f3876"
     },
     "plugin/hub-workflow/skills/test-strength/SKILL.md": {
       "executable": false,
