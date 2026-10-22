@@ -1138,16 +1138,27 @@ function NamingFacts({ config }: { config: HubConfig }) {
   );
 }
 
-/**
- * The guard's rules as sentences, zeros left out. The environments and services lines of the design
- * wait for the config view to carry them (AGH-416).
- */
-function GuardFacts({ config }: { config: HubConfig }) {
-  const { guard } = config;
+/** The badge on an environment the hub marks as the live, customer-facing one. */
+const LIVE_ENV_LABEL = "Production";
+
+const ACCESS_WORDS: Record<"read" | "write" | "ask", string> = {
+  write: "can change",
+  read: "can read",
+  ask: "ask you before changing",
+};
+
+/** The guard's rules as sentences, zeros left out, then what agents may do in each environment. */
+function GuardFacts({ project, config }: { project: string; config: HubConfig }) {
+  const { guard, environments } = config;
   const blocked = guard.blocked_words.team.length + guard.blocked_words.local.length;
+  const envs = environments.environments;
+  const byAccess = (["write", "ask", "read"] as const)
+    .map((access) => ({ access, list: envs.filter((e) => e.access === access) }))
+    .filter((g) => g.list.length > 0);
   const anyRule =
     guard.ask_before_edit.length + guard.deny_paths.length + guard.deny_hosts.length + blocked >
       0 || guard.infra_on;
+  const envHref = `/projects/${encodeURIComponent(project)}/environments`;
   return (
     <>
       {guard.ask_before_edit.length > 0 && (
@@ -1187,6 +1198,35 @@ function GuardFacts({ config }: { config: HubConfig }) {
       )}
       {guard.infra_on && <Fact>The infra guard is on.</Fact>}
       {!anyRule && <Fact>No rules beyond the built-in ones.</Fact>}
+      {byAccess.map(({ access, list }) => (
+        <Fact key={access}>
+          Agents {ACCESS_WORDS[access]} {plural(list.length, "environment")}:{" "}
+          {list.map((e, i) => (
+            <span key={e.name}>
+              {i > 0 && ", "}
+              <AppLink href={envHref}>{e.name}</AppLink>
+              {e.source === "hub.local.json" && <span className="ah-muted"> (yours)</span>}
+              {e.production && (
+                <>
+                  {" "}
+                  <StatusBadge status="waiting" label={LIVE_ENV_LABEL} />
+                </>
+              )}
+            </span>
+          ))}
+          .
+        </Fact>
+      ))}
+      {environments.services.length > 0 && (
+        <Fact>
+          {plural(
+            environments.services.length,
+            "service has its address",
+            "services have their addresses",
+          )}{" "}
+          listed.
+        </Fact>
+      )}
     </>
   );
 }
@@ -1265,7 +1305,7 @@ function ConfigSection({ project }: { project: ProjectDetail }) {
                 title="What agents may touch"
                 link={{ href: `${home}#guard`, text: "See guard" }}
               >
-                <GuardFacts config={config.data} />
+                <GuardFacts project={project.name} config={config.data} />
               </SetupCard>
               <SetupCard icon="box" title="The hub">
                 <HubFacts project={project} config={config.data} />

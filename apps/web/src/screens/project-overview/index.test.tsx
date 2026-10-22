@@ -464,8 +464,8 @@ describe("ProjectOverviewScreen", () => {
       section.getByText("2 words are blocked from anything the agents write."),
     ).toBeInTheDocument();
     expect(section.queryByText(/never contact/)).not.toBeInTheDocument();
-    // The config view carries no environments before AGH-416, so the card names none.
-    expect(section.queryByText(/environment/)).not.toBeInTheDocument();
+    // What agents may do in each environment (AGH-416's config view), the live one badged.
+    expect(section.getByText("Production")).toBeInTheDocument();
     expect(section.getByText("1 repository: demo-api.")).toBeInTheDocument();
     expect(section.getByRole("link", { name: /Open hub configuration/ })).toHaveAttribute(
       "href",

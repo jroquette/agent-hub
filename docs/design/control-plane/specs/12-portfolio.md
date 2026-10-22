@@ -290,7 +290,9 @@ numbers, focus, Tickets the agents are working on, **Recent work** (AC-273.15), 
   "summary"); the API's made-up example sits only in a tooltip on a focusable span ("Example with a made-up issue:
   …"). The pull request row folds into "Commit and pull request titles" when it follows the commit title.
 - Guard lines show only when their count is above zero; with no rule: "No rules beyond the built-in ones." The
-  design's environment and services lines wait for the config view to carry environments (AGH-416).
+  environments follow, from the config view's `environments` (AGH-416): one line per access ("Agents can change 1
+  environment: local."), each name a link to Environments, "(yours)" on one from `hub.local.json`, a "Production"
+  badge on the live one, then "N services have their addresses listed." when any is declared.
 - Recent work stacks (Features first) when the section is narrower than 960 px. Its rows are `ft-row`s with the meta sized to its content (`--ft-meta: auto`), and a ticket's title reads
   as plain text, so the title keeps its width in a half-width column.
 - Not built from the design and its review: middle-truncated paths (`PathText`) in the findings, four card skeletons
