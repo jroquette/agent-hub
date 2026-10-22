@@ -663,7 +663,8 @@ folder, the server's environment minus `LINEAR_API_KEY`); no problem quotes its 
   with no credential and only when every arg is known (AM-8)), plus, per row, `needs_acceptance` (a draft action) and
   `accept_command`, the exact `git add -- … && git commit -m …` line that accepts it (AM-5: nothing commits from
   hub web). The inputs (as a run's: at most 64, names `^[a-z][a-z0-9_]*$`) are checked against the scenario's first
-  (422 `workflow-run-invalid-inputs`); the child runs in its own session, its stdout read in chunks up to 4
+  (422 `workflow-run-invalid-inputs`), and a `hub.local.json` that cannot be read or conflicts with `hub.json` is 409
+  `hub-local-invalid` before any child runs, as for a start; the child runs in its own session, its stdout read in chunks up to 4
   MiB and its stderr dropped; past 300 s or that cap its process group gets SIGINT (the CLI then kills its
   plan-mode scripts' groups), SIGKILL 5 s later, and the call answers 502 `workflow-run-launch-failed`.
 - `POST /api/v1/scenarios/{project}/{name}/runs` with `{environment, inputs?, mode?}` (`interactive`, the default,
@@ -713,16 +714,20 @@ folder, the server's environment minus `LINEAR_API_KEY`); no problem quotes its 
   again, `pick` runs the workaround, then the step. Approvals sends an investigation gate here (409
   `workflow-run-investigation-gate` there).
 - `POST /api/v1/scenario-runs/{run_id}/findings/{finding_id}/issue` with `{confirm?}` → 200 `FindingIssue`: the
-  draft `hub scenario findings --issue` prints (`title`, `description`) and the `team` it goes to (`tracker.team`, or
-  the first of `tracker.teams`), `created: null`. With `confirm: true` (the terminal's `y`; only the JSON `true`
-  confirms, anything else is 422) it calls the tracker's `create_issue` once and answers 201 with `created: {id,
-  url}`. A marker `finding-<id>.issue` in the run folder, made exclusively before the call and claimed the
-  same way by `hub scenario findings --issue`, refuses any later create from either side
-  (409 `workflow-run-issue-exists`, naming the issue when it is known); a create the tracker refuses or does not
-  answer is 502 `urn:agent-hub:problem:scenario-run-issue-failed` and is never tried again here (the issue may exist:
-  check the tracker). The tracker is the effective one: `hub.json` with `hub.local.json` over it, so a
-  local `tracker.transport` wins; an unreadable `hub.local.json` refuses (409 `hub-local-invalid`). Without a tracker key (transport `api`), 409 `workflow-run-tracker-not-connected`; transport
-  `mcp` reaches Linear through `claude -p` in the hub, as the CLI does.
+  draft `hub scenario findings --issue` prints (`title`, `description`) and the `team` it goes to (`hub.json`'s
+  `tracker.team`, or the first of `tracker.teams`; `null` when `hub.json` cannot be read), `created: null`; the draft
+  never reads `hub.local.json`. With `confirm: true` (the terminal's `y`; only the JSON `true` confirms, anything else
+  is 422) the tracker is resolved from the effective config, `hub.json` with `hub.local.json` over it (a local
+  `tracker.transport` wins; a `hub.local.json` that cannot be read or conflicts with `hub.json` is 409
+  `hub-local-invalid`), then its `create_issue` is called once and the answer is 201 with `created: {id, url}`.
+  The marker `finding-<id>.issue` in the run folder, shared with `hub scenario findings --issue`, is claimed
+  exclusively before the call and then holds the issue or the failure. A marker naming an issue refuses every later
+  create on both sides (409 `workflow-run-issue-exists`, naming it). A create the tracker refuses or does not answer
+  is 502 `urn:agent-hub:problem:scenario-run-issue-failed`; that marker, or the empty one a crash leaves, is also 409
+  `workflow-run-issue-exists` here (the issue may exist), and only a terminal retries it: `hub scenario findings
+  --issue` shows the state, warns that the issue may already exist in the tracker and asks again. Without a tracker
+  key (transport `api`), 409 `workflow-run-tracker-not-connected`; transport `mcp` reaches Linear through `claude -p`
+  in the hub, as the CLI does.
 - `POST /api/v1/scenario-runs/{run_id}/findings/{finding_id}/inbox` → 201 `FindingNote` (`path`, hub-relative):
   writes `brain/_inbox/<date>-scenario-<name>-<finding>.md` (`provenance: agent-from-external`, the CLI's text),
   never over an existing note (409 `workflow-run-note-exists`) nor through a link (409 `workflow-run-link-in-path`).
@@ -744,7 +749,7 @@ Problems:
 | 409 | `workflow-run-link-in-path` | the link file `investigation-<n>.session` is a symbolic link |
 | 409 | `workflow-run-workspace-root` | a read root (the hub or a declared repo) is `/`, the home folder or one of its ancestors, where reads would reach the developer's own credentials |
 | 409 | `urn:agent-hub:problem:hub-registry-unreadable` (`hub_registry_unreadable`) | the hub registry cannot be read |
-| 409 | `urn:agent-hub:problem:hub-local-invalid` (`hub_local_invalid`) | the hub's `hub.local.json` cannot be read, so its env files and credential names are unknown (an investigation session, a start or a pick) |
+| 409 | `urn:agent-hub:problem:hub-local-invalid` (`hub_local_invalid`) | the hub's `hub.local.json` cannot be read or conflicts with `hub.json` (it loosens an environment's access, for example), so its env files, credential names and environments are unknown (an investigation session, a plan, a start, a pick or an issue's create) |
 | 422 | `workflow-run-invalid-inputs` · the body's | inputs that do not fit the scenario's · a body outside its model |
 | 422 | `record_too_large` · `record_unreadable` | the run's record is over 8 MiB · a line before its last is not one JSON object |
 | 502 | `workflow-run-launch-failed` · `-resume-failed` · `-decision-unknown` · `scenario-run-issue-failed` | a child that cannot start or finish · the answer is recorded, the resume did not start · `hub workflow decide` outlasted 60 s · the tracker's create failed |

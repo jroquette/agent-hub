@@ -1263,3 +1263,39 @@ def test_reads_no_actions_when_scenarios_run_answered_without_drafts(
     assert shown.status_code == 200, shown.text
     assert shown.json()["proposal"]["options"][0]["refusal"] is not None
     assert reads == []
+
+
+# Review round 2 (E-14): the draft needs no hub.local.json; a local file that conflicts with
+# hub.json refuses as one that cannot be read.
+
+
+def test_answers_draft_when_scenarios_finding_issue_local_file_broken(scenarios: Any) -> None:
+    write_records(scenarios.hub, a_paused_walk(scenarios.hub))
+    fake = scenarios.reader.hubs[str(scenarios.hub)]
+    fake.local = (ConfigProblem(path="hub.local.json", message="not valid JSON"),)
+    path = f"/scenario-runs/{WALK_RUN}/findings/f1/issue"
+
+    drafted = _post(scenarios, path, {})
+    confirmed = _post(scenarios, path, {"confirm": True})
+
+    assert drafted.status_code == 200, drafted.text
+    assert (drafted.json()["team"], drafted.json()["created"]) == ("DEM", None)
+    assert drafted.json()["title"] == "Scenario order-walk: Order stays on hold"
+    assert (confirmed.status_code, confirmed.json()["code"]) == (409, "hub_local_invalid")
+    assert scenarios.backend.issues == {}
+
+
+def test_returns_409_conflict_when_scenarios_local_file_loosens_environment(
+    scenarios: Any,
+) -> None:
+    # hub.local.json parses, but loosens hub.json's staging (ask) to write.
+    fake = scenarios.reader.hubs[str(scenarios.hub)]
+    fake.local = LocalConfig.model_validate({"environments": {"staging": {"access": "write"}}})
+    body = {"environment": "staging", "inputs": {"ref": "T-1"}}
+
+    planned = _post(scenarios, "/scenarios/demo/order-walk/plan", body)
+    started = _post(scenarios, "/scenarios/demo/order-walk/runs", body)
+
+    assert (planned.status_code, planned.json()["code"]) == (409, "hub_local_invalid")
+    assert (started.status_code, started.json()["code"]) == (409, "hub_local_invalid")
+    assert scenarios.launcher.calls == []
