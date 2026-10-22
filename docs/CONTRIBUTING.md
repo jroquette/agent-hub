@@ -183,9 +183,10 @@ bytes.
 ## Releases
 
 A release is an annotated tag `vX.Y.Z` on a commit of `main` ([ADR 0013](adr/0013-release-by-git-tags.md)). The
-`release.yml` workflow creates it when dispatched ([ADR 0047](adr/0047-release-tag-by-workflow-dispatch.md)); no agent
-session holds a credential that can push a tag. Never create a tag through the GitHub Releases UI or with a plain
-`git tag`: both make a lightweight tag, which `release.yml` rejects.
+`release.yml` workflow creates it when dispatched ([ADR 0047](adr/0047-release-tag-by-workflow-dispatch.md)). The rule:
+an agent never creates or pushes a tag itself; only the dispatched workflow does. A `v*` tag ruleset that lets only the
+workflow create tags would enforce it; it is not set up yet (the owner's choice). Never create a tag through the GitHub
+Releases UI or with a plain `git tag`: both make a lightweight tag, which `release.yml` rejects.
 
 The hub's `/release` skill runs the whole release. The owner does three things: confirm the version and the SHA at its
 gate, merge the version PR, and merge the hub pin PR. The agent does the rest:
@@ -204,11 +205,16 @@ gate, merge the version PR, and merge the hub pin PR. The agent does the rest:
 
    ```bash
    gh workflow run release.yml --ref main -f version=X.Y.Z -f sha=<full sha> -f notes="$(cat <notes file>)"
-   gh run list --workflow release.yml --event workflow_dispatch --limit 1   # the run's id
    gh run watch <run id> --exit-status
    ```
 
-   Its `release-tag` job refuses a malformed version or SHA, empty notes, a commit not on `main`, a commit whose cli
+   The run id comes from the run URL `gh workflow run` prints. When it prints none, the run is the one in
+   `gh run list --workflow release.yml --event workflow_dispatch --json databaseId,displayTitle,createdAt` whose
+   title is `release vX.Y.Z at <full sha>` (the workflow's `run-name`) and that was created after the dispatch: the
+   newest run may be the previous release's. Inputs are capped at 65,535 characters: longer notes get their sync list
+   trimmed to a summary, and the hub PR keeps the full list.
+
+   Its `release-tag` job runs only on a dispatch from `main` and refuses a malformed version or SHA, empty notes, a commit not on `main`, a commit whose cli
    and meta versions differ from `X.Y.Z` (`scripts/check_release.py` on that commit's files) and a tag that already
    exists. Then it runs `git tag -a vX.Y.Z --cleanup=verbatim -F <notes> <sha>` as `github-actions[bot]` and pushes
    that one tag. A tag pushed with `GITHUB_TOKEN` starts no other workflow, so `release-check` runs next in the same
@@ -219,7 +225,7 @@ gate, merge the version PR, and merge the hub pin PR. The agent does the rest:
 6. **The hub pin PR.** `platform.version` in the hub's `hub.json`, `hub sync`, `hub doctor` and the hub's check, with
    the notes' sync section in the PR body.
 
-A tag pushed by hand (`git tag -a vX.Y.Z -F <notes> <sha>`, then `git push origin vX.Y.Z`, that one tag, never
+A tag pushed by hand (`git tag -a vX.Y.Z --cleanup=verbatim -F <notes> <sha>`, then `git push origin vX.Y.Z`, that one tag, never
 `--tags`) is still checked: `release.yml` runs `release-check` on every pushed `v*` tag. Wait for that run to be green:
 a red run means the tag is not a release (0.9.0 to 0.14.0, and 0.20.0, were lightweight tags whose runs failed).
 `tests/e2e/test_release_annotated_tag.py` runs the annotation step with real git and proves a lightweight tag is
