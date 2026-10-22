@@ -585,7 +585,9 @@ replaces Live sessions and the separate list of driven sessions (design in
   only. `Session` carries the tile fields `LiveTile` has, derived on read; no new route or migration, and the event payload allow-list does not change.
 - **Driven sessions in the same list.** A session `hub web` drives shows once: as its observed twin with a "Chat"
   badge, or, with no twin (`AgentSession.observed_session_id` null), in its own status section. Every tile and row
-  has a visible Open (or Open chat, Answer) and a real link. New session is a short dialog (where and the prompt).
+  has a visible Open (or Open chat, Answer) and a real link. New session is a short dialog: where, and the prompt
+  written in the chat's message card with its images and files
+  ([agent-sessions.md](design/agent-sessions.md#new-session-the-first-prompt-in-the-chats-card-agh-421)).
 - **Chat.** The chat stays a full page and behaves as a chat client: it opens at the latest entry, follows the stream
   only at the bottom, keeps header, composer and Stop on screen, and has message time and Copy, code labels, clear
   tool states, a saved draft, a `/` menu and keyboard paths for permissions

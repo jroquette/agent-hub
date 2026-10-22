@@ -90,6 +90,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   browser), docks beside the page from 1280 px and lays over it below, closes with Escape and gives focus back; its
   header is two quiet rows with one menu, it shows what Claude is doing and full errors, and it starts with a short
   title and the starters as rows.
+- `hub web`'s chat takes PDF and text files with a message for Claude to read, up to 10 per message and 5 MB each
+  (AGH-419): Attach, a paste or a drop adds them as chips with name and size beside the images, and a sent message
+  lists them. The server keeps no file byte, only each file's name and size in the log. A session's first prompt may
+  carry pasted images and files too, so the Discuss panel takes them from its first message. The agent-session
+  routes' body cap goes to 160 MiB.
 - The base plugin gains the `/premortem` and `/context-audit` skills (AGH-414). `/premortem` assumes a decision
   already failed and gives its top three causes an early-warning sign and the cheapest experiment that could prove the
   choice wrong. `/context-audit` estimates the always-loaded context of a hub and its repos and ranks the cuts by
@@ -141,6 +146,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - The hub guard denies, instead of asking, a call it would ask about when the session runs in Claude Code's
   `auto` mode, with the same reason and a note, so the agent takes another way; other modes still ask (AGH-430). It
   arrives with `hub sync` after you bump `platform.version`.
+- hub web's New session writes its first prompt in the chat's message card (AGH-421): images, PDFs and text files
+  pasted, dropped or attached go with it, `/` lists the folder's skills, and the mode and model are pills in the
+  card's bar, sized to their value, instead of an Options section. A shake's screenshot sits in the same attachments
+  row, and the chat shows the first prompt's images.
 - `make playground-export`: a session is credited with the hub files of a Studio Publish through the draft it
   wrote (the `draft_id` a `publish` version names, read from the conductor's item versions), instead of a
   `PUBLISHED <path>` line in Claude's reply, which the server publish no longer gives (AGH-298). A conductor older

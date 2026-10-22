@@ -130,8 +130,8 @@ describe("ShakeToSession (shake to start a session)", () => {
     expect(order).toEqual(["capture before dialog"]);
     expect(captureScreen).toHaveBeenCalledTimes(1);
     expect(
-      within(dialog).getByRole("checkbox", { name: "Attach a screenshot of the current screen" }),
-    ).toBeChecked();
+      within(dialog).getByRole("button", { name: "Remove Screenshot of the screen you shook" }),
+    ).toBeInTheDocument();
     expect(
       within(dialog).getByRole("img", { name: "Screenshot of the screen you shook" }),
     ).toHaveAttribute("src", SHOT);
@@ -318,11 +318,7 @@ describe("ShakeToSession (shake to start a session)", () => {
     shake();
 
     const dialog = await screen.findByRole("dialog", { name: "New session" });
-    const attach = within(dialog).getByRole("checkbox", {
-      name: "Attach a screenshot of the current screen",
-    });
-    expect(attach).not.toBeChecked();
-    expect(attach).toBeDisabled();
+    expect(within(dialog).queryByRole("button", { name: /screenshot/i })).toBeNull();
     expect(within(dialog).getByText("No screenshot was taken")).toBeInTheDocument();
     expect(within(dialog).queryByRole("img")).toBeNull();
   });
@@ -336,9 +332,7 @@ describe("ShakeToSession (shake to start a session)", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "New session" });
     expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveValue(REPO_ID);
-    expect(within(dialog).getByRole("button", { name: "Options" })).toHaveAccessibleDescription(
-      /^Auto ·/,
-    );
+    expect(within(dialog).getByRole("combobox", { name: "Mode" })).toHaveValue("auto");
     expect(within(dialog).queryByRole("note")).toBeNull();
   });
 
@@ -369,9 +363,7 @@ describe("ShakeToSession (shake to start a session)", () => {
 
     const dialog = await screen.findByRole("dialog", { name: "New session" });
     expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveValue(REPO_ID);
-    expect(within(dialog).getByRole("button", { name: "Options" })).toHaveAccessibleDescription(
-      /^Auto ·/,
-    );
+    expect(within(dialog).getByRole("combobox", { name: "Mode" })).toHaveValue("auto");
   });
 
   it("live-edit-fallback: no served checkout keeps the defaults and shows the note", async () => {
@@ -384,9 +376,7 @@ describe("ShakeToSession (shake to start a session)", () => {
     expect(within(dialog).getByRole("combobox", { name: "Working folder" })).toHaveValue(
       aWorkdir().workdir_id,
     );
-    expect(within(dialog).getByRole("button", { name: "Options" })).toHaveAccessibleDescription(
-      /^Ask before edits ·/,
-    );
+    expect(within(dialog).getByRole("combobox", { name: "Mode" })).toHaveValue("default");
     expect(within(dialog).getByRole("note")).toHaveTextContent(LIVE_RELOAD_NOTE);
     expect(LIVE_RELOAD_NOTE).toBe("Live reload needs make dev in a listed folder");
   });
