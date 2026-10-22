@@ -216,6 +216,11 @@ DESIGN_PATHS = (
     "workflows/sdlc/scripts/pass_outcome.py",
     "workflows/sdlc/scripts/verdict.py",
     "workflows/sdlc/ticket-pass.yaml",
+    "workflows/security-sweep/prompts/triage.md",
+    "workflows/security-sweep/scripts/new.py",
+    "workflows/security-sweep/scripts/report.py",
+    "workflows/security-sweep/scripts/scan.py",
+    "workflows/security-sweep/security-sweep.yaml",
 )
 # AGH-19 spec "The rendered set": the base plugin's agents, by file stem, and its skills, by
 # folder name.
@@ -838,6 +843,8 @@ def test_parses_as_python39_when_rendered(demo_render: dict[str, RenderedFile]) 
         "scripts",
         # The sdlc pack's helpers (AGH-229), run by uv on its Python, also parse as 3.9.
         "workflows/sdlc/scripts",
+        # The security-sweep pack's scripts (AGH-486), likewise.
+        "workflows/security-sweep/scripts",
     }
 
 

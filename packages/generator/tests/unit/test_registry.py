@@ -88,6 +88,11 @@ SEEDED_PACK_FILES = (
     "sdlc/scripts/pass_outcome.py",
     "sdlc/scripts/verdict.py",
     "sdlc/ticket-pass.yaml",
+    "security-sweep/prompts/triage.md",
+    "security-sweep/scripts/new.py",
+    "security-sweep/scripts/report.py",
+    "security-sweep/scripts/scan.py",
+    "security-sweep/security-sweep.yaml",
 )
 CORE_SOURCES |= {
     f"workflows/{name}": (BUILTIN_PACKAGE, f"{BUILTIN_FOLDER}/{name}") for name in SEEDED_PACK_FILES

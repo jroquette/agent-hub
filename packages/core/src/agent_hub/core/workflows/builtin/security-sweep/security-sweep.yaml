@@ -1,0 +1,261 @@
+# A weekly security sweep: the scanners that are installed run on each repo of hub.json
+# as of origin/<default branch> (no fetch: the report names the commit scanned), in a detached
+# worktree under TMPDIR that is removed after; the findings not seen before go to one triage
+# session that follows the hub's security-reviewer agent; the ones it keeps go to a note in
+# brain/_inbox/ for /triage. The findings are marked seen only after the report is written, so a
+# failed triage or report brings them back next run.
+#
+# Invariants: read-only on code (no node edits a repo; the agent is read-only); no tracker write
+# (ADR 0030: the note says to file an issue per accepted finding, then run /triage <issue>); no
+# secret value in a node output, the run record or the note (scan.py keeps an allow-list of
+# structured fields and drops a secret finding's line; report.py writes a secret finding from
+# scan data only); no scanner is installed (a missing one is named in the note, not a failure).
+#
+# Scanners, each run only when on PATH: semgrep (p/security-audit and p/secrets, or the repo's
+# own .semgrep.yml; registry rules need the network), bandit (no network), pip-audit on uv.lock
+# (exported offline with uv) or requirements*.txt, with --disable-pip --no-deps (PyPI/OSV
+# advisories over the network), npm audit --package-lock-only (npm registry advisories over the
+# network; package-lock.json only, not yarn or pnpm), and the hub guard's secret-file rule
+# (plugin/hub-workflow/hooks/guard.py, in process).
+#
+# Residual risk: the triage agent may read a hard-coded credential while tracing another finding
+# in the same file and quote it in its text; that text stays in the local run record and, for a
+# non-secret finding, in the note. The prompt forbids quoting credentials. A repo's own
+# .semgrep.yml decides Semgrep's rules.
+#
+# Suggested schedule (hub.json schedules, UTC): {"workflow": "security-sweep", "cron": "0 6 * * 1"}.
+# Gates: hub workflow validate security-sweep; hub workflow test security-sweep.
+version: 1
+name: security-sweep
+description: Weekly scanners on every repo, new findings triaged by the security reviewer, kept ones to brain/_inbox for /triage.
+revision: 1
+inputs:
+  repo:
+    default: ""
+    description: One repo's dir in hub.json to sweep; empty sweeps every repo.
+returns: mark
+outcome_field: status
+nodes:
+  - id: scan
+    type: script
+    description: Run the installed scanners on each repo as of origin/<branch>, in a TMPDIR worktree; structured fields only.
+    runtime: python
+    script: scan.py
+    args: [--repo, $INPUTS.repo]
+    effect: read
+    mutates_checkout: false
+    timeout: 45m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [repos, findings, more, trimmed]
+      properties:
+        repos:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [repo, ref, head, date, status, note, scanners]
+            properties:
+              repo: {type: string, maxLength: 100}
+              ref: {type: string, maxLength: 120}
+              head: {type: string, pattern: "^([0-9a-f]{40})?$"}
+              date: {type: string, maxLength: 40}
+              status: {type: string, enum: [scanned, unreadable]}
+              note: {type: string, maxLength: 200}
+              scanners:
+                type: array
+                maxItems: 5
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [name, status, note, count]
+                  properties:
+                    name: {type: string, enum: [semgrep, bandit, pip-audit, npm, guard]}
+                    status: {type: string, enum: [ran, missing, skipped, failed, timeout]}
+                    note: {type: string, maxLength: 200}
+                    count: {type: integer, minimum: 0}
+        findings:
+          type: array
+          maxItems: 1000
+          items:
+            type: object
+            additionalProperties: false
+            required: [repo, scanner, rule, path, line, severity, cwe, secret, package, version, advisory, fixed, title]
+            properties:
+              repo: {type: string, maxLength: 100}
+              scanner: {type: string, enum: [semgrep, bandit, pip-audit, npm, guard]}
+              rule: {type: string, maxLength: 200}
+              path: {type: string, maxLength: 300}
+              line: {type: [integer, "null"], minimum: 0}
+              severity: {type: string, enum: [critical, high, medium, low, unknown]}
+              cwe: {type: string, pattern: "^(CWE-[0-9]{1,5})?$"}
+              secret: {type: boolean}
+              package: {type: string, maxLength: 214}
+              version: {type: string, maxLength: 64}
+              advisory: {type: string, maxLength: 200}
+              fixed: {type: string, maxLength: 200}
+              title: {type: string, maxLength: 200}
+        more: {type: integer, minimum: 0}
+        trimmed: {type: boolean}
+
+  - id: new
+    type: script
+    description: The findings not marked seen in the hub's store, listed for triage (writes nothing).
+    depends_on: [scan]
+    runtime: python
+    script: new.py
+    args: [select]
+    # On stdin: the scan may be longer than one argument holds.
+    stdin: $scan.output
+    effect: read
+    mutates_checkout: false
+    timeout: 2m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [findings, listed, counts, ran, current, store_problem]
+      properties:
+        findings:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, fingerprint, repo, scanner, rule, path, line, severity, cwe, secret, package, version, advisory, fixed, title]
+            properties:
+              id: {type: string, pattern: "^F[1-9][0-9]{0,2}$"}
+              fingerprint: {type: string, pattern: "^[A-Za-z0-9._-]{1,100}/[a-z-]{1,10}/[0-9a-f]{16}$"}
+              repo: {type: string, maxLength: 100}
+              scanner: {type: string, enum: [semgrep, bandit, pip-audit, npm, guard]}
+              rule: {type: string, maxLength: 200}
+              path: {type: string, maxLength: 300}
+              line: {type: [integer, "null"], minimum: 0}
+              severity: {type: string, enum: [critical, high, medium, low, unknown]}
+              cwe: {type: string, pattern: "^(CWE-[0-9]{1,5})?$"}
+              secret: {type: boolean}
+              package: {type: string, maxLength: 214}
+              version: {type: string, maxLength: 64}
+              advisory: {type: string, maxLength: 200}
+              fixed: {type: string, maxLength: 200}
+              title: {type: string, maxLength: 200}
+        listed: {type: integer, minimum: 0, maximum: 100}
+        counts:
+          type: object
+          additionalProperties: false
+          required: [new, seen, more]
+          properties:
+            new: {type: integer, minimum: 0}
+            seen: {type: integer, minimum: 0}
+            more: {type: integer, minimum: 0}
+        ran:
+          type: array
+          maxItems: 500
+          items:
+            type: object
+            additionalProperties: false
+            required: [repo, scanner]
+            properties:
+              repo: {type: string, maxLength: 100}
+              scanner: {type: string, enum: [semgrep, bandit, pip-audit, npm, guard]}
+        current:
+          type: array
+          maxItems: 1000
+          items: {type: string, pattern: "^[A-Za-z0-9._-]{1,100}/[a-z-]{1,10}/[0-9a-f]{16}$"}
+        store_problem: {type: string, maxLength: 200}
+
+  - id: triage
+    type: agent
+    description: The security reviewer's steps on the new findings, read-only; keeps the exploitable ones.
+    depends_on: [new]
+    when: "$new.output.listed > 0"
+    context: fresh
+    prompt_file: triage.md
+    model: large
+    limits: {max_turns: 80, max_cost_usd: 6.0}
+    with:
+      findings: $new.output.findings
+      repos: $scan.output.repos
+    mutates_checkout: false
+    timeout: 45m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [kept, unresolved, dropped]
+      properties:
+        kept:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, attack, fix]
+            properties:
+              id: {type: string, pattern: "^F[1-9][0-9]{0,2}$"}
+              attack: {type: string, maxLength: 400}
+              fix: {type: string, maxLength: 400}
+        unresolved:
+          type: array
+          maxItems: 20
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, why]
+            properties:
+              id: {type: string, pattern: "^F[1-9][0-9]{0,2}$"}
+              why: {type: string, maxLength: 300}
+        dropped: {type: integer, minimum: 0}
+
+  - id: report
+    type: script
+    description: Write the note for /triage in brain/_inbox/ (kept findings only; a secret one as rule and path).
+    depends_on: [new, triage]
+    trigger_rule: none_failed_min_one_success
+    runtime: python
+    script: report.py
+    args:
+      - --findings
+      - $new.output.findings
+      - --repos
+      - $scan.output.repos
+      - --counts
+      - $new.output.counts
+      - --store-problem
+      - $new.output.store_problem
+    # On stdin: the triage reply, empty when triage was skipped (nothing new).
+    stdin: $triage.output
+    timeout: 2m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [path, kept, secrets, missing, status]
+      properties:
+        path: {type: string}
+        kept: {type: integer, minimum: 0}
+        secrets: {type: integer, minimum: 0}
+        missing: {type: array, maxItems: 100, items: {type: string, maxLength: 120}}
+        status: {type: string, enum: [findings, clean]}
+
+  - id: mark
+    type: script
+    description: Mark this run's listed findings seen in the hub's store, now that the report exists.
+    depends_on: [report]
+    runtime: python
+    script: new.py
+    args: [mark, --status, $report.output.status]
+    stdin: $new.output
+    timeout: 2m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [status, marked, store_size]
+      properties:
+        status: {type: string, enum: [findings, clean]}
+        marked: {type: integer, minimum: 0}
+        store_size: {type: integer, minimum: 0}
