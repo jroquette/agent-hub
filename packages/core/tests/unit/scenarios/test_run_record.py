@@ -161,3 +161,62 @@ def test_keeps_polls_captures_and_decisions_when_records_folded() -> None:
         "demo",
         "web",
     )
+
+
+def test_keeps_action_facts_when_action_lines_folded() -> None:
+    """Each action call's policy facts (AGH-350 E-15): never its inputs or output."""
+    record = [
+        *a_record(),
+        {"event": "action", "node": "order-held", "attempt": 1, "poll": 2}
+        | {"action": "demo/get-order", "environment": "local", "effect": "read"}
+        | {"origin": "author", "decision": "allow", "content_hash": "sha256:" + "a" * 64}
+        | {"service": ["demo-api/api"], "reason_kind": "table", "inputs": {"ref": "T-1"}}
+        | {"status": "ok", "failure_kind": None, "ts": "2026-10-21T10:00:30+00:00"},
+        {"event": "action", "node": "release", "attempt": 1, "poll": 0, "action": "demo/release"}
+        | {"effect": "write", "origin": "agent", "decision": "ask", "approver": "dev"}
+        | {"status": "failed", "failure_kind": "exec_failed"},
+    ]
+
+    view = fold_records(record)
+
+    first, second = view.actions
+    assert (first.node, first.attempt, first.poll, first.action, first.effect) == (
+        "order-held",
+        1,
+        2,
+        "demo/get-order",
+        "read",
+    )
+    assert (first.origin, first.decision, first.reason_kind, first.status) == (
+        "author",
+        "allow",
+        "table",
+        "ok",
+    )
+    assert first.content_hash == "sha256:" + "a" * 64
+    assert first.at == "2026-10-21T10:00:30+00:00"
+    assert "T-1" not in repr(first)
+    assert (second.decision, second.approver, second.failure_kind) == ("ask", "dev", "exec_failed")
+    assert all(item.event != "action" for item in view.timeline)
+
+
+def test_names_action_and_effect_when_agent_action_folded() -> None:
+    """An investigation read's line in the timeline names its action and effect (E-15)."""
+    record = [
+        *a_record(),
+        {"event": "agent_action", "gate": GATE, "number": 1, "item": "", "action": "demo/get"}
+        | {"effect": "read", "origin": "agent", "decision": "allow", "status": "ok"}
+        | {"output": {"secret": "x"}},
+    ]
+
+    view = fold_records(record)
+
+    read = view.timeline[-1]
+    assert (read.event, read.node, read.action, read.effect, read.status) == (
+        "agent_action",
+        GATE,
+        "demo/get",
+        "read",
+        "ok",
+    )
+    assert all(item.action is None for item in view.timeline[:-1])

@@ -3,6 +3,8 @@
 from enum import StrEnum
 from typing import Literal
 
+from pydantic import Field
+
 from agent_hub.core.events.stored_event import EventId
 from agent_hub.core.readmodels.view_types import ApiTimestamp, DerivedView
 
@@ -17,6 +19,7 @@ class ApprovalKind(StrEnum):
     PERMISSION = "permission"
 
 
+type GateKindName = Literal["policy", "investigation"]
 type ApprovalStatus = Literal["open", "approved", "declined", "changes_requested", "rejected"]
 
 
@@ -49,3 +52,7 @@ class Approval(DerivedView):
     how_to_decide: str | None = None
     request_event_id: EventId
     decision_event_id: EventId | None = None
+    # An engine run's open gate, as its run's own record names it (E-10, E-15): a policy ask or
+    # an investigation; ``GET /approvals`` sets it, never from the gate's id. Left out of the
+    # JSON when unknown (an authored gate, another kind, a record that cannot be read).
+    gate_kind: GateKindName | None = Field(default=None, exclude_if=lambda value: value is None)

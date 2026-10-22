@@ -33,6 +33,7 @@ that accepts it, AM-5) and whether it can be picked now (core's ``option_refusal
 
 import contextlib
 import dataclasses
+import json
 import os
 import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -58,6 +59,7 @@ from agent_hub.api.scenario_investigation import (
     RUN_FOLDERS,
     SCENARIO_KIND,
     InvestigationRestrictions,
+    linked_session,
     open_investigation,
     read_records,
 )
@@ -69,7 +71,12 @@ from agent_hub.core.json_form import JsonValue
 from agent_hub.core.readmodels.filters import MAX_PAGE_LIMIT, RunFilter, Scope
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError, EventReadModels
 from agent_hub.core.readmodels.view_types import ApiTimestamp, ViewModel
-from agent_hub.core.runs.workflow_run import WorkflowRun, WorkflowRunStatus, scenario_label
+from agent_hub.core.runs.workflow_run import (
+    RunEnvironment,
+    WorkflowRun,
+    WorkflowRunStatus,
+    scenario_label,
+)
 from agent_hub.core.scenarios.access_policy import PolicyDecision, deny_reason
 from agent_hub.core.scenarios.action_catalog import ActionEntry
 from agent_hub.core.scenarios.findings import (
@@ -103,6 +110,7 @@ from agent_hub.core.workflows.gate_decisions import ResumeAfterDecisionError
 from agent_hub.core.workflows.gates import GateAnswer
 from agent_hub.core.workflows.launch import (
     MAX_INPUTS,
+    RUN_ID_PATTERN,
     InputName,
     InputValue,
     RunAccepted,
@@ -127,6 +135,9 @@ RUN_PAGE: Final = 50
 INBOX_FOLDER: Final = Path("brain", "_inbox")
 FINDING_ID_TEXT: Final = r"^f[0-9]{1,6}$"
 _NEW_FILE: Final = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+_READ_FILE: Final = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+# A run record's first line (its start record) is read up to this size for a run's facts.
+HEADER_BYTES: Final = 64 << 10
 ANSWERED: Final = "the investigation is answered; its options can no longer be picked"
 LOCAL_UNREADABLE: Final = (
     "hub.local.json cannot be read or conflicts with hub.json, so the options cannot be planned now"
@@ -143,12 +154,23 @@ type Inputs = Annotated[dict[InputName, InputValue], Field(max_length=MAX_INPUTS
 
 
 class ScenarioRunRef(ViewModel):
-    """A scenario run as the folded events show it."""
+    """A scenario run as the folded events show it, with the environment and mode its start
+    record names (``None`` when the record cannot be read)."""
 
     run_id: str
     status: WorkflowRunStatus
     started_at: ApiTimestamp
     ended_at: ApiTimestamp | None
+    environment: str | None = None
+    mode: str | None = None
+
+
+class ScenarioEnvironment(ViewModel):
+    """An environment the project's hub declares, as the effective config reads now."""
+
+    name: str
+    access: str
+    production: bool
 
 
 class ScenarioSummary(ViewModel):
@@ -176,10 +198,12 @@ class ScenarioStepView(ViewModel):
 
 
 class ScenarioDetail(ScenarioSummary):
-    """A scenario's steps and its scenario runs, newest first."""
+    """A scenario's steps, its scenario runs, newest first, and the environments it can be
+    planned in (empty when ``hub.local.json`` or ``hub.json`` cannot be read)."""
 
     steps: tuple[ScenarioStepView, ...]
     runs: tuple[ScenarioRunRef, ...]
+    environments: tuple[ScenarioEnvironment, ...] = ()
 
 
 class ScenarioCatalogView(ViewModel):
@@ -190,10 +214,33 @@ class ScenarioCatalogView(ViewModel):
 
 
 class TimelineEntry(ViewModel):
+    """A line of the run's timeline; an investigation read (``agent_action``) names its action
+    and effect."""
+
     event: str
     node: str | None
     attempt: int | None
     status: str | None
+    at: str | None
+    action: str | None = None
+    effect: str | None = None
+
+
+class ActionCallEntry(ViewModel):
+    """An action call's policy facts, from its record line: never its inputs or output."""
+
+    node: str
+    attempt: int | None
+    poll: int | None
+    action: str | None
+    effect: str | None
+    origin: str | None
+    decision: str | None
+    reason_kind: str | None
+    content_hash: str | None
+    approver: str | None
+    status: str | None
+    failure_kind: str | None
     at: str | None
 
 
@@ -231,6 +278,8 @@ class FindingEntry(ViewModel):
 
 
 class InvestigationEntry(ViewModel):
+    """An investigation; ``agent_session_id`` is the session its link file names, if any."""
+
     number: int
     step: str
     gate: str
@@ -239,6 +288,7 @@ class InvestigationEntry(ViewModel):
     text: str | None
     approver: str | None
     closed: bool
+    agent_session_id: str | None = None
 
 
 class OptionEntry(ViewModel):
@@ -292,6 +342,7 @@ class ScenarioRunDetail(ViewModel):
     investigations: tuple[InvestigationEntry, ...]
     proposal: ProposalEntry | None
     workarounds: tuple[WorkaroundEntry, ...]
+    actions: tuple[ActionCallEntry, ...] = ()
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -344,7 +395,7 @@ class ScenarioCatalog:
                 continue
             source = DiscoveredScenarioSource(Path(hub))
             catalog = check_workflows(source)
-            last = self._last_runs(project)
+            last = self._last_runs(project, hub)
             for plan in catalog.plans:
                 name = plan.document.name
                 found = source.found[name]
@@ -365,7 +416,7 @@ class ScenarioCatalog:
                 project=project, kind="scenario", workflow=scenario_label(name), limit=RUN_PAGE
             )
         )
-        runs = tuple(_run_ref(run) for run in page.items)
+        runs = tuple(_run_ref(run, hub) for run in page.items)
         summary = _summary(project, plan, pack=pack, last=runs[0] if runs else None)
         steps = tuple(
             ScenarioStepView(
@@ -377,7 +428,43 @@ class ScenarioCatalog:
             )
             for node in plan.document.nodes
         )
-        return ScenarioDetail(**summary.model_dump(), steps=steps, runs=runs)
+        return ScenarioDetail(
+            **summary.model_dump(),
+            steps=steps,
+            runs=runs,
+            environments=self._environments(hub, project),
+        )
+
+    def _environments(self, hub: str, project: str) -> tuple[ScenarioEnvironment, ...]:
+        """The environments to plan in, or none when the config cannot be read whole."""
+        try:
+            view = self.credentials.environments_of(hub, project)
+        except HubLocalInvalidError, EntityNotFoundError:
+            return ()
+        return tuple(
+            ScenarioEnvironment(name=item.name, access=item.access, production=item.production)
+            for item in view.environments
+        )
+
+    def run_environment(self, project: str, run_id: str) -> RunEnvironment | None:
+        """The environment a workflow run's own start record names (the best-effort banner,
+        E-15), with its access and production flag as the effective config reads now (both
+        ``None`` when it cannot be read or no longer declares it); None without one."""
+        hub = next(
+            (path for known, path in self.credentials.project_hubs() if known == project), None
+        )
+        header = None if hub is None else run_header(hub, run_id)
+        name = None if header is None else header.get("environment")
+        if not isinstance(name, str):
+            return None
+        try:
+            view = self.credentials.environments_of(hub or "", project)
+        except HubLocalInvalidError, EntityNotFoundError:
+            return RunEnvironment(name=name, access=None, production=None)
+        found = next((item for item in view.environments if item.name == name), None)
+        if found is None:
+            return RunEnvironment(name=name, access=None, production=None)
+        return RunEnvironment(name=name, access=found.access, production=found.production)
 
     def hub_of(self, project: str) -> str:
         """The project's hub folder; ``EntityNotFoundError`` (``project``) else."""
@@ -442,11 +529,12 @@ class ScenarioCatalog:
             captures=tuple(CaptureEntry.model_validate(_fields(item)) for item in view.captures),
             decisions=tuple(DecisionEntry.model_validate(_fields(item)) for item in view.decisions),
             findings=tuple(FindingEntry.model_validate(_fields(item)) for item in view.findings),
-            investigations=tuple(_investigation(item) for item in view.investigations),
+            investigations=tuple(_investigation(item, run.folder) for item in view.investigations),
             proposal=self._proposal(run, view, waiting),
             workarounds=tuple(
                 WorkaroundEntry.model_validate(_fields(item)) for item in view.workarounds
             ),
+            actions=tuple(ActionCallEntry.model_validate(_fields(item)) for item in view.actions),
         )
 
     def _proposal(
@@ -478,7 +566,7 @@ class ScenarioCatalog:
             proposal=last.proposal.proposal, investigation=last.number, options=options
         )
 
-    def _last_runs(self, project: str) -> dict[str, ScenarioRunRef]:
+    def _last_runs(self, project: str, hub: str) -> dict[str, ScenarioRunRef]:
         """The newest scenario run of each label, from one page of the project's scenario
         runs."""
         page = self._runs.list_runs(
@@ -486,7 +574,8 @@ class ScenarioCatalog:
         )
         last: dict[str, ScenarioRunRef] = {}
         for run in page.items:
-            last.setdefault(run.workflow, _run_ref(run))
+            if run.workflow not in last:
+                last[run.workflow] = _run_ref(run, hub)
         return last
 
 
@@ -516,10 +605,38 @@ def _action_of(node: object) -> str | None:
     return action if isinstance(action, str) else None
 
 
-def _run_ref(run: WorkflowRun) -> ScenarioRunRef:
+def _run_ref(run: WorkflowRun, hub: str) -> ScenarioRunRef:
+    header = run_header(hub, run.id) or {}
+    environment, mode = header.get("environment"), header.get("mode")
     return ScenarioRunRef(
-        run_id=run.id, status=run.status, started_at=run.started_at, ended_at=run.ended_at
+        run_id=run.id,
+        status=run.status,
+        started_at=run.started_at,
+        ended_at=run.ended_at,
+        environment=environment if isinstance(environment, str) else None,
+        mode=mode if isinstance(mode, str) else None,
     )
+
+
+def run_header(hub: str, run_id: str) -> Mapping[str, JsonValue] | None:
+    """The start record (first line) of run ``run_id``'s record in ``hub``, never through a
+    link and read up to ``HEADER_BYTES``; None when it cannot be read or is not one object."""
+    folder = Path(hub) / RUN_FOLDERS / run_id
+    if not RUN_ID_PATTERN.fullmatch(run_id) or folder.is_symlink():
+        return None
+    try:
+        descriptor = os.open(folder / RECORDS, _READ_FILE)
+    except OSError:
+        return None
+    with os.fdopen(descriptor, "rb") as file:
+        first = file.read(HEADER_BYTES).split(b"\n", 1)
+    if len(first) < 2:  # noqa: PLR2004 -- the line and what follows its newline
+        return None
+    try:
+        value = json.loads(first[0])
+    except ValueError:
+        return None
+    return value if isinstance(value, dict) else None
 
 
 def _fields(item: DataclassInstance) -> dict[str, object]:
@@ -527,7 +644,7 @@ def _fields(item: DataclassInstance) -> dict[str, object]:
     return dataclasses.asdict(item)
 
 
-def _investigation(item: InvestigationView) -> InvestigationEntry:
+def _investigation(item: InvestigationView, folder: Path) -> InvestigationEntry:
     return InvestigationEntry(
         number=item.number,
         step=item.step,
@@ -537,6 +654,7 @@ def _investigation(item: InvestigationView) -> InvestigationEntry:
         text=item.text,
         approver=item.approver,
         closed=item.closed,
+        agent_session_id=linked_session(folder, item.number),
     )
 
 

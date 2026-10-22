@@ -1432,3 +1432,122 @@ def test_leaves_retryable_marker_when_scenarios_tracker_raises_other_error(
     retaken = retake_issue(folder, unfinished)
     assert isinstance(retaken, HeldFindingIssue)
     retaken.release()
+
+
+# The read fields the Scenarios screens need (AGH-350 E-15, plan T13): all read-only.
+LINKED_SESSION = "0192f00d-0000-7000-8000-000000000001"
+
+
+def test_lists_environments_and_run_facts_when_scenarios_detail_read(scenarios: Any) -> None:
+    scenarios.events.runs.append(
+        read_model_builders.a_run(
+            id=WALK_RUN, workflow="scenario:order-walk", status="running", issue=None
+        )
+    )
+    scenarios.events.runs.append(
+        read_model_builders.a_run(id="walk-0", workflow="scenario:order-walk", issue=None)
+    )
+    write_records(scenarios.hub, a_paused_walk(scenarios.hub))
+
+    detail = scenarios.client.get("/api/v1/scenarios/demo/order-walk").json()
+    (item,) = scenarios.client.get("/api/v1/scenarios").json()["items"]
+
+    assert detail["environments"] == [
+        {"name": "local", "access": "write", "production": False},
+        {"name": "staging", "access": "ask", "production": False},
+        {"name": "live", "access": "read", "production": True},
+    ]
+    shown = [(run["run_id"], run["environment"], run["mode"]) for run in detail["runs"]]
+    # A run whose record cannot be read names neither.
+    assert shown == [(WALK_RUN, "live", "interactive"), ("walk-0", None, None)]
+    assert (item["last_run"]["environment"], item["last_run"]["mode"]) == ("live", "interactive")
+
+
+def test_lists_no_environments_when_scenarios_local_file_invalid(scenarios: Any) -> None:
+    fake = scenarios.reader.hubs[str(scenarios.hub)]
+    fake.local = LocalConfig.model_validate({"environments": {"staging": {"access": "write"}}})
+
+    detail = scenarios.client.get("/api/v1/scenarios/demo/order-walk")
+
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["environments"] == []
+
+
+def test_names_session_reads_and_action_facts_when_scenarios_run_read(scenarios: Any) -> None:
+    hub = scenarios.hub
+    records = a_paused_walk(hub)
+    records.insert(
+        3,
+        {"event": "action", "node": "order-held", "attempt": 1, "poll": 1}
+        | {"action": "demo/get-order", "environment": "live", "effect": "read"}
+        | {"origin": "author", "decision": "allow", "content_hash": "sha256:" + "1" * 64}
+        | {"reason_kind": "table", "inputs": {"ref": "T-1"}, "status": "ok", "failure_kind": None},
+    )
+    records.append(
+        {"event": "agent_action", "gate": WALK_GATE, "number": 1, "item": "", "status": "ok"}
+        | {"action": "demo/get-order", "effect": "read", "origin": "agent", "decision": "allow"}
+        | {"output": {"status": "OPEN"}}
+    )
+    write_records(hub, records)
+    link = hub / WALK_RECORDS.parent / "investigation-1.session"
+    link.write_text(f"{LINKED_SESSION}\n", encoding="ascii")
+
+    body = scenarios.client.get(f"/api/v1/scenario-runs/{WALK_RUN}").json()
+
+    (investigation,) = body["investigations"]
+    assert investigation["agent_session_id"] == LINKED_SESSION
+    read = body["timeline"][-1]
+    assert (read["event"], read["action"], read["effect"]) == (
+        "agent_action",
+        "demo/get-order",
+        "read",
+    )
+    (call,) = body["actions"]
+    assert (call["node"], call["action"], call["effect"], call["decision"]) == (
+        "order-held",
+        "demo/get-order",
+        "read",
+        "allow",
+    )
+    assert (call["origin"], call["poll"], call["status"]) == ("author", 1, "ok")
+    assert "T-1" not in json.dumps(body["actions"])
+
+
+def test_names_no_session_when_scenarios_investigation_link_missing_or_link(
+    scenarios: Any, tmp_path: Path
+) -> None:
+    write_records(scenarios.hub, a_paused_walk(scenarios.hub))
+    unlinked = scenarios.client.get(f"/api/v1/scenario-runs/{WALK_RUN}").json()
+    target = tmp_path / "elsewhere.session"
+    target.write_text(f"{LINKED_SESSION}\n", encoding="ascii")
+    (scenarios.hub / WALK_RECORDS.parent / "investigation-1.session").symlink_to(target)
+
+    through_link = scenarios.client.get(f"/api/v1/scenario-runs/{WALK_RUN}").json()
+
+    assert unlinked["investigations"][0]["agent_session_id"] is None
+    # Never read through a link.
+    assert through_link["investigations"][0]["agent_session_id"] is None
+
+
+def test_shows_run_environment_and_access_when_workflow_run_environment_recorded(
+    scenarios: Any,
+) -> None:
+    events = scenarios.events
+    events.runs.append(read_model_builders.a_run(id="flow-1", workflow="sync", issue=None))
+    events.runs.append(read_model_builders.a_run(id="flow-2", workflow="sync", issue=None))
+    events.runs.append(read_model_builders.a_run(id="flow-3", workflow="sync", issue=None))
+    for run, environment in (("flow-1", "live"), ("flow-3", "gone")):
+        folder = scenarios.hub / ".agent-runs" / "workflows" / run
+        folder.mkdir(parents=True)
+        start = {"event": "start", "run": run, "workflow": "sync", "environment": environment}
+        (folder / "records.jsonl").write_text(json.dumps(start) + "\n", encoding="utf-8")
+
+    declared = scenarios.client.get("/api/v1/workflow-runs/flow-1")
+    without = scenarios.client.get("/api/v1/workflow-runs/flow-2")
+    undeclared = scenarios.client.get("/api/v1/workflow-runs/flow-3")
+
+    assert declared.status_code == 200, declared.text
+    assert declared.json()["environment"] == {"name": "live", "access": "read", "production": True}
+    # No record, or a record without an environment: the run reads as before.
+    assert "environment" not in without.json()
+    assert undeclared.json()["environment"] == {"name": "gone", "access": None, "production": None}
