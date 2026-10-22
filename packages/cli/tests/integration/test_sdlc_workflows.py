@@ -974,7 +974,6 @@ def test_prints_what_its_check_declares_when_preflight_result_script_runs(tmp_pa
     assert result.returncode == 0, result.stderr
     assert checked(result.stdout, "preflight-check", "result") == {
         "status": "passed",
-        "drift": "local",
         "superseded": SUPERSEDED,
     }
 
@@ -989,8 +988,10 @@ PREFLIGHT_OUTCOME = (
     "pr: https://github.com/acme/demo-api/pull/4\ndependents: [DEM-8]\n---\n\n"
     "# Outcome: DEM-7\n\n## What was built\n\nThe reader.\n"
 )
+# The agent lists no blocker read: the run still records the one it was started for (F4).
 NO_DRIFT = PLAN_DRIFT | {
     "drift": "none",
+    "blockers_read": [],
     "evidence": "",
     "proposal": "",
     "summary": "",
@@ -1075,7 +1076,10 @@ def test_changes_no_checkout_and_reads_an_outcome_once_when_a_stubbed_preflight_
     reads = {"due", "context", "check__preflight", "check__record"}
     assert ran == reads | ({"check__request"} if drift == "plan" else {"check__result"})
     preflight = json.loads((feature / "tickets/DEM-8/preflight.json").read_text())
-    assert [run["blockers_read"] for run in preflight["runs"]] == [["DEM-7"]]
+    # On plan drift the agent listed DEM-7 (T1's id): it is not listed twice.
+    assert [run["blockers_read"] for run in preflight["runs"]] == [
+        ["DEM-7"] if drift == "plan" else ["T1"]
+    ]
     written = {path: (hub / path).read_bytes() for path in changed}
 
     second = run_command(hub, "workflow", "run", "preflight", *given, "--live", "--run-id", "pf-2")

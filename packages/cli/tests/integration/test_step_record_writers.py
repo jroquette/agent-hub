@@ -1074,7 +1074,11 @@ class TestOutcome:
         ("change", "reason"),
         [
             (("--ticket", "DEM-99"), "DEM-99 is not a ticket of features.json"),
-            (("--pr", "#pending"), "pr names no pull request: #pending"),
+            (
+                ("--pr", "#pending"),
+                "outcome.md could not be read (pr names no pull request: #pending). "
+                "Fix it in a hub PR.",
+            ),
             (("--merged-at", "2026-01-25T10:00:00"), "merged_at needs a time with an offset"),
             (("--merged-at", "soon"), "merged_at needs a time with an offset"),
             (("--built", " "), "what was built is empty"),
@@ -1132,6 +1136,28 @@ class TestOutcome:
         assert outside.read_text() == "x"
         (hub.feature / "tickets" / "T3" / "outcome.md").unlink()
 
+    # AGH-473 review Q1, Q7: another run records the outcome between the check and the write.
+    def test_keeps_the_other_runs_outcome_when_it_is_recorded_during_the_write(
+        self, hub: Hub, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        other = OUTCOME_TEXTS[:2] + ("--merged-at", "2026-01-26T09:00:00+00:00", *OUTCOME_TEXTS[4:])
+        assert hub.ok("outcome", "--feature", "demo-flow", "--ticket", "T3", *other)["written"]
+        path = hub.feature / "tickets" / "T3" / "outcome.md"
+        theirs = path.read_bytes()
+        path.unlink()
+        text = step_records.outcome_text
+
+        def racing(outcome: Any) -> bytes:
+            path.write_bytes(theirs)  # the other run's write lands now
+            return text(outcome)
+
+        monkeypatch.setattr(step_records, "outcome_text", racing)
+
+        output = hub.ok("outcome", "--feature", "demo-flow", "--ticket", "T3", *OUTCOME_TEXTS)
+
+        assert (output["written"], output["merged_at"]) == (False, "2026-01-26T09:00:00+00:00")
+        assert path.read_bytes() == theirs
+
 
 class TestPreflightDue:
     DUE = ("preflight-due", "--feature", "demo-flow", "--ticket", "DEM-8")
@@ -1144,12 +1170,7 @@ class TestPreflightDue:
         # A run before the merge read no outcome of it.
         hub.ok("preflight", *TICKET, *found(blockers_read=[]))
 
-        assert hub.ok(*self.DUE, "--blocker", "t3") == {
-            "due": True,
-            "reason": "",
-            "input": "none",
-            "merged_at": MERGED_AT,
-        }
+        assert hub.ok(*self.DUE, "--blocker", "t3") == {"due": True, "reason": "", "input": "none"}
 
     def test_says_not_due_when_a_preflight_since_the_merge_read_the_outcome(self, hub: Hub) -> None:
         self.merged(hub)
@@ -1169,6 +1190,37 @@ class TestPreflightDue:
         output = hub.ok(*self.DUE, "--blocker", "T3")
 
         assert (output["due"], output["reason"]) == (False, "DEM-8 is merged")
+
+    # AGH-473 review F4: the automatic preflight records the blocker it was run for, whatever the
+    # agent listed.
+    def test_says_not_due_when_the_preflight_was_given_the_blocker_read(self, hub: Hub) -> None:
+        self.merged(hub)
+
+        hub.ok("preflight", *TICKET, *found(blockers_read=[]), "--read", "T3")
+
+        record = preflight_record(
+            (hub.feature / "tickets/DEM-8/preflight.json").read_bytes(), folder="DEM-8"
+        )
+        assert not isinstance(record, str)
+        assert [run.blockers_read for run in record.runs] == [("T3",)]
+        assert hub.ok(*self.DUE, "--blocker", "T3")["due"] is False
+
+    def test_keeps_blockers_read_once_when_the_agent_listed_the_blocker_too(self, hub: Hub) -> None:
+        hub.ok("preflight", *TICKET, *found(blockers_read=["t3", "DEM-7"]), "--read", "T3")
+
+        runs = json.loads((hub.feature / "tickets/DEM-8/preflight.json").read_text())["runs"]
+        assert runs[0]["blockers_read"] == ["t3", "DEM-7"]
+
+    # AGH-473 review Q8: a blocker outcome over its read cap is refused, as its reader would.
+    def test_refuses_when_the_blocker_outcome_is_over_its_read_cap(self, hub: Hub) -> None:
+        (hub.feature / "tickets" / "T3").mkdir(parents=True)
+        (hub.feature / "tickets/T3/outcome.md").write_bytes(b"x" * (MAX_OUTCOME_BYTES + 1))
+
+        line = hub.refused(*self.DUE, "--blocker", "T3")
+
+        assert (
+            line == f"hub step preflight-due: outcome.md is larger than {MAX_OUTCOME_BYTES} bytes"
+        )
 
     @pytest.mark.parametrize(
         ("blocker", "reason"),
