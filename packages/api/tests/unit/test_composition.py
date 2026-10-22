@@ -60,6 +60,7 @@ from agent_hub.core.testing.hub_fakes import (
     InMemoryHubRegistry,
     hub_json_bytes,
 )
+from agent_hub.core.testing.knowledge_fakes import FakeKnowledgeCheckout
 from agent_hub.core.testing.read_model_builders import (
     AGENT_SESSION_ID,
     a_skill_usage,
@@ -75,8 +76,10 @@ from agent_hub.core.testing.tracker_reader_fakes import (
 from agent_hub.core.workflows.catalog import WorkflowFile
 from agent_hub.core.workflows.workflow_reads import ReadWorkflows
 from agent_hub.storage.agent_session_store import open_agent_session_store
+from agent_hub.storage.errors import Fts5UnavailableError
 from agent_hub.storage.event_store import open_event_store
 from agent_hub.storage.item_version_store import SqliteItemVersionStore
+from agent_hub.storage.knowledge_index import FTS5_MISSING
 
 RUNNING = "0.9.0"
 HUB = "/work/demo-hub"
@@ -612,3 +615,90 @@ def test_wires_skill_usage_when_app_built() -> None:
     assert alpha.usage.count == 3
     assert usage.asked == ["demo"]
     assert models.settings().db_path == "/data/agent-hub.db"
+
+
+# Knowledge reads (AGH-393, P-10)
+
+
+def _knowledge_app(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, environ: dict[str, str]
+) -> tuple[TestClient, FakeKnowledgeCheckout]:
+    """``build_app`` with a registered hub ``demo`` whose checkout is a fake: git never runs."""
+    hub = tmp_path / "demo-hub"
+    hub.mkdir()
+    (hub / "hub.json").write_bytes(_without())
+    checkout = FakeKnowledgeCheckout()
+    checkout.write("brain/now.md", b"# Now\n\nmarker\n")
+    monkeypatch.setattr(composition, "GitKnowledgeCheckout", lambda *_a, **_k: checkout)
+    app = build_app(
+        _session_settings(tmp_path, sessions_off=True),
+        projects_root=tmp_path / "projects",
+        web_dist=tmp_path / "web_dist",
+        brain_changes=InMemoryBrainChangeRequests(FakeBrainOrigin()),
+        environ=environ,
+    )
+    client = TestClient(app, base_url="http://127.0.0.1:7420", raise_server_exceptions=False)
+    registered = client.post(
+        "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": "http://127.0.0.1:7420"}
+    )
+    assert registered.status_code == 201
+    return client, checkout
+
+
+def _git_folder(tmp_path: Path) -> str:
+    """A ``PATH`` folder holding an executable named ``git`` (never run: the checkout is a
+    fake)."""
+    folder = tmp_path / "bin"
+    folder.mkdir()
+    git = folder / "git"
+    git.write_text("#!/bin/sh\nexit 1\n")
+    git.chmod(0o755)
+    return str(folder)
+
+
+def test_opens_knowledge_index_lazily_when_first_search_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    opened: list[Path] = []
+    real_open = composition.open_knowledge_index
+
+    def counting_open(path: Path) -> Any:
+        opened.append(path)
+        if len(opened) == 1:
+            raise Fts5UnavailableError(FTS5_MISSING)
+        return real_open(path)
+
+    monkeypatch.setattr(composition, "open_knowledge_index", counting_open)
+    client, _ = _knowledge_app(tmp_path, monkeypatch, {"PATH": _git_folder(tmp_path)})
+    built = len(opened)
+    search = "/api/v1/projects/demo/knowledge/search?q=marker"
+
+    failed = client.get(search)
+    first = client.get(search)
+    second = client.get(search)
+    backlinks = client.get("/api/v1/projects/demo/brain/backlinks?path=now.md")
+
+    assert built == 0
+    assert (failed.status_code, failed.json()["title"]) == (503, "Search unavailable")
+    assert failed.json()["detail"] == FTS5_MISSING
+    assert [response.status_code for response in (first, second, backlinks)] == [200, 200, 200]
+    assert [hit["path"] for hit in second.json()["results"]] == ["brain/now.md"]
+    assert second.json()["sync"]["read"] == 0
+    assert opened == [tmp_path / "agent-hub.db"] * 2
+
+
+def test_finds_git_per_call_when_path_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    environ: dict[str, str] = {"PATH": str(tmp_path / "empty")}
+    client, _ = _knowledge_app(tmp_path, monkeypatch, environ)
+
+    missing = client.get("/api/v1/projects/demo/knowledge/search?q=marker")
+    no_backlinks = client.get("/api/v1/projects/demo/brain/backlinks?path=now.md")
+    environ["PATH"] = _git_folder(tmp_path)
+    found = client.get("/api/v1/projects/demo/knowledge/search?q=marker")
+
+    assert (missing.status_code, missing.json()["title"]) == (502, "Could not read the hub's files")
+    assert missing.json()["detail"] == "git is not on PATH; install git"
+    assert no_backlinks.status_code == 502
+    assert found.status_code == 200
