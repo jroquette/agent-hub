@@ -14058,6 +14058,94 @@
         "title": "Usage",
         "type": "object"
       },
+      "UsageDays": {
+        "enum": [
+          7,
+          30,
+          90
+        ],
+        "type": "integer"
+      },
+      "UsageReport": {
+        "additionalProperties": false,
+        "description": "The hub's skills and agents with their runs, never used in ``days`` first (AGH-482).\n\n``truncated`` says the catalog or the usage fold was cut or not fully read.",
+        "properties": {
+          "days": {
+            "$ref": "#/components/schemas/UsageDays"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/UsageRow"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "days",
+          "items"
+        ],
+        "title": "UsageReport",
+        "type": "object"
+      },
+      "UsageRow": {
+        "additionalProperties": false,
+        "description": "One hub skill or agent in the usage report: names, counts and a time only (AGH-482,\nADR 0019). ``last_used_at`` is the last use within 90 days, or None.",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/ItemKind"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "runs_30d": {
+            "minimum": 0.0,
+            "title": "Runs 30D",
+            "type": "integer"
+          },
+          "runs_7d": {
+            "minimum": 0.0,
+            "title": "Runs 7D",
+            "type": "integer"
+          },
+          "runs_90d": {
+            "minimum": 0.0,
+            "title": "Runs 90D",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project",
+          "kind",
+          "name",
+          "runs_7d",
+          "runs_30d",
+          "runs_90d",
+          "last_used_at"
+        ],
+        "title": "UsageRow",
+        "type": "object"
+      },
       "UtcTimestamp": {
         "format": "date-time",
         "type": "string"
@@ -21570,6 +21658,77 @@
         "summary": "Get Settings",
         "tags": [
           "settings"
+        ]
+      }
+    },
+    "/api/v1/skill-usage": {
+      "get": {
+        "description": "The skills and agents of every (or one) project's hub, never used in ``days`` first.",
+        "operationId": "get_skill_usage_api_v1_skill_usage_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          },
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/UsageDays",
+              "default": 30
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageReport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Skill Usage",
+        "tags": [
+          "skills"
         ]
       }
     },

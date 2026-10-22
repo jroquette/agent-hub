@@ -1749,6 +1749,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/skill-usage": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Skill Usage
+     * @description The skills and agents of every (or one) project's hub, never used in ``days`` first.
+     */
+    get: operations["get_skill_usage_api_v1_skill_usage_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/tracker/linear": {
     parameters: {
       query?: never;
@@ -7054,6 +7074,43 @@ export interface components {
       /** User Count */
       user_count: number;
     };
+    /** @enum {integer} */
+    UsageDays: 7 | 30 | 90;
+    /**
+     * UsageReport
+     * @description The hub's skills and agents with their runs, never used in ``days`` first (AGH-482).
+     *
+     *     ``truncated`` says the catalog or the usage fold was cut or not fully read.
+     */
+    UsageReport: {
+      days: components["schemas"]["UsageDays"];
+      /** Items */
+      items: components["schemas"]["UsageRow"][];
+      /**
+       * Truncated
+       * @default false
+       */
+      truncated: boolean;
+    };
+    /**
+     * UsageRow
+     * @description One hub skill or agent in the usage report: names, counts and a time only (AGH-482,
+     *     ADR 0019). ``last_used_at`` is the last use within 90 days, or None.
+     */
+    UsageRow: {
+      kind: components["schemas"]["ItemKind"];
+      last_used_at: components["schemas"]["ApiTimestamp"] | null;
+      /** Name */
+      name: string;
+      /** Project */
+      project: string;
+      /** Runs 30D */
+      runs_30d: number;
+      /** Runs 7D */
+      runs_7d: number;
+      /** Runs 90D */
+      runs_90d: number;
+    };
     /** Format: date-time */
     UtcTimestamp: string;
     /**
@@ -11404,6 +11461,47 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["SettingsView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_skill_usage_api_v1_skill_usage_get: {
+    parameters: {
+      query?: {
+        project?: string | null;
+        days?: components["schemas"]["UsageDays"];
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["UsageReport"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */
