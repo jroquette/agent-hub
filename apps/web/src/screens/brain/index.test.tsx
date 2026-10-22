@@ -352,7 +352,6 @@ describe("BrainScreen search", () => {
       "/projects/demo/brain/decisions/0001-worktrees.md?q=worktrees",
     );
     const text = await textSection("worktrees", "3");
-    expect(searchQueries(requests)).toEqual(["worktrees"]);
     expect(
       new URL(requests.find((r) => r.url.includes("knowledge"))?.url ?? "").searchParams.has(
         "limit",

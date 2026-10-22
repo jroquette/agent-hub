@@ -43,9 +43,23 @@ export function frontmatterSession(frontmatter: Frontmatter): string | null {
   return typeof value === "string" && SESSION_ID.test(value) ? value : null;
 }
 
-/** The frontmatter fields this section shows, which the note's chips leave out (AM-1). */
-export function originFields(frontmatter: Frontmatter): string[] {
-  return ["provenance", "sources", ...(frontmatterSession(frontmatter) ? ["session"] : [])];
+type NoteLearnings = ReturnType<typeof useNoteLearnings>;
+
+/**
+ * The frontmatter session this section links (Q-7): only once the learnings are read and none
+ * names a session, else null.
+ */
+export function originSession(frontmatter: Frontmatter, learnings: NoteLearnings): string | null {
+  const named = (learnings.data?.items ?? []).some((learning) => learning.source_session_id);
+  return learnings.isPending || named ? null : frontmatterSession(frontmatter);
+}
+
+/**
+ * The frontmatter fields this section shows, which the note's chips leave out (AM-1): the
+ * session only while the section shows it as a link.
+ */
+export function originFields(frontmatter: Frontmatter, learnings: NoteLearnings): string[] {
+  return ["provenance", "sources", ...(originSession(frontmatter, learnings) ? ["session"] : [])];
 }
 
 function asList(value: Frontmatter[string] | undefined): string[] {
@@ -153,14 +167,13 @@ export function NoteOrigin({
   /** The loaded note's frontmatter. */
   frontmatter: Frontmatter;
   /** The accepted learnings that name the note, asked for by the screen as the note opens. */
-  learnings: ReturnType<typeof useNoteLearnings>;
+  learnings: NoteLearnings;
 }) {
   const tipId = useId();
   const provenance = asList(frontmatter.provenance).join(", ");
   const sources = asList(frontmatter.sources);
   const items = learnings.data?.items ?? [];
-  const named = items.some((learning) => learning.source_session_id);
-  const session = learnings.isPending || named ? null : frontmatterSession(frontmatter);
+  const session = originSession(frontmatter, learnings);
   const nothing =
     provenance === "" &&
     sources.length === 0 &&

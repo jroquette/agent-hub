@@ -366,8 +366,6 @@ export interface ProvenanceLineageProps {
   /** The list's accessible name, e.g. "Trail from session to note". */
   label: string;
   steps: readonly LineageStep[];
-  /** Vertical only: the one form with a consumer (a narrow detail column). */
-  orientation?: "vertical";
 }
 
 /**
@@ -375,13 +373,9 @@ export interface ProvenanceLineageProps {
  * AGH-393): an ordered list, each step starting with its visible name; icons and the connector are
  * decorative. No status colour and no dashed node: what a step waits for is said in words.
  */
-export function ProvenanceLineage({
-  label,
-  steps,
-  orientation = "vertical",
-}: ProvenanceLineageProps) {
+export function ProvenanceLineage({ label, steps }: ProvenanceLineageProps) {
   return (
-    <ol className="ah-lineage" data-orientation={orientation} aria-label={label}>
+    <ol className="ah-lineage" aria-label={label}>
       {steps.map((step) => (
         <li key={step.id} className="ah-lin-node">
           <span className="ah-lin-kind">

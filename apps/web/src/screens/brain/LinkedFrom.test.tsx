@@ -21,8 +21,15 @@ const BACKLINKS = "/api/v1/projects/agent-hub/brain/backlinks";
 const LEARNINGS = "/api/v1/learnings";
 const route = "projects/:project/brain/*";
 
+const SLOW =
+  "Reading the hub's notes to find the links. A first read after an update can take a few seconds.";
+
 /** `index.md` of project agent-hub on the Brain screen, its backlinks answered by `backlinks`. */
-function open(backlinks: ApiRoutes[string], routes: ApiRoutes = {}) {
+function open(
+  backlinks: ApiRoutes[string],
+  routes: ApiRoutes = {},
+  path = "/projects/agent-hub/brain",
+) {
   return renderWithApi(<BrainScreen />, {
     routes: {
       [TREE]: aBrainTree(),
@@ -31,7 +38,7 @@ function open(backlinks: ApiRoutes[string], routes: ApiRoutes = {}) {
       [BACKLINKS]: backlinks,
       ...routes,
     },
-    path: "/projects/agent-hub/brain",
+    path,
     route,
   });
 }
@@ -98,6 +105,23 @@ describe("BrainScreen Linked from", () => {
     expect(within(section).getByText("and 30 more")).not.toHaveAttribute("href");
   });
 
+  it("linked from: says how many more link here than are listed", async () => {
+    open(aNoteBacklinks({ items: [aBacklink(), aBacklink({ path: "brain/b.md" })], total: 5 }));
+
+    const section = await linkedFrom("5");
+    expect(within(section).getByText("and 3 more")).toBeInTheDocument();
+  });
+
+  it("linked from: keeps the Brain search's query on a source link", async () => {
+    open(twoSources(), {}, "/projects/agent-hub/brain?q=cleanup");
+
+    const section = await linkedFrom("2");
+    expect(within(section).getByRole("link", { name: "Cleanup after merge" })).toHaveAttribute(
+      "href",
+      "/projects/agent-hub/brain/playbooks/cleanup.md?q=cleanup",
+    );
+  });
+
   it("linked from: shows the failure with Try again, the note still shown", async () => {
     let calls = 0;
     open(() => {
@@ -141,32 +165,52 @@ describe("BrainScreen Linked from", () => {
   });
 
   it("linked from: shows skeletons, then says the first read can take a few seconds", async () => {
-    open("pending");
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    try {
+      open("pending");
+      let section: HTMLElement | null = null;
+      for (let i = 0; i < 50 && section === null; i += 1) {
+        await vi.advanceTimersByTimeAsync(0);
+        section = screen.queryByRole("region", { name: "Linked from" });
+      }
+      if (section === null) throw new Error("no Linked from section");
+      expect(section).toHaveAttribute("aria-busy", "true");
 
-    const section = await linkedFrom();
-    expect(section).toHaveAttribute("aria-busy", "true");
-    await vi.waitFor(() => {
+      await vi.advanceTimersByTimeAsync(1_999);
       expect(section.querySelector(".ah-skel")).not.toBeNull();
-    });
-    expect(
-      await within(section).findByText(
-        "Reading the hub's notes to find the links. A first read after an update can take a few seconds.",
-        {},
-        { timeout: 3000 },
-      ),
-    ).toBeInTheDocument();
+      expect(within(section).queryByText(SLOW)).not.toBeInTheDocument();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(within(section).getByText(SLOW)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("linked from: the header button names the count and moves focus to the section", async () => {
     open(twoSources());
 
-    const jump = await screen.findByRole("button", { name: "Go to Linked from, 2 notes" });
+    const jump = await screen.findByRole("button", { name: "Linked from · 2" });
     expect(jump).toHaveTextContent("Linked from · 2");
     await userEvent.click(jump);
 
     const heading = within(await linkedFrom("2")).getByRole("heading", { level: 2 });
     expect(heading).toHaveFocus();
     expect(scroll.mock.contexts).toContain(heading);
+  });
+
+  it("linked from: the header buttons' names contain their visible text (WCAG 2.5.3)", async () => {
+    const { container } = open(twoSources());
+    await linkedFrom("2");
+
+    const jumps = [...container.querySelectorAll<HTMLElement>(".ah-brain-jumps button")];
+    expect(jumps.map((jump) => jump.textContent)).toEqual([
+      "Where it came from",
+      "Linked from · 2",
+    ]);
+    for (const jump of jumps) {
+      const visible = jump.textContent.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      expect(jump).toHaveAccessibleName(new RegExp(visible));
+    }
   });
 
   it("linked from: opens a source note and moves focus to its path line", async () => {
