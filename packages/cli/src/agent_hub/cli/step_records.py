@@ -43,6 +43,7 @@ from agent_hub.core.features.feature_record import (
     PlannedTicket,
     record_from_bytes,
 )
+from agent_hub.core.features.feature_reviews import names_pull_request
 from agent_hub.core.features.feature_status import MAX_PLAN_BYTES
 from agent_hub.core.features.output_models import PreflightRecord
 from agent_hub.core.features.plan_version import plan_version
@@ -166,9 +167,13 @@ def preflight(
     if read:
         # The blocker an automatic preflight was started for is read, whatever the agent listed.
         blocking = _planned(tickets, read)
-        findings = with_blocker_read(
-            findings, read, names=_names(blocking) if blocking is not None else (read,)
-        )
+        names = _names(blocking) if blocking is not None else (read,)
+        if not {name.upper() for name in names} & {name.upper() for name in planned.blocked_by}:
+            shown = planned.id or planned.key
+            raise TicketRecordError(
+                f"{shown} is not blocked by {one_line(read)[:64]} in {RECORD_FILE}"
+            )
+        findings = with_blocker_read(findings, read, names=names)
     if facts.input == "approve" and facts.request is not None:
         # An approval the plan moved past is re-checked as a plain check that says so (A23).
         moved = _superseded(folder, facts.request, plan)
@@ -370,6 +375,9 @@ def outcome(
         raise TicketRecordError(f"{OUTCOME} is a link; no link is followed")
     if existing is not None and (existing / OUTCOME).exists():
         return _kept(hub, existing, dependents)
+    if not names_pull_request(pr.strip()):
+        # The writer's own input, named as given (the record's reader would say the same).
+        raise TicketRecordError(f"--pr: names no pull request: {one_line(pr)[:64]}")
     try:
         when = aware_time(merged_at, "merged_at")
     except RecordFieldError as error:
