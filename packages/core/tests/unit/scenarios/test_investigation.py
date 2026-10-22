@@ -149,7 +149,8 @@ ENV_FILE_NAME = ".env.staging"
 
 
 def a_policy(tmp_path: Any) -> tuple[investigation.ToolPolicy, Any]:
-    """A hub and its sibling repo holding a declared env file; the policy of run ``RUN``."""
+    """A hub and its declared sibling repo holding a declared env file; the policy of run
+    ``RUN``."""
     workspace = tmp_path / "work"
     hub = workspace / "demo-hub"
     (hub / "actions" / "orders").mkdir(parents=True)
@@ -157,7 +158,10 @@ def a_policy(tmp_path: Any) -> tuple[investigation.ToolPolicy, Any]:
     env_folder.mkdir(parents=True)
     (env_folder / ENV_FILE_NAME).write_text("DEMO_DB_URL=placeholder\n", encoding="utf-8")
     policy = investigation.ToolPolicy.of(
-        hub=str(hub), env_files=("demo-api/environment/.env.staging",), run_id=RUN
+        hub=str(hub),
+        repos=("demo-api", "demo-absent"),
+        env_files=("demo-api/environment/.env.staging",),
+        run_id=RUN,
     )
     return policy, hub
 
@@ -237,10 +241,10 @@ def test_denies_reads_when_investigation_credentials_env_file_targeted(tmp_path:
         ("Grep", {"pattern": "DEMO", "path": str(env_file)}),
         ("Grep", {"pattern": "DEMO", "path": "../demo-api/environment"}),
         ("Grep", {"pattern": "DEMO", "path": "link-to-folder"}),
-        ("Grep", {"pattern": "DEMO", "path": "..", "glob": "**/.env.*"}),
+        ("Grep", {"pattern": "DEMO", "path": "../demo-api", "glob": "**/.env.*"}),
         ("Glob", {"pattern": "../demo-api/**/.env*"}),
         ("Glob", {"pattern": "*", "path": "link-to-folder"}),
-        ("Glob", {"pattern": "**/*", "path": str(hub.parent)}),
+        ("Glob", {"pattern": "**/*", "path": "../demo-api"}),
         ("Glob", {"pattern": str(env_file)}),
         # A running action's environment holds the env file's values.
         ("Read", {"file_path": "/proc/self/environ"}),
@@ -255,28 +259,29 @@ def test_denies_reads_when_investigation_credentials_env_file_targeted(tmp_path:
         ("Grep", {"pattern": "DEMO", "path": "../demo-api", "glob": "\\.env*"}),
         ("Grep", {"pattern": "DEMO", "path": "../demo-api", "glob": "/env/.env*"}),
         ("Grep", {"pattern": "DEMO", "path": "../demo-api", "glob": "env/\\.env.staging"}),
-        ("Grep", {"pattern": "DEMO", "path": "..", "glob": "\\.env*"}),
-        ("Grep", {"pattern": "DEMO", "path": "..", "glob": "*.py"}),
+        ("Grep", {"pattern": "DEMO", "path": "../demo-api", "glob": "\\.env*"}),
+        ("Grep", {"pattern": "DEMO", "path": "../demo-api", "glob": "*.py"}),
         # Any filter, negations included, under a root holding one: splitting is not mimicked.
-        ("Grep", {"pattern": "DEMO", "path": "..", "glob": "!a,.env*"}),
-        ("Grep", {"pattern": "DEMO", "path": "..", "glob": "!a\\{b,.env*"}),
-        ("Grep", {"pattern": "DEMO", "path": "..", "glob": "!a[{],.env*"}),
-        ("Grep", {"pattern": "DEMO", "path": "..", "glob": "!a\ufeff.env*"}),
-        ("Grep", {"pattern": "DEMO", "path": "..", "glob": "!*.env*"}),
+        ("Grep", {"pattern": "DEMO", "path": "../demo-api", "glob": "!a,.env*"}),
+        ("Grep", {"pattern": "DEMO", "path": "../demo-api", "glob": "!a\\{b,.env*"}),
+        ("Grep", {"pattern": "DEMO", "path": "../demo-api", "glob": "!a[{],.env*"}),
+        ("Grep", {"pattern": "DEMO", "path": "../demo-api", "glob": "!a\ufeff.env*"}),
+        ("Grep", {"pattern": "DEMO", "path": "../demo-api", "glob": "!*.env*"}),
     ]
     passed = [
         ("Read", {"file_path": "../demo-api/environment/other.txt"}),
         # E-5: a Grep above the folder with no glob skips the git-ignored env file.
-        ("Grep", {"pattern": "DEMO", "path": ".."}),
+        ("Grep", {"pattern": "DEMO", "path": "../demo-api"}),
         ("Grep", {"pattern": "DEMO", "path": "actions", "glob": "*.yaml"}),
-        ("Glob", {"pattern": "**/*.yaml", "path": str(hub.parent)}),
+        ("Glob", {"pattern": "**/*.yaml", "path": "../demo-api"}),
     ]
 
     verdicts = [investigation.tool_verdict(policy, tool, given) for tool, given in denied]
     passes = [investigation.tool_verdict(policy, tool, given) for tool, given in passed]
 
     assert [verdict.allowed for verdict in verdicts] == [False] * len(denied)
-    assert all("env file" in verdict.reason or "/proc" in verdict.reason for verdict in verdicts)
+    reasons = ("env file", "/proc", "outside the hub")
+    assert all(any(why in verdict.reason for why in reasons) for verdict in verdicts)
     assert all(str(env_file.resolve()) not in verdict.reason for verdict in verdicts)
     assert [verdict.allowed for verdict in passes] == [True] * len(passed)
     assert policy.env_files == (str(env_file.resolve()),)
@@ -299,16 +304,61 @@ def test_denies_reads_when_investigation_path_outside_workspace(tmp_path: Any) -
         ("Grep", {"pattern": "x", "path": str(outside)}),
         ("Grep", {"pattern": "x", "path": "link-out"}),
         ("Grep", {"pattern": "x", "path": "~"}),
+        # The folder holding the hub is not a root: only the hub and its declared repos are.
+        ("Read", {"file_path": "../notes.txt"}),
+        ("Grep", {"pattern": "x", "path": ".."}),
+        ("Glob", {"pattern": "*", "path": ".."}),
+        ("Glob", {"pattern": "actions/../*.md"}),
+        ("Grep", {"pattern": "x", "path": "actions", "glob": "../*"}),
     ]
 
     verdicts = [investigation.tool_verdict(policy, tool, given) for tool, given in denied]
 
     assert [verdict.allowed for verdict in verdicts] == [False] * len(denied)
-    assert all("workspace" in verdict.reason for verdict in verdicts)
+    assert all("outside" in verdict.reason for verdict in verdicts)
     assert investigation.tool_verdict(policy, "Read", {"file_path": "README.md"}).allowed
 
 
-def test_refuses_policy_when_investigation_workspace_is_root() -> None:
-    # A hub at /demo-hub would make the whole file system its workspace.
-    with pytest.raises(investigation.WorkspaceRootError, match="workspace"):
-        investigation.ToolPolicy.of(hub="/demo-hub", env_files=(), run_id=RUN)
+def test_refuses_policy_when_investigation_workspace_is_root(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    (home / "demo-api").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    refused = [
+        ("/", ()),  # the file system root
+        (str(home), ()),  # the hub is the home folder
+        (str(home / "demo-hub"), (".",)),  # a repo that resolves to the home folder
+        (str(tmp_path / "hub"), ("..",)),  # a repo that is an ancestor of the home folder
+    ]
+
+    for hub, repos in refused:
+        with pytest.raises(investigation.WorkspaceRootError, match="home folder or the root"):
+            investigation.ToolPolicy.of(hub=hub, repos=repos, env_files=(), run_id=RUN)
+
+
+def test_denies_home_when_investigation_roots_are_hub_and_repos(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The owner's layout: the hub and its repos sit directly in the home folder.
+    home = tmp_path / "home"
+    hub = home / "demo-hub"
+    hub.mkdir(parents=True)
+    (hub / "README.md").write_text("hub\n", encoding="utf-8")
+    (home / "demo-api").mkdir()
+    (home / "demo-api" / "main.py").write_text("print()\n", encoding="utf-8")
+    (home / ".aws").mkdir()
+    (home / ".aws" / "credentials").write_text("[default]\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    policy = investigation.ToolPolicy.of(
+        hub=str(hub), repos=("demo-api",), env_files=(), run_id=RUN
+    )
+
+    def allowed(tool: str, given: dict[str, Any]) -> bool:
+        return investigation.tool_verdict(policy, tool, given).allowed
+
+    assert not allowed("Read", {"file_path": "~/.aws/credentials"})
+    assert not allowed("Grep", {"pattern": "key", "path": "~"})
+    assert not allowed("Glob", {"pattern": "~/.ssh/*"})
+    assert allowed("Read", {"file_path": "../demo-api/main.py"})
+    assert allowed("Read", {"file_path": str(hub / "README.md")})

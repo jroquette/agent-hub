@@ -125,7 +125,10 @@ def _investigation_policy(tmp_path: Path) -> ToolPolicy:
     env_file.parent.mkdir(parents=True)
     env_file.write_text("DEMO_DB_URL=placeholder\n", encoding="utf-8")
     return ToolPolicy.of(
-        hub=str(hub), env_files=("demo-api/environment/.env.staging",), run_id="a1b2c3d4"
+        hub=str(hub),
+        repos=("demo-api",),
+        env_files=("demo-api/environment/.env.staging",),
+        run_id="a1b2c3d4",
     )
 
 
