@@ -731,3 +731,44 @@ class TrackerClientContract:
                 assert (error.operation, error.issue_id) == (operation, issue_id)
                 assert "\n" not in str(error), (operation, issue_id)
         assert tracker_backend == before
+
+    def test_creates_issue_once_when_create_issue_called(
+        self, tracker_client: TrackerClient, tracker_backend: FakeTrackerBackend
+    ) -> None:
+        # Q-5: one new issue of the team, holding the title and description given; nothing else
+        # changes. Its id is the tracker's (the next number of the team in every fake).
+        before = copy.deepcopy(tracker_backend)
+        description = "What happened, in plain words.\n\n- run: demo-run-1\n- step: order-held"
+
+        created = tracker_client.create_issue("DEM", "A synthetic finding", description)
+
+        added = set(tracker_backend.issues) - set(before.issues)
+        assert len(added) == 1
+        (issue_id,) = added
+        stored = tracker_backend.issues[issue_id]
+        assert _sorted_labels(created) == _sorted_labels(stored)
+        assert (created.id, created.title, created.description) == (
+            issue_id,
+            "A synthetic finding",
+            description,
+        )
+        assert issue_id.startswith("DEM-")
+        assert created.url
+        assert created.labels == ()
+        assert _without(tracker_backend.issues, issue_id) == before.issues
+        assert tracker_backend.comments == before.comments
+        assert _labels_unchanged(before, tracker_backend)
+
+    def test_raises_naming_team_when_create_issue_team_unknown(
+        self, tracker_client: TrackerClient, tracker_backend: FakeTrackerBackend
+    ) -> None:
+        before = copy.deepcopy(tracker_backend)
+
+        error = _expecting_tracker_error(
+            lambda: tracker_client.create_issue("NOPE", "A synthetic finding", "Plain words.")
+        )
+
+        assert str(error).startswith("create_issue: ")
+        assert "NOPE" in str(error)
+        assert "\n" not in str(error)
+        assert tracker_backend == before

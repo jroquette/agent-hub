@@ -444,10 +444,11 @@ def _gate_of(
 
 
 def _approver() -> str:
+    """The account deciding; ``GateDecisionError`` when none is known (A5: no fallback)."""
     try:
         return getpass.getuser()
     except KeyError, OSError:
-        return "unknown"
+        raise GateDecisionError("the decision names no person (no account name is known)") from None
 
 
 def _ingest() -> IngestEvents:

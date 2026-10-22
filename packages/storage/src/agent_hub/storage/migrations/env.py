@@ -8,7 +8,7 @@ table properties in place, so migrations run in batch mode there.
 from alembic import context
 from sqlalchemy import Connection, create_engine, pool
 
-from agent_hub.storage.db import metadata
+from agent_hub.storage.db import is_declared_table, metadata
 
 config = context.config
 
@@ -53,9 +53,17 @@ def _run_migrations(connection: Connection) -> None:
         connection=connection,
         target_metadata=metadata,
         render_as_batch=connection.dialect.name == "sqlite",
+        include_name=_declared,
     )
     with context.begin_transaction():
         context.run_migrations()
+
+
+def _declared(name: str | None, type_: str, parent_names: object) -> bool:
+    """Compare only declared tables: the FTS5 table and its shadows are made by 0008's SQL."""
+    if type_ == "table" and name is not None:
+        return is_declared_table(name)
+    return True
 
 
 if context.is_offline_mode():

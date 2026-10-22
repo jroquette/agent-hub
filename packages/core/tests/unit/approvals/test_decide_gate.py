@@ -186,3 +186,13 @@ def test_refuses_the_text_without_recording_when_it_is_one_byte_over_64_kib() ->
     with pytest.raises(GateDecisionError, match="65536 bytes"):
         DecideGate(book, None, project="demo").execute(decision(text="é" * 32768 + "x"))
     assert book.recorded == []
+
+
+@pytest.mark.parametrize("approver", ["", "  ", "unknown", " UNKNOWN "])
+def test_refuses_without_recording_when_the_approver_names_no_person(approver: str) -> None:
+    book = Book()
+    nobody = GateDecision("r1:ship:2", GateAnswer("approve"), approver, "cli", START)
+
+    with pytest.raises(GateDecisionError, match="names no person"):
+        DecideGate(book, None, project="demo").execute(nobody)
+    assert book.recorded == []

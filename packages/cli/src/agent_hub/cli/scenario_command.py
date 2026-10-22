@@ -1,5 +1,6 @@
-"""``hub scenario list|plan|run``: the hub's scenarios, listed, planned and run
-(docs/design/scenarios.md § Contract, § Plan and modes; ADR 0041).
+"""``hub scenario list|plan|run|propose|findings``: the hub's scenarios, listed, planned and
+run, and their scenario runs' findings (docs/design/scenarios.md § Contract, § Plan and modes,
+§ Investigation; ADR 0041).
 
 ``list`` prints one line per scenario that loads, ``<name>  <pack>  <nodes> nodes
 [<description>]``; each problem is one stderr line, ``<file>[:<line>]: <key>: <message>``, and
@@ -37,10 +38,26 @@ scenario run RUN paused at an open investigation (else exit 1, nothing recorded)
 steps are planned with origin ``agent`` and printed with their plan, ``needs acceptance`` when
 one runs a draft action, and why an option cannot be picked; one ``finding`` event per finding.
 A later proposal replaces the earlier one as the investigation's options.
+
+``findings RUN [--json]`` lists scenario run RUN's findings, read from its record through core's
+``run_record`` fold: one line each, ``<finding-id>  <step>  <title>``, or ``no findings in run
+RUN``; ``--json`` prints ``run``, ``scenario``, ``environment`` and ``findings`` (each
+``finding_id``, ``step``, ``title``, ``text``, ``evidence``), in ASCII so no control is shown
+raw. ``--issue F`` prints finding F's tracker issue draft (core's ``findings``: title, then the
+description) and, on a terminal, asks
+``create this issue in <team>?``: after a ``y`` it calls the tracker's ``create_issue`` once, in
+``tracker.team`` (the first of ``tracker.teams``), and prints ``created <id>  <url>``; the
+question is asked only once the tracker's key is there and its client resolved. Without a
+terminal it creates nothing and says so (exit 0: the draft is the output). ``--inbox F`` writes
+``brain/_inbox/<date>-scenario-<name>-<F>.md`` in the hub, never over an existing note (exit 1).
+An unknown run or finding id exits 1; ``--issue`` with ``--inbox``, or ``--json`` with either,
+exits 2.
 """
 
+import json
 import os
 import sys
+from datetime import date
 from pathlib import Path
 from typing import Annotated, Final, NoReturn
 
@@ -51,13 +68,16 @@ from agent_hub.cli.action_command import (
     Environment,
     Inputs,
     action_hub,
+    confirmed,
     deny_reason,
     given_texts,
+    has_terminal,
 )
 from agent_hub.cli.action_process import ActionCall, plan_action
 from agent_hub.cli.collect import hub_project_name
 from agent_hub.cli.command_exits import FAILURE, fail
 from agent_hub.cli.effective_config import load_effective_config_or_exit
+from agent_hub.cli.exclusive_write import write_exclusive
 from agent_hub.cli.init_report import shown_path, shown_text
 from agent_hub.cli.run_log import new_run_id, now
 from agent_hub.cli.scenario_investigation import Planned, option_lines, record_proposal
@@ -68,9 +88,12 @@ from agent_hub.cli.scenario_runs import (
     load_scenario,
     start,
 )
+from agent_hub.cli.tracker_client import missing_key_line, resolve_tracker_client, transport_line
 from agent_hub.cli.workflow_command import problem_line, typed_input
 from agent_hub.cli.workflow_runs import (
+    RECORDS,
     RUN_ID_PATTERN,
+    RUNS_ROOT,
     EventSink,
     WorkflowRunError,
     drop_torn_tail,
@@ -78,16 +101,19 @@ from agent_hub.cli.workflow_runs import (
     run_folder,
     run_lock,
 )
+from agent_hub.core.errors import TrackerError
 from agent_hub.core.hub_config.effective_environments import effective_environments
 from agent_hub.core.json_form import JsonValue, dump_json
 from agent_hub.core.scenarios.access_policy import PolicyDecision
 from agent_hub.core.scenarios.action_catalog import resolve_action
 from agent_hub.core.scenarios.credentials import CredentialNames
+from agent_hub.core.scenarios.findings import FindingsError, finding_of, inbox_note, issue_draft
 from agent_hub.core.scenarios.investigation import (
     MAX_PROPOSAL_BYTES,
     ProposalError,
     parse_proposal,
 )
+from agent_hub.core.scenarios.run_record import FindingView, ScenarioRunView, fold_records
 from agent_hub.core.scenarios.scenario_events import ScenarioEvents
 from agent_hub.core.scenarios.scenario_plan import PlanRow, ScenarioPlan, plan_scenario
 from agent_hub.core.workflows.catalog import WorkflowCatalog, check_workflows
@@ -103,6 +129,11 @@ NOT_PLANNED: Final = "not planned"
 _PLAN_PREFIX: Final = "hub scenario plan"
 _RUN_PREFIX: Final = "hub scenario run"
 _PROPOSE_PREFIX: Final = "hub scenario propose"
+_FINDINGS_PREFIX: Final = "hub scenario findings"
+NO_TERMINAL: Final = (
+    "no terminal: the issue was not created; run this command on a terminal to create it"
+)
+INBOX_FOLDER: Final = Path("brain", "_inbox")
 
 scenario_app = typer.Typer(
     name=COMMAND, no_args_is_help=True, help="List, plan and run the hub's scenarios."
@@ -278,6 +309,153 @@ def propose_command(*, run: ProposeRun) -> None:
         typer.echo(f"finding {ident}: {shown_text(finding.title)}")
     for line in option_lines(planned, recorded, proposal):
         typer.echo(shown_text(line))
+
+
+RunArgument = Annotated[str, typer.Argument(metavar="RUN", help="The scenario run.")]
+IssueFinding = Annotated[
+    str | None,
+    typer.Option(
+        "--issue",
+        metavar="FINDING",
+        help="Print the finding's tracker issue draft; create it after a y on a terminal.",
+    ),
+]
+InboxFinding = Annotated[
+    str | None,
+    typer.Option(
+        "--inbox", metavar="FINDING", help="Write the finding as a note in brain/_inbox/."
+    ),
+]
+
+
+@scenario_app.command("findings")
+def findings_command(
+    run: RunArgument,
+    *,
+    as_json: AsJson = False,
+    issue: IssueFinding = None,
+    inbox: InboxFinding = None,
+) -> None:
+    """List a scenario run's findings; draft a tracker issue or an inbox note from one."""
+    if not RUN_ID_PATTERN.fullmatch(run):
+        hint = "use 1 to 32 of a-z 0-9 -, starting with a letter or digit"
+        raise typer.BadParameter(hint, param_hint="RUN")
+    if issue is not None and inbox is not None:
+        raise typer.BadParameter("give --issue or --inbox, not both", param_hint="--issue")
+    if as_json and (issue is not None or inbox is not None):
+        raise typer.BadParameter("--json only lists the findings", param_hint="--json")
+    hub = action_hub()
+    view = _scenario_run(hub, run)
+    if issue is not None:
+        _issue(hub, view, _finding(view, run, issue), run=run)
+    elif inbox is not None:
+        _inbox(hub, view, _finding(view, run, inbox), run=run)
+    elif as_json:
+        # ASCII only: agent-written findings may hold C1 or bidi controls, never shown raw.
+        typer.echo(json.dumps(_findings_json(view), indent=2, sort_keys=True, ensure_ascii=True))
+    else:
+        _print_findings(run, view)
+
+
+def _print_findings(run: str, view: ScenarioRunView) -> None:
+    if not view.findings:
+        typer.echo(f"no findings in run {run}")
+    for finding in view.findings:
+        step, title = shown_text(finding.step), shown_text(finding.title)
+        typer.echo(f"{shown_text(finding.finding_id)}  {step}  {title}")
+
+
+def _scenario_run(hub: Path, run: str) -> ScenarioRunView:
+    """Scenario run ``run``, folded from its record; else exit 1."""
+    folder = run_folder(hub, run)
+    if not folder.is_dir() or folder.is_symlink():
+        fail(f"{_FINDINGS_PREFIX}: no scenario run {run}")
+    try:
+        records = read_records(folder)
+    except WorkflowRunError as error:
+        fail(f"{_FINDINGS_PREFIX}: {error}")
+    if not records or records[0].get("kind") != "scenario":
+        fail(f"{_FINDINGS_PREFIX}: {run} is not a scenario run")
+    return fold_records(records)
+
+
+def _finding(view: ScenarioRunView, run: str, finding_id: str) -> FindingView:
+    found = finding_of(view, finding_id)
+    if found is None:
+        fail(f"{_FINDINGS_PREFIX}: run {run} has no finding {shown_path(finding_id)}")
+    return found
+
+
+def _record(run: str) -> str:
+    """The run's record file, relative to the hub."""
+    return (RUNS_ROOT / run / RECORDS).as_posix()
+
+
+def _issue(hub: Path, view: ScenarioRunView, finding: FindingView, *, run: str) -> None:
+    """Print the draft; on a terminal, create it after a ``y``, once."""
+    try:
+        draft = issue_draft(view, finding, record=_record(run))
+    except FindingsError as error:
+        fail(f"{_FINDINGS_PREFIX}: {error}")
+    typer.echo(f"title: {draft.title}")
+    typer.echo("")
+    typer.echo(draft.description, nl=False)
+    typer.echo("")
+    if not has_terminal():
+        typer.echo(NO_TERMINAL)
+        return
+    config = load_effective_config_or_exit(hub).config
+    team = config.tracker.team_keys[0]
+    # The question is asked only when a create can run: the key is there, the client resolved.
+    missing = missing_key_line(config, os.environ, command="scenario findings")
+    if missing is not None:
+        fail(missing)
+    client = resolve_tracker_client(config, os.environ, hub_root=hub)
+    if not confirmed(f"create this issue in {team}?"):
+        typer.echo("the issue was not created")
+        return
+    typer.echo(transport_line(config), err=True)
+    try:
+        created = client.create_issue(team, draft.title, draft.description)
+    except TrackerError as error:
+        fail(f"{_FINDINGS_PREFIX}: {error}")
+    typer.echo(f"created {shown_text(created.id)}  {shown_text(created.url)}")
+
+
+def _inbox(hub: Path, view: ScenarioRunView, finding: FindingView, *, run: str) -> None:
+    """Write the finding's note in the hub's ``brain/_inbox/``, never over another."""
+    try:
+        note = inbox_note(view, finding, record=_record(run), day=date.today())
+    except FindingsError as error:
+        fail(f"{_FINDINGS_PREFIX}: {error}")
+    shown = (INBOX_FOLDER / note.name).as_posix()
+    folder = hub / INBOX_FOLDER
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        written = write_exclusive(folder, note.name, note.text.encode())
+    except OSError as error:
+        fail(f"{_FINDINGS_PREFIX}: cannot write {shown}: {error.strerror or error}")
+    if not written:
+        fail(f"{_FINDINGS_PREFIX}: {shown} already exists; nothing written")
+    typer.echo(f"wrote {shown}")
+
+
+def _findings_json(view: ScenarioRunView) -> dict[str, JsonValue]:
+    return {
+        "run": view.run,
+        "scenario": view.scenario,
+        "environment": view.environment,
+        "findings": [
+            {
+                "finding_id": finding.finding_id,
+                "step": finding.step,
+                "title": finding.title,
+                "text": finding.text,
+                "evidence": finding.evidence,
+            }
+            for finding in view.findings
+        ],
+    }
 
 
 def _refuse_start(planned: ScenarioPlan) -> NoReturn:
