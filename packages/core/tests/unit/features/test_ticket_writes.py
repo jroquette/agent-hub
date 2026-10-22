@@ -484,7 +484,10 @@ class TestAmendment:
         assert (again, ident) == (once, "A2")
 
     def test_refuses_when_the_plan_moved_since_the_request(self) -> None:
-        with pytest.raises(TicketRecordError, match="plan.md is v1"):
+        with pytest.raises(
+            TicketRecordError,
+            match="change request 2 approved but superseded by plan v1: not applied",
+        ):
             self.amend(b"# Plan\n")
 
     def test_refuses_when_the_request_is_not_approved(self) -> None:

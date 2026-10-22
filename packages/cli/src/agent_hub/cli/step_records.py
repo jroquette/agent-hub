@@ -99,6 +99,8 @@ def ticket_brief(
     folder = _feature(hub, feature)
     record = _record(folder)
     planned = _planned_or_refuse(record.tickets, ticket)
+    # Main as last fetched, read once: the preflight reads this commit and its run records it.
+    main = _main_commit(hub, config, planned)
     plan = _required(folder / PLAN, MAX_PLAN_BYTES)
     names = (*plan_ids(planned.key), *_names(planned)[1:])
     section = plan_section(plan.decode("utf-8", "replace"), names)
@@ -122,20 +124,18 @@ def ticket_brief(
     with _feature_lock(hub, feature):
         written, version = appended_brief(_read(target / TICKET_BRIEF, MAX_BRIEF_BYTES), brief)
         _replace(target, TICKET_BRIEF, written)
-    # The hub and the ticket repo's base, which the preflight reads without a checkout.
-    known = any(repo.dir == planned.repo for repo in config.repos)
-    base = f"origin/{config.default_branch_for(planned.repo or '')}" if known else ""
+    # The hub, the ticket's repo (the plan's, not a caller's) and main's commit the preflight reads.
     return {
         "path": _relative(hub, target / TICKET_BRIEF),
         "version": version,
         "hub": str(hub),
-        "base": base,
+        "repo": planned.repo,
+        "commit": main,
     }
 
 
 def preflight(
     hub: Path,
-    config: HubConfig,
     *,
     feature: str,
     ticket: str,
@@ -143,13 +143,13 @@ def preflight(
     facts: PreflightFacts,
 ) -> dict[str, JsonValue]:
     """Append the run built from the agent's ``findings`` to ``tickets/<ticket>/preflight.json``;
-    ``facts`` gives the time, the run's id and the input, and this fills the plan's version and
-    the commit of ``origin/<default branch>`` in the ticket's repo checkout, as last fetched."""
+    ``facts`` gives the time, the run's id, main's commit the preflight read (``ticket-brief``'s)
+    and the input, and this fills the plan's version."""
     folder = _feature(hub, feature)
     planned = _planned_or_refuse(_record(folder).tickets, ticket)
     target = _ticket_folder(folder, planned)
     plan_version = _version(_required(folder / PLAN, MAX_PLAN_BYTES))
-    facts = replace(facts, plan_version=plan_version, commit=_main_commit(hub, config, planned))
+    facts = replace(facts, plan_version=plan_version)
     with _feature_lock(hub, feature):
         existing = _read(target / PREFLIGHT_FILE, MAX_PREFLIGHT_BYTES)
         record = preflight_record(existing, folder=target.name)
@@ -192,14 +192,22 @@ def change_request(
     evidence: str,
     proposal: str,
     now: datetime,
+    findings: bytes = b"",
+    facts: PreflightFacts | None = None,
 ) -> dict[str, JsonValue]:
     """Create ``change-requests/<n>.md`` (``n`` the next free number) against the plan's
-    current version."""
+    current version. With the preflight's ``findings`` and the run's ``facts``, the run
+    that will name the request is checked first: a run the writer would refuse opens no request
+    that no preflight run names."""
     folder = _feature(hub, feature)
     planned = _planned_or_refuse(_record(folder).tickets, ticket)
     plan_from = _version(_required(folder / PLAN, MAX_PLAN_BYTES))
     requests = _folder(folder, CHANGE_REQUESTS_FOLDER)
     first = next_request(os.listdir(requests))
+    if facts is not None:
+        facts = replace(facts, plan_version=plan_from, request=first)
+        run = preflight_run(findings, facts, None)
+        appended_preflight(None, run, folder=planned.id or planned.key)
     for n in range(first, first + MAX_REQUEST_TRIES):
         text = change_request_text(
             n=n,
@@ -282,9 +290,13 @@ def pending(hub: Path, *, feature: str, ticket: str) -> dict[str, JsonValue]:
     """The owner's decision on the change request the ticket's last preflight opened, when one
     was recorded with no run waiting for it (AC-2.14); empty values when there is none."""
     folder = _feature(hub, feature)
-    target = _ticket_folder(folder, _planned_or_refuse(_record(folder).tickets, ticket))
-    found = pending_request(_preflight(target))
+    planned = _planned_or_refuse(_record(folder).tickets, ticket)
+    target = _ticket_folder(folder, planned)
+    record = _preflight(target)
     requests = folder / CHANGE_REQUESTS_FOLDER
+    found = pending_request(record)
+    if found is None and requests.is_dir() and not requests.is_symlink():
+        found = _unnamed_request(requests, planned, record)
     decided = NO_PENDING
     if found is not None and requests.is_dir() and not requests.is_symlink():
         request = _read(requests / f"{found}.md", MAX_REQUEST_BYTES)
@@ -298,7 +310,35 @@ def pending(hub: Path, *, feature: str, ticket: str) -> dict[str, JsonValue]:
         "input": decided.input,
         "note": decided.note,
         "summary": decided.summary,
+        "superseded": decided.superseded,
     }
+
+
+def _unnamed_request(
+    requests: Path, planned: PlannedTicket, record: PreflightRecord | None
+) -> int | None:
+    """The ticket's newest decided request that no preflight run names, opened since its last
+    run: the run that opened it failed before its preflight run was recorded."""
+    runs = record.runs if record is not None else ()
+    since = runs[-1].ran_at if runs else None
+    named = {run.change_request for run in runs}
+    names = {name.upper() for name in _names(planned)}
+    found: list[int] = []
+    for name in os.listdir(requests):
+        if not name.endswith(".decision.md") or (n := name.split(".", 1)[0]).isdecimal() is False:
+            continue
+        head = _read(requests / f"{n}.md", MAX_REQUEST_BYTES)
+        try:
+            fields = record_fields(head or b"")
+            ticket = text_field(fields, "ticket") or ""
+            opened = datetime.fromisoformat(text_field(fields, "opened_at") or "")
+        except RecordFieldError, ValueError:
+            continue
+        # A run's time is kept to the second.
+        newer = since is None or opened.replace(microsecond=0) >= since
+        if ticket.upper() in names and int(n) not in named and newer:
+            found.append(int(n))
+    return max(found, default=None)
 
 
 def _preflight(target: Path) -> PreflightRecord | None:

@@ -40,6 +40,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import sys
 from collections.abc import Callable, Sequence
@@ -109,6 +110,7 @@ TARGET_TEXTS: Final = ("branch", "base", "default_branch", "github", "gate")
 STOPPED: Final = "the implementing session stopped: "
 # A discovery (a broken plan assumption, implement's loop back to preflight) is one line.
 MAX_DISCOVERY_CHARS: Final = 1000
+FENCE_RUN: Final = re.compile("`{3,}")
 
 step_app = typer.Typer(name=COMMAND, no_args_is_help=True, help="Run one stage of hub run.")
 
@@ -261,7 +263,8 @@ def _one_line(value: object) -> str:
     if not isinstance(value, str):
         return ""
     kept = "".join(c for c in value if c.isprintable() or c.isspace())
-    return " ".join(kept.split())[:MAX_DISCOVERY_CHARS]
+    # No run of three backticks: the preflight renders it inside a fence of three.
+    return " ".join(FENCE_RUN.sub("`", kept).split())[:MAX_DISCOVERY_CHARS]
 
 
 @step_app.command("commits")
@@ -411,6 +414,9 @@ def preflight(
         str, typer.Option("--input", help="none, discovery, declined_change; a gate's decision.")
     ],
     text: Annotated[str, typer.Option("--input-text", help="The discovery, or the note.")] = "",
+    commit: Annotated[
+        str, typer.Option("--commit", help="Main's commit the preflight read (ticket-brief's).")
+    ],
     request: Annotated[
         str, typer.Option("--request", help="The change request it opened or re-checked.")
     ] = "",
@@ -419,11 +425,10 @@ def preflight(
     if request and not (request.isascii() and request.isdecimal()):
         raise typer.BadParameter("use a request number, or nothing", param_hint="--request")
     hub = _hub()
-    config = load_hub_config_or_exit(hub / FILE_LABEL)
     facts = PreflightFacts(
         ran_at=datetime.now(UTC),
         plan_version=1,
-        commit="",
+        commit=commit,
         run_id=os.environ.get(RUN_ID_VARIABLE, ""),
         input=kind,
         input_text=text,
@@ -432,7 +437,7 @@ def preflight(
     _record(
         "preflight",
         lambda: step_records.preflight(
-            hub, config, feature=feature, ticket=ticket, findings=findings.encode(), facts=facts
+            hub, feature=feature, ticket=ticket, findings=findings.encode(), facts=facts
         ),
     )
 
@@ -448,10 +453,26 @@ def change_request(
         str,
         typer.Option("--affected", metavar="TICKETS", help="Affected tickets, comma-separated."),
     ] = "",
+    findings: Annotated[
+        str, typer.Option("--findings", metavar="JSON", help="The preflight's, checked first.")
+    ] = "",
+    commit: Annotated[str, typer.Option("--commit", help="Main's commit it read.")] = "",
 ) -> None:
     """Open change-requests/<n>.md against the plan's current version."""
     hub = _hub()
     names = [name.strip() for name in affected.split(",")]
+    run_id = os.environ.get(RUN_ID_VARIABLE, "")
+    facts = None
+    if findings:
+        facts = PreflightFacts(
+            ran_at=datetime.now(UTC),
+            plan_version=1,
+            commit=commit,
+            run_id=run_id,
+            input="none",
+            input_text="",
+            request=None,
+        )
     _record(
         "change-request",
         lambda: step_records.change_request(
@@ -459,10 +480,12 @@ def change_request(
             feature=feature,
             ticket=ticket,
             affected=[name for name in names if name],
-            run_id=os.environ.get(RUN_ID_VARIABLE, ""),
+            run_id=run_id,
             evidence=evidence,
             proposal=proposal,
             now=datetime.now(UTC),
+            findings=findings.encode(),
+            facts=facts,
         ),
     )
 

@@ -183,7 +183,8 @@ class EvalOutput(BaseModel):
 class PreflightRun(BaseModel):
     """One preflight run of a ticket: when it ran, the plan version and commit it checked, the
     blocker outcomes it read, the input it was given (a discovery or a declined change's note,
-    ``input_text``; null for ``none``), the drift it found with its local notes (at least one for
+    ``input_text``; for ``none``, null or a note such as an approval another one superseded,
+    two-level-flows A23), the drift it found with its local notes (at least one for
     ``local``), the change request it opened (required for ``plan``) and the workflow
     run it belongs to."""
 
@@ -202,10 +203,8 @@ class PreflightRun(BaseModel):
 
     @model_validator(mode="after")
     def _fields_agree(self) -> PreflightRun:
-        """``input_text`` exactly when an input was given, a note for local drift, the request
-        a plan drift opened."""
-        if self.input == "none" and self.input_text is not None:
-            raise ValueError("input_text must be null when input is none")
+        """``input_text`` when an input was given, a note for local drift, the request a plan
+        drift opened."""
         if self.input != "none" and self.input_text is None:
             raise ValueError(f"input_text is required when input is {self.input}")
         if self.drift == "local" and not self.local_notes:

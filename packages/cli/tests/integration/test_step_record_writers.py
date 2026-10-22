@@ -856,7 +856,16 @@ class TestPendingDecision:
     def preflight(
         self, hub: Hub, *, drift: str, input_kind: str = "none", text: str = "", request: str = ""
     ) -> None:
-        given = ("--input", input_kind, "--input-text", text, "--request", request)
+        given = (
+            "--commit",
+            COMMIT,
+            "--input",
+            input_kind,
+            "--input-text",
+            text,
+            "--request",
+            request,
+        )
         hub.ok("preflight", *TICKET, "--findings", json.dumps(FINDINGS | {"drift": drift}), *given)
 
     def test_reads_nothing_pending_when_the_ticket_has_no_preflight(self, hub: Hub) -> None:
