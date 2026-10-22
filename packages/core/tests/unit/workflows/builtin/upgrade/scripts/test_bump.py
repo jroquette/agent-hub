@@ -3,6 +3,7 @@ is, the version its lockfile holds, semver's major move, and every refusal (exit
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from importlib.resources import files
@@ -264,3 +265,175 @@ def test_exits_two_when_a_manifest_is_unreadable(
     assert load().main(["--package", "vite", "--to", "6.0.0", "--issue", "DEM-1"]) == 2
 
     assert capsys.readouterr().err == f"bump.py: {reason}\n"
+
+
+def fake_tool(bin_dir: Path, name: str, body: str) -> None:
+    """A ``name`` on PATH that records its cwd and argv to ``$RECORD``, then runs ``body``."""
+    bin_dir.mkdir(exist_ok=True)
+    tool = bin_dir / name
+    tool.write_text(
+        f'#!/bin/sh\nprintf "%s|%s\\n" "$(pwd)" "$*" >> "$RECORD"\n{body}\n', encoding="utf-8"
+    )
+    tool.chmod(0o755)
+
+
+@pytest.fixture
+def record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The fake tools' folder goes first on PATH; their calls land in the returned file."""
+    path = tmp_path / "record.txt"
+    monkeypatch.setenv("RECORD", str(path))
+    monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}:{os.environ['PATH']}")
+    return path
+
+
+def calls(record: Path) -> list[tuple[str, str]]:
+    lines = record.read_text(encoding="utf-8").splitlines() if record.exists() else []
+    return [(Path(cwd).name, argv) for cwd, argv in (line.split("|", 1) for line in lines)]
+
+
+def bump(*args: str) -> list[str]:
+    return ["--package", args[0], "--to", args[1], "--issue", "DEM-1"]
+
+
+def test_runs_uv_lock_upgrade_package_when_no_exact_pin(
+    repo: Path, record: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake_tool(record.parent / "bin", "uv", "sed -i 's/13.9.4/14.0.0/' uv.lock")
+
+    assert load().main(bump("rich", "14.0.0")) == 0
+
+    assert calls(record) == [("repo", "lock --upgrade-package rich==14.0.0")]
+    head = git(repo, "rev-parse", "HEAD").strip()
+    assert json.loads(capsys.readouterr().out) == {
+        "manager": "uv",
+        "dir": ".",
+        "from": "13.9.4",
+        "to": "14.0.0",
+        "major": True,
+        "files": ["uv.lock"],
+        "commit": head,
+    }
+
+
+def test_runs_uv_add_in_each_pinning_member_when_pinned_exactly(
+    repo: Path, record: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    body = "sed -i 's/0.28.1/0.29.0/' uv.lock pyproject.toml packages/core/pyproject.toml"
+    fake_tool(record.parent / "bin", "uv", body)
+
+    assert load().main(bump("httpx", "0.29.0")) == 0
+
+    assert calls(record) == [
+        ("repo", "add --no-sync --package demo-core --optional http httpx==0.29.0"),
+        ("repo", "add --no-sync httpx==0.29.0"),
+    ]
+    found = json.loads(capsys.readouterr().out)
+    assert found["files"] == ["packages/core/pyproject.toml", "pyproject.toml", "uv.lock"]
+    assert found["major"] is True
+    assert git(repo, "status", "--porcelain") == ""
+
+
+@pytest.mark.parametrize(
+    ("package", "to", "argv"),
+    [
+        ("vite", "6.0.0", "--save-dev vite@6.0.0"),
+        ("react", "18.3.2", "--save-exact react@18.3.2"),
+        ("@scope/ui", "2.2.0", "@scope/ui@2.2.0"),
+    ],
+)
+def test_runs_npm_install_with_ignore_scripts_and_dev_flag_when_dev_dependency(
+    repo: Path,
+    record: Path,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    package: str,
+    to: str,
+    argv: str,
+) -> None:
+    fake_tool(record.parent / "bin", "npm", "echo '{}' > package-lock.json")
+
+    assert load().main(bump(package, to)) == 0
+
+    assert calls(record) == [("web", f"install --ignore-scripts --no-audit --no-fund {argv}")]
+    found = json.loads(capsys.readouterr().out)
+    assert (found["manager"], found["dir"], found["files"]) == (
+        "npm",
+        "web",
+        ["web/package-lock.json"],
+    )
+    assert git(repo, "status", "--porcelain") == ""
+
+
+def test_commits_manifest_and_lockfile_with_issue_subject_when_bump_applies(
+    repo: Path, record: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake_tool(record.parent / "bin", "uv", "sed -i 's/0.28.1/0.28.2/' uv.lock pyproject.toml")
+    # A hook that would refuse the commit: the bump commits with hooks off.
+    hook = repo / ".git/hooks/pre-commit"
+    hook.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    hook.chmod(0o755)
+
+    assert load().main(bump("httpx", "0.28.2")) == 0
+
+    subject = git(repo, "log", "-1", "--format=%s").strip()
+    assert subject == "chore(deps): bump httpx from 0.28.1 to 0.28.2 (DEM-1)"
+    changed = git(repo, "show", "--name-only", "--format=", "HEAD").split()
+    assert changed == ["pyproject.toml", "uv.lock"]
+    assert json.loads(capsys.readouterr().out)["major"] is False
+
+
+def test_writes_no_lockfile_itself_when_tool_changes_nothing(
+    repo: Path, record: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake_tool(record.parent / "bin", "uv", "true")
+    before = (repo / "uv.lock").read_bytes(), git(repo, "rev-parse", "HEAD")
+
+    assert load().main(bump("rich", "14.0.0")) == 1
+
+    assert capsys.readouterr().err == "bump.py: uv changed no manifest or lockfile\n"
+    assert ((repo / "uv.lock").read_bytes(), git(repo, "rev-parse", "HEAD")) == before
+
+
+def test_exits_one_when_tool_changes_a_file_that_is_not_a_manifest_or_lockfile(
+    repo: Path, record: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake_tool(record.parent / "bin", "uv", "echo x >> uv.lock; echo x > src.py")
+    head = git(repo, "rev-parse", "HEAD")
+
+    assert load().main(bump("rich", "14.0.0")) == 1
+
+    err = capsys.readouterr().err
+    assert err == "bump.py: uv changed a file that is not a manifest or lockfile: src.py\n"
+    assert git(repo, "rev-parse", "HEAD") == head
+
+
+def test_exits_one_with_tool_tail_when_tool_fails(
+    repo: Path, record: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fake_tool(
+        record.parent / "bin",
+        "uv",
+        "printf 'x%.0s' $(seq 3000) >&2; echo ' no solution' >&2; exit 3",
+    )
+    head = git(repo, "rev-parse", "HEAD")
+
+    assert load().main(bump("rich", "14.0.0")) == 1
+
+    err = capsys.readouterr().err
+    assert err.startswith("bump.py: uv lock failed (exit 3): ")
+    assert err.endswith("x no solution\n")
+    assert len(err) < 2100
+    assert git(repo, "rev-parse", "HEAD") == head
+
+
+def test_exits_one_when_the_tool_runs_past_its_time(
+    repo: Path, record: Path, capsys: pytest.CaptureFixture[str], *, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = load()
+    monkeypatch.setattr(module, "TOOL_TIMEOUT", 0.2)
+    fake_tool(record.parent / "bin", "uv", "sleep 5")
+
+    assert module.main(bump("rich", "14.0.0")) == 1
+
+    assert capsys.readouterr().err == "bump.py: uv lock ran past 0.2 s\n"
+    assert repo.is_dir()
