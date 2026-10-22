@@ -21,6 +21,7 @@ const user = (seq: number, text: string): TranscriptEntry => ({
   queued: false,
   screenshot: false,
   screenshotCount: 0,
+  files: [],
 });
 const claude = (seq: number, text: string, streaming = false): TranscriptEntry => ({
   kind: "assistant",

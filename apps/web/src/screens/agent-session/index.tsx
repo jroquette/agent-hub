@@ -515,10 +515,16 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
             mode={mode}
             model={model}
             models={models}
-            onSend={(text, screenshots) =>
-              transcript.send(text, (message) => commands.send(message, screenshots), screenshots)
+            onSend={(text, screenshots, files) =>
+              transcript.send(
+                text,
+                (message) => commands.send(message, screenshots, files),
+                screenshots,
+                files,
+              )
             }
             acceptsImages={!cloud}
+            acceptsFiles={!cloud}
             onInterrupt={commands.interrupt}
             onSettings={commands.settings}
             onSending={follow.pin}

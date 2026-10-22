@@ -261,6 +261,20 @@ the target, so the panel talks about any screen:
   a screenshot along, and that Discuss selection still points at one part.
 - **AC-273.7** Given the panel is closed, then the screen fallback is not mounted and asks the API nothing.
 
+Images and files in the panel (AGH-419, the chat's rules in
+[agent-sessions.md](../../agent-sessions.md#chat-behaviour), AC-419.7 to AC-419.12):
+
+- **AC-419.13** Given the Discuss panel before its conversation starts, when images, PDFs or text files are pasted,
+  dropped or attached in its composer and the first message is sent, then the new session carries them with its
+  first prompt (`screenshots[]`, `files[]`), after the screen's capture when the screen is the target, and the first
+  bubble shows the capture and the images.
+- **AC-419.14** Given a Discuss conversation that runs, when a message is sent with images or files, then they go
+  with the message as in the full chat.
+- **AC-419.15** Given a screen that starts a Discuss conversation itself, when it uses `useStartDiscussion`, then it
+  gets the panel's checks (whether Claude can run here, the project's hub folder) and the start with the first
+  message's images and files, and the conversation it keeps per target (`ah.discuss.session.<key>`) is the one the
+  panel opens.
+
 ## Breadcrumbs
 
 `Breadcrumbs` appear only on detail screens, under the top bar, `small` style, separator `chevron-right` 12px in `text-subtle`.
