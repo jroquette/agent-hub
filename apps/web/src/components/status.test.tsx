@@ -200,6 +200,7 @@ describe("ProvenanceLineage", () => {
 
     const list = screen.getByRole("list", { name: "Trail from session to note" });
     expect(list.tagName).toBe("OL");
+    expect(list).toHaveAttribute("role", "list");
     expect(list).not.toHaveAttribute("data-orientation");
     expect(list).toHaveClass("ah-lineage");
     const [first, ...rest] = within(list).getAllByRole("listitem");
