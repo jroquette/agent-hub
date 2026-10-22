@@ -1,0 +1,525 @@
+# Someone else's PR reviewed through the spec, quality and security lenses, drafted as one review
+# the owner edits and approves. The split: /review reads the PR with gh into files,
+# fetches its head to refs/agent-hub/review/<pr> and starts this run; the run drafts; after the run
+# /review posts the payload `final` wrote, and only that. No pr_opened start yet (a follow-up): the
+# pack is started by /review only.
+#
+# Invariants. The run never posts and never pushes: no hub step node, no gh in any command, and the
+# scripts get no token. The PR's text (title, body, branch, CI names, the spec) reaches the run only
+# through the files /review wrote, never a command line, and every prompt fences it after its
+# instructions. The head lives in refs/agent-hub/review/<pr>, never a branch: fetch.py refuses any
+# other ref, and /review deletes it once the run ended. No node writes the tracker (ADR 0030).
+#
+# The check. check.py runs the repo's `check` from hub.json at the head, in a detached throwaway
+# worktree with an environment built from nothing, and never for a fork (a deleted head repo counts
+# as one). Residual risk: a same-repo PR's check runs its author's code, which can read the owner's
+# files by absolute path and reach the network; the clone's own .git/config applies to the
+# throwaway checkout. The owner starts every run by hand.
+#
+# The security lens runs when surface.py (a script, never an agent) finds the diff touches input
+# handling, auth, secrets, subprocesses, file paths or parsing, or cannot read the diff.
+#
+# The review file. compose writes .agent-runs/review-incoming/<run>.md in the hub and the run pauses
+# at `gate`. The owner edits the file, then answers ./hub workflow respond <run> --choice
+# comment|request-changes|approve, or --choice reject, which ends the run done with no outcome:
+# nothing is posted. `final` parses the edited file again and writes the payload /review posts,
+# with its sha256.
+version: 1
+name: review-incoming
+description: Someone else's PR through the spec, quality and security lenses, drafted as one review posted only after the owner approves it.
+revision: 1
+inputs:
+  repo:
+    required: true
+    description: The PR's repo, its dir in hub.json.
+  pr:
+    required: true
+    description: The PR's number.
+  ref:
+    required: true
+    description: The fetched head, exactly refs/agent-hub/review/<pr>.
+  pr_file:
+    required: true
+    description: The absolute path of the PR's JSON as /review read it (untrusted).
+  ci_file:
+    required: true
+    description: The absolute path of the head's check runs JSON as /review read it (untrusted).
+  spec_file:
+    required: true
+    description: The absolute path of the issue's ACs and the decisions /review wrote; may be empty (untrusted).
+returns: final
+outcome_field: event
+nodes:
+  - id: fetch
+    type: script
+    description: Read the PR's files and the local clone - the facts every node reads; read-only.
+    runtime: python
+    script: fetch.py
+    args:
+      - --repo
+      - $INPUTS.repo
+      - --pr
+      - $INPUTS.pr
+      - --ref
+      - $INPUTS.ref
+      - --pr-file
+      - $INPUTS.pr_file
+      - --ci-file
+      - $INPUTS.ci_file
+      - --spec-file
+      - $INPUTS.spec_file
+    mutates_checkout: false
+    timeout: 2m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      required: [number, url, title, body, body_cut, author, fork, head_sha, head_ref, base_ref, merge_base, path, hub, check, files, more_files, ci, issues, spec]
+      properties:
+        number: {type: integer, minimum: 1}
+        url: {type: string, maxLength: 512}
+        title: {type: string, maxLength: 256}
+        body: {type: string, maxLength: 16384}
+        body_cut: {type: boolean}
+        author: {type: string, maxLength: 100}
+        fork: {type: boolean}
+        head_sha: {type: string, pattern: "^[0-9a-f]{40}$"}
+        head_ref: {type: string, maxLength: 255}
+        base_ref: {type: string, maxLength: 255}
+        merge_base: {type: string, pattern: "^[0-9a-f]{40}$"}
+        path: {type: string}
+        hub: {type: string}
+        check: {type: string}
+        files:
+          type: array
+          maxItems: 200
+          items:
+            type: object
+            required: [status, path]
+            properties:
+              status: {type: string}
+              path: {type: string, maxLength: 300}
+        more_files: {type: boolean}
+        ci:
+          type: object
+          required: [state, runs, more]
+          properties:
+            state: {type: string, enum: [success, failure, pending, none, unknown]}
+            runs:
+              type: array
+              maxItems: 30
+              items:
+                type: object
+                required: [name, status, conclusion]
+                properties:
+                  name: {type: string, maxLength: 100}
+                  status: {type: string, maxLength: 32}
+                  conclusion: {type: string, maxLength: 32}
+            more: {type: boolean}
+        issues:
+          type: array
+          maxItems: 10
+          items: {type: string, maxLength: 64}
+        spec: {type: string, maxLength: 32768}
+
+  - id: check
+    type: script
+    description: The repo's check at the head, in a detached throwaway worktree; never for a fork; red is data.
+    depends_on: [fetch]
+    runtime: python
+    script: check.py
+    args:
+      - --path
+      - $fetch.output.path
+      - --head
+      - $fetch.output.head_sha
+      - --command
+      - $fetch.output.check
+      - --fork
+      - $fetch.output.fork
+    mutates_checkout: false
+    timeout: 45m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      required: [status, exit_code, tail, reason, command]
+      properties:
+        status: {type: string, enum: [passed, failed, timeout, not_run, error]}
+        exit_code:
+          anyOf: [{type: integer}, {type: "null"}]
+        tail: {type: string, maxLength: 4000}
+        reason: {type: string, maxLength: 1000}
+        command: {type: string}
+
+  - id: surface
+    type: script
+    description: Whether the diff touches a risky surface, by path and added-line rules; fails closed.
+    depends_on: [fetch]
+    runtime: python
+    script: surface.py
+    args:
+      - --path
+      - $fetch.output.path
+      - --base
+      - $fetch.output.merge_base
+      - --head
+      - $fetch.output.head_sha
+    mutates_checkout: false
+    timeout: 2m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      required: [risky, categories, hits, files, truncated, reason]
+      properties:
+        risky: {type: boolean}
+        categories:
+          type: array
+          maxItems: 6
+          items:
+            type: string
+            enum: [input handling, auth, secrets, subprocesses, file paths, parsing]
+        hits:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            required: [category, path, line, rule]
+            properties:
+              category: {type: string}
+              path: {type: string, maxLength: 160}
+              line:
+                anyOf: [{type: integer, minimum: 1}, {type: "null"}]
+              rule: {type: string, maxLength: 64}
+        files: {type: integer, minimum: 0}
+        truncated: {type: boolean}
+        reason: {type: string, maxLength: 1000}
+
+  - id: spec
+    type: agent
+    description: The spec lens on the PR's commits, read by sha; fresh and read-only, in the clone.
+    depends_on: [fetch]
+    prompt_file: spec-lens.md
+    cwd: $fetch.output.path
+    context: fresh
+    mutates_checkout: false
+    timeout: 20m
+    retry: {max_attempts: 0}
+    with:
+      base: $fetch.output.merge_base
+      head: $fetch.output.head_sha
+      title: $fetch.output.title
+      body: $fetch.output.body
+      author: $fetch.output.author
+      issues: $fetch.output.issues
+      spec: $fetch.output.spec
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [reviewer, commit, verdict, findings, coverage]
+      properties:
+        reviewer: {type: string, const: spec}
+        commit: {type: string, pattern: "^[0-9a-f]{7,40}$"}
+        verdict: {type: string, enum: [PASS, FAIL]}
+        findings:
+          type: array
+          maxItems: 15
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, kind, severity, path, line, acs, what, expected]
+            properties:
+              id: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$"}
+              kind:
+                type: string
+                enum: [missing, extra, test, assertion, contract, invariant, security, idempotency, quality]
+              severity: {type: string, enum: [blocking, minor]}
+              path: {type: string, minLength: 1, maxLength: 300, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+              line:
+                anyOf: [{type: integer, minimum: 1, maximum: 10000000}, {type: "null"}]
+              acs:
+                type: array
+                maxItems: 10
+                items: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}
+              what: {type: string, minLength: 1, maxLength: 400, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+              expected: {type: string, minLength: 1, maxLength: 400, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+        coverage:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            additionalProperties: false
+            required: [ac, status, test]
+            properties:
+              ac: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}
+              status: {type: string, enum: [covered, not covered, not testable]}
+              test: {type: string, maxLength: 160, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+
+  - id: quality
+    type: agent
+    description: The quality lens on the PR's commits, read by sha; fresh and read-only, in the clone.
+    depends_on: [fetch]
+    prompt_file: quality-lens.md
+    cwd: $fetch.output.path
+    context: fresh
+    mutates_checkout: false
+    timeout: 20m
+    retry: {max_attempts: 0}
+    with:
+      base: $fetch.output.merge_base
+      head: $fetch.output.head_sha
+      title: $fetch.output.title
+      body: $fetch.output.body
+      author: $fetch.output.author
+      issues: $fetch.output.issues
+      spec: $fetch.output.spec
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [reviewer, commit, verdict, findings, coverage]
+      properties:
+        reviewer: {type: string, const: quality}
+        commit: {type: string, pattern: "^[0-9a-f]{7,40}$"}
+        verdict: {type: string, enum: [PASS, FAIL]}
+        findings:
+          type: array
+          maxItems: 15
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, kind, severity, path, line, acs, what, expected]
+            properties:
+              id: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$"}
+              kind:
+                type: string
+                enum: [missing, extra, test, assertion, contract, invariant, security, idempotency, quality]
+              severity: {type: string, enum: [blocking, minor]}
+              path: {type: string, minLength: 1, maxLength: 300, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+              line:
+                anyOf: [{type: integer, minimum: 1, maximum: 10000000}, {type: "null"}]
+              acs:
+                type: array
+                maxItems: 10
+                items: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}
+              what: {type: string, minLength: 1, maxLength: 400, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+              expected: {type: string, minLength: 1, maxLength: 400, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+        coverage:
+          type: array
+          maxItems: 0
+
+  - id: security
+    type: agent
+    description: The security lens, as the hub's security-reviewer, when surface found a risky diff; fresh and read-only.
+    depends_on: [surface]
+    when: "$surface.output.risky == true"
+    prompt_file: security-lens.md
+    cwd: $fetch.output.path
+    context: fresh
+    mutates_checkout: false
+    model: large
+    timeout: 30m
+    retry: {max_attempts: 0}
+    with:
+      base: $fetch.output.merge_base
+      head: $fetch.output.head_sha
+      title: $fetch.output.title
+      body: $fetch.output.body
+      author: $fetch.output.author
+      issues: $fetch.output.issues
+      spec: $fetch.output.spec
+      hub: $fetch.output.hub
+      hits: $surface.output.hits
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [reviewer, commit, verdict, findings, coverage]
+      properties:
+        reviewer: {type: string, const: security}
+        commit: {type: string, pattern: "^[0-9a-f]{7,40}$"}
+        verdict: {type: string, enum: [PASS, FAIL]}
+        findings:
+          type: array
+          maxItems: 15
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, kind, severity, path, line, acs, what, expected]
+            properties:
+              id: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$"}
+              kind:
+                type: string
+                enum: [missing, extra, test, assertion, contract, invariant, security, idempotency, quality]
+              severity: {type: string, enum: [blocking, minor]}
+              path: {type: string, minLength: 1, maxLength: 300, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+              line:
+                anyOf: [{type: integer, minimum: 1, maximum: 10000000}, {type: "null"}]
+              acs:
+                type: array
+                maxItems: 10
+                items: {type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"}
+              what: {type: string, minLength: 1, maxLength: 400, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+              expected: {type: string, minLength: 1, maxLength: 400, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+        coverage:
+          type: array
+          maxItems: 0
+
+  - id: findings
+    type: script
+    description: The lenses' findings merged, blocking first, within 40 KiB; a skipped security lens reads as not run.
+    depends_on: [spec, quality, security]
+    trigger_rule: none_failed_min_one_success
+    runtime: python
+    script: review.py
+    args: [merge, --spec, $spec.output, --quality, $quality.output, --security, $security.output]
+    timeout: 1m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      required: [findings, coverage, verdicts, omitted]
+      properties:
+        findings:
+          type: array
+          items:
+            type: object
+            required: [id, lens, kind, severity, path, line, what, expected]
+            properties:
+              id: {type: string, pattern: "^(spec|quality|security):[A-Za-z0-9][A-Za-z0-9._-]{0,31}$"}
+              lens: {type: string, enum: [spec, quality, security]}
+              kind: {type: string}
+              severity: {type: string, enum: [blocking, minor]}
+              path: {type: string}
+              line:
+                anyOf: [{type: integer}, {type: "null"}]
+              what: {type: string}
+              expected: {type: string}
+        coverage: {type: array}
+        verdicts:
+          type: object
+          required: [spec, quality, security]
+          properties:
+            spec: {type: string, enum: [PASS, FAIL, not run]}
+            quality: {type: string, enum: [PASS, FAIL, not run]}
+            security: {type: string, enum: [PASS, FAIL, not run]}
+        omitted: {type: integer, minimum: 0}
+
+  - id: draft
+    type: agent
+    description: One review drafted from the findings, the check and CI, in plain language; read-only, in the hub.
+    depends_on: [check, findings]
+    prompt_file: draft.md
+    context: fresh
+    mutates_checkout: false
+    timeout: 20m
+    retry: {max_attempts: 0}
+    with:
+      title: $fetch.output.title
+      url: $fetch.output.url
+      author: $fetch.output.author
+      ci: $fetch.output.ci
+      check: $check.output
+      findings: $findings.output
+      issues: $fetch.output.issues
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [summary, comments]
+      properties:
+        summary: {type: string, minLength: 1, maxLength: 3000, pattern: "^[^\\x00-\\x08\\x0b-\\x1f\\x7f-\\x9f]*$"}
+        comments:
+          type: array
+          maxItems: 30
+          items:
+            type: object
+            additionalProperties: false
+            required: [path, line, severity, body, sources]
+            properties:
+              path: {type: string, minLength: 1, maxLength: 300, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+              line:
+                anyOf: [{type: integer, minimum: 1, maximum: 10000000}, {type: "null"}]
+              severity: {type: string, enum: [blocking, minor]}
+              body: {type: string, minLength: 1, maxLength: 1500, pattern: "^[^\\x00-\\x08\\x0b-\\x1f\\x7f-\\x9f]*$"}
+              sources:
+                type: array
+                minItems: 1
+                maxItems: 5
+                items: {type: string, pattern: "^(spec|quality|security|check|ci):[A-Za-z0-9._-]{1,32}$"}
+
+  - id: compose
+    type: script
+    description: The review file the owner edits - every blocking finding kept, each comment checked against the diff.
+    depends_on: [draft]
+    runtime: python
+    script: review.py
+    # On stdin: the draft may be longer than one argument holds.
+    stdin: $draft.output
+    args:
+      - compose
+      - --findings
+      - $findings.output
+      - --path
+      - $fetch.output.path
+      - --base
+      - $fetch.output.merge_base
+      - --head
+      - $fetch.output.head_sha
+      - --repo
+      - $INPUTS.repo
+      - --pr
+      - $INPUTS.pr
+    timeout: 2m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      required: [path, blocking, minor, inline, suggested, preview]
+      properties:
+        path: {type: string}
+        blocking: {type: integer, minimum: 0}
+        minor: {type: integer, minimum: 0}
+        inline: {type: integer, minimum: 0}
+        suggested: {type: string, enum: [comment, request-changes]}
+        preview: {type: string, maxLength: 6000}
+
+  - id: gate
+    type: approval
+    description: The owner edits the review file, then picks how it is posted, or rejects it.
+    depends_on: [compose]
+    message: >-
+      Review of $INPUTS.repo#$INPUTS.pr drafted in $compose.output.path: $compose.output.blocking
+      blocking, $compose.output.minor minor, $compose.output.inline inline; suggested
+      $compose.output.suggested. Edit the file, then answer comment, request-changes or approve to
+      post it after the run, or reject to post nothing.
+    decisions:
+      - {id: comment, label: Comment}
+      - {id: request-changes, label: Request changes}
+      - {id: approve, label: Approve}
+      - {id: reject, label: Reject - post nothing}
+
+  - id: final
+    type: script
+    description: The edited review parsed again and written as the payload /review posts, with its sha256.
+    depends_on: [gate]
+    when: "$gate.output.decision != 'reject'"
+    runtime: python
+    script: review.py
+    args:
+      - final
+      - --file
+      - $compose.output.path
+      - --decision
+      - $gate.output.decision
+      - --path
+      - $fetch.output.path
+      - --base
+      - $fetch.output.merge_base
+      - --head
+      - $fetch.output.head_sha
+    timeout: 2m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      required: [path, sha256, event, blocking, optional, inline]
+      properties:
+        path: {type: string}
+        sha256: {type: string, pattern: "^[0-9a-f]{64}$"}
+        event: {type: string, enum: [COMMENT, REQUEST_CHANGES, APPROVE]}
+        blocking: {type: integer, minimum: 0}
+        optional: {type: integer, minimum: 0}
+        inline: {type: integer, minimum: 0}
