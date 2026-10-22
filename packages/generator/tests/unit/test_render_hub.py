@@ -216,6 +216,7 @@ DESIGN_PATHS = (
     "workflows/sdlc/scripts/pass_outcome.py",
     "workflows/sdlc/scripts/verdict.py",
     "workflows/sdlc/ticket-pass.yaml",
+    "workflows/spike/spike.yaml",
 )
 # AGH-19 spec "The rendered set": the base plugin's agents, by file stem, and its skills, by
 # folder name.

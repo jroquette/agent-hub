@@ -1,4 +1,4 @@
-# A timeboxed spike (AGH-492): one question to research.md and an ADR draft, with no code change.
+# A timeboxed spike: one question to research.md and an ADR draft, with no code change.
 # Read-only agents recall what the brain already says, research the code, then offer 2 or 3
 # options; the owner picks one (or asks for more, up to three rounds of options); a premortem
 # finds the pick's top three failure causes; draft.py writes brain/features/<slug>/research.md

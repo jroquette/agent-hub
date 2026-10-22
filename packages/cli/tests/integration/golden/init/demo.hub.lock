@@ -759,6 +759,9 @@
     },
     "workflows/sdlc/ticket-pass.yaml": {
       "ownership": "seeded"
+    },
+    "workflows/spike/spike.yaml": {
+      "ownership": "seeded"
     }
   },
   "lock_version": 1,
