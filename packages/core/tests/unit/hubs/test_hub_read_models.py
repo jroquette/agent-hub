@@ -206,6 +206,20 @@ def test_lists_project_hubs_when_valid_hubs_registered() -> None:
     assert list(models.project_hubs()) == [("demo", DEMO)]
 
 
+# AGH-429 (AC-429.5): hub paths never run the doctor.
+def test_lists_project_hubs_without_running_doctor_when_lock_matches_pin() -> None:
+    hub = a_demo_hub()
+    hub.lock = a_lock()
+    models, reader, _ = read_models({DEMO: hub}, DEMO)
+
+    hubs = list(models.project_hubs())
+
+    assert hubs == [("demo", DEMO)]
+    assert reader.snapshots == {}
+    assert models.get_project("demo").lock_state == "drift"
+    assert reader.snapshots == {DEMO: 1}
+
+
 def test_details_project_when_known() -> None:
     hub = a_demo_hub()
     hub.hub_json = hub_json_bytes(pin="0.1.0")

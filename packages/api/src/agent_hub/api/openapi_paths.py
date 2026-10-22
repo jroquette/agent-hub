@@ -1,6 +1,6 @@
 """The Phase 2 contract's paths, the paths control-plane clarity, ticket planning, the Skills
-tab, the workflows, the run commands and the item versions add, and the paths an app's OpenAPI
-document lists."""
+tab, the workflows, the run commands, the item versions and the scenarios add, and the paths an
+app's OpenAPI document lists."""
 
 from fastapi import FastAPI
 
@@ -20,6 +20,8 @@ P2_PATHS: frozenset[tuple[str, str]] = frozenset(
         ("get", "/projects/{project}/repos"),
         ("get", "/projects/{project}/config"),
         ("put", "/projects/{project}/config/local"),
+        ("post", "/projects/{project}/config/environments"),
+        ("get", "/projects/{project}/env-file-keys"),
         ("get", "/needs-you"),
         ("get", "/activity"),
         ("get", "/search"),
@@ -87,6 +89,7 @@ AGENT_SESSION_PATHS: frozenset[tuple[str, str]] = frozenset(
         ("get", "/{agent_session_id}/events"),
         ("get", "/{agent_session_id}/repo-changes"),
         ("get", "/{agent_session_id}/repo-changes/commit"),
+        ("get", "/{agent_session_id}/repo-changes/file"),
         ("get", "/{agent_session_id}/stream"),
         ("post", "/{agent_session_id}/messages"),
         ("post", "/{agent_session_id}/interrupt"),
@@ -179,18 +182,38 @@ DOCTOR_FIX_PATHS: frozenset[tuple[str, str]] = frozenset(
     {("post", f"{API_PREFIX}/hubs/{{hub_id}}/doctor-fix")}
 )
 
-# A paused scenario run's investigation session (AGH-350 P-7, AM-2): a strict write that starts
-# a driven session, so it needs the launch cookie like the run commands.
-SCENARIO_PATHS: frozenset[tuple[str, str]] = frozenset(
-    {("post", f"{API_PREFIX}/scenario-runs/{{run_id}}/investigation")}
+# Running an AC's recorded check from the feature page (playground): run, never recorded.
+AC_CHECK_PATHS: frozenset[tuple[str, str]] = frozenset(
+    {("post", f"{API_PREFIX}/features/{{project}}/{{slug}}/acs/{{ac}}/check-runs")}
 )
 
-# Running an AC's recorded check from the feature page (playground): run, never recorded. The
-# scenario paths are grouped here, the last group the path tests' union of the served groups
-# names (they pin that union; AGH-350 changes no existing test).
-AC_CHECK_PATHS: frozenset[tuple[str, str]] = (
-    frozenset({("post", f"{API_PREFIX}/features/{{project}}/{{slug}}/acs/{{ac}}/check-runs")})
-    | SCENARIO_PATHS
+# The scenarios (AGH-350 plan T12, AC-350.30): the list, a scenario, its plan and its start, a
+# scenario run's record, its investigation's session (P-7, AM-2) and answer, and a finding's
+# issue and inbox note. Every POST is a strict write that needs the launch cookie.
+SCENARIO_PATHS: frozenset[tuple[str, str]] = frozenset(
+    (method, f"{API_PREFIX}{path}")
+    for method, path in (
+        ("get", "/scenarios"),
+        ("get", "/scenarios/{project}/{name}"),
+        ("post", "/scenarios/{project}/{name}/plan"),
+        ("post", "/scenarios/{project}/{name}/runs"),
+        ("get", "/scenario-runs/{run_id}"),
+        ("post", "/scenario-runs/{run_id}/investigation"),
+        ("post", "/scenario-runs/{run_id}/answer"),
+        ("post", "/scenario-runs/{run_id}/findings/{finding_id}/issue"),
+        ("post", "/scenario-runs/{run_id}/findings/{finding_id}/inbox"),
+    )
+)
+
+# Finding services with a read-only Claude session (ADR 0046): start, list, read and discard.
+DISCOVERY_PATHS: frozenset[tuple[str, str]] = frozenset(
+    (method, f"{API_PREFIX}/projects/{{project}}/environment-discoveries{path}")
+    for method, path in (
+        ("post", ""),
+        ("get", ""),
+        ("get", "/{discovery_id}"),
+        ("delete", "/{discovery_id}"),
+    )
 )
 
 # The knowledge view (AGH-393): the project's hub searched, and the documents linking to a note.
@@ -220,6 +243,8 @@ SERVED_PATHS: frozenset[tuple[str, str]] = (
     | DOCTOR_FIX_PATHS
     | AC_CHECK_PATHS
     | KNOWLEDGE_PATHS
+    | DISCOVERY_PATHS
+    | SCENARIO_PATHS
 )
 
 

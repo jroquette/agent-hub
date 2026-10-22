@@ -5,7 +5,9 @@ import pytest
 from agent_hub.core.sessions.session import Outcome, SessionStatus
 from agent_hub.core.sessions.session_status import (
     END_AFTER,
+    LIVE_WINDOW,
     Activity,
+    clock_phase,
     session_segments,
     session_status,
 )
@@ -107,3 +109,43 @@ def test_reopens_as_segment_two_when_event_follows_session_end() -> None:
 
 def test_keeps_outcome_value_when_activity_ends() -> None:
     assert _activity(1, ends=True, outcome="done").outcome == Outcome.DONE
+
+
+# AGH-429 (AC-429.1): a fold is kept while the clock phase is the same.
+@pytest.mark.parametrize(
+    ("earlier", "later"),
+    [
+        (timedelta(seconds=1), timedelta(minutes=4)),
+        (LIVE_WINDOW, END_AFTER - timedelta(seconds=1)),
+        (END_AFTER, END_AFTER + timedelta(days=3)),
+    ],
+    ids=["live", "idle", "ended"],
+)
+def test_folds_same_status_when_clock_phase_unchanged(earlier: timedelta, later: timedelta) -> None:
+    activity = [_activity(0), _activity(1)]
+    last_at = activity[-1].at
+
+    def folded(quiet_for: timedelta) -> tuple[object, ...]:
+        now = last_at + quiet_for
+        segments = session_segments(activity, now=now)
+        status = session_status(
+            segments,
+            last_activity_at=last_at,
+            now=now,
+            has_open_gate=False,
+            has_open_tool_call=False,
+        )
+        return segments, status
+
+    assert clock_phase(last_at, last_at + earlier) == clock_phase(last_at, last_at + later)
+    assert folded(earlier) == folded(later)
+
+
+# AGH-429 (AC-429.2): crossing a threshold folds the session again.
+def test_changes_clock_phase_when_quiet_time_crosses_a_threshold() -> None:
+    phases = {
+        clock_phase(START, START + quiet_for)
+        for quiet_for in (timedelta(0), LIVE_WINDOW, END_AFTER)
+    }
+
+    assert len(phases) == 3

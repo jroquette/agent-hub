@@ -2,7 +2,7 @@
 
 Documents live in the ``knowledge_documents`` table of the hub web database and their title and
 body in the FTS5 table ``knowledge_text`` (migration 0008, ``rowid = knowledge_documents.id``).
-Each document's links to brain notes live in ``knowledge_links`` (migration 0009, AGH-393), one
+Each document's links to brain notes live in ``knowledge_links`` (migration 0010, AGH-393), one
 row per ``(hub, source, target)``.
 ``open_knowledge_index`` first checks that the interpreter's SQLite has FTS5, before any
 directory, migration or engine is touched, so a missing module is reported as itself and no

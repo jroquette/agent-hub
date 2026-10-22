@@ -252,6 +252,7 @@ export function aRun(overrides: Partial<WorkflowRun> = {}): WorkflowRun {
     gate_results: [],
     id: "a1b2c3d4e5f6",
     issue: { key: "AGH-48", title: null, url: null },
+    kind: "workflow",
     last_activity_at: at(900),
     mode: "live",
     pr_url: null,
@@ -774,6 +775,7 @@ export function anAcRow(overrides: Partial<Schemas["AcRow"]> = {}): Schemas["AcR
     manual: false,
     passes: true,
     repo: "agent-hub",
+    signed_off: false,
     ...overrides,
   };
 }

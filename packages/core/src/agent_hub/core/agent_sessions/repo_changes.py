@@ -134,6 +134,18 @@ class RepoCommitDiff(ViewModel):
     binary: bool = False
 
 
+class RepoFileText(ViewModel):
+    """``GET /agent-sessions/{id}/repo-changes/file``: a file as it is at one commit (the base a
+    pull request's diff is read against), so a review can show the lines its diff leaves out.
+    ``text`` is null for a binary file, one past ``REPO_DIFF_MAX_BYTES`` or one the commit does
+    not have."""
+
+    sha: str
+    path: str
+    text: str | None = None
+    binary: bool = False
+
+
 class RepoChangesReader(Protocol):
     """Reads one listed repository's changes against its base (the ``hub_git`` adapter)."""
 
@@ -145,6 +157,11 @@ class RepoChangesReader(Protocol):
     def commit_diff(self, root: str, *, sha: str, paths: Sequence[str]) -> RepoCommitDiff:
         """What commit ``sha`` changed in ``paths`` (relative to ``root``: a file and the name it
         had before a rename); ``RepoChangesError`` when git cannot read it (no such commit)."""
+        ...
+
+    def file_text(self, root: str, *, sha: str, path: str) -> RepoFileText:
+        """The file at ``path`` (relative to ``root``) as commit ``sha`` has it;
+        ``RepoChangesError`` when git cannot read it (no such commit)."""
         ...
 
     def read_recorded(

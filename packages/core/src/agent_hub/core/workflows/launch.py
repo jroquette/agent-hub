@@ -84,10 +84,18 @@ class RunInputError(AgentHubError):
 
 
 class RunConflictError(AgentHubError):
-    """A run command refused in the run's current state (answers 409); ``reason`` is shown."""
+    """A run command refused in the run's current state (answers 409); ``reason`` is shown,
+    ``steps`` names the steps that refused it (a scenario's denied steps)."""
 
-    def __init__(self, *, code: str, reason: str, run_id: str | None = None) -> None:
-        self.code, self.reason, self.run_id = code, reason, run_id
+    def __init__(
+        self,
+        *,
+        code: str,
+        reason: str,
+        run_id: str | None = None,
+        steps: tuple[str, ...] = (),
+    ) -> None:
+        self.code, self.reason, self.run_id, self.steps = code, reason, run_id, steps
         super().__init__(reason)
 
 

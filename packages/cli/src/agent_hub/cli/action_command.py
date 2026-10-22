@@ -68,10 +68,12 @@ from agent_hub.core.hub_config.environments import Endpoint
 from agent_hub.core.ingestion.ingest_events import IngestEvents
 from agent_hub.core.json_form import JsonValue, dump_json
 from agent_hub.core.scenarios.access_policy import (
-    Effect,
+    DRAFT_REASON,
+    NEEDS_TERMINAL,
     Origin,
     PolicyDecision,
     decide,
+    deny_reason,
     find_environment,
 )
 from agent_hub.core.scenarios.action_call import ActionCallError, ActionCallPlan, plan_action_call
@@ -91,8 +93,6 @@ from agent_hub.generator.action_discovery import ActionDiscovery, discover_actio
 COMMAND: Final = "action"
 MAX_INPUTS: Final = 64
 MAX_INPUT_BYTES: Final = 64 * 1024
-DRAFT_REASON: Final = "draft action: commit it to run"
-NEEDS_TERMINAL: Final = "write and destroy actions need a terminal or a scenario run"
 INVESTIGATION_READS: Final = "an investigation runs read actions only"
 _RUN_PREFIX: Final = "hub action run"
 
@@ -458,22 +458,6 @@ def decision_text(resolved: ResolvedCall) -> str:
         access=environment.access if environment is not None else None,
     )
     return resolved.decision.decision if reason is None else f"deny ({reason})"
-
-
-def deny_reason(
-    decision: PolicyDecision, *, effect: Effect, environment: str, access: str | None
-) -> str | None:
-    """Why ``decision`` denies, in plain words; ``None`` when it does not."""
-    if decision.decision != "deny":
-        return None
-    reasons = {
-        "draft": DRAFT_REASON,
-        "undeclared": f"environment {environment} is not declared",
-        "production": f"{environment} is a production environment: writes and destroys are denied",
-        "table": f"access {access or ''} in {environment} does not allow {effect}",
-        "read_only": NEEDS_TERMINAL,
-    }
-    return reasons.get(decision.reason_kind, decision.reason_kind)
 
 
 def action_hub() -> Path:

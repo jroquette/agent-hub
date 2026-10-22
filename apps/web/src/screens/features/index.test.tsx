@@ -526,6 +526,14 @@ describe("FeaturesScreen", () => {
     expect(router.state.location.pathname).toBe("/features/agent-hub/control-plane");
   });
 
+  it("opens New feature from the title row (AC-420.1)", async () => {
+    const { router } = open();
+
+    await userEvent.click(await screen.findByRole("button", { name: "New feature" }));
+
+    expect(router.state.location.pathname).toBe("/features/new");
+  });
+
   it("asks for the scoped project's features", async () => {
     const { requests } = open({}, true, "/features?scope=agent-hub");
 
@@ -546,6 +554,8 @@ describe("FeaturesScreen", () => {
 
       expect(await screen.findByText("No feature records yet.")).toBeInTheDocument();
       expect(screen.getByText("/feature AGH-112")).toBeInTheDocument();
+      // AC-420.1: the empty state points at New feature too.
+      expect(screen.getByText(/one here with/)).toHaveTextContent("New feature");
     });
 
     it("shows the problem in place with Try again", async () => {
@@ -934,7 +944,7 @@ describe("FeaturesScreen (playground delivery)", () => {
     expect(facetCount(/^bounded/)).toBe("0");
   });
 
-  it("titles a named feature with its nickname in the UI font and puts the slug beside it in mono (AC-PG-28.2)", async () => {
+  it("titles a named feature with its nickname in the UI font and puts its fixed label beside it (AC-PG-28.2, AC-425.7)", async () => {
     open({
       "/api/v1/feature-names": {
         items: [{ project: "agent-hub", slug: "layered-memory", name: "Layered memory" }],
@@ -944,14 +954,15 @@ describe("FeaturesScreen (playground delivery)", () => {
     const title = await screen.findByRole("link", { name: "Layered memory" });
     expect(title).toHaveClass("ft-row-title");
     expect(title).toHaveAttribute("data-named");
-    expect(title.nextElementSibling).toHaveClass("ft-row-slug");
+    expect(title.nextElementSibling).toHaveAccessibleName("Feature label layered-memory");
     expect(title.nextElementSibling).toHaveTextContent("layered-memory");
-    expect(screen.getByRole("link", { name: "control-plane" })).not.toHaveAttribute("data-named");
+    const unnamed = screen.getByRole("link", { name: "control-plane" });
+    expect(unnamed).not.toHaveAttribute("data-named");
+    expect(unnamed.nextElementSibling).toHaveAccessibleName("Feature label control-plane");
 
     const css = cssOf("src/screens/features/features.css");
     expect(ruleOf(css, ".ft-row-title")).toMatch(/font-family: var\(--font-mono\);/);
     expect(ruleOf(css, ".ft-row-title[data-named]")).toMatch(/font-family: var\(--font-sans\);/);
-    expect(ruleOf(css, ".ft-row-slug")).toMatch(/font-family: var\(--font-mono\);/);
   });
 
   describe("renaming inline (AC-PG-28.3)", () => {

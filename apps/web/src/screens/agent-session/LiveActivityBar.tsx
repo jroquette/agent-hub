@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
-import { Button, Icon, type IconName } from "../../components";
+import { Button, Icon, TOOL_ICON, type IconName } from "../../components";
 import { useNow } from "../../lib/clock";
 import { cx } from "../../lib/cx";
 import { BACKGROUND_PANEL_ID } from "./BackgroundTasks";
 import { useDrawerWidth } from "./DrawerResize";
-import { cutText, OUTPUT_SHOWN } from "./ToolCallCard";
+import { cutText, OUTPUT_SHOWN, TOOL_STATE } from "./ToolCallCard";
 import {
   elapsed,
   QUIET_MS,
@@ -57,41 +57,61 @@ function headline(activity: LiveActivity): string {
 
 type ToolItem = Extract<FeedItem, { kind: "tool" }>;
 
+const toolIcon = (name: string): IconName =>
+  TOOL_ICON[name] ?? (name.startsWith("mcp__") ? "plug" : "box");
+
+const lineWord = (count: number) =>
+  `${count.toLocaleString("en-US")} ${count === 1 ? "line" : "lines"}`;
+
+/** What a call is for, in Claude's words: a command's description, a subagent's task. */
+function purpose(item: ToolItem): string | null {
+  if (item.childCount > 0 || item.tool.name === "Task" || item.tool.name === "Agent")
+    return item.summary || null;
+  const text = item.tool.input.description;
+  return typeof text === "string" && text.trim() !== "" ? text.trim() : null;
+}
+
+/** A call's output, folded behind one line; a failed call's opens on its first lines. */
 function Output({ item }: { item: ToolItem }) {
+  const [open, setOpen] = useState(item.state === "error");
   const [full, setFull] = useState(false);
-  if (item.preview.length === 0) return null;
-  if (full && item.output !== null) {
-    const cut = cutText(item.output, OUTPUT_SHOWN);
-    return (
-      <div className="as-feed-out">
-        <pre className="as-feed-pre as-feed-full">{cut ? cut.shown : item.output}</pre>
-        <button
-          type="button"
-          className="as-feed-more"
-          onClick={() => {
-            setFull(false);
-          }}
-        >
-          {cut
-            ? `First ${OUTPUT_SHOWN.toLocaleString("en-US")} of ${cut.total.toLocaleString("en-US")} characters · collapse`
-            : "Collapse"}
-        </button>
-      </div>
-    );
-  }
+  const empty = item.output === null || item.output.trim() === "";
+  if (item.digest !== null || empty) return null;
+  const cut = full && item.output !== null ? cutText(item.output, OUTPUT_SHOWN) : null;
   return (
     <div className="as-feed-out">
-      <pre className="as-feed-pre">{item.preview.join("\n")}</pre>
-      {item.more > 0 && (
-        <button
-          type="button"
-          className="as-feed-more"
-          onClick={() => {
-            setFull(true);
-          }}
-        >
-          … +{item.more} {item.more === 1 ? "line" : "lines"}
-        </button>
+      <button
+        type="button"
+        className="as-feed-more"
+        aria-expanded={open}
+        onClick={() => {
+          setOpen(!open);
+        }}
+      >
+        <Icon name={open ? "chevron-down" : "chevron-right"} size="sm" />
+        {item.state === "error" ? "Error output" : "Output"} · {lineWord(item.lines)}
+      </button>
+      {open && (
+        <>
+          <pre className={cx("as-feed-pre", full && "as-feed-full")}>
+            {full ? (cut ? cut.shown : item.output) : item.preview.join("\n")}
+          </pre>
+          {item.more > 0 && (
+            <button
+              type="button"
+              className="as-feed-more"
+              onClick={() => {
+                setFull(!full);
+              }}
+            >
+              {full
+                ? cut
+                  ? `First ${OUTPUT_SHOWN.toLocaleString("en-US")} of ${cut.total.toLocaleString("en-US")} characters · show less`
+                  : "Show less"
+                : `Show all ${lineWord(item.lines)}`}
+            </button>
+          )}
+        </>
       )}
     </div>
   );
@@ -112,7 +132,7 @@ function ThoughtRow({ seconds }: { seconds: number | null }) {
     <li className="as-feed-item as-feed-thinking">
       <div className="as-feed-call">
         <span className="as-feed-mark" aria-hidden>
-          ✻
+          <Icon name="lightbulb" size="sm" data-icon="lightbulb" />
         </span>
         <span className="ah-muted">
           {seconds === null ? "Thought" : `Thought for ${String(seconds)} s`}
@@ -133,21 +153,49 @@ function FeedRow({ item, now }: { item: FeedItem; now: number }) {
   const shown = all ? item.children : item.children.slice(-SUBAGENT_SHOWN);
   const hidden = item.children.length - shown.length;
   const uses = `${String(item.childCount)} tool ${item.childCount === 1 ? "use" : "uses"}`;
+  const why = purpose(item);
+  const detail = why !== null && why === item.summary ? null : item.summary;
   const call = (
     <>
       <span className="as-feed-mark" aria-hidden>
-        ●
+        <Icon name={toolIcon(item.tool.name)} size="sm" data-icon={toolIcon(item.tool.name)} />
       </span>
-      <b>{item.tool.name}</b>
-      {item.summary && (
-        <span className="as-feed-summary ah-mono" title={item.summary}>
-          ({item.summary})
+      <span className="as-feed-text">
+        <span className="as-feed-title">
+          <b>{why ?? item.tool.name}</b>
+          {why === null && detail && (
+            <span className="as-feed-summary ah-mono" title={detail}>
+              {detail}
+            </span>
+          )}
         </span>
-      )}
-      {group && <span className="ah-subtle ah-num">· {uses}</span>}
-      {ran !== null && <span className="ah-subtle ah-num">running {elapsed(ran)}</span>}
-      {item.state === "error" && <span className="ah-subtle">didn't work, Claude moved on</span>}
-      {item.state === "denied" && <span className="ah-subtle">denied</span>}
+        {why !== null && detail && (
+          <span className="as-feed-summary as-feed-sub ah-mono" title={detail}>
+            {detail}
+          </span>
+        )}
+      </span>
+      <span className="as-feed-meta ah-small">
+        {group && <span className="ah-subtle ah-num">{uses}</span>}
+        {item.digest !== null && <span className="ah-subtle ah-num">{item.digest}</span>}
+        {ran !== null && (
+          <span className="as-feed-state ah-num">
+            <Icon name="loader" size="sm" data-icon="loader" /> {elapsed(ran)}
+          </span>
+        )}
+        {item.state === "error" && (
+          <span className="as-feed-state ah-subtle" title="The call failed; Claude moved on">
+            <Icon name={TOOL_STATE.error.icon} size="sm" data-icon={TOOL_STATE.error.icon} />
+            Failed
+          </span>
+        )}
+        {item.state === "denied" && (
+          <span className="as-feed-state ah-subtle">
+            <Icon name={TOOL_STATE.denied.icon} size="sm" data-icon={TOOL_STATE.denied.icon} />
+            Denied
+          </span>
+        )}
+      </span>
     </>
   );
   return (
@@ -161,14 +209,18 @@ function FeedRow({ item, now }: { item: FeedItem; now: number }) {
             setOpen(!expanded);
           }}
         >
-          <Icon name={expanded ? "chevron-down" : "chevron-right"} size="sm" />
           {call}
+          <Icon
+            name={expanded ? "chevron-down" : "chevron-right"}
+            size="sm"
+            className="as-feed-chevron"
+          />
         </button>
       ) : (
         <div className="as-feed-call">{call}</div>
       )}
       {item.state === "waiting" && (
-        <div className="as-feed-out">
+        <div className="as-feed-out as-feed-ask">
           <span className="as-live-quiet">Waiting for you</span>{" "}
           <button
             type="button"
@@ -471,6 +523,11 @@ export function StepsPanel({ steps, onClose, focusOnOpen = true }: StepsPanelPro
           <>
             <Icon name={PHASE[activity.phase].icon} size="sm" />
             <b>{headline(activity)}</b>
+            {activity.calls[0] && activity.phase !== "waiting" && (
+              <span className="as-live-detail ah-muted" title={activity.calls[0].label}>
+                {activity.calls[0].label}
+              </span>
+            )}
             <span className="ah-grow" />
             {turn !== null && (
               <span className="ah-muted ah-num">

@@ -13,6 +13,7 @@ import {
   type ApiProblem,
 } from "../../lib/api";
 import { ticketName, type TicketInfo } from "../../components";
+import { fileBody, type MessageFile } from "../../lib/messageFile";
 import { screenshotBody } from "../../lib/pastedImage";
 import { rememberMessageScreenshots } from "../../lib/screenshotCopy";
 import { useEventStream, type StreamHandlers, type StreamHealth } from "../../lib/sse";
@@ -120,6 +121,20 @@ export function useRepoCommitDiff(
       query: { path, sha, ...(oldPath ? { old_path: oldPath } : {}) },
     },
     { retry: false, staleTime: Infinity },
+  );
+}
+
+/** `GET /agent-sessions/{id}/repo-changes/file`: a file as one commit has it (the base of a pull
+ * request's diff), read once and only when `enabled`. */
+export function useRepoFileText(
+  id: string,
+  { path, sha }: { path: string; sha: string },
+  enabled: boolean,
+) {
+  return useApi(
+    "/api/v1/agent-sessions/{agent_session_id}/repo-changes/file",
+    { path: { agent_session_id: id }, query: { path, sha } },
+    { retry: false, staleTime: Infinity, enabled },
   );
 }
 
@@ -309,12 +324,14 @@ export interface AgentTranscript {
   health: StreamHealth;
   /** Whether the stream is (meant to be) open: a live session whose log has loaded. */
   streaming: boolean;
-  /** Posts `text` (and the images pasted in it) with `post`, showing it as "Sending…" until its
-   * record arrives (AC-234.27); the images are kept in this browser under the accepted seq. */
+  /** Posts `text` (and the images and files attached to it) with `post`, showing it as
+   * "Sending…" until its record arrives (AC-234.27); the images are kept in this browser under
+   * the accepted seq, the files are only named. */
   send: (
     text: string,
     post: (text: string) => Promise<MessageAccepted>,
     screenshots?: readonly string[],
+    files?: readonly MessageFile[],
   ) => Promise<unknown>;
 }
 
@@ -397,11 +414,13 @@ export function useAgentTranscript(id: string): AgentTranscript {
       text: string,
       post: (text: string) => Promise<MessageAccepted>,
       screenshots: readonly string[] = [],
+      files: readonly MessageFile[] = [],
     ) => {
       const sendKey = `send-${String((sends.current += 1))}`;
       // A message to an ended session reopens it in place: reload, so the stream opens again.
       const reopens = ended.current;
-      batcher.push({ type: "sending", key: sendKey, text, screenshots });
+      const attachedFiles = files.map((file) => ({ name: file.name, bytes: file.bytes }));
+      batcher.push({ type: "sending", key: sendKey, text, screenshots, files: attachedFiles });
       try {
         const { seq } = await post(text);
         // The server keeps no image: this browser does, for the message's bubble.
@@ -444,8 +463,12 @@ function isSession(data: unknown): data is AgentSession {
 }
 
 export interface AgentSessionCommands {
-  /** Posts a message, with the PNG data URLs of the images pasted in it. */
-  send: (text: string, screenshots?: readonly string[]) => Promise<MessageAccepted>;
+  /** Posts a message, with the PNG data URLs of the images pasted in it and its files. */
+  send: (
+    text: string,
+    screenshots?: readonly string[],
+    files?: readonly MessageFile[],
+  ) => Promise<MessageAccepted>;
   interrupt: () => Promise<unknown>;
   /** Stops a running background task (an agent or a command). */
   stopTask: (taskId: string) => Promise<unknown>;
@@ -468,12 +491,14 @@ export function useAgentSessionCommands(id: string): AgentSessionCommands {
       return data;
     };
     return {
-      send: (text, screenshots = []) =>
+      send: (text, screenshots = [], files = []) =>
         apiPost(
           "/api/v1/agent-sessions/{agent_session_id}/messages",
-          screenshots.length > 0
-            ? { text, screenshots: screenshots.map(screenshotBody) }
-            : { text },
+          {
+            text,
+            ...(screenshots.length > 0 ? { screenshots: screenshots.map(screenshotBody) } : {}),
+            ...(files.length > 0 ? { files: files.map(fileBody) } : {}),
+          },
           params,
         ),
       interrupt: () =>

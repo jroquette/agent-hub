@@ -173,16 +173,165 @@
   font-size: 13px;
   font-weight: 600;
 }
-.po-meta {
+
+/* Recent work: features and tickets side by side, stacked when the section is narrow. */
+#po-recent,
+#po-config {
+  container-type: inline-size;
+}
+.po-recent {
   display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 6px var(--space-4);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+@container (max-width: 960px) {
+  .po-recent {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.po-recent-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.po-recent-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+}
+.po-recent-head h3 {
   margin: 0;
   font-size: 13px;
+  font-weight: 600;
 }
-.po-meta dt {
+.po-recent .ft-row-head .ft-row-title {
+  font-family: var(--font-sans);
+  font-weight: 500;
+}
+/* The rows here carry only a cost on the right: the list screens' three meta columns would starve the title. */
+.po-recent .ft-card {
+  --ft-meta: auto;
+}
+/* A ticket's title is what people read: plain text, not a quiet mono slug. */
+.po-recent .ft-row-slug {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--text);
+}
+.po-hint {
+  border-radius: var(--radius-sm);
+}
+.po-path-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* The hub configuration in plain sentences: a 2 x 2 grid of equal cards, one column when narrow. */
+.po-config {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
+  gap: var(--space-3);
+}
+@container (max-width: 760px) {
+  .po-config {
+    grid-template-columns: minmax(0, 1fr);
+    grid-auto-rows: auto;
+  }
+}
+.po-config-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  min-width: 0;
+}
+.po-config-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.po-config-card-head h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.po-facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+  line-height: 20px;
+}
+.po-fact {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.po-fact-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 6px;
+  min-width: 0;
+}
+.po-fact-text > :not(.po-fact-label) {
+  overflow-wrap: anywhere;
+}
+.po-fact-label {
+  flex-basis: 100%;
+  font-size: 12px;
   color: var(--text-subtle);
 }
-.po-meta dd {
+.po-fact .ah-config-source {
+  flex: none;
+}
+.po-pattern {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 2px;
+}
+
+/* Health findings: the message first, then where; the rule id is a quiet reference at the end. */
+.po-findings {
   margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.po-finding {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-2);
+  padding: 7px 0;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+.po-finding-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.po-finding-message,
+.po-finding-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.po-finding-path {
+  font-size: 12px;
+}
+.po-check-tip {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px var(--space-2);
+  overflow-wrap: anywhere;
 }

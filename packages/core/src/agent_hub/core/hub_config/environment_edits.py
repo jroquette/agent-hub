@@ -7,6 +7,10 @@ so an add followed by its remove gives the document back. Whether the result is 
 not checked here: the caller validates it with the same checks as a read. A name starting
 with ``_`` is a comment key, never a name: every edit refuses one. A name given by the
 caller is echoed in a refusal only when it is a valid name without a secret's shape.
+
+A rename keeps the key's place in its map: ``rename_environment`` also moves every endpoint the
+same document keys by the old name, ``set_service`` renames a service in its repo. Neither looks
+at the other file: the caller renames there too when that file holds the old name.
 """
 
 import copy
@@ -134,11 +138,12 @@ def add_endpoint(
     file: str,
     creates_repo: bool,
     known_repos: Collection[str] = (),
+    description: str | None = None,
 ) -> Document | EditRefusal:
     """``document`` with ``endpoint`` for ``service`` of ``repo`` in ``environment``; the
-    service is added when absent, with ``kind`` when given. With ``creates_repo`` (the local
-    file), an absent ``repos`` entry is added as ``{dir, services}``, for a dir in
-    ``known_repos`` (``hub.json``'s) only."""
+    service is added when absent, with ``kind`` and ``description`` when given. With
+    ``creates_repo`` (the local file), an absent ``repos`` entry is added as ``{dir, services}``,
+    for a dir in ``known_repos`` (``hub.json``'s) only."""
     if refusal := _comment_refusal(repo, service, environment):
         return refusal
     edited = copy.deepcopy(document)
@@ -158,6 +163,8 @@ def add_endpoint(
     target: Document = found if isinstance(found, dict) else {}
     if kind is not None:
         target["kind"] = kind
+    if description is not None:
+        target["description"] = description
     endpoints = _map(target, "endpoints")
     if environment in endpoints:
         return EditRefusal(f"{repo} {service} already has an endpoint in {shown_name(environment)}")
@@ -201,6 +208,94 @@ def remove_endpoint(
         repos.remove(entry)
         _drop_if_empty(edited, "repos")
     return edited
+
+
+def rename_environment(
+    document: Document, name: str, new_name: str, *, declared: Collection[str], file: str
+) -> Document | EditRefusal:
+    """``document`` with the environment ``name`` renamed ``new_name`` in its place, and each
+    service's endpoint keyed by ``name`` moved to ``new_name`` in its place.
+
+    Refused when ``new_name`` equals ignoring case another environment of ``document`` or of
+    ``declared`` (the other file's names; ``name`` itself is skipped: a change of case renames).
+    """
+    if refusal := _comment_refusal(name, new_name):
+        return refusal
+    edited = copy.deepcopy(document)
+    environments = _map(edited, "environments")
+    if name not in environments:
+        return EditRefusal(f"no environment {shown_name(name)} in {file}")
+    for existing in (*environment_names(edited), *declared):
+        if existing != name and existing.lower() == new_name.lower():
+            return EditRefusal(f"environment {shown_name(existing)} is already declared")
+    edited["environments"] = _renamed(environments, name, new_name)
+    for entry in _repos(edited):
+        services = _map(entry, "services")
+        for service in services.values():
+            if isinstance(service, dict) and name in _map(service, "endpoints"):
+                service["endpoints"] = _renamed(_map(service, "endpoints"), name, new_name)
+    return edited
+
+
+def set_service(
+    document: Document,
+    *,
+    repo: str,
+    service: str,
+    changes: Mapping[str, JsonValue | None],
+    new_name: str | None,
+    taken: Collection[str],
+    file: str,
+) -> Document | EditRefusal:
+    """``document`` with ``changes`` made to ``service`` of ``repo`` (a key set to ``None`` is
+    removed), then renamed ``new_name`` in its place when given.
+
+    Refused when ``new_name`` is another service of that repo in ``document`` or in ``taken``
+    (the other file's names for that repo).
+    """
+    if refusal := _comment_refusal(repo, service, new_name):
+        return refusal
+    edited = copy.deepcopy(document)
+    entry = _repo(edited, repo)
+    if entry is None:
+        return EditRefusal(f"no repo {shown_name(repo)} in {file}")
+    services = _map(entry, "services")
+    target = services.get(service)
+    if not isinstance(target, dict):
+        return EditRefusal(f"no service {shown_name(service)} on {repo} in {file}")
+    _change(target, changes)
+    if new_name is not None and new_name != service:
+        if new_name in services or new_name in taken:
+            return EditRefusal(f"{repo} already has a service {shown_name(new_name)}")
+        entry["services"] = _renamed(services, service, new_name)
+    return edited
+
+
+def environment_names(document: Document) -> list[str]:
+    """The environment names of ``document``, comment keys left out."""
+    return [key for key in _map(document, "environments") if not key.startswith("_")]
+
+
+def repo_dirs(document: Document) -> list[str]:
+    """The ``dir`` of each repo of ``document``."""
+    return [str(entry.get("dir")) for entry in _repos(document)]
+
+
+def service_names(document: Document, repo: str) -> list[str]:
+    """The service names of ``repo`` in ``document`` (none when it has no such repo)."""
+    entry = _repo(document, repo)
+    services = _map(entry, "services") if entry is not None else {}
+    return [key for key in services if not key.startswith("_")]
+
+
+def _renamed(found: Document, name: str, new_name: str) -> Document:
+    """``found`` with the key ``name`` renamed ``new_name`` in its place."""
+    return {new_name if key == name else key: value for key, value in found.items()}
+
+
+def _repos(document: Document) -> list[Document]:
+    repos = document.get("repos")
+    return [entry for entry in repos if isinstance(entry, dict)] if isinstance(repos, list) else []
 
 
 def _change(entry: Document, changes: Mapping[str, JsonValue | None]) -> None:

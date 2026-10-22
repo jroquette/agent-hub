@@ -272,8 +272,16 @@ export function LocalSettingsDialog({
           </p>
         )}
         <p className="ah-small ah-muted" style={{ margin: 0 }}>
-          Environments and services: edit them with <code className="ah-mono">hub env --local</code>{" "}
-          or ask Claude.
+          Environments and endpoints: add and change them in the{" "}
+          <a
+            href="#environments"
+            onClick={() => {
+              onClose();
+            }}
+          >
+            Environments
+          </a>{" "}
+          section.
         </p>
       </form>
     </Dialog>

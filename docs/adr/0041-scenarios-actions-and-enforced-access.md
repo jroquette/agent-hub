@@ -120,6 +120,11 @@ oversight a `script` step with today's keys cannot.
 - Contract: [design/scenarios.md](../design/scenarios.md); keys in [design/workflow-schema.md](../design/workflow-schema.md);
   environments in [design/environments.md](../design/environments.md).
 - AGH-350: spec, research and plan in the hub (`brain/features/scenarios/`).
+- Amendment while proposed (AGH-417): hub web may read a declared or typed env file's variable **names**, never a
+  value, so the Environments screens can show what scripted actions will get (`GET /projects/{project}/env-file-keys`).
+  Only a regular file of at most 64 KiB, held by the hub or a declared repo by real path and reached through no link
+  (the rule of doctor's `environments.env_file`), is read; each value is dropped as the line is parsed and never leaves
+  the server. The action runner stays the only reader of values.
 - Option 2 was rejected because it needs infra libraries in agent-hub and a generic action would be a script with
   hidden effects; option 3 because a classifier over free commands is wrong often enough to give false safety (ADR
   0038's reason, still true); option 4 because gates, records, resume, events and the run views already exist.

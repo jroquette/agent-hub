@@ -91,6 +91,20 @@ def test_refuses_screenshot_when_prompt_missing() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "attached",
+    [
+        {"screenshots": [{"media_type": "image/png", "data": PNG_DATA}]},
+        {"files": [{"name": "a.txt", "media_type": "text/plain", "data": "aGk="}]},
+    ],
+    ids=["screenshots", "files"],
+)
+def test_refuses_attachments_when_prompt_missing(attached: dict[str, object]) -> None:
+    # AC-419.5: images and files need a first prompt.
+    with pytest.raises(ValidationError):
+        CreateAgentSession.model_validate({"project": "demo", "workdir_id": WORKDIR_ID} | attached)
+
+
 def test_refuses_screenshot_when_media_type_not_png() -> None:
     with pytest.raises(ValidationError):
         CreateAgentSession.model_validate(

@@ -44,6 +44,12 @@ MODEL_ALIASES: Final = ("default", "opus", "sonnet", "haiku")
 MODEL_PATTERN: Final = r"^[A-Za-z0-9._\-\[\]]{1,64}$"
 _MODEL = re.compile(MODEL_PATTERN)
 
+# Which tools a session may use: ``all`` (what the mode and the person allow), or ``read_only``,
+# where only ``READ_ONLY_TOOLS`` exist and every other tool request is denied without asking
+# (ADR 0046). Only the server picks ``read_only`` (a discovery); the browser never sets it.
+type ToolAccess = Literal["all", "read_only"]
+READ_ONLY_TOOLS: Final = ("Read", "Grep", "Glob")
+
 # The terminal reason of a turn ended by ``interrupt`` (the CLI's own word for it).
 ABORTED_TERMINAL_REASON: Final = "aborted_streaming"
 
@@ -76,8 +82,10 @@ class StartSpec(DriverModel):
     """What one session starts with: a resolved working directory (never a free path from the
     browser), the mode, an optional model, an optional session to resume (and fork), an
     optional session id to give the new session (P13), variables added to the child's
-    environment (``AGENT_HUB_WEB_URL``; never the access token, L5), and the hub's plugin
-    folders a session outside the hub loads (resolved by the workdir listing).
+    environment (``AGENT_HUB_WEB_URL``; never the access token, L5), the hub's plugin
+    folders a session outside the hub loads (resolved by the workdir listing), the tools it may
+    use (``tool_access``) and the folders it may read besides its own (``add_dirs``, absolute
+    paths the server resolved).
 
     ``hidden_environment`` names the hub's declared credentials, which the child's environment
     loses (every session, AM-13): the names only, never a value. An investigation session also
@@ -95,6 +103,8 @@ class StartSpec(DriverModel):
     hidden_environment: CredentialNames = NO_CREDENTIALS
     tool_policy: ToolPolicy | None = None
     system_prompt: str | None = None
+    tool_access: ToolAccess = "all"
+    add_dirs: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def _fork_needs_resume(self) -> StartSpec:
@@ -112,6 +122,20 @@ class DriverImage(DriverModel):
     data: bytes
 
     def __repr_args__(self) -> Iterator[tuple[str, object]]:
+        yield "media_type", self.media_type
+        yield "bytes", len(self.data)
+
+
+class DriverFile(DriverModel):
+    """A file sent with a user message for Claude to read (a decoded PDF or UTF-8 text); its
+    repr shows only the name, the media type and the size, never the bytes."""
+
+    name: str
+    media_type: Literal["application/pdf", "text/plain"]
+    data: bytes
+
+    def __repr_args__(self) -> Iterator[tuple[str, object]]:
+        yield "name", self.name
         yield "media_type", self.media_type
         yield "bytes", len(self.data)
 
@@ -335,10 +359,15 @@ class SessionDriver(Protocol):
         ...
 
     async def send(
-        self, handle: DriverHandle, text: str, *, images: tuple[DriverImage, ...] = ()
+        self,
+        handle: DriverHandle,
+        text: str,
+        *,
+        images: tuple[DriverImage, ...] = (),
+        files: tuple[DriverFile, ...] = (),
     ) -> None:
-        """Send a user message (``images`` first, then ``text``): it starts a turn, or waits
-        behind the running one."""
+        """Send a user message (``files``, then ``images``, then ``text``): it starts a turn,
+        or waits behind the running one."""
         ...
 
     async def interrupt(self, handle: DriverHandle) -> None:

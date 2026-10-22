@@ -186,9 +186,12 @@ The human summary of `spec.md`, `research.md` or `plan.md`, written by the hub's
 record is written or amended; the record stays the agents' reference and is never changed by it. Frontmatter:
 `type: summary`, `of` (the record's file name), `source_sha256` (the hex SHA-256 of the record's bytes when the summary
 was written), `written_at`, `provenance: agent`. Body: a bottom line first, then only the non-empty sections of
-Decisions, Risks, Open questions and Next step; 150 to 300 words (at most 350), plain language, every point linking
-to the record's section it comes from. People skim long agent text rather than read it (NN/g: about 20% of a page's
-words are read), so `hub web` opens a record tab on its summary ("For humans") with the record one click away
+Decisions, Risks, Open questions and Next step; 150 to 300 words (at most 350, the Open questions section not
+counted), plain language, every point linking to the record's section it comes from. Its Open questions section
+repeats every question of the record with the same id, each with its context and options in plain words, so the
+owner can answer it without the record; `hub web` shows those questions above the Approve bar in place of the
+record's while the summary is current and names every question the record has (AGH-425). People skim long agent
+text rather than read it (NN/g: about 20% of a page's words are read), so `hub web` opens a record tab on its summary ("For humans") with the record one click away
 ("Agent markdown"), and says the summary is out of date when `source_sha256` differs from the `sha256` the brain
 note route gives for the record.
 
@@ -262,6 +265,13 @@ the same wait as `acceptance_eval.owner_wait` ([API.md](../API.md)). With no AC 
 AC withdrawn), the step is `waiting` (when it is the gate, A19), "Sign off by hand · no ACs listed", until a
 later owner SHIP of any scope
 exists; the app cannot write that one, so the owner writes it by hand.
+
+The owner can also sign off named ACs they checked by hand (AGH-425, the sign-off's `acs`): an owner eval over
+exactly those live ACs, with no source eval and no tickets. It keeps the refusals above, writing nothing: an unknown
+or withdrawn AC, `done` over an AC whose latest eval is NO-SHIP, a note that would not rank newer than every eval
+naming those ACs, and evals left unread. An AC whose latest evals are all owner SHIPs reads `signed_off` and counts as
+passing (`EvalCoverage.signed_off`) even when `features.json` says it does not; being an owner SHIP, it also leaves
+the Acceptance wait. `features.json` is never changed by it.
 
 Each feature (list and detail) carries `waiting_on_owner`, the owner decision it waits on: `change_request` (with the
 open requests' origin tickets) while a plan change request is open, else `owner_signoff` while the acceptance eval

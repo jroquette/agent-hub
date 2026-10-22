@@ -20,7 +20,7 @@ PHASE_ZERO_INSERT = (
     "VALUES ('demo', 'session-1', 'tool.call', 'claude_code', ?, "
     "'2026-09-27 08:00:00.000000', '{}')"
 )
-HEAD = "0009"
+HEAD = "0010"
 AGENT_SESSION_TABLES = {"agent_sessions", "agent_session_records"}
 ITEM_VERSION_TABLES = {"item_versions"}
 KNOWLEDGE_TABLES = {
@@ -558,7 +558,7 @@ KNOWLEDGE_DOCUMENT_INSERT = (
 def test_keeps_rows_when_upgraded_to_knowledge_links(tmp_path: Path) -> None:
     db_path = tmp_path / "agent-hub.db"
     config = alembic_config(f"sqlite:///{db_path}")
-    upgrade(config, "0008")
+    upgrade(config, "0009")
     engine = create_engine(f"sqlite:///{db_path}")
     try:
         with engine.begin() as connection:
@@ -590,9 +590,9 @@ def test_keeps_rows_when_upgraded_to_knowledge_links(tmp_path: Path) -> None:
     rows_before = all_rows()
     assert all(rows_before.values())
 
-    upgrade(config, "0009")
+    upgrade(config, "0010")
 
-    assert _current_revision(db_path) == "0009"
+    assert _current_revision(db_path) == "0010"
     assert _table_names(db_path) >= KNOWLEDGE_TABLES | LINK_TABLES
     assert {table: _schema(db_path, table) for table in tables} == schema_before
     assert all_rows() == rows_before
@@ -610,10 +610,34 @@ def test_keeps_rows_when_upgraded_to_knowledge_links(tmp_path: Path) -> None:
         ("uq_knowledge_links_hub_source_target", ["hub", "source", "target"])
     ]
 
-    downgrade(config, "0008")
+    downgrade(config, "0009")
 
-    assert _current_revision(db_path) == "0008"
+    assert _current_revision(db_path) == "0009"
     assert _table_names(db_path).isdisjoint(LINK_TABLES)
     assert _table_names(db_path) >= KNOWLEDGE_TABLES
     assert {table: _schema(db_path, table) for table in tables} == schema_before
     assert all_rows() == rows_before
+
+
+# AC-418.1
+def test_keeps_sessions_as_all_tools_when_tool_access_added_and_dropped(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0005")
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(SESSION_INSERT)
+    finally:
+        engine.dispose()
+    upgrade(config, "0008")
+    before = _all_session_rows(db_path)
+
+    upgrade(config, "0009")
+    at_head = _all_session_rows(db_path)
+    columns = [name for name, _, _ in _schema(db_path, "agent_sessions")["columns"]]
+    downgrade(config, "0008")
+
+    assert columns[-1] == "tool_access"
+    assert at_head == [(*before[0], "all")]
+    assert _all_session_rows(db_path) == before

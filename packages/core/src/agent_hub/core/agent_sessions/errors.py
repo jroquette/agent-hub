@@ -176,15 +176,37 @@ class ScreenshotTooLargeError(AgentHubError):
         super().__init__(f"screenshot of {size} bytes is over the {limit} byte limit")
 
 
-class HubLocalInvalidError(AgentHubError):
-    """The hub's ``hub.local.json`` cannot be read, so the credentials it may declare are
-    unknown and no driven session starts in that project (409, E-8, AM-13)."""
+class InvalidMessageFileError(AgentHubError):
+    """A message's file is not valid base64, or not what its media type says (422); ``reason``
+    is fixed text, never the data. ``pointer`` is the JSON pointer of its ``data``."""
 
-    def __init__(self, project: str) -> None:
+    def __init__(self, reason: str, *, pointer: str) -> None:
+        self.reason = reason
+        self.pointer = pointer
+        super().__init__(f"invalid file: {reason}")
+
+
+class MessageFileTooLargeError(AgentHubError):
+    """A message's decoded file is over the byte limit (413)."""
+
+    def __init__(self, *, size: int, limit: int) -> None:
+        self.size = size
+        self.limit = limit
+        super().__init__(f"file of {size} bytes is over the {limit} byte limit")
+
+
+class HubLocalInvalidError(AgentHubError):
+    """The hub's ``hub.local.json`` cannot be read, or conflicts with ``hub.json``, so the
+    credentials and environments it may declare are unknown: no driven session starts in that
+    project (409, E-8, AM-13), and no scenario plan, start, pick or issue create runs (E-14).
+    ``before`` names what waits for the fix (a session), else nothing is named."""
+
+    def __init__(self, project: str, *, before: str | None = None) -> None:
         self.project = project
+        waiting = f" before {before}" if before else ""
         super().__init__(
-            f"project {project}: hub.local.json cannot be read, so the credentials it declares"
-            " are unknown; fix it (hub doctor) before starting a session"
+            f"project {project}: hub.local.json cannot be read or conflicts with hub.json, so the"
+            f" credentials and environments it declares are unknown; fix it (hub doctor){waiting}"
         )
 
 

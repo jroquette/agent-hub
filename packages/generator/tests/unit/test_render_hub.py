@@ -128,6 +128,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/skills/feature/SKILL.md",
     "plugin/hub-workflow/skills/fix/SKILL.md",
     "plugin/hub-workflow/skills/handoff/SKILL.md",
+    "plugin/hub-workflow/skills/implement/SKILL.md",
     "plugin/hub-workflow/skills/incident/SKILL.md",
     "plugin/hub-workflow/skills/kickoff/SKILL.md",
     "plugin/hub-workflow/skills/learn/SKILL.md",
@@ -239,6 +240,7 @@ BASE_SKILLS = (
     "feature",
     "fix",
     "handoff",
+    "implement",
     "incident",
     "kickoff",
     "learn",
@@ -367,12 +369,12 @@ def test_returns_rendered_hub_when_demo_rendered(demo_config: HubConfig) -> None
     # skills, AGH-274's two review skills and ux-designer agent, /summarize, AGH-319's
     # `plain-language`, AGH-412's /test-strength, and AGH-411's test-writer agent and
     # /property-based-testing, AGH-413's security-reviewer agent and /design-fit, and AGH-414's
-    # /premortem and /context-audit: 37, sorted by path.
+    # /premortem and /context-audit, and AGH-406's /implement: 38, sorted by path.
     assert [link.path for link in rendered.links] == [
         *(f".claude/agents/{name}.md" for name in BASE_AGENTS),
         *(f".claude/skills/{name}" for name in BASE_SKILLS),
     ]
-    assert len(rendered.links) == 37
+    assert len(rendered.links) == 38
     assert all(
         (link.kind, link.ownership) == (Kind.GENERIC, Ownership.MANAGED) for link in rendered.links
     )
@@ -2101,6 +2103,7 @@ SKILL_FRONTMATTER_KEYS = {
     "feature": ["name", "description", "disable-model-invocation", "argument-hint"],
     "fix": ["name", "description", "disable-model-invocation", "argument-hint"],
     "handoff": ["name", "description", "disable-model-invocation", "argument-hint"],
+    "implement": ["name", "description", "disable-model-invocation", "argument-hint"],
     "incident": ["name", "description", "disable-model-invocation", "argument-hint"],
     "kickoff": ["name", "description", "disable-model-invocation"],
     "learn": ["name", "description", "disable-model-invocation", "argument-hint"],
@@ -5011,6 +5014,9 @@ ADAPTER_MODULES = frozenset(
         "workflow_source.py",
         "action_discovery.py",
         "git_answers.py",
+        "env_file_reader.py",
+        # A scenario finding's issue marker, shared by the CLI and hub web (AGH-363).
+        "finding_issues.py",
     }
 )
 RENDERING_MODULES = frozenset(
@@ -5057,6 +5063,7 @@ def test_calls_no_io_when_rendering_modules_scanned() -> None:
     assert hits == []
 
 
+# AGH-431 (AC-431.5): the make -n output is compared without leading tabs.
 def test_passes_budget_and_from_when_run_issue_given(
     variant_config: HubConfig,
     rendered_tree: Callable[[RenderedHub], Path],
@@ -5079,10 +5086,10 @@ def test_passes_budget_and_from_when_run_issue_given(
     ready = run_make(root, fake_uv_bin, "-n", "next")
 
     assert issue.returncode == 0, issue.stderr
-    assert (
-        f"{hub} run 'DEM-1' --repo 'demo-api' --live --budget '2' --from 'verify'"
-        in issue.stdout.splitlines()
-    )
+    # make 3.81 (macOS) prints a recipe's continued lines with their leading tab; make 4 drops it.
+    assert f"{hub} run 'DEM-1' --repo 'demo-api' --live --budget '2' --from 'verify'" in [
+        line.strip() for line in issue.stdout.splitlines()
+    ]
     assert ready.returncode == 0, ready.stderr
     assert ready.stdout.splitlines() == [f"{hub} next"]
     assert logged_calls(fake_uv_bin) == []

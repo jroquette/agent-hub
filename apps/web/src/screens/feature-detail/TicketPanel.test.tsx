@@ -116,7 +116,7 @@ describe("TicketPanel (AC-1.10)", () => {
     expect(rows[1]).toHaveFocus();
   });
 
-  it("AC-1.10 opens from a header ticket chip, on the Tickets tab", async () => {
+  it("AC-425.5 has no header ticket chip; the panel opens from the Tickets tab and closes with another tab", async () => {
     const API = "/api/v1/features/agent-hub/control-plane";
     const { router } = renderWithApi(<FeatureDetailScreen />, {
       routes: {
@@ -124,18 +124,16 @@ describe("TicketPanel (AC-1.10)", () => {
         [`${API}/tickets`]: tickets(),
         "/api/v1/sessions": aPage([]),
       },
-      path: "/features/agent-hub/control-plane?doc=acs",
+      path: "/features/agent-hub/control-plane?doc=tickets",
       route: "features/:project/:slug",
     });
 
-    const chips = await screen.findByRole("group", { name: "Tickets of this feature" });
-    const chip = within(chips).getByRole("link", { name: "AGH-202" });
-    expect(chip).toHaveAccessibleDescription(/AGH-202 · .*show its steps$/);
-    await userEvent.click(chip);
+    const title = await screen.findByRole("link", { name: "Serve the ticket summaries" });
+    expect(screen.queryByRole("group", { name: "Tickets of this feature" })).toBeNull();
+    await userEvent.click(title);
 
     expect(router.state.location.search).toBe("?doc=tickets&ticket=AGH-202");
     expect(await screen.findByRole("complementary", { name: /^Ticket AGH-202/ })).toBeVisible();
-    expect(screen.getByRole("tab", { name: /Tickets/ })).toHaveAttribute("aria-selected", "true");
 
     // Switching tab closes the panel and drops ticket=.
     await userEvent.click(screen.getByRole("tab", { name: "Eval" }));

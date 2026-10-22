@@ -6,8 +6,16 @@ import { AgentSessionScreen } from "./screens/agent-session";
 import { BrainPickerScreen, BrainScreen } from "./screens/brain";
 import { FeatureDetailScreen } from "./screens/feature-detail";
 import { FeaturesScreen } from "./screens/features";
+import { NewFeatureScreen } from "./screens/features/NewFeature";
+import { TicketsScreen } from "./screens/tickets";
 import { HealthScreen } from "./screens/health";
+import { DiscoverScreen } from "./screens/environments/DiscoverPage";
+import { EnvironmentsPickerScreen, EnvironmentsScreen } from "./screens/environments";
+import { ReviewScreen } from "./screens/environments/ReviewPage";
+import { EnvironmentScreen } from "./screens/environments/EnvironmentPage";
 import { HubConfigPickerScreen, HubConfigScreen } from "./screens/hub-config";
+import { AddEnvironmentScreen } from "./screens/hub-config/AddEnvironmentFlow";
+import { AddServiceScreen } from "./screens/hub-config/AddServiceFlow";
 import { KnowledgePhase3Screen } from "./screens/knowledge-phase3";
 import { LearningsScreen } from "./screens/learnings";
 import { NotFoundScreen } from "./screens/not-found";
@@ -59,7 +67,20 @@ export const appRoutes: RouteObject[] = [
           { path: "projects/:project", element: <ProjectOverviewScreen /> },
           { path: "projects/:project/brain/*", element: <BrainScreen /> },
           { path: "projects/:project/config", element: <HubConfigScreen /> },
+          {
+            path: "projects/:project/environments/new",
+            element: <AddEnvironmentScreen />,
+          },
+          { path: "projects/:project/environments/services/new", element: <AddServiceScreen /> },
           { path: "config", element: <HubConfigPickerScreen /> },
+          { path: "projects/:project/environments", element: <EnvironmentsScreen /> },
+          { path: "projects/:project/environment/:name", element: <EnvironmentScreen /> },
+          { path: "projects/:project/environments/discover", element: <DiscoverScreen /> },
+          {
+            path: "projects/:project/environments/discover/:discoveryId",
+            element: <ReviewScreen />,
+          },
+          { path: "environments", element: <EnvironmentsPickerScreen /> },
           { path: "projects/:project/skills", element: <SkillsScreen /> },
           { path: "projects/:project/skills/new/:kind", element: <NewDraftScreen /> },
           { path: "projects/:project/skills/drafts/:draftId", element: <StudioScreen /> },
@@ -85,7 +106,9 @@ export const appRoutes: RouteObject[] = [
           { path: "knowledge/skills", element: <SkillsPickerScreen /> },
           { path: "knowledge/:section", element: <KnowledgePhase3Screen /> },
           { path: "features", element: <FeaturesScreen /> },
+          { path: "features/new", element: <NewFeatureScreen /> },
           { path: "features/:project/:slug", element: <FeatureDetailScreen /> },
+          { path: "tickets", element: <TicketsScreen /> },
           // Older links: Workflows moved into the Toolkit.
           { path: "workflows", element: <WorkflowsScreen /> },
           { path: "workflows/new", element: <NewWorkflowScreen /> },

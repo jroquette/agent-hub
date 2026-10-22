@@ -85,7 +85,8 @@ its own session (3 s, then killed with its process group) and only tightens: `ch
 or extra output, timeout, a file resolving outside the hub) gives `ask` with the cause; no file: skipped. The base guard
 asks before edits to `plugin/hub-workflow/hooks/`, `plugin/<project>/hooks/`, `.claude/settings*.json`, `hub.lock`,
 `hub.json` and the `hub`/`agent` launchers (Bash asks only when it writes one). It is a guardrail against mistakes, not
-a sandbox: it matches tool input and Bash text by pattern, so a determined agent can get round it. The real limits are
+a sandbox: it matches tool input and Bash text by pattern, so a determined agent can get round it. A hook's `ask` prompts in every Claude Code mode, so in a session whose
+`permission_mode` is `auto` the guard turns each `ask` into a `deny` with the same reason and a note (AGH-430). The real limits are
 OS permissions and Claude Code's permission rules; the extension's trust boundary is the ask on hooks folder edits. The
 settings' denies and sandbox are defense in depth (sandboxed Bash runs without a prompt; excluded commands take the
 normal permission flow). The sandbox keeps writes in the workspace and `$TMPDIR` and the network to the HTTP(S)
@@ -226,6 +227,22 @@ an edit exits 3, adopt lists differences, a `hub.lock` snapshot. Loki: write `hu
   cap.
 - **AC-378.3** Given the demo hub, when `hub init` writes its `hub.lock`, then the lock matches the committed golden
   `golden/init/demo.hub.lock`, whose `feature/SKILL.md` hash carries the new step 6.
+
+## The guard denies instead of asking in auto mode (AGH-430)
+
+A hook's `ask` forces a permission prompt in every Claude Code mode, so a session in `auto` mode still stopped for a
+call nobody chose to confirm. Proof: `packages/generator/tests/integration/test_guard_hook.py`.
+
+- **AC-430.1** Given a session whose PreToolUse event has `permission_mode: auto`, when the guard (base rules,
+  environment endpoints, env files or the project extension) would ask about a call, then it denies it instead, with
+  the same reason followed by " (denied in auto mode, which never stops to confirm: take another way, or ask the user
+  to switch the session out of auto mode to approve it)".
+- **AC-430.2** Given any other mode (`default`, `acceptEdits`, `plan`, or no `permission_mode`), when the guard would
+  ask, then it still asks with the unchanged reason.
+- **AC-430.3** Given auto mode, when the guard denies a call (e.g. a push to `main`), then the deny and its reason are
+  unchanged, without the note.
+- **AC-430.4** Given auto mode, when the guard turns an ask into a deny, then the decision it records through the
+  event sensor is `kind: deny` under the ask's `rule`.
 
 ## Decisions
 

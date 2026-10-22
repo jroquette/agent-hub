@@ -116,7 +116,7 @@
       },
       "AcRow": {
         "additionalProperties": false,
-        "description": "One acceptance criterion of ``features.json``.",
+        "description": "One acceptance criterion of ``features.json``; ``signed_off`` when it does not pass there\nbut the owner's latest eval of it (``provenance: owner``) says SHIP: checked by hand.",
         "properties": {
           "command": {
             "anyOf": [
@@ -167,6 +167,11 @@
               }
             ],
             "title": "Repo"
+          },
+          "signed_off": {
+            "default": false,
+            "title": "Signed Off",
+            "type": "boolean"
           }
         },
         "required": [
@@ -236,6 +241,14 @@
         ],
         "title": "AcceptanceEval",
         "type": "object"
+      },
+      "Access": {
+        "enum": [
+          "read",
+          "write",
+          "ask"
+        ],
+        "type": "string"
       },
       "ActivityItem": {
         "additionalProperties": false,
@@ -361,6 +374,247 @@
         ],
         "type": "string"
       },
+      "AddEndpoint": {
+        "additionalProperties": false,
+        "description": "A service's endpoint in one environment; the service is added when new.",
+        "properties": {
+          "environment": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Environment",
+            "type": "string"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "op": {
+            "const": "add_endpoint",
+            "title": "Op",
+            "type": "string"
+          },
+          "replace": {
+            "default": false,
+            "title": "Replace",
+            "type": "boolean"
+          },
+          "repo": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Repo",
+            "type": "string"
+          },
+          "resource": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/Scope"
+          },
+          "service": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Service",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "scope",
+          "op",
+          "repo",
+          "service",
+          "environment"
+        ],
+        "title": "AddEndpoint",
+        "type": "object"
+      },
+      "AddEnvironment": {
+        "additionalProperties": false,
+        "description": "A new environment, with its credentials by name only.",
+        "properties": {
+          "access": {
+            "$ref": "#/components/schemas/Access"
+          },
+          "aws_profile": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aws Profile"
+          },
+          "credential_env": {
+            "default": [],
+            "items": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Credential Env",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "env_file": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Env File"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "op": {
+            "const": "add_environment",
+            "title": "Op",
+            "type": "string"
+          },
+          "production": {
+            "default": false,
+            "title": "Production",
+            "type": "boolean"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/Scope"
+          }
+        },
+        "required": [
+          "scope",
+          "op",
+          "name",
+          "access"
+        ],
+        "title": "AddEnvironment",
+        "type": "object"
+      },
+      "AddService": {
+        "additionalProperties": false,
+        "description": "A new service of a repo with its address in one or more environments, in one step.\n\nEach address goes to the file of its environment: a team environment's to ``hub.json``, the\ndeveloper's own to ``hub.local.json``; both files are checked before either is written.",
+        "properties": {
+          "addresses": {
+            "items": {
+              "$ref": "#/components/schemas/ServiceAddress"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Addresses",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "op": {
+            "const": "add_service",
+            "title": "Op",
+            "type": "string"
+          },
+          "repo": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Repo",
+            "type": "string"
+          },
+          "service": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Service",
+            "type": "string"
+          }
+        },
+        "required": [
+          "op",
+          "repo",
+          "service",
+          "addresses"
+        ],
+        "title": "AddService",
+        "type": "object"
+      },
       "AgentModelView": {
         "additionalProperties": false,
         "description": "A plugin agent's tier, when ``models.agents`` moves it off its template's.",
@@ -383,7 +637,7 @@
       },
       "AgentSession": {
         "additionalProperties": false,
-        "description": "One session ``hub web`` started (or one cloud start, ``kind=\"cloud\"``).\n\n``claude_session_id`` links it to the hook-observed Session once ``init`` arrives (or at\nstart when the id is given, P13); ``observed_session_id`` is that Session's id once it has\nbeen observed, else ``null`` (a twin may never arrive, D2). ``last_seq`` is the last\npersisted record's ``seq``. ``cost_usd`` and ``usage`` add up the turns' results (an estimate).\n``last_prompt`` and ``last_reply`` are the latest ``user.message`` and assistant ``text`` of\nthe stored (redacted) log as one line of at most 280 characters, the reply's markdown\nmarks dropped; ``changed_files`` the files changed, latest change first, at most 200\n(``digest``).",
+        "description": "One session ``hub web`` started (or one cloud start, ``kind=\"cloud\"``).\n\n``claude_session_id`` links it to the hook-observed Session once ``init`` arrives (or at\nstart when the id is given, P13); ``observed_session_id`` is that Session's id once it has\nbeen observed, else ``null`` (a twin may never arrive, D2). ``last_seq`` is the last\npersisted record's ``seq``. ``cost_usd`` and ``usage`` add up the turns' results (an estimate).\n``last_prompt`` and ``last_reply`` are the latest ``user.message`` and assistant ``text`` of\nthe stored (redacted) log as one line of at most 280 characters, the reply's markdown\nmarks dropped; ``changed_files`` the files changed, latest change first, at most 200\n(``digest``). ``tool_access`` is the tools it may use, kept so a reopened session keeps\nthem; it is the server's own (``exclude``: never in an answer, so the contract is unchanged).",
         "properties": {
           "changed_files": {
             "default": [],
@@ -1081,6 +1335,41 @@
         "title": "BundledFileText",
         "type": "object"
       },
+      "CaptureEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "node": {
+            "title": "Node",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue"
+          }
+        },
+        "required": [
+          "node",
+          "attempt",
+          "name",
+          "value"
+        ],
+        "title": "CaptureEntry",
+        "type": "object"
+      },
       "CatalogItem": {
         "additionalProperties": false,
         "description": "One card of the catalog (D3, AC-164.7).\n\n``description`` is the first line, at most 200 characters; ``invocation`` is\n``/<name> <argument-hint>`` for a skill, None for an agent or a hook; ``mode`` is None for an\nagent or a hook; ``usage`` is None for a hook. ``linked_from`` lists the ``.claude/`` links\nthat point at the item; ``active`` is false for a plugin hook whose plugin is not enabled;\n``state`` is set for hooks only.",
@@ -1447,6 +1736,14 @@
         "title": "ChangedFile",
         "type": "object"
       },
+      "Choice": {
+        "enum": [
+          "pick",
+          "retry",
+          "stop"
+        ],
+        "type": "string"
+      },
       "CloudMessage": {
         "additionalProperties": false,
         "description": "``POST /agent-sessions/cloud/{cloud_id}/messages``: a one-shot follow-up.",
@@ -1702,8 +1999,24 @@
       },
       "CreateAgentSession": {
         "additionalProperties": false,
-        "description": "``POST /agent-sessions``: where, how, and an optional first prompt (its byte size is\nchecked against the message limit, 413), or a past session to resume (and fork).\n``screenshot`` goes with the first prompt as an image, so it needs one.",
+        "description": "``POST /agent-sessions``: where, how, and an optional first prompt (its byte size is\nchecked against the message limit, 413), or a past session to resume (and fork).\n``screenshot`` (the screen's capture), ``screenshots`` (images pasted in the first\nmessage) and ``files`` go with the first prompt, so they need one.",
         "properties": {
+          "files": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/MessageFile"
+                },
+                "maxItems": 10,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Files"
+          },
           "fork": {
             "default": false,
             "title": "Fork",
@@ -1763,6 +2076,22 @@
               }
             ]
           },
+          "screenshots": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Screenshot"
+                },
+                "maxItems": 10,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Screenshots"
+          },
           "workdir_id": {
             "pattern": "^[0-9a-f]{16}$",
             "title": "Workdir Id",
@@ -1774,6 +2103,144 @@
           "workdir_id"
         ],
         "title": "CreateAgentSession",
+        "type": "object"
+      },
+      "CreatedIssue": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "url"
+        ],
+        "title": "CreatedIssue",
+        "type": "object"
+      },
+      "Credentials": {
+        "additionalProperties": false,
+        "description": "Where the credentials of an environment come from: names, never values.",
+        "patternProperties": {
+          "^_": {}
+        },
+        "properties": {
+          "aws_profile": {
+            "description": "An AWS profile name.",
+            "pattern": "^[A-Za-z0-9_.-]{1,64}$",
+            "type": "string"
+          },
+          "env": {
+            "default": [],
+            "description": "Names of the environment variables that hold credentials.",
+            "items": {
+              "pattern": "^[A-Z_][A-Z0-9_]{0,63}$",
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Env",
+            "type": "array"
+          },
+          "env_file": {
+            "description": "A dotenv file, relative to the folder holding the hub and its repos, that only actions read; at most 200 characters, no '..', no leading '/' or '~'.",
+            "maxLength": 200,
+            "pattern": "^[!-.0-}][!-~]*$",
+            "type": "string"
+          }
+        },
+        "title": "Credentials",
+        "type": "object"
+      },
+      "DecisionEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "approver": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approver"
+          },
+          "at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          },
+          "attempt": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt"
+          },
+          "choice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Choice"
+          },
+          "node": {
+            "title": "Node",
+            "type": "string"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "where": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Where"
+          }
+        },
+        "required": [
+          "node",
+          "attempt",
+          "choice",
+          "text",
+          "approver",
+          "where",
+          "at"
+        ],
+        "title": "DecisionEntry",
         "type": "object"
       },
       "Diagnostic": {
@@ -1829,6 +2296,63 @@
           "warning"
         ],
         "title": "DiagnosticSeverity",
+        "type": "string"
+      },
+      "DiscoveryProposal": {
+        "additionalProperties": false,
+        "description": "What Claude proposed, as the server checked it.",
+        "properties": {
+          "dropped": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Dropped"
+            },
+            "title": "Dropped",
+            "type": "array"
+          },
+          "environments": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ProposedEnvironment"
+            },
+            "title": "Environments",
+            "type": "array"
+          },
+          "missing": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/MissingService"
+            },
+            "title": "Missing",
+            "type": "array"
+          },
+          "not_read": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/NotRead"
+            },
+            "title": "Not Read",
+            "type": "array"
+          },
+          "services": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ProposedService"
+            },
+            "title": "Services",
+            "type": "array"
+          }
+        },
+        "title": "DiscoveryProposal",
+        "type": "object"
+      },
+      "DiscoveryState": {
+        "enum": [
+          "running",
+          "finished",
+          "failed",
+          "stopped"
+        ],
         "type": "string"
       },
       "DoctorFixRequest": {
@@ -1974,6 +2498,26 @@
         "title": "DriverCapabilities",
         "type": "object"
       },
+      "Dropped": {
+        "additionalProperties": false,
+        "description": "An item, or one field of it, the server refused while checking the proposal.",
+        "properties": {
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "what": {
+            "title": "What",
+            "type": "string"
+          }
+        },
+        "required": [
+          "what",
+          "reason"
+        ],
+        "title": "Dropped",
+        "type": "object"
+      },
       "EdgeSource": {
         "enum": [
           "plan",
@@ -1981,6 +2525,81 @@
           "both"
         ],
         "type": "string"
+      },
+      "EditBatch": {
+        "additionalProperties": false,
+        "description": "Edits made in order and written together: both files or neither.",
+        "properties": {
+          "op": {
+            "const": "batch",
+            "title": "Op",
+            "type": "string"
+          },
+          "ops": {
+            "items": {
+              "$ref": "#/components/schemas/SingleEdit"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Ops",
+            "type": "array"
+          }
+        },
+        "required": [
+          "op",
+          "ops"
+        ],
+        "title": "EditBatch",
+        "type": "object"
+      },
+      "EffectiveEnvironments": {
+        "description": "The union of both files: committed entries first, then the developer's (P-5).",
+        "properties": {
+          "blocked_env": {
+            "items": {
+              "$ref": "#/components/schemas/LayeredEntry"
+            },
+            "title": "Blocked Env",
+            "type": "array"
+          },
+          "blocked_files": {
+            "items": {
+              "$ref": "#/components/schemas/LayeredEntry"
+            },
+            "title": "Blocked Files",
+            "type": "array"
+          },
+          "blocked_words": {
+            "items": {
+              "$ref": "#/components/schemas/LayeredEntry"
+            },
+            "title": "Blocked Words",
+            "type": "array"
+          },
+          "environments": {
+            "items": {
+              "$ref": "#/components/schemas/SourcedEnvironment"
+            },
+            "title": "Environments",
+            "type": "array"
+          },
+          "services": {
+            "items": {
+              "$ref": "#/components/schemas/SourcedService"
+            },
+            "title": "Services",
+            "type": "array"
+          }
+        },
+        "required": [
+          "environments",
+          "services",
+          "blocked_words",
+          "blocked_files",
+          "blocked_env"
+        ],
+        "title": "EffectiveEnvironments",
+        "type": "object"
       },
       "EndReason": {
         "description": "Why a session ended.",
@@ -1993,6 +2612,238 @@
         ],
         "title": "EndReason",
         "type": "string"
+      },
+      "Endpoint": {
+        "additionalProperties": false,
+        "anyOf": [
+          {
+            "required": [
+              "url"
+            ]
+          },
+          {
+            "required": [
+              "resource"
+            ]
+          }
+        ],
+        "description": "How a service is reached in one environment: a url, a resource name, or both.",
+        "patternProperties": {
+          "^_": {}
+        },
+        "properties": {
+          "credentials": {
+            "$ref": "#/components/schemas/Credentials",
+            "description": "Names of the credentials to use here; never a value."
+          },
+          "note": {
+            "minLength": 1,
+            "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f\\u061c\\u200e\\u200f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]+$",
+            "type": "string"
+          },
+          "resource": {
+            "description": "A resource name, such as a table or a function.",
+            "minLength": 1,
+            "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f\\u061c\\u200e\\u200f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]+$",
+            "type": "string"
+          },
+          "url": {
+            "description": "scheme://host[:port][/path], at most 200 characters; no user info, query or fragment.",
+            "maxLength": 200,
+            "pattern": "^[A-Za-z][A-Za-z0-9+.-]*://[A-Za-z0-9.-]+(?::[0-9]{1,5})?(?:/[!\"$->A-~]*)?$",
+            "type": "string"
+          }
+        },
+        "title": "Endpoint",
+        "type": "object"
+      },
+      "EnvFileKeys": {
+        "additionalProperties": false,
+        "description": "What hub web may show of an env file: whether it is found where it may be, whether git\nignores it, and its variable names. ``problem`` says, in words, why no names are shown.",
+        "properties": {
+          "exists": {
+            "title": "Exists",
+            "type": "boolean"
+          },
+          "holder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Holder"
+          },
+          "ignored": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ignored"
+          },
+          "keys": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Keys",
+            "type": "array"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "problem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Problem"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path",
+          "exists",
+          "holder",
+          "ignored"
+        ],
+        "title": "EnvFileKeys",
+        "type": "object"
+      },
+      "EnvironmentDiscovery": {
+        "additionalProperties": false,
+        "description": "``/projects/{project}/environment-discoveries``: a discovery, where its session is, and\nits checked proposal once there is one; ``problem`` says in plain words why it failed.",
+        "properties": {
+          "agent_session_id": {
+            "title": "Agent Session Id",
+            "type": "string"
+          },
+          "created_at": {
+            "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "environments": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Environments",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "problem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Problem"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "proposal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DiscoveryProposal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "repos": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Repos",
+            "type": "array"
+          },
+          "state": {
+            "$ref": "#/components/schemas/DiscoveryState"
+          },
+          "suggest_environments": {
+            "title": "Suggest Environments",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "project",
+          "agent_session_id",
+          "repos",
+          "environments",
+          "suggest_environments",
+          "created_at",
+          "state"
+        ],
+        "title": "EnvironmentDiscovery",
+        "type": "object"
+      },
+      "EnvironmentEdit": {
+        "discriminator": {
+          "mapping": {
+            "add_endpoint": "#/components/schemas/AddEndpoint",
+            "add_environment": "#/components/schemas/AddEnvironment",
+            "add_service": "#/components/schemas/AddService",
+            "batch": "#/components/schemas/EditBatch",
+            "remove_endpoint": "#/components/schemas/RemoveEndpoint",
+            "remove_environment": "#/components/schemas/RemoveEnvironment",
+            "rename_environment": "#/components/schemas/RenameEnvironment",
+            "set_environment": "#/components/schemas/SetEnvironment",
+            "set_service": "#/components/schemas/SetService"
+          },
+          "propertyName": "op"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/AddEnvironment"
+          },
+          {
+            "$ref": "#/components/schemas/SetEnvironment"
+          },
+          {
+            "$ref": "#/components/schemas/RenameEnvironment"
+          },
+          {
+            "$ref": "#/components/schemas/RemoveEnvironment"
+          },
+          {
+            "$ref": "#/components/schemas/AddEndpoint"
+          },
+          {
+            "$ref": "#/components/schemas/RemoveEndpoint"
+          },
+          {
+            "$ref": "#/components/schemas/AddService"
+          },
+          {
+            "$ref": "#/components/schemas/SetService"
+          },
+          {
+            "$ref": "#/components/schemas/EditBatch"
+          }
+        ]
       },
       "EvalRecord": {
         "additionalProperties": false,
@@ -2158,6 +3009,32 @@
         ],
         "title": "EventType",
         "type": "string"
+      },
+      "Evidence": {
+        "additionalProperties": false,
+        "description": "Where Claude saw something: a file relative to the workspace, inside a picked repo.",
+        "properties": {
+          "line": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "Evidence",
+        "type": "object"
       },
       "ExternalBlocker": {
         "additionalProperties": false,
@@ -2847,6 +3724,153 @@
         ],
         "type": "string"
       },
+      "FindingEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "evidence": {
+            "title": "Evidence",
+            "type": "string"
+          },
+          "finding_id": {
+            "title": "Finding Id",
+            "type": "string"
+          },
+          "step": {
+            "title": "Step",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "finding_id",
+          "step",
+          "title",
+          "text",
+          "evidence"
+        ],
+        "title": "FindingEntry",
+        "type": "object"
+      },
+      "FindingIssue": {
+        "additionalProperties": false,
+        "description": "A finding's tracker issue: its draft, the team it goes to, and the issue once created.\n``recorded`` is whether the created issue reached its marker (``None`` before a create);\nwhen it did not, ``warning`` says so: the issue exists, do not create it again.",
+        "properties": {
+          "created": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CreatedIssue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "finding_id": {
+            "title": "Finding Id",
+            "type": "string"
+          },
+          "recorded": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recorded"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "team": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warning"
+          }
+        },
+        "required": [
+          "run_id",
+          "finding_id",
+          "team",
+          "title",
+          "description",
+          "created"
+        ],
+        "title": "FindingIssue",
+        "type": "object"
+      },
+      "FindingIssueRequest": {
+        "additionalProperties": false,
+        "description": "``confirm: true`` creates the issue (the terminal's ``y``); without it, the draft.",
+        "properties": {
+          "confirm": {
+            "default": false,
+            "title": "Confirm",
+            "type": "boolean"
+          }
+        },
+        "title": "FindingIssueRequest",
+        "type": "object"
+      },
+      "FindingNote": {
+        "additionalProperties": false,
+        "description": "The inbox note written for a finding, hub-relative.",
+        "properties": {
+          "finding_id": {
+            "title": "Finding Id",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "finding_id",
+          "path"
+        ],
+        "title": "FindingNote",
+        "type": "object"
+      },
       "FindingView": {
         "additionalProperties": false,
         "description": "A finding of a registered hub's doctor run.",
@@ -3478,6 +4502,9 @@
           "default_branch": {
             "$ref": "#/components/schemas/SourcedValue"
           },
+          "environments": {
+            "$ref": "#/components/schemas/EffectiveEnvironments"
+          },
           "guard": {
             "$ref": "#/components/schemas/GuardConfigView"
           },
@@ -3553,7 +4580,8 @@
           "model_tiers",
           "agent_models",
           "modules",
-          "platform_version"
+          "platform_version",
+          "environments"
         ],
         "title": "HubConfigView",
         "type": "object"
@@ -3732,6 +4760,163 @@
           }
         ]
       },
+      "Inputs": {
+        "additionalProperties": {
+          "$ref": "#/components/schemas/InputValue"
+        },
+        "maxProperties": 64,
+        "propertyNames": {
+          "$ref": "#/components/schemas/InputName"
+        },
+        "type": "object"
+      },
+      "InvestigationAnswer": {
+        "additionalProperties": false,
+        "description": "The answer to an open investigation: ``pick`` with an option id, ``retry`` or ``stop``.",
+        "properties": {
+          "choice": {
+            "$ref": "#/components/schemas/Choice"
+          },
+          "option": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OptionId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "choice"
+        ],
+        "title": "InvestigationAnswer",
+        "type": "object"
+      },
+      "InvestigationAnswered": {
+        "additionalProperties": false,
+        "description": "What an answer did: recorded for the investigation, and the run resumed.",
+        "properties": {
+          "choice": {
+            "$ref": "#/components/schemas/Choice"
+          },
+          "investigation": {
+            "title": "Investigation",
+            "type": "integer"
+          },
+          "option": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Option"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "step": {
+            "title": "Step",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "project",
+          "investigation",
+          "step",
+          "choice",
+          "option"
+        ],
+        "title": "InvestigationAnswered",
+        "type": "object"
+      },
+      "InvestigationEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "approver": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approver"
+          },
+          "choice": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Choice"
+          },
+          "closed": {
+            "title": "Closed",
+            "type": "boolean"
+          },
+          "failure_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Kind"
+          },
+          "gate": {
+            "title": "Gate",
+            "type": "string"
+          },
+          "number": {
+            "title": "Number",
+            "type": "integer"
+          },
+          "step": {
+            "title": "Step",
+            "type": "string"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          }
+        },
+        "required": [
+          "number",
+          "step",
+          "gate",
+          "failure_kind",
+          "choice",
+          "text",
+          "approver",
+          "closed"
+        ],
+        "title": "InvestigationEntry",
+        "type": "object"
+      },
       "InvestigationSession": {
         "additionalProperties": false,
         "description": "The session of a scenario run's open investigation: ``started`` when this call\nstarted it.",
@@ -3848,6 +5033,14 @@
           "hook"
         ],
         "title": "ItemKind",
+        "type": "string"
+      },
+      "ItemStatus": {
+        "enum": [
+          "new",
+          "differs",
+          "declared"
+        ],
         "type": "string"
       },
       "ItemVersionContent": {
@@ -4228,6 +5421,25 @@
           "dropped"
         ],
         "title": "KnowledgeSyncCounts",
+        "type": "object"
+      },
+      "LayeredEntry": {
+        "description": "A blocked word, glob or variable name, and the first layer that lists it.",
+        "properties": {
+          "layer": {
+            "title": "Layer",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "layer"
+        ],
+        "title": "LayeredEntry",
         "type": "object"
       },
       "LayeredList": {
@@ -5475,6 +6687,82 @@
         "title": "MessageAccepted",
         "type": "object"
       },
+      "MessageFile": {
+        "additionalProperties": false,
+        "description": "A file attached to a message for Claude to read: a PDF or a UTF-8 text, base64-encoded;\nits decoded size and content are checked by ``decode_message_file`` (413, 422).",
+        "properties": {
+          "data": {
+            "minLength": 1,
+            "title": "Data",
+            "type": "string"
+          },
+          "media_type": {
+            "enum": [
+              "application/pdf",
+              "text/plain"
+            ],
+            "title": "Media Type",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "media_type",
+          "data"
+        ],
+        "title": "MessageFile",
+        "type": "object"
+      },
+      "MissingService": {
+        "additionalProperties": false,
+        "description": "A service Claude saw a sign of but could not place: no address it could read.",
+        "properties": {
+          "evidence": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "repo": {
+            "title": "Repo",
+            "type": "string"
+          },
+          "why": {
+            "title": "Why",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo",
+          "name",
+          "why"
+        ],
+        "title": "MissingService",
+        "type": "object"
+      },
       "Mode": {
         "description": "Who can invoke a skill (S5, L2); ``neither`` reads \"Hidden\" in the UI.",
         "enum": [
@@ -5548,6 +6836,26 @@
           "learning"
         ],
         "type": "string"
+      },
+      "NotRead": {
+        "additionalProperties": false,
+        "description": "A file Claude could not read, and why.",
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "reason"
+        ],
+        "title": "NotRead",
+        "type": "object"
       },
       "NoteBacklink": {
         "additionalProperties": false,
@@ -5709,6 +7017,82 @@
         "title": "OpenPermission",
         "type": "object"
       },
+      "OptionEntry": {
+        "additionalProperties": false,
+        "description": "An option of the latest proposal: its steps and their plan as shown, whether a step runs\na draft action (``needs_acceptance``, with the commit lines that accept those still\ndrafts), and whether it can be picked now, or why not.",
+        "properties": {
+          "accept_commands": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Accept Commands",
+            "type": "array"
+          },
+          "needs_acceptance": {
+            "title": "Needs Acceptance",
+            "type": "boolean"
+          },
+          "option_id": {
+            "title": "Option Id",
+            "type": "string"
+          },
+          "pickable": {
+            "title": "Pickable",
+            "type": "boolean"
+          },
+          "plan": {
+            "items": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue"
+              },
+              "type": "object"
+            },
+            "title": "Plan",
+            "type": "array"
+          },
+          "refusal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refusal"
+          },
+          "steps": {
+            "items": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue"
+              },
+              "type": "object"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "option_id",
+          "summary",
+          "steps",
+          "plan",
+          "needs_acceptance",
+          "accept_commands",
+          "pickable",
+          "refusal"
+        ],
+        "title": "OptionEntry",
+        "type": "object"
+      },
+      "OptionId": {
+        "pattern": "^o[0-9]{1,2}$",
+        "type": "string"
+      },
       "Origin": {
         "description": "Who owns an item (S4): ``managed`` per ``hub.lock``, ``project-owned`` (any other plugin\nfolder, ``settings.project.json``), ``local`` (a real entry in ``.claude/``).",
         "enum": [
@@ -5732,8 +7116,26 @@
       },
       "OwnerSignOffBody": {
         "additionalProperties": false,
-        "description": "``POST .../owner-signoff``: the eval to settle, the owner's decision and an optional note.",
+        "description": "``POST .../owner-signoff``: the eval to settle (or the ACs the owner checked by hand), the\nowner's decision and an optional note.",
         "properties": {
+          "acs": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 32,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 200,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acs"
+          },
           "decision": {
             "default": "done",
             "enum": [
@@ -5900,6 +7302,41 @@
           "total_estimate"
         ],
         "title": "Page[Approval]",
+        "type": "object"
+      },
+      "Page_EnvironmentDiscovery_": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentDiscovery"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          },
+          "total_estimate": {
+            "minimum": 0.0,
+            "title": "Total Estimate",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total_estimate"
+        ],
+        "title": "Page[EnvironmentDiscovery]",
         "type": "object"
       },
       "Page_FeatureView_": {
@@ -6551,6 +7988,44 @@
         "title": "PermissionSuggestion",
         "type": "object"
       },
+      "PlanEndpoint": {
+        "additionalProperties": false,
+        "properties": {
+          "resource": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource"
+          },
+          "service": {
+            "title": "Service",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "service",
+          "url",
+          "resource"
+        ],
+        "title": "PlanEndpoint",
+        "type": "object"
+      },
       "PlanView": {
         "additionalProperties": false,
         "description": "The plan's version (AC-1.4): ``v<amendments + 1>``. ``version`` is None and ``problem``\nsays why when ``plan.md`` could not be read (larger than its cap).",
@@ -6656,6 +8131,68 @@
           "changed_files"
         ],
         "title": "PlatformSyncResult",
+        "type": "object"
+      },
+      "PollEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          },
+          "attempt": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt"
+          },
+          "held": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Held"
+          },
+          "node": {
+            "title": "Node",
+            "type": "string"
+          },
+          "poll": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Poll"
+          }
+        },
+        "required": [
+          "node",
+          "attempt",
+          "poll",
+          "held",
+          "at"
+        ],
+        "title": "PollEntry",
         "type": "object"
       },
       "PreflightRun": {
@@ -6779,6 +8316,16 @@
         ],
         "title": "PreflightView",
         "type": "object"
+      },
+      "Preset": {
+        "enum": [
+          "local",
+          "staging",
+          "production",
+          "mine",
+          "other"
+        ],
+        "type": "string"
       },
       "Problem": {
         "additionalProperties": false,
@@ -7287,6 +8834,243 @@
         "title": "ProjectSummary",
         "type": "object"
       },
+      "ProposalEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "investigation": {
+            "title": "Investigation",
+            "type": "integer"
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/OptionEntry"
+            },
+            "title": "Options",
+            "type": "array"
+          },
+          "proposal": {
+            "title": "Proposal",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "proposal",
+          "investigation",
+          "options"
+        ],
+        "title": "ProposalEntry",
+        "type": "object"
+      },
+      "ProposedAccess": {
+        "enum": [
+          "read",
+          "ask",
+          "write"
+        ],
+        "type": "string"
+      },
+      "ProposedAddress": {
+        "additionalProperties": false,
+        "description": "A service's address in one environment: a URL or a resource name.",
+        "properties": {
+          "address": {
+            "title": "Address",
+            "type": "string"
+          },
+          "environment": {
+            "title": "Environment",
+            "type": "string"
+          },
+          "evidence": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ItemStatus"
+          },
+          "yours": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Yours"
+          }
+        },
+        "required": [
+          "environment",
+          "address",
+          "status",
+          "yours"
+        ],
+        "title": "ProposedAddress",
+        "type": "object"
+      },
+      "ProposedEnvironment": {
+        "additionalProperties": false,
+        "description": "An environment Claude found. ``access`` and ``production`` come from ``preset``, never\nfrom Claude alone; ``yours`` describes the declared one when ``status`` is ``differs``.",
+        "properties": {
+          "access": {
+            "$ref": "#/components/schemas/ProposedAccess"
+          },
+          "aws_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aws Profile"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "env_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Env File"
+          },
+          "evidence": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "preset": {
+            "$ref": "#/components/schemas/Preset"
+          },
+          "production": {
+            "title": "Production",
+            "type": "boolean"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ItemStatus"
+          },
+          "yours": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Yours"
+          }
+        },
+        "required": [
+          "name",
+          "preset",
+          "access",
+          "production",
+          "status",
+          "yours"
+        ],
+        "title": "ProposedEnvironment",
+        "type": "object"
+      },
+      "ProposedService": {
+        "additionalProperties": false,
+        "description": "A service of a picked repo; ``declared`` when it and every address are declared already,\n``differs`` when it is declared but an address is new or different.",
+        "properties": {
+          "addresses": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ProposedAddress"
+            },
+            "title": "Addresses",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "evidence": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "repo": {
+            "title": "Repo",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ItemStatus"
+          }
+        },
+        "required": [
+          "repo",
+          "name",
+          "status"
+        ],
+        "title": "ProposedService",
+        "type": "object"
+      },
       "PublishDraftBody": {
         "additionalProperties": false,
         "description": "``POST .../skills/drafts/{draft_id}/publish``: ``target`` the item the draft edits, or\n``null`` for a new item (stated, never left out); ``confirm_managed`` as for a restore (S9),\nonly JSON ``true`` confirms.",
@@ -7455,6 +9239,114 @@
           "name"
         ],
         "title": "Relation",
+        "type": "object"
+      },
+      "RemoveEndpoint": {
+        "additionalProperties": false,
+        "description": "A service's endpoint in one environment, or the whole service when none is named.",
+        "properties": {
+          "environment": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Environment"
+          },
+          "op": {
+            "const": "remove_endpoint",
+            "title": "Op",
+            "type": "string"
+          },
+          "repo": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Repo",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/Scope"
+          },
+          "service": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Service",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "op",
+          "repo",
+          "service"
+        ],
+        "title": "RemoveEndpoint",
+        "type": "object"
+      },
+      "RemoveEnvironment": {
+        "additionalProperties": false,
+        "description": "An environment no endpoint uses any more.",
+        "properties": {
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "op": {
+            "const": "remove_environment",
+            "title": "Op",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/Scope"
+          }
+        },
+        "required": [
+          "scope",
+          "op",
+          "name"
+        ],
+        "title": "RemoveEnvironment",
+        "type": "object"
+      },
+      "RenameEnvironment": {
+        "additionalProperties": false,
+        "description": "A new name for an environment; its endpoints in the same file follow it.",
+        "properties": {
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "new_name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "New Name",
+            "type": "string"
+          },
+          "op": {
+            "const": "rename_environment",
+            "title": "Op",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/Scope"
+          }
+        },
+        "required": [
+          "scope",
+          "op",
+          "name",
+          "new_name"
+        ],
+        "title": "RenameEnvironment",
         "type": "object"
       },
       "RepoChanges": {
@@ -7808,6 +9700,42 @@
           "renamed"
         ],
         "type": "string"
+      },
+      "RepoFileText": {
+        "additionalProperties": false,
+        "description": "``GET /agent-sessions/{id}/repo-changes/file``: a file as it is at one commit (the base a\npull request's diff is read against), so a review can show the lines its diff leaves out.\n``text`` is null for a binary file, one past ``REPO_DIFF_MAX_BYTES`` or one the commit does\nnot have.",
+        "properties": {
+          "binary": {
+            "default": false,
+            "title": "Binary",
+            "type": "boolean"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          }
+        },
+        "required": [
+          "sha",
+          "path"
+        ],
+        "title": "RepoFileText",
+        "type": "object"
       },
       "RepoPullRequest": {
         "additionalProperties": false,
@@ -8317,6 +10245,13 @@
         "pattern": "^[a-z0-9][a-z0-9-]{0,31}$",
         "type": "string"
       },
+      "RunKind": {
+        "enum": [
+          "workflow",
+          "scenario"
+        ],
+        "type": "string"
+      },
       "RunStatus": {
         "enum": [
           "done",
@@ -8419,6 +10354,686 @@
         "title": "RunStep",
         "type": "object"
       },
+      "ScenarioCatalogView": {
+        "additionalProperties": false,
+        "description": "The scenarios that load, by project then name, and every file that does not.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ScenarioSummary"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "problems": {
+            "items": {
+              "$ref": "#/components/schemas/WorkflowProblemView"
+            },
+            "title": "Problems",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "problems"
+        ],
+        "title": "ScenarioCatalogView",
+        "type": "object"
+      },
+      "ScenarioDetail": {
+        "additionalProperties": false,
+        "description": "A scenario's steps and its scenario runs, newest first.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "inputs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/WorkflowInputView"
+            },
+            "title": "Inputs",
+            "type": "array"
+          },
+          "last_run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ScenarioRunRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "node_count": {
+            "title": "Node Count",
+            "type": "integer"
+          },
+          "pack": {
+            "title": "Pack",
+            "type": "string"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/ScenarioRunRef"
+            },
+            "title": "Runs",
+            "type": "array"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/ScenarioStepView"
+            },
+            "title": "Steps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "project",
+          "name",
+          "pack",
+          "description",
+          "revision",
+          "node_count",
+          "steps",
+          "runs"
+        ],
+        "title": "ScenarioDetail",
+        "type": "object"
+      },
+      "ScenarioMode": {
+        "enum": [
+          "interactive",
+          "regression"
+        ],
+        "type": "string"
+      },
+      "ScenarioPlanRequest": {
+        "additionalProperties": false,
+        "description": "The body of a plan: the environment and the inputs (``--input``).",
+        "properties": {
+          "environment": {
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
+            "title": "Environment",
+            "type": "string"
+          },
+          "inputs": {
+            "$ref": "#/components/schemas/Inputs"
+          }
+        },
+        "required": [
+          "environment"
+        ],
+        "title": "ScenarioPlanRequest",
+        "type": "object"
+      },
+      "ScenarioPlanRow": {
+        "additionalProperties": false,
+        "description": "One step of a plan, as ``hub scenario plan --json`` prints it, and whether its action\nneeds acceptance (a draft), with the commit line that accepts it (AM-5).",
+        "properties": {
+          "accept_command": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accept Command"
+          },
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "args": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Args",
+            "type": "object"
+          },
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "decision": {
+            "title": "Decision",
+            "type": "string"
+          },
+          "draft": {
+            "title": "Draft",
+            "type": "boolean"
+          },
+          "effect": {
+            "title": "Effect",
+            "type": "string"
+          },
+          "endpoints": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PlanEndpoint"
+            },
+            "title": "Endpoints",
+            "type": "object"
+          },
+          "every": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Every"
+          },
+          "needs_acceptance": {
+            "title": "Needs Acceptance",
+            "type": "boolean"
+          },
+          "plan": {
+            "title": "Plan",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "reason_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason Kind"
+          },
+          "step": {
+            "title": "Step",
+            "type": "string"
+          },
+          "timeout": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "step",
+          "type",
+          "action",
+          "effect",
+          "args",
+          "endpoints",
+          "every",
+          "timeout",
+          "content_hash",
+          "draft",
+          "decision",
+          "reason_kind",
+          "reason",
+          "plan",
+          "needs_acceptance",
+          "accept_command"
+        ],
+        "title": "ScenarioPlanRow",
+        "type": "object"
+      },
+      "ScenarioPlanView": {
+        "additionalProperties": false,
+        "description": "A scenario planned in one environment; ``denied`` when it may not start.",
+        "properties": {
+          "access": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access"
+          },
+          "denied": {
+            "title": "Denied",
+            "type": "boolean"
+          },
+          "environment": {
+            "title": "Environment",
+            "type": "string"
+          },
+          "problems": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Problems",
+            "type": "array"
+          },
+          "production": {
+            "title": "Production",
+            "type": "boolean"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/ScenarioPlanRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "scenario": {
+            "title": "Scenario",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project",
+          "scenario",
+          "environment",
+          "access",
+          "production",
+          "denied",
+          "problems",
+          "rows"
+        ],
+        "title": "ScenarioPlanView",
+        "type": "object"
+      },
+      "ScenarioRunDetail": {
+        "additionalProperties": false,
+        "description": "A scenario run as its record holds it. ``status`` is its end's, ``None`` while it has\nnone; ``open_investigation`` is the number of the investigation waiting for an answer.",
+        "properties": {
+          "captures": {
+            "items": {
+              "$ref": "#/components/schemas/CaptureEntry"
+            },
+            "title": "Captures",
+            "type": "array"
+          },
+          "decisions": {
+            "items": {
+              "$ref": "#/components/schemas/DecisionEntry"
+            },
+            "title": "Decisions",
+            "type": "array"
+          },
+          "environment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Environment"
+          },
+          "findings": {
+            "items": {
+              "$ref": "#/components/schemas/FindingEntry"
+            },
+            "title": "Findings",
+            "type": "array"
+          },
+          "investigations": {
+            "items": {
+              "$ref": "#/components/schemas/InvestigationEntry"
+            },
+            "title": "Investigations",
+            "type": "array"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode"
+          },
+          "open_investigation": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Open Investigation"
+          },
+          "pack": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pack"
+          },
+          "paused_step": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paused Step"
+          },
+          "polls": {
+            "items": {
+              "$ref": "#/components/schemas/PollEntry"
+            },
+            "title": "Polls",
+            "type": "array"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "proposal": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProposalEntry"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "scenario": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenario"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "timeline": {
+            "items": {
+              "$ref": "#/components/schemas/TimelineEntry"
+            },
+            "title": "Timeline",
+            "type": "array"
+          },
+          "workarounds": {
+            "items": {
+              "$ref": "#/components/schemas/WorkaroundEntry"
+            },
+            "title": "Workarounds",
+            "type": "array"
+          }
+        },
+        "required": [
+          "run_id",
+          "project",
+          "scenario",
+          "pack",
+          "environment",
+          "mode",
+          "status",
+          "open_investigation",
+          "paused_step",
+          "timeline",
+          "polls",
+          "captures",
+          "decisions",
+          "findings",
+          "investigations",
+          "proposal",
+          "workarounds"
+        ],
+        "title": "ScenarioRunDetail",
+        "type": "object"
+      },
+      "ScenarioRunRef": {
+        "additionalProperties": false,
+        "description": "A scenario run as the folded events show it.",
+        "properties": {
+          "ended_at": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "started_at": {
+            "$ref": "#/components/schemas/ApiTimestamp"
+          },
+          "status": {
+            "$ref": "#/components/schemas/WorkflowRunStatus"
+          }
+        },
+        "required": [
+          "run_id",
+          "status",
+          "started_at",
+          "ended_at"
+        ],
+        "title": "ScenarioRunRef",
+        "type": "object"
+      },
+      "ScenarioStartRequest": {
+        "additionalProperties": false,
+        "description": "The body of a start: a plan's, and the mode (``interactive`` by default).",
+        "properties": {
+          "environment": {
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
+            "title": "Environment",
+            "type": "string"
+          },
+          "inputs": {
+            "$ref": "#/components/schemas/Inputs"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/ScenarioMode",
+            "default": "interactive"
+          }
+        },
+        "required": [
+          "environment"
+        ],
+        "title": "ScenarioStartRequest",
+        "type": "object"
+      },
+      "ScenarioStepView": {
+        "additionalProperties": false,
+        "description": "A step in declaration order: its type, the action it calls (an action or expect step)\nand the steps it waits for.",
+        "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
+          "depends_on": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Depends On",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "action",
+          "depends_on"
+        ],
+        "title": "ScenarioStepView",
+        "type": "object"
+      },
+      "ScenarioSummary": {
+        "additionalProperties": false,
+        "description": "A scenario of a project's hub, its pack and its last scenario run.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "inputs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/WorkflowInputView"
+            },
+            "title": "Inputs",
+            "type": "array"
+          },
+          "last_run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ScenarioRunRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "node_count": {
+            "title": "Node Count",
+            "type": "integer"
+          },
+          "pack": {
+            "title": "Pack",
+            "type": "string"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project",
+          "name",
+          "pack",
+          "description",
+          "revision",
+          "node_count"
+        ],
+        "title": "ScenarioSummary",
+        "type": "object"
+      },
+      "Scope": {
+        "enum": [
+          "team",
+          "local"
+        ],
+        "type": "string"
+      },
       "Screenshot": {
         "additionalProperties": false,
         "description": "A PNG image sent with a message (a screenshot, or an image pasted in the chat),\nbase64-encoded; its decoded size and signature are checked by ``decode_screenshot`` (413,\n422).",
@@ -8514,8 +11129,24 @@
       },
       "SendMessage": {
         "additionalProperties": false,
-        "description": "``POST /{id}/messages``: one user message (byte limit checked, 413), with the images\npasted in it, sent to Claude before the text.",
+        "description": "``POST /{id}/messages``: one user message (byte limit checked, 413), with the files and\nimages attached to it, sent to Claude before the text.",
         "properties": {
+          "files": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/MessageFile"
+                },
+                "maxItems": 10,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Files"
+          },
           "screenshots": {
             "anyOf": [
               {
@@ -8542,6 +11173,42 @@
           "text"
         ],
         "title": "SendMessage",
+        "type": "object"
+      },
+      "ServiceAddress": {
+        "additionalProperties": false,
+        "description": "Where a service is reached in one environment: a URL (holds ``://``) or a resource name.",
+        "properties": {
+          "address": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Address",
+            "type": "string"
+          },
+          "environment": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Environment",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "required": [
+          "environment",
+          "address"
+        ],
+        "title": "ServiceAddress",
         "type": "object"
       },
       "Session": {
@@ -9373,6 +12040,178 @@
         "title": "SessionSummary",
         "type": "object"
       },
+      "SetEnvironment": {
+        "additionalProperties": false,
+        "description": "A change to an environment: a field left out stays; an empty text removes the key.",
+        "properties": {
+          "access": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Access"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "aws_profile": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aws Profile"
+          },
+          "credential_env": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 10,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Credential Env"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "env_file": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Env File"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "op": {
+            "const": "set_environment",
+            "title": "Op",
+            "type": "string"
+          },
+          "production": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Production"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/Scope"
+          }
+        },
+        "required": [
+          "scope",
+          "op",
+          "name"
+        ],
+        "title": "SetEnvironment",
+        "type": "object"
+      },
+      "SetService": {
+        "additionalProperties": false,
+        "description": "A change to a service: a field left out stays; an empty text removes the key.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "new_name": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Name"
+          },
+          "op": {
+            "const": "set_service",
+            "title": "Op",
+            "type": "string"
+          },
+          "repo": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Repo",
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/Scope"
+          },
+          "service": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Service",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "op",
+          "repo",
+          "service"
+        ],
+        "title": "SetService",
+        "type": "object"
+      },
       "SettingsView": {
         "additionalProperties": false,
         "description": "Read-only settings of the running ``hub web`` (no ``PATCH`` in Phase 2).",
@@ -9443,6 +12282,47 @@
         ],
         "title": "Severity",
         "type": "string"
+      },
+      "SingleEdit": {
+        "discriminator": {
+          "mapping": {
+            "add_endpoint": "#/components/schemas/AddEndpoint",
+            "add_environment": "#/components/schemas/AddEnvironment",
+            "add_service": "#/components/schemas/AddService",
+            "remove_endpoint": "#/components/schemas/RemoveEndpoint",
+            "remove_environment": "#/components/schemas/RemoveEnvironment",
+            "rename_environment": "#/components/schemas/RenameEnvironment",
+            "set_environment": "#/components/schemas/SetEnvironment",
+            "set_service": "#/components/schemas/SetService"
+          },
+          "propertyName": "op"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/AddEnvironment"
+          },
+          {
+            "$ref": "#/components/schemas/SetEnvironment"
+          },
+          {
+            "$ref": "#/components/schemas/RenameEnvironment"
+          },
+          {
+            "$ref": "#/components/schemas/RemoveEnvironment"
+          },
+          {
+            "$ref": "#/components/schemas/AddEndpoint"
+          },
+          {
+            "$ref": "#/components/schemas/RemoveEndpoint"
+          },
+          {
+            "$ref": "#/components/schemas/AddService"
+          },
+          {
+            "$ref": "#/components/schemas/SetService"
+          }
+        ]
       },
       "SkillCatalog": {
         "additionalProperties": false,
@@ -9902,6 +12782,153 @@
         "title": "SourceStatus",
         "type": "object"
       },
+      "SourcedEndpoint": {
+        "description": "A service's endpoint in one environment, and the file that declares it.",
+        "properties": {
+          "endpoint": {
+            "$ref": "#/components/schemas/Endpoint"
+          },
+          "environment": {
+            "title": "Environment",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "environment",
+          "endpoint",
+          "source"
+        ],
+        "title": "SourcedEndpoint",
+        "type": "object"
+      },
+      "SourcedEnvironment": {
+        "description": "An effective environment and its source: the file its effective ``access`` comes from.",
+        "properties": {
+          "access": {
+            "enum": [
+              "read",
+              "write",
+              "ask"
+            ],
+            "title": "Access",
+            "type": "string"
+          },
+          "credentials": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Credentials"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "production": {
+            "title": "Production",
+            "type": "boolean"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "team_access": {
+            "anyOf": [
+              {
+                "enum": [
+                  "read",
+                  "write",
+                  "ask"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team Access"
+          }
+        },
+        "required": [
+          "name",
+          "access",
+          "production",
+          "description",
+          "credentials",
+          "source"
+        ],
+        "title": "SourcedEnvironment",
+        "type": "object"
+      },
+      "SourcedService": {
+        "description": "A repo's service with its endpoints from both files, the committed ones first.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "endpoints": {
+            "items": {
+              "$ref": "#/components/schemas/SourcedEndpoint"
+            },
+            "title": "Endpoints",
+            "type": "array"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "repo": {
+            "title": "Repo",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo",
+          "name",
+          "kind",
+          "description",
+          "endpoints"
+        ],
+        "title": "SourcedService",
+        "type": "object"
+      },
       "SourcedValue": {
         "additionalProperties": false,
         "description": "An effective value (None when no source gives one) and where it comes from.",
@@ -9986,6 +13013,44 @@
           "task"
         ],
         "title": "StartCloud",
+        "type": "object"
+      },
+      "StartEnvironmentDiscovery": {
+        "additionalProperties": false,
+        "description": "``POST /projects/{project}/environment-discoveries``: the repos to read (``hub.json``\nrepo folders), the declared environments to look for, and whether Claude may suggest\nenvironments not declared yet.",
+        "properties": {
+          "environments": {
+            "default": [],
+            "items": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Environments",
+            "type": "array"
+          },
+          "repos": {
+            "items": {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Repos",
+            "type": "array"
+          },
+          "suggest_environments": {
+            "default": false,
+            "title": "Suggest Environments",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "repos"
+        ],
+        "title": "StartEnvironmentDiscovery",
         "type": "object"
       },
       "StartRunRequest": {
@@ -10689,6 +13754,68 @@
         ],
         "type": "string"
       },
+      "TimelineEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          },
+          "attempt": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt"
+          },
+          "event": {
+            "title": "Event",
+            "type": "string"
+          },
+          "node": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "required": [
+          "event",
+          "node",
+          "attempt",
+          "status",
+          "at"
+        ],
+        "title": "TimelineEntry",
+        "type": "object"
+      },
       "TimelineEvent": {
         "additionalProperties": false,
         "description": "One stored event as the timeline and Raw events show it.\n\n``fact_key`` groups copies of the same fact from several sources; ``merged_sources`` lists\nthem on the winner; a loser has ``conflict`` set (D16). ``latency_ms`` is ``received_at``\nminus ``timestamp`` when both exist.",
@@ -11293,6 +14420,59 @@
         "title": "WaitingOnOwner",
         "type": "object"
       },
+      "WorkaroundEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "approver": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approver"
+          },
+          "number": {
+            "title": "Number",
+            "type": "integer"
+          },
+          "option": {
+            "title": "Option",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "steps": {
+            "title": "Steps",
+            "type": "integer"
+          },
+          "workaround_id": {
+            "title": "Workaround Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workaround_id",
+          "number",
+          "option",
+          "steps",
+          "approver",
+          "status"
+        ],
+        "title": "WorkaroundEntry",
+        "type": "object"
+      },
       "Workdir": {
         "additionalProperties": false,
         "description": "A folder a session may start in (D6): the hub, a repo checkout or one of its worktrees.\n\n``workdir_id`` is opaque and stable; the server resolves it only by lookup. ``skills`` are\nthe names under its ``.claude/skills/`` (the ``/skill`` shortcut, P15).",
@@ -11408,7 +14588,7 @@
       },
       "WorkflowDetail": {
         "additionalProperties": false,
-        "description": "A workflow's layers (in run order, nodes in declaration order) and its document as\nwritten (keys left out are not filled in).",
+        "description": "A workflow's layers (in run order, nodes in declaration order) and its document as\nwritten (keys left out are not filled in); ``environment`` is the one a process workflow\ndeclares (P-18), None without one.",
         "properties": {
           "description": {
             "anyOf": [
@@ -11427,6 +14607,17 @@
             },
             "title": "Document",
             "type": "object"
+          },
+          "environment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Environment"
           },
           "inputs": {
             "default": [],
@@ -11796,6 +14987,10 @@
                 "type": "null"
               }
             ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RunKind",
+            "default": "workflow"
           },
           "last_activity_at": {
             "$ref": "#/components/schemas/ApiTimestamp"
@@ -13246,6 +16441,82 @@
         ]
       }
     },
+    "/api/v1/agent-sessions/{agent_session_id}/repo-changes/file": {
+      "get": {
+        "description": "One file of the session's repositories (``path`` absolute) as commit ``sha`` has it: the\nlines a review expands around a pull request's diff.",
+        "operationId": "get_agent_session_repo_file_api_v1_agent_sessions__agent_session_id__repo_changes_file_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "agent_session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Agent Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "maxLength": 4096,
+              "minLength": 1,
+              "pattern": "^/",
+              "title": "Path",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sha",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{7,40}$",
+              "title": "Sha",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepoFileText"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Agent Session Repo File",
+        "tags": [
+          "agent-sessions"
+        ]
+      }
+    },
     "/api/v1/agent-sessions/{agent_session_id}/settings": {
       "post": {
         "description": "Change the permission mode or the model.",
@@ -14382,7 +17653,7 @@
     },
     "/api/v1/features/{project}/{slug}/owner-signoff": {
       "post": {
-        "description": "The owner settles the owner steps. Without a body: writes an ``owner-signoff`` SHIP eval\nover the ACs the Acceptance step waits on; 409 with a one-line reason, writing nothing, when\nnone waits or the feature lists no AC, when one of them has a NO-SHIP as its latest eval, when\nthe acceptance eval is undated or future-dated, or when not every eval was read. With\n``delivery``, settles that SHIP-WITH-OWNER-STEPS eval only: ``decision`` ``done`` writes a SHIP\nover its waiting ACs, ``more_work`` a NO-SHIP; ``note`` is the owner's words. A ``delivery``\nnaming the acceptance eval covers what the Acceptance step waits on, with the no-body\nrefusals, except that ``more_work`` is not refused over ACs an agent's eval reopened; either\ndecision there is refused once an owner decision newer than the acceptance eval settled it\n(its SHIP signed every waiting AC off, or its NO-SHIP is still the latest eval of one).",
+        "description": "The owner settles the owner steps. Without a body: writes an ``owner-signoff`` SHIP eval\nover the ACs the Acceptance step waits on; 409 with a one-line reason, writing nothing, when\nnone waits or the feature lists no AC, when one of them has a NO-SHIP as its latest eval, when\nthe acceptance eval is undated or future-dated, or when not every eval was read. With\n``delivery``, settles that SHIP-WITH-OWNER-STEPS eval only: ``decision`` ``done`` writes a SHIP\nover its waiting ACs, ``more_work`` a NO-SHIP; ``note`` is the owner's words. A ``delivery``\nnaming the acceptance eval covers what the Acceptance step waits on, with the no-body\nrefusals, except that ``more_work`` is not refused over ACs an agent's eval reopened; either\ndecision there is refused once an owner decision newer than the acceptance eval settled it\n(its SHIP signed every waiting AC off, or its NO-SHIP is still the latest eval of one). With\n``acs``, signs off those criteria as checked by hand (AGH-425), with the same refusals over\nthem: an unknown AC, a NO-SHIP as the latest eval of one (``done``), an eval naming one that\nthe note would not rank newer than, evals left unread.",
         "operationId": "sign_off_owner_steps_api_v1_features__project___slug__owner_signoff_post",
         "parameters": [
           {
@@ -15808,6 +19079,71 @@
         ]
       }
     },
+    "/api/v1/projects/{project}/config/environments": {
+      "post": {
+        "description": "Add, change or remove an environment or a service endpoint, in ``hub.json`` (the team's,\nleft uncommitted) or ``hub.local.json`` (this developer's), as ``hub env`` does.",
+        "operationId": "post_project_environment_edit_api_v1_projects__project__config_environments_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnvironmentEdit"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HubConfigView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Post Project Environment Edit",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
     "/api/v1/projects/{project}/config/local": {
       "put": {
         "description": "Save this developer's ``hub.local.json`` values; the team's ``hub.json`` is untouched.",
@@ -15870,6 +19206,311 @@
         "summary": "Put Project Local Config",
         "tags": [
           "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/env-file-keys": {
+      "get": {
+        "description": "The variable NAMES an env file holds, never a value: only a regular file of at most\n64 KiB inside the hub or one of its repos, with whether git ignores it there.",
+        "operationId": "get_env_file_keys_api_v1_projects__project__env_file_keys_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvFileKeys"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Env File Keys",
+        "tags": [
+          "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/environment-discoveries": {
+      "get": {
+        "description": "The project's discoveries not discarded, newest first.",
+        "operationId": "list_environment_discoveries_api_v1_projects__project__environment_discoveries_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_EnvironmentDiscovery_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "List Environment Discoveries",
+        "tags": [
+          "environment-discoveries"
+        ]
+      },
+      "post": {
+        "description": "Start a read-only Claude session that reads the picked repos and proposes environments,\nservices and addresses; 422 naming each repo or environment the config does not hold.",
+        "operationId": "start_environment_discovery_api_v1_projects__project__environment_discoveries_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartEnvironmentDiscovery"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentDiscovery"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Start Environment Discovery",
+        "tags": [
+          "environment-discoveries"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/environment-discoveries/{discovery_id}": {
+      "delete": {
+        "description": "Discard a discovery (its session is ended when it still works).",
+        "operationId": "discard_environment_discovery_api_v1_projects__project__environment_discoveries__discovery_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "discovery_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{12}$",
+              "title": "Discovery Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Discard Environment Discovery",
+        "tags": [
+          "environment-discoveries"
+        ]
+      },
+      "get": {
+        "description": "One discovery: its session's state and, once Claude finished, the checked proposal with\neach item's status against the config of now.",
+        "operationId": "get_environment_discovery_api_v1_projects__project__environment_discoveries__discovery_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "discovery_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{12}$",
+              "title": "Discovery Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentDiscovery"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Environment Discovery",
+        "tags": [
+          "environment-discoveries"
         ]
       }
     },
@@ -16795,6 +20436,272 @@
         ]
       }
     },
+    "/api/v1/scenario-runs/{run_id}": {
+      "get": {
+        "description": "A scenario run as its record holds it: timeline, polls, captures, decisions, findings,\ninvestigations, the latest proposal's options and the workarounds.",
+        "operationId": "get_scenario_run_api_v1_scenario_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{0,31}$",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioRunDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Scenario Run",
+        "tags": [
+          "scenarios"
+        ]
+      }
+    },
+    "/api/v1/scenario-runs/{run_id}/answer": {
+      "post": {
+        "description": "Answer the open investigation (pick an option, retry the step or stop the run), then\nresume the run; a pick that cannot stand is 409 with its reason and records nothing.",
+        "operationId": "answer_investigation_api_v1_scenario_runs__run_id__answer_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{0,31}$",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvestigationAnswer"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvestigationAnswered"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Answer Investigation",
+        "tags": [
+          "scenarios"
+        ]
+      }
+    },
+    "/api/v1/scenario-runs/{run_id}/findings/{finding_id}/inbox": {
+      "post": {
+        "description": "Write the finding as a ``brain/_inbox/`` note (``provenance: agent-from-external``),\nnever over another.",
+        "operationId": "finding_inbox_api_v1_scenario_runs__run_id__findings__finding_id__inbox_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{0,31}$",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "finding_id",
+            "required": true,
+            "schema": {
+              "pattern": "^f[0-9]{1,6}$",
+              "title": "Finding Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FindingNote"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Finding Inbox",
+        "tags": [
+          "scenarios"
+        ]
+      }
+    },
+    "/api/v1/scenario-runs/{run_id}/findings/{finding_id}/issue": {
+      "post": {
+        "description": "A finding's tracker issue draft; with ``confirm: true``, the issue created once (201).",
+        "operationId": "finding_issue_api_v1_scenario_runs__run_id__findings__finding_id__issue_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "pattern": "^[a-z0-9][a-z0-9-]{0,31}$",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "finding_id",
+            "required": true,
+            "schema": {
+              "pattern": "^f[0-9]{1,6}$",
+              "title": "Finding Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FindingIssueRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FindingIssue"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FindingIssue"
+                }
+              }
+            },
+            "description": "The issue was created"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Finding Issue",
+        "tags": [
+          "scenarios"
+        ]
+      }
+    },
     "/api/v1/scenario-runs/{run_id}/investigation": {
       "post": {
         "description": "Start the investigation session of a scenario run paused at an open investigation, or\nanswer the one already started (200); 409 when the run is not paused there.",
@@ -16854,6 +20761,286 @@
           }
         },
         "summary": "Open Investigation",
+        "tags": [
+          "scenarios"
+        ]
+      }
+    },
+    "/api/v1/scenarios": {
+      "get": {
+        "description": "The scenarios of every (or one) project, each with its last scenario run, and the\nfiles that do not load.",
+        "operationId": "list_scenarios_api_v1_scenarios_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioCatalogView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "List Scenarios",
+        "tags": [
+          "scenarios"
+        ]
+      }
+    },
+    "/api/v1/scenarios/{project}/{name}": {
+      "get": {
+        "description": "One scenario: its steps and its scenario runs, newest first.",
+        "operationId": "get_scenario_api_v1_scenarios__project___name__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Scenario",
+        "tags": [
+          "scenarios"
+        ]
+      }
+    },
+    "/api/v1/scenarios/{project}/{name}/plan": {
+      "post": {
+        "description": "What each step would do in the environment, and the policy's decision; nothing runs\nbut the scripts' plan mode, with no credential and only when a step's args are known.",
+        "operationId": "plan_scenario_api_v1_scenarios__project___name__plan_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScenarioPlanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioPlanView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Plan Scenario",
+        "tags": [
+          "scenarios"
+        ]
+      }
+    },
+    "/api/v1/scenarios/{project}/{name}/runs": {
+      "post": {
+        "description": "Start a scenario run once its plan holds no problem and no deny (409 naming the denied\nsteps, no run created); its events tell the rest.",
+        "operationId": "start_scenario_api_v1_scenarios__project___name__runs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScenarioStartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Start Scenario",
         "tags": [
           "scenarios"
         ]
@@ -17942,7 +22129,7 @@
     },
     "/api/v1/workflow-runs": {
       "get": {
-        "description": "Workflow runs matching the filters, newest first.",
+        "description": "Workflow runs matching the filters, newest first; ``kind`` keeps scenario runs or\nworkflow runs only (absent: both).",
         "operationId": "list_runs_api_v1_workflow_runs_get",
         "parameters": [
           {
@@ -18103,6 +22290,22 @@
                 }
               ],
               "title": "Failure Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/RunKind"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
             }
           },
           {

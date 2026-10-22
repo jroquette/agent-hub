@@ -65,6 +65,10 @@ gate-needing steps that do not depend on each other are a plan error naming both
   differing sets are a plan problem) may name `env_file`: a dotenv file relative to the workspace holding the hub and
   its repos (`demo-api/.env.staging`), ≤ 200 characters, no `..`, `~`, leading `/` or secret shape, in `hub.json` or
   `hub.local.json` (own environments), set by `hub env add|set --env-file`; AGENTS.md and the brief never show it.
+- hub web may list the file's variable **names** (`GET /projects/{project}/env-file-keys?path=`), never a value: a
+  regular file of at most 64 KiB held by the hub or a declared repo by real path and reached through no link, `NAME=`
+  and `export NAME=` lines (a quoted value spanning lines is skipped), at most 200 names; it also says whether git
+  ignores the file there.
 - One loader, shared by `hub action run` and the engine's action executor, reads it when an action starts: in the hub
   or a declared repo by real path, reached through no link, a regular file, ≤ 64 KiB and 200 variables, `NAME=value`
   lines (`#` comments, optional `export `, quotes, no interpolation). It injects **every** variable, `AWS_PROFILE` from
@@ -96,18 +100,18 @@ pins its action files and gates, labels events `workflow: scenario:<name>`, and 
 
 ### Investigation, answers and workarounds
 
-Opening a paused run in hub web starts one session per gate (none when the hub or a declared repo is `/`, home or an ancestor
-of it), held by a PreToolUse hook: reads only in the hub and its declared repos, never of an env file, `Write` only under
-`actions/<pack>/`, Bash only for `./hub action …` and `./hub scenario propose`; `hub action run --run <id>` needs an open
-investigation, runs only `read` actions with its environment's env file (origin `agent`, writes denied). The agent records
-findings and options (a summary and `{action, with}` steps) with `propose` (secret shapes redacted); each option is shown with
-its plan. The answer is `pick` (`--text <option id>`), `retry` or `stop`: `hub workflow respond`, `hub workflow decide` (hub
-web) or the Scenarios screen (Approvals sends the gate there). An option holding a `deny`, a draft action or a plan changed
-since shown cannot be picked (refused, nothing recorded). A pick answers its steps' asks: `workaround.start`, its actions
-(origin `agent`), `workaround.end`, then the diverged step as a new attempt; a failed or cut-short workaround (never re-run)
-opens a new investigation. `retry` skips it; `stop` ends it `cancelled`, findings kept. Nothing rewinds the system. `hub
-scenario findings <run>` lists them; `--issue <id>` creates a tracker issue after a terminal `y`, never retried (the MCP
-`create_issue` call uses only `save_issue`); `--inbox <id>` writes a `brain/_inbox/` note (`provenance: agent-from-external`).
+Opening a paused run in hub web starts one session per gate (none if the hub or a declared repo is `/`, home or above), held by
+a PreToolUse hook: reads only in the hub and its declared repos, never an env file, `Write` only under `actions/<pack>/`, Bash
+only for `./hub action …` and `./hub scenario propose`; `hub action run --run <id>` needs an open investigation and runs only
+`read` actions with its environment's env file. The agent records findings and options (a summary, `{action, with}` steps) with
+`propose` (secret shapes redacted), each shown with its plan. The answer is `pick` (`--text <option id>`), `retry` or `stop`:
+`hub workflow respond`, `decide` (hub web) or the Scenarios screen (Approvals sends the gate there). An option holding a `deny`,
+a draft action or a plan changed since shown is refused, nothing recorded. A pick answers its steps' asks: `workaround.start`,
+its actions (origin `agent`), `workaround.end`, then the diverged step as a new attempt; a failed or cut-short workaround (never
+re-run) opens a new investigation. `retry` skips it; `stop` ends it `cancelled`, findings kept; nothing is rewound. `hub
+scenario findings <run>` lists them; `--issue <id>` creates a tracker issue after a terminal `y` (MCP: `save_issue` only);
+`--inbox <id>` writes a `brain/_inbox/` note (`provenance: agent-from-external`). A `finding-<id>.issue` marker shared with hub
+web makes it once: a named issue or a running create refuses both; only a warned terminal retries a failed or unfinished one.
 
 ### Events and bounds
 
