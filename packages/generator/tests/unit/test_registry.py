@@ -29,6 +29,12 @@ CORE_SOURCES: dict[str, tuple[str, str]] = {
 BUILTIN_PACKAGE = "agent_hub.core"
 BUILTIN_FOLDER = "workflows/builtin"
 SEEDED_PACK_FILES = (
+    "brain-care/fixtures/inbox-all-drop.yaml",
+    "brain-care/fixtures/inbox-empty.yaml",
+    "brain-care/fixtures/inbox-external-pending.yaml",
+    "brain-care/fixtures/inbox-three-notes.yaml",
+    "brain-care/inbox.yaml",
+    "brain-care/prompts/group.md",
     "brain-care/scripts/apply.py",
     "brain-care/scripts/groups.py",
     "brain-care/scripts/hub_branch.py",

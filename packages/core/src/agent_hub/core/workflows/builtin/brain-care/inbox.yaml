@@ -1,0 +1,224 @@
+# The weekly inbox review (brain-care pack): read the hub's brain/_inbox/ notes (at most
+# 50, oldest first), let a read-only agent group duplicates and propose one action per group
+# (promote into brain/learnings/, route to a repo, check, drop), then ask the owner about each
+# group at its own gate (apply, drop or keep, with a note). A note whose provenance is not agent
+# or human is external: groups.py always puts it alone, and its gate asks for explicit approval.
+# Only after the gates, and only when a decision changes something, the run adds a hub worktree
+# on <branch_prefix>brain-care-inbox-<run id> from origin/<default branch>, writes the approved
+# changes there (only brain/ paths) and opens a hub PR the owner merges (hub step pr). Nothing
+# runs on the default branch, brain/decisions/ is never edited, and nothing reads or writes the
+# tracker (ADR 0030). Suggested schedule: every Monday (hub.json schedules).
+version: 1
+name: inbox
+description: The weekly inbox review - group duplicate notes, the owner decides each group, one hub PR.
+revision: 1
+nodes:
+  - id: read
+    type: script
+    description: The inbox notes to review (at most 50, oldest first), with their provenance.
+    runtime: python
+    script: read_inbox.py
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        count: {type: integer, minimum: 0, maximum: 50}
+        notes:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            properties:
+              path: {type: string}
+              title: {type: string}
+              age_days: {type: [integer, "null"]}
+              provenance: {type: string}
+              external: {type: boolean}
+              excerpt: {type: string, maxLength: 1500}
+            required: [path, title, age_days, provenance, external, excerpt]
+        paths: {type: array, items: {type: string}}
+        external: {type: array, items: {type: string}}
+        unreadable:
+          type: array
+          items:
+            type: object
+            properties:
+              path: {type: string}
+              reason: {type: string}
+            required: [path, reason]
+        omitted: {type: integer, minimum: 0}
+      required: [count, notes, paths, external, unreadable, omitted]
+
+  - id: group
+    type: agent
+    description: Group duplicate notes and propose one action per group; it must not change the hub.
+    depends_on: [read]
+    when: "$read.output.count > 0"
+    context: fresh
+    prompt_file: group.md
+    mutates_checkout: false
+    timeout: 30m
+    retry: {max_attempts: 0}
+    with:
+      notes: $read.output.notes
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [groups]
+      properties:
+        groups:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            additionalProperties: false
+            required: [notes, action, target, reason, text]
+            properties:
+              notes:
+                type: array
+                minItems: 1
+                maxItems: 50
+                items: {type: string, maxLength: 512}
+              action: {type: string, enum: [promote, route, check, drop]}
+              target: {type: string, maxLength: 200}
+              reason: {type: string, minLength: 1, maxLength: 500}
+              text: {type: string, maxLength: 2000}
+
+  - id: plan
+    type: script
+    description: The agent's groups checked against what was read; each external note alone.
+    depends_on: [group]
+    runtime: python
+    script: groups.py
+    args: [plan, --paths, $read.output.paths, --external, $read.output.external]
+    stdin: $group.output
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        count: {type: integer, minimum: 0, maximum: 50}
+        groups: {type: array, maxItems: 50, items: {type: object}}
+        ignored: {type: array, items: {type: object}}
+        unproposed: {type: array, items: {type: string}}
+      required: [count, groups, ignored, unproposed]
+
+  - id: decide
+    type: loop_group
+    description: One gate per group - the owner applies, drops or keeps it, with a note.
+    depends_on: [plan]
+    when: "$plan.output.count > 0"
+    max_iterations: 50
+    until_when: "$next.output.last == true"
+    nodes:
+      - id: next
+        type: script
+        description: The next group and its gate message.
+        runtime: python
+        script: groups.py
+        args: [next, --after, $LOOP_PREV.next.output.index]
+        stdin: $plan.output
+        retry: {max_attempts: 0}
+        output_format:
+          type: object
+          properties:
+            index: {type: integer, minimum: 0}
+            last: {type: boolean}
+            group: {type: object}
+            message: {type: string}
+          required: [index, last, group, message]
+
+      - id: gate
+        type: approval
+        description: The owner decides the group; an external note needs his explicit apply.
+        depends_on: [next]
+        message: $next.output.message
+        decisions:
+          - {id: apply, label: Apply as proposed}
+          - {id: drop, label: Drop the notes}
+          - {id: keep, label: Keep them in the inbox}
+        capture_response: true
+
+      - id: record
+        type: script
+        description: The decisions so far, with this one.
+        depends_on: [gate]
+        runtime: python
+        script: groups.py
+        args:
+          - record
+          - --group
+          - $next.output.group
+          - --decision
+          - $gate.output.decision
+          - --note
+          - $gate.output.text
+          - --approver
+          - $gate.output.approver
+        stdin: $LOOP_PREV.record.output.decisions
+        retry: {max_attempts: 0}
+        output_format:
+          type: object
+          properties:
+            decisions: {type: array, maxItems: 50, items: {type: object}}
+            acted: {type: integer, minimum: 0}
+          required: [decisions, acted]
+
+  - id: branch
+    type: script
+    description: The run's hub worktree and branch, from origin's default branch; its PR target.
+    depends_on: [decide]
+    when: "$decide.output.record.acted > 0"
+    runtime: python
+    script: hub_branch.py
+    args: [--workflow, inbox]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        path: {type: string}
+        branch: {type: string}
+        base: {type: string}
+        target: {type: object}
+      required: [path, branch, base, target]
+
+  - id: apply
+    type: script
+    description: The approved decisions written and committed in the worktree (only brain/ paths).
+    depends_on: [branch]
+    runtime: python
+    script: apply.py
+    args:
+      - --worktree
+      - $branch.output.path
+      - --base
+      - $branch.output.base
+      - --unreadable
+      - $read.output.unreadable
+    stdin: $decide.output.record.decisions
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        changes: {type: integer, minimum: 0}
+        deleted: {type: array, items: {type: string}}
+        written: {type: array, items: {type: string}}
+        edited: {type: array, items: {type: string}}
+        skipped: {type: array, items: {type: object}}
+        summary: {type: string, maxLength: 8000}
+      required: [changes, deleted, written, edited, skipped, summary]
+
+  - id: pr
+    type: shell
+    description: Push the branch and open the hub PR the owner merges (no tracker write).
+    depends_on: [apply]
+    when: "$apply.output.changes > 0"
+    command: [hub, step, pr, --issue, brain-care, --target, $branch.output.target, --summary, $apply.output.summary]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        url: {type: string}
+        found: {type: boolean}
+        summary: {type: string}
+        title_unmatched: {type: [string, "null"]}
+      required: [url, found, summary, title_unmatched]

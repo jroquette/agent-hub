@@ -157,6 +157,12 @@ DESIGN_PATHS = (
     "scripts/recall_transcripts.py",
     "scripts/retro_metrics.py",
     # AGH-487: the built-in brain-care pack, seeded.
+    "workflows/brain-care/fixtures/inbox-all-drop.yaml",
+    "workflows/brain-care/fixtures/inbox-empty.yaml",
+    "workflows/brain-care/fixtures/inbox-external-pending.yaml",
+    "workflows/brain-care/fixtures/inbox-three-notes.yaml",
+    "workflows/brain-care/inbox.yaml",
+    "workflows/brain-care/prompts/group.md",
     "workflows/brain-care/scripts/apply.py",
     "workflows/brain-care/scripts/groups.py",
     "workflows/brain-care/scripts/hub_branch.py",

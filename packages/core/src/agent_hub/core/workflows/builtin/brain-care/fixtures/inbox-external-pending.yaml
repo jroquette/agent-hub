@@ -1,0 +1,36 @@
+# AC-1: the owner applied the pair, but the external note waits for its own gate: the run pauses
+# there, and no branch, commit or PR exists yet.
+workflow: inbox
+stubs:
+  read:
+    output:
+      count: 3
+      notes:
+        - {path: brain/_inbox/YYYY-MM-DD-cache-key.md, title: Cache key, age_days: 21, provenance: agent, external: false, excerpt: Key the cache by the lockfile hash.}
+        - {path: brain/_inbox/YYYY-MM-DD-cache-key-again.md, title: Cache key again, age_days: 14, provenance: agent, external: false, excerpt: The cache key must include the lockfile.}
+        - {path: brain/_inbox/YYYY-MM-DD-blog-tip.md, title: Blog tip, age_days: 13, provenance: agent-from-external, external: true, excerpt: A tip read on a blog.}
+      paths: [brain/_inbox/YYYY-MM-DD-cache-key.md, brain/_inbox/YYYY-MM-DD-cache-key-again.md, brain/_inbox/YYYY-MM-DD-blog-tip.md]
+      external: [brain/_inbox/YYYY-MM-DD-blog-tip.md]
+      unreadable: []
+      omitted: 0
+  group:
+    output:
+      groups:
+        - {notes: [brain/_inbox/YYYY-MM-DD-cache-key.md, brain/_inbox/YYYY-MM-DD-cache-key-again.md, brain/_inbox/YYYY-MM-DD-blog-tip.md], action: promote, target: brain/learnings/, reason: The same lesson three times., text: Key the cache by the lockfile hash.}
+  plan:
+    output:
+      count: 2
+      groups:
+        - {id: 1, notes: [brain/_inbox/YYYY-MM-DD-cache-key.md, brain/_inbox/YYYY-MM-DD-cache-key-again.md], external: false, action: promote, target: brain/learnings/, reason: The same lesson three times., text: Key the cache by the lockfile hash.}
+        - {id: 2, notes: [brain/_inbox/YYYY-MM-DD-blog-tip.md], external: true, action: promote, target: brain/learnings/, reason: "The same lesson three times. (an external note, split from its group: it needs its own approval)", text: ""}
+      ignored: []
+      unproposed: []
+  decide__next:
+    - output: {index: 0, last: false, group: {id: 1}, message: "Group 1 of 2: promote -> brain/learnings/."}
+    - output: {index: 1, last: true, group: {id: 2}, message: "Group 2 of 2: promote -> brain/learnings/. It needs your explicit approval."}
+  decide__gate:
+    - {decision: apply, text: "", approver: Dana Owner}
+  decide__record:
+    - output: {decisions: [{group: {id: 1}, decision: apply, note: "", approver: Dana Owner}], acted: 1}
+expect: {status: paused}
+reached: [read, group, plan, decide, decide__next, decide__gate, decide__record]
