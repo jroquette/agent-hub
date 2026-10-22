@@ -22,6 +22,8 @@ ITEM_NAME: Final = r"^[A-Za-z0-9_-]{1,128}$"
 FILE_ID: Final = r"^[0-9a-f]{16}$"
 # The usage window, in days back from the snapshot's ``now`` (S8, P2).
 USAGE_DAYS: Final = 30
+# The usage report's windows, in days back from ``now`` (AGH-482); the fold reads the longest.
+USAGE_WINDOWS: Final = (7, 30, 90)
 # What the catalog says of a third-party plugin: its content is never fetched (D1).
 NOT_IN_HUB: Final = "not in this hub"
 
@@ -156,6 +158,8 @@ type StepTag = Literal["gate", "agent", "command", "script", "human"]
 # The type a step declares for itself with a leading backticked token, as the hub's workflow
 # skills do ("`agent` **Scope**: ..."): who acts in it.
 type StepType = Literal["agent", "script", "gate", "human"]
+# One of the usage report's windows (AGH-482).
+type UsageDays = Literal[7, 30, 90]
 # A frontmatter value: a scalar, a list, or a one-level map of strings (L1, A4).
 type SkillFrontmatterValue = str | tuple[str, ...] | dict[str, str]
 
@@ -203,13 +207,53 @@ class Usage(ViewModel):
     last_used_at: ApiTimestamp | None
 
 
+class UsageWindows(ViewModel):
+    """How often a skill or agent was used over 7, 30 and 90 days, and its last use within 90
+    days: counts and a time only (AGH-482, ADR 0019)."""
+
+    runs_7d: int = Field(ge=0)
+    runs_30d: int = Field(ge=0)
+    runs_90d: int = Field(ge=0)
+    last_used_at: ApiTimestamp | None
+
+
 class SkillUsage(ViewModel):
     """Usage per bare name over the window from ``since`` (S8, P2); ``truncated`` when more than
-    500 names of a kind were seen (the most used are kept)."""
+    500 names of a kind were seen (the most used are kept).
+
+    ``windows_by_skill`` and ``windows_by_agent`` hold every name used in the last 90 days with
+    its 7/30/90-day runs (AGH-482); ``by_skill`` and ``by_agent`` stay the 30-day window.
+    """
 
     since: ApiTimestamp
     by_skill: dict[str, Usage]
     by_agent: dict[str, Usage]
+    truncated: bool = False
+    windows_by_skill: dict[str, UsageWindows] = {}
+    windows_by_agent: dict[str, UsageWindows] = {}
+
+
+class UsageRow(ViewModel):
+    """One hub skill or agent in the usage report: names, counts and a time only (AGH-482,
+    ADR 0019). ``last_used_at`` is the last use within 90 days, or None."""
+
+    project: str
+    kind: ItemKind
+    name: str
+    runs_7d: int = Field(ge=0)
+    runs_30d: int = Field(ge=0)
+    runs_90d: int = Field(ge=0)
+    last_used_at: ApiTimestamp | None
+
+
+class UsageReport(ViewModel):
+    """The hub's skills and agents with their runs, never used in ``days`` first (AGH-482).
+
+    ``truncated`` says the catalog or the usage fold was cut or not fully read.
+    """
+
+    days: UsageDays
+    items: tuple[UsageRow, ...]
     truncated: bool = False
 
 
