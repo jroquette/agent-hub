@@ -7,6 +7,12 @@ mode is always passed: with none the CLI runs ``auto`` (spike), which the web ne
 CLI accepts ``default`` as it is, so no mode is renamed (E15). The SDK runs the ``claude`` found
 on ``PATH`` (``cli_path``), never the binary bundled in its wheel. The child's stderr is
 discarded: it may hold conversation text, which no server log keeps.
+
+The child loses the hub's declared credentials (``environment``). An investigation session
+(``StartSpec.tool_policy``, P-17) gets only the built-in tools ``Read``, ``Glob``, ``Grep``,
+``Write`` and ``Bash``, and a ``PreToolUse`` hook on every tool that denies what core's
+``tool_verdict`` refuses (an allowed call goes on to the permission mode as any other); its
+``system_prompt`` is appended to Claude Code's own, so the tools keep their instructions.
 """
 
 import os
@@ -14,10 +20,20 @@ import shutil
 from collections.abc import Mapping
 from typing import Final
 
-from claude_agent_sdk import CanUseTool, ClaudeAgentOptions
+from claude_agent_sdk import (
+    CanUseTool,
+    ClaudeAgentOptions,
+    HookCallback,
+    HookContext,
+    HookInput,
+    HookJSONOutput,
+    HookMatcher,
+)
+from claude_agent_sdk.types import SystemPromptPreset
 
-from agent_hub.claude_sessions.environment import child_environment
+from agent_hub.claude_sessions.environment import child_environment, masked_names
 from agent_hub.core.agent_sessions.driver import StartSpec
+from agent_hub.core.scenarios.investigation import INVESTIGATION_TOOLS, ToolPolicy, tool_verdict
 
 # One message from the CLI may be at most this large (the plan's bound; the SDK's default is 1 MiB).
 MAX_BUFFER_BYTES: Final = 8 * 1024 * 1024
@@ -37,6 +53,39 @@ def _discard(_line: str) -> None:
     """Drop one stderr line of the child."""
 
 
+def tool_hook(policy: ToolPolicy) -> HookCallback:
+    """The ``PreToolUse`` hook holding a session to ``policy``: a refused call is denied with
+    its reason; an allowed one answers nothing, so the permission mode decides as usual."""
+
+    async def hook(
+        hook_input: HookInput, _tool_use_id: str | None, _context: HookContext
+    ) -> HookJSONOutput:
+        tool = hook_input.get("tool_name")
+        given = hook_input.get("tool_input")
+        verdict = tool_verdict(
+            policy,
+            tool if isinstance(tool, str) else "",
+            given if isinstance(given, dict) else {},
+        )
+        if verdict.allowed:
+            return {}
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": verdict.reason,
+            }
+        }
+
+    return hook
+
+
+def _system_prompt(spec: StartSpec) -> SystemPromptPreset | None:
+    if spec.system_prompt is None:
+        return None
+    return {"type": "preset", "preset": "claude_code", "append": spec.system_prompt}
+
+
 def sdk_options(
     spec: StartSpec,
     *,
@@ -46,6 +95,9 @@ def sdk_options(
     max_buffer_size: int = MAX_BUFFER_BYTES,
 ) -> ClaudeAgentOptions:
     """The SDK options of a session started with ``spec``."""
+    env = child_environment(environ, spec.environment_extra, hidden=spec.hidden_environment)
+    env.update(dict.fromkeys(masked_names((environ, os.environ), spec.hidden_environment), ""))
+    policy = spec.tool_policy
     return ClaudeAgentOptions(
         cli_path=cli_path,
         cwd=spec.cwd,
@@ -56,8 +108,13 @@ def sdk_options(
         session_id=spec.session_id,
         include_partial_messages=True,
         can_use_tool=can_use_tool,
-        env=child_environment(environ, spec.environment_extra),
+        env=env,
         max_buffer_size=max_buffer_size,
         stderr=_discard,
         plugins=[{"type": "local", "path": path} for path in spec.plugin_dirs],
+        tools=None if policy is None else list(INVESTIGATION_TOOLS),
+        hooks=None
+        if policy is None
+        else {"PreToolUse": [HookMatcher(matcher=None, hooks=[tool_hook(policy)])]},
+        system_prompt=_system_prompt(spec),
     )

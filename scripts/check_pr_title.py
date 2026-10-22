@@ -20,6 +20,7 @@ SCOPES = (
     "hub-git",
     "claude-sessions",
     "api",
+    "mcp-server",
     "web",
     "repo",
     "deps",

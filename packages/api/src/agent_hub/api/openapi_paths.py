@@ -182,9 +182,18 @@ DOCTOR_FIX_PATHS: frozenset[tuple[str, str]] = frozenset(
     {("post", f"{API_PREFIX}/hubs/{{hub_id}}/doctor-fix")}
 )
 
-# Running an AC's recorded check from the feature page (playground): run, never recorded.
-AC_CHECK_PATHS: frozenset[tuple[str, str]] = frozenset(
-    {("post", f"{API_PREFIX}/features/{{project}}/{{slug}}/acs/{{ac}}/check-runs")}
+# A paused scenario run's investigation session (AGH-350 P-7, AM-2): a strict write that starts
+# a driven session, so it needs the launch cookie like the run commands.
+SCENARIO_PATHS: frozenset[tuple[str, str]] = frozenset(
+    {("post", f"{API_PREFIX}/scenario-runs/{{run_id}}/investigation")}
+)
+
+# Running an AC's recorded check from the feature page (playground): run, never recorded. The
+# scenario paths are grouped here, the last group the path tests' union of the served groups
+# names (they pin that union; AGH-350 changes no existing test).
+AC_CHECK_PATHS: frozenset[tuple[str, str]] = (
+    frozenset({("post", f"{API_PREFIX}/features/{{project}}/{{slug}}/acs/{{ac}}/check-runs")})
+    | SCENARIO_PATHS
 )
 
 # Every path the document lists.
