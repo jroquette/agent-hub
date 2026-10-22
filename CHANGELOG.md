@@ -11,6 +11,22 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- The built-in `upgrade` workflow pack (AGH-484): one uv or npm package from its changelog to a PR. The bump is made
+  with the repo's own tooling (`uv add`/`uv lock --upgrade-package`, `npm install --ignore-scripts`), never by
+  editing a lockfile; the upstream release notes are read without a token; a read-only agent lists where each
+  breaking change hits the repo; the repo's `check_fast` (read from `hub.json`) runs, then up to three adapt rounds;
+  test strength runs on the adapted lines; a major bump, no changelog or more than five touched files asks the
+  `size` approval; the full check runs, and the push waits on the `publish` approval. Three red rounds end the run
+  `blocked` with the failing check named. Existing hubs get the pack on `./hub sync`.
+
+### Changed
+
+- `/upgrade` starts the `upgrade` workflow (`./hub workflow run upgrade … --live`) for a uv or npm package, one run
+  per package; a toolchain, plugin pin, Docker digest, GitHub Action or lock-maintenance bump follows its steps by
+  hand, as before.
+
 ## [0.20.1] - 2026-10-22
 
 ### Added

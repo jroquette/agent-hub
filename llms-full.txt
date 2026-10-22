@@ -571,12 +571,16 @@ A workflow is data: a YAML (or JSON) file in the hub's `workflows/<pack>/` folde
 `script`, `loop`, `loop_group`, `include`, `approval`, `wait`, `halt`) depend on each other and run in layers
 ([format](docs/design/workflow-schema.md), [ADR 0032](docs/adr/0032-workflow-engine.md)). `hub init` and `hub sync`
 seed the built-in packs once: `issue-to-pr` (what `hub run` runs) and `sdlc` (`deliver`: implement, validate and
-review in a loop until green, then the PR; `review`: a spec lens and a quality lens side by side, then one verdict). A hub's own file
+review in a loop until green, then the PR; `review`: a spec lens and a quality lens side by side, then one verdict) and
+`upgrade` (one uv or npm package from its changelog to a PR: the bump made with the repo's own tooling, the changelog
+read, the fast check, up to three adapt rounds, test strength on the adapted lines, the `size` approval for a risky
+bump, the full check, then the PR behind the `publish` approval; `/upgrade` starts it). A hub's own file
 overrides a built-in of the same name.
 
 ```bash
 ./hub workflow list                          # the workflows that load; problems as <file>:<line>: <key>: <message>
 ./hub workflow run deliver --input issue=DEM-7 --input repo=api --input issue_text="..."  # dry: what would run
+./hub workflow run upgrade --input issue=DEM-8 --input repo=api --input package=httpx --input to=0.29.0 --live
 ./hub workflow run deliver --input issue=DEM-7 --input repo=api --input issue_text="..." --live
 ./hub workflow run --resume <run>            # continue a failed or paused run; --abandon ends it
 ./hub workflow approve <run>                 # or reject / respond: decide a paused gate; the run resumes
@@ -704,7 +708,7 @@ The size decides the ceremony:
 | `/release [version]` | Cuts a platform release: merged PRs, the bump, the check on the exact commit, notes with what `hub sync` rewrites, then the hub's pin bump | When `main` holds what the next version ships |
 | `/incident <symptom or issue>` | Investigates a problem with no known reproduction: evidence, ranked hypotheses, a gated mitigation, then `/fix` and a postmortem | When `/fix` cannot start because nothing reproduces yet |
 | `/refactor <issue>` | Makes a behaviour-preserving change: characterization tests first, then batched PRs that each pass `check` alone | When a refactor is too big for `/fix` and needs no spec |
-| `/upgrade [package or tool]` | Bumps a dependency, toolchain or plugin pin after reading its changelog, adapting to breaking changes | For dependency and toolchain bumps |
+| `/upgrade [package or tool]` | Starts the `upgrade` workflow for a uv or npm package (bump, changelog, adapt, checks, PR behind an approval); a toolchain, plugin pin, Docker digest or Action goes by hand | For dependency and toolchain bumps |
 | `/adr <question or issue>` | Records an architectural decision: options and trade-offs, your pick, a new ADR that supersedes and never edits | For a decision outside a `/feature` |
 | `/onboard [propose \| apply]` | Reads each repo read-only and proposes `hub.json` values, gates and `AGENTS.project.md` with `path:line` evidence; applies them only after your approval (`propose` only writes the proposal, for a headless run) | The first session in a new hub, or after adding a repo |
 | `/retro [period]` | Turns the period's run metrics into at most five evidence-backed changes to the workflows, filed as issues | Weekly, or after a rough stretch |
