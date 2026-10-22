@@ -16,38 +16,83 @@ inside a project the page says where it is and what it reads.
 
 ## Project index (All projects)
 
+Changed by AGH-427 (the owner validated it in the playground): the index is a grid of project cards, not a table.
+Toolkit, Brain and Hub config (and Environments, when it lands) share it.
+
 ```
-Brain
-What each project's hub knows: current focus, decisions, playbooks and feature records. Open a project ...
-+----------------+--------------------------------+-------+----------+-----------+-----------+---------------+
-| Project        | Current focus                  | Notes | Features | Decisions | Learnings | Inbox         |
-| [] agent-hub   | Ship the playground deliveries | 112   | 9        | 14        | 21        | (i) 3 to triage|
-| [] demo        | No current focus recorded      | 4     | 0        | 0         | 1         | None          |
-+----------------+--------------------------------+-------+----------+-----------+-----------+---------------+
-Tip: pick a project in the scope switcher to open its brain directly.
+Toolkit
+What each project's agents can do: the agents, skills and hooks its hub installs. Open a project to browse them.
+
+Projects                                      [folder] To come straight here, choose a project in the top bar.
++------------------------------------------------+ +------------------------------------------------+
+| agent-hub  AGH        [Sync pending] [Healthy] >| | demo                           [Not checked] > |
+| acme/agent-hub-hub · 3 repos · platform 0.19.0  | | acme/demo-hub · 1 repo · platform 0.19.0       |
+| Agents   Skills   Hooks   Used · 30 d           | | Agents   Skills   Hooks   Used · 30 d          |
+| 12       34       5       18                    | | —        —        —        —                    |
+| (!) 4 items with problems                       | | (!) Could not read this catalog: Boom.  [Retry]|
++------------------------------------------------+ +------------------------------------------------+
 ```
 
-Skills' index has the columns Project, Hub repo, Skills, Agents, Hooks, "Used in 30 days" and Diagnostics.
+One shared component, `KnowledgeProjectIndex` (`screens/knowledge-index/`), renders every picker: a "Projects"
+section title (one project: "Project") with the screen's tip at its right beside the scope switcher's
+`folder-kanban` icon, then a list (named by the screen's caption) of `.ah-pcard` cards in a grid that fills the
+content width (`repeat(auto-fill, minmax(min(360px, 100%), 1fr))`: 3 columns at 1440, one or two projects keep a
+card's width). A card is, top to bottom:
 
-One shared component, `KnowledgeProjectIndex` (`screens/knowledge-index/`), renders both: a `DataTable` with a
-caption, one row per registered project, the project name as a link, then the screen's own columns. Each count cell
-reads the project's tree or catalog through the query the project page already uses, so the request is shared.
+1. the head of the Portfolio card (`ProjectCardHead`, extracted from `ProjectCard` in `components/domain.tsx`, which
+   still renders it): the name as an `h3` holding the link, the tracker team, `hub · n repos · platform v` with the
+   repo names in a tooltip, Sync pending and the health badge, and a `chevron-right` cue;
+2. an optional lead line (Brain: "Current focus: …"; Hub config: the repo names joined by " · ", else "No repos
+   declared yet"), one line with an ellipsis;
+3. the screen's figures as `CardStat`s (exported from `components/domain.tsx`) whose values are `CountCell`s;
+4. an optional foot line: a link to what needs a look, a quiet line when nothing does, or the read error with a
+   Retry that refetches only that project's source.
+
+Each figure or foot reads the project's tree or catalog through the query the project page already uses, so the
+request is shared and the cards show at once. Per screen:
+
+| Screen | Figures | Lead | Foot |
+|---|---|---|---|
+| Toolkit | Agents, Skills, Hooks, "Used · 30 d" | none | "<n> items with problems" (to `?diag=1`), "No problems found", or the error + Retry |
+| Brain | Notes, Features, Decisions, Learnings | "Current focus: <first line>" "+n more", else "No current focus recorded" | "<n> to triage in Learnings", "Inbox empty", or the error + Retry |
+| Hub config | none | the repo names | none |
+
+The whole-list error is a `ProblemError` "Could not load projects". The head shows the hub repo, so Toolkit has no
+Hub repo figure. Not built (left open by the design): opening the only project directly, a find field for many
+projects, and figures or a problems foot for Hub config.
 
 ## Acceptance criteria
 
-- **AC-270.1** Given All projects in scope, when Knowledge › Brain opens, then it shows the table "Projects and their
-  brains" with one row per project: Project, Current focus (the first focus line of `now.md` and "+n more", else
-  "No current focus recorded"), Notes, Features (folders under `brain/features/`), Decisions, Learnings and Inbox.
-- **AC-270.2** Given a project whose `brain/_inbox/` holds notes, when the Brain index shows it, then its Inbox cell
-  is a link "<n> to triage" to Learnings in that project's scope; with none it reads "None".
-- **AC-270.3** Given All projects in scope, when Knowledge › Skills opens, then it shows the table "Projects and their
-  skills, agents and hooks": Project, Hub repo, Skills, Agents, Hooks, "Used in 30 days" (skills and agents used at
-  least once; hooks are not counted) and Diagnostics ("<n> with problems", linking to the catalog filtered on
-  diagnostics, else "None").
-- **AC-270.4** Given a count whose source is loading, failed or over its bounds, when the index shows it, then the
-  cell is a skeleton, "—" with the reason in a tooltip, or the number followed by "+" with the reason in a tooltip.
-- **AC-270.5** Given the index, when a row or its name is activated, then the project's Brain (or Skills) opens; with
-  no project registered the index shows "No projects yet." and a link to register a hub in Settings.
+- **AC-270.1** (changed by AGH-427) Given All projects in scope, when Knowledge › Brain opens, then it shows the
+  project cards "Projects and their brains", one per project: the lead "Current focus: <the first focus line of
+  `now.md`>" and "+n more", else "No current focus recorded", then Notes, Features (folders under
+  `brain/features/`), Decisions and Learnings, and the Inbox in the foot.
+- **AC-270.2** (changed by AGH-427) Given a project whose `brain/_inbox/` holds notes, when the Brain index shows it,
+  then its foot is a link "<n> to triage in Learnings" (named "<n> to triage in Learnings for <project>") to
+  Learnings in that project's scope; with none it reads "Inbox empty".
+- **AC-270.3** (changed by AGH-427) Given All projects in scope, when the Toolkit picker opens, then it shows the
+  project cards "Projects and their agents, skills and hooks": Agents, Skills, Hooks, "Used · 30 d" (skills and
+  agents used at least once in the last 30 days; hooks are not counted), and a foot "<n> items with problems" linking
+  to the catalog filtered on diagnostics, else "No problems found".
+- **AC-270.4** (changed by AGH-427) Given a count whose source is loading, failed or over its bounds, when the index
+  shows it, then the figure is a skeleton, "—" with the reason in a tooltip, or the number followed by "+" with the
+  reason in a tooltip; a failed source also puts its reason in the card's foot with a Retry.
+- **AC-270.5** (changed by AGH-427) Given the index, when a card is clicked or its name activated, then the project's
+  Brain (or Toolkit) opens; with no project registered the index shows "No projects yet." and a link to register a
+  hub in Settings.
+- **AC-427.12** Given a picker card, when it shows, then its head is the Portfolio card's head (name as the card's
+  only opening link, team, `hub · n repos · platform v`, Sync pending, health) followed by a chevron.
+- **AC-427.13** Given a project whose catalog or tree cannot be read, when its card shows, then the foot says "Could
+  not read this catalog: <title>." (or "this brain") with a Retry that refetches only that project's source, and the
+  other cards are unaffected.
+- **AC-427.14** Given the picker, when `j` or `k` is pressed, then focus moves to the next or previous card's name;
+  `o` opens the focused card.
+- **AC-427.15** Given the picker, when it loads, then three skeleton cards show in the grid (`aria-busy`); when the
+  list fails, then "Could not load projects" shows with Retry.
+- **AC-427.16** Given the Hub config picker, when it shows, then each card's lead lists the project's repos joined by
+  " · ", else "No repos declared yet".
+- **AC-427.17** Given any picker, when it shows, then the tip "To come straight here, choose a project in the top
+  bar." sits at the right of the "Projects" title, and the page has no serious or critical axe violation.
 - **AC-270.6** Given a project's Brain or Skills page, when it renders, then it shows the breadcrumb
   Portfolio › project › Brain (Skills) and a purpose line ("What <project>'s agents know, read from brain/ in its
   hub." / "What <project>'s agents can do, read from its hub's files. Nothing here runs them.").
@@ -66,7 +111,9 @@ reads the project's tree or catalog through the query the project page already u
 
 ## Accessibility
 
-Folder rows and note links are at least 24 px high. The tree's groups are sections labelled by their headings; the
+Folder rows and note links are at least 24 px high. A picker card is an `article` labelled by its name, which is
+the one link that opens it (the card's click is a mouse convenience); the foot link and Retry are their own Tab
+stops and do not open the card. The tree's groups are sections labelled by their headings; the
 filter has the accessible name "Filter brain notes". Count cells are tabular numbers.
 
 ## UX principles applied
