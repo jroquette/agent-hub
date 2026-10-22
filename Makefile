@@ -151,8 +151,10 @@ migrations: ## upgrade a scratch SQLite database to head, then alembic check (no
 coverage: ## per-package floors (core 90%, others 80%) over the collected coverage data
 	$(RUN) coverage json -q -o coverage.json && $(RUN) python -m scripts.check_coverage coverage.json
 
-# Not part of check: test_build_llms_txt.py (in test-fast) fails while either file is stale.
-llms-txt: ## regenerate llms.txt and llms-full.txt from the docs
+# Not part of check: test_build_llms_txt.py and test_build_flow_catalog.py (in test-fast) fail
+# while a file is stale.
+llms-txt: ## regenerate the flow catalog in USING.md, llms.txt and llms-full.txt
+	$(RUN) python -m scripts.build_flow_catalog
 	$(RUN) python -m scripts.build_llms_txt
 
 # Not part of check: the drift tests in test-fast fail while the shipped file is stale.

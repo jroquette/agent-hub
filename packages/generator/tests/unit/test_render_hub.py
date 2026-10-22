@@ -4747,7 +4747,7 @@ def test_names_app_repo_agents_once_when_readme_rendered(demo_config: HubConfig)
     assert lines[heading - 4] == "Repos, checked out next to this hub: demo-api."
 
 
-# AGH-51: the README's last section, for a teammate joining the hub.
+# AGH-51: the README's last hand-written section, for a teammate joining the hub.
 JOIN_HEADING = "## Join this hub"
 URL_WITH_CREDENTIAL = re.compile(r"https://[^\s/]*@")
 
@@ -4787,7 +4787,8 @@ def test_keeps_join_section_within_60_lines_when_readme_rendered() -> None:
 
     section = join_section(readme)
 
-    assert readme.endswith(section)
+    # AGH-495: only the generated Pick a flow table follows it.
+    assert readme.split(section, 1)[1].startswith("## Pick a flow\n")
     assert len(section.splitlines()) <= 60
 
 
