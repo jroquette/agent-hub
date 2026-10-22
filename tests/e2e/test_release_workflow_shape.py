@@ -8,7 +8,10 @@ import yaml
 
 from tests.e2e.conftest import RELEASE_WORKFLOW
 
-DISPATCH_FROM_MAIN = "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'"
+DISPATCH_ONLY = "github.event_name == 'workflow_dispatch'"
+# The first check step's refusal of a dispatch from another ref than main (Q14).
+MAIN_ONLY_CHECK = '[ "$GITHUB_REF" = refs/heads/main ]'
+CHECK_STEP = "Check the inputs, that the commit is on main, and its declared versions"
 CHECK_AFTER_TAG = (
     "${{ !cancelled() && (github.event_name == 'push' || needs.release-tag.result == 'success') }}"
 )
@@ -49,8 +52,24 @@ def test_names_version_and_sha_in_run_name_when_dispatched(workflow: dict[Any, A
     assert "format('release v{0} at {1}', inputs.version, inputs.sha)" in run_name
 
 
-def test_runs_tag_job_only_when_dispatched_from_main(workflow: dict[Any, Any]) -> None:
-    assert workflow["jobs"]["release-tag"]["if"] == DISPATCH_FROM_MAIN
+def test_runs_tag_job_only_when_dispatched(workflow: dict[Any, Any]) -> None:
+    """Dispatch-only, so a dispatch from another ref runs the job and fails loudly in its check."""
+    assert workflow["jobs"]["release-tag"]["if"] == DISPATCH_ONLY
+
+
+def test_refuses_non_main_ref_before_push_when_tag_job_read(workflow: dict[Any, Any]) -> None:
+    steps = workflow["jobs"]["release-tag"]["steps"]
+    runs = [step for step in steps if "run" in step]
+
+    assert runs[0]["name"] == CHECK_STEP
+    assert MAIN_ONLY_CHECK in runs[0]["run"]
+
+
+def test_sets_no_step_condition_when_tag_job_read(workflow: dict[Any, Any]) -> None:
+    """No step `if` (e.g. always()): a failed check is never followed by the push."""
+    steps = workflow["jobs"]["release-tag"]["steps"]
+
+    assert [step.get("name", step.get("uses")) for step in steps if "if" in step] == []
 
 
 def test_runs_check_after_tag_job_when_dispatched_or_alone_when_pushed(
