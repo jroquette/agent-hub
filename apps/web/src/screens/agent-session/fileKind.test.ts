@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { fileKind, isMarkdown, isReviewable } from "./fileKind";
+import { fileKind, isMarkdown, isReviewable, isTestFile } from "./fileKind";
 
 describe("fileKind", () => {
   it.each([
@@ -34,5 +34,31 @@ describe("fileKind", () => {
     expect(isMarkdown("/a/README.md")).toBe(true);
     expect(isMarkdown("/a/page.MDX")).toBe(true);
     expect(isMarkdown("/a/index.ts")).toBe(false);
+  });
+});
+
+describe("isTestFile", () => {
+  it.each([
+    "/repo/demo-shop/tests/order_intents/test_fraud_check_provider.py",
+    "/repo/common-data-models/tests/test_payments_constants.py",
+    "/repo/pkg/src/thing_test.py",
+    "/repo/pkg/conftest.py",
+    "/repo/svc/handler_test.go",
+    "/repo/apps/web/src/screens/x/FilesPanel.test.tsx",
+    "/repo/apps/web/src/lib/format.spec.ts",
+    "/repo/apps/web/src/__tests__/helpers.ts",
+    "/repo/e2e/review.ts",
+  ])("%s is a test", (path) => {
+    expect(isTestFile(path)).toBe(true);
+  });
+
+  it.each([
+    "/repo/demo-shop/src/demo_shop/order_intents/fraud_check_provider.py",
+    "/repo/common-data-models/src/common_data_models/insurance/constants.py",
+    "/repo/apps/web/src/screens/x/FilesPanel.tsx",
+    "/repo/src/testing_utils.py",
+    "/repo/src/contest.py",
+  ])("%s is not a test", (path) => {
+    expect(isTestFile(path)).toBe(false);
   });
 });

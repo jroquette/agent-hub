@@ -50,3 +50,11 @@ export const isMarkdown = (path: string) => /\.(?:md|markdown|mdx)$/i.test(path)
  * request. Claude's plans, feature records, brain notes and scratch are there to read, not to sign
  * off. */
 export const isReviewable = (path: string) => fileKind(path) === "code";
+
+/** A test file (a folder like `tests/`, `__tests__/` or `e2e/`, or a name like `test_x.py`,
+ * `x_test.go`, `x.test.ts`, `x.spec.tsx`, `conftest.py`): the code tab can show them apart from
+ * the code they test. */
+const TEST_DIR = /(?:^|\/)(?:tests?|__tests__|specs?|e2e)\//;
+const TEST_NAME =
+  /(?:^|\/)(?:test_[^/]+\.py|[^/]+_test\.(?:py|go)|[^/]+\.(?:test|spec)\.[cm]?[jt]sx?|conftest\.py)$/;
+export const isTestFile = (path: string) => TEST_DIR.test(path) || TEST_NAME.test(path);
