@@ -79,7 +79,7 @@ def test_drops_target_when_note_route_refuses() -> None:
 
 
 def test_drops_target_when_link_leaves_workspace_and_returns() -> None:
-    text = "[back](../../../../demo-hub/brain/x.md) [in](../../../demo-hub/brain/x.md)\n"
+    text = "[back](../../../../demo-hub/brain/y.md) [in](../../../demo-hub/brain/x.md)\n"
 
     links = document_links(NOTE, text, hub_folder=HUB_FOLDER)
 
