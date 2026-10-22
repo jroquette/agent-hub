@@ -834,8 +834,9 @@ def test_names_only_this_runs_hub_files_and_a_no_ship_when_delivery_script_runs(
 
 
 # AC-2.1: a live implement run of a planned ticket, its agents stubbed and its hub steps real.
-# The preflight finds plan drift, the owner declines and the re-check still finds it: the run
-# ends blocked with the ticket's records and the request in the hub, nothing else.
+# The preflight finds plan drift, the owner declines (or approves, which amends plan.md) and the
+# re-check still finds it: the run ends blocked with the ticket's records, the request and its
+# decision in the hub, plus the amendment when approved, and nothing else.
 RUN_FEATURE = "brain/features/demo-flow"
 RUN_FEATURES_JSON = {
     "tickets": [
