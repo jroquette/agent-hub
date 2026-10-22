@@ -80,6 +80,7 @@ IGNORED_PATHS: tuple[tuple[str | int, ...], ...] = (
     ("project", "conventions"),
     ("repos", 0, "conventions"),
     ("repos", 0, "services"),
+    ("repos", 0, "ui_paths"),
     ("tracker", "states"),
     ("tracker", "blocked_label"),
     ("models",),
