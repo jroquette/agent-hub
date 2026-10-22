@@ -5080,6 +5080,8 @@ ADAPTER_MODULES = frozenset(
         "env_file_reader.py",
         # A scenario finding's issue marker, shared by the CLI and hub web (AGH-363).
         "finding_issues.py",
+        # Reads the built-in packs and the skill templates, package data (AGH-495).
+        "flow_catalog.py",
     }
 )
 RENDERING_MODULES = frozenset(

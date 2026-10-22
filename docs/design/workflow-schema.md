@@ -19,7 +19,7 @@ cap) or JSON, then a frozen Pydantic model that forbids unknown keys. A load err
 |---|---|---|
 | `version` | `1` | format version; the engine refuses one it does not know |
 | `kind` | `workflow` (default) or `scenario` | a scenario holds only `action`, `expect`, `approval`, `wait`, `loop_group`, `include` ([scenarios.md](scenarios.md)) |
-| `name`, `description` | kebab-case file stem; optional string | unique among the workflows discovered; one line for people |
+| `name`, `description` | kebab-case file stem; optional string | unique among the workflows discovered; one line for people, whose first sentence says when to use the flow: the "Use when" column of the flow catalog (`flow_catalog.py`) and the first line of hub web's Workflows card; a built-in's must hold at least four words |
 | `revision` | integer ≥ 1 | bumped by the author on each change |
 | `inputs` | map `^[a-z][a-z0-9_]*$` → `{type, required, default, description}` | `type`: `string` (default), `integer`, `number`, `boolean`; `required` excludes `default` |
 | `returns` | node id, optional | the node whose output is the workflow's (and an include's) output |
