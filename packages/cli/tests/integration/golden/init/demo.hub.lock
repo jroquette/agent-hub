@@ -613,6 +613,21 @@
     "workflows/issue-to-pr/prompts/implement.md": {
       "ownership": "seeded"
     },
+    "workflows/retro/fixtures/retro-all-dropped.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/retro/fixtures/retro-keep-none.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/retro/fixtures/retro-no-runs.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/retro/fixtures/retro-pending.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/retro/fixtures/retro-week.yaml": {
+      "ownership": "seeded"
+    },
     "workflows/retro/prompts/changes.md": {
       "ownership": "seeded"
     },
