@@ -196,6 +196,17 @@ AC_CHECK_PATHS: frozenset[tuple[str, str]] = (
     | SCENARIO_PATHS
 )
 
+# Finding services with a read-only Claude session (ADR 0046): start, list, read and discard.
+DISCOVERY_PATHS: frozenset[tuple[str, str]] = frozenset(
+    (method, f"{API_PREFIX}/projects/{{project}}/environment-discoveries{path}")
+    for method, path in (
+        ("post", ""),
+        ("get", ""),
+        ("get", "/{discovery_id}"),
+        ("delete", "/{discovery_id}"),
+    )
+)
+
 # Every path the document lists.
 SERVED_PATHS: frozenset[tuple[str, str]] = (
     P2_PATHS
@@ -214,6 +225,7 @@ SERVED_PATHS: frozenset[tuple[str, str]] = (
     | PLATFORM_SYNC_PATHS
     | DOCTOR_FIX_PATHS
     | AC_CHECK_PATHS
+    | DISCOVERY_PATHS
 )
 
 

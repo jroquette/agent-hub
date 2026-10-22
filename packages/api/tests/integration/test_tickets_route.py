@@ -174,6 +174,7 @@ def _get_paths(app: Any, slug: str) -> list[str]:
         "name": "alpha",
         "file_id": "0" * 16,
         "version_id": "01929a4e-7a11-7c00-8a00-00000000b001",
+        "discovery_id": "0123456789ab",
         "ticket": "DEM-1",
     }
     paths = []
