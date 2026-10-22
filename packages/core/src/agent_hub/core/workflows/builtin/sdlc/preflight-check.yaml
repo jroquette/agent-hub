@@ -44,6 +44,9 @@ inputs:
   declined_request:
     default: ""
     description: The declined request a declined_change input comes from (pending-decision's).
+  blocker_read:
+    default: ""
+    description: A merged blocker the first run records read, whatever the agent lists (preflight's; AC-3.3).
 returns: result
 outcome_field: status
 nodes:
@@ -102,7 +105,7 @@ nodes:
     description: Append the preflight's run to tickets/<ticket>/preflight.json.
     depends_on: [preflight, request]
     trigger_rule: none_failed_min_one_success
-    command: [hub, step, preflight, --feature, $INPUTS.feature, --ticket, $INPUTS.ticket, --findings, $preflight.output, --commit, $INPUTS.main, --input, $INPUTS.input, --input-text, $INPUTS.input_text, --request, $request.output.n, --declined-request, $INPUTS.declined_request]
+    command: [hub, step, preflight, --feature, $INPUTS.feature, --ticket, $INPUTS.ticket, --findings, $preflight.output, --commit, $INPUTS.main, --input, $INPUTS.input, --input-text, $INPUTS.input_text, --request, $request.output.n, --declined-request, $INPUTS.declined_request, --read, $INPUTS.blocker_read]
     retry: {max_attempts: 0}
     output_format: {type: object}
 
@@ -210,6 +213,5 @@ nodes:
       type: object
       properties:
         status: {type: string, enum: [passed, blocked]}
-        drift: {type: string, enum: [none, local, plan]}
         superseded: {type: string}
-      required: [status, drift, superseded]
+      required: [status, superseded]

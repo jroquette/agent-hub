@@ -73,7 +73,6 @@ IMPLEMENT_FIXTURES = (
 )
 PREFLIGHT_FIXTURES = (
     "preflight-already-read",
-    "preflight-drift-local",
     "preflight-drift-none",
     "preflight-drift-plan",
     "preflight-plan-declined-still-plan",
@@ -214,7 +213,7 @@ def test_reaches_the_built_in_fixtures_when_implement_tested_from_a_hub_with_a_s
     for fixture in (*IMPLEMENT_FIXTURES, *PREFLIGHT_FIXTURES):
         assert f"<builtin>/sdlc/fixtures/{fixture}.yaml: ok" in tested.stdout
     assert "warning" not in tested.stdout
-    assert tested.stdout.endswith("25 fixtures: 25 passed, 0 failed\n")
+    assert tested.stdout.endswith("24 fixtures: 24 passed, 0 failed\n")
 
 
 def test_captures_a_decline_note_when_the_owner_answers_the_plan_change_gate() -> None:

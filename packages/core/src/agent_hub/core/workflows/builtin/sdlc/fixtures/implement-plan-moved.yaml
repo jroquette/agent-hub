@@ -44,7 +44,7 @@ stubs:
   pass-1__check__rerecord:
     output: {runs: 2}
   pass-1__check__result:
-    output: {status: passed, drift: local, superseded: 'change request 1 approved but superseded by plan v2: not applied'}
+    output: {status: passed, superseded: 'change request 1 approved but superseded by plan v2: not applied'}
   pass-1__worktree:
     output:
       path: /ws/demo-api/.claude/worktrees/dem-1

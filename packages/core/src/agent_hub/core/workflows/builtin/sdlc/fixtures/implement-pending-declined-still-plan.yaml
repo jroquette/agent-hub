@@ -25,7 +25,7 @@ stubs:
   pass-1__check__record:
     output: {runs: 2}
   pass-1__check__result:
-    output: {status: blocked, drift: plan, superseded: ''}
+    output: {status: blocked, superseded: ''}
   pass-1__outcome:
     output: {status: blocked, question: 'plan drift remains after the owner''s decision on the plan change:
         the next /implement opens a new change request', verdict: '', next_input: '', next_text: '', superseded: '',

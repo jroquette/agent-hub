@@ -46,7 +46,6 @@ OUTCOME_FILE: Final = "outcome.md"
 OUTCOME_TYPE: Final = "ticket-outcome"
 # ``outcome.md`` is read whole up to this size, by every read of a feature (Build counts it).
 MAX_OUTCOME_BYTES: Final = 16_384
-MAX_DEPENDENTS: Final = 50
 # At most this many ticket folders are read, by name; each ``preflight.json`` up to its cap.
 MAX_TICKET_FOLDERS: Final = 500
 MAX_PREFLIGHT_BYTES: Final = 65_536
@@ -249,8 +248,6 @@ def outcome_record(read: bytes | str | None, *, folder: str) -> TicketOutcome | 
         if not names_pull_request(pr):
             raise RecordFieldError(f"pr names no pull request: {(pr or 'none')[:64]}")
         dependents = _names(fields.get("dependents"), "dependents")
-        if len(dependents) > MAX_DEPENDENTS:
-            raise RecordFieldError(f"dependents lists more than {MAX_DEPENDENTS} tickets")
     except RecordFieldError as problem:
         return _unreadable(OUTCOME_FILE, str(problem))
     return TicketOutcome(

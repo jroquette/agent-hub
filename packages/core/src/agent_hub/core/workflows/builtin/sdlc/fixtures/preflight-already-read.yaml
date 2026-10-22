@@ -11,6 +11,5 @@ stubs:
       due: false
       reason: "DEM-8 already read DEM-7's outcome"
       input: none
-      merged_at: ''
 expect: {status: done}
 reached: [due]

@@ -293,6 +293,21 @@ def preflight_run(findings: bytes, facts: PreflightFacts) -> bytes:
     return json.dumps(run, ensure_ascii=False).encode()
 
 
+def with_blocker_read(findings: bytes, blocker: str, *, names: Iterable[str]) -> bytes:
+    """The preflight's ``findings`` with ``blocker`` in ``blockers_read`` unless one of its
+    ``names`` (key or id, any case) is there already: an automatic preflight after a blocker's
+    merge records it read whatever the agent listed (AC-3.3). Findings of another shape are
+    left for ``preflight_run`` to refuse."""
+    found = parse_document(findings)
+    listed = found.get("blockers_read") if isinstance(found, dict) else None
+    if not isinstance(found, dict) or not isinstance(listed, list):
+        return findings
+    wanted = {name.upper() for name in names}
+    if any(isinstance(item, str) and item.upper() in wanted for item in listed):
+        return findings
+    return json.dumps(found | {"blockers_read": [*listed, blocker]}, ensure_ascii=False).encode()
+
+
 def appended_preflight(existing: bytes | None, run: bytes, *, folder: str) -> tuple[bytes, int]:
     """``preflight.json`` of ``tickets/<folder>/`` with ``run`` appended, and its run count.
 
@@ -557,11 +572,5 @@ def outcome_text(outcome: TicketOutcomeText) -> bytes:
         raise TicketRecordError(f"the outcome would be larger than {MAX_OUTCOME_BYTES} bytes")
     read = outcome_record(text, folder=outcome.ticket)
     if isinstance(read, str):
-        # The reader's own words, without the advice for a record already in the hub.
-        raise TicketRecordError(_why(read))
+        raise TicketRecordError(read)
     return text
-
-
-def _why(problem: str) -> str:
-    found = re.fullmatch(r".*? could not be read \((.*)\)\. Fix it in a hub PR\.", problem)
-    return found[1] if found else problem
