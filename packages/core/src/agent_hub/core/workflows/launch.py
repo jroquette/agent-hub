@@ -55,6 +55,9 @@ type InputNumber = Annotated[float, Field(allow_inf_nan=False)]
 type InputValue = StrictBool | StrictInt | InputNumber | InputText
 type InputName = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]{0,63}$")]
 type RunAction = Literal["start", "cancel", "resume", "abandon"]
+# How a run started by itself (ADR 0048); a run started by hand has none.
+type RunTrigger = Literal["schedule", "event"]
+RUN_TRIGGERS: Final[tuple[RunTrigger, ...]] = ("schedule", "event")
 
 
 class StartRunRequest(BaseModel):
