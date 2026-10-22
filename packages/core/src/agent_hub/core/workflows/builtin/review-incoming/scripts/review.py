@@ -47,7 +47,7 @@ NUMBER = re.compile(r"[1-9][0-9]{0,8}")
 CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 BACKTICKS = re.compile(r"`{3,}")
 ATTRIBUTION = re.compile(r"co-authored-by|generated with|\U0001f916", re.IGNORECASE)
-HUNK = re.compile(r"^@@ -[0-9,]+ \+([0-9]+)(?:,([0-9]+))? @@")
+HUNK = re.compile(r"^@{2} -[0-9,]+ \+([0-9]+)(?:,([0-9]+))? @{2}")
 GIT = ("git", "-c", "core.hooksPath=/dev/null", "-c", "core.quotePath=false")
 SUMMARY = "# Summary"
 BLOCKING = "# Blocking"
