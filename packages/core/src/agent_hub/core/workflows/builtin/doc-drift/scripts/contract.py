@@ -6,7 +6,7 @@
 
 ``contract.py --repo <dir> --sha <sha>`` runs in the hub (the node's default cwd). It reads
 ``hub.json`` → ``repos[]`` (the entry whose ``dir`` is ``<dir>``; its ``default_branch``, else
-``project.default_branch``, else ``main``) and works in the repo's clone next to the hub, never
+the ``project`` one, else ``main``) and works in the repo's clone next to the hub, never
 fetching (a script gets no token: fetch first). ``base`` is the local ``origin/<default>``.
 
 - Merge mode (``--sha`` given): the diff from the commit's first parent to the commit; a name is
@@ -29,10 +29,17 @@ readable, a repo not in ``hub.json`` or not cloned, an unknown commit, no parent
 ``origin/<default>``) exits 2; a git failure exits 1. Both say why on stderr.
 """
 
+import argparse
 import json
 import re
+import subprocess
+import sys
 from collections.abc import Callable, Iterable, Mapping
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import NamedTuple
+
+PROG = "contract.py"
 
 KINDS = (
     "command",
@@ -83,6 +90,22 @@ ALTER_COLUMN = re.compile(
     re.DOTALL,
 )
 MIGRATION_DIRS = frozenset({"migrations", "versions", "alembic"})
+MAX_CONFIG_BYTES = 1024 * 1024
+MAX_PATHS = 5000
+MAX_PATCH_BYTES = 4 * 1024 * 1024
+MAX_CHECKS = 500
+MONTH = timedelta(days=30)
+GIT_TIMEOUT = 120
+SHA = re.compile(r"^[0-9a-f]{7,40}$")
+REPO_DIR = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
+NON_DOCS = (
+    ":(exclude)*.md",
+    ":(exclude)*.txt",
+    ":(exclude)*.rst",
+    ":(exclude)*.adoc",
+    ":(exclude)*CHANGELOG*",
+)
+PATH_KINDS = frozenset({"skill", "workflow", "path"})
 
 Finder = Callable[[str], list[str]]
 
@@ -344,3 +367,207 @@ def capped(names: list[Name]) -> tuple[list[Name], int]:
             break
         kept.append(name)
     return kept, len(names) - len(kept)
+
+
+class RefusedError(Exception):
+    """Bad input: exit 2."""
+
+
+class GitFailedError(Exception):
+    """A git command failed: exit 1."""
+
+
+class Span(NamedTuple):
+    """What a run diffs: ``start..end``, names checked at ``at``."""
+
+    mode: str
+    start: str
+    end: str
+    label: str
+
+
+def _config(root: Path) -> dict[str, object]:
+    path = root / "hub.json"
+    try:
+        if path.stat().st_size > MAX_CONFIG_BYTES:
+            raise RefusedError("hub.json: larger than 1 MiB")
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise RefusedError(f"hub.json: {error}") from None
+    if not isinstance(value, dict):
+        raise RefusedError("hub.json: not a JSON object")
+    return value
+
+
+def default_branch(root: Path, repo: str) -> str:
+    """The repo's default branch: its own, else the project's, else ``main``."""
+    config = _config(root)
+    repos = config.get("repos")
+    entries = [e for e in repos if isinstance(e, dict)] if isinstance(repos, list) else []
+    entry = next((e for e in entries if e.get("dir") == repo), None)
+    if entry is None or not REPO_DIR.match(repo):
+        raise RefusedError(f"hub.json: no repo {repo} in repos")
+    project = config.get("project")
+    project_branch = project.get("default_branch") if isinstance(project, dict) else None
+    for branch in (entry.get("default_branch"), project_branch):
+        if isinstance(branch, str) and branch:
+            return branch
+    return "main"
+
+
+def _git(repo: Path, *args: str, accept: tuple[int, ...] = (0,)) -> str:
+    command = ["git", "-c", "core.quotePath=false", *args]
+    try:
+        done = subprocess.run(  # noqa: S603 - git from PATH, arguments the script built
+            command, cwd=repo, capture_output=True, text=True, check=False, timeout=GIT_TIMEOUT
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise GitFailedError(f"git {args[0]}: {error}") from None
+    if done.returncode not in accept:
+        raise GitFailedError(f"git {' '.join(args[:3])}: {done.stderr.strip()}")
+    return done.stdout
+
+
+def _commit(repo: Path, ref: str) -> str:
+    return _git(
+        repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}", accept=(0, 1)
+    ).strip()
+
+
+def _span(repo: Path, *, sha: str, base: str, now: datetime) -> Span:
+    if sha:
+        full = _commit(repo, sha)
+        if not full:
+            raise RefusedError(f"unknown commit {sha}")
+        parent = _commit(repo, f"{full}^1")
+        if not parent:
+            raise RefusedError(f"commit {sha} has no parent")
+        return Span("merge", parent, full, f"merge {full[:7]}")
+    before = (now - MONTH).isoformat()
+    start = _git(repo, "rev-list", "-1", "--first-parent", f"--before={before}", base).strip()
+    if not start:
+        start = _git(repo, "hash-object", "-t", "tree", "/dev/null").strip()
+    return Span("monthly", start, base, f"month to {now:%Y-%m-%d}")
+
+
+def name_status(repo: Path, span: Span) -> tuple[list[tuple[str, str, str]], bool]:
+    """The span's ``--name-status`` rows (letter, old path, new path), at most ``MAX_PATHS``."""
+    out = _git(repo, "diff", "--name-status", "-M", "-z", "--no-ext-diff", span.start, span.end)
+    fields = out.split("\0")
+    rows: list[tuple[str, str, str]] = []
+    index = 0
+    while index + 1 < len(fields) and fields[index]:
+        letter = fields[index][:1]
+        if letter in {"R", "C"}:
+            rows.append((letter, fields[index + 1], fields[index + 2]))
+            index += 3
+        else:
+            rows.append((letter, fields[index + 1], ""))
+            index += 2
+    return rows[:MAX_PATHS], len(rows) > MAX_PATHS
+
+
+def read_patch(repo: Path, span: Span) -> tuple[str, bool]:
+    """The span's ``-U0`` patch of the non-doc files, the first ``MAX_PATCH_BYTES`` of it."""
+    command = [
+        "git", "-c", "core.quotePath=false", "diff", "-U0", "-M", "--no-color", "--no-ext-diff",
+        "--src-prefix=a/", "--dst-prefix=b/", span.start, span.end, "--", *NON_DOCS,
+    ]  # fmt: skip
+    try:
+        with subprocess.Popen(  # noqa: S603 - git from PATH, arguments the script built
+            command, cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+        ) as child:
+            assert child.stdout is not None  # noqa: S101 - stdout=PIPE always sets it
+            read = child.stdout.read(MAX_PATCH_BYTES + 1)
+            child.kill()
+    except OSError as error:
+        raise GitFailedError(f"git diff: {error}") from None
+    truncated = len(read) > MAX_PATCH_BYTES
+    return read[:MAX_PATCH_BYTES].decode("utf-8", errors="replace"), truncated
+
+
+def _grep(repo: Path, at: str, name: str) -> dict[str, str]:
+    """The lines at ``at`` holding ``name``, by path (docs left out)."""
+    out = _git(repo, "grep", "-I", "-F", "--null", "-e", name, at, "--", *NON_DOCS, accept=(0, 1))
+    found: dict[str, list[str]] = {}
+    for line in out.splitlines():
+        where, _, text = line.partition("\0")
+        found.setdefault(where.removeprefix(f"{at}:"), []).append(text)
+    return {path: "\n".join(lines) for path, lines in found.items()}
+
+
+def gone(repo: Path, at: str, names: list[Name]) -> tuple[list[Name], int]:
+    """The names nothing at ``at`` declares; names past ``MAX_CHECKS`` are only counted."""
+    tree = {path: "" for path in _git(repo, "ls-tree", "-r", "-z", "--name-only", at).split("\0")}
+    kept = []
+    for name in names[:MAX_CHECKS]:
+        files = tree if name.kind in PATH_KINDS else _grep(repo, at, name.name)
+        if not still_declared(name.kind, name.name, files):
+            kept.append(name)
+    return kept, max(0, len(names) - MAX_CHECKS)
+
+
+def contract_for(root: Path, *, repo: str, sha: str, now: datetime) -> dict[str, object]:
+    """The run's contract output; ``RefusedError`` or ``GitFailedError``."""
+    if sha and not SHA.fullmatch(sha):
+        raise RefusedError("--sha is not a commit id")
+    branch = default_branch(root, repo)
+    repo_path = (root.parent / repo).resolve()
+    if not (repo_path / ".git").exists():
+        raise RefusedError(f"{repo} is not cloned at {repo_path}")
+    base = _commit(repo_path, f"origin/{branch}")
+    if not base:
+        raise RefusedError(f"no origin/{branch} in {repo}; fetch it first")
+    span = _span(repo_path, sha=sha, base=base, now=now)
+    status, too_many = name_status(repo_path, span)
+    patch, patch_truncated = read_patch(repo_path, span)
+    extracted = names_from(status, patch)
+    names, unchecked = gone(repo_path, span.end, extracted.names)
+    kept, truncated = capped(names)
+    return {
+        "mode": span.mode,
+        "sha": span.end,
+        "base": base,
+        "label": span.label,
+        "hub": str(root),
+        "repo_path": str(repo_path),
+        "count": len(kept),
+        "names": [name.as_json() for name in kept],
+        "skipped": extracted.skipped,
+        "truncated": truncated + unchecked,
+        "patch_truncated": patch_truncated or too_many,
+    }
+
+
+def _now(text: str) -> datetime:
+    if not text:
+        return datetime.now(UTC)
+    try:
+        moment = datetime.fromisoformat(text)
+    except ValueError:
+        raise RefusedError("--now is not an ISO 8601 time") from None
+    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog=PROG)
+    parser.add_argument("--repo", required=True)
+    parser.add_argument("--sha", default="")
+    parser.add_argument("--now", default="", help=argparse.SUPPRESS)
+    given = parser.parse_args(argv)
+    try:
+        found = contract_for(
+            Path.cwd().resolve(), repo=given.repo, sha=given.sha.strip(), now=_now(given.now)
+        )
+    except RefusedError as error:
+        print(f"{PROG}: {error}", file=sys.stderr)
+        return 2
+    except GitFailedError as error:
+        print(f"{PROG}: {error}", file=sys.stderr)
+        return 1
+    print(json.dumps(found))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

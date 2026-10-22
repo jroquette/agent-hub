@@ -2,6 +2,9 @@
 removed, and whether anything still declares them."""
 
 import importlib.util
+import json
+import os
+import subprocess
 import sys
 from importlib.resources import files
 from pathlib import Path
@@ -244,3 +247,204 @@ def test_counts_truncated_when_names_exceed_cap() -> None:
     assert len(heavy_kept) + heavy_truncated == 100
     size = sum(len(str(name.as_json())) for name in heavy_kept)
     assert size <= contract.MAX_NAMES_BYTES
+
+
+def git(folder: Path, *args: str, date: str = "") -> str:
+    env = {**os.environ, **({"GIT_COMMITTER_DATE": date, "GIT_AUTHOR_DATE": date} if date else {})}
+    done = subprocess.run(  # noqa: S603 - git from PATH, fixed arguments
+        ["git", "-c", "user.name=T", "-c", "user.email=t@example.com", *args],  # noqa: S607
+        cwd=folder,
+        capture_output=True,
+        text=True,
+        check=True,
+        env=env,
+    )
+    return done.stdout.strip()
+
+
+@pytest.fixture(autouse=True)
+def isolated_git(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+
+
+CLI = (
+    'import typer\napp = typer.Typer()\n\n\n@app.command("{name}")\ndef run() -> None:\n    pass\n'
+)
+
+
+def write(repo: Path, files_: dict[str, str]) -> None:
+    for name, text in files_.items():
+        path = repo / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+
+def a_workspace(tmp_path: Path, base: dict[str, str], change: dict[str, str]) -> tuple[Path, str]:
+    """A hub next to ``demo-api``, whose trunk merges a branch that writes ``change``."""
+    hub = tmp_path / "hub"
+    hub.mkdir()
+    config = {
+        "project": {"default_branch": "trunk", "branch_prefix": "jdoe/"},
+        "repos": [{"dir": "demo-api", "github": "acme/demo-api"}],
+    }
+    (hub / "hub.json").write_text(json.dumps(config), encoding="utf-8")
+    repo = tmp_path / "demo-api"
+    repo.mkdir()
+    git(repo, "init", "-q", "-b", "trunk")
+    write(repo, base)
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "base")
+    git(repo, "checkout", "-qb", "feature")
+    write(repo, change)
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "change")
+    git(repo, "checkout", "-q", "trunk")
+    git(repo, "merge", "-q", "--no-ff", "-m", "merge", "feature")
+    git(repo, "update-ref", "refs/remotes/origin/trunk", "HEAD")
+    return hub, git(repo, "rev-parse", "HEAD")
+
+
+def run(
+    hub: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], *argv: str
+) -> tuple[int, dict[str, object], str]:
+    monkeypatch.chdir(hub)
+    code = contract.main(list(argv))
+    out, err = capsys.readouterr()
+    return code, (json.loads(out) if code == 0 else {}), err
+
+
+RENAMED = {"src/demo/cli.py": CLI.format(name="new-cmd")}
+BASE = {"src/demo/cli.py": CLI.format(name="old-cmd"), "docs/USING.md": "Run `demo old-cmd`.\n"}
+
+
+def test_lists_renamed_command_when_merge_renames_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    hub, merge = a_workspace(tmp_path, BASE, RENAMED)
+
+    code, output, _ = run(hub, monkeypatch, capsys, "--repo", "demo-api", "--sha", merge)
+
+    assert code == 0
+    assert output == {
+        "mode": "merge",
+        "sha": merge,
+        "base": merge,
+        "label": f"merge {merge[:7]}",
+        "hub": str(hub.resolve()),
+        "repo_path": str((tmp_path / "demo-api").resolve()),
+        "count": 1,
+        "names": [
+            {"kind": "command", "name": "old-cmd", "new": ["new-cmd"], "source": "src/demo/cli.py"}
+        ],
+        "skipped": 0,
+        "truncated": 0,
+        "patch_truncated": False,
+    }
+
+
+def test_drops_name_when_another_file_still_declares_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    base = {**BASE, "src/demo/other.py": CLI.format(name="old-cmd")}
+    hub, merge = a_workspace(tmp_path, base, RENAMED)
+
+    code, output, _ = run(hub, monkeypatch, capsys, "--repo", "demo-api", "--sha", merge)
+
+    assert (code, output["count"], output["names"]) == (0, 0, [])
+
+
+def test_lists_name_when_only_generated_txt_still_holds_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    base = {**BASE, "llms-full.txt": CLI.format(name="old-cmd")}
+    hub, merge = a_workspace(tmp_path, base, RENAMED)
+
+    code, output, _ = run(hub, monkeypatch, capsys, "--repo", "demo-api", "--sha", merge)
+
+    assert code == 0
+    assert [name["name"] for name in output["names"]] == ["old-cmd"]  # type: ignore[attr-defined]
+
+
+def test_reads_month_diff_when_sha_is_blank(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    hub, _ = a_workspace(tmp_path, {"README.md": "# demo\n"}, {"CHANGES.md": "x\n"})
+    repo = tmp_path / "demo-api"
+    write(repo, BASE)
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "old", date="2026-08-01T10:00:00+00:00")
+    old = git(repo, "rev-parse", "HEAD")
+    write(repo, RENAMED)
+    git(repo, "commit", "-qam", "rename", date="2026-10-10T10:00:00+00:00")
+    git(repo, "update-ref", "refs/remotes/origin/trunk", "HEAD")
+    base = git(repo, "rev-parse", "HEAD")
+
+    code, output, _ = run(
+        hub, monkeypatch, capsys, "--repo", "demo-api", "--sha", "", "--now", "2026-10-22T00:00:00Z"
+    )
+
+    assert code == 0
+    assert (output["mode"], output["sha"], output["base"]) == ("monthly", base, base)
+    assert output["label"] == "month to 2026-10-22"
+    assert [name["name"] for name in output["names"]] == ["old-cmd"]  # type: ignore[attr-defined]
+    assert old != base
+
+
+def test_counts_zero_when_merge_touches_no_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    body = {"src/demo/cli.py": CLI.format(name="old-cmd").replace("pass", "return None")}
+    hub, merge = a_workspace(tmp_path, BASE, body)
+
+    code, output, _ = run(hub, monkeypatch, capsys, "--repo", "demo-api", "--sha", merge)
+
+    assert (code, output["count"], output["names"]) == (0, 0, [])
+
+
+def test_exits_two_when_sha_is_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    hub, _ = a_workspace(tmp_path, BASE, RENAMED)
+
+    code, _, err = run(hub, monkeypatch, capsys, "--repo", "demo-api", "--sha", "deadbeef")
+
+    assert code == 2
+    assert err == "contract.py: unknown commit deadbeef\n"
+
+
+@pytest.mark.parametrize(
+    ("argv", "reason"),
+    [
+        (["--repo", "demo-web", "--sha", ""], "hub.json: no repo demo-web in repos"),
+        (["--repo", "../x", "--sha", ""], "hub.json: no repo ../x in repos"),
+        (["--repo", "demo-api", "--sha", "not a sha"], "--sha is not a commit id"),
+    ],
+)
+def test_exits_two_when_repo_is_not_in_hub_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    argv: list[str],
+    reason: str,
+) -> None:
+    hub, _ = a_workspace(tmp_path, BASE, RENAMED)
+
+    code, _, err = run(hub, monkeypatch, capsys, *argv)
+
+    assert code == 2
+    assert err == f"contract.py: {reason}\n"
+
+
+def test_exits_two_when_origin_branch_was_never_fetched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    hub, merge = a_workspace(tmp_path, BASE, RENAMED)
+    git(tmp_path / "demo-api", "update-ref", "-d", "refs/remotes/origin/trunk")
+
+    code, _, err = run(hub, monkeypatch, capsys, "--repo", "demo-api", "--sha", merge)
+
+    assert code == 2
+    assert err == "contract.py: no origin/trunk in demo-api; fetch it first\n"
