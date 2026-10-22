@@ -5,22 +5,132 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  /* The reading ground: the chat sits on surface, the app's frame stays on bg. */
+  background: var(--surface);
 }
+/* The reading column: 768 px of text plus its gutters, centred. */
 .as-column {
+  --as-gutter: var(--space-6);
   box-sizing: border-box;
   width: 100%;
-  max-width: 960px;
+  max-width: calc(var(--chat-column) + 2 * var(--as-gutter));
   margin-inline: auto;
-  padding-inline: var(--space-8);
+  padding-inline: var(--as-gutter);
+}
+@container (min-width: 1600px) {
+  .as-column {
+    --as-gutter: var(--space-8);
+  }
 }
 .as-header {
   flex: none;
   position: sticky;
   top: 0;
   z-index: var(--z-sticky);
-  padding: var(--space-4) 0 var(--space-3);
+  padding: 0 0 var(--space-3);
   border-bottom: 1px solid var(--border);
-  background: var(--bg);
+  background: var(--surface);
+}
+/*
+ * The full chat's header: a toolbar on the window and a heading in the document. Row 1 sits on the
+ * page's gutters (where the session is, then what you can open or do); row 2 sits in the reading
+ * column: the title on its own line, then the status, feature and cost under it, so the title
+ * starts on the first message's edge and the cost ends on the composer's.
+ * Neither row wraps: the crumbs and the title truncate, and narrow widths drop words first.
+ */
+.as-toolbar {
+  height: 40px;
+  padding-inline: var(--space-6);
+}
+.as-toolbar-row {
+  flex-wrap: nowrap;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.as-toolbar-row > .ah-crumbs,
+.as-toolbar-row > nav {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.as-toolbar-folder {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.as-toolbar-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+/* The title gets the whole width; what describes the session sits under it, quieter. */
+.as-heading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  padding-top: var(--space-1);
+}
+.as-heading-meta {
+  flex-wrap: nowrap;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.as-heading-meta > * {
+  flex: none;
+}
+.as-title {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+/* Review changes: the one bordered control while files wait; only what waits is tinted. */
+.as-review-btn {
+  white-space: nowrap;
+}
+.as-review-due {
+  color: var(--waiting);
+  font-weight: 600;
+}
+.as-review-open,
+.as-review-open:hover {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.as-review-btn .as-files-stats {
+  font-size: 12px;
+}
+/* Width steps of the page, not the window: the page shares it with the sidebar and the panel. */
+.as-narrow-only {
+  display: none;
+}
+@container (max-width: 1099px) {
+  .as-review-btn .as-files-stats,
+  .as-toolbar-actions .as-wide-only:not(a, [tabindex]) {
+    display: none;
+  }
+}
+@container (max-width: 959px) {
+  .as-toolbar {
+    padding-inline: var(--space-4);
+  }
+  .as-toolbar-folder,
+  .as-toolbar-actions .as-wide-only {
+    display: none;
+  }
+  .as-narrow-only {
+    display: flex;
+  }
 }
 .as-body {
   position: relative;
@@ -35,6 +145,8 @@
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  /* Text passes under the floating composer: the last 24 px fade out (no colour, D-chat-3). */
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--space-6)), transparent);
 }
 .as-scroll:focus-visible {
   outline: 2px solid var(--focus-ring);
@@ -65,14 +177,32 @@
 }
 .as-footer {
   flex: none;
-  padding: var(--space-2) 0 var(--space-4);
-  background: var(--bg);
+  padding: 0 0 var(--space-6);
+  background: var(--surface);
 }
+/*
+ * The turn rhythm (4 px grid): 12 px between the blocks of a turn, 24 px from your message to the
+ * reply, 32 px above each of your messages. A narrow chat (the panel) tightens it to 16 and 24.
+ */
 .as-transcript {
+  --as-turn-gap: var(--space-8);
+  --as-reply-gap: var(--space-6);
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  padding-block: var(--space-4);
+  padding-block: var(--space-6);
+}
+@container (max-width: 559px) {
+  .as-transcript {
+    --as-turn-gap: var(--space-6);
+    --as-reply-gap: var(--space-4);
+  }
+}
+.as-entry:has(> .as-msg-user):not(:first-child) {
+  margin-top: calc(var(--as-turn-gap) - var(--space-3));
+}
+.as-entry:has(> .as-msg-user) + .as-entry {
+  margin-top: calc(var(--as-reply-gap) - var(--space-3));
 }
 /* The Sending… bubbles continue the log's column, inside its bottom padding. */
 .as-pending {
@@ -96,20 +226,32 @@
   margin: 0;
 }
 .as-msg {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-width: 80ch;
+  min-width: 0;
 }
+/* Your turn: a soft card on the right, at most 85% of the column (90% when narrow). */
 .as-msg-user {
   align-self: flex-end;
   align-items: flex-end;
+  max-width: 85%;
+}
+@container (max-width: 559px) {
+  .as-msg-user {
+    max-width: 90%;
+  }
 }
 /* The screenshot sent with a message, or offered in "New session" after a shake (AGH-260). */
 .as-shot {
   display: block;
   max-width: 240px;
   height: auto;
+  /* A long screenshot shows its top; the lightbox shows it whole. */
+  max-height: 320px;
+  object-fit: cover;
+  object-position: top;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
 }
@@ -129,28 +271,86 @@
   opacity: 0.7;
 }
 .as-msg-pending .as-bubble {
-  border: 1px dashed var(--border);
+  outline: 1px dashed var(--border-strong);
+  outline-offset: -1px;
 }
 .as-bubble {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-lg);
-  background: var(--accent-soft);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-2xl);
+  background: var(--surface-turn);
   color: var(--text);
+  font-size: 14px;
+  line-height: 22px;
 }
+/* Claude's turn: prose on the ground, no bubble and no avatar. */
 .as-msg-assistant {
-  align-self: flex-start;
-  position: relative;
+  align-self: stretch;
 }
-/* The action row (AC-234.22): shown on hover or keyboard focus, always without hover. */
+/* Prose stops at a comfortable line; code, tables and cards take the column. */
+.as-msg-assistant .as-md {
+  max-width: none;
+}
+.as-msg-assistant .as-md > :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) {
+  max-width: 68ch;
+}
+.as-msg .as-md code {
+  font-size: 13px;
+}
+.as-msg .ah-md-pre,
+.as-msg .ah-md-text {
+  font-size: 13px;
+  line-height: 20px;
+  border-radius: var(--radius-lg);
+}
+/* A wide chat reads at 15/24 (D-chat-2); the panel keeps the console's 14/22. */
+@container (min-width: 560px) {
+  .as-msg .as-md,
+  .as-bubble {
+    font-size: 15px;
+    line-height: 24px;
+  }
+  .as-msg .as-md h1 {
+    font-size: 20px;
+    line-height: 28px;
+  }
+  .as-msg .as-md h2 {
+    font-size: 16px;
+    line-height: 24px;
+  }
+  .as-msg .as-md h3 {
+    font-size: 15px;
+    line-height: 24px;
+  }
+}
+/*
+ * The action row (AC-234.22): time and Copy, shown on hover or keyboard focus. It lies over the
+ * gap under the message instead of taking a row of its own.
+ */
 .as-meta {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: var(--space-2);
   min-height: 24px;
+  padding-right: var(--space-1);
+  background: var(--surface);
   opacity: 0;
+  pointer-events: none;
   transition: opacity 120ms ease;
+}
+.as-msg-user .as-meta {
+  left: auto;
+  right: 0;
+  padding: 0 0 0 var(--space-1);
+}
+.as-msg:hover .as-meta,
+.as-msg:focus-within .as-meta {
+  pointer-events: auto;
 }
 .as-msg:hover .as-meta,
 .as-msg:focus-within .as-meta {
@@ -158,7 +358,9 @@
 }
 @media (hover: none) {
   .as-meta {
+    position: static;
     opacity: 1;
+    pointer-events: auto;
   }
 }
 .as-md > :first-child {
@@ -168,15 +370,18 @@
   margin-bottom: 0;
 }
 .as-caret {
+  /* While Claude writes: one dot that breathes at the system's pulse, not a blinking caret. */
   display: inline-block;
-  width: 7px;
-  height: 14px;
+  width: 8px;
+  height: 8px;
+  margin-top: var(--space-1);
+  border-radius: var(--radius-full);
   background: var(--text-muted);
-  animation: as-blink 1s steps(2) infinite;
+  animation: as-breathe var(--dur-pulse) ease-in-out infinite;
 }
-@keyframes as-blink {
-  to {
-    opacity: 0;
+@keyframes as-breathe {
+  50% {
+    opacity: 0.3;
   }
 }
 .as-working {
@@ -196,7 +401,7 @@
   margin-right: var(--space-2);
   border-radius: 50%;
   background: var(--accent);
-  animation: as-blink 1s steps(2) infinite;
+  animation: as-breathe var(--dur-pulse) ease-in-out infinite;
 }
 
 .as-spin {
@@ -249,7 +454,7 @@
   border-radius: var(--radius-sm);
   background: var(--accent);
   color: var(--on-accent);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   line-height: 18px;
   text-transform: uppercase;
@@ -301,7 +506,7 @@
 }
 .as-stored {
   align-self: flex-start;
-  font: 500 11px/16px var(--font-mono);
+  font: 500 12px/16px var(--font-mono);
   padding: 0 6px;
   border-radius: var(--radius-sm);
   border: 1px dashed var(--border-strong);
@@ -310,8 +515,6 @@
 }
 .as-thinking {
   color: var(--text-muted);
-  border-left: 2px solid var(--ev-reasoning);
-  padding-left: var(--space-3);
 }
 .as-thinking summary {
   cursor: pointer;
@@ -401,12 +604,27 @@
 .as-tool-label {
   display: flex;
   align-items: center;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-subtle);
   margin-bottom: 4px;
+  gap: 6px;
+  min-height: 24px;
+}
+.as-tool-meta {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.as-tool-description {
+  margin: 0 0 var(--space-2);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.as-tool-empty {
+  margin: 0;
 }
 .as-tool + .as-perm {
   margin-top: var(--space-2);
@@ -437,6 +655,31 @@
 }
 .as-pre-error {
   color: var(--failed);
+}
+/* Output and commands wrap as a terminal does: no sideways scroll hiding the end of a line. */
+.as-pre-wrap {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* The command as a terminal line (as the permission card's): a `$` prompt the copy leaves out. */
+.as-command {
+  border-left: 2px solid var(--done);
+  font-size: 12.5px;
+}
+.as-command-prompt {
+  color: var(--done);
+  font-weight: 600;
+  user-select: none;
+}
+/* grep/rg output: the path and line number read apart from the matched text. */
+.as-grep-path {
+  color: var(--syntax-title);
+}
+.as-grep-no {
+  color: var(--syntax-number);
+}
+.as-grep-sep {
+  color: var(--text-subtle);
 }
 /* A diff with the file's line numbers: git's two gutters (old, new), kept in view while the code
  * scrolls sideways; each line's tint spans the widest line. */
@@ -489,6 +732,65 @@
 .as-diff-hunk,
 .as-diff-head {
   color: var(--text-subtle);
+}
+/* The buttons that reveal the lines a diff leaves out, in a hunk header's two gutters (as on
+ * GitHub): one opens a small gap whole, two open a bigger one 20 lines at a time. */
+.as-diff-no.as-diff-no-expand {
+  grid-column: span 2;
+  display: flex;
+  align-items: stretch;
+  padding: 0;
+  text-align: center;
+  user-select: none;
+  background: color-mix(in srgb, var(--accent-soft) 80%, var(--code-bg));
+}
+.as-diff-expand {
+  display: flex;
+  flex: 1;
+}
+.as-diff-expand-btn {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  min-height: 18px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.as-diff-expand-btn:hover {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.as-diff-expand-btn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+/* A diff coloured in its file's language, as a pull request reads: the line's ground and its sign
+ * say added or removed, the code keeps the text and syntax colours, and the number gutters carry
+ * a stronger tint so the eye finds the changed lines. */
+.as-diff-syntax .as-diff-add,
+.as-diff-syntax .as-diff-del,
+.as-diff-syntax .as-diff-ctx {
+  color: var(--text);
+}
+.as-diff-syntax .as-diff-add .as-diff-sign {
+  color: var(--diff-add);
+}
+.as-diff-syntax .as-diff-del .as-diff-sign {
+  color: var(--diff-del);
+}
+.as-diff-sign {
+  user-select: none;
+}
+.as-diff-syntax .as-diff-line.as-diff-add .as-diff-no {
+  background: color-mix(in srgb, var(--diff-add) 22%, var(--code-bg));
+  color: var(--text-muted);
+}
+.as-diff-syntax .as-diff-line.as-diff-del .as-diff-no {
+  background: color-mix(in srgb, var(--diff-del) 22%, var(--code-bg));
+  color: var(--text-muted);
 }
 /* A request waiting for you: a raised card with an amber halo, so it reads as "your turn". */
 .as-perm {
@@ -578,7 +880,7 @@
   border-radius: var(--radius-full);
   background: color-mix(in srgb, var(--waiting) 14%, transparent);
   color: var(--waiting);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.02em;
   white-space: nowrap;
@@ -656,7 +958,8 @@
   flex-direction: column;
   gap: 2px;
   padding: var(--space-2) var(--space-3);
-  border-left: 2px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
 }
 .as-recap-item dt {
   font-size: 12px;
@@ -743,7 +1046,7 @@
   display: none;
   height: 18px;
   min-width: 18px;
-  font-size: 10px;
+  font-size: 12px;
 }
 .as-perm:focus .as-perm-kbd {
   display: inline-flex;
@@ -807,7 +1110,7 @@
   height: 20px;
   border-radius: 50%;
   background: var(--border);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
 }
 .as-step-current .as-step-num {
@@ -875,25 +1178,133 @@
   color: var(--failed);
   margin: 0;
 }
+/*
+ * The composer is one soft capsule, as the chat apps draw it: what goes with the message
+ * (references, attachments) on top, the message across the whole width, then one row of
+ * controls: "+" and the mode and model on the left, Stop and Send on the right.
+ */
 .as-composer {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-3) var(--space-2);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    "acc acc acc acc acc"
+    "files files files files files"
+    "text text text text text"
+    "plus set . stop send"
+    "err err err err err";
+  align-items: center;
+  column-gap: var(--space-1);
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  /* The owner's answer to the chat redesign: the composer and your turn at 16 px (D-chat-1). */
+  border-radius: var(--radius-2xl);
+  background: var(--surface-overlay);
   box-shadow: var(--shadow-sm);
   transition:
-    border-color 120ms ease,
-    box-shadow 120ms ease;
+    border-color 160ms ease,
+    box-shadow 160ms ease;
 }
+/* Focus is a quiet lift of the frame, not a coloured halo: the caret already shows where you type. */
 .as-composer:focus-within {
-  border-color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border-strong));
   box-shadow:
-    0 0 0 3px var(--accent-soft),
-    var(--shadow-sm);
+    var(--shadow-sm),
+    0 0 0 3px color-mix(in srgb, var(--accent-soft) 60%, transparent);
+}
+.as-composer > .ah-discuss-refs {
+  grid-area: acc;
+  padding: var(--space-1) var(--space-2) var(--space-2);
+}
+.as-composer > .as-composer-images {
+  grid-area: files;
+  margin: var(--space-1) var(--space-2) var(--space-2);
+}
+.as-composer > .as-composer-input {
+  grid-area: text;
+  width: 100%;
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  text-align: left;
+}
+.as-composer-bar,
+.as-composer-actions {
+  display: contents;
+}
+.as-composer-settings {
+  grid-area: set;
+}
+.as-composer .as-composer-attach {
+  grid-area: plus;
+}
+.as-composer .as-composer-stop {
+  grid-area: stop;
+}
+.as-composer .as-round[type="submit"] {
+  grid-area: send;
+}
+.as-composer > .as-error {
+  grid-area: err;
+  margin: var(--space-1) var(--space-3) 0;
+}
+/* The mode and the model read as quiet text with a caret, as a macOS toolbar menu does: no frame,
+ * no fill, a soft capsule only under the pointer. A mode that runs on its own (edits, plan, auto)
+ * says so with the colour of its icon, not with a filled badge. */
+.as-composer .as-pill,
+.as-composer .as-pill[data-mode] {
+  gap: 4px;
+  height: 26px;
+  padding: 0 7px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.as-composer .as-pill:hover,
+.as-composer .as-pill[data-mode]:hover {
+  border-color: transparent;
+  background: var(--surface-hover);
+  color: var(--text);
+}
+/* Focus shows as the hover capsule, never as a ring left around the picker after a click. */
+.as-composer .as-pill:focus-within {
+  outline: none;
+  background: var(--surface-hover);
+  color: var(--text);
+}
+/* The pill is as wide as its value: a native select is as wide as its longest option, so it lies
+ * invisible over the whole pill (still the keyboard and screen reader control) and a span shows
+ * the value. */
+.as-composer .as-pill .as-pill-select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  max-width: none;
+  opacity: 0;
+}
+.as-composer .as-pill-value {
+  overflow: hidden;
+  max-width: 160px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 450;
+}
+.as-composer .as-pill .ah-icon {
+  width: 13px;
+  height: 13px;
+}
+.as-composer .as-pill .as-pill-caret {
+  width: 11px;
+  height: 11px;
+  opacity: 0.5;
+}
+.as-composer .as-pill[data-mode="acceptEdits"] .ah-icon:not(.as-pill-caret) {
+  color: var(--waiting);
+}
+.as-composer .as-pill[data-mode="plan"] .ah-icon:not(.as-pill-caret) {
+  color: var(--accent);
+}
+.as-composer .as-pill[data-mode="auto"] .ah-icon:not(.as-pill-caret) {
+  color: var(--guard);
 }
 .as-composer-input {
   height: auto;
@@ -904,11 +1315,18 @@
 }
 /* Inside the composer card the card is the field: the box drops its own frame. */
 .as-composer .as-composer-input {
-  min-height: 44px;
-  padding: 2px 2px;
+  min-height: 24px;
+  padding: var(--space-2) var(--space-3) var(--space-1);
   border: 0;
   background: transparent;
-  line-height: 1.5;
+  font-size: 14px;
+  line-height: 22px;
+}
+@container (min-width: 560px) {
+  .as-composer .as-composer-input {
+    font-size: 15px;
+    line-height: 24px;
+  }
 }
 .as-composer .as-composer-input:focus,
 .as-composer .as-composer-input:focus-visible {
@@ -917,34 +1335,57 @@
 .as-composer .as-composer-input:disabled {
   cursor: not-allowed;
 }
-.as-composer-bar {
+.as-composer-settings {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--border);
-}
-.as-composer-settings,
-.as-composer-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
+  gap: 2px;
   min-width: 0;
-}
-.as-composer-actions {
-  margin-left: auto;
 }
 .as-composer-stop[disabled] {
   display: none;
 }
+/* Send, Stop and Attach: round icon buttons, their names in the tooltip and for screen readers. */
+.as-composer .as-round,
+.as-composer .as-composer-attach {
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  gap: 0;
+  border-radius: var(--radius-full);
+}
+.as-composer .as-composer-attach {
+  font-size: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+}
+.as-composer .as-composer-attach:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.as-composer .as-composer-attach .ah-icon {
+  width: 17px;
+  height: 17px;
+}
+/* The keys to send show while the box has focus, under the card, without moving anything. */
 .as-composer-hint {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  left: 0;
+  right: 0;
+  text-align: center;
   padding: 0 2px;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 16px;
   color: var(--text-subtle);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.as-composer:focus-within .as-composer-hint,
+.as-composer-hint[data-warn] {
+  opacity: 1;
 }
 .as-composer-hint[data-warn] {
   color: var(--failed);
@@ -1010,6 +1451,24 @@
 .as-pill-select:focus-visible {
   outline: none;
 }
+/* A pill that shows its value in a span is as wide as that value: the native select (as wide as
+ * its longest option) lies invisible over the whole pill, still the keyboard and screen reader
+ * control, so a press anywhere on the pill opens it. */
+.as-pill:has(> .as-pill-value) .as-pill-select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  max-width: none;
+  opacity: 0;
+  cursor: pointer;
+}
+.as-pill-value {
+  overflow: hidden;
+  max-width: 160px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
 /* The mode tints its pill: edits run alone, plan only reads, auto runs everything alone. */
 .as-pill[data-mode="acceptEdits"] {
   background: var(--waiting-soft);
@@ -1069,7 +1528,7 @@
   gap: var(--space-2);
 }
 .as-estimate {
-  font: 500 11px/16px var(--font-mono);
+  font: 500 12px/16px var(--font-mono);
   padding: 0 5px;
   border-radius: var(--radius-sm);
   background: var(--surface-sunken);
@@ -1077,9 +1536,101 @@
 }
 /* New session dialog, cloud panel and agent session list (sessions screen). */
 .as-new-dialog {
-  width: min(560px, calc(100vw - 32px));
+  width: min(640px, calc(100vw - 32px));
   max-height: calc(100vh - 64px);
   overflow: auto;
+}
+/* New session reads top to bottom: where it runs, the first prompt in the chat's card, extras. */
+.as-new-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.as-new-label {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.as-new-where,
+.as-new-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.as-new-fork {
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-sunken);
+}
+.as-new-where-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.as-new-project {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+}
+/* "Where" uses the composer's pills at a calmer, roomier size; the folder may take the rest. */
+.as-new-pill {
+  height: 32px;
+  padding: 0 var(--space-3);
+  font-size: 13px;
+}
+.as-new-folder {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.as-new-folder .as-pill-select {
+  flex: 1;
+  max-width: none;
+}
+/* In the dialog the card is a field, not the chat's capsule: a softer radius, a taller box. */
+.as-new-composer {
+  border-radius: var(--radius-lg);
+  padding: var(--space-2) var(--space-2) var(--space-1);
+}
+.as-new-composer > .as-composer-input {
+  min-height: 84px;
+}
+/* The `/` menu opens under the card: above it is "Where", inside a scrolling dialog. */
+.as-new-composer .as-slash {
+  top: calc(100% + var(--space-1));
+  bottom: auto;
+}
+.as-new-hint {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-subtle);
+}
+.as-new-hint[data-warn] {
+  color: var(--failed);
+}
+.as-new-hint b {
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.as-new-skills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}
+.as-new-skills .as-new-label {
+  margin-right: var(--space-1);
+}
+.as-new-skill {
+  border-radius: var(--radius-full);
+  font-family: var(--font-mono);
+  font-size: 12px;
 }
 .as-fieldset {
   border: 0;
@@ -1112,7 +1663,7 @@
   border-radius: var(--radius-md);
 }
 .as-limited {
-  font: 500 11px/16px var(--font-mono);
+  font: 500 12px/16px var(--font-mono);
   padding: 0 6px;
   border-radius: var(--radius-sm);
   background: var(--surface-sunken);
@@ -1127,68 +1678,37 @@
   gap: var(--space-2);
 }
 
-/* Images pasted, dropped or picked into the composer, above the text: a thumbnail each (open it
- * to mark it up) with a remove button in its corner. */
+/* The composer while a file is dragged over it (its attachments: components/AttachmentList.css). */
 .as-composer-drop {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
-.as-composer-images {
+.as-msg-file-name {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The files a sent message carried, above its bubble. */
+.as-msg-files {
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
   gap: var(--space-2);
   margin: 0;
   padding: 0;
   list-style: none;
 }
-.as-composer-image {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 72px;
-  height: 72px;
+.as-msg-file {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 260px;
+  padding: var(--space-1) var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface-sunken);
-}
-.as-composer-image .ah-shot-button {
-  width: 100%;
-  height: 100%;
-}
-.as-composer-thumb {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: calc(var(--radius-md) - 1px);
-}
-.as-composer-image .ah-shot-hint {
-  right: 4px;
-  bottom: 4px;
-  width: 20px;
-  height: 20px;
-}
-.as-composer-image-remove {
-  position: absolute;
-  top: -7px;
-  right: -7px;
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: 1px solid var(--border-strong);
-  border-radius: 50%;
-  background: var(--surface);
   color: var(--text-muted);
-  cursor: pointer;
-  box-shadow: var(--shadow-sm);
-}
-.as-composer-image-remove:hover {
-  color: var(--failed);
-  border-color: var(--failed);
-}
-.as-composer-image-reading {
-  color: var(--text-subtle);
 }
 /* What Claude did between two messages: one quiet line; its steps open in the side panel. */
 .as-activity {
@@ -1451,21 +1971,6 @@ body.as-resizing .as-drawer {
   background: var(--done);
   transition: width var(--dur-base) var(--ease-out);
 }
-/* One line that fits: cut in the middle, its tail (extension, last folder) always whole. */
-.as-fit {
-  display: inline-flex;
-  min-width: 0;
-  max-width: 100%;
-  white-space: nowrap;
-}
-.as-fit-head {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.as-fit-tail {
-  flex: none;
-}
 /* The files' root on one line: repo, branch icon, worktree in bold, the rest; then copy. */
 .as-files-root {
   display: flex;
@@ -1565,6 +2070,28 @@ body.as-resizing .as-drawer {
 .as-files-nav-name {
   flex: 1;
   font-family: var(--font-mono);
+}
+/* A narrow list: one line per item, each cut at its end (never over its neighbour). */
+.as-files-cut {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.as-files-folder-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.as-files-folder-leaf {
+  flex: 0 1 auto;
+  color: var(--text-muted);
+}
+.as-files-folder-parent {
+  flex: 1 1 0;
+  color: var(--text-subtle);
+  opacity: 0.75;
 }
 .as-files-stats {
   display: inline-flex;
@@ -1834,15 +2361,8 @@ body.as-resizing .as-drawer {
   border: 1px solid color-mix(in srgb, var(--waiting) 55%, transparent);
   border-radius: var(--radius-full);
   color: var(--waiting);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-}
-/* Narrow column: the chip keeps its verb and what waits; the line counts live in the drawer. */
-@media (max-width: 1279px) {
-  .as-files-chip .as-files-chip-count,
-  .as-files-chip > .as-files-stats {
-    display: none;
-  }
 }
 .as-files-chip-done {
   color: var(--done);
@@ -2137,7 +2657,7 @@ body.as-resizing .as-drawer {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   line-height: 1;
 }
@@ -2146,8 +2666,8 @@ body.as-resizing .as-drawer {
   color: var(--on-accent);
 }
 .as-thread-avatar-claude {
-  background: #d97757;
-  color: #fff;
+  background: var(--surface-sunken);
+  color: var(--text);
 }
 .as-thread-main {
   flex: 1;
@@ -2169,7 +2689,7 @@ body.as-resizing .as-drawer {
   border: 1px solid var(--border-strong);
   border-radius: 999px;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 16px;
 }
 .as-thread-body {
@@ -2234,7 +2754,6 @@ body.as-resizing .as-drawer {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  border-left: 3px solid var(--accent);
 }
 .as-review-bubble-head {
   display: flex;
@@ -2314,7 +2833,8 @@ body.as-resizing .as-drawer {
   flex: none;
 }
 .as-live-bar > .as-live-detail,
-.as-live-bar > .as-live-todo {
+.as-live-bar > .as-live-todo,
+.as-live-panel-now > .as-live-detail {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -2329,7 +2849,7 @@ body.as-resizing .as-drawer {
   height: 8px;
   border-radius: 50%;
   background: var(--live);
-  animation: as-live-pulse 1.4s ease-in-out infinite;
+  animation: as-live-pulse var(--dur-pulse) ease-in-out infinite;
 }
 .as-live-waiting .as-live-pulse {
   background: var(--waiting);
@@ -2363,7 +2883,8 @@ body.as-resizing .as-drawer {
   cursor: pointer;
   min-height: 24px;
 }
-.as-feed-group:hover b {
+.as-feed-group:hover b,
+.as-feed-group:hover .as-feed-chevron {
   color: var(--accent);
 }
 .as-steps-jump {
@@ -2399,18 +2920,32 @@ body.as-resizing .as-drawer {
   color: var(--text-muted);
 }
 
-/* The turn's steps, as Claude Code prints them: `● Tool(input)`, then `⎿` and its output. */
+/* The turn's steps as a timeline, like the Activity drawer: the tool's icon on a thread, what the
+ * call is for, its command or path in mono, and its output folded under it. */
 .as-feed {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+}
+.as-feed-item {
+  position: relative;
+  padding-bottom: var(--space-3);
+}
+/* The thread between the steps. */
+.as-feed-item:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 24px;
+  bottom: 2px;
+  border-left: 1px solid var(--border);
 }
 /* The Live activity drawer: the turn's steps, following new ones. */
 .as-live-panel-now {
   flex: none;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -2439,24 +2974,28 @@ body.as-resizing .as-drawer {
   color: var(--accent);
 }
 .as-feed-nested {
-  margin: 4px 0 0 18px;
-  padding-left: var(--space-3);
-  border-left: 1px solid var(--border);
+  margin: var(--space-2) 0 0 26px;
 }
 .as-feed-call {
   display: flex;
-  align-items: baseline;
-  gap: 6px;
+  align-items: flex-start;
+  gap: var(--space-2);
   min-width: 0;
 }
 .as-feed-mark {
   flex: none;
-  width: 12px;
-  color: var(--done);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  color: var(--text-subtle);
 }
 .as-feed-running > .as-feed-call .as-feed-mark {
   color: var(--live);
-  animation: as-blink 1s steps(2) infinite;
+  animation: as-breathe var(--dur-pulse) ease-in-out infinite;
 }
 .as-feed-waiting > .as-feed-call .as-feed-mark {
   color: var(--waiting);
@@ -2468,6 +3007,35 @@ body.as-resizing .as-drawer {
 .as-feed-thinking .as-feed-mark {
   color: var(--ev-reasoning);
 }
+.as-feed-thinking {
+  padding-bottom: var(--space-2);
+}
+.as-feed-thinking .as-feed-call {
+  align-items: center;
+  font-size: 12px;
+}
+.as-feed-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 1px;
+}
+.as-feed-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.as-feed-title > b {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
 .as-feed-summary {
   flex: 0 1 auto;
   min-width: 0;
@@ -2475,21 +3043,43 @@ body.as-resizing .as-drawer {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-muted);
+  font-size: 12px;
 }
-.as-feed-out {
-  position: relative;
-  margin: 2px 0 0 18px;
-  padding-left: 18px;
+.as-feed-meta {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-top: 2px;
 }
-.as-feed-out::before {
-  content: "⎿";
-  position: absolute;
-  left: 0;
-  top: 0;
+.as-feed-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.as-feed-running .as-feed-state {
+  color: var(--live);
+}
+.as-feed-chevron {
+  flex: none;
+  margin-top: 3px;
   color: var(--text-subtle);
 }
+.as-feed-out {
+  margin: 4px 0 0 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
 .as-feed-pre {
+  align-self: stretch;
   margin: 0;
+  max-height: 160px;
+  overflow: auto;
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 12px;
   line-height: 1.45;
@@ -2499,14 +3089,11 @@ body.as-resizing .as-drawer {
 }
 .as-feed-pre.as-feed-full {
   max-height: 320px;
-  overflow: auto;
-  padding: var(--space-2);
-  border-radius: var(--radius-md);
-  background: var(--surface-sunken);
 }
 .as-feed-more {
   display: inline-flex;
   align-items: center;
+  gap: 4px;
   min-height: 24px;
   padding: 0;
   border: 0;
@@ -2518,9 +3105,14 @@ body.as-resizing .as-drawer {
 }
 .as-feed-more:hover {
   color: var(--accent);
-  text-decoration: underline;
+}
+.as-feed-ask {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
 }
 .as-feed-earlier {
+  padding: 0 0 var(--space-3) 28px;
   font-size: 12px;
 }
 @media (max-width: 720px) {
@@ -2762,4 +3354,226 @@ button.as-bg-head {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--font-mono);
+}
+
+/*
+ * The sessions rail, left of the chat: switch between agents as between conversations in a chat
+ * app. 260 px, quiet, on the app's bg so the chat's surface reads as the document; folds to a
+ * 48 px strip of status dots (kept per browser).
+ */
+.as-chat-layout {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  /* Nothing in the chat scrolls the page: only the transcript and the rail's list scroll. The
+     screen-reader labels (.ah-sr, absolute) anchor here and are clipped, so a long rail cannot give
+     the shell's main extra height to scroll into; clip, unlike hidden, cannot be scrolled by focus
+     or scrollIntoView. */
+  position: relative;
+  overflow: clip;
+}
+.as-chat-layout > .as-page {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.as-rail {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  width: 260px;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  /* Between the app's frame (bg) and the chat (surface): the columns step in by tone, not lines. */
+  background: var(--surface-sunken);
+}
+.as-rail-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 40px;
+  padding: 0 var(--space-2) 0 var(--space-4);
+}
+.as-rail-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.as-rail-filter {
+  position: relative;
+  display: block;
+  margin: 0 var(--space-3) var(--space-2);
+}
+.as-rail-filter > .ah-icon {
+  position: absolute;
+  top: 50%;
+  left: var(--space-3);
+  transform: translateY(-50%);
+  color: var(--text-subtle);
+  pointer-events: none;
+}
+/* The filter is a small capsule, as the composer is: filled, no frame, a halo on focus. */
+.as-rail-filter > input {
+  width: 100%;
+  height: 32px;
+  padding-left: 30px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  background: var(--surface-turn);
+  font-size: 13px;
+}
+.as-rail-filter > input:focus,
+.as-rail-filter > input:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.as-rail-scroll {
+  /* Its rows' screen-reader labels scroll with the list instead of overflowing the page. */
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 var(--space-2) var(--space-4);
+}
+.as-rail-group {
+  margin: var(--space-4) var(--space-3) var(--space-1);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--text-subtle);
+}
+.as-rail-list,
+.as-rail-strip {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.as-rail-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-xl);
+  color: var(--text);
+  text-decoration: none;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.as-rail-row:hover {
+  background: var(--surface-hover);
+  text-decoration: none;
+}
+.as-rail-row:focus-visible,
+.as-rail-strip-item:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+.as-rail-current,
+.as-rail-current:hover {
+  background: var(--surface-turn);
+}
+.as-rail-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.as-rail-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 20px;
+}
+.as-rail-current .as-rail-name {
+  font-weight: 600;
+}
+/* What the session is about: small chips for its project, ticket and feature. */
+.as-rail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.as-rail-tag {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--surface-hover);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
+}
+.as-rail-current .as-rail-tag {
+  background: var(--surface);
+}
+.as-rail-tag-ticket {
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+.as-rail-tag-feature,
+.as-rail-current .as-rail-tag-feature {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.as-rail-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: var(--radius-full);
+}
+.as-rail-dot-running {
+  color: var(--live);
+}
+.as-rail-dot-waiting {
+  color: var(--waiting);
+}
+.as-rail-dot-idle {
+  color: var(--text-subtle);
+}
+.as-rail-dot-failed {
+  color: var(--failed);
+}
+.as-rail-empty {
+  margin: var(--space-3) var(--space-2);
+  font-size: 13px;
+  color: var(--text-subtle);
+}
+.as-rail-folded {
+  width: 48px;
+  align-items: center;
+  padding-top: var(--space-2);
+  gap: var(--space-2);
+}
+.as-rail-strip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+}
+.as-rail-strip-item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-xl);
+}
+.as-rail-strip-item:hover {
+  background: var(--surface-hover);
+}
+.as-rail-strip-item .as-rail-dot {
+  margin-top: 0;
+}
+.as-files-codesplit {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) 0;
 }

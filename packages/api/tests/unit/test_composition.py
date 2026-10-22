@@ -526,6 +526,29 @@ class _OneHub:
         return [("demo", str(self.path))]
 
 
+class _UnreadableRegistry:
+    def project_hubs(self) -> list[tuple[str, str]]:
+        raise HubRegistryError("hubs.json is not JSON")
+
+
+# AGH-429 (AC-429.5): hub paths never run the doctor.
+def test_names_hub_path_from_project_hubs_when_project_registered(tmp_path: Path) -> None:
+    paths = composition._HubPaths()
+    paths.hubs = _OneHub(tmp_path)
+
+    assert paths("demo") == str(tmp_path)
+    assert paths("other") is None
+
+
+# AGH-429 (AC-429.5): hub paths never run the doctor.
+def test_names_no_hub_path_when_unbound_or_registry_unreadable() -> None:
+    paths = composition._HubPaths()
+    assert paths("demo") is None
+
+    paths.hubs = _UnreadableRegistry()
+    assert paths("demo") is None
+
+
 def test_names_no_absolute_path_when_hub_workflows_have_problems(tmp_path: Path) -> None:
     for pack in ("a-pack", "b-pack"):
         (tmp_path / "workflows" / pack).mkdir(parents=True)

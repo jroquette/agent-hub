@@ -1,4 +1,4 @@
-import { featureHref } from "./FeatureChip";
+import { FeatureLabel, featureHref } from "./FeatureChip";
 import "./features.css";
 
 import { useEffect, useRef, useState } from "react";
@@ -319,7 +319,7 @@ function FeatureRow({
               >
                 {name ?? f.slug}
               </Link>
-              {name && <span className="ft-row-slug">{f.slug}</span>}
+              <FeatureLabel slug={f.slug} />
               <RenameButton
                 slug={f.slug}
                 named={name !== null}
@@ -624,7 +624,19 @@ export function FeaturesScreen() {
   return (
     <div ref={screenRef} style={{ padding: "16px 32px 40px" }} className="ah-stack">
       <div className="ft-head">
-        <h1 className="ah-h1">Features</h1>
+        <div className="ft-title">
+          <h1 className="ah-h1">Features</h1>
+          <Button
+            variant="primary"
+            size="sm"
+            icon="plus"
+            onClick={() => {
+              void navigate("/features/new");
+            }}
+          >
+            New feature
+          </Button>
+        </div>
         {features.isSuccess && all.length > 0 && (
           <p className="ft-summary">
             <span data-group="needs">
@@ -662,7 +674,7 @@ export function FeaturesScreen() {
           <EmptyState icon="list-checks" title="No feature records yet." command="/feature AGH-112">
             Features appear when <span className="ah-mono">/feature</span> writes{" "}
             <span className="ah-mono">brain/features/&lt;slug&gt;/spec.md</span> in the hub. Start
-            one in a Claude Code session in the hub:
+            one here with <b>New feature</b>, or in a Claude Code session in the hub:
           </EmptyState>
         </div>
       ) : (

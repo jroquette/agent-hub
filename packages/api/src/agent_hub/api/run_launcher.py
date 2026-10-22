@@ -23,6 +23,14 @@ signalled, never removed, and counted live. Cancel sends SIGINT to the group (th
 its node children), SIGKILL after ``grace`` seconds, then abandons the run so its end is
 recorded. Abandon and a gate's decision (``hub workflow decide``, its text on stdin, never in
 argv) wait for the CLI. Nothing here polls a run's status: it comes from events.
+
+A scenario run (AGH-350 plan T12) starts the same way, as a detached ``hub scenario run NAME
+--env ENV --mode MODE --run-id RUN`` child, and resumes through ``hub workflow run --resume``
+like any engine run. ``plan_scenario`` waits for ``hub scenario plan NAME --env ENV --json``
+in its own session: the plan with its plan-mode summaries (AM-8), which only the CLI's action
+runner calls, with no credential. Its stdout is read in chunks up to ``MAX_PLAN_BYTES``, its
+stderr dropped; past that cap or ``PLAN_TIMEOUT_SECONDS`` its group gets SIGINT, so the CLI kills
+its plan-mode scripts' groups, then SIGKILL, and nothing of it outlives the call.
 """
 
 import contextlib
@@ -32,6 +40,7 @@ import json
 import logging
 import os
 import secrets
+import selectors
 import shutil
 import signal
 import subprocess
@@ -43,6 +52,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, Literal
 
+from agent_hub.core.json_form import JsonValue
 from agent_hub.core.workflows.gates import GateAnswer
 from agent_hub.core.workflows.launch import (
     RUN_ID_PATTERN,
@@ -65,6 +75,11 @@ MAX_CHILDREN: Final = 8
 ABANDON_TIMEOUT_SECONDS: Final = 60.0
 DECIDE_TIMEOUT_SECONDS: Final = 60.0
 GRACE_SECONDS: Final = 10.0
+# ``hub scenario plan`` calls each step's script in plan mode, 60 s at most each.
+PLAN_TIMEOUT_SECONDS: Final = 300.0
+MAX_PLAN_BYTES: Final = 4 << 20
+PLAN_GRACE_SECONDS: Final = 5.0
+_PLAN_CHUNK: Final = 64 * 1024
 _POLL_SECONDS: Final = 0.2
 SCAN_BUDGET_SECONDS: Final = 2.0
 LOGGER = logging.getLogger("agent_hub.api")
@@ -97,6 +112,20 @@ def process_started(pid: int) -> str | None:
         return None
     started = done.stdout.decode(errors="replace").strip()
     return started if done.returncode == 0 and started else None
+
+
+@dataclass(frozen=True, kw_only=True)
+class ScenarioLaunch:
+    """A scenario run to start: its id, project, hub folder, scenario, environment, mode and
+    the inputs given (the CLI fills the defaults)."""
+
+    run_id: str
+    project: str
+    hub_path: str
+    name: str
+    environment: str
+    mode: str
+    inputs: Mapping[str, JsonValue]
 
 
 @dataclass
@@ -144,6 +173,45 @@ class ProcessRunLauncher:
         for name, value in spec.inputs.items():
             argv += ["--input", f"{name}={argv_text(value)}"]
         self._detach(spec.hub_path, spec.run_id, argv, issue=spec.issue)
+
+    def start_scenario(self, spec: ScenarioLaunch) -> None:
+        """Start a scenario run detached (``hub scenario run``); it refuses a plan with a
+        problem or a deny itself, creating no run."""
+        argv = [*self._program, "scenario", "run", spec.name, "--env", spec.environment]
+        argv += ["--mode", spec.mode, "--run-id", spec.run_id]
+        for name, value in spec.inputs.items():
+            argv += ["--input", f"{name}={argv_text(value)}"]
+        self._detach(spec.hub_path, spec.run_id, argv, issue=None)
+
+    def plan_scenario(
+        self, hub_path: str, name: str, *, environment: str, inputs: Mapping[str, str]
+    ) -> tuple[int, bytes]:
+        """``hub scenario plan NAME --env ENV --json``'s exit code and stdout, waited for in its
+        own session (stderr dropped). Past ``PLAN_TIMEOUT_SECONDS``, or once its stdout passes
+        ``MAX_PLAN_BYTES`` (read in chunks, never more), its group gets SIGINT (the CLI then
+        kills its plan-mode scripts' groups), SIGKILL after ``PLAN_GRACE_SECONDS``, and
+        ``RunLaunchError``; also when it cannot start."""
+        argv = [*self._program, "scenario", "plan", name, "--env", environment, "--json"]
+        for key, text in inputs.items():
+            argv += ["--input", f"{key}={text}"]
+        try:
+            process = subprocess.Popen(  # noqa: S603 -- an argv list; the program is this hub
+                argv,
+                cwd=hub_path,
+                env=self._env(hub_path),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError as error:
+            message = f"hub scenario plan did not finish: {type(error).__name__}"
+            raise RunLaunchError(message) from None
+        try:
+            printed = _bounded_output(process, timeout=PLAN_TIMEOUT_SECONDS, cap=MAX_PLAN_BYTES)
+        finally:
+            _stop_group(process)
+        return process.returncode, printed
 
     def resume(self, hub_path: str, run_id: str, *, issue: str | None) -> None:
         argv = [*self._program, "workflow", "run", "--resume", run_id]
@@ -585,6 +653,51 @@ def _probe_run_lock(hub: Path, run_id: str) -> None:
         raise RunConflictError(code="in_use", reason=reason, run_id=run_id) from None
     finally:
         os.close(descriptor)
+
+
+def _bounded_output(process: subprocess.Popen[bytes], *, timeout: float, cap: int) -> bytes:
+    """``process``'s stdout to its end and its exit, read in chunks; ``RunLaunchError`` past
+    ``timeout`` seconds or ``cap`` bytes (the caller stops its group)."""
+    assert process.stdout is not None  # noqa: S101 -- started with stdout=PIPE
+    deadline = time.monotonic() + timeout
+    descriptor = process.stdout.fileno()
+    chunks: list[bytes] = []
+    size = 0
+    # A selector, not select(): it has no limit on the descriptor's number.
+    with selectors.DefaultSelector() as selector:
+        selector.register(descriptor, selectors.EVENT_READ)
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise RunLaunchError("hub scenario plan did not finish in time")
+            if not selector.select(left):
+                continue
+            chunk = os.read(descriptor, _PLAN_CHUNK)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > cap:
+                raise RunLaunchError(f"hub scenario plan printed more than {cap} bytes")
+            chunks.append(chunk)
+    try:
+        process.wait(timeout=max(deadline - time.monotonic(), 0.0))
+    except subprocess.TimeoutExpired:
+        raise RunLaunchError("hub scenario plan did not finish in time") from None
+    return b"".join(chunks)
+
+
+def _stop_group(process: subprocess.Popen[bytes]) -> None:
+    """End what is left of ``process``'s group: SIGINT (the CLI kills its children's groups),
+    SIGKILL after ``PLAN_GRACE_SECONDS``; then reap it and close its pipe."""
+    if process.poll() is None:
+        _signal_group(process.pid, signal.SIGINT)
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            process.wait(timeout=PLAN_GRACE_SECONDS)
+    # The leader may have ended while others of its group still run.
+    _signal_group(process.pid, signal.SIGKILL)
+    process.wait()
+    if process.stdout is not None:
+        process.stdout.close()
 
 
 def _not_set(event: threading.Event) -> Callable[[], bool]:

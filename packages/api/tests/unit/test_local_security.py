@@ -240,6 +240,13 @@ RUN_WRITES = (
     "/api/v1/approvals/run-1:ok:1/decision",
     # two-level-flows AC-2.14 (AGH-405): the owner answers a lost run's change request.
     "/api/v1/features/demo/demo-feature/change-requests/2/decision",
+    # AGH-350 plan T12: the scenario writes run the CLI, the tracker or write into the hub.
+    "/api/v1/scenarios/demo/order-walk/plan",
+    "/api/v1/scenarios/demo/order-walk/runs",
+    "/api/v1/scenario-runs/walk-1/investigation",
+    "/api/v1/scenario-runs/walk-1/answer",
+    "/api/v1/scenario-runs/walk-1/findings/f1/issue",
+    "/api/v1/scenario-runs/walk-1/findings/f1/inbox",
 )
 OWN_JSON = {"Origin": "http://127.0.0.1:7420", "Content-Type": "application/json"}
 
@@ -263,6 +270,10 @@ def test_marks_strict_run_write_when_post_to_run_command(path: str) -> None:
         ("POST", "/api/v1/approvals/run-1:ok:1/decision/extra"),
         ("GET", "/api/v1/features/demo/demo-feature/change-requests/2/decision"),
         ("POST", "/api/v1/features/demo/demo-feature/change-requests/2/decision/extra"),
+        ("GET", "/api/v1/scenarios"),
+        ("GET", "/api/v1/scenario-runs/walk-1"),
+        ("POST", "/api/v1/scenarios/demo/order-walk/plan/extra"),
+        ("POST", "/api/v1/scenario-runs/walk-1/findings/f1/other"),
     ],
 )
 def test_keeps_default_checks_when_not_run_command(method: str, path: str) -> None:
@@ -376,7 +387,8 @@ def test_accepts_large_body_when_create_session_under_create_body_cap() -> None:
         "/api/v1/agent-sessions", content=_streamed(AGENT_SESSION_CREATE_BODY_BYTES)
     )
 
-    assert AGENT_SESSION_CREATE_BODY_BYTES == 16 * 1024 * 1024
+    # AC-419.6: ten images and ten files fit.
+    assert AGENT_SESSION_CREATE_BODY_BYTES == 160 * 1024 * 1024
     assert (sized.status_code, sized.json()) == (200, {"length": len(body)})
     assert (streamed.status_code, streamed.json()) == (200, {"length": len(body)})
 
@@ -427,7 +439,8 @@ def test_caps_message_body_at_message_cap_when_images_may_be_pasted() -> None:
     at_cap = client.post(path, content=_streamed(AGENT_SESSION_MESSAGE_BODY_BYTES))
     over = client.post(path, content=_streamed(AGENT_SESSION_MESSAGE_BODY_BYTES + 1))
 
-    assert AGENT_SESSION_MESSAGE_BODY_BYTES == 64 * 1024 * 1024
+    # AC-419.6: ten images and ten files fit.
+    assert AGENT_SESSION_MESSAGE_BODY_BYTES == 160 * 1024 * 1024
     assert at_cap.status_code == 200
     assert over.status_code == 413
     assert over.json()["detail"] == (
@@ -440,6 +453,8 @@ PLAYGROUND_HUB_WRITES = (
     ("POST", "/api/v1/hubs/hub-1/platform-sync"),
     ("POST", "/api/v1/hubs/hub-1/doctor-fix"),
     ("PUT", "/api/v1/projects/demo/config/local"),
+    # AC-416.10: the environment edits are a hub registry write.
+    ("POST", "/api/v1/projects/demo/config/environments"),
 )
 CHECK_RUN = "/api/v1/features/demo/demo-feature/acs/AC-7.1/check-runs"
 

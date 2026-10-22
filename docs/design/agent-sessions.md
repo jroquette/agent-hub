@@ -17,6 +17,10 @@ them; the routes and frames are in [API.md](../API.md#agent-sessions), the produ
   `set_mode`, `set_model`, `close`, `events(handle)` (an async iterator), `list_resumable(cwd)`, `capabilities()`.
   `StartSpec` holds a resolved `cwd`, the mode, an optional model, `resume` and `fork`, an optional `session_id` and
   `environment_extra` (`AGENT_HUB_WEB_URL` only).
+  `tool_access` is `all`, or `read_only` for a session only the server starts (a discovery,
+  [ADR 0046](../adr/0046-read-only-discovery-sessions.md)): `Read`, `Grep` and `Glob` are its whole tool set, no MCP
+  server, every other tool request denied without asking; stored with the session (migration 0009) so a reopened one
+  keeps it. `add_dirs` are folders the server resolved for it to read besides its own.
 - Driver events, a closed union: `init` (Claude's `session_id`, model, slash commands), `text.delta`, `text`,
   `thinking`, `tool.call`, `tool.result`, `todos`, `permission.request` (`request_kind`: `tool`,
   `ask_user_question`, `plan_approval`; suggestions), `result` (cost, usage, terminal reason), `error`, `exited`.
@@ -131,6 +135,22 @@ session is ended or refused for the limit.
 Session its `agent_session_id` and makes its live tile `waiting` while a request is open; the tile carries
 `agent_session_id` too, so the web app links it to the chat (a hook-observed prompt links to Approvals).
 
+### Read-only sessions (AGH-418)
+
+A session the server starts for a discovery ([ADR 0046](../adr/0046-read-only-discovery-sessions.md),
+[environments.md](environments.md#discoveries)) carries `tool_access: read_only`; every session the browser starts
+has `all`, and the body of `POST /agent-sessions` cannot change it. `final_reply` reads the assistant's stored
+(redacted) text after the session's last message, and whether that turn was interrupted, so the server can read what
+the session answered without the browser.
+
+- **AC-418.1** Given a `read_only` session, when it starts or is reopened by a later message, then `Read`, `Grep` and
+  `Glob` are its whole tool set, allowed outright, every tool that writes, runs a command, reaches the network or
+  starts an agent is disallowed, no MCP server loads, and the permission bridge denies any other tool request at once
+  without asking; its `tool_access` is stored (migration 0009, `all` for every row already there) and survives an
+  update; a session started from the body of `POST /agent-sessions` keeps all tools.
+- **AC-418.2** Given a session, when its final reply is read, then it answers the stored text blocks after its last
+  message joined by a blank line (an earlier turn's text left out), and none before any text.
+
 ## Chat behaviour
 
 The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a full page
@@ -157,7 +177,9 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
   open permission reads "Waiting for you". Output over 10,000 characters is cut with "Show all (N characters)". What
   Claude does between two messages (its calls and the thoughts between them) folds into one activity line that
   opens the Activity side panel (below). Thinking reads "Thought for N s" (from the previous record's `at`), else
-  "Thinking"; thoughts with no call among them stay in the conversation.
+  "Thinking"; thoughts with no call among them stay in the conversation. An expanded call reads like a terminal:
+  a shell command as a `$` line with its description above it, a JSON reply in the JSON viewer, grep output with its
+  paths and line numbers told apart (AGH-423, below).
 - **Permission and question cards** (AGH-264). A pending card is raised, with a warning-tone halo, an icon tile and a
   "Waiting for you" badge; once answered it is flat and its outcome reads as a pill.
   - AC-264.1 A tool card shows what the call is for (the tool input's `description`) under its title, and the
@@ -221,9 +243,46 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
   - AC-266.8: the `user.message` record keeps one marker per image, never its bytes; the chat shows the images this
     browser sent with each message (kept by the message's seq), else "N images attached".
   - AC-266.9: a message's text may be up to `--message-max-bytes`, 1 MiB by default (at most 4 MiB); the body caps
-    are 64 MiB for a message and 16 MiB for a session's first prompt.
+    are 160 MiB for a message and for a session's first prompt (AC-419.6).
   - AC-266.10: the composer's toolbar shows mode and model as compact pills (icon, value, caret) over native selects,
     the mode tinting its pill; Stop shows only while a turn can be stopped; the hint sits under the bar.
+- **Files in a message (AGH-419).** PDFs and text files go with a message for Claude to read, like images; the
+  server keeps no file byte.
+  - **AC-419.1** Given `POST /{id}/messages` with `files: [{name, media_type, data}]` (1 to 10; `media_type`
+    `application/pdf` or `text/plain`, `data` base64), when it is accepted, then Claude gets the files first, then the
+    images, then the text: a PDF as a `document` block titled by its name, a text file as a `text` block wrapped in
+    `<file name="…">`.
+  - **AC-419.2** Given a file whose `data` is not strict base64, a PDF without the `%PDF-` signature, or a text that is
+    not UTF-8 or holds a NUL byte, when it is sent, then it is refused with 422 `invalid-file` pointing at
+    `/files/{index}/data`, before anything is logged or sent; the detail never quotes the data.
+  - **AC-419.3** Given a file over 5,242,880 bytes decoded (5 MiB), when it is sent, then it is refused with 413
+    `file-too-large` (`limit`, `size`) before anything is logged or sent; one exactly at the limit is taken. More than
+    10 files is 422.
+  - **AC-419.4** Given a message with files, when it is logged, then the `user.message` record carries
+    `attachments: [{kind: "file", media_type, bytes, name}]`, one per file, and never its bytes; the request's and the
+    driver's models never print the data in a repr.
+  - **AC-419.5** Given `POST ""` with a first prompt, when it carries `screenshots[]` (1 to 10) and `files[]` (1 to
+    10) besides the screen's `screenshot`, then they are checked like a message's before the session starts, logged
+    as markers and sent with the prompt (the capture first, then the images); without `prompt` they are refused
+    (422).
+  - **AC-419.6** Given the body caps, then `POST ""` and `POST /{id}/messages` take bodies up to 160 MiB, so ten
+    images and ten files fit; 413 above.
+  - **AC-419.7** Given the composer of a local session, when a PDF or a UTF-8 text file is picked with Attach
+    ("Attach a file"; it also takes images), pasted or dropped, then it shows above the text as a chip with its name
+    and size (KB, MB) and a remove button, and goes with the message; images keep their thumbnails beside the chips.
+    A cloud session offers no Attach.
+  - **AC-419.8** Given a file over 5 MB, an empty one, or one that is neither a PDF nor UTF-8 text, when it is added,
+    then it is refused with the reason ("“x.zip” is 6.0 MB: files go up to 5 MB.", "Claude reads PDFs and text files
+    here, and “x.bin” is neither.") and the rest stay; past 10 files, "A message takes up to 10 files.".
+  - **AC-419.9** Given files attached and no text, then Send stays off and the hint reads "Add a message to send with
+    the file"; the placeholder reads "Say what Claude should do with the file".
+  - **AC-419.10** Given a message sent with files, when the chat shows it ("Sending…" or from its record), then its
+    files are listed above the bubble with name and size, after a reload too (from the record's markers).
+  - **AC-419.11** Given a file chip, when its name is long, then every chip keeps one width, the name is cut with an
+    ellipsis (whole in its title) and the size stays on one line beside the remove button, a 24 px target.
+  - **AC-419.12** Given `AttachmentList` and `useMessageAttachments` in the shared components, when a screen uses
+    them, then it gets the composer's reading, limits, refusals, thumbnails and chips; without remove handlers the
+    list is read-only.
 - **Accessibility.** No serious or critical axe violation in any state (empty, streaming, waiting, detached, menu
   open, ended). The log keeps `role="log"` and `aria-busy` and has a visually hidden h2; under
   `prefers-reduced-motion` no caret, shimmer or smooth scroll animates.
@@ -435,6 +494,68 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
 - **AC-377.42** Given the OpenAPI document, when it is built, then the two repo-changes routes are listed with the
   agent-session paths and are behind the same access check as the others.
 
+### Session review: tests apart, diff colours, discarded files and expanding a diff (AGH-424)
+
+**Code and tests**
+
+- **AC-424.1** Given the Code tab holds test files (under a `tests/`, `test/`, `__tests__/`, `spec/`, `specs/` or `e2e/`
+  folder, or named `test_x.py`, `x_test.py`, `x_test.go`, `x.test.ts`, `x.spec.tsx` or `conftest.py`) and other code,
+  when it shows, then a control "Show the code and its tests" offers `All n`, `Code n` and `Tests n`, `All` first;
+  the code or the tests alone list only those, and the choice is kept in this browser for every session.
+- **AC-424.2** Given the split shows one side, when a card in the conversation opens a file of the other side, then
+  the list shows that side with the file open; given the Code tab has no tests (or only tests), then it offers no
+  split.
+
+**A narrow file list**
+
+- **AC-424.3** Given the file list is narrower than 360px, when it shows, then each file and folder stays on one line,
+  cut at its end (never in the middle, never over its neighbour): a folder leads with its own name, where it sits
+  dimmed after it; the root line shows only the folder's own name (a worktree's, with the branch icon); a file drops
+  its line counts (they are on the open file); every whole name or path shows on hover. Wider, the list is as
+  AC-377.11 says.
+
+**Diffs in the file's colours**
+
+- **AC-424.4** Given a diff of a file whose extension names a language the highlighter knows (`.py`, `.tsx`, `.mjs`…),
+  when the review, an edit in the transcript, a commit's diff or an item's history compare shows it, then each code
+  line is coloured in that language, as a pull request shows it: the old side (context and removed lines) and the new
+  side (context and added lines) are each highlighted as one text, so a string or comment across lines reads right;
+  only the line's ground and its `+`/`-` sign (not selectable) say added or removed, and the number gutters of changed
+  lines carry a stronger tint. Hunk headers and notes are not coloured; a file of an unknown language, a diff with no
+  file, or a side past the highlight bounds (ADR 0034) stays plain.
+- **AC-424.5** Given highlighted code anywhere (diffs and Markdown code blocks), when it is coloured, then the syntax
+  tokens use GitHub's palette (keyword red, function and type purple, string navy / light blue, constant blue,
+  attribute and key orange, comment grey), light and dark, each still at least 4.5:1 on `code-bg`.
+
+**Discarded files**
+
+- **AC-424.6** Given a file the session created or changed and then deleted or put back (git lists it nowhere in the
+  pull request, or, without git, its changes cancel out), when the review drawer opens, then the file is in its own
+  `Discarded` tab, right after `Code`, with the note that none of it goes in the pull request; it leaves the Code tab,
+  has no `Viewed` checkbox, and is counted neither in the file and line totals nor in what waits for review (drawer
+  and header chip).
+
+**Expanding a pull request's diff**
+
+- **AC-424.7** Given a file's final diff read from git against a base commit, of a file the base has (not one the
+  branch added or a discarded one), when it shows, then each hunk header and the end of the diff have GitHub's expand
+  buttons in the gutter: a gap of 20 lines or fewer opens whole (`Expand all N hidden lines`), a bigger one 20 lines at
+  a time (`Expand 20 lines down` from the hunk above, `Expand 20 lines up` from the hunk below). The revealed lines
+  join the diff as context with their real numbers, colours and comments; two hunks merge once the gap between them is
+  all shown. The base's file is read once (`repo-changes/file`); while it loads, or when it cannot be read, the diff
+  shows as it is, without buttons; a newer diff of the file starts closed again.
+
+**API: one file at a commit (`GET /api/v1/agent-sessions/{id}/repo-changes/file?path=&sha=`)**
+
+- **AC-424.8** Given a file of one of the session's repositories (`path` absolute) and a commit, when it is read, then
+  git shows the file as that commit has it (`git show <sha>:<path>`): the full sha, the path and its `text`; `text`
+  is null when the commit has no such file, the file is past `REPO_DIFF_MAX_BYTES`, or it is binary (`binary`).
+- **AC-424.9** Given the file is outside the session's repositories, or git does not know the commit, when it is read,
+  then the answer is not found; given a ref (`HEAD`), an option (`--output=x`), a relative path or no path, then it
+  answers 400 and never calls the session control (as AC-377.37).
+- **AC-424.10** Given the OpenAPI document, when it is built, then the route is listed with the agent-session paths,
+  the third repo-changes read, behind the same access check as the others.
+
 ### Chat: opening, answers, links and the slash menu (AGH-379)
 
 **Chat (agent session)**
@@ -584,6 +705,190 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
 - **AC-380.23** Given a chat whose observed twin is on a ticket, when it opens, then its header and breadcrumb read
   the ticket's name from the twin's label (the title once read) and show the feature label.
 
+### Chat redesign: reading anatomy and composer (AGH-422)
+
+Design: [control-plane/specs/20-chat.md](control-plane/specs/20-chat.md#reading-anatomy). It amends the Layout,
+Streaming, Messages and Stop items above where they differ (the column, the caret, the action row, the buttons).
+
+- **AC-422.8 Reading anatomy.** Given a chat, then it reads on `surface` in a 768 px column (`chat-column`, gutters
+  24 px, 32 px from a 1600 px container): Claude's prose flows without a bubble or avatar and stops at 68ch (code,
+  tables and cards take the column), at `reading` 15/24 when the chat is at least 560 px wide and 14/22 narrower;
+  your turn is a `surface-turn` card at `radius-2xl` (16 px), right-aligned, at most 85% of the column (90% narrow);
+  turns keep a 12/24/32 rhythm (16/24 narrow). The time and Copy row lies over the gap under its message on hover
+  or focus (in flow under `hover: none`); thinking, the recap and the review bubble lose their coloured left bars;
+  the review avatar loses its hard-coded colour; no chat text is under 12 px; the transcript's last 24 px fade under
+  the composer (a transparency mask, no colour). Text on `surface-turn` reads at 4.5:1 in both themes.
+- **AC-422.9 Floating composer.** Given the composer, then it is one card (`surface-overlay`, `radius-2xl`, a soft
+  border, the focus shown by an accent-tinted border and halo) that stacks what rides with the message (the Discuss
+  references, the images), the message across its full width (one line to start, growing), then one row of
+  controls: the round "+" and the mode and model pickers on the left, round Stop and Send on the right, named
+  "Stop" / "Send" for screen readers and in their tooltips ("Stop (Esc)"). The send keys show under the card only
+  while it has focus (the warnings always).
+- **AC-422.10 One loop.** Given a turn running, then the chat's only looping motion is the live pulse at
+  `dur-pulse` (2 s): the streaming caret is a breathing dot, the working row, the live bar and the running activity
+  line use it, and the running activity line has no spinner.
+- **AC-422.11 Pickers sized to their value.** Given the composer's mode and model pickers, then each is as wide as
+  the value it shows (the native select lies invisible over it, still the keyboard and screen-reader control), reads
+  as quiet text with a caret, and shows focus as the hover capsule, with no ring left after a click.
+- **AC-422.12 Tall images.** Given a tall or wide image in the composer or in a sent message, then its thumbnail
+  keeps its 72 px tile (cropped, top first), and a sent screenshot shows at most 320 px of its top; the lightbox shows
+  it whole.
+
+### Chat redesign: the full chat's header (AGH-422)
+
+Design: [control-plane/specs/20-chat.md](control-plane/specs/20-chat.md#full-chat-header). It amends AC-265.10 (the
+chip's wording and shape), AC-380.13 (the Background chip shows only while tasks run) and AC-380.23 (the breadcrumb
+no longer repeats the name).
+
+- **AC-422.13 A toolbar on the window, a heading in the column.** Given the full chat, then its header is two parts:
+  row 1, on the page's gutters, the breadcrumb by containment (`Portfolio › <project> › Session <short id>`, the
+  project a link, the id mono), the folder when it differs from the project, then one quiet set of small buttons;
+  under it, in the reading column, the session's title on its own line (20/28, cut with an ellipsis, the whole name
+  in its `title`) and under the title, in small text, the status, the feature and the cost. Neither row wraps. The
+  mode and model live only on the composer; the todo list sits with the live bar above the composer; the Steps chip
+  leaves the header (the live bar and `Ctrl/Cmd+Alt+.` open Steps).
+- **AC-422.14 Actions.** Given the header's buttons, then they are, in order: the running background tasks, "Open
+  timeline" (a ghost link to the session detail; "No timeline yet" with its reason in a focusable tooltip when the
+  hooks never reported the session), Review changes and the session menu. The menu holds links ("Open timeline" when
+  the width hides it, "Open cost details" to the session detail's Cost tab) above Fork, Close and Delete. Below a
+  1100 px page Review changes drops its line counts and Background its label; below 960 px "Open timeline" moves into
+  the menu and the folder hides.
+- **AC-422.15 Cost.** Given the header, then the cost reads "Cost $13.24 · estimated", and its focusable tooltip
+  holds the precise amount ("$13.2405 · Estimated from transcript"), the tokens and the turns; before a turn finishes
+  it reads "Cost —" and says why. The Discuss panel shows the amount only.
+- **AC-422.16 Background tasks.** Given background tasks, then the header's button shows only while one runs; once
+  all are done, the session menu offers "Background tasks · N done", and the card at the conversation's end hides
+  while the live bar already says what runs in the background.
+- **AC-422.17 Review changes.** Given changed files, then Review changes is the header's only bordered button while
+  files wait ("Review changes +a −r · N to review", or "· N of M to review", only the count tinted), and ghost once
+  all are viewed ("· M files" and a check); with Claude's own files only it reads "· No code changes". Its accessible
+  name is unchanged.
+
+### Chat redesign: the sessions rail and the side columns (AGH-422)
+
+Design: [control-plane/specs/20-chat.md](control-plane/specs/20-chat.md#sessions-rail).
+
+- **AC-422.18 Sessions rail.** Given the full chat, then a 260 px rail named "Sessions" sits left of it, as chat apps
+  list conversations: "Waiting for you", then "Open", then "Recent" (the 20 newest ended), newest first in each, each
+  group with its count; each row is the session's status dot (its word for screen readers and in the row's tooltip),
+  its name and, under it, chips for its project (across projects), its ticket and the feature that plans it; the
+  current session reads as selected (`aria-current="page"`), the others link to their chat; "All" opens Sessions.
+  The page never scrolls past its own height: only the transcript and the rail's list scroll.
+- **AC-422.19 Filter.** Given the rail's filter, when the owner types, then it narrows the rows by name, project,
+  folder, ticket or feature and drops empty groups ("No session matches."); Escape clears it.
+- **AC-422.20 Named as the header names it.** Given a session whose observed twin is on a ticket, then its row reads
+  the ticket's name (`ACME-12: Export orders as CSV`) as the chat's header does, else Claude Code's title, else its
+  last prompt on one line, else "Untitled session"; its ticket and feature chips come from the observed sessions and
+  the hub's features (the 200 newest observed sessions, one read).
+- **AC-422.21 Folds.** Given the rail, when "Hide sessions" is pressed, then it folds to a 48 px strip of the open
+  sessions' status dots (their names for screen readers and in tooltips), and the choice is kept per browser
+  (`ah.chat.rail`).
+- **AC-422.22 Side columns in the chat's style.** Given the app's sidebar and the rail, then both take the chat's
+  vocabulary: soft rounded rows (`radius-xl`), a filled current item instead of an outline, more room, no hard lines;
+  the columns step in by tone (the sidebar on `bg`, the rail on `surface-sunken`, the chat on `surface`). The rail's
+  filter is a small capsule with the composer's focus halo, and its tags are soft pills.
+
+### New session: the first prompt in the chat's card (AGH-421)
+
+New session (`sessions-list/NewSessionDialog.tsx`, also opened by a shake and by Fork…) writes its first prompt in
+the same message card as the chat, so a session starts with what a message can carry. It amends the dialog of AGH-248
+(no Options section) and AC-266.3 (the shake's screenshot is a thumbnail in the card, not a checkbox).
+
+```
+New session                                                     (x)
+Where   [▣ agent-hub ▾] › [⌂ agent-hub-hub (hub)            ▾]
+Prompt
++----------------------------------------------------------------+
+| [shot] [img] [notes.md 2 KB x]          <- attachments row      |
+| What should Claude do? Type / for the folder's skills           |
+|                                                                 |
+| [+ Attach]  [⛨ Ask before edits ▾] [▣ default ▾]                |
++----------------------------------------------------------------+
+Without a prompt the session waits for your first message. Ctrl+Enter or ⌘+Enter starts it.
+Ask before edits. Claude asks before each edit or command. Paste or drop images, PDFs and text files.
+Skills  [/fix] [/review]
+                                          [Cancel] [↑ Start session]
+```
+
+- **AC-421.1 One card, top to bottom.** Given New session, then it reads Where (the project, then the working folder,
+  as pills), then "Prompt" over the chat's message card (`.as-composer`, at the dialog's softer radius, its box at
+  least 84 px tall and focused), then the hints, the skills and the actions; the dialog is up to 640 px wide and has
+  no Options section. A fork shows what it forks in place of Where.
+- **AC-421.2 Images and files with the first prompt.** Given the card, when images, PDFs or text files are pasted in
+  the box, dropped anywhere on the card or picked with Attach ("Attach a file"), then they show in the card's
+  attachments row ("Attached to the first prompt": thumbnails and chips, each removable, an image opens to be marked
+  up) and go with the first prompt as `screenshots[]` and `files[]` (AC-419.5), with the chat's limits and refusals
+  (AC-266.6, AC-419.8); the placeholder says what to do with them.
+- **AC-421.3 Attachments need a prompt.** Given anything attached and an empty prompt, then Start session is off and
+  says "Write a prompt to send the attachments.", the hint under the card warns "The attachments go with the first
+  prompt: write one.", and Start waits while a file is still being read ("Wait for the files to be read.").
+- **AC-421.4 The folder's skills on `/`.** Given a folder with skills, when `/` is typed in the box, then the chat's
+  `/` menu lists them (opening under the card); Enter or Tab inserts the one picked, Esc closes only the menu (the
+  dialog stays open) and Enter never starts the session. The skill buttons under the card still put a `/skill` in
+  front of the prompt.
+- **AC-421.5 Mode and model in the card's bar.** Given the card, then its bar holds Attach and the mode (never
+  bypass; Auto only in the playground) and model pickers as the chat's pills, each as wide as the value it shows
+  (the native select invisible over it, AC-422.11), as is the project pill under Where; a line under the card reads
+  the mode and what it does ("Plan. Claude plans first and asks you to approve the plan."). "Other model id…" opens
+  the Model id field below, and an invalid id says "The model id is not valid." on Start.
+- **AC-421.6 The shake's screenshot in the row.** Given a shake opened New session with a capture, then the capture
+  leads the attachments row ("Screenshot of the screen you shook"), opens to be marked up (the marked copy is the one
+  sent as `screenshot`), and "Remove Screenshot of the screen you shook" drops it, offering "Attach the screenshot
+  again"; when the capture failed, the dialog says "No screenshot was taken" and attaches nothing.
+- **AC-421.7 The chat shows them.** Given a session started with images, when its chat opens, then the first
+  prompt's bubble shows the capture, then the images added (kept by this browser for the log's first record, as
+  Discuss does, AC-419.13).
+
+### Chat side panels (AGH-423)
+
+The chat's side drawers (Activity, Steps, Background, the review) close on a click outside them, the Steps drawer
+reads as a timeline, and an expanded tool call reads like a terminal. The tool call body's design: what changes is
+the Bash input (description above a wrapped `$` line, bash-coloured, Copy) and the text result (JSON reformatted in
+the JSON viewer, `path:line:` coloured, wrapped, a line count, Copy, "No output"); the card head, states, the diff
+(its gutters keep their sideways scroll), the 10,000-character cut and `StoredCopyLabel` stay. It reuses
+`CopyButton compact`, `JsonViewer` and the lazy highlighter of ADR 0034, moved out of `Markdown.tsx` into the shared
+`useHighlight(text, lang, enabled)` hook (same bounds, same plain fallback); the hljs colour rules apply to any
+`.hljs` element. No new token. The JSON and grep shapes are read from the text itself (a `JSON.parse`, a line
+pattern), not by lowlight guessing a language, so ADR 0034's "no auto-detection" rule for code blocks is kept.
+
+**Drawers**
+
+- **AC-423.1** Given a drawer is open (Activity, Steps, Background or the review), when the reader clicks space
+  outside it that has no action of its own (a message's text, the empty column), then the drawer closes; Escape and
+  its Close button stay the other ways out.
+- **AC-423.2** Given a drawer is open, when the click is inside it or on its resize edge, in a dialog or menu over
+  the page, on something with its own action (a button, a link, the composer, a tab), or ends a text selection, then
+  it stays open.
+- **AC-423.3** Given the Steps drawer was closed by a click outside it, when the chat is loaded again, then it stays
+  closed (`ah.chat.steps`); before the turn has a step there is no Steps drawer to close.
+
+**Steps drawer**
+
+- **AC-423.4** Given the Steps drawer lists a call, then it shows the tool's icon on the thread, what the call is for
+  in Claude's words (a command's `description`, a subagent's task) with its command or path in mono below it, or the
+  tool's name and its summary when there is no description; a thought shows a light bulb.
+- **AC-423.5** Given a call failed, was denied or runs, then its state reads calmly at the row's end: "Failed" or
+  "Denied" with the state's icon in the subtle tone (never red), or a spinner with the running time.
+- **AC-423.6** Given a call with output, then the output folds behind one line ("Output · N lines", "Error output ·
+  N lines") opened on its first lines for a failed call and closed otherwise; "Show all N lines" shows the rest and
+  "Show less" folds it back; a call whose result reads as one digest ("Read 120 lines") shows the digest, no fold.
+- **AC-423.7** Given a turn runs, when the Steps drawer shows its live strip, then the strip names the call running
+  now beside the headline.
+
+**Tool call body (the Activity drawer's expanded call)**
+
+- **AC-423.8** Given a Bash call is expanded, then its input reads "Command" with its description above (when it has
+  one) and a terminal line: a `$ ` the screen reader skips, then the command coloured as bash and wrapped, never
+  scrolled sideways; "Copy command" copies the command without the `$`.
+- **AC-423.9** Given a call's text result is a JSON object or array (after trimming, it parses, under 64 KiB) and not
+  an error, then it shows in the JSON viewer and its label reads "Result · JSON", with no character cut.
+- **AC-423.10** Given a text result where at least 80% of the non-empty lines read as grep output (`path:line:text`,
+  or `path-line-text` for context lines), then each such line shows its path and line number in their own colours,
+  colons kept; other output stays plain.
+- **AC-423.11** Given a text result, then it wraps like a terminal, its label carries the line count ("1 line",
+  "12 lines") and "Copy result" copies the whole text; an empty one reads "No output"; an error's label carries the
+  failed icon before "Error".
+
 ## Invariants
 
 - The platform implements no agent loop and calls no model; the children are the user's own `claude` with its own
@@ -611,6 +916,8 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
   screen that lists driven sessions with the observed ones.
 - [ADR 0034](../adr/0034-syntax-highlighting-in-the-chat.md): syntax highlighting of completed code blocks with
   lowlight, rendered without an HTML path.
+- [ADR 0046](../adr/0046-read-only-discovery-sessions.md) (proposed): the `read_only` tool profile of a discovery
+  session.
 - [ADR 0019](../adr/0019-metadata-only-events-and-redaction.md): the redaction rule set the stored copy uses.
 - [ADR 0024](../adr/0024-learning-actions-from-the-app.md): off in the container, as hubs are read-only there.
 

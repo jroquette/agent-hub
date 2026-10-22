@@ -1,7 +1,18 @@
-import { useId, useMemo, useRef, useState } from "react";
+import { useId, useMemo, useRef, useState, type ReactNode } from "react";
 
-import { Button, Icon, JsonViewer, TOOL_ICON, type IconName } from "../../components";
+import {
+  Button,
+  CopyButton,
+  Icon,
+  JsonViewer,
+  TOOL_ICON,
+  highlightable,
+  useHighlight,
+  type IconName,
+} from "../../components";
 import { cx } from "../../lib/cx";
+import { ExpandGap, type DiffExpansion } from "./DiffExpand";
+import { useDiffSyntax } from "./diffSyntax";
 import { StoredCopyLabel } from "./SessionStatus";
 import {
   isRedacted,
@@ -9,6 +20,7 @@ import {
   toolSummary,
   asArray,
   asObject,
+  str,
   toolState,
   type PermissionView,
   type ToolResultView,
@@ -59,46 +71,116 @@ export function diffLines(diff: string): DiffLine[] {
   });
 }
 
+/** For each line, the number of the hunk header it is (from 0), else -1. */
+export function hunkIndexes(lines: readonly DiffLine[]): number[] {
+  let next = 0;
+  return lines.map((line) => (line.kind === "hunk" ? next++ : -1));
+}
+
+/** A numbered line's two gutters (old, new); a hunk header's hold the buttons that reveal the
+ * lines hidden above it, when there are any. */
+export function DiffGutter({
+  line,
+  hunk,
+  expansion,
+}: {
+  line: DiffLine;
+  hunk: number | undefined;
+  expansion: DiffExpansion | undefined;
+}) {
+  const gap = hunk !== undefined && hunk >= 0 ? expansion?.headers[hunk] : null;
+  if (gap && expansion) {
+    return (
+      <span className="as-diff-no as-diff-no-expand">
+        <ExpandGap gap={gap} expansion={expansion} />
+      </span>
+    );
+  }
+  return (
+    <>
+      <span className="as-diff-no" aria-hidden="true">
+        {line.oldNo ?? ""}
+      </span>
+      <span className="as-diff-no" aria-hidden="true">
+        {line.newNo ?? ""}
+      </span>
+    </>
+  );
+}
+
+/** A diff line's text as a pull request shows it: the sign in the line's colour, the code in
+ * the syntax colours of its language (`code`, from `useDiffSyntax`) or plain. */
+export function DiffLineText({
+  line,
+  code,
+}: {
+  line: DiffLine;
+  code: ReactNode[] | null | undefined;
+}) {
+  if (!code) return <>{line.text}</>;
+  return (
+    <>
+      <span className="as-diff-sign">{line.text.slice(0, 1)}</span>
+      {code}
+    </>
+  );
+}
+
 /**
  * A unified diff as text (`<pre>`), each line tinted by its sign. `numbered`, for a diff with the
  * file's real line numbers, adds git's two gutters (old, new) and leaves the file headers out.
+ * With the file's `path`, the code is coloured in its language.
  */
 export function DiffText({
   diff,
   label,
   numbered = false,
+  path,
+  expansion,
 }: {
   diff: string;
   label: string;
   numbered?: boolean;
+  path?: string | undefined;
+  /** The lines it can reveal around its hunks (a numbered diff only). */
+  expansion?: DiffExpansion | undefined;
 }) {
-  const lines = diffLines(diff);
+  const lines = useMemo(() => diffLines(diff), [diff]);
+  const syntax = useDiffSyntax(lines, path);
+  const hunkAt = useMemo(() => hunkIndexes(lines), [lines]);
   return (
-    // A diff can scroll sideways, so the keyboard must reach it.
-    // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
-    <pre className={cx("as-diff", numbered && "as-diff-numbered")} tabIndex={0} aria-label={label}>
+    <pre
+      className={cx("as-diff", numbered && "as-diff-numbered", syntax && "hljs as-diff-syntax")}
+      // A diff can scroll sideways, so the keyboard must reach it.
+      // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+      tabIndex={0}
+      aria-label={label}
+    >
       {lines.map((line, i) =>
         numbered ? (
           line.kind === "head" ? null : (
             <span key={i} className={`as-diff-line as-diff-${line.kind}`}>
-              <span className="as-diff-no" aria-hidden="true">
-                {line.oldNo ?? ""}
-              </span>
-              <span className="as-diff-no" aria-hidden="true">
-                {line.newNo ?? ""}
-              </span>
+              <DiffGutter line={line} hunk={hunkAt[i]} expansion={expansion} />
               <span className="as-diff-code">
-                {line.text}
+                <DiffLineText line={line} code={syntax?.[i]} />
                 {"\n"}
               </span>
             </span>
           )
         ) : (
           <span key={i} className={`as-diff-${line.kind}`}>
-            {line.text}
+            <DiffLineText line={line} code={syntax?.[i]} />
             {"\n"}
           </span>
         ),
+      )}
+      {numbered && expansion?.trailing && (
+        <span className="as-diff-line as-diff-hunk">
+          <span className="as-diff-no as-diff-no-expand">
+            <ExpandGap gap={expansion.trailing} expansion={expansion} />
+          </span>
+          <span className="as-diff-code">{"\n"}</span>
+        </span>
       )}
     </pre>
   );
@@ -138,26 +220,116 @@ function shownText(content: unknown): string | null {
   return json !== undefined && cutText(json, OUTPUT_SHOWN) ? json : null;
 }
 
+/** Text that is a JSON object or array (an MCP server's reply, often), parsed; else undefined. */
+export function parsedJson(text: string): unknown {
+  const trimmed = text.trim();
+  const first = trimmed[0];
+  if ((first !== "{" && first !== "[") || trimmed.length > MAX_JSON_CHARS) return undefined;
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+/** A longer JSON text stays as text: the viewer renders every node. */
+const MAX_JSON_CHARS = 64 * 1024;
+
+/** A line of grep/rg output: `path:line:text` (a match) or `path-line-text` (context, `-C`). */
+const GREP_LINE = /^([^\s:][^:\n]*?)([:-])(\d+)([:-])(.*)$/;
+
+/** True when most lines read as grep output, so their path and line number can be told apart. */
+export function isGrepOutput(lines: readonly string[]): boolean {
+  let total = 0;
+  let matched = 0;
+  for (const line of lines) {
+    if (line === "" || line === "--") continue;
+    total += 1;
+    if (GREP_LINE.test(line)) matched += 1;
+  }
+  return total > 0 && matched / total >= 0.8;
+}
+
+function GrepText({ text }: { text: string }) {
+  return text.split("\n").map((line, i) => {
+    const match = GREP_LINE.exec(line);
+    return (
+      <span key={i}>
+        {match ? (
+          <>
+            <span className="as-grep-path">{match[1]}</span>
+            <span className="as-grep-sep">{match[2]}</span>
+            <span className="as-grep-no">{match[3]}</span>
+            <span className="as-grep-sep">{match[4]}</span>
+            {match[5]}
+          </>
+        ) : (
+          line
+        )}
+        {"\n"}
+      </span>
+    );
+  });
+}
+
+function lineCount(text: string): number {
+  if (text === "") return 0;
+  const body = text.endsWith("\n") ? text.slice(0, -1) : text;
+  return body.split("\n").length;
+}
+
 function ResultBody({ result }: { result: ToolResultView }) {
   const text = useMemo(() => shownText(result.content), [result.content]);
+  // Only a text reply is parsed: structured content too long for the viewer stays text on purpose.
+  const json = useMemo(() => {
+    const reply = resultText(result.content);
+    return reply === null || result.isError ? undefined : parsedJson(reply);
+  }, [result.content, result.isError]);
   const [all, setAll] = useState(false);
   const pre = useRef<HTMLPreElement>(null);
   const cut = useMemo(() => (text === null ? null : cutText(text, OUTPUT_SHOWN)), [text]);
+  const shown = text === null ? null : cut && !all ? cut.shown : text;
+  const grep = useMemo(
+    () => shown !== null && !result.isError && isGrepOutput(shown.split("\n")),
+    [shown, result.isError],
+  );
+  const label = result.isError ? "Error" : "Result";
   return (
     <div className="as-tool-section">
       <div className="as-tool-label">
-        {result.isError ? "Error" : "Result"}
+        {result.isError && <Icon name="circle-x" size="sm" />}
+        {label}
+        {json !== undefined && <span className="as-tool-meta"> · JSON</span>}
+        {text !== null && text.trim() !== "" && json === undefined && (
+          <span className="as-tool-meta">
+            {" "}
+            · {lineCount(text).toLocaleString("en-US")} {lineCount(text) === 1 ? "line" : "lines"}
+          </span>
+        )}
         {text !== null && isRedacted(text) && <StoredCopyLabel />}
+        <span className="ah-grow" />
+        {text !== null && text.trim() !== "" && (
+          <CopyButton text={text} label={`Copy ${label.toLowerCase()}`} compact />
+        )}
       </div>
-      {text !== null ? (
-        // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
-        <pre ref={pre} className={cx("as-pre", result.isError && "as-pre-error")} tabIndex={0}>
-          {cut && !all ? cut.shown : text}
+      {text !== null && text.trim() === "" ? (
+        <p className="ah-small ah-muted as-tool-empty">No output</p>
+      ) : json !== undefined ? (
+        <JsonViewer value={json} maxHeight={320} />
+      ) : text !== null ? (
+        <pre
+          ref={pre}
+          className={cx("as-pre", "as-pre-wrap", result.isError && "as-pre-error")}
+          // A long output scrolls, so the keyboard must reach it.
+          // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
+          tabIndex={0}
+          aria-label={result.isError ? "Error output" : "Result"}
+        >
+          {grep && shown !== null ? <GrepText text={shown} /> : shown}
         </pre>
       ) : (
         <JsonViewer value={result.content} maxHeight={240} />
       )}
-      {cut && !all && (
+      {cut && !all && json === undefined && (
         <Button
           size="sm"
           variant="ghost"
@@ -183,25 +355,50 @@ function ResultBody({ result }: { result: ToolResultView }) {
   );
 }
 
+/** A shell command as a terminal line: `$`, then the command coloured as bash, wrapped. */
+function CommandText({ command, description }: { command: string; description: string | null }) {
+  const nodes = useHighlight(command, "bash", highlightable(command));
+  return (
+    <>
+      {description && <p className="as-tool-description">{description}</p>}
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
+      <pre className="as-pre as-pre-wrap as-command" tabIndex={0} aria-label="Command">
+        <span className="as-command-prompt" aria-hidden="true">
+          ${" "}
+        </span>
+        <code className={nodes ? "hljs" : undefined}>{nodes ?? command}</code>
+      </pre>
+    </>
+  );
+}
+
 function InputBody({ tool }: { tool: ToolView }) {
   // Claude's own report of the change, once it ran, carries the file's line numbers.
   const reported = tool.result?.diff ?? null;
   const diff = reported ?? toolDiff(tool);
   const command = typeof tool.input.command === "string" ? tool.input.command : null;
+  const description =
+    typeof tool.input.description === "string" && tool.input.description.trim() !== ""
+      ? tool.input.description
+      : null;
   return (
     <div className="as-tool-section">
-      <div className="as-tool-label">{diff !== null ? "Diff" : "Input"}</div>
+      <div className="as-tool-label">
+        {diff !== null ? "Diff" : command !== null ? "Command" : "Input"}
+        <span className="ah-grow" />
+        {diff === null && command !== null && (
+          <CopyButton text={command} label="Copy command" compact />
+        )}
+      </div>
       {diff !== null ? (
         <DiffText
           diff={diff}
           label={`Diff of ${toolSummary(tool.input) || tool.name}`}
           numbered={reported !== null}
+          path={str(tool.input, "file_path") ?? undefined}
         />
       ) : command !== null ? (
-        // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
-        <pre className="as-pre" tabIndex={0}>
-          {command}
-        </pre>
+        <CommandText command={command} description={description} />
       ) : (
         <JsonViewer value={tool.input} maxHeight={240} />
       )}

@@ -76,6 +76,7 @@ const rows = Array.from({ length: 12 }, (_, i) => ({
   repo: "agent-hub",
   passes: i < 10,
   manual: false,
+  signed_off: false,
   evidence: i < 10 ? `test run ${String(i + 1)}` : null,
   command: `uv run pytest -k case_${String(i + 1)}`,
 }));
@@ -85,6 +86,7 @@ rows.push({
   repo: "agent-hub",
   passes: false,
   manual: true,
+  signed_off: false,
   evidence: "eval.md §Owner steps",
   command: "manual: open a session in the hub",
 });
@@ -174,14 +176,14 @@ describe("ticketIds", () => {
 });
 
 describe("FeatureDetailScreen", () => {
-  it("shows the header with verdict, issues and the AC bar", async () => {
+  it("AC-425.5 shows the header with verdict and the AC bar, without the ticket ids", async () => {
     open();
 
     expect(
       await screen.findByRole("heading", { level: 1, name: "layered-memory" }),
     ).toBeInTheDocument();
     expect(screen.getAllByText("SHIP-WITH-OWNER-STEPS").length).toBeGreaterThan(0);
-    expect(screen.getByText("AGH-49")).toBeInTheDocument();
+    expect(screen.queryByText("AGH-49")).toBeNull();
     expect(screen.getByText("11/13").parentElement).toHaveTextContent("11/13 · 1 owner step");
   });
 
@@ -509,7 +511,7 @@ describe("FeatureDetailScreen", () => {
   });
 
   describe("records", () => {
-    it("has the Spec, Research, Plan, Eval and Acceptance criteria tabs (AC-269.9, records)", async () => {
+    it("has the Spec, Research, Plan, Acceptance criteria, Tickets and Eval tabs, in the order they are written (AC-269.9, AC-425.6, records)", async () => {
       open();
 
       const tabs = within(await screen.findByRole("tablist", { name: "Feature record" }));
@@ -517,9 +519,9 @@ describe("FeatureDetailScreen", () => {
         "Spec",
         "Research",
         "Plan",
-        "Eval",
         "Acceptance criteria13",
         "Tickets2",
+        "Eval",
       ]);
       expect(tabs.getByRole("tab", { name: /Acceptance criteria/ })).toHaveAttribute(
         "aria-selected",
@@ -913,6 +915,7 @@ describe("FeatureDetailScreen", () => {
                 repo: null,
                 passes: false,
                 manual: false,
+                signed_off: false,
                 evidence: null,
                 command: null,
               },
@@ -1034,21 +1037,12 @@ describe("FeatureDetailScreen", () => {
       expect(screen.getByRole("tab", { name: /Tickets/ })).toHaveAttribute("aria-selected", "true");
     });
 
-    it("shows each header chip with its Linear status and title on hover, and no PR placeholder (tickets)", async () => {
+    it("AC-425.5 keeps the ticket chips out of the header, and no PR placeholder (tickets)", async () => {
       open({ [TICKETS]: tickets }, "/features/agent-hub/layered-memory?doc=tickets");
 
       await screen.findByRole("region", { name: "Ticket flow" });
 
-      const header = screen.getByRole("group", { name: "Tickets of this feature" });
-      const link = within(header).getByRole("link", { name: "AGH-48" });
-      expect(link).toHaveTextContent(/^AGH-48$/);
-      expect(link).toHaveAttribute(
-        "href",
-        "/features/agent-hub/layered-memory?doc=tickets&ticket=AGH-48",
-      );
-      // Its destination is its description (AGH-330 UX F6).
-      expect(link).toHaveAccessibleDescription("AGH-48 · Load the memory layers · show its steps");
-      expect(within(header).getAllByText("In Progress")).toHaveLength(2);
+      expect(screen.queryByRole("group", { name: "Tickets of this feature" })).toBeNull();
       expect(screen.queryByText("PR —")).toBeNull();
     });
 
@@ -1072,18 +1066,6 @@ describe("FeatureDetailScreen", () => {
       await userEvent.click(screen.getByRole("button", { name: "Open the eval of acceptance" }));
       // Without an acceptance eval, the step names the tab it opens.
       expect(screen.getByRole("tab", { name: "Eval" })).toHaveAttribute("aria-selected", "true");
-    });
-
-    it("shows the ticket ids in the header until the tickets load (tickets)", async () => {
-      open();
-
-      await screen.findByRole("heading", { level: 1, name: "layered-memory" });
-
-      const header = screen.getByRole("group", { name: "Tickets of this feature" });
-      expect(within(header).getByRole("link", { name: "AGH-48" })).toBeInTheDocument();
-      expect(within(header).getByRole("link", { name: "AGH-49" })).toHaveAccessibleDescription(
-        "AGH-49 · show its steps",
-      );
     });
 
     it("refetches the tickets route on Refresh (notice)", async () => {
@@ -1239,5 +1221,25 @@ describe("FeatureDetailScreen", () => {
     await screen.findByRole("table", { name: "Acceptance criteria" });
 
     expect(await seriousViolations(container)).toEqual([]);
+  });
+});
+
+describe("FeatureDetailScreen and the feature's own session (AGH-422)", () => {
+  it("AC-422.1 names the session that wrote the spec in the header, one click from the panel", async () => {
+    const writer = anAgentSession({
+      id: anId(9, "0192a5e9"),
+      title: "Write the layered memory spec",
+    });
+    open({
+      "/api/v1/agent-sessions": (request: Request) => ({
+        items: new URL(request.url).searchParams.get("wrote")?.endsWith("/spec.md") ? [writer] : [],
+      }),
+    });
+
+    const chip = await screen.findByRole("button", { name: "Write the layered memory spec" });
+    expect(chip).toHaveAttribute(
+      "title",
+      "Talk with the session that wrote this feature's records: Write the layered memory spec",
+    );
   });
 });

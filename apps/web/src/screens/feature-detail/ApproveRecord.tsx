@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 
 import type { components } from "../../api/schema";
@@ -6,14 +6,8 @@ import { Button, Icon, MenuItem, Popover } from "../../components";
 import { ApiProblem, apiPost, useApi } from "../../lib/api";
 import { useBrainNote } from "../brain/queries";
 import { agentSessionHref } from "../sessions-list/control";
-import { OpenQuestions } from "./QuestionsBlock";
-import {
-  approvalMessage,
-  countLine,
-  openQuestions,
-  outcomeOf,
-  type Answers,
-} from "./openQuestions";
+import { OpenQuestions, useOpenQuestions } from "./QuestionsBlock";
+import { approvalMessage, countLine, outcomeOf, type Answers } from "./openQuestions";
 import { ANSWERS_MAX_BYTES, useAnswerDrafts } from "./useAnswerDrafts";
 
 export { approvalMessage } from "./openQuestions";
@@ -94,6 +88,8 @@ export function featureSessions(
  * else the newest session that wrote the file (`?wrote=`), else the newest one naming the feature;
  * the arrow picks another one. When the record has open questions, they sit above the bar with
  * a box each; the answers (or "accept the recommendation" for a blank one) go with the approval.
+ * A record whose frontmatter says `status: approved` shows that it is approved and offers no
+ * approval again.
  */
 export function ApproveRecord({
   project,
@@ -127,9 +123,9 @@ export function ApproveRecord({
   const [error, setError] = useState<string | null>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const [sentAnswers, setSentAnswers] = useState<Answers>({});
-  const note = useBrainNote(project, path.replace(/^brain\//, ""));
-  const markdown = note.data?.markdown;
-  const questions = useMemo(() => (markdown ? openQuestions(markdown) : []), [markdown]);
+  const notePath = path.replace(/^brain\//, "");
+  const note = useBrainNote(project, notePath);
+  const questions = useOpenQuestions(project, notePath);
   const drafts = useAnswerDrafts(project, slug, record, questions);
 
   useEffect(() => {
@@ -157,6 +153,23 @@ export function ApproveRecord({
     };
   }, [open]);
 
+  // An approved record says so instead of offering the approval again.
+  if (isApproved(note.data?.frontmatter.status)) {
+    return (
+      <>
+        {children}
+        <div className="ah-row ah-wrap ah-small" style={{ gap: 8 }} role="status">
+          <Icon name="check" size="sm" style={{ color: "var(--done)" }} />
+          <span>
+            {`${record.charAt(0).toUpperCase()}${record.slice(1)}`} approved
+            {typeof note.data?.frontmatter.last_verified === "string" &&
+              ` · last verified ${note.data.frontmatter.last_verified}`}
+            .
+          </span>
+        </div>
+      </>
+    );
+  }
   // Without session control (no cookie, the container) there is nowhere to send it.
   if (!sessions.isSuccess) return <>{children}</>;
   const all = sessions.data.items.filter((s) => s.kind === "local");
@@ -347,6 +360,11 @@ export function ApproveRecord({
       {bar()}
     </>
   );
+}
+
+/** Whether a record's frontmatter `status` says the owner approved it. */
+export function isApproved(status: string | readonly string[] | undefined): boolean {
+  return typeof status === "string" && status.trim().toLowerCase() === "approved";
 }
 
 /**

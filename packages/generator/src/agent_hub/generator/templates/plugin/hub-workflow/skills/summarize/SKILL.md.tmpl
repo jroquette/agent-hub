@@ -26,12 +26,29 @@ reader needs to decide must be in it, and nothing the record does not say.
    - bullets of one or two lines, the meaning in their first words;
    - each bullet ends with a link to the record's section it comes from: `([Goals](../<record>.md#goals))`
      (the heading in lower case, spaces as `-`, punctuation dropped).
+   - **Open questions** is the exception: hub web shows the owner this section's questions to answer, in place of the
+     record's, so each one must be answerable from the summary alone. List every question of the record's
+     `## Open questions`, answered or not, in its order and with its id, in this shape:
+
+     ```
+     - Q7. **When the businesses are re-checked after a provider switch.** <Context: what is being decided, what
+       today's behaviour or the requirement it touches says, in words, and why the choice matters.>
+       - **Async job per webshop** (recommended): <what happens if chosen, and what it costs>.
+       - **Explicit admin action**: <what happens if chosen, and what it costs>.
+       - **Owner answer (<date>):** <the answer, if the record has one>.
+     ```
+
+     The context and every option stand on their own: no "AC-9", "D5", "invariant 5", "Q2" or file path a reader
+     would have to look up. Say what the criterion, decision or rule says instead ("the criterion where an admin
+     re-checks a webshop's businesses after switching provider"). Keep each option the record offers, its
+     "(recommended)" mark and its trade-off; add none. Each question ends with its link to the record.
 4. Rules:
-   - **150 to 300 words, never over 350**, links and frontmatter not counted.
+   - **150 to 300 words, never over 350**, links, frontmatter and the Open questions section not counted.
    - Plain language for a mixed audience: no `path:line` citations, file paths, AC lists or code; the domain words
      the team already uses are fine.
    - Keep the record's hedges and scope ("phase 1 only", "not verified", "MEDUSA webshops only"); never make a
      claim broader than the record makes it.
    - Name every open question and every owner decision still pending: a missing one is the failure readers cannot see.
+     A question the owner cannot answer without opening the record is a missing one too.
    - Write in the language of the record. Word the summary with the `plain-language` skill; where the two differ, this list wins.
 5. Show the summary and its path. Stop.

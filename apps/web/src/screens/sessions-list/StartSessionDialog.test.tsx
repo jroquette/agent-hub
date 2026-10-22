@@ -1,9 +1,13 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { rememberScreenshot, screenshotFor } from "../../lib/screenshotCopy";
+import {
+  rememberMessageScreenshots,
+  rememberScreenshot,
+  screenshotFor,
+} from "../../lib/screenshotCopy";
 import {
   aCapabilities,
   aWorkdir,
@@ -12,6 +16,19 @@ import {
   renderWithApi,
 } from "../../testing/builders";
 import { StartSessionDialog } from "./StartSessionDialog";
+
+vi.mock("../../lib/pastedImage", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../lib/pastedImage")>();
+  return {
+    ...actual,
+    imageToPng: vi.fn((file: File) => Promise.resolve(`data:image/png;base64,${file.name}`)),
+  };
+});
+
+vi.mock("../../lib/screenshotCopy", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../lib/screenshotCopy")>();
+  return { ...actual, rememberMessageScreenshots: vi.fn(actual.rememberMessageScreenshots) };
+});
 
 const AGENT = "/api/v1/agent-sessions";
 const SHOT = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
@@ -101,11 +118,11 @@ describe("StartSessionDialog (shake to start a session)", () => {
     });
   });
 
-  it("does not remember the copy when unchecked", async () => {
+  it("does not remember the copy once removed", async () => {
     const { created, view, dialog } = start();
 
     await userEvent.click(
-      within(dialog).getByRole("checkbox", { name: "Attach a screenshot of the current screen" }),
+      within(dialog).getByRole("button", { name: "Remove Screenshot of the screen you shook" }),
     );
     await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
 
@@ -117,6 +134,34 @@ describe("StartSessionDialog (shake to start a session)", () => {
       (r) => r.method === "POST" && new URL(r.url).pathname === AGENT,
     );
     expect(await bodyOf(post)).not.toHaveProperty("screenshot");
+  });
+
+  it("AC-421.7 keeps the capture and the images of the first prompt for the chat's first bubble", async () => {
+    const { created, view, dialog } = start();
+    const prompt = within(dialog).getByRole("textbox", { name: "Prompt" });
+
+    fireEvent.paste(prompt, {
+      clipboardData: { files: [new File(["png"], "UEFTVEVE", { type: "image/png" })] },
+    });
+    const attached = within(dialog).getByRole("list", { name: "Attached to the first prompt" });
+    expect(await within(attached).findByRole("img", { name: "Image 2" })).toBeInTheDocument();
+    await userEvent.type(prompt, "Compare these");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Start session" }));
+
+    await waitFor(() => {
+      expect(view.router.state.location.pathname).toBe(`/agent-sessions/${created.id}`);
+    });
+    expect(vi.mocked(rememberMessageScreenshots)).toHaveBeenCalledWith(created.id, 1, [
+      SHOT,
+      "data:image/png;base64,UEFTVEVE",
+    ]);
+    const post = view.requests.find(
+      (r) => r.method === "POST" && new URL(r.url).pathname === AGENT,
+    );
+    expect(await bodyOf(post)).toMatchObject({
+      prompt: "Compare these",
+      screenshots: [{ media_type: "image/png", data: "UEFTVEVE" }],
+    });
   });
 
   it("closes on Cancel without a request", async () => {

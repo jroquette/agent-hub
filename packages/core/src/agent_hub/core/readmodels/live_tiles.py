@@ -104,6 +104,13 @@ def _failing_notice(winners: Sequence[StoredEvent], *, now: datetime) -> str | N
     return None
 
 
+def tile_clock_settled(last_activity_at: datetime, now: datetime) -> bool:
+    """Whether ``now`` is past the only clock window a tile's fields read (the failing notice
+    counts the tool errors of the last ``ERROR_WINDOW``) since the session's last event: from
+    then on, for the same events and status, ``tile_fields`` no longer changes with ``now``."""
+    return now - last_activity_at > ERROR_WINDOW
+
+
 def _last_action(winners: Sequence[StoredEvent]) -> tuple[str | None, str | None]:
     calls = [stored for stored in winners if stored.event.type == EventType.TOOL_CALL]
     if not calls:

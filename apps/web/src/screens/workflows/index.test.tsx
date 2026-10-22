@@ -38,7 +38,7 @@ function renderDetail(reply: ApiRoutes[string] = aWorkflowDetail(), query = "") 
 }
 
 describe("Toolkit › Workflows tab", () => {
-  it("lists the hub's workflows before the built-ins, each with its inputs and shape", async () => {
+  it("AC-427.10 lists the hub's workflows before the built-ins as catalog cards, each with its inputs and shape", async () => {
     renderList({
       "/api/v1/workflows": aWorkflowCatalog({
         items: [aWorkflowSummary({ name: "review", source: "builtin" }), aWorkflowSummary()],
@@ -50,7 +50,22 @@ describe("Toolkit › Workflows tab", () => {
     expect(rows[0]).toHaveTextContent("feature-flow");
     expect(rows[0]).toHaveTextContent("You give it: feature");
     expect(rows[0]).toHaveTextContent("4 steps · Claude does 1 · stops to ask you");
-    expect(rows[1]).toHaveTextContent("reviewbuilt-in");
+    expect(rows[0]).toHaveTextContent("Hub");
+    expect(rows[1]).toHaveTextContent("review");
+    expect(rows[1]).toHaveTextContent("Built-in");
+  });
+
+  it("AC-427.10 gives each card one Tab stop, its name", async () => {
+    renderList({ "/api/v1/workflows": aWorkflowCatalog({ problems: [] }) });
+
+    const list = await screen.findByRole("list", { name: "Workflows" });
+    const card = within(list).getByRole("article", { name: "feature-flow" });
+    expect(
+      within(card)
+        .getAllByRole("link")
+        .map((link) => link.textContent),
+    ).toEqual(["feature-flow"]);
+    expect(within(card).queryByRole("button")).toBeNull();
   });
 
   it("says in one sentence what a workflow is, and selects its tab", async () => {
@@ -207,7 +222,7 @@ describe("WorkflowDetailScreen", () => {
     expect(edges.sort()).toEqual(["build→review", "docs→review", "plan→build", "plan→docs"]);
   });
 
-  it("opens the node panel from the keyboard and returns focus on close", async () => {
+  it("AC-427.9 opens the node panel from the keyboard and returns focus on close", async () => {
     const user = userEvent.setup();
     const { router } = renderDetail();
 
@@ -245,19 +260,19 @@ describe("WorkflowDetailScreen", () => {
     ]);
   });
 
-  it("lists the steps in run order in plain words, and what a run takes", async () => {
+  it("AC-427.3 lists the steps in run order in plain words, and what a run takes", async () => {
     renderDetail();
 
     const steps = await screen.findByRole("list", { name: "Steps" });
     const items = within(steps).getAllByRole("listitem");
     expect(items.map((item) => item.textContent)).toEqual([
-      expect.stringContaining("AI agentplan"),
-      expect.stringContaining("Commandbuild"),
-      expect.stringContaining("Commanddocs"),
-      expect.stringContaining("Approval by youreview"),
+      expect.stringMatching(/^1Step 1: .*AI agent.*plan/),
+      expect.stringMatching(/^2Step 2: build.*Command/),
+      expect.stringMatching(/^3Step 3: .*Command.*docs/),
+      expect.stringMatching(/^4Step 4: review.*Approval by you/),
     ]);
     expect(items[0]).toHaveTextContent("Writes the plan.");
-    expect(items[2]).toHaveTextContent("after plan");
+    expect(items[2]).toHaveTextContent("Waits for plan");
     const inputs = screen.getByRole("region", { name: "What you give it" });
     expect(inputs).toHaveTextContent("feature");
     expect(inputs).toHaveTextContent("What to build.");
@@ -426,7 +441,7 @@ describe("WorkflowDetailScreen, starting and reading (AC-PG-13)", () => {
     );
   });
 
-  it("AC-PG-13.4 shows each step's kind, its prompt or command, and a repeat's rounds", async () => {
+  it("AC-PG-13.4 AC-427.5 AC-427.6 shows each step's kind, its prompt or command, and a repeat's rounds", async () => {
     renderWith(
       "feature-flow",
       aWorkflowDetail({
@@ -455,12 +470,156 @@ describe("WorkflowDetailScreen, starting and reading (AC-PG-13)", () => {
     );
 
     const steps = await screen.findByRole("list", { name: "Steps" });
-    expect(steps).toHaveTextContent(
-      "Each round runs these steps; at most 3 rounds, stopping as soon as they pass.",
-    );
+    expect(steps).toHaveTextContent("Rounds, up to 3");
+    expect(steps).toHaveTextContent("Stops when make check passes.");
+    expect(steps).toHaveTextContent("If round 3 ends without stopping, this step fails.");
     expect(within(steps).getByText("Read the prompt")).toBeInTheDocument();
     expect(steps).toHaveTextContent("Fix the failing test.");
-    expect(steps).toHaveTextContent("$ make check");
+    expect(within(steps).getByRole("group", { name: "Command of check" })).toHaveTextContent(
+      "make check",
+    );
+  });
+
+  it("AC-427.4 shows a step's condition as text, not only in a tooltip", async () => {
+    renderWith(
+      "feature-flow",
+      aWorkflowDetail({
+        layers: [[{ id: "docs", type: "shell", depends_on: [], description: "Builds the docs." }]],
+        document: {
+          name: "feature-flow",
+          nodes: [
+            {
+              id: "docs",
+              type: "shell",
+              description: "Builds the docs.",
+              when: "$check.output.passed == true",
+              command: ["make", "docs"],
+            },
+          ],
+        },
+      }),
+    );
+
+    const steps = await screen.findByRole("list", { name: "Steps" });
+    expect(steps).toHaveTextContent("Only when $check.output.passed == true");
+  });
+
+  it("AC-427.7 moves across the steps with j and k", async () => {
+    // jsdom has no scrollIntoView.
+    Element.prototype.scrollIntoView = vi.fn();
+    const user = userEvent.setup();
+    renderWith("feature-flow", aWorkflowDetail());
+
+    const steps = await screen.findByRole("list", { name: "Steps" });
+    const items = within(steps).getAllByRole("listitem");
+    await user.keyboard("j");
+    expect(items[0]).toHaveFocus();
+    await user.keyboard("j");
+    expect(items[1]).toHaveFocus();
+    await user.keyboard("k");
+    expect(items[0]).toHaveFocus();
+  });
+
+  it("AC-427.11 has no serious a11y violations with rounds and an open prompt (a11y)", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWith(
+      "feature-flow",
+      aWorkflowDetail({
+        layers: [[{ id: "fixing", type: "loop_group", depends_on: [], description: null }]],
+        document: {
+          name: "feature-flow",
+          nodes: [
+            {
+              id: "fixing",
+              type: "loop_group",
+              max_iterations: 3,
+              until_when: "$check.output.passed == true",
+              nodes: [
+                { id: "fixing__fix", type: "agent", prompt: "Fix it.", context: "fresh" },
+                {
+                  id: "fixing__check",
+                  type: "shell",
+                  when: "$fix.output.done == true",
+                  command: ["make", "check"],
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+
+    await user.click(await screen.findByText("Read the prompt"));
+    expect(screen.getByText("Starts afresh each round")).toBeInTheDocument();
+    expect(await seriousViolations(container)).toEqual([]);
+  });
+
+  it("AC-427.1 holds the inputs, the revision and the runs link in the About rail", async () => {
+    renderWith("feature-flow", aWorkflowDetail({ revision: 4 }));
+
+    const rail = await screen.findByRole("complementary", { name: "About this workflow" });
+    expect(within(rail).getByRole("region", { name: "What you give it" })).toHaveTextContent(
+      "feature",
+    );
+    expect(within(rail).getByRole("region", { name: "Where it lives" })).toHaveTextContent(
+      "Revisionr4",
+    );
+    expect(within(rail).getByRole("link", { name: "Runs of this workflow" })).toHaveAttribute(
+      "href",
+      "/runs?workflow=feature-flow",
+    );
+  });
+
+  it("AC-427.2 says the shape in words under the description, a repeat in rounds", async () => {
+    renderWith(
+      "feature-flow",
+      aWorkflowDetail({
+        steps: [
+          { id: "plan", type: "agent", max_iterations: null, body: [] },
+          {
+            id: "fixing",
+            type: "loop_group",
+            max_iterations: 3,
+            body: [{ id: "fix", type: "agent", max_iterations: null, body: [] }],
+          },
+        ],
+      }),
+    );
+
+    expect(
+      await screen.findByText(
+        "2 steps · Claude does 2 · repeats in up to 3 rounds · runs without you",
+      ),
+    ).toBeInTheDocument();
+    const heading = screen.getByRole("heading", { name: "Step by step" });
+    expect(heading.parentElement).toHaveTextContent("1 AI agent");
+  });
+
+  it("AC-427.8 says a workflow without steps has none", async () => {
+    renderWith("feature-flow", aWorkflowDetail({ layers: [], document: { name: "feature-flow" } }));
+
+    expect(await screen.findByText("This workflow has no steps.")).toBeInTheDocument();
+  });
+
+  it("AC-427.8 shows a skeleton of the page while the workflow loads", async () => {
+    renderWith("feature-flow", "pending");
+
+    expect(
+      await screen.findByRole("status", { name: "Loading feature-flow" }, { timeout: 2000 }),
+    ).toHaveAttribute("aria-busy", "true");
+  });
+
+  it("AC-427.9 opens a chosen node under the graph, its facts beside its document", async () => {
+    renderWith("feature-flow", aWorkflowDetail(), "?node=build");
+
+    const panel = await screen.findByRole("complementary", { name: "Node build" });
+    const graph = screen.getByRole("group", { name: "Workflow graph" });
+    expect(graph.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(graph).not.toContainElement(panel);
+    const facts = panel.querySelector(".wf-node-facts");
+    expect(facts).toHaveTextContent("Typeshell");
+    expect(facts).toHaveTextContent("Waits forplan");
+    expect(panel.querySelector(".wf-node-detail")).toHaveTextContent("make");
   });
 
   it("AC-PG-13.4 says a built-in is not a hub file and how to propose a copy", async () => {

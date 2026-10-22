@@ -7,6 +7,7 @@ naming the hub. Every action script appends its stdin to the file ``MARKER`` nam
 sees which mode ran, if any. Output is read without colour codes (CI forces a terminal).
 """
 
+import fcntl
 import json
 import os
 import pty
@@ -2368,6 +2369,13 @@ def test_creates_issue_once_after_yes_when_findings_issue_on_terminal(
     description = call["arguments"]["description"]
     assert "Record: /scenarios/hold-walk/runs/walk-1 in hub web" in description
     assert FINDING_KEY not in description
+    # The marker hub web shares holds the issue, owner-only (AGH-363 review round 2).
+    issue_file = hub / ".agent-runs" / "workflows" / RUN / "finding-f1.issue"
+    assert json.loads(issue_file.read_text(encoding="utf-8")) == {
+        "id": "DEM-42",
+        "url": "https://linear.example.com/demo/issue/DEM-42",
+    }
+    assert issue_file.stat().st_mode & 0o777 == 0o600
 
 
 def test_creates_nothing_when_findings_issue_without_terminal(
@@ -2560,3 +2568,186 @@ def test_escapes_controls_when_findings_json(hub: Path, marker: Path, held: Path
     assert result.stdout.isascii()
     assert raw_controls(result.stdout.replace("\n", "")) == []
     assert json.loads(result.stdout)["findings"][0]["title"] == text
+
+
+def test_creates_nothing_when_findings_issue_already_marked(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    # The terminal and hub web share one marker per finding: at most one issue (AGH-363 Q7).
+    found_run(hub, marker, held)
+    env = a_tracker(hub)
+    issue = {"id": "DEM-7", "url": "https://linear.example.com/demo/issue/DEM-7"}
+    marked = hub / ".agent-runs" / "workflows" / RUN / "finding-f1.issue"
+    marked.write_text(json.dumps(issue), encoding="utf-8")
+
+    code, shown = findings_in_terminal(hub, env, RUN, "--issue", "f1", answer="y")
+
+    assert code == 1, shown
+    assert "finding f1 already has the issue DEM-7" in plain(shown)
+    assert "[y/N]" not in shown
+    assert tracker_calls(hub) == []
+    assert json.loads(marked.read_text(encoding="utf-8")) == issue
+
+
+@pytest.mark.skipif(not Path("/proc/self/stat").exists(), reason="reads /proc")
+def test_kills_plan_groups_when_scenario_plan_interrupted(hub: Path, marker: Path) -> None:
+    # hub web stops a plan past its time or output cap with SIGINT to the plan's group
+    # (AGH-363 Q3): the plan-mode scripts, in their own groups, end with it.
+    write_action(hub, "slow-order", "read")
+    (hub / "actions" / "demo" / "scripts" / "slow-order.sh").write_text(SLOW_SCRIPT)
+    write_scenario(hub, SLOW_WALK)
+    commit_all(hub, "slow walk")
+    groups_file = Path(f"{marker}.groups")
+
+    process = hub_process(hub, marker, "scenario", "plan", "slow-walk", "--env", "local", "--json")
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline and not _lines(groups_file):
+        time.sleep(0.05)
+    process.send_signal(signal.SIGINT)
+    process.communicate(timeout=30)
+
+    groups = [int(line) for line in _lines(groups_file)]
+    assert len(groups) == 1
+    assert live_members(groups[0]) == []
+    assert not Path(f"{marker}.late").exists()
+
+
+# A failed or unfinished create (AGH-363 review round 2, E-14): hub web refuses it; a terminal
+# shows the state, warns that the issue may exist, and asks again.
+FAILING_CLAUDE = """\
+import json
+import os
+import sys
+
+request = json.loads(sys.argv[2].splitlines()[-1])
+with open(os.environ["TRACKER_CALLS"], "a") as calls:
+    calls.write(json.dumps(request) + "\\n")
+sys.exit(1)
+"""
+DEM_42 = {"id": "DEM-42", "url": "https://linear.example.com/demo/issue/DEM-42"}
+
+
+def issue_file(hub: Path) -> Path:
+    return hub / ".agent-runs" / "workflows" / RUN / "finding-f1.issue"
+
+
+def test_marks_failure_when_findings_issue_create_fails(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    found_run(hub, marker, held)
+    env = a_tracker(hub)
+    (hub.parent.parent / "tracker-bin" / "claude").write_text(
+        f"#!{sys.executable}\n{FAILING_CLAUDE}"
+    )
+
+    code, shown = findings_in_terminal(hub, env, RUN, "--issue", "f1", answer="y")
+
+    assert code == 1, shown
+    assert len(tracker_calls(hub)) == 1
+    assert json.loads(issue_file(hub).read_text(encoding="utf-8")) == {"failed": True}
+
+
+@pytest.mark.parametrize("left", ['{"failed": true}', ""])
+def test_creates_once_after_warning_when_findings_issue_retried(
+    hub: Path, marker: Path, held: Path, *, left: str
+) -> None:
+    found_run(hub, marker, held)
+    env = a_tracker(hub)
+    issue_file(hub).write_text(left, encoding="utf-8")
+
+    code, shown = findings_in_terminal(hub, env, RUN, "--issue", "f1", answer="y")
+
+    assert code == 0, shown
+    text = plain(shown)
+    assert "the issue may already exist in the tracker" in text
+    assert "[y/N]" in shown
+    assert "created DEM-42" in text
+    assert len(tracker_calls(hub)) == 1
+    recorded = json.loads(issue_file(hub).read_text(encoding="utf-8"))
+    assert {key: recorded[key] for key in ("id", "url")} == DEM_42
+    assert issue_file(hub).stat().st_mode & 0o777 == 0o600
+
+
+def test_creates_nothing_when_findings_issue_retry_declined(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    found_run(hub, marker, held)
+    env = a_tracker(hub)
+    issue_file(hub).write_text('{"failed": true}', encoding="utf-8")
+
+    code, shown = findings_in_terminal(hub, env, RUN, "--issue", "f1", answer="n")
+    quiet = findings(hub, marker, held, RUN, "--issue", "f1", **env)
+
+    assert code == 0, shown
+    assert "the issue may already exist in the tracker" in plain(shown)
+    assert "the issue was not created" in plain(shown)
+    assert quiet.exit_code == 0, quiet.output
+    assert tracker_calls(hub) == []
+    assert json.loads(issue_file(hub).read_text(encoding="utf-8")) == {"failed": True}
+
+
+def test_refuses_before_asking_when_findings_issue_create_running(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    # E-14: a running create (hub web's, or another terminal's) holds the claim's lock.
+    found_run(hub, marker, held)
+    env = a_tracker(hub)
+    issue_file(hub).write_text("", encoding="utf-8")
+    lock = os.open(issue_file(hub).with_name("finding-f1.issue.lock"), os.O_RDWR | os.O_CREAT)
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    try:
+        code, shown = findings_in_terminal(hub, env, RUN, "--issue", "f1", answer="y")
+    finally:
+        os.close(lock)
+
+    assert code == 1, shown
+    assert "a create of finding f1's issue is running" in plain(shown)
+    assert "[y/N]" not in shown
+    assert tracker_calls(hub) == []
+
+
+# Review round 4: a lock file that is a link, and a created issue that cannot be recorded.
+
+
+def test_exits_one_when_findings_issue_lock_is_link(hub: Path, marker: Path, held: Path) -> None:
+    found_run(hub, marker, held)
+    env = a_tracker(hub)
+    issue_file(hub).write_text('{"failed": true}', encoding="utf-8")
+    issue_file(hub).with_name("finding-f1.issue.lock").symlink_to(hub / "elsewhere")
+
+    code, shown = findings_in_terminal(hub, env, RUN, "--issue", "f1", answer="y")
+
+    assert code == 1, shown
+    assert "cannot mark the finding's issue: Too many levels of symbolic links" in plain(shown)
+    assert "[y/N]" not in shown
+    assert tracker_calls(hub) == []
+    assert not (hub / "elsewhere").exists()
+
+
+# The fake tracker, turning the marker into a folder while it creates the issue.
+UNRECORDABLE_CLAUDE = (
+    "import os\n"
+    "marker = os.environ['ISSUE_MARKER']\n"
+    "os.remove(marker)\n"
+    "os.mkdir(marker)\n" + TRACKER_CLAUDE
+)
+
+
+def test_warns_not_recorded_when_findings_issue_record_fails(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    found_run(hub, marker, held)
+    env = a_tracker(hub) | {"ISSUE_MARKER": str(issue_file(hub))}
+    (hub.parent.parent / "tracker-bin" / "claude").write_text(
+        f"#!{sys.executable}\n{UNRECORDABLE_CLAUDE}"
+    )
+
+    code, shown = findings_in_terminal(hub, env, RUN, "--issue", "f1", answer="y")
+
+    assert code == 1, shown
+    text = plain(shown).replace("\r\n", "\n")
+    assert (
+        "the issue DEM-42 was created but could not be recorded: Is a directory;"
+        " do not create it again"
+    ) in text
+    assert len(tracker_calls(hub)) == 1

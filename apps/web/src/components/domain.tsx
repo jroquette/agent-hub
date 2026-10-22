@@ -415,7 +415,7 @@ const HEALTH_BADGE = {
 } as const;
 
 /** One figure of a project card: a label above, the value below, an optional note under it. */
-function CardStat({
+export function CardStat({
   label,
   hint,
   children,
@@ -437,8 +437,83 @@ function CardStat({
   );
 }
 
-export function ProjectCard({ p, onOpen }: { p: ProjectCardData; onOpen?: () => void }) {
+export type ProjectCardHeadData = Pick<
+  ProjectCardData,
+  | "name"
+  | "hub"
+  | "team"
+  | "version"
+  | "lockVersion"
+  | "syncPending"
+  | "repos"
+  | "health"
+  | "healthLabel"
+>;
+
+/**
+ * The head of a project card: name, team, `hub · n repos · platform v`, Sync pending and health.
+ * With `nameHref` the name is the card's link (the pickers); without it, plain text (Portfolio).
+ */
+export function ProjectCardHead({
+  p,
+  nameHref,
+  nameId,
+  trailing,
+}: {
+  p: ProjectCardHeadData;
+  nameHref?: string | undefined;
+  nameId?: string | undefined;
+  trailing?: ReactNode;
+}) {
   const health = p.health ? HEALTH_BADGE[p.health] : null;
+  return (
+    <div className="ah-pcard-head">
+      <div className="ah-stack" style={{ gap: 2, minWidth: 0 }}>
+        <div className="ah-row" style={{ gap: 8 }}>
+          <h3 id={nameId} className="ah-h3" style={{ fontSize: 16 }}>
+            {nameHref === undefined ? (
+              p.name
+            ) : (
+              <AppLink href={nameHref} className="ah-pcard-name" data-nav-row>
+                {p.name}
+              </AppLink>
+            )}
+          </h3>
+          {p.team && <span className="ah-small ah-subtle">{p.team}</span>}
+        </div>
+        <div className="ah-small ah-subtle">
+          {p.hub} ·{" "}
+          <span title={p.repos.length > 0 ? p.repos.join(", ") : undefined}>
+            {p.repos.length} {p.repos.length === 1 ? "repo" : "repos"}
+          </span>{" "}
+          · platform {p.version}
+        </div>
+      </div>
+      <span className="ah-grow" />
+      {p.syncPending && (
+        <span
+          className="ah-badge ah-badge-waiting"
+          title={`hub.lock ${p.lockVersion ?? "—"}, pin ${p.version}`}
+        >
+          <Icon name="refresh-cw" />
+          Sync pending
+        </span>
+      )}
+      <Tooltip label={p.healthLabel}>
+        <span role="img" aria-label={p.healthLabel}>
+          {health ? (
+            <StatusBadge status={health.status} label={health.label} />
+          ) : (
+            <StatusBadge status="idle" label="Not checked" quiet />
+          )}
+        </span>
+      </Tooltip>
+      {trailing}
+    </div>
+  );
+}
+
+export function ProjectCard({ p, onOpen }: { p: ProjectCardData; onOpen?: () => void }) {
   const missing = [p.prs === null && "GitHub", p.ready === null && "Linear"].filter(
     (name): name is string => Boolean(name),
   );
@@ -455,39 +530,7 @@ export function ProjectCard({ p, onOpen }: { p: ProjectCardData; onOpen?: () => 
         if (e.key === "Enter" && e.target === e.currentTarget) onOpen?.();
       }}
     >
-      <div className="ah-pcard-head">
-        <div className="ah-stack" style={{ gap: 2, minWidth: 0 }}>
-          <div className="ah-row" style={{ gap: 8 }}>
-            <h3 className="ah-h3" style={{ fontSize: 16 }}>
-              {p.name}
-            </h3>
-            {p.team && <span className="ah-small ah-subtle">{p.team}</span>}
-          </div>
-          <div className="ah-small ah-subtle">
-            {p.hub} · {p.repos.length} {p.repos.length === 1 ? "repo" : "repos"} · platform{" "}
-            {p.version}
-          </div>
-        </div>
-        <span className="ah-grow" />
-        {p.syncPending && (
-          <span
-            className="ah-badge ah-badge-waiting"
-            title={`hub.lock ${p.lockVersion ?? "—"}, pin ${p.version}`}
-          >
-            <Icon name="refresh-cw" />
-            Sync pending
-          </span>
-        )}
-        <Tooltip label={p.healthLabel}>
-          <span role="img" aria-label={p.healthLabel}>
-            {health ? (
-              <StatusBadge status={health.status} label={health.label} />
-            ) : (
-              <StatusBadge status="idle" label="Not checked" quiet />
-            )}
-          </span>
-        </Tooltip>
-      </div>
+      <ProjectCardHead p={p} />
       <div className="ah-pcard-grid">
         <CardStat label="Live sessions" hint="Now">
           {p.live > 0 && <span className="ah-dot ah-pulse" style={{ color: "var(--live)" }} />}

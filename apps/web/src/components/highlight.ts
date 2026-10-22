@@ -81,3 +81,47 @@ export function highlight(code: string, language: string): ReactNode[] | null {
   if (!lowlight.registered(name)) return null;
   return toReact(lowlight.highlight(name, code).children);
 }
+
+/** One run of text and the classes of the spans around it, outermost first. */
+interface Run {
+  text: string;
+  classes: readonly (string | undefined)[];
+}
+
+function splitRuns(
+  nodes: readonly (RootContent | ElementContent)[],
+  classes: readonly (string | undefined)[],
+  lines: Run[][],
+): void {
+  for (const node of nodes) {
+    if (node.type === "text") {
+      node.value.split("\n").forEach((text, index) => {
+        if (index > 0) lines.push([]);
+        if (text !== "") lines[lines.length - 1]?.push({ text, classes });
+      });
+    } else if (node.type === "element") {
+      const inner =
+        node.tagName === "span" ? [...classes, classOf(node.properties.className)] : classes;
+      splitRuns(node.children, inner, lines);
+    }
+  }
+}
+
+/** The code as highlighted React nodes, one list per line (a span crossing a line break opens
+ * again on the next line, as a diff shows each line on its own row), or null when the language
+ * is not one of ours. Same output rules as `toReact`: text and classed `span`s only. */
+export function highlightLines(code: string, language: string): ReactNode[][] | null {
+  const name = language.toLowerCase();
+  if (!lowlight.registered(name)) return null;
+  const lines: Run[][] = [[]];
+  splitRuns(lowlight.highlight(name, code).children, [], lines);
+  return lines.map((runs) =>
+    runs.map((run, key) =>
+      run.classes.reduceRight<ReactNode>(
+        (child, className, depth) =>
+          createElement("span", depth === 0 ? { key, className } : { className }, child),
+        run.classes.length === 0 ? createElement(Fragment, { key }, run.text) : run.text,
+      ),
+    ),
+  );
+}

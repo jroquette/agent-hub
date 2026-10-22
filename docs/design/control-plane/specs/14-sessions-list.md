@@ -47,7 +47,8 @@ Sessions                    [Grid | Table]  [Views ▾] [Columns] [24 h|7 d|30 d
   running session older than the period still shows.
 - **Driven sessions.** A driven session with an observed twin shows once, as the twin, with a "Chat" badge, and opens
   the chat. One without a twin (`observed_session_id` null) shows in its section with the fields it has. "New session"
-  sits in the page header; the 401, 404 `agent-sessions-off` and 503 banners stay. There is no separate "Driven from
+  sits in the page header (its dialog writes the first prompt in the chat's message card, with images and files:
+  [agent-sessions.md](../../agent-sessions.md#new-session-the-first-prompt-in-the-chats-card-agh-421)); the 401, 404 `agent-sessions-off` and 503 banners stay. There is no separate "Driven from
   hub web" list. Cloud guidance is a collapsed "Cloud sessions" details below the sections. An ended or failed local
   driven session (or its twin) has a "Resume" link to its chat, where a message resumes it in place (ADR 0036).
 - **Open.** Every tile and row has a visible primary button: "Open" (observed), "Open chat" (driven), "Answer" when

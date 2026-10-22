@@ -132,6 +132,28 @@ is a permission prompt maps to `permission`) is decided by the `gate.result` wit
 ask is keyed by its tool use id: a PostToolUse or PostToolUseFailure with that id decides it `approved` (the tool ran,
 E3); the session's next UserPromptSubmit, Stop or SessionEnd without it decides it `declined`, labelled inferred.
 
+### Fold cost (AGH-429)
+
+`now` reaches a session's fold only through its status thresholds since the last event: `LIVE_WINDOW` (5 minutes) and
+`END_AFTER` (30 minutes), its `clock_phase`; and its tile fields only through the failing notice's `ERROR_WINDOW`. The
+memo keeps a fold until one of those changes, so opening a session one second after the last read does not fold every
+session again. Proof: unit tests in `packages/core/tests/unit` and `packages/api/tests/unit/test_composition.py`.
+
+- **AC-429.1** Given a session folded at `now`, when it is read again at a later `now` with the same clock phase (no
+  threshold crossed since its last event) and the same events, then the memo returns the same fold without folding it
+  again.
+- **AC-429.2** Given the same session, when the clock crosses `LIVE_WINDOW` or `END_AFTER` since its last event, then
+  it is folded again (e.g. `ended`, labelled inferred, after 30 minutes).
+- **AC-429.3** Given a session whose last event is older than `ERROR_WINDOW`, when the session list is read again at a
+  later `now`, then its tile fields are reused, not derived again.
+- **AC-429.4** Given a session with many approval requests, when its approvals are folded, then each request is decided
+  by its own tool or gate result and by the events strictly after it (an index per session and a bisection on the
+  timestamp, not a scan per request), with the same results as before; the session's fold folds them once and hands
+  them to its problems.
+- **AC-429.5** Given registered hubs, when a fold asks a project's hub path (the "How to decide" links), then it is read
+  from the registry and each `hub.json` (`project_hubs`), never from the project detail whose lock state may run the
+  doctor; an unknown project or an unreadable registry gives no path.
+
 ## Phase 2 decisions
 
 - **D5, stored ids.** The store mints `event_id` (UUIDv7) and `received_at` at append (ADR 0018); identity stays

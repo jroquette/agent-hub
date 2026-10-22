@@ -12,6 +12,7 @@ import {
 import {
   Button,
   CopyButton,
+  FitText,
   Icon,
   Markdown,
   SegmentedControl,
@@ -19,10 +20,12 @@ import {
   Tabs,
 } from "../../components";
 import { cx } from "../../lib/cx";
+import { fmtInt } from "../../lib/format";
 import { githubPullHref } from "../../lib/safeHref";
 import { readStored, writeStored } from "../../lib/storage";
 import { useDrawerWidth, useListWidth } from "./DrawerResize";
 import { ReviewCommentsContext, ReviewDiff, type ReviewComments } from "./ReviewDiff";
+import { canExpand, useExpandableNet, type DiffExpansion } from "./DiffExpand";
 import { DiffText, TOOL_STATE } from "./ToolCallCard";
 import {
   FILE_KINDS,
@@ -30,16 +33,31 @@ import {
   fileKind,
   isMarkdown,
   isReviewable,
+  isTestFile,
   type FileKind,
 } from "./fileKind";
 import { commonDir, type ChangedFile, type FileChange } from "./model";
 import { useRepoCommitDiff } from "./queries";
 import { writtenText } from "./netDiff";
-import { repoState, type FileCommit, type RepoChanges } from "./repoChanges";
+import { isDiscarded, repoState, type FileCommit, type RepoChanges } from "./repoChanges";
 import { shortSha } from "../feature-detail/acEvidence";
 
+/** The drawer's tabs: one per kind of file, then the files that ended as they began. */
+type FilesTab = FileKind | "discarded";
+
+const DISCARDED_TAB = {
+  label: "Discarded",
+  icon: "file-x",
+  hint: "touched, then put back: none of it goes in the pull request",
+} as const;
+
+/** A file you review: code that goes in the pull request (a discarded file does not). */
+const needsReview = (file: ChangedFile) => isReviewable(file.path) && !isDiscarded(file);
+
 /** What each tab says about its files, under the tabs. */
-const KIND_NOTE: Record<FileKind, string> = {
+const KIND_NOTE: Record<FilesTab, string> = {
+  discarded:
+    "Files this session created or changed, then deleted or put back: they end as they are on the base, so none of it goes in the pull request. Kept here so you can see what was tried.",
   code: "The files of your repo this session changed: what goes in the pull request.",
   plan: "The plans Claude wrote for this work. They stay on this machine.",
   feature:
@@ -52,6 +70,15 @@ const KIND_NOTE: Record<FileKind, string> = {
 
 /** The DOM id of the files drawer, for the header button's `aria-controls`. */
 export const FILES_PANEL_ID = "as-files-panel";
+
+/** How the code tab splits its files: all together, the code apart, or the tests apart. Kept in
+ * this browser for every session. */
+type CodeSplit = "all" | "source" | "tests";
+export const CODE_SPLIT_KEY = "ah.chat.codeSplit";
+const readCodeSplit = (): CodeSplit => {
+  const value = readStored(CODE_SPLIT_KEY);
+  return value === "source" || value === "tests" ? value : "all";
+};
 
 export const reviewedKey = (sessionId: string) => `ah.chat.reviewed.${sessionId}`;
 
@@ -103,8 +130,8 @@ const CHANGE_VERB: Record<string, string> = {
 export function Stats({ added, removed }: { added: number; removed: number }) {
   return (
     <span className="as-files-stats">
-      <span className="as-files-add">+{added}</span>
-      <span className="as-files-del">−{removed}</span>
+      <span className="as-files-add">+{fmtInt(added)}</span>
+      <span className="as-files-del">−{fmtInt(removed)}</span>
     </span>
   );
 }
@@ -161,6 +188,7 @@ function ChangeBlock({
           diff={change.diff}
           label={`Change ${String(index + 1)} to ${path}`}
           numbered={change.numbered}
+          path={filePath}
         />
       )}
     </div>
@@ -168,8 +196,15 @@ function ChangeBlock({
 }
 
 /** A file's final diff: what all its changes add up to, open to review comments (change 0). */
-function NetBlock({ file, path }: { file: ChangedFile; path: string }) {
-  const comments = useContext(ReviewCommentsContext);
+function NetBlock({
+  file,
+  path,
+  sessionId,
+}: {
+  file: ChangedFile;
+  path: string;
+  sessionId: string;
+}) {
   const net = file.net;
   const repo = file.repo;
   if (!net) {
@@ -189,6 +224,42 @@ function NetBlock({ file, path }: { file: ChangedFile; path: string }) {
       </p>
     );
   }
+  // Git's diff against the base opens wider around its hunks, as on GitHub.
+  return canExpand(file) ? (
+    <ExpandableNetDiff sessionId={sessionId} file={file} label={label} />
+  ) : (
+    <NetDiff file={file} diff={net.diff} label={label} />
+  );
+}
+
+function ExpandableNetDiff({
+  sessionId,
+  file,
+  label,
+}: {
+  sessionId: string;
+  file: ChangedFile;
+  label: string;
+}) {
+  const shown = useExpandableNet(sessionId, file);
+  if (shown.diff === null) return null;
+  return <NetDiff file={file} diff={shown.diff} label={label} expansion={shown.expansion} />;
+}
+
+/** The final diff, open to review comments when the drawer takes them. */
+function NetDiff({
+  file,
+  diff,
+  label,
+  expansion,
+}: {
+  file: ChangedFile;
+  diff: string;
+  label: string;
+  expansion?: DiffExpansion | undefined;
+}) {
+  const comments = useContext(ReviewCommentsContext);
+  const numbered = file.net?.numbered ?? false;
   const threads =
     comments?.threads.filter(
       (thread) => thread.anchor.path === file.path && thread.anchor.change === 0,
@@ -197,17 +268,24 @@ function NetBlock({ file, path }: { file: ChangedFile; path: string }) {
     <div className="as-files-change">
       {comments ? (
         <ReviewDiff
-          diff={net.diff}
+          diff={diff}
           label={label}
-          numbered={net.numbered}
+          numbered={numbered}
           path={file.path}
           change={0}
           threads={threads}
           resolved={comments.resolved}
           onComment={comments.onComment}
+          expansion={expansion}
         />
       ) : (
-        <DiffText diff={net.diff} label={label} numbered={net.numbered} />
+        <DiffText
+          diff={diff}
+          label={label}
+          numbered={numbered}
+          path={file.path}
+          expansion={expansion}
+        />
       )}
     </div>
   );
@@ -271,6 +349,8 @@ function OpenThreads({ path }: { path: string }) {
 
 /** The drawer is wide enough for the list beside the file (px). */
 export const SPLIT_MIN = 720;
+/** Below this width the file list keeps each name and folder on one line, cut at its end (px). */
+export const LIST_COMPACT = 360;
 
 /** How wide `element` is, followed as it resizes (0 without a ResizeObserver: the narrow,
  * one-pane layout). */
@@ -289,6 +369,18 @@ function useWidth(element: HTMLElement | null): number {
   return width;
 }
 
+/** A folder on one narrow line: its own name first, then where it sits, dimmed and cut at its
+ * end; the whole path on hover. */
+function FolderLine({ folder }: { folder: string }) {
+  const at = folder.lastIndexOf("/");
+  return (
+    <span className="as-files-folder-line" title={folder}>
+      <span className="as-files-folder-leaf as-files-cut">{folder.slice(at + 1)}</span>
+      {at > 0 && <span className="as-files-folder-parent as-files-cut">{folder.slice(0, at)}</span>}
+    </span>
+  );
+}
+
 /** A path or name that wraps after its separators (`/ _ - .`) instead of being cut: in the
  * review the name is the content, so all of it shows. */
 function Breakable({ text }: { text: string }) {
@@ -302,27 +394,6 @@ function Breakable({ text }: { text: string }) {
         </Fragment>
       ))}
     </>
-  );
-}
-
-/** One line that fits its width, however the list is resized: cut in the middle with an
- * ellipsis, its `tail` (a file's extension, a folder's last name) always shown; the whole text
- * on hover. Measured by the browser, not by characters, so it follows the split. */
-function FitText({
-  text,
-  tail,
-  className,
-}: {
-  text: string;
-  tail: number;
-  className?: string | undefined;
-}) {
-  const cut = Math.max(0, text.length - tail);
-  return (
-    <span className={cx("as-fit", className)} title={text}>
-      <span className="as-fit-head">{text.slice(0, cut)}</span>
-      <span className="as-fit-tail">{text.slice(cut)}</span>
-    </span>
   );
 }
 
@@ -341,8 +412,28 @@ const HOME = /^(?:\/Users\/[^/]+|\/home\/[^/]+)(?=\/|$)/;
 /** The folder every listed file is under, on one line: a worktree as its repo and its name (the
  * branch's folder, in bold), else the session's folder in bold when the root is inside it, else
  * the path with the home folder as `~`. The full path on hover and one click away. */
-function RootLine({ base, workdirLabel }: { base: string; workdirLabel: string | undefined }) {
+function RootLine({
+  base,
+  workdirLabel,
+  compact = false,
+}: {
+  base: string;
+  workdirLabel: string | undefined;
+  compact?: boolean;
+}) {
   const path = base.slice(0, -1);
+  if (compact) {
+    // Narrow: only the folder's own name (the branch's, in a worktree), cut at its end.
+    const worktree = WORKTREE.exec(path);
+    const lead = worktree?.[3] ?? path.slice(path.lastIndexOf("/") + 1);
+    return (
+      <div className="as-files-root ah-small" title={path}>
+        <Icon name={worktree ? "git-branch" : "folder"} size="sm" />
+        <span className="as-files-root-lead as-files-cut">{lead}</span>
+        <CopyButton text={path} label="Copy folder path" className="as-files-copy" compact />
+      </div>
+    );
+  }
   const worktree = WORKTREE.exec(path);
   let body;
   if (worktree) {
@@ -432,7 +523,14 @@ function CommitDiff({
     return <p className="ah-small ah-muted">Too big a diff to show here.</p>;
   if (diff === "")
     return <p className="ah-small ah-muted">This commit changed the file under another name.</p>;
-  return <DiffText diff={diff} label={`Commit ${shortSha(commit.sha)} to ${path}`} numbered />;
+  return (
+    <DiffText
+      diff={diff}
+      label={`Commit ${shortSha(commit.sha)} to ${path}`}
+      numbered
+      path={path}
+    />
+  );
 }
 
 /** A file's history on its branch: the commits that touched it, newest first, each opening on
@@ -572,13 +670,22 @@ function FileList({
   review: ReviewState;
   onSelect: (path: string) => void;
 }) {
+  // Narrow, every line stays one line and is cut at its end, never over its neighbour: a folder
+  // leads with its own name, a file drops its line counts (they are on the open file).
+  const [nav, setNav] = useState<HTMLElement | null>(null);
+  const navWidth = useWidth(nav);
+  const compact = navWidth > 0 && navWidth < LIST_COMPACT;
   // Only the code is reviewed: Claude's own files carry no viewed mark and no progress.
-  const reviewable = files.filter((file) => isReviewable(file.path));
+  const reviewable = files.filter(needsReview);
   const viewedCount = reviewable.filter(
     (file) => review.reviewed[file.path] === file.lastChangeId,
   ).length;
   return (
-    <nav className="as-files-nav" aria-label="Files">
+    <nav
+      ref={setNav}
+      className={cx("as-files-nav", compact && "as-files-nav-compact")}
+      aria-label="Files"
+    >
       {reviewable.length > 0 && (
         <div className="as-files-progress ah-small">
           <span>
@@ -589,13 +696,17 @@ function FileList({
           </span>
         </div>
       )}
-      {base && <RootLine base={base} workdirLabel={workdirLabel} />}
+      {base && <RootLine base={base} workdirLabel={workdirLabel} compact={compact} />}
       {byFolder(files, nameOf).map(([folder, inFolder]) => (
         <div key={folder} className="as-files-group">
           {folder && (
             <div className="as-files-folder ah-small">
               <Icon name="folder" size="sm" />
-              <FitText text={folder.slice(0, -1)} tail={folderTail(folder.slice(0, -1))} />
+              {compact ? (
+                <FolderLine folder={folder.slice(0, -1)} />
+              ) : (
+                <FitText text={folder.slice(0, -1)} tail={folderTail(folder.slice(0, -1))} />
+              )}
             </div>
           )}
           <ul aria-label={folder ? `Folder ${folder.slice(0, -1)}` : undefined}>
@@ -623,15 +734,26 @@ function FileList({
                     }}
                   >
                     <KindBadge created={file.created} status={file.repo?.status} />
-                    <FitText
-                      text={name.slice(name.lastIndexOf("/") + 1)}
-                      tail={nameTail(name.slice(name.lastIndexOf("/") + 1))}
-                      className="as-files-nav-name"
-                    />
-                    <OpenThreads path={file.path} />
-                    <Stats added={file.added} removed={file.removed} />
+                    {compact ? (
+                      <>
+                        <span className="as-files-nav-name as-files-cut">
+                          {name.slice(name.lastIndexOf("/") + 1)}
+                        </span>
+                        <OpenThreads path={file.path} />
+                      </>
+                    ) : (
+                      <>
+                        <FitText
+                          text={name.slice(name.lastIndexOf("/") + 1)}
+                          tail={nameTail(name.slice(name.lastIndexOf("/") + 1))}
+                          className="as-files-nav-name"
+                        />
+                        <OpenThreads path={file.path} />
+                        <Stats added={file.added} removed={file.removed} />
+                      </>
+                    )}
                   </button>
-                  {isReviewable(file.path) && (
+                  {needsReview(file) && (
                     <ViewedToggle
                       compact
                       viewed={viewed}
@@ -743,7 +865,7 @@ function FileDetail({
           </span>
         </div>
         <CopyButton text={file.path} label="Copy file path" className="as-files-copy" />
-        {isReviewable(file.path) && (
+        {needsReview(file) && (
           <ViewedToggle
             viewed={viewed}
             stale={mark !== undefined && !viewed}
@@ -811,7 +933,7 @@ function FileDetail({
           </p>
         )}
         {showPreview && <PreviewBlock text={text} />}
-        {showNet && <NetBlock file={file} path={name} />}
+        {showNet && <NetBlock file={file} path={name} sessionId={sessionId} />}
         {current === "commits" && repo && (
           <CommitsBlock
             sessionId={sessionId}
@@ -884,7 +1006,8 @@ export function FilesPanel({
   const own = useReviewed(sessionId);
   const review = shared ?? own;
   const [picked, setPicked] = useState<string | null>(initialPath);
-  const [tab, setTab] = useState<FileKind | null>(null);
+  const [tab, setTab] = useState<FilesTab | null>(null);
+  const [split, setSplit] = useState<CodeSplit>(readCodeSplit);
   // Opened on a file, the keyboard goes to that file; else to the drawer's heading.
   const [focusFile, setFocusFile] = useState(initialPath !== null);
   useEffect(() => {
@@ -901,19 +1024,45 @@ export function FilesPanel({
   }, [pickNonce, initialPath]);
 
   // One tab per kind of file the session changed: the code first, Claude's scratch last.
-  const kinds = useMemo(
-    () =>
-      FILE_KINDS.map((kind) => ({
-        kind,
-        files: files.filter((file) => fileKind(file.path) === kind),
-      })).filter((group) => group.files.length > 0),
-    [files],
-  );
+  // The files that ended as they began have a tab of their own, after the code.
+  const kinds = useMemo(() => {
+    const kept = files.filter((file) => !isDiscarded(file));
+    const groups: { kind: FilesTab; files: ChangedFile[] }[] = FILE_KINDS.map((kind) => ({
+      kind,
+      files: kept.filter((file) => fileKind(file.path) === kind),
+    }));
+    groups.splice(1, 0, { kind: "discarded", files: files.filter(isDiscarded) });
+    return groups.filter((group) => group.files.length > 0);
+  }, [files]);
   // A file picked (from a card in the conversation, too) shows in its own tab.
-  const pickedKind =
-    picked !== null && files.some((file) => file.path === picked) ? fileKind(picked) : null;
+  const pickedFile = picked === null ? undefined : files.find((file) => file.path === picked);
+  const pickedKind: FilesTab | null = pickedFile
+    ? isDiscarded(pickedFile)
+      ? "discarded"
+      : fileKind(pickedFile.path)
+    : null;
   const kind = kinds.find((group) => group.kind === (pickedKind ?? tab)) ?? kinds[0];
-  const shown = useMemo(() => kind?.files ?? [], [kind]);
+  // The code tab can show its tests apart: only when it has both tests and other code.
+  const testCount = kind?.kind === "code" ? kind.files.filter((f) => isTestFile(f.path)).length : 0;
+  const sourceCount = kind?.kind === "code" ? kind.files.length - testCount : 0;
+  const canSplit = testCount > 0 && sourceCount > 0;
+  // A picked file (a card in the conversation) shows even when the split hides its side.
+  const pickedSide: CodeSplit | null =
+    canSplit && picked !== null && kind?.files.some((file) => file.path === picked)
+      ? isTestFile(picked)
+        ? "tests"
+        : "source"
+      : null;
+  const side: CodeSplit = !canSplit
+    ? "all"
+    : split !== "all" && pickedSide !== null && pickedSide !== split
+      ? pickedSide
+      : split;
+  const shown = useMemo(() => {
+    const all = kind?.files ?? [];
+    if (side === "all") return all;
+    return all.filter((file) => isTestFile(file.path) === (side === "tests"));
+  }, [kind, side]);
 
   const root = useMemo(() => commonDir(shown.map((file) => file.path)), [shown]);
   // One file alone keeps its folder in view: the root is then its parent's parent.
@@ -1004,13 +1153,13 @@ export function FilesPanel({
                 label="Kind of file"
                 value={kind.kind}
                 onChange={(id) => {
-                  setTab(id as FileKind);
+                  setTab(id as FilesTab);
                   setPicked(null);
                 }}
                 tabs={kinds.map((group) => ({
                   id: group.kind,
-                  label: KIND_TAB[group.kind].label,
-                  icon: KIND_TAB[group.kind].icon,
+                  label: tabOf(group.kind).label,
+                  icon: tabOf(group.kind).icon,
                   count: group.files.length,
                 }))}
               />
@@ -1023,6 +1172,37 @@ export function FilesPanel({
           )}
           {(kind?.kind ?? "code") === "code" && repos && repos.length > 0 && (
             <RepoList repos={repos} />
+          )}
+          {canSplit && (
+            <div className="as-files-codesplit ah-small">
+              <SegmentedControl
+                label="Show the code and its tests"
+                value={side}
+                onChange={(id) => {
+                  const next = id as CodeSplit;
+                  setSplit(next);
+                  writeStored(CODE_SPLIT_KEY, next);
+                  setPicked(null);
+                }}
+                options={[
+                  {
+                    id: "all",
+                    label: `All ${String(sourceCount + testCount)}`,
+                    title: "Code and tests together",
+                  },
+                  {
+                    id: "source",
+                    label: `Code ${String(sourceCount)}`,
+                    title: "The code, without its tests",
+                  },
+                  {
+                    id: "tests",
+                    label: `Tests ${String(testCount)}`,
+                    title: "Only the test files",
+                  },
+                ]}
+              />
+            </div>
           )}
           <div
             className={cx("as-files-body", wide && "as-files-split")}
@@ -1102,10 +1282,13 @@ function RepoList({ repos }: { repos: readonly RepoChanges[] }) {
   );
 }
 
+const tabOf = (tab: FilesTab) => (tab === "discarded" ? DISCARDED_TAB : KIND_TAB[tab]);
+
 /** What the review totals: the code that goes in the pull request (git's files and the repo
  * files Claude changed), never Claude's plans, feature records, brain notes or scratch. */
+
 export function codeTotals(files: readonly ChangedFile[]) {
-  const code = files.filter((file) => isReviewable(file.path));
+  const code = files.filter(needsReview);
   return {
     files: code.length,
     added: code.reduce((sum, file) => sum + file.added, 0),
@@ -1129,12 +1312,22 @@ export interface ChangedFilesChipProps {
 export function ChangedFilesChip({ files, review, open, onToggle }: ChangedFilesChipProps) {
   // Only the code counts and waits on you: Claude's own files are in their tabs, not the total.
   const { files: codeFiles, added, removed } = codeTotals(files);
-  const due = files.filter((file) => isReviewable(file.path) && !isViewed(review, file)).length;
+  const due = files.filter((file) => needsReview(file) && !isViewed(review, file)).length;
   const count = codeFiles > 0 ? plural(codeFiles, "file") : "No code";
+  const left =
+    due === 0
+      ? null
+      : due >= codeFiles
+        ? `${fmtInt(due)} to review`
+        : `${fmtInt(due)} of ${fmtInt(codeFiles)} to review`;
   return (
     <button
       type="button"
-      className={cx("as-files-chip", due > 0 && "as-files-chip-due", open && "as-files-chip-open")}
+      className={cx(
+        "ah-btn ah-btn-sm as-review-btn",
+        due === 0 && "ah-btn-ghost",
+        open && "as-review-open",
+      )}
       aria-expanded={open}
       aria-controls={open ? FILES_PANEL_ID : undefined}
       aria-label={`Review changes: ${count}, ${String(added)} lines added, ${String(removed)} removed, ${due > 0 ? `${String(due)} to review` : "all reviewed"}`}
@@ -1142,13 +1335,20 @@ export function ChangedFilesChip({ files, review, open, onToggle }: ChangedFiles
       onClick={onToggle}
     >
       <Icon name="git-compare" size="sm" />
-      <span className="as-files-chip-label">Review changes</span>
-      <span className="as-files-chip-count">{count}</span>
+      Review changes
       {codeFiles > 0 && <Stats added={added} removed={removed} />}
-      {due > 0 ? (
-        <span className="as-files-chip-due-count">{due} to review</span>
+      {codeFiles === 0 ? (
+        <span className="ah-subtle">· No code changes</span>
+      ) : left ? (
+        <span>
+          <span className="ah-subtle">· </span>
+          <span className="as-review-due">{left}</span>
+        </span>
       ) : (
-        <Icon name="circle-check" size="sm" className="as-files-chip-done" />
+        <span className="ah-row" style={{ gap: 4 }}>
+          <span className="ah-subtle">· {count}</span>
+          <Icon name="circle-check" size="sm" className="as-files-chip-done" />
+        </span>
       )}
     </button>
   );

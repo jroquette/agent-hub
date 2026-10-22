@@ -117,8 +117,19 @@ def test_gives_shell_its_representative_routes_when_routes_asked() -> None:
     assert routes_of("core") == ()
 
 
+# AGH-431 (AC-431.3): the Environments and Tickets screen folders show on their own pages.
+def test_maps_environments_and_tickets_screens_when_routes_asked() -> None:
+    assert [route.path for route in routes_of("environments")] == ["/projects/demo/environments"]
+    assert [route.path for route in routes_of("tickets")] == ["/tickets"]
+
+
+# AGH-431 (AC-431.2): every screen folder has its routes; a hidden folder is not a screen.
 def test_maps_every_screen_folder_when_routes_listed() -> None:
-    folders = {path.name for path in SCREENS_DIR.iterdir() if path.is_dir()} - {"not-found"}
+    folders = {
+        path.name
+        for path in SCREENS_DIR.iterdir()
+        if path.is_dir() and not path.name.startswith(".")
+    } - {"not-found"}
     assert folders <= set(SCREEN_ROUTES)
 
 

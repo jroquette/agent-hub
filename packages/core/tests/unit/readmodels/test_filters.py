@@ -14,6 +14,7 @@ from agent_hub.core.readmodels.filters import (
     SessionFilter,
 )
 from agent_hub.core.readmodels.page import MAX_CURSOR_CHARS
+from agent_hub.core.testing.read_model_builders import a_run
 
 
 def test_applies_defaults_when_session_filter_empty() -> None:
@@ -97,3 +98,17 @@ def test_refuses_brain_path_when_auto_or_climbing(brain_path: str) -> None:
         LearningFilter(brain_path=brain_path)
 
     assert refused.value.errors()[0]["loc"] == ("brain_path",)
+
+
+def test_keeps_scenario_runs_when_kind_scenario() -> None:
+    # P-15, AM-7: a scenario run's events carry ``workflow: scenario:<name>``.
+    runs = [a_run(id="w-1", workflow="ship"), a_run(id="s-1", workflow="scenario:order-walk")]
+
+    kept = [run.id for run in runs if RunFilter(kind="scenario").keeps(run)]
+    workflows = [run.id for run in runs if RunFilter(kind="workflow").keeps(run)]
+    every = [run.id for run in runs if RunFilter().keeps(run)]
+
+    assert [run.kind for run in runs] == ["workflow", "scenario"]
+    assert (kept, workflows, every) == (["s-1"], ["w-1"], ["w-1", "s-1"])
+    with pytest.raises(ValidationError, match="kind"):
+        RunFilter.model_validate({"kind": "both"})

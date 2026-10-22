@@ -247,18 +247,6 @@ def _until_subscribed(app: Any, session_id: str) -> None:
     while not (session_id in live and live[session_id]._subscribers):  # noqa: SLF001
         assert time.monotonic() < deadline, "the stream never attached"
         time.sleep(0.005)
-    _until_waiting_live(app, session_id)
-
-
-def _until_waiting_live(app: Any, session_id: str) -> None:
-    """Waits until the attached stream has sent its replay and waits for the next live frame.
-    Attached is not enough: the replay reads the store past the attach, so a record stored
-    while it reads comes from the store (redacted) and its live frame is skipped as sent."""
-    deadline = time.monotonic() + 5
-    live = app.rig.control._live[session_id]  # noqa: SLF001 -- no public view of a stream's state
-    while not live._condition._waiters:  # noqa: SLF001 -- a waiter is a stream past its replay
-        assert time.monotonic() < deadline, "the stream never waited for live frames"
-        time.sleep(0.005)
 
 
 def test_redacts_store_and_keeps_live_raw_when_secrets_streamed_redaction_logs(

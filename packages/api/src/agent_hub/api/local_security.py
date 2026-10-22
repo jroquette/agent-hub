@@ -7,10 +7,10 @@ actions, the workflow-run writes, a workflow gate's decision and the item writes
 Publish into a hub's tree) also need that ``Origin``, a same-origin fetch and a JSON body (S7),
 so do the hub registry writes (``POST /hubs``, ``DELETE /hubs/{id}``; a missing ``Origin`` is
 refused too, A11: a registered hub is a folder sessions may start in), bodies stop at 1 MiB
-(8 MiB for ``POST /agent-sessions``, which may carry a screenshot), API answers are never
-cached, a CSP keeps the app to its own origin, and no CORS header is ever sent. No route
-speaks WebSocket (ADR 0031, D3): any ``websocket`` scope is closed with 1008 before it is
-accepted, so an upgrade never skips these checks (P7, AC-165.54).
+(160 MiB for ``POST /agent-sessions`` and its messages, which may carry images and files), API
+answers are never cached, a CSP keeps the app to its own origin, and no CORS header is ever
+sent. No route speaks WebSocket (ADR 0031, D3): any ``websocket`` scope is closed with 1008
+before it is accepted, so an upgrade never skips these checks (P7, AC-165.54).
 
 ``AGENT_HUB_ALLOWED_HOSTS`` (read by ``hub web``, parsed here) may add exact ``host[:port]``
 names, for example the host port a container publishes; never a wildcard.
@@ -38,11 +38,14 @@ STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 # the launch's cookie when sessions are on (``session_access``). A workflow gate's decision
 # (AC-213.18) runs the CLI and resumes the run, so it is one of them, and so is the owner's
 # decision on a plan change request whose run is gone (two-level-flows AC-2.14): it answers in
-# the run's stead.
+# the run's stead. The scenario writes (AGH-350 plan T12) run the CLI too: a plan (the scripts'
+# plan mode), a start, an investigation's session and answer; a finding's issue reaches the
+# tracker and its note writes into the hub.
 RUN_WRITES = re.compile(
     rf"^{re.escape(API_PREFIX)}/(workflow-runs(/[^/]+/(cancel|resume|abandon))?"
     r"|approvals/[^/]+/decision"
-    r"|scenario-runs/[^/]+/investigation"
+    r"|scenarios/[^/]+/[^/]+/(plan|runs)"
+    r"|scenario-runs/[^/]+/(investigation|answer|findings/[^/]+/(issue|inbox))"
     r"|features/[^/]+/[^/]+/acs/[^/]+/check-runs"
     r"|features/[^/]+/[^/]+/change-requests/[^/]+/decision)$"
 )
@@ -69,15 +72,26 @@ HUB_REGISTRY_WRITES = (
     ("POST", re.compile(rf"^{re.escape(API_PREFIX)}/hubs/[^/]+/doctor-fix$")),
     # Rewrites the developer's hub.local.json (the Hub config screen).
     ("PUT", re.compile(rf"^{re.escape(API_PREFIX)}/projects/[^/]+/config/local$")),
+    # Rewrites hub.json or hub.local.json's environments and services (the Hub config screen).
+    ("POST", re.compile(rf"^{re.escape(API_PREFIX)}/projects/[^/]+/config/environments$")),
+    # Starts a read-only Claude session and records a discovery in the hub (ADR 0046).
+    ("POST", re.compile(rf"^{re.escape(API_PREFIX)}/projects/[^/]+/environment-discoveries$")),
+    # Marks a discovery discarded and ends its session.
+    (
+        "DELETE",
+        re.compile(rf"^{re.escape(API_PREFIX)}/projects/[^/]+/environment-discoveries/[^/]+$"),
+    ),
 )
-# The routes with a larger body cap: a session's first prompt may carry a PNG screenshot (at
-# most ``MAX_SCREENSHOT_BYTES`` decoded, 5 MiB of base64), and a later message up to
-# ``MAX_MESSAGE_SCREENSHOTS`` of them; either one also carries a text of up to the largest
+# The routes with a larger body cap: a session's first prompt and a later message may carry
+# PNG images (at most ``MAX_SCREENSHOT_BYTES`` decoded, 5 MiB of base64, each; the first
+# prompt also the screen's capture) up to ``MAX_MESSAGE_SCREENSHOTS`` of them, and
+# ``MAX_MESSAGE_FILES`` files (5 MiB decoded each, about 6.7 MiB of base64); either one also
+# carries a text of up to the largest
 # ``--message-max-bytes`` (4 MiB), which JSON escaping may grow. Every other route keeps
 # ``max_body_bytes``.
-AGENT_SESSION_CREATE_BODY_BYTES: Final = 16 * 1024 * 1024
+AGENT_SESSION_CREATE_BODY_BYTES: Final = 160 * 1024 * 1024
 AGENT_SESSION_CREATE_PATH: Final = f"{API_PREFIX}/agent-sessions"
-AGENT_SESSION_MESSAGE_BODY_BYTES: Final = 64 * 1024 * 1024
+AGENT_SESSION_MESSAGE_BODY_BYTES: Final = 160 * 1024 * 1024
 AGENT_SESSION_MESSAGE_PATH: Final = re.compile(
     rf"^{re.escape(API_PREFIX)}/agent-sessions/[^/]+/messages$"
 )
