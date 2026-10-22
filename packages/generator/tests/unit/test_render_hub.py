@@ -164,6 +164,8 @@ DESIGN_PATHS = (
     "workflows/incident/incident.yaml",
     "workflows/incident/scripts/check.py",
     "workflows/incident/scripts/evidence.py",
+    "workflows/incident/scripts/inbox.py",
+    "workflows/incident/scripts/mitigation.py",
     # AGH-227: the built-in issue-to-pr pack, seeded.
     "workflows/issue-to-pr/fixtures/blocked.yaml",
     "workflows/issue-to-pr/fixtures/dirty.yaml",
