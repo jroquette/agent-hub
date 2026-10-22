@@ -10,7 +10,7 @@ stubs:
       commit: 0a1b2c3d4e}
   pending:
     output: {request: null, decision: '', input: none, note: '', summary: '', superseded: ''}
-  pass-1__preflight:
+  pass-1__check__preflight:
     output:
       drift: none
       local_notes: []
@@ -19,8 +19,10 @@ stubs:
       proposal: ''
       affected: ''
       summary: ''
-  pass-1__record:
+  pass-1__check__record:
     output: {runs: 1}
+  pass-1__check__result:
+    output: {status: passed, drift: none, superseded: ''}
   pass-1__worktree:
     output:
       path: /ws/demo-api/.claude/worktrees/dem-1
@@ -123,7 +125,7 @@ stubs:
   pr: {fail: exec_failed}
 expect: {status: failed}
 failed: [pr]
-reached: [context, pending, pass-1__preflight, pass-1__record, pass-1__worktree, pass-1__plan, pass-1__rounds,
+reached: [context, pending, pass-1__check__preflight, pass-1__check__record, pass-1__check__result, pass-1__worktree, pass-1__plan, pass-1__rounds,
   pass-1__rounds__implement, pass-1__rounds__verdict, pass-1__rounds__check, pass-1__rounds__spec, pass-1__rounds__quality,
   pass-1__rounds__review, pass-1__rounds__notes, pass-1__rounds__feedback, pass-1__outcome, last, eval,
   commits, pr]
