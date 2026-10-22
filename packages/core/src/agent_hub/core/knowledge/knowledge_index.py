@@ -14,6 +14,13 @@ Synchronous (SQLite FTS5 in production). ``KnowledgeIndexContract`` checks every
 - ``search`` answers the hub's documents holding every word, a title match weighted above a body
   match, best first and then by path, at most ``limit``, of the listed kinds only when given;
   none when no word is given. A hit's snippet is one line around the first match in the body.
+
+``KnowledgeLinksContract`` checks each document's links (AGH-393):
+
+- A document's links are written with it and replaced when it is indexed again; a touched path
+  keeps them; a skipped or dropped path loses them, and a rebuild drops the hub's.
+- ``backlinks`` answers the hub's documents linking to a note, sorted by path, at most ``limit``,
+  with the full count; a note that is not indexed (a dead link) still has its sources.
 """
 
 from collections.abc import Mapping
@@ -38,8 +45,8 @@ type Kind = Literal[
 KINDS: Final[tuple[Kind, ...]] = get_args(Kind.__value__)
 
 # Bumped by any change to what is indexed or how (D-version): a hub whose rows hold another
-# version is rebuilt by the next search.
-INDEX_VERSION: Final = 1
+# version is rebuilt by the next search. 2: each document's links to brain notes are stored.
+INDEX_VERSION: Final = 2
 
 # At most this many backlinks are answered for one note (D-backlinks-route), with the full count.
 MAX_BACKLINKS: Final = 100
@@ -166,4 +173,9 @@ class KnowledgeIndex(Protocol):
         """The hub's documents holding every word, best first, of ``kinds`` when not empty.
 
         ``words`` are the non-empty output of ``query_words``; with no word the answer is ``()``."""
+        ...
+
+    def backlinks(self, hub: str, target: str, *, limit: int) -> Backlinks:
+        """The hub's documents linking to ``target`` (``brain/<rest>``), by path, at most
+        ``limit``, with the full count."""
         ...

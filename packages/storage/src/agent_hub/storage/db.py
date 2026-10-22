@@ -197,6 +197,21 @@ knowledge_documents = Table(
     UniqueConstraint("hub", "path", name="uq_knowledge_documents_hub_path"),
 )
 
+# One row per brain note an indexed document links to (AGH-393, D-links-store): ``source`` is the
+# document's path and ``target`` the note's (``brain/<rest>``). Unique per ``(hub, source,
+# target)`` so concurrent syncs converge; indexed by ``(hub, target)`` for the backlinks. No
+# foreign key (SQLite enforces none here): the adapter clears a source's rows on each write path.
+knowledge_links = Table(
+    "knowledge_links",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("hub", String, nullable=False),
+    Column("source", String, nullable=False),
+    Column("target", String, nullable=False),
+    UniqueConstraint("hub", "source", "target", name="uq_knowledge_links_hub_source_target"),
+    Index("ix_knowledge_links_hub_target", "hub", "target"),
+)
+
 # The FTS5 virtual table over the indexed documents' title and body. Migration 0008 creates it
 # (metadata cannot declare a virtual table), so ``alembic check`` must not see it or the shadow
 # tables FTS5 keeps beside it (``knowledge_text_data``, ``_idx``, ``_content``, ``_docsize``,
