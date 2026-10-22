@@ -26,9 +26,9 @@ run `/kickoff` again.
 4. Check that `git config user.email` in the hub and in each repo equals @@{identity_email}; if it
    differs, say so before any commit. If the session was given a `claude/…` branch (cloud sessions), it is not a repo
    branch: work on @@{kickoff_branch}.
-5. Propose the next unfinished item (from `now.md` → "Next", the handoff, or open PRs in the brief) and ask before starting; suggest `/fix` for a bug or a small bounded task within `/fix`'s limits (one repo, at most 5 changed non-test files, no new contract, no path under `guard.ask_before_edit`), `/feature` otherwise (create the tracker issue first if there is none).
+5. Propose the next unfinished item (from `now.md` → "Next", the handoff, or open PRs in the brief) and ask before starting; route it to its flow: suggest `/fix` for a bug or a small bounded task within `/fix`'s limits (one repo, at most 5 changed non-test files, no new contract, no path under `guard.ask_before_edit`) (or /change where the hub has it), `/feature` otherwise (create the tracker issue first if there is none), whose planned tickets each run the `implement` flow (`/implement`).
    An issue that is not ready yet goes to `/triage` first; an open PR to drive to merge, to `/deliver`; someone else's PR, to `/review`.
-   A bug with no reproduction goes to `/incident`; a refactor, a dependency bump or a standalone decision, to `/refactor`, `/upgrade` or `/adr`;
-   cutting a release, to `/release`; a look back at the period's runs, to `/retro`.
+   A bug with no reproduction goes to the `incident` flow (`/incident`); a dependency bump to the `upgrade` flow (`/upgrade`); an open question to the `spike` flow (`/feature`, spike size); the brain inbox to the `inbox` flow (`/learn` promote).
+   A refactor or a standalone decision goes to `/refactor` or `/adr`; cutting a release, to `/release`; a look back at the period's runs, to `/retro`. Scheduled flows start by themselves (the README's flow table).
 
 Never start editing during /kickoff. If `now.md` and the repos disagree (e.g. a PR listed as open is merged), say so.

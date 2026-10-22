@@ -187,3 +187,23 @@ def test_names_no_project_value_when_triage_rendered(
         assert repo.dir not in body, repo.dir
     assert "@@{" not in text
     assert PROJECT_ID.search(TEMPLATE.read_text(encoding="utf-8")) is None
+
+
+# AGH-495 (AC-2): the draft names the flow that takes the issue next, by flow name.
+TRIAGE_ROUTES = (
+    "the `implement` flow",
+    "the `spike` flow",
+    "the `incident` flow",
+    "the `upgrade` flow",
+    "`/fix`",
+    "`/feature`",
+    "(or /change)",
+)
+
+
+def test_routes_by_flow_when_triage_rendered(text: str) -> None:
+    start = text.index("3. **Draft**")
+    draft = text[start : text.index("4. **Approve**", start)]
+
+    for route in TRIAGE_ROUTES:
+        assert route in draft, route

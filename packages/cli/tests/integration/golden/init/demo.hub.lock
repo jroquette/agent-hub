@@ -461,7 +461,7 @@
     "plugin/hub-workflow/skills/kickoff/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "fb13e4ab38fe867717dd7437cd1bc2318dde602057e191611bbe995a5325f5cc"
+      "sha256": "7d0f2e3f34caf8cb168bb6933ab4fec43ef318d9478f36e3b4f57eea7ab4b337"
     },
     "plugin/hub-workflow/skills/learn/SKILL.md": {
       "executable": false,
@@ -551,7 +551,7 @@
     "plugin/hub-workflow/skills/triage/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "bc3cf49ece2884afa15dabd788cc3f4d28e5ae3c855084eba82f13c1c2537c10"
+      "sha256": "8981d86e43ee16f894b86cb6b52ebab5b58e9bf095e23d93e8137d80c40c828e"
     },
     "plugin/hub-workflow/skills/upgrade/SKILL.md": {
       "executable": false,
