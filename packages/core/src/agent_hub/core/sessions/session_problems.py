@@ -134,6 +134,7 @@ class _Session:
         *,
         winners: Sequence[StoredEvent] | None = None,
         actors: Sequence[Actor] | None = None,
+        approvals: Mapping[str, Approval] | None = None,
     ) -> None:
         self.ordered = canonical_events(events)
         self.winners: Sequence[StoredEvent] = (
@@ -148,7 +149,9 @@ class _Session:
         }
         self.asks = {
             approval.request_event_id: approval
-            for approval in fold_approvals(self.ordered).values()
+            for approval in (
+                fold_approvals(self.ordered) if approvals is None else approvals
+            ).values()
             if approval.kind == ApprovalKind.GUARD_ASK
         }
         self.actors = {
@@ -385,13 +388,14 @@ def fold_problems(
     status: SessionStatus,
     winners: Sequence[StoredEvent] | None = None,
     actors: Sequence[Actor] | None = None,
+    approvals: Mapping[str, Approval] | None = None,
 ) -> SessionProblems:
     """The problems of one session (its events, any order) whose status is ``status``.
 
-    A caller that already resolved the events' facts (``winners``) or folded their ``actors``
-    passes them, so they are not computed twice.
+    A caller that already resolved the events' facts (``winners``), folded their ``actors``
+    or their ``approvals`` passes them, so they are not computed twice.
     """
-    session = _Session(events, status, winners=winners, actors=actors)
+    session = _Session(events, status, winners=winners, actors=actors, approvals=approvals)
     found = [
         problem
         for position, stored in enumerate(session.winners)
