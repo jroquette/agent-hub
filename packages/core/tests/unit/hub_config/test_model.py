@@ -1901,3 +1901,50 @@ def test_names_first_name_when_environment_name_repeated_ignoring_case() -> None
     assert [(problem.path, problem.message) for problem in problems] == [
         ("environments.LIVE", 'environment name "LIVE" is already used by "live", ignoring case')
     ]
+
+
+def test_leaves_ui_paths_absent_when_repo_omits_key() -> None:
+    assert HubConfig.model_validate(a_hub_document()).repos[0].ui_paths is None
+
+
+@pytest.mark.parametrize(
+    "globs",
+    [["apps/web/**"], ["src/**/*.tsx", "public/index.html"], ["*.vue"], ["a/.storybook/**"]],
+    ids=["folder", "two", "root glob", "hidden folder"],
+)
+def test_accepts_ui_paths_when_relative_globs(globs: list[str]) -> None:
+    config = HubConfig.model_validate(with_value(("repos", 0, "ui_paths"), globs))
+
+    assert config.repos[0].ui_paths == tuple(globs)
+
+
+@pytest.mark.parametrize(
+    "glob",
+    ["", "/apps/web/**", "../web/**", "apps/../web", "apps/..", "apps/web /**", "a\tb", "x" * 201],
+    ids=[
+        "empty",
+        "absolute",
+        "leading parent",
+        "inner parent",
+        "trailing parent",
+        "space",
+        "tab",
+        "too long",
+    ],
+)
+def test_rejects_ui_paths_when_glob_not_relative_path(glob: str) -> None:
+    document = with_value(("repos", 0, "ui_paths"), ["apps/web/**", glob])
+
+    assert error_locs(document) == [("repos", 0, "ui_paths", 1)]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [[], "apps/web/**", None, [f"p{index}/**" for index in range(51)]],
+    ids=["empty list", "string", "null", "51 globs"],
+)
+def test_rejects_ui_paths_when_not_list_of_one_to_fifty(value: object) -> None:
+    [(loc, kind)] = error_types(with_value(("repos", 0, "ui_paths"), value))
+
+    assert loc == ("repos", 0, "ui_paths")
+    assert kind != "extra_forbidden"
