@@ -30,6 +30,17 @@ export function brainRoute(project: string, path: string, anchor: string | null 
   return `/projects/${encodeURIComponent(project)}/brain/${segments}${hash}`;
 }
 
+/**
+ * `route` with the Brain search's query kept as `?q=` before any `#anchor` (AGH-393: every link
+ * inside the Brain keeps the search open); unchanged without a query.
+ */
+export function withBrainQuery(route: string, query: string | null): string {
+  if (!query) return route;
+  const search = `?${new URLSearchParams({ q: query }).toString()}`;
+  const hash = route.indexOf("#");
+  return hash < 0 ? route + search : route.slice(0, hash) + search + route.slice(hash);
+}
+
 /** A GitHub-style heading slug: lower case, letters, digits, `-` and `_`, spaces as `-`. */
 export function headingSlug(text: string): string {
   return text

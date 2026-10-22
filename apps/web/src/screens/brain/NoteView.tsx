@@ -1,10 +1,10 @@
 import { useEffect } from "react";
 import type { ReactNode } from "react";
-import { useLocation, useNavigate } from "react-router";
+import { useLocation, useNavigate, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
 import { Banner, EmptyState, Markdown, ProblemError, Skeleton } from "../../components";
-import { anchorId } from "../../lib/brainLinks";
+import { anchorId, withBrainQuery } from "../../lib/brainLinks";
 import { useBrainNote } from "./queries";
 
 type FrontmatterValue = components["schemas"]["FrontmatterValue"];
@@ -47,6 +47,7 @@ export function NoteView({ project, path, missing, foldFrontmatter }: NoteViewPr
   const note = useBrainNote(project, path);
   const navigate = useNavigate();
   const { hash } = useLocation();
+  const [params] = useSearchParams();
   const loaded = note.data !== undefined;
 
   useEffect(() => {
@@ -146,7 +147,7 @@ export function NoteView({ project, path, missing, foldFrontmatter }: NoteViewPr
       <Markdown
         source={data.markdown}
         note={{ project, path }}
-        onBrainLink={(link) => void navigate(link.route)}
+        onBrainLink={(link) => void navigate(withBrainQuery(link.route, params.get("q")))}
       />
     </div>
   );
