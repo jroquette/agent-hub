@@ -760,6 +760,18 @@
     "workflows/sdlc/ticket-pass.yaml": {
       "ownership": "seeded"
     },
+    "workflows/upgrade/fixtures/upgrade-adapt-exhausted.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/upgrade/fixtures/upgrade-major-breaking.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/upgrade/fixtures/upgrade-patch-green.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/upgrade/fixtures/upgrade-split.yaml": {
+      "ownership": "seeded"
+    },
     "workflows/upgrade/scripts/fast_gate.py": {
       "ownership": "seeded"
     },

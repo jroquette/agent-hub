@@ -216,6 +216,10 @@ DESIGN_PATHS = (
     "workflows/sdlc/scripts/pass_outcome.py",
     "workflows/sdlc/scripts/verdict.py",
     "workflows/sdlc/ticket-pass.yaml",
+    "workflows/upgrade/fixtures/upgrade-adapt-exhausted.yaml",
+    "workflows/upgrade/fixtures/upgrade-major-breaking.yaml",
+    "workflows/upgrade/fixtures/upgrade-patch-green.yaml",
+    "workflows/upgrade/fixtures/upgrade-split.yaml",
     "workflows/upgrade/scripts/fast_gate.py",
     "workflows/upgrade/upgrade.yaml",
 )

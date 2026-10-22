@@ -1,0 +1,27 @@
+# AC-3: the fast check stays red through three adapt rounds: the group ends after round 3, no
+# full check, push or PR, and the run ends done with the outcome blocked, the failing check named.
+workflow: upgrade
+inputs: {issue: DEM-1, repo: demo-api, package: httpx, to: "1.0.0"}
+stubs:
+  worktree:
+    output:
+      path: /ws/demo-api/.claude/worktrees/dem-1
+      branch: jdoe/dem-1
+      base: origin/trunk
+      hub: /ws/hub
+      hub_name: hub
+      check: make check
+      prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
+      target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
+  gate: {output: {check_fast: make check-fast, source: check_fast, reason: ""}}
+  bump: {output: {manager: uv, dir: ., from: "0.28.1", to: "1.0.0", major: true, files: [pyproject.toml, uv.lock], commit: 0a1b2c3d4e5f60718293a4b5c6d7e8f901234567}}
+  notes: {output: {found: true, sources: ["https://github.com/encode/httpx/releases/tag/1.0.0"], text: "Changes the client.", truncated: false, reason: ""}}
+  changelog: {output: {breaking: [{change: Client.get drops the verify argument., path: src/api.py, line: 12, action: Pass verify through the transport.}], summary: One breaking change hits the repo.}}
+  check: {output: {passed: false, exit_code: 2, round: 1, tail: "FAILED tests/test_api.py::test_get\n"}}
+  adapt__fix: [{output: {status: done, summary: Adapts the client calls., question: ""}}, {output: {status: done, summary: Adapts the client calls., question: ""}}, {output: {status: done, summary: Adapts the client calls., question: ""}}]
+  adapt__recheck: [{output: {passed: false, exit_code: 2, round: 1, tail: "FAILED tests/test_api.py::test_get\n"}}, {output: {passed: false, exit_code: 2, round: 2, tail: "FAILED tests/test_api.py::test_get\n"}}, {output: {passed: false, exit_code: 2, round: 3, tail: "FAILED tests/test_api.py::test_get\n"}}]
+  outcome: {output: {status: blocked, question: "check_fast (make check-fast) still fails after 3 adapt rounds, exit 2: FAILED tests/test_api.py::test_get", summary: "httpx 0.28.1 -> 1.0.0, major."}}
+  report: {output: {delivery: blocked, stage: implementing, reason: "the implementing session stopped: check_fast (make check-fast) still fails after 3 adapt rounds, exit 2: FAILED tests/test_api.py::test_get", question: "check_fast (make check-fast) still fails after 3 adapt rounds, exit 2: FAILED tests/test_api.py::test_get", pr: "", summary: ""}}
+expect: {status: done, outcome: blocked}
+failed: []
+reached: [worktree, gate, bump, notes, changelog, check, adapt, adapt__fix, adapt__recheck, outcome, report]
