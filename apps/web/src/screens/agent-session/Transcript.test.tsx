@@ -285,10 +285,10 @@ describe("Transcript (transcript)", () => {
     expect(todos).toHaveTextContent("Fix the test");
     expect(todos).toHaveTextContent("0 of 1 done");
     const meter = screen.getByRole("group", { name: "Cost and tokens (estimate)" });
-    expect(meter).toHaveTextContent("$0.0012");
-    expect(meter).toHaveTextContent("12 in");
-    expect(meter).toHaveTextContent("5 out");
-    expect(meter).toHaveTextContent("estimate");
+    expect(meter).toHaveTextContent("$0.00");
+    expect(meter).toHaveTextContent("estimated");
+    expect(meter.closest(".ah-tip-wrap")).toHaveTextContent("$0.0012 · Estimated from transcript");
+    expect(meter.closest(".ah-tip-wrap")).toHaveTextContent("12 in · 5 out");
   });
 
   it("labels replayed text as the stored, redacted copy", () => {

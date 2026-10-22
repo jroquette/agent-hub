@@ -30,30 +30,25 @@ export interface BackgroundChipProps {
   onToggle: () => void;
 }
 
-/** The header's way to the Background drawer: how many tasks run now (with a pulse), else how
- * many ended. Hidden until the session started a task. */
+/** The header's way to the Background drawer while tasks run (with a pulse); the ended ones are
+ * reached from the session menu, the background card and the live bar. */
 export function BackgroundChip({ tasks, open, onToggle }: BackgroundChipProps) {
   const running = tasks.running.length;
-  const done = tasks.done.length;
-  if (running + done === 0) return null;
-  const count = running > 0 ? `${String(running)} running` : `${String(done)} done`;
+  if (running === 0) return null;
+  const count = `${String(running)} running`;
   return (
     <button
       type="button"
-      className={cx("as-files-chip", open && "as-files-chip-open")}
+      className={cx("ah-btn ah-btn-ghost ah-btn-sm", open && "as-review-open")}
       aria-expanded={open}
       aria-controls={open ? BACKGROUND_PANEL_ID : undefined}
       aria-label={`Background tasks, ${count}`}
       title={`${open ? "Hide" : "Show"} the tasks running in the background`}
       onClick={onToggle}
     >
-      {running > 0 ? (
-        <span className="as-live-pulse" aria-hidden />
-      ) : (
-        <Icon name="layers" size="sm" />
-      )}
-      <span>Background</span>
-      <span className="as-steps-count ah-num">{count}</span>
+      <span className="as-live-pulse" aria-hidden />
+      <span className="as-wide-only">Background tasks ·</span>
+      <span className="ah-num">{count}</span>
     </button>
   );
 }
