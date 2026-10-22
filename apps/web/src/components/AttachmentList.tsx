@@ -1,6 +1,6 @@
 import "./AttachmentList.css";
 
-import { useRef, useState } from "react";
+import { useRef, useState, type DragEvent } from "react";
 
 import {
   fileSize,
@@ -11,6 +11,7 @@ import {
   type MessageFile,
 } from "../lib/messageFile";
 import { imageFiles, imageToPng, MAX_MESSAGE_IMAGES } from "../lib/pastedImage";
+import { Button } from "./core";
 import { Icon } from "./Icon";
 import { ScreenshotThumb } from "./ScreenshotLightbox";
 
@@ -39,6 +40,8 @@ export interface MessageAttachmentsOptions {
 }
 
 export interface MessageAttachments {
+  acceptsImages: boolean;
+  acceptsFiles: boolean;
   images: readonly AttachedImage[];
   files: readonly AttachedFile[];
   /** How many images or files are still being read. */
@@ -140,6 +143,8 @@ export function useMessageAttachments({
   });
 
   return {
+    acceptsImages,
+    acceptsFiles,
     images,
     files,
     reading: readingImages + readingFiles,
@@ -170,6 +175,94 @@ export function useMessageAttachments({
       (!acceptsImages || images.length + readingImages >= MAX_MESSAGE_IMAGES) &&
       (!acceptsFiles || files.length + readingFiles >= MAX_MESSAGE_FILES),
   };
+}
+
+/**
+ * A drop zone for attachments: files dropped anywhere on it join the message, with the drop
+ * highlight while they are dragged over. A drag of anything but files (selected text) is left
+ * to the browser.
+ */
+export function useAttachmentDrop(
+  attachments: MessageAttachments,
+  { disabled = false, onAdded }: { disabled?: boolean | undefined; onAdded?: () => void } = {},
+) {
+  const [dragging, setDragging] = useState(false);
+  const off = disabled || (!attachments.acceptsImages && !attachments.acceptsFiles);
+  const carriesFiles = (event: DragEvent) => event.dataTransfer.types.includes("Files");
+  return {
+    dragging,
+    dropProps: {
+      onDragOver: (event: DragEvent) => {
+        if (off || !carriesFiles(event)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+        setDragging(true);
+      },
+      onDragLeave: (event: DragEvent) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false);
+      },
+      onDrop: (event: DragEvent) => {
+        setDragging(false);
+        if (off || !carriesFiles(event)) return;
+        event.preventDefault();
+        attachments.add(event.dataTransfer);
+        onAdded?.();
+      },
+    },
+  };
+}
+
+/**
+ * The picker of a message's attachments: "Attach" (images, PDFs and text files) or, where only
+ * images are taken, "Image". Off once both limits are reached.
+ */
+export function AttachButton({
+  attachments,
+  disabled = false,
+  onAdded,
+  className,
+}: {
+  attachments: MessageAttachments;
+  disabled?: boolean | undefined;
+  onAdded?: () => void;
+  className?: string | undefined;
+}) {
+  const picker = useRef<HTMLInputElement | null>(null);
+  const { acceptsFiles, acceptsImages } = attachments;
+  if (!acceptsFiles && !acceptsImages) return null;
+  return (
+    <>
+      <input
+        ref={picker}
+        type="file"
+        accept={acceptsFiles ? undefined : "image/*"}
+        multiple
+        hidden
+        tabIndex={-1}
+        onChange={(event) => {
+          attachments.add(event.target);
+          event.target.value = "";
+          onAdded?.();
+        }}
+      />
+      <Button
+        size="sm"
+        variant="ghost"
+        icon="plus"
+        className={className}
+        disabled={disabled || attachments.full}
+        aria-label={acceptsFiles ? "Attach a file" : "Add an image"}
+        title={
+          acceptsFiles
+            ? "Attach images, PDFs or text files up to 5 MB (or paste or drop them in the box)"
+            : "Add an image (or paste or drop one in the box)"
+        }
+        onClick={() => picker.current?.click()}
+      >
+        {acceptsFiles ? "Attach" : "Image"}
+      </Button>
+    </>
+  );
 }
 
 export interface AttachmentListProps {
