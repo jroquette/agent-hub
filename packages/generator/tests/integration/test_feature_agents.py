@@ -451,3 +451,54 @@ def test_parses_clean_frontmatter_when_eval_example_copied(texts: dict[str, str]
         for item in value if isinstance(value, list) else [value]:
             assert " #" not in item, (name, item)
             assert "#" not in item or (name, item) == ("prs", "<repo>#<n>"), (name, item)
+
+
+# two-level-flows AC-2.11 (AGH-406): once Tickets is done, Build follows `/implement`'s steps
+# once per can-start ticket, one at a time; a ticket of a planned feature goes to `/implement`.
+def test_follows_implement_per_can_start_ticket_when_feature_build_rendered(
+    texts: dict[str, str],
+) -> None:
+    build = step(texts[FEATURE], 5)
+
+    assert build.startswith("5. **Build**")
+    assert "once **Tickets** is done" in build
+    assert "follow `/implement`'s steps once per ticket the planning lists as can-start" in build
+    assert "one ticket at a time" in build
+
+
+def test_points_a_planned_ticket_to_implement_when_feature_rendered(
+    texts: dict[str, str],
+) -> None:
+    text = flat(texts[FEATURE])
+    pointer = text[text.index("ticket of a planned feature") :][:400]
+
+    assert "`/implement <id>`" in pointer
+    assert "brief, sizing or spec" in pointer
+    assert text.index("ticket of a planned feature") < text.index("0. **Brief**")
+
+
+def test_sends_a_no_ship_to_implement_and_finishes_in_line_only_when_feature_built_by_implement(
+    texts: dict[str, str],
+) -> None:
+    verify = step(texts[FEATURE], 8)
+    finish = verify[verify.index("**Finish**") :]
+
+    assert (
+        "On the Build path, a `NO-SHIP` goes to a new `/implement` run of each ticket"
+        " its failing `results` name" in verify
+    )
+    assert finish.startswith("**Finish** (the in-line path of step 6 only;")
+
+
+# AGH-406: step 3's `/adr` reference agrees with `/adr` on both paths: in-line on the feature's
+# worktree (its PR carries the ADR), on the Build path through `/adr`'s own step 6.
+def test_records_adrs_on_both_paths_when_feature_step_three_rendered_with_implement(
+    texts: dict[str, str],
+) -> None:
+    research = step(texts[FEATURE], 3)
+
+    assert "on this issue and worktree" not in research
+    assert (
+        "(its steps 1–5 on this issue; in-line on the feature's worktree, and on the Build"
+        " path its step 6 too)" in research
+    )
