@@ -442,7 +442,9 @@ Git stays the source of truth. Each developer's database holds a derived full-te
 `hub brain reindex`. `hub search` and the MCP server `hub mcp` (tools `search`, `read`, `propose`) query it; every
 result names its path and a snippet. A query is its runs of letters and digits, all required, never FTS5 syntax: one
 with no word (`!!!`, `(`) exits 2, and one that starts with `-` goes after `--` (`hub search -- -foo`). `propose`
-writes a new `brain/_inbox/` note on a branch and opens a hub pull request through `hub_git`, never the default branch.
+writes a new `brain/_inbox/` note on a branch `<prefix>learning-propose-<slug>` and opens a hub pull request through
+`hub_git`, never the default branch; its `kind` names the brain folder the note would join (`learning`, `playbook`,
+`decision`, `domain` or `system`).
 The knowledge view gains the same search, links between notes and the provenance path above. Transcripts are never
 indexed or shared; embeddings and hosting are out of scope.
 
@@ -887,7 +889,7 @@ flowchart LR
 
 The sessions and GitHub/Linear feed the collector, and the web app reads everything through the API. The app's actions go back to the workflow executor. The API also reads the hub repos to show brain, rules and workflows.
 
-- **Stack (decided, ADRs 0001–0004, 0008, 0011, 0014, 0015, 0017, 0020, 0024 and 0044):** Python 3.14 in a uv workspace with one package per component (`core`, `storage`, `collector`, `generator`, `tracker_linear`, `hub_git`, `cli`, `api`, and `mcp_server` once ADR 0044 is built: the third composition root, behind `hub mcp`) under a lean hexagonal architecture: entities, use cases and ports in `core`, adapters in the other packages. Persistence is SQLAlchemy Core + Alembic on SQLite, moving to Postgres via config when there are multiple users. The API is FastAPI + Pydantic in `packages/api`, a second composition root that `hub web` serves; the front end is React 18 + TypeScript in `apps/web`, whose production build is committed to `packages/api` so a `uvx` install needs no Node.
+- **Stack (decided, ADRs 0001–0004, 0008, 0011, 0014, 0015, 0017, 0020, 0024 and 0044):** Python 3.14 in a uv workspace with one package per component (`core`, `storage`, `collector`, `generator`, `tracker_linear`, `hub_git`, `cli`, `api` and `mcp_server`, ADR 0044's third composition root behind `hub mcp`) under a lean hexagonal architecture: entities, use cases and ports in `core`, adapters in the other packages. Persistence is SQLAlchemy Core + Alembic on SQLite, moving to Postgres via config when there are multiple users. The API is FastAPI + Pydantic in `packages/api`, a second composition root that `hub web` serves; the front end is React 18 + TypeScript in `apps/web`, whose production build is committed to `packages/api` so a `uvx` install needs no Node.
 - **Hooks as sensors** ([ADR 0021](adr/0021-hook-event-sensor.md)): the generated hub registers a stdlib Python 3.9 sensor, `plugin/hub-workflow/hooks/event_sensor.py`, for eleven Claude Code hooks (SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, PostToolUseFailure, Notification, Stop, SubagentStart, SubagentStop, PreCompact, SessionEnd). It wraps the hook input in a versioned envelope (`v: 1`, project, repo, the `hub run` run, step and attempt) and posts it to `POST /api/v1/events/hooks` with a 0.5 s timeout; it prints nothing and exits 0 on any failure, so without `hub web` the session carries on normally. `AGENT_HUB_WEB_URL` may only name a loopback URL. The guard and the Stop gate send their own decisions (a denial, an ask, a blocked Stop) the same way, after deciding, without changing their output or exit codes. On Stop, SubagentStop and SessionEnd the server reads the session's transcript from its last offset, only under `~/.claude/projects/` and never through a link.
 - **Read-only agents** (AGH-141): an agent whose definition's frontmatter says `mutates_checkout: false` is held if it
   changes a checkout. The base plugin's researcher, spec-reviewer and quality-reviewer declare it; any hub or project
@@ -1011,8 +1013,8 @@ Continuity between sessions comes from the brain and the summaries, not from rer
 - The team shares by `git pull`; there is no central store. Each developer's index (SQLite FTS5, in the database
   `hub web` uses) is derived from the checkout, synced on each search and disposable (`hub brain reindex`).
 - Agents reach it through `hub mcp`, a stdio MCP server that `hub sync` declares in the hub's `.mcp.json`: `search`
-  (always with path and snippet), `read` (brain and docs only) and `propose` (a hub pull request through `hub_git`,
-  never the default branch). The app repos get no MCP configuration, so direction 2 holds.
+  (always with path and snippet), `read` (brain and docs only) and `propose` (a hub pull request through `hub_git`
+  on `<prefix>learning-propose-<slug>`, never the default branch). The app repos get no MCP configuration, so direction 2 holds.
 - Out of scope: hosting, Postgres, accounts, sharing transcripts, embeddings. A move to hosted later replaces only where
   the index is stored.
 

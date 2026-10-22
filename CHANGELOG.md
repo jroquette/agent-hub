@@ -20,6 +20,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   read, on every search). A query with no word (`!!!`) exits 2, and a query that starts with `-` goes after `--`
   (`hub search -- -foo`). The database gains migration 0008; a Python whose SQLite lacks FTS5 can no longer migrate
   it (ADR 0044) (AGH-391).
+- `hub mcp` serves the hub's knowledge to Claude Code as a local stdio MCP server (ADR 0044): `search` (the
+  `hub search` index, at most 50 results, 10 by default), `read` (one file of `brain/` or a repo's `docs/`, under the
+  index's file rules) and `propose` (a hub pull request adding one `brain/_inbox/` note on
+  `<prefix>learning-propose-<slug>`, from a temporary clone; needs `gh`). `hub sync` now renders a managed `.mcp.json`
+  declaring it: a hub that already has its own `.mcp.json` gets a sync conflict (exit 3); move its servers to your
+  user scope (`claude mcp add --scope user`) first. Claude Code asks once to approve the `hub` server. Arrives after
+  you bump `platform.version` and run `hub sync` (AGH-392).
 
 ### Changed
 
