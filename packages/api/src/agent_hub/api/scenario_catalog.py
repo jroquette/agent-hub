@@ -31,6 +31,7 @@ that accepts it, AM-5) and whether it can be picked now (core's ``option_refusal
 - ``finding_inbox`` writes the finding's ``brain/_inbox/`` note, never over another.
 """
 
+import contextlib
 import dataclasses
 import os
 import threading
@@ -730,7 +731,9 @@ class CreatedIssue(ViewModel):
 
 
 class FindingIssue(ViewModel):
-    """A finding's tracker issue: its draft, the team it goes to, and the issue once created."""
+    """A finding's tracker issue: its draft, the team it goes to, and the issue once created.
+    ``recorded`` is whether the created issue reached its marker (``None`` before a create);
+    when it did not, ``warning`` says so: the issue exists, do not create it again."""
 
     run_id: str
     finding_id: str
@@ -738,6 +741,8 @@ class FindingIssue(ViewModel):
     title: str
     description: str
     created: CreatedIssue | None
+    recorded: bool | None = None
+    warning: str | None = None
 
 
 class FindingNote(ViewModel):
@@ -902,17 +907,28 @@ class ScenarioCommands:
             try:
                 created = client.create_issue(team, draft.title, draft.description)
             except TrackerError:
-                claim.fail()
+                with contextlib.suppress(OSError):
+                    claim.fail()
                 msg = (
                     f"the tracker did not create the issue of finding {finding_id}; it may"
                     " exist: check the tracker"
                 )
                 raise FindingIssueError(msg) from None
-            claim.record(issue_id=created.id, url=created.url)
+            made = CreatedIssue(id=created.id, url=created.url)
+            try:
+                claim.record(issue_id=created.id, url=created.url)
+            except OSError as error:
+                warning = (
+                    f"the issue {created.id} was created but could not be recorded:"
+                    f" {error.strerror or error}; do not create it again"
+                )
+                return issue.model_copy(
+                    update={"created": made, "recorded": False, "warning": warning}
+                )
         finally:
             # Any other end leaves the marker unfinished and releases the claim.
             claim.release()
-        return issue.model_copy(update={"created": CreatedIssue(id=created.id, url=created.url)})
+        return issue.model_copy(update={"created": made, "recorded": True})
 
     def finding_inbox(self, run_id: str, finding_id: str) -> FindingNote:
         """Write the finding's note in the hub's ``brain/_inbox/``, never over another."""

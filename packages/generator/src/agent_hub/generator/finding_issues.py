@@ -13,16 +13,21 @@ create is running, and nothing claims or retakes it. A marker without an issue a
 running create (a failed or unfinished create: the issue may exist) refuses hub web too; only a
 person on a terminal, warned, may take it again (``retake_issue``): under the lock, and only
 while the marker still reads as the person was shown, a fresh marker replaces it atomically, so
-hub web never sees the finding unclaimed. A leftover ``finding-<id>.issue.<n>`` (an older
-retry's generation file) is ignored, and removed once a result is recorded.
+hub web never sees the finding unclaimed. The fresh marker is written to a dot temp file
+first; a crash between its write and the replace can leave one behind, which is harmless (it
+is never read). A result that cannot be written raises once the claim is released: the caller
+says the issue was created but not recorded.
+
+A lock held while no marker exists (another process between its lock and its marker) reads as
+busy after one short retry, never as a running create.
 """
 
 import contextlib
 import fcntl
 import json
 import os
-import re
 import secrets
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
@@ -32,6 +37,8 @@ _LOCK_FILE: Final = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC
 _READ_FILE: Final = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
 _WRITE_FILE: Final = os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC
 _MARKER_BYTES: Final = 4096
+# A probe holds the lock for a moment: one retry after this many seconds.
+_LOCK_RETRY_SECONDS: Final = 0.05
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -45,10 +52,13 @@ class IssueMarked:
     failed: bool = False
     generation: int = 0
     running: bool = False
+    busy: bool = False
 
     @property
     def state(self) -> str:
         """What happened to the earlier create, in plain words."""
+        if self.busy:
+            return f"finding {self.finding_id}'s issue is busy in another process"
         if self.issue_id is not None:
             return f"finding {self.finding_id} already has the issue {self.issue_id}"
         if self.running:
@@ -59,6 +69,8 @@ class IssueMarked:
     @property
     def reason(self) -> str:
         """Why no issue is created now, in plain words."""
+        if self.busy:
+            return f"{self.state}; try again"
         if self.running:
             return f"{self.state}: wait for it, then check the tracker"
         if self.issue_id is None:
@@ -94,13 +106,13 @@ class HeldIssue:
             os.close(self.lock)
 
     def _finish(self, value: dict[str, object]) -> None:
+        """Write the result, then release; ``OSError`` (after the release) when it cannot be
+        written."""
         kept = value | {"generation": self.generation} if self.generation else value
         try:
-            with contextlib.suppress(OSError):
-                descriptor = os.open(issue_marker(self.folder, self.finding_id), _WRITE_FILE)
-                with os.fdopen(descriptor, "wb") as file:
-                    file.write(json.dumps(kept).encode())
-            _remove_generation_files(self.folder, self.finding_id)
+            descriptor = os.open(issue_marker(self.folder, self.finding_id), _WRITE_FILE)
+            with os.fdopen(descriptor, "wb") as file:
+                file.write(json.dumps(kept).encode())
         finally:
             self.release()
 
@@ -176,21 +188,32 @@ def _shown(marked: IssueMarked) -> tuple[str | None, str | None, bool, int]:
 
 
 def _take_lock(folder: Path, finding_id: str) -> int | None:
-    """The claim's lock, taken without waiting; None while another holder has it."""
+    """The claim's lock, taken without waiting (once more after a moment, so a probe's brief
+    hold is passed); None while another holder has it."""
     lock = os.open(folder / f"finding-{finding_id}.issue.lock", _LOCK_FILE, 0o600)
     try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        os.close(lock)
-        return None
+        for attempt in range(2):
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                if attempt == 0:
+                    time.sleep(_LOCK_RETRY_SECONDS)
+                continue
+            return lock
     except BaseException:
         os.close(lock)
         raise
-    return lock
+    os.close(lock)
+    return None
 
 
 def _running(folder: Path, finding_id: str) -> IssueMarked:
-    known = _marked(issue_marker(folder, finding_id), finding_id)
+    """The claim that stands while another holder has the lock: a running create when the
+    marker exists, else busy (that holder may not have made it yet)."""
+    marker = issue_marker(folder, finding_id)
+    if not marker.exists() and not marker.is_symlink():
+        return IssueMarked(finding_id=finding_id, issue_id=None, url=None, busy=True)
+    known = _marked(marker, finding_id)
     return IssueMarked(
         finding_id=finding_id,
         issue_id=known.issue_id,
@@ -199,16 +222,6 @@ def _running(folder: Path, finding_id: str) -> IssueMarked:
         generation=known.generation,
         running=known.issue_id is None,
     )
-
-
-def _remove_generation_files(folder: Path, finding_id: str) -> None:
-    """Remove an older retry's ``finding-<id>.issue.<n>`` files."""
-    pattern = re.compile(rf"finding-{re.escape(finding_id)}\.issue\.[0-9]+")
-    with contextlib.suppress(OSError):
-        for path in folder.iterdir():
-            if pattern.fullmatch(path.name):
-                with contextlib.suppress(OSError):
-                    path.unlink()
 
 
 def _marked(marker: Path, finding_id: str) -> IssueMarked:
