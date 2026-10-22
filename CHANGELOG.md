@@ -11,6 +11,15 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- A built-in `release` workflow pack (AGH-494): `/release` runs it to list the PRs merged since the last tag,
+  propose the version, make the release commit, compute what `hub sync` rewrites, write the notes and run the check on
+  that exact commit; the release PR opens after the owner's approval. Once the platform repo's release workflow has
+  tagged the release commit (the PR's head: merge it with a merge commit), a second approval opens the hub PR that
+  raises `platform.version` and runs `./hub sync`. A red check ends the run blocked; no node creates a tag or writes
+  the tracker.
+
 ## [0.20.1] - 2026-10-22
 
 ### Added
