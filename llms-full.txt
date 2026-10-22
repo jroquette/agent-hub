@@ -276,6 +276,18 @@ you. To read the brain, open Knowledge › Brain (or a project's Brain): it list
 `brain/auto/`) and renders any one, with links between notes; a feature's Spec, Research, Plan, Eval and Criteria tabs
 show its records. The app reads the registered hub's checkout as it is on disk, so pull the hub to see merged changes.
 
+**Scheduled and event starts.** `hub web` can start a workflow by itself. Declare it in `hub.json`: a schedule such
+as `"schedules": [{"workflow": "retro", "cron": "0 9 * * 1", "inputs": {"since": 7}}]` starts `retro` every Monday at
+09:00, and an event such as `"events": [{"workflow": "post-merge-verify", "on": "merge", "repo": "<repo dir>"}]`
+starts `post-merge-verify` after each new commit on that repo's default branch (`on` may also be `ci_red`, a failed
+Actions run on it, or `pr_opened`, a newly opened pull request). The cron has 5 numeric fields and is read in UTC.
+Nothing starts while `hub web` is not running; when it comes back, the most recent missed slot runs once and older
+ones never do. Events are polled through `gh` every 5 minutes, so `gh` must be signed in; the first poll only records
+what is there, and the run gets the event's `sha`, `pr` or `ci_run` when the workflow declares that input. Each run
+records `trigger` in its start record and is listed in Runs like any other. `./hub workflow schedule list` prints each
+schedule's next start, and `./hub doctor --only workflows.starts` flags a misspelled workflow. In Docker no run starts
+by itself, as no run starts from the app there.
+
 The Skills tab (Knowledge › Skills, or a project's Skills) lists the hub's skills, agents and hooks with how each is
 invoked, whether it is managed or the project's, and how often it was used in the last 30 days; a skill's page shows
 its text (rendered or raw), the steps, agents and commands derived from it, its bundled files and its diagnostics
