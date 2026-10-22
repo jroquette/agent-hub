@@ -733,7 +733,7 @@ describe("FilesPanel (discarded files)", () => {
       ],
     );
 
-  it("shows a file that ends as on the base in its own Discarded tab, out of the review", async () => {
+  it("shows a file that ends as on the base in its own Discarded tab, out of the review (AC-424.6)", async () => {
     render(<FilesPanel files={files()} sessionId="s1" onClose={vi.fn()} />);
 
     const kinds = screen.getByRole("tablist", { name: "Kind of file" });
@@ -748,7 +748,7 @@ describe("FilesPanel (discarded files)", () => {
     expect(screen.queryByText(/viewed$/)).toBeNull();
   });
 
-  it("leaves a discarded file out of the chip's count and what waits for review", () => {
+  it("leaves a discarded file out of the chip's count and what waits for review (AC-424.6)", () => {
     render(
       <ChangedFilesChip
         files={files()}
@@ -813,7 +813,7 @@ describe("FilesPanel (code and tests)", () => {
       .map((button) => button.dataset.filePath)
       .filter(Boolean);
 
-  it("shows everything together, then the code or its tests apart, and remembers the choice", async () => {
+  it("shows everything together, then the code or its tests apart, and remembers the choice (AC-424.1)", async () => {
     const { unmount } = render(
       <FilesPanel files={filesOf(MIXED)} sessionId="s1" onClose={vi.fn()} />,
     );
@@ -836,7 +836,7 @@ describe("FilesPanel (code and tests)", () => {
     expect(rows()).toEqual(["/repo/src/provider.py"]);
   });
 
-  it("shows a file a card asked for, even on the side the split hides", () => {
+  it("shows a file a card asked for, even on the side the split hides (AC-424.2)", () => {
     window.localStorage.setItem(CODE_SPLIT_KEY, "source");
     render(
       <FilesPanel
@@ -849,7 +849,7 @@ describe("FilesPanel (code and tests)", () => {
     expect(screen.getByRole("region", { name: /test_provider\.py/ })).toBeInTheDocument();
   });
 
-  it("offers no split when the code has no tests", () => {
+  it("offers no split when the code has no tests (AC-424.2)", () => {
     render(<FilesPanel files={filesOf(TWO_FILES)} sessionId="s1" onClose={vi.fn()} />);
     expect(screen.queryByRole("group", { name: "Show the code and its tests" })).toBeNull();
   });
@@ -876,7 +876,7 @@ describe("FilesPanel (narrow list)", () => {
     );
   }
 
-  it("keeps each item on one line, cut at its end, a folder led by its own name", () => {
+  it("keeps each item on one line, cut at its end, a folder led by its own name (AC-424.3)", () => {
     stubWidth(300);
     render(<FilesPanel files={filesOf(TWO_FILES)} sessionId="s1" onClose={vi.fn()} />);
 
@@ -884,13 +884,13 @@ describe("FilesPanel (narrow list)", () => {
     expect(list).toHaveClass("as-files-nav-compact");
     const row = within(list).getByRole("button", { name: /app\.ts/ });
     // No cut in the middle (its tail never shrinks), no line counts beside the name.
-    expect(row.querySelector(".ah-fit")).toBeNull();
+    expect(row.querySelector(".as-fit")).toBeNull();
     expect(row.querySelector(".as-files-stats")).toBeNull();
     expect(row.querySelector(".as-files-cut")).toHaveTextContent("app.ts");
     expect(within(list).getByTitle("ui")).toBeInTheDocument();
   });
 
-  it("keeps one line per file when the list is wide enough", () => {
+  it("keeps one line per file when the list is wide enough (AC-424.3)", () => {
     stubWidth(500);
     render(<FilesPanel files={filesOf(TWO_FILES)} sessionId="s1" onClose={vi.fn()} />);
 

@@ -73,6 +73,24 @@ describe("highlight token colours (AC-234.31)", () => {
   );
 });
 
+describe("diff syntax colours (AC-424.5)", () => {
+  // A diff coloured in its file's language shows the code on the added and removed lines' grounds.
+  const used = ["text", "syntax-key", "syntax-string", "syntax-number", "syntax-keyword"];
+  used.push("syntax-title", "syntax-comment", "diff-add", "diff-del");
+
+  it.each(["light", "dark"])(
+    "every token colour reads at 4.5:1 on the added and removed grounds (%s)",
+    (theme) => {
+      for (const ground of ["diff-add-bg", "diff-del-bg"]) {
+        for (const name of used) {
+          const ok = contrast(value(name, theme), value(ground, theme)) >= 4.5;
+          expect({ name, ground, ok }).toEqual({ name, ground, ok: true });
+        }
+      }
+    },
+  );
+});
+
 // two-level-flows AC-1.14 as amended by A16: jsdom computes no colours, so each theme's contrast is
 // checked here, on the token pairs the ticket panel, the owner-wait callouts and banner use.
 describe("Feature detail colour pairs (AC-1.14, A16)", () => {

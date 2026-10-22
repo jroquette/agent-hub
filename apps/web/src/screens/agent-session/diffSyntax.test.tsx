@@ -13,7 +13,7 @@ const DIFF = [
 ].join("\n");
 
 describe("useDiffSyntax", () => {
-  it("colours each code line in the file's language, and no other row", async () => {
+  it("colours each code line in the file's language, and no other row (AC-424.4)", async () => {
     const lines = diffLines(DIFF);
     const { result } = renderHook(() => useDiffSyntax(lines, "src/app.py"));
 
@@ -29,14 +29,14 @@ describe("useDiffSyntax", () => {
     expect(rows[4]).toBeNull();
   });
 
-  it("leaves a file of an unknown language plain", () => {
+  it("leaves a file of an unknown language plain (AC-424.4)", () => {
     const lines = diffLines(DIFF);
     const { result } = renderHook(() => useDiffSyntax(lines, "notes.txt"));
 
     expect(result.current).toBeNull();
   });
 
-  it("leaves a diff without a path plain", () => {
+  it("leaves a diff without a path plain (AC-424.4)", () => {
     const lines = diffLines(DIFF);
     const { result } = renderHook(() => useDiffSyntax(lines, undefined));
 

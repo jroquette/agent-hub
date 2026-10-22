@@ -37,6 +37,7 @@ describe("fileKind", () => {
   });
 });
 
+// AC-424.1: what the code tab counts as a test.
 describe("isTestFile", () => {
   it.each([
     "/repo/demo-shop/tests/order_intents/test_fraud_check_provider.py",

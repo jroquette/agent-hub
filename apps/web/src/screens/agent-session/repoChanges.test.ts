@@ -114,7 +114,7 @@ describe("withRepoChanges", () => {
     expect(reverted?.repo?.unchanged).toBe(true);
   });
 
-  it("calls a file discarded when it ends as it began, and only then", () => {
+  it("calls a file discarded when it ends as it began, and only then (AC-424.6)", () => {
     const files = withRepoChanges(own, [repo()]);
 
     expect(files.filter(isDiscarded).map((one) => one.path)).toEqual(["/w/api/reverted.py"]);

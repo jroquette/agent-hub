@@ -435,6 +435,47 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
 - **AC-377.42** Given the OpenAPI document, when it is built, then the two repo-changes routes are listed with the
   agent-session paths and are behind the same access check as the others.
 
+### Session review: tests apart, diff colours and discarded files (AGH-424)
+
+**Code and tests**
+
+- **AC-424.1** Given the Code tab holds test files (under a `tests/`, `test/`, `__tests__/`, `spec/`, `specs/` or `e2e/`
+  folder, or named `test_x.py`, `x_test.py`, `x_test.go`, `x.test.ts`, `x.spec.tsx` or `conftest.py`) and other code,
+  when it shows, then a control "Show the code and its tests" offers `All n`, `Code n` and `Tests n`, `All` first;
+  the code or the tests alone list only those, and the choice is kept in this browser for every session.
+- **AC-424.2** Given the split shows one side, when a card in the conversation opens a file of the other side, then
+  the list shows that side with the file open; given the Code tab has no tests (or only tests), then it offers no
+  split.
+
+**A narrow file list**
+
+- **AC-424.3** Given the file list is narrower than 360px, when it shows, then each file and folder stays on one line,
+  cut at its end (never in the middle, never over its neighbour): a folder leads with its own name, where it sits
+  dimmed after it; the root line shows only the folder's own name (a worktree's, with the branch icon); a file drops
+  its line counts (they are on the open file); every whole name or path shows on hover. Wider, the list is as
+  AC-377.11 says.
+
+**Diffs in the file's colours**
+
+- **AC-424.4** Given a diff of a file whose extension names a language the highlighter knows (`.py`, `.tsx`, `.mjs`…),
+  when the review, an edit in the transcript, a commit's diff or an item's history compare shows it, then each code
+  line is coloured in that language, as a pull request shows it: the old side (context and removed lines) and the new
+  side (context and added lines) are each highlighted as one text, so a string or comment across lines reads right;
+  only the line's ground and its `+`/`-` sign (not selectable) say added or removed, and the number gutters of changed
+  lines carry a stronger tint. Hunk headers and notes are not coloured; a file of an unknown language, a diff with no
+  file, or a side past the highlight bounds (ADR 0034) stays plain.
+- **AC-424.5** Given highlighted code anywhere (diffs and Markdown code blocks), when it is coloured, then the syntax
+  tokens use GitHub's palette (keyword red, function and type purple, string navy / light blue, constant blue,
+  attribute and key orange, comment grey), light and dark, each still at least 4.5:1 on `code-bg`.
+
+**Discarded files**
+
+- **AC-424.6** Given a file the session created or changed and then deleted or put back (git lists it nowhere in the
+  pull request, or, without git, its changes cancel out), when the review drawer opens, then the file is in its own
+  `Discarded` tab, right after `Code`, with the note that none of it goes in the pull request; it leaves the Code tab,
+  has no `Viewed` checkbox, and is counted neither in the file and line totals nor in what waits for review (drawer
+  and header chip).
+
 ### Chat: opening, answers, links and the slash menu (AGH-379)
 
 **Chat (agent session)**
