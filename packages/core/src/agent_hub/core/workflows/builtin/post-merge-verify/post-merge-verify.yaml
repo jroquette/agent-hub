@@ -160,12 +160,14 @@ nodes:
             additionalProperties: false
             required: [feature, ac, merge, subject, kind, evidence]
             properties:
-              feature: {type: string, maxLength: 200, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
-              ac: {type: string, maxLength: 64, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+              # Caps that keep the whole reply, every character four bytes, under one argument's
+              # 128 KiB: the report step reads it as an argument.
+              feature: {type: string, maxLength: 200, pattern: "^[\\x20-\\x7e]*$"}
+              ac: {type: string, maxLength: 64, pattern: "^[\\x20-\\x7e]*$"}
               merge: {type: string, pattern: "^([0-9a-f]{7,40})?$"}
-              subject: {type: string, maxLength: 200, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+              subject: {type: string, maxLength: 120, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
               kind: {type: string, enum: [regression, flaky, unknown]}
-              evidence: {type: string, maxLength: 1000, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+              evidence: {type: string, maxLength: 300, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
 
   - id: report
     type: script
