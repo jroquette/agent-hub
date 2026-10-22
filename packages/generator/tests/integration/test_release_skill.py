@@ -75,9 +75,10 @@ STEP_PHRASES = {
         "-f sha=<full sha>",
         '-f notes="$(cat <notes file>)"',
         "the run URL `gh workflow run` prints",
-        "--json databaseId,displayTitle,createdAt",
+        "Before dispatching, record the ids",
+        "--json databaseId,displayTitle",
         "`displayTitle` names `v<version>`",
-        "created after the dispatch",
+        "whose id is not in that set",
         "gh run watch <run id> --exit-status",
         "red run stops here with its URL",
         "65,535 characters",
@@ -171,6 +172,8 @@ def test_stops_before_tag_when_check_or_gate_fails(release_text: str) -> None:
 def test_matches_run_by_name_when_dispatched_run_watched(release_text: str) -> None:
     """The newest run may be the last release's: never take it blindly."""
     assert "--limit 1" not in release_text
+    assert "createdAt" not in release_text
+    assert "created after" not in release_text
 
 
 def test_opens_version_pr_not_restart_when_versions_mismatch(release_text: str) -> None:

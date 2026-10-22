@@ -72,10 +72,15 @@ def remote_and_checkout(tmp_path: Path) -> tuple[Path, Path, str]:
 
 
 def run_step(
-    checkout: Path, *, version: str = VERSION, sha: str, notes: str = NOTES
+    checkout: Path,
+    *,
+    version: str = VERSION,
+    sha: str,
+    notes: str = NOTES,
+    ref: str = "refs/heads/main",
 ) -> subprocess.CompletedProcess[str]:
     """Run the job's steps in order, as Actions does (bash -eo pipefail); stop at a failure."""
-    env = {**isolated_git_env(), "VERSION": version, "SHA": sha, "NOTES": notes}
+    env = {**isolated_git_env(), "VERSION": version, "SHA": sha, "NOTES": notes, "GITHUB_REF": ref}
     for name in STEP_NAMES:
         result = subprocess.run(
             ["bash", "-e", "-o", "pipefail", "-c", workflow_step_script(name)],
@@ -157,6 +162,16 @@ def test_refuses_tag_when_sha_not_on_main(tmp_path: Path) -> None:
     assert remote_tags(origin) == ""
 
 
+def test_refuses_tag_when_dispatched_from_other_ref(tmp_path: Path) -> None:
+    origin, checkout, sha = remote_and_checkout(tmp_path)
+
+    result = run_step(checkout, sha=sha, ref="refs/heads/side")
+
+    assert result.returncode == 1
+    assert "dispatched from 'refs/heads/side'; a release is tagged only from main" in result.stderr
+    assert remote_tags(origin) == ""
+
+
 def test_refuses_tag_when_sha_unknown(tmp_path: Path) -> None:
     origin, checkout, _ = remote_and_checkout(tmp_path)
 
@@ -224,6 +239,7 @@ HOSTILE_NOTES = {
     "expression-and-variable": "${{ github.token }} $HOME ${PATH}",
     "quotes": "it's \"quoted\" and 'single' \\ backslash",
     "comment-lines": "# Features\n\n# none\n#",
+    "trailing-newlines": "Features\n\n- one\n\n",
     "many-lines": "\n".join(f"- line {number}" for number in range(500)),
 }
 
@@ -246,6 +262,7 @@ def test_keeps_notes_verbatim_when_notes_hostile(tmp_path: Path, kind: str) -> N
         check=True,
         timeout=TIMEOUT_SECONDS,
     ).stdout.split("\n\n", 1)[1]
-    assert message == notes + "\n"
+    expected = {"trailing-newlines": "Features\n\n- one\n\n\n"}.get(kind, notes + "\n")
+    assert message == expected
     after = files_outside_git(tmp_path)
     assert after == before
