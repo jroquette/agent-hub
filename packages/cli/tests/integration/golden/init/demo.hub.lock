@@ -784,6 +784,9 @@
     "workflows/upgrade/scripts/release_notes.py": {
       "ownership": "seeded"
     },
+    "workflows/upgrade/scripts/strength.py": {
+      "ownership": "seeded"
+    },
     "workflows/upgrade/upgrade.yaml": {
       "ownership": "seeded"
     }
