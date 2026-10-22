@@ -129,6 +129,7 @@ _READ_FILE: Final = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
 _MARKER_BYTES: Final = 4096
 ANSWERED: Final = "the investigation is answered; its options can no longer be picked"
 LOCAL_UNREADABLE: Final = "hub.local.json cannot be read, so the options cannot be planned now"
+CONFIG_UNREADABLE: Final = "hub.json cannot be read, so the options cannot be planned now"
 
 type ScenarioMode = Literal["interactive", "regression"]
 type Choice = Literal["pick", "retry", "stop"]
@@ -410,10 +411,11 @@ class ScenarioCatalog:
         """What the run's options are planned against now; ``HubLocalInvalidError`` when its
         hub's ``hub.local.json`` cannot be read."""
         header = run.records[0]
+        view = self.credentials.environments_of(run.hub, run.project)
         return _Planner(
             found=discover_actions(Path(run.hub)),
             pack=str(header.get("pack")),
-            view=self.credentials.environments_of(run.hub, run.project),
+            view=view,
             environment=str(header.get("environment")),
         )
 
@@ -458,7 +460,14 @@ class ScenarioCatalog:
                 planner = self.planner(run)
             except HubLocalInvalidError:
                 refusal = LOCAL_UNREADABLE
-        found = planner.found if planner is not None else discover_actions(Path(run.hub))
+            except EntityNotFoundError:
+                refusal = CONFIG_UNREADABLE
+        # The actions are read only to judge a waiting investigation's options or to name the
+        # commit line of a drafted step (no cache: E-14).
+        found = None if planner is None else planner.found
+        drafted = any(_drafted(option) for option in last.proposal.options)
+        if found is None and drafted:
+            found = discover_actions(Path(run.hub))
         options = tuple(
             _option(option, found, planner=planner, refusal=refusal)
             for option in last.proposal.options
@@ -529,14 +538,19 @@ def _investigation(item: InvestigationView) -> InvestigationEntry:
     )
 
 
+def _drafted(option: OptionView) -> list[Mapping[str, JsonValue]]:
+    """The steps of ``option`` whose plan, as shown, runs a draft action."""
+    return [step for step in option.plan if step.get("draft") is True]
+
+
 def _option(
     option: OptionView,
-    found: ActionDiscovery,
+    found: ActionDiscovery | None,
     *,
     planner: _Planner | None,
     refusal: str | None,
 ) -> OptionEntry:
-    drafted = [step for step in option.plan if step.get("draft") is True]
+    drafted = _drafted(option)
     if planner is not None:
         refusal = option_refusal(option, planner)
     return OptionEntry(
@@ -545,7 +559,7 @@ def _option(
         steps=tuple(dict(step) for step in option.steps),
         plan=tuple(dict(step) for step in option.plan),
         needs_acceptance=bool(drafted),
-        accept_commands=tuple(_accept_commands(drafted, found)),
+        accept_commands=() if found is None else tuple(_accept_commands(drafted, found)),
         pickable=refusal is None,
         refusal=refusal,
     )
@@ -853,8 +867,10 @@ class ScenarioCommands:
             raise RunConflictError(
                 code="finding_unusable", reason=str(error), run_id=run_id
             ) from None
-        config = self._catalog.credentials.config_of(run.hub)
-        team = config.tracker.team_keys[0] if config is not None else None
+        # As the CLI: hub.json with hub.local.json over it (a local tracker.transport wins);
+        # an unreadable local file refuses (fail closed).
+        config = self._catalog.credentials.effective_config_of(run.hub, run.project)
+        team = config.tracker.team_keys[0]
         issue = FindingIssue(
             run_id=run_id,
             finding_id=finding_id,
@@ -865,8 +881,8 @@ class ScenarioCommands:
         )
         if not request.confirm:
             return issue
-        client = None if config is None else self._tracker_of(config, run.hub)
-        if config is None or team is None or client is None:
+        client = self._tracker_of(config, run.hub)
+        if client is None:
             reason = (
                 "the tracker is not connected: set LINEAR_API_KEY or connect Linear in"
                 ' Settings, or set tracker.transport "mcp" in hub.json'

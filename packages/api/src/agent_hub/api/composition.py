@@ -486,10 +486,12 @@ def ticket_snapshots(
 
 
 def tracker_client_of(environ: Mapping[str, str], linear_environ: Mapping[str, str]) -> TrackerOf:
-    """A hub's tracker client for a finding's issue (as ``hub scenario findings`` resolves
-    it): the Linear MCP server through ``claude -p`` in the hub for transport ``mcp``, else
-    Linear's GraphQL API with ``LINEAR_API_KEY`` (``linear_environ``: the key file too), None
-    when that key is unset (not connected). The key is read at call time, never shown."""
+    """A hub's tracker client for a finding's issue, given its effective config (``hub.json``
+    with ``hub.local.json`` over it, so a local ``tracker.transport`` wins): for transport
+    ``mcp``, the Linear MCP server through ``claude -p`` in the hub, with ``environ``; else
+    Linear's GraphQL API with ``LINEAR_API_KEY`` from ``linear_environ`` (the environment, then
+    Settings' key file), None when no key is there (not connected). The key is read at call
+    time, never shown."""
 
     def of(config: HubConfig, hub_path: str) -> TrackerClient | None:
         if config.tracker.transport == "mcp":
