@@ -759,6 +759,9 @@
     },
     "workflows/sdlc/ticket-pass.yaml": {
       "ownership": "seeded"
+    },
+    "workflows/upgrade/scripts/fast_gate.py": {
+      "ownership": "seeded"
     }
   },
   "lock_version": 1,
