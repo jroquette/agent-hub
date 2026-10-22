@@ -281,3 +281,246 @@ def test_exits_two_when_days_outside_one_to_ninety(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "metrics.py: " in captured.err
+
+
+REPO = Path(__file__).resolve().parents[8]
+FULL_GOLDEN = REPO / "packages/generator/tests/integration/golden/retro_metrics/full.golden"
+TABLE_HEAD = (
+    "Skills and agents: runs in the last 7 days, never used first.\n\n"
+    "| Project | Kind | Name | 7 d | 30 d | 90 d | Last used |\n"
+    "| --- | --- | --- | --- | --- | --- | --- |\n"
+)
+SKILL_TABLE = TABLE_HEAD + (
+    "| demo | skill | /refactor | 0 | 0 | 3 | 2026-08-01 |\n"
+    "| demo | agent | evaluator | 0 | 1 | 1 | 2026-09-30 |\n"
+    "| demo | skill | /feature | 2 | 5 | 9 | 2026-10-20 |\n"
+)
+MINING = (
+    "# Transcript mining — last 7 days (2026-10-22)\n\n"
+    "Sessions: 12 · cost (sessions with cost records): $34.5 · Stop-gate blocks: 3\n\n"
+    "## Recurring tool errors (candidates for a hook, lint or AGENTS.md line)\n\n"
+    "- 4× **Bash**: `secret reason text`\n\n"
+    "## Guard / hook / permission blocks\n\n"
+    "- 5× `denied: push to main by someone`\n"
+    "- 2× `asked: edit docs/adr`\n\n"
+    "## Bash commands failing repeatedly (first word)\n\n"
+    "- 3× `make`\n"
+)
+EMPTY_REPORT = json.dumps(
+    {"window": "", "prs": {}, "agent_runs": {"outcomes": {}, "cost_per_issue": {}}, "ci": {}}
+)
+
+
+def golden_stdout(path: Path) -> str:
+    text = path.read_text()
+    return text.split("--- stdout", 1)[1].split("---\n", 1)[1].split("\n--- stderr", 1)[0]
+
+
+class FakeRunner:
+    """Answers each command by its script or subcommand name; records the argv it got."""
+
+    def __init__(self, answers: dict[str, tuple[int, str, str]]) -> None:
+        self.answers = answers
+        self.calls: list[tuple[list[str], int]] = []
+
+    def __call__(self, argv: list[str], timeout: int) -> tuple[int, str, str]:
+        self.calls.append((argv, timeout))
+        name = Path(argv[1] if argv[0] == "python3" else argv[0]).name
+        return self.answers.get(name, (127, "", f"{name}: not found"))
+
+
+def test_flattens_retro_metrics_when_report_complete() -> None:
+    reading = load().parse_retro_metrics(0, golden_stdout(FULL_GOLDEN), "")
+
+    assert reading.metrics == {
+        "issue_runs.outcome.failed:verify": 2,
+        "issue_runs.outcome.pr_opened": 5,
+        "issue_runs.outcome.failed:check": 1,
+        "issue_runs.cost_usd.TST-5": 2.0,
+        "issue_runs.cost_usd.TST-1": 1.45,
+        "issue_runs.cost_usd.TST-3": 0.3,
+        "issue_runs.cost_usd.TST-2": 0.17,
+        "issue_runs.cost_usd.TST-4": 0.0,
+        "prs.acme/api.merged": 3,
+        "prs.acme/api.median_cycle_h": 1.1,
+        "prs.acme/api.agent_prs": 2,
+        "prs.acme/api.agent_merged_without_edits": 1,
+        "prs.acme/web.merged": 0,
+        "prs.acme/web.agent_prs": 0,
+        "prs.acme/web.agent_merged_without_edits": 0,
+        "prs.acme/demo-hub.merged": 4,
+        "prs.acme/demo-hub.median_cycle_h": 2.7,
+        "prs.acme/demo-hub.agent_prs": 1,
+        "prs.acme/demo-hub.agent_merged_without_edits": 1,
+        "ci.acme/api.runs": 8,
+        "ci.acme/api.failed": 6,
+        "ci.acme/web.runs": 2,
+        "ci.acme/web.failed": 1,
+        "ci.acme/demo-hub.runs": 0,
+        "ci.acme/demo-hub.failed": 0,
+        "memory.inbox_pending": 2,
+        "memory.learnings_added_or_changed": 3,
+    }
+    assert reading.sources == [
+        {"name": "issue_runs", "status": "ok", "reason": ""},
+        {"name": "github", "status": "ok", "reason": ""},
+    ]
+
+
+def test_drops_github_keys_when_gh_warning_printed() -> None:
+    warning = "warning: gh pr list failed: HTTP 503: " + "-" * 300 + "\n"
+
+    reading = load().parse_retro_metrics(0, golden_stdout(FULL_GOLDEN), warning * 3)
+
+    assert not any(key.startswith("prs.") for key in reading.metrics)
+    assert reading.metrics["ci.acme/api.runs"] == 8
+    assert reading.metrics["issue_runs.outcome.pr_opened"] == 5
+    [github] = [item for item in reading.sources if item["name"] == "github"]
+    assert github["status"] == "missing"
+    assert github["reason"].startswith("warning: gh pr list failed: HTTP 503")
+    assert len(github["reason"]) == 200
+
+    both = warning + "warning: gh run list failed: no network\n"
+    reading = load().parse_retro_metrics(0, golden_stdout(FULL_GOLDEN), both)
+    assert not any(key.startswith(("prs.", "ci.")) for key in reading.metrics)
+
+
+@pytest.mark.parametrize(
+    ("answer", "reason"),
+    [
+        ((1, "", "hub.json: project.hub_repo and every repos[].github are required\n"), "exit 1: "),
+        ((124, "", "timed out after 300 s"), "exit 124: timed out"),
+        ((0, "Traceback? not json", ""), "not a JSON object"),
+        ((0, "[1, 2]", ""), "not a JSON object"),
+    ],
+)
+def test_marks_issue_runs_missing_when_retro_metrics_fails(
+    answer: tuple[int, str, str], reason: str
+) -> None:
+    reading = load().parse_retro_metrics(*answer)
+
+    assert reading.metrics == {}
+    assert [item["status"] for item in reading.sources] == ["missing", "missing"]
+    assert reading.sources[0]["name"] == "issue_runs"
+    assert reading.sources[0]["reason"].startswith(reason)
+
+
+def test_lists_idle_skills_when_skill_usage_table_parsed() -> None:
+    reading = load().parse_skill_usage(0, SKILL_TABLE, "", days=7)
+
+    assert reading.metrics == {
+        "skills.idle": 1,
+        "agents.idle": 1,
+        "skill.refactor.runs_7d": 0,
+        "agent.evaluator.runs_7d": 0,
+        "skill.feature.runs_7d": 2,
+    }
+    assert reading.extras == {"skills": ["refactor"], "agents": ["evaluator"]}
+    assert reading.sources == [{"name": "skill_usage", "status": "ok", "reason": ""}]
+
+    wider = load().parse_skill_usage(0, SKILL_TABLE, "", days=90)
+    assert wider.metrics["skill.refactor.runs_90d"] == 3
+    assert wider.extras == {"skills": [], "agents": []}
+
+
+@pytest.mark.parametrize(
+    ("since", "window"), [(1, 7), (7, 7), (8, 30), (30, 30), (31, 90), (90, 90)]
+)
+def test_picks_smallest_window_covering_since_when_days_given(since: int, window: int) -> None:
+    assert load().skill_window(since) == window
+
+
+@pytest.mark.parametrize(
+    ("rc", "out", "err"),
+    [
+        (2, "", "Error: No such command 'skill-usage'.\n"),
+        (127, "", "./hub: not found"),
+        (0, "no table here\n", ""),
+    ],
+)
+def test_marks_skill_usage_missing_when_command_unknown(rc: int, out: str, err: str) -> None:
+    reading = load().parse_skill_usage(rc, out, err, days=7)
+
+    assert reading.metrics == {}
+    assert reading.extras == {}
+    assert reading.sources[0]["status"] == "missing"
+    assert reading.sources[0]["reason"]
+
+
+def test_marks_skill_usage_partial_when_not_read_line_printed() -> None:
+    table = SKILL_TABLE + "| demo | skill | /odd | x | 1 | 1 | never |\n\n"
+    table += "Some items were not read; the list may be incomplete.\n"
+
+    reading = load().parse_skill_usage(0, table, "", days=7)
+
+    assert reading.sources == [
+        {
+            "name": "skill_usage",
+            "status": "partial",
+            "reason": "some items were not read; 1 rows not parsed",
+        }
+    ]
+    assert "skill.odd.runs_7d" not in reading.metrics
+    assert reading.metrics["skill.feature.runs_7d"] == 2
+
+
+def test_keeps_only_counts_when_transcript_report_parsed() -> None:
+    reading = load().parse_mining(0, MINING, "")
+
+    assert reading.metrics == {
+        "transcripts.sessions": 12,
+        "transcripts.cost_usd": 34.5,
+        "transcripts.stop_gate_blocks": 3,
+        "transcripts.guard_blocks": 7,
+    }
+    assert reading.sources == [{"name": "transcripts", "status": "ok", "reason": ""}]
+    assert "push to main" not in json.dumps(reading)
+    assert "secret reason" not in json.dumps(reading)
+
+    missing = load().parse_mining(0, "# Transcript mining\n\nno counts\n", "")
+    assert missing.metrics == {}
+    assert missing.sources[0]["status"] == "missing"
+
+
+def test_counts_issue_runs_in_runs_when_retro_metrics_has_outcomes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / ".agent-runs" / "workflows").mkdir(parents=True)
+    report = json.dumps({"agent_runs": {"outcomes": {"pr_opened": 2}, "cost_per_issue": {}}})
+    runner = FakeRunner(
+        {
+            "retro_metrics.py": (0, report, ""),
+            "hub": (0, TABLE_HEAD, ""),
+            "mine_transcripts.py": (0, MINING, ""),
+        }
+    )
+
+    code = load().main(["--days", "8", "--root", str(tmp_path), "--today", TODAY], runner=runner)
+    found = json.loads(capsys.readouterr().out)
+
+    assert code == 0
+    assert (found["runs"], found["nothing"]) == (2, False)
+    assert [item["name"] for item in found["sources"]] == [
+        "runs",
+        "issue_runs",
+        "github",
+        "skill_usage",
+        "transcripts",
+    ]
+    assert runner.calls == [
+        (["python3", "scripts/retro_metrics.py", "--days", "8"], 300),
+        (["./hub", "skill-usage", "--days", "30"], 120),
+        (["python3", "scripts/mine_transcripts.py", "--days", "8"], 300),
+    ]
+    assert "lower bound" in found["summary"]
+
+
+def test_exits_one_when_every_source_missing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = load().main(["--days", "7", "--root", str(tmp_path)], runner=FakeRunner({}))
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert captured.out == ""
+    assert captured.err.startswith("metrics.py: every source is missing")

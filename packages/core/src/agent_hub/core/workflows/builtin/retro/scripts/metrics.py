@@ -4,35 +4,46 @@
 # ///
 """Gather step 1's numbers for the weekly retro, as one JSON object.
 
-``metrics.py --days N [--root DIR] [--today YYYY-MM-DD]`` folds the hub's workflow run records
-(``.agent-runs/workflows/*/records.jsonl``) started in the last ``N`` days (1-90) into flat
-``workflow.<name>.<number>`` keys: runs, done, failed, cancelled, open, retries, review_rounds,
-gates, gate_wait_h_median, evals, no_ship, no_ship_rate, ``outcome.<value>`` and
-``failed_at.<node>``. The ``retro`` runs themselves, ``issue-to-pr`` runs (the dated records count
-those) and scenario runs are left out.
+``metrics.py --days N [--root DIR] [--today YYYY-MM-DD]``, run in the hub (``--root``), reads:
+
+- the workflow run records (``.agent-runs/workflows/*/records.jsonl``) started in the last ``N``
+  days (1-90), folded into ``workflow.<name>.<number>``: runs, done, failed, cancelled, open,
+  retries, review_rounds, gates, gate_wait_h_median, evals, no_ship, no_ship_rate,
+  ``outcome.<value>`` and ``failed_at.<node>``. ``retro`` runs, ``issue-to-pr`` runs (the dated
+  records count those) and scenario runs are left out;
+- ``python3 scripts/retro_metrics.py --days N``: ``issue_runs.*``, ``prs.*``, ``ci.*`` and
+  ``memory.*`` (a ``gh … failed`` warning drops its zeros and marks ``github`` missing);
+- ``./hub skill-usage --days D`` (D the smallest of 7, 30 or 90 covering ``N``):
+  ``skill.<name>.runs_<D>d``, ``agent.<name>.runs_<D>d`` and the idle counts;
+- ``python3 scripts/mine_transcripts.py --days N``: ``transcripts.*`` counts, never its text.
 
 It prints ``{"days", "since", "until", "runs", "nothing", "metrics", "idle", "sources",
 "left_out", "summary"}``: ``metrics`` maps each key to a number (at most 300), ``runs`` counts the
-runs started in the window, ``nothing`` is true when there is none, ``sources`` says for each
-source whether it was read (``ok``, ``partial`` or ``missing``, with a reason) and ``left_out``
-names what the numbers do not cover. A ``--days`` outside 1-90 or a bad ``--today`` exits 2.
+runs started in the window, ``nothing`` is true when there is none, ``idle`` names the skills and
+agents not run, ``sources`` says how each source read (``ok``, ``partial`` or ``missing``, with a
+reason) and ``left_out`` names what the numbers do not cover. Every source missing exits 1; a
+``--days`` outside 1-90 or a bad ``--today`` exits 2.
 """
 
 import argparse
 import json
 import re
 import statistics
+import subprocess
 import sys
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import NamedTuple
 
 Record = dict[str, object]
 Metrics = dict[str, float]
 Source = dict[str, str]
+# ``(argv, timeout in seconds) -> (exit code, stdout, stderr)``, run in the hub.
+Runner = Callable[[list[str], int], tuple[int, str, str]]
 
 # Last week's retro is not activity; issue-to-pr runs are counted from the dated records.
 LEFT_OUT_WORKFLOWS = frozenset({"retro", "issue-to-pr"})
@@ -56,6 +67,34 @@ LEFT_OUT = (
     " transcript blocks are counted instead)",
     "GitHub review rounds on PRs (scripts get no GitHub token; workflow review rounds are counted)",
 )
+MAX_OUTPUT = MIB
+TIMED_OUT = 124
+NOT_RUN = 127
+RETRO_METRICS = ["python3", "scripts/retro_metrics.py"]
+RETRO_METRICS_TIMEOUT = 300
+SKILL_USAGE = ["./hub", "skill-usage"]
+SKILL_USAGE_TIMEOUT = 120
+MINING = ["python3", "scripts/mine_transcripts.py"]
+MINING_TIMEOUT = 300
+TOP_COSTS = 10
+PR_KEYS = ("merged", "median_cycle_h", "agent_prs", "agent_merged_without_edits")
+CI_KEYS = ("runs", "failed")
+MEMORY_KEYS = ("inbox_pending", "learnings_added_or_changed")
+# retro_metrics.py prints these on stderr and zeros on stdout: zeros that must not become evidence.
+GH_FAILED = {"prs": "gh pr list failed", "ci": "gh run list failed"}
+USAGE_HEADER = "| Project | Kind | Name | 7 d | 30 d | 90 d | Last used |"
+USAGE_RULE = "| --- | --- | --- | --- | --- | --- | --- |"
+NOT_READ_LINE = "Some items were not read; the list may be incomplete."
+USAGE_COLUMN = {7: 3, 30: 4, 90: 5}
+USAGE_KINDS = {"skill": "skills", "agent": "agents"}
+MAX_ROWS = 150
+COUNTS_LINE = re.compile(
+    r"^Sessions: (\d+) · cost \(sessions with cost records\): \$([0-9.]+)"
+    r" · Stop-gate blocks: (\d+)$",
+    re.MULTILINE,
+)
+BLOCKS_HEADING = "## Guard / hook / permission blocks"
+BLOCK_BULLET = re.compile(r"^- (\d+)× ", re.MULTILINE)
 # The cap keeps the keys in this order: a key's rank is its first prefix's place here.
 KEY_ORDER = (
     ("workflow.",),
@@ -268,6 +307,10 @@ def _source(name: str, status: str, reason: str) -> Source:
     return {"name": name, "status": status, "reason": reason[:200]}
 
 
+def _ok(name: str) -> Source:
+    return _source(name, "ok", "")
+
+
 def _rank(key: str) -> int:
     return next(
         (n for n, prefixes in enumerate(KEY_ORDER) if key.startswith(prefixes)), len(KEY_ORDER)
@@ -294,6 +337,8 @@ def _summary(
         f"- {item['name']}: {item['status']}" + (f" ({item['reason']})" * bool(item["reason"]))
         for item in sources
     ]
+    if any(item["name"] == "transcripts" and item["status"] != "missing" for item in sources):
+        lines.append("Guard blocks count the transcript report's top 10 reasons: a lower bound.")
     lines.append("Left out:")
     lines += [f"- {line}" for line in left_out]
     return "\n".join(lines)[:MAX_SUMMARY]
@@ -330,6 +375,169 @@ def assemble(readings: list[Reading], *, days: int, since: date, until: date) ->
     return found
 
 
+def run_command(argv: list[str], timeout: int, *, cwd: Path) -> tuple[int, str, str]:
+    """The default ``Runner``: ``argv`` in ``cwd``, each stream cut at 1 MiB."""
+    try:
+        done = subprocess.run(  # noqa: S603 - fixed argv, the hub's own scripts and shim
+            argv, cwd=cwd, capture_output=True, timeout=timeout, check=False
+        )
+    except subprocess.TimeoutExpired:
+        return TIMED_OUT, "", f"timed out after {timeout} s"
+    except OSError as error:
+        return NOT_RUN, "", f"{argv[0]}: {error}"
+    out = done.stdout[:MAX_OUTPUT].decode("utf-8", "replace")
+    return done.returncode, out, done.stderr[:MAX_OUTPUT].decode("utf-8", "replace")
+
+
+def _failed(code: int, err: str) -> str:
+    first = next((line.strip() for line in err.splitlines() if line.strip()), "")
+    return f"exit {code}: {first}"
+
+
+def _number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return round(value, 2) if isinstance(value, float) else value
+
+
+def _numbers(prefix: str, values: object, names: Iterable[str] | None = None) -> Metrics:
+    """``<prefix>.<name>`` for each number in the mapping ``values`` (only ``names`` if given)."""
+    if not isinstance(values, dict):
+        return {}
+    found: Metrics = {}
+    for name in values if names is None else names:
+        number = _number(values.get(name))
+        if number is not None:
+            found[f"{prefix}.{_part(str(name))}"] = number
+    return found
+
+
+def _per_repo(report: dict[str, object], section: str, names: tuple[str, ...]) -> Metrics:
+    repos = report.get(section)
+    found: Metrics = {}
+    for repo, values in repos.items() if isinstance(repos, dict) else ():
+        found |= _numbers(f"{section}.{_part(str(repo))}", values, names)
+    return found
+
+
+def _issue_runs(report: dict[str, object]) -> Metrics:
+    runs = report.get("agent_runs")
+    runs = runs if isinstance(runs, dict) else {}
+    found = _numbers("issue_runs.outcome", runs.get("outcomes"))
+    costs = _numbers("issue_runs.cost_usd", runs.get("cost_per_issue"))
+    top = sorted(costs.items(), key=lambda item: -item[1])[:TOP_COSTS]
+    return found | dict(top)
+
+
+def parse_retro_metrics(code: int, out: str, err: str) -> Reading:
+    """The ``issue_runs`` and ``github`` sources from ``retro_metrics.py``'s report."""
+    report: object = None
+    if code == 0:
+        try:
+            report = json.loads(out)
+        except ValueError:
+            report = None
+    if not isinstance(report, dict):
+        reason = _failed(code, err) if code else "not a JSON object"
+        missing = [_source("issue_runs", "missing", reason)]
+        return Reading(
+            {}, [*missing, _source("github", "missing", "retro_metrics.py did not run")], {}
+        )
+    found = _issue_runs(report)
+    failures: list[str] = []
+    for section, names in (("prs", PR_KEYS), ("ci", CI_KEYS)):
+        warning = next((line for line in err.splitlines() if GH_FAILED[section] in line), "")
+        failures += [warning.strip()] * bool(warning)
+        found |= {} if warning else _per_repo(report, section, names)
+    found |= _numbers("memory", report.get("memory"), MEMORY_KEYS)
+    github = _source("github", "missing", "; ".join(failures)) if failures else _ok("github")
+    return Reading(found, [_ok("issue_runs"), github], {})
+
+
+def skill_window(since: int) -> int:
+    """The smallest ``hub skill-usage`` window (7, 30 or 90 days) that covers ``since`` days."""
+    return next(window for window in (7, 30, 90) if since <= window or window == 90)
+
+
+def _usage_row(line: str, column: int) -> tuple[str, str, int] | None:
+    """``(kind, name, runs)`` from one table row, or None when it does not parse."""
+    cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+    if len(cells) != len(USAGE_HEADER.strip("|").split("|")) or cells[1] not in USAGE_KINDS:
+        return None
+    if not cells[column].isdigit() or not cells[2]:
+        return None
+    return cells[1], _part(cells[2].removeprefix("/")), int(cells[column])
+
+
+def _usage_problems(out: str, *, unparsed: int, over: int) -> list[str]:
+    problems = ["some items were not read"] * (NOT_READ_LINE in out)
+    problems += [f"{unparsed} rows not parsed"] * bool(unparsed)
+    return problems + [f"{over} rows over {MAX_ROWS}"] * bool(over)
+
+
+def parse_skill_usage(code: int, out: str, err: str, *, days: int) -> Reading:
+    """The ``skill_usage`` source from ``hub skill-usage --days <days>``'s table (AGH-482)."""
+    lines = [line.strip() for line in out.splitlines()]
+    if code or USAGE_HEADER not in lines:
+        reason = _failed(code, err) if code else "no usage table in the output"
+        return Reading({}, [_source("skill_usage", "missing", reason)], {})
+    rows: list[tuple[str, str, int]] = []
+    unparsed = over = 0
+    for line in lines[lines.index(USAGE_HEADER) + 1 :]:
+        if not line.startswith("|") or line == USAGE_RULE:
+            continue
+        row = _usage_row(line, USAGE_COLUMN[days])
+        if row is None:
+            unparsed += 1
+        elif sum(kind == row[0] for kind, _, _ in rows) >= MAX_ROWS:
+            over += 1
+        else:
+            rows.append(row)
+    idle = {
+        plural: [name for kind, name, runs in rows if kind == singular and not runs]
+        for singular, plural in USAGE_KINDS.items()
+    }
+    found: Metrics = {f"{plural}.idle": len(names) for plural, names in idle.items()}
+    found |= {f"{kind}.{name}.runs_{days}d": runs for kind, name, runs in rows}
+    problems = _usage_problems(out, unparsed=unparsed, over=over)
+    status = (
+        _source("skill_usage", "partial", "; ".join(problems)) if problems else _ok("skill_usage")
+    )
+    return Reading(found, [status], idle)
+
+
+def parse_mining(code: int, out: str, err: str) -> Reading:
+    """The ``transcripts`` source: only the counts of ``mine_transcripts.py``'s report, never its
+    reason text (it is transcript text)."""
+    counts = COUNTS_LINE.search(out) if code == 0 else None
+    if counts is None:
+        reason = _failed(code, err) if code else "no counts line in the report"
+        return Reading({}, [_source("transcripts", "missing", reason)], {})
+    section = out.split(BLOCKS_HEADING, 1)[1] if BLOCKS_HEADING in out else ""
+    section = section.split("\n## ", 1)[0]
+    blocks = sum(int(found.group(1)) for found in BLOCK_BULLET.finditer(section))
+    found: Metrics = {
+        "transcripts.sessions": int(counts.group(1)),
+        "transcripts.cost_usd": round(float(counts.group(2)), 2),
+        "transcripts.stop_gate_blocks": int(counts.group(3)),
+        "transcripts.guard_blocks": blocks,
+    }
+    return Reading(found, [_ok("transcripts")], {})
+
+
+def outside_sources(days: int, runner: Runner) -> list[Reading]:
+    """The three commands' readings: retro_metrics.py, hub skill-usage, mine_transcripts.py."""
+    window = skill_window(days)
+    period = ["--days", str(days)]
+    return [
+        parse_retro_metrics(*runner([*RETRO_METRICS, *period], RETRO_METRICS_TIMEOUT)),
+        parse_skill_usage(
+            *runner([*SKILL_USAGE, "--days", str(window)], SKILL_USAGE_TIMEOUT), days=window
+        ),
+        parse_mining(*runner([*MINING, *period], MINING_TIMEOUT)),
+    ]
+
+
 def _arguments(argv: list[str]) -> tuple[int, Path, date] | str:
     """``(days, root, today)``, or what is wrong with the arguments."""
     parser = argparse.ArgumentParser(prog="metrics.py")
@@ -346,14 +554,20 @@ def _arguments(argv: list[str]) -> tuple[int, Path, date] | str:
     return int(given.days), Path(given.root), today
 
 
-def main(argv: list[str]) -> int:
+def main(argv: list[str], *, runner: Runner | None = None) -> int:
     found = _arguments(argv)
     if isinstance(found, str):
         print(f"metrics.py: {found}", file=sys.stderr)
         return 2
     days, root, today = found
     since = today - timedelta(days=days)
-    readings = [runs_source(root, since)]
+    run = runner or partial(run_command, cwd=root)
+    readings = [runs_source(root, since), *outside_sources(days, run)]
+    sources = [item for reading in readings for item in reading.sources]
+    if all(item["status"] == "missing" for item in sources):
+        reasons = "; ".join(f"{item['name']} ({item['reason']})" for item in sources)
+        print(f"metrics.py: every source is missing: {reasons}", file=sys.stderr)
+        return 1
     print(json.dumps(assemble(readings, days=days, since=since, until=today)))
     return 0
 
