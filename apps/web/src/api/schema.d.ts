@@ -1246,6 +1246,89 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/scenario-runs/{run_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Scenario Run
+     * @description A scenario run as its record holds it: timeline, polls, captures, decisions, findings,
+     *     investigations, the latest proposal's options and the workarounds.
+     */
+    get: operations["get_scenario_run_api_v1_scenario_runs__run_id__get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/scenario-runs/{run_id}/answer": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Answer Investigation
+     * @description Answer the open investigation (pick an option, retry the step or stop the run), then
+     *     resume the run; a pick that cannot stand is 409 with its reason and records nothing.
+     */
+    post: operations["answer_investigation_api_v1_scenario_runs__run_id__answer_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/scenario-runs/{run_id}/findings/{finding_id}/inbox": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Finding Inbox
+     * @description Write the finding as a ``brain/_inbox/`` note (``provenance: agent-from-external``),
+     *     never over another.
+     */
+    post: operations["finding_inbox_api_v1_scenario_runs__run_id__findings__finding_id__inbox_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/scenario-runs/{run_id}/findings/{finding_id}/issue": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Finding Issue
+     * @description A finding's tracker issue draft; with ``confirm: true``, the issue created once (201).
+     */
+    post: operations["finding_issue_api_v1_scenario_runs__run_id__findings__finding_id__issue_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/scenario-runs/{run_id}/investigation": {
     parameters: {
       query?: never;
@@ -1261,6 +1344,89 @@ export interface paths {
      *     answer the one already started (200); 409 when the run is not paused there.
      */
     post: operations["open_investigation_api_v1_scenario_runs__run_id__investigation_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/scenarios": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Scenarios
+     * @description The scenarios of every (or one) project, each with its last scenario run, and the
+     *     files that do not load.
+     */
+    get: operations["list_scenarios_api_v1_scenarios_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/scenarios/{project}/{name}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Scenario
+     * @description One scenario: its steps and its scenario runs, newest first.
+     */
+    get: operations["get_scenario_api_v1_scenarios__project___name__get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/scenarios/{project}/{name}/plan": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Plan Scenario
+     * @description What each step would do in the environment, and the policy's decision; nothing runs
+     *     but the scripts' plan mode, with no credential and only when a step's args are known.
+     */
+    post: operations["plan_scenario_api_v1_scenarios__project___name__plan_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/scenarios/{project}/{name}/runs": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Start Scenario
+     * @description Start a scenario run once its plan holds no problem and no deny (409 naming the denied
+     *     steps, no run created); its events tell the rest.
+     */
+    post: operations["start_scenario_api_v1_scenarios__project___name__runs_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -2128,6 +2294,16 @@ export interface components {
       /** Text */
       text: string | null;
     };
+    /** CaptureEntry */
+    CaptureEntry: {
+      /** Attempt */
+      attempt: number | null;
+      /** Name */
+      name: string;
+      /** Node */
+      node: string;
+      value: components["schemas"]["agent_hub__core__json_form__JsonValue"];
+    };
     /**
      * CatalogItem
      * @description One card of the catalog (D3, AC-164.7).
@@ -2260,6 +2436,8 @@ export interface components {
       /** Path */
       path: string;
     };
+    /** @enum {string} */
+    Choice: "pick" | "retry" | "stop";
     /**
      * CloudMessage
      * @description ``POST /agent-sessions/cloud/{cloud_id}/messages``: a one-shot follow-up.
@@ -2396,6 +2574,30 @@ export interface components {
       screenshot?: components["schemas"]["Screenshot"] | null;
       /** Workdir Id */
       workdir_id: string;
+    };
+    /** CreatedIssue */
+    CreatedIssue: {
+      /** Id */
+      id: string;
+      /** Url */
+      url: string;
+    };
+    /** DecisionEntry */
+    DecisionEntry: {
+      /** Approver */
+      approver: string | null;
+      /** At */
+      at: string | null;
+      /** Attempt */
+      attempt: number | null;
+      /** Choice */
+      choice: string | null;
+      /** Node */
+      node: string;
+      /** Text */
+      text: string | null;
+      /** Where */
+      where: string | null;
     };
     /**
      * Diagnostic
@@ -2817,6 +3019,59 @@ export interface components {
     FileOperation: "read" | "edited" | "created" | "written";
     /** @enum {string} */
     FileRole: "scripts" | "references" | "assets" | "other";
+    /** FindingEntry */
+    FindingEntry: {
+      /** Evidence */
+      evidence: string;
+      /** Finding Id */
+      finding_id: string;
+      /** Step */
+      step: string;
+      /** Text */
+      text: string;
+      /** Title */
+      title: string;
+    };
+    /**
+     * FindingIssue
+     * @description A finding's tracker issue: its draft, the team it goes to, and the issue once created.
+     */
+    FindingIssue: {
+      created: components["schemas"]["CreatedIssue"] | null;
+      /** Description */
+      description: string;
+      /** Finding Id */
+      finding_id: string;
+      /** Run Id */
+      run_id: string;
+      /** Team */
+      team: string | null;
+      /** Title */
+      title: string;
+    };
+    /**
+     * FindingIssueRequest
+     * @description ``confirm: true`` creates the issue (the terminal's ``y``); without it, the draft.
+     */
+    FindingIssueRequest: {
+      /**
+       * Confirm
+       * @default false
+       */
+      confirm: boolean;
+    };
+    /**
+     * FindingNote
+     * @description The inbox note written for a finding, hub-relative.
+     */
+    FindingNote: {
+      /** Finding Id */
+      finding_id: string;
+      /** Path */
+      path: string;
+      /** Run Id */
+      run_id: string;
+    };
     /**
      * FindingView
      * @description A finding of a registered hub's doctor run.
@@ -3120,6 +3375,53 @@ export interface components {
     InputText: string;
     InputValue:
       boolean | number | components["schemas"]["InputNumber"] | components["schemas"]["InputText"];
+    Inputs: {
+      [key: string]: components["schemas"]["InputValue"];
+    };
+    /**
+     * InvestigationAnswer
+     * @description The answer to an open investigation: ``pick`` with an option id, ``retry`` or ``stop``.
+     */
+    InvestigationAnswer: {
+      choice: components["schemas"]["Choice"];
+      option?: components["schemas"]["OptionId"] | null;
+    };
+    /**
+     * InvestigationAnswered
+     * @description What an answer did: recorded for the investigation, and the run resumed.
+     */
+    InvestigationAnswered: {
+      choice: components["schemas"]["Choice"];
+      /** Investigation */
+      investigation: number;
+      /** Option */
+      option: string | null;
+      /** Project */
+      project: string;
+      /** Run Id */
+      run_id: string;
+      /** Step */
+      step: string;
+    };
+    /** InvestigationEntry */
+    InvestigationEntry: {
+      /** Approver */
+      approver: string | null;
+      /** Choice */
+      choice: string | null;
+      /** Closed */
+      closed: boolean;
+      /** Failure Kind */
+      failure_kind: string | null;
+      /** Gate */
+      gate: string;
+      /** Number */
+      number: number;
+      /** Step */
+      step: string;
+      /** Text */
+      text: string | null;
+    };
     /**
      * InvestigationSession
      * @description The session of a scenario run's open investigation: ``started`` when this call
@@ -3690,6 +3992,35 @@ export interface components {
       tool: string;
     };
     /**
+     * OptionEntry
+     * @description An option of the latest proposal: its steps and their plan as shown, whether a step runs
+     *     a draft action (``needs_acceptance``, with the commit lines that accept those still
+     *     drafts), and whether it can be picked now, or why not.
+     */
+    OptionEntry: {
+      /** Accept Commands */
+      accept_commands: string[];
+      /** Needs Acceptance */
+      needs_acceptance: boolean;
+      /** Option Id */
+      option_id: string;
+      /** Pickable */
+      pickable: boolean;
+      /** Plan */
+      plan: {
+        [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue"];
+      }[];
+      /** Refusal */
+      refusal: string | null;
+      /** Steps */
+      steps: {
+        [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue"];
+      }[];
+      /** Summary */
+      summary: string;
+    };
+    OptionId: string;
+    /**
      * Origin
      * @description Who owns an item (S4): ``managed`` per ``hub.lock``, ``project-owned`` (any other plugin
      *     folder, ``settings.project.json``), ``local`` (a real entry in ``.claude/``).
@@ -3950,6 +4281,15 @@ export interface components {
       index: number;
       rule: components["schemas"]["pydantic__types__JsonValue"];
     };
+    /** PlanEndpoint */
+    PlanEndpoint: {
+      /** Resource */
+      resource: string | null;
+      /** Service */
+      service: string;
+      /** Url */
+      url: string | null;
+    };
     /**
      * PlanView
      * @description The plan's version (AC-1.4): ``v<amendments + 1>``. ``version`` is None and ``problem``
@@ -3990,6 +4330,19 @@ export interface components {
       previous_version: string | null;
       /** Version */
       version: string;
+    };
+    /** PollEntry */
+    PollEntry: {
+      /** At */
+      at: string | null;
+      /** Attempt */
+      attempt: number | null;
+      /** Held */
+      held: boolean | null;
+      /** Node */
+      node: string;
+      /** Poll */
+      poll: number | null;
     };
     /**
      * PreflightRun
@@ -4227,6 +4580,15 @@ export interface components {
       sources_missing: components["schemas"]["EventSource"][];
       /** Tracker Teams */
       tracker_teams: string[];
+    };
+    /** ProposalEntry */
+    ProposalEntry: {
+      /** Investigation */
+      investigation: number;
+      /** Options */
+      options: components["schemas"]["OptionEntry"][];
+      /** Proposal */
+      proposal: number;
     };
     /**
      * PublishDraftBody
@@ -4675,6 +5037,223 @@ export interface components {
       skip_cause?: components["schemas"]["SkipCause"] | null;
       started_at: components["schemas"]["ApiTimestamp"];
       status: components["schemas"]["StepStatus"];
+    };
+    /**
+     * ScenarioCatalogView
+     * @description The scenarios that load, by project then name, and every file that does not.
+     */
+    ScenarioCatalogView: {
+      /** Items */
+      items: components["schemas"]["ScenarioSummary"][];
+      /** Problems */
+      problems: components["schemas"]["WorkflowProblemView"][];
+    };
+    /**
+     * ScenarioDetail
+     * @description A scenario's steps and its scenario runs, newest first.
+     */
+    ScenarioDetail: {
+      /** Description */
+      description: string | null;
+      /**
+       * Inputs
+       * @default []
+       */
+      inputs: components["schemas"]["WorkflowInputView"][];
+      last_run?: components["schemas"]["ScenarioRunRef"] | null;
+      /** Name */
+      name: string;
+      /** Node Count */
+      node_count: number;
+      /** Pack */
+      pack: string;
+      /** Project */
+      project: string;
+      /** Revision */
+      revision: number;
+      /** Runs */
+      runs: components["schemas"]["ScenarioRunRef"][];
+      /** Steps */
+      steps: components["schemas"]["ScenarioStepView"][];
+    };
+    /** @enum {string} */
+    ScenarioMode: "interactive" | "regression";
+    /**
+     * ScenarioPlanRequest
+     * @description The body of a plan: the environment and the inputs (``--input``).
+     */
+    ScenarioPlanRequest: {
+      /** Environment */
+      environment: string;
+      inputs?: components["schemas"]["Inputs"];
+    };
+    /**
+     * ScenarioPlanRow
+     * @description One step of a plan, as ``hub scenario plan --json`` prints it, and whether its action
+     *     needs acceptance (a draft), with the commit line that accepts it (AM-5).
+     */
+    ScenarioPlanRow: {
+      /** Accept Command */
+      accept_command: string | null;
+      /** Action */
+      action: string;
+      /** Args */
+      args: {
+        [key: string]: string;
+      };
+      /** Content Hash */
+      content_hash: string;
+      /** Decision */
+      decision: string;
+      /** Draft */
+      draft: boolean;
+      /** Effect */
+      effect: string;
+      /** Endpoints */
+      endpoints: {
+        [key: string]: components["schemas"]["PlanEndpoint"];
+      };
+      /** Every */
+      every: string | null;
+      /** Needs Acceptance */
+      needs_acceptance: boolean;
+      /** Plan */
+      plan: string;
+      /** Reason */
+      reason: string | null;
+      /** Reason Kind */
+      reason_kind: string | null;
+      /** Step */
+      step: string;
+      /** Timeout */
+      timeout: string | null;
+      /** Type */
+      type: string;
+    };
+    /**
+     * ScenarioPlanView
+     * @description A scenario planned in one environment; ``denied`` when it may not start.
+     */
+    ScenarioPlanView: {
+      /** Access */
+      access: string | null;
+      /** Denied */
+      denied: boolean;
+      /** Environment */
+      environment: string;
+      /** Problems */
+      problems: string[];
+      /** Production */
+      production: boolean;
+      /** Project */
+      project: string;
+      /** Rows */
+      rows: components["schemas"]["ScenarioPlanRow"][];
+      /** Scenario */
+      scenario: string;
+    };
+    /**
+     * ScenarioRunDetail
+     * @description A scenario run as its record holds it. ``status`` is its end's, ``None`` while it has
+     *     none; ``open_investigation`` is the number of the investigation waiting for an answer.
+     */
+    ScenarioRunDetail: {
+      /** Captures */
+      captures: components["schemas"]["CaptureEntry"][];
+      /** Decisions */
+      decisions: components["schemas"]["DecisionEntry"][];
+      /** Environment */
+      environment: string | null;
+      /** Findings */
+      findings: components["schemas"]["FindingEntry"][];
+      /** Investigations */
+      investigations: components["schemas"]["InvestigationEntry"][];
+      /** Mode */
+      mode: string | null;
+      /** Open Investigation */
+      open_investigation: number | null;
+      /** Pack */
+      pack: string | null;
+      /** Paused Step */
+      paused_step: string | null;
+      /** Polls */
+      polls: components["schemas"]["PollEntry"][];
+      /** Project */
+      project: string;
+      proposal: components["schemas"]["ProposalEntry"] | null;
+      /** Run Id */
+      run_id: string;
+      /** Scenario */
+      scenario: string | null;
+      /** Status */
+      status: string | null;
+      /** Timeline */
+      timeline: components["schemas"]["TimelineEntry"][];
+      /** Workarounds */
+      workarounds: components["schemas"]["WorkaroundEntry"][];
+    };
+    /**
+     * ScenarioRunRef
+     * @description A scenario run as the folded events show it.
+     */
+    ScenarioRunRef: {
+      ended_at: components["schemas"]["ApiTimestamp"] | null;
+      /** Run Id */
+      run_id: string;
+      started_at: components["schemas"]["ApiTimestamp"];
+      status: components["schemas"]["WorkflowRunStatus"];
+    };
+    /**
+     * ScenarioStartRequest
+     * @description The body of a start: a plan's, and the mode (``interactive`` by default).
+     */
+    ScenarioStartRequest: {
+      /** Environment */
+      environment: string;
+      inputs?: components["schemas"]["Inputs"];
+      /** @default interactive */
+      mode: components["schemas"]["ScenarioMode"];
+    };
+    /**
+     * ScenarioStepView
+     * @description A step in declaration order: its type, the action it calls (an action or expect step)
+     *     and the steps it waits for.
+     */
+    ScenarioStepView: {
+      /** Action */
+      action: string | null;
+      /** Depends On */
+      depends_on: string[];
+      /** Description */
+      description?: string | null;
+      /** Id */
+      id: string;
+      /** Type */
+      type: string;
+    };
+    /**
+     * ScenarioSummary
+     * @description A scenario of a project's hub, its pack and its last scenario run.
+     */
+    ScenarioSummary: {
+      /** Description */
+      description: string | null;
+      /**
+       * Inputs
+       * @default []
+       */
+      inputs: components["schemas"]["WorkflowInputView"][];
+      last_run?: components["schemas"]["ScenarioRunRef"] | null;
+      /** Name */
+      name: string;
+      /** Node Count */
+      node_count: number;
+      /** Pack */
+      pack: string;
+      /** Project */
+      project: string;
+      /** Revision */
+      revision: number;
     };
     /**
      * Screenshot
@@ -5528,6 +6107,19 @@ export interface components {
     TicketsSource: "linear" | "plan";
     /** @enum {string} */
     TileGroup: "waiting" | "live" | "idle" | "ended_recently";
+    /** TimelineEntry */
+    TimelineEntry: {
+      /** At */
+      at: string | null;
+      /** Attempt */
+      attempt: number | null;
+      /** Event */
+      event: string;
+      /** Node */
+      node: string | null;
+      /** Status */
+      status: string | null;
+    };
     /**
      * TimelineEvent
      * @description One stored event as the timeline and Raw events show it.
@@ -5762,6 +6354,21 @@ export interface components {
        */
       tickets: string[];
     };
+    /** WorkaroundEntry */
+    WorkaroundEntry: {
+      /** Approver */
+      approver: string | null;
+      /** Number */
+      number: number;
+      /** Option */
+      option: string;
+      /** Status */
+      status: string | null;
+      /** Steps */
+      steps: number;
+      /** Workaround Id */
+      workaround_id: string;
+    };
     /**
      * Workdir
      * @description A folder a session may start in (D6): the hub, a repo checkout or one of its worktrees.
@@ -5815,7 +6422,8 @@ export interface components {
     /**
      * WorkflowDetail
      * @description A workflow's layers (in run order, nodes in declaration order) and its document as
-     *     written (keys left out are not filled in).
+     *     written (keys left out are not filled in); ``environment`` is the one a process workflow
+     *     declares (P-18), None without one.
      */
     WorkflowDetail: {
       /** Description */
@@ -5824,6 +6432,8 @@ export interface components {
       document: {
         [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue"];
       };
+      /** Environment */
+      environment?: string | null;
       /**
        * Inputs
        * @default []
@@ -8936,6 +9546,185 @@ export interface operations {
       };
     };
   };
+  get_scenario_run_api_v1_scenario_runs__run_id__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ScenarioRunDetail"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  answer_investigation_api_v1_scenario_runs__run_id__answer_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        run_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["InvestigationAnswer"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["InvestigationAnswered"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  finding_inbox_api_v1_scenario_runs__run_id__findings__finding_id__inbox_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        run_id: string;
+        finding_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FindingNote"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  finding_issue_api_v1_scenario_runs__run_id__findings__finding_id__issue_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        run_id: string;
+        finding_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["FindingIssueRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FindingIssue"];
+        };
+      };
+      /** @description The issue was created */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["FindingIssue"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
   open_investigation_api_v1_scenario_runs__run_id__investigation_post: {
     parameters: {
       query?: never;
@@ -8963,6 +9752,177 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["InvestigationSession"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  list_scenarios_api_v1_scenarios_get: {
+    parameters: {
+      query?: {
+        project?: string | null;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ScenarioCatalogView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_scenario_api_v1_scenarios__project___name__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        name: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ScenarioDetail"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  plan_scenario_api_v1_scenarios__project___name__plan_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        name: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ScenarioPlanRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ScenarioPlanView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  start_scenario_api_v1_scenarios__project___name__runs_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        name: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ScenarioStartRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RunAccepted"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */

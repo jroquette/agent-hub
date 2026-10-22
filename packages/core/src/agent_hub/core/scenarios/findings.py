@@ -63,6 +63,11 @@ class FindingsError(AgentHubError):
     """The run record names a scenario, run or finding id no text can be built from."""
 
 
+class FindingIssueError(AgentHubError):
+    """The tracker refused or did not answer a finding's issue create; the issue may exist,
+    so the create is never tried again (hub web answers 502)."""
+
+
 @dataclass(frozen=True, kw_only=True, slots=True)
 class IssueDraft:
     """A tracker issue's title (one line) and Markdown description."""

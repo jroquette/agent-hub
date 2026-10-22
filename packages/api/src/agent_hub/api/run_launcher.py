@@ -23,6 +23,13 @@ signalled, never removed, and counted live. Cancel sends SIGINT to the group (th
 its node children), SIGKILL after ``grace`` seconds, then abandons the run so its end is
 recorded. Abandon and a gate's decision (``hub workflow decide``, its text on stdin, never in
 argv) wait for the CLI. Nothing here polls a run's status: it comes from events.
+
+A scenario run (AGH-350 plan T12) starts the same way, as a detached ``hub scenario run NAME
+--env ENV --mode MODE --run-id RUN`` child, and resumes through ``hub workflow run --resume``
+like any engine run. ``plan_scenario`` waits for ``hub scenario plan NAME --env ENV --json``
+(at most ``PLAN_TIMEOUT_SECONDS``; its stdout read up to ``MAX_PLAN_BYTES``, its stderr
+dropped): the plan with its plan-mode summaries (AM-8), which only the CLI's action runner
+calls, with no credential.
 """
 
 import contextlib
@@ -43,6 +50,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, Literal
 
+from agent_hub.core.json_form import JsonValue
 from agent_hub.core.workflows.gates import GateAnswer
 from agent_hub.core.workflows.launch import (
     RUN_ID_PATTERN,
@@ -65,6 +73,9 @@ MAX_CHILDREN: Final = 8
 ABANDON_TIMEOUT_SECONDS: Final = 60.0
 DECIDE_TIMEOUT_SECONDS: Final = 60.0
 GRACE_SECONDS: Final = 10.0
+# ``hub scenario plan`` calls each step's script in plan mode, 60 s at most each.
+PLAN_TIMEOUT_SECONDS: Final = 300.0
+MAX_PLAN_BYTES: Final = 4 << 20
 _POLL_SECONDS: Final = 0.2
 SCAN_BUDGET_SECONDS: Final = 2.0
 LOGGER = logging.getLogger("agent_hub.api")
@@ -97,6 +108,20 @@ def process_started(pid: int) -> str | None:
         return None
     started = done.stdout.decode(errors="replace").strip()
     return started if done.returncode == 0 and started else None
+
+
+@dataclass(frozen=True, kw_only=True)
+class ScenarioLaunch:
+    """A scenario run to start: its id, project, hub folder, scenario, environment, mode and
+    the inputs given (the CLI fills the defaults)."""
+
+    run_id: str
+    project: str
+    hub_path: str
+    name: str
+    environment: str
+    mode: str
+    inputs: Mapping[str, JsonValue]
 
 
 @dataclass
@@ -144,6 +169,41 @@ class ProcessRunLauncher:
         for name, value in spec.inputs.items():
             argv += ["--input", f"{name}={argv_text(value)}"]
         self._detach(spec.hub_path, spec.run_id, argv, issue=spec.issue)
+
+    def start_scenario(self, spec: ScenarioLaunch) -> None:
+        """Start a scenario run detached (``hub scenario run``); it refuses a plan with a
+        problem or a deny itself, creating no run."""
+        argv = [*self._program, "scenario", "run", spec.name, "--env", spec.environment]
+        argv += ["--mode", spec.mode, "--run-id", spec.run_id]
+        for name, value in spec.inputs.items():
+            argv += ["--input", f"{name}={argv_text(value)}"]
+        self._detach(spec.hub_path, spec.run_id, argv, issue=None)
+
+    def plan_scenario(
+        self, hub_path: str, name: str, *, environment: str, inputs: Mapping[str, str]
+    ) -> tuple[int, bytes]:
+        """``hub scenario plan NAME --env ENV --json``'s exit code and stdout, waited for;
+        ``RunLaunchError`` when it cannot run, outlasts its time or prints too much."""
+        argv = [*self._program, "scenario", "plan", name, "--env", environment, "--json"]
+        for key, text in inputs.items():
+            argv += ["--input", f"{key}={text}"]
+        try:
+            done = subprocess.run(  # noqa: S603 -- an argv list; the program is this hub
+                argv,
+                cwd=hub_path,
+                env=self._env(hub_path),
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=PLAN_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise RunLaunchError(
+                f"hub scenario plan did not finish: {type(error).__name__}"
+            ) from None
+        if len(done.stdout) > MAX_PLAN_BYTES:
+            raise RunLaunchError(f"hub scenario plan printed more than {MAX_PLAN_BYTES} bytes")
+        return done.returncode, done.stdout
 
     def resume(self, hub_path: str, run_id: str, *, issue: str | None) -> None:
         argv = [*self._program, "workflow", "run", "--resume", run_id]

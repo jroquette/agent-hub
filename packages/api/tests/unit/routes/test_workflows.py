@@ -70,6 +70,21 @@ def test_gives_document_and_layers_when_workflow_requested(reads: Any) -> None:
     ]
 
 
+class StagedFiles(Files):
+    def workflow_files(self) -> Iterable[WorkflowFile | LoadProblem]:
+        staged = SHIP | {"environment": "staging"}
+        return [WorkflowFile("workflows/mine/ship.yaml", "ship", staged, origin="hub")]
+
+
+def test_shows_environment_when_workflow_declares_one(reads: Any) -> None:
+    # A process workflow's environment (P-18, plan T12 12.3): the run detail's sentence reads it.
+    plain = reads.client.get("/api/v1/workflows/demo/ship").json()
+    reads.wire(workflow_reads=ReadWorkflows(Hubs(), lambda _hub: StagedFiles()))
+    staged = reads.client.get("/api/v1/workflows/demo/ship").json()
+
+    assert (plain["environment"], staged["environment"]) == (None, "staging")
+
+
 @pytest.mark.parametrize(
     ("path", "detail"),
     [
