@@ -163,6 +163,7 @@ DESIGN_PATHS = (
     "workflows/doc-drift/fixtures/drift-none.yaml",
     "workflows/doc-drift/fixtures/drift-renamed-command.yaml",
     "workflows/doc-drift/scripts/contract.py",
+    "workflows/doc-drift/scripts/mentions.py",
     # AGH-227: the built-in issue-to-pr pack, seeded.
     "workflows/issue-to-pr/fixtures/blocked.yaml",
     "workflows/issue-to-pr/fixtures/dirty.yaml",
