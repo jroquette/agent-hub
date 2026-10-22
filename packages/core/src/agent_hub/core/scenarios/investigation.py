@@ -38,6 +38,7 @@ import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from fnmatch import fnmatchcase
+from pathlib import Path
 from typing import Final, Self
 
 from pydantic import BaseModel, ConfigDict
@@ -200,35 +201,51 @@ _PROCESS_FILES: Final = ("/proc", "/dev/fd")
 
 
 class WorkspaceRootError(AgentHubError):
-    """A hub directly under ``/``: its workspace would be the whole file system, so no
-    investigation policy is built (no session starts)."""
+    """A read root (the hub or a declared repo) that is ``/``, the home folder or one of its
+    ancestors: reads there would reach the developer's own credentials, so no investigation
+    policy is built (no session starts)."""
 
 
 class ToolPolicy(BaseModel):
     """What the investigation session may touch: ``workdir`` (the hub's real path) resolves a
-    relative path, ``actions`` is where ``Write`` may write (a pack's folder below it),
-    ``env_files`` are the declared env files' real paths and ``run_id`` the scenario run its
-    ``./hub`` commands must name. It holds paths only, never an env file's content."""
+    relative path, ``read_roots`` (the real paths of the hub and of each declared repo present)
+    are where ``Read``, ``Glob`` and ``Grep`` may look, ``actions`` is where ``Write`` may
+    write (a pack's folder below it), ``env_files`` are the declared env files' real paths and
+    ``run_id`` the scenario run its ``./hub`` commands must name. It holds paths only, never an
+    env file's content."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     workdir: str
+    read_roots: tuple[str, ...]
     actions: str
     env_files: tuple[str, ...]
     run_id: str
 
     @classmethod
-    def of(cls, *, hub: str, env_files: Iterable[str], run_id: str) -> Self:
-        """The policy of ``run_id`` in ``hub``; ``env_files`` are relative to the workspace
-        (the folder holding the hub and its repos), as the config declares them."""
+    def of(
+        cls, *, hub: str, env_files: Iterable[str], run_id: str, repos: Iterable[str] = ()
+    ) -> Self:
+        """The policy of ``run_id`` in ``hub``; ``repos`` (``hub.json``'s ``repos[].dir``) and
+        ``env_files`` are relative to the workspace (the folder holding the hub and its repos),
+        as the config declares them. A repo that is absent is not a root.
+        ``WorkspaceRootError`` when a root is ``/``, the home folder or one of its ancestors."""
         real = os.path.realpath(hub)
         workspace = os.path.dirname(real)
-        if workspace == os.path.dirname(workspace):
-            msg = f"the hub's workspace is {workspace}, the whole file system: move the hub"
-            raise WorkspaceRootError(msg)
+        repo_roots = (os.path.realpath(os.path.join(workspace, repo)) for repo in repos)
+        roots = tuple(dict.fromkeys([real, *(root for root in repo_roots if os.path.isdir(root))]))
+        home = os.path.realpath(Path.home())
+        for root in roots:
+            if root == os.path.dirname(root) or home == root or home.startswith(f"{root}/"):
+                msg = (
+                    f"investigation reads at {root} would reach the home folder or the root:"
+                    " keep the hub and its repos in folders of their own"
+                )
+                raise WorkspaceRootError(msg)
         resolved = (os.path.realpath(os.path.join(workspace, path)) for path in env_files)
         return cls(
             workdir=real,
+            read_roots=roots,
             actions=os.path.realpath(os.path.join(real, ACTIONS_FOLDER)),
             env_files=tuple(dict.fromkeys(resolved)),
             run_id=run_id,
@@ -272,7 +289,7 @@ def _env_file_denied(tool: str) -> ToolVerdict:
 
 
 def _outside_denied(tool: str) -> ToolVerdict:
-    return _denied(f"{tool} reaches outside the workspace (the hub and its repos)")
+    return _denied(f"{tool} reaches outside the hub and its declared repos")
 
 
 def _process_files_denied(tool: str) -> ToolVerdict:
@@ -288,15 +305,15 @@ class _Paths:
 
     def __init__(self, policy: ToolPolicy) -> None:
         self.workdir = policy.workdir
-        self.workspace = os.path.dirname(policy.workdir)
+        self.roots = policy.read_roots
         self.env_files = tuple(path.lower() for path in policy.env_files)
 
     def resolve(self, path: str) -> str:
         return os.path.realpath(os.path.join(self.workdir, os.path.expanduser(path)))
 
     def inside(self, real: str) -> bool:
-        """Whether ``real`` is the workspace or below it."""
-        return real == self.workspace or real.startswith(self.workspace.rstrip("/") + "/")
+        """Whether ``real`` is a read root (the hub or a declared repo) or below one."""
+        return any(real == root or real.startswith(f"{root}/") for root in self.roots)
 
     def is_env_file(self, real: str) -> bool:
         return real.lower() in self.env_files
@@ -350,6 +367,8 @@ def _glob_verdict(policy: ToolPolicy, tool_input: Mapping[str, object]) -> ToolV
     pattern = _text_input(tool_input, "pattern")
     if not pattern:
         return _denied("Glob needs a pattern")
+    if ".." in pattern.split("/"):
+        return _outside_denied("Glob")
     paths = _Paths(policy)
     root = paths.resolve(_text_input(tool_input, "path") or ".")
     parts = os.path.join(root, os.path.expanduser(pattern)).split("/")
@@ -365,7 +384,7 @@ def _glob_verdict(policy: ToolPolicy, tool_input: Mapping[str, object]) -> ToolV
     rest = [part.lower() for part in parts[first:] if part]
     if _in_process_files(base) or (base == "/" and _segments_reach(rest[:1], ["proc"])):
         return _process_files_denied("Glob")
-    if not paths.inside(base) or ".." in rest:
+    if not paths.inside(base):
         return _outside_denied("Glob")
     reached = any(_segments_reach(rest, rel.split("/")) for rel in paths.under(base))
     return _env_file_denied("Glob") if reached else _ALLOWED
@@ -385,6 +404,8 @@ def _grep_verdict(policy: ToolPolicy, tool_input: Mapping[str, object]) -> ToolV
     grep_glob = _text_input(tool_input, "glob") or ""
     if not grep_glob.strip():
         return _env_file_denied("Grep") if paths.holds(root) else _ALLOWED
+    if ".." in grep_glob:
+        return _outside_denied("Grep")
     if paths.under(root):
         return _env_file_denied("Grep")
     return _ALLOWED

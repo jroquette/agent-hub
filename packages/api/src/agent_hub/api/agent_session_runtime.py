@@ -232,11 +232,13 @@ class SessionRuntime:
 @dataclass(frozen=True, kw_only=True, slots=True)
 class DeclaredCredentials:
     """The credentials one hub declares: the names (``credentials.env`` and ``aws_profile``),
-    the env files as declared (relative to the workspace), and whether both files were read."""
+    the env files as declared (relative to the workspace), whether both files were read, and
+    the repos ``hub.json`` declares (their folders, relative to the workspace)."""
 
     names: CredentialNames
     env_files: tuple[str, ...]
     complete: bool
+    repos: tuple[str, ...] = ()
 
 
 NO_DECLARED: Final = DeclaredCredentials(names=NO_CREDENTIALS, env_files=(), complete=False)
@@ -302,4 +304,5 @@ class HubCredentials:
             names=CredentialNames.of(view),
             env_files=tuple(found.path for found in declared_env_files(view)),
             complete=complete,
+            repos=tuple(str(repo.dir) for repo in config.repos),
         )
