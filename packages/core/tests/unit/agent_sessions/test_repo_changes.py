@@ -10,6 +10,7 @@ from agent_hub.core.agent_sessions.repo_changes import (
     RepoChanges,
     RepoChangesError,
     RepoCommitDiff,
+    RepoFileText,
     RepoPullRequest,
     relative_to_root,
     repo_roots,
@@ -197,6 +198,12 @@ class _Reader:
         if root in self._failing:
             raise RepoChangesError(root)
         return RepoCommitDiff(sha=sha * 2, path=paths[0], diff=f"diff of {','.join(paths)}")
+
+    def file_text(self, root: str, *, sha: str, path: str) -> RepoFileText:
+        self.read_roots.append(root)
+        if root in self._failing:
+            raise RepoChangesError(root)
+        return RepoFileText(sha=sha * 2, path=path, text=f"text of {path}")
 
 
 def _workdirs(project: str) -> WorkdirListing:
@@ -409,6 +416,41 @@ async def test_answers_not_found_when_git_cannot_read_the_commit(make_rig: MakeR
 
     with pytest.raises(EntityNotFoundError):
         await rig.control.repo_commit_diff(session.id, path=f"{REPO_PATH}/a.py", sha="abc1234")
+
+
+async def test_reads_a_file_at_a_commit_in_the_repository_that_holds_it(
+    make_rig: MakeRig,
+) -> None:
+    reader = _Reader()
+    rig, session = await _ended_session_with_files(make_rig, reader)
+
+    found = await rig.control.repo_file_text(
+        session.id, path=f"{WORKTREE_PATH}/src/a.py", sha="abc1234"
+    )
+
+    assert reader.read_roots == [WORKTREE_PATH]
+    assert (found.path, found.text) == (f"{WORKTREE_PATH}/src/a.py", "text of src/a.py")
+
+
+@pytest.mark.parametrize("path", [f"{HUB_PATH}/brain/a.md", "/etc/passwd", WORKTREE_PATH])
+async def test_answers_not_found_when_a_file_is_outside_the_repositories(
+    make_rig: MakeRig, path: str
+) -> None:
+    rig, session = await _ended_session_with_files(make_rig, _Reader())
+
+    with pytest.raises(EntityNotFoundError):
+        await rig.control.repo_file_text(session.id, path=path, sha="abc1234")
+
+
+async def test_answers_not_found_when_git_cannot_read_the_file_s_commit(
+    make_rig: MakeRig,
+) -> None:
+    rig, session = await _ended_session_with_files(
+        make_rig, _Reader(failing=frozenset({REPO_PATH}))
+    )
+
+    with pytest.raises(EntityNotFoundError):
+        await rig.control.repo_file_text(session.id, path=f"{REPO_PATH}/a.py", sha="abc1234")
 
 
 def test_keeps_only_files_inside_the_root_when_made_relative_to_it() -> None:

@@ -16,7 +16,8 @@ import { ApiProblem } from "../../lib/api";
 import { cx } from "../../lib/cx";
 import { readStored, writeStored } from "../../lib/storage";
 import { useDiffSyntax } from "./diffSyntax";
-import { DiffLineText, diffLines, type DiffLine } from "./ToolCallCard";
+import { ExpandGap, type DiffExpansion } from "./DiffExpand";
+import { DiffGutter, DiffLineText, diffLines, hunkIndexes, type DiffLine } from "./ToolCallCard";
 import {
   commentMessage,
   parseReview,
@@ -377,6 +378,8 @@ export interface ReviewDiffProps {
   resolved: ResolvedThreads;
   /** Sends a comment or a reply to the session's Claude; without it the threads are read-only. */
   onComment?: ((text: string) => Promise<unknown> | undefined) | undefined;
+  /** The lines it can reveal around its hunks (a numbered diff only). */
+  expansion?: DiffExpansion | undefined;
 }
 
 /**
@@ -394,9 +397,11 @@ export function ReviewDiff({
   threads,
   resolved,
   onComment,
+  expansion,
 }: ReviewDiffProps) {
   const rows = useMemo(() => diffLines(diff).filter((line) => line.kind !== "head"), [diff]);
   const syntax = useDiffSyntax(rows, path);
+  const hunkAt = useMemo(() => hunkIndexes(rows), [rows]);
   const refs = rows.map((line, i) => refOf(line, i, numbered));
   const [selection, setSelection] = useState<{ from: number; to: number } | null>(null);
   const low = selection ? Math.min(selection.from, selection.to) : -1;
@@ -451,14 +456,7 @@ export function ReviewDiff({
               className={cx("as-diff-line", `as-diff-${line.kind}`, selected && "as-diff-selected")}
             >
               {numbered ? (
-                <>
-                  <span className="as-diff-no" aria-hidden="true">
-                    {line.oldNo ?? ""}
-                  </span>
-                  <span className="as-diff-no" aria-hidden="true">
-                    {line.newNo ?? ""}
-                  </span>
-                </>
+                <DiffGutter line={line} hunk={hunkAt[i]} expansion={expansion} />
               ) : (
                 <span className="as-diff-no as-diff-no-single" aria-hidden="true">
                   {ref?.n ?? ""}
@@ -506,6 +504,16 @@ export function ReviewDiff({
           </div>
         );
       })}
+      {numbered && expansion?.trailing && (
+        <div className="as-review-row">
+          <div className="as-diff-line as-diff-hunk">
+            <span className="as-diff-no as-diff-no-expand">
+              <ExpandGap gap={expansion.trailing} expansion={expansion} />
+            </span>
+            <span className="as-diff-code" />
+          </div>
+        </div>
+      )}
       {outdated.length > 0 && (
         <div className="as-review-outdated">
           <p className="ah-small ah-muted">On lines this change no longer shows</p>

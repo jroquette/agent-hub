@@ -42,6 +42,7 @@ from agent_hub.core.agent_sessions.repo_changes import (
     RepoFileChange,
     RepoFileCommit,
     RepoFileStatus,
+    RepoFileText,
     RepoPullRequest,
 )
 from agent_hub.hub_git.git_runner import GIT_OPTIONS, ProcessResult, child_env, run_process
@@ -365,6 +366,28 @@ class GitRepoChanges:
         too_big = item.binary or len(text.encode()) > REPO_DIFF_MAX_BYTES
         return RepoCommitDiff(
             sha=full, path=item.path, diff=None if too_big else text, binary=item.binary
+        )
+
+    def file_text(self, root: str, *, sha: str, path: str) -> RepoFileText:
+        """The file at ``path`` as commit ``sha`` has it (``git show <sha>:<path>``); its text
+        null when the commit has no such file, it is binary or past ``REPO_DIFF_MAX_BYTES``."""
+        run = self._run(root, label=root)
+        found = run.result("rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}")
+        if found.returncode != 0:
+            raise RepoChangesError(root)
+        full = found.stdout.decode().strip()
+        size = run.result("cat-file", "-s", f"{full}:{path}")
+        if size.returncode != 0:
+            return RepoFileText(sha=full, path=path)
+        if int(size.stdout.decode().strip() or 0) > REPO_DIFF_MAX_BYTES:
+            return RepoFileText(sha=full, path=path)
+        shown = run.result("show", "--no-color", "--no-textconv", f"{full}:{path}")
+        if shown.returncode != 0:
+            return RepoFileText(sha=full, path=path)
+        if b"\0" in shown.stdout:
+            return RepoFileText(sha=full, path=path, binary=True)
+        return RepoFileText(
+            sha=full, path=path, text=shown.stdout.decode("utf-8", errors="replace")
         )
 
     def _run(self, root: str, *, label: str) -> _Run:
