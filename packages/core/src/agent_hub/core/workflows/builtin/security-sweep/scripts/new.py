@@ -47,8 +47,9 @@ MAX_STORE_BYTES = 2 * 1024 * 1024
 MAX_ENTRIES = 20_000
 MAX_FINDINGS = 1000
 MAX_LISTED = 100
-# The listing is an argument of the report and part of the triage prompt (each under 128 KiB).
-MAX_LISTED_BYTES = 64 * 1024
+# The listing is an argument of the report and, with up to 100 repos, the triage prompt: both
+# stay under 128 KiB.
+MAX_LISTED_BYTES = 48 * 1024
 STORE_PROBLEM = "the seen-findings store could not be read; read as empty"
 SCANNERS = {"semgrep", "bandit", "pip-audit", "npm", "guard"}
 TEXTS = ("rule", "path", "severity", "cwe", "package", "version", "advisory", "fixed", "title")

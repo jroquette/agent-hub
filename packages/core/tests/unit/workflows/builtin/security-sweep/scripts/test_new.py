@@ -221,7 +221,7 @@ def test_lists_fewer_when_findings_hold_wide_characters(store: Store) -> None:
         selected["findings"], sort_keys=True, separators=(",", ":"), ensure_ascii=False
     )
     assert 0 < selected["listed"] < 100
-    assert len(canonical.encode()) <= 64 * 1024
+    assert len(canonical.encode()) <= 48 * 1024
     assert selected["counts"]["more"] == 100 - selected["listed"]
 
 
