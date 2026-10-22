@@ -1696,9 +1696,7 @@ def test_keeps_plain_session_unmarked_when_restriction_read_fails_once(
     _rig, counting = _counted(wired, tmp_path)
     session_id = _plain_session(wired)
     counting.fail.append(
-        session_errors.RestrictionUnreadableError(
-            session_id, "the runs cannot be read", refuses_reopen=True
-        )
+        session_errors.RestrictionUnreadableError(session_id, "the runs cannot be read")
     )
 
     first = wired.client.get(f"/api/v1/agent-sessions/{session_id}")
@@ -1755,4 +1753,60 @@ def test_tells_unread_hub_apart_when_restriction_of_project_unregistered(tmp_pat
     assert restrictions.restriction_of(plain) is None
     with pytest.raises(session_errors.RestrictionUnreadableError) as raised:
         restrictions.restriction_of(elsewhere)
-    assert raised.value.refuses_reopen is False
+    assert raised.value.agent_session_id == UNKNOWN_SESSION
+
+
+def test_clears_unbuilt_mark_when_unlinked_session_reopened_free(
+    wired: Any, investigation: Any
+) -> None:
+    """A forgotten session marked by a link that cannot be rebuilt, whose link then goes,
+    reopens free and no longer reads restricted (review round 5, Q3)."""
+    session_id, fresh, hub = _start_and_restart(wired, investigation)
+    folder = hub / ".agent-runs" / "workflows" / RUN
+    records = folder / "records.jsonl"
+    kept = records.read_text(encoding="utf-8")
+    records.write_text("not one JSON object\n{}\n", encoding="utf-8")
+    marked = wired.client.get(f"/api/v1/agent-sessions/{session_id}")
+    (folder / "investigation-1.session").unlink()
+    records.write_text(kept, encoding="utf-8")
+
+    sent = _message(wired, session_id)
+    shown = wired.client.get(f"/api/v1/agent-sessions/{session_id}")
+
+    assert marked.json()["restricted"] is True
+    assert sent.status_code == 202, sent.text
+    (spec,) = _starts(fresh)
+    assert spec.tool_policy is None
+    assert "restricted" not in shown.json()
+
+
+def test_refuses_reopen_when_project_hub_unregistered_between_reads(
+    wired: Any, investigation: Any, tmp_path: Path
+) -> None:
+    """The registry changes between the reopen's listing and the restriction's read: no hub
+    names the project any more, so whether the session is held cannot be told and the reopen
+    is refused, never resumed without its tool policy (fail closed, review round 5, Q2)."""
+    first, hub = investigation(a_record())
+    session_id = wired.client.post(ROUTE, json={}, headers=_origin(wired)).json()[
+        "agent_session_id"
+    ]
+    driver, store = _restart(first, session_id)
+    registry, reader = a_reader(hub)
+    credentials = HubCredentials(registry=registry, reader=reader, running_version=RUNNING)
+    unregistered = HubCredentials(
+        registry=InMemoryHubRegistry(), reader=reader, running_version=RUNNING
+    )
+    fresh = build_rig(
+        hidden_environment=credentials.names,
+        restriction_of=InvestigationRestrictions(unregistered).restriction_of,
+        driver=driver,
+        store=store,
+    )
+    wired.wire(agent_sessions=fresh.control)
+
+    sent = _message(wired, session_id)
+
+    assert sent.status_code == 409, sent.text
+    assert sent.json()["type"] == "urn:agent-hub:problem:agent-session-restriction-unavailable"
+    assert _starts(fresh) == []
+    assert fresh.store.get(session_id).status == AgentSessionStatus.ENDED

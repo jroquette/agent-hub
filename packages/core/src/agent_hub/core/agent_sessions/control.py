@@ -1162,13 +1162,9 @@ class AgentSessionControl:
                 **digest.fields(),
             }
             hidden = await self._hidden(session.project)
-            try:
-                kept = await self._restriction(session)
-            except RestrictionUnreadableError as error:
-                # No registered hub names its project: nothing links it; a failed read refuses.
-                if error.refuses_reopen:
-                    raise
-                kept = None
+            # Any restriction that cannot be told or rebuilt refuses the reopen (fail closed,
+            # E-13), a project no registered hub names included.
+            kept = await self._restriction(session)
             reopened = await asyncio.to_thread(lambda: self._store.update(session.id, **fields))
             spec = StartSpec(
                 cwd=resolved.path,

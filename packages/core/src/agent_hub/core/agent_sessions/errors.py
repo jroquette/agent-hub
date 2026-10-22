@@ -203,13 +203,8 @@ class SessionRestrictionError(AgentHubError):
 
 class RestrictionUnreadableError(SessionRestrictionError):
     """Whether a session is held to a restriction could not be told: its project's runs could
-    not be read (``refuses_reopen``: a reopen stays refused, fail closed, E-13), or no
-    registered hub names its project (a reopen goes on unrestricted, as before). A read of
-    the session caches nothing then (review round 4, Q1, Q2)."""
-
-    def __init__(self, agent_session_id: str, reason: str, *, refuses_reopen: bool) -> None:
-        super().__init__(agent_session_id, reason)
-        self.refuses_reopen = refuses_reopen
+    not be read, or no registered hub names its project. A reopen is refused (fail closed,
+    E-13), and a read of the session caches nothing (review round 4, Q1, Q2; round 5, Q2)."""
 
 
 class SessionModeLockedError(AgentHubError):
