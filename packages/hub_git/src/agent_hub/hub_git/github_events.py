@@ -2,7 +2,9 @@
 
 One REST call per poll, through ``gh`` (the account it is signed in with; no other host, no
 token read here): ``merge`` lists the commits of the default branch, ``pr_opened`` the open pull
-requests newest first, ``ci_red`` the failed Actions runs of the branch, ``per_page=20`` each.
+requests newest first, ``ci_red`` the failed push runs of the branch, ``per_page=20`` each.
+Only the polled repo's own items count: a pull request from a fork (or a deleted fork) and a run
+of another repo's branch are dropped, so a stranger's code never starts a local run.
 The child gets an argv list, an empty stdin, no prompt, the system temp folder as its cwd and the
 caller's environment without git's location variables or ``LINEAR_API_KEY``. Its stdout is read
 up to ``OUTPUT_LIMIT``; an answer that fills it is refused, not parsed. Each item's id is
@@ -61,9 +63,9 @@ class GhEventSource:
         if query.kind == "merge":
             return tuple(_merge(item) for item in _items(answer))
         if query.kind == "pr_opened":
-            return tuple(_pull(item) for item in _items(answer))
+            return tuple(_pull(item) for item in _items(answer) if _own_pull(item, query))
         runs = answer.get("workflow_runs") if isinstance(answer, dict) else None
-        return tuple(_red_run(item) for item in _items(runs))
+        return tuple(_red_run(item) for item in _items(runs) if _own_run(item, query))
 
     def _answer(self, query: EventQuery) -> JsonValue:
         program = shutil.which(self._gh, path=self._env.get("PATH") or "")
@@ -103,7 +105,8 @@ def _api_args(query: EventQuery) -> list[str]:
         fields = ["-f", "state=open", "-f", "sort=created", "-f", "direction=desc"]
     else:
         base[-1] += "actions/runs"
-        fields = ["-f", f"branch={query.branch}", "-f", "status=failure"]
+        # Push runs only: a fork's pull-request run can carry a branch named like ours.
+        fields = ["-f", f"branch={query.branch}", "-f", "status=failure", "-f", "event=push"]
     return [*base, *fields, *page]
 
 
@@ -123,6 +126,24 @@ def _number(value: JsonValue) -> int:
     if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= _MAX_ID:
         return value
     raise EventPollError(_UNEXPECTED)
+
+
+def _same_repo(repository: JsonValue, github: str) -> bool:
+    # GitHub's owner and repo names ignore case; a missing repository (a deleted fork) is not ours.
+    name = repository.get("full_name") if isinstance(repository, dict) else None
+    return isinstance(name, str) and name.lower() == github.lower()
+
+
+def _own_pull(item: Mapping[str, JsonValue], query: EventQuery) -> bool:
+    """A pull request whose head is in the polled repo: a fork's never starts a local run."""
+    head = item.get("head")
+    return _same_repo(head.get("repo") if isinstance(head, dict) else None, query.github)
+
+
+def _own_run(item: Mapping[str, JsonValue], query: EventQuery) -> bool:
+    """A run of the polled repo's own branch, never a fork's branch of the same name."""
+    own_branch = item.get("head_branch") == query.branch
+    return own_branch and _same_repo(item.get("head_repository"), query.github)
 
 
 def _merge(item: Mapping[str, JsonValue]) -> EventRef:

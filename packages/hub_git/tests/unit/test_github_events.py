@@ -17,6 +17,18 @@ SHA_A, SHA_B = "a" * 40, "b" * 40
 MERGES = EventQuery("merge", "acme/demo", "main")
 PULLS = EventQuery("pr_opened", "acme/demo", "main")
 RED_RUNS = EventQuery("ci_red", "acme/demo", "release")
+OURS = {"full_name": "acme/demo"}
+FORK = {"full_name": "mallory/demo"}
+
+
+def a_pull(number: int, sha: str, repo: object = OURS) -> dict[str, Any]:
+    return {"number": number, "head": {"sha": sha, "repo": repo}}
+
+
+def a_red_run(
+    run: int, sha: str, *, repo: object = OURS, branch: str = "release"
+) -> dict[str, Any]:
+    return {"id": run, "head_sha": sha, "head_branch": branch, "head_repository": repo}
 
 
 class CannedLaunch:
@@ -78,7 +90,7 @@ def test_reads_merge_shas_newest_first_when_gh_lists_commits(gh_path: str) -> No
 
 
 def test_reads_pr_number_and_head_sha_when_gh_lists_open_pulls(gh_path: str) -> None:
-    launch = CannedLaunch([{"number": 12, "head": {"sha": SHA_A}}])
+    launch = CannedLaunch([a_pull(12, SHA_A)])
 
     refs = a_source(gh_path, launch).poll(PULLS)
 
@@ -90,14 +102,14 @@ def test_reads_pr_number_and_head_sha_when_gh_lists_open_pulls(gh_path: str) -> 
 
 
 def test_reads_failed_run_ids_when_gh_lists_red_runs(gh_path: str) -> None:
-    launch = CannedLaunch({"total_count": 1, "workflow_runs": [{"id": 9001, "head_sha": SHA_B}]})
+    launch = CannedLaunch({"total_count": 1, "workflow_runs": [a_red_run(9001, SHA_B)]})
 
     refs = a_source(gh_path, launch).poll(RED_RUNS)
 
     assert refs == (EventRef("9001", {"ci_run": 9001, "sha": SHA_B}),)
     assert launch.calls[0]["argv"][4:] == [
         "repos/acme/demo/actions/runs", "-f", "branch=release", "-f", "status=failure",
-        "-f", "per_page=20",
+        "-f", "event=push", "-f", "per_page=20",
     ]  # fmt: skip
 
 
@@ -151,10 +163,11 @@ def test_raises_poll_error_when_gh_answer_is_not_json(gh_path: str) -> None:
         (MERGES, [{"sha": "not-a-sha"}]),
         (MERGES, [{"sha": SHA_A.upper()}]),
         (MERGES, {"sha": SHA_A}),
-        (PULLS, [{"number": "12", "head": {"sha": SHA_A}}]),
-        (PULLS, [{"number": True, "head": {"sha": SHA_A}}]),
-        (RED_RUNS, {"workflow_runs": [{"id": 0, "head_sha": SHA_A}]}),
-        (RED_RUNS, {"workflow_runs": [{"id": 2**53 + 1, "head_sha": SHA_A}]}),
+        (PULLS, [{**a_pull(12, SHA_A), "number": "12"}]),
+        (PULLS, [{**a_pull(12, SHA_A), "number": True}]),
+        (PULLS, [a_pull(12, "not-a-sha")]),
+        (RED_RUNS, {"workflow_runs": [a_red_run(0, SHA_A)]}),
+        (RED_RUNS, {"workflow_runs": [a_red_run(2**53 + 1, SHA_A)]}),
     ],
 )
 def test_raises_poll_error_when_an_item_has_no_valid_sha(
@@ -186,3 +199,38 @@ def test_raises_poll_error_when_gh_exits_non_zero(gh_path: str) -> None:
     with pytest.raises(EventPollError, match="gh exited 1") as caught:
         a_source(gh_path, CannedLaunch(secret_text, returncode=1)).poll(MERGES)
     assert "Bad credentials" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        a_red_run(9002, SHA_A, repo=FORK, branch="release"),
+        a_red_run(9003, SHA_A, repo=None, branch="release"),
+        a_red_run(9004, SHA_A, branch="feature"),
+    ],
+    ids=["fork", "no-repository", "other-branch"],
+)
+def test_drops_red_run_of_another_repo_or_branch_when_events_polled(
+    gh_path: str, item: dict[str, Any]
+) -> None:
+    launch = CannedLaunch({"workflow_runs": [item, a_red_run(9001, SHA_B)]})
+
+    refs = a_source(gh_path, launch).poll(RED_RUNS)
+
+    # A fork's pull-request run on a branch named like ours never starts a local run.
+    assert refs == (EventRef("9001", {"ci_run": 9001, "sha": SHA_B}),)
+
+
+@pytest.mark.parametrize("repo", [FORK, None], ids=["fork", "deleted-fork"])
+def test_drops_pull_request_from_a_fork_when_events_polled(gh_path: str, repo: object) -> None:
+    launch = CannedLaunch([a_pull(13, SHA_A, repo), a_pull(12, SHA_B)])
+
+    refs = a_source(gh_path, launch).poll(PULLS)
+
+    assert refs == (EventRef("12", {"pr": 12, "sha": SHA_B}),)
+
+
+def test_keeps_pull_request_of_same_repo_when_owner_case_differs(gh_path: str) -> None:
+    launch = CannedLaunch([a_pull(12, SHA_B, {"full_name": "Acme/Demo"})])
+
+    assert len(a_source(gh_path, launch).poll(PULLS)) == 1
