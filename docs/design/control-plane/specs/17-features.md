@@ -14,7 +14,7 @@ README's "Sources not connected": Linear is read for a feature's tickets; GitHub
 - **Records.** A feature folder adds `evals/<delivery>.md` (one per evaluation, never overwritten; `eval.md` is read
   as the delivery `legacy`) and `reviews/<ticket>.md`. Tickets come from `features.json` (`tickets` and `linear`),
   not from `issues.md`, which only marks the plan as written.
-- **Tabs.** Spec, Research, Plan, Eval, Criteria and Tickets (`?doc=spec|research|plan|eval|acs|tickets`; the old
+- **Tabs.** Spec, Research, Plan, Eval, Criteria and Tickets (order replaced by AC-425.6; `?doc=spec|research|plan|eval|acs|tickets`; the old
   `?doc=issues` opens Tickets). Eval lists every delivery with its verdict, tickets, ACs, PRs and commit. Tickets
   loads `GET /features/{project}/{slug}/tickets` only while it is open.
 - **Tickets tab.** Columns Ticket, Title, Status (badge with text, never color alone), Assignee, Blocked by (links,
@@ -148,7 +148,7 @@ otherwise, this list wins. Each item is an acceptance criterion.
   or shipped.
 - **AC-268.16 Steps open tabs.** Given the golden path, when a step is chosen, then the tab holding its evidence opens
   (Evaluate opens Eval).
-- **AC-268.17 Header chips.** Given the feature's tickets, then each header chip shows the id with its Linear status
+- **AC-268.17 Header chips** (superseded by AC-425.5). Given the feature's tickets, then each header chip shows the id with its Linear status
   and the title on hover; the "PR —" placeholder is gone while GitHub is not connected.
 - **AC-268.18 Sessions by issue.** Given `GET /sessions?issue=<id>` (any case), then it lists the sessions about that
   issue: the one their first prompt names (`/feature <id>`, a ticket's Start), else their branch or worktree, for
@@ -361,7 +361,7 @@ spec amendment A15. Where the sections above say otherwise, this list wins.
 - **Openers.** The card title, and a table row's title, are links to `?doc=tickets&ticket=<id>` (this reverses
   AGH-326's "Card title": the title opens the panel; the epic's title stays plain text); a table row (the body is one tab stop: `j` / `k` and `↓` / `↑`
   move between tickets, epics skipped; `Enter`, `o` or a click opens it; links and buttons in the row keep their own
-  action); a header chip, which now opens the Tickets tab with that ticket's panel (tooltip "<id> · <title> · show its
+  action); a header chip (removed by AC-425.5), which opened the Tickets tab with that ticket's panel (tooltip "<id> · <title> · show its
   steps"; the Linear link moved into the panel, so AC-268.17's link is gone). The waiting banner opens it in S2 (A8).
 - **Tab.** The panel belongs to the Tickets tab: another tab closes it and drops `ticket=` and `step=`.
 
@@ -518,6 +518,54 @@ Design: [20-chat.md](20-chat.md) (the Discuss panel). Where the sections above s
   Discuss panel on that session; the panel's row 2 reads "Feature session · <name>", and its menu offers "New
   conversation" (the panel's own conversation for the record) and, from there, "Back to the feature session". The
   first session found wins (the oldest writer of the spec); no writer, no chip, and the panel works as before.
+
+## Departures (AGH-425, feature detail and the Features list)
+
+Built after the owner validated these in the playground (part of AGH-415); where the sections above say otherwise,
+this list wins. Records and refusals: [feature-records.md](../../feature-records.md); route: [API.md](../../../API.md)
+"Feature detail".
+
+**Acceptance criteria tab**
+
+- **AC-425.1 Mark a criterion as passing.** Given a criterion that does not pass in `features.json` and that the
+  owner checked by hand, when its card offers "I checked it, mark as passing" and the owner confirms the short form
+  ("Note (optional)", Cancel sends nothing), then `POST .../owner-signoff` gets `{acs: [<id>], decision: "done",
+  note}`, the API writes an owner SHIP eval (`provenance: owner`) over that AC only, `features.json` and the other evals
+  are kept, and the AC reads "Signed off" (passing, "You checked it by hand and signed it off") in its row, the AC
+  bar and the counts, here and on the Features list; its card then says "You checked this by hand and signed it off;
+  it counts as passing." with no button. A criterion that already passes offers nothing. Being an owner SHIP, the
+  note also signs that AC off for the Acceptance step (it leaves the acceptance eval's `owner_wait`). A later agent
+  eval of the AC decides again.
+- **AC-425.2 Refusals stay.** Given a manual sign-off that main's sign-off rules refuse, then the API answers 409
+  with its one-line reason and writes nothing, and the card's form shows it ("Could not mark <id> as passing"): an
+  unknown or withdrawn AC, `acs` together with `delivery`, an AC whose latest eval is NO-SHIP ("fix or re-evaluate
+  first"; the owner's by-hand check does not override an agent's NO-SHIP), a note that would not rank newer than an
+  eval naming the AC (undated, or dated at or after now), and evals left unread. An empty `acs` is 422.
+
+**Record tabs**
+
+- **AC-425.3 Questions in plain words.** Given a record whose human summary is current and whose Open questions
+  section names every question of the record (same ids), when the record's Approve bar shows, then the questions
+  above it are the summary's, worded in plain words with their context and options; otherwise (no summary, out of
+  date, or one missing) they are the record's own, so none goes unanswered. The questions link counts the same list.
+  The `/summarize` skill repeats every open question of the record in that shape.
+- **AC-425.4 Approved stays approved.** Given a record (spec, research or plan) whose frontmatter says `status:
+  approved`, when its tab shows, then a status line reads "<Record> approved · last verified <date>." (the date when
+  the frontmatter has `last_verified`) and neither the Approve bar nor its open questions show again.
+
+**Header and tabs**
+
+- **AC-425.5 No ticket chips.** Given a feature with tickets, when its page shows, then the header holds no ticket
+  chips (the group "Tickets of this feature" is gone): the tickets and their Linear status are in the Tickets tab and
+  its ticket flow, whose card titles and rows still open the ticket panel. This removes the header chip from the
+  panel's openers (AGH-330 "Openers") and supersedes AC-268.17.
+- **AC-425.6 Tab order.** Given the feature page, then the record tabs read Spec, Research, Plan, Acceptance criteria,
+  Tickets, Eval: the order the workflow writes them (the planner writes the criteria and the ticket plan in
+  `features.json` once the plan is approved; the eval comes last). This replaces the AGH-136 tab order.
+- **AC-425.7 Fixed label.** Given a feature, named or not, when its page header or its Features list row shows, then
+  its slug follows its name as a tag label ("Feature label <slug>", mono, tag icon; on hover: set when the feature was
+  created, unique and never changes, a rename changes only its name), not a link on its own page; the chip that ties a
+  session to its feature uses the same tag icon and hover text, plus "Open its panel."
 
 ## Screen 1: Features list
 

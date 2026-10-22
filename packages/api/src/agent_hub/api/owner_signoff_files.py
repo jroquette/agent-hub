@@ -7,7 +7,7 @@ overwriting an eval, and no link is followed into the folder.
 
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -19,13 +19,17 @@ _FEATURES = ("brain", "features")
 
 
 class OwnerSignOffBody(BaseModel):
-    """``POST .../owner-signoff``: the eval to settle, the owner's decision and an optional note."""
+    """``POST .../owner-signoff``: the eval to settle (or the ACs the owner checked by hand), the
+    owner's decision and an optional note."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     delivery: str | None = Field(default=None, min_length=1, max_length=64)
     decision: Literal["done", "more_work"] = "done"
     note: str | None = Field(default=None, max_length=MAX_NOTE_CHARS)
+    acs: tuple[Annotated[str, Field(min_length=1, max_length=32)], ...] | None = Field(
+        default=None, min_length=1, max_length=200
+    )
 
 
 class ProjectHubPaths:
