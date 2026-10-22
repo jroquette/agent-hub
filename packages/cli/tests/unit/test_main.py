@@ -35,6 +35,7 @@ def test_lists_commands_when_help_requested() -> None:
         "start",
         "validate-output",
         "search",
+        "mcp",
     ):
         assert command in unstyle(result.stdout)
 

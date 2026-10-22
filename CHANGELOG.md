@@ -38,6 +38,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   changes the sessions worked on outside a feature (`/fix`, `/refactor`, `/upgrade`, `/incident`, `/triage`,
   `/deliver`, `/review`, hub runs), one row per tracker issue under Needs you, In progress and Ended, with a Kind
   filter and search. **Start ticket** opens the New session dialog on the hub folder with `/fix` in the prompt.
+- `hub mcp` serves the hub's knowledge to Claude Code as a local stdio MCP server (ADR 0044): `search` (the
+  `hub search` index, at most 50 results, 10 by default), `read` (one file of `brain/` or a repo's `docs/`, under the
+  index's file rules) and `propose` (a hub pull request adding one `brain/_inbox/` note on
+  `<prefix>learning-propose-<slug>`, from a temporary clone; needs `gh`). `hub sync` now renders a managed `.mcp.json`
+  declaring it: a hub that already has its own `.mcp.json` gets a sync conflict (exit 3); move its servers to your
+  user scope (`claude mcp add --scope user`) first. Claude Code asks once to approve the `hub` server. Arrives after
+  you bump `platform.version` and run `hub sync` (AGH-392).
 
 ### Changed
 

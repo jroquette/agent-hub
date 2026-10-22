@@ -875,6 +875,9 @@ flowchart BT
   api --> generator
   api --> hubgit
   cli -. "hub web" .-> api
+  mcp["mcp_server<br/>hub mcp: search, read, propose"] --> core
+  mcp --> hubgit
+  cli -. "hub mcp" .-> mcp
 ```
 
 | Package | Distribution | Role |
@@ -887,10 +890,11 @@ flowchart BT
 | `packages/hub_git` | `agent-hub-hub-git` | Opens a hub pull request for a learning accepted or rejected in `hub web`, with `git` and `gh` from a temporary clone ([ADR 0024](docs/adr/0024-learning-actions-from-the-app.md)) |
 | `packages/cli` | `agent-hub-cli` | The `hub` command |
 | `packages/api` | `agent-hub-api` | `hub web`: the local REST and SSE API and the built web app ([ADR 0017](docs/adr/0017-api-second-composition-root.md)) |
+| `packages/mcp_server` | `agent-hub-mcp-server` | `hub mcp`: the hub's brain and repo docs as a local stdio MCP server for Claude Code, with the tools `search`, `read` and `propose` ([ADR 0044](docs/adr/0044-team-memory-git-source-local-index-and-hub-mcp.md)) |
 | `packages/agent-hub` | `agent-hub` | Meta-package that installs all of the above |
 
-`core` imports nothing internal; the five adapters never import each other; nothing imports `cli`, and `api` is
-reached only from `hub web`. import-linter enforces this in `make check`. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+`core` imports nothing internal; the five adapters never import each other; nothing imports `cli`, `api` is
+reached only from `hub web` and `mcp_server` only from `hub mcp`. import-linter enforces this in `make check`. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 </details>
 
