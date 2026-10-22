@@ -56,6 +56,10 @@ Every screen carries its phase. A screen tagged P3 or P4 is not shown in the sid
 └ /features/:project/:slug          Feature detail                                   P2
     ?doc=spec|plan|research|eval&ac=:acId
 
+/environments                       Environments: project picker (AGH-417)           P2
+└ /projects/:project/environments   Environments (specs/23-environments.md)          P2 + ADR 0040 writes
+  └ /projects/:project/environment/:name   Environment page ?service=<repo>/<name>   P2 + ADR 0040 writes
+
 /workflows                          Workflow catalog                                 P4
 └ /workflows/:workflowId            Workflow detail                                  P4
     ?view=graph|revisions&overlay=failure|wait&rev=:n
@@ -127,7 +131,8 @@ otherwise, this list wins:
 - **AC-273.20** The sidebar lists, in order: Portfolio (no caption); **Work**: Sessions (`list`, the live badge,
   ADR 0033), Workflow runs (`route`), Workflows (`workflow`), Features (`list-checks`); **Knowledge**: Learnings
   (`lightbulb`, the learnings-to-triage badge on the waiting ground), Brain (`book-open`) and Skills (`package`) as
-  flat items, Brain and Skills following the project open or in scope; and Health and Settings pinned to the footer,
+  flat items, Brain and Skills following the project open or in scope (as built, AGH-417: Work ends with
+  Environments, `server`, which follows them too: AC-417.2); and Health and Settings pinned to the footer,
   next to Shortcuts. There is no Approvals and no Live sessions entry. The command palette lists the same screens,
   Learnings with its `g k` hint.
 - **AC-273.21** There is no Approvals screen: `/approvals` is an unknown route (404), `g a` goes nowhere (and still

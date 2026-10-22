@@ -44,6 +44,15 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   reads only a regular file of at most 64 KiB that the hub or a declared repo holds, reached through no link, and says
   whether git ignores it. A long name in the chat's files list is shown whole when it fits, else cut in the middle with
   the whole text on hover.
+- `hub web` has an Environments page, in the sidebar's Work group (AGH-417): a table of the project's environments
+  (what agents may do, secrets by name, services, who set them) whose rows open each environment's own page. There
+  you change the access (for the team, or stricter for you only), where the secrets live and the description in place,
+  one section at a time; see its services and open one in a side panel to change its kind, description and every
+  address at once; and read a short summary of what agents see. Removing an environment in use is one confirmation.
+  For an env file, hub web lists its variable names, never a value (`GET /projects/{project}/env-file-keys`, only a
+  regular file of at most 64 KiB that the hub or a declared repo holds, reached through no link). A long address, and
+  a long name in the chat's files list, is shown whole when it fits, else cut in the middle with the whole text on
+  hover. The Hub config screen keeps a summary row that opens the page.
 - `hub web` reads and edits the declared environments and services (AGH-416). The Hub config view carries every
   effective environment and repo service with the file it comes from (and hub.json's access of a tightened one), and
   `POST /projects/{project}/config/environments` adds, changes, renames and removes environments, services and

@@ -121,3 +121,42 @@ describe("SidePanel (AC-1.10)", () => {
     expect(await seriousViolations(container)).toEqual([]);
   });
 });
+
+describe("SidePanel footer and initial focus (AC-417.8)", () => {
+  it("keeps the footer's actions below the body and focuses the control it names", () => {
+    const opener = { current: null };
+    render(
+      <SidePanel
+        title="demo-api › api"
+        closeLabel="Close demo-api › api"
+        openerRef={opener}
+        onClose={vi.fn()}
+        initialFocus="#address-staging"
+        footer={<button type="button">Save changes</button>}
+      >
+        <input aria-label="Address in local" />
+        <input id="address-staging" aria-label="Address in staging" />
+      </SidePanel>,
+    );
+
+    expect(screen.getByRole("textbox", { name: "Address in staging" })).toHaveFocus();
+    const footer = screen.getByRole("button", { name: "Save changes" }).parentElement;
+    expect(footer).toHaveClass("ah-side-panel-foot");
+    expect(footer?.previousElementSibling).toHaveClass("ah-side-panel-body");
+  });
+
+  it("focuses the heading when the named control is not there", () => {
+    render(
+      <SidePanel
+        title="demo-api › api"
+        closeLabel="Close demo-api › api"
+        openerRef={{ current: null }}
+        onClose={vi.fn()}
+        initialFocus="#nowhere"
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "demo-api › api" })).toHaveFocus();
+    expect(document.querySelector(".ah-side-panel-foot")).toBeNull();
+  });
+});

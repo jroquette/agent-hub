@@ -1,19 +1,9 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { Navigate, useParams, useSearchParams } from "react-router";
+import { Link, Navigate, useLocation, useParams, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
-import {
-  Banner,
-  Button,
-  DerivedLabel,
-  Icon,
-  IconButton,
-  ProblemError,
-  Skeleton,
-  Toast,
-  Tooltip,
-} from "../../components";
+import { Banner, Button, Icon, ProblemError, Skeleton, Tooltip } from "../../components";
 import type { IconName } from "../../components";
 import { useApi } from "../../lib/api";
 import { useScope } from "../../lib/scope";
@@ -24,60 +14,23 @@ import { useAgentCapabilities } from "../sessions-list/queries";
 import { sessionControlUnavailable } from "../sessions-list/control";
 import type { DiscussReference, DiscussStarter } from "../../shell/discuss";
 import { KnowledgeProjectIndex } from "../knowledge-index";
+import { count, environmentsPage } from "./environments";
+import { SavedToast, UncommittedNotice, useSaveNotices } from "./notices";
 import { LocalSettingsDialog } from "./LocalSettingsDialog";
+import { AskBlocked, ConfigRow, ConfigSource, Mono, NoneText, Section, useAttach } from "./parts";
+import type { RowAsk, Source } from "./parts";
+export { ConfigSource } from "./parts";
 import "./hub-config.css";
 
 type HubConfigView = components["schemas"]["HubConfigView"];
 type SourcedValue = components["schemas"]["SourcedValue"];
-type PatternView = components["schemas"]["PatternView"];
 type RepoConfigView = components["schemas"]["RepoConfigView"];
 type LayeredList = components["schemas"]["LayeredList"];
-
-type Source = SourcedValue["source"] | PatternView["source"];
 
 /** Where the sidebar's Hub config goes: the project in scope, else a project picker. */
 export const CONFIG_PICKER = "/config";
 export function configHome(project: string): string {
   return `/projects/${encodeURIComponent(project)}/config`;
-}
-
-/**
- * Who set a value, in the words a person uses. "Set by you" and "Set by the team" are the two
- * files someone edits; "Built-in" is agent-hub's own value when neither file sets one.
- */
-const SOURCE_LOOK: Record<Source, { label: string; icon: IconName }> = {
-  team: { label: "Set by the team", icon: "users" },
-  project: { label: "Set by the team", icon: "users" },
-  repo: { label: "Set by the team", icon: "users" },
-  local: { label: "Set by you", icon: "laptop" },
-  git: { label: "From your git config", icon: "git-commit-horizontal" },
-  derived: { label: "From your email", icon: "circle-dashed" },
-  default: { label: "Built-in", icon: "box" },
-  commit_title: { label: "Built-in", icon: "box" },
-};
-
-/** What a source's tooltip says: the file and key, or why agent-hub picked the value. */
-function sourceTip(source: Source, where: string): string {
-  if (source === "default" || source === "commit_title")
-    return `agent-hub's own value: neither hub.json nor your hub.local.json sets this (${where}).`;
-  if (source === "repo") return `Set by the team for this repo only: ${where}`;
-  return where;
-}
-
-/** Who set a value: an icon and plain words, its tooltip naming the file and key. */
-export function ConfigSource({ source, where }: { source: Source; where: string }) {
-  if (source === "derived") return <DerivedLabel how={where}>From your email</DerivedLabel>;
-  const look = SOURCE_LOOK[source];
-  return (
-    <Tooltip label={sourceTip(source, where)}>
-      {/* Focusable so keyboard users reach the file and key in its tooltip. */}
-      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
-      <span className="ah-config-source" data-source={source} tabIndex={0}>
-        <Icon name={look.icon} />
-        {look.label}
-      </span>
-    </Tooltip>
-  );
 }
 
 /** A pattern rendered with sample values; the Repositories card says so once. */
@@ -153,86 +106,6 @@ const STARTERS: readonly DiscussStarter[] = [
   },
 ];
 
-/* ---------- Rows ---------- */
-
-/** Why Claude cannot be asked here (session control locked or off), else null. */
-const AskBlocked = createContext<string | null>(null);
-
-interface RowAsk {
-  label: string;
-  pressed: boolean;
-  onClick: () => void;
-}
-
-interface RowProps {
-  label: string;
-  children: ReactNode;
-  source?: ReactNode;
-  /** Point Claude at this row: shown on hover and focus, and kept once attached. */
-  ask?: RowAsk | undefined;
-  /** Open this row's field in my settings: only for what hub.local.json may set. */
-  onEdit?: (() => void) | undefined;
-  editLabel?: string;
-}
-
-function ConfigRow({
-  label,
-  children,
-  source,
-  ask,
-  onEdit,
-  editLabel = "Change for me",
-}: RowProps) {
-  const blocked = useContext(AskBlocked);
-  return (
-    <div className="ah-config-row">
-      <div className="ah-config-label">{label}</div>
-      <div className="ah-config-value">{children}</div>
-      <div className="ah-config-src">{source}</div>
-      <div className="ah-config-act">
-        {ask && (
-          <span className="ah-config-ask" data-pressed={ask.pressed || undefined}>
-            {ask.pressed && <span className="ah-small ah-muted">In next message</span>}
-            <IconButton
-              icon={ask.pressed ? "check" : "message-square"}
-              size="sm"
-              variant="ghost"
-              disabled={blocked !== null}
-              label={
-                blocked !== null
-                  ? `${ask.label} (unavailable: ${blocked})`
-                  : ask.pressed
-                    ? `${ask.label}: in next message`
-                    : ask.label
-              }
-              onClick={ask.onClick}
-            />
-          </span>
-        )}
-        {onEdit && (
-          <Button
-            size="sm"
-            variant="ghost"
-            icon="pencil"
-            aria-label={`${editLabel}: ${label.toLowerCase()}`}
-            onClick={onEdit}
-          >
-            {editLabel}
-          </Button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function Mono({ children }: { children: ReactNode }) {
-  return <code className="ah-mono ah-config-code">{children}</code>;
-}
-
-function NoneText({ children = "None" }: { children?: ReactNode }) {
-  return <span className="ah-muted">{children}</span>;
-}
-
 function ListValue({ items }: { items: readonly string[] }) {
   if (items.length === 0) return <NoneText />;
   return (
@@ -303,41 +176,6 @@ function ListSource({ list, keyPath }: { list: LayeredList; keyPath: string }) {
 }
 
 /* ---------- Sections ---------- */
-
-interface SectionProps {
-  id: string;
-  title: string;
-  /** What the section's Ask button names: "Ask Claude to change <askName>". */
-  askName: string;
-  purpose: string;
-  icon: IconName;
-  onAsk?: (() => void) | undefined;
-  children: ReactNode;
-}
-
-function Section({ id, title, askName, purpose, icon, onAsk, children }: SectionProps) {
-  const blocked = useContext(AskBlocked);
-  return (
-    <section className="ah-card ah-config-section" aria-labelledby={`${id}-title`} id={id}>
-      <header className="ah-config-section-head">
-        <div className="ah-config-section-title">
-          <h2 className="ah-h3" id={`${id}-title`}>
-            <Icon name={icon} /> {title}
-          </h2>
-          <p className="ah-small ah-muted">{purpose}</p>
-        </div>
-        {onAsk && (
-          <Tooltip label={blocked ?? undefined}>
-            <Button size="sm" icon="message-square" disabled={blocked !== null} onClick={onAsk}>
-              Ask Claude to change {askName}
-            </Button>
-          </Tooltip>
-        )}
-      </header>
-      {children}
-    </section>
-  );
-}
 
 /* ---------- Where values come from ---------- */
 
@@ -435,8 +273,9 @@ function WhereValuesComeFrom({ hubRepo, localSet }: { hubRepo: string; localSet:
         ))}
       </ol>
       <p className="ah-small ah-muted ah-config-note">
-        You can set your author name and email, branch prefix and tracker transport, and add blocked
-        words. Everything else is the team&apos;s. {mineCount(localSet)}
+        You can set your author name and email, branch prefix and tracker transport, add blocked
+        words, and add your own environments and endpoints. Everything else is the team&apos;s.{" "}
+        {mineCount(localSet)}
       </p>
     </section>
   );
@@ -448,20 +287,10 @@ const SECTIONS = [
   { id: "repositories", label: "Repositories" },
   { id: "who-commits", label: "Who commits" },
   { id: "guard", label: "Guard" },
+  { id: "environments", label: "Environments" },
   { id: "tracker", label: "Tracker" },
   { id: "models", label: "Models" },
 ];
-
-function useAttach() {
-  const { references, addReference } = useDiscuss();
-  const attached = new Set(references.map((r) => r.id));
-  return {
-    attach: (ref: DiscussReference) => {
-      addReference(ref);
-    },
-    isAttached: (id: string) => attached.has(`config:${id}`),
-  };
-}
 
 function RepoCard({
   repo,
@@ -848,6 +677,40 @@ function ConfigBody({ view, onSaved }: { view: HubConfigView; onSaved: () => voi
           </Section>
 
           <Section
+            id="environments"
+            title="Environments"
+            askName="the environments"
+            icon="server"
+            purpose="Where your systems run, what agents may do in each, and where each repo's services live. They have their own page."
+            onAsk={askSection(
+              "environments",
+              "Environments",
+              view.environments.environments
+                .map(
+                  (environment) =>
+                    `environments.${environment.name}: access ${environment.access}${environment.production ? ", production" : ""}`,
+                )
+                .join("\n") || "No environments declared.",
+            )}
+          >
+            <div className="ah-env-summary">
+              <span>
+                {view.environments.environments.length === 0 ? (
+                  <NoneText>No environments yet</NoneText>
+                ) : (
+                  <>
+                    {count(view.environments.environments.length, "environment")} ·{" "}
+                    {count(view.environments.services.length, "service")}
+                  </>
+                )}
+              </span>
+              <Link className="ah-btn ah-btn-sm" to={environmentsPage(view.project)}>
+                Open Environments
+              </Link>
+            </div>
+          </Section>
+
+          <Section
             id="tracker"
             title="Tracker"
             askName="the tracker"
@@ -1002,21 +865,13 @@ export function HubConfigScreen() {
   const config = useApi("/api/v1/projects/{project}/config", { path: { project } });
   const { setOpen, addReference } = useDiscuss();
   const [editing, setEditing] = useState(false);
-  const [saved, setSaved] = useState(false);
-  useEffect(() => {
-    if (!saved) return;
-    const timer = setTimeout(() => {
-      setSaved(false);
-    }, 4000);
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [saved]);
+  const location = useLocation();
+  const notices = useSaveNotices();
   const capabilities = useAgentCapabilities();
   const unavailable = sessionControlUnavailable(capabilities.error, capabilities.data);
   const blocked = unavailable ? `${unavailable.title}. ${unavailable.detail}` : null;
   const onSaved = () => {
-    setSaved(true);
+    notices.onSaved("Saved your settings");
   };
   useDiscussTarget({
     key: `config:${project}`,
@@ -1032,13 +887,23 @@ export function HubConfigScreen() {
   }, [project]);
 
   const view = config.data;
+  useEffect(() => {
+    if (!view || location.hash === "") return;
+    document.getElementById(location.hash.slice(1))?.scrollIntoView({ block: "start" });
+  }, [view, location.hash]);
   const localSet = view
     ? [view.author_name, view.author_email, view.branch_prefix, view.tracker.transport].filter(
         (v) => v.source === "local",
       ).length +
       view.guard.blocked_words.local.length +
       view.guard.blocked_words_files.local.length +
-      view.guard.blocked_words_env.local.length
+      view.guard.blocked_words_env.local.length +
+      view.environments.environments.filter((e) => e.source === "hub.local.json").length +
+      view.environments.services.reduce(
+        (count, service) =>
+          count + service.endpoints.filter((e) => e.source === "hub.local.json").length,
+        0,
+      )
     : 0;
 
   let body: ReactNode;
@@ -1138,6 +1003,9 @@ export function HubConfigScreen() {
             {view.local_file.problems.join("; ")}
           </Banner>
         )}
+        {notices.teamChanged && (
+          <UncommittedNotice blocked={blocked} onDismiss={notices.dismissTeamChanged} />
+        )}
         {body}
         {editing && view && (
           <LocalSettingsDialog
@@ -1149,11 +1017,7 @@ export function HubConfigScreen() {
             onSaved={onSaved}
           />
         )}
-        {saved && (
-          <div className="ah-config-toast">
-            <Toast>Saved your settings</Toast>
-          </div>
-        )}
+        <SavedToast message={notices.saved} />
       </div>
     </AskBlocked.Provider>
   );
