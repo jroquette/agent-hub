@@ -15,22 +15,24 @@ untrusted text: ``{"findings": [{"title", "text", "evidence"?}], "options": [{"s
 every text redacted of the secret shapes (``secret_shapes.redact_shapes``).
 
 The investigation session's tools (P-17, AM-3, AM-4 safety 1): ``tool_verdict`` judges each call
-the session's ``PreToolUse`` hook sees against a ``ToolPolicy`` (the hub's real path, its
-``actions/`` folder, every declared env file's real path and the run). ``Read``, ``Glob`` and
-``Grep`` pass only inside the workspace (the folder holding the hub and its repos, E-13) and
-never on a declared env file, both by resolved real path (a symlink, a ``..`` or a relative form
-is caught); a ``Glob`` whose pattern can reach one, or a ``Grep`` on one or on the folder
-holding one, is denied (E-5: a folder above with no filter passes, the env file being
-git-ignored). A ``Grep`` filter becomes ripgrep globs that override ``.gitignore``, split in
-ways not worth mimicking, so a ``Grep`` with any filter is denied under a root holding a
-declared env file at any depth. The three are denied under ``/proc`` too, where a running
-action's environment (its env file's values) can be read, and a ``Glob`` or ``Grep`` of the
-whole file system with it. ``Write`` passes only under ``actions/<pack>/``. ``Bash`` passes only
-for ``./hub action list|plan …``, ``./hub action run … --run <run>`` and ``./hub scenario
-propose --run <run>``, each word plain (no shell metacharacter); the proposal's JSON may follow
-``propose`` as one quoted here-document (``<<'END'``), whose body the shell never expands. Every
-other tool is denied. A verdict's reason names the tool and the rule, never a path's content.
-This is not a sandbox (known limit 2).
+the session's ``PreToolUse`` hook sees against a ``ToolPolicy`` (the real paths of the hub and
+of each declared repo present, its ``actions/`` folder, every declared env file's real path and
+the run). ``Read``, ``Glob`` and ``Grep`` pass only under the real path of the hub or of a
+declared repo (never the folder holding them, E-13) and never on a declared env file, both by
+resolved real path (a symlink, a ``..`` or a relative form is caught); a ``Glob`` whose pattern
+can reach one, or a ``Grep`` on one or on the folder holding one, is denied (E-5: a folder above
+with no filter passes, the env file being git-ignored). A ``Grep`` filter becomes ripgrep globs
+that override ``.gitignore``, split in ways not worth mimicking, so a ``Grep`` with any filter
+is denied under a root holding a declared env file at any depth. The three are denied under
+``/proc`` too, where a running action's environment (its env file's values) can be read, and a
+``Glob`` or ``Grep`` of the whole file system with it. ``Write`` passes only under
+``actions/<pack>/``. ``Bash`` passes only for ``./hub action list|plan …``, ``./hub action run …
+--run <run>`` and ``./hub scenario propose --run <run>``, each word plain (no shell
+metacharacter); the proposal's JSON may follow ``propose`` as one quoted here-document
+(``<<'END'``), whose body the shell never expands. Every other tool is denied. No policy is
+built when a root is ``/``, the home folder or an ancestor of it (``WorkspaceRootError``). A
+verdict's reason names the tool and the rule, never a path's content. This is not a sandbox
+(known limit 2).
 """
 
 import os
@@ -223,9 +225,7 @@ class ToolPolicy(BaseModel):
     run_id: str
 
     @classmethod
-    def of(
-        cls, *, hub: str, env_files: Iterable[str], run_id: str, repos: Iterable[str] = ()
-    ) -> Self:
+    def of(cls, *, hub: str, repos: Iterable[str], env_files: Iterable[str], run_id: str) -> Self:
         """The policy of ``run_id`` in ``hub``; ``repos`` (``hub.json``'s ``repos[].dir``) and
         ``env_files`` are relative to the workspace (the folder holding the hub and its repos),
         as the config declares them. A repo that is absent is not a root.
