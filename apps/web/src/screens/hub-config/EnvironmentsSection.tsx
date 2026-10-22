@@ -12,8 +12,8 @@ import {
 } from "../../components";
 import { AskBlocked, ConfigSource, Mono, NoneText, useAttach } from "./parts";
 import { useEnvironmentRemoval } from "./EnvironmentRemoval";
-import { ACCESS_LOOK, environmentPath, isMine, isTeams } from "./environments";
-import type { HubConfigView, SourcedEnvironment } from "./environments";
+import { ACCESS_LOOK, addEnvironmentPath, environmentPath, isMine, isTeams } from "./environments";
+import type { FlowOrigin, HubConfigView, SourcedEnvironment } from "./environments";
 
 /** Production, by icon and word, never by colour alone. */
 export function ProductionBadge() {
@@ -104,9 +104,12 @@ function focusAddEnvironment() {
 export function EnvironmentsSection({
   view,
   onSaved,
+  origin,
 }: {
   view: HubConfigView;
   onSaved: (message: string, team: boolean) => void;
+  /** Where the add flows come back to. */
+  origin: FlowOrigin;
 }) {
   const navigate = useNavigate();
   const { attach, isAttached } = useAttach();
@@ -126,6 +129,18 @@ export function EnvironmentsSection({
           icon="server"
           title="No environments yet"
           command="./hub env add local --access write --local"
+          action={
+            <Button
+              id={ADD_ENVIRONMENT_ID}
+              variant="primary"
+              icon="plus"
+              onClick={() => {
+                void navigate(addEnvironmentPath(view.project), { state: origin });
+              }}
+            >
+              Add environment
+            </Button>
+          }
         >
           Say where your systems run (this machine, a test stack, production) and what agents may do
           in each. Agents read it, so they stop guessing hosts and profiles.
