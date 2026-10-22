@@ -24,6 +24,10 @@ Decision = Literal["allow", "ask", "deny"]
 # Why: ``read_only`` is the command's own refusal of an agent's write (``hub action run``).
 ReasonKind = Literal["undeclared", "production", "table", "agent_origin", "draft", "read_only"]
 
+# Why a draft is denied, and an agent's write without a terminal (``hub action run``).
+DRAFT_REASON: Final = "draft action: commit it to run"
+NEEDS_TERMINAL: Final = "write and destroy actions need a terminal or a scenario run"
+
 # The table's rows for a declared, non-production environment.
 _TABLE: Final[Mapping[Access, Mapping[Effect, Decision]]] = {
     "read": {"read": "allow", "write": "deny", "destroy": "deny"},
@@ -72,3 +76,19 @@ def find_environment(view: EffectiveEnvironments, name: str) -> SourcedEnvironme
     return next(
         (environment for environment in view.environments if environment.name == name), None
     )
+
+
+def deny_reason(
+    decision: PolicyDecision, *, effect: Effect, environment: str, access: str | None
+) -> str | None:
+    """Why ``decision`` denies, in plain words; ``None`` when it does not."""
+    if decision.decision != "deny":
+        return None
+    reasons = {
+        "draft": DRAFT_REASON,
+        "undeclared": f"environment {environment} is not declared",
+        "production": f"{environment} is a production environment: writes and destroys are denied",
+        "table": f"access {access or ''} in {environment} does not allow {effect}",
+        "read_only": NEEDS_TERMINAL,
+    }
+    return reasons.get(decision.reason_kind, decision.reason_kind)
