@@ -72,9 +72,9 @@ interface Depth {
 
 /* ---------- Blocks ---------- */
 
-const FENCE = /^ {0,3}(`{3,}|~{3,})[ \t]*([^`\s]*)/;
+export const FENCE = /^ {0,3}(`{3,}|~{3,})[ \t]*([^`\s]*)/;
 // Linear by construction: the closing `#` sequence is stripped by `headingText`, not here.
-const HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*))?$/;
+export const HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*))?$/;
 const RULE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 const ITEM = /^( *)([-*+]|\d{1,9}[.)])( +|$)(.*)$/;
 const QUOTE = /^ {0,3}> ?(.*)$/;

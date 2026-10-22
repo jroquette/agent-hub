@@ -238,6 +238,8 @@ RUN_WRITES = (
     "/api/v1/workflow-runs/run-1/resume",
     "/api/v1/workflow-runs/run-1/abandon",
     "/api/v1/approvals/run-1:ok:1/decision",
+    # two-level-flows AC-2.14 (AGH-405): the owner answers a lost run's change request.
+    "/api/v1/features/demo/demo-feature/change-requests/2/decision",
 )
 OWN_JSON = {"Origin": "http://127.0.0.1:7420", "Content-Type": "application/json"}
 
@@ -259,6 +261,8 @@ def test_marks_strict_run_write_when_post_to_run_command(path: str) -> None:
         ("GET", "/api/v1/approvals/run-1:ok:1/gate"),
         ("POST", "/api/v1/approvals/a/b/decision"),
         ("POST", "/api/v1/approvals/run-1:ok:1/decision/extra"),
+        ("GET", "/api/v1/features/demo/demo-feature/change-requests/2/decision"),
+        ("POST", "/api/v1/features/demo/demo-feature/change-requests/2/decision/extra"),
     ],
 )
 def test_keeps_default_checks_when_not_run_command(method: str, path: str) -> None:

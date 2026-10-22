@@ -589,6 +589,25 @@ def test_reads_only_named_folder_when_one_feature_read() -> None:
     assert reader.ticket_reads == ["ticketed"]
 
 
+# two-level-flows A7 (AGH-405): one ticket's records, read with the folder's tickets/ records.
+def test_serves_ticket_records_when_ticket_of_feature() -> None:
+    models, reader, _ = read_models({DEMO: a_ticket_hub()}, DEMO)
+
+    found = models.ticket_records("demo", "ticketed", "t2")
+
+    assert (found.project, found.slug, found.ticket, found.preflight) == (
+        "demo",
+        "ticketed",
+        "t2",
+        None,
+    )
+    assert reader.ticket_reads == ["ticketed"]
+    with pytest.raises(EntityNotFoundError):
+        models.ticket_records("demo", "ticketed", "DEM-99")
+    with pytest.raises(EntityNotFoundError):
+        models.ticket_records("demo", "nope", "T2")
+
+
 def test_reads_skill_catalog_when_project_known() -> None:
     hub = fake_hub_of(a_skills_fixture_tree(), hub_json=hub_json_bytes(pin=RUNNING))
     usage = a_skill_usage()

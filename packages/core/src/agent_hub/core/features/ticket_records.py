@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Final, Literal, cast
 from pydantic import ValidationError
 
 from agent_hub.core.brain.brain_note import FrontmatterValue
+from agent_hub.core.brain.frontmatter import split_frontmatter
 from agent_hub.core.features.feature_evals import (
     ISO_TIME,
     RecordFieldError,
@@ -25,6 +26,7 @@ from agent_hub.core.features.feature_evals import (
     text_field,
 )
 from agent_hub.core.features.feature_record import KEY_PATTERN
+from agent_hub.core.features.feature_view import ChangeDecisionView, ChangeRequestView
 from agent_hub.core.features.output_models import OutputProblem, PreflightRecord
 from agent_hub.core.features.output_shape import parse_document, shape_problems
 from agent_hub.core.hub_config.problems import one_line
@@ -67,10 +69,12 @@ class TicketFiles:
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ChangeRequest:
     """One plan change request: its origin ``ticket``, its status folded from its decision, the
-    plan version it asks for and the tickets it affects. ``problem`` says why it could not be
-    read (status None; ``ticket`` kept when it could be), or why its decision could not be: the
-    request then stays ``open``, not known to be decided. A decision needs a person
-    (``decided_by`` neither empty nor ``unknown``, A5)."""
+    plan versions it goes from and to, the tickets it affects, when it was opened and by which
+    workflow run, and its ``body`` (evidence and proposal, within the head read; ``body_cut``
+    when the file is longer than that head). ``problem``
+    says why it could not be read (status None; ``ticket`` kept when it could be), or why its
+    decision could not be: the request then stays ``open``, not known to be decided. A decision
+    needs a person (``decided_by`` neither empty nor ``unknown``, A5)."""
 
     n: int
     ticket: str | None
@@ -78,6 +82,12 @@ class ChangeRequest:
     plan_to: int | None
     affected: tuple[str, ...]
     problem: str | None
+    plan_from: int | None = None
+    opened_at: str | None = None
+    run_id: str | None = None
+    decision: ChangeDecisionView | None = None
+    body: str | None = None
+    body_cut: bool = False
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -147,6 +157,26 @@ def ticket_folder(folders: Iterable[str], names: Iterable[str]) -> str | None:
     )
 
 
+def request_view(request: ChangeRequest, *, slug: str, body: bool = False) -> ChangeRequestView:
+    """``request`` as hub web reads it, with its ``body`` when asked (the ticket route); its
+    run's gate and liveness are the API's to resolve (P8)."""
+    return ChangeRequestView(
+        n=request.n,
+        ticket=request.ticket,
+        status=request.status,
+        plan_from=request.plan_from,
+        plan_to=request.plan_to,
+        affected=request.affected,
+        opened_at=request.opened_at,
+        run_id=request.run_id,
+        decision=request.decision,
+        path=f"features/{slug}/{CHANGE_REQUESTS_FOLDER}/{request.n}.md",
+        problem=request.problem,
+        body=request.body if body else None,
+        body_cut=body and request.body_cut,
+    )
+
+
 def preflight_record(read: bytes | str | None, *, folder: str) -> PreflightRecord | str | None:
     """The preflight record of ``tickets/<folder>/``; its one-line problem when it cannot be
     read, is malformed (the first problem, at its JSON path) or names another ticket (ASCII case
@@ -184,23 +214,54 @@ def _request(n: int, head: RecordHead, decision: RecordHead | None) -> ChangeReq
         if not plan_to:
             raise RecordFieldError("plan_to is missing")
         affected = _names(fields.get("affected"))
+        plan_from = text_field(fields, "plan_from", _VERSION)
+        opened_at = text_field(fields, "opened_at", ISO_TIME)
+        run_id = text_field(fields, "run_id")
     except RecordFieldError as problem:
         return _broken(n, ticket, _unreadable(name, str(problem)))
-    status: ChangeStatus = "open"
+    decided = None
     undecided = None
     if decision is not None:
         try:
-            status = _decision(decision)
+            decided = _decision(decision)
         except RecordFieldError as error:
             # Not known to be decided: the request stays open, with the decision's problem.
             where = f"{CHANGE_REQUESTS_FOLDER}/{decision.name}"
             undecided = _unreadable(where, str(error))
     return ChangeRequest(
-        n=n, ticket=ticket, status=status, plan_to=plan_to, affected=affected, problem=undecided
+        n=n,
+        ticket=ticket,
+        status="open" if decided is None else decided.decision,
+        plan_to=plan_to,
+        affected=affected,
+        problem=undecided,
+        plan_from=None if plan_from is None else int(plan_from),
+        opened_at=opened_at,
+        run_id=run_id,
+        decision=decided,
+        body=_body(head),
+        body_cut=_cut(head),
     )
 
 
-def _decision(head: RecordHead) -> ChangeStatus:
+def _body(head: RecordHead) -> str | None:
+    """The request's text after its frontmatter (within the head read), None when empty. A
+    full head may end inside a character: only then is its replacement mark dropped."""
+    if head.head is None:
+        return None
+    text = split_frontmatter(head.head.decode("utf-8", "replace")).body.strip()
+    if _cut(head):
+        text = text.rstrip("\ufffd").rstrip()
+    return f"{text}\n" if text else None
+
+
+def _cut(head: RecordHead) -> bool:
+    """Whether the head read fills its cap: the file may go on past it (a file of exactly the
+    cap reads as cut too, which only sends the owner to read it whole)."""
+    return head.head is not None and len(head.head) >= CHANGE_REQUEST_HEAD_BYTES
+
+
+def _decision(head: RecordHead) -> ChangeDecisionView:
     fields = _fields(head)
     record_type(fields, "change-request-decision")
     decision = text_field(fields, "decision")
@@ -211,9 +272,15 @@ def _decision(head: RecordHead) -> ChangeStatus:
         raise RecordFieldError("decided_by is missing")
     if decided_by.strip().lower() == "unknown":
         raise RecordFieldError(f"decided_by names no person: {decided_by.strip()}")
-    if text_field(fields, "decided_at", ISO_TIME) is None:
+    decided_at = text_field(fields, "decided_at", ISO_TIME)
+    if decided_at is None:
         raise RecordFieldError("decided_at is missing")
-    return cast("ChangeStatus", decision)
+    return ChangeDecisionView(
+        decision=cast("Literal['approved', 'declined']", decision),
+        decided_by=decided_by.strip(),
+        decided_at=decided_at,
+        note=text_field(fields, "note"),
+    )
 
 
 def _fields(head: RecordHead) -> dict[str, FrontmatterValue]:
