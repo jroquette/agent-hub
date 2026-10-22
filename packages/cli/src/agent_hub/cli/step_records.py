@@ -148,15 +148,29 @@ def preflight(
     folder = _feature(hub, feature)
     planned = _planned_or_refuse(_record(folder).tickets, ticket)
     target = _ticket_folder(folder, planned)
-    plan_version = _version(_required(folder / PLAN, MAX_PLAN_BYTES))
-    facts = replace(facts, plan_version=plan_version)
+    plan = _required(folder / PLAN, MAX_PLAN_BYTES)
+    facts = replace(facts, plan_version=_version(plan))
+    if facts.input == "approve" and facts.request is not None:
+        # An approval the plan moved past is re-checked as a plain check that says so (A23).
+        moved = _superseded(folder, facts.request, plan)
+        if moved:
+            facts = replace(facts, input="none", input_text=moved)
     with _feature_lock(hub, feature):
         existing = _read(target / PREFLIGHT_FILE, MAX_PREFLIGHT_BYTES)
-        record = preflight_record(existing, folder=target.name)
-        run = preflight_run(findings, facts, None if isinstance(record, str) else record)
+        run = preflight_run(findings, facts)
         written, count = appended_preflight(existing, run, folder=target.name)
         _replace(target, PREFLIGHT_FILE, written)
     return {"path": _relative(hub, target / PREFLIGHT_FILE), "runs": count}
+
+
+def _superseded(folder: Path, n: int, plan: bytes) -> str:
+    """What the run says of approved request ``n`` when the plan moved past it, else ``""``."""
+    requests = folder / CHANGE_REQUESTS_FOLDER
+    request = _read(requests / f"{n}.md", MAX_REQUEST_BYTES)
+    decision = _read(requests / f"{n}.decision.md", MAX_REQUEST_BYTES)
+    if request is None or decision is None:
+        return ""
+    return pending_decision(n, request=request, decision=decision, plan=plan).superseded
 
 
 def _main_commit(hub: Path, config: HubConfig, planned: PlannedTicket) -> str:
@@ -206,7 +220,7 @@ def change_request(
     first = next_request(os.listdir(requests))
     if facts is not None:
         facts = replace(facts, plan_version=plan_from, request=first)
-        run = preflight_run(findings, facts, None)
+        run = preflight_run(findings, facts)
         appended_preflight(None, run, folder=planned.id or planned.key)
     for n in range(first, first + MAX_REQUEST_TRIES):
         text = change_request_text(
@@ -334,8 +348,7 @@ def _unnamed_request(
             opened = datetime.fromisoformat(text_field(fields, "opened_at") or "")
         except RecordFieldError, ValueError:
             continue
-        # A run's time is kept to the second.
-        newer = since is None or opened.replace(microsecond=0) >= since
+        newer = since is None or opened > since
         if ticket.upper() in names and int(n) not in named and newer:
             found.append(int(n))
     return max(found, default=None)
