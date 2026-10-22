@@ -81,7 +81,7 @@ describe("ToolCallCard (transcript)", () => {
     const diff = screen.getByLabelText("Diff of a.py");
     expect(diff).toHaveTextContent("+y");
     expect(diff).toHaveTextContent("+q");
-    // The code reads in the file's colours; the sign alone in the line's.
+    // The code reads in the file's colours; the sign alone in the line's (AC-424.4).
     expect(diff).toHaveClass("as-diff-syntax");
     expect(within(diff).getAllByText("+").length).toBe(2);
   });

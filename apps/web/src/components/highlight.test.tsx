@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { highlightLines } from "./highlight";
 import { languageOfPath } from "./useHighlight";
 
+// AC-424.4: highlighted code split into the rows of a diff.
 describe("highlightLines", () => {
   it("returns one list of nodes per line", () => {
     const lines = highlightLines("def f():\n    return 1", "python");

@@ -37,6 +37,7 @@ describe("fileKind", () => {
   });
 });
 
+// AC-424.1: what the code tab counts as a test.
 describe("isTestFile", () => {
   it.each([
     "/repo/tipple-webshops/tests/order_intents/test_allianz_provider.py",

@@ -757,7 +757,8 @@ change; the live-session limit is [ADR 0042](adr/0042-no-live-session-limit-in-t
   reviewed and counted), read from git per repository (`GET /agent-sessions/{id}/repo-changes`: the branch against
   the branch it was started from, files, commits, `…/repo-changes/commit` for one commit's diff of a file), with each
   repository's pull request and state; what a read found is recorded on the session (`review_targets`, migration
-  0007), so the review outlives its worktree.
+  0007), so the review outlives its worktree. The code can show its tests apart, files that end as they
+  began sit in a Discarded tab out of the review, and diffs are coloured in the file's language, as on GitHub.
 - **Chat**: opens at the latest message or the pending card; open questions answered by options; links to URLs,
   pull requests, tickets and review files; the slash menu holds the hub's skills and agents anywhere in the message.
   Background agents and commands stay visible after a turn (task records, a Background drawer, a closing card,

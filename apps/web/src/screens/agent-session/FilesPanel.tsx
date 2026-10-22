@@ -296,7 +296,7 @@ function OpenThreads({ path }: { path: string }) {
 
 /** The drawer is wide enough for the list beside the file (px). */
 export const SPLIT_MIN = 720;
-/** Below this width the file list wraps its names and folders instead of cutting them (px). */
+/** Below this width the file list keeps each name and folder on one line, cut at its end (px). */
 export const LIST_COMPACT = 360;
 
 /** How wide `element` is, followed as it resizes (0 without a ResizeObserver: the narrow,
@@ -1250,9 +1250,10 @@ function RepoList({ repos }: { repos: readonly RepoChanges[] }) {
   );
 }
 
+const tabOf = (tab: FilesTab) => (tab === "discarded" ? DISCARDED_TAB : KIND_TAB[tab]);
+
 /** What the review totals: the code that goes in the pull request (git's files and the repo
  * files Claude changed), never Claude's plans, feature records, brain notes or scratch. */
-const tabOf = (tab: FilesTab) => (tab === "discarded" ? DISCARDED_TAB : KIND_TAB[tab]);
 
 export function codeTotals(files: readonly ChangedFile[]) {
   const code = files.filter(needsReview);
