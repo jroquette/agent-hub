@@ -114,6 +114,25 @@ SCRIPT_RUNNERS: Final[Mapping[str, tuple[str, ...]]] = {"sh": ("sh",), "python":
 
 type ChildRunner = Callable[..., ChildResult]
 
+# A ``mutates_checkout: false`` agent's tools: reading, and git's and the shell's read-only
+# commands; no gate. ``--allowedTools`` only adds to the user's and the project's allow rules, so
+# the edit tools are also denied; a Bash rule those allow stays allowed (the probe then compares
+# the checkout's status and HEAD after the attempt).
+READ_ONLY_TOOLS: Final = (
+    "Read",
+    "Glob",
+    "Grep",
+    "Bash(git status:*)",
+    "Bash(git diff:*)",
+    "Bash(git log:*)",
+    "Bash(git show:*)",
+    "Bash(ls:*)",
+    "Bash(cat:*)",
+    "Bash(rg:*)",
+    "Bash(grep:*)",
+)
+EDIT_TOOLS: Final = ("Edit", "Write", "NotebookEdit")
+
 
 @dataclass(frozen=True, kw_only=True)
 class WorkflowExecutors:
@@ -206,6 +225,7 @@ class WorkflowExecutors:
         gated = (home,) if home is not None else repos
         caps = self.session if node.id == IMPLEMENT_STEP else None
         effort = AGENT_EFFORT if caps is None else caps.effort
+        read_only = not node.mutates_checkout
         settings_file = None
         # A cwd in the resolved hub loads the hub's own settings: a hooks file there (a repo that
         # is the hub or holds it) would run each hook twice.
@@ -221,11 +241,13 @@ class WorkflowExecutors:
             model=self.config.models.model_for(node.model) if caps is None else caps.model,
             effort=effort,
             add_dirs=(*folders, *(str(self.hub.parent / repo.dir) for repo in others)),
-            tools=(
+            tools=READ_ONLY_TOOLS
+            if read_only
+            else (
                 *IMPLEMENTING_TOOLS,
                 *gate_tools(command for repo in gated for command in (repo.check_fast, repo.check)),
             ),
-            denied_tools=SESSION_DENIED_TOOLS,
+            denied_tools=(*SESSION_DENIED_TOOLS, *(EDIT_TOOLS if read_only else ())),
             settings_file=settings_file,
         )
         if call.resume_session is not None:
