@@ -49,7 +49,9 @@ function Change({ change }: { change: ShownChange }) {
         change.diff === null &&
         !change.skipped &&
         note("A binary file: its bytes differ, and it has no text to show.")}
-      {change.diff !== null && <DiffText diff={change.diff} label={`Changes to ${change.path}`} />}
+      {change.diff !== null && (
+        <DiffText diff={change.diff} label={`Changes to ${change.path}`} path={change.path} />
+      )}
       {change.hiddenLines > 0 && note(`${lineCount(change.hiddenLines)} — too large to show here`)}
       {change.skipped && note("Diff not shown — too large to show here.")}
     </div>

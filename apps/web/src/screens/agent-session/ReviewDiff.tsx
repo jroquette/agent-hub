@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent,
@@ -14,7 +15,8 @@ import { Button, Icon, Markdown } from "../../components";
 import { ApiProblem } from "../../lib/api";
 import { cx } from "../../lib/cx";
 import { readStored, writeStored } from "../../lib/storage";
-import { diffLines, type DiffLine } from "./ToolCallCard";
+import { useDiffSyntax } from "./diffSyntax";
+import { DiffLineText, diffLines, type DiffLine } from "./ToolCallCard";
 import {
   commentMessage,
   parseReview,
@@ -393,7 +395,8 @@ export function ReviewDiff({
   resolved,
   onComment,
 }: ReviewDiffProps) {
-  const rows = diffLines(diff).filter((line) => line.kind !== "head");
+  const rows = useMemo(() => diffLines(diff).filter((line) => line.kind !== "head"), [diff]);
+  const syntax = useDiffSyntax(rows, path);
   const refs = rows.map((line, i) => refOf(line, i, numbered));
   const [selection, setSelection] = useState<{ from: number; to: number } | null>(null);
   const low = selection ? Math.min(selection.from, selection.to) : -1;
@@ -428,7 +431,11 @@ export function ReviewDiff({
 
   return (
     <div
-      className={cx("as-diff as-review-diff", numbered && "as-diff-numbered")}
+      className={cx(
+        "as-diff as-review-diff",
+        numbered && "as-diff-numbered",
+        syntax && "hljs as-diff-syntax",
+      )}
       // A diff can scroll sideways, so the keyboard must reach it.
       // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
       tabIndex={0}
@@ -471,7 +478,7 @@ export function ReviewDiff({
                     <Icon name="plus" size="sm" />
                   </button>
                 )}
-                {line.text}
+                <DiffLineText line={line} code={syntax?.[i]} />
               </span>
             </div>
             {threadsAt(placed.get(i))}
