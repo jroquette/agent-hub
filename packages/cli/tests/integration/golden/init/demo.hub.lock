@@ -583,6 +583,9 @@
       "ownership": "managed",
       "sha256": "fdac169d0ebd59302540f442f0592e39239ede6ca87fc367184c16806f9eff21"
     },
+    "workflows/backlog-care/scripts/drafts.py": {
+      "ownership": "seeded"
+    },
     "workflows/backlog-care/scripts/hygiene.py": {
       "ownership": "seeded"
     },
