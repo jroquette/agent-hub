@@ -1,14 +1,16 @@
-"""The ticket records an ``implement`` run writes into the hub (two-level-flows S2, P7).
+"""The ticket records an ``implement`` run writes into the hub (two-level-flows S2, P7), and a
+merged ticket's outcome (S3).
 
-``hub step ticket-brief|preflight|change-request|decide|amend-plan`` call these with the hub's
-main checkout (``pending-decision`` too, which only reads). They write under
+``hub step ticket-brief|preflight|change-request|decide|amend-plan|outcome`` call these with the
+hub's main checkout (``pending-decision`` and ``preflight-due`` too, which only read). They write under
 ``brain/features/<slug>/`` only and never commit: the run's report names the changed files for
 the owner's hub PR (D-1). The texts and their checks are
 ``agent_hub.core.features.ticket_writes``'; here are the reads and writes. No link is followed:
 the feature folder, ``tickets/``, ``change-requests/`` and every file read or replaced must not
 be one. A file that is appended to (``brief.md``, ``preflight.json``, ``plan.md``) is replaced
 whole through a temp file and a rename; a change request and its decision are created
-exclusively, never over another file, so a request is decided once. ``brief.md``,
+exclusively, never over another file, so a request is decided once; so is an outcome, written
+once (a second ``outcome`` writes nothing). ``brief.md``,
 ``preflight.json`` and ``plan.md`` are read and replaced under a per-feature lock
 (``.agent-runs/locks/<slug>.lock``, never committed), so two runs never drop or interleave
 entries. A ticket must be planned in ``features.json``; its records go to one folder whatever
@@ -46,10 +48,16 @@ from agent_hub.core.features.output_models import PreflightRecord
 from agent_hub.core.features.plan_version import plan_version
 from agent_hub.core.features.ticket_records import (
     CHANGE_REQUESTS_FOLDER,
+    MAX_OUTCOME_BYTES,
     MAX_PREFLIGHT_BYTES,
+    OUTCOME_FILE,
     PREFLIGHT_FILE,
     TICKET_BRIEF,
     TICKETS_FOLDER,
+    TicketOutcome,
+    already_read,
+    aware_time,
+    outcome_record,
     preflight_record,
     ticket_folder,
 )
@@ -60,6 +68,7 @@ from agent_hub.core.features.ticket_writes import (
     PlanMovedError,
     PreflightFacts,
     TicketBrief,
+    TicketOutcomeText,
     TicketRecordError,
     amended_plan,
     appended_brief,
@@ -69,6 +78,7 @@ from agent_hub.core.features.ticket_writes import (
     decision_text,
     named_paths,
     next_request,
+    outcome_text,
     pending_decision,
     pending_request,
     plan_ids,
@@ -82,7 +92,7 @@ from agent_hub.core.json_form import JsonValue
 
 FEATURES: Final = ("brain", "features")
 PLAN: Final = "plan.md"
-OUTCOME: Final = "outcome.md"
+OUTCOME: Final = OUTCOME_FILE
 LOCKS: Final = (".agent-runs", "locks")
 MAX_BRIEF_BYTES: Final = 1_048_576
 MAX_COMMITS: Final = 50
@@ -327,6 +337,139 @@ def pending(hub: Path, *, feature: str, ticket: str) -> dict[str, JsonValue]:
         "summary": decided.summary,
         "superseded": decided.superseded,
     }
+
+
+def outcome(
+    hub: Path,
+    *,
+    feature: str,
+    ticket: str,
+    pr: str,
+    merged_at: str,
+    built: str,
+    changes: str,
+    interfaces: str,
+) -> dict[str, JsonValue]:
+    """Create ``tickets/<ticket>/outcome.md`` once (AC-3.1): a second run, or one for a ticket
+    whose outcome an earlier merge recorded, writes nothing (``written`` false)."""
+    folder = _feature(hub, feature)
+    record = _record(folder)
+    planned = _planned_or_refuse(record.tickets, ticket)
+    dependents = _dependents(record.tickets, planned)
+    existing = _existing_ticket_folder(folder, planned)
+    if existing is not None:
+        path = existing / OUTCOME
+        if path.is_symlink():
+            raise TicketRecordError(f"{OUTCOME} is a link; no link is followed")
+        if path.exists():
+            shown = {"path": _relative(hub, path), "dependents": list(dependents)}
+            return {"written": False, "merged_at": _merged_at(path)} | shown
+    try:
+        when = aware_time(merged_at, "merged_at")
+    except RecordFieldError as error:
+        raise TicketRecordError(str(error)) from None
+    # Checked whole before any folder is made.
+    text = outcome_text(
+        TicketOutcomeText(
+            ticket=(planned.id or planned.key) if existing is None else existing.name,
+            merged_at=when,
+            pr=pr.strip(),
+            dependents=dependents,
+            built=built,
+            changes=changes,
+            interfaces=interfaces,
+        )
+    )
+    target = _ticket_folder(folder, planned)
+    written = write_exclusive(target, OUTCOME, text)
+    shown = {"path": _relative(hub, target / OUTCOME), "dependents": list(dependents)}
+    return {"written": written, "merged_at": when.isoformat()} | shown
+
+
+def preflight_due(hub: Path, *, feature: str, ticket: str, blocker: str) -> dict[str, JsonValue]:
+    """Whether dependent ``ticket`` still has to read ``blocker``'s outcome (AC-3.2, AC-3.3): not
+    when it is merged itself, nor when a preflight run since the merge lists the blocker in
+    ``blockers_read``. Writes nothing; ``input`` is the automatic preflight's (always ``none``)."""
+    folder = _feature(hub, feature)
+    record = _record(folder)
+    planned = _planned_or_refuse(record.tickets, ticket)
+    blocking = _planned(record.tickets, blocker)
+    names = _names(blocking) if blocking is not None else (blocker,)
+    wanted = {name.upper() for name in names}
+    shown = planned.id or planned.key
+    if not any(name.upper() in wanted for name in planned.blocked_by):
+        reason = f"{shown} is not blocked by {one_line(blocker)[:64]} in {RECORD_FILE}"
+        raise TicketRecordError(reason)
+    found = _recorded_outcome(folder, names)
+    if found is None:
+        raise TicketRecordError(f"{one_line(blocker)[:64]} has no {OUTCOME}")
+    due: dict[str, JsonValue] = {"due": True, "reason": "", "input": "none"}
+    due["merged_at"] = found.merged_at.isoformat()
+    if _recorded_outcome(folder, _names(planned), refuse=False) is not None:
+        return due | {"due": False, "reason": f"{shown} is merged"}
+    target = _existing_ticket_folder(folder, planned)
+    run = already_read(
+        None if target is None else _preflight(target), names=names, merged_at=found.merged_at
+    )
+    if run is not None:
+        at = run.ran_at.isoformat()
+        reason = f"{shown} already read {one_line(blocker)[:64]}'s outcome (preflight run at {at})"
+        return due | {"due": False, "reason": reason}
+    return due
+
+
+def _dependents(tickets: Sequence[PlannedTicket], planned: PlannedTicket) -> tuple[str, ...]:
+    """The tickets whose ``blocked_by`` names ``planned``, by id once they have one."""
+    names = {name.upper() for name in _names(planned)}
+    return tuple(
+        other.id or other.key
+        for other in tickets
+        if other is not planned and names & {name.upper() for name in other.blocked_by}
+    )
+
+
+def _merged_at(path: Path) -> str:
+    """The recorded outcome's ``merged_at`` as written, ``""`` when it cannot be read."""
+    try:
+        content = _read(path, MAX_OUTCOME_BYTES) or b""
+        return text_field(record_fields(content), "merged_at") or ""
+    except RecordFieldError, TicketRecordError:
+        return ""
+
+
+def _recorded_outcome(
+    folder: Path, names: Sequence[str], *, refuse: bool = True
+) -> TicketOutcome | None:
+    """The outcome of the ticket named ``names``, None when none is recorded; one its reader
+    refuses is refused (or, without ``refuse``, read as none)."""
+    tickets = folder / TICKETS_FOLDER
+    if tickets.is_symlink():
+        raise TicketRecordError(f"{TICKETS_FOLDER} is a link; no link is followed")
+    if not tickets.is_dir():
+        return None
+    found = ticket_folder(os.listdir(tickets), names)
+    if found is None or (tickets / found).is_symlink():
+        return None
+    read = outcome_record(_read(tickets / found / OUTCOME, MAX_OUTCOME_BYTES), folder=found)
+    if isinstance(read, str):
+        if refuse:
+            raise TicketRecordError(read)
+        return None
+    return read
+
+
+def _existing_ticket_folder(feature: Path, planned: PlannedTicket) -> Path | None:
+    """The ticket's folder as ``_ticket_folder`` finds it, None when there is none (nothing
+    is created)."""
+    tickets = feature / TICKETS_FOLDER
+    if tickets.is_symlink() or not tickets.is_dir():
+        return None
+    found = ticket_folder(os.listdir(tickets), _names(planned))
+    if found is None:
+        return None
+    if (tickets / found).is_symlink():
+        raise TicketRecordError(f"{found} is a link; no link is followed")
+    return tickets / found
 
 
 def _unnamed_request(

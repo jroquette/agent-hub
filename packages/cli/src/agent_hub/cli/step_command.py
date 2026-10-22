@@ -1,7 +1,8 @@
 """``hub step worktree|verdict|commits|pr|report``: ``hub run``'s stages as commands; and
 ``hub step ticket-brief|preflight|change-request|decide|amend-plan``, the ticket records an
-``implement`` run writes into the hub (``step_records``), and ``pending-decision``, the owner's
-decision a new run follows.
+``implement`` run writes into the hub (``step_records``), ``pending-decision``, the owner's
+decision a new run follows, ``outcome``, a merged ticket's outcome (written once), and
+``preflight-due``, whether a dependent still has to read a blocker's outcome.
 
 The issue-to-pr workflow (ADR 0032) runs them as ``hub step`` nodes. Each prints one JSON object
 on stdout, the ``output_format`` its node declares, and exits 0; a failure is one
@@ -560,6 +561,53 @@ def amend_plan(
     _record(
         "amend-plan",
         lambda: step_records.amend_plan(hub, feature=feature, request=request, summary=summary),
+    )
+
+
+@step_app.command("outcome")
+def outcome(
+    *,
+    feature: Feature,
+    ticket: Ticket,
+    pr: Annotated[str, typer.Option("--pr", help="The merged pull request (URL or repo#n).")],
+    merged_at: Annotated[
+        str, typer.Option("--merged-at", help="When it merged, ISO 8601 with an offset (now).")
+    ] = "",
+    built: Annotated[str, typer.Option("--built", help="What was built.")],
+    changes: Annotated[str, typer.Option("--changes", help="What changed against the plan.")],
+    interfaces: Annotated[str, typer.Option("--interfaces", help="The final interfaces.")],
+) -> None:
+    """Record the merged ticket's tickets/<ticket>/outcome.md, once (a second run writes nothing)."""
+    hub = _hub()
+    _record(
+        "outcome",
+        lambda: step_records.outcome(
+            hub,
+            feature=feature,
+            ticket=ticket,
+            pr=pr,
+            merged_at=merged_at or datetime.now(UTC).isoformat(),
+            built=built,
+            changes=changes,
+            interfaces=interfaces,
+        ),
+    )
+
+
+@step_app.command("preflight-due")
+def preflight_due(
+    *,
+    feature: Feature,
+    ticket: Ticket,
+    blocker: Annotated[
+        str, typer.Option("--blocker", metavar="TICKET", help="The merged blocker's key or id.")
+    ],
+) -> None:
+    """Print whether the dependent ticket still has to read the merged blocker's outcome."""
+    hub = _hub()
+    _record(
+        "preflight-due",
+        lambda: step_records.preflight_due(hub, feature=feature, ticket=ticket, blocker=blocker),
     )
 
 

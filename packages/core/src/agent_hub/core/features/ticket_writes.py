@@ -15,6 +15,9 @@ the way its reader will read it, so a record this module returns is never a reco
 - ``plan.md``: one ``A<k> (<date>, <who>): …`` entry appended at the end, under an
   ``## Amendments`` heading (added when the last section is another), only while the plan is
   still the version the approved request was opened against.
+- ``tickets/<ticket>/outcome.md``, a merged ticket's outcome (S3, AC-3.1): frontmatter
+  ``type: ticket-outcome``, ``ticket``, ``merged_at``, ``pr`` and ``dependents``, then what was
+  built, what changed against the plan and the final interfaces; created once.
 
 ``preflight_run`` builds the run ``hub step preflight`` appends from the agent's findings.
 ``pending_request`` and ``pending_decision`` read, for the next run of a ticket, the owner's
@@ -45,8 +48,11 @@ from agent_hub.core.features.output_shape import parse_document, shape_problems
 from agent_hub.core.features.plan_version import last_section, opens_amendments, plan_version
 from agent_hub.core.features.ticket_records import (
     CHANGE_REQUEST_HEAD_BYTES,
+    MAX_OUTCOME_BYTES,
     MAX_PREFLIGHT_BYTES,
+    OUTCOME_TYPE,
     change_requests,
+    outcome_record,
     preflight_record,
 )
 from agent_hub.core.hub_config.problems import one_line
@@ -511,3 +517,51 @@ def pending_decision(n: int, *, request: bytes, decision: bytes, plan: bytes) ->
 def _summary(n: int, request: bytes) -> str:
     proposal = _PROPOSAL.search(request.decode("utf-8", "replace"))
     return one_line(proposal[1])[:MAX_SUMMARY_CHARS] if proposal else f"change request {n}"
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class TicketOutcomeText:
+    """What ``hub step outcome`` records of a merged ticket (AC-3.1)."""
+
+    ticket: str
+    merged_at: datetime
+    pr: str
+    dependents: tuple[str, ...]
+    built: str
+    changes: str
+    interfaces: str
+
+
+def outcome_text(outcome: TicketOutcomeText) -> bytes:
+    """``tickets/<ticket>/outcome.md`` for ``outcome``; refused when a section is empty, when
+    the result would be over ``MAX_OUTCOME_BYTES`` and when its reader would refuse it."""
+    for what, value in (
+        ("what was built is empty", outcome.built),
+        ("what changed against the plan is empty", outcome.changes),
+        ("the final interfaces are empty", outcome.interfaces),
+    ):
+        if not value.strip():
+            raise TicketRecordError(what)
+    front = (
+        f"---\ntype: {OUTCOME_TYPE}\nticket: {outcome.ticket}\n"
+        f"merged_at: {outcome.merged_at.isoformat()}\npr: {scalar(outcome.pr)}\n"
+        f"dependents: [{', '.join(outcome.dependents)}]\n---\n"
+    )
+    text = (
+        f"{front}\n# Outcome: {outcome.ticket}\n\n"
+        f"## What was built\n\n{outcome.built.strip()}\n\n"
+        f"## What changed against the plan\n\n{outcome.changes.strip()}\n\n"
+        f"## Final interfaces\n\n{outcome.interfaces.strip()}\n"
+    ).encode()
+    if len(text) > MAX_OUTCOME_BYTES:
+        raise TicketRecordError(f"the outcome would be larger than {MAX_OUTCOME_BYTES} bytes")
+    read = outcome_record(text, folder=outcome.ticket)
+    if isinstance(read, str):
+        # The reader's own words, without the advice for a record already in the hub.
+        raise TicketRecordError(_why(read))
+    return text
+
+
+def _why(problem: str) -> str:
+    found = re.fullmatch(r".*? could not be read \((.*)\)\. Fix it in a hub PR\.", problem)
+    return found[1] if found else problem
