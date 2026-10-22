@@ -17,6 +17,10 @@ them; the routes and frames are in [API.md](../API.md#agent-sessions), the produ
   `set_mode`, `set_model`, `close`, `events(handle)` (an async iterator), `list_resumable(cwd)`, `capabilities()`.
   `StartSpec` holds a resolved `cwd`, the mode, an optional model, `resume` and `fork`, an optional `session_id` and
   `environment_extra` (`AGENT_HUB_WEB_URL` only).
+  `tool_access` is `all`, or `read_only` for a session only the server starts (a discovery,
+  [ADR 0046](../adr/0046-read-only-discovery-sessions.md)): `Read`, `Grep` and `Glob` are its whole tool set, no MCP
+  server, every other tool request denied without asking; stored with the session (migration 0009) so a reopened one
+  keeps it. `add_dirs` are folders the server resolved for it to read besides its own.
 - Driver events, a closed union: `init` (Claude's `session_id`, model, slash commands), `text.delta`, `text`,
   `thinking`, `tool.call`, `tool.result`, `todos`, `permission.request` (`request_kind`: `tool`,
   `ask_user_question`, `plan_approval`; suggestions), `result` (cost, usage, terminal reason), `error`, `exited`.
@@ -130,6 +134,22 @@ session is ended or refused for the limit.
 `AgentSessionLinks.link_of(project, claude_session_id)` (live sessions first, then the store) gives the folded
 Session its `agent_session_id` and makes its live tile `waiting` while a request is open; the tile carries
 `agent_session_id` too, so the web app links it to the chat (a hook-observed prompt links to Approvals).
+
+### Read-only sessions (AGH-418)
+
+A session the server starts for a discovery ([ADR 0046](../adr/0046-read-only-discovery-sessions.md),
+[environments.md](environments.md#discoveries)) carries `tool_access: read_only`; every session the browser starts
+has `all`, and the body of `POST /agent-sessions` cannot change it. `final_reply` reads the assistant's stored
+(redacted) text after the session's last message, and whether that turn was interrupted, so the server can read what
+the session answered without the browser.
+
+- **AC-418.1** Given a `read_only` session, when it starts or is reopened by a later message, then `Read`, `Grep` and
+  `Glob` are its whole tool set, allowed outright, every tool that writes, runs a command, reaches the network or
+  starts an agent is disallowed, no MCP server loads, and the permission bridge denies any other tool request at once
+  without asking; its `tool_access` is stored (migration 0009, `all` for every row already there) and survives an
+  update; a session started from the body of `POST /agent-sessions` keeps all tools.
+- **AC-418.2** Given a session, when its final reply is read, then it answers the stored text blocks after its last
+  message joined by a blank line (an earlier turn's text left out), and none before any text.
 
 ## Chat behaviour
 
@@ -611,6 +631,8 @@ The chat at `/agent-sessions/:id` (`apps/web/src/screens/agent-session/`) is a f
   screen that lists driven sessions with the observed ones.
 - [ADR 0034](../adr/0034-syntax-highlighting-in-the-chat.md): syntax highlighting of completed code blocks with
   lowlight, rendered without an HTML path.
+- [ADR 0046](../adr/0046-read-only-discovery-sessions.md) (proposed): the `read_only` tool profile of a discovery
+  session.
 - [ADR 0019](../adr/0019-metadata-only-events-and-redaction.md): the redaction rule set the stored copy uses.
 - [ADR 0024](../adr/0024-learning-actions-from-the-app.md): off in the container, as hubs are read-only there.
 

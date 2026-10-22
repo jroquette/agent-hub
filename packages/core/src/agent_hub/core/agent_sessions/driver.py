@@ -42,6 +42,12 @@ MODEL_ALIASES: Final = ("default", "opus", "sonnet", "haiku")
 MODEL_PATTERN: Final = r"^[A-Za-z0-9._\-\[\]]{1,64}$"
 _MODEL = re.compile(MODEL_PATTERN)
 
+# Which tools a session may use: ``all`` (what the mode and the person allow), or ``read_only``,
+# where only ``READ_ONLY_TOOLS`` exist and every other tool request is denied without asking
+# (ADR 0046). Only the server picks ``read_only`` (a discovery); the browser never sets it.
+type ToolAccess = Literal["all", "read_only"]
+READ_ONLY_TOOLS: Final = ("Read", "Grep", "Glob")
+
 # The terminal reason of a turn ended by ``interrupt`` (the CLI's own word for it).
 ABORTED_TERMINAL_REASON: Final = "aborted_streaming"
 
@@ -74,8 +80,10 @@ class StartSpec(DriverModel):
     """What one session starts with: a resolved working directory (never a free path from the
     browser), the mode, an optional model, an optional session to resume (and fork), an
     optional session id to give the new session (P13), variables added to the child's
-    environment (``AGENT_HUB_WEB_URL``; never the access token, L5), and the hub's plugin
-    folders a session outside the hub loads (resolved by the workdir listing)."""
+    environment (``AGENT_HUB_WEB_URL``; never the access token, L5), the hub's plugin
+    folders a session outside the hub loads (resolved by the workdir listing), the tools it may
+    use (``tool_access``) and the folders it may read besides its own (``add_dirs``, absolute
+    paths the server resolved)."""
 
     cwd: str = Field(min_length=1)
     mode: PermissionMode
@@ -85,6 +93,8 @@ class StartSpec(DriverModel):
     session_id: str | None = None
     environment_extra: Mapping[str, str] = Field(default_factory=dict)
     plugin_dirs: tuple[str, ...] = ()
+    tool_access: ToolAccess = "all"
+    add_dirs: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def _fork_needs_resume(self) -> StartSpec:
