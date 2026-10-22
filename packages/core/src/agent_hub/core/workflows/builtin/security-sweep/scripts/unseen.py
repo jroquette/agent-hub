@@ -4,14 +4,14 @@
 # ///
 """The findings of a scan not seen before, and marking them seen; one JSON object on stdout.
 
-``new.py select`` reads ``scan.py``'s output on stdin and the hub's store of seen findings
+``unseen.py select`` reads ``scan.py``'s output on stdin and the hub's store of seen findings
 (``.agent-runs/security-sweep/seen.json``, gitignored) and prints
 ``{"findings": [{"id", "fingerprint", <the finding>}], "listed", "counts": {"new", "seen",
 "more"}, "ran": [{"repo", "scanner"}], "current": [<fingerprint>], "store_problem"}``: at most
 ``MAX_LISTED`` new findings in the scan's order (ids ``F1``...), within ``MAX_LISTED_BYTES``; the
 rest are counted in ``more`` and stay unseen. It writes nothing.
 
-``new.py mark --status <findings|clean>`` reads that output on stdin, after the report, and
+``unseen.py mark --status <findings|clean>`` reads that output on stdin, after the report, and
 updates the store: a ``(repo, scanner)`` that ran this time keeps only the entries it still
 reports (a fixed finding that comes back is new again), one that did not run keeps its entries,
 and the listed findings are added with today's date; past ``MAX_ENTRIES``, the oldest go. The
@@ -256,14 +256,14 @@ def mark(selected: dict[str, object], *, store: Path, today: str, status: str) -
     try:
         write_store(store, seen)
     except OSError as error:
-        print(f"new.py: cannot write the store: {type(error).__name__}", file=sys.stderr)
+        print(f"unseen.py: cannot write the store: {type(error).__name__}", file=sys.stderr)
         return 1
     print(json.dumps({"status": status, "marked": count, "store_size": len(seen)}))
     return 0
 
 
 def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="new.py", description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(prog="unseen.py", description=__doc__.split("\n")[0])
     parser.add_argument("command", choices=("select", "mark"))
     parser.add_argument("--status", default="", help="the report's status, for mark")
     parser.add_argument("--store", default=STORE, help=argparse.SUPPRESS)
@@ -271,7 +271,9 @@ def main(argv: list[str]) -> int:
     arguments = parser.parse_args(argv)
     today = arguments.today or datetime.now(timezone.utc).date().isoformat()  # noqa: UP017 - 3.9
     if arguments.command == "mark" and arguments.status not in STATUSES:
-        print(f"new.py: the status is not findings or clean: {arguments.status!r}", file=sys.stderr)
+        print(
+            f"unseen.py: the status is not findings or clean: {arguments.status!r}", file=sys.stderr
+        )
         return 2
     try:
         data = read_stdin()
@@ -280,7 +282,7 @@ def main(argv: list[str]) -> int:
             return 0
         return mark(data, store=Path(arguments.store), today=today, status=arguments.status)
     except BadInputError:
-        print(f"new.py: stdin is not the {arguments.command} input", file=sys.stderr)
+        print(f"unseen.py: stdin is not the {arguments.command} input", file=sys.stderr)
         return 2
 
 

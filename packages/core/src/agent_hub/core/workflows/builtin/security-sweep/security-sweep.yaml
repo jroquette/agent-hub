@@ -106,7 +106,7 @@ nodes:
     description: The findings not marked seen in the hub's store, listed for triage (writes nothing).
     depends_on: [scan]
     runtime: python
-    script: new.py
+    script: unseen.py
     args: [select]
     # On stdin: the scan may be longer than one argument holds.
     stdin: $scan.output
@@ -246,7 +246,7 @@ nodes:
     description: Mark this run's listed findings seen in the hub's store, now that the report exists.
     depends_on: [report]
     runtime: python
-    script: new.py
+    script: unseen.py
     args: [mark, --status, $report.output.status]
     stdin: $new.output
     timeout: 2m

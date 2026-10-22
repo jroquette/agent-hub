@@ -201,7 +201,7 @@ def test_stays_under_the_prompt_cap_when_inputs_are_at_their_bound(tmp_path: Pat
     store = str(tmp_path / "seen.json")
 
     selected = script(
-        "new.py", "select", "--store", store, cwd=tmp_path, env=env, stdin=canonical_text(scan)
+        "unseen.py", "select", "--store", store, cwd=tmp_path, env=env, stdin=canonical_text(scan)
     )
 
     assert selected.returncode == 0, selected.stderr
@@ -300,7 +300,7 @@ def test_reports_without_value_and_lists_none_new_when_chain_runs_twice(
     before = chain.state()
 
     scan = chain.run("scan.py", "--repo", "demo-api")
-    selected = chain.run("new.py", "select", stdin=canonical_text(scan))
+    selected = chain.run("unseen.py", "select", stdin=canonical_text(scan))
     kept = [{"id": f["id"], "attack": "reachable", "fix": "fix it"} for f in selected["findings"]]
     triage: Any = {"kept": kept, "unresolved": [], "dropped": 0}
     report = chain.run(
@@ -315,9 +315,11 @@ def test_reports_without_value_and_lists_none_new_when_chain_runs_twice(
         selected["store_problem"],
         stdin=canonical_text(triage),
     )
-    marked = chain.run("new.py", "mark", "--status", report["status"], stdin=json.dumps(selected))
+    marked = chain.run(
+        "unseen.py", "mark", "--status", report["status"], stdin=json.dumps(selected)
+    )
     again = chain.run(
-        "new.py", "select", stdin=json.dumps(chain.run("scan.py", "--repo", "demo-api"))
+        "unseen.py", "select", stdin=json.dumps(chain.run("scan.py", "--repo", "demo-api"))
     )
 
     assert selected["listed"] >= 2

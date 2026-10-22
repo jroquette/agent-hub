@@ -1,4 +1,4 @@
-"""The security-sweep pack's ``new.py`` (AGH-486), in process: which findings are new against the
+"""The security-sweep pack's ``unseen.py`` (AGH-486), in process: which findings are new against the
 hub's store (``select``, which writes nothing), and marking them seen after the report (``mark``).
 """
 
@@ -15,11 +15,11 @@ from typing import Any
 import pytest
 
 SCRIPT = Path(
-    str(files("agent_hub.core").joinpath("workflows/builtin/security-sweep/scripts/new.py"))
+    str(files("agent_hub.core").joinpath("workflows/builtin/security-sweep/scripts/unseen.py"))
 )
 
 # Named as its folder places it, so coverage of agent_hub.core measures it.
-MODULE = "agent_hub.core.workflows.builtin.security-sweep.scripts.new"
+MODULE = "agent_hub.core.workflows.builtin.security-sweep.scripts.unseen"
 TODAY = "2026-10-26"
 
 
@@ -72,7 +72,7 @@ def a_scan(*findings: Any, ran: tuple[str, ...] = ("semgrep",), more: int = 0) -
 
 
 class Store:
-    """``new.py`` run in process against a store in ``tmp_path``."""
+    """``unseen.py`` run in process against a store in ``tmp_path``."""
 
     def __init__(self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: Any):
         self.path = tmp_path / ".agent-runs" / "security-sweep" / "seen.json"
