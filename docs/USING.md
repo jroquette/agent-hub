@@ -231,6 +231,9 @@ A human then reads the proposal and sets its `status` to `approved`, and `/onboa
 `./hub sync`, and commit that change through a PR. If the newest release has no `.claude/skills/onboard` either, stop
 and tell the user; do not try other versions.
 
+The platform's own releases come from `/release`, which runs the built-in `release` workflow: the owner approves
+the release PR, merges it with a merge commit, and approves the hub PR that raises `platform.version`.
+
 ### Run the control plane
 
 The control plane (`hub web`) shows the hub's sessions, runs, approvals and health; old `/live` links open the Sessions
