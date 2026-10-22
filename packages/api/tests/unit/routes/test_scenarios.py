@@ -43,6 +43,7 @@ from agent_hub.core.testing.read_model_builders import WORKDIR_ID
 from agent_hub.core.testing.session_driver_fakes import InMemorySessionDriver
 from agent_hub.core.workflows.gates import GateAnswer
 from agent_hub.generator.action_discovery import discover_actions
+from agent_hub.generator.finding_issues import IssueMarked, marked_issue, retake_issue
 
 RUNNING = "0.9.0"
 RUN = "walk-1"
@@ -1299,3 +1300,32 @@ def test_returns_409_conflict_when_scenarios_local_file_loosens_environment(
     assert (planned.status_code, planned.json()["code"]) == (409, "hub_local_invalid")
     assert (started.status_code, started.json()["code"]) == (409, "hub_local_invalid")
     assert scenarios.launcher.calls == []
+
+
+class PeekingTracker(InMemoryTrackerClient):
+    """A tracker that, mid-create, sees whether a terminal retry could take the claim."""
+
+    def __init__(self, backend: FakeTrackerBackend, folder: Path) -> None:
+        super().__init__(backend)
+        self.folder = folder
+        self.seen: list[str] = []
+
+    def create_issue(self, team: str, title: str, description: str) -> Any:
+        unfinished = marked_issue(self.folder, "f1")
+        assert unfinished is not None
+        standing = retake_issue(self.folder, unfinished)
+        self.seen.append(standing.state if isinstance(standing, IssueMarked) else "taken")
+        return super().create_issue(team, title, description)
+
+
+def test_holds_claim_when_scenarios_finding_issue_create_running(scenarios: Any) -> None:
+    # E-14: a running create is never retaken; hub web holds the claim's lock across it.
+    write_records(scenarios.hub, a_paused_walk(scenarios.hub))
+    peeking = PeekingTracker(scenarios.backend, (scenarios.hub / WALK_RECORDS).parent)
+    rewire_tracker(scenarios, lambda _config, _hub: peeking)
+
+    created = _post(scenarios, f"/scenario-runs/{WALK_RUN}/findings/f1/issue", {"confirm": True})
+
+    assert created.status_code == 201, created.text
+    assert peeking.seen == ["a create of finding f1's issue is running"]
+    assert len(scenarios.backend.issues) == 1

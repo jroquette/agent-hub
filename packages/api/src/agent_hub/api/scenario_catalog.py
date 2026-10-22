@@ -115,7 +115,7 @@ from agent_hub.core.workflows.launch import (
 from agent_hub.core.workflows.plan import WorkflowPlan
 from agent_hub.core.workflows.workflow_reads import WorkflowInputView, WorkflowProblemView
 from agent_hub.generator.action_discovery import ActionDiscovery, discover_actions
-from agent_hub.generator.finding_issues import claim_issue, record_failure, record_issue
+from agent_hub.generator.finding_issues import HeldIssue, IssueMarked, claim_issue
 from agent_hub.generator.scenario_discovery import DiscoveredScenarioSource
 
 if TYPE_CHECKING:
@@ -894,17 +894,22 @@ class ScenarioCommands:
                 ' Settings, or set tracker.transport "mcp" in hub.json'
             )
             raise RunConflictError(code="tracker_not_connected", reason=reason, run_id=run_id)
-        _claim_issue(run.folder, run_id, finding_id)
+        # The claim's lock is held across the create, so nothing retakes a running create.
+        claim = _claim_issue(run.folder, run_id, finding_id)
         try:
-            created = client.create_issue(team, draft.title, draft.description)
-        except TrackerError:
-            record_failure(run.folder, finding_id)
-            msg = (
-                f"the tracker did not create the issue of finding {finding_id}; it may exist:"
-                " check the tracker"
-            )
-            raise FindingIssueError(msg) from None
-        record_issue(run.folder, finding_id, issue_id=created.id, url=created.url)
+            try:
+                created = client.create_issue(team, draft.title, draft.description)
+            except TrackerError:
+                claim.fail()
+                msg = (
+                    f"the tracker did not create the issue of finding {finding_id}; it may"
+                    " exist: check the tracker"
+                )
+                raise FindingIssueError(msg) from None
+            claim.record(issue_id=created.id, url=created.url)
+        finally:
+            # Any other end leaves the marker unfinished and releases the claim.
+            claim.release()
         return issue.model_copy(update={"created": CreatedIssue(id=created.id, url=created.url)})
 
     def finding_inbox(self, run_id: str, finding_id: str) -> FindingNote:
@@ -976,15 +981,16 @@ def _record(run_id: str) -> str:
     return (RUN_FOLDERS / run_id / RECORDS).as_posix()
 
 
-def _claim_issue(folder: Path, run_id: str, finding_id: str) -> None:
-    """Claim the finding's issue marker (shared with ``hub scenario findings --issue``); 409
-    ``issue_exists`` when either side claimed it before."""
+def _claim_issue(folder: Path, run_id: str, finding_id: str) -> HeldIssue:
+    """Claim the finding's issue (shared with ``hub scenario findings --issue``) and hold it;
+    409 ``issue_exists`` when either side claimed it before or a create is running."""
     try:
-        earlier = claim_issue(folder, finding_id)
+        claimed = claim_issue(folder, finding_id)
     except OSError as error:
         raise RunLaunchError(f"cannot mark the finding's issue: {error.strerror}") from None
-    if earlier is not None:
-        raise RunConflictError(code="issue_exists", reason=earlier.reason, run_id=run_id)
+    if isinstance(claimed, IssueMarked):
+        raise RunConflictError(code="issue_exists", reason=claimed.reason, run_id=run_id)
+    return claimed
 
 
 def _inbox_folder(hub: Path, run_id: str) -> Path:

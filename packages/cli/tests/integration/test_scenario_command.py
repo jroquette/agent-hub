@@ -7,6 +7,7 @@ naming the hub. Every action script appends its stdin to the file ``MARKER`` nam
 sees which mode ran, if any. Output is read without colour codes (CI forces a terminal).
 """
 
+import fcntl
 import json
 import os
 import pty
@@ -2683,3 +2684,23 @@ def test_creates_nothing_when_findings_issue_retry_declined(
     assert quiet.exit_code == 0, quiet.output
     assert tracker_calls(hub) == []
     assert json.loads(issue_file(hub).read_text(encoding="utf-8")) == {"failed": True}
+
+
+def test_refuses_before_asking_when_findings_issue_create_running(
+    hub: Path, marker: Path, held: Path
+) -> None:
+    # E-14: a running create (hub web's, or another terminal's) holds the claim's lock.
+    found_run(hub, marker, held)
+    env = a_tracker(hub)
+    issue_file(hub).write_text("", encoding="utf-8")
+    lock = os.open(issue_file(hub).with_name("finding-f1.issue.lock"), os.O_RDWR | os.O_CREAT)
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    try:
+        code, shown = findings_in_terminal(hub, env, RUN, "--issue", "f1", answer="y")
+    finally:
+        os.close(lock)
+
+    assert code == 1, shown
+    assert "a create of finding f1's issue is running" in plain(shown)
+    assert "[y/N]" not in shown
+    assert tracker_calls(hub) == []

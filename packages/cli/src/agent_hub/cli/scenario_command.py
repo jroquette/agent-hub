@@ -125,11 +125,10 @@ from agent_hub.core.workflows.engine import WorkflowEngineError, start_inputs
 from agent_hub.core.workflows.plan import WorkflowPlan
 from agent_hub.generator.action_discovery import ActionDiscovery, discover_actions
 from agent_hub.generator.finding_issues import (
+    HeldIssue,
     IssueMarked,
     claim_issue,
     marked_issue,
-    record_failure,
-    record_issue,
     retake_issue,
 )
 from agent_hub.generator.scenario_discovery import HUB_SCENARIOS, DiscoveredScenarioSource
@@ -423,7 +422,8 @@ def _issue(hub: Path, view: ScenarioRunView, finding: FindingView, *, run: str) 
     # failed or unfinished create may be taken again here only, after the warning (E-14).
     folder = run_folder(hub, run)
     earlier = marked_issue(folder, finding.finding_id)
-    if earlier is not None and earlier.issue_id is not None:
+    if earlier is not None and (earlier.issue_id is not None or earlier.running):
+        # An issue it names, or a create running now (E-14): never taken again.
         fail(f"{_FINDINGS_PREFIX}: {earlier.reason}")
     config = load_effective_config_or_exit(hub).config
     team = config.tracker.team_keys[0]
@@ -437,18 +437,22 @@ def _issue(hub: Path, view: ScenarioRunView, finding: FindingView, *, run: str) 
     if not confirmed(f"create this issue in {team}?"):
         typer.echo("the issue was not created")
         return
-    _claim(folder, finding.finding_id, earlier)
-    typer.echo(transport_line(config), err=True)
+    # The claim's lock is held across the create, so nothing retakes a running create.
+    claim = _claim(folder, finding.finding_id, earlier)
     try:
-        created = client.create_issue(team, draft.title, draft.description)
-    except TrackerError as error:
-        record_failure(folder, finding.finding_id)
-        fail(f"{_FINDINGS_PREFIX}: {error}")
-    record_issue(folder, finding.finding_id, issue_id=created.id, url=created.url)
+        typer.echo(transport_line(config), err=True)
+        try:
+            created = client.create_issue(team, draft.title, draft.description)
+        except TrackerError as error:
+            claim.fail()
+            fail(f"{_FINDINGS_PREFIX}: {error}")
+        claim.record(issue_id=created.id, url=created.url)
+    finally:
+        claim.release()
     typer.echo(f"created {shown_text(created.id)}  {shown_text(created.url)}")
 
 
-def _claim(folder: Path, finding_id: str, earlier: IssueMarked | None) -> None:
+def _claim(folder: Path, finding_id: str, earlier: IssueMarked | None) -> HeldIssue:
     """Claim the finding's issue marker before the create (take a failed or unfinished one
     again when ``earlier`` names it); else exit 1 naming the claim that stands."""
     try:
@@ -458,8 +462,9 @@ def _claim(folder: Path, finding_id: str, earlier: IssueMarked | None) -> None:
             standing = retake_issue(folder, earlier)
     except OSError as error:
         fail(f"{_FINDINGS_PREFIX}: cannot mark the finding's issue: {error.strerror or error}")
-    if standing is not None:
+    if isinstance(standing, IssueMarked):
         fail(f"{_FINDINGS_PREFIX}: {standing.reason}")
+    return standing
 
 
 def _inbox(hub: Path, view: ScenarioRunView, finding: FindingView, *, run: str) -> None:

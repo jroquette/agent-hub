@@ -721,7 +721,9 @@ folder, the server's environment minus `LINEAR_API_KEY`); no problem quotes its 
   `tracker.transport` wins; a `hub.local.json` that cannot be read or conflicts with `hub.json` is 409
   `hub-local-invalid`), then its `create_issue` is called once and the answer is 201 with `created: {id, url}`.
   The marker `finding-<id>.issue` in the run folder, shared with `hub scenario findings --issue`, is claimed
-  exclusively before the call and then holds the issue or the failure. A marker naming an issue refuses every later
+  exclusively before the call and then holds the issue or the failure; the claimer holds `flock` on
+  `finding-<id>.issue.lock` from the claim until the result is recorded, so a running create is never retaken (409
+  `workflow-run-issue-exists`, "a create of finding <id>'s issue is running"), and a crash releases it. A marker naming an issue refuses every later
   create on both sides (409 `workflow-run-issue-exists`, naming it). A create the tracker refuses or does not answer
   is 502 `urn:agent-hub:problem:scenario-run-issue-failed`; that marker, or the empty one a crash leaves, is also 409
   `workflow-run-issue-exists` here (the issue may exist), and only a terminal retries it: `hub scenario findings
