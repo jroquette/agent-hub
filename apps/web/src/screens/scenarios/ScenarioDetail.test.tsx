@@ -1,6 +1,6 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import {
@@ -48,6 +48,11 @@ async function planIn(environment: string, ref = "T-1") {
   await user.click(screen.getByRole("button", { name: `Plan in ${environment}` }));
   return user;
 }
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 describe("ScenarioDetailScreen (scenarios detail)", () => {
   it("scenarios detail plans for a chosen environment (deny; needs acceptance with the commit line)", async () => {
@@ -304,5 +309,49 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
     await screen.findByRole("table", { name: "Plan of order-lifecycle in personal" });
 
     expect(await seriousViolations(container)).toEqual([]);
+  });
+  it("scenarios detail never sends a second start, even after the scenario run is late", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { requests } = renderDetail({
+      [PLAN]: aScenarioPlan(),
+      [START]: { run_id: SCENARIO_RUN, project: "demo", action: "start" },
+    });
+    const user = await planIn("personal");
+    await user.click(await screen.findByRole("button", { name: "Start scenario run" }));
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", { name: "Start scenario run" }),
+    );
+    await screen.findByText("Started. Waiting for the scenario run's first event…");
+
+    act(() => {
+      vi.advanceTimersByTime(31_000);
+    });
+
+    const dialog = await screen.findByRole("dialog", { name: "Start a scenario run in personal?" });
+    expect(within(dialog).getByText(/has not reported in 30 s/)).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Start scenario run" })).toBeNull();
+    expect(
+      within(dialog).getByRole("link", { name: `Open scenario run ${SCENARIO_RUN} anyway` }),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Back to plan" })).toBeEnabled();
+    await user.click(within(dialog).getByRole("button", { name: "Back to plan" }));
+    expect(screen.getByRole("button", { name: "Start scenario run" })).toBeDisabled();
+    const starts = requests.filter((r) => r.method === "POST" && r.url.endsWith("/runs"));
+    expect(starts).toHaveLength(1);
+  });
+
+  it("scenarios detail on a tablet plans but says starting needs a desktop screen", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query === "(min-width: 768px) and (max-width: 1279px)",
+      media: query,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }));
+    renderDetail({ [PLAN]: aScenarioPlan() });
+    await planIn("personal");
+
+    expect(await screen.findByText("Can start in personal.")).toBeInTheDocument();
+    expect(screen.getByText("Starting a scenario run needs a desktop screen.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Start scenario run" })).toBeNull();
   });
 });
