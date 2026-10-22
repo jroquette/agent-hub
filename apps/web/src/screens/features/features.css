@@ -5,6 +5,13 @@
   gap: var(--space-1);
   margin-bottom: var(--space-2);
 }
+/* The page title with its action at the right (the Tickets list's Start ticket). */
+.ft-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
 .ft-summary {
   display: flex;
   flex-wrap: wrap;
