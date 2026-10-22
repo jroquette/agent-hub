@@ -5,13 +5,13 @@ workflow: implement
 inputs:
   feature: demo-flow
   issue: DEM-1
-  repo: demo-api
   issue_text: "```text\nid: DEM-1\n```"
 stubs:
   context:
-    output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-1/brief.md, hub: /ws/hub, base: origin/trunk}
+    output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-1/brief.md, hub: /ws/hub, repo: demo-api,
+      commit: 0a1b2c3d4e}
   pending:
-    output: {request: null, decision: '', input: none, note: '', summary: ''}
+    output: {request: null, decision: '', input: none, note: '', summary: '', superseded: ''}
   pass-1__preflight:
     output:
       drift: none
@@ -44,8 +44,10 @@ stubs:
     output:
       status: discovery
       question: ''
-      discovery: The plan's T3 contract returns a list, not a page.
       verdict: ''
+      next_input: discovery
+      next_text: The plan's T3 contract returns a list, not a page.
+      superseded: ''
       path: /ws/demo-api/.claude/worktrees/dem-1
       base: origin/trunk
       target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
@@ -126,8 +128,10 @@ stubs:
     output:
       status: done
       question: ''
-      discovery: ''
       verdict: PASS
+      next_input: ''
+      next_text: ''
+      superseded: ''
       path: /ws/demo-api/.claude/worktrees/dem-1
       base: origin/trunk
       target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
@@ -140,6 +144,7 @@ stubs:
       path: /ws/demo-api/.claude/worktrees/dem-1
       base: origin/trunk
       target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
+      superseded: ''
   eval:
     output:
       schema: agent-hub/eval/1
@@ -170,6 +175,7 @@ stubs:
       pr: https://github.com/acme/demo-api/pull/99
       summary: Adds the change.
       hub_files: [tickets/DEM-1/brief.md, tickets/DEM-1/plan.md, tickets/DEM-1/preflight.json]
+      superseded: ''
 expect: {status: done, outcome: delivered}
 reached: [context, pending, pass-1__preflight, pass-1__record, pass-1__worktree, pass-1__plan, pass-1__rounds,
   pass-1__rounds__implement, pass-1__rounds__verdict, pass-1__outcome, pass-2__preflight, pass-2__record,

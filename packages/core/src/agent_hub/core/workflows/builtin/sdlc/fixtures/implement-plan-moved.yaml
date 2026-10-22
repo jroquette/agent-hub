@@ -1,17 +1,19 @@
-# The owner approves, but another ticket's amendment moved the plan first: amend-plan writes
-# nothing and says so, and the re-check reads the current plan (local drift here) instead of
-# failing the run; the ticket goes on.
+# The owner approves, but another ticket's amendment moved the plan first: amend-plan writes no
+# A<k> and says so (A23). No re-check, no worktree: the pass ends superseded and the next pass
+# checks the current plan, told that the approval was not applied (its preflight run records it),
+# finds local drift and goes on; the delivery says "change request 1 approved but superseded by
+# plan v2: not applied".
 workflow: implement
 inputs:
   feature: demo-flow
   issue: DEM-1
-  repo: demo-api
   issue_text: "```text\nid: DEM-1\n```"
 stubs:
   context:
-    output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-1/brief.md, hub: /ws/hub, base: origin/trunk}
+    output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-1/brief.md, hub: /ws/hub, repo: demo-api,
+      commit: 0a1b2c3d4e}
   pending:
-    output: {request: null, decision: '', input: none, note: '', summary: ''}
+    output: {request: null, decision: '', input: none, note: '', summary: '', superseded: ''}
   pass-1__preflight:
     output:
       drift: plan
@@ -29,9 +31,13 @@ stubs:
   pass-1__approved:
     output: {decision: approved}
   pass-1__amend:
-    output: {amendment: null, already: null, moved: 'plan.md is v2; change request 1 asks v1 to v2: re-run
-        preflight'}
-  pass-1__recheck:
+    output: {amendment: null, already: null, moved: 'change request 1 approved but superseded by plan
+        v2: not applied'}
+  pass-1__outcome:
+    output: {status: superseded, question: '', verdict: '', next_input: none, next_text: 'change request
+        1 approved but superseded by plan v2: not applied', superseded: 'change request 1 approved but
+        superseded by plan v2: not applied', path: '', base: '', target: null}
+  pass-2__preflight:
     output:
       drift: local
       local_notes: [T3's amendment already routes the handler.]
@@ -40,9 +46,9 @@ stubs:
       proposal: ''
       affected: ''
       summary: ''
-  pass-1__rerecord:
+  pass-2__record:
     output: {runs: 2}
-  pass-1__worktree:
+  pass-2__worktree:
     output:
       path: /ws/demo-api/.claude/worktrees/dem-1
       branch: jdoe/dem-1
@@ -52,19 +58,19 @@ stubs:
       check: make check
       prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
       target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
-  pass-1__plan:
+  pass-2__plan:
     output: {path: /ws/hub/brain/features/demo-flow/tickets/DEM-1/plan.md}
-  pass-1__rounds__implement: {text: '{"status": "done", "summary": "Adds the change.", "tests": "make
+  pass-2__rounds__implement: {text: '{"status": "done", "summary": "Adds the change.", "tests": "make
       test", "discovery": ""}'}
-  pass-1__rounds__verdict:
+  pass-2__rounds__verdict:
     output: {status: done, summary: Adds the change., question: '', discovery: ''}
-  pass-1__rounds__check:
+  pass-2__rounds__check:
     output:
       passed: true
       exit_code: 0
       round: 1
       tail: "ok\n"
-  pass-1__rounds__spec:
+  pass-2__rounds__spec:
     output:
       schema: agent-hub/review/1
       reviewer: spec
@@ -74,7 +80,7 @@ stubs:
       commit: 0a1b2c3d
       verdict: PASS
       findings: []
-  pass-1__rounds__quality:
+  pass-2__rounds__quality:
     output:
       schema: agent-hub/review/1
       reviewer: quality
@@ -84,11 +90,11 @@ stubs:
       commit: 0a1b2c3d
       verdict: PASS
       findings: []
-  pass-1__rounds__review:
+  pass-2__rounds__review:
     output:
       verdict: PASS
       lenses: {spec: PASS, quality: PASS}
-  pass-1__rounds__notes:
+  pass-2__rounds__notes:
     output:
       check:
         passed: true
@@ -96,7 +102,7 @@ stubs:
         tail: "ok\n"
       findings: []
       omitted: 0
-  pass-1__rounds__feedback:
+  pass-2__rounds__feedback:
     output:
       check:
         passed: true
@@ -104,12 +110,14 @@ stubs:
         tail: "ok\n"
       findings: []
       omitted: 0
-  pass-1__outcome:
+  pass-2__outcome:
     output:
       status: done
       question: ''
-      discovery: ''
       verdict: PASS
+      next_input: ''
+      next_text: ''
+      superseded: ''
       path: /ws/demo-api/.claude/worktrees/dem-1
       base: origin/trunk
       target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
@@ -118,10 +126,11 @@ stubs:
       status: done
       question: ''
       verdict: PASS
-      pass: 1
+      pass: 2
       path: /ws/demo-api/.claude/worktrees/dem-1
       base: origin/trunk
       target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
+      superseded: 'change request 1 approved but superseded by plan v2: not applied'
   eval:
     output:
       schema: agent-hub/eval/1
@@ -153,8 +162,10 @@ stubs:
       summary: Adds the change.
       hub_files: [change-requests/1.decision.md, change-requests/1.md, tickets/DEM-1/brief.md, tickets/DEM-1/plan.md,
         tickets/DEM-1/preflight.json]
+      superseded: 'change request 1 approved but superseded by plan v2: not applied'
 expect: {status: done, outcome: delivered}
 reached: [context, pending, pass-1__preflight, pass-1__request, pass-1__record, pass-1__gate, pass-1__approved,
-  pass-1__amend, pass-1__recheck, pass-1__rerecord, pass-1__worktree, pass-1__plan, pass-1__rounds, pass-1__rounds__implement,
-  pass-1__rounds__verdict, pass-1__rounds__check, pass-1__rounds__spec, pass-1__rounds__quality, pass-1__rounds__review,
-  pass-1__rounds__notes, pass-1__rounds__feedback, pass-1__outcome, last, eval, commits, pr, report, delivery]
+  pass-1__amend, pass-1__outcome, pass-2__preflight, pass-2__record, pass-2__worktree, pass-2__plan, pass-2__rounds,
+  pass-2__rounds__implement, pass-2__rounds__verdict, pass-2__rounds__check, pass-2__rounds__spec, pass-2__rounds__quality,
+  pass-2__rounds__review, pass-2__rounds__notes, pass-2__rounds__feedback, pass-2__outcome, last, eval,
+  commits, pr, report, delivery]
