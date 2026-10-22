@@ -15,6 +15,7 @@ import { readStored, writeStored } from "../../lib/storage";
 import { useTicketLookup } from "../features/queries";
 import { agentSessionHref } from "../sessions-list/control";
 import { useAgentSessions, type AgentSession, type Session } from "../sessions-list/queries";
+import { issueOf } from "../tickets/model";
 import { AGENT_STATUS } from "./SessionStatus";
 
 /** Whether the rail is folded to its strip, kept in this browser. */
@@ -23,12 +24,6 @@ export const RAIL_KEY = "ah.chat.rail";
 const RECENT = 20;
 /** How many observed sessions are read for their tickets, newest first. */
 const SESSIONS_READ = 200;
-
-/** The ticket an observed session works on, as the tracker writes it (`ACME-12`). */
-function issueOf(session: Session): string | null {
-  const issue = session.label?.issue ?? session.issue ?? null;
-  return issue === null ? null : issue.toUpperCase();
-}
 
 export interface RailGroup {
   id: "needs" | "active" | "recent";
