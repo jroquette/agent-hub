@@ -11,7 +11,7 @@ stubs:
       commit: 0a1b2c3d4e}
   pending:
     output: {request: null, decision: '', input: none, note: '', summary: '', superseded: ''}
-  pass-1__preflight:
+  pass-1__check__preflight:
     output:
       drift: local
       local_notes: [Adjusts to main.]
@@ -20,8 +20,10 @@ stubs:
       proposal: ''
       affected: ''
       summary: ''
-  pass-1__record:
+  pass-1__check__record:
     output: {runs: 1}
+  pass-1__check__result:
+    output: {status: passed, drift: local, superseded: ''}
   pass-1__worktree:
     output:
       path: /ws/demo-api/.claude/worktrees/dem-1
@@ -50,7 +52,7 @@ stubs:
       path: /ws/demo-api/.claude/worktrees/dem-1
       base: origin/trunk
       target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
-  pass-2__preflight:
+  pass-2__check__preflight:
     output:
       drift: local
       local_notes: [Adjusts to main.]
@@ -59,8 +61,10 @@ stubs:
       proposal: ''
       affected: ''
       summary: ''
-  pass-2__record:
+  pass-2__check__record:
     output: {runs: 2}
+  pass-2__check__result:
+    output: {status: passed, drift: local, superseded: ''}
   pass-2__worktree:
     output:
       path: /ws/demo-api/.claude/worktrees/dem-1
@@ -89,7 +93,7 @@ stubs:
       path: /ws/demo-api/.claude/worktrees/dem-1
       base: origin/trunk
       target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
-  pass-3__preflight:
+  pass-3__check__preflight:
     output:
       drift: local
       local_notes: [Adjusts to main.]
@@ -98,8 +102,10 @@ stubs:
       proposal: ''
       affected: ''
       summary: ''
-  pass-3__record:
+  pass-3__check__record:
     output: {runs: 3}
+  pass-3__check__result:
+    output: {status: passed, drift: local, superseded: ''}
   pass-3__worktree:
     output:
       path: /ws/demo-api/.claude/worktrees/dem-1
@@ -157,8 +163,8 @@ stubs:
       hub_files: [tickets/DEM-1/brief.md, tickets/DEM-1/plan.md, tickets/DEM-1/preflight.json]
       superseded: ''
 expect: {status: done, outcome: blocked}
-reached: [context, pending, pass-1__preflight, pass-1__record, pass-1__worktree, pass-1__plan, pass-1__rounds,
-  pass-1__rounds__implement, pass-1__rounds__verdict, pass-1__outcome, pass-2__preflight, pass-2__record,
-  pass-2__worktree, pass-2__plan, pass-2__rounds, pass-2__rounds__implement, pass-2__rounds__verdict,
-  pass-2__outcome, pass-3__preflight, pass-3__record, pass-3__worktree, pass-3__plan, pass-3__rounds,
+reached: [context, pending, pass-1__check__preflight, pass-1__check__record, pass-1__check__result, pass-1__worktree, pass-1__plan, pass-1__rounds,
+  pass-1__rounds__implement, pass-1__rounds__verdict, pass-1__outcome, pass-2__check__preflight, pass-2__check__record,
+  pass-2__check__result, pass-2__worktree, pass-2__plan, pass-2__rounds, pass-2__rounds__implement, pass-2__rounds__verdict,
+  pass-2__outcome, pass-3__check__preflight, pass-3__check__record, pass-3__check__result, pass-3__worktree, pass-3__plan, pass-3__rounds,
   pass-3__rounds__implement, pass-3__rounds__verdict, pass-3__outcome, last, report, delivery]

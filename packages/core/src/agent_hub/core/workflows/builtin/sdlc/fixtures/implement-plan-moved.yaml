@@ -13,7 +13,7 @@ stubs:
       commit: 0a1b2c3d4e}
   pending:
     output: {request: null, decision: '', input: none, note: '', summary: '', superseded: ''}
-  pass-1__preflight:
+  pass-1__check__preflight:
     output:
       drift: plan
       local_notes: []
@@ -22,17 +22,17 @@ stubs:
       proposal: Route T2 through routes.py.
       affected: T3
       summary: T2 goes through routes.py
-  pass-1__request:
+  pass-1__check__request:
     output: {n: 1, plan_from: 1, plan_to: 2}
-  pass-1__record:
+  pass-1__check__record:
     output: {runs: 1}
-  pass-1__gate: {decision: approve, text: Go ahead., approver: Dana Owner}
-  pass-1__approved:
+  pass-1__check__gate: {decision: approve, text: Go ahead., approver: Dana Owner}
+  pass-1__check__approved:
     output: {decision: approved}
-  pass-1__amend:
+  pass-1__check__amend:
     output: {amendment: null, already: null, moved: 'change request 1 approved but superseded by plan
         v2: not applied'}
-  pass-1__recheck:
+  pass-1__check__recheck:
     output:
       drift: local
       local_notes: [T3's amendment already routes the handler.]
@@ -41,8 +41,10 @@ stubs:
       proposal: ''
       affected: ''
       summary: ''
-  pass-1__rerecord:
+  pass-1__check__rerecord:
     output: {runs: 2}
+  pass-1__check__result:
+    output: {status: passed, drift: local, superseded: 'change request 1 approved but superseded by plan v2: not applied'}
   pass-1__worktree:
     output:
       path: /ws/demo-api/.claude/worktrees/dem-1
@@ -159,7 +161,7 @@ stubs:
         tickets/DEM-1/preflight.json]
       superseded: 'change request 1 approved but superseded by plan v2: not applied'
 expect: {status: done, outcome: delivered}
-reached: [context, pending, pass-1__preflight, pass-1__request, pass-1__record, pass-1__gate, pass-1__approved,
-  pass-1__amend, pass-1__recheck, pass-1__rerecord, pass-1__worktree, pass-1__plan, pass-1__rounds, pass-1__rounds__implement,
+reached: [context, pending, pass-1__check__preflight, pass-1__check__request, pass-1__check__record, pass-1__check__gate, pass-1__check__approved,
+  pass-1__check__amend, pass-1__check__recheck, pass-1__check__rerecord, pass-1__check__result, pass-1__worktree, pass-1__plan, pass-1__rounds, pass-1__rounds__implement,
   pass-1__rounds__verdict, pass-1__rounds__check, pass-1__rounds__spec, pass-1__rounds__quality, pass-1__rounds__review,
   pass-1__rounds__notes, pass-1__rounds__feedback, pass-1__outcome, last, eval, commits, pr, report, delivery]

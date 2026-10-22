@@ -1,0 +1,72 @@
+# A dependent ticket's automatic preflight after a blocker merged (two-level-flows S3, AC-3.2,
+# AC-3.3), which /merge starts for each dependent once the blocker's outcome is recorded. Read-only
+# to every checkout: no worktree, branch, commit or PR. hub step preflight-due first says whether
+# the dependent still has to read the outcome: not when it is merged itself, nor when a preflight
+# run since the merge lists the blocker in blockers_read, so a second /merge of the same merge
+# starts no second preflight (the run ends done with nothing written). Otherwise hub step
+# ticket-brief appends the dependent's next context brief (it now lists the blocker's outcome) and
+# reads main's commit, and preflight-check runs as in each implement pass: a fresh, read-only
+# preflight agent, its run appended to preflight.json, and on `plan` drift a change request and
+# the owner's gate, as AC-2.6 (the run pauses for the owner; a decision resumes it, as in
+# implement). The writers create or append in the hub and never commit; the owner's hub PR takes
+# the files (D-1).
+version: 1
+name: preflight
+description: A dependent ticket's read-only preflight after a blocker's merge - once per outcome, a plan change gate on plan drift.
+revision: 1
+inputs:
+  feature:
+    required: true
+    description: The feature's folder under brain/features/.
+  ticket:
+    required: true
+    description: The dependent ticket, its key or id in the feature's features.json.
+  blocker:
+    required: true
+    description: The merged blocker whose outcome the dependent reads, its key or id.
+returns: check
+outcome_field: status
+nodes:
+  - id: due
+    type: shell
+    description: Whether the dependent still has to read the blocker's outcome (nothing written).
+    command: [hub, step, preflight-due, --feature, $INPUTS.feature, --ticket, $INPUTS.ticket, --blocker, $INPUTS.blocker]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        due: {type: boolean}
+        reason: {type: string}
+        input: {type: string, enum: [none]}
+        merged_at: {type: string}
+      required: [due, reason, input, merged_at]
+
+  - id: context
+    type: shell
+    description: The dependent's next context brief, listing the blocker's outcome, and main's commit (no checkout changes).
+    depends_on: [due]
+    when: "$due.output.due == true"
+    command: [hub, step, ticket-brief, --feature, $INPUTS.feature, --ticket, $INPUTS.ticket]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        path: {type: string}
+        hub: {type: string}
+        repo: {type: string}
+        commit: {type: string}
+      required: [path, hub, repo, commit]
+
+  - id: check
+    type: include
+    description: The read-only preflight, with the plan change gate on plan drift (preflight-check).
+    depends_on: [context]
+    include: preflight-check
+    with:
+      feature: $INPUTS.feature
+      ticket: $INPUTS.ticket
+      repo: $context.output.repo
+      brief: $context.output.path
+      hub: $context.output.hub
+      main: $context.output.commit
+      input: $due.output.input
