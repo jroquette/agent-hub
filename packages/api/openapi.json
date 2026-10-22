@@ -8082,12 +8082,12 @@
             "anyOf": [
               {
                 "additionalProperties": {
-                  "maxLength": 1024,
+                  "maxLength": 8192,
                   "type": "string"
                 },
                 "maxProperties": 16,
                 "propertyNames": {
-                  "maxLength": 200,
+                  "maxLength": 8192,
                   "minLength": 1
                 },
                 "type": "object"
