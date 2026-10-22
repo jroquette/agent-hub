@@ -422,6 +422,7 @@ function OptionsColumn({
   onRefetch,
   children,
   ignoreOption = false,
+  onPick,
 }: {
   run: ScenarioRunDetail;
   step: string;
@@ -433,6 +434,8 @@ function OptionsColumn({
   children?: ReactNode;
   /** The URL still holds the previous investigation's option: show nothing picked. */
   ignoreOption?: boolean;
+  /** A person picked an option (click, Space or an arrow key): it is shown from now on. */
+  onPick?: (() => void) | undefined;
 }) {
   const [params, setParams] = useSearchParams();
   const selected = ignoreOption ? null : params.get("option");
@@ -443,6 +446,7 @@ function OptionsColumn({
   const chosen = options.find((option) => option.option_id === selected && option.pickable);
   const number = run.open_investigation ?? 1;
   const select = (id: string) => {
+    onPick?.();
     setParams(
       (current) => {
         const copy = new URLSearchParams(current);
@@ -665,6 +669,7 @@ export function PausedView({
   findings,
   reopened = false,
   ignoreOption = false,
+  onPick,
 }: {
   run: ScenarioRunDetail;
   controlOff: boolean;
@@ -676,6 +681,8 @@ export function PausedView({
   reopened?: boolean;
   /** The URL still holds the previous investigation's option, until its reset lands. */
   ignoreOption?: boolean;
+  /** A person picked an option: the previous investigation's option no longer hides it. */
+  onPick?: (() => void) | undefined;
 }) {
   const number = run.open_investigation ?? 1;
   const step = run.paused_step ?? "";
@@ -710,6 +717,7 @@ export function PausedView({
         onAnswered={onAnswered}
         onRefetch={onRefetch}
         ignoreOption={ignoreOption}
+        onPick={onPick}
       >
         {findings}
       </OptionsColumn>
