@@ -369,7 +369,7 @@ the app refetches the route; the cache still applies (`as_of` shows its age). `G
 | `POST /{id}/messages` | `{text, screenshots?}` (text 1 byte to `--message-max-bytes`, 1 MiB UTF-8 by default; 1 to 10 screenshots) → 202 `{seq}`; accepted while a turn runs |
 | `POST /{id}/interrupt` | `{}` → 202; the turn's `result` follows on the stream |
 | `POST /{id}/permissions/{request_id}` | `{decision: allow \| deny \| always, message?, answers?, suggestion?, mode?}` → 200 |
-| `POST /{id}/settings` | `{mode?, model?}` (at least one) → 200 |
+| `POST /{id}/settings` | `{mode?, model?}` (at least one) → 200; a mode change of a session held to a tool policy (an investigation session) is 409 `mode-locked` and changes nothing |
 | `POST /{id}/close` | `{}` → 200; idempotent |
 | `GET /cloud` · `POST /cloud` | cloud sessions recorded here, newest first (at most 50) · `{project, workdir_id, task}`: always 501 `cloud-unavailable` with the terminal command as `guidance` (`claude --cloud` needs a terminal; no process is run) |
 | `POST /cloud/{cloud_id}/messages` | `{text}`: 501 `cloud-unavailable` with `guidance` (no start is ever recorded, so a follow-up has nothing to reach; the `claude -p --cloud` path stays behind `cloud_followup`) |
@@ -462,6 +462,7 @@ text or a value the browser sent):
 | `invalid-screenshot` | 422 | a screenshot that is not strict base64 of a PNG (`errors[]` points at `/screenshot/data`, or `/screenshots/{index}/data` for a message's image) |
 | `unavailable` | 503 | no `claude` on `PATH` or no `sessions` extra (`reason`), on every write |
 | `restriction-unavailable` | 409 | a message to an ended session that cannot be reopened safely (E-13): a scenario investigation session whose tool policy cannot be rebuilt from its run, or any session while the hub's scenario runs (or a link file in them) cannot be read to tell whether it is one (`detail` says which) |
+| `mode-locked` | 409 | a permission-mode change of a session held to a tool policy (a scenario investigation session, E-15): its mode stays `default`, so the writes and `./hub` commands its policy allows keep asking; a model change still applies. Such a session reads `restricted: true` (the member is absent for other sessions) |
 | `cloud-unavailable` · `cloud-failed` · `cloud-timeout` | 501 · 502 · 504 | link-out guidance (`guidance`) · the step that failed (`step`) · the 60 s deadline (`seconds`) |
 
 ## Skills
@@ -713,7 +714,7 @@ folder, the server's environment minus `LINEAR_API_KEY`); no problem quotes its 
   cannot be written stops the session it would have named.
 - The chat is the agent-session routes' (`POST /api/v1/agent-sessions/{agent_session_id}/messages`, AM-9). A message
   that reopens an ended investigation session (after a restart, for example) rebuilds its tool policy and prompt from
-  the link and the run's record, or is refused (409 `agent-session-restriction-unavailable`).
+  the link and the run's record, or is refused (409 `agent-session-restriction-unavailable`). Its permission mode cannot change (409 `agent-session-mode-locked`).
 - `POST /api/v1/scenario-runs/{run_id}/answer` with `{choice, option?}` (`pick` with an option id `o<n>`, `retry` or
   `stop`; an option without a pick, or a pick without one, is 422) → 202 `InvestigationAnswered` (`run_id`,
   `project`, `investigation`, `step`, `choice`, `option`) and `Location: /api/v1/scenario-runs/{run_id}`. The

@@ -2104,6 +2104,8 @@ export interface components {
       open_permission?: components["schemas"]["OpenPermission"] | null;
       /** Project */
       project: string;
+      /** Restricted */
+      restricted?: boolean | null;
       /**
        * Review Targets
        * @default []
