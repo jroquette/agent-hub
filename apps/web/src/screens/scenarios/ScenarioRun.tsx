@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import { useParams, useSearchParams } from "react-router";
 
 import {
@@ -23,7 +23,7 @@ import { StaleStamp } from "../portfolio/StaleStamp";
 import { useRun } from "../run-detail/queries";
 import { RunCommands } from "../run-detail/RunCommands";
 import { Findings } from "./Findings";
-import { PausedView } from "./Investigation";
+import { containerProblem, PausedView } from "./Investigation";
 import { Page, ScenarioRunBadge, shortId } from "./parts";
 import {
   gateNodeOf,
@@ -404,7 +404,12 @@ function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void
   const workflowRun = useRun(run.run_id);
   const steps = scenario.data?.steps;
   const paused = run.open_investigation !== null;
-  const controlOff = false;
+  // Run control is off in the container: the reads stay, every answer and write is off.
+  const [controlOff, setControlOff] = useState(false);
+  const markControlOff = useCallback(() => {
+    setControlOff(true);
+  }, []);
+  const container = containerProblem(run);
   const findings = <Findings run={run} ended={ended} actionsOff={controlOff} />;
   return (
     <Page>
@@ -416,11 +421,26 @@ function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void
           <RunCommands run={workflowRun.data} noun="scenario run" only={["cancel"]} />
         )}
       </div>
+      {controlOff && (
+        <Banner tone="info" boxed live={false}>
+          <span className="ah-stack" style={{ gap: 4 }}>
+            <b>{container.title}</b>
+            <span>{container.detail}</span>
+            {container.command && <CodeBlock code={container.command} />}
+          </span>
+        </Banner>
+      )}
       {paused && <PauseBanner run={run} steps={steps} />}
       <EndLine run={run} steps={steps} />
       {!ended && <PolicyAsks run={run} />}
       {paused ? (
-        <PausedView run={run} controlOff={controlOff} onRefetch={refetch} findings={findings} />
+        <PausedView
+          run={run}
+          controlOff={controlOff}
+          onControlOff={markControlOff}
+          onRefetch={refetch}
+          findings={findings}
+        />
       ) : (
         findings
       )}

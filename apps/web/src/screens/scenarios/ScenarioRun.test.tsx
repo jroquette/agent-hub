@@ -491,4 +491,39 @@ describe("ScenarioRunScreen (scenarios run)", () => {
 
     expect(await seriousViolations(container)).toEqual([]);
   });
+  it("scenarios run in the container: the answers and finding actions are off, the command names the recorded gate", async () => {
+    const recorded = "intake__order-processed__investigation";
+    renderRun({
+      [RUN]: aScenarioRunDetail({
+        investigations: [
+          {
+            ...aScenarioRunDetail().investigations[0],
+            gate: recorded,
+          } as ScenarioRunDetail["investigations"][number],
+        ],
+      }),
+      [`POST ${RUN}/investigation`]: aProblem({
+        status: 404,
+        title: "Run control off",
+        type: "urn:agent-hub:problem:run-control-off",
+      }),
+    });
+
+    expect(
+      await screen.findAllByText(
+        "This scenario run cannot be answered from the agent-hub container",
+      ),
+    ).not.toHaveLength(0);
+    expect(
+      screen.getAllByText(
+        `./hub workflow respond ${SCENARIO_RUN} --node ${recorded} --choice retry`,
+      ),
+    ).not.toHaveLength(0);
+    expect(screen.queryByText(/--node order-processed__investigation/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Retry order-processed" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Stop scenario run" })).toBeDisabled();
+    const findings = screen.getByRole("region", { name: "Findings" });
+    expect(within(findings).getByRole("button", { name: "Draft tracker issue" })).toBeDisabled();
+    expect(within(findings).getByRole("button", { name: "Write inbox note" })).toBeDisabled();
+  });
 });
