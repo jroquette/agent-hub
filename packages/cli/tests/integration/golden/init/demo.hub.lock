@@ -613,6 +613,12 @@
     "workflows/issue-to-pr/prompts/implement.md": {
       "ownership": "seeded"
     },
+    "workflows/release/prompts/notes.md": {
+      "ownership": "seeded"
+    },
+    "workflows/release/release.yaml": {
+      "ownership": "seeded"
+    },
     "workflows/release/scripts/bump.py": {
       "ownership": "seeded"
     },
