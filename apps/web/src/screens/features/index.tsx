@@ -361,8 +361,7 @@ function FeatureRow({
               >
                 {name ?? f.slug}
               </Link>
-              {/* Unnamed, the title is the label already: the chip would say it twice. */}
-              {name && <FeatureLabel slug={f.slug} />}
+              <FeatureLabel slug={f.slug} />
               <RenameButton
                 slug={f.slug}
                 named={name !== null}
