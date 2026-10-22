@@ -71,6 +71,13 @@ HUB_REGISTRY_WRITES = (
     ("PUT", re.compile(rf"^{re.escape(API_PREFIX)}/projects/[^/]+/config/local$")),
     # Rewrites hub.json or hub.local.json's environments and services (the Hub config screen).
     ("POST", re.compile(rf"^{re.escape(API_PREFIX)}/projects/[^/]+/config/environments$")),
+    # Starts a read-only Claude session and records a discovery in the hub (ADR 0046).
+    ("POST", re.compile(rf"^{re.escape(API_PREFIX)}/projects/[^/]+/environment-discoveries$")),
+    # Marks a discovery discarded and ends its session.
+    (
+        "DELETE",
+        re.compile(rf"^{re.escape(API_PREFIX)}/projects/[^/]+/environment-discoveries/[^/]+$"),
+    ),
 )
 # The routes with a larger body cap: a session's first prompt and a later message may carry
 # PNG images (at most ``MAX_SCREENSHOT_BYTES`` decoded, 5 MiB of base64, each; the first
