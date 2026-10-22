@@ -162,6 +162,7 @@ DESIGN_PATHS = (
     "workflows/doc-drift/fixtures/drift-declined.yaml",
     "workflows/doc-drift/fixtures/drift-none.yaml",
     "workflows/doc-drift/fixtures/drift-renamed-command.yaml",
+    "workflows/doc-drift/scripts/contract.py",
     # AGH-227: the built-in issue-to-pr pack, seeded.
     "workflows/issue-to-pr/fixtures/blocked.yaml",
     "workflows/issue-to-pr/fixtures/dirty.yaml",
@@ -842,6 +843,8 @@ def test_parses_as_python39_when_rendered(demo_render: dict[str, RenderedFile]) 
         "plugin/demo/hooks",
         "plugin/hub-workflow/hooks",
         "scripts",
+        # The doc-drift pack's scripts (AGH-491), run by uv on its Python, also parse as 3.9.
+        "workflows/doc-drift/scripts",
         # The sdlc pack's helpers (AGH-229), run by uv on its Python, also parse as 3.9.
         "workflows/sdlc/scripts",
     }

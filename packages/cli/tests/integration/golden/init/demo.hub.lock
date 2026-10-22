@@ -598,6 +598,9 @@
     "workflows/doc-drift/fixtures/drift-renamed-command.yaml": {
       "ownership": "seeded"
     },
+    "workflows/doc-drift/scripts/contract.py": {
+      "ownership": "seeded"
+    },
     "workflows/issue-to-pr/fixtures/blocked.yaml": {
       "ownership": "seeded"
     },
