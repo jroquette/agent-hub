@@ -39,6 +39,8 @@ SEEDED_PACK_FILES = (
     "issue-to-pr/fixtures/pr-failure.yaml",
     "issue-to-pr/issue-to-pr.yaml",
     "issue-to-pr/prompts/implement.md",
+    "retro/prompts/changes.md",
+    "retro/retro.yaml",
     "retro/scripts/drafts.py",
     "retro/scripts/metrics.py",
     "retro/scripts/vet.py",

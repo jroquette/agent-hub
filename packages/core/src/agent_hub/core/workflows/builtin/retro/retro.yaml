@@ -1,0 +1,203 @@
+# The weekly retro: the past week's run metrics, then at most five changes to the workflows, each
+# backed by those numbers, then issue drafts for the ones the owner keeps. Scripts compute, the
+# agent judges:
+#   1. metrics (metrics.py): the hub's workflow run records folded per workflow (runs, outcomes,
+#      failures, review rounds, gates, NO-SHIP rate), plus retro_metrics.py's issue runs, PRs, CI
+#      and memory, `hub skill-usage`'s idle skills and agents, and mine_transcripts.py's counts.
+#      Every source says whether it was read; no run in the window is "nothing to change".
+#   2. changes (an agent, read-only, fresh): at most 5 changes, each citing step 1's keys and values.
+#   3. vet (vet.py): drops a change whose numbers are not step 1's, as step 1 gave them.
+#   4. pick (the owner) and drafts (drafts.py): the kept changes go to brain/_inbox/retro-<date>.md
+#      as issue drafts (status: to-file); the owner files them in the tracker and runs /triage.
+# No node writes the tracker (ADR 0030): there is no shell node and no `hub step`. The numbers are
+# per workflow, skill, repo or issue, never per person, and no event is added (ADR 0019).
+# Left out, and said so in the summary: per-workflow cost, the event store's per-workflow numbers
+# (folded here from the run records instead), guard denies from the event store (transcript
+# blocks are counted instead) and GitHub review rounds on PRs (scripts get no GitHub token).
+# Suggested schedule (hub.json schedules): {"workflow": "retro", "cron": "0 10 * * 1",
+# "inputs": {"since": 7}}: Mondays at 10:00 UTC, after the Monday inbox review.
+version: 1
+name: retro
+description: The week's run metrics, at most five evidence-backed changes, and issue drafts for the ones the owner keeps.
+revision: 1
+inputs:
+  since:
+    type: integer
+    default: 7
+    description: The window in days, 1-90.
+returns: drafts
+outcome_field: outcome
+nodes:
+  - id: metrics
+    type: script
+    description: Step 1's numbers from the run records, retro_metrics.py, hub skill-usage and the transcripts.
+    runtime: python
+    script: metrics.py
+    args: [--days, $INPUTS.since]
+    timeout: 15m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [days, since, until, runs, nothing, metrics, idle, sources, left_out, summary]
+      properties:
+        days: {type: integer, minimum: 1, maximum: 90}
+        since: {type: string}
+        until: {type: string}
+        runs: {type: integer, minimum: 0}
+        nothing: {type: boolean}
+        metrics:
+          type: object
+          maxProperties: 300
+          propertyNames: {pattern: "^[A-Za-z0-9_.:/-]{1,120}$"}
+          additionalProperties: {type: number}
+        idle:
+          type: object
+          additionalProperties: false
+          required: [skills, agents]
+          properties:
+            skills: {type: array, maxItems: 150, items: {type: string}}
+            agents: {type: array, maxItems: 150, items: {type: string}}
+        sources:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, status, reason]
+            properties:
+              name: {type: string, enum: [runs, issue_runs, github, skill_usage, transcripts]}
+              status: {type: string, enum: [ok, partial, missing]}
+              reason: {type: string, maxLength: 200}
+        left_out: {type: array, items: {type: string}}
+        summary: {type: string, maxLength: 4000}
+
+  - id: changes
+    type: agent
+    description: At most five changes to the workflows, each citing step 1's numbers; none is a valid answer.
+    depends_on: [metrics]
+    when: "$metrics.output.nothing == false"
+    prompt_file: changes.md
+    context: fresh
+    mutates_checkout: false
+    timeout: 30m
+    retry: {max_attempts: 0}
+    with:
+      metrics: $metrics.output
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [changes]
+      properties:
+        changes:
+          type: array
+          maxItems: 5
+          items:
+            type: object
+            additionalProperties: false
+            required: [title, kind, change, metrics, links, expected_effect, how_to_tell]
+            properties:
+              title: {type: string, minLength: 1, maxLength: 120}
+              kind: {type: string, enum: [skill, agent, guard, plan, bench, workflow, other]}
+              change: {type: string, minLength: 1, maxLength: 1500}
+              metrics:
+                type: array
+                minItems: 1
+                maxItems: 8
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [key, value]
+                  properties:
+                    key: {type: string, pattern: "^[A-Za-z0-9_.:/-]{1,120}$"}
+                    value: {type: number}
+              links:
+                type: array
+                maxItems: 5
+                items:
+                  type: string
+                  pattern: "^(https://\\S{1,300}|\\.agent-runs/workflows/[a-z0-9-]{1,32}/?)$"
+              expected_effect: {type: string, minLength: 1, maxLength: 600}
+              how_to_tell: {type: string, minLength: 1, maxLength: 400}
+
+  - id: vet
+    type: script
+    description: Keep the changes whose numbers are step 1's; number them and write the owner's message.
+    depends_on: [changes, metrics]
+    runtime: python
+    script: vet.py
+    args: [--metrics, $metrics.output.metrics]
+    stdin: $changes.output
+    timeout: 1m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [count, kept, dropped, message]
+      properties:
+        count: {type: integer, minimum: 0, maximum: 5}
+        kept:
+          type: array
+          maxItems: 5
+          items:
+            type: object
+            required: [n, title, kind, change, metrics, links, expected_effect, how_to_tell]
+            properties:
+              n: {type: integer, minimum: 1, maximum: 5}
+        dropped:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [title, reason]
+            properties:
+              title: {type: string}
+              reason: {type: string}
+        message: {type: string, maxLength: 16000}
+
+  - id: pick
+    type: approval
+    description: The owner keeps some of the changes (their numbers, or all), or none.
+    depends_on: [vet]
+    when: "$vet.output.count > 0"
+    message: >-
+      $vet.output.message
+
+      $metrics.output.summary
+
+      Answer keep with the numbers of the changes to draft as issues (such as 1,3, or all), or
+      none to draft nothing.
+    decisions:
+      - {id: keep, label: "Keep the changes the note names: numbers such as 1,3, or all"}
+      - {id: none, label: Keep none}
+    capture_response: true
+
+  - id: drafts
+    type: script
+    description: Write the kept changes as issue drafts in the hub's inbox; say how the retro ended.
+    depends_on: [metrics, vet, pick]
+    trigger_rule: none_failed_min_one_success
+    runtime: python
+    script: drafts.py
+    args:
+      - --nothing
+      - $metrics.output.nothing
+      - --count
+      - $vet.output.count
+      - --decision
+      - $pick.output.decision
+      - --note
+      - $pick.output.text
+      - --summary
+      - $metrics.output.summary
+    stdin: $vet.output
+    timeout: 1m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [outcome, kept, path, summary]
+      properties:
+        outcome: {type: string, enum: [drafted, none kept, nothing to change]}
+        kept: {type: integer, minimum: 0, maximum: 5}
+        path: {type: string}
+        summary: {type: string, maxLength: 2000}
