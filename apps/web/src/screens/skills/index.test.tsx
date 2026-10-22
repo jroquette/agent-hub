@@ -107,30 +107,135 @@ describe("SkillsPickerScreen states", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Boom");
   });
 
-  it("counts each project's skills, agents, hooks, usage and problems", async () => {
+  it("counts each project's agents, skills, hooks, usage and problems (AC-270.3)", async () => {
     pick("/knowledge/skills", { [CATALOG]: aSkillCatalog() });
 
-    const row = (await screen.findByRole("link", { name: "demo" })).closest("tr");
-    if (row === null) throw new Error("no row");
-    await within(row).findByText("1 with problems");
-    const cells = within(row)
-      .getAllByRole("cell")
-      .map((cell) => cell.textContent);
-    expect(cells.slice(2)).toEqual(["1", "2", "1", "1", "1 with problems"]);
-    expect(within(row).getByRole("link", { name: "1 item with problems in demo" })).toHaveAttribute(
+    const card = await screen.findByRole("article", { name: "demo" });
+    await within(card).findByText("1 item with problems");
+    const values = [...card.querySelectorAll(".ah-pcard-stat")].map((stat) => [
+      stat.querySelector(".ah-pcard-k")?.textContent,
+      stat.querySelector(".ah-pcard-v")?.textContent,
+    ]);
+    expect(values).toEqual([
+      ["Agents", "1"],
+      ["Skills", "2"],
+      ["Hooks", "1"],
+      ["Used · 30 d", "1"],
+    ]);
+    expect(
+      within(card).getByRole("link", { name: "1 item with problems in demo" }),
+    ).toHaveAttribute("href", "/projects/demo/skills?diag=1");
+    expect(within(card).getByRole("link", { name: "demo" })).toHaveAttribute(
       "href",
-      "/projects/demo/skills?diag=1",
+      "/projects/demo/skills",
     );
   });
 
-  it("shows a dash with the reason when one project's catalog cannot be read", async () => {
+  it("shows a dash and a Retry when one project's catalog cannot be read (AC-270.4, AC-427.13)", async () => {
     pick("/knowledge/skills", { [CATALOG]: aProblem({ status: 500, title: "Boom" }) });
 
-    const row = (await screen.findByRole("link", { name: "demo" })).closest("tr");
-    if (row === null) throw new Error("no row");
+    const card = await screen.findByRole("article", { name: "demo" });
+    expect(await within(card).findByText("Could not read this catalog: Boom.")).toBeInTheDocument();
+    expect((await within(card).findAllByText("—")).length).toBeGreaterThan(0);
+    expect(within(card).getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+});
+
+describe("SkillsPickerScreen cards (AGH-427)", () => {
+  const two = aPage([
+    aProjectSummary({ name: "demo", repos: ["api", "web"], hub_repo: "acme/demo-hub" }),
+    aProjectSummary({ name: "other", tracker_teams: [] }),
+  ]);
+
+  it("AC-427.12 heads each card as Portfolio does, the name its only opening link", async () => {
+    pick("/knowledge/skills", { "/api/v1/projects": two, [CATALOG]: aSkillCatalog() });
+
+    const card = await screen.findByRole("article", { name: "demo" });
+    expect(card).toHaveClass("ah-pcard");
+    expect(card).toHaveTextContent("AGH");
+    expect(card).toHaveTextContent("acme/demo-hub · 2 repos · platform 0.4.0");
+    expect(within(card).getByTitle("api, web")).toHaveTextContent("2 repos");
     expect(
-      (await within(row).findAllByText("Could not read this catalog: Boom")).length,
-    ).toBeGreaterThan(0);
+      within(card).getByRole("img", { name: "Health: no doctor errors or warnings" }),
+    ).toBeInTheDocument();
+    expect(card.querySelector(".ah-pick-chevron")).not.toBeNull();
+    expect(within(card).getByRole("heading", { level: 3 })).toContainElement(
+      within(card).getByRole("link", { name: "demo" }),
+    );
+  });
+
+  it("AC-427.13 retries only the project whose catalog failed", async () => {
+    let calls = 0;
+    const { requests } = pick("/knowledge/skills", {
+      "/api/v1/projects": two,
+      [CATALOG]: () => {
+        calls += 1;
+        return calls === 1 ? aProblem({ status: 500, title: "Boom" }) : aSkillCatalog();
+      },
+      "/api/v1/projects/other/skills": aSkillCatalog(),
+    });
+
+    const card = await screen.findByRole("article", { name: "demo" });
+    const other = screen.getByRole("article", { name: "other" });
+    fireEvent.click(await within(card).findByRole("button", { name: "Retry" }));
+
+    expect(await within(card).findByText("1 item with problems")).toBeInTheDocument();
+    expect(paths(requests).filter((path) => path === CATALOG)).toHaveLength(2);
+    expect(paths(requests).filter((path) => path === "/api/v1/projects/other/skills")).toHaveLength(
+      1,
+    );
+    expect(within(other).queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
+  it("AC-427.14 moves across the cards with j and k and opens one with o", async () => {
+    const { router } = renderWithApi(<SkillsPickerScreen />, {
+      routes: { "/api/v1/projects": two },
+      path: "/knowledge/skills",
+      route: "*",
+    });
+
+    const demo = await screen.findByRole("link", { name: "demo" });
+    fireEvent.keyDown(document.body, { key: "j" });
+    expect(demo).toHaveFocus();
+    fireEvent.keyDown(document.body, { key: "j" });
+    expect(screen.getByRole("link", { name: "other" })).toHaveFocus();
+    fireEvent.keyDown(document.body, { key: "k" });
+    expect(demo).toHaveFocus();
+    fireEvent.keyDown(document.body, { key: "o" });
+    await vi.waitFor(() => {
+      expect(router.state.location.pathname).toBe("/projects/demo/skills");
+    });
+  });
+
+  it("AC-427.15 shows skeleton cards while the projects load", async () => {
+    pick("/knowledge/skills", { "/api/v1/projects": "pending" });
+
+    expect(await screen.findByRole("list", { name: "Loading projects" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+  });
+
+  it("AC-427.15 says it could not load projects when the list fails", async () => {
+    pick("/knowledge/skills", {
+      "/api/v1/projects": aProblem({ status: 500, title: "Boom", detail: "The database is gone." }),
+    });
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Could not load projects");
+    expect(alert).toHaveTextContent("The database is gone.");
+  });
+
+  it("AC-427.17 puts the tip beside the Projects title", async () => {
+    pick("/knowledge/skills", { "/api/v1/projects": two });
+
+    const title = await screen.findByRole("heading", { level: 2, name: "Projects" });
+    expect(title.parentElement).toHaveTextContent(
+      "To come straight here, choose a project in the top bar.",
+    );
+    expect(
+      await screen.findByRole("list", { name: "Projects and their agents, skills and hooks" }),
+    ).toBeInTheDocument();
   });
 });
 
@@ -417,7 +522,7 @@ describe("Skills screens a11y", () => {
     expect(await seriousViolations(container)).toEqual([]);
   });
 
-  it("has no serious or critical violation on the picker", async () => {
+  it("has no serious or critical violation on the picker (AC-427.17)", async () => {
     const { container } = pick();
     await screen.findByRole("link", { name: "demo" });
 

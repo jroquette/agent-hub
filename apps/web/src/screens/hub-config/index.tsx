@@ -1169,9 +1169,11 @@ export function HubConfigPickerScreen() {
       intro="Each project's hub rules: per repo the default branch, branch, commit and PR title patterns and checks; who commits; the guard and its blocked words. Open a project to see and change them."
       caption="Projects and their hub configuration"
       emptyLine="Register a hub to see its configuration."
-      tip="Tip: pick a project in the scope switcher to open its configuration directly."
+      tip="To come straight here, choose a project in the top bar."
       href={configHome}
-      columns={[]}
+      lead={(project) =>
+        project.repos.length > 0 ? project.repos.join(" · ") : "No repos declared yet"
+      }
     />
   );
 }
