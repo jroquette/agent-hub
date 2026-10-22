@@ -15,13 +15,13 @@ D-12), so a glob that matches nothing (a typo, a moved folder) silently turns th
 from collections.abc import Iterator
 from typing import Final
 
+from agent_hub.core.doctor.config_rules import CONFIG_PATH
 from agent_hub.core.doctor.finding import Finding, Read, Rule
 from agent_hub.core.doctor.snapshot import ConfigFailure, DoctorSnapshot
 from agent_hub.core.hub_config.doctor_rules import REPOS_UI_PATHS_RULE, RULE_MODULES, Severity
 from agent_hub.core.hub_config.ui_paths import ui_path_pattern
 from agent_hub.core.hub_config.versions import cut_echo
 
-CONFIG_PATH: Final = "hub.json"
 MESSAGE: Final = "repos[{index}].ui_paths[{glob_index}]: {glob} matches no file in ../{dir}"
 FIX: Final = (
     "fix the glob or remove it; ui_paths globs match paths from the repo root"
