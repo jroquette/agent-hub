@@ -55,6 +55,8 @@ from agent_hub.core.skills.skill_view import (
     SkillCatalog,
     SkillDetail,
     SkillUsage,
+    UsageDays,
+    UsageReport,
 )
 
 
@@ -227,6 +229,12 @@ class HubReadModels(Protocol):
 
     def skill_catalog(self, project: str) -> SkillCatalog:
         """The project's skills, agents and hooks with their usage (AGH-164)."""
+        ...
+
+    def skill_usage_report(self, scope: Scope, *, days: UsageDays) -> UsageReport:
+        """The skills and agents of each scoped project's hub ``.claude/`` folder with their
+        runs over 7, 30 and 90 days, never used in ``days`` first (AGH-482); a scope that names
+        no registered project gives no items."""
         ...
 
     def skill_detail(self, project: str, *, kind: ItemKind, source: str, name: str) -> SkillDetail:
