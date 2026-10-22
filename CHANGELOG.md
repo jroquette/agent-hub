@@ -53,11 +53,17 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   files are left for you to collect with `git status`). A hub that already holds `workflows/sdlc/` runs it from the
   release.
 - `hub step pending-decision` reads a decision given in `hub web` after a run was lost, and the next run follows it.
-  `hub step preflight` now takes the agent's findings (`--findings`, `--input`, `--input-text`, `--request`) and fills
-  the run's time, id, main's commit and plan version itself (it no longer takes `--run`). `hub step change-request`
+  `hub step preflight` now takes the agent's findings and main's commit (`--findings`, `--commit`, `--input`,
+  `--input-text`, `--request`) and fills the run's time, id and plan version itself (it no longer takes `--run`). `hub step change-request`
   takes the run's id only from `AGENT_HUB_RUN_ID`, which a workflow's steps and scripts now get (`--run-id` is gone),
   and `--affected` is one comma-separated value. `hub step verdict` also prints the reply's `discovery`, and
-  `ticket-brief` the hub's path and the ticket repo's base. A fixture's approval stub may name its `approver`.
+  `ticket-brief` the hub's path, the ticket's repo and main's commit. A fixture's approval stub may name its `approver`.
+- An approval another amendment overtook is not applied (A23): `amend-plan` says "change request <n> approved but
+  superseded by plan v<k>: not applied", the `implement` run checks the ticket against the current plan with that
+  note (plan drift opens a new request) and its report lists it under `superseded`. `ticket-brief` reads main's
+  commit once (the preflight reads it and its run records it) and refuses a ticket whose repo `hub.json` lacks; the
+  run takes the ticket's repo from `features.json`, not an input. A workflow agent marked `mutates_checkout: false`
+  gets read-only tools, and its check compares HEAD too and ignores `brain/features/`, which parallel runs write.
 
 ## [0.19.0] - 2026-10-21
 

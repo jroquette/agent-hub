@@ -667,6 +667,9 @@
     "workflows/sdlc/fixtures/implement-pending-declined-still-plan.yaml": {
       "ownership": "seeded"
     },
+    "workflows/sdlc/fixtures/implement-pending-superseded.yaml": {
+      "ownership": "seeded"
+    },
     "workflows/sdlc/fixtures/implement-plan-approved.yaml": {
       "ownership": "seeded"
     },
