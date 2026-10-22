@@ -15,11 +15,6 @@ TAG = "v0.2.0"
 TIMEOUT_SECONDS = 120
 
 
-def step_script() -> str:
-    """The ``run: |`` block of the annotation step in release.yml, dedented."""
-    return workflow_step_script(STEP_NAME)
-
-
 def git(cwd: Path, *arguments: str) -> None:
     subprocess.run(
         [
@@ -89,7 +84,7 @@ def test_accepts_tag_when_remote_tag_annotated(tmp_path: Path, local: str) -> No
 
 def run_step(checkout: Path) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["bash", "-e", "-c", step_script()],
+        ["bash", "-e", "-c", workflow_step_script(STEP_NAME)],
         cwd=checkout,
         capture_output=True,
         text=True,

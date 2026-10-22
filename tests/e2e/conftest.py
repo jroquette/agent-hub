@@ -100,9 +100,9 @@ def isolated_git_env() -> dict[str, str]:
     return {**kept, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
 
 
-def workflow_step_script(step_name: str, workflow: Path = RELEASE_WORKFLOW) -> str:
-    """The ``run: |`` block of the step whose line is ``step_name`` in ``workflow``, dedented."""
-    lines = workflow.read_text(encoding="utf-8").splitlines()
+def workflow_step_script(step_name: str) -> str:
+    """The ``run: |`` block of the step whose line is ``step_name`` in release.yml, dedented."""
+    lines = RELEASE_WORKFLOW.read_text(encoding="utf-8").splitlines()
     start = next(index for index, line in enumerate(lines) if line.strip() == step_name)
     run_index = next(
         index for index in range(start, len(lines)) if lines[index].strip() == "run: |"
