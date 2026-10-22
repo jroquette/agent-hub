@@ -223,6 +223,7 @@ DESIGN_PATHS = (
     "workflows/upgrade/scripts/bump.py",
     "workflows/upgrade/scripts/check.py",
     "workflows/upgrade/scripts/fast_gate.py",
+    "workflows/upgrade/scripts/release_notes.py",
     "workflows/upgrade/upgrade.yaml",
 )
 # AGH-19 spec "The rendered set": the base plugin's agents, by file stem, and its skills, by
