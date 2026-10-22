@@ -122,3 +122,12 @@ def test_refuses_push_when_branch_name_invalid(tmp_path: Path, branch: str) -> N
 def test_refuses_deletion_when_branch_is_default() -> None:
     with pytest.raises(RefspecRefusedError):
         push_argv("main", default_branch="main", prefix="", delete=True)
+
+
+def test_pushes_propose_branch_when_under_learning_prefix(tmp_path: Path) -> None:
+    branch = "demo/learning-propose-x"
+
+    argv = push_argv(branch, default_branch="main", prefix="demo/")
+
+    assert argv == ["push", "--no-verify", "origin", f"refs/heads/{branch}:refs/heads/{branch}"]
+    assert _refused_push(tmp_path, "demo/brain-inbox-x").calls == []

@@ -9,7 +9,6 @@ URL a loopback port nothing listens on).
 import json
 import os
 import shutil
-import socket
 import subprocess
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -19,6 +18,7 @@ import pytest
 
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.testing.builders import a_hub_document
+from agent_hub.core.testing.loopback import closed_url
 from agent_hub.generator.render_hub import render_hub
 
 HOOKS = "plugin/hub-workflow/hooks"
@@ -166,14 +166,6 @@ def problems_of(
     return found
 
 
-def closed_port() -> int:
-    """A loopback port nothing listens on (bound, then released)."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.bind(("127.0.0.1", 0))
-        port: int = probe.getsockname()[1]
-        return port
-
-
 def scratch_env(tmp_path: Path) -> dict[str, str]:
     """``HOME`` and ``TMPDIR`` under ``tmp_path``; ``PATH`` starts with a stub ``uvx``, so the
     SessionStart hook never reaches the real one (or the network); the sensor, the guard and the
@@ -190,7 +182,7 @@ def scratch_env(tmp_path: Path) -> dict[str, str]:
         "HOME": str(home),
         "TMPDIR": str(temp),
         "PATH": path,
-        "AGENT_HUB_WEB_URL": f"http://127.0.0.1:{closed_port()}",
+        "AGENT_HUB_WEB_URL": closed_url(),
     }
 
 

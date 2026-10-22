@@ -15,6 +15,7 @@ from agent_hub.api.openapi_paths import (
     RUN_COMMAND_PATHS,
     SERVED_PATHS,
     SKILL_PATHS,
+    TICKET_FLOW_PATHS,
     TICKET_PATHS,
     WORKFLOW_PATHS,
     document_paths,
@@ -142,6 +143,7 @@ def test_lists_agent_session_paths_when_document_built(api_settings: ApiSettings
         | ITEM_VERSION_PATHS
         | LINEAR_PATHS
         | OWNER_SIGNOFF_PATHS
+        | TICKET_FLOW_PATHS
         | FEATURE_NAME_PATHS
         | PLATFORM_SYNC_PATHS
         | DOCTOR_FIX_PATHS
@@ -166,6 +168,7 @@ def test_lists_skill_paths_when_document_built(api_settings: ApiSettings) -> Non
         | ITEM_VERSION_PATHS
         | LINEAR_PATHS
         | OWNER_SIGNOFF_PATHS
+        | TICKET_FLOW_PATHS
         | FEATURE_NAME_PATHS
         | PLATFORM_SYNC_PATHS
         | DOCTOR_FIX_PATHS
@@ -192,6 +195,15 @@ def test_lists_run_command_paths_when_document_built(api_settings: ApiSettings) 
         ("post", "/api/v1/workflow-runs/{run_id}/resume"),
         ("post", "/api/v1/workflow-runs/{run_id}/abandon"),
     } == RUN_COMMAND_PATHS
+    assert document_paths(create_app(api_settings)) == SERVED_PATHS
+
+
+def test_lists_ticket_flow_paths_when_document_built(api_settings: ApiSettings) -> None:
+    # two-level-flows A7, AC-2.14 (AGH-405): one ticket's records and a change request's decision.
+    assert {
+        ("get", "/api/v1/features/{project}/{slug}/tickets/{ticket}"),
+        ("post", "/api/v1/features/{project}/{slug}/change-requests/{n}/decision"),
+    } == TICKET_FLOW_PATHS
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
 
 

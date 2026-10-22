@@ -16,6 +16,7 @@ members = [
     "agent-hub-core",
     "agent-hub-generator",
     "agent-hub-hub-git",
+    "agent-hub-mcp-server",
     "agent-hub-storage",
     "agent-hub-tracker-linear",
 ]
@@ -49,6 +50,7 @@ dependencies = [
     { name = "agent-hub-core" },
     { name = "agent-hub-generator" },
     { name = "agent-hub-hub-git" },
+    { name = "agent-hub-mcp-server" },
     { name = "agent-hub-storage" },
     { name = "agent-hub-tracker-linear" },
 ]
@@ -67,6 +69,7 @@ requires-dist = [
     { name = "agent-hub-core", editable = "packages/core" },
     { name = "agent-hub-generator", editable = "packages/generator" },
     { name = "agent-hub-hub-git", editable = "packages/hub_git" },
+    { name = "agent-hub-mcp-server", editable = "packages/mcp_server" },
     { name = "agent-hub-storage", editable = "packages/storage" },
     { name = "agent-hub-tracker-linear", editable = "packages/tracker_linear" },
 ]
@@ -199,6 +202,23 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [{ name = "agent-hub-core", editable = "packages/core" }]
+
+[[package]]
+name = "agent-hub-mcp-server"
+version = "0.1.0"
+source = { editable = "packages/mcp_server" }
+dependencies = [
+    { name = "agent-hub-core" },
+    { name = "agent-hub-hub-git" },
+    { name = "mcp" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "agent-hub-core", editable = "packages/core" },
+    { name = "agent-hub-hub-git", editable = "packages/hub_git" },
+    { name = "mcp", specifier = "==2.3.0" },
+]
 
 [[package]]
 name = "agent-hub-storage"

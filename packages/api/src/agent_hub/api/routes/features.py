@@ -5,19 +5,34 @@ from typing import Annotated
 from fastapi import APIRouter, Path
 
 from agent_hub.api.ac_check import AcCheckRun
+from agent_hub.api.change_request_files import ChangeRequestDecisionBody
 from agent_hub.api.dependencies import (
     AcChecksDep,
+    ChangeRequestDecisionsDep,
+    EventReadModelsDep,
     FeatureNamesDep,
     HubReadModelsDep,
+    OptionalChangeRequestDecisionsDep,
     OwnerSignOffDep,
 )
 from agent_hub.api.feature_names import FeatureName, FeatureNameBody, FeatureNamesView
 from agent_hub.api.owner_signoff_files import OwnerSignOffBody
 from agent_hub.api.schemas import MAX_QUERY_TEXT, PROBLEM_RESPONSES, ProjectParam
-from agent_hub.core.features.feature_view import EvalRecord, FeatureDetail, FeatureView
-from agent_hub.core.features.ticket_view import FeatureTickets
+from agent_hub.core.features.change_request_decision import (
+    DecideChangeRequest,
+    RequestRuns,
+    with_runs,
+)
+from agent_hub.core.features.feature_view import (
+    ChangeRequestView,
+    EvalRecord,
+    FeatureDetail,
+    FeatureView,
+)
+from agent_hub.core.features.ticket_view import FeatureTickets, TicketRecords
 from agent_hub.core.readmodels.filters import Scope
 from agent_hub.core.readmodels.page import Page
+from agent_hub.core.readmodels.read_ports import EventReadModels
 
 router = APIRouter(tags=["features"], responses=PROBLEM_RESPONSES)
 
@@ -31,9 +46,20 @@ def list_features(models: HubReadModelsDep, *, project: ProjectParam = None) -> 
 
 
 @router.get("/features/{project}/{slug}")
-def get_feature(project: NamePath, slug: NamePath, models: HubReadModelsDep) -> FeatureDetail:
-    """One feature with its acceptance criteria."""
-    return models.get_feature(project, slug)
+def get_feature(
+    project: NamePath,
+    slug: NamePath,
+    *,
+    models: HubReadModelsDep,
+    events: EventReadModelsDep,
+    decisions: OptionalChangeRequestDecisionsDep,
+) -> FeatureDetail:
+    """One feature with its acceptance criteria; each open change request carries the open gate
+    of its run that answers it (``approval_id``), and whether its run is gone, so hub web
+    decides it (``decidable_here``)."""
+    detail = models.get_feature(project, slug)
+    requests = _with_runs(project, detail.change_requests, events=events, decisions=decisions)
+    return detail.model_copy(update={"change_requests": requests})
 
 
 @router.get("/features/{project}/{slug}/tickets")
@@ -43,6 +69,56 @@ def get_feature_tickets(
     """One feature's tickets with their planning and golden path; Linear when connected, else
     the plan with a notice (always 200 for a known feature)."""
     return models.feature_tickets(project, slug)
+
+
+@router.get("/features/{project}/{slug}/tickets/{ticket}")
+def get_ticket_records(
+    project: NamePath,
+    slug: NamePath,
+    ticket: NamePath,
+    *,
+    models: HubReadModelsDep,
+    events: EventReadModelsDep,
+    decisions: OptionalChangeRequestDecisionsDep,
+) -> TicketRecords:
+    """One ticket's records the ticket panel shows: its context brief and ticket plan, every
+    preflight run (local notes, discoveries) and the change requests it asks or is held by, each
+    open one with its run's open gate; 404 when the feature does not list the ticket."""
+    records = models.ticket_records(project, slug, ticket)
+    requests = _with_runs(project, records.change_requests, events=events, decisions=decisions)
+    return records.model_copy(update={"change_requests": requests})
+
+
+@router.post("/features/{project}/{slug}/change-requests/{n}/decision", status_code=201)
+def decide_change_request(
+    project: NamePath,
+    slug: NamePath,
+    n: Annotated[int, Path(ge=1, le=999_999)],
+    *,
+    body: ChangeRequestDecisionBody,
+    decide: ChangeRequestDecisionsDep,
+) -> ChangeRequestView:
+    """The owner decides a plan change request whose run is gone (lost, or ended, and held by no
+    child): creates ``change-requests/<n>.decision.md`` once with the hub's person as
+    ``decided_by``, never editing the request; the next ``/implement`` of its ticket reads it.
+    409 while the run's gate is open (answer it through ``approval_id``), while the run lives,
+    once decided, or with no person to record; 422 for a decline without a note."""
+    return decide(project, slug, n, decision=body.decision, note=body.note)
+
+
+def _with_runs(
+    project: str,
+    requests: tuple[ChangeRequestView, ...],
+    *,
+    events: EventReadModels,
+    decisions: DecideChangeRequest | None,
+) -> tuple[ChangeRequestView, ...]:
+    """The requests with their gates and whether this hub web decides them: never when the
+    decision route is not wired; else when the run is gone, the launcher's runs included."""
+    if not any(request.status == "open" for request in requests):
+        return requests
+    live = None if decisions is None else decisions.live_runs(project)
+    return with_runs(requests, RequestRuns(events), project=project, live=live)
 
 
 @router.post("/features/{project}/{slug}/owner-signoff", status_code=201)
