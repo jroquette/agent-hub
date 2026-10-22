@@ -1504,7 +1504,8 @@ export interface paths {
     };
     /**
      * List Runs
-     * @description Workflow runs matching the filters, newest first.
+     * @description Workflow runs matching the filters, newest first; ``kind`` keeps scenario runs or
+     *     workflow runs only (absent: both).
      */
     get: operations["list_runs_api_v1_workflow_runs_get"];
     put?: never;
@@ -4648,6 +4649,8 @@ export interface components {
     };
     RunId: string;
     /** @enum {string} */
+    RunKind: "workflow" | "scenario";
+    /** @enum {string} */
     RunStatus: "done" | "failed" | "cancelled";
     /**
      * RunStep
@@ -5949,6 +5952,8 @@ export interface components {
       /** Id */
       id: string;
       issue: components["schemas"]["IssueRef"] | null;
+      /** @default workflow */
+      kind: components["schemas"]["RunKind"];
       last_activity_at: components["schemas"]["ApiTimestamp"];
       /** Mode */
       mode: ("live" | "dry_run") | null;
@@ -9541,6 +9546,7 @@ export interface operations {
         issue?: string | null;
         workflow?: string | null;
         failure_kind?: components["schemas"]["FailureKind"] | null;
+        kind?: components["schemas"]["RunKind"] | null;
         cursor?: string | null;
         limit?: number;
       };

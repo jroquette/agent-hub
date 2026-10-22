@@ -2,12 +2,13 @@
 
 A step is keyed by its node id as recorded (``a__b`` inside an include). ``kind`` is the node's
 type, which events do not carry: it is known only for issue-to-pr's steps; the workflow's
-document (``GET /workflows``) gives the others.
+document (``GET /workflows``) gives the others. A run's own ``kind`` derives from its label
+(P-15, AM-7): a scenario run's events carry ``workflow: scenario:<name>``.
 """
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Final, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from agent_hub.core.events.stored_event import EventId
 from agent_hub.core.readmodels.view_types import ApiTimestamp, DerivedView, Money, ViewModel
@@ -21,8 +22,21 @@ type StepKind = Literal[
     "agent", "shell", "script", "loop", "loop_group", "approval", "wait", "halt"
 ]
 type WorkflowRunStatus = Literal["running"] | RunStatus
+type RunKind = Literal["workflow", "scenario"]
+# The label a scenario run's records and events carry before its scenario's name.
+SCENARIO_LABEL_PREFIX: Final = "scenario:"
 # What an ended run delivered (AGH-140), apart from whether it failed (``failure``).
 type RunDelivery = Literal["delivered", "no_changes", "blocked", "failed"]
+
+
+def scenario_label(name: str) -> str:
+    """The ``workflow`` a scenario run's records and events carry: ``scenario:<name>``."""
+    return f"{SCENARIO_LABEL_PREFIX}{name}"
+
+
+def run_kind(workflow: str) -> RunKind:
+    """A run's kind, from the ``workflow`` its events carry."""
+    return "scenario" if workflow.startswith(SCENARIO_LABEL_PREFIX) else "workflow"
 
 
 class RunStep(ViewModel):
@@ -88,6 +102,8 @@ class WorkflowRun(DerivedView):
     repo: str | None
     issue: IssueRef | None
     workflow: str
+    # Derived from ``workflow`` whatever is given (P-15): a scenario run or a workflow run.
+    kind: RunKind = "workflow"
     stage: Stage
     status: WorkflowRunStatus = "running"
     outcome: bool | str | None = None
@@ -107,3 +123,10 @@ class WorkflowRun(DerivedView):
     pr_url: str | None = None
     delivery: RunDelivery | None = None
     delivery_reason: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _kind_of_label(cls, data: Any) -> Any:  # noqa: ANN401 -- pydantic's raw input
+        if isinstance(data, dict) and isinstance(data.get("workflow"), str):
+            return {**data, "kind": run_kind(data["workflow"])}
+        return data
