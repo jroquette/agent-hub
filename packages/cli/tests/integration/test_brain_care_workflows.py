@@ -5,6 +5,7 @@ notes, and the pack's scripts make a hub worktree whose target ``hub step commit
 
 import json
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Callable
@@ -213,3 +214,15 @@ def test_commits_only_inbox_deletions_when_apply_runs_all_drop(
     assert json.loads(result.stdout)["dirty"] is False
     # The hub's own checkout is untouched: the notes are still there.
     assert all((hub / path).is_file() for path in NOTES)
+
+
+BARE_EXCEPT_LIST = re.compile(r"^\s*except\s+[^(\s:][^:]*,", re.MULTILINE)
+
+
+@pytest.mark.parametrize("name", sorted(path.name for path in (PACK / "scripts").glob("*.py")))
+def test_keeps_older_python_syntax_when_pack_script_formatted(name: str) -> None:
+    """A hub runs a pack script on any Python from 3.12: ``except A, B:`` (3.14 only, which the
+    formatter writes for a py314 target) would not parse there."""
+    text = (PACK / "scripts" / name).read_text(encoding="utf-8")
+
+    assert not BARE_EXCEPT_LIST.search(text)
