@@ -961,4 +961,98 @@ describe("ScenarioRunScreen (scenarios run)", () => {
     expect(screen.getByRole("button", { name: "Pick an option" })).toBeDisabled();
     expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
   });
+  it("scenarios run starts an investigation reopened across a running state with nothing picked", async () => {
+    const user = userEvent.setup();
+    const gateNode = "order-processed__investigation";
+    let stage: "paused" | "running" | "reopened" = "paused";
+    const base = aScenarioRunDetail();
+    const answeredFirst = {
+      ...base.investigations[0],
+      choice: "pick",
+      text: "o1",
+      closed: true,
+    } as ScenarioRunDetail["investigations"][number];
+    const runningTimeline = [
+      ...base.timeline,
+      { event: "decision", node: gateNode, attempt: 1, status: null, at: at(1000) },
+      { event: "step_end", node: gateNode, attempt: 1, status: "ok", at: at(1000) },
+      { event: "workaround_start", node: null, attempt: 1, status: null, at: at(1001) },
+    ];
+    const { router, queryClient } = renderRun({
+      [RUN]: () => {
+        if (stage === "paused") return base;
+        if (stage === "running") {
+          // Between the answer and the next pause the run is running: no open investigation.
+          return {
+            ...base,
+            open_investigation: null,
+            paused_step: null,
+            timeline: runningTimeline,
+            investigations: [answeredFirst],
+          };
+        }
+        return {
+          ...base,
+          open_investigation: 2,
+          timeline: [
+            ...runningTimeline,
+            { event: "workaround_end", node: null, attempt: 1, status: "failed", at: at(1050) },
+            {
+              event: "investigation",
+              node: "order-processed",
+              attempt: 2,
+              status: null,
+              at: at(1051),
+            },
+            { event: "gate", node: gateNode, attempt: 2, status: null, at: at(1051) },
+          ],
+          investigations: [
+            answeredFirst,
+            { ...base.investigations[0], number: 2 } as ScenarioRunDetail["investigations"][number],
+          ],
+          // The new proposal reuses the ids: o1 is the option that just failed.
+          proposal: { proposal: 3, investigation: 2, options: base.proposal?.options ?? [] },
+        };
+      },
+      [`POST ${RUN}/answer`]: () => {
+        stage = "running";
+        return {
+          run_id: SCENARIO_RUN,
+          project: "demo",
+          investigation: 1,
+          step: "order-processed",
+          choice: "pick",
+          option: "o1",
+        };
+      },
+    });
+    const options = await screen.findByRole("radiogroup", { name: "Options from the agent" });
+    await user.click(within(options).getByRole("radio", { name: /o1 ·/ }));
+    await user.click(screen.getByRole("button", { name: "Pick option o1" }));
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", { name: "Pick option o1" }),
+    );
+    await screen.findByText("Answer recorded: option o1 picked.");
+    await waitFor(() => {
+      expect(screen.queryByRole("radiogroup", { name: "Options from the agent" })).toBeNull();
+    });
+
+    stage = "reopened";
+    await act(async () => {
+      await queryClient.invalidateQueries();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("proposal 3")).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(router.state.location.search).toBe("");
+    });
+    await waitFor(() => {
+      const reopened = screen.getByRole("radiogroup", { name: "Options from the agent" });
+      expect(within(reopened).queryAllByRole("radio", { checked: true })).toHaveLength(0);
+    });
+    expect(screen.getByRole("button", { name: "Pick an option" })).toBeDisabled();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
+  });
 });
