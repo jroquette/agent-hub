@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useParams, useSearchParams } from "react-router";
 
 import {
@@ -12,6 +12,7 @@ import {
   Skeleton,
   Time,
   TimelineEvent,
+  Toast,
 } from "../../components";
 import { useNow } from "../../lib/clock";
 import { fmtClock, fmtDuration } from "../../lib/format";
@@ -19,11 +20,12 @@ import { usePreferences } from "../../lib/preferences";
 import { useShell } from "../../shell/AppShell";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { GateDecision } from "../approvals/GateDecision";
+import type { Approval } from "../approvals/queries";
 import { StaleStamp } from "../portfolio/StaleStamp";
 import { useRun } from "../run-detail/queries";
 import { RunCommands } from "../run-detail/RunCommands";
 import { Findings } from "./Findings";
-import { containerProblem, PausedView } from "./Investigation";
+import { answerDone, answerShort, containerProblem, PausedView } from "./Investigation";
 import { Page, ScenarioRunBadge, shortId } from "./parts";
 import {
   gateNodeOf,
@@ -33,6 +35,7 @@ import {
   useScenario,
   useScenarioRun,
   useScenarioRunStream,
+  type Answer,
   type ScenarioRunDetail,
   type ScenarioStep,
 } from "./queries";
@@ -171,7 +174,17 @@ function Timeline({
               cat: row.cat,
               icon: row.icon,
               actor: { kind: row.actor === "Agent" ? "agent" : "main", label: row.actor },
-              text: row.text,
+              text: (
+                <>
+                  {row.text}
+                  {row.captures.map((capture) => (
+                    <span key={capture.name}>
+                      {" · captured "}
+                      {capture.name} = <CaptureValue value={capture.value} />
+                    </span>
+                  ))}
+                </>
+              ),
               detail:
                 row.detail.length > 0 ? (
                   <ul className="ah-small" style={{ margin: 0, paddingLeft: 18 }}>
@@ -188,7 +201,17 @@ function Timeline({
   );
 }
 
-function Header({ run, now }: { run: ScenarioRunDetail; now: number }) {
+function Header({
+  run,
+  now,
+  waiting,
+  heading,
+}: {
+  run: ScenarioRunDetail;
+  now: number;
+  waiting: boolean;
+  heading: RefObject<HTMLHeadingElement>;
+}) {
   const started = run.timeline.find((entry) => entry.event === "start")?.at ?? null;
   const end = run.timeline.filter((entry) => entry.event === "end").at(-1)?.at ?? null;
   const seconds = started ? ((end ? Date.parse(end) : now) - Date.parse(started)) / 1000 : null;
@@ -205,10 +228,10 @@ function Header({ run, now }: { run: ScenarioRunDetail; now: number }) {
         ]}
       />
       <div className="ah-row ah-wrap" style={{ gap: 12 }}>
-        <h1 className="ah-h1" tabIndex={-1}>
+        <h1 ref={heading} className="ah-h1" tabIndex={-1}>
           Scenario run <span className="ah-mono">{shortId(run.run_id)}</span>
         </h1>
-        <ScenarioRunBadge status={run.status} waiting={run.open_investigation !== null} />
+        <ScenarioRunBadge status={run.status} waiting={waiting} />
         <span className="ah-small">
           <AppLink href={scenarioHref(run.project, scenario)} className="ah-mono">
             {scenario}
@@ -359,31 +382,33 @@ function EndLine({
   return null;
 }
 
-/** The open gates of the run a person answers here: every one but the investigation's. */
-function PolicyAsks({ run }: { run: ScenarioRunDetail }) {
+/** The open gates of the run a person answers here: every one but the investigation's (the
+ * run's record and the open-gates read name it, never its id, E-10). */
+function useOpenPolicyAsks(run: ScenarioRunDetail): Approval[] {
   const gates = useOpenHumanGates(run.project);
-  const investigations = new Set(
-    run.investigations.filter((item) => !item.closed).map((item) => item.gate),
-  );
-  const mine = (gates.data?.items ?? []).filter(
+  if (run.status !== null) return [];
+  const investigations = investigationGates(run);
+  return (gates.data?.items ?? []).filter(
     (gate) =>
       gateRun(gate) === run.run_id &&
       gate.gate_kind !== "investigation" &&
-      !investigations.has(gateNodeOf(gate)) &&
-      !investigationGates(run).has(gateNodeOf(gate)),
+      !investigations.has(gateNodeOf(gate)),
   );
-  if (mine.length === 0) return null;
+}
+
+function PolicyAsks({ asks }: { asks: readonly Approval[] }) {
+  if (asks.length === 0) return null;
   return (
     <section
       aria-label="Waiting for you"
       className="ah-card ah-stack"
-      style={{ gap: 12, padding: 16, borderLeft: "4px solid var(--waiting)" }}
+      style={{ gap: 12, padding: 16 }}
     >
       <div className="ah-row" style={{ gap: 6 }}>
         <Icon name="stamp" size="sm" style={{ color: "var(--waiting)" }} />
         <span className="ah-overline">Waiting for you</span>
       </div>
-      {mine.map((gate) => (
+      {asks.map((gate) => (
         <div key={gate.id} className="ah-stack" style={{ gap: 6 }}>
           <span className="ah-small">
             <span className="ah-mono">{gateNodeOf(gate)}</span> waits for your approval since{" "}
@@ -396,6 +421,12 @@ function PolicyAsks({ run }: { run: ScenarioRunDetail }) {
   );
 }
 
+const ENDED_WORDS: Readonly<Record<string, string>> = {
+  done: "Scenario run done",
+  failed: "Scenario run failed",
+  cancelled: "Scenario run cancelled",
+};
+
 function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void }) {
   const ended = run.status !== null;
   const now = useNow(ended ? 60_000 : 1000);
@@ -404,6 +435,37 @@ function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void
   const workflowRun = useRun(run.run_id);
   const steps = scenario.data?.steps;
   const paused = run.open_investigation !== null;
+  const asks = useOpenPolicyAsks(run);
+  const heading = useRef<HTMLHeadingElement>(null);
+  // An answer recorded here: its toast, and a resuming line until the record moves on (B3).
+  const [answered, setAnswered] = useState<{ answer: Answer; step: string; mark: number } | null>(
+    null,
+  );
+  const onAnswered = useCallback(
+    (answer: Answer) => {
+      setAnswered({ answer, step: run.paused_step ?? "", mark: run.timeline.length });
+    },
+    [run.paused_step, run.timeline.length],
+  );
+  const moved = answered !== null && (run.timeline.length > answered.mark || ended);
+  if (moved) {
+    // The record moved on: the resuming line and the toast end (state adjusted while rendering).
+    setAnswered(null);
+  }
+  // The paused view leaves after an answer: focus goes to the page's heading.
+  const wasPaused = useRef(paused);
+  useEffect(() => {
+    if (wasPaused.current && !paused) heading.current?.focus();
+    wasPaused.current = paused;
+  }, [paused]);
+  const announcement =
+    answered !== null
+      ? "Answer recorded"
+      : run.status !== null
+        ? (ENDED_WORDS[run.status] ?? "")
+        : paused
+          ? `Scenario run paused at ${run.paused_step ?? ""}`
+          : "";
   // Run control is off in the container: the reads stay, every answer and write is off.
   const [controlOff, setControlOff] = useState(false);
   const markControlOff = useCallback(() => {
@@ -415,7 +477,7 @@ function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void
     <Page>
       <div className="ah-row ah-wrap" style={{ gap: 12, alignItems: "flex-start" }}>
         <div className="ah-grow">
-          <Header run={run} now={now} />
+          <Header run={run} now={now} waiting={paused || asks.length > 0} heading={heading} />
         </div>
         {workflowRun.data?.status === "running" && !paused && (
           <RunCommands run={workflowRun.data} noun="scenario run" only={["cancel"]} />
@@ -430,14 +492,25 @@ function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void
           </span>
         </Banner>
       )}
+      <div data-announcer="" className="ah-sr" aria-live="polite">
+        {announcement}
+      </div>
       {paused && <PauseBanner run={run} steps={steps} />}
+      {!paused && answered !== null && (
+        <div role="status" className="ah-row ah-small" style={{ gap: 6 }}>
+          <Icon name="rotate-ccw" size="sm" />
+          {answerDone(answered.answer, answered.step)}
+        </div>
+      )}
+      {answered !== null && <Toast>{answerShort(answered.answer, answered.step)}</Toast>}
       <EndLine run={run} steps={steps} />
-      {!ended && <PolicyAsks run={run} />}
+      <PolicyAsks asks={asks} />
       {paused ? (
         <PausedView
           run={run}
           controlOff={controlOff}
           onControlOff={markControlOff}
+          onAnswered={onAnswered}
           onRefetch={refetch}
           findings={findings}
         />

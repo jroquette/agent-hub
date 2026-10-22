@@ -5,7 +5,6 @@ import {
   Button,
   CodeBlock,
   ConfirmDialog,
-  DataTable,
   OptionRow,
   ProvenanceBadge,
   Skeleton,
@@ -16,7 +15,7 @@ import { apiCommand, type ApiProblem } from "../../lib/api";
 import { readStored, writeStored } from "../../lib/storage";
 import { DiscussChat } from "../agent-session/DiscussChat";
 import { sessionControlUnavailable } from "../sessions-list/control";
-import { DraftLine, EffectBadge, PolicyBadge, sentence, WhereText } from "./parts";
+import { DraftLine, EffectBadge, PlanGrid, PolicyBadge, sentence, WhereText } from "./parts";
 import {
   useAnswerInvestigation,
   useOpenInvestigation,
@@ -38,6 +37,7 @@ interface PlannedStep {
   action: string;
   effect: string | null;
   decision: string;
+  draft: boolean;
   endpoint: Record<string, unknown>;
 }
 
@@ -47,6 +47,7 @@ function plannedSteps(option: ScenarioOption): PlannedStep[] {
     action: typeof step.action === "string" ? step.action : "",
     effect: typeof step.effect === "string" ? step.effect : null,
     decision: typeof step.decision === "string" ? step.decision : "deny",
+    draft: step.draft === true,
     endpoint:
       typeof step.endpoint === "object" && step.endpoint !== null && !Array.isArray(step.endpoint)
         ? (step.endpoint as Record<string, unknown>)
@@ -247,38 +248,54 @@ function InvestigationChat({
   );
 }
 
-function OptionPlan({ option, environment }: { option: ScenarioOption; environment: string }) {
+const OPTION_COLUMNS = [
+  { id: "step", label: "Step", width: "34%" },
+  { id: "effect", label: "Effect", width: 88 },
+  { id: "where", label: "Where" },
+  { id: "policy", label: "Policy", width: 112 },
+] as const;
+
+function OptionPlan({
+  option,
+  environment,
+  draft,
+}: {
+  option: ScenarioOption;
+  environment: string;
+  draft?: ReactNode;
+}) {
+  const steps = plannedSteps(option);
+  // The draft line goes under the drafted step (else the last).
+  const drafted = steps.find((step) => step.draft) ?? steps[steps.length - 1];
   return (
-    <DataTable
+    <PlanGrid
       caption={`Plan of option ${option.option_id}`}
-      density="compact"
-      rows={plannedSteps(option)}
-      rowKey={(step) => String(step.index)}
-      columns={[
-        {
-          id: "step",
-          label: "Step",
-          render: (step) => <span className="ah-mono ah-small">{step.action}</span>,
+      compact
+      columns={OPTION_COLUMNS}
+      rows={steps.map((step) => ({
+        key: String(step.index),
+        cells: {
+          step: <span className="ah-mono ah-small">{step.action}</span>,
+          effect: <EffectBadge effect={step.effect} />,
+          where: <WhereText endpoints={step.endpoint} environment={environment} />,
+          policy: <PolicyBadge decision={step.decision} asksTooltip={ASKS_IN_OPTION} />,
         },
-        { id: "effect", label: "Effect", render: (step) => <EffectBadge effect={step.effect} /> },
-        {
-          id: "where",
-          label: "Where",
-          render: (step) => <WhereText endpoints={step.endpoint} environment={environment} />,
-        },
-        {
-          id: "policy",
-          label: "Policy",
-          render: (step) => <PolicyBadge decision={step.decision} asksTooltip={ASKS_IN_OPTION} />,
-        },
-      ]}
+        ...(draft !== undefined && step === drafted ? { extra: draft } : {}),
+      }))}
     />
   );
 }
 
 type Asking = { kind: "pick"; option: ScenarioOption } | { kind: "retry" } | { kind: "stop" };
 
-function answerDone(answer: Answer, step: string): string {
+/** The answer's own toast: "Answer recorded: option o2 picked." */
+export function answerShort(answer: Answer, step: string): string {
+  if (answer.choice === "pick") return `Answer recorded: option ${answer.option ?? ""} picked.`;
+  if (answer.choice === "retry") return `Answer recorded: ${step} runs again.`;
+  return "Answer recorded: the scenario run is stopping.";
+}
+
+export function answerDone(answer: Answer, step: string): string {
   if (answer.choice === "pick") {
     return `Answer recorded: option ${answer.option ?? ""} picked. The scenario run resumes; its events update this page.`;
   }
@@ -384,6 +401,7 @@ function OptionsColumn({
   gate,
   controlOff,
   onControlOff,
+  onAnswered,
   onRefetch,
   children,
 }: {
@@ -392,6 +410,7 @@ function OptionsColumn({
   gate: string;
   controlOff: boolean;
   onControlOff: () => void;
+  onAnswered: (answer: Answer) => void;
   onRefetch: () => void;
   children?: ReactNode;
 }) {
@@ -416,6 +435,9 @@ function OptionsColumn({
   const send = (body: Answer) => {
     setAsking(null);
     answer.mutate(body, {
+      onSuccess: () => {
+        onAnswered(body);
+      },
       onError: (error) => {
         if (error.code === "pick_refused") onRefetch();
         if (isRunControlOff(error)) onControlOff();
@@ -423,6 +445,10 @@ function OptionsColumn({
     });
   };
   const busy = answer.isPending || controlOff || answer.isSuccess;
+  const statusLine = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (answer.isPending) statusLine.current?.focus();
+  }, [answer.isPending]);
   return (
     <section
       aria-label="Options from the agent"
@@ -469,21 +495,25 @@ function OptionsColumn({
                       select(option.option_id);
                     }}
                   />
-                  <OptionPlan option={option} environment={environment} />
-                  {option.needs_acceptance && option.accept_commands.length > 0 && (
-                    <DraftLine
-                      commands={option.accept_commands}
-                      action={
-                        plannedSteps(option).find((s) => s.decision === "deny")?.action ??
-                        option.option_id
-                      }
-                      then="check again"
-                    >
-                      <Button size="sm" icon="refresh-cw" onClick={onRefetch}>
-                        Check again
-                      </Button>
-                    </DraftLine>
-                  )}
+                  <OptionPlan
+                    option={option}
+                    environment={environment}
+                    draft={
+                      option.needs_acceptance && option.accept_commands.length > 0 ? (
+                        <DraftLine
+                          commands={option.accept_commands}
+                          action={
+                            plannedSteps(option).find((s) => s.draft)?.action ?? option.option_id
+                          }
+                          then="check again"
+                        >
+                          <Button size="sm" icon="refresh-cw" onClick={onRefetch}>
+                            Check again
+                          </Button>
+                        </DraftLine>
+                      ) : undefined
+                    }
+                  />
                 </div>
               );
             })}
@@ -494,13 +524,14 @@ function OptionsColumn({
         </>
       )}
       <div
-        className="ah-row ah-wrap"
+        role="group"
+        aria-label="Answer"
+        className="ah-row ah-wrap sc-answer-bar"
+        // Above the plan tables' sticky heads while the options scroll (review F3).
         style={{
           gap: 8,
-          position: "sticky",
-          bottom: 0,
-          background: "var(--surface)",
-          paddingTop: 8,
+          zIndex: "calc(var(--z-sticky) + 1)",
+          borderTop: "1px solid var(--border)",
         }}
       >
         <Button
@@ -530,16 +561,14 @@ function OptionsColumn({
           Stop scenario run
         </Button>
       </div>
-      {answer.isPending && (
-        <span role="status" className="ah-small">
-          Recording your answer and resuming the scenario run…
-        </span>
-      )}
-      {answer.isSuccess && (
-        <span role="status" className="ah-small">
-          {answerDone(answer.variables, step)}
-        </span>
-      )}
+      {/* Takes focus once an answer is sent: its trigger is off by then (review B3). */}
+      <span ref={statusLine} role="status" className="ah-small" tabIndex={-1}>
+        {answer.isPending
+          ? "Recording your answer and resuming the scenario run…"
+          : answer.isSuccess
+            ? answerDone(answer.variables, step)
+            : ""}
+      </span>
       {answer.isError && (
         <AnswerProblem error={answer.error} answer={answer.variables} run={run} gate={gate} />
       )}
@@ -610,12 +639,14 @@ export function PausedView({
   run,
   controlOff,
   onControlOff,
+  onAnswered,
   onRefetch,
   findings,
 }: {
   run: ScenarioRunDetail;
   controlOff: boolean;
   onControlOff: () => void;
+  onAnswered: (answer: Answer) => void;
   onRefetch: () => void;
   findings: ReactNode;
 }) {
@@ -644,6 +675,7 @@ export function PausedView({
         gate={gate}
         controlOff={controlOff}
         onControlOff={onControlOff}
+        onAnswered={onAnswered}
         onRefetch={onRefetch}
       >
         {findings}

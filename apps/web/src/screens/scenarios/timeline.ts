@@ -11,8 +11,11 @@ export interface Row {
   at: string | null;
   cat: EventCategory;
   icon: IconName;
-  actor: "Scenario run" | "Agent" | "You";
+  /** "Scenario run", "Agent", or who answered a gate (the record's approver). */
+  actor: string;
   text: string;
+  /** The values the step captured, shown after the text (a credential mark as a chip). */
+  captures: { name: string; value: unknown }[];
   detail: string[];
 }
 
@@ -66,11 +69,6 @@ export function pollsOf(run: ScenarioRunDetail, node: string, attempt: number | 
   return run.polls.filter((poll) => poll.node === node && poll.attempt === attempt);
 }
 
-function captureText(value: unknown): string {
-  if (typeof value === "string") return value;
-  return JSON.stringify(value);
-}
-
 /** The run's timeline as rows, in record order. */
 export function timelineRows(
   run: ScenarioRunDetail,
@@ -97,7 +95,12 @@ export function timelineRows(
   const rows: Row[] = [];
   run.timeline.forEach((entry: Entry, index) => {
     const id = String(index + 1);
-    const base = { id, at: entry.at, detail: [] as string[] };
+    const base = {
+      id,
+      at: entry.at,
+      detail: [] as string[],
+      captures: [] as { name: string; value: unknown }[],
+    };
     const node = entry.node ?? "";
     switch (entry.event) {
       case "start":
@@ -158,13 +161,12 @@ export function timelineRows(
         } else if (step?.type !== "expect" && polls.length === 0) {
           parts.push(entry.status ?? "ended");
         }
-        for (const capture of run.captures) {
-          if (capture.node === node && capture.attempt === entry.attempt) {
-            parts.push(`captured ${capture.name} = ${captureText(capture.value)}`);
-          }
-        }
+        const captured = run.captures
+          .filter((capture) => capture.node === node && capture.attempt === entry.attempt)
+          .map((capture) => ({ name: capture.name, value: capture.value as unknown }));
         rows.push({
           ...base,
+          captures: captured,
           cat: entry.status === "failed" ? "error" : "tool",
           icon: step?.type === "expect" || polls.length > 0 ? "timer" : "circle-play",
           actor: "Scenario run",
@@ -195,7 +197,7 @@ export function timelineRows(
           ...base,
           cat: "decision",
           icon: "split",
-          actor: "You",
+          actor: decision.approver ?? "You",
           text: `${node} · ${decisionWords(decision.choice, decision.text)}${decision.approver ? ` by ${decision.approver}` : ""}${whereWords(decision.where)}`,
         });
         return;
