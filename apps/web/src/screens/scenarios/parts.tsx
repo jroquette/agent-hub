@@ -144,7 +144,8 @@ export function WhereText({
   const found = Object.values(endpoints).filter(isEndpoint);
   if (found.length === 0) return <span className="ah-subtle">—</span>;
   return (
-    <span className="ah-stack" style={{ gap: 2 }}>
+    // min-width 0: a flex item's min-content would keep a long name from wrapping (F2-R4).
+    <span className="ah-stack" style={{ gap: 2, minWidth: 0 }}>
       {found.map((item) => {
         const where = item.url ?? item.resource;
         return (

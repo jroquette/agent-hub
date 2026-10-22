@@ -887,4 +887,78 @@ describe("ScenarioRunScreen (scenarios run)", () => {
       }
     });
   });
+  it("scenarios run starts a reopened investigation with nothing picked and focus on the heading", async () => {
+    const user = userEvent.setup();
+    const gateNode = "order-processed__investigation";
+    let stage: "paused" | "reopened" = "paused";
+    const base = aScenarioRunDetail();
+    const { router, queryClient } = renderRun({
+      [RUN]: () =>
+        stage === "paused"
+          ? base
+          : {
+              ...base,
+              open_investigation: 2,
+              timeline: [
+                ...base.timeline,
+                { event: "decision", node: gateNode, attempt: 1, status: null, at: at(1000) },
+                { event: "step_end", node: gateNode, attempt: 1, status: "ok", at: at(1000) },
+                {
+                  event: "investigation",
+                  node: "order-processed",
+                  attempt: 2,
+                  status: null,
+                  at: at(1051),
+                },
+                { event: "gate", node: gateNode, attempt: 2, status: null, at: at(1051) },
+              ],
+              investigations: [
+                {
+                  ...base.investigations[0],
+                  choice: "pick",
+                  text: "o1",
+                  closed: true,
+                } as ScenarioRunDetail["investigations"][number],
+                {
+                  ...base.investigations[0],
+                  number: 2,
+                } as ScenarioRunDetail["investigations"][number],
+              ],
+              // The new proposal reuses the ids: o1 is the option that just failed.
+              proposal: { proposal: 3, investigation: 2, options: base.proposal?.options ?? [] },
+            },
+      [`POST ${RUN}/answer`]: () => {
+        stage = "reopened";
+        return {
+          run_id: SCENARIO_RUN,
+          project: "demo",
+          investigation: 1,
+          step: "order-processed",
+          choice: "pick",
+          option: "o1",
+        };
+      },
+    });
+    const options = await screen.findByRole("radiogroup", { name: "Options from the agent" });
+    await user.click(within(options).getByRole("radio", { name: /o1 ·/ }));
+    await user.click(screen.getByRole("button", { name: "Pick option o1" }));
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", { name: "Pick option o1" }),
+    );
+    await screen.findByText("Answer recorded: option o1 picked.");
+    await act(async () => {
+      await queryClient.invalidateQueries();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("proposal 3")).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(router.state.location.search).toBe("");
+    });
+    const reopened = screen.getByRole("radiogroup", { name: "Options from the agent" });
+    expect(within(reopened).queryAllByRole("radio", { checked: true })).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Pick an option" })).toBeDisabled();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveFocus();
+  });
 });

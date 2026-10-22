@@ -186,10 +186,12 @@ function InvestigationChat({
   run,
   number,
   onControlOff,
+  focusComposer,
 }: {
   run: ScenarioRunDetail;
   number: number;
   onControlOff: () => void;
+  focusComposer: boolean;
 }) {
   const open = useOpenInvestigation(run.run_id);
   const off = open.isError && isRunControlOff(open.error);
@@ -233,6 +235,7 @@ function InvestigationChat({
         <DiscussChat
           agentSessionId={session.agent_session_id}
           lockMode
+          focusComposer={focusComposer}
           onGone={() => {
             mutate();
           }}
@@ -657,6 +660,7 @@ export function PausedView({
   onAnswered,
   onRefetch,
   findings,
+  reopened = false,
 }: {
   run: ScenarioRunDetail;
   controlOff: boolean;
@@ -664,6 +668,8 @@ export function PausedView({
   onAnswered: (answer: Answer) => void;
   onRefetch: () => void;
   findings: ReactNode;
+  /** A failed workaround reopened this investigation: focus stays on the page's heading. */
+  reopened?: boolean;
 }) {
   const number = run.open_investigation ?? 1;
   const step = run.paused_step ?? "";
@@ -682,7 +688,12 @@ export function PausedView({
           <span className="ah-small ah-muted">The chat needs hub web on your machine.</span>
         </section>
       ) : (
-        <InvestigationChat run={run} number={number} onControlOff={onControlOff} />
+        <InvestigationChat
+          run={run}
+          number={number}
+          onControlOff={onControlOff}
+          focusComposer={!reopened}
+        />
       )}
       <OptionsColumn
         run={run}
