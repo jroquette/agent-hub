@@ -100,6 +100,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/agents/quality-reviewer.md",
     "plugin/hub-workflow/agents/requirements-analyst.md",
     "plugin/hub-workflow/agents/researcher.md",
+    "plugin/hub-workflow/agents/security-reviewer.md",
     "plugin/hub-workflow/agents/spec-reviewer.md",
     "plugin/hub-workflow/agents/test-writer.md",
     "plugin/hub-workflow/agents/ux-designer.md",
@@ -119,8 +120,10 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/schemas/eval.v1.json",
     "plugin/hub-workflow/schemas/review.v1.json",
     "plugin/hub-workflow/skills/adr/SKILL.md",
+    "plugin/hub-workflow/skills/context-audit/SKILL.md",
     "plugin/hub-workflow/skills/create-plan/SKILL.md",
     "plugin/hub-workflow/skills/deliver/SKILL.md",
+    "plugin/hub-workflow/skills/design-fit/SKILL.md",
     "plugin/hub-workflow/skills/feature/SKILL.md",
     "plugin/hub-workflow/skills/fix/SKILL.md",
     "plugin/hub-workflow/skills/handoff/SKILL.md",
@@ -132,6 +135,7 @@ DESIGN_PATHS = (
     "plugin/hub-workflow/skills/overengineering-review/SKILL.md",
     "plugin/hub-workflow/skills/overengineering-review/references/patterns.md",
     "plugin/hub-workflow/skills/plain-language/SKILL.md",
+    "plugin/hub-workflow/skills/premortem/SKILL.md",
     "plugin/hub-workflow/skills/property-based-testing/SKILL.md",
     "plugin/hub-workflow/skills/recall/SKILL.md",
     "plugin/hub-workflow/skills/refactor/SKILL.md",
@@ -191,14 +195,17 @@ BASE_AGENTS = (
     "quality-reviewer",
     "requirements-analyst",
     "researcher",
+    "security-reviewer",
     "spec-reviewer",
     "test-writer",
     "ux-designer",
 )
 BASE_SKILLS = (
     "adr",
+    "context-audit",
     "create-plan",
     "deliver",
+    "design-fit",
     "feature",
     "fix",
     "handoff",
@@ -208,6 +215,7 @@ BASE_SKILLS = (
     "onboard",
     "overengineering-review",
     "plain-language",
+    "premortem",
     "property-based-testing",
     "recall",
     "refactor",
@@ -328,12 +336,13 @@ def test_returns_rendered_hub_when_demo_rendered(demo_config: HubConfig) -> None
     # AC-4.6: the 14 links of spec "The rendered set", plus AGH-58's /fix, the ten AGH-99
     # skills, AGH-274's two review skills and ux-designer agent, /summarize, AGH-319's
     # `plain-language`, AGH-412's /test-strength, and AGH-411's test-writer agent and
-    # /property-based-testing: 33, sorted by path.
+    # /property-based-testing, AGH-413's security-reviewer agent and /design-fit, and AGH-414's
+    # /premortem and /context-audit: 37, sorted by path.
     assert [link.path for link in rendered.links] == [
         *(f".claude/agents/{name}.md" for name in BASE_AGENTS),
         *(f".claude/skills/{name}" for name in BASE_SKILLS),
     ]
-    assert len(rendered.links) == 33
+    assert len(rendered.links) == 37
     assert all(
         (link.kind, link.ownership) == (Kind.GENERIC, Ownership.MANAGED) for link in rendered.links
     )
@@ -1451,7 +1460,7 @@ HUB_SCRIPT_NAMES = ("brief.py", "features_check.py", "worktree.sh", "hubconfig")
 FEATURE_CHECK_COMMAND = "./hub doctor --only features.tracker"
 AGENT_FRONTMATTER_KEYS = ["name", "description", "tools", "model"]
 # AGH-141 (AC-141.1): the read-only agents declare `mutates_checkout: false` after `model`.
-READ_ONLY_AGENTS = ("quality-reviewer", "researcher", "spec-reviewer")
+READ_ONLY_AGENTS = ("quality-reviewer", "researcher", "security-reviewer", "spec-reviewer")
 
 
 def plugin_markdown(config: HubConfig) -> dict[str, str]:
@@ -2055,8 +2064,10 @@ def test_names_transcript_script_when_recall_rendered(
 # model-invocable.
 SKILL_FRONTMATTER_KEYS = {
     "adr": ["name", "description", "disable-model-invocation", "argument-hint"],
+    "context-audit": ["name", "description", "disable-model-invocation", "argument-hint"],
     "create-plan": ["name", "description", "argument-hint"],
     "deliver": ["name", "description", "disable-model-invocation", "argument-hint"],
+    "design-fit": ["name", "description", "disable-model-invocation", "argument-hint"],
     "feature": ["name", "description", "disable-model-invocation", "argument-hint"],
     "fix": ["name", "description", "disable-model-invocation", "argument-hint"],
     "handoff": ["name", "description", "disable-model-invocation", "argument-hint"],
@@ -2066,6 +2077,7 @@ SKILL_FRONTMATTER_KEYS = {
     "onboard": ["name", "description", "disable-model-invocation", "argument-hint"],
     "overengineering-review": ["name", "description", "disable-model-invocation", "argument-hint"],
     "plain-language": ["name", "description"],
+    "premortem": ["name", "description", "disable-model-invocation", "argument-hint"],
     "property-based-testing": ["name", "description", "disable-model-invocation", "argument-hint"],
     "recall": ["name", "description", "argument-hint"],
     "refactor": ["name", "description", "disable-model-invocation", "argument-hint"],
@@ -5100,6 +5112,7 @@ TEMPLATE_TIERS = {
     "quality-reviewer": "large",
     "requirements-analyst": "large",
     "researcher": "medium",
+    "security-reviewer": "large",
     "spec-reviewer": "large",
     "test-writer": "large",
     "ux-designer": "large",
@@ -5205,6 +5218,7 @@ def test_overrides_agent_tier_when_models_agents_set() -> None:
         "quality-reviewer": "model: claude-opus-4-1",
         "requirements-analyst": "model: claude-opus-4-1",
         "researcher": "model: claude-opus-4-1",
+        "security-reviewer": "model: claude-opus-4-1",
         "spec-reviewer": "model: claude-opus-4-1",
         "test-writer": "model: claude-opus-4-1",
         "ux-designer": "model: claude-opus-4-1",

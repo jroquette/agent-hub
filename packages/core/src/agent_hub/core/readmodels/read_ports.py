@@ -13,7 +13,7 @@ from agent_hub.core.brain.brain_note import BrainNote, BrainTree
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.events.event import EventType
 from agent_hub.core.features.feature_view import FeatureDetail, FeatureView
-from agent_hub.core.features.ticket_view import FeatureTickets
+from agent_hub.core.features.ticket_view import FeatureTickets, TicketRecords
 from agent_hub.core.hub_config.config_view import HubConfigView
 from agent_hub.core.hubs.finding_view import FindingView
 from agent_hub.core.hubs.registered_hub import HubView
@@ -200,6 +200,11 @@ class HubReadModels(Protocol):
     def feature_tickets(self, project: str, slug: str) -> FeatureTickets:
         """One feature's tickets, their planning and golden path; the only read that may call
         the tracker (ADR 0025). A tracker failure falls back to the plan, never raises."""
+        ...
+
+    def ticket_records(self, project: str, slug: str, ticket: str) -> TicketRecords:
+        """One ticket's records (brief, preflight, change requests); ``EntityNotFoundError``
+        when the feature does not list the ticket."""
         ...
 
     def doctor_findings(self, scope: Scope) -> Page[FindingView]:

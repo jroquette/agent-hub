@@ -59,7 +59,12 @@ from agent_hub.core.features.feature_view import (
 from agent_hub.core.features.golden_path import EvalGate, GoldenInputs, golden_path
 from agent_hub.core.features.plan_version import plan_version
 from agent_hub.core.features.ticket_planning import TicketBoard, ticket_board
-from agent_hub.core.features.ticket_records import ChangeRequests, TicketFiles, change_requests
+from agent_hub.core.features.ticket_records import (
+    ChangeRequests,
+    TicketFiles,
+    change_requests,
+    request_view,
+)
 from agent_hub.core.features.ticket_snapshots import SnapshotRead
 from agent_hub.core.hub_config.problems import one_line
 from agent_hub.core.tracker.tracker_client import ISSUE_ID_PATTERN
@@ -240,9 +245,9 @@ def feature_parts(
     gate = EvalGate(
         evals=len(evals),
         covered=len(coverage.covered),
-        owner_steps=None if waiting is None else len(waiting.acs),
+        wait=_wait_state(waiting, block),
+        owner_steps=0 if waiting is None else len(waiting.acs),
         reopened=0 if waiting is None else len(waiting.reopened),
-        undated=block == "undated",
         # The web's date-time in UTC ("21 Nov 2026, 09:01:00 UTC"), so the step reads as the prompt.
         signable_after=(
             f"{block.day} {block:%b %Y, %H:%M:%S} UTC" if isinstance(block, datetime) else None
@@ -277,26 +282,31 @@ def feature_parts(
     )
 
 
+def _wait_state(
+    waiting: OwnerWait | None, block: Literal["undated"] | datetime | None
+) -> OwnerWaitState | None:
+    """The Acceptance wait's state in the order the sign-off refuses (A9-A11, A15; evals left
+    unread, its first refusal, are the caller's): no AC to sign off, then no sign-off able to
+    follow the eval, then reopened ACs; None when nothing waits."""
+    if waiting is None:
+        return None
+    if not waiting.acs:
+        return "no_acs"
+    if block == "undated":
+        return "undated"
+    if block is not None:
+        return "future"
+    return "reopened" if waiting.reopened else "sign_off"
+
+
 def _owner_wait_view(
     waiting: OwnerWait | None, block: Literal["undated"] | datetime | None
 ) -> OwnerWaitView | None:
-    """The Acceptance wait in the order the sign-off refuses (A9-A11, A15; evals left unread, its
-    first refusal, are the caller's): no AC to sign off,
-    then no sign-off able to follow the eval, then reopened ACs; None when nothing waits or an
-    owner decision newer than the eval already settled it (A11)."""
-    if waiting is None or waiting.settled:
+    """The Acceptance wait the Eval tab's prompt shows; None when nothing waits or an owner
+    decision newer than the eval already settled it (A11)."""
+    state = _wait_state(waiting, block)
+    if waiting is None or state is None or waiting.settled:
         return None
-    state: OwnerWaitState
-    if not waiting.acs:
-        state = "no_acs"
-    elif block == "undated":
-        state = "undated"
-    elif block is not None:
-        state = "future"
-    elif waiting.reopened:
-        state = "reopened"
-    else:
-        state = "sign_off"
     return OwnerWaitView(
         state=state,
         acs=waiting.acs,
@@ -356,6 +366,9 @@ def feature_detail(
             else AcceptanceEval(
                 delivery=accepted.delivery, verdict=accepted.verdict, owner_wait=parts.owner_wait
             )
+        ),
+        change_requests=tuple(
+            request_view(request, slug=folder.slug) for request in parts.requests.requests
         ),
     )
 

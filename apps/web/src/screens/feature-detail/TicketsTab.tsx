@@ -22,6 +22,8 @@ import {
   AcCount,
   PlanningView,
   ReadinessText,
+  TicketSignal,
+  signalKind,
   StateBadge,
   TicketIdLine,
   TicketPrLink,
@@ -173,6 +175,10 @@ function useTicketSessions(project: string, row: TicketRow) {
  * What a ticket's card offers next to its readiness: its newest session, one click from its
  * dialogue, and Start while the ticket is free to pick up and no session of it is still open.
  */
+/** Whether a ticket's own plan change waits for the owner: Start is then no view's primary. */
+const changeWaits = (rows: readonly TicketRow[]) =>
+  rows.some((row) => row.flow != null && signalKind(row.flow) === "waiting");
+
 function CardAction({
   project,
   slug,
@@ -188,7 +194,13 @@ function CardAction({
   const newest = sessions.data?.items[0];
   const open = newest != null && newest.status !== "ended";
   const start = canStartTicket(row, rows) && !open && (
-    <StartTicketButton project={project} slug={slug} row={row} rows={rows} />
+    <StartTicketButton
+      project={project}
+      slug={slug}
+      row={row}
+      rows={rows}
+      quiet={changeWaits(rows)}
+    />
   );
   if (!newest) return start ? <span className="ah-flow-card-action">{start}</span> : null;
   return (
@@ -458,12 +470,25 @@ function TicketsTable({
     {
       label: "Readiness",
       width: 180,
-      cell: (row) => (
-        <span className="ah-row ah-wrap" style={{ gap: 8 }}>
-          <ReadinessText row={row} rows={data.tickets} external={data.planning.external_blockers} />
-          {ticketAction?.(row)}
-        </span>
-      ),
+      cell: (row) => {
+        // A plan change's wait, a hold or a re-run replaces readiness; local drift joins it (A13).
+        const signal = row.flow ? signalKind(row.flow) : null;
+        return (
+          <span className="ah-row ah-wrap" style={{ gap: 8 }}>
+            {signal !== null && signal !== "local" && row.flow ? (
+              <TicketSignal flow={row.flow} />
+            ) : (
+              <ReadinessText
+                row={row}
+                rows={data.tickets}
+                external={data.planning.external_blockers}
+              />
+            )}
+            {ticketAction?.(row)}
+            {signal === "local" && row.flow && <TicketSignal flow={row.flow} />}
+          </span>
+        );
+      },
     },
     {
       label: "PR",
@@ -719,7 +744,13 @@ export function TicketsTab({
   if (!data) return <Loading />;
   const ticketAction: TicketAction = (row) =>
     canStartTicket(row, data.tickets) ? (
-      <StartTicketButton project={project} slug={slug} row={row} rows={data.tickets} />
+      <StartTicketButton
+        project={project}
+        slug={slug}
+        row={row}
+        rows={data.tickets}
+        quiet={changeWaits(data.tickets)}
+      />
     ) : null;
   const cardAction: TicketAction = (row) => (
     <CardAction project={project} slug={slug} row={row} rows={data.tickets} />

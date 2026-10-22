@@ -155,6 +155,15 @@ OWNER_SIGNOFF_PATHS: frozenset[tuple[str, str]] = frozenset(
     {("post", f"{API_PREFIX}/features/{{project}}/{{slug}}/owner-signoff")}
 )
 
+# The ticket flow (two-level-flows S2): one ticket's records, and the owner's decision on a plan
+# change request whose run is gone (strict, like a gate's decision).
+TICKET_FLOW_PATHS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("get", f"{API_PREFIX}/features/{{project}}/{{slug}}/tickets/{{ticket}}"),
+        ("post", f"{API_PREFIX}/features/{{project}}/{{slug}}/change-requests/{{n}}/decision"),
+    }
+)
+
 # Feature nicknames the owner sets from the Features screen (playground), kept on this machine.
 FEATURE_NAME_PATHS: frozenset[tuple[str, str]] = frozenset(
     (method, f"{API_PREFIX}/feature-names") for method in ("get", "put")
@@ -197,6 +206,7 @@ SERVED_PATHS: frozenset[tuple[str, str]] = (
     | ITEM_VERSION_PATHS
     | LINEAR_PATHS
     | OWNER_SIGNOFF_PATHS
+    | TICKET_FLOW_PATHS
     | FEATURE_NAME_PATHS
     | PLATFORM_SYNC_PATHS
     | DOCTOR_FIX_PATHS

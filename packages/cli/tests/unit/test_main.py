@@ -34,6 +34,7 @@ def test_lists_commands_when_help_requested() -> None:
         "bench",
         "start",
         "validate-output",
+        "search",
     ):
         assert command in unstyle(result.stdout)
 

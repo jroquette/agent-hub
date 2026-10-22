@@ -54,6 +54,10 @@ BODIES: dict[tuple[str, str], object] = {
     ): {},
     ("post", "/api/v1/workflows/{project}/{name}/versions/{version_id}/restore"): {},
     ("post", "/api/v1/projects/{project}/skills/drafts/{draft_id}/publish"): {"target": None},
+    # A change request's decision is a strict write (two-level-flows AC-2.14).
+    ("post", "/api/v1/features/{project}/{slug}/change-requests/{n}/decision"): {
+        "decision": "approved"
+    },
 }
 OWN_ORIGIN = {"Origin": "http://127.0.0.1:7420"}
 QUERIES = {
@@ -67,7 +71,7 @@ AGENT_SESSION_ID = "01929a4e-7a11-7c00-8a00-00000000a001"
 
 
 def _concrete(path: str) -> str:
-    path = path.replace("{agent_session_id}", AGENT_SESSION_ID)
+    path = path.replace("{agent_session_id}", AGENT_SESSION_ID).replace("{n}", "2")
     # Run commands take the CLI's run ids only.
     if path.endswith(("/cancel", "/resume", "/abandon")):
         path = path.replace("{run_id}", "run-1")
@@ -80,6 +84,7 @@ def _concrete(path: str) -> str:
         "learning_id",
         "slug",
         "ac",
+        "ticket",
     )
     for name in (*names, "request_id", "cloud_id"):
         path = path.replace(f"{{{name}}}", f"{name}-1")

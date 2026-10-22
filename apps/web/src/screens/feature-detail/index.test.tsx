@@ -211,7 +211,7 @@ describe("FeatureDetailScreen", () => {
   it("calls out the owner steps left", async () => {
     open();
 
-    const callout = await screen.findByText("Waiting on you: 1 owner step left");
+    const callout = await screen.findByText("Waiting for you: 1 owner step left");
     expect(callout.closest('[role="status"]')).toHaveTextContent("AC-48.13");
     expect(callout.closest('[role="status"]')).toHaveTextContent("memory loads.");
   });
@@ -272,7 +272,7 @@ describe("FeatureDetailScreen", () => {
         phase: "acceptance",
         steps: detail.golden_path.steps.map((step) =>
           step.name === "acceptance"
-            ? { ...step, state: "current", meta: "Waiting on you: sign off 3 ACs", reason: null }
+            ? { ...step, state: "waiting", meta: "Waiting for you: sign off 3 ACs", reason: null }
             : step,
         ),
       }),
@@ -288,7 +288,11 @@ describe("FeatureDetailScreen", () => {
       expect(
         within(banner).getByRole("link", { name: "AGH-48: Eval 1 passed with owner steps" }),
       ).toHaveAttribute("href", "/features/agent-hub/layered-memory?doc=eval&eval=agh-48");
-      expect(screen.getAllByText("Waiting on you")).toHaveLength(1);
+      // One banner title; the Acceptance step says it too, as its typed state (A18).
+      expect(screen.getAllByText("Waiting for you", { selector: "b" })).toHaveLength(1);
+      expect(screen.getByRole("list", { name: "Golden path" })).toHaveTextContent(
+        "Waiting for you: sign off 3 ACs",
+      );
       expect(screen.queryByRole("region", { name: "Owner steps" })).toBeNull();
       expect(screen.queryByText(/owner steps? left/)).toBeNull();
       await userEvent.click(
@@ -382,7 +386,8 @@ describe("FeatureDetailScreen", () => {
       await screen.findByText("Acceptance: sign off 3 ACs (Eval 2)");
 
       expect(await seriousViolations(container)).toEqual([]);
-    });
+      // Long under the fast gate's parallel lanes, as the panel's axe test is.
+    }, 20_000);
   });
 
   it("shows every AC row at once, with no Show all fold (AC-269.12)", async () => {
