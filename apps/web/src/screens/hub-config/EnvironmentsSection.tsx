@@ -10,6 +10,7 @@ import {
   StatusBadge,
   Tooltip,
 } from "../../components";
+import { discoverPath } from "../environments/discovery";
 import { AskBlocked, ConfigSource, Mono, NoneText, useAttach } from "./parts";
 import { useEnvironmentRemoval } from "./EnvironmentRemoval";
 import { ACCESS_LOOK, addEnvironmentPath, environmentPath, isMine, isTeams } from "./environments";
@@ -84,6 +85,33 @@ export function EnvironmentSource({ environment }: { environment: SourcedEnviron
       source={isMine(environment) ? "local" : "team"}
       where={`${environment.source} → environments.${environment.name}`}
     />
+  );
+}
+
+/** Opens "Find services with Claude"; off, with the reason, when sessions cannot start. */
+export function FindWithClaude({
+  project,
+  blocked,
+  primary = false,
+}: {
+  project: string;
+  blocked: string | null;
+  primary?: boolean;
+}) {
+  const navigate = useNavigate();
+  return (
+    <Tooltip label={blocked ?? undefined}>
+      <Button
+        variant={primary ? "primary" : "default"}
+        icon="folder-search"
+        disabled={blocked !== null}
+        onClick={() => {
+          void navigate(discoverPath(project));
+        }}
+      >
+        Find services with Claude
+      </Button>
+    </Tooltip>
   );
 }
 
