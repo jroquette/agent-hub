@@ -23,6 +23,13 @@ type CommandRunner = Callable[..., Result]
 type Workspace = Any
 
 PACK = BUILTIN_WORKFLOWS / "review-incoming"
+FIXTURES = (
+    "incoming-clean",
+    "incoming-clean-approved",
+    "incoming-lens-failed",
+    "incoming-rejected",
+    "incoming-security",
+)
 INPUTS = {"repo", "pr", "ref", "pr_file", "ci_file", "spec_file"}
 LENSES = ("spec", "quality", "security")
 READ_ONLY = ("fetch", "check", "surface", *LENSES, "draft")
@@ -97,9 +104,16 @@ def test_validates_and_passes_every_fixture_when_review_incoming_tested(
     demo_workspace: Workspace, run_command: CommandRunner
 ) -> None:
     validated = run_command(demo_workspace.hub, "workflow", "validate", "review-incoming")
+    tested = run_command(demo_workspace.hub, "workflow", "test", "review-incoming")
 
     assert validated.exit_code == 0, validated.output
     assert validated.stdout == "review-incoming: valid (11 nodes in 8 layers)\n"
+    assert tested.exit_code == 0, tested.output
+    for fixture in FIXTURES:
+        # The hub's seeded copy shadows the built-in (AGH-227).
+        assert f"workflows/review-incoming/fixtures/{fixture}.yaml: ok" in tested.stdout
+    assert "warning" not in tested.stdout
+    assert tested.stdout.endswith("5 fixtures: 5 passed, 0 failed\n")
 
 
 def test_runs_no_github_call_when_document_loaded() -> None:
