@@ -372,6 +372,10 @@ CONVENTIONS_READERS = {
     # the mixed hub's document data: the project's and demo-api's conventions keys, written,
     # not read
     f"{CORE}/testing/builders.py": 2,
+    # the release pack's hub_branch.py (AGH-494) writes the hub target's "conventions" key (all
+    # empty: titles not configured), which hub step commits|pr read back; a pack script cannot
+    # import the model
+    f"{CORE}/workflows/builtin/release/scripts/hub_branch.py": 1,
 }
 
 # Lines per file that build a branch as the prefix followed by a name.
@@ -384,6 +388,9 @@ BRANCH_BUILDERS = {
     f"{CORE}/doctor/text_rules.py": 1,
     # hint text, unchanged (R-7, AGH-68): the guard's _branch_hint
     f"{TEMPLATES}/plugin/hub-workflow/hooks/guard.py.tmpl": 1,
+    # the release pack's hub_branch.py (AGH-494): the hub pin's branch,
+    # <prefix><issue lower>-<slug> (the hub is no repo of hub.json, so no repo convention applies)
+    f"{CORE}/workflows/builtin/release/scripts/hub_branch.py": 1,
 }
 
 
