@@ -8,7 +8,7 @@ const css = readFileSync(join(process.cwd(), "src/styles/tokens.css"), "utf8");
 
 describe("tokens.css", () => {
   it("emits light and dark theme variables", () => {
-    expect(css).toContain(':root, [data-theme="light"] {\n  --gray-50: #f7f8fa;');
+    expect(css).toContain(':root, [data-theme="light"] {\n  --gray-50: #f1ede4;');
     expect(css).toContain('[data-theme="dark"] {\n  --gray-50: #0b0d10;');
   });
 
@@ -118,5 +118,66 @@ describe("Feature detail colour pairs (AC-1.14, A16)", () => {
         },
       );
     }
+  });
+});
+
+// AGH-428: the light theme's grounds are warm sand off-whites, not bright white; dark is unchanged.
+describe("Warm sand light theme (AC-428.*)", () => {
+  const grounds = ["bg", "surface", "surface-sunken", "surface-hover", "surface-overlay"];
+
+  /** The `#rrggbb` channels as numbers. */
+  function channels(hex: string): [number, number, number] {
+    return [1, 3, 5].map((at) => Number.parseInt(hex.slice(at, at + 2), 16)) as [
+      number,
+      number,
+      number,
+    ];
+  }
+
+  it("AC-428.1: every light ground is a warm off-white, the panels lighter than the app ground", () => {
+    for (const ground of grounds) {
+      const hex = value(ground, "light");
+      const [r, g, b] = channels(hex);
+      expect({ ground, hex, warm: r >= g && g >= b && r > b, white: hex === "#ffffff" }).toEqual({
+        ground,
+        hex,
+        warm: true,
+        white: false,
+      });
+    }
+    expect(luminance(value("surface", "light"))).toBeGreaterThan(luminance(value("bg", "light")));
+  });
+
+  it("AC-428.2: light text reads at 4.5:1 and control outlines at 3:1 on every ground", () => {
+    for (const ground of grounds) {
+      for (const text of ["text", "text-muted", "text-subtle", "accent"]) {
+        const ok = contrast(value(text, "light"), value(ground, "light")) >= 4.5;
+        expect({ text, ground, ok }).toEqual({ text, ground, ok: true });
+      }
+    }
+    for (const ground of ["bg", "surface"]) {
+      const ok = contrast(value("border-control", "light"), value(ground, "light")) >= 3;
+      expect({ ground, ok }).toEqual({ ground, ok: true });
+    }
+  });
+
+  it("AC-428.3: the dark theme keeps its grounds and lines", () => {
+    const dark = Object.fromEntries(
+      [...grounds, "border", "border-strong", "border-control", "text-subtle", "code-bg"].map(
+        (name) => [name, value(name, "dark")],
+      ),
+    );
+    expect(dark).toEqual({
+      bg: "#0b0d10",
+      surface: "#121519",
+      "surface-sunken": "#0e1014",
+      "surface-hover": "#191d23",
+      "surface-overlay": "#171a20",
+      border: "#232830",
+      "border-strong": "#2f353f",
+      "border-control": "#666e7e",
+      "text-subtle": "#8b93a3",
+      "code-bg": "#0e1014",
+    });
   });
 });
