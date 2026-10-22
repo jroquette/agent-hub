@@ -11,6 +11,15 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- The built-in `backlog-care` pack and `/triage --backlog` (AGH-489): the skill reads the open issues (at most 50, or
+  `--limit N`, oldest first) into one JSON file and runs `backlog-care` on it. The run reports orphan, stale,
+  duplicate and cyclic issues with their evidence and how many open issues were left unread, drafts at most 10 issues
+  with neither the ready label nor `needs-human`, and opens one approval per issue (apply or skip). No node reads or
+  writes the tracker: `/triage` applies the approved drafts after the run, one issue at a time, and leaves skipped
+  ones as they were. A schedule cannot start it (it needs the file the skill writes): run `/triage --backlog` weekly.
+
 ## [0.20.1] - 2026-10-22
 
 ### Added
