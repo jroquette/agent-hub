@@ -723,6 +723,21 @@ describe("The workflow canvas", () => {
     expect(within(frame).getByRole("button", { name: "Expand rounds" })).toBeInTheDocument();
   });
 
+  it("AC-WG.3 closes a rounds frame with left and opens it with right, from the keyboard", async () => {
+    const user = userEvent.setup();
+    renderDetail(ROUNDS);
+
+    const frame = await screen.findByRole("group", { name: "fixing rounds: up to 3" });
+    document.getElementById("wf-node-fixing")?.focus();
+    await user.keyboard("{ArrowLeft}");
+    expect(frame).toHaveTextContent("2 steps inside");
+    expect(document.activeElement?.id).toBe("wf-node-fixing");
+    await user.keyboard("{ArrowRight}");
+    expect(within(frame).getByRole("list", { name: "Layer 1 of fixing" })).toBeInTheDocument();
+    await user.keyboard("{ArrowRight}");
+    expect(document.activeElement?.id).toBe("wf-node-fixing__fix");
+  });
+
   it("AC-WG.3 shows a group's rule and its own steps in the panel, and opens one from there", async () => {
     const user = userEvent.setup();
     renderDetail(ROUNDS, "?node=fixing");
