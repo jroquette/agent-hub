@@ -157,6 +157,10 @@ DESIGN_PATHS = (
     "scripts/recall_transcripts.py",
     "scripts/retro_metrics.py",
     # AGH-483: the built-in incident pack, seeded.
+    "workflows/incident/fixtures/incident-awaiting-mitigation.yaml",
+    "workflows/incident/fixtures/incident-confirmed.yaml",
+    "workflows/incident/fixtures/incident-mitigation-declined.yaml",
+    "workflows/incident/fixtures/incident-none-confirmed.yaml",
     "workflows/incident/incident.yaml",
     # AGH-227: the built-in issue-to-pr pack, seeded.
     "workflows/issue-to-pr/fixtures/blocked.yaml",

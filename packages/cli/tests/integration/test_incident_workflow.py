@@ -25,6 +25,12 @@ WORKFLOW = PACK / "incident.yaml"
 READ_ONLY = ("evidence", "check", "mitigation")
 WRITERS = ("handoff", "note")
 WIDE = "\U0001f600"  # four bytes in UTF-8
+FIXTURES = (
+    "incident-awaiting-mitigation",
+    "incident-confirmed",
+    "incident-mitigation-declined",
+    "incident-none-confirmed",
+)
 
 
 def nodes_of(name: str) -> dict[str, Any]:
@@ -79,9 +85,16 @@ def test_validates_and_passes_every_fixture_when_incident_tested(
     demo_workspace: Workspace, run_command: CommandRunner
 ) -> None:
     validated = run_command(demo_workspace.hub, "workflow", "validate", "incident")
+    tested = run_command(demo_workspace.hub, "workflow", "test", "incident")
 
     assert validated.exit_code == 0, validated.output
     assert validated.stdout == "incident: valid (9 nodes in 9 layers)\n"
+    assert tested.exit_code == 0, tested.output
+    for fixture in FIXTURES:
+        # The hub's seeded copy shadows the built-in (AGH-227).
+        assert f"workflows/incident/fixtures/{fixture}.yaml: ok" in tested.stdout
+    assert "warning" not in tested.stdout
+    assert tested.stdout.endswith("4 fixtures: 4 passed, 0 failed\n")
 
 
 def test_declares_read_only_nodes_and_no_tracker_step_when_document_loaded() -> None:

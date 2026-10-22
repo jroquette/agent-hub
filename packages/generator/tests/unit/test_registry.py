@@ -29,6 +29,10 @@ CORE_SOURCES: dict[str, tuple[str, str]] = {
 BUILTIN_PACKAGE = "agent_hub.core"
 BUILTIN_FOLDER = "workflows/builtin"
 SEEDED_PACK_FILES = (
+    "incident/fixtures/incident-awaiting-mitigation.yaml",
+    "incident/fixtures/incident-confirmed.yaml",
+    "incident/fixtures/incident-mitigation-declined.yaml",
+    "incident/fixtures/incident-none-confirmed.yaml",
     "incident/incident.yaml",
     "issue-to-pr/fixtures/blocked.yaml",
     "issue-to-pr/fixtures/dirty.yaml",
