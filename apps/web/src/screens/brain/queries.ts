@@ -13,3 +13,24 @@ export function useBrainNote(project: string, path: string, enabled = true) {
     { enabled },
   );
 }
+
+/** A query holds a word when it has a letter or a digit; the search route refuses any other. */
+export function hasWord(query: string): boolean {
+  return /[\p{L}\p{N}]/u.test(query);
+}
+
+/**
+ * The AGH-391 index's matches for `q` in the project's hub and its repos' docs, best first
+ * (AGH-393). Nothing is fetched while `enabled` is false; `limit` is the route's, 50 by default.
+ */
+export function useKnowledgeSearch(
+  project: string,
+  q: string,
+  { limit, enabled = true }: { limit?: number | undefined; enabled?: boolean | undefined } = {},
+) {
+  return useApi(
+    "/api/v1/projects/{project}/knowledge/search",
+    { path: { project }, query: limit === undefined ? { q } : { q, limit } },
+    { enabled },
+  );
+}
