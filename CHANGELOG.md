@@ -13,6 +13,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- `/implement <ticket>` takes one ticket of a planned feature to a PR through the built-in `implement` workflow
+  (`hub workflow run implement`), with no spec, research or plan step; a ticket in no feature is sent to `hub run`
+  (`issue-to-pr`) or `/fix`. `/feature`'s Build step now dispatches `/implement` once per can-start ticket, and
+  `/feature <id>` for a ticket of a planned feature points to `/implement <id>`. Arrives after you bump
+  `platform.version` and run `hub sync` (AGH-406).
 - Feature detail shows plan change requests (AGH-405): a "Waiting for you" banner names each open request and opens
   its ticket's panel at Preflight, Plan carries "v3 waits for you", tickets read "Waiting for you: plan change",
   "Held: plan change pending", a re-run or their local drift, and the panel lists every preflight run, local note and
