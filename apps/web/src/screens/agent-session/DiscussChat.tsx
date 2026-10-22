@@ -133,7 +133,7 @@ export function DiscussChatView({
             draftId={agentSessionId}
             focusOnOpen={pending.length === 0}
             resumable={resumable(session, endReason)}
-            modeLocked={lockMode}
+            modeLocked={lockMode || session.restricted === true}
           />
         </div>
       </footer>
