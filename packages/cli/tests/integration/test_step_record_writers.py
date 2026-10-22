@@ -1074,11 +1074,8 @@ class TestOutcome:
         ("change", "reason"),
         [
             (("--ticket", "DEM-99"), "DEM-99 is not a ticket of features.json"),
-            (
-                ("--pr", "#pending"),
-                "outcome.md could not be read (pr names no pull request: #pending). "
-                "Fix it in a hub PR.",
-            ),
+            # The writer's own input is named, not a record in the hub (AGH-473 review Q12).
+            (("--pr", "#pending"), "--pr: names no pull request: #pending"),
             (("--merged-at", "2026-01-25T10:00:00"), "merged_at needs a time with an offset"),
             (("--merged-at", "soon"), "merged_at needs a time with an offset"),
             (("--built", " "), "what was built is empty"),
@@ -1210,6 +1207,34 @@ class TestPreflightDue:
 
         runs = json.loads((hub.feature / "tickets/DEM-8/preflight.json").read_text())["runs"]
         assert runs[0]["blockers_read"] == ["t3", "DEM-7"]
+
+    # AGH-473 review Q10: only a blocker the ticket's blocked_by names is recorded read.
+    def test_refuses_a_blocker_read_when_the_ticket_is_not_blocked_by_it(self, hub: Hub) -> None:
+        line = hub.refused("preflight", *TICKET, *found(), "--read", "DEM-9")
+
+        assert line == "hub step preflight: DEM-8 is not blocked by DEM-9 in features.json"
+
+    def test_records_a_blocker_read_when_named_by_its_id_in_any_case(self, hub: Hub) -> None:
+        hub.ok("preflight", *TICKET, *found(blockers_read=[]), "--read", "dem-7")
+
+        runs = json.loads((hub.feature / "tickets/DEM-8/preflight.json").read_text())["runs"]
+        assert runs[0]["blockers_read"] == ["dem-7"]
+
+    # AGH-473 review Q11: a linked tickets/ folder is refused and named.
+    @pytest.mark.parametrize("step", ["outcome", "preflight-due"])
+    def test_refuses_and_names_the_link_when_tickets_is_a_link(
+        self, hub: Hub, tmp_path: Path, step: str
+    ) -> None:
+        target = hub.link("tickets", tmp_path)
+        args = {
+            "outcome": ("outcome", "--feature", "demo-flow", "--ticket", "T3", *OUTCOME_TEXTS),
+            "preflight-due": (*self.DUE, "--blocker", "T3"),
+        }[step]
+
+        line = hub.refused(*args)
+
+        assert line == f"hub step {step}: tickets is a link; no link is followed"
+        assert list(target.iterdir()) == []
 
     # AGH-473 review Q8: a blocker outcome over its read cap is refused, as its reader would.
     def test_refuses_when_the_blocker_outcome_is_over_its_read_cap(self, hub: Hub) -> None:
