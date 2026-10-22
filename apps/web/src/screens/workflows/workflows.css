@@ -1,10 +1,40 @@
 /* Workflows: the catalog cards are the Toolkit's own (Skills.css). */
 
-/* A workflow's page: capped so steps keep a readable measure on wide screens. */
+/* A workflow's page: the header, a view switch, then the canvas filling the rest of the screen. */
 .wf-detail {
   padding: var(--space-4) var(--space-8) var(--space-8);
-  max-width: 1280px;
+  max-width: 1680px;
   min-height: 100%;
+}
+.wf-detail[data-view="graph"] {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 640px;
+  padding-bottom: var(--space-6);
+}
+.wf-detail[data-view="graph"] > .wf-canvas {
+  flex: 1 1 auto;
+  min-height: 480px;
+}
+.wf-detail[data-view="steps"] .ah-skill-main {
+  max-width: 960px;
+}
+.wf-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.wf-head-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+}
+.wf-viewbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
 }
 @media (max-width: 1359px) {
   .wf-detail {
@@ -239,41 +269,578 @@
   background: var(--surface);
 }
 
-/* Advanced, under the two columns. */
-.wf-advanced > summary {
+/* ---------- The canvas: a pan and zoom world on a dot grid, with a docked details panel. ---------- */
+.wf-canvas {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.wf-canvas[data-panel] {
+  grid-template-columns: minmax(0, 1fr) 320px;
+}
+@media (min-width: 1600px) {
+  .wf-canvas[data-panel] {
+    grid-template-columns: minmax(0, 1fr) 360px;
+  }
+}
+.wf-canvas-run {
+  height: clamp(420px, 62vh, 760px);
+}
+.wf-canvas-viewport {
+  position: relative;
+  overflow: hidden;
+  min-height: 0;
+  background: var(--surface-sunken);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.wf-canvas-viewport[data-dragging] {
+  cursor: grabbing;
+}
+.wf-grid {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.wf-grid circle {
+  fill: var(--border-strong);
+}
+.wf-world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  padding: 32px;
+  width: max-content;
+}
+.wf-world[data-animate] {
+  transition: transform var(--dur-base) ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .wf-world[data-animate] {
+    transition: none;
+  }
+}
+.wf-rows {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 72px;
+}
+.wf-cols {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 56px;
 }
-.wf-advanced-body {
+.wf-col {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wf-col-item {
+  display: flex;
+}
+
+/* Edges sit above the group frames and under the cards. */
+.wf-edges {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 1;
+  overflow: visible;
+  pointer-events: none;
+}
+.wf-edges path {
+  fill: none;
+  stroke: var(--border-control);
+  stroke-width: 1.5;
+}
+.wf-edges path[data-pending] {
+  stroke: var(--border-strong);
+}
+.wf-edges path[data-hot] {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.wf-edges path[data-chain] {
+  stroke: var(--text-subtle);
+}
+.wf-edges path[data-dim] {
+  opacity: 0.25;
+}
+.wf-arrow-plain path {
+  fill: var(--border-control);
+}
+.wf-arrow-hot path {
+  fill: var(--accent);
+}
+
+/* A step: kind tile, title, caption, badges, and a run's state line. */
+.wf-node,
+.wf-group-title {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  width: 216px;
+  min-height: 60px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm, none);
+  transition:
+    background-color var(--dur-fast) ease,
+    border-color var(--dur-fast) ease;
+}
+.wf-node:hover,
+.wf-group-title:hover {
+  background: var(--surface-hover);
+}
+.wf-node:focus-visible,
+.wf-group-title:focus-visible {
+  outline: calc(2px / var(--k, 1)) solid var(--focus-ring);
+  outline-offset: calc(2px / var(--k, 1));
+}
+.wf-node[data-chain] {
+  border-color: var(--border-strong);
+}
+.wf-node[aria-pressed="true"],
+.wf-group-title[aria-pressed="true"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.wf-kind-tile {
+  --kind: var(--ev-lifecycle);
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--kind);
+}
+.wf-kind-tile[data-kind="agent"] {
+  --kind: var(--ev-message);
+}
+.wf-kind-tile[data-kind="command"] {
+  --kind: var(--ev-tool);
+}
+.wf-kind-tile[data-kind="approval"],
+.wf-kind-tile[data-kind="wait"] {
+  --kind: var(--ev-gate);
+}
+.wf-node-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.wf-node-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.wf-node-caption {
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-subtle);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.wf-node-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+.wf-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.wf-node-state {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
+}
+.wf-world[data-zoom="far"] .wf-node-caption,
+.wf-world[data-zoom="far"] .wf-node-badges {
+  display: none;
+}
+
+/* Run states: only running, waiting and failed pop. */
+.wf-node[data-state="running"],
+.wf-group[data-state="running"] > .wf-group-head > .wf-group-title {
+  border-color: var(--live);
+  box-shadow: 0 0 0 0.5px var(--live);
+}
+.wf-node[data-state="waiting"] {
+  background: var(--waiting-soft);
+  border: 2px solid var(--waiting);
+  padding: 9px 11px;
+}
+.wf-node[data-state="failed"],
+.wf-group[data-state="failed"] > .wf-group-head > .wf-group-title {
+  border-color: var(--failed);
+  box-shadow: 0 0 0 0.5px var(--failed);
+}
+.wf-node[data-state="skipped"] {
+  background: var(--surface-sunken);
+}
+.wf-node[data-state="skipped"] .wf-node-title {
+  color: var(--text-muted);
+}
+
+/* A rounds group: a frame with its rule in the head and its own steps inside. */
+.wf-group {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
+}
+.wf-group[data-chain] {
+  border-color: var(--border-control);
+}
+.wf-group-head {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  padding: 6px;
+}
+.wf-group[data-open] > .wf-group-head {
+  border-bottom: 1px solid var(--border);
+}
+.wf-group-title {
+  border-color: transparent;
+  box-shadow: none;
+  background: transparent;
+  min-height: 0;
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 216px;
+  max-width: 960px;
+}
+.wf-group:not([data-open]) .wf-group-title {
+  width: 216px;
+  max-width: 216px;
+}
+.wf-group-title .wf-node-caption {
+  white-space: normal;
+}
+.wf-group-rule code {
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  background: var(--code-bg);
+  font: 400 11.5px/16px var(--font-mono);
+  overflow-wrap: anywhere;
+}
+.wf-group-body {
+  display: flex;
+  align-items: center;
+  gap: 56px;
+  padding: 16px;
+}
+
+/* Controls, minimap, overlay and the empty state, floating in the viewport. */
+.wf-canvas-controls {
+  position: absolute;
+  left: var(--space-3);
+  bottom: var(--space-3);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-popover);
+  cursor: default;
+}
+.wf-zoom-pct {
+  min-width: 52px;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+.wf-controls-sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 2px;
+  background: var(--border);
+}
+.wf-minimap {
+  position: absolute;
+  right: var(--space-3);
+  bottom: var(--space-3);
+  z-index: 3;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-overlay);
+  box-shadow: var(--shadow-popover);
+  cursor: pointer;
+}
+.wf-mini-node {
+  --kind: var(--ev-lifecycle);
+  fill: var(--kind);
+  opacity: 0.8;
+}
+.wf-mini-node[data-kind="agent"] {
+  --kind: var(--ev-message);
+}
+.wf-mini-node[data-kind="command"] {
+  --kind: var(--ev-tool);
+}
+.wf-mini-node[data-kind="approval"],
+.wf-mini-node[data-kind="wait"] {
+  --kind: var(--ev-gate);
+}
+.wf-mini-node[data-state="ok"],
+.wf-mini-node[data-state="cached"] {
+  --kind: var(--done);
+}
+.wf-mini-node[data-state="running"] {
+  --kind: var(--live);
+}
+.wf-mini-node[data-state="waiting"] {
+  --kind: var(--waiting);
+}
+.wf-mini-node[data-state="failed"] {
+  --kind: var(--failed);
+}
+.wf-mini-node[data-state="pending"],
+.wf-mini-node[data-state="skipped"] {
+  --kind: var(--idle);
+}
+.wf-mini-group {
+  fill: none;
+  stroke: var(--border-strong);
+}
+.wf-mini-view {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+.wf-canvas-overlay {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  z-index: 3;
+  cursor: default;
+}
+.wf-canvas-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-6);
+  text-align: center;
+}
+
+/* The details panel: About, or the chosen step. */
+.wf-panel {
+  min-height: 0;
+  overflow: auto;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  cursor: auto;
+}
+.wf-panel .ah-skill-rail-section:first-child {
+  padding-top: var(--space-4);
+}
+.wf-inspector {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+  padding: var(--space-4);
 }
-
-/* A node chosen in the graph: under the graph at full width, its facts beside its JSON. */
-.wf-node-detail {
-  display: grid;
-  grid-template-columns: minmax(200px, 1fr) minmax(0, 2.5fr);
-  gap: var(--space-4) var(--space-6);
-  align-items: start;
+.wf-inspector-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
 }
-.wf-node-facts {
+.wf-inspector-title {
+  flex: 1 1 auto;
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.wf-inspector-kind {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-subtle);
+}
+.wf-facts {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
   margin: 0;
-  min-width: 0;
 }
-.wf-node-facts dd {
-  font-size: 14px;
-  line-height: 20px;
+.wf-facts dt {
+  margin-bottom: 4px;
 }
-.wf-node-detail .ah-json {
-  min-width: 0;
+.wf-facts dd {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
 }
-@media (max-width: 899px) {
-  .wf-node-detail {
+.wf-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.wf-chip-btn {
+  cursor: pointer;
+  font: inherit;
+}
+.wf-chip-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.wf-kinds {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wf-kinds li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 2px 10px;
+  font-size: 13px;
+}
+.wf-kinds li > .wf-kind-tile {
+  grid-row: span 2;
+}
+.wf-list-with-panel[data-panel] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: var(--space-4);
+  align-items: start;
+}
+
+/* Under the laptop width the chosen step overlays the canvas instead of docking. */
+@media (max-width: 1279px) {
+  .wf-canvas[data-panel] {
     grid-template-columns: minmax(0, 1fr);
   }
+  .wf-canvas[data-panel] > .wf-panel {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 4;
+    width: min(360px, 100%);
+    background: var(--surface-overlay);
+    box-shadow: var(--shadow-overlay);
+  }
+  .wf-minimap {
+    display: none;
+  }
+  .wf-list-with-panel[data-panel] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (forced-colors: active) {
+  .wf-grid {
+    display: none;
+  }
+  .wf-edges path {
+    stroke: CanvasText;
+  }
+  .wf-arrow path {
+    fill: CanvasText;
+  }
+  .wf-node[aria-pressed="true"],
+  .wf-group-title[aria-pressed="true"] {
+    border-color: Highlight;
+  }
+}
+
+/* About above the canvas, under the laptop width. */
+.wf-about-inline {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0 var(--space-6);
+  padding: 0 var(--space-4);
+}
+@media (max-width: 899px) {
+  .wf-about-inline {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.wf-about-inline > [aria-label="How to move around"] {
+  display: none;
+}
+
+/* Loading: the page in its final shape. */
+.wf-loading {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.wf-loading > .wf-canvas {
+  flex: 1 1 auto;
+  min-height: 480px;
+}
+.wf-loading-canvas {
+  display: flex;
+  align-items: center;
+  gap: 56px;
+  padding: 32px;
+  cursor: default;
 }

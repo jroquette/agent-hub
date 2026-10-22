@@ -1,18 +1,47 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type {
+  CSSProperties,
+  KeyboardEvent,
+  PointerEvent as ReactPointerEvent,
+  ReactNode,
+} from "react";
 import { useSearchParams } from "react-router";
 
-import { Button, DataTable, Icon, SegmentedControl } from "../../components";
+import { Button, DataTable, Icon, IconButton, SegmentedControl } from "../../components";
 import type { IconName } from "../../components";
-import { curvePath, useNodeBoxes } from "../../lib/nodeBoxes";
+import { centreOn, fitView, type Size } from "../../lib/canvasView";
+import { curvePath, useNodeBoxes, type NodeBox } from "../../lib/nodeBoxes";
+import { capture, usePanZoom, type WheelMode } from "../../lib/usePanZoom";
+import { goSequencePending, typingIn } from "../../shell/goSequence";
+import {
+  canvasModel,
+  chainOf,
+  columnWidth,
+  drawnColumns,
+  edgeKey,
+  neighbours,
+  runOrder,
+  visibleEdges,
+  wrapPath,
+  wrapRows,
+  WORLD_PAD,
+  type CanvasModel,
+  type CanvasStep,
+  type Doc,
+} from "./graphModel";
+import { STEP_KINDS, stepKind } from "./steps";
 
-/* The layered graph of a workflow (plan 6.3/6.4): a column per layer, SVG edges for depends_on
- * under focusable node buttons, a list view as its text alternative and a node side panel. */
+/* The workflow canvas (plan 6.3/6.4): the server's layers as columns, left to right, on a pan and
+ * zoom surface. Steps are cards with their kind, a rounds group is a frame holding its own steps,
+ * edges are curves with arrowheads and the chosen step lights its whole chain. One Tab stop: the
+ * arrow keys follow the edges. A list view stays as the text alternative, and a side panel
+ * (About, or the chosen step) docks inside the card. */
 
 export interface GraphNode {
   id: string;
   type: string;
   depends_on: string[];
+  description?: string | null | undefined;
 }
 
 const TYPE_ICON: Readonly<Record<string, IconName>> = {
@@ -46,112 +75,855 @@ export function nodeDomId(id: string): string {
   return `wf-node-${id}`;
 }
 
+/** The plain kind label of a step: "AI agent", "Command", "Rounds". */
+export function kindLabelOf(type: string): string {
+  if (type === "loop_group") return "Rounds";
+  const one = STEP_KINDS[stepKind(type)].one;
+  return `${(one[0] ?? "").toUpperCase()}${one.slice(1)}`;
+}
+
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 2;
+const ZOOM_STEP = 1.2;
+/** Below this zoom the cards show only their kind and title. */
+const FAR = 0.6;
+
 export interface WorkflowGraphProps<N extends GraphNode> {
   layers: N[][];
+  /** The document as written: badges, rounds groups and their own steps come from it. */
+  document?: unknown;
   /** The graph's accessible name (default "Workflow graph"). */
   label?: string | undefined;
   selected: string | null;
   onSelect: (id: string) => void;
-  /** A line under the node's type (a run's state); also a column of the list view. */
-  detail?: ((node: N) => ReactNode) | undefined;
-  /** The node's state for styling (`data-state`). */
-  state?: ((node: N) => string) | undefined;
+  /** Esc on the canvas or the panel: close the chosen step. */
+  onClose?: (() => void) | undefined;
+  /** A line under the card (a run's state); also a column of the list view. */
+  detail?: ((id: string) => ReactNode) | undefined;
+  /** The step's state for styling (`data-state`), by id (a group's own steps too). */
+  state?: ((id: string) => string | undefined) | undefined;
   /** The list view's last column title, when `detail` is given. */
   detailLabel?: string | undefined;
+  /** The details panel docked at the right of the canvas (About, or the chosen step). */
+  panel?: ReactNode;
+  /** The wheel pans the canvas (`"pan"`, a canvas that fills the page) or scrolls the page. */
+  wheel?: WheelMode | undefined;
+  /** Offer a Graph | List switch with the list as the text alternative (default `"list"`). */
+  textAlternative?: "list" | "none" | undefined;
+  /** The step the first view centres on when none is chosen (a run's step that needs you). */
+  focusFirst?: string | null | undefined;
+  /** Extra content at the top right of the canvas (a legend). */
+  overlay?: ReactNode;
+  /** Classes of the canvas card (its height). */
+  className?: string | undefined;
+}
+
+function badgesOf(step: CanvasStep): { icon: IconName; text: string; mono?: boolean }[] {
+  const doc = step.doc;
+  if (!doc) return [];
+  const badges: { icon: IconName; text: string; mono?: boolean }[] = [];
+  if (typeof doc.when === "string" && doc.when.trim())
+    badges.push({ icon: "split", text: "Only when" });
+  if (typeof doc.include === "string")
+    badges.push({ icon: "layers", text: doc.include, mono: true });
+  if (step.type === "loop" && typeof doc.max_iterations === "number") {
+    badges.push({ icon: "rotate-ccw", text: `Up to ${String(doc.max_iterations)} turns` });
+  }
+  if (step.group !== null && doc.context === "fresh") {
+    badges.push({ icon: "rotate-ccw", text: "Starts afresh" });
+  }
+  return badges.slice(0, 2);
+}
+
+/** The rule of a rounds group in one line: "Up to 3 rounds · Stops when …". */
+function roundsLine(doc: Doc | undefined): { max: string; rule: ReactNode } {
+  const max = typeof doc?.max_iterations === "number" ? String(doc.max_iterations) : "?";
+  const until = typeof doc?.until_when === "string" ? doc.until_when : null;
+  const bash = Array.isArray(doc?.until_bash) ? doc.until_bash.map(String).join(" ") : null;
+  return {
+    max,
+    rule: until ? (
+      <>
+        Stops when <code>{until}</code>
+      </>
+    ) : bash ? (
+      <>
+        Stops when <code>{bash}</code> passes
+      </>
+    ) : (
+      <>Runs all {max} rounds</>
+    ),
+  };
+}
+
+interface CardProps {
+  step: CanvasStep;
+  selected: boolean;
+  onChain: boolean;
+  tabStop: boolean;
+  state: string | undefined;
+  detail: ReactNode;
+  onSelect: (id: string) => void;
+  onFocus: (id: string) => void;
+  onHover: (id: string | null) => void;
+}
+
+function NodeCard({
+  step,
+  selected,
+  onChain,
+  tabStop,
+  state,
+  detail,
+  onSelect,
+  onFocus,
+  onHover,
+}: CardProps) {
+  const kind = stepKind(step.type);
+  const titled = step.description !== null && step.description.trim() !== "";
+  const badges = badgesOf(step);
+  return (
+    <li className="wf-col-item">
+      <button
+        type="button"
+        id={nodeDomId(step.id)}
+        className="wf-node"
+        data-node-id={step.id}
+        data-kind={kind}
+        data-state={state}
+        data-chain={onChain ? "" : undefined}
+        aria-pressed={selected}
+        tabIndex={tabStop ? 0 : -1}
+        onClick={() => {
+          onSelect(step.id);
+        }}
+        onFocus={() => {
+          onFocus(step.id);
+        }}
+        onMouseEnter={() => {
+          onHover(step.id);
+        }}
+        onMouseLeave={() => {
+          onHover(null);
+        }}
+      >
+        <span className="wf-kind-tile" data-kind={kind} aria-hidden="true">
+          <Icon name={STEP_KINDS[kind].icon} size="sm" />
+        </span>
+        <span className="wf-node-text">
+          <span className={titled ? "wf-node-title" : "wf-node-title ah-mono"}>
+            {titled ? step.description : step.bare}
+          </span>
+          <span className="wf-node-caption">
+            {titled && (
+              <>
+                <span className="ah-mono wf-node-id" title={step.bare}>
+                  {step.bare}
+                </span>
+                <span aria-hidden="true"> · </span>
+              </>
+            )}
+            <span>{kindLabelOf(step.type)}</span>
+          </span>
+          {badges.length > 0 && (
+            <span className="wf-node-badges">
+              {badges.map((badge) => (
+                <span key={badge.text} className={badge.mono ? "wf-badge ah-mono" : "wf-badge"}>
+                  <Icon name={badge.icon} size="sm" />
+                  {badge.text}
+                </span>
+              ))}
+            </span>
+          )}
+          {detail !== undefined && detail !== null && (
+            <span className="wf-node-state">{detail}</span>
+          )}
+        </span>
+      </button>
+    </li>
+  );
+}
+
+interface GroupProps extends Omit<CardProps, "detail"> {
+  body: CanvasStep[][];
+  open: boolean;
+  onToggle: (id: string) => void;
+  renderStep: (step: CanvasStep) => ReactNode;
+  detail: ReactNode;
+}
+
+function GroupFrame({
+  step,
+  body,
+  open,
+  onToggle,
+  renderStep,
+  selected,
+  onChain,
+  tabStop,
+  state,
+  detail,
+  onSelect,
+  onFocus,
+  onHover,
+}: GroupProps) {
+  const { max, rule } = roundsLine(step.doc);
+  const titled = step.description !== null && step.description.trim() !== "";
+  const inside = body.flat().length;
+  return (
+    <li className="wf-col-item">
+      <div
+        className="wf-group"
+        data-node-id={step.id}
+        data-open={open ? "" : undefined}
+        data-state={state}
+        data-chain={onChain ? "" : undefined}
+        role="group"
+        aria-label={`${step.bare} rounds: up to ${max}`}
+      >
+        <div className="wf-group-head">
+          <button
+            type="button"
+            id={nodeDomId(step.id)}
+            className="wf-group-title"
+            aria-pressed={selected}
+            tabIndex={tabStop ? 0 : -1}
+            onClick={() => {
+              onSelect(step.id);
+            }}
+            onFocus={() => {
+              onFocus(step.id);
+            }}
+            onMouseEnter={() => {
+              onHover(step.id);
+            }}
+            onMouseLeave={() => {
+              onHover(null);
+            }}
+          >
+            <span className="wf-kind-tile" data-kind="repeat" aria-hidden="true">
+              <Icon name="refresh-cw" size="sm" />
+            </span>
+            <span className="wf-node-text">
+              <span className={titled ? "wf-node-title" : "wf-node-title ah-mono"}>
+                {titled ? step.description : step.bare}
+              </span>
+              <span className="wf-node-caption">
+                {titled && (
+                  <>
+                    <span className="ah-mono wf-node-id">{step.bare}</span>
+                    <span aria-hidden="true"> · </span>
+                  </>
+                )}
+                Up to {max} rounds
+                {open ? (
+                  <>
+                    <span aria-hidden="true"> · </span>
+                    <span className="wf-group-rule">{rule}</span>
+                  </>
+                ) : (
+                  ` · ${String(inside)} ${inside === 1 ? "step" : "steps"} inside`
+                )}
+              </span>
+              {detail !== undefined && detail !== null && (
+                <span className="wf-node-state">{detail}</span>
+              )}
+            </span>
+          </button>
+          <IconButton
+            size="sm"
+            icon={open ? "chevron-up" : "chevron-down"}
+            label={open ? "Collapse rounds" : "Expand rounds"}
+            aria-expanded={open}
+            tabIndex={-1}
+            onClick={() => {
+              onToggle(step.id);
+            }}
+          />
+        </div>
+        {open && (
+          <div className="wf-group-body">
+            {body.map((layer, i) => (
+              <ol key={i} className="wf-col" aria-label={`Layer ${String(i + 1)} of ${step.bare}`}>
+                {layer.map(renderStep)}
+              </ol>
+            ))}
+          </div>
+        )}
+      </div>
+    </li>
+  );
+}
+
+/** The rounds groups drawn open: all but the ones closed, and always the one holding `keep`. */
+function useOpenGroups(model: CanvasModel, keep: readonly (string | null | undefined)[]) {
+  const [closed, setClosed] = useState<ReadonlySet<string>>(() => new Set());
+  const open = useMemo(() => {
+    const forced = new Set(
+      keep.map((id) => (id ? model.steps.get(id)?.group : null)).filter((g) => g != null),
+    );
+    return new Set([...model.groups.keys()].filter((id) => !closed.has(id) || forced.has(id)));
+  }, [model, closed, keep]);
+  const toggle = useCallback((id: string) => {
+    setClosed((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+  const closeAll = useCallback(() => {
+    setClosed(new Set(model.groups.keys()));
+  }, [model]);
+  return { open, closeAll, toggle };
+}
+
+function Minimap({
+  boxes,
+  size,
+  view,
+  viewport,
+  kindOf,
+  onCentre,
+}: {
+  boxes: Readonly<Record<string, NodeBox>>;
+  size: Size;
+  view: { x: number; y: number; k: number };
+  viewport: Size;
+  kindOf: (id: string) => { group: boolean; kind: string; state: string | undefined };
+  onCentre: (x: number, y: number) => void;
+}) {
+  const W = 176;
+  const H = 112;
+  const m = Math.min(W / size.width, H / size.height);
+  const ox = (W - size.width * m) / 2;
+  const oy = (H - size.height * m) / 2;
+  const at = (event: ReactPointerEvent<SVGSVGElement>) => {
+    const r = event.currentTarget.getBoundingClientRect();
+    onCentre((event.clientX - r.left - ox) / m, (event.clientY - r.top - oy) / m);
+  };
+  return (
+    <svg
+      className="wf-minimap"
+      aria-hidden="true"
+      width={W}
+      height={H}
+      data-no-pan=""
+      onPointerDown={(event) => {
+        capture(event.currentTarget, event.pointerId);
+        at(event);
+      }}
+      onPointerMove={(event) => {
+        if (event.buttons === 1) at(event);
+      }}
+    >
+      {Object.entries(boxes)
+        .filter(([id]) => !id.startsWith("row:"))
+        .map(([id, box]) => {
+          const info = kindOf(id);
+          return (
+            <rect
+              key={id}
+              x={ox + box.left * m}
+              y={oy + box.top * m}
+              width={Math.max(2, (box.right - box.left) * m)}
+              height={Math.max(2, (box.bottom - box.top) * m)}
+              rx={1}
+              className={info.group ? "wf-mini-group" : "wf-mini-node"}
+              data-kind={info.kind}
+              data-state={info.state}
+            />
+          );
+        })}
+      <rect
+        className="wf-mini-view"
+        x={ox + (-view.x / view.k) * m}
+        y={oy + (-view.y / view.k) * m}
+        width={(viewport.width / view.k) * m}
+        height={(viewport.height / view.k) * m}
+      />
+    </svg>
+  );
 }
 
 function GraphCanvas<N extends GraphNode>({
   layers,
+  document,
   label = "Workflow graph",
   selected,
   onSelect,
+  onClose,
   detail,
   state,
+  panel,
+  wheel = "pan",
+  focusFirst,
+  overlay,
+  className,
 }: WorkflowGraphProps<N>) {
-  const ref = useRef<HTMLDivElement>(null);
-  const edges = edgesOf(layers);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const worldRef = useRef<HTMLDivElement>(null);
+  const hintId = useId();
+  const gridId = `wf-grid-${useId().replace(/:/g, "")}`;
+  const arrowId = `wf-arrow-${useId().replace(/:/g, "")}`;
+  const model = useMemo(() => canvasModel(layers, document), [layers, document]);
+  const keepOpen = useMemo(() => [selected, focusFirst], [selected, focusFirst]);
+  const { open, closeAll, toggle } = useOpenGroups(model, keepOpen);
+  const edges = useMemo(() => visibleEdges(layers, model, open), [layers, model, open]);
+  const order = useMemo(() => runOrder(layers, model, open), [layers, model, open]);
+  const columns = useMemo(() => drawnColumns(layers, model, open), [layers, model, open]);
+  const pz = usePanZoom(viewportRef, { wheel, min: MIN_ZOOM, max: MAX_ZOOM });
+  const { view } = pz;
+  const far = view.k < FAR;
+
+  const [viewport, setViewport] = useState<Size>({ width: 0, height: 0 });
+  useLayoutEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    const read = () => {
+      setViewport({ width: el.clientWidth, height: el.clientHeight });
+    };
+    read();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(read);
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+
+  // Long chains wrap into rows that fit the canvas at 100%, read left to right, top to bottom.
+  const [wrap, setWrap] = useState(true);
+  const rows = useMemo(
+    () =>
+      wrap
+        ? wrapRows(
+            layers.map((layer) => columnWidth(layer, model, open)),
+            viewport.width,
+          )
+        : [layers.map((_, i) => i)],
+    [wrap, layers, model, open, viewport.width],
+  );
+  const rowOf = useMemo(() => {
+    const map = new Map<string, number>();
+    rows.forEach((row, r) => {
+      for (const i of row) {
+        for (const node of layers[i] ?? []) {
+          map.set(node.id, r);
+          for (const inner of model.groups.get(node.id)?.flat() ?? []) map.set(inner.id, r);
+        }
+      }
+    });
+    return map;
+  }, [rows, layers, model]);
   // Re-measure when the shape changes, not on every render (a live run re-renders each second).
-  const shape = layers
-    .map((layer) => layer.map((node) => `${node.id}<${node.depends_on.join(",")}`).join(" "))
-    .join("|");
-  const { boxes, size } = useNodeBoxes(ref, shape);
+  const shape = `${edges.map(edgeKey).join(" ")}|${order.join(",")}|${far ? "far" : "near"}|${rows.map((r) => r.join(".")).join("/")}`;
+  const { boxes, size } = useNodeBoxes(worldRef, shape);
+
+  // The first view, once the world and the viewport have a size.
+  const placed = useRef(false);
+  const triedClosing = useRef(false);
+  useLayoutEffect(() => {
+    if (placed.current) return;
+    if (size.width === 0 || viewport.width === 0) return;
+    // Wait for the measure of the rows as now laid out (the rows follow the viewport's width).
+    const measuredRows = Object.keys(boxes).filter((id) => id.startsWith("row:")).length;
+    if (measuredRows !== rows.length) return;
+    const target = selected ?? focusFirst ?? null;
+    const box = target ? boxes[target] : undefined;
+    if (box) {
+      pz.setView(centreOn(box, viewport, 1));
+      placed.current = true;
+      return;
+    }
+    const fit = fitView(size, viewport, { max: 1, min: MIN_ZOOM });
+    if (fit.k >= FAR) {
+      pz.setView(fit);
+      placed.current = true;
+      return;
+    }
+    if (rows.length > 1) {
+      // Wrapped rows: the full width, from the top.
+      const k = Math.max(MIN_ZOOM, Math.min(1, viewport.width / size.width));
+      pz.setView({ k, x: (viewport.width - size.width * k) / 2, y: 0 });
+      placed.current = true;
+      return;
+    }
+    if (!triedClosing.current && open.size > 0) {
+      // Too big to read whole: close the rounds and look again.
+      triedClosing.current = true;
+      closeAll();
+      return;
+    }
+    pz.setView({ k: 0.8, x: 0, y: Math.max(0, (viewport.height - size.height * 0.8) / 2) });
+    placed.current = true;
+  }, [boxes, size, viewport, selected, focusFirst, open, closeAll, pz, rows.length]);
+
+  // The chain of the chosen step, or the direct edges of the one under the pointer or focus.
+  const [hover, setHover] = useState<string | null>(null);
+  const [focusId, setFocusId] = useState<string | null>(null);
+  const chain = useMemo(() => {
+    if (selected && model.steps.has(selected)) return chainOf(edges, selected);
+    return null;
+  }, [edges, selected, model]);
+  const near = !chain ? (hover ?? null) : null;
+
+  const tabStop =
+    focusId && order.includes(focusId)
+      ? focusId
+      : selected && order.includes(selected)
+        ? selected
+        : order[0];
+
+  const fit = useCallback(() => {
+    pz.setView(fitView(size, viewport, { max: 1, min: MIN_ZOOM }), true);
+  }, [pz, size, viewport]);
+
+  /** Keep a focused step on screen, with a margin. */
+  const reveal = useCallback(
+    (id: string) => {
+      const box = boxes[id];
+      if (!box || viewport.width === 0) return;
+      const margin = 48;
+      const { x, y, k } = pz.view;
+      const left = box.left * k + x;
+      const right = box.right * k + x;
+      const top = box.top * k + y;
+      const bottom = box.bottom * k + y;
+      let nx = x;
+      let ny = y;
+      if (left < margin) nx += margin - left;
+      else if (right > viewport.width - margin) nx -= right - (viewport.width - margin);
+      if (top < margin) ny += margin - top;
+      else if (bottom > viewport.height - margin) ny -= bottom - (viewport.height - margin);
+      if (nx !== x || ny !== y) pz.setView({ k, x: nx, y: ny }, true);
+    },
+    [boxes, pz, viewport],
+  );
+
+  const moveTo = (id: string | undefined) => {
+    if (!id) return;
+    const el = window.document.getElementById(nodeDomId(id));
+    el?.focus({ preventScroll: true });
+    reveal(id);
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+    if (typingIn(event.target)) return;
+    const target = event.target as HTMLElement;
+    const inWorld = worldRef.current?.contains(target) ?? false;
+    const inCanvas = viewportRef.current?.contains(target) ?? false;
+    if (event.key === "Escape" && selected && onClose) {
+      event.preventDefault();
+      onClose();
+      return;
+    }
+    if (!inCanvas) return;
+    if (goSequencePending()) return;
+    const at = target.closest<HTMLElement>("[data-node-id], .wf-group-title");
+    const id = at?.classList.contains("wf-group-title")
+      ? (at.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId ?? null)
+      : (at?.dataset.nodeId ?? null);
+    switch (event.key) {
+      case "+":
+      case "=":
+        event.preventDefault();
+        pz.zoomBy(ZOOM_STEP);
+        return;
+      case "-":
+        event.preventDefault();
+        pz.zoomBy(1 / ZOOM_STEP);
+        return;
+      case "0":
+        event.preventDefault();
+        fit();
+        return;
+      case "1":
+        event.preventDefault();
+        pz.zoomTo(1);
+        return;
+    }
+    if (!inWorld || !id) return;
+    const step = model.steps.get(id);
+    const { next, previous } = neighbours(edges, id);
+    let to: string | undefined;
+    switch (event.key) {
+      case "ArrowRight": {
+        const body = model.groups.get(id);
+        to = body && open.has(id) ? body[0]?.[0]?.id : next[0];
+        if (!to && step?.group) to = neighbours(edges, step.group).next[0];
+        break;
+      }
+      case "ArrowLeft":
+        to = previous[0] ?? step?.group ?? undefined;
+        break;
+      case "ArrowDown":
+      case "ArrowUp": {
+        const column = columns.find((col) => col.includes(id)) ?? [];
+        const i = column.indexOf(id) + (event.key === "ArrowDown" ? 1 : -1);
+        to = column[i];
+        break;
+      }
+      case "j":
+      case "k": {
+        const i = order.indexOf(id) + (event.key === "j" ? 1 : -1);
+        to = order[i];
+        break;
+      }
+      default:
+        return;
+    }
+    event.preventDefault();
+    moveTo(to);
+  };
+
+  const renderStep = (step: CanvasStep): ReactNode => {
+    const common = {
+      step,
+      selected: selected === step.id,
+      onChain: chain?.nodes.has(step.id) ?? false,
+      tabStop: tabStop === step.id,
+      state: state?.(step.id),
+      detail: detail?.(step.id),
+      onSelect,
+      onFocus: setFocusId,
+      onHover: setHover,
+    };
+    const body = model.groups.get(step.id);
+    if (body) {
+      return (
+        <GroupFrame
+          key={step.id}
+          {...common}
+          body={body}
+          open={open.has(step.id)}
+          onToggle={toggle}
+          renderStep={renderStep}
+        />
+      );
+    }
+    return <NodeCard key={step.id} {...common} />;
+  };
+
+  /** A curve within a row; a routed line back to the start of a later row. */
+  const edgePath = (from: string, to: string): string => {
+    const a = boxes[from];
+    const b = boxes[to];
+    const ra = rowOf.get(from);
+    const rb = rowOf.get(to);
+    if (a && b && ra !== undefined && rb !== undefined && rb > ra) {
+      const gap = (r: number) => {
+        const above = boxes[`row:${String(r)}`];
+        const below = boxes[`row:${String(r + 1)}`];
+        return above && below ? (above.bottom + below.top) / 2 : a.bottom + 36;
+      };
+      if (rb === ra + 1) return wrapPath(a, b, gap(ra));
+      return wrapPath(a, b, gap(ra), 10, { gapAbove: gap(rb - 1), gutter: WORLD_PAD / 2 });
+    }
+    return curvePath(a, b);
+  };
+
+  const empty = layers.length === 0 || layers.every((layer) => layer.length === 0);
+  const overflow =
+    size.width * view.k > viewport.width + 1 || size.height * view.k > viewport.height + 1;
+  const worldStyle: CSSProperties & Record<"--k", string> = {
+    transform: `translate(${String(view.x)}px, ${String(view.y)}px) scale(${String(view.k)})`,
+    "--k": String(view.k),
+  };
 
   return (
+    // The keys of the canvas and its panel (arrows, zoom, Esc) bubble here from their buttons.
+    // eslint-disable-next-line jsx-a11y/no-static-element-interactions
     <div
-      ref={ref}
-      role="group"
-      aria-label={label}
-      style={{ position: "relative", display: "flex", gap: 48, overflowX: "auto", padding: 4 }}
+      className={className ? `wf-canvas ${className}` : "wf-canvas"}
+      data-panel={panel ? "" : undefined}
+      onKeyDown={onKeyDown}
     >
-      <svg
-        aria-hidden="true"
-        data-edges=""
-        width={size.width}
-        height={size.height}
-        style={{ position: "absolute", left: 0, top: 0, pointerEvents: "none" }}
+      <div
+        ref={viewportRef}
+        className="wf-canvas-viewport"
+        data-dragging={pz.dragging ? "" : undefined}
+        {...pz.handlers}
       >
-        {edges.map(([from, to]) => (
-          <path
-            key={`${from}→${to}`}
-            data-edge={`${from}→${to}`}
-            d={curvePath(boxes[from], boxes[to])}
-            fill="none"
-            stroke="var(--border-strong)"
-            strokeWidth={1.5}
+        <svg className="wf-grid" aria-hidden="true">
+          <defs>
+            <pattern
+              id={gridId}
+              width={16}
+              height={16}
+              patternUnits="userSpaceOnUse"
+              patternTransform={`translate(${String(view.x)} ${String(view.y)}) scale(${String(view.k)})`}
+            >
+              <circle cx={1} cy={1} r={1} />
+            </pattern>
+          </defs>
+          <rect width="100%" height="100%" fill={`url(#${gridId})`} />
+        </svg>
+        {empty ? (
+          <div className="wf-canvas-empty">
+            <span className="ah-empty-icon">
+              <Icon name="workflow" size="lg" />
+            </span>
+            <p className="ah-empty-title" style={{ margin: 0 }}>
+              This workflow has no steps.
+            </p>
+            <p className="ah-small ah-muted" style={{ margin: 0 }}>
+              Its file declares no nodes. Add them under <code className="ah-mono">nodes:</code> in
+              the file, or ask Claude with Discuss.
+            </p>
+          </div>
+        ) : (
+          <div
+            ref={worldRef}
+            className="wf-world"
+            role="group"
+            aria-label={label}
+            aria-describedby={hintId}
+            data-zoom={far ? "far" : undefined}
+            data-animate={pz.animated ? "" : undefined}
+            data-chosen={chain ? "" : undefined}
+            style={worldStyle}
+          >
+            <svg
+              aria-hidden="true"
+              data-edges=""
+              className="wf-edges"
+              // A 1 px box that draws outside itself: sized to the world, it would hold the world's
+              // own measure at its last size.
+              width={1}
+              height={1}
+            >
+              <defs>
+                {(["plain", "hot"] as const).map((tone) => (
+                  <marker
+                    key={tone}
+                    id={`${arrowId}-${tone}`}
+                    viewBox="0 0 8 8"
+                    refX="7"
+                    refY="4"
+                    markerWidth="7"
+                    markerHeight="7"
+                    orient="auto-start-reverse"
+                    className={`wf-arrow wf-arrow-${tone}`}
+                  >
+                    <path d="M 0 0 L 8 4 L 0 8 z" />
+                  </marker>
+                ))}
+              </defs>
+              {edges.map((edge) => {
+                const key = edgeKey(edge);
+                const [from, to] = edge;
+                // The chosen step's own edges light up; the rest of its chain stays, the others fade.
+                const focus = selected && chain ? selected : near;
+                const hot = focus !== null && (from === focus || to === focus);
+                const dim = chain !== null && !chain.edges.has(key);
+                return (
+                  <path
+                    key={key}
+                    data-edge={key}
+                    data-hot={hot ? "" : undefined}
+                    data-chain={chain && !hot && !dim ? "" : undefined}
+                    data-dim={dim ? "" : undefined}
+                    data-pending={
+                      state && ["pending", "skipped"].includes(state(to) ?? "") ? "" : undefined
+                    }
+                    d={edgePath(from, to)}
+                    markerEnd={`url(#${arrowId}-${hot ? "hot" : "plain"})`}
+                  />
+                );
+              })}
+            </svg>
+            <div className="wf-rows">
+              {rows.map((row, r) => (
+                <div key={r} className="wf-cols" data-node-id={`row:${String(r)}`} data-row="">
+                  {row.map((i) => (
+                    <ol key={i} className="wf-col" aria-label={`Layer ${String(i + 1)}`}>
+                      {(layers[i] ?? []).map((node) => {
+                        const step = model.steps.get(node.id);
+                        return step ? renderStep(step) : null;
+                      })}
+                    </ol>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        <span id={hintId} className="ah-sr">
+          Arrow keys follow the arrows, Enter opens a step, plus and minus zoom, 0 fits the graph.
+        </span>
+        {overlay && <div className="wf-canvas-overlay">{overlay}</div>}
+        {!empty && (
+          <div className="wf-canvas-controls" role="toolbar" aria-label="Graph view" data-no-pan="">
+            <IconButton
+              size="sm"
+              icon="minus"
+              label="Zoom out (−)"
+              disabled={view.k <= MIN_ZOOM + 1e-6}
+              onClick={() => {
+                pz.zoomBy(1 / ZOOM_STEP);
+              }}
+            />
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label="Reset zoom to 100%"
+              className="wf-zoom-pct"
+              onClick={() => {
+                pz.zoomTo(1);
+              }}
+            >
+              {Math.round(view.k * 100)}%
+            </Button>
+            <IconButton
+              size="sm"
+              icon="plus"
+              label="Zoom in (+)"
+              disabled={view.k >= MAX_ZOOM - 1e-6}
+              onClick={() => {
+                pz.zoomBy(ZOOM_STEP);
+              }}
+            />
+            <span className="wf-controls-sep" aria-hidden="true" />
+            <IconButton size="sm" icon="maximize-2" label="Fit to view (0)" onClick={fit} />
+            <IconButton
+              size="sm"
+              icon="corner-down-right"
+              label={wrap ? "Show in one line" : "Wrap long chains into rows"}
+              aria-pressed={wrap}
+              onClick={() => {
+                placed.current = false;
+                setWrap((w) => !w);
+              }}
+            />
+          </div>
+        )}
+        {!empty && overflow && size.width > 0 && (
+          <Minimap
+            boxes={boxes}
+            size={size}
+            view={view}
+            viewport={viewport}
+            kindOf={(id) => {
+              const step = model.steps.get(id);
+              return {
+                group: model.groups.has(id) && open.has(id),
+                kind: step ? stepKind(step.type) : "command",
+                state: state?.(id),
+              };
+            }}
+            onCentre={(x, y) => {
+              pz.setView({
+                k: view.k,
+                x: viewport.width / 2 - x * view.k,
+                y: viewport.height / 2 - y * view.k,
+              });
+            }}
           />
-        ))}
-      </svg>
-      {layers.map((layer, i) => (
-        <ol
-          key={i}
-          aria-label={`Layer ${String(i + 1)}`}
-          className="ah-stack"
-          style={{ gap: 12, listStyle: "none", margin: 0, padding: 0, minWidth: 168 }}
-        >
-          {layer.map((node) => (
-            <li key={node.id}>
-              <button
-                type="button"
-                id={nodeDomId(node.id)}
-                data-node-id={node.id}
-                data-state={state?.(node)}
-                aria-pressed={selected === node.id}
-                onClick={() => {
-                  onSelect(node.id);
-                }}
-                className="ah-card"
-                style={{
-                  position: "relative",
-                  display: "grid",
-                  gridTemplateColumns: "16px 1fr",
-                  gap: "2px 8px",
-                  width: "100%",
-                  padding: "8px 10px",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  font: "inherit",
-                  color: "inherit",
-                  borderColor: selected === node.id ? "var(--accent)" : undefined,
-                  boxShadow: selected === node.id ? "0 0 0 1px var(--accent)" : undefined,
-                }}
-              >
-                <Icon name={typeIcon(node.type)} size="sm" style={{ marginTop: 2 }} />
-                <span className="ah-mono" style={{ fontWeight: 500, overflowWrap: "anywhere" }}>
-                  {node.id}
-                </span>
-                <span />
-                <span className="ah-small ah-subtle">{node.type}</span>
-                {detail && (
-                  <>
-                    <span />
-                    <span className="ah-small">{detail(node)}</span>
-                  </>
-                )}
-              </button>
-            </li>
-          ))}
-        </ol>
-      ))}
+        )}
+      </div>
+      {panel && <div className="wf-panel">{panel}</div>}
     </div>
   );
 }
@@ -190,7 +962,7 @@ function GraphList<N extends GraphNode>({
               {
                 id: "detail",
                 label: detailLabel ?? "State",
-                render: (row: { node: N }) => detail(row.node),
+                render: (row: { node: N }) => detail(row.node.id),
               },
             ]
           : []),
@@ -199,14 +971,15 @@ function GraphList<N extends GraphNode>({
   );
 }
 
-/** The graph with a Graph | List switch; the list is the graph's text alternative. */
+/** The canvas, with a Graph | List switch when the list is its text alternative. */
 export function WorkflowGraph<N extends GraphNode>(props: WorkflowGraphProps<N>) {
   const [view, setView] = useState<"graph" | "list">("graph");
+  if (props.textAlternative === "none") return <GraphCanvas {...props} />;
   return (
     <div className="ah-stack" style={{ gap: 8 }}>
       <div className="ah-row" style={{ gap: 8 }}>
         <span className="ah-small ah-subtle">
-          One column per layer · arrows follow depends_on · choose a node for its details
+          Arrows point to the step that waits · choose a step for its details
         </span>
         <span className="ah-grow" />
         <SegmentedControl
@@ -221,7 +994,14 @@ export function WorkflowGraph<N extends GraphNode>(props: WorkflowGraphProps<N>)
           ]}
         />
       </div>
-      {view === "graph" ? <GraphCanvas {...props} /> : <GraphList {...props} />}
+      {view === "graph" ? (
+        <GraphCanvas {...props} />
+      ) : (
+        <div className="wf-list-with-panel" data-panel={props.panel ? "" : undefined}>
+          <GraphList {...props} />
+          {props.panel}
+        </div>
+      )}
     </div>
   );
 }
@@ -256,8 +1036,11 @@ export function useNodeParam(): {
   );
   const open = (id: string) => {
     const active = document.activeElement;
-    // Safari leaves focus on the body after a mouse click: fall back to the node then.
-    opener.current = active instanceof HTMLElement && active !== document.body ? active : null;
+    // Safari leaves focus on the body after a mouse click: fall back to the node then. A step
+    // chosen from the panel (a "Waits for" chip) gives focus back to its own node.
+    const inPanel = active instanceof HTMLElement && active.closest(".wf-panel") !== null;
+    opener.current =
+      active instanceof HTMLElement && active !== document.body && !inPanel ? active : null;
     setOpenedByUser(true);
     setNode(id);
   };
@@ -270,35 +1053,37 @@ export function useNodeParam(): {
     opener.current = null;
     setOpenedByUser(false);
     setNode(null);
-    back?.focus();
+    back?.focus({ preventScroll: true });
   };
   return { nodeId, openedByUser, open, close };
 }
 
-/** The selected node's side panel; Close gives focus back to what opened it. */
+/** The selected node's panel; Close gives focus back to what opened it. */
 export function NodePanel({
   id,
   onClose,
   focusOnOpen,
+  heading,
   children,
 }: {
   id: string;
   onClose: () => void;
   /** Move focus into the panel: on a user's choice, not on a `?node=` link at load. */
   focusOnOpen: boolean;
+  /** The head of the panel (default: the id in mono). */
+  heading?: ReactNode;
   children: ReactNode;
 }) {
-  const heading = useRef<HTMLHeadingElement>(null);
+  const ref = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
-    if (focusOnOpen) heading.current?.focus();
+    if (focusOnOpen) ref.current?.focus({ preventScroll: true });
   }, [id, focusOnOpen]);
   return (
-    <aside className="ah-card" aria-label={`Node ${id}`} style={{ padding: "12px 16px" }}>
-      <div className="ah-row" style={{ gap: 8, marginBottom: 8 }}>
-        <h2 ref={heading} tabIndex={-1} className="ah-h3 ah-mono" style={{ margin: 0 }}>
-          {id}
+    <aside className="wf-inspector" aria-label={`Node ${id}`}>
+      <div className="wf-inspector-head">
+        <h2 ref={ref} tabIndex={-1} className="ah-h3 wf-inspector-title">
+          {heading ?? <span className="ah-mono">{id}</span>}
         </h2>
-        <span className="ah-grow" />
         <Button size="sm" variant="ghost" icon="x" onClick={onClose}>
           Close
         </Button>

@@ -26,20 +26,25 @@ export function useNodeBoxes(
   useLayoutEffect(() => {
     const el = root.current;
     if (!el) return;
-    // Content coordinates: the SVG scrolls with the nodes, so add the scroll offsets.
+    // Content coordinates: the SVG scrolls with the nodes, so add the scroll offsets. A root drawn
+    // under a CSS scale (a zoomed canvas) is measured at its own scale, read from the DOM, so a
+    // measure during a zoom transition is still right.
     const measure = () => {
       const origin = el.getBoundingClientRect();
-      const dx = el.scrollLeft - origin.left;
-      const dy = el.scrollTop - origin.top;
+      const scale = el.offsetWidth > 0 && origin.width > 0 ? origin.width / el.offsetWidth : 1;
+      const at = (client: number, start: number, scroll: number) =>
+        (client - start) / scale + scroll;
       const next: Record<string, NodeBox> = {};
       el.querySelectorAll<HTMLElement>("[data-node-id]").forEach((node) => {
         const r = node.getBoundingClientRect();
+        const top = at(r.top, origin.top, el.scrollTop);
+        const bottom = at(r.bottom, origin.top, el.scrollTop);
         next[node.dataset.nodeId ?? ""] = {
-          left: r.left + dx,
-          right: r.right + dx,
-          top: r.top + dy,
-          bottom: r.bottom + dy,
-          mid: r.top + dy + r.height / 2,
+          left: at(r.left, origin.left, el.scrollLeft),
+          right: at(r.right, origin.left, el.scrollLeft),
+          top,
+          bottom,
+          mid: (top + bottom) / 2,
         };
       });
       setBoxes(next);
