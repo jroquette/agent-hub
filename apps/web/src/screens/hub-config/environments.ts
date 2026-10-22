@@ -47,9 +47,37 @@ export function endpointText(endpoint: SourcedEndpoint): string {
 export function environmentPath(project: string, name: string): string {
   return `/projects/${encodeURIComponent(project)}/environment/${encodeURIComponent(name)}`;
 }
+export function addEnvironmentPath(project: string): string {
+  return `/projects/${encodeURIComponent(project)}/environments/new`;
+}
+export function addServicePath(project: string, repo?: string): string {
+  const path = `/projects/${encodeURIComponent(project)}/environments/services/new`;
+  return repo ? `${path}?repo=${encodeURIComponent(repo)}` : path;
+}
 
 export function environmentsPage(project: string): string {
   return `/projects/${encodeURIComponent(project)}/environments`;
+}
+
+/** Where a setup flow was opened from, so it returns there: the Environments page or the Hub
+ * configuration's section. */
+export interface FlowOrigin {
+  returnTo: string;
+  returnLabel: string;
+}
+
+/** The origin a flow was handed, when it is one of this project's pages; else the Environments
+ * page. */
+export function flowOrigin(state: unknown, project: string): FlowOrigin {
+  const handed = state as Partial<FlowOrigin> | null;
+  const prefix = `/projects/${encodeURIComponent(project)}/`;
+  if (
+    typeof handed?.returnTo === "string" &&
+    typeof handed.returnLabel === "string" &&
+    handed.returnTo.startsWith(prefix)
+  )
+    return { returnTo: handed.returnTo, returnLabel: handed.returnLabel };
+  return { returnTo: environmentsPage(project), returnLabel: "Environments" };
 }
 
 /** What a flow hands back to the config screen after a save: its toast and whether hub.json
@@ -92,6 +120,7 @@ export const ACCESS_LOOK: Record<
 };
 
 export const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/;
+export const VARIABLE_PATTERN = /^[A-Z_][A-Z0-9_]{0,63}$/;
 
 /** Whether the environment comes from the developer's own file (its own, or a tightening). */
 export function isMine(environment: SourcedEnvironment): boolean {
@@ -333,3 +362,74 @@ export function exampleAddress(kind: ServiceKind, environment: SourcedEnvironmen
 export function addressKind(address: string): "url" | "resource" {
   return address.includes("://") ? "url" : "resource";
 }
+
+/** The usual environments, so a person picks one and gets sensible values. */
+export interface EnvironmentPreset {
+  id: string;
+  label: string;
+  hint: string;
+  icon: IconName;
+  name: string;
+  access: Access;
+  production: boolean;
+  description: string;
+  scope: "local" | "team";
+}
+
+export const ENVIRONMENT_PRESETS: readonly EnvironmentPreset[] = [
+  {
+    id: "local",
+    label: "This machine",
+    hint: "Docker compose, dev servers and local databases on each developer's laptop.",
+    icon: "laptop",
+    name: "local",
+    access: "write",
+    production: false,
+    description: "Runs on the developer's machine",
+    scope: "team",
+  },
+  {
+    id: "staging",
+    label: "Test or staging",
+    hint: "A shared environment the team tests on.",
+    icon: "flask-conical",
+    name: "staging",
+    access: "ask",
+    production: false,
+    description: "Shared test environment",
+    scope: "team",
+  },
+  {
+    id: "production",
+    label: "Production",
+    hint: "Real customers and real data. Agents only read.",
+    icon: "shield-x",
+    name: "production",
+    access: "read",
+    production: true,
+    description: "Live system with real customer data",
+    scope: "team",
+  },
+  {
+    id: "mine",
+    label: "My own copy",
+    hint: "A personal cloud or sandbox only you use.",
+    icon: "user",
+    name: "personal",
+    access: "write",
+    production: false,
+    description: "My personal sandbox",
+    scope: "local",
+  },
+  {
+    id: "other",
+    label: "Something else",
+    hint: "Start from blank answers.",
+    icon: "circle-dashed",
+    name: "",
+    access: "read",
+    production: false,
+    description: "",
+    scope: "local",
+  },
+];

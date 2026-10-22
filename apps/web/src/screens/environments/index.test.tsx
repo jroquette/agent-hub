@@ -118,6 +118,18 @@ describe("EnvironmentsScreen", () => {
     ).toBeVisible();
   });
 
+  it("AC-417.17 opens the add flow so it comes back to this page", async () => {
+    const { router } = open();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Add environment" }));
+
+    expect(router.state.location.pathname).toBe("/projects/demo/environments/new");
+    expect(router.state.location.state).toEqual({
+      returnTo: "/projects/demo/environments",
+      returnLabel: "Environments",
+    });
+  });
+
   it("AC-417.3 lays environments out as a table: access, secrets and who set them", async () => {
     open(withEnvironments());
 

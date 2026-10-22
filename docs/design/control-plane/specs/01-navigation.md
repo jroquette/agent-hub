@@ -58,6 +58,8 @@ Every screen carries its phase. A screen tagged P3 or P4 is not shown in the sid
 
 /environments                       Environments: project picker (AGH-417)           P2
 └ /projects/:project/environments   Environments (specs/23-environments.md)          P2 + ADR 0040 writes
+  ├ …/environments/new              Add environment (step by step)                   P2 + ADR 0040 writes
+  ├ …/environments/services/new     Add service (step by step) ?repo=                P2 + ADR 0040 writes
   └ /projects/:project/environment/:name   Environment page ?service=<repo>/<name>   P2 + ADR 0040 writes
 
 /workflows                          Workflow catalog                                 P4
