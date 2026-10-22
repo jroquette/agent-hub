@@ -11,6 +11,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- The `security-sweep` built-in pack (AGH-486): weekly read-only scanners on every repo, a security-reviewer triage
+  of the new findings, and a note in `brain/_inbox/` for `/triage`, with no secret value and no tracker write.
+
 ## [0.20.1] - 2026-10-22
 
 ### Added
