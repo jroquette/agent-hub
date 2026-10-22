@@ -506,9 +506,14 @@ function RunBody({ run, refetch }: { run: ScenarioRunDetail; refetch: () => void
   const [reopened, setReopened] = useState(false);
   const lastInvestigation = useRef(run.open_investigation);
   useEffect(() => {
+    const now = run.open_investigation;
+    // A running stage (null) keeps the last investigation, so 1 → running → 2 still reopens.
+    if (now === null) {
+      return;
+    }
     const before = lastInvestigation.current;
-    lastInvestigation.current = run.open_investigation;
-    if (before === null || run.open_investigation === null || before === run.open_investigation) {
+    lastInvestigation.current = now;
+    if (before === null || before === now) {
       return;
     }
     setParams(
