@@ -101,6 +101,7 @@ from agent_hub.core.agent_sessions.errors import (
     PermissionAnsweredError,
     SessionLiveError,
     SessionModeLockedError,
+    SessionRestrictionError,
     SessionsUnavailableError,
     SessionTerminalError,
     UnknownPermissionError,
@@ -429,6 +430,9 @@ class AgentSessionControl:
         self._restriction_of = restriction_of
         # The restriction of each session started with one, kept for its reopening.
         self._restrictions: dict[str, SessionRestriction] = {}
+        # Sessions read after a restart: linked to a run but not rebuilt, or known to be free.
+        self._restricted_unbuilt: set[str] = set()
+        self._unrestricted: set[str] = set()
         # Each branch's pull request as GitHub last named it, and when: (root, branch) -> ...
         self._pull_requests: dict[tuple[str, str], tuple[datetime, RepoPullRequest | None]] = {}
         self._live: dict[str, LiveSession] = {}
@@ -474,7 +478,10 @@ class AgentSessionControl:
     async def snapshot(self, agent_session_id: str) -> AgentSession:
         """One session, with its open permission request while live (E10); ``restricted`` when
         this server holds it to a restriction (its mode cannot change, E-15)."""
-        return self._marked((await self._with_twins([await self._session(agent_session_id)]))[0])
+        view = (await self._with_twins([await self._session(agent_session_id)]))[0]
+        if view.id not in self._restrictions and view.kind == "local":
+            await self._learn_restriction(view)
+        return self._marked(view)
 
     async def repo_changes(self, agent_session_id: str) -> SessionRepoChanges:
         """Each listed repo or worktree the session started in, changed a file in or named, as
@@ -693,9 +700,24 @@ class AgentSessionControl:
     def _marked(self, view: AgentSession) -> AgentSession:
         """``view``, ``restricted`` when this server holds the session to a restriction (its
         permission mode cannot change, E-15): every answer about it says so."""
-        if view.id in self._restrictions:
+        if view.id in self._restrictions or view.id in self._restricted_unbuilt:
             return view.model_copy(update={"restricted": True})
         return view
+
+    async def _learn_restriction(self, session: AgentSession) -> None:
+        """Whether a session this server forgot (a restart) is held to a restriction, asked of
+        ``restriction_of`` once per session, so its page offers no mode switch before a reopen
+        (E-15). A link that names it but cannot be rebuilt still marks it; an answer of none
+        is remembered (a session is linked only when it starts)."""
+        if self._restriction_of is None or session.id in self._unrestricted:
+            return
+        try:
+            kept = await self._restriction(session)
+        except SessionRestrictionError:
+            self._restricted_unbuilt.add(session.id)
+            return
+        if kept is None:
+            self._unrestricted.add(session.id)
 
     async def _restriction(self, session: AgentSession) -> SessionRestriction | None:
         """The restriction ``session`` started with: kept in memory, else rebuilt."""
