@@ -423,3 +423,46 @@ def test_leaves_no_temporary_file_when_launch_succeeds_or_fails(tmp_path: Path) 
         launcher(tmp_path).start(spec_of(tmp_path))  # the program does not exist
     assert temporaries(tmp_path) == []
     assert not (web(tmp_path) / "run-1.pid").exists()
+
+
+# AGH-350 plan T12: a scenario run starts as ``hub scenario run`` and is planned by ``hub
+# scenario plan --json``; the program here echoes its arguments instead.
+ECHO_ARGV = "import json, sys\nprint(json.dumps(sys.argv[1:]))\nsys.exit(1)\n"
+
+
+def test_runs_scenario_commands_when_scenario_planned_or_started(tmp_path: Path) -> None:
+    written = tmp_path / "argv.json"
+    record = f"import json, sys\nopen({str(written)!r}, 'w').write(json.dumps(sys.argv[1:]))\n"
+    planner = ProcessRunLauncher(
+        db_path=tmp_path / "db", environ={}, program=[sys.executable, "-c", ECHO_ARGV]
+    )
+    starter = ProcessRunLauncher(
+        db_path=tmp_path / "db", environ={}, program=[sys.executable, "-c", record]
+    )
+
+    code, printed = planner.plan_scenario(
+        str(tmp_path), "order-walk", environment="local", inputs={"ref": "T-1"}
+    )
+    starter.start_scenario(
+        run_launcher.ScenarioLaunch(
+            run_id="walk-1",
+            project="demo",
+            hub_path=str(tmp_path),
+            name="order-walk",
+            environment="staging",
+            mode="regression",
+            inputs={"ref": "T-1", "count": 2},
+        )
+    )
+    deadline = time.monotonic() + 10
+    while not written.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+
+    assert code == 1
+    assert json.loads(printed) == [
+        *("scenario", "plan", "order-walk", "--env", "local", "--json", "--input", "ref=T-1")
+    ]
+    assert json.loads(written.read_text()) == [
+        *("scenario", "run", "order-walk", "--env", "staging", "--mode", "regression"),
+        *("--run-id", "walk-1", "--input", "ref=T-1", "--input", "count=2"),
+    ]

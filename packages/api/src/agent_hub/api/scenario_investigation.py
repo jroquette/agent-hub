@@ -150,7 +150,7 @@ class InvestigationRestrictions:
             return None
         hub, folder, number = found
         try:
-            records = _read_records(folder)
+            records = read_records(folder)
             investigation = next(
                 item for item in fold_records(records).investigations if item.number == number
             )
@@ -197,8 +197,8 @@ class ScenarioInvestigations:
         """The investigation session of ``run_id``, started on the first call."""
         project, hub, folder = await asyncio.to_thread(self._restrictions.run_folder, run_id)
         async with self._lock:
-            records = await asyncio.to_thread(_read_records, folder)
-            pending = _open_investigation(records, run_id)
+            records = await asyncio.to_thread(read_records, folder)
+            pending = open_investigation(records, run_id)
             link = folder / f"investigation-{pending.number}.session"
             existing = await asyncio.to_thread(_claim, link, run_id)
             if existing is not None and await self._usable(existing):
@@ -286,7 +286,7 @@ def _view(
     )
 
 
-def _read_records(folder: Path) -> list[dict[str, JsonValue]]:
+def read_records(folder: Path) -> list[dict[str, JsonValue]]:
     """The record's lines; ``EntityNotFoundError`` without one, ``RunRecordError`` when it is
     too large or a line before the last is not one JSON object."""
     try:
@@ -301,7 +301,7 @@ def _read_records(folder: Path) -> list[dict[str, JsonValue]]:
     return record_lines(data)
 
 
-def _open_investigation(records: list[dict[str, JsonValue]], run_id: str) -> InvestigationView:
+def open_investigation(records: list[dict[str, JsonValue]], run_id: str) -> InvestigationView:
     """The open, unanswered investigation of a scenario run, which its record names."""
     pending = fold_records(records).open_investigation
     is_scenario = bool(records) and records[0].get("kind") == SCENARIO_KIND

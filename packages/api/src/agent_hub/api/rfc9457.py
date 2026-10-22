@@ -70,6 +70,7 @@ from agent_hub.core.learnings.brain_change_requests import (
 )
 from agent_hub.core.learnings.learning_ports import HubReadOnlyError, LearningConflictError
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
+from agent_hub.core.scenarios.findings import FindingIssueError
 from agent_hub.core.scenarios.run_record import RecordTooLargeError, RunRecordError
 from agent_hub.core.skills.skill_view import SkillFileTooLargeError
 from agent_hub.core.workflows.gate_decisions import ResumeAfterDecisionError
@@ -471,6 +472,8 @@ def _run_conflict_problem(error: RunConflictError) -> Problem:
     }
     if error.run_id is not None:
         members["run_id"] = error.run_id
+    if error.steps:
+        members["steps"] = list(error.steps)
     return Problem(409, "Workflow run command refused", error.reason, members)
 
 
@@ -482,6 +485,11 @@ def _run_record_problem(error: RunRecordError) -> Problem:
         "code": code,
     }
     return Problem(422, "Scenario run record unreadable", str(error), members)
+
+
+def _finding_issue_problem(error: FindingIssueError) -> Problem:
+    members: dict[str, JsonValue] = {"type": "urn:agent-hub:problem:scenario-run-issue-failed"}
+    return Problem(502, "Could not create the tracker issue", str(error), members)
 
 
 def _run_launch_problem(_: RunLaunchError) -> Problem:
@@ -785,6 +793,7 @@ PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
     RunRecordError: _run_record_problem,
     ChangeRequestDecisionError: _change_request_decision_problem,
     RunLaunchError: _run_launch_problem,
+    FindingIssueError: _finding_issue_problem,
     ResumeAfterDecisionError: _resume_after_decision_problem,
     DecisionUnknownError: _decision_unknown_problem,
     LearningConflictError: _learning_conflict_problem,
