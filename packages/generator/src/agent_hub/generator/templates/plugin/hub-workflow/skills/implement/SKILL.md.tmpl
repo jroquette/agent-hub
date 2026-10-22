@@ -10,12 +10,12 @@ argument-hint: "<tracker issue id>"
 Paths below are relative to the hub (the directory with `hub.json`). The ticket flow of a feature that `/feature` already planned: it runs no spec, research, plan or tickets step, and the run writes only the ticket's records (`brain/features/<slug>/tickets/<ticket>/`, `change-requests/`, its eval and `plan.md`'s amendment entries); it never commits in the hub.
 
 1. **Find the feature**: search `brain/features/*/features.json` for the ticket's id (a ticket's `id`, ignoring case). A ticket in no feature: stop, and name the path for it: `issue-to-pr` (`./hub run <ticket> --repo <repo>`), or `/fix` for a bug or a small bounded task. A ticket in more than one: stop and ask which.
-2. **Read the ticket** in the tracker (if it cannot be read, say so and stop); its title and description, as text, are the run's `issue_text`.
-3. **Run**: `./hub workflow run implement --input feature=<slug> --input issue=<ticket> --input issue_text="<the ticket as text>" --live`, from the hub, with its output redirected to a file and `$?` checked. Without `--live` it only prints what would run.
-4. **Report** the run's outcome to the user:
+2. **Read the ticket** in the tracker (if it cannot be read, say so and stop). Write it, with the Write tool, to a new file under `$TMPDIR` (e.g. `$TMPDIR/<ticket>.txt`) in the shape `hub run` gives an issue: lines `id: <ticket>`, `title: <title>`, `url: <url>`, then `description:` and the description as the tracker holds it, unfenced (the run's prompts fence it as untrusted text). Never paste the ticket's text into a command line.
+3. **Run**: `./hub workflow run implement --input feature=<slug> --input issue=<ticket> --input issue_text="$(cat "$TMPDIR/<ticket>.txt")" --live`, from the hub, with its output redirected to a file and `$?` checked. Without `--live` it only prints what would run.
+4. **Report** the run's outcome to the user. The command's last line is `run <run>: paused at <gate>` or `run <run>: done, outcome <outcome>`; the rest is in `.agent-runs/workflows/<run>/records.jsonl`, whose `step_end` line with `"node": "delivery"` holds, in its `output`, the `delivery`, `stage`, `reason`, `question`, `pr`, `summary` and `hub_files`.
    - `paused` on a plan change request (`change-requests/<n>.md`): the owner decides it in hub web's ticket panel (Approve, or Decline with a note), or with `./hub workflow approve <run>` or `./hub workflow respond <run> --choice decline --text "<note>"`; the run then resumes on its own. Never decide it yourself.
-   - `blocked`: the run's question, for the owner; the next `/implement` of the ticket starts a new run.
-   - `delivered`: the PR. `no_changes` or `failed`: its stage and reason.
-   Name the hub files the run's report lists (`hub_files`): they reach `main` only through a hub PR the owner opens.
+   - `blocked`: the run's `question`, for the owner; the next `/implement` of the ticket starts a new run.
+   - `delivered`: the `pr`. `no_changes` or `failed`: its `stage` and `reason`.
+   Name the hub files the delivery lists (`hub_files`): they reach `main` only through a hub PR the owner opens.
 
 The PR is reviewed and merged by the user (`/deliver` drives it); learnings go through `/learn`.

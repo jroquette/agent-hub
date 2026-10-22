@@ -9,7 +9,7 @@ argument-hint: "<question or tracker issue id>"
 
 Paths below are relative to the hub (the directory with `hub.json`); repos are its siblings, listed in `hub.json` → `repos`, each with its own `AGENTS.md`: read the one for the repo the decision lives in, and its ADR process (where ADRs live, the template, the status lines it allows).
 Step types: `human` (the user answers), `agent` (this session works), `gate` (the session waits for the user's decision), `script` (a fixed command).
-Inside `/feature`'s architectural path, run steps 1–5 once per ADR the plan needs, on that feature's issue, worktree and PR (step 6 is then `/feature`'s own).
+Inside `/feature`'s architectural path, run steps 1–5 once per ADR the plan needs, on that feature's issue. When `/feature` builds in-line (its step 6), use its worktree and leave step 6 to `/feature`'s own PR; when its Build step hands the tickets to `/implement`, run step 6 too, so each ADR ships on its own PR.
 
 1. `human` **Question**: read the tracker issue (if it cannot be read, say so and stop; no issue: create it in @@{tracker_team_key} first). The user states the question and its forces (constraints, NFRs), one question at a time here in the main session.
 2. `agent` **Research**: the current code (`/research`), the repo's existing ADRs and `brain/decisions/` notes the decision touches or would supersede. External sources go to `brain/_inbox/` with `provenance: agent-from-external`, never straight into the brain or the ADR.
