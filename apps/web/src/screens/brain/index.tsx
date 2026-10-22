@@ -17,7 +17,7 @@ import { brainRoute } from "../../lib/brainLinks";
 import { useScope } from "../../lib/scope";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
-import { CountCell, KnowledgeProjectIndex } from "../knowledge-index";
+import { CountCell, KnowledgeProjectIndex, PickFoot } from "../knowledge-index";
 import { useProjectNow } from "../project-overview/queries";
 import { BRAIN_NOTE_STARTERS } from "../learnings/discussLearning";
 import { NoteView } from "./NoteView";
@@ -374,6 +374,7 @@ function useBrainCounts(project: string) {
   return {
     pending: tree.isPending,
     error: tree.isError ? `Could not read this brain: ${tree.error.title}` : null,
+    retry: () => void tree.refetch(),
     incomplete,
     notes: paths.length,
     features: features.size,
@@ -396,25 +397,26 @@ function BrainCountCell({ project, count }: { project: string; count: BrainCount
   );
 }
 
-function InboxCell({ project }: { project: string }) {
+function InboxFoot({ project }: { project: string }) {
   const counts = useBrainCounts(project);
-  if (counts.pending || counts.error !== null || counts.inbox === 0) {
+  if (counts.pending) return null;
+  if (counts.error !== null) {
     return (
-      <CountCell {...counts} incomplete={null} value={<span className="ah-muted">None</span>} />
+      <PickFoot tone="error" onRetry={counts.retry}>
+        {counts.error}.
+      </PickFoot>
     );
   }
+  if (counts.inbox === 0) return <PickFoot tone="quiet">Inbox empty</PickFoot>;
   return (
-    <AppLink
+    <PickFoot
+      tone="attention"
+      icon="sprout"
       href={`/knowledge/learnings?scope=${encodeURIComponent(project)}`}
-      className="ah-row"
-      style={{ gap: 4 }}
-      onClick={(event) => {
-        event.stopPropagation();
-      }}
+      label={`${String(counts.inbox)} to triage in Learnings for ${project}`}
     >
-      <Icon name="lightbulb" size="sm" />
-      <span>{counts.inbox} to triage</span>
-    </AppLink>
+      {counts.inbox} to triage in Learnings
+    </PickFoot>
   );
 }
 
@@ -432,7 +434,7 @@ function FocusCell({ project }: { project: string }) {
         title={first.text}
         style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
       >
-        {first.text}
+        Current focus: {first.text}
       </span>
       {focus.length > 1 && (
         <span className="ah-muted" style={{ whiteSpace: "nowrap" }}>
@@ -456,51 +458,33 @@ export function BrainPickerScreen() {
       intro="What each project's hub knows: current focus, decisions, playbooks and feature records. Open a project to read its brain."
       caption="Projects and their brains"
       emptyLine="Register a hub to read its brain."
-      tip="Tip: pick a project in the scope switcher to open its brain directly."
+      tip="To come straight here, choose a project in the top bar."
       href={brainHome}
-      columns={[
-        {
-          id: "focus",
-          label: "Current focus",
-          render: (project) => <FocusCell project={project.name} />,
-        },
+      lead={(project) => <FocusCell project={project.name} />}
+      figures={[
         {
           id: "notes",
           label: "Notes",
-          align: "right",
-          width: 90,
           render: (project) => <BrainCountCell project={project.name} count="notes" />,
         },
         {
           id: "features",
           label: "Features",
           hint: "Feature records under brain/features/.",
-          align: "right",
-          width: 100,
           render: (project) => <BrainCountCell project={project.name} count="features" />,
         },
         {
           id: "decisions",
           label: "Decisions",
-          align: "right",
-          width: 100,
           render: (project) => <BrainCountCell project={project.name} count="decisions" />,
         },
         {
           id: "learnings",
           label: "Learnings",
-          align: "right",
-          width: 100,
           render: (project) => <BrainCountCell project={project.name} count="learnings" />,
         },
-        {
-          id: "inbox",
-          label: "Inbox",
-          hint: "Unreviewed proposals in brain/_inbox/; nothing there is authoritative.",
-          width: 140,
-          render: (project) => <InboxCell project={project.name} />,
-        },
       ]}
+      foot={(project) => <InboxFoot project={project.name} />}
     />
   );
 }

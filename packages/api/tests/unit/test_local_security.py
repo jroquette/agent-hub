@@ -387,7 +387,8 @@ def test_accepts_large_body_when_create_session_under_create_body_cap() -> None:
         "/api/v1/agent-sessions", content=_streamed(AGENT_SESSION_CREATE_BODY_BYTES)
     )
 
-    assert AGENT_SESSION_CREATE_BODY_BYTES == 16 * 1024 * 1024
+    # AC-419.6: ten images and ten files fit.
+    assert AGENT_SESSION_CREATE_BODY_BYTES == 160 * 1024 * 1024
     assert (sized.status_code, sized.json()) == (200, {"length": len(body)})
     assert (streamed.status_code, streamed.json()) == (200, {"length": len(body)})
 
@@ -438,7 +439,8 @@ def test_caps_message_body_at_message_cap_when_images_may_be_pasted() -> None:
     at_cap = client.post(path, content=_streamed(AGENT_SESSION_MESSAGE_BODY_BYTES))
     over = client.post(path, content=_streamed(AGENT_SESSION_MESSAGE_BODY_BYTES + 1))
 
-    assert AGENT_SESSION_MESSAGE_BODY_BYTES == 64 * 1024 * 1024
+    # AC-419.6: ten images and ten files fit.
+    assert AGENT_SESSION_MESSAGE_BODY_BYTES == 160 * 1024 * 1024
     assert at_cap.status_code == 200
     assert over.status_code == 413
     assert over.json()["detail"] == (
@@ -451,6 +453,8 @@ PLAYGROUND_HUB_WRITES = (
     ("POST", "/api/v1/hubs/hub-1/platform-sync"),
     ("POST", "/api/v1/hubs/hub-1/doctor-fix"),
     ("PUT", "/api/v1/projects/demo/config/local"),
+    # AC-416.10: the environment edits are a hub registry write.
+    ("POST", "/api/v1/projects/demo/config/environments"),
 )
 CHECK_RUN = "/api/v1/features/demo/demo-feature/acs/AC-7.1/check-runs"
 

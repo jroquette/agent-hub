@@ -316,3 +316,666 @@
   bottom: var(--space-6);
   z-index: 50;
 }
+
+/* ---------- Environments ---------- */
+.ah-env-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.ah-env-access,
+.ah-env-credentials {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.ah-env-caption {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.ah-env-repo th {
+  position: static;
+  height: 32px;
+  background: var(--surface-sunken);
+  color: var(--text);
+  font-weight: 500;
+}
+.ah-env-fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.ah-env-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+.ah-env-honesty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: var(--space-2) 0 0;
+}
+.ah-env-details > summary {
+  cursor: pointer;
+  margin-bottom: var(--space-2);
+}
+
+/* ---------- Setup flows: one question at a time ---------- */
+.ah-setup {
+  container-type: inline-size;
+}
+.ah-setup-layout {
+  display: grid;
+  grid-template-columns: 184px minmax(0, 640px) 264px;
+  justify-content: start;
+  align-items: start;
+  gap: var(--space-6);
+}
+@container (max-width: 1135px) {
+  .ah-setup-layout {
+    grid-template-columns: 184px minmax(0, 640px);
+  }
+  .ah-setup-preview {
+    position: static;
+    grid-column: 2;
+  }
+}
+@container (max-width: 879px) {
+  .ah-setup-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ah-setup-steps {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+  .ah-setup-step::after,
+  .ah-setup-step-summary {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow-wrap: anywhere;
+  }
+  .ah-setup-preview {
+    grid-column: 1;
+  }
+}
+.ah-setup-steps {
+  position: sticky;
+  top: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ah-setup-step {
+  position: relative;
+}
+/* The line joining one step's circle to the next. */
+.ah-setup-step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: 15px;
+  top: 38px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--border);
+}
+.ah-setup-step[data-state="done"]:not(:last-child)::after {
+  background: var(--done);
+}
+.ah-setup-step-button {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  width: 100%;
+  padding: 6px 4px 14px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+button.ah-setup-step-button {
+  cursor: pointer;
+}
+button.ah-setup-step-button:hover .ah-setup-step-title {
+  text-decoration: underline;
+}
+button.ah-setup-step-button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.ah-setup-dot {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+.ah-setup-dot[data-state="open"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.ah-setup-dot[data-state="done"] {
+  background: var(--done-soft);
+  color: var(--done);
+}
+.ah-setup-step-title {
+  padding-top: 4px;
+  font-weight: 500;
+}
+.ah-setup-step[data-state="future"] .ah-setup-step-title {
+  color: var(--text-muted);
+}
+.ah-setup-step-summary {
+  overflow-wrap: anywhere;
+}
+.ah-setup-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-6);
+}
+.ah-setup-question {
+  margin: 0;
+}
+.ah-setup-question:focus {
+  outline: none;
+}
+.ah-setup-help {
+  max-width: 60ch;
+  margin: 0 0 var(--space-4);
+}
+.ah-setup-body {
+  flex: 1;
+}
+.ah-setup-input {
+  width: 100%;
+}
+/* Short answers (a name, a profile) stay short; paths and addresses take the card's width. */
+.ah-setup-input-short {
+  max-width: 360px;
+}
+.ah-setup-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+/* One bordered list: per environment, its name and access on the left, the address on the right. */
+.ah-setup-addresses {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.ah-setup-address {
+  display: grid;
+  grid-template-columns: 176px minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+.ah-setup-address + .ah-setup-address {
+  border-top: 1px solid var(--border);
+}
+/* A field shown inside the choice that asks for it. */
+.ah-setup-inline {
+  margin-top: var(--space-3);
+  cursor: auto;
+}
+.ah-setup-review {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.ah-setup-review-row {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+.ah-setup-review-row + .ah-setup-review-row {
+  border-top: 1px solid var(--border);
+}
+.ah-setup-review-row dt {
+  color: var(--text-muted);
+}
+.ah-setup-review-row dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.ah-setup-next {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--surface-sunken);
+}
+.ah-setup-next ol {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+.ah-setup-preview {
+  position: sticky;
+  top: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+.ah-setup-preview-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ah-setup-preview-line {
+  display: block;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.ah-setup-preview-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+/* An env file's variable names (never values). */
+.ah-env-keys {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: 520px;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+}
+.ah-env-keys:empty {
+  display: none;
+}
+.ah-env-key-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ah-env-key-list code {
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 12px;
+}
+
+/* ---------- Environments page ---------- */
+.ah-env-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.ah-env-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.ah-env-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.ah-env-block-head .ah-h2 {
+  margin: 0;
+}
+.ah-env-count {
+  font-weight: 400;
+}
+.ah-env-table {
+  table-layout: fixed;
+}
+.ah-env-table th[scope="row"],
+.ah-env-table td {
+  height: auto;
+  padding-top: var(--space-3);
+  padding-bottom: var(--space-3);
+  vertical-align: top;
+  white-space: normal;
+  text-align: left;
+  font-weight: 400;
+  color: var(--text);
+}
+/* The environments list: rows of two lines (name and description), the whole row opens it. */
+.ah-env-list .ah-table {
+  table-layout: fixed;
+}
+.ah-env-list .ah-table td {
+  height: auto;
+  padding-top: var(--space-3);
+  padding-bottom: var(--space-3);
+  vertical-align: middle;
+  white-space: normal;
+}
+.ah-env-list .ah-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.ah-env-list .ah-env-name-link {
+  font-weight: 500;
+}
+.ah-env-list .ah-env-name-link:hover {
+  text-decoration: underline;
+}
+.ah-env-list .ah-env-actions > .ah-icon {
+  margin-left: var(--space-1);
+  color: var(--text-subtle);
+}
+.ah-env-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1);
+}
+.ah-link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.ah-link-button:hover {
+  text-decoration: underline;
+}
+.ah-link-button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Hub config's Environments row: a count and the way to the page. */
+.ah-env-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+}
+
+/* ---------- One environment's page ---------- */
+/* The frame is the container: a container query never matches the element that declares it. */
+/* The service panel docks beside the page from 1600 px (SidePanel), overlays it below. */
+.ah-env-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+.ah-env-detail-frame {
+  flex: 1;
+  min-width: 0;
+  container-type: inline-size;
+}
+.ah-env-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  align-items: start;
+  gap: var(--space-6);
+}
+@container (max-width: 1100px) {
+  .ah-env-detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+/* What agents read: a summary, the brief's service lines folded; never taller than the view. */
+.ah-env-agents {
+  position: sticky;
+  top: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-height: calc(100vh - var(--space-8));
+  overflow-y: auto;
+  padding: var(--space-4);
+}
+.ah-env-agents p {
+  margin: 0;
+}
+.ah-env-agents-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.ah-env-agents-head .ah-h3 {
+  margin: 0;
+}
+.ah-env-agents-facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ah-env-agents-facts li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.ah-env-agents-brief summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.ah-env-agents-brief ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+.ah-env-agents-brief li {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ah-env-sections {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+.ah-env-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-6);
+}
+.ah-env-section + .ah-env-section {
+  border-top: 1px solid var(--border);
+}
+.ah-env-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.ah-env-section-head .ah-h3 {
+  margin: 0;
+}
+.ah-env-section-form {
+  max-width: 640px;
+}
+.ah-env-section-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+.ah-env-services-here {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.ah-env-services-here > li + li {
+  border-top: 1px solid var(--border);
+}
+.ah-env-service-item {
+  display: flex;
+  align-items: center;
+  padding-right: var(--space-2);
+}
+.ah-env-service-item:hover {
+  background: var(--surface-hover);
+}
+.ah-env-copy {
+  flex-shrink: 0;
+  opacity: 0;
+}
+.ah-env-service-item:hover .ah-env-copy,
+.ah-env-copy:focus-visible {
+  opacity: 1;
+}
+.ah-env-elsewhere {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ah-env-elsewhere > summary {
+  color: var(--text-subtle);
+  cursor: pointer;
+}
+.ah-env-elsewhere[open] > summary {
+  margin-bottom: var(--space-2);
+}
+.ah-env-services-count {
+  color: inherit;
+  text-decoration: none;
+}
+.ah-env-services-count:hover {
+  text-decoration: underline;
+}
+.ah-env-service-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ah-env-service-row:hover {
+  background: var(--surface-hover);
+}
+.ah-env-service-row:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+.ah-env-name-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: inherit;
+  text-decoration: none;
+}
+.ah-env-name-link:hover code {
+  text-decoration: underline;
+}
+/* An address row with an action at its end (the panel's remove or undo). */
+.ah-setup-address[data-has-end] {
+  grid-template-columns: 140px minmax(0, 1fr) auto;
+}
+.ah-setup-address[data-removed] input {
+  text-decoration: line-through;
+}
+
+/* ---------- Find services with Claude ---------- */
+.ah-discover-card {
+  max-width: 760px;
+}
+.ah-review-table th[scope="row"] {
+  vertical-align: top;
+}
+.ah-review-table tr[data-status="declared"] > * {
+  color: var(--text-muted);
+}
+.ah-review-check {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  accent-color: var(--accent);
+}
+.ah-review-missing {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+.ah-review-missing > .ah-icon {
+  margin-top: 2px;
+  color: var(--waiting);
+}
+/* The action bar stays in view while the person picks rows. */
+.ah-review-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: var(--z-sticky);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-overlay);
+}

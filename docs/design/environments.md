@@ -15,7 +15,7 @@ All optional and additive under `schema_version: 1`; a hub without them behaves,
 | Key | Shape |
 |---|---|
 | `environments.<name>` | `access` (required: `read`, `write` or `ask`), `production` (bool, `false`), `description` (≤ 80, rendered as plain text), `credentials` |
-| `…credentials` | `aws_profile` (`^[A-Za-z0-9_.-]{1,64}$`), `env` (≤ 10 names `^[A-Z_][A-Z0-9_]{0,63}$`) and `env_file` (a dotenv path relative to the workspace, ≤ 200, no `..`, no leading `/` or `~`, read only by actions: [scenarios.md](scenarios.md)): names and paths, never values |
+| `…credentials` | `aws_profile` (`^[A-Za-z0-9_.-]{1,64}$`), `env` (≤ 10 names `^[A-Z_][A-Z0-9_]{0,63}$`) and `env_file` (a dotenv path relative to the workspace, ≤ 200, no `..`, no leading `/` or `~`, its values read only by actions, its names listed by hub web: [scenarios.md](scenarios.md)): names and paths, never values |
 | `repos[].services.<name>` | `kind` (`^[a-z0-9]+(-[a-z0-9]+)*$`, ≤ 32, informational), `description`, `endpoints` |
 | `…endpoints.<env>` | `url` or `resource` (one required), `note`, `credentials`; `<env>` must be declared |
 | `guard.blocked_words` | ≤ 200 words `^[A-Za-z0-9]+(?:[-_.][A-Za-z0-9]+)*$`, 2-64 characters, matched literally, never a secret's shape |
@@ -126,6 +126,109 @@ between that check and the replace is overwritten: a narrow window). `remove` re
 environment; a committed write prints `run ./hub sync to update AGENTS.md`. The guard asks before a mutating
 `hub env` and an edit of `hub.local.json`; `list` and `show` pass. `hub setup`'s optional step writes only it.
 
+### From hub web
+
+The Environments screens (AGH-417) read and make the same edits as `hub env` through `GET /projects/{project}/config` (its
+`environments`) and `POST /projects/{project}/config/environments` (AGH-416). The edit is checked as a read checks
+both files (each file, then the rules across them) before anything is written, refuses a file changed since it was
+read or a symlinked one, replaces the file through a temporary one, and is never committed: a `hub.json` change waits
+for the owner's hub PR and `./hub sync` ([ADR 0040](../adr/0040-hub-web-keeps-local-settings-writes-hub-files-and-runs-checks.md),
+option 1). The route is a hub registry write: it needs this server's `Origin`. A refused edit answers 422 "This change
+was not saved" with the reason; `hub env` gains no command from it.
+
+**Renames.** renaming a `hub.json` environment also moves every endpoint `hub.json` keys by it, and renaming
+a `hub.json` service keeps its place in its repo. When this developer's `hub.local.json` holds the old name (a
+tightening, or that service's endpoints), the same write renames it there too, both files or neither; other
+developers' `hub.local.json` are not touched, and their entries under the old name stop applying until they rename
+them (the screen warns). A local rename of a `hub.json` name is refused, and `hub.local.json` may only add endpoints to
+a committed service, never change its `kind`, `description` or name.
+
+**Acceptance criteria (AGH-416)**
+
+- **AC-416.1** Given environments and services in `hub.json` and `hub.local.json`, when the Hub config is read, then
+  its `environments` lists every effective environment (name, access, production, description, credentials by name)
+  and every repo service with its endpoints, each with the file it comes from; when `hub.local.json` breaks a rule
+  across both files (a looser `access`), only the team's are listed and the problem is reported.
+- **AC-416.2** Given `hub.local.json` tightens a `hub.json` environment, when the Hub config is read, then that
+  environment carries hub.json's `access` as `team_access` beside the effective one; a developer's own environment
+  has none.
+- **AC-416.3** Given a scope (`team`: `hub.json`, `local`: `hub.local.json`), when `add_environment`,
+  `set_environment` or `remove_environment` is posted, then the change is made in that file as `hub env` makes it:
+  a new environment goes last, credentials are names and a path only (an empty text or list removes the key), a
+  local file is created when absent and removed when its last entry goes, a local `set_environment` on a `hub.json`
+  name may only tighten `access`, a looser `access` or another field is refused, and removing an environment an
+  endpoint uses (or a `hub.json` one this developer's file still tightens) is refused; nothing is committed.
+- **AC-416.4** Given a repo service, when `add_endpoint` or `remove_endpoint` is posted, then the endpoint is added
+  (the service too, when new) or removed (the whole service when no environment is named); an endpoint with both or
+  neither of a URL and a resource, or a URL with user info, is refused and the file is unchanged.
+- **AC-416.5** Given a service with an endpoint in an environment, when `add_endpoint` is posted with `replace`, then
+  that endpoint is replaced in the same write and the service keeps its `kind`.
+- **AC-416.6** Given a new service of a repo, when `add_service` is posted with a `kind`, a `description` and one
+  address per environment, then each address goes to its environment's file (a URL when it holds `://`, else a
+  resource), the kind and description go with the service's first declaration (`hub.json`'s when a team environment
+  gets an address), and when any address is refused or makes either file invalid, neither file is written.
+- **AC-416.7** Given a `hub.json` environment, when `rename_environment` is posted with scope `team`, then it is
+  renamed in its place, every endpoint `hub.json` keys by it follows, and this developer's `hub.local.json`
+  tightening or endpoints under the old name are renamed in the same write; other developers' `hub.local.json` are
+  not touched. A local rename renames the developer's own environment and its endpoints. A new name another
+  environment of either file holds (ignoring case; a change of case renames) is refused, and so is a local rename of
+  a `hub.json` name.
+- **AC-416.8** Given a service, when `set_service` is posted, then its `kind` and `description` change (an empty text
+  removes the key) and a `new_name` renames it in its place in its repo; a team rename also renames this developer's
+  endpoints for it in `hub.local.json`. A name the repo already has is refused, and so is a local change to a
+  `hub.json` service.
+- **AC-416.9** Given a `batch` of edits, when it is posted, then the edits are made in order on both files in memory
+  and written together; when one is refused (named `op N: ...`) or the result is invalid, neither file is written.
+- **AC-416.10** Given a request from another origin or without an `Origin`, when it posts an environment edit, then
+  it is refused as every hub registry write is; with this server's `Origin` the composed app answers the new Hub
+  config view.
+
+**Acceptance criteria (AGH-417)** (the screens: [control-plane/specs/23-environments.md](control-plane/specs/23-environments.md))
+
+- **AC-417.12** Given an env file path, when `GET /projects/{project}/env-file-keys?path=` is read, then it answers
+  the file's variable names only, never a value, whether it exists, which of the hub and its repos holds it and
+  whether git ignores it there; a file outside the hub and its repos, reached through a link, not regular or over
+  64 KiB gives its reason and no names; a path with `..`, a leading `/` or `~`, or a space is refused (400).
+
+### Discoveries
+
+`hub web` can find services with Claude ([ADR 0046](../adr/0046-read-only-discovery-sessions.md)): the person picks
+repos and declared environments (and whether Claude may suggest new ones); the server starts a read-only session
+(`Read`, `Grep`, `Glob` only) in the hub with the repos attached, and Claude ends its reply with one JSON proposal of
+environments, services and their addresses, each with evidence. The server checks every item with this file's
+shapes (an invalid one is listed as dropped, with the reason), sets `access` and `production` from the preset Claude
+names, and marks each item `new`, `differs` or `declared` against the effective config. Nothing is written until the
+person applies the rows they pick through the batch edit. Routes: `/api/v1/projects/{project}/environment-discoveries`
+(POST, GET) and `/{discovery_id}` (GET, DELETE); one file per discovery under `<hub>/.agent-runs/env-discoveries/`.
+
+A discovery's state follows its session: `running` while a turn works or a request is open, `finished` once the last
+reply holds a proposal, `stopped` when the person interrupted the turn or closed the session before one, else `failed`
+with the reason in plain words. The session's `tool_access` (`all` or `read_only`) is stored with it (migration 0009)
+so a session reopened by a later message stays read-only; `POST /agent-sessions` never sets it (AC-418.1 and
+AC-418.2 in [agent-sessions.md](agent-sessions.md#read-only-sessions-agh-418)).
+
+**Acceptance criteria (AGH-418)** (the screens: [control-plane/specs/23-environments.md](control-plane/specs/23-environments.md))
+
+- **AC-418.3** Given picked repos and declared environments, when `POST /projects/{project}/environment-discoveries`
+  is posted, then a `read_only` session starts in the hub with the server's prompt (the repos, the environments, where
+  to look, never open a `.env` file, never print a secret) and the picked repos attached, and the discovery is
+  recorded as one file under `<hub>/.agent-runs/env-discoveries/`; a repo `hub.json` does not hold, or an environment
+  not declared, is refused (422, naming each one) before anything starts, and so is an empty repo list.
+- **AC-418.4** Given a finished session, when its discovery is read, then the last fenced JSON block of its final reply
+  (at most 512 KiB, parsed strictly) is the proposal; each item is checked with `hub.json`'s shapes, an invalid item
+  or field is listed as dropped with its reason (a secret-shaped value never echoed), `access` and `production` come
+  from the preset Claude names, evidence must name a file inside a picked repo, and each item is `new`, `differs` or
+  `declared` against the effective config of now.
+- **AC-418.5** Given a discovery, when it is read, then it is `running` while its session works, `finished` with a
+  proposal, `stopped` when the person interrupted or closed it before a proposal, and `failed` with the reason when
+  the reply holds no proposal, the session failed or was removed, or `hub web` stopped first.
+- **AC-418.6** Given discoveries, when they are listed, then the project's own not discarded ones come newest first,
+  at most 50; `DELETE` marks one discarded and ends its session; an unknown or discarded id answers 404 and an id
+  that is not 12 hex digits is refused.
+- **AC-418.7** Given the discovery routes, when they are called, then they follow the agent-session rules: the
+  session cookie, this server's `Origin` for the writes, off in the container; nothing in `hub.json` changes until
+  the person applies rows through `POST /projects/{project}/config/environments`.
+
 ### Known limits
 
 Blocked words are a best-effort text tripwire, not a security boundary: the boundary is which credentials the
@@ -163,6 +266,8 @@ and the input tools: MCP tools (`mcp__*`), WebSearch, Task, Agent and SendMessag
 - [ADR 0038](../adr/0038-declared-environments-and-blocked-words.md): environments in `hub.json` and
   `hub.local.json`, blocked words enforced, `access` advisory, `hub env` and setup as writers, local environments in
   the brief rather than a rendered `CLAUDE.local.md`.
+- [ADR 0040](../adr/0040-hub-web-keeps-local-settings-writes-hub-files-and-runs-checks.md): hub web makes the writes
+  `hub env` would make, in `hub.json` or `hub.local.json`, left uncommitted for the owner's hub PR (AGH-416).
 - Variables by a fixed list of names, not every value (`PATH`, `HOME` hold names); `$HUB_CONFIG` is hooks-only.
 
 ## Open questions

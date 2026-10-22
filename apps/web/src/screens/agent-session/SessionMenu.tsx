@@ -1,8 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 
-import { IconButton, MenuItem, Popover } from "../../components";
+import { IconButton, MenuItem, Popover, type IconName } from "../../components";
+
+/** A place the menu goes to; `narrowOnly` shows it only where the header has no room for it. */
+export interface SessionMenuLink {
+  icon: IconName;
+  label: string;
+  href: string;
+  narrowOnly?: boolean | undefined;
+}
 
 export interface SessionMenuProps {
+  links?: readonly SessionMenuLink[] | undefined;
+  /** The ended background tasks, when none runs (the header shows only running ones). */
+  onBackground?: { label: string; run: () => void } | undefined;
   onFork?: (() => void) | undefined;
   onClose?: (() => void) | undefined;
   onDelete?: (() => void) | undefined;
@@ -13,7 +24,14 @@ export interface SessionMenuProps {
  * The session's lifecycle actions (close, fork, delete), behind one "⋯" button
  * at the end of the header, so the header's visible actions are reviewing what Claude changed and its events.
  */
-export function SessionMenu({ onFork, onClose, onDelete, busy }: SessionMenuProps) {
+export function SessionMenu({
+  links = [],
+  onBackground,
+  onFork,
+  onClose,
+  onDelete,
+  busy,
+}: SessionMenuProps) {
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLSpanElement>(null);
 
@@ -35,7 +53,9 @@ export function SessionMenu({ onFork, onClose, onDelete, busy }: SessionMenuProp
     };
   }, [open]);
 
-  if (!onFork && !onClose && !onDelete) return null;
+  const lifecycle = Boolean(onFork) || Boolean(onClose && !busy) || Boolean(onDelete && !busy);
+  const places = links.length > 0 || onBackground !== undefined;
+  if (!lifecycle && !places) return null;
   const run = (action: () => void) => () => {
     setOpen(false);
     action();
@@ -46,14 +66,29 @@ export function SessionMenu({ onFork, onClose, onDelete, busy }: SessionMenuProp
         icon="ellipsis"
         label="Session actions"
         size="sm"
-        variant="default"
         aria-haspopup="true"
         aria-expanded={open}
         onClick={() => {
           setOpen(!open);
         }}
       />
-      <Popover open={open} label="Session actions" style={{ top: 34, right: 0, minWidth: 220 }}>
+      <Popover open={open} label="Session actions" style={{ top: 30, right: 0, minWidth: 240 }}>
+        {links.map((link) => (
+          <MenuItem
+            key={link.href}
+            icon={link.icon}
+            href={link.href}
+            className={link.narrowOnly ? "as-narrow-only" : undefined}
+          >
+            {link.label}
+          </MenuItem>
+        ))}
+        {onBackground && (
+          <MenuItem icon="layers" onClick={run(onBackground.run)}>
+            {onBackground.label}
+          </MenuItem>
+        )}
+        {places && lifecycle && <div className="ah-menu-sep" role="separator" />}
         {onFork && (
           <MenuItem icon="git-branch" onClick={run(onFork)}>
             Fork…

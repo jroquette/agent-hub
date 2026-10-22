@@ -20,7 +20,7 @@
  */
 import "./Markdown.css";
 
-import { Fragment, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
+import { Fragment, type MouseEvent, type ReactNode } from "react";
 
 import {
   isRelativeHref,
@@ -31,6 +31,7 @@ import {
 } from "../lib/brainLinks";
 import { cx } from "../lib/cx";
 import { CopyButton } from "./core";
+import { highlightable, useHighlight } from "./useHighlight";
 
 /** The largest note formatted; a larger one shows as plain text (the API's 256 KiB note bound). */
 export const MAX_MARKDOWN_BYTES = 256 * 1024;
@@ -43,9 +44,6 @@ const MAX_INLINE_DEPTH = 8;
 const LINK_WINDOW = 2000;
 /** A longer line is not a heading (core's `MAX_HEADING_CHARS`, so the TOC matches the body). */
 export const MAX_HEADING_CHARS = 1024;
-/** A longer code block is shown plain, never highlighted (ADR 0034). */
-export const MAX_HIGHLIGHT_LINES = 2000;
-export const MAX_HIGHLIGHT_BYTES = 64 * 1024;
 
 type Align = "left" | "center" | "right" | null;
 type Block =
@@ -650,46 +648,9 @@ function itemId(block: Extract<Block, { t: "list" }>, top: boolean, ctx: Ctx): s
   return stepAnchor(ctx.steps);
 }
 
-type Highlighter = typeof import("./highlight");
-let highlighter: Highlighter | null = null;
-let loading: Promise<Highlighter | null> | null = null;
-
-/** The lazy chunk, loaded once; a failed load leaves every block plain until the page reloads. */
-function loadHighlighter(): Promise<Highlighter | null> {
-  loading ??= import("./highlight").then(
-    (loaded) => (highlighter = loaded),
-    () => null,
-  );
-  return loading;
-}
-
-/** Within the bounds a block is highlighted at (lines, then UTF-8 bytes). */
-function highlightable(text: string): boolean {
-  if (text.length > MAX_HIGHLIGHT_BYTES) return false;
-  let lines = 1;
-  for (let at = text.indexOf("\n"); at !== -1; at = text.indexOf("\n", at + 1)) {
-    if (++lines > MAX_HIGHLIGHT_LINES) return false;
-  }
-  return new TextEncoder().encode(text).length <= MAX_HIGHLIGHT_BYTES;
-}
-
 /** A code block's text: highlighted when `highlight` holds and the chunk has loaded, else plain. */
 function CodeText({ lang, text, highlight }: { lang: string; text: string; highlight: boolean }) {
-  const [module, setModule] = useState(highlighter);
-  useEffect(() => {
-    if (!highlight || module) return;
-    let live = true;
-    void loadHighlighter().then((loaded) => {
-      if (live && loaded) setModule(loaded);
-    });
-    return () => {
-      live = false;
-    };
-  }, [highlight, module]);
-  const nodes = useMemo(
-    () => (highlight && module ? module.highlight(text, lang) : null),
-    [highlight, module, text, lang],
-  );
+  const nodes = useHighlight(text, lang, highlight);
   return (
     <code data-lang={lang || undefined} className={nodes ? "hljs" : undefined}>
       {nodes ?? text}

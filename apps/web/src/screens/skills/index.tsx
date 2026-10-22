@@ -6,7 +6,7 @@ import "./SkillDetail.css";
 import { useState } from "react";
 import { Navigate, useNavigate, useParams } from "react-router";
 
-import { AppLink, Button, EmptyState, Icon, ProblemError, Skeleton } from "../../components";
+import { Button, EmptyState, Icon, ProblemError, Skeleton } from "../../components";
 import type { MarkdownProps } from "../../components";
 import type { components } from "../../api/schema";
 import { useNow } from "../../lib/clock";
@@ -14,7 +14,7 @@ import { useScope } from "../../lib/scope";
 import { bundledFileAnchor, resolveSkillLink } from "../../lib/skillLinks";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
-import { CountCell, KnowledgeProjectIndex } from "../knowledge-index";
+import { CountCell, KnowledgeProjectIndex, PickFoot } from "../knowledge-index";
 import { HistoryPanel } from "../item-history";
 import { NotFoundBody } from "../not-found";
 import { useWorkflows } from "../workflows/queries";
@@ -301,6 +301,7 @@ function useCatalogCounts(project: string) {
   return {
     pending: catalog.isPending,
     error: catalog.isError ? `Could not read this catalog: ${catalog.error.title}` : null,
+    retry: () => void catalog.refetch(),
     incomplete: catalog.data?.truncated
       ? "The catalog is incomplete: the hub is over its bounds."
       : null,
@@ -323,27 +324,27 @@ function UsedCount({ project }: { project: string }) {
   return <CountCell {...counts} value={counts.used} />;
 }
 
-function ProblemsCell({ project }: { project: string }) {
+function ProblemsFoot({ project }: { project: string }) {
   const counts = useCatalogCounts(project);
-  if (counts.pending || counts.error !== null || counts.withProblems === 0) {
+  if (counts.pending) return null;
+  if (counts.error !== null) {
     return (
-      <CountCell {...counts} incomplete={null} value={<span className="ah-muted">None</span>} />
+      <PickFoot tone="error" onRetry={counts.retry}>
+        {counts.error}.
+      </PickFoot>
     );
   }
   const n = counts.withProblems;
+  if (n === 0) return <PickFoot tone="quiet">No problems found</PickFoot>;
+  const items = n === 1 ? "item" : "items";
   return (
-    <AppLink
+    <PickFoot
+      tone="attention"
       href={`${skillsHome(project)}?diag=1`}
-      className="ah-row"
-      style={{ gap: 4 }}
-      aria-label={`${String(n)} ${n === 1 ? "item" : "items"} with problems in ${project}`}
-      onClick={(event) => {
-        event.stopPropagation();
-      }}
+      label={`${String(n)} ${items} with problems in ${project}`}
     >
-      <Icon name="circle-alert" size="sm" />
-      <span>{n} with problems</span>
-    </AppLink>
+      {n} {items} with problems
+    </PickFoot>
   );
 }
 
@@ -357,55 +358,35 @@ export function SkillsPickerScreen() {
   return (
     <KnowledgeProjectIndex
       title="Toolkit"
-      intro="What each project's agents can do: the skills, agents and hooks its hub installs. Open a project to browse them."
-      caption="Projects and their skills, agents and hooks"
+      intro="What each project's agents can do: the agents, skills and hooks its hub installs. Open a project to browse them."
+      caption="Projects and their agents, skills and hooks"
       emptyLine="Register a hub to see its toolkit."
-      tip="Tip: pick a project in the scope switcher to open its toolkit directly."
+      tip="To come straight here, choose a project in the top bar."
       href={skillsHome}
-      columns={[
-        {
-          id: "hub_repo",
-          label: "Hub repo",
-          render: (project) => (
-            <span className="ah-mono ah-small ah-muted">{project.hub_repo}</span>
-          ),
-        },
+      figures={[
         {
           id: "agents",
           label: "Agents",
-          align: "right",
-          width: 90,
           render: (project) => <KindCount project={project.name} kind="agent" />,
         },
         {
           id: "skills",
           label: "Skills",
-          align: "right",
-          width: 90,
           render: (project) => <KindCount project={project.name} kind="skill" />,
         },
         {
           id: "hooks",
           label: "Hooks",
-          align: "right",
-          width: 90,
           render: (project) => <KindCount project={project.name} kind="hook" />,
         },
         {
           id: "used",
-          label: `Used in ${String(USAGE_DAYS)} days`,
-          hint: "Skills and agents used at least once in this window. Hooks are not counted.",
-          align: "right",
-          width: 150,
+          label: `Used · ${String(USAGE_DAYS)} d`,
+          hint: `Skills and agents used at least once in the last ${String(USAGE_DAYS)} days. Hooks are not counted.`,
           render: (project) => <UsedCount project={project.name} />,
         },
-        {
-          id: "diagnostics",
-          label: "Diagnostics",
-          width: 180,
-          render: (project) => <ProblemsCell project={project.name} />,
-        },
       ]}
+      foot={(project) => <ProblemsFoot project={project.name} />}
     />
   );
 }
