@@ -6,7 +6,8 @@ exists is ``skipped``, "No screen change recorded"), Research and Plan (their re
 written; one left out while a later record exists is ``skipped``; Plan's meta is the plan's
 version, and its signal says the next version waits for the owner while a plan change request is
 open, AC-2.8), Tickets (every planned ticket has a tracker id), Build (every ticket merged: Done in
-Linear; its meta counts the tickets an open change request pauses), Acceptance (the latest
+Linear or its outcome recorded, D-5; its meta counts the tickets an open change request pauses),
+Acceptance (the latest
 whole-feature eval is SHIP, or SHIP-WITH-OWNER-STEPS whose owner steps the owner signed off;
 ticket evals never make it done) and Shipped (Build and Acceptance done). Canceled tickets and
 withdrawn ACs are left out of every count; an epic (a ticket with children) counts only under
@@ -18,7 +19,7 @@ and the ``phase``. No step after the gate is ``done``: one whose own condition h
 ``blocked`` naming the gate, one with recorded evidence for part of the feature (created or
 merged tickets, ticket evals covering some ACs, a design written) is ``partial``, one that cannot
 be read is ``unknown``, the rest ``pending``. Without Linear (the plan fallback), ticket states
-are unknown: Build and Shipped are ``unknown``, never done.
+are unknown: Build and Shipped are ``unknown``, done only when every ticket's outcome is recorded.
 """
 
 from collections.abc import Callable
@@ -98,8 +99,9 @@ class GoldenInputs:
     ``source`` is ``linear``, None in the plan fallback); ``acs`` the record's ACs;
     ``ux_designs`` whether each ``ux-*.md`` is approved, and ``ux_problem`` why they could not
     all be read; ``plan`` the plan's version (None without ``plan.md``); ``requests`` the plan
-    change requests. ``not_loaded`` says the plan fallback is a cold cache with a key present
-    (E5), not a missing connection.
+    change requests; ``merged`` the names (upper case) of the ticket folders whose outcome is
+    recorded (a ticket merged whatever Linear says, D-5). ``not_loaded`` says the plan fallback is
+    a cold cache with a key present (E5), not a missing connection.
     """
 
     files: tuple[str, ...]
@@ -110,8 +112,15 @@ class GoldenInputs:
     ux_problem: str | None = None
     plan: PlanView | None = None
     requests: ChangeRequests = NO_REQUESTS
+    merged: frozenset[str] = frozenset()
     source: TicketsSource
     not_loaded: bool = False
+
+    def is_merged(self, row: TicketRow) -> bool:
+        """Whether ``row`` is merged: Done in Linear, or its outcome recorded (D-5)."""
+        if row.state is not None and row.state.type == "completed":
+            return True
+        return any(name and name.upper() in self.merged for name in (row.key, row.id))
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -213,7 +222,7 @@ def _owns(inputs: GoldenInputs) -> dict[FeaturePhase, _Own]:
         planned=planned,
         active=active,
         acs=tuple(ac for ac in inputs.acs if not ac.withdrawn),
-        done=sum(row.state is not None and row.state.type == "completed" for row in active),
+        done=sum(inputs.is_merged(row) for row in active),
     )
     judges: tuple[tuple[FeaturePhase, Callable[[_Facts], _Own]], ...] = (
         ("spec", _spec),
@@ -313,16 +322,20 @@ def _tickets(facts: _Facts) -> _Own:
 
 
 def _build(facts: _Facts) -> _Own:
-    """Build is every ticket merged (Done in Linear); its meta also counts those in progress.
-    With no ticket to build (Tickets done by ``issues.md`` alone, or only epics) it is never
-    done: "No tickets planned"."""
+    """Build is every ticket merged (Done in Linear, or its outcome recorded); its meta also
+    counts those in progress. With no ticket to build (Tickets done by ``issues.md`` alone, or
+    only epics) it is never done: "No tickets planned". Without Linear it is unknown unless every
+    ticket's outcome is recorded."""
     total = len(facts.active)
     if total == 0:
         return _Own(holds=False, meta="No tickets planned", reason="no tickets planned")
-    if not facts.linear:
+    if not facts.linear and facts.done < total:
         meta, reason = facts.unread
         return _Own(holds=None, meta=meta, reason=reason)
-    working = sum(row.state is not None and row.state.type == "started" for row in facts.active)
+    working = sum(
+        row.state is not None and row.state.type == "started" and not facts.inputs.is_merged(row)
+        for row in facts.active
+    )
     meta = f"{facts.done} of {total} merged"
     if working:
         meta += f" · {working} in progress"
@@ -340,7 +353,7 @@ def _paused(facts: _Facts) -> str:
     """ " · n paused for a plan change": the tickets not merged an open change request pauses."""
     paused = facts.inputs.requests.paused
     count = sum(
-        not (row.state is not None and row.state.type == "completed")
+        not facts.inputs.is_merged(row)
         and any(name and name.upper() in paused for name in (row.key, row.id))
         for row in facts.active
     )
