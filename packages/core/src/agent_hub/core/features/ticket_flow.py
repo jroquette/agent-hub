@@ -216,7 +216,7 @@ def _delivered(
 ) -> dict[TicketStepName, _Found]:
     """Implement (a review round), Review, Eval, PR and Merged from the feature's records; Merged
     is done by a recorded outcome or by Linear (``merged``); an outcome that cannot be read is
-    then its meta, and makes it unknown only while Linear has the ticket open (``_merged``)."""
+    then its meta, and makes it unknown unless Linear has the ticket completed (``_merged``)."""
     reviews = [r for r in evidence.reviews if r.problem is None and r.ticket.upper() in names]
     evals = tuple(
         dict.fromkeys(record for name in sorted(names) for record in evidence.evals.get(name, ()))
