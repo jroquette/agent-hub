@@ -583,6 +583,27 @@
       "ownership": "managed",
       "sha256": "fdac169d0ebd59302540f442f0592e39239ede6ca87fc367184c16806f9eff21"
     },
+    "workflows/backlog-care/backlog-care.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/fixtures/backlog-approve-and-skip.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/fixtures/backlog-mixed.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/fixtures/backlog-over-limit.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/fixtures/backlog-paused.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/fixtures/backlog-read-failed.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/prompts/draft.md": {
+      "ownership": "seeded"
+    },
     "workflows/backlog-care/scripts/drafts.py": {
       "ownership": "seeded"
     },
