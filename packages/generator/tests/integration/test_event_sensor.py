@@ -7,11 +7,14 @@ and always exits 0, within about the 0.5 s bound of its send.
 """
 
 import json
+import socket
 import subprocess
 import time
 from collections.abc import Callable, Mapping
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -228,6 +231,23 @@ def test_exits_silently_when_server_down(
 
     assert_silent(completed)
     assert elapsed < RUN_BOUND
+
+
+# AGH-452: the down URL every child gets (``child_env``, ``server_down_env``) is a port held for
+# the whole test process, never listening. An event server, here or on another xdist worker,
+# cannot be bound to it, so a child pointed at it never adds a post to another test's server.
+def test_refuses_event_server_when_bound_to_down_port(server_down_env: dict[str, str]) -> None:
+    port = urlsplit(server_down_env[URL_VARIABLE]).port
+
+    with pytest.raises(OSError):
+        ThreadingHTTPServer(("127.0.0.1", port), BaseHTTPRequestHandler)
+
+
+def test_refuses_connection_when_url_is_down_port(server_down_env: dict[str, str]) -> None:
+    port = urlsplit(server_down_env[URL_VARIABLE]).port
+
+    with pytest.raises(ConnectionRefusedError):
+        socket.create_connection(("127.0.0.1", port), timeout=1).close()
 
 
 @pytest.mark.serial

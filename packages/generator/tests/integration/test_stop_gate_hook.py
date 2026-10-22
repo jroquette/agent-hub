@@ -14,7 +14,6 @@ import os
 import shlex
 import shutil
 import signal
-import socket
 import subprocess
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -26,6 +25,7 @@ import pytest
 
 from agent_hub.core.hub_config.model import MAX_CHECK_FAST_TIMEOUT, HubConfig
 from agent_hub.core.ingestion.hook_envelope import HookEnvelope
+from agent_hub.core.testing.loopback import closed_url
 
 HOOK = "plugin/hub-workflow/hooks/stop_gate.py"
 TIMEOUT = 60
@@ -76,14 +76,6 @@ def workspace(
     return hub.parent
 
 
-def closed_port() -> int:
-    """A loopback port nothing listens on (bound, then released)."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.bind(("127.0.0.1", 0))
-        port: int = probe.getsockname()[1]
-        return port
-
-
 def scratch_env(tmp_path: Path) -> dict[str, str]:
     """``PATH`` from this process; ``HOME`` and ``TMPDIR`` under ``tmp_path``; the event server's
     URL a loopback port nothing listens on (a block is never sent to a running ``hub web``)."""
@@ -94,7 +86,7 @@ def scratch_env(tmp_path: Path) -> dict[str, str]:
         "PATH": os.environ.get("PATH", os.defpath),
         "HOME": str(home),
         "TMPDIR": str(temp),
-        "AGENT_HUB_WEB_URL": f"http://127.0.0.1:{closed_port()}",
+        "AGENT_HUB_WEB_URL": closed_url(),
     }
 
 
