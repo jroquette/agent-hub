@@ -29,11 +29,16 @@ target is kept once, the first ``MAX_LINKS_PER_DOCUMENT`` in reading order.
 """
 
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from typing import Final
 from urllib.parse import unquote
 
-from agent_hub.core.brain.brain_path import BRAIN_FOLDER, BrainPathError, brain_relative
+from agent_hub.core.brain.brain_path import (
+    BRAIN_FOLDER,
+    MAX_SEGMENTS,
+    BrainPathError,
+    brain_relative,
+)
 from agent_hub.core.doctor.config_lint import text_lines, unfenced_lines
 
 # At most this many targets are kept per document (D-links), the first in reading order.
@@ -102,18 +107,20 @@ def document_links(path: str, text: str, *, hub_folder: str) -> tuple[str, ...]:
     return tuple(targets)
 
 
-def _brain_target(folder: list[str], relative: str, hub_folder: str) -> str | None:
+def _brain_target(folder: Sequence[str], relative: str, hub_folder: str) -> str | None:
     """Where ``relative`` leads from ``folder`` (workspace segments), as ``brain/<rest>`` when it
     is a note of the hub's brain the note route serves; ``None`` otherwise, or when it climbs
-    out of the workspace."""
-    segments = list(folder)
-    for segment in relative.split("/"):
-        if segment == _UP:
-            if not segments:
-                return None
-            segments.pop()
-        elif segment not in _HERE:
-            segments.append(segment)
+    out of the workspace.
+
+    The climb is counted first, so a target that leaves the workspace or is deeper than the note
+    route serves (``<hub folder>/brain/`` plus ``MAX_SEGMENTS``) is refused before any of the
+    folder is copied: a deep document costs its links' length, not their number times its depth.
+    """
+    up, below = climbs_and_segments(relative)
+    kept = len(folder) - up
+    if kept < 0 or kept + len(below) > MAX_SEGMENTS + 2:
+        return None
+    segments = [*folder[:kept], *below]
     if segments[:2] != [hub_folder, BRAIN_FOLDER]:
         return None
     rest = "/".join(segments[2:])
@@ -122,6 +129,22 @@ def _brain_target(folder: list[str], relative: str, hub_folder: str) -> str | No
     except BrainPathError:
         return None
     return f"{BRAIN_FOLDER}/{rest}"
+
+
+def climbs_and_segments(path: str) -> tuple[int, list[str]]:
+    """How many folders a relative ``path`` climbs above its start, then its segments from
+    there (``.`` and empty segments dropped)."""
+    up = 0
+    rest: list[str] = []
+    for segment in path.split("/"):
+        if segment == _UP:
+            if rest:
+                rest.pop()
+            else:
+                up += 1
+        elif segment not in _HERE:
+            rest.append(segment)
+    return up, rest
 
 
 def link_path(destination: str) -> str | None:

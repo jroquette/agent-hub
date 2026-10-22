@@ -21,12 +21,15 @@ from agent_hub.core.knowledge.document_rules import (
 from agent_hub.core.knowledge.knowledge_index import (
     INDEX_VERSION,
     KINDS,
+    MAX_BACKLINKS,
     Fingerprint,
     IndexedDocument,
     Kind,
     SkippedFile,
 )
 from agent_hub.core.knowledge.search_query import MAX_RESULTS, MAX_SNIPPET_CHARS
+from agent_hub.core.knowledge.sync_knowledge import sync_knowledge
+from agent_hub.core.testing.knowledge_fakes import FakeKnowledgeCheckout, InMemoryKnowledgeIndex
 
 
 def test_states_bounds_when_constants_read() -> None:
@@ -262,6 +265,22 @@ def test_keeps_no_links_when_file_skipped() -> None:
         SkippedFile(path="brain/_inbox/leak.md", fingerprint=_fingerprint(leak), reason=RULE_MATCH),
         SkippedFile(path="brain/_inbox/big.md", fingerprint=_fingerprint(big), reason=TOO_LARGE),
     ]
+    # Where links could leak: files that linked before are skipped by the next sync.
+    hub, paths = "/w/demo-hub", ("brain/_inbox/big.md", "brain/_inbox/leak.md")
+    index, checkout = InMemoryKnowledgeIndex(), FakeKnowledgeCheckout()
+    for path in paths:
+        checkout.write(path, link)
+    sync_knowledge(index, checkout, hub)
+    linked = [item.path for item in index.backlinks(hub, "brain/now.md", limit=MAX_BACKLINKS).items]
+    checkout.write("brain/_inbox/leak.md", leak)
+    checkout.write("brain/_inbox/big.md", big)
+
+    report = sync_knowledge(index, checkout, hub)
+
+    assert linked == list(paths)
+    assert [file.reason for file in report.skipped] == [TOO_LARGE, RULE_MATCH]
+    backlinks = index.backlinks(hub, "brain/now.md", limit=MAX_BACKLINKS)
+    assert (backlinks.items, backlinks.total) == ((), 0)
 
 
 def test_reads_title_in_linear_time_when_heading_holds_long_space_run() -> None:

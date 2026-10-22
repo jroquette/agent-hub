@@ -35,11 +35,13 @@ from agent_hub.core.doctor.finding import Finding, Read, Rule
 from agent_hub.core.doctor.snapshot import DoctorSnapshot, HubFiles, hub_paths
 from agent_hub.core.hub_config.doctor_rules import LINKS_DEAD_RULE, RULE_MODULES, Severity
 from agent_hub.core.hub_config.versions import cut_echo
-from agent_hub.core.knowledge.document_links import link_destinations, link_path
+from agent_hub.core.knowledge.document_links import (
+    climbs_and_segments,
+    link_destinations,
+    link_path,
+)
 
 DEAD_FIX: Final = "point the link at an existing file or folder, or remove it"
-_HERE: Final = frozenset({"", "."})
-_UP: Final = ".."
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -119,7 +121,7 @@ def _is_dead(target: str, *, folder: Sequence[PathTrie | None], tree: _Tree) -> 
     """Whether the target, from the file's folder, is no path or folder of the tree or of the
     checkout it climbs into; a target that leaves the workspace, or a repo, is never dead.
     """
-    up, rest = _climbs_and_segments(target)
+    up, rest = climbs_and_segments(target)
     depth = len(folder) - 1
     if up <= depth:
         node = folder[depth - up]
@@ -128,21 +130,6 @@ def _is_dead(target: str, *, folder: Sequence[PathTrie | None], tree: _Tree) -> 
         return False
     checkout = tree.checkouts.get(rest[0])
     return checkout is not None and not checkout.holds(rest[1:])
-
-
-def _climbs_and_segments(target: str) -> tuple[int, list[str]]:
-    """How many folders the target climbs above its start, then its segments from there."""
-    up = 0
-    rest: list[str] = []
-    for segment in target.split("/"):
-        if segment == _UP:
-            if rest:
-                rest.pop()
-            else:
-                up += 1
-        elif segment not in _HERE:
-            rest.append(segment)
-    return up, rest
 
 
 LINKS_DEAD: Final = Rule(
