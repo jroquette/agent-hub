@@ -220,6 +220,8 @@ DESIGN_PATHS = (
     "workflows/upgrade/fixtures/upgrade-major-breaking.yaml",
     "workflows/upgrade/fixtures/upgrade-patch-green.yaml",
     "workflows/upgrade/fixtures/upgrade-split.yaml",
+    "workflows/upgrade/prompts/adapt.md",
+    "workflows/upgrade/prompts/changelog.md",
     "workflows/upgrade/scripts/bump.py",
     "workflows/upgrade/scripts/check.py",
     "workflows/upgrade/scripts/fast_gate.py",
