@@ -247,12 +247,15 @@ A workflow is data: a YAML (or JSON) file in the hub's `workflows/<pack>/` folde
 `script`, `loop`, `loop_group`, `include`, `approval`, `wait`, `halt`) depend on each other and run in layers
 ([format](docs/design/workflow-schema.md), [ADR 0032](docs/adr/0032-workflow-engine.md)). `hub init` and `hub sync`
 seed the built-in packs once: `issue-to-pr` (what `hub run` runs) and `sdlc` (`deliver`: implement, validate and
-review in a loop until green, then the PR; `review`: a spec lens and a quality lens side by side, then one verdict). A hub's own file
-overrides a built-in of the same name.
+review in a loop until green, then the PR; `review`: a spec lens and a quality lens side by side, then one verdict) and
+`spike` (`spike`: recall, research, 2 or 3 options, the owner's pick, a premortem of the pick, then
+`brain/features/<slug>/research.md` and an ADR draft for `/adr`, within a timebox of 2h of agent time by default; it
+changes no code). A hub's own file overrides a built-in of the same name.
 
 ```bash
 ./hub workflow list                          # the workflows that load; problems as <file>:<line>: <key>: <message>
 ./hub workflow run deliver --input issue=DEM-7 --input repo=api --input issue_text="..."  # dry: what would run
+./hub workflow run spike --input question="..." --input slug=brief-cache --live  # a spike; answer its pick with respond
 ./hub workflow run deliver --input issue=DEM-7 --input repo=api --input issue_text="..." --live
 ./hub workflow run --resume <run>            # continue a failed or paused run; --abandon ends it
 ./hub workflow approve <run>                 # or reject / respond: decide a paused gate; the run resumes
