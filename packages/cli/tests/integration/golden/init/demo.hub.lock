@@ -346,7 +346,7 @@
     "plugin/hub-workflow/hooks/guard.py": {
       "executable": true,
       "ownership": "managed",
-      "sha256": "1364bb2313a8291caba04d32325243dd8ad5e4cdca6a1650c3b87fc80e94174b"
+      "sha256": "976c1983eeade1db4cb5fec7d4db43434fe7d30469db886d599ef774d71bf3c1"
     },
     "plugin/hub-workflow/hooks/hooks.json": {
       "executable": false,
@@ -516,7 +516,7 @@
     "plugin/hub-workflow/skills/release/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "2b1be8df90b267de9b010c25fa5cda48b7ee6c61834dc8a52402013a788a0b0b"
+      "sha256": "4347ca13b837f9e96de22b03460be8c7e7badf821c859dc8b1c9e24cc6aaa538"
     },
     "plugin/hub-workflow/skills/research/SKILL.md": {
       "executable": false,
@@ -536,7 +536,7 @@
     "plugin/hub-workflow/skills/summarize/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "1f09f3d48095ae554ea75c842e769b3ed102ea61cad6c74d47bc1689335e5a3c"
+      "sha256": "5ab7200a25ede66064ab455885b6d2a7a7041bf207509fee7a0d9878a26f3876"
     },
     "plugin/hub-workflow/skills/test-strength/SKILL.md": {
       "executable": false,

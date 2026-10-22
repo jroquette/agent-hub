@@ -103,6 +103,47 @@ describe("Transcript (screenshot-thumbnail)", () => {
   });
 });
 
+describe("Transcript (files, AC-419.10)", () => {
+  it("lists a message's files with name and size above its bubble", () => {
+    const state = [
+      {
+        type: "record",
+        record: aLogRecord("user.message", {
+          seq: 1,
+          body: {
+            text: "Read the spec.",
+            attachments: [
+              { kind: "file", media_type: "application/pdf", bytes: 2048, name: "spec.pdf" },
+            ],
+          },
+        }),
+      } satisfies StreamItem,
+    ].reduce(reduceTranscript, initialTranscript());
+    render(<Transcript state={state} />);
+
+    const list = screen.getByRole("list", { name: "Files sent with this message" });
+    expect(within(list).getByText("spec.pdf")).toHaveAttribute("title", "spec.pdf");
+    expect(within(list).getByText("2 KB")).toBeInTheDocument();
+  });
+
+  it("lists the files of a message while it sends", () => {
+    const state = [
+      {
+        type: "sending",
+        key: "send-1",
+        text: "Read the notes.",
+        files: [{ name: "notes.md", bytes: 300 }],
+      } satisfies StreamItem,
+    ].reduce(reduceTranscript, initialTranscript());
+    render(<Transcript state={state} />);
+
+    const list = screen.getByRole("list", { name: "Files sent with this message" });
+    expect(within(list).getByText("notes.md")).toBeInTheDocument();
+    expect(within(list).getByText("300 B")).toBeInTheDocument();
+    expect(screen.getByText("Sending…")).toBeInTheDocument();
+  });
+});
+
 describe("Transcript (pasted-images)", () => {
   const twoShots = (seq: number): StreamItem => ({
     type: "record",
@@ -229,8 +270,9 @@ describe("Transcript (transcript)", () => {
     const diff = screen.getByLabelText("Diff of src/app.py");
     expect(diff.tagName).toBe("PRE");
     expect(diff).toHaveTextContent("--- a/src/app.py");
-    expect(within(diff).getByText("-a = 1")).toHaveClass("as-diff-del");
-    expect(within(diff).getByText("+a = 2")).toHaveClass("as-diff-add");
+    // Each line whole, plain or coloured in the file's language (AC-424.4), tinted by its sign.
+    expect(diffRow(diff, "-a = 1")).toHaveClass("as-diff-del");
+    expect(diffRow(diff, "+a = 2")).toHaveClass("as-diff-add");
     expect(screen.getByText("edited")).toBeInTheDocument();
 
     await userEvent.click(head);
@@ -244,10 +286,10 @@ describe("Transcript (transcript)", () => {
     expect(todos).toHaveTextContent("Fix the test");
     expect(todos).toHaveTextContent("0 of 1 done");
     const meter = screen.getByRole("group", { name: "Cost and tokens (estimate)" });
-    expect(meter).toHaveTextContent("$0.0012");
-    expect(meter).toHaveTextContent("12 in");
-    expect(meter).toHaveTextContent("5 out");
-    expect(meter).toHaveTextContent("estimate");
+    expect(meter).toHaveTextContent("$0.00");
+    expect(meter).toHaveTextContent("estimated");
+    expect(meter.closest(".ah-tip-wrap")).toHaveTextContent("$0.0012 · Estimated from transcript");
+    expect(meter.closest(".ah-tip-wrap")).toHaveTextContent("12 in · 5 out");
   });
 
   it("labels replayed text as the stored, redacted copy", () => {
@@ -940,3 +982,10 @@ describe("Transcript (message-meta)", () => {
     expect(renders.markdown).toBe(0);
   });
 });
+
+/** The row of a diff whose whole text is `text` (its code may be split into syntax spans). */
+function diffRow(diff: HTMLElement, text: string): HTMLElement {
+  const row = Array.from(diff.children).find((child) => child.textContent.trim() === text);
+  if (!(row instanceof HTMLElement)) throw new Error(`no diff row ${text}`);
+  return row;
+}

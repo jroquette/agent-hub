@@ -917,6 +917,10 @@ export const ICONS = {
     ],
     ["path", { d: "M20.054 15.987H3.946" }],
   ],
+  "chevrons-up-down": [
+    ["path", { d: "m7 15 5 5 5-5" }],
+    ["path", { d: "m7 9 5-5 5 5" }],
+  ],
 } as const satisfies Record<string, IconNode>;
 
 /** A Lucide icon name the app bundles. */

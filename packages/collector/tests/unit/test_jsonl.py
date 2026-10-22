@@ -139,9 +139,15 @@ def _line_with_payload(payload_json: str) -> str:
     return json.dumps(fields)[:-1] + f', "payload": {payload_json}}}'
 
 
-def test_reports_error_when_line_nested_too_deeply() -> None:
-    depth = 200_000
-    line = _line_with_payload('{"a": ' + "[" * depth + "]" * depth + "}")
+# AGH-431 (AC-431.4): the parser's overflow is simulated, not built.
+def test_reports_error_when_line_nested_too_deeply(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The parser runs out of stack on deep nesting; how deep depends on the interpreter and the
+    # machine (Python 3.14 reads 200,000 levels), so the overflow itself is simulated.
+    def overflow(*_args: object, **_kwargs: object) -> object:
+        raise RecursionError
+
+    monkeypatch.setattr("agent_hub.collector.jsonl.json.loads", overflow)
+    line = _line_with_payload('{"a": [[]]}')
 
     batch = parse_events(line)
 

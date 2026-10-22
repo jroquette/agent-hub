@@ -1,8 +1,8 @@
 # Features
 
-**Phase:** P2 (read-only) · **Routes:** `/features`, `/features/{project}/{slug}` (params `doc=spec|plan|research|eval|issues` (as built: `tickets`, see Departures), `ac=AC-48.21`, `phase=`; as built also `eval=`, `tickets=table`, `ticket=<id>` and `step=<step>`, see Departures (AGH-326, AGH-330)) · **Answers:** "Where is each feature on the golden path, and is it really done?"
+**Phase:** P2 (read-only) · **Routes:** `/features`, `/features/new` (AGH-420, Screen 3), `/features/{project}/{slug}` (params `doc=spec|plan|research|eval|issues` (as built: `tickets`, see Departures), `ac=AC-48.21`, `phase=`; as built also `eval=`, `tickets=table`, `ticket=<id>` and `step=<step>`, see Departures (AGH-326, AGH-330)) · **Answers:** "Where is each feature on the golden path, and is it really done?"
 
-This section holds two screens: the **Features list** and **Feature detail**. A feature is a folder `brain/features/<slug>/` in the hub with `spec.md`, `research.md`, `plan.md`, `features.json`, `issues.md` and `eval.md`. The app only reads these files; editing a feature record stays a human act in a hub PR (principle 2).
+This section holds three screens: the **Features list**, **Feature detail** and **New feature** (AGH-420). A feature is a folder `brain/features/<slug>/` in the hub with `spec.md`, `research.md`, `plan.md`, `features.json`, `issues.md` and `eval.md`. The app only reads these files; editing a feature record stays a human act in a hub PR (principle 2).
 
 ## Departures (AGH-136, ticket planning)
 
@@ -14,7 +14,7 @@ README's "Sources not connected": Linear is read for a feature's tickets; GitHub
 - **Records.** A feature folder adds `evals/<delivery>.md` (one per evaluation, never overwritten; `eval.md` is read
   as the delivery `legacy`) and `reviews/<ticket>.md`. Tickets come from `features.json` (`tickets` and `linear`),
   not from `issues.md`, which only marks the plan as written.
-- **Tabs.** Spec, Research, Plan, Eval, Criteria and Tickets (`?doc=spec|research|plan|eval|acs|tickets`; the old
+- **Tabs.** Spec, Research, Plan, Eval, Criteria and Tickets (order replaced by AC-425.6; `?doc=spec|research|plan|eval|acs|tickets`; the old
   `?doc=issues` opens Tickets). Eval lists every delivery with its verdict, tickets, ACs, PRs and commit. Tickets
   loads `GET /features/{project}/{slug}/tickets` only while it is open.
 - **Tickets tab.** Columns Ticket, Title, Status (badge with text, never color alone), Assignee, Blocked by (links,
@@ -148,7 +148,7 @@ otherwise, this list wins. Each item is an acceptance criterion.
   or shipped.
 - **AC-268.16 Steps open tabs.** Given the golden path, when a step is chosen, then the tab holding its evidence opens
   (Evaluate opens Eval).
-- **AC-268.17 Header chips.** Given the feature's tickets, then each header chip shows the id with its Linear status
+- **AC-268.17 Header chips** (superseded by AC-425.5). Given the feature's tickets, then each header chip shows the id with its Linear status
   and the title on hover; the "PR —" placeholder is gone while GitHub is not connected.
 - **AC-268.18 Sessions by issue.** Given `GET /sessions?issue=<id>` (any case), then it lists the sessions about that
   issue: the one their first prompt names (`/feature <id>`, a ticket's Start), else their branch or worktree, for
@@ -361,7 +361,7 @@ spec amendment A15. Where the sections above say otherwise, this list wins.
 - **Openers.** The card title, and a table row's title, are links to `?doc=tickets&ticket=<id>` (this reverses
   AGH-326's "Card title": the title opens the panel; the epic's title stays plain text); a table row (the body is one tab stop: `j` / `k` and `↓` / `↑`
   move between tickets, epics skipped; `Enter`, `o` or a click opens it; links and buttons in the row keep their own
-  action); a header chip, which now opens the Tickets tab with that ticket's panel (tooltip "<id> · <title> · show its
+  action); a header chip (removed by AC-425.5), which opened the Tickets tab with that ticket's panel (tooltip "<id> · <title> · show its
   steps"; the Linear link moved into the panel, so AC-268.17's link is gone). The waiting banner opens it in S2 (A8).
 - **Tab.** The panel belongs to the Tickets tab: another tab closes it and drops `ticket=` and `step=`.
 
@@ -507,6 +507,65 @@ say otherwise, this list wins.
   Acceptance step is `waiting` too ("Waiting for you"), with no decision button.
 - **Panel Implement.** Each discovery of the preflight runs: "Discovery <date-time>: <text>. Preflight ran again."
   (AC-2.13); the step's meta ("Ticket plan written") when no round exists yet.
+
+## Departures (AGH-422, the feature's own session)
+
+Design: [20-chat.md](20-chat.md) (the Discuss panel). Where the sections above say otherwise, this list wins.
+
+- **AC-422.1 The feature's session.** Given a feature whose spec (else research, else plan) a session `hub web`
+  drives wrote, when its page opens, then its header names that session ("Session" and the session's name, a ghost
+  button whose tooltip is "Talk with the session that wrote this feature's records: <name>") and a click opens the
+  Discuss panel on that session; the panel's row 2 reads "Feature session · <name>", and its menu offers "New
+  conversation" (the panel's own conversation for the record) and, from there, "Back to the feature session". The
+  first session found wins (the oldest writer of the spec); no writer, no chip, and the panel works as before.
+
+## Departures (AGH-425, feature detail and the Features list)
+
+Built after the owner validated these in the playground (part of AGH-415); where the sections above say otherwise,
+this list wins. Records and refusals: [feature-records.md](../../feature-records.md); route: [API.md](../../../API.md)
+"Feature detail".
+
+**Acceptance criteria tab**
+
+- **AC-425.1 Mark a criterion as passing.** Given a criterion that does not pass in `features.json` and that the
+  owner checked by hand, when its card offers "I checked it, mark as passing" and the owner confirms the short form
+  ("Note (optional)", Cancel sends nothing), then `POST .../owner-signoff` gets `{acs: [<id>], decision: "done",
+  note}`, the API writes an owner SHIP eval (`provenance: owner`) over that AC only, `features.json` and the other evals
+  are kept, and the AC reads "Signed off" (passing, "You checked it by hand and signed it off") in its row, the AC
+  bar and the counts, here and on the Features list; its card then says "You checked this by hand and signed it off;
+  it counts as passing." with no button. A criterion that already passes offers nothing. Being an owner SHIP, the
+  note also signs that AC off for the Acceptance step (it leaves the acceptance eval's `owner_wait`). A later agent
+  eval of the AC decides again.
+- **AC-425.2 Refusals stay.** Given a manual sign-off that main's sign-off rules refuse, then the API answers 409
+  with its one-line reason and writes nothing, and the card's form shows it ("Could not mark <id> as passing"): an
+  unknown or withdrawn AC, `acs` together with `delivery`, an AC whose latest eval is NO-SHIP ("fix or re-evaluate
+  first"; the owner's by-hand check does not override an agent's NO-SHIP), a note that would not rank newer than an
+  eval naming the AC (undated, or dated at or after now), and evals left unread. An empty `acs` is 422.
+
+**Record tabs**
+
+- **AC-425.3 Questions in plain words.** Given a record whose human summary is current and whose Open questions
+  section names every question of the record (same ids), when the record's Approve bar shows, then the questions
+  above it are the summary's, worded in plain words with their context and options; otherwise (no summary, out of
+  date, or one missing) they are the record's own, so none goes unanswered. The questions link counts the same list.
+  The `/summarize` skill repeats every open question of the record in that shape.
+- **AC-425.4 Approved stays approved.** Given a record (spec, research or plan) whose frontmatter says `status:
+  approved`, when its tab shows, then a status line reads "<Record> approved · last verified <date>." (the date when
+  the frontmatter has `last_verified`) and neither the Approve bar nor its open questions show again.
+
+**Header and tabs**
+
+- **AC-425.5 No ticket chips.** Given a feature with tickets, when its page shows, then the header holds no ticket
+  chips (the group "Tickets of this feature" is gone): the tickets and their Linear status are in the Tickets tab and
+  its ticket flow, whose card titles and rows still open the ticket panel. This removes the header chip from the
+  panel's openers (AGH-330 "Openers") and supersedes AC-268.17.
+- **AC-425.6 Tab order.** Given the feature page, then the record tabs read Spec, Research, Plan, Acceptance criteria,
+  Tickets, Eval: the order the workflow writes them (the planner writes the criteria and the ticket plan in
+  `features.json` once the plan is approved; the eval comes last). This replaces the AGH-136 tab order.
+- **AC-425.7 Fixed label.** Given a feature, named or not, when its page header or its Features list row shows, then
+  its slug follows its name as a tag label ("Feature label <slug>", mono, tag icon; on hover: set when the feature was
+  created, unique and never changes, a rename changes only its name), not a link on its own page; the chip that ties a
+  session to its feature uses the same tag icon and hover text, plus "Open its panel."
 
 ## Screen 1: Features list
 
@@ -824,6 +883,132 @@ Expanded row: full Given/When/Then, evidence text, "Last verified by hub-workflo
 | Read, copy commands, open evidence, open in GitHub | P2 | No | None |
 | Mark owner step done | Not in the app | n/a | The owner records it in eval.md / features.json through a hub PR (principle 2: the app does not edit the brain) |
 | Start run on an issue of this feature | P4 | Dry-run preview first | Same flow as Run detail "Start run on an issue" |
+
+## Screen 3: New feature (AGH-420)
+
+**Route:** `/features/new`, from the list's "New feature" button · **Phase:** P2 (driven sessions,
+[ADR 0031](../../../adr/0031-driving-claude-code-sessions-from-the-app.md)) · **Answers:** "What do I want built, and how do
+I hand it to Claude?"
+
+### Purpose and primary user
+
+The project owner with an idea, and often a screenshot, a PDF or a CSV: say what to build, attach the material, press
+one button. The one action is **Start with Claude**; the issue, slug and size are optional and look it. The screen
+writes no file: it starts a Discuss conversation in the project's hub folder (`useStartDiscussion`, AC-419.15) whose
+first message asks Claude to run the hub's `feature` skill from step 0. The records stay the skill's: the brief goes
+into the tracker issue's description (step 0), then `brain/features/<slug>/spec.md` and its summary, each shown to the
+owner before it is written; a `brief.md` the agent writes in the feature folder is one of the folder's record files
+([feature-records.md](../../feature-records.md) "`brief.md` and `ux-*.md`"), so the feature shows on the list from it,
+its Spec step "Brief only · spec not written".
+
+### Layout (1440 px, sidebar expanded, Discuss panel closed)
+
+```
+Features › New
+New feature                                                                     ( ▦ demo  ⌄ )
+Describe what to build and attach what Claude should see.
+
+What do you want to build?                                              ┌ Options ────────── All optional ┐
+╭──────────────────────────────────────────────────────────────────╮    │ Start from an issue             │
+│ [img] [▤ client-brief.pdf 1.2 MB ⨯]              (only with any) │    │ [ None                        ] │
+│ Describe the feature: who it is for, what they should be able    │    │ Like DEMO-1600. Claude reads its │
+│ to do, and why.                                  (placeholder)   │    │ brief first.                    │
+│                                                                  │    │ Slug                            │
+│ [+ Attach]  Paste or drop images, PDFs and text files            │    │ [ Claude picks one            ] │
+│                                Ctrl/⌘ Enter [▸ Start with Claude] │   │ Like orders-csv-export.         │
+│ ⓧ the refusal or the failed start, when there is one  (err row)  │    │ Size                            │
+╰──────────────────────────────────────────────────────────────────╯    │ [ Let Claude ask            ⌄ ] │
+                       Write at least a sentence, or give an issue.     │ Claude proposes a size and asks │
+                                                                        │ you.                            │
+What happens next                                                       └─────────────────────────────────┘
+(1) Claude reads your brief…  (2) It asks one question…  (3) It drafts…
+```
+
+The toolbar is one row at the bottom of the box: Attach and the drop note on the left, the key hint and Start on the
+right (the drawing wraps only for its width). The box is a grid of its own (`files`, `text`, `plus set . stop send`,
+`err`) inside the chat composer's frame, focus ring and drop highlight. The Options card is sticky. At 1100 px or
+less, or when `.ft-new` is narrower than 900 px (the Discuss panel docked), one column: brief, Options (its three
+fields side by side as the card allows, `auto-fit` of 200 px), What happens next. Below 640 px of box width the drop
+note hides, below 480 px the key hint; below 560 px of `.ft-new` the project pill drops under the title.
+
+### Components
+
+| Piece | Decision |
+|---|---|
+| `.as-composer` frame, `as-composer-drop`, `AttachmentList`, `useMessageAttachments` | reuse (the chat's, AGH-419) |
+| `useAttachmentDrop`, `AttachButton` (`components/AttachmentList.tsx`), `useAutoGrow` (`lib/useAutoGrow.ts`) | new, shared: the chat composer's paste/drop/picker handlers and its auto-grow, moved out so the chat and this screen use one copy |
+| `useStartDiscussion`, `rememberDiscussSession`, `discussPrompt`, `useDiscussTarget` | reuse (the Discuss panel's) |
+| Project pill: `.as-pill` + `.as-pill-select` + `.as-pill-value` + `.as-pill-caret` | reuse; `.as-pill-value` makes any pill as wide as its value (the native select lies invisible over it) |
+| Options: `.ah-input` fields; Size a `select.ah-input` with a `chevron-down` caret (`.ft-new-select`) | reuse, one local extension |
+| `Button` primary, `Kbd`, `Icon circle-x`, `Banner warning boxed`, `Skeleton`, `ah-card`, `EmptyState` | reuse |
+| `.ah-input.ah-mono` (`styles/bundle.css`) | fix: `.ah-input { font: inherit }` no longer drops a code field's mono face |
+
+### Content
+
+| Element | Copy |
+|---|---|
+| Lead | "Describe what to build and attach what Claude should see." |
+| Brief label / placeholder | "What do you want to build?" / "Describe the feature: who it is for, what they should be able to do, and why." · with images "Say what to build, and what Claude should see in the image." · with files "Say what to build, and what Claude should take from the file." |
+| Toolbar | "Attach" (title "Attach images, PDFs or text files up to 5 MB (or paste or drop them in the box)") · "Paste or drop images, PDFs and text files" · `Ctrl` / `⌘` `Enter` · "Start with Claude", pending "Starting…" |
+| Status line | ready "Opens the Discuss panel. Claude asks before writing any file." · pending "Starting the conversation in the hub folder…" · not ready, the first that holds: the unavailable reason's title ("Session control is locked in this browser.") · "Wait for the files to be read." · "Add a sentence on what to build with the attachments." · "Write at least a sentence, or give an issue." · "Fix the issue id in Options." · "Fix the slug in Options." · the hub folder check ("Looking for the hub folder…") |
+| Options | "Options" / "All optional" · "Start from an issue", placeholder "None", hint "Like DEMO-1600. Claude reads its brief first.", error "An issue id, like DEMO-1600." · "Slug", placeholder "Claude picks one", hint "Like orders-csv-export.", errors "Lowercase letters, digits and dashes, starting with a letter." / "A feature with this slug already exists." · "Size": "Let Claude ask", "Spike", "Bounded", "Architectural", with the chosen one's hint |
+| Sent card | "Sent to Claude" · the brief and its attachments · "Issue: … · Slug: … · Size: …" · "Claude is working on the brief with you in the panel." with "Open the panel" and "Open the full chat" · once found "`<slug>` has its record." and "Open `<slug>`" · "Start another feature" |
+
+### States
+
+| State | What shows |
+|---|---|
+| Loading | A pill-shaped skeleton in the header; the form's two blocks (the box's radius, the card) |
+| No project | `EmptyState` "No project yet" · "Register a hub to start features in it." · "Open Welcome" |
+| Empty form | Instruction placeholder, Start `aria-disabled`, "Write at least a sentence, or give an issue." |
+| Sessions unavailable | `Banner warning` above the box with the reason and its fix; the status line says the reason's title; the fields stay editable |
+| Error | A refused file or a failed start in the box's last row (`role="alert"`, `circle-x`) |
+| Starting | "Starting…" (`aria-busy`), the pending status line; nothing re-sends |
+| Sent | The sent card, polling the records every 3 s until the feature appears |
+
+### Acceptance criteria (AGH-420)
+
+- **AC-420.1** Given the Features list, when it opens, then a primary "New feature" button sits on the title row and
+  opens `/features/new`; with no feature yet, the empty state says a feature can be started here with New feature.
+- **AC-420.2** Given `/features/new`, when it opens, then it shows the breadcrumb "Features › New", the title "New
+  feature" and the one-line lead; with more than one project, the project is a pill (folder icon, name, caret) on the
+  title row, as wide as the name, its native select (named "Project") covering it; changing it gives the form of that
+  project (the brief's draft is kept per project; issue, slug and size reset); with no project, the "No project yet"
+  empty state.
+- **AC-420.3** Given the brief box, when images, PDFs or UTF-8 text files are pasted, dropped anywhere on the box or
+  picked with Attach, then they join the brief as the chat's thumbnails and chips above the text, with the chat's
+  limits and refusal sentences, and the placeholder turns to the image or file variant; a drag that carries no file
+  (selected text) is left to the browser; a press on the box's empty space puts the caret in the text.
+- **AC-420.4** Given the form, when Start cannot run yet, then Start stays focusable with `aria-disabled`, and one
+  status line under the box, right-aligned and `aria-live`, gives the first reason that holds (sessions unavailable by
+  its title, files being read, no sentence with attachments, no idea of 10 characters and no valid issue, a bad issue
+  id, a bad or taken slug, the hub folder check); pressing Start or Ctrl/⌘+Enter then sends nothing and moves focus to
+  the field at fault (the brief, the issue or the slug).
+- **AC-420.5** Given the Options card, when it shows, then Issue, Slug and Size have one field shape (label, one 32 px
+  field, one hint) in that order: the issue upper-cased and checked as `KEY-123`, the slug checked as kebab case and
+  against the project's features, Size a select defaulting to "Let Claude ask" with the chosen size's hint; the empty
+  fields say their default ("None", "Claude picks one") in the sans face while typed ids show in mono.
+- **AC-420.6** Given a ready form, when Start is pressed or Ctrl/⌘+Enter is typed in any field (Enter in a one-line
+  field does nothing, an IME composition never starts), then one conversation starts in the project's hub folder with
+  the message naming only the filled fields ("Tracker issue: … (read its brief first).", "Slug: …", "Size: …", then the
+  idea), the brief asking Claude to follow the hub's `feature` skill from step 0, one question at a time, showing each
+  record before writing it, and the images and files attached; the Discuss panel opens on that conversation (kept for
+  its target) and the draft is cleared.
+- **AC-420.7** Given a started request, when the sent card shows, then it lists the brief, its attachments and the
+  options, says Claude works with the owner in the panel ("Open the panel" while it is closed, focus back on it when
+  the panel closes, and "Open the full chat"), rereads the features every 3 s and, once the new feature appears (the
+  given slug, else the first slug not there at the start), links to it; "Start another feature" closes the panel and
+  gives an empty form with the focus in the brief.
+- **AC-420.8** Given a file refused earlier, when Start is pressed or that attachment is removed, then the refusal
+  clears, and a failed start always shows in the box's error row (the problem's detail or title, else "Could not
+  start the conversation. Try again."), both lines when both hold; everything typed and attached stays.
+- **AC-420.9** Given the screen at 1440 px, then the brief and its status line sit left and the sticky Options card
+  right, What happens next under the brief; at 1100 px or less, or with `.ft-new` under 900 px (the Discuss panel
+  docked), one column in the order brief, Options, What happens next; the drop note hides under 640 px of box and the
+  key hint under 480 px.
+- **AC-420.10** Given the chat composer and this screen, then both use the same `useAttachmentDrop`, `AttachButton`
+  and `useAutoGrow` (the brief grows to half the viewport, the chat to 40 %), so paste, drop and the picker behave the
+  same in both.
 
 ## UX principles applied
 

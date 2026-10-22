@@ -87,6 +87,25 @@ AGH-201 (control-plane clarity) changes the design further
   which also need the server's own `Origin`), the same workflow run writes and the restores
   ([API.md](../../API.md#local-security)); the CSP is unchanged.
 
+AGH-422 (the chat redesign: the Discuss panel, the reading anatomy, the composer, the chat's header and the sessions
+rail, [specs/20-chat.md](specs/20-chat.md)) records the owner's answers to its design:
+
+- **Principle 1 and the chat.** Principle 1 ("Observe, don't replace. No chat and no 'talk to the agent' box,
+  anywhere.") predates [ADR 0031](../../adr/0031-driving-claude-code-sessions-from-the-app.md) and
+  [ADR 0033](../../adr/0033-sessions-and-chat-interaction-model.md), which already put a chat in the app: the owner
+  drives the sessions he starts from it. The owner chose to do the redesign now on that basis; principle 1 reads as
+  "observe every session; drive only the ones the owner starts here, and nothing in the app talks to an agent on its
+  own" until a principle change says it in its own words.
+- **D-chat-1 · Chat shape.** The composer and the owner's turn use `radius-2xl` (16 px, new, chat only), and Send,
+  Stop and the composer's "+" are round (`radius-full`): Shape's "radii are small" and "radius-full only for status
+  badges and dots" do not apply inside the chat's composer and turns.
+- **D-chat-2 · Reading type.** The chat's prose uses the new type style `reading` (15/24) when its container is at
+  least 560 px wide; narrower it keeps `body` 14/22.
+- **D-chat-3 · Scroll-edge fade.** The transcript fades its last 24 px with a transparency `mask-image` (no colour),
+  so text passes under the floating composer: the one gradient, and it means "there is more below".
+- **Tokens.** `surface-turn` (an alias: light `gray-100`, dark `gray-200`; the owner's turn card, never a hover or a
+  selection), `radius-2xl` (16 px) and `chat-column` (768 px) join `tokens.json`.
+
 ## Design system
 
 The control plane of agent-hub is an observability and governance console for teams of AI coding agents. It answers five questions: how are my projects doing (Portfolio), what are the agents doing right now (Live sessions), why did the agent do that (Session timeline), what does it know and what did it learn (Knowledge), and how should work flow and where does it get stuck (Workflows). A busy engineering lead should understand any screen in five seconds and be able to trust it.
@@ -132,7 +151,18 @@ This system is the north star for the people and agents building the REST API (`
 
 **Personality.** Calm, precise, trustworthy, engineering-grade: the clarity of a good issue tracker, the density of a metrics console, the trace view of a tracing tool. Not playful. No gradients as decoration, no 3D, no robot or spark imagery.
 
-**Color.** A cool 11-step neutral scale (`gray-50` … `gray-950`, inverted in dark so each step keeps its role) carries almost everything. Grounds: `bg` (app), `surface` (panels, tables, timeline), `surface-sunken` (wells, code, table header), `surface-hover`, `surface-overlay` (menus, dialogs). Text: `text`, `text-muted`, `text-subtle`, each at least 4.5:1 on every ground in both themes. Lines: `border` (hairlines, decorative), `border-strong`, `border-control` (inputs, 3:1). One accent, deep indigo `accent`, used sparingly: the primary action of a view, links, the selected nav item and `focus-ring`. Text on an accent fill is `on-accent`.
+**Color.** An 11-step neutral scale (`gray-50` … `gray-950`, inverted in dark so each step keeps its role) carries almost everything. In light, its ground and line steps (`gray-50` … `gray-300`) are a warm sand and its text steps stay cool; dark is cool throughout. Grounds: `bg` (app), `surface` (panels, tables, timeline), `surface-sunken` (wells, code, table header), `surface-hover`, `surface-overlay` (menus, dialogs). Text: `text`, `text-muted`, `text-subtle`, each at least 4.5:1 on every ground in both themes. Lines: `border` (hairlines, decorative), `border-strong`, `border-control` (inputs, 3:1). One accent, deep indigo `accent`, used sparingly: the primary action of a view, links, the selected nav item and `focus-ring`. Text on an accent fill is `on-accent`.
+
+**Warm sand light theme (AGH-428).** The light theme's grounds are warm off-whites instead of bright white, so long
+reading sessions do not glare; dark is unchanged. Tested in `apps/web/src/styles/tokens.test.ts`.
+
+- AC-428.1: Given the light theme, when any screen renders, then `bg`, `surface`, `surface-sunken`, `surface-hover`
+  and `surface-overlay` are warm off-whites (red ≥ green ≥ blue, never `#ffffff`), with `surface` lighter than `bg`.
+- AC-428.2: Given the warm light grounds, when text or a control sits on them, then `text`, `text-muted`,
+  `text-subtle` and `accent` still read at 4.5:1 on every ground and `border-control` at 3:1 on `surface` and `bg`
+  (`text-subtle`, `border-control` and `syntax-title` are darkened a step to keep it).
+- AC-428.3: Given the dark theme, when any screen renders, then its grounds, lines and text colours are the ones it
+  had before AGH-428.
 
 **Status is one pre-attentive channel.** Only status colors pop; everything else stays neutral. Every status is icon + label, never color alone (`StatusBadge`):
 

@@ -236,6 +236,13 @@ INERT_BUNDLE_URLS = frozenset(
         # requested.
         "https://github.com/highlightjs/highlight.js/issues/2277",
         "https://github.com/highlightjs/highlight.js/wiki/security",
+        # AGH-417: the example addresses of a service kind (`exampleAddress`), shown as an address
+        # input's placeholder in the service panel and the add flow; never requested.
+        "http://localhost:3000",
+        "http://localhost:8000",
+        "http://localhost:9000",
+        "https://api.example.com",
+        "https://app.example.com",
     }
 )
 _ABSOLUTE_URL = re.compile(r"https?://[A-Za-z0-9.\-\[\]:]+(?:/[A-Za-z0-9._~/\-]*)?")

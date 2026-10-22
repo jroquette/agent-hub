@@ -61,6 +61,17 @@ if [ ! -f "$AHH/hub.json" ]; then
     --hub-repo jroquette/agent-hub-hub)
 fi
 
+step "node from apps/web/.node-version"
+# Before the conductor: its sessions inherit its PATH, and their Stop gate (make check-fast) runs
+# npm ci, which refuses an older Node than the web app's.
+if [ -s "$HOME/.nvm/nvm.sh" ]; then
+  # shellcheck disable=SC1091
+  . "$HOME/.nvm/nvm.sh"
+  nvm install "$(cat "$AH/apps/web/.node-version")" > /dev/null
+  nvm use "$(cat "$AH/apps/web/.node-version")" > /dev/null
+fi
+node --version
+
 step "conductor on 7420"
 # A folder there that is not a worktree of its own (an interrupted `worktree add`) would send the
 # git commands below up to this checkout, whose uncommitted work `checkout -f` would drop.
@@ -111,12 +122,6 @@ for hub in "$AHH" "$WORKSPACE"/*-hub; do
 done
 
 step "playground (make live)"
-if [ -s "$HOME/.nvm/nvm.sh" ]; then
-  # shellcheck disable=SC1091
-  . "$HOME/.nvm/nvm.sh"
-  nvm install "$(cat "$AH/apps/web/.node-version")" > /dev/null
-  nvm use "$(cat "$AH/apps/web/.node-version")" > /dev/null
-fi
 (cd "$AH" && nohup make live > "$LOGS/agent-hub-live.log" 2>&1 &)
 wait_for http://127.0.0.1:7421/
 wait_for http://127.0.0.1:5173/

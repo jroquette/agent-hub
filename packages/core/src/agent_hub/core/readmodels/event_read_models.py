@@ -9,10 +9,10 @@ Reads stay cheap with state kept in process and never on disk. The loaded events
 by session, run and learning, each group in canonical order; a new batch is read alone and
 sorts again only the groups it touches. Each session, run, session's approvals and the
 learnings keep their last fold and the group it came from, so a batch folds again only what it
-changed (a session also when the second of ``now`` moves: statuses depend on the clock). The
-folded snapshot is kept for the same mark and the same second of ``now`` (threads asking for it
-at once share one fold), and a session's sorted timeline for the same mark, so its pages are
-found by bisection. A cursor from before
+changed (a session also when ``now`` crosses one of its status thresholds: statuses depend on
+the clock, but only through ``clock_phase``). The folded snapshot is kept for the same mark and
+the same second of ``now`` (threads asking for it at once share one fold), and a session's
+sorted timeline for the same mark, so its pages are found by bisection. A cursor from before
 later appends folds its own events apart. Search reads only ids, paths, commands and tool
 names, never payload bodies.
 
@@ -72,6 +72,7 @@ from agent_hub.core.readmodels.live_tiles import (
     TileFields,
     has_tile,
     live_tiles,
+    tile_clock_settled,
     tile_fields,
 )
 from agent_hub.core.readmodels.page import Page
@@ -98,6 +99,7 @@ from agent_hub.core.sessions.session import (
 from agent_hub.core.sessions.session_cost import fold_session_cost
 from agent_hub.core.sessions.session_files import fold_session_files
 from agent_hub.core.sessions.session_label import LabelRules, with_issue, with_prompt_issue
+from agent_hub.core.sessions.session_status import clock_phase
 from agent_hub.core.sessions.session_summary import summarize_session
 from agent_hub.core.skills.skill_usage import fold_skill_usage
 from agent_hub.core.skills.skill_view import SkillUsage
@@ -447,7 +449,8 @@ class FoldedEventReadModels:
         issues: Mapping[str, str],
         memos: _FoldMemos,
     ) -> dict[str, FoldedSession]:
-        # A session whose events, ``now`` and run issue are unchanged is not folded again; its
+        # A session whose events, clock phase and run issue are unchanged is not folded again
+        # (``clock_phase``: between two thresholds ``now`` changes nothing in the fold); its
         # run comes from its own events, so the same events name the same run. Its problems
         # are folded with it, at the same status.
         folded: dict[str, FoldedSession] = {}
@@ -456,7 +459,7 @@ class FoldedEventReadModels:
             if (
                 found is not None
                 and found[0] is group
-                and found[1] == now
+                and _same_clock_phase(group, found[1], now)
                 and found[2] == _run_issue(found[3].session, issues)
             ):
                 folded[session_id] = found[3]
@@ -841,16 +844,16 @@ def _with_tile_fields(
 
 
 def _tile_fields_of(snapshot: _Snapshot, session: Session, *, waits: bool) -> TileFields:
-    """The tile fields of one row, folded again only when its events, ``now`` or problems
-    changed (AC-234.5: a read at the same mark, or after an append to another session, does
-    not fold every row's events)."""
+    """The tile fields of one row, folded again only when its events, its problems or a
+    ``now`` that still matters (``tile_clock_settled``) changed (AC-234.5: a read at the same
+    mark, or after an append to another session, does not fold every row's events)."""
     group = snapshot.by_session[session.id]
     problems = snapshot.problems[session.id]
     found = snapshot.tiles.get((session.id, waits))
     if (
         found is not None
         and found[0] is group
-        and found[1] == snapshot.now
+        and _same_tile_clock(group, found[1], snapshot.now)
         and found[2] is problems
     ):
         return found[3]
@@ -860,6 +863,20 @@ def _tile_fields_of(snapshot: _Snapshot, session: Session, *, waits: bool) -> Ti
         fields = replace(fields, waiting_reason=_permission_reason(fields.waiting_reason))
     snapshot.tiles[(session.id, waits)] = (group, snapshot.now, problems, fields)
     return fields
+
+
+def _same_clock_phase(group: _Group, before: datetime, now: datetime) -> bool:
+    """Whether a session folded at ``before`` from ``group`` folds the same at ``now``."""
+    last_at = group[-1].event.timestamp
+    return before == now or clock_phase(last_at, before) == clock_phase(last_at, now)
+
+
+def _same_tile_clock(group: _Group, before: datetime, now: datetime) -> bool:
+    """Whether tile fields derived at ``before`` from ``group`` are the same at ``now``."""
+    last_at = group[-1].event.timestamp
+    return before == now or (
+        tile_clock_settled(last_at, before) and tile_clock_settled(last_at, now)
+    )
 
 
 def _waiting(session: Session) -> Session:

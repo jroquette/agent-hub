@@ -17,7 +17,7 @@ import { useHasWorkflowRuns } from "../screens/runs-list/queries";
 import { usePageScope } from "./pageScope";
 import { CommandPalette } from "./CommandPalette";
 import { DiscussProvider, useDiscuss } from "./discuss";
-import { DiscussPanel } from "./DiscussPanel";
+import { DiscussPanel, useDiscussWidth } from "./DiscussPanel";
 import { DiscussSelection } from "./DiscussSelection";
 import { ScreenDiscussFallback } from "./screenContext";
 import { GlobalStreamProvider, useGlobalStream } from "./GlobalStream";
@@ -131,6 +131,7 @@ function ShellLayout({ children }: { children?: ReactNode }) {
   const [palette, setPalette] = useState<{ query: string } | null>(null);
   const [sheet, setSheet] = useState(false);
   const discuss = useDiscuss();
+  const discussWidth = useDiscussWidth();
 
   const actions = useMemo<ShellActions>(
     () => ({
@@ -167,6 +168,7 @@ function ShellLayout({ children }: { children?: ReactNode }) {
         className="ah-shell"
         data-collapsed={preferences.sidebarCollapsed || undefined}
         data-discuss={discuss.open || undefined}
+        style={discussWidth.style}
       >
         <Sidebar
           counts={{
@@ -196,7 +198,7 @@ function ShellLayout({ children }: { children?: ReactNode }) {
         <main className="ah-shell-main" id="main">
           {children ?? <Outlet />}
         </main>
-        <DiscussPanel />
+        <DiscussPanel resize={discussWidth} />
         <DiscussSelection />
         {discuss.open && <ScreenDiscussFallback />}
       </div>

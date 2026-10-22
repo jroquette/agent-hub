@@ -621,3 +621,87 @@ def test_serves_future_wait_when_eval_dated_in_the_current_second() -> None:
     assert detail.acceptance_eval is not None
     assert detail.acceptance_eval.owner_wait is not None
     assert detail.acceptance_eval.owner_wait.state == "future"
+
+
+# AC-425.1: the owner checked one criterion by hand; the note covers exactly that AC.
+def test_signs_off_named_acs_when_owner_checked_them_by_hand() -> None:
+    agent = a_head("acme-1521", "SHIP-WITH-OWNER-STEPS", scope="acs: [AC-7.3]", at="2026-10-11")
+    sign_off, writer = a_sign_off_of(a_planned_folder(agent))
+
+    written = sign_off("demo", SLUG, acs=("AC-7.3",), note="Clicked through the page.")
+
+    assert (written.verdict, written.acs, written.tickets) == ("SHIP", ("AC-7.3",), ())
+    assert written.provenance == "owner"
+    text = writer.written["owner-signoff.md"]
+    assert "acs: [AC-7.3]\n" in text
+    assert "these acceptance criteria by hand pass" in text
+    assert "Clicked through the page." in text
+
+
+# AC-425.1: the by-hand sign-off is an owner SHIP, so it signs that AC off for Acceptance too.
+def test_signs_off_named_ac_for_acceptance_when_acceptance_eval_waits_on_it() -> None:
+    whole = a_head("feature", "SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-10-10")
+    sign_off, writer = a_sign_off_of(a_planned_folder(whole))
+    sign_off("demo", SLUG, acs=("AC-7.2",))
+    signed = RecordHead(
+        name="owner-signoff.md", head=writer.written["owner-signoff.md"].encode(), problem=None
+    )
+
+    detail = feature_detail(a_planned_folder(whole, signed), project="demo", read=MERGED, now=NOW)
+
+    assert detail.acceptance_eval is not None
+    assert detail.acceptance_eval.owner_wait is not None
+    assert detail.acceptance_eval.owner_wait.acs == ("AC-7.1", "AC-7.3")
+    assert [row.id for row in detail.ac_rows if row.signed_off] == ["AC-7.2"]
+
+
+# AC-425.2: the sign-off's refusals hold for named ACs, writing nothing.
+@pytest.mark.parametrize(
+    ("acs", "reason"),
+    [
+        (("AC-9",), "no AC AC-9 in this feature"),
+        (
+            ("AC-7.2",),
+            "the latest eval of AC-7.2 is NO-SHIP; fix or re-evaluate first",
+        ),
+    ],
+    ids=["unknown-ac", "latest-no-ship"],
+)
+def test_refuses_named_acs_writing_nothing_when_refused(acs: tuple[str, ...], reason: str) -> None:
+    reopened = a_head("acme-1521", "NO-SHIP", scope="acs: [AC-7.2]", at="2026-10-11")
+    sign_off, writer = a_sign_off_of(a_planned_folder(reopened))
+
+    with pytest.raises(OwnerSignOffError) as refused:
+        sign_off("demo", SLUG, acs=acs)
+
+    assert refused.value.reason == reason
+    assert writer.written == {}
+
+
+# AC-425.2: a note that would not be the latest eval of the AC is refused.
+@pytest.mark.parametrize("dated", ["", "2026-10-18"], ids=["undated", "future"])
+def test_refuses_named_acs_when_signoff_would_not_be_newer(dated: str) -> None:
+    agent = a_head("acme-1521", "SHIP-WITH-OWNER-STEPS", scope="acs: [AC-7.3]", at=dated)
+    sign_off, writer = a_sign_off_of(a_planned_folder(agent))
+
+    with pytest.raises(OwnerSignOffError, match="would not be newer than acme-1521"):
+        sign_off("demo", SLUG, acs=("AC-7.3",))
+    assert writer.written == {}
+
+
+# AC-425.2: more evals than were read is no ground to sign off named ACs either.
+def test_refuses_named_acs_when_folder_holds_more_evals_than_were_read() -> None:
+    sign_off, writer = a_sign_off_of(replace(a_planned_folder(), evals_skipped=1))
+
+    with pytest.raises(OwnerSignOffError, match="not all were read"):
+        sign_off("demo", SLUG, acs=("AC-7.3",))
+    assert writer.written == {}
+
+
+def test_refuses_named_acs_when_an_eval_is_named_too() -> None:
+    whole = a_head("feature", "SHIP-WITH-OWNER-STEPS", scope="acs: all", at="2026-10-10")
+    sign_off, writer = a_sign_off_of(a_planned_folder(whole))
+
+    with pytest.raises(OwnerSignOffError, match="not both"):
+        sign_off("demo", SLUG, delivery="feature", acs=("AC-7.3",))
+    assert writer.written == {}

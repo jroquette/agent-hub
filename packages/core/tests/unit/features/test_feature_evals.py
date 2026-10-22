@@ -12,6 +12,7 @@ from agent_hub.core.features.feature_evals import (
     acceptance_eval,
     eval_coverage,
     eval_records,
+    evals_naming,
 )
 from agent_hub.core.features.feature_record import PlannedTicket, RecordAc
 from agent_hub.core.features.feature_reviews import review_records
@@ -550,3 +551,48 @@ def test_acceptance_eval_prefers_evals_file_when_legacy_also_whole() -> None:
 
     assert found is not None
     assert (found.delivery, found.verdict) == ("feature", "SHIP-WITH-OWNER-STEPS")
+
+
+# AC-425.1: an owner SHIP that is the latest eval of an AC signs it off.
+@pytest.mark.parametrize(
+    ("owner_verdict", "agent_after", "signed_off"),
+    [("SHIP", None, ("AC-7.1",)), ("NO-SHIP", None, ()), ("SHIP", "SHIP", ())],
+    ids=["owner-ship-latest", "owner-no-ship", "agent-eval-later"],
+)
+def test_lists_signed_off_when_owner_ship_is_latest(
+    owner_verdict: str, agent_after: str | None, signed_off: tuple[str, ...]
+) -> None:
+    heads = (
+        an_eval("dem-1.md", verdict="NO-SHIP", acs="[AC-7.1]", evaluated_at="2026-10-10"),
+        an_eval(
+            "owner-signoff.md",
+            verdict=owner_verdict,
+            acs="[AC-7.1]",
+            evaluated_at="2026-10-11",
+            provenance="owner",
+        ),
+        *(
+            [an_eval("dem-1-r2.md", verdict=agent_after, acs="[AC-7.1]", evaluated_at="2026-10-12")]
+            if agent_after
+            else []
+        ),
+    )
+
+    coverage = eval_coverage(eval_records(heads, None, slug=SLUG), acs_named(2))
+
+    assert coverage.signed_off == signed_off
+
+
+def test_lists_evals_naming_each_ac_when_scoped_by_acs_and_tickets() -> None:
+    heads = (
+        an_eval("dem-1.md", verdict="SHIP", acs="[AC-7.1]", evaluated_at="2026-10-10"),
+        an_eval("dem-2.md", verdict="SHIP", tickets="[DEM-2]", evaluated_at="2026-10-10"),
+    )
+    acs = (an_ac("AC-7.1"), an_ac("AC-7.2", ticket="DEM-2"), an_ac("AC-7.3"))
+
+    naming = evals_naming(eval_records(heads, None, slug=SLUG), acs)
+
+    assert {ac: [e.delivery for e in found] for ac, found in naming.items()} == {
+        "AC-7.1": ["dem-1"],
+        "AC-7.2": ["dem-2"],
+    }
