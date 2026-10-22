@@ -650,6 +650,57 @@ Streaming, Messages and Stop items above where they differ (the column, the care
   keeps its 72 px tile (cropped, top first), and a sent screenshot shows at most 320 px of its top; the lightbox shows
   it whole.
 
+### New session: the first prompt in the chat's card (AGH-421)
+
+New session (`sessions-list/NewSessionDialog.tsx`, also opened by a shake and by Fork…) writes its first prompt in
+the same message card as the chat, so a session starts with what a message can carry. It amends the dialog of AGH-248
+(no Options section) and AC-266.3 (the shake's screenshot is a thumbnail in the card, not a checkbox).
+
+```
+New session                                                     (x)
+Where   [▣ agent-hub ▾] › [⌂ agent-hub-hub (hub)            ▾]
+Prompt
++----------------------------------------------------------------+
+| [shot] [img] [notes.md 2 KB x]          <- attachments row      |
+| What should Claude do? Type / for the folder's skills           |
+|                                                                 |
+| [+ Attach]  [⛨ Ask before edits ▾] [▣ default ▾]                |
++----------------------------------------------------------------+
+Without a prompt the session waits for your first message. Ctrl+Enter or ⌘+Enter starts it.
+Ask before edits. Claude asks before each edit or command. Paste or drop images, PDFs and text files.
+Skills  [/fix] [/review]
+                                          [Cancel] [↑ Start session]
+```
+
+- **AC-421.1 One card, top to bottom.** Given New session, then it reads Where (the project, then the working folder,
+  as pills), then "Prompt" over the chat's message card (`.as-composer`, at the dialog's softer radius, its box at
+  least 84 px tall and focused), then the hints, the skills and the actions; the dialog is up to 640 px wide and has
+  no Options section. A fork shows what it forks in place of Where.
+- **AC-421.2 Images and files with the first prompt.** Given the card, when images, PDFs or text files are pasted in
+  the box, dropped anywhere on the card or picked with Attach ("Attach a file"), then they show in the card's
+  attachments row ("Attached to the first prompt": thumbnails and chips, each removable, an image opens to be marked
+  up) and go with the first prompt as `screenshots[]` and `files[]` (AC-419.5), with the chat's limits and refusals
+  (AC-266.6, AC-419.8); the placeholder says what to do with them.
+- **AC-421.3 Attachments need a prompt.** Given anything attached and an empty prompt, then Start session is off and
+  says "Write a prompt to send the attachments.", the hint under the card warns "The attachments go with the first
+  prompt: write one.", and Start waits while a file is still being read ("Wait for the files to be read.").
+- **AC-421.4 The folder's skills on `/`.** Given a folder with skills, when `/` is typed in the box, then the chat's
+  `/` menu lists them (opening under the card); Enter or Tab inserts the one picked, Esc closes only the menu (the
+  dialog stays open) and Enter never starts the session. The skill buttons under the card still put a `/skill` in
+  front of the prompt.
+- **AC-421.5 Mode and model in the card's bar.** Given the card, then its bar holds Attach and the mode (never
+  bypass; Auto only in the playground) and model pickers as the chat's pills, each as wide as the value it shows
+  (the native select invisible over it, AC-422.11), as is the project pill under Where; a line under the card reads
+  the mode and what it does ("Plan. Claude plans first and asks you to approve the plan."). "Other model id…" opens
+  the Model id field below, and an invalid id says "The model id is not valid." on Start.
+- **AC-421.6 The shake's screenshot in the row.** Given a shake opened New session with a capture, then the capture
+  leads the attachments row ("Screenshot of the screen you shook"), opens to be marked up (the marked copy is the one
+  sent as `screenshot`), and "Remove Screenshot of the screen you shook" drops it, offering "Attach the screenshot
+  again"; when the capture failed, the dialog says "No screenshot was taken" and attaches nothing.
+- **AC-421.7 The chat shows them.** Given a session started with images, when its chat opens, then the first
+  prompt's bubble shows the capture, then the images added (kept by this browser for the log's first record, as
+  Discuss does, AC-419.13).
+
 ## Invariants
 
 - The platform implements no agent loop and calls no model; the children are the user's own `claude` with its own

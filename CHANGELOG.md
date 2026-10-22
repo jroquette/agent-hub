@@ -66,6 +66,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Changed
 
+- hub web's New session writes its first prompt in the chat's message card (AGH-421): images, PDFs and text files
+  pasted, dropped or attached go with it, `/` lists the folder's skills, and the mode and model are pills in the
+  card's bar, sized to their value, instead of an Options section. A shake's screenshot sits in the same attachments
+  row, and the chat shows the first prompt's images.
 - `make playground-export`: a session is credited with the hub files of a Studio Publish through the draft it
   wrote (the `draft_id` a `publish` version names, read from the conductor's item versions), instead of a
   `PUBLISHED <path>` line in Claude's reply, which the server publish no longer gives (AGH-298). A conductor older
