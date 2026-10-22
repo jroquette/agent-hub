@@ -359,4 +359,20 @@ describe("AppShell scope on a project's Brain or Skills", () => {
 
     expect(router.state.location.pathname).toBe("/knowledge/skills");
   });
+  it("hides the top bar's Discuss on a scenario run's page, which has its own chat", () => {
+    const { unmount } = renderWithApi(<AppShell />, { routes, path: "/scenarios" });
+    expect(
+      within(screen.getByRole("banner")).getByRole("button", { name: /Discuss/ }),
+    ).toBeInTheDocument();
+    unmount();
+
+    renderWithApi(<AppShell />, {
+      routes,
+      path: "/scenarios/demo/order-lifecycle/runs/3f2a91c0",
+    });
+
+    expect(
+      within(screen.getByRole("banner")).queryByRole("button", { name: /Discuss/ }),
+    ).toBeNull();
+  });
 });
