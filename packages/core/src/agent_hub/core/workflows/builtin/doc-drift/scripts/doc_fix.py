@@ -64,6 +64,9 @@ STATUS_HEADING = re.compile(r"^#{1,6}\s*status\s*$", re.IGNORECASE)
 TICKS = re.compile(r"`+")
 REGENERATE = re.compile(r"^([A-Za-z0-9_.-]*llms[A-Za-z0-9_.-]*)\s*:(?!=)", re.MULTILINE)
 NOT_ALLOWED = "not a doc this run may change"
+# Tuples, not bare lists in the except clauses: a seeded script still parses as Python 3.9.
+READ_ERRORS = (OSError, UnicodeDecodeError)
+SHOW_ERRORS = (OSError, subprocess.SubprocessError, UnicodeDecodeError)
 
 
 # The doc rules below are the same in mentions.py (a parity test holds them equal): a pack
@@ -200,7 +203,7 @@ class BaseDocs:
                 command, cwd=self.repo, capture_output=True, check=True, timeout=GIT_TIMEOUT
             )
             return done.stdout.decode("utf-8")
-        except OSError, subprocess.SubprocessError, UnicodeDecodeError:
+        except SHOW_ERRORS:
             return None
 
     def line(self, path: str, number: int) -> str | None:
@@ -406,7 +409,7 @@ def _replace(path: Path, line: int, *, old: str, new: str) -> str:
     """Replace one line in the file, keeping its ending; the reason when it cannot."""
     try:
         text = path.read_bytes().decode("utf-8")
-    except OSError, UnicodeDecodeError:
+    except READ_ERRORS:
         return "not a readable UTF-8 file"
     lines = _split_keeping_ends(text)
     current = lines[line - 1] if 1 <= line <= len(lines) else None
@@ -519,7 +522,7 @@ def _regenerate(worktree: Path) -> str:
     makefile = worktree / "Makefile"
     try:
         text = makefile.read_text(encoding="utf-8") if makefile.is_file() else ""
-    except OSError, UnicodeDecodeError:
+    except READ_ERRORS:
         text = ""
     target = REGENERATE.search(text[:MAX_FILE_BYTES])
     if target:
