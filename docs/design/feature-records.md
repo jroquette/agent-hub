@@ -158,8 +158,8 @@ then each pass: the preflight agent (fresh, `mutates_checkout: false`, in the ti
 main at `ticket-brief`'s commit with git: no checkout, no branch), `change-request` on `plan` drift, `preflight`, the
 gate (`approve`, `decline` with its note, `capture_response`), `decide` (`--by` the gate's `approver`) and `amend-plan`
 or the note, a re-preflight appended the same way; only then, once a preflight passed, the worktree and its branch
-(`hub step worktree --commit`: the fetch still runs, but the branch starts at the commit the preflight checked, never
-a newer main), the ticket plan and the review rounds (`hub step verdict` also prints the reply's `discovery`, one line
+(`hub step worktree --commit`: no fetch; the branch starts at the commit the preflight checked, already in the clone,
+never a newer main), the ticket plan and the review rounds (`hub step verdict` also prints the reply's `discovery`, one line
 with no run of three backticks). Main is read as last fetched: nothing fetches before the preflight, so a stale main
 is checked and the branch starts from it; the PR then shows any conflict with a newer main. An approval `amend-plan`
 answers `moved` for is re-checked inside its pass against the current plan, told so (`$WITH.superseded`), and the
