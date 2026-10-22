@@ -1059,6 +1059,56 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/projects/{project}/environment-discoveries": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Environment Discoveries
+     * @description The project's discoveries not discarded, newest first.
+     */
+    get: operations["list_environment_discoveries_api_v1_projects__project__environment_discoveries_get"];
+    put?: never;
+    /**
+     * Start Environment Discovery
+     * @description Start a read-only Claude session that reads the picked repos and proposes environments,
+     *     services and addresses; 422 naming each repo or environment the config does not hold.
+     */
+    post: operations["start_environment_discovery_api_v1_projects__project__environment_discoveries_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/projects/{project}/environment-discoveries/{discovery_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Environment Discovery
+     * @description One discovery: its session's state and, once Claude finished, the checked proposal with
+     *     each item's status against the config of now.
+     */
+    get: operations["get_environment_discovery_api_v1_projects__project__environment_discoveries__discovery_id__get"];
+    put?: never;
+    post?: never;
+    /**
+     * Discard Environment Discovery
+     * @description Discard a discovery (its session is ended when it still works).
+     */
+    delete: operations["discard_environment_discovery_api_v1_projects__project__environment_discoveries__discovery_id__delete"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/projects/{project}/now": {
     parameters: {
       query?: never;
@@ -2435,6 +2485,39 @@ export interface components {
      */
     DiagnosticSeverity: "info" | "warning";
     /**
+     * DiscoveryProposal
+     * @description What Claude proposed, as the server checked it.
+     */
+    DiscoveryProposal: {
+      /**
+       * Dropped
+       * @default []
+       */
+      dropped: components["schemas"]["Dropped"][];
+      /**
+       * Environments
+       * @default []
+       */
+      environments: components["schemas"]["ProposedEnvironment"][];
+      /**
+       * Missing
+       * @default []
+       */
+      missing: components["schemas"]["MissingService"][];
+      /**
+       * Not Read
+       * @default []
+       */
+      not_read: components["schemas"]["NotRead"][];
+      /**
+       * Services
+       * @default []
+       */
+      services: components["schemas"]["ProposedService"][];
+    };
+    /** @enum {string} */
+    DiscoveryState: "running" | "finished" | "failed" | "stopped";
+    /**
      * DoctorFixRequest
      * @description The empty JSON body of the fix: a cross-site form cannot send one (S7).
      */
@@ -2493,6 +2576,16 @@ export interface components {
       models: string[];
       /** Reason */
       reason?: string | null;
+    };
+    /**
+     * Dropped
+     * @description An item, or one field of it, the server refused while checking the proposal.
+     */
+    Dropped: {
+      /** Reason */
+      reason: string;
+      /** What */
+      what: string;
     };
     /** @enum {string} */
     EdgeSource: "plan" | "linear" | "both";
@@ -2576,6 +2669,30 @@ export interface components {
        */
       truncated: boolean;
     };
+    /**
+     * EnvironmentDiscovery
+     * @description ``/projects/{project}/environment-discoveries``: a discovery, where its session is, and
+     *     its checked proposal once there is one; ``problem`` says in plain words why it failed.
+     */
+    EnvironmentDiscovery: {
+      /** Agent Session Id */
+      agent_session_id: string;
+      created_at: components["schemas"]["ApiTimestamp"];
+      /** Environments */
+      environments: string[];
+      /** Id */
+      id: string;
+      /** Problem */
+      problem?: string | null;
+      /** Project */
+      project: string;
+      proposal?: components["schemas"]["DiscoveryProposal"] | null;
+      /** Repos */
+      repos: string[];
+      state: components["schemas"]["DiscoveryState"];
+      /** Suggest Environments */
+      suggest_environments: boolean;
+    };
     EnvironmentEdit:
       | components["schemas"]["AddEnvironment"]
       | components["schemas"]["SetEnvironment"]
@@ -2657,6 +2774,16 @@ export interface components {
       | "finding"
       | "workaround.start"
       | "workaround.end";
+    /**
+     * Evidence
+     * @description Where Claude saw something: a file relative to the workspace, inside a picked repo.
+     */
+    Evidence: {
+      /** Line */
+      line?: number | null;
+      /** Path */
+      path: string;
+    };
     /**
      * ExternalBlocker
      * @description A blocker outside the feature's tickets, with its status when Linear returned it.
@@ -3229,6 +3356,8 @@ export interface components {
      * @enum {string}
      */
     ItemKind: "skill" | "agent" | "hook";
+    /** @enum {string} */
+    ItemStatus: "new" | "differs" | "declared";
     /**
      * ItemVersionContent
      * @description A version's content: a file unit's one file, or a folder's files in path order (S6).
@@ -3694,6 +3823,25 @@ export interface components {
       seq: number;
     };
     /**
+     * MissingService
+     * @description A service Claude saw a sign of but could not place: no address it could read.
+     */
+    MissingService: {
+      /**
+       * Evidence
+       * @default []
+       */
+      evidence: components["schemas"]["Evidence"][];
+      /** Kind */
+      kind?: string | null;
+      /** Name */
+      name: string;
+      /** Repo */
+      repo: string;
+      /** Why */
+      why: string;
+    };
+    /**
      * Mode
      * @description Who can invoke a skill (S5, L2); ``neither`` reads "Hidden" in the UI.
      * @enum {string}
@@ -3719,6 +3867,16 @@ export interface components {
     };
     /** @enum {string} */
     NeedsYouKind: "approval" | "failed" | "waiting" | "blocked" | "doctor" | "learning";
+    /**
+     * NotRead
+     * @description A file Claude could not read, and why.
+     */
+    NotRead: {
+      /** Path */
+      path: string;
+      /** Reason */
+      reason: string;
+    };
     /**
      * NowItem
      * @description One line of ``brain/now.md``.
@@ -3828,6 +3986,15 @@ export interface components {
     Page_Approval_: {
       /** Items */
       items: components["schemas"]["Approval"][];
+      /** Next Cursor */
+      next_cursor?: string | null;
+      /** Total Estimate */
+      total_estimate: number;
+    };
+    /** Page[EnvironmentDiscovery] */
+    Page_EnvironmentDiscovery_: {
+      /** Items */
+      items: components["schemas"]["EnvironmentDiscovery"][];
       /** Next Cursor */
       next_cursor?: string | null;
       /** Total Estimate */
@@ -4060,6 +4227,8 @@ export interface components {
       /** Version */
       version: string;
     };
+    /** @enum {string} */
+    Preset: "local" | "staging" | "production" | "mine" | "other";
     /**
      * Problem
      * @description One problem of a session and the event it comes from.
@@ -4249,6 +4418,81 @@ export interface components {
       sources_missing: components["schemas"]["EventSource"][];
       /** Tracker Teams */
       tracker_teams: string[];
+    };
+    /** @enum {string} */
+    ProposedAccess: "read" | "ask" | "write";
+    /**
+     * ProposedAddress
+     * @description A service's address in one environment: a URL or a resource name.
+     */
+    ProposedAddress: {
+      /** Address */
+      address: string;
+      /** Environment */
+      environment: string;
+      /**
+       * Evidence
+       * @default []
+       */
+      evidence: components["schemas"]["Evidence"][];
+      /** Note */
+      note?: string | null;
+      status: components["schemas"]["ItemStatus"];
+      /** Yours */
+      yours: string | null;
+    };
+    /**
+     * ProposedEnvironment
+     * @description An environment Claude found. ``access`` and ``production`` come from ``preset``, never
+     *     from Claude alone; ``yours`` describes the declared one when ``status`` is ``differs``.
+     */
+    ProposedEnvironment: {
+      access: components["schemas"]["ProposedAccess"];
+      /** Aws Profile */
+      aws_profile?: string | null;
+      /** Description */
+      description?: string | null;
+      /** Env File */
+      env_file?: string | null;
+      /**
+       * Evidence
+       * @default []
+       */
+      evidence: components["schemas"]["Evidence"][];
+      /** Name */
+      name: string;
+      preset: components["schemas"]["Preset"];
+      /** Production */
+      production: boolean;
+      status: components["schemas"]["ItemStatus"];
+      /** Yours */
+      yours: string | null;
+    };
+    /**
+     * ProposedService
+     * @description A service of a picked repo; ``declared`` when it and every address are declared already,
+     *     ``differs`` when it is declared but an address is new or different.
+     */
+    ProposedService: {
+      /**
+       * Addresses
+       * @default []
+       */
+      addresses: components["schemas"]["ProposedAddress"][];
+      /** Description */
+      description?: string | null;
+      /**
+       * Evidence
+       * @default []
+       */
+      evidence: components["schemas"]["Evidence"][];
+      /** Kind */
+      kind?: string | null;
+      /** Name */
+      name: string;
+      /** Repo */
+      repo: string;
+      status: components["schemas"]["ItemStatus"];
     };
     /**
      * PublishDraftBody
@@ -5453,6 +5697,26 @@ export interface components {
       task: string;
       /** Workdir Id */
       workdir_id: string;
+    };
+    /**
+     * StartEnvironmentDiscovery
+     * @description ``POST /projects/{project}/environment-discoveries``: the repos to read (``hub.json``
+     *     repo folders), the declared environments to look for, and whether Claude may suggest
+     *     environments not declared yet.
+     */
+    StartEnvironmentDiscovery: {
+      /**
+       * Environments
+       * @default []
+       */
+      environments: string[];
+      /** Repos */
+      repos: string[];
+      /**
+       * Suggest Environments
+       * @default false
+       */
+      suggest_environments: boolean;
     };
     /**
      * StartRunRequest
@@ -8588,6 +8852,170 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["EnvFileKeys"];
         };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  list_environment_discoveries_api_v1_projects__project__environment_discoveries_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Page_EnvironmentDiscovery_"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  start_environment_discovery_api_v1_projects__project__environment_discoveries_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["StartEnvironmentDiscovery"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EnvironmentDiscovery"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_environment_discovery_api_v1_projects__project__environment_discoveries__discovery_id__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        discovery_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EnvironmentDiscovery"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  discard_environment_discovery_api_v1_projects__project__environment_discoveries__discovery_id__delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        discovery_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       /** @description A client error, as an RFC 9457 problem */
       "4XX": {

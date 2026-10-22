@@ -190,6 +190,45 @@ a committed service, never change its `kind`, `description` or name.
   whether git ignores it there; a file outside the hub and its repos, reached through a link, not regular or over
   64 KiB gives its reason and no names; a path with `..`, a leading `/` or `~`, or a space is refused (400).
 
+### Discoveries
+
+`hub web` can find services with Claude ([ADR 0046](../adr/0046-read-only-discovery-sessions.md)): the person picks
+repos and declared environments (and whether Claude may suggest new ones); the server starts a read-only session
+(`Read`, `Grep`, `Glob` only) in the hub with the repos attached, and Claude ends its reply with one JSON proposal of
+environments, services and their addresses, each with evidence. The server checks every item with this file's
+shapes (an invalid one is listed as dropped, with the reason), sets `access` and `production` from the preset Claude
+names, and marks each item `new`, `differs` or `declared` against the effective config. Nothing is written until the
+person applies the rows they pick through the batch edit. Routes: `/api/v1/projects/{project}/environment-discoveries`
+(POST, GET) and `/{discovery_id}` (GET, DELETE); one file per discovery under `<hub>/.agent-runs/env-discoveries/`.
+
+A discovery's state follows its session: `running` while a turn works or a request is open, `finished` once the last
+reply holds a proposal, `stopped` when the person interrupted the turn or closed the session before one, else `failed`
+with the reason in plain words. The session's `tool_access` (`all` or `read_only`) is stored with it (migration 0009)
+so a session reopened by a later message stays read-only; `POST /agent-sessions` never sets it (AC-418.1 and
+AC-418.2 in [agent-sessions.md](agent-sessions.md#read-only-sessions-agh-418)).
+
+**Acceptance criteria (AGH-418)** (the screens: [control-plane/specs/23-environments.md](control-plane/specs/23-environments.md))
+
+- **AC-418.3** Given picked repos and declared environments, when `POST /projects/{project}/environment-discoveries`
+  is posted, then a `read_only` session starts in the hub with the server's prompt (the repos, the environments, where
+  to look, never open a `.env` file, never print a secret) and the picked repos attached, and the discovery is
+  recorded as one file under `<hub>/.agent-runs/env-discoveries/`; a repo `hub.json` does not hold, or an environment
+  not declared, is refused (422, naming each one) before anything starts, and so is an empty repo list.
+- **AC-418.4** Given a finished session, when its discovery is read, then the last fenced JSON block of its final reply
+  (at most 512 KiB, parsed strictly) is the proposal; each item is checked with `hub.json`'s shapes, an invalid item
+  or field is listed as dropped with its reason (a secret-shaped value never echoed), `access` and `production` come
+  from the preset Claude names, evidence must name a file inside a picked repo, and each item is `new`, `differs` or
+  `declared` against the effective config of now.
+- **AC-418.5** Given a discovery, when it is read, then it is `running` while its session works, `finished` with a
+  proposal, `stopped` when the person interrupted or closed it before a proposal, and `failed` with the reason when
+  the reply holds no proposal, the session failed or was removed, or `hub web` stopped first.
+- **AC-418.6** Given discoveries, when they are listed, then the project's own not discarded ones come newest first,
+  at most 50; `DELETE` marks one discarded and ends its session; an unknown or discarded id answers 404 and an id
+  that is not 12 hex digits is refused.
+- **AC-418.7** Given the discovery routes, when they are called, then they follow the agent-session rules: the
+  session cookie, this server's `Origin` for the writes, off in the container; nothing in `hub.json` changes until
+  the person applies rows through `POST /projects/{project}/config/environments`.
+
 ### Known limits
 
 Blocked words are a best-effort text tripwire, not a security boundary: the boundary is which credentials the

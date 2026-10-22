@@ -21,6 +21,7 @@ from agent_hub.core.agent_sessions.cloud import CloudSessionCommands
 from agent_hub.core.agent_sessions.control import AgentSessionCommands
 from agent_hub.core.agent_sessions.links import AgentSessionLinkLookup
 from agent_hub.core.brain.brain_path import DEFAULT_ACCEPT_FOLDER
+from agent_hub.core.environment_discovery.environment_discoveries import EnvironmentDiscoveries
 from agent_hub.core.events.event_reader import EventReader
 from agent_hub.core.features.owner_signoff import SignOffOwnerSteps
 from agent_hub.core.ingestion.ingest_hook import IngestHook
@@ -62,6 +63,7 @@ class ApiPorts:
     owner_signoff: SignOffOwnerSteps | None = None
     feature_names: FeatureNames | None = None
     ac_checks: AcCheckRunner | None = None
+    environment_discoveries: EnvironmentDiscoveries | None = None
 
 
 def _ports(request: Request) -> ApiPorts:
@@ -276,6 +278,14 @@ def ac_checks(request: Request) -> AcCheckRunner:
     return port
 
 
+def environment_discoveries(request: Request) -> EnvironmentDiscoveries:
+    """The environment discoveries, or 501 when not wired."""
+    port = _ports(request).environment_discoveries
+    if port is None:
+        raise _unwired(request)
+    return port
+
+
 def api_settings(request: Request) -> ApiSettings:
     """The settings ``create_app`` was given."""
     settings: ApiSettings = request.app.state.settings
@@ -320,3 +330,4 @@ FeatureNamesDep = Annotated[FeatureNames, Depends(feature_names)]
 AcChecksDep = Annotated[AcCheckRunner, Depends(ac_checks)]
 AgentSessionControlDep = Annotated[AgentSessionCommands, Depends(agent_session_control)]
 CloudSessionsDep = Annotated[CloudSessionCommands, Depends(cloud_sessions)]
+EnvironmentDiscoveriesDep = Annotated[EnvironmentDiscoveries, Depends(environment_discoveries)]

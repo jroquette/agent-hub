@@ -13,6 +13,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- `hub web` can find a project's services with a read-only Claude session (AGH-418, ADR 0046):
+  `POST /projects/{project}/environment-discoveries` starts a session limited to `Read`, `Grep` and `Glob` (no MCP
+  server; any other tool request is denied without asking) on the picked repos, and each read answers its state and
+  the proposal of its final reply, every item checked with `hub.json`'s shapes, its access set from a preset and
+  marked new, differs or already declared. Nothing is written until the person applies rows through the batch edit.
+  The database gains migration 0009 (a session's tool access, kept when it is reopened).
 - `hub web` has an Environments page, in the sidebar's Work group (AGH-417): a table of the project's environments
   (what agents may do, secrets by name, services, who set them) whose rows open each environment's own page. There
   you change the access (for the team, or stricter for you only), where the secrets live and the description in place,

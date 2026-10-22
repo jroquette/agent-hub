@@ -50,6 +50,7 @@ from agent_hub.api.agent_session_runtime import (
 from agent_hub.api.app import create_app
 from agent_hub.api.change_feed import ChangeFeed, SystemTimer
 from agent_hub.api.dependencies import ApiPorts
+from agent_hub.api.discovery_files import HubDiscoveryFiles
 from agent_hub.api.feature_names import FILE_NAME as FEATURE_NAMES_FILE
 from agent_hub.api.feature_names import FeatureNames
 from agent_hub.api.linear_connection import (
@@ -86,6 +87,7 @@ from agent_hub.core.agent_sessions.driver import SessionDriver
 from agent_hub.core.agent_sessions.links import AgentSessionLinks, ObservedSessionLookup
 from agent_hub.core.agent_sessions.repo_changes import RepoChangesReader
 from agent_hub.core.agent_sessions.store import AgentSessionStore
+from agent_hub.core.environment_discovery.environment_discoveries import EnvironmentDiscoveries
 from agent_hub.core.features.owner_signoff import OwnerSignOffError, SignOffOwnerSteps
 from agent_hub.core.features.ticket_snapshots import (
     SnapshotRequest,
@@ -741,6 +743,11 @@ def build_app(
         ),
         feature_names=FeatureNames(settings.registry_path.parent / FEATURE_NAMES_FILE),
         ac_checks=AcCheckRunner(hubs),
+        environment_discoveries=None
+        if sessions is None
+        else EnvironmentDiscoveries(
+            sessions.control, hubs, HubDiscoveryFiles(), clock=settings.clock
+        ),
         linear=LinearConnection(
             linear_environ,
             key_file,
