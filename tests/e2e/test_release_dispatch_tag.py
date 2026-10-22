@@ -1,7 +1,8 @@
-"""release.yml's dispatch job creates the release tag (ADR 0047): its tag step, read from the
-workflow file, runs with real git against a local bare remote. It creates an annotated tag whose
-message is the notes, on the given commit, and refuses a malformed input, a commit off main, a
-version other than the one that commit declares, and a tag that already exists (never moved)."""
+"""release.yml's dispatch job creates the release tag (ADR 0047): its check step and its tag step,
+read from the workflow file, run in order with real git against a local bare remote. They create an
+annotated tag whose message is the notes, on the given commit, push only that tag, and refuse a
+malformed input, a commit off main, a version other than the one that commit declares, and a tag
+that already exists (never moved)."""
 
 import shutil
 import subprocess
@@ -9,14 +10,13 @@ from pathlib import Path
 
 import pytest
 
-from tests.e2e.conftest import (
-    RELEASE_WORKFLOW,
-    REPO_ROOT,
-    isolated_git_env,
-    workflow_step_script,
-)
+from tests.e2e.conftest import REPO_ROOT, isolated_git_env, workflow_step_script
 
-STEP_NAME = "- name: Check the inputs, then create and push the annotated tag"
+# The dispatch job's steps, in the order the job runs them; only the last one holds the token.
+STEP_NAMES = (
+    "- name: Check the inputs, that the commit is on main, and its declared versions",
+    "- name: Create and push the annotated tag, unless it exists",
+)
 VERSION = "0.2.0"
 TAG = f"v{VERSION}"
 NOTES = "Features\n\n- one\n\n# Migration steps\n\nnone"
@@ -74,14 +74,28 @@ def remote_and_checkout(tmp_path: Path) -> tuple[Path, Path, str]:
 def run_step(
     checkout: Path, *, version: str = VERSION, sha: str, notes: str = NOTES
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["bash", "-e", "-o", "pipefail", "-c", workflow_step_script(STEP_NAME)],
-        cwd=checkout,
-        capture_output=True,
-        text=True,
-        env={**isolated_git_env(), "VERSION": version, "SHA": sha, "NOTES": notes},
-        timeout=TIMEOUT_SECONDS,
-        check=False,
+    """Run the job's steps in order, as Actions does (bash -eo pipefail); stop at a failure."""
+    env = {**isolated_git_env(), "VERSION": version, "SHA": sha, "NOTES": notes}
+    for name in STEP_NAMES:
+        result = subprocess.run(
+            ["bash", "-e", "-o", "pipefail", "-c", workflow_step_script(name)],
+            cwd=checkout,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=TIMEOUT_SECONDS,
+            check=False,
+        )
+        if result.returncode != 0:
+            break
+    return result
+
+
+def files_outside_git(root: Path) -> list[Path]:
+    """Every path under ``root`` but the repositories' own git data (the bare origin, ``.git``)."""
+    skipped = {".git", "origin.git"}
+    return sorted(
+        path.relative_to(root) for path in root.rglob("*") if skipped.isdisjoint(path.parts)
     )
 
 
@@ -91,10 +105,12 @@ def remote_tags(origin: Path) -> str:
 
 def test_creates_annotated_tag_with_notes_when_inputs_valid(tmp_path: Path) -> None:
     origin, checkout, sha = remote_and_checkout(tmp_path)
+    git(checkout, "tag", "local-only", sha)
 
     result = run_step(checkout, sha=sha)
 
     assert result.returncode == 0, result.stderr
+    assert git(origin, "for-each-ref", "refs/tags", "--format=%(refname)") == f"refs/tags/{TAG}"
     assert git(origin, "cat-file", "-t", f"refs/tags/{TAG}") == "tag"
     assert git(origin, "rev-parse", f"refs/tags/{TAG}^{{commit}}") == sha
     assert git(origin, "for-each-ref", f"refs/tags/{TAG}", "--format=%(contents)") == NOTES
@@ -161,16 +177,14 @@ def test_refuses_tag_when_version_differs_from_declared(tmp_path: Path) -> None:
     assert remote_tags(origin) == ""
 
 
-@pytest.mark.parametrize(
-    "version", ["", "0.2", "v0.2.0", "0.2.0-rc1", "0.2.0\n", " 0.2.0", "0.2.0;true", "٠.2.0"]
-)
-def test_refuses_tag_when_version_malformed(tmp_path: Path, version: str) -> None:
+def test_refuses_tag_when_version_malformed(tmp_path: Path) -> None:
+    """The form is check_release.py's (unit-tested there); this proves the step applies it."""
     origin, checkout, sha = remote_and_checkout(tmp_path)
 
-    result = run_step(checkout, version=version, sha=sha)
+    result = run_step(checkout, version="0-2-0", sha=sha)
 
     assert result.returncode == 1
-    assert "version must be X.Y.Z" in result.stderr
+    assert "must be v<major>.<minor>.<patch>" in result.stderr
     assert remote_tags(origin) == ""
 
 
@@ -202,18 +216,36 @@ def test_refuses_tag_when_notes_empty(tmp_path: Path) -> None:
     assert remote_tags(origin) == ""
 
 
-def test_keeps_expressions_out_of_run_blocks_when_workflow_read() -> None:
-    """Inputs reach run: only through env (script injection)."""
-    lines = RELEASE_WORKFLOW.read_text(encoding="utf-8").splitlines()
-    inside: int | None = None
-    found: list[str] = []
-    for line in lines:
-        indent = len(line) - len(line.lstrip())
-        if inside is not None and line.strip() and indent <= inside:
-            inside = None
-        if inside is not None and "${{" in line:
-            found.append(line.strip())
-        if line.strip() == "run: |":
-            inside = indent
+HOSTILE_NOTES = {
+    "command-substitution": 'Fixes: $(touch pwned) and $(touch "$PWD/also")',
+    "backticks": "Fixes: `touch pwned` and `id`",
+    "file-option": "-F /etc/passwd",
+    "cleanup-option": "--cleanup=strip",
+    "expression-and-variable": "${{ github.token }} $HOME ${PATH}",
+    "quotes": "it's \"quoted\" and 'single' \\ backslash",
+    "comment-lines": "# Features\n\n# none\n#",
+    "many-lines": "\n".join(f"- line {number}" for number in range(500)),
+}
 
-    assert found == []
+
+@pytest.mark.parametrize("kind", sorted(HOSTILE_NOTES))
+def test_keeps_notes_verbatim_when_notes_hostile(tmp_path: Path, kind: str) -> None:
+    notes = HOSTILE_NOTES[kind]
+    origin, checkout, sha = remote_and_checkout(tmp_path)
+    before = files_outside_git(tmp_path)
+
+    result = run_step(checkout, sha=sha, notes=notes)
+
+    assert result.returncode == 0, result.stderr
+    message = subprocess.run(
+        ["git", "cat-file", "tag", f"refs/tags/{TAG}"],
+        cwd=origin,
+        capture_output=True,
+        text=True,
+        env=isolated_git_env(),
+        check=True,
+        timeout=TIMEOUT_SECONDS,
+    ).stdout.split("\n\n", 1)[1]
+    assert message == notes + "\n"
+    after = files_outside_git(tmp_path)
+    assert after == before

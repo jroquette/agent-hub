@@ -49,6 +49,7 @@ STEP_PHRASES = {
         "`$?`",
         "log path",
         "open the version PR yourself",
+        "the lock file (relock)",
         "waits for the user to merge it",
         "merge commit",
         "new step 2 gate",
@@ -73,8 +74,14 @@ STEP_PHRASES = {
         "-f version=<version>",
         "-f sha=<full sha>",
         '-f notes="$(cat <notes file>)"',
-        "gh run watch",
+        "the run URL `gh workflow run` prints",
+        "--json databaseId,displayTitle,createdAt",
+        "`displayTitle` names `v<version>`",
+        "created after the dispatch",
+        "gh run watch <run id> --exit-status",
         "red run stops here with its URL",
+        "65,535 characters",
+        "trim the sync list to a summary",
         "No such workflow",
         "git tag -a v<version> --cleanup=verbatim -F <notes file> <full sha>",
         "git push origin v<version>",
@@ -159,6 +166,11 @@ def test_stops_before_tag_when_check_or_gate_fails(release_text: str) -> None:
     assert "On failure stop and print the log path" in paragraphs[3]
     assert "Stop here" in paragraphs[2]
     assert "never pushes" in paragraphs[5]
+
+
+def test_matches_run_by_name_when_dispatched_run_watched(release_text: str) -> None:
+    """The newest run may be the last release's: never take it blindly."""
+    assert "--limit 1" not in release_text
 
 
 def test_opens_version_pr_not_restart_when_versions_mismatch(release_text: str) -> None:
