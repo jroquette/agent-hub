@@ -120,6 +120,23 @@ def test_runs_claude_in_hub_when_agent_node_called(tmp_path: Path, pack: Path) -
     assert child.calls[0]["cwd"] == tmp_path / "hub"
 
 
+def test_gives_read_only_tools_and_denies_edits_when_agent_node_is_read_only(
+    tmp_path: Path, pack: Path
+) -> None:
+    child = FakeChild([claude_result("ok")])
+
+    executors(tmp_path, pack, child).run(call({**AGENT, "mutates_checkout": False}, prompt="x"))
+
+    argv = child.calls[0]["argv"]
+    allowed = argv[argv.index("--allowedTools") + 1 : argv.index("--disallowedTools")]
+    denied = argv[argv.index("--disallowedTools") + 1 :]
+    assert {"Read", "Grep", "Bash(git show:*)", "Bash(git log:*)"} <= set(allowed)
+    assert not {"Edit", "Write", "Bash(git commit:*)", "Bash(git add:*)", "Bash(make:*)"} & set(
+        allowed
+    )
+    assert {"Edit", "Write", "NotebookEdit"} <= set(denied)
+
+
 def test_gives_session_env_with_node_step_when_agent_node_called(
     tmp_path: Path, pack: Path
 ) -> None:
