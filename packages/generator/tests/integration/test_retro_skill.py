@@ -66,6 +66,13 @@ def test_names_every_data_source_when_hub_rendered(retro_text: str) -> None:
         assert source in retro_text, source
 
 
+def test_gathers_skill_usage_table_when_hub_rendered(retro_text: str) -> None:
+    gather = retro_text.split("\n2. ", 1)[0]
+
+    assert "`./hub skill-usage` when the pinned CLI has it" in gather
+    assert "never-used first" in gather
+
+
 def test_drops_proposals_without_evidence_when_hub_rendered(retro_text: str) -> None:
     assert "A proposal without evidence is dropped" in retro_text
     assert "at most 5" in retro_text
