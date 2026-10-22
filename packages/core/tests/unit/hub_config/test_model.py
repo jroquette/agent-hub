@@ -645,6 +645,9 @@ PROJECT_BRANCH_READERS = {
     f"{TEMPLATES}/scripts/retro_metrics.py.tmpl": 2,
     # Config.default_branch, and the project's branch in the protected set (also the root file's)
     f"{TEMPLATES}/plugin/hub-workflow/hooks/hubhooks.py.tmpl": 2,
+    # the release pack's pin.py (AGH-494) names the key it needs for the hub copy's base (a pack
+    # script reads hub.json itself)
+    "core/src/agent_hub/core/workflows/builtin/release/scripts/pin.py": 1,
 }
 
 

@@ -616,6 +616,9 @@
     "workflows/release/scripts/bump.py": {
       "ownership": "seeded"
     },
+    "workflows/release/scripts/pin.py": {
+      "ownership": "seeded"
+    },
     "workflows/release/scripts/since.py": {
       "ownership": "seeded"
     },
