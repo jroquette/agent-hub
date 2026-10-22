@@ -193,8 +193,9 @@ cloud setup). Order: `worktree`, `brief`, `doctor`, `agent`, `next`/`run`, `benc
 
 ### Distribution
 
-Releases are annotated semver tags `vX.Y.Z` (`git tag -a`) on agent-hub `main`, made by the owner; `release.yml` checks
-their form, that they are annotated and on `main`, and the meta-package version `agent-hub-cli` shares in lockstep
+Releases are annotated semver tags `vX.Y.Z` (`git tag -a`) on agent-hub `main`, created by `release.yml` on a dispatch
+(ADR 0047) or pushed by hand; `release.yml` checks their form, that they are annotated and on `main`, and the
+meta-package version `agent-hub-cli` shares in lockstep
 (`make lockstep`); no PyPI. A shim runs the pinned release with no install (`hub init` takes the same source):
 `uvx --from <platform.repository>@v<platform.version>#subdirectory=packages/agent-hub hub …`, the repository read from
 `hub.json` at run time (default `git+https://github.com/jroquette/agent-hub`, public: no credential). A private mirror
