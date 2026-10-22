@@ -342,6 +342,23 @@ describe("HubConfigScreen", () => {
     );
   });
 
+  it("AC-427.16 leads each picker card with the project's repos", async () => {
+    renderWithApi(createElement(HubConfigPickerScreen), {
+      routes: {
+        "/api/v1/projects": aPage([
+          aProjectSummary({ name: "demo", repos: ["api", "web"] }),
+          aProjectSummary({ name: "empty", repos: [] }),
+        ]),
+      },
+      path: "/config",
+    });
+
+    expect(await screen.findByRole("article", { name: "demo" })).toHaveTextContent("api · web");
+    expect(screen.getByRole("article", { name: "empty" })).toHaveTextContent(
+      "No repos declared yet",
+    );
+  });
+
   it("AC-PG-38.2 opens the project in scope's configuration from /config", async () => {
     const { router } = renderWithApi(createElement(HubConfigPickerScreen), {
       routes: { "/api/v1/projects": aPage([aProjectSummary({ name: "demo" })]) },
