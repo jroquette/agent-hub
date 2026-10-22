@@ -19,6 +19,7 @@ from agent_hub.api.scenario_investigation import InvestigationRestrictions, Scen
 from agent_hub.core.agent_sessions.agent_session import AgentSessionStatus, EndReason
 from agent_hub.core.agent_sessions.driver import PastSession, StartSpec
 from agent_hub.core.agent_sessions.errors import SessionsUnavailableError
+from agent_hub.core.errors import TrackerError
 from agent_hub.core.hub_config.effective_environments import (
     EffectiveEnvironments,
     effective_environments,
@@ -28,6 +29,7 @@ from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.hubs.hub_registry import HubRegistryError
 from agent_hub.core.readmodels.filters import RunFilter
+from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.scenarios import investigation as proposals
 from agent_hub.core.scenarios.investigation import tool_verdict
 from agent_hub.core.scenarios.workaround import plan_option
@@ -812,6 +814,7 @@ def scenarios(wired: Any, tmp_path: Path) -> Any:
     )
     wired.wire(scenario_reads=catalog, scenario_commands=commands)
     wired.hub, wired.launcher, wired.backend = hub, launcher, backend
+    wired.reader, wired.catalog = reader, catalog
     return wired
 
 
@@ -1122,3 +1125,141 @@ def test_writes_note_when_scenarios_finding_inbox_posted(scenarios: Any) -> None
     assert "provenance: agent-from-external" in text
     assert (again.status_code, again.json()["code"]) == (409, "note_exists")
     assert (scenarios.hub / note).read_text(encoding="utf-8") == text
+
+
+# Review round 1 (AGH-363, erratum E-14): the tracker from the effective config, the failure
+# paths of the writes, and a run detail that stays readable.
+
+
+class FailingTracker(InMemoryTrackerClient):
+    """A tracker whose create fails, counting the attempts."""
+
+    def __init__(self, backend: FakeTrackerBackend) -> None:
+        super().__init__(backend)
+        self.attempts = 0
+
+    def create_issue(self, team: str, title: str, description: str) -> Any:
+        self.attempts += 1
+        raise TrackerError(
+            operation="create_issue", cause="the tracker did not answer", fix="retry"
+        )
+
+
+def rewire_tracker(wired: Any, tracker_of: Any) -> None:
+    commands = ScenarioCommands(
+        catalog=wired.catalog,
+        launcher=wired.launcher,
+        lock=threading.Lock(),
+        tracker_of=tracker_of,
+        today=lambda: date(2026, 10, 22),
+        mint=lambda: "walk-9",
+    )
+    wired.wire(scenario_commands=commands)
+
+
+def test_uses_local_transport_when_scenarios_finding_issue_confirmed(scenarios: Any) -> None:
+    write_records(scenarios.hub, a_paused_walk(scenarios.hub))
+    seen: list[str] = []
+
+    def tracker_of(config: HubConfig, _hub: str) -> Any:
+        seen.append(config.tracker.transport)
+        return InMemoryTrackerClient(scenarios.backend)
+
+    rewire_tracker(scenarios, tracker_of)
+    fake = scenarios.reader.hubs[str(scenarios.hub)]
+    fake.local = LocalConfig.model_validate({"tracker": {"transport": "mcp"}})
+    path = f"/scenario-runs/{WALK_RUN}/findings/f1/issue"
+
+    created = _post(scenarios, path, {"confirm": True})
+    fake.local = (ConfigProblem(path="hub.local.json", message="not valid JSON"),)
+    refused = _post(scenarios, path, {"confirm": True})
+
+    assert created.status_code == 201, created.text
+    assert seen == ["mcp"]
+    assert (refused.status_code, refused.json()["code"]) == (409, "hub_local_invalid")
+    assert len(scenarios.backend.issues) == 1
+
+
+def test_returns_502_problem_when_scenarios_finding_issue_create_fails(scenarios: Any) -> None:
+    write_records(scenarios.hub, a_paused_walk(scenarios.hub))
+    failing = FailingTracker(scenarios.backend)
+    rewire_tracker(scenarios, lambda _config, _hub: failing)
+    path = f"/scenario-runs/{WALK_RUN}/findings/f1/issue"
+
+    failed = _post(scenarios, path, {"confirm": True})
+    again = _post(scenarios, path, {"confirm": True})
+
+    assert failed.status_code == 502, failed.text
+    assert failed.json()["type"] == "urn:agent-hub:problem:scenario-run-issue-failed"
+    assert (again.status_code, again.json()["code"]) == (409, "issue_exists")
+    assert failing.attempts == 1
+    assert scenarios.backend.issues == {}
+
+
+def test_returns_409_conflict_when_scenarios_tracker_not_connected(scenarios: Any) -> None:
+    write_records(scenarios.hub, a_paused_walk(scenarios.hub))
+    rewire_tracker(scenarios, lambda _config, _hub: None)
+
+    refused = _post(scenarios, f"/scenario-runs/{WALK_RUN}/findings/f1/issue", {"confirm": True})
+
+    assert (refused.status_code, refused.json()["code"]) == (409, "tracker_not_connected")
+    assert not (scenarios.hub / WALK_RECORDS).with_name("finding-f1.issue").exists()
+
+
+class LiveLauncher(FakeScenarioLauncher):
+    def live_runs(self, hub_path: str) -> dict[str, str | None]:
+        return {WALK_RUN: None}
+
+
+def test_returns_409_conflict_when_investigation_answer_run_in_use(scenarios: Any) -> None:
+    write_records(scenarios.hub, a_paused_walk(scenarios.hub))
+    launcher = LiveLauncher(scenarios.hub)
+    scenarios.launcher = launcher
+    rewire_tracker(scenarios, lambda _config, _hub: None)
+
+    refused = _post(scenarios, f"/scenario-runs/{WALK_RUN}/answer", {"choice": "retry"})
+
+    assert (refused.status_code, refused.json()["code"]) == (409, "in_use")
+    assert launcher.calls == []
+
+
+def test_keeps_run_readable_when_scenarios_hub_json_unreadable(
+    scenarios: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hub = scenarios.hub
+    write_records(hub, a_paused_walk(hub, option_line(hub, "o1", READ_OPTION, environment="live")))
+
+    def unreadable(_hub: str, project: str) -> EffectiveEnvironments:
+        raise EntityNotFoundError(entity="project", entity_id=project)
+
+    monkeypatch.setattr(scenarios.catalog.credentials, "environments_of", unreadable)
+
+    shown = scenarios.client.get(f"/api/v1/scenario-runs/{WALK_RUN}")
+
+    assert shown.status_code == 200, shown.text
+    (option,) = shown.json()["proposal"]["options"]
+    assert option["pickable"] is False
+    assert option["refusal"] == "hub.json cannot be read, so the options cannot be planned now"
+
+
+def test_reads_no_actions_when_scenarios_run_answered_without_drafts(
+    scenarios: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hub = scenarios.hub
+    paused = a_paused_walk(hub, option_line(hub, "o1", READ_OPTION, environment="live"))
+    stopped = {"event": "decision", "node": WALK_GATE, "attempt": 1, "choice": "stop"}
+    write_records(hub, [*paused, stopped])
+    reads: list[Path] = []
+    real = discover_actions
+
+    def counted(root: Path) -> Any:
+        reads.append(root)
+        return real(root)
+
+    monkeypatch.setattr("agent_hub.api.scenario_catalog.discover_actions", counted)
+
+    shown = scenarios.client.get(f"/api/v1/scenario-runs/{WALK_RUN}")
+
+    assert shown.status_code == 200, shown.text
+    assert shown.json()["proposal"]["options"][0]["refusal"] is not None
+    assert reads == []
