@@ -18,6 +18,7 @@ Stop hooks yield no event (E4); a Stop after a refused ask shows up through the 
 tail it triggers (rule 3). The fold only reads events: it is pure and order-independent.
 """
 
+import bisect
 from collections.abc import Iterable, Mapping, Sequence
 from typing import NamedTuple
 
@@ -67,13 +68,34 @@ def _is_turn_end(stored: StoredEvent) -> bool:
     return event.type == EventType.MESSAGE and event.payload.get("role") == "user"
 
 
-def _tool_results(events: Sequence[StoredEvent], tool_use_id: str) -> list[StoredEvent]:
-    return [
-        stored
-        for stored in events
-        if stored.event.type == EventType.TOOL_RESULT
-        and stored.event.payload.get("tool_use_id") == tool_use_id
-    ]
+class _SessionEvents:
+    """One session's events in canonical order, indexed once for every request in it.
+
+    Each request looks only at its own tool results and gate results, and its later events
+    start after a bisection on the timestamp, so a session with many requests stays linear
+    instead of scanning all of its events once per request.
+    """
+
+    def __init__(self, events: Sequence[StoredEvent]) -> None:
+        self.events = events
+        self.timestamps = [stored.event.timestamp for stored in events]
+        self.tool_results: dict[str, list[StoredEvent]] = {}
+        self.gate_results: dict[str, list[StoredEvent]] = {}
+        for stored in events:
+            event = stored.event
+            if event.type == EventType.TOOL_RESULT:
+                tool_use_id = event.payload.get("tool_use_id")
+                if isinstance(tool_use_id, str):
+                    self.tool_results.setdefault(tool_use_id, []).append(stored)
+            elif event.type == EventType.GATE_RESULT:
+                gate_id = event.payload.get("gate_id")
+                if isinstance(gate_id, str):
+                    self.gate_results.setdefault(gate_id, []).append(stored)
+
+    def after(self, request: StoredEvent) -> Sequence[StoredEvent]:
+        """The events later than ``request`` (by timestamp), in canonical order."""
+        start = bisect.bisect_right(self.timestamps, request.event.timestamp)
+        return self.events[start:]
 
 
 def _by_hook_result(results: Sequence[StoredEvent]) -> Decision | None:
@@ -88,12 +110,9 @@ def _by_hook_result(results: Sequence[StoredEvent]) -> Decision | None:
     return None
 
 
-def _by_gate_result(events: Sequence[StoredEvent], gate_id: str) -> Decision | None:
-    for stored in events:
-        event = stored.event
-        if event.type != EventType.GATE_RESULT or event.payload.get("gate_id") != gate_id:
-            continue
-        status = _RESULT_STATUS.get(str(event.payload.get("result")))
+def _by_gate_result(results: Sequence[StoredEvent]) -> Decision | None:
+    for stored in results:
+        status = _RESULT_STATUS.get(str(stored.event.payload.get("result")))
         if status is not None:
             return Decision(status, stored, inferred=False)
     return None
@@ -109,12 +128,8 @@ def _by_transcript_result(results: Sequence[StoredEvent]) -> Decision | None:
     return None
 
 
-def _by_turn_end(
-    request: StoredEvent, session_events: Sequence[StoredEvent], kind: ApprovalKind
-) -> Decision | None:
-    for stored in session_events:
-        if stored.event.timestamp <= request.event.timestamp:
-            continue
+def _by_turn_end(later: Sequence[StoredEvent], kind: ApprovalKind) -> Decision | None:
+    for stored in later:
         if (
             kind == ApprovalKind.PERMISSION
             and stored.event.type == EventType.TOOL_RESULT
@@ -126,11 +141,9 @@ def _by_turn_end(
     return None
 
 
-def _by_run_close(request: StoredEvent, session_events: Sequence[StoredEvent]) -> Decision | None:
-    for stored in session_events:
+def _by_run_close(request: StoredEvent, later: Sequence[StoredEvent]) -> Decision | None:
+    for stored in later:
         event = stored.event
-        if event.timestamp <= request.event.timestamp:
-            continue
         step_closed = (
             event.type == EventType.STEP_END
             and event.step == request.event.step
@@ -141,18 +154,16 @@ def _by_run_close(request: StoredEvent, session_events: Sequence[StoredEvent]) -
     return None
 
 
-def _decide(
-    request: StoredEvent, kind: ApprovalKind, session_events: Sequence[StoredEvent]
-) -> Decision | None:
+def _decide(request: StoredEvent, kind: ApprovalKind, session: _SessionEvents) -> Decision | None:
     gate_id = _gate_id(request)
-    results = _tool_results(session_events, gate_id) if kind == ApprovalKind.GUARD_ASK else []
-    decision = _by_hook_result(results) or _by_gate_result(session_events, gate_id)
+    results = session.tool_results.get(gate_id, []) if kind == ApprovalKind.GUARD_ASK else []
+    decision = _by_hook_result(results) or _by_gate_result(session.gate_results.get(gate_id, []))
     if decision is None:
         decision = _by_transcript_result(results)
     if decision is None and kind in {ApprovalKind.GUARD_ASK, ApprovalKind.PERMISSION}:
-        decision = _by_turn_end(request, session_events, kind)
+        decision = _by_turn_end(session.after(request), kind)
     if decision is None and request.event.session.startswith(_RUN_SESSION):
-        decision = _by_run_close(request, session_events)
+        decision = _by_run_close(request, session.after(request))
     return decision
 
 
@@ -220,12 +231,16 @@ def fold_approvals(
     by_session: dict[str, list[StoredEvent]] = {}
     for stored in ordered:
         by_session.setdefault(stored.event.session, []).append(stored)
+    indexed: dict[str, _SessionEvents] = {}
     approvals: dict[str, Approval] = {}
     for stored in ordered:
         kind = _kind(stored) if stored.event.type == EventType.GATE_REQUEST else None
         if kind is None or _gate_id(stored) in approvals:
             continue
-        decision = _decide(stored, kind, by_session[stored.event.session])
+        session_id = stored.event.session
+        if session_id not in indexed:
+            indexed[session_id] = _SessionEvents(by_session[session_id])
+        decision = _decide(stored, kind, indexed[session_id])
         hub_path = (hub_paths or {}).get(stored.event.project)
         approvals[_gate_id(stored)] = _approval(stored, kind, decision=decision, hub_path=hub_path)
     return approvals

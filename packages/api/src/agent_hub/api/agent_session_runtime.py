@@ -36,6 +36,7 @@ from agent_hub.core.agent_sessions.driver import (
     DriverAnswer,
     DriverCapabilities,
     DriverEvent,
+    DriverFile,
     DriverHandle,
     DriverImage,
     PastSession,
@@ -87,6 +88,7 @@ class UnavailableSessionDriver:
         text: str,  # noqa: ARG002 -- same
         *,
         images: tuple[DriverImage, ...] = (),  # noqa: ARG002 -- same
+        files: tuple[DriverFile, ...] = (),  # noqa: ARG002 -- same
     ) -> None:
         """No session exists to send to."""
         raise self._refuse()

@@ -8,6 +8,9 @@ are marked as such. Suggestions are the CLI's own rules, passed back verbatim on
 the ones "Always allow" may apply (``addRules``, ``allow``, ``localSettings``; A11) are emitted
 or passed back, with their index in the CLI's list.
 
+A read-only bridge (``allowed``, ADR 0046) denies at once, never parks, a request for any tool
+outside its set, with ``READ_ONLY_DENIED``: the browser is never asked to widen such a session.
+
 ``deny_all`` answers every parked request (interrupt, close); after ``close`` new requests are
 denied at once. When the CLI cancels a request, it is forgotten.
 """
@@ -41,6 +44,7 @@ from agent_hub.core.agent_sessions.permission_policy import is_offered, offered_
 CLOSED: Final = "session closed"
 INTERRUPTED: Final = "interrupted"
 NO_DESTINATION: Final = "unspecified"
+READ_ONLY_DENIED: Final = "This session can only read files."
 REQUEST_KINDS: Final[dict[str, RequestKind]] = {
     "AskUserQuestion": "ask_user_question",
     "ExitPlanMode": "plan_approval",
@@ -72,8 +76,12 @@ def _sdk_result(answer: DriverAnswer) -> PermissionResult:
 class PermissionBridge:
     """Parks permission requests of one session; ``emit`` hands each to its event stream."""
 
-    def __init__(self, emit: Callable[[DriverEvent], None]) -> None:
+    def __init__(
+        self, emit: Callable[[DriverEvent], None], *, allowed: frozenset[str] | None = None
+    ) -> None:
         self._emit = emit
+        # The only tools a read-only session may ask for; None: any tool.
+        self._allowed = allowed
         self._pending: dict[str, asyncio.Future[DriverAnswer]] = {}
         self._answered: set[str] = set()
         self._minted = 0
@@ -85,6 +93,8 @@ class PermissionBridge:
         """The SDK callback: emit the request, wait for its answer."""
         if self._closed:
             return PermissionResultDeny(message=CLOSED)
+        if self._allowed is not None and tool_name not in self._allowed:
+            return PermissionResultDeny(message=READ_ONLY_DENIED)
         request_id = self._request_id(context.tool_use_id)
         future: asyncio.Future[DriverAnswer] = asyncio.get_running_loop().create_future()
         self._pending[request_id] = future

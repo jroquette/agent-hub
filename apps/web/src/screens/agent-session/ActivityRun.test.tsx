@@ -79,6 +79,9 @@ describe("ActivityRun (activity-panel)", () => {
 
     const line = screen.getByRole("button", { name: "Bash make check" });
     expect(line).toHaveAttribute("aria-expanded", "false");
+    // AC-422.10: the chat's one loop, the live pulse, not a spinner.
+    expect(line.querySelector(".as-live-pulse")).not.toBeNull();
+    expect(line.querySelector(".as-spin")).toBeNull();
   });
 
   it("counts the failed calls next to the summary and opens the run when pressed (AC-265.2, AC-265.3)", () => {

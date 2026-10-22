@@ -77,8 +77,8 @@ Errors are RFC 9457 Problem Details, with media type `application/problem+json`:
   phrase) until a specific problem type is defined; `detail` is specific to this occurrence.
 - Each named domain exception maps to one problem in one place, `agent_hub/api/rfc9457.py`: unknown id → 404 naming
   the id; a bad parameter or cursor → 400 with `errors[]` naming the parameter; an invalid body → 422; a body over
-  1 MiB → 413 (16 MiB for `POST /api/v1/agent-sessions`, which may carry a screenshot, and 64 MiB for
-  `POST /api/v1/agent-sessions/{id}/messages`, which may carry up to ten); an unregistrable hub → 422 ("No hub.json", "Invalid hub.json" with JSON-pointer `errors[]`); a
+  1 MiB → 413 (160 MiB for `POST /api/v1/agent-sessions` and
+  `POST /api/v1/agent-sessions/{id}/messages`, which may carry images and files); an unregistrable hub → 422 ("No hub.json", "Invalid hub.json" with JSON-pointer `errors[]`); a
   project registered twice → 409; an event conflict → 409; a busy or unreadable database or hub registry → 503.
   Anything else is a generic 500 problem; the server logs it as structured JSON without payload strings, so neither
   the answer nor the log holds a secret or a traceback.
@@ -276,6 +276,15 @@ acceptance criteria rows, the records and every eval, it carries:
   `POST /approvals/{approval_id}/decision` and the run writes the records; with `decidable_here`, through
   [the decision route](#plan-change-requests) below; with neither, the run is live and asks at its gate when it
   gets there (P8, A5).
+- `ac_rows[].signed_off` (AGH-425): `true` when the AC does not pass in `features.json` but its latest evals are all
+  the owner's SHIP (`provenance: owner`): the owner checked it by hand. It counts as passing in `acs.passing` (here
+  and in the list) and is no longer counted under `acs.owner_steps`.
+
+`POST /api/v1/features/{project}/{slug}/owner-signoff` also takes `acs` (1 to 200 AC ids, AGH-425) instead of
+`delivery`: the owner signs off the criteria they checked by hand. It writes an owner eval over exactly those live
+ACs, with no tickets, and answers 409, writing nothing, for an unknown or withdrawn AC, for `acs` together with
+`delivery`, for `done` over an AC whose latest eval is NO-SHIP, when the note would not rank newer than an eval
+naming one of them (undated, or dated at or after now), and when not every eval was read. An empty list is 422.
 
 ## Feature tickets
 
@@ -386,14 +395,23 @@ the app refetches the route; the cache still applies (`as_of` shows its age). `G
   accepted (else 422 "Invalid request body"). `data` must be strict base64 of a PNG (else 422 `invalid-screenshot`)
   of at most 3,932,160 bytes decoded (3.75 MiB, so its base64 fits the Anthropic API's 5 MiB image limit; else 413
   `screenshot-too-large`); every check runs before the session starts. The request body of this route alone may be
-  up to 16 MiB (413 "Request body too large" above it). No image byte is stored, streamed, logged or echoed: the first
+  up to 160 MiB (413 "Request body too large" above it). No image byte is stored, streamed, logged or echoed: the first
   `user.message` record's body carries a marker instead,
   `attachments: [{kind: "screenshot", media_type: "image/png", bytes: <decoded size>}]`.
 - **Images in a later message.** `POST /{id}/messages` may carry `screenshots: [{media_type: "image/png", data}]`
   (1 to 10; an image pasted in the chat, converted to PNG by the browser), sent to Claude before the message's text.
   Each is checked like the first prompt's screenshot, before anything is logged or sent (422 `invalid-screenshot`
-  points at `/screenshots/{index}/data`; 413 `screenshot-too-large`). This route's body may be up to 64 MiB. The
+  points at `/screenshots/{index}/data`; 413 `screenshot-too-large`). This route's body may be up to 160 MiB. The
   `user.message` record carries one `attachments` marker per image and never its bytes.
+- **Images and files in the first prompt.** `POST ""` may also carry `screenshots` and `files`, as a later message
+  does (below), checked the same way before the session starts; like `screenshot`, they need `prompt`.
+- **Files in a later message.** `POST /{id}/messages` may also carry
+  `files: [{name, media_type: "application/pdf" | "text/plain", data: <base64>}]` (1 to 10, at most 5 MiB decoded
+  each), sent to Claude before the images and the text: a PDF as a document block, a text file as a text block
+  wrapped in `<file name="…">`. `data` must be strict base64 of a PDF (it starts with `%PDF-`) or of UTF-8 text
+  without NUL bytes (else 422 `invalid-file`, pointing at `/files/{index}/data`); over the size, 413
+  `file-too-large`. No file byte is stored: the record carries
+  `attachments: [{kind: "file", media_type, bytes, name}]`.
 - **Observed twin.** `GET ""` and `GET /{id}` carry `observed_session_id`: the `claude_session_id` once the hooks or
   transcripts observed that Claude session (it is then a row of `GET /api/v1/sessions`), else `null`, so a list shows a
   driven session once, with or without its twin. The other routes answer it `null`.
@@ -460,6 +478,8 @@ text or a value the browser sent):
 | `message-too-large` | 413 | a prompt or message over the limit (`limit`, `size`) |
 | `screenshot-too-large` | 413 | a screenshot over 3,932,160 bytes decoded (`limit`, `size`) |
 | `invalid-screenshot` | 422 | a screenshot that is not strict base64 of a PNG (`errors[]` points at `/screenshot/data`, or `/screenshots/{index}/data` for a message's image) |
+| `file-too-large` | 413 | a message's file over 5,242,880 bytes decoded (`limit`, `size`) |
+| `invalid-file` | 422 | a message's file that is not strict base64 of a PDF or of UTF-8 text (`errors[]` points at `/files/{index}/data`) |
 | `unavailable` | 503 | no `claude` on `PATH` or no `sessions` extra (`reason`), on every write |
 | `restriction-unavailable` | 409 | a message to an ended session that cannot be reopened safely (E-13): a scenario investigation session whose tool policy cannot be rebuilt from its run, any session while the hub's scenario runs (or a link file in them) cannot be read to tell whether it is one, or any session whose project no registered hub names (for example, the project was unregistered between two registry reads) (`detail` says which) |
 | `mode-locked` | 409 | a permission-mode change of a session held to a tool policy (a scenario investigation session, E-15): its mode stays `default`, so the writes and `./hub` commands its policy allows keep asking; a model change still applies. Such a session reads `restricted: true` (the member is absent for other sessions) |

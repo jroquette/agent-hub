@@ -289,6 +289,26 @@ pre {
   color: var(--text-subtle);
 }
 
+/* One line that fits: cut in the middle, its tail always whole (FitText). */
+.ah-fit {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+}
+.ah-fit-head {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ah-fit-tail {
+  flex: none;
+}
+.ah-fit-wrap {
+  min-width: 0;
+  max-width: 100%;
+}
+
 /* Tooltip & popover */
 .ah-tip-wrap {
   position: relative;
@@ -309,6 +329,7 @@ pre {
   white-space: normal;
   width: max-content;
   max-width: 320px;
+  overflow-wrap: anywhere;
   box-shadow: var(--shadow-popover);
   pointer-events: none;
 }
@@ -318,6 +339,12 @@ pre {
 .ah-table tbody tr:nth-child(-n + 3) .ah-tip {
   bottom: auto;
   top: calc(100% + 6px);
+}
+/* A long value (a URL, a path) in a tooltip: mono, wider, broken anywhere. */
+.ah-tip-mono {
+  max-width: min(560px, 80vw);
+  font-family: var(--font-mono);
+  white-space: normal;
 }
 .ah-tip-wrap:not(:hover):not(:focus-within) > .ah-tip:not(.ah-tip-open) {
   display: none;
@@ -1351,6 +1378,10 @@ pre {
   color: var(--text);
   font: inherit;
   min-width: 0;
+}
+/* `font: inherit` above would undo `.ah-mono`: a code field keeps its mono face. */
+.ah-input.ah-mono {
+  font-family: var(--font-mono);
 }
 .ah-input::placeholder {
   color: var(--text-subtle);
@@ -2600,7 +2631,6 @@ pre {
   display: flex;
   flex-direction: column;
   background: var(--bg);
-  border-right: 1px solid var(--border);
   overflow: hidden auto;
   z-index: var(--z-sidebar);
 }
@@ -2612,7 +2642,6 @@ pre {
   padding: 0 var(--space-4);
   font-weight: 600;
   letter-spacing: -0.01em;
-  border-bottom: 1px solid var(--border);
   flex: none;
   white-space: nowrap;
 }
@@ -2627,33 +2656,36 @@ pre {
   font: 600 11px/1 var(--font-mono);
   flex: none;
 }
+/* The navigation reads as the chat does: soft rounded rows, a filled current page, room around. */
 .ah-nav {
-  padding: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-4);
 }
 .ah-nav-group-title {
-  padding: 0 var(--space-2);
-  margin-bottom: 2px;
-  font-size: 11px;
+  padding: 0 var(--space-3);
+  margin-bottom: var(--space-1);
+  font-size: 12px;
   line-height: 16px;
   font-weight: 500;
   color: var(--text-subtle);
-  letter-spacing: 0.02em;
 }
 .ah-nav-item {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 32px;
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-md);
+  height: 36px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-xl);
   color: var(--text-muted);
   font-weight: 500;
-  font-size: 13px;
+  font-size: 14px;
   cursor: pointer;
   white-space: nowrap;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 .ah-nav-item:hover {
   background: var(--surface-hover);
@@ -2661,9 +2693,8 @@ pre {
   text-decoration: none;
 }
 .ah-nav-item[aria-current="page"] {
-  background: var(--surface);
+  background: var(--surface-turn);
   color: var(--text);
-  box-shadow: inset 0 0 0 1px var(--border);
 }
 .ah-nav-item[aria-current="page"] > .ah-icon {
   color: var(--accent);
@@ -2708,8 +2739,7 @@ pre {
 }
 .ah-sidebar-foot {
   margin-top: auto;
-  padding: var(--space-2);
-  border-top: 1px solid var(--border);
+  padding: var(--space-2) var(--space-3) var(--space-3);
 }
 .ah-topbar {
   grid-column: 2;
@@ -3086,4 +3116,14 @@ button.ah-nav-item {
 .ah-feature-chip-slug {
   overflow: hidden;
   text-overflow: ellipsis;
+  font-family: var(--font-mono);
+}
+.ah-feature-label {
+  cursor: default;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.ah-feature-label:hover {
+  color: var(--text-muted);
+  border-color: var(--border-strong);
 }

@@ -42,6 +42,7 @@ describe("useDrawerWidth (drawer)", () => {
     render(<Drawer />);
     const handle = screen.getByRole("separator", { name: "Resize the panel" });
     expect(handle).toHaveAttribute("aria-valuenow", "500");
+    expect(handle).toHaveAttribute("aria-valuetext", "500 pixels wide");
 
     handle.focus();
     await userEvent.keyboard("{Home}");
@@ -58,6 +59,42 @@ describe("useDrawerWidth (drawer)", () => {
     expect(screen.getByTestId("drawer").style.getPropertyValue("--as-panel-w")).toBe("100000px");
     await userEvent.click(screen.getByRole("button", { name: "Narrow" }));
     expect(screen.getByTestId("drawer").style.getPropertyValue("--as-panel-w")).toBe("480px");
+  });
+});
+
+function Panel() {
+  const panel = useDrawerWidth({
+    storageKey: "ah.test.width",
+    cssVar: "--test-w",
+    label: "Resize the test panel",
+    defaultWidth: 480,
+    bounds: () => ({ right: 1440, max: 600 }),
+  });
+  return (
+    <aside data-testid="panel" style={panel.style}>
+      <div {...panel.handle} />
+    </aside>
+  );
+}
+
+describe("useDrawerWidth (a panel with its own key and bounds, AGH-422)", () => {
+  it("AC-422.2 names its separator, gives its default and widest widths, and keeps its own key", async () => {
+    render(<Panel />);
+    const handle = screen.getByRole("separator", { name: "Resize the test panel" });
+    expect(handle).toHaveAttribute("aria-valuenow", "480");
+    expect(handle).toHaveAttribute("aria-valuemin", String(DRAWER_MIN));
+    expect(handle).toHaveAttribute("aria-valuemax", "600");
+
+    handle.focus();
+    await userEvent.keyboard("{End}");
+    expect(screen.getByTestId("panel").style.getPropertyValue("--test-w")).toBe("600px");
+    expect(window.localStorage.getItem("ah.test.width")).toBe("600");
+    expect(window.localStorage.getItem(DRAWER_WIDTH_KEY)).toBeNull();
+
+    await userEvent.keyboard("{ArrowRight}");
+    expect(window.localStorage.getItem("ah.test.width")).toBe("560");
+    await userEvent.keyboard("{Home}");
+    expect(window.localStorage.getItem("ah.test.width")).toBeNull();
   });
 });
 

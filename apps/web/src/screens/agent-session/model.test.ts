@@ -116,6 +116,34 @@ describe("reduceTranscript (transcript)", () => {
     ).toEqual([1, 0, 0, 0]);
   });
 
+  it("reads a message's files from its markers, name and size, never as images (AC-419.10)", () => {
+    const state = run([
+      record("user.message", {
+        seq: 1,
+        body: {
+          text: "Read these.",
+          attachments: [
+            { kind: "file", media_type: "application/pdf", bytes: 2048, name: "spec.pdf" },
+            { kind: "file", media_type: "text/plain", bytes: 12 },
+            { kind: "screenshot", media_type: "image/png", bytes: 16 },
+          ],
+        },
+      }),
+      record("user.message", { seq: 2, body: { text: "No marker." } }),
+    ]);
+
+    expect(state.entries.map((entry) => (entry.kind === "user" ? entry.files : null))).toEqual([
+      [
+        { name: "spec.pdf", bytes: 2048 },
+        { name: "File", bytes: 12 },
+      ],
+      [],
+    ]);
+    expect(
+      state.entries.map((entry) => (entry.kind === "user" ? entry.screenshotCount : null)),
+    ).toEqual([1, 0]);
+  });
+
   it("keeps thinking, todos and user messages when those records arrive", () => {
     const state = run([
       record("user.message", { seq: 1, body: { text: "Fix it." } }),

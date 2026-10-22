@@ -15,7 +15,8 @@ function renderSidebar(path = "/", props: Partial<Parameters<typeof Sidebar>[0]>
 
 describe("Sidebar", () => {
   // Widened by Scenarios (AGH-350 E-12, E-15): it pins the old list, so it must now fail.
-  it.fails("AC-273.20: lists the destinations in Work, Knowledge and the Hub footer", () => {
+  // prettier-ignore
+  it.fails("AC-273.20, AC-426.1: lists the destinations in Work, Knowledge and the Hub footer", () => {
     renderSidebar();
 
     const nav = screen.getByRole("navigation", { name: "Main" });
@@ -27,6 +28,8 @@ describe("Sidebar", () => {
       "Sessions",
       "Workflow runs",
       "Features",
+      "Tickets",
+      "Environments",
       "Learnings",
       "Brain",
       "Toolkit",
@@ -38,6 +41,7 @@ describe("Sidebar", () => {
       expect(within(nav).getByText(group)).toBeInTheDocument();
     }
     expect(within(nav).queryByText("Live sessions")).not.toBeInTheDocument();
+    expect(within(nav).getByRole("link", { name: "Tickets" })).toHaveAttribute("href", "/tickets");
   });
 
   it("hides Workflow runs until a workflow has run, and lists no Workflows", () => {
@@ -249,6 +253,8 @@ describe("Sidebar", () => {
       "Workflow runs",
       "Scenarios",
       "Features",
+      "Tickets",
+      "Environments",
       "Learnings",
       "Brain",
       "Toolkit",

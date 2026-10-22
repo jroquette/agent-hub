@@ -1,6 +1,7 @@
 import json
 import os
 import stat
+import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -122,7 +123,16 @@ def named(text: str, message: str) -> bool:
         ("hub", leftover_variable, "CLAUDE_PROJECT_DIR"),
         ("hub", unquoted_variable, "plain words"),
         ('h"ub', valid_hooks, "holds"),
-        ("h\udcffub", valid_hooks, "not UTF-8"),
+        pytest.param(
+            "h\udcffub",
+            valid_hooks,
+            "not UTF-8",
+            # AGH-431 (AC-431.5): Linux keeps any bytes in a folder name; macOS (APFS) refuses
+            # them, so no hub there can have such a path.
+            marks=pytest.mark.skipif(
+                sys.platform == "darwin", reason="APFS refuses a folder name that is not UTF-8"
+            ),
+        ),
     ],
     ids=[
         "no-settings",

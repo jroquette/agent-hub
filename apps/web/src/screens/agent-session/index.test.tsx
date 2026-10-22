@@ -366,19 +366,19 @@ describe("AgentSessionScreen (transcript)", () => {
     expect(screen.getByRole("textbox", { name: "Message Claude" })).toBeDisabled();
   });
 
-  it("says there are no events when the hub's hooks never reported the session", async () => {
+  it("AC-422.14 says there is no timeline yet when the hub's hooks never reported the session", async () => {
     renderChat(routes({ [SESSION]: anAgentSession({ observed_session_id: null }) }));
 
-    expect(await screen.findByText("No events")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Events" })).toBeNull();
+    expect(await screen.findByText("No timeline yet")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open timeline" })).toBeNull();
   });
 
-  it("links the agent session to its observed session", async () => {
+  it("AC-422.14 links the agent session to its observed session as Open timeline", async () => {
     const view = renderChat(
       routes({ [SESSION]: anAgentSession({ observed_session_id: anId(1, "5091b986") }) }),
     );
 
-    await userEvent.click(await screen.findByRole("link", { name: "Events" }));
+    await userEvent.click(await screen.findByRole("link", { name: "Open timeline" }));
     await waitFor(() => {
       expect(view.router.state.location.pathname).toBe(`/sessions/${anId(1, "5091b986")}`);
     });
@@ -474,7 +474,11 @@ describe("AgentSessionScreen (layout)", () => {
     expect(composer.closest("footer.as-footer")).not.toBeNull();
     expect(conversation).toHaveClass("as-column");
 
-    const list = within(header).getByRole("region", { name: "Todo list" });
+    // The todo list sits with the live bar above the composer, not in the header.
+    expect(within(header).queryByRole("region", { name: "Todo list" })).toBeNull();
+    const footer = composer.closest("footer.as-footer");
+    if (!(footer instanceof HTMLElement)) throw new Error("no chat footer");
+    const list = within(footer).getByRole("region", { name: "Todo list" });
     expect(list.querySelector("details")).not.toHaveAttribute("open");
     expect(within(list).getByText(/0 of 1 done/)).toBeVisible();
   });
@@ -726,6 +730,38 @@ describe("AgentSessionScreen (composer)", () => {
     expect(await bodyOf(posts(view.requests, "/messages")[0])).toEqual({
       text: "first\nsecond",
     });
+  });
+
+  it("posts an attached file with the message and lists it while it sends (AC-419.7, AC-419.10)", async () => {
+    const view = renderChat(routes({ [`POST ${SESSION}/messages`]: { seq: 4 } }));
+    await screen.findByText("Starting.");
+    const box = screen.getByRole("textbox", { name: "Message Claude" });
+    expect(screen.getByRole("button", { name: "Attach a file" })).toBeEnabled();
+
+    fireEvent.paste(box, {
+      clipboardData: { files: [new File(["# Brief"], "brief.md", { type: "text/markdown" })] },
+    });
+    await screen.findByRole("button", { name: "Remove brief.md" });
+    await userEvent.type(box, "Read it.{Enter}");
+
+    await waitFor(() => {
+      expect(posts(view.requests, "/messages")).toHaveLength(1);
+    });
+    expect(await bodyOf(posts(view.requests, "/messages")[0])).toEqual({
+      text: "Read it.",
+      files: [{ name: "brief.md", media_type: "text/plain", data: btoa("# Brief") }],
+    });
+    const sent = await screen.findByRole("list", { name: "Files sent with this message" });
+    expect(within(sent).getByText("brief.md")).toBeInTheDocument();
+  });
+
+  it("offers no Attach in a cloud session (AC-419.7)", async () => {
+    renderChat(
+      routes({ [SESSION]: anAgentSession({ status: "idle", kind: "cloud", last_seq: 3 }) }),
+    );
+    await screen.findByText("Starting.");
+
+    expect(screen.queryByRole("button", { name: "Attach a file" })).toBeNull();
   });
 
   it("focuses the composer on open", async () => {
@@ -1178,12 +1214,14 @@ describe("AgentSessionScreen (steps-drawer)", () => {
     expect(drawer()).toBeNull();
   });
 
-  it("AC-PG-32.2: the header chip and the bar open Steps, and the open state is remembered", async () => {
+  it("AC-PG-32.2, AC-422.13: the live bar opens Steps, and the open state is remembered", async () => {
     renderChat();
-    const chip = await screen.findByRole("button", { name: /^Steps, \d+, turn running$/ });
-    await userEvent.click(chip);
+    const bar = within(await screen.findByRole("region", { name: "Live activity" })).getByRole(
+      "button",
+    );
+    expect(screen.queryByRole("button", { name: /^Steps, \d+, turn running$/ })).toBeNull();
+    await userEvent.click(bar);
     expect(drawer()).toBeInTheDocument();
-    expect(chip).toHaveAttribute("aria-expanded", "true");
     expect(window.localStorage.getItem("ah.chat.steps")).toBe("open");
 
     await userEvent.click(
@@ -1194,10 +1232,32 @@ describe("AgentSessionScreen (steps-drawer)", () => {
     expect(drawer()).toBeNull();
     expect(window.localStorage.getItem("ah.chat.steps")).toBe("closed");
 
-    const bar = within(screen.getByRole("region", { name: "Live activity" })).getByRole("button");
-    await userEvent.click(bar);
+    await userEvent.click(
+      within(screen.getByRole("region", { name: "Live activity" })).getByRole("button"),
+    );
     expect(drawer()).toBeInTheDocument();
     expect(window.localStorage.getItem("ah.chat.steps")).toBe("open");
+  });
+
+  it("AC-423.1, AC-423.2, AC-423.3: a click outside closes Steps, which stays closed on the next load", async () => {
+    window.localStorage.setItem("ah.chat.steps", "open");
+    const first = renderChat();
+    await screen.findByText("Starting.");
+    expect(drawer()).toBeInTheDocument();
+
+    // Inside the drawer, or on something with its own action (the composer), it stays open.
+    await userEvent.click(screen.getByRole("heading", { name: "Steps" }));
+    await userEvent.click(box());
+    expect(drawer()).toBeInTheDocument();
+
+    await userEvent.click(screen.getByText("Starting."));
+    expect(drawer()).toBeNull();
+    expect(window.localStorage.getItem("ah.chat.steps")).toBe("closed");
+
+    first.unmount();
+    renderChat();
+    await screen.findByText("Starting.");
+    expect(drawer()).toBeNull();
   });
 
   it("AC-PG-32.2, AC-PG-32.4: left open, Steps reopens on load and leaves the keyboard in the composer", async () => {
@@ -1447,7 +1507,7 @@ describe("AgentSessionScreen (changed-files)", () => {
     expect(button).toHaveAccessibleName(
       "Review changes: 1 file, 1 lines added, 1 removed, 1 to review",
     );
-    expect(button).toHaveTextContent("1 file+1−11 to review");
+    expect(button).toHaveTextContent("Review changes+1−1· 1 to review");
     await userEvent.click(button);
 
     const panel = screen.getByRole("complementary", { name: "Changed files" });
@@ -1458,6 +1518,27 @@ describe("AgentSessionScreen (changed-files)", () => {
     await userEvent.click(screen.getByRole("button", { name: /^Edit/ }));
     expect(screen.queryByRole("complementary", { name: "Changed files" })).toBeNull();
     expect(screen.getByRole("complementary", { name: "Activity" })).toBeInTheDocument();
+  });
+
+  it("AC-423.1: a click on the conversation outside them closes the review and the Activity drawers", async () => {
+    renderChat(
+      routes({
+        [EVENTS]: {
+          items: [...log(), aLogRecord("tool.call", { seq: 4 })],
+          next_after: null,
+        },
+      }),
+    );
+    await userEvent.click(await screen.findByRole("button", { name: /^Review changes:/ }));
+    expect(screen.getByRole("complementary", { name: "Changed files" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByText("Starting."));
+    expect(screen.queryByRole("complementary", { name: "Changed files" })).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: /^Edit/ }));
+    expect(screen.getByRole("complementary", { name: "Activity" })).toBeInTheDocument();
+    await userEvent.click(screen.getByText("Starting."));
+    expect(screen.queryByRole("complementary", { name: "Activity" })).toBeNull();
   });
 });
 
@@ -1542,7 +1623,7 @@ describe("AgentSessionScreen (review-comments)", () => {
     const card = await screen.findByRole("region", { name: "Files edited in this turn" });
     await user.click(within(card).getByRole("button", { name: /^Open src\/app\.py/ }));
     const panel = screen.getByRole("complementary", { name: "Changed files" });
-    expect(within(panel).getByText("+a = 2", { exact: false })).toBeInTheDocument();
+    expect(panel).toHaveTextContent("+a = 2");
     expect(within(panel).queryByRole("button", { name: /^Comment on/ })).toBeNull();
   });
 });
@@ -1656,6 +1737,18 @@ describe("AgentSessionScreen (background-tasks)", () => {
     expect(within(drawer).getByText("Rerun the checks")).toBeInTheDocument();
   });
 
+  it("AC-423.1: a click outside the Background drawer closes it", async () => {
+    renderChat(backgroundRoutes());
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Background tasks, 1 running" }),
+    );
+    expect(screen.getByRole("complementary", { name: "Background tasks" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByText("Run the checks in the background."));
+
+    expect(screen.queryByRole("complementary", { name: "Background tasks" })).toBeNull();
+  });
+
   it("stops a running task from the drawer with an empty JSON body", async () => {
     const view = renderChat(backgroundRoutes());
     await userEvent.click(
@@ -1680,14 +1773,11 @@ describe("AgentSessionScreen (background-tasks)", () => {
     expect(screen.getByRole("complementary", { name: "Background tasks" })).toBeInTheDocument();
   });
 
-  it("closes the conversation with a card that opens the drawer", async () => {
+  it("AC-422.16 leaves the running task to the live bar: no second card at the conversation's end", async () => {
     renderChat(backgroundRoutes());
 
-    await userEvent.click(
-      await screen.findByRole("button", { name: "1 background command running" }),
-    );
-
-    expect(screen.getByRole("complementary", { name: "Background tasks" })).toBeInTheDocument();
+    await screen.findByRole("region", { name: "Live activity" });
+    expect(screen.queryByRole("button", { name: "1 background command running" })).toBeNull();
   });
 });
 
@@ -1721,5 +1811,67 @@ describe("AgentSessionScreen (session-name)", () => {
 
     expect(await screen.findByRole("combobox", { name: "Model" })).toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Mode" })).toBeNull();
+  });
+});
+
+describe("AgentSessionScreen (the header as a toolbar and a heading, AGH-422)", () => {
+  it("AC-422.13 names the session by containment, the title on its own line, the facts under it", async () => {
+    renderChat(
+      routes({
+        [SESSION]: anAgentSession({
+          status: "running",
+          last_seq: 3,
+          title: "Fix the CSV export test",
+          observed_session_id: anId(1, "5091b986"),
+        }),
+      }),
+    );
+
+    const crumbs = await screen.findByRole("navigation", { name: "Breadcrumb" });
+    expect(within(crumbs).getByRole("link", { name: "Portfolio" })).toHaveAttribute("href", "/");
+    expect(crumbs).toHaveTextContent(`Session ${ID.slice(0, 8)}`);
+    expect(crumbs).not.toHaveTextContent("Fix the CSV export test");
+    const title = screen.getByRole("heading", { level: 1, name: "Fix the CSV export test" });
+    expect(title).toHaveClass("as-title");
+    // The status and the cost sit under the title, not beside it.
+    const meta = title.nextElementSibling;
+    expect(meta).toHaveClass("as-heading-meta");
+    expect(
+      within(meta as HTMLElement).getByRole("group", { name: "Cost and tokens (estimate)" }),
+    ).toBeInTheDocument();
+  });
+
+  it("AC-422.14 keeps the mode and model on the composer only, and the cost details in the menu", async () => {
+    renderChat(
+      routes({
+        [SESSION]: anAgentSession({
+          status: "running",
+          last_seq: 3,
+          observed_session_id: anId(1, "5091b986"),
+        }),
+      }),
+    );
+    await screen.findByRole("heading", { level: 1 });
+    const header = document.querySelector<HTMLElement>("header.as-header");
+    if (!header) throw new Error("no chat header");
+    expect(within(header).queryByText(/Ask before edits/)).toBeNull();
+
+    await userEvent.click(within(header).getByRole("button", { name: "Session actions" }));
+    expect(screen.getByRole("link", { name: "Open cost details" })).toHaveAttribute(
+      "href",
+      `/sessions/${anId(1, "5091b986")}?tab=cost`,
+    );
+  });
+});
+
+describe("AgentSessionScreen (the sessions rail, AGH-422)", () => {
+  it("AC-422.18 puts the sessions rail beside the chat, the page itself never scrolling", async () => {
+    const { container } = renderChat(
+      routes({ "/api/v1/agent-sessions": { items: [anAgentSession({ status: "running" })] } }),
+    );
+    expect(await screen.findByRole("navigation", { name: "Sessions" })).toBeInTheDocument();
+    const layout = container.querySelector(".as-chat-layout");
+    expect(layout?.firstElementChild).toHaveClass("as-rail");
+    expect(layout?.querySelector(":scope > .as-page")).not.toBeNull();
   });
 });

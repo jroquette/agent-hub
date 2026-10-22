@@ -316,6 +316,27 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/agent-sessions/{agent_session_id}/repo-changes/file": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Agent Session Repo File
+     * @description One file of the session's repositories (``path`` absolute) as commit ``sha`` has it: the
+     *     lines a review expands around a pull request's diff.
+     */
+    get: operations["get_agent_session_repo_file_api_v1_agent_sessions__agent_session_id__repo_changes_file_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/agent-sessions/{agent_session_id}/settings": {
     parameters: {
       query?: never;
@@ -669,7 +690,10 @@ export interface paths {
      *     naming the acceptance eval covers what the Acceptance step waits on, with the no-body
      *     refusals, except that ``more_work`` is not refused over ACs an agent's eval reopened; either
      *     decision there is refused once an owner decision newer than the acceptance eval settled it
-     *     (its SHIP signed every waiting AC off, or its NO-SHIP is still the latest eval of one).
+     *     (its SHIP signed every waiting AC off, or its NO-SHIP is still the latest eval of one). With
+     *     ``acs``, signs off those criteria as checked by hand (AGH-425), with the same refusals over
+     *     them: an unknown AC, a NO-SHIP as the latest eval of one (``done``), an eval naming one that
+     *     the note would not rank newer than, evals left unread.
      */
     post: operations["sign_off_owner_steps_api_v1_features__project___slug__owner_signoff_post"];
     delete?: never;
@@ -1046,6 +1070,27 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/projects/{project}/config/environments": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Post Project Environment Edit
+     * @description Add, change or remove an environment or a service endpoint, in ``hub.json`` (the team's,
+     *     left uncommitted) or ``hub.local.json`` (this developer's), as ``hub env`` does.
+     */
+    post: operations["post_project_environment_edit_api_v1_projects__project__config_environments_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/projects/{project}/config/local": {
     parameters: {
       query?: never;
@@ -1061,6 +1106,77 @@ export interface paths {
     put: operations["put_project_local_config_api_v1_projects__project__config_local_put"];
     post?: never;
     delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/projects/{project}/env-file-keys": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Env File Keys
+     * @description The variable NAMES an env file holds, never a value: only a regular file of at most
+     *     64 KiB inside the hub or one of its repos, with whether git ignores it there.
+     */
+    get: operations["get_env_file_keys_api_v1_projects__project__env_file_keys_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/projects/{project}/environment-discoveries": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Environment Discoveries
+     * @description The project's discoveries not discarded, newest first.
+     */
+    get: operations["list_environment_discoveries_api_v1_projects__project__environment_discoveries_get"];
+    put?: never;
+    /**
+     * Start Environment Discovery
+     * @description Start a read-only Claude session that reads the picked repos and proposes environments,
+     *     services and addresses; 422 naming each repo or environment the config does not hold.
+     */
+    post: operations["start_environment_discovery_api_v1_projects__project__environment_discoveries_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/projects/{project}/environment-discoveries/{discovery_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Environment Discovery
+     * @description One discovery: its session's state and, once Claude finished, the checked proposal with
+     *     each item's status against the config of now.
+     */
+    get: operations["get_environment_discovery_api_v1_projects__project__environment_discoveries__discovery_id__get"];
+    put?: never;
+    post?: never;
+    /**
+     * Discard Environment Discovery
+     * @description Discard a discovery (its session is ended when it still works).
+     */
+    delete: operations["discard_environment_discovery_api_v1_projects__project__environment_discoveries__discovery_id__delete"];
     options?: never;
     head?: never;
     patch?: never;
@@ -1933,7 +2049,8 @@ export interface components {
     };
     /**
      * AcRow
-     * @description One acceptance criterion of ``features.json``.
+     * @description One acceptance criterion of ``features.json``; ``signed_off`` when it does not pass there
+     *     but the owner's latest eval of it (``provenance: owner``) says SHIP: checked by hand.
      */
     AcRow: {
       /** Command */
@@ -1953,6 +2070,11 @@ export interface components {
       passes: boolean;
       /** Repo */
       repo: string | null;
+      /**
+       * Signed Off
+       * @default false
+       */
+      signed_off: boolean;
     };
     /**
      * AcceptLearningBody
@@ -1978,6 +2100,8 @@ export interface components {
       owner_wait?: components["schemas"]["OwnerWaitView"] | null;
       verdict: components["schemas"]["Verdict"];
     };
+    /** @enum {string} */
+    Access: "read" | "write" | "ask";
     /**
      * ActionCallEntry
      * @description An action call's policy facts, from its record line: never its inputs or output.
@@ -2047,6 +2171,92 @@ export interface components {
     /** @enum {string} */
     ActorKind: "main" | "subagent";
     /**
+     * AddEndpoint
+     * @description A service's endpoint in one environment; the service is added when new.
+     */
+    AddEndpoint: {
+      /** Environment */
+      environment: string;
+      /** Kind */
+      kind?: string | null;
+      /** Note */
+      note?: string | null;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "add_endpoint";
+      /**
+       * Replace
+       * @default false
+       */
+      replace: boolean;
+      /** Repo */
+      repo: string;
+      /** Resource */
+      resource?: string | null;
+      scope: components["schemas"]["Scope"];
+      /** Service */
+      service: string;
+      /** Url */
+      url?: string | null;
+    };
+    /**
+     * AddEnvironment
+     * @description A new environment, with its credentials by name only.
+     */
+    AddEnvironment: {
+      access: components["schemas"]["Access"];
+      /** Aws Profile */
+      aws_profile?: string | null;
+      /**
+       * Credential Env
+       * @default []
+       */
+      credential_env: string[];
+      /** Description */
+      description?: string | null;
+      /** Env File */
+      env_file?: string | null;
+      /** Name */
+      name: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "add_environment";
+      /**
+       * Production
+       * @default false
+       */
+      production: boolean;
+      scope: components["schemas"]["Scope"];
+    };
+    /**
+     * AddService
+     * @description A new service of a repo with its address in one or more environments, in one step.
+     *
+     *     Each address goes to the file of its environment: a team environment's to ``hub.json``, the
+     *     developer's own to ``hub.local.json``; both files are checked before either is written.
+     */
+    AddService: {
+      /** Addresses */
+      addresses: components["schemas"]["ServiceAddress"][];
+      /** Description */
+      description?: string | null;
+      /** Kind */
+      kind?: string | null;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "add_service";
+      /** Repo */
+      repo: string;
+      /** Service */
+      service: string;
+    };
+    /**
      * AgentModelView
      * @description A plugin agent's tier, when ``models.agents`` moves it off its template's.
      */
@@ -2067,7 +2277,8 @@ export interface components {
      *     ``last_prompt`` and ``last_reply`` are the latest ``user.message`` and assistant ``text`` of
      *     the stored (redacted) log as one line of at most 280 characters, the reply's markdown
      *     marks dropped; ``changed_files`` the files changed, latest change first, at most 200
-     *     (``digest``).
+     *     (``digest``). ``tool_access`` is the tools it may use, kept so a reopened session keeps
+     *     them; it is the server's own (``exclude``: never in an answer, so the contract is unchanged).
      */
     AgentSession: {
       /**
@@ -2590,9 +2801,12 @@ export interface components {
      * CreateAgentSession
      * @description ``POST /agent-sessions``: where, how, and an optional first prompt (its byte size is
      *     checked against the message limit, 413), or a past session to resume (and fork).
-     *     ``screenshot`` goes with the first prompt as an image, so it needs one.
+     *     ``screenshot`` (the screen's capture), ``screenshots`` (images pasted in the first
+     *     message) and ``files`` go with the first prompt, so they need one.
      */
     CreateAgentSession: {
+      /** Files */
+      files?: components["schemas"]["MessageFile"][] | null;
       /**
        * Fork
        * @default false
@@ -2608,6 +2822,8 @@ export interface components {
       /** Resume Session Id */
       resume_session_id?: string | null;
       screenshot?: components["schemas"]["Screenshot"] | null;
+      /** Screenshots */
+      screenshots?: components["schemas"]["Screenshot"][] | null;
       /** Workdir Id */
       workdir_id: string;
     };
@@ -2617,6 +2833,24 @@ export interface components {
       id: string;
       /** Url */
       url: string;
+    };
+    /**
+     * Credentials
+     * @description Where the credentials of an environment come from: names, never values.
+     */
+    Credentials: {
+      /** @description An AWS profile name. */
+      aws_profile?: string;
+      /**
+       * Env
+       * @description Names of the environment variables that hold credentials.
+       * @default []
+       */
+      env: string[];
+      /** @description A dotenv file, relative to the folder holding the hub and its repos, that only actions read; at most 200 characters, no '..', no leading '/' or '~'. */
+      env_file?: string;
+    } & {
+      [key: string]: unknown;
     };
     /** DecisionEntry */
     DecisionEntry: {
@@ -2673,6 +2907,39 @@ export interface components {
      * @enum {string}
      */
     DiagnosticSeverity: "info" | "warning";
+    /**
+     * DiscoveryProposal
+     * @description What Claude proposed, as the server checked it.
+     */
+    DiscoveryProposal: {
+      /**
+       * Dropped
+       * @default []
+       */
+      dropped: components["schemas"]["Dropped"][];
+      /**
+       * Environments
+       * @default []
+       */
+      environments: components["schemas"]["ProposedEnvironment"][];
+      /**
+       * Missing
+       * @default []
+       */
+      missing: components["schemas"]["MissingService"][];
+      /**
+       * Not Read
+       * @default []
+       */
+      not_read: components["schemas"]["NotRead"][];
+      /**
+       * Services
+       * @default []
+       */
+      services: components["schemas"]["ProposedService"][];
+    };
+    /** @enum {string} */
+    DiscoveryState: "running" | "finished" | "failed" | "stopped";
     /**
      * DoctorFixRequest
      * @description The empty JSON body of the fix: a cross-site form cannot send one (S7).
@@ -2733,14 +3000,132 @@ export interface components {
       /** Reason */
       reason?: string | null;
     };
+    /**
+     * Dropped
+     * @description An item, or one field of it, the server refused while checking the proposal.
+     */
+    Dropped: {
+      /** Reason */
+      reason: string;
+      /** What */
+      what: string;
+    };
     /** @enum {string} */
     EdgeSource: "plan" | "linear" | "both";
+    /**
+     * EditBatch
+     * @description Edits made in order and written together: both files or neither.
+     */
+    EditBatch: {
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "batch";
+      /** Ops */
+      ops: components["schemas"]["SingleEdit"][];
+    };
+    /**
+     * EffectiveEnvironments
+     * @description The union of both files: committed entries first, then the developer's (P-5).
+     */
+    EffectiveEnvironments: {
+      /** Blocked Env */
+      blocked_env: components["schemas"]["LayeredEntry"][];
+      /** Blocked Files */
+      blocked_files: components["schemas"]["LayeredEntry"][];
+      /** Blocked Words */
+      blocked_words: components["schemas"]["LayeredEntry"][];
+      /** Environments */
+      environments: components["schemas"]["SourcedEnvironment"][];
+      /** Services */
+      services: components["schemas"]["SourcedService"][];
+    };
     /**
      * EndReason
      * @description Why a session ended.
      * @enum {string}
      */
     EndReason: "closed" | "idle_timeout" | "server_stopped" | "failed" | "log_full";
+    /**
+     * Endpoint
+     * @description How a service is reached in one environment: a url, a resource name, or both.
+     */
+    Endpoint:
+      | ({
+          /** @description Names of the credentials to use here; never a value. */
+          credentials?: components["schemas"]["Credentials"];
+          note?: string;
+          /** @description A resource name, such as a table or a function. */
+          resource?: string;
+          /** @description scheme://host[:port][/path], at most 200 characters; no user info, query or fragment. */
+          url?: string;
+        } & {
+          [key: string]: unknown;
+        })
+      | unknown
+      | unknown;
+    /**
+     * EnvFileKeys
+     * @description What hub web may show of an env file: whether it is found where it may be, whether git
+     *     ignores it, and its variable names. ``problem`` says, in words, why no names are shown.
+     */
+    EnvFileKeys: {
+      /** Exists */
+      exists: boolean;
+      /** Holder */
+      holder: string | null;
+      /** Ignored */
+      ignored: boolean | null;
+      /**
+       * Keys
+       * @default []
+       */
+      keys: string[];
+      /** Path */
+      path: string;
+      /** Problem */
+      problem?: string | null;
+      /**
+       * Truncated
+       * @default false
+       */
+      truncated: boolean;
+    };
+    /**
+     * EnvironmentDiscovery
+     * @description ``/projects/{project}/environment-discoveries``: a discovery, where its session is, and
+     *     its checked proposal once there is one; ``problem`` says in plain words why it failed.
+     */
+    EnvironmentDiscovery: {
+      /** Agent Session Id */
+      agent_session_id: string;
+      created_at: components["schemas"]["ApiTimestamp"];
+      /** Environments */
+      environments: string[];
+      /** Id */
+      id: string;
+      /** Problem */
+      problem?: string | null;
+      /** Project */
+      project: string;
+      proposal?: components["schemas"]["DiscoveryProposal"] | null;
+      /** Repos */
+      repos: string[];
+      state: components["schemas"]["DiscoveryState"];
+      /** Suggest Environments */
+      suggest_environments: boolean;
+    };
+    EnvironmentEdit:
+      | components["schemas"]["AddEnvironment"]
+      | components["schemas"]["SetEnvironment"]
+      | components["schemas"]["RenameEnvironment"]
+      | components["schemas"]["RemoveEnvironment"]
+      | components["schemas"]["AddEndpoint"]
+      | components["schemas"]["RemoveEndpoint"]
+      | components["schemas"]["AddService"]
+      | components["schemas"]["SetService"]
+      | components["schemas"]["EditBatch"];
     /**
      * EvalRecord
      * @description One evaluation of a delivery: ``evals/<delivery>.md``, or the legacy ``eval.md``.
@@ -2812,6 +3197,16 @@ export interface components {
       | "finding"
       | "workaround.start"
       | "workaround.end";
+    /**
+     * Evidence
+     * @description Where Claude saw something: a file relative to the workspace, inside a picked repo.
+     */
+    Evidence: {
+      /** Line */
+      line?: number | null;
+      /** Path */
+      path: string;
+    };
     /**
      * ExternalBlocker
      * @description A blocker outside the feature's tickets, with its status when Linear returned it.
@@ -3336,6 +3731,7 @@ export interface components {
         components["schemas"]["PatternView"],
       ];
       default_branch: components["schemas"]["SourcedValue"];
+      environments: components["schemas"]["EffectiveEnvironments"];
       guard: components["schemas"]["GuardConfigView"];
       /** Hub Path */
       hub_path: string;
@@ -3520,6 +3916,8 @@ export interface components {
      * @enum {string}
      */
     ItemKind: "skill" | "agent" | "hook";
+    /** @enum {string} */
+    ItemStatus: "new" | "differs" | "declared";
     /**
      * ItemVersionContent
      * @description A version's content: a file unit's one file, or a folder's files in path order (S6).
@@ -3590,6 +3988,16 @@ export interface components {
     "JsonValue-Input": unknown;
     /** @enum {string} */
     KeySource: "environment" | "settings";
+    /**
+     * LayeredEntry
+     * @description A blocked word, glob or variable name, and the first layer that lists it.
+     */
+    LayeredEntry: {
+      /** Layer */
+      layer: string;
+      /** Value */
+      value: string;
+    };
     /**
      * LayeredList
      * @description A list the team sets and this developer adds to.
@@ -3975,6 +4383,41 @@ export interface components {
       seq: number;
     };
     /**
+     * MessageFile
+     * @description A file attached to a message for Claude to read: a PDF or a UTF-8 text, base64-encoded;
+     *     its decoded size and content are checked by ``decode_message_file`` (413, 422).
+     */
+    MessageFile: {
+      /** Data */
+      data: string;
+      /**
+       * Media Type
+       * @enum {string}
+       */
+      media_type: "application/pdf" | "text/plain";
+      /** Name */
+      name: string;
+    };
+    /**
+     * MissingService
+     * @description A service Claude saw a sign of but could not place: no address it could read.
+     */
+    MissingService: {
+      /**
+       * Evidence
+       * @default []
+       */
+      evidence: components["schemas"]["Evidence"][];
+      /** Kind */
+      kind?: string | null;
+      /** Name */
+      name: string;
+      /** Repo */
+      repo: string;
+      /** Why */
+      why: string;
+    };
+    /**
      * Mode
      * @description Who can invoke a skill (S5, L2); ``neither`` reads "Hidden" in the UI.
      * @enum {string}
@@ -4000,6 +4443,16 @@ export interface components {
     };
     /** @enum {string} */
     NeedsYouKind: "approval" | "failed" | "waiting" | "blocked" | "doctor" | "learning";
+    /**
+     * NotRead
+     * @description A file Claude could not read, and why.
+     */
+    NotRead: {
+      /** Path */
+      path: string;
+      /** Reason */
+      reason: string;
+    };
     /**
      * NowItem
      * @description One line of ``brain/now.md``.
@@ -4084,9 +4537,12 @@ export interface components {
     Outcome: "done" | "stopped" | "blocked" | "error";
     /**
      * OwnerSignOffBody
-     * @description ``POST .../owner-signoff``: the eval to settle, the owner's decision and an optional note.
+     * @description ``POST .../owner-signoff``: the eval to settle (or the ACs the owner checked by hand), the
+     *     owner's decision and an optional note.
      */
     OwnerSignOffBody: {
+      /** Acs */
+      acs?: string[] | null;
       /**
        * Decision
        * @default done
@@ -4139,6 +4595,15 @@ export interface components {
     Page_Approval_: {
       /** Items */
       items: components["schemas"]["Approval"][];
+      /** Next Cursor */
+      next_cursor?: string | null;
+      /** Total Estimate */
+      total_estimate: number;
+    };
+    /** Page[EnvironmentDiscovery] */
+    Page_EnvironmentDiscovery_: {
+      /** Items */
+      items: components["schemas"]["EnvironmentDiscovery"][];
       /** Next Cursor */
       next_cursor?: string | null;
       /** Total Estimate */
@@ -4442,6 +4907,8 @@ export interface components {
       /** Runs */
       runs: components["schemas"]["PreflightRun"][];
     };
+    /** @enum {string} */
+    Preset: "local" | "staging" | "production" | "mine" | "other";
     /**
      * Problem
      * @description One problem of a session and the event it comes from.
@@ -4641,6 +5108,81 @@ export interface components {
       /** Proposal */
       proposal: number;
     };
+    /** @enum {string} */
+    ProposedAccess: "read" | "ask" | "write";
+    /**
+     * ProposedAddress
+     * @description A service's address in one environment: a URL or a resource name.
+     */
+    ProposedAddress: {
+      /** Address */
+      address: string;
+      /** Environment */
+      environment: string;
+      /**
+       * Evidence
+       * @default []
+       */
+      evidence: components["schemas"]["Evidence"][];
+      /** Note */
+      note?: string | null;
+      status: components["schemas"]["ItemStatus"];
+      /** Yours */
+      yours: string | null;
+    };
+    /**
+     * ProposedEnvironment
+     * @description An environment Claude found. ``access`` and ``production`` come from ``preset``, never
+     *     from Claude alone; ``yours`` describes the declared one when ``status`` is ``differs``.
+     */
+    ProposedEnvironment: {
+      access: components["schemas"]["ProposedAccess"];
+      /** Aws Profile */
+      aws_profile?: string | null;
+      /** Description */
+      description?: string | null;
+      /** Env File */
+      env_file?: string | null;
+      /**
+       * Evidence
+       * @default []
+       */
+      evidence: components["schemas"]["Evidence"][];
+      /** Name */
+      name: string;
+      preset: components["schemas"]["Preset"];
+      /** Production */
+      production: boolean;
+      status: components["schemas"]["ItemStatus"];
+      /** Yours */
+      yours: string | null;
+    };
+    /**
+     * ProposedService
+     * @description A service of a picked repo; ``declared`` when it and every address are declared already,
+     *     ``differs`` when it is declared but an address is new or different.
+     */
+    ProposedService: {
+      /**
+       * Addresses
+       * @default []
+       */
+      addresses: components["schemas"]["ProposedAddress"][];
+      /** Description */
+      description?: string | null;
+      /**
+       * Evidence
+       * @default []
+       */
+      evidence: components["schemas"]["Evidence"][];
+      /** Kind */
+      kind?: string | null;
+      /** Name */
+      name: string;
+      /** Repo */
+      repo: string;
+      status: components["schemas"]["ItemStatus"];
+    };
     /**
      * PublishDraftBody
      * @description ``POST .../skills/drafts/{draft_id}/publish``: ``target`` the item the draft edits, or
@@ -4731,6 +5273,54 @@ export interface components {
       name: string;
       /** Source */
       source: string;
+    };
+    /**
+     * RemoveEndpoint
+     * @description A service's endpoint in one environment, or the whole service when none is named.
+     */
+    RemoveEndpoint: {
+      /** Environment */
+      environment?: string | null;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "remove_endpoint";
+      /** Repo */
+      repo: string;
+      scope: components["schemas"]["Scope"];
+      /** Service */
+      service: string;
+    };
+    /**
+     * RemoveEnvironment
+     * @description An environment no endpoint uses any more.
+     */
+    RemoveEnvironment: {
+      /** Name */
+      name: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "remove_environment";
+      scope: components["schemas"]["Scope"];
+    };
+    /**
+     * RenameEnvironment
+     * @description A new name for an environment; its endpoints in the same file follow it.
+     */
+    RenameEnvironment: {
+      /** Name */
+      name: string;
+      /** New Name */
+      new_name: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "rename_environment";
+      scope: components["schemas"]["Scope"];
     };
     /**
      * RepoChanges
@@ -4888,6 +5478,26 @@ export interface components {
     };
     /** @enum {string} */
     RepoFileStatus: "added" | "modified" | "deleted" | "renamed";
+    /**
+     * RepoFileText
+     * @description ``GET /agent-sessions/{id}/repo-changes/file``: a file as it is at one commit (the base a
+     *     pull request's diff is read against), so a review can show the lines its diff leaves out.
+     *     ``text`` is null for a binary file, one past ``REPO_DIFF_MAX_BYTES`` or one the commit does
+     *     not have.
+     */
+    RepoFileText: {
+      /**
+       * Binary
+       * @default false
+       */
+      binary: boolean;
+      /** Path */
+      path: string;
+      /** Sha */
+      sha: string;
+      /** Text */
+      text?: string | null;
+    };
     /**
      * RepoPullRequest
      * @description The branch's pull request on GitHub: its number, link, state (``OPEN``, ``MERGED``,
@@ -5348,6 +5958,8 @@ export interface components {
       /** Revision */
       revision: number;
     };
+    /** @enum {string} */
+    Scope: "team" | "local";
     /**
      * Screenshot
      * @description A PNG image sent with a message (a screenshot, or an image pasted in the chat),
@@ -5384,14 +5996,28 @@ export interface components {
       "session" | "run" | "approval" | "learning" | "feature" | "file" | "command" | "tool";
     /**
      * SendMessage
-     * @description ``POST /{id}/messages``: one user message (byte limit checked, 413), with the images
-     *     pasted in it, sent to Claude before the text.
+     * @description ``POST /{id}/messages``: one user message (byte limit checked, 413), with the files and
+     *     images attached to it, sent to Claude before the text.
      */
     SendMessage: {
+      /** Files */
+      files?: components["schemas"]["MessageFile"][] | null;
       /** Screenshots */
       screenshots?: components["schemas"]["Screenshot"][] | null;
       /** Text */
       text: string;
+    };
+    /**
+     * ServiceAddress
+     * @description Where a service is reached in one environment: a URL (holds ``://``) or a resource name.
+     */
+    ServiceAddress: {
+      /** Address */
+      address: string;
+      /** Environment */
+      environment: string;
+      /** Note */
+      note?: string | null;
     };
     /**
      * Session
@@ -5681,6 +6307,53 @@ export interface components {
       stored: boolean;
     };
     /**
+     * SetEnvironment
+     * @description A change to an environment: a field left out stays; an empty text removes the key.
+     */
+    SetEnvironment: {
+      access?: components["schemas"]["Access"] | null;
+      /** Aws Profile */
+      aws_profile?: string | null;
+      /** Credential Env */
+      credential_env?: string[] | null;
+      /** Description */
+      description?: string | null;
+      /** Env File */
+      env_file?: string | null;
+      /** Name */
+      name: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "set_environment";
+      /** Production */
+      production?: boolean | null;
+      scope: components["schemas"]["Scope"];
+    };
+    /**
+     * SetService
+     * @description A change to a service: a field left out stays; an empty text removes the key.
+     */
+    SetService: {
+      /** Description */
+      description?: string | null;
+      /** Kind */
+      kind?: string | null;
+      /** New Name */
+      new_name?: string | null;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "set_service";
+      /** Repo */
+      repo: string;
+      scope: components["schemas"]["Scope"];
+      /** Service */
+      service: string;
+    };
+    /**
      * SettingsView
      * @description Read-only settings of the running ``hub web`` (no ``PATCH`` in Phase 2).
      */
@@ -5714,6 +6387,15 @@ export interface components {
      * @enum {string}
      */
     Severity: "error" | "warning" | "info";
+    SingleEdit:
+      | components["schemas"]["AddEnvironment"]
+      | components["schemas"]["SetEnvironment"]
+      | components["schemas"]["RenameEnvironment"]
+      | components["schemas"]["RemoveEnvironment"]
+      | components["schemas"]["AddEndpoint"]
+      | components["schemas"]["RemoveEndpoint"]
+      | components["schemas"]["AddService"]
+      | components["schemas"]["SetService"];
     /**
      * SkillCatalog
      * @description A project's skills, agents and hooks in stable order (kind, name, source).
@@ -5910,6 +6592,55 @@ export interface components {
       state: "fresh" | "stale" | "never";
     };
     /**
+     * SourcedEndpoint
+     * @description A service's endpoint in one environment, and the file that declares it.
+     */
+    SourcedEndpoint: {
+      endpoint: components["schemas"]["Endpoint"];
+      /** Environment */
+      environment: string;
+      /** Source */
+      source: string;
+    };
+    /**
+     * SourcedEnvironment
+     * @description An effective environment and its source: the file its effective ``access`` comes from.
+     */
+    SourcedEnvironment: {
+      /**
+       * Access
+       * @enum {string}
+       */
+      access: "read" | "write" | "ask";
+      credentials: components["schemas"]["Credentials"] | null;
+      /** Description */
+      description: string | null;
+      /** Name */
+      name: string;
+      /** Production */
+      production: boolean;
+      /** Source */
+      source: string;
+      /** Team Access */
+      team_access?: ("read" | "write" | "ask") | null;
+    };
+    /**
+     * SourcedService
+     * @description A repo's service with its endpoints from both files, the committed ones first.
+     */
+    SourcedService: {
+      /** Description */
+      description: string | null;
+      /** Endpoints */
+      endpoints: components["schemas"]["SourcedEndpoint"][];
+      /** Kind */
+      kind: string | null;
+      /** Name */
+      name: string;
+      /** Repo */
+      repo: string;
+    };
+    /**
      * SourcedValue
      * @description An effective value (None when no source gives one) and where it comes from.
      */
@@ -5939,6 +6670,26 @@ export interface components {
       task: string;
       /** Workdir Id */
       workdir_id: string;
+    };
+    /**
+     * StartEnvironmentDiscovery
+     * @description ``POST /projects/{project}/environment-discoveries``: the repos to read (``hub.json``
+     *     repo folders), the declared environments to look for, and whether Claude may suggest
+     *     environments not declared yet.
+     */
+    StartEnvironmentDiscovery: {
+      /**
+       * Environments
+       * @default []
+       */
+      environments: string[];
+      /** Repos */
+      repos: string[];
+      /**
+       * Suggest Environments
+       * @default false
+       */
+      suggest_environments: boolean;
     };
     /**
      * StartRunRequest
@@ -7495,6 +8246,49 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["RepoCommitDiff"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_agent_session_repo_file_api_v1_agent_sessions__agent_session_id__repo_changes_file_get: {
+    parameters: {
+      query: {
+        path: string;
+        sha: string;
+      };
+      header?: never;
+      path: {
+        agent_session_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["RepoFileText"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */
@@ -9124,6 +9918,50 @@ export interface operations {
       };
     };
   };
+  post_project_environment_edit_api_v1_projects__project__config_environments_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["EnvironmentEdit"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HubConfigView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
   put_project_local_config_api_v1_projects__project__config_local_put: {
     parameters: {
       query?: never;
@@ -9147,6 +9985,212 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["HubConfigView"];
         };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_env_file_keys_api_v1_projects__project__env_file_keys_get: {
+    parameters: {
+      query: {
+        path: string;
+      };
+      header?: never;
+      path: {
+        project: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EnvFileKeys"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  list_environment_discoveries_api_v1_projects__project__environment_discoveries_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Page_EnvironmentDiscovery_"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  start_environment_discovery_api_v1_projects__project__environment_discoveries_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["StartEnvironmentDiscovery"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EnvironmentDiscovery"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_environment_discovery_api_v1_projects__project__environment_discoveries__discovery_id__get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        discovery_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["EnvironmentDiscovery"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  discard_environment_discovery_api_v1_projects__project__environment_discoveries__discovery_id__delete: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        discovery_id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       /** @description A client error, as an RFC 9457 problem */
       "4XX": {

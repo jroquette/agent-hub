@@ -215,6 +215,19 @@ export function countLine(questions: readonly OpenQuestion[], answers: Answers):
     .join(" · ");
 }
 
+/**
+ * The questions the owner answers: the summary's, written in plain words with their context, when
+ * it names every question the record has (same ids); else the record's own, so none goes missing.
+ */
+export function questionsToShow(
+  record: readonly OpenQuestion[],
+  summary: readonly OpenQuestion[] | null,
+): readonly OpenQuestion[] {
+  if (!summary || summary.length === 0) return record;
+  const ids = new Set(summary.map((q) => q.id));
+  return record.every((q) => ids.has(q.id)) ? summary : record;
+}
+
 /** The approval message; with open questions, each one's answer or what a blank answer means. */
 export function approvalMessage(
   record: string,
