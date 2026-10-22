@@ -104,16 +104,16 @@ Opening the paused scenario run in hub web (`POST /scenario-runs/{id}/investigat
 gate, its tools held by a PreToolUse hook: `Read`, `Glob`, `Grep` except on a declared env file, `Write` only under
 `actions/<pack>/` (draft actions), Bash only for `./hub action list|plan|run …` and `./hub scenario propose --run <id>`
 and no shell metacharacter. `hub action run --run <id>` needs that run paused at an open investigation, uses its
-environment and env file, records origin `agent`, and runs only `read` actions (a write exits 1 and records
-`policy.decision` `deny`). The agent records findings and options (a summary and `{action, with}` steps each) with
-`./hub scenario propose` (JSON on stdin, secret shapes redacted); each option is shown with its plan. The answer is
-`pick` (`--text <option id>`), `retry` or `stop`: `hub workflow respond <run> --node <step>__investigation --choice …`,
-`hub workflow decide` from hub web, or the Scenarios screen (Approvals sends the gate there). An option holding a
-`deny`, a draft action or a plan changed since shown cannot be picked (refused with its reason, nothing recorded). A
-pick answers its steps' asks: `workaround.start`, its actions (origin `agent`), `workaround.end`, then the diverged step
-as a new attempt; a failed or cut-short workaround (never re-run) opens a new investigation. `retry` skips it; `stop`
-ends it `cancelled`, findings kept. Nothing rewinds the system. `hub scenario findings <run> --issue <id>` creates a
-tracker issue after a terminal `y`; `--inbox <id>` writes a `brain/_inbox/` note (`provenance: agent-from-external`).
+environment and env file, records origin `agent`, and runs only `read` actions (a write exits 1 and records `policy.decision`
+`deny`). The agent records findings and options (a summary and `{action, with}` steps each) with `./hub scenario propose`
+(JSON on stdin, secret shapes redacted); each option is shown with its plan. The answer is `pick` (`--text <option id>`),
+`retry` or `stop`: `hub workflow respond <run> --node <step>__investigation --choice …`, `hub workflow decide` from hub web,
+or the Scenarios screen (Approvals sends the gate there). An option holding a `deny`, a draft action or a plan changed since
+shown cannot be picked (refused with its reason, nothing recorded). A pick answers its steps' asks: `workaround.start`, its
+actions (origin `agent`), `workaround.end`, then the diverged step as a new attempt; a failed or cut-short workaround (never
+re-run) opens a new investigation. `retry` skips it; `stop` ends it `cancelled`, findings kept. Nothing rewinds the system.
+`hub scenario findings <run>` lists them; `--issue <id>` creates a tracker issue after a terminal `y`, never retried (the MCP
+`create_issue` call uses only `save_issue`); `--inbox <id>` writes a `brain/_inbox/` note (`provenance: agent-from-external`).
 
 ### Events and bounds
 

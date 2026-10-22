@@ -119,6 +119,29 @@ class FakeTrackerBackend:
     issues: dict[str, Issue] = field(default_factory=dict)
     comments: list[tuple[str, str]] = field(default_factory=list)
 
+    def new_issue(self, team: str, title: str, description: str) -> Issue:
+        """Store and return a new issue of ``team``: the team's next number, its first unstarted
+        state, no label; the fakes' ``create_issue``. The team must be known."""
+        numbers = [
+            int(issue_id.partition("-")[2])
+            for issue_id in self.issues
+            if _team_of(issue_id) == team and ISSUE_ID_PATTERN.fullmatch(issue_id)
+        ]
+        issue_id = f"{team}-{max(numbers, default=0) + 1}"
+        state = next(
+            state.name for state in self.states[team] if state.type in UNSTARTED_STATE_TYPES
+        )
+        issue = Issue(
+            id=issue_id,
+            title=title,
+            description=description,
+            state=state,
+            labels=(),
+            url=f"https://linear.example.com/demo/issue/{issue_id}",
+        )
+        self.issues[issue_id] = issue
+        return issue
+
 
 class InMemoryTrackerClient:
     """A ``TrackerClient`` over a ``FakeTrackerBackend``; it checks every name before a change."""
@@ -187,6 +210,16 @@ class InMemoryTrackerClient:
         """Record one comment on the issue."""
         self._issue("comment", issue_id)
         self._backend.comments.append((issue_id, body))
+
+    def create_issue(self, team: str, title: str, description: str) -> Issue:
+        """Create one issue of a known team; an unknown team raises and creates nothing."""
+        if team not in self._backend.states:
+            raise TrackerError(
+                operation="create_issue",
+                cause=f"team {team!r} not found",
+                fix="use a team key of the tracker, such as DEM",
+            )
+        return self._backend.new_issue(team, title, description)
 
     def _issue(self, operation: str, issue_id: str) -> Issue:
         if not ISSUE_ID_PATTERN.fullmatch(issue_id):
