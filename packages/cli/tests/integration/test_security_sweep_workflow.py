@@ -79,6 +79,8 @@ def test_declares_read_only_nodes_and_no_tracker_step_when_document_loaded() -> 
     assert nodes["triage"].model == "large"
     assert nodes["report"].trigger_rule == "none_failed_min_one_success"
     assert nodes["mark"].depends_on == ("report",)
+    # Only the ids triage named are marked seen.
+    assert nodes["mark"].args[-2:] == ("--triaged", "$report.output.triaged")
     assert loaded.returns == "mark"
     assert loaded.outcome_field == "status"
 
@@ -86,8 +88,8 @@ def test_declares_read_only_nodes_and_no_tracker_step_when_document_loaded() -> 
 def a_reply(kept: int = 100, attack: str = "a" * 400) -> dict[str, Any]:
     return {
         "kept": [{"id": f"F{n}", "attack": attack, "fix": "f" * 400} for n in range(1, kept + 1)],
-        "unresolved": [{"id": f"F{n}", "why": "w" * 300} for n in range(1, 21)],
-        "dropped": 0,
+        "unresolved": [{"id": f"F{n}", "why": "w" * 300} for n in range(1, 101)],
+        "dropped": [f"F{n}" for n in range(1, 101)],
     }
 
 
@@ -100,7 +102,13 @@ def test_bounds_triage_reply_when_outputs_validated() -> None:
         for wrong in ("F0", "G1")
     ]
 
-    for wrong in (a_reply(kept=101), a_reply(attack="a" * 401), *bad_ids):
+    too_many = [
+        {**a_reply(), "unresolved": [{"id": "F1", "why": ""}] * 101},
+        {**a_reply(), "dropped": ["F1"] * 101},
+        {**a_reply(), "dropped": 2},
+        {**a_reply(), "dropped": ["G1"]},
+    ]
+    for wrong in (a_reply(kept=101), a_reply(attack="a" * 401), *bad_ids, *too_many):
         with pytest.raises(NodeFailedError):
             outputs.check(schema, wrong)
 
@@ -302,7 +310,7 @@ def test_reports_without_value_and_lists_none_new_when_chain_runs_twice(
     scan = chain.run("scan.py", "--repo", "demo-api")
     selected = chain.run("unseen.py", "select", stdin=canonical_text(scan))
     kept = [{"id": f["id"], "attack": "reachable", "fix": "fix it"} for f in selected["findings"]]
-    triage: Any = {"kept": kept, "unresolved": [], "dropped": 0}
+    triage: Any = {"kept": kept, "unresolved": [], "dropped": []}
     report = chain.run(
         "report.py",
         "--findings",
@@ -316,7 +324,13 @@ def test_reports_without_value_and_lists_none_new_when_chain_runs_twice(
         stdin=canonical_text(triage),
     )
     marked = chain.run(
-        "unseen.py", "mark", "--status", report["status"], stdin=json.dumps(selected)
+        "unseen.py",
+        "mark",
+        "--status",
+        report["status"],
+        "--triaged",
+        canonical_text(report["triaged"]),
+        stdin=json.dumps(selected),
     )
     again = chain.run(
         "unseen.py", "select", stdin=json.dumps(chain.run("scan.py", "--repo", "demo-api"))

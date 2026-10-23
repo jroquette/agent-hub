@@ -21,6 +21,7 @@ SCRIPT = Path(
 # Named as its folder places it, so coverage of agent_hub.core measures it.
 MODULE = "agent_hub.core.workflows.builtin.security-sweep.scripts.unseen"
 TODAY = "2026-10-26"
+EMPTY = json.dumps({"findings": [], "listed": 0, "ran": [], "current": []})
 
 
 def load() -> ModuleType:
@@ -90,8 +91,11 @@ class Store:
         assert code == 0
         return json.loads(out)
 
-    def mark(self, selected: Any, status: str = "findings") -> Any:
-        code, out = self.call("mark", "--status", status, stdin=json.dumps(selected))
+    def mark(self, selected: Any, status: str = "findings", triaged: Any = None) -> Any:
+        """``mark`` with ``triaged`` (default: every listed id, as a full triage names them)."""
+        named = [finding["id"] for finding in selected["findings"]] if triaged is None else triaged
+        argv = ("mark", "--status", status, "--triaged", json.dumps(named))
+        code, out = self.call(*argv, stdin=json.dumps(selected))
         assert code == 0
         return json.loads(out)
 
@@ -282,8 +286,11 @@ def test_drops_oldest_entries_when_store_is_over_its_cap(store: Store) -> None:
         (("select",), "not json"),
         (("select",), "[]"),
         (("select",), '{"repos": [], "findings": {}}'),
-        (("mark", "--status", "findings"), '{"findings": []}'),
-        (("mark", "--status", "maybe"), json.dumps({"findings": []})),
+        (("mark", "--status", "findings", "--triaged", "[]"), '{"findings": []}'),
+        (("mark", "--status", "maybe", "--triaged", "[]"), json.dumps({"findings": []})),
+        (("mark", "--status", "clean"), EMPTY),
+        (("mark", "--status", "clean", "--triaged", "x"), EMPTY),
+        (("mark", "--status", "clean", "--triaged", '["G1"]'), EMPTY),
     ],
 )
 def test_exits_two_when_stdin_is_not_scan_json(
@@ -299,3 +306,25 @@ def test_writes_the_store_atomically_when_marked(store: Store) -> None:
     store.mark(store.select(a_scan(a_finding())))
 
     assert sorted(os.listdir(store.path.parent)) == ["seen.json"]
+
+
+def test_marks_only_the_ids_triage_named_when_reply_undercounts(store: Store) -> None:
+    scan = a_scan(a_finding("r1"), a_finding("r2"), a_finding("r3"))
+
+    first = store.select(scan)
+    marked = store.mark(first, triaged=["F2"])
+    second = store.select(scan)
+
+    assert marked["marked"] == 1
+    # The two triage never named stay unseen: they come back next run.
+    assert [finding["rule"] for finding in second["findings"]] == ["r1", "r3"]
+
+
+def test_lists_the_seen_hit_again_when_a_new_hit_lands_above_it(store: Store) -> None:
+    # The known limit of a rank-by-line fingerprint: a new hit of the same rule in the same file,
+    # above a seen one, takes the seen hit's rank 0; the seen hit, now rank 1, is listed instead.
+    store.mark(store.select(a_scan(a_finding(line=9))))
+
+    both = store.select(a_scan(a_finding(line=3), a_finding(line=9)))
+
+    assert [finding["line"] for finding in both["findings"]] == [9]

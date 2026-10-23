@@ -10,13 +10,15 @@
 ``brain/_inbox/security-YYYY-MM-DD.md`` (UTC), or with the run's first 8 characters
 (``AGENT_HUB_RUN_ID``, else ``local``) and then a number when that name is taken: never
 overwritten. It names each repo's scanned commit and each scanner's end, lists only the findings
-triage kept (an id not in the listing is ignored and counted), then the unresolved ones and the
-counts. A finding's rule, path and line come from the listing, never from the agent; the agent's
+triage kept (an id not in the listing is ignored and counted), then the unresolved ones, the
+listed findings triage named nowhere (kept, unresolved or dropped) with the mismatch flagged, and
+the counts. A finding's rule, path and line come from the listing, never from the agent; the agent's
 text is one quoted line (control characters dropped, backticks replaced, ``MAX_TEXT`` characters).
 A secret finding is its rule and path with a fixed text: the agent's text for it is never written.
 
-Output: ``{"path", "kept", "secrets", "missing": ["<repo>: <scanner>"], "status"}``, ``status``
-``findings`` when triage kept one, else ``clean``. Bad input exits 2 and writes nothing.
+Output: ``{"path", "kept", "secrets", "missing": ["<repo>: <scanner>"], "triaged": [<id>],
+"status"}``: ``triaged`` the listed ids triage named, the only ones ``mark`` marks seen;
+``status`` ``findings`` when triage kept one, else ``clean``. Bad input exits 2 and writes nothing.
 ``--today`` is for tests.
 """
 
@@ -87,7 +89,7 @@ def objects(values: object, what: str) -> list[Item]:
 def read_triage(text: str) -> Item:
     """The triage reply; blank (triage skipped) keeps nothing."""
     if not text.strip():
-        return {"kept": [], "unresolved": [], "dropped": 0}
+        return {"kept": [], "unresolved": [], "dropped": []}
     return json_object(text, "the triage reply")
 
 
@@ -181,31 +183,61 @@ def unresolved_lines(picked: Picked) -> list[str]:
     return [*lines, ""]
 
 
-def count_lines(counts: Item, triage: Item, picked: tuple[Picked, Picked]) -> list[str]:
-    kept, unresolved = picked
-    dropped = triage.get("dropped")
-    seen = (
-        f"New: {counts.get('new')}; kept: {len(kept.found)};"
-        f" dropped: {dropped if isinstance(dropped, int) else 0};"
-        f" unresolved: {len(unresolved.found)}; already seen: {counts.get('seen')};"
-        f" not listed, for next run: {counts.get('more')}."
-    )
-    lines = ["## Counts", "", f"- {seen}"]
-    ignored = kept.ignored + unresolved.ignored
-    if ignored:
-        plural = "id that is" if ignored == 1 else "ids that are"
-        lines.append(f"- Triage named {ignored} {plural} not in the listing; ignored.")
+def ids_as_entries(values: object) -> list[object]:
+    """``dropped``, a list of ids, as entries ``Picked`` reads."""
+    return [{"id": value} for value in values] if isinstance(values, list) else []
+
+
+class Triage:
+    """The reply read against the listing: each part's entries, and the listed findings triage
+    named in none of them (it stopped short: they stay unseen and come back next run)."""
+
+    def __init__(self, reply: Item, findings: list[Item]) -> None:
+        listing = {str(finding.get("id")): finding for finding in findings}
+        self.kept = Picked(reply.get("kept"), listing)
+        self.unresolved = Picked(reply.get("unresolved"), listing)
+        self.dropped = Picked(ids_as_entries(reply.get("dropped")), listing)
+        parts = (self.kept, self.unresolved, self.dropped)
+        named = {str(finding.get("id")) for part in parts for finding, _ in part.found}
+        self.triaged = [key for key in listing if key in named]
+        self.untriaged = [finding for key, finding in listing.items() if key not in named]
+        self.ignored = sum(part.ignored for part in parts)
+
+
+def untriaged_lines(triage: Triage) -> list[str]:
+    if not triage.untriaged:
+        return []
+    lines = ["## Not triaged", ""]
+    lines += [f"- {where(finding)}" for finding in triage.untriaged]
     return [*lines, ""]
 
 
-def render(findings: list[Item], triage: Item, **given: object) -> tuple[str, str, Item]:
+def count_lines(counts: Item, triage: Triage) -> list[str]:
+    seen = (
+        f"New: {counts.get('new')}; kept: {len(triage.kept.found)};"
+        f" dropped: {len(triage.dropped.found)};"
+        f" unresolved: {len(triage.unresolved.found)}; already seen: {counts.get('seen')};"
+        f" not listed, for next run: {counts.get('more')}."
+    )
+    lines = ["## Counts", "", f"- {seen}"]
+    if triage.untriaged:
+        listed = len(triage.triaged) + len(triage.untriaged)
+        lines.append(
+            f"- Triage accounted for {len(triage.triaged)} of {listed} listed findings; the"
+            f" other {len(triage.untriaged)} stay unseen and come back next run."
+        )
+    if triage.ignored:
+        plural = "id that is" if triage.ignored == 1 else "ids that are"
+        lines.append(f"- Triage named {triage.ignored} {plural} not in the listing; ignored.")
+    return [*lines, ""]
+
+
+def render(findings: list[Item], reply: Item, **given: object) -> tuple[str, str, Item]:
     """``(status, markdown, output fields)`` of the note; ``given`` holds ``repos``,
     ``counts``, ``today`` and ``store_problem``."""
     repos = objects(given["repos"], "the repos")
     counts = given["counts"] if isinstance(given["counts"], dict) else {}
-    listing = {str(finding.get("id")): finding for finding in findings}
-    kept = Picked(triage.get("kept"), listing)
-    unresolved = Picked(triage.get("unresolved"), listing)
+    triage = Triage(reply, findings)
     names = ", ".join(one_line(repo.get("repo"), 100) for repo in repos[:MAX_NAMES])
     lines = [
         "---",
@@ -221,16 +253,23 @@ def render(findings: list[Item], triage: Item, **given: object) -> tuple[str, st
         " not fetch. The findings are the new ones the security-reviewer triage kept.",
         "",
         *scanned(repos),
-        *kept_lines(kept),
-        *unresolved_lines(unresolved),
-        *count_lines(counts, triage, (kept, unresolved)),
+        *kept_lines(triage.kept),
+        *unresolved_lines(triage.unresolved),
+        *untriaged_lines(triage),
+        *count_lines(counts, triage),
     ]
     if given.get("store_problem"):
         lines += [f"Store: {one_line(given['store_problem'], 200)}.", ""]
     lines.append(CLOSING)
-    status = "findings" if kept.found else "clean"
-    secrets = sum(1 for finding, _ in kept.found if finding.get("secret") is True)
-    fields: Item = {"kept": len(kept.found), "secrets": secrets, "missing": missing(repos)}
+    kept = triage.kept.found
+    status = "findings" if kept else "clean"
+    secrets = sum(1 for finding, _ in kept if finding.get("secret") is True)
+    fields: Item = {
+        "kept": len(kept),
+        "secrets": secrets,
+        "missing": missing(repos),
+        "triaged": triage.triaged,
+    }
     return status, "\n".join(lines) + "\n", fields
 
 

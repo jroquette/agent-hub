@@ -25,7 +25,7 @@ stubs:
       ran: [{repo: demo-api, scanner: semgrep}]
       current: [demo-api/semgrep/1123456789abcdef]
       store_problem: ""
-  report: {output: {path: brain/_inbox/security-YYYY-MM-DD.md, kept: 0, secrets: 0, missing: [], status: clean}}
+  report: {output: {path: brain/_inbox/security-YYYY-MM-DD.md, kept: 0, secrets: 0, missing: [], triaged: [], status: clean}}
   mark: {output: {status: clean, marked: 0, store_size: 1}}
 expect: {status: done, outcome: clean}
 reached: [scan, new, report, mark]

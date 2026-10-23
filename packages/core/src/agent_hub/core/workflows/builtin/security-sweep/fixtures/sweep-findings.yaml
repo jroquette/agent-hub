@@ -37,8 +37,8 @@ stubs:
     output:
       kept: [{id: F2, attack: A request's name reaches the SQL string unescaped., fix: Use a bound parameter.}]
       unresolved: []
-      dropped: 2
-  report: {output: {path: brain/_inbox/security-YYYY-MM-DD.md, kept: 1, secrets: 0, missing: [], status: findings}}
+      dropped: [F1, F3]
+  report: {output: {path: brain/_inbox/security-YYYY-MM-DD.md, kept: 1, secrets: 0, missing: [], triaged: [F1, F2, F3], status: findings}}
   mark: {output: {status: findings, marked: 3, store_size: 3}}
 expect: {status: done, outcome: findings}
 reached: [scan, new, triage, report, mark]
