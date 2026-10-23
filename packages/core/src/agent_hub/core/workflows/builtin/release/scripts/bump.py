@@ -13,7 +13,9 @@ link; ``README.md`` replaces the previous version as a whole token; the ``docs/S
 line names the date and the release (its prose phrase is the owner's, in the PR). Then it runs
 ``--regenerate`` (split as a shell would, no shell; the repo's generated files) and commits once,
 ``chore(repo): release X.Y.Z (<issue>)``, with git hooks off. Only ``RELEASE_FILES`` may change;
-the repo's ``scripts/check_release.py --root .`` runs on the commit when the repo has one.
+the repo's ``scripts/check_release.py --root .`` runs before the commit when the repo has one.
+Any failure puts the checkout back on the commit it started from; a re-run that finds its own
+release commit on ``HEAD`` (a clean checkout) prints it again.
 
 Prints ``{"version", "previous", "sha", "files", "changelog", "changelog_empty",
 "readme_replaced", "lockstep"}``: ``changelog`` is the new section (at most ``MAX_SECTION``
@@ -195,11 +197,43 @@ def _checked(given: argparse.Namespace) -> None:
         raise RefusedError("--today must be YYYY-MM-DD")
 
 
-def release(root: Path, given: argparse.Namespace) -> dict[str, object]:
-    _checked(given)
+def _lockstep(root: Path) -> str:
+    """The repo's release check on the files as they are, when the repo has one."""
+    if not (root / CHECK_RELEASE).is_file():
+        return ""
+    lines = _run([sys.executable, CHECK_RELEASE, "--root", "."], root).strip().splitlines()
+    return lines[-1] if lines else ""
+
+
+def _restore(root: Path, base: str) -> None:
+    """Put the checkout back on ``base``, clean, after a failed run (best effort)."""
+    for args in (("reset", "-q", "--hard", base), ("clean", "-fdq")):
+        try:
+            _git(root, *args)
+        except FailedError:
+            return
+
+
+def _result(
+    root: Path, given: argparse.Namespace, *, readme: str, lockstep: str
+) -> dict[str, object]:
+    """What the release commit on HEAD holds; ``readme`` is the README before it."""
+    changelog = section(read_file(root, "CHANGELOG.md"), given.version)
+    return {
+        "version": given.version,
+        "previous": given.previous,
+        "sha": _git(root, "rev-parse", "HEAD").strip(),
+        "files": sorted(_git(root, "diff", "--name-only", "HEAD^", "HEAD").split()),
+        "changelog": changelog,
+        "changelog_empty": not changelog,
+        "readme_replaced": replace_tokens(readme, given.previous, given.version)[1],
+        "lockstep": lockstep,
+    }
+
+
+def _commit(root: Path, given: argparse.Namespace, *, subject: str) -> dict[str, str]:
+    """Edit, regenerate, check and commit; the release files as they were before."""
     files = {name: read_file(root, name) for name in EDITED_FILES}
-    if changed(root):
-        raise FailedError("the checkout is not clean; the release commit holds only its edits")
     texts = edits(
         files,
         version=given.version,
@@ -214,25 +248,29 @@ def release(root: Path, given: argparse.Namespace) -> dict[str, object]:
     outside = [name for name in touched if name not in RELEASE_FILES]
     if outside:
         raise FailedError(f"the release changed files outside the release files: {outside}")
+    lockstep = _lockstep(root)
     _git(root, "add", "--", *touched)
-    subject = f"chore(repo): release {given.version} ({given.issue})"
     _git(root, "commit", "-q", "-m", subject)
-    lockstep = ""
-    if (root / CHECK_RELEASE).is_file():
-        lines = _run([sys.executable, CHECK_RELEASE, "--root", "."], root).strip().splitlines()
-        lockstep = lines[-1] if lines else ""
-    new_changelog = texts["CHANGELOG.md"]
-    found = section(new_changelog, given.version)
-    return {
-        "version": given.version,
-        "previous": given.previous,
-        "sha": _git(root, "rev-parse", "HEAD").strip(),
-        "files": touched,
-        "changelog": found,
-        "changelog_empty": not found,
-        "readme_replaced": replace_tokens(files["README.md"], given.previous, given.version)[1],
-        "lockstep": lockstep,
-    }
+    return {"readme": files["README.md"], "lockstep": lockstep}
+
+
+def release(root: Path, given: argparse.Namespace) -> dict[str, object]:
+    """Make the release commit, or find this run's own on HEAD (a re-run); undo a failed one."""
+    _checked(given)
+    subject = f"chore(repo): release {given.version} ({given.issue})"
+    clean = not changed(root)
+    if clean and _git(root, "log", "-1", "--format=%s").strip() == subject:
+        readme = _git(root, "show", "HEAD^:README.md")
+        return _result(root, given, readme=readme, lockstep=_lockstep(root))
+    if not clean:
+        raise FailedError("the checkout is not clean; the release commit holds only its edits")
+    base = _git(root, "rev-parse", "HEAD").strip()
+    try:
+        made = _commit(root, given, subject=subject)
+    except FailedError, RefusedError:
+        _restore(root, base)
+        raise
+    return _result(root, given, readme=made["readme"], lockstep=made["lockstep"])
 
 
 def main(argv: list[str]) -> int:
