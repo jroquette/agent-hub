@@ -45,5 +45,7 @@ stubs:
     output: {changes: 4, deleted: [brain/_inbox/YYYY-MM-DD-cache-key.md, brain/_inbox/YYYY-MM-DD-cache-key-again.md], written: [brain/learnings/], edited: [brain/_inbox/YYYY-MM-DD-blog-tip.md], skipped: [], summary: Weekly inbox review.}
   pr:
     output: {url: "https://github.com/acme/demo-hub/pull/7", found: false, summary: Weekly inbox review., title_unmatched: null}
-expect: {status: done}
-reached: [read, group, plan, decide, decide__next, decide__gate, decide__record, branch, apply, pr]
+  outcome:
+    output: {outcome: pr_opened, reason: "opened https://github.com/acme/demo-hub/pull/7; after the merge, run: git worktree remove /ws/hub/.claude/worktrees/brain-care-inbox-0a1b2c3d && git branch -D jdoe/brain-care-inbox-0a1b2c3d"}
+expect: {status: done, outcome: pr_opened}
+reached: [read, group, plan, decide, decide__next, decide__gate, decide__record, branch, apply, pr, outcome]

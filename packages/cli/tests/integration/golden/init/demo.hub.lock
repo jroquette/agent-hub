@@ -466,7 +466,7 @@
     "plugin/hub-workflow/skills/learn/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "3b885e42cabca7b276f87e07de1c6b597afdb3a5593fbd6d4e96647dd818da6b"
+      "sha256": "9ff91a164e8b99065c18c27044d1040fcedc28d88c17b15a84fd9a151ae65127"
     },
     "plugin/hub-workflow/skills/onboard/SKILL.md": {
       "executable": false,
@@ -589,6 +589,9 @@
     "workflows/brain-care/fixtures/context-declined.yaml": {
       "ownership": "seeded"
     },
+    "workflows/brain-care/fixtures/context-no-commit.yaml": {
+      "ownership": "seeded"
+    },
     "workflows/brain-care/fixtures/context-over-budget.yaml": {
       "ownership": "seeded"
     },
@@ -596,6 +599,9 @@
       "ownership": "seeded"
     },
     "workflows/brain-care/fixtures/inbox-all-drop.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/fixtures/inbox-all-skipped.yaml": {
       "ownership": "seeded"
     },
     "workflows/brain-care/fixtures/inbox-empty.yaml": {
@@ -622,6 +628,9 @@
     "workflows/brain-care/scripts/apply.py": {
       "ownership": "seeded"
     },
+    "workflows/brain-care/scripts/check_managed.py": {
+      "ownership": "seeded"
+    },
     "workflows/brain-care/scripts/groups.py": {
       "ownership": "seeded"
     },
@@ -629,6 +638,9 @@
       "ownership": "seeded"
     },
     "workflows/brain-care/scripts/inventory.py": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/scripts/outcome.py": {
       "ownership": "seeded"
     },
     "workflows/brain-care/scripts/read_inbox.py": {

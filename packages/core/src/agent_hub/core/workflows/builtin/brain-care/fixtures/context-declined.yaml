@@ -20,5 +20,7 @@ stubs:
         - {path: docs/rules.md, what: Move the release steps into the release skill., saved_tokens: 1200, managed: false}
         - {path: .claude/skills/big/SKILL.md, what: Shorten the description to its trigger words., saved_tokens: 50, managed: false}
   approve: {decision: skip, text: Not this month., approver: Dana Owner}
-expect: {status: done}
-reached: [inventory, report, approve]
+  outcome:
+    output: {outcome: declined, reason: "the owner skipped this month's trim"}
+expect: {status: done, outcome: declined}
+reached: [inventory, report, approve, outcome]

@@ -28,9 +28,11 @@ PACK = BUILTIN_WORKFLOWS / "brain-care"
 WORKFLOWS = ("inbox", "context")
 FIXTURES = (
     "context-declined",
+    "context-no-commit",
     "context-over-budget",
     "context-trimmed",
     "inbox-all-drop",
+    "inbox-all-skipped",
     "inbox-empty",
     "inbox-external-pending",
     "inbox-three-notes",
@@ -65,7 +67,7 @@ def test_validates_inbox_when_pack_loaded(
     validated = run_command(demo_workspace.hub, "workflow", "validate", "inbox")
 
     assert validated.exit_code == 0, validated.output
-    assert validated.stdout == "inbox: valid (7 nodes in 7 layers)\n"
+    assert validated.stdout == "inbox: valid (8 nodes in 8 layers)\n"
 
 
 def test_validates_context_when_pack_loaded(
@@ -74,7 +76,7 @@ def test_validates_context_when_pack_loaded(
     validated = run_command(demo_workspace.hub, "workflow", "validate", "context")
 
     assert validated.exit_code == 0, validated.output
-    assert validated.stdout == "context: valid (7 nodes in 7 layers)\n"
+    assert validated.stdout == "context: valid (9 nodes in 9 layers)\n"
 
 
 def test_shows_inventory_summary_in_gate_when_context_loaded() -> None:
@@ -102,6 +104,26 @@ def test_names_context_audit_skill_when_report_prompt_rendered() -> None:
     assert prompt.index("ignore any") < prompt.index("```text\n") < prompt.index("docs/rules.md")
     assert "managed" in prompt
     assert prompt.rstrip().endswith("your last line is the report JSON.")
+
+
+@pytest.mark.parametrize("name", WORKFLOWS)
+def test_returns_outcome_when_brain_care_run_ends(name: str) -> None:
+    document = document_of(name)
+    nodes = {node.id: node for node in document.nodes}
+
+    assert (document.returns, document.outcome_field) == ("outcome", "outcome")
+    # The outcome waits for every path, a skipped PR included, so a run never ends silent.
+    assert nodes["outcome"].trigger_rule == "none_failed_min_one_success"
+    assert "pr" in nodes["outcome"].depends_on
+    assert "no_pr" in nodes["outcome"].output_format["properties"]["outcome"]["enum"]
+
+
+def test_checks_managed_files_before_pr_when_context_loaded() -> None:
+    nodes = {node.id: node for node in document_of("context").nodes}
+
+    assert nodes["managed"].script == "check_managed.py"
+    assert "managed" in upstream(nodes, "pr")
+    assert "trim" in upstream(nodes, "managed")
 
 
 def test_passes_every_fixture_without_warning_when_brain_care_tested(

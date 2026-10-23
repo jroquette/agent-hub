@@ -32,5 +32,9 @@ stubs:
     output: {count: 1, subjects: ["docs(brain): trim always-loaded context"], summary: Moves the release steps., dirty: false}
   pr:
     output: {url: "https://github.com/acme/demo-hub/pull/9", found: false, summary: Moved the release steps., title_unmatched: null}
-expect: {status: done}
-reached: [inventory, report, approve, branch, trim, commits, pr]
+  managed:
+    output: {changed: [docs/rules.md], managed: []}
+  outcome:
+    output: {outcome: pr_opened, reason: "opened https://github.com/acme/demo-hub/pull/9; after the merge, run: git worktree remove /ws/hub/.claude/worktrees/brain-care-context-0a1b2c3d && git branch -D jdoe/brain-care-context-0a1b2c3d"}
+expect: {status: done, outcome: pr_opened}
+reached: [inventory, report, approve, branch, trim, managed, commits, pr, outcome]
