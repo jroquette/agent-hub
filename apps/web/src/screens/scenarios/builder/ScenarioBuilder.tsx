@@ -584,6 +584,28 @@ export function ScenarioBuilder({
       return globalThis.document.querySelector<HTMLElement>('.bk-world [aria-selected="true"]');
     },
   };
+  // How many steps take each scenario input as the run's value (left out, or only repeated).
+  const runValueUsage: Record<string, number> = {};
+  const runNames = new Set(
+    typeof document.inputs === "object" &&
+      document.inputs !== null &&
+      !Array.isArray(document.inputs)
+      ? Object.keys(document.inputs)
+      : [],
+  );
+  for (const node of allNodes(document.nodes)) {
+    const facts = actionFacts(node);
+    if (!facts) continue;
+    const given =
+      typeof node.with === "object" && node.with !== null && !Array.isArray(node.with)
+        ? node.with
+        : {};
+    for (const input of facts.inputs) {
+      const value = given[input.name];
+      if (runNames.has(input.name) && (value === undefined || value === `$INPUTS.${input.name}`))
+        runValueUsage[input.name] = (runValueUsage[input.name] ?? 0) + 1;
+    }
+  }
   const hatButton: RefObject<HTMLElement | null> = {
     get current() {
       return globalThis.document.querySelector<HTMLElement>(".bk-hat");
@@ -596,6 +618,7 @@ export function ScenarioBuilder({
           document={document}
           onChange={draft.edit}
           openerRef={hatButton}
+          usage={runValueUsage}
           onClose={() => {
             setSettings(false);
           }}

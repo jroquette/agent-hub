@@ -402,6 +402,49 @@ describe("ScenarioBuilder (scenario builder)", () => {
     );
   });
 
+  it("scenario builder gives every step the run's values and drops the repeats", async () => {
+    const user = userEvent.setup();
+    const { requests } = renderBuilder({
+      [DETAIL]: aScenarioDetail({
+        document: {
+          ...document,
+          nodes: [
+            {
+              id: "fetch-order",
+              type: "action",
+              action: "send-queue-message",
+              with: { external_ref: "$INPUTS.external_ref" },
+            },
+            { ...document.nodes[1], with: { external_ref: "$INPUTS.external_ref" } },
+          ],
+        },
+        content_hash: "sha256:aaa",
+      }),
+      [SAVE]: () => SAVED,
+    });
+
+    const fetch = await screen.findByRole("treeitem", { name: "Script fetch-order" });
+    await waitFor(() => {
+      expect(fetch).toHaveTextContent("+ 1 from the run");
+    });
+    await user.click(screen.getByRole("button", { name: "Inputs" }));
+    const settings = screen.getByRole("region", { name: "Scenario settings" });
+    expect(settings).toHaveTextContent("2 steps take it");
+    expect(settings).toHaveTextContent("2 values repeat a run value");
+    await user.click(within(settings).getByRole("button", { name: "Remove the repeats" }));
+
+    const save = screen.getByRole("button", { name: "Save scenario" });
+    await waitFor(() => {
+      expect(save).toBeEnabled();
+    });
+    await user.click(save);
+    await screen.findByText("Saved · rev 2");
+    const nodes = (await savedNodes(requests)) as (SentNode & { with?: object })[];
+    expect(nodes.map((node) => node.with)).toEqual([undefined, undefined]);
+    // Still the run's value on the card.
+    expect(fetch).toHaveTextContent("+ 1 from the run");
+  });
+
   it("scenario builder inserts a block between two others from the + menu", async () => {
     const user = userEvent.setup();
     const { requests } = renderBuilder({ [SAVE]: () => SAVED });
@@ -460,6 +503,11 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const form = screen.getByRole("region", { name: "Inspector: Script fetch-order" });
     await user.selectOptions(within(form).getByLabelText("Action"), "orders/get-order-by-ref");
     expect(fetch).toHaveTextContent("get-order-by-ref· Python");
+    // external_ref is a scenario input: the step takes the run's value unless it sets its own.
+    expect(
+      within(form).getByRole("note", { name: /external_ref: the run's value/ }),
+    ).toBeInTheDocument();
+    await user.click(within(form).getByRole("button", { name: "Set for this step" }));
     await user.type(within(form).getByLabelText("external_ref"), "T-1");
     expect(fetch).toHaveTextContent("external_refT-1");
 

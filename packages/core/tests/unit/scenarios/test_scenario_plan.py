@@ -368,3 +368,31 @@ def test_reports_nothing_when_scenario_plan_reads_nested_and_array_paths() -> No
 
     assert plan.problems == ()
     assert plan.rows[1].args["ref"] == "<$list.output.meta.ref from list>"
+
+
+def test_gives_run_value_when_step_leaves_input_out() -> None:
+    # The step names no ``ref``: the action's ``ref`` takes the run's ``ref`` input.
+    plan = planned(
+        [{"id": "send-order", "type": "action", "action": "send-order", "with": {"target": "api"}}]
+    )
+
+    send = plan.rows[0]
+    assert plan.problems == ()
+    assert send.args == {"target": "api", "ref": "T-1", "count": "1"}
+    assert send.call is not None
+    assert send.call.inputs == {"target": "api", "ref": "T-1", "count": 1}
+
+
+def test_keeps_step_value_when_step_gives_input_named_like_run_input() -> None:
+    plan = planned(
+        [
+            {
+                "id": "send-order",
+                "type": "action",
+                "action": "send-order",
+                "with": {"target": "api", "ref": "T-9"},
+            }
+        ]
+    )
+
+    assert plan.rows[0].args["ref"] == "T-9"

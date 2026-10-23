@@ -277,12 +277,30 @@ function summarizeJson(value: Json): string {
   return `{${parts.join(", ")}}`;
 }
 
-/** The With rows: literals first, then values from earlier steps; inputs passed straight through
- * fold into one row. At most 3 rows unless the card is selected. */
-function WithRows({ node, selected }: { node: BuilderNode; selected: boolean }) {
+/** The With rows: literals first, then values from earlier steps; the run's values (an input of
+ * the action named like a scenario input, left out or only repeated) fold into one row. At most
+ * 3 rows unless the card is selected. */
+function WithRows({
+  node,
+  selected,
+  declared,
+  runInputs,
+}: {
+  node: BuilderNode;
+  selected: boolean;
+  /** The action's input names. */
+  declared: readonly string[];
+  /** The scenario's inputs: the run's values. */
+  runInputs: readonly string[];
+}) {
   const given = Object.entries(record(node.with));
-  if (given.length === 0) return null;
-  const through = given.filter(([key, value]) => value === `$INPUTS.${key}`).map(([key]) => key);
+  const named = new Set(given.map(([key]) => key));
+  const fromRun = declared.filter((name) => !named.has(name) && runInputs.includes(name));
+  if (given.length === 0 && fromRun.length === 0) return null;
+  const through = [
+    ...given.filter(([key, value]) => value === `$INPUTS.${key}`).map(([key]) => key),
+    ...fromRun,
+  ];
   const rest = given.filter(([key, value]) => value !== `$INPUTS.${key}`);
   const rank = (value: Json) => {
     const written = shown(value);
@@ -313,10 +331,11 @@ function WithRows({ node, selected }: { node: BuilderNode; selected: boolean }) 
       )}
       {through.length > 0 && (
         <Row label={shownRows.length === 0 && more === 0 ? "With" : ""}>
-          <span className="bk-quiet">
+          <span className="bk-quiet" title="The run's values: the same in every step">
+            <Icon name="flag" size="sm" />{" "}
             {selected
-              ? `${through.join(", ")} from scenario inputs`
-              : `+ ${String(through.length)} from scenario inputs`}
+              ? `${through.join(", ")} from the run`
+              : `+ ${String(through.length)} from the run`}
           </span>
         </Row>
       )}
@@ -329,10 +348,13 @@ export function CardFacts({
   node,
   action,
   selected,
+  runInputs = [],
 }: {
   node: BuilderNode;
   action: ScenarioAction | null;
   selected: boolean;
+  /** The scenario's inputs: values of the run that steps get by name. */
+  runInputs?: readonly string[];
 }) {
   const named = typeof node.description === "string" && node.description.trim() !== "";
   const rows: ReactNode[] = [];
@@ -358,7 +380,15 @@ export function CardFacts({
     );
   }
   if (node.type === "action" || node.type === "expect" || node.type === "include") {
-    rows.push(<WithRows key="with" node={node} selected={selected} />);
+    rows.push(
+      <WithRows
+        key="with"
+        node={node}
+        selected={selected}
+        declared={action?.inputs.map((input) => input.name) ?? []}
+        runInputs={runInputs}
+      />,
+    );
   }
   if (action && (node.type === "action" || node.type === "expect")) {
     const given = record(node.with);

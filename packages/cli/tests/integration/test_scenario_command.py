@@ -642,6 +642,20 @@ def test_passes_endpoint_when_service_input_resolved(hub: Path, marker: Path) ->
     assert {event.payload["service"][0] for event in started} == {"demo-api/api"}
 
 
+def test_gives_run_value_when_step_leaves_input_out(hub: Path, marker: Path) -> None:
+    # send-order names no ref: its action's ref takes the run's ref, the same in every step.
+    write_scenario(
+        hub, SCENARIO.replace("with: {target: api, ref: $INPUTS.ref}", "with: {target: api}", 1)
+    )
+    git(hub, "commit", "-q", "-am", "send-order takes the run's ref")
+
+    result = run_scenario(hub, marker, "local")
+
+    assert result.exit_code == 0, result.output
+    calls = [json.loads(line) for line in marker.read_text().splitlines()]
+    assert calls[0]["inputs"] == {"target": "api", "ref": "T-1", "count": 1}
+
+
 def test_resumes_scenario_when_policy_gate_approved(hub: Path, marker: Path) -> None:
     paused = run_scenario(hub, marker, "staging")
 
