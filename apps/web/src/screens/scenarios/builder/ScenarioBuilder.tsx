@@ -321,6 +321,7 @@ export function ScenarioBuilder({
   const planRows = new Map((preview?.rows ?? []).map((row) => [row.step, row]));
   const [slot, setSlot] = useState<SlotRequest | null>(null);
   const [settings, setSettings] = useState(false);
+  const [details, setDetails] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [help, setHelp] = useState(() => readStored(HELP_KEY) !== "hidden");
@@ -511,7 +512,8 @@ export function ScenarioBuilder({
   };
 
   const inspector = (() => {
-    if (!selectedItem) {
+    // The board shows a step in place; the graph has only the panel to show it in.
+    if (!selectedItem || (!details && view === "blocks")) {
       return settings ? (
         <ScenarioSettings
           document={document}
@@ -550,7 +552,7 @@ export function ScenarioBuilder({
             removeItem(node.id);
           }}
           onClose={() => {
-            setSelected(null);
+            setDetails(false);
           }}
         />
       );
@@ -1394,30 +1396,20 @@ export function ScenarioBuilder({
         />
         <div className="sb-stage">
           {view === "blocks" && help && (
-            <div className="sb-help" role="note">
-              <b>How to build</b>
+            <div className="sb-hint" role="note">
               <span>
-                <Icon name="plus" size="sm" /> Hover between two blocks and press + to add a step
+                Hover between two steps and press <b>+</b> to add one. Click a step to see
+                everything it does. Drag a step to move it.
               </span>
-              <span>
-                <Icon name="pencil" size="sm" /> Click an underlined word to fill it
-              </span>
-              <span>
-                <Icon name="grip-vertical" size="sm" /> Drag a block to move it (the blocks under it
-                come along)
-              </span>
-              <span>
-                <Icon name="keyboard" size="sm" /> Delete removes · Alt+↑/↓ moves · ⌘Z undoes · ⌘S
-                saves
-              </span>
-              <IconButton
-                icon="x"
-                label="Hide these tips"
+              <Button
+                size="sm"
                 onClick={() => {
                   setHelp(false);
                   writeStored(HELP_KEY, "hidden");
                 }}
-              />
+              >
+                Got it
+              </Button>
             </div>
           )}
           {view === "blocks" && program.main.length === 0 && !reviewProgram && (
@@ -1436,6 +1428,69 @@ export function ScenarioBuilder({
               suggested={reviewProgram ? suggestedIds : undefined}
               planOf={(id) => planRows.get(id) ?? null}
               planEnvironment={preview?.environment ?? null}
+              onHat={() => {
+                setSelected(null);
+                setSettings(true);
+              }}
+              stepActions={(id) => (
+                <>
+                  <Button
+                    size="sm"
+                    variant={details ? "primary" : "ghost"}
+                    icon="settings"
+                    onClick={() => {
+                      setDetails(!details);
+                    }}
+                  >
+                    More settings
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    icon="message-square"
+                    onClick={() => {
+                      ask(
+                        `About the step \`${id}\` of the scenario \`${scenario.name}\` (the file \`${scenario.path ?? ""}\`): explain in a few lines what it does, what it runs and where it can stop. Change nothing.`,
+                      );
+                    }}
+                  >
+                    Ask Claude
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    icon="copy"
+                    onClick={() => {
+                      const item = findItem(program.main, id);
+                      const at = locate(program.main, id);
+                      if (item?.kind !== "block" || !at) return;
+                      const copy: Item = {
+                        kind: "block",
+                        node: { ...item.node, id: freshId(taken, item.node.id) },
+                      };
+                      commit(
+                        insertAt(program.main, at.slot, at.index + 1, [copy]),
+                        program.kept,
+                        layout.loose,
+                      );
+                      setSelected(itemId(copy));
+                    }}
+                  >
+                    Duplicate
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    icon="trash"
+                    onClick={() => {
+                      removeItem(id);
+                      setToast(`Deleted ${id}.`);
+                    }}
+                  >
+                    Delete step
+                  </Button>
+                </>
+              )}
               main={{
                 id: "main",
                 x: layout.main.x,

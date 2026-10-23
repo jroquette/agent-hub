@@ -107,11 +107,15 @@ describe("ScenarioBuilder (scenario builder)", () => {
   it("scenario builder reads the scenario as blocks that say what they do", async () => {
     renderBuilder();
 
-    const check = await screen.findByRole("button", { name: "Check order-on-hold" });
+    const check = await screen.findByRole("treeitem", { name: "Check order-on-hold" });
     expect(check).toHaveTextContent("wait until");
     expect(check).toHaveTextContent("status is ON_HOLD");
+    // The timing fields show once the step is opened.
+    expect(within(check).queryByLabelText("Check every, order-on-hold")).not.toBeInTheDocument();
+    check.focus();
+    await userEvent.setup().keyboard("{Enter}");
     expect(within(check).getByLabelText("Check every, order-on-hold")).toHaveValue("10s");
-    expect(screen.getByRole("button", { name: "Script fetch-order" })).toHaveTextContent("run");
+    expect(screen.getByRole("treeitem", { name: "Script fetch-order" })).toHaveTextContent("run");
     expect(screen.getByText("when the scenario starts")).toBeInTheDocument();
     expect(await screen.findByText("Loads")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save scenario" })).toBeDisabled();
@@ -122,13 +126,14 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const { requests } = renderBuilder({ [SAVE]: () => SAVED });
 
     await user.click(await screen.findByRole("button", { name: "Add block: ask me to …" }));
+    await user.click(screen.getByRole("button", { name: "More settings" }));
     const inspector = await screen.findByRole("region", {
       name: "Inspector: Manual step manual-step",
     });
     await user.clear(within(inspector).getByLabelText("What to do"));
     await user.type(within(inspector).getByLabelText("What to do"), "Create the order");
     await user.click(within(inspector).getByLabelText(/Ask me to type a value/));
-    const block = screen.getByRole("button", { name: "Manual step manual-step" });
+    const block = screen.getByRole("treeitem", { name: "Manual step manual-step" });
     expect(block).toHaveTextContent("ask me to");
     expect(block).toHaveTextContent("Create the order");
     expect(block).toHaveTextContent("and keep what I type");
@@ -149,10 +154,11 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const user = userEvent.setup();
     const { requests } = renderBuilder({ [SAVE]: () => SAVED });
 
-    const field = await screen.findByLabelText("For up to, order-on-hold");
+    await user.click(await screen.findByRole("treeitem", { name: "Check order-on-hold" }));
+    const field = screen.getByLabelText("For up to, order-on-hold");
     await user.clear(field);
     await user.type(field, "10m");
-    expect(screen.getByRole("button", { name: "Check order-on-hold" })).toHaveTextContent(
+    expect(screen.getByRole("treeitem", { name: "Check order-on-hold" })).toHaveTextContent(
       "(60 checks)",
     );
     const save = screen.getByRole("button", { name: "Save scenario" });
@@ -172,7 +178,6 @@ describe("ScenarioBuilder (scenario builder)", () => {
 
     await user.click(await screen.findByRole("button", { name: "Add block: if … else" }));
 
-    expect(await screen.findByRole("region", { name: "Inspector: If" })).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Add a block what happens when it holds" }),
     ).toBeInTheDocument();
@@ -202,7 +207,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     });
 
     expect(await screen.findByText("1 problem")).toBeInTheDocument();
-    const block = screen.getByRole("button", { name: "Script fetch-order" });
+    const block = screen.getByRole("treeitem", { name: "Script fetch-order" });
     expect(block).toHaveAttribute("data-invalid", "true");
     block.focus();
     await userEvent.setup().keyboard("{Enter}");
@@ -217,9 +222,10 @@ describe("ScenarioBuilder (scenario builder)", () => {
     await user.click(await screen.findByRole("button", { name: "Add action get-order-by-ref" }));
     await user.keyboard("{/Shift}");
 
-    expect(
-      await screen.findByRole("region", { name: "Inspector: Check get-order-by-ref" }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("treeitem", { name: "Check get-order-by-ref" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 
   it("scenario builder still adds blocks in the graph view", async () => {
@@ -240,24 +246,24 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const user = userEvent.setup();
     const first = renderBuilder();
     await user.click(await screen.findByRole("button", { name: "Add block: wait 30s" }));
-    await screen.findByRole("button", { name: "Pause pause" });
+    await screen.findByRole("treeitem", { name: "Pause pause" });
     first.unmount();
 
     const second = renderBuilder();
-    expect(await screen.findByRole("button", { name: "Pause pause" })).toBeInTheDocument();
+    expect(await screen.findByRole("treeitem", { name: "Pause pause" })).toBeInTheDocument();
     expect(
       screen.getByText(/Your unsaved changes came back from this browser/),
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Discard them" }));
-    expect(screen.queryByRole("button", { name: "Pause pause" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("treeitem", { name: "Pause pause" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Add block: wait 30s" }));
     second.unmount();
 
     renderBuilder({
       [DETAIL]: aScenarioDetail({ document, content_hash: "sha256:changed-outside" }),
     });
-    await screen.findByRole("button", { name: "Check order-on-hold" });
-    expect(screen.queryByRole("button", { name: "Pause pause" })).not.toBeInTheDocument();
+    await screen.findByRole("treeitem", { name: "Check order-on-hold" });
+    expect(screen.queryByRole("treeitem", { name: "Pause pause" })).not.toBeInTheDocument();
     window.localStorage.clear();
   });
 
@@ -270,7 +276,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     await user.type(within(menu).getByLabelText(/Find a block or action/), "wait 30");
     await user.keyboard("{Enter}");
 
-    expect(await screen.findByRole("button", { name: "Pause pause" })).toBeInTheDocument();
+    expect(await screen.findByRole("treeitem", { name: "Pause pause" })).toBeInTheDocument();
     const save = screen.getByRole("button", { name: "Save scenario" });
     await waitFor(() => {
       expect(save).toBeEnabled();
@@ -305,16 +311,16 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const list = screen.getByRole("dialog", { name: "Problems" });
     await user.click(within(list).getByRole("button", { name: /the condition does not parse/ }));
 
-    expect(
-      await screen.findByRole("region", { name: "Inspector: Check order-on-hold" }),
-    ).toBeInTheDocument();
+    const check = await screen.findByRole("treeitem", { name: "Check order-on-hold" });
+    expect(check).toHaveAttribute("aria-selected", "true");
+    expect(within(check).getByText("the condition does not parse")).toBeInTheDocument();
   });
 
   it("scenario builder fills a block's slots on the block itself", async () => {
     const user = userEvent.setup();
     const { requests } = renderBuilder({ [SAVE]: () => SAVED });
 
-    const fetch = await screen.findByRole("button", { name: "Script fetch-order" });
+    const fetch = await screen.findByRole("treeitem", { name: "Script fetch-order" });
     await user.click(within(fetch).getByRole("button", { name: "action: change" }));
     const picker = screen.getByRole("dialog", { name: "Choose the action" });
     await user.click(within(picker).getByRole("button", { name: /get-order-by-ref/ }));
@@ -341,27 +347,29 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const user = userEvent.setup();
     renderBuilder();
 
-    const check = await screen.findByRole("button", { name: "Check order-on-hold" });
+    const check = await screen.findByRole("treeitem", { name: "Check order-on-hold" });
     check.focus();
     await user.keyboard("{Enter}");
     await user.keyboard("{Alt>}{ArrowUp}{/Alt}");
-    const blocks = screen.getAllByRole("button", { name: /^(Check|Script) / });
+    const blocks = screen.getAllByRole("treeitem", { name: /^(Check|Script) / });
     expect(blocks.map((block) => block.getAttribute("aria-label"))).toEqual([
       "Check order-on-hold",
       "Script fetch-order",
     ]);
 
     await user.keyboard("{Delete}");
-    expect(screen.queryByRole("button", { name: "Check order-on-hold" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("treeitem", { name: "Check order-on-hold" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Undo" }));
-    expect(await screen.findByRole("button", { name: "Check order-on-hold" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("treeitem", { name: "Check order-on-hold" }),
+    ).toBeInTheDocument();
   });
 
   it("scenario builder shows the side panel only for a block or the inputs", async () => {
     const user = userEvent.setup();
     renderBuilder();
 
-    await screen.findByRole("button", { name: "Check order-on-hold" });
+    await screen.findByRole("treeitem", { name: "Check order-on-hold" });
     expect(screen.queryByRole("region", { name: "Scenario settings" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Inputs" }));
     expect(screen.getByRole("region", { name: "Scenario settings" })).toHaveTextContent(
@@ -398,11 +406,11 @@ describe("ScenarioBuilder (scenario builder)", () => {
       "Claude proposes 1 new or changed block · it loads",
     );
     await user.click(screen.getByRole("button", { name: "Review" }));
-    expect(screen.getByRole("button", { name: "Script notify" })).toHaveAttribute(
+    expect(screen.getByRole("treeitem", { name: "Script notify" })).toHaveAttribute(
       "data-suggested",
       "true",
     );
-    expect(screen.getByRole("button", { name: "Script fetch-order" })).not.toHaveAttribute(
+    expect(screen.getByRole("treeitem", { name: "Script fetch-order" })).not.toHaveAttribute(
       "data-suggested",
     );
     // Block by block: the review panel lists the change, accepted on its own.
@@ -411,7 +419,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     await user.click(within(review).getByRole("button", { name: "Accept notify" }));
 
     expect(await screen.findByText("Unsaved")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Script notify" })).not.toHaveAttribute(
+    expect(screen.getByRole("treeitem", { name: "Script notify" })).not.toHaveAttribute(
       "data-suggested",
     );
     await waitFor(() => {
@@ -434,7 +442,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
       }),
     });
 
-    const fetch = await screen.findByRole("button", { name: "Script fetch-order" });
+    const fetch = await screen.findByRole("treeitem", { name: "Script fetch-order" });
     await user.click(within(fetch).getByRole("button", { name: "action: change" }));
     await user.click(screen.getByRole("button", { name: "New action…" }));
     const dialog = screen.getByRole("dialog", { name: "New action" });
@@ -478,8 +486,8 @@ describe("ScenarioBuilder (scenario builder)", () => {
     ).toBeInTheDocument();
     await user.click(within(start).getByRole("button", { name: /Do something, then wait/ }));
 
-    expect(await screen.findByRole("button", { name: "Script script" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Check check" })).toBeInTheDocument();
+    expect(await screen.findByRole("treeitem", { name: "Script script" })).toBeInTheDocument();
+    expect(screen.getByRole("treeitem", { name: "Check check" })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Start the scenario" })).not.toBeInTheDocument();
   });
 
@@ -487,12 +495,9 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const user = userEvent.setup();
     renderBuilder();
 
-    const check = await screen.findByRole("button", { name: "Check order-on-hold" });
+    const check = await screen.findByRole("treeitem", { name: "Check order-on-hold" });
     // A block that is not selected says it in one line; selected, it shows every fact.
-    await waitFor(() => {
-      expect(check).toHaveTextContent("get_order_by_ref.py");
-    });
-    expect(check).not.toHaveTextContent("Python");
+    expect(check).not.toHaveTextContent("get_order_by_ref.py");
     check.focus();
     await user.keyboard("{Enter}");
     await waitFor(() => {
@@ -503,8 +508,8 @@ describe("ScenarioBuilder (scenario builder)", () => {
     ).toBeInTheDocument();
     expect(check).toHaveTextContent("Only reads: changes nothing");
     expect(check).toHaveTextContent("Givesstatus");
-    const fetch = screen.getByRole("button", { name: "Script fetch-order" });
-    expect(fetch).toHaveTextContent("changes data");
+    const fetch = screen.getByRole("treeitem", { name: "Script fetch-order" });
+    expect(within(fetch).getByLabelText(/changes data/i)).toBeInTheDocument();
     await user.click(within(check).getByRole("button", { name: "show script" }));
     expect(within(check).getByLabelText("Script of get-order-by-ref")).toHaveTextContent(
       "print('{}')",
@@ -530,10 +535,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     await user.type(within(form).getByRole("textbox", { name: /external_ref/ }), "T-1");
     await user.click(within(form).getByRole("button", { name: "Preview" }));
 
-    const fetch = screen.getByRole("button", { name: "Script fetch-order" });
-    await waitFor(() => {
-      expect(fetch).toHaveTextContent("Would send one message");
-    });
+    const fetch = screen.getByRole("treeitem", { name: "Script fetch-order" });
     fetch.focus();
     await user.keyboard("{Enter}");
     await waitFor(() => {
@@ -586,7 +588,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const user = userEvent.setup();
     renderBuilder();
 
-    const check = await screen.findByRole("button", { name: "Check order-on-hold" });
+    const check = await screen.findByRole("treeitem", { name: "Check order-on-hold" });
     await user.click(within(check).getByRole("button", { name: "condition: change" }));
     const pop = screen.getByRole("dialog", { name: "Wait until" });
     await user.type(

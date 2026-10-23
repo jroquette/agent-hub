@@ -24,22 +24,61 @@ import type { BuilderProblem } from "./useScenarioDraft";
  * holding its own blocks, and an arrow for each `depends_on`. Every block has a "+" under it
  * that opens the add menu; nothing is placed by hand, so the YAML order is the drawn order. */
 
-export const KIND_LOOK: Readonly<Record<string, { label: string; icon: IconName; tint: string }>> =
-  {
-    action: { label: "Script", icon: "circle-play", tint: "var(--ev-tool)" },
-    expect: { label: "Check", icon: "timer", tint: "var(--ev-gate)" },
-    approval: { label: "Manual step", icon: "stamp", tint: "var(--ev-prompt)" },
-    wait: { label: "Pause", icon: "hourglass", tint: "var(--ev-lifecycle)" },
-    loop_group: { label: "Repeat", icon: "refresh-cw", tint: "var(--ev-lifecycle)" },
-    include: { label: "Sub-flow", icon: "layers", tint: "var(--ev-message)" },
-  };
+export const KIND_LOOK: Readonly<
+  Record<string, { label: string; icon: IconName; tint: string; soft: string }>
+> = {
+  action: {
+    label: "Script",
+    icon: "circle-play",
+    tint: "var(--kind-do)",
+    soft: "var(--kind-do-soft)",
+  },
+  include: {
+    label: "Sub-flow",
+    icon: "layers",
+    tint: "var(--kind-do)",
+    soft: "var(--kind-do-soft)",
+  },
+  expect: {
+    label: "Check",
+    icon: "timer",
+    tint: "var(--kind-check)",
+    soft: "var(--kind-check-soft)",
+  },
+  wait: {
+    label: "Pause",
+    icon: "hourglass",
+    tint: "var(--text-muted)",
+    soft: "var(--surface-sunken)",
+  },
+  loop_group: {
+    label: "Repeat",
+    icon: "refresh-cw",
+    tint: "var(--kind-control)",
+    soft: "var(--kind-control-soft)",
+  },
+  branch: {
+    label: "If",
+    icon: "split",
+    tint: "var(--kind-control)",
+    soft: "var(--kind-control-soft)",
+  },
+  parallel: {
+    label: "At the same time",
+    icon: "git-branch",
+    tint: "var(--kind-control)",
+    soft: "var(--kind-control-soft)",
+  },
+  approval: { label: "Manual step", icon: "hand", tint: "var(--surface)", soft: "var(--text)" },
+};
 
 export function kindLook(type: string) {
   return (
     KIND_LOOK[type] ?? {
       label: type,
       icon: "circle-dashed" as IconName,
-      tint: "var(--text-subtle)",
+      tint: "var(--text-muted)",
+      soft: "var(--surface-sunken)",
     }
   );
 }

@@ -80,7 +80,7 @@ export const CATEGORIES: readonly { title: string; entries: readonly PaletteEntr
         label: "if … else",
         hint: "Take one path",
         icon: "split",
-        tint: "var(--ev-decision)",
+        tint: kindLook("branch").tint,
         make: () => ({ kind: "if", key: freshKey("if"), condition: "", then: [], otherwise: [] }),
       },
       {
@@ -88,7 +88,7 @@ export const CATEGORIES: readonly { title: string; entries: readonly PaletteEntr
         label: "at the same time",
         hint: "Paths side by side",
         icon: "git-branch",
-        tint: "var(--ev-reasoning)",
+        tint: kindLook("parallel").tint,
         make: () => ({ kind: "parallel", key: freshKey("together"), lanes: [[], []] }),
       },
     ],

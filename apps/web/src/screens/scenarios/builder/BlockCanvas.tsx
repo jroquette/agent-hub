@@ -7,11 +7,11 @@ import {
   type ReactNode,
 } from "react";
 
-import { CanvasControls, Icon, useViewportSize, type IconName } from "../../../components";
+import { CanvasControls, Icon, useViewportSize } from "../../../components";
 import { fitView } from "../../../lib/canvasView";
 import { usePanZoom } from "../../../lib/usePanZoom";
 import type { ScenarioAction, ScenarioPlanRow } from "../queries";
-import { BlockFacts } from "./BlockFacts";
+import { BlockFacts, EFFECT } from "./BlockFacts";
 import { maxChecks } from "../story";
 import { kindLook } from "./FlowCanvas";
 import { conditionWords, refInWords, shown, text, type BuilderNode, type Json } from "./model";
@@ -72,6 +72,12 @@ export interface BlockCanvasProps {
   /** A preview in an environment: the plan's row of a step, and the environment's name. */
   planOf?: ((id: string) => ScenarioPlanRow | null) | undefined;
   planEnvironment?: string | null | undefined;
+  /** Every step shows its slots and facts (the Detailed density), not only the selected one. */
+  detailed?: boolean | undefined;
+  /** The buttons in the selected step's footer (More settings, Ask Claude, Duplicate, Delete). */
+  stepActions?: ((id: string) => ReactNode) | undefined;
+  /** The hat ("when the scenario starts") was clicked: open the scenario's inputs. */
+  onHat?: (() => void) | undefined;
 }
 
 /** A slot of a block clicked to fill it: which block (or C-block), which key, where. */
@@ -183,9 +189,14 @@ function Condition({
     </Pill>
   ) : (
     <Pill title={value} label="condition" onOpen={onOpen}>
-      <Icon name="split" size="sm" /> {conditionWords(value)}
+      {conditionWords(value)}
     </Pill>
   );
+}
+
+/** `$CTX.x` and `$INPUTS.x` in a text drawn as `⬩ x`. */
+function refsInText(value: string): string {
+  return value.replace(/\$(?:CTX|INPUTS)\.([A-Za-z0-9_]+)/g, "⬩ $1");
 }
 
 function firstLine(value: string): string | null {
@@ -200,15 +211,52 @@ function values(node: BuilderNode): [string, Json][] {
     : [];
 }
 
-/** The words of a block, Scratch-like: verbs and inline fields. */
+/** A value passed straight from the scenario input of the same name. */
+function passThrough(key: string, value: Json): boolean {
+  return value === `$INPUTS.${key}`;
+}
+
+/** A JSON value read short: literal keys as `key: value`, referenced or nested ones bare. */
+export function summarize(value: Json): string | null {
+  let data: Json = value;
+  if (typeof value === "string" && /^\s*[[{]/.test(value)) {
+    try {
+      data = JSON.parse(value) as Json;
+    } catch {
+      // Not strict JSON (a reference written bare): read its keys and literal values as written.
+      const parts = [...value.matchAll(/"([^"]+)"\s*:\s*("([^"$]*)"|[^,}\]]+)?/g)].map((match) =>
+        match[3] !== undefined && match[3] !== ""
+          ? `${match[1] ?? ""}: ${match[3]}`
+          : (match[1] ?? ""),
+      );
+      if (parts.length === 0) return null;
+      const short = `{${parts.join(", ")}}`;
+      return short.length > 64 ? `${short.slice(0, 63)}…}` : short;
+    }
+  }
+  if (typeof data !== "object" || data === null || Array.isArray(data)) return null;
+  const parts = Object.entries(data).map(([key, item]) =>
+    (typeof item === "string" && !item.startsWith("$")) ||
+    typeof item === "number" ||
+    typeof item === "boolean"
+      ? `${key}: ${String(item)}`
+      : key,
+  );
+  const text = `{${parts.join(", ")}}`;
+  return text.length > 64 ? `${text.slice(0, 63)}…}` : text;
+}
+
+/** The words of a block: verb first, slots to click; compact hides pass-throughs and timing. */
 function BlockWords({
   node,
   facts,
+  expanded,
   onEditNode,
   onSlot,
 }: {
   node: BuilderNode;
   facts: ScenarioAction | null;
+  expanded: boolean;
   onEditNode: (node: BuilderNode) => void;
   onSlot: (request: SlotRequest) => void;
 }) {
@@ -228,6 +276,8 @@ function BlockWords({
   );
   const given = new Set(values(node).map(([key]) => key));
   const missing = (facts?.inputs ?? []).filter((input) => input.required && !given.has(input.name));
+  const shownValues = values(node).filter(([key, value]) => expanded || !passThrough(key, value));
+  const hidden = values(node).length - shownValues.length;
   const kept = Object.keys(
     typeof node.capture === "object" && node.capture !== null && !Array.isArray(node.capture)
       ? node.capture
@@ -235,8 +285,9 @@ function BlockWords({
   );
   const chips = (
     <>
-      {values(node).map(([key, value]) => {
+      {shownValues.map(([key, value]) => {
         const words = refInWords(shown(value));
+        const short = expanded ? null : summarize(value);
         return (
           <span key={key} className="bk-pair">
             <span className="bk-label">{key.replace(/_/g, " ")}</span>
@@ -244,9 +295,14 @@ function BlockWords({
               title={`${key} = ${shown(value)} · click to change`}
               label={key}
               onOpen={open("value", `with.${key}`)}
+              className={short ? "bk-pill bk-pill-json" : "bk-pill"}
             >
-              {words.ref && <Icon name="bookmark" size="sm" />}
-              {words.text}
+              {short ?? (
+                <>
+                  {words.ref && <span className="bk-ref">⬩</span>}
+                  {words.text}
+                </>
+              )}
             </Pill>
           </span>
         );
@@ -261,20 +317,25 @@ function BlockWords({
       ))}
       {kept.map((name) => (
         <span key={name} className="bk-pair">
-          <span className="bk-label">keep as</span>
+          <span className="bk-label">keep</span>
           <span className="bk-pill bk-pill-kept">
-            <Icon name="bookmark" size="sm" />
+            <span className="bk-ref">⬩</span>
             {name}
           </span>
         </span>
       ))}
+      {hidden > 0 && (
+        <span className="bk-hidden" title="Values passed straight from the scenario's inputs">
+          +{hidden} from inputs
+        </span>
+      )}
     </>
   );
   switch (node.type) {
     case "action":
       return (
         <>
-          <span>run</span>
+          <span className="bk-verb">run</span>
           {actionPill}
           {chips}
         </>
@@ -285,35 +346,37 @@ function BlockWords({
       const checks = every && timeout ? maxChecks(every, timeout) : null;
       return (
         <>
-          <span>wait until</span>
+          <span className="bk-verb">wait until</span>
           <Condition
             value={text(node.until_when)}
             placeholder="a state holds"
             onOpen={open("condition", "until_when")}
           />
-          <span className="bk-sep">·</span>
           <span className="bk-label">reading</span>
           {actionPill}
-          <span className="bk-sep">·</span>
-          <span className="bk-label">every</span>
-          <Field
-            value={every}
-            label={`Check every, ${node.id}`}
-            width={44}
-            onChange={(value) => {
-              set("every", value);
-            }}
-          />
-          <span className="bk-label">up to</span>
-          <Field
-            value={timeout}
-            label={`For up to, ${node.id}`}
-            width={44}
-            onChange={(value) => {
-              set("timeout", value);
-            }}
-          />
-          {checks !== null && <span className="bk-quiet">({checks} checks)</span>}
+          {expanded && (
+            <>
+              <span className="bk-label">every</span>
+              <Field
+                value={every}
+                label={`Check every, ${node.id}`}
+                width={48}
+                onChange={(value) => {
+                  set("every", value);
+                }}
+              />
+              <span className="bk-label">up to</span>
+              <Field
+                value={timeout}
+                label={`For up to, ${node.id}`}
+                width={48}
+                onChange={(value) => {
+                  set("timeout", value);
+                }}
+              />
+              {checks !== null && <span className="bk-quiet">({checks} checks)</span>}
+            </>
+          )}
           {chips}
         </>
       );
@@ -321,7 +384,7 @@ function BlockWords({
     case "approval":
       return (
         <>
-          <span>ask me to</span>
+          <span className="bk-verb">ask me to</span>
           <Pill
             className="bk-pill bk-pill-text"
             title={text(node.message)}
@@ -329,7 +392,7 @@ function BlockWords({
             empty={firstLine(text(node.message)) === null}
             onOpen={open("text", "message")}
           >
-            {firstLine(text(node.message)) ?? "do something by hand"}
+            {refsInText(firstLine(text(node.message)) ?? "do something by hand")}
           </Pill>
           {node.capture_response === true && <span className="bk-label">and keep what I type</span>}
         </>
@@ -337,11 +400,11 @@ function BlockWords({
     case "wait":
       return (
         <>
-          <span>wait</span>
+          <span className="bk-verb">wait</span>
           <Field
             value={text(node.duration)}
             label={`Wait for, ${node.id}`}
-            width={48}
+            width={52}
             onChange={(value) => {
               set("duration", value);
             }}
@@ -351,7 +414,7 @@ function BlockWords({
     case "include":
       return (
         <>
-          <span>run the scenario</span>
+          <span className="bk-verb">run the scenario</span>
           <Pill
             empty={text(node.include) === ""}
             label="scenario"
@@ -383,6 +446,7 @@ function isTarget(target: DropTarget | null, stack: string, slot: Slot, index: n
   );
 }
 
+/** The gap between two steps: a drop zone, and a "+" that sits on the spine. */
 function Gap({
   ctx,
   slot,
@@ -402,7 +466,7 @@ function Gap({
       type="button"
       className="bk-plus"
       aria-label={`Add a block ${where}`}
-      title={`Add a block ${where}`}
+      title={`Add a step ${where}`}
       data-no-pan=""
       onPointerDown={(event) => {
         event.stopPropagation();
@@ -441,15 +505,19 @@ function List({
   empty: string;
 }) {
   if (items.length === 0) {
-    return <Gap ctx={ctx} slot={slot} index={0} empty={empty} where={empty} />;
+    return (
+      <div className="bk-list" role="group">
+        <Gap ctx={ctx} slot={slot} index={0} empty={empty} where={empty} />
+      </div>
+    );
   }
   return (
-    <div className="bk-list">
+    <div className="bk-list" role="group">
       <Gap
         ctx={ctx}
         slot={slot}
         index={0}
-        where={`before ${items[0] ? itemId(items[0]) : "the first block"}`}
+        where={`before ${items[0] ? itemId(items[0]) : "the first step"}`}
       />
       {items.map((item, index) => (
         <div key={itemId(item)} className="bk-entry">
@@ -461,23 +529,40 @@ function List({
   );
 }
 
-const EFFECT_MARK: Readonly<Record<string, { icon: IconName; words: string }>> = {
-  read: { icon: "file-text", words: "Reads only" },
-  write: { icon: "file-pen", words: "Changes data" },
-  destroy: { icon: "triangle-alert", words: "Deletes or replaces data" },
-};
-
-/** The block's marks at its right edge: effect, draft, problems, warnings, then a run's status. */
-function Badges({ ctx, node }: { ctx: Ctx; node: BuilderNode }) {
+/** The marks at a row's right edge: effect, services, gives-up time, draft, problems. */
+function Marks({ ctx, node }: { ctx: Ctx; node: BuilderNode }) {
   const action = ctx.props.actionOf(node);
   const problems = ctx.props.problemsOf(node.id);
   const errors = problems.filter((problem) => problem.severity === "error");
   const warnings = problems.filter(
     (problem) => problem.severity !== "error" && !/draft/i.test(problem.message),
   );
-  const effect = action?.effect ? EFFECT_MARK[action.effect] : undefined;
+  const effect = action?.effect ? EFFECT[action.effect] : undefined;
+  const given =
+    typeof node.with === "object" && node.with !== null && !Array.isArray(node.with)
+      ? node.with
+      : {};
+  const services = (action?.inputs ?? [])
+    .filter((input) => input.type === "service")
+    .map((input) => given[input.name])
+    .filter((value): value is Json => value !== undefined)
+    .map((value) => refInWords(shown(value)).text);
+  const timeout = text(node.timeout);
   return (
     <span className="bk-marks">
+      {services.map((service) => (
+        <span key={service} className="bk-mark" title={`Calls ${service}`}>
+          <Icon name="globe" size="sm" /> {service}
+        </span>
+      ))}
+      {(node.type === "expect" || node.type === "loop_group") && timeout && (
+        <span
+          className="bk-mark"
+          title={`Checks every ${text(node.every) || "…"}, gives up after ${timeout}`}
+        >
+          <Icon name="timer" size="sm" /> {timeout}
+        </span>
+      )}
       {effect && (
         <span className="bk-mark" title={effect.words} aria-label={effect.words}>
           <Icon name={effect.icon} size="sm" />
@@ -497,7 +582,7 @@ function Badges({ ctx, node }: { ctx: Ctx; node: BuilderNode }) {
           className="bk-mark bk-mark-warn"
           title={warnings.map((problem) => problem.message).join("\n")}
         >
-          <Icon name="triangle-alert" size="sm" />
+          <Icon name="triangle-alert" size="sm" /> {warnings.length}
         </span>
       )}
       {errors.length > 0 && (
@@ -513,16 +598,25 @@ function Badges({ ctx, node }: { ctx: Ctx; node: BuilderNode }) {
   );
 }
 
-function Num({ ctx, id }: { ctx: Ctx; id: string }) {
+/** The step's number, a round badge on the spine. */
+function Badge({ ctx, id }: { ctx: Ctx; id: string }) {
   const n = ctx.props.numbers.get(id);
-  return n ? (
-    <span className="bk-num" aria-hidden>
+  if (!n) return null;
+  return (
+    <span
+      className="bk-badge"
+      data-selected={ctx.props.selected === id || undefined}
+      data-invalid={
+        ctx.props.problemsOf(id).some((problem) => problem.severity === "error") || undefined
+      }
+      aria-hidden
+    >
       {n}
     </span>
-  ) : null;
+  );
 }
 
-function blockProps(ctx: Ctx, id: string, kind: string, label: string) {
+function rowProps(ctx: Ctx, id: string, kind: string, label: string) {
   const look = kindLook(kind);
   return {
     "data-no-pan": "",
@@ -530,15 +624,16 @@ function blockProps(ctx: Ctx, id: string, kind: string, label: string) {
     "data-suggested": ctx.props.suggested?.has(id) === true || undefined,
     "data-invalid":
       ctx.props.problemsOf(id).some((problem) => problem.severity === "error") || undefined,
-    style: { ["--kind" as string]: look.tint },
-    role: "button",
+    style: { ["--kind" as string]: look.tint, ["--kind-soft" as string]: look.soft },
+    role: "treeitem",
     tabIndex: 0,
     "aria-label": label,
-    "aria-pressed": ctx.props.selected === id,
+    "aria-selected": ctx.props.selected === id,
     onPointerDown: (event: ReactPointerEvent) => {
       ctx.startPress(event, ctx.stack, id);
     },
     onKeyDown: (event: KeyboardEvent) => {
+      if (event.target !== event.currentTarget) return;
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
         ctx.props.onSelect(id);
@@ -547,12 +642,37 @@ function blockProps(ctx: Ctx, id: string, kind: string, label: string) {
   };
 }
 
-function ControlHead({ icon, children }: { icon: IconName; children: ReactNode }) {
+function Tile({ kind }: { kind: string }) {
+  const look = kindLook(kind);
   return (
-    <div className="bk-c-head">
-      <Icon name={icon} size="sm" />
-      {children}
-    </div>
+    <span className="bk-icon" aria-hidden>
+      <Icon name={look.icon} size="sm" />
+    </span>
+  );
+}
+
+/** The footer of the selected step: its id and what you can do with it. */
+function Footer({ ctx, node }: { ctx: Ctx; node: BuilderNode }) {
+  const problems = ctx.props.problemsOf(node.id);
+  return (
+    <>
+      {problems.length > 0 && (
+        <ul className="bk-problems">
+          {problems.map((problem, index) => (
+            <li key={index} data-severity={problem.severity}>
+              {problem.message}
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="bk-footer">
+        <span className="bk-id" title="The step's id in the file">
+          {node.id}
+        </span>
+        <span className="ah-grow" />
+        {ctx.props.stepActions?.(node.id)}
+      </div>
+    </>
   );
 }
 
@@ -560,125 +680,157 @@ function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
   if (item.kind === "block") {
     const node = item.node;
     const look = kindLook(node.type);
+    const expanded = ctx.props.selected === node.id || ctx.props.detailed === true;
+    const selected = ctx.props.selected === node.id;
     return (
       <div
-        className="bk-block"
-        {...blockProps(ctx, node.id, node.type, `${look.label} ${node.id}`)}
+        className="bk-row"
+        data-expanded={expanded || undefined}
+        {...rowProps(ctx, node.id, node.type, `${look.label} ${node.id}`)}
       >
-        <Num ctx={ctx} id={node.id} />
-        <span className="bk-icon" aria-hidden>
-          <Icon name={look.icon} size="sm" />
-        </span>
-        <span className="bk-body">
-          {typeof node.description === "string" && node.description !== "" && (
-            <span className="bk-caption">{node.description}</span>
-          )}
-          <span className="bk-words">
-            <BlockWords
-              node={node}
-              facts={ctx.props.actionOf(node)}
-              onEditNode={ctx.props.onEditNode}
-              onSlot={ctx.props.onSlot}
-            />
+        <Badge ctx={ctx} id={node.id} />
+        <div className="bk-row-main">
+          <Tile kind={node.type} />
+          <span className="bk-body">
+            {typeof node.description === "string" && node.description !== "" && (
+              <span className="bk-name">{node.description}</span>
+            )}
+            <span className="bk-words">
+              <BlockWords
+                node={node}
+                facts={ctx.props.actionOf(node)}
+                expanded={expanded}
+                onEditNode={ctx.props.onEditNode}
+                onSlot={ctx.props.onSlot}
+              />
+            </span>
           </span>
-          {/* The full facts on the selected block; a one-line summary on the others. */}
-          <BlockFacts
-            node={node}
-            action={ctx.props.actionOf(node)}
-            row={ctx.props.planOf?.(node.id) ?? null}
-            environment={ctx.props.planEnvironment ?? null}
-            compact={ctx.props.selected !== node.id}
-          />
-        </span>
-        <Badges ctx={ctx} node={node} />
+          <Marks ctx={ctx} node={node} />
+        </div>
+        {expanded && (
+          <div className="bk-more">
+            <BlockFacts
+              node={node}
+              action={ctx.props.actionOf(node)}
+              row={ctx.props.planOf?.(node.id) ?? null}
+              environment={ctx.props.planEnvironment ?? null}
+            />
+            {selected && <Footer ctx={ctx} node={node} />}
+          </div>
+        )}
       </div>
     );
   }
   if (item.kind === "repeat") {
     const node = item.node;
     return (
-      <div className="bk-c" {...blockProps(ctx, node.id, "loop_group", `Repeat ${node.id}`)}>
-        <ControlHead icon="refresh-cw">
-          <Num ctx={ctx} id={node.id} />
-          <span>repeat until</span>
-          <Condition
-            value={text(node.until_when)}
-            placeholder="a state holds"
-            onOpen={(anchor) => {
-              ctx.props.onSlot({ id: node.id, kind: "condition", key: "until_when", anchor });
-            }}
-          />
-          <span>· at most</span>
-          <Field
-            value={text(node.max_iterations, "1")}
-            label={`Rounds, ${node.id}`}
-            width={36}
-            onChange={(value) => {
-              ctx.props.onEditNode({
-                ...node,
-                max_iterations: /^\d+$/.test(value) ? Number(value) : value,
-              });
-            }}
-          />
-          <span>rounds</span>
-          <Badges ctx={ctx} node={node} />
-        </ControlHead>
-        <div className="bk-mouth">
+      <div className="bk-group" data-kind="repeat">
+        <div
+          className="bk-row bk-head"
+          {...rowProps(ctx, node.id, "loop_group", `Repeat ${node.id}`)}
+        >
+          <Badge ctx={ctx} id={node.id} />
+          <div className="bk-row-main">
+            <Tile kind="loop_group" />
+            <span className="bk-words">
+              <span className="bk-verb">repeat until</span>
+              <Condition
+                value={text(node.until_when)}
+                placeholder="a state holds"
+                onOpen={(anchor) => {
+                  ctx.props.onSlot({ id: node.id, kind: "condition", key: "until_when", anchor });
+                }}
+              />
+              <span className="bk-label">at most</span>
+              <Field
+                value={text(node.max_iterations, "1")}
+                label={`Rounds, ${node.id}`}
+                width={40}
+                onChange={(value) => {
+                  ctx.props.onEditNode({
+                    ...node,
+                    max_iterations: /^\d+$/.test(value) ? Number(value) : value,
+                  });
+                }}
+              />
+              <span className="bk-label">rounds</span>
+            </span>
+            <Marks ctx={ctx} node={node} />
+          </div>
+          {ctx.props.selected === node.id && <Footer ctx={ctx} node={node} />}
+        </div>
+        <div className="bk-lane bk-loop">
           <List
             ctx={ctx}
             items={item.body}
             slot={{ in: "body", owner: node.id }}
-            empty="put the blocks that repeat here"
+            empty="put the steps that repeat here"
           />
+          <span className="bk-foot">
+            <Icon name="refresh-cw" size="sm" /> then go on
+          </span>
         </div>
-        <div className="bk-c-foot">then go on</div>
       </div>
     );
   }
   if (item.kind === "if") {
     return (
-      <div className="bk-c" {...blockProps(ctx, item.key, "branch", "If")}>
-        <ControlHead icon="split">
-          <Num ctx={ctx} id={item.key} />
-          <span>if</span>
-          <Condition
-            value={item.condition}
-            placeholder="a condition"
-            onOpen={(anchor) => {
-              ctx.props.onSlot({ id: itemId(item), kind: "condition", key: "if", anchor });
-            }}
-          />
-        </ControlHead>
-        <div className="bk-mouth">
-          <List
-            ctx={ctx}
-            items={item.then}
-            slot={{ in: "then", owner: item.key }}
-            empty="what happens when it holds"
-          />
+      <div className="bk-group" data-kind="if">
+        <div className="bk-row bk-head" {...rowProps(ctx, item.key, "branch", "If")}>
+          <Badge ctx={ctx} id={item.key} />
+          <div className="bk-row-main">
+            <Tile kind="branch" />
+            <span className="bk-words">
+              <span className="bk-verb">if</span>
+              <Condition
+                value={item.condition}
+                placeholder="a condition"
+                onOpen={(anchor) => {
+                  ctx.props.onSlot({ id: itemId(item), kind: "condition", key: "if", anchor });
+                }}
+              />
+            </span>
+          </div>
         </div>
-        <div className="bk-c-mid">else</div>
-        <div className="bk-mouth">
-          <List
-            ctx={ctx}
-            items={item.otherwise}
-            slot={{ in: "otherwise", owner: item.key }}
-            empty="otherwise (or nothing: skip to the next block)"
-          />
+        <div className="bk-lanes">
+          <div className="bk-lane">
+            <span className="bk-lane-label">if it holds</span>
+            <List
+              ctx={ctx}
+              items={item.then}
+              slot={{ in: "then", owner: item.key }}
+              empty="what happens when it holds"
+            />
+          </div>
+          <div className="bk-lane">
+            <span className="bk-lane-label">else</span>
+            <List
+              ctx={ctx}
+              items={item.otherwise}
+              slot={{ in: "otherwise", owner: item.key }}
+              empty="otherwise (or nothing: skip to the next block)"
+            />
+          </div>
         </div>
-        <div className="bk-c-foot">then go on after the path taken</div>
+        <span className="bk-foot">then go on after the path taken</span>
       </div>
     );
   }
   return (
-    <div className="bk-c" {...blockProps(ctx, item.key, "parallel", "At the same time")}>
-      <ControlHead icon="git-branch">
-        <Num ctx={ctx} id={item.key} />
-        <span>at the same time</span>
-      </ControlHead>
+    <div className="bk-group" data-kind="parallel">
+      <div className="bk-row bk-head" {...rowProps(ctx, item.key, "parallel", "At the same time")}>
+        <Badge ctx={ctx} id={item.key} />
+        <div className="bk-row-main">
+          <Tile kind="parallel" />
+          <span className="bk-words">
+            <span className="bk-verb">at the same time</span>
+          </span>
+        </div>
+      </div>
       <div className="bk-lanes">
         {item.lanes.map((lane, index) => (
-          <div key={index} className="bk-mouth bk-lane">
+          <div key={index} className="bk-lane">
+            <span className="bk-lane-label">path {index + 1}</span>
             <List
               ctx={ctx}
               items={lane}
@@ -688,17 +840,29 @@ function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
           </div>
         ))}
       </div>
-      <div className="bk-c-foot">then go on when every path finished</div>
+      <span className="bk-foot">then go on when every path finished</span>
     </div>
   );
 }
 
-function StackView({ stack, ctx, hat }: { stack: Stack; ctx: Ctx; hat?: ReactNode }) {
+function StackView({
+  stack,
+  ctx,
+  hat,
+  steps,
+}: {
+  stack: Stack;
+  ctx: Ctx;
+  hat?: ReactNode;
+  steps?: number;
+}) {
   return (
     <div
       className="bk-stack"
       style={{ left: stack.x, top: stack.y }}
       data-loose={!hat || undefined}
+      role="tree"
+      aria-label={hat ? "Steps of the scenario" : "Loose steps"}
     >
       {hat}
       {!hat && (
@@ -706,18 +870,20 @@ function StackView({ stack, ctx, hat }: { stack: Stack; ctx: Ctx; hat?: ReactNod
           <Icon name="triangle-alert" size="sm" />
           {stack.kept
             ? "Kept as written: the blocks cannot show how these connect"
-            : "Not connected: snap under a block to use it (not saved)"}
+            : "Not connected: snap under a step to use it (not saved)"}
         </div>
       )}
       <List
         ctx={ctx}
         items={stack.items}
         slot={{ in: "main" }}
-        empty={hat ? "drag blocks here" : ""}
+        empty={hat ? "add the first step" : ""}
       />
       {hat && (
         <div className="bk-cap">
-          <Icon name="flag" size="sm" /> end of the scenario
+          <span className="bk-cap-dot" aria-hidden />
+          End of the scenario
+          {steps !== undefined ? ` · ${String(steps)} ${steps === 1 ? "step" : "steps"}` : ""}
         </div>
       )}
     </div>
@@ -734,7 +900,7 @@ export function BlockCanvas(props: BlockCanvasProps) {
   // Fit the stacks (not a fixed box) in the viewport: on first show, and on Fit.
   const { setView } = pz;
   const fit = useCallback(
-    (animate: boolean) => {
+    (animate: boolean, whole = false) => {
       const stacks = viewport.current?.querySelectorAll<HTMLElement>(".bk-world > .bk-stack") ?? [];
       let box: { left: number; top: number; right: number; bottom: number } | null = null;
       stacks.forEach((stack) => {
@@ -754,10 +920,15 @@ export function BlockCanvas(props: BlockCanvasProps) {
       const found = box as { left: number; top: number; right: number; bottom: number } | null;
       if (!found || size.width === 0) return;
       const world = { width: found.right - found.left, height: found.bottom - found.top };
-      const view = fitView(world, size, { max: FIT_MAX, min: FIT_MIN, pad: 48 });
-      // Keep the top of a tall scenario in view rather than its middle.
-      const y = world.height * view.k > size.height ? 48 : view.y;
-      setView({ k: view.k, x: view.x - found.left * view.k, y: y - found.top * view.k }, animate);
+      // On open: read it at 100 % (90 % on a small screen), from the top; Fit shows it whole.
+      const k = whole
+        ? fitView(world, size, { max: FIT_MAX, min: 0.3, pad: 48 }).k
+        : size.width < 1100
+          ? FIT_MIN + 0.1
+          : 1;
+      const x = (size.width - world.width * k) / 2 - found.left * k;
+      const y = whole && world.height * k < size.height ? (size.height - world.height * k) / 2 : 24;
+      setView({ k, x, y: y - found.top * k }, animate);
     },
     [setView, size],
   );
@@ -868,33 +1039,42 @@ export function BlockCanvas(props: BlockCanvasProps) {
     startPress,
   });
 
+  const inputsText =
+    props.inputs.length === 0
+      ? ""
+      : props.inputs.length <= 2
+        ? ` · with ${props.inputs.join(" and ")}`
+        : ` · with ${props.inputs.slice(0, 2).join(", ")} and ${String(props.inputs.length - 2)} more`;
   const hat = (
-    <div
+    <button
+      type="button"
       className="bk-hat"
       data-no-pan=""
-      onPointerDown={(event) => {
-        event.stopPropagation();
-        const h = { x: event.clientX, y: event.clientY, sx: props.main.x, sy: props.main.y };
-        const move = (moved: PointerEvent) => {
-          props.onMoveStack(
-            "main",
-            h.sx + (moved.clientX - h.x) / pz.view.k,
-            h.sy + (moved.clientY - h.y) / pz.view.k,
-          );
-        };
-        const up = () => {
-          window.removeEventListener("pointermove", move);
-        };
-        window.addEventListener("pointermove", move);
-        window.addEventListener("pointerup", up, { once: true });
-      }}
-      title="Drag to move the scenario on the canvas"
+      onClick={props.onHat}
+      title="The scenario's inputs"
     >
-      <Icon name="flag" size="sm" />
-      <span>when the scenario starts</span>
-      {props.inputs.length > 0 && <span className="bk-quiet">with {props.inputs.join(", ")}</span>}
-    </div>
+      <span className="bk-icon bk-icon-neutral" aria-hidden>
+        <Icon name="flag" size="sm" />
+      </span>
+      <span>
+        <b>when the scenario starts</b>
+        <span className="bk-quiet">{inputsText}</span>
+      </span>
+    </button>
   );
+  const count = (items: readonly Item[]): number =>
+    items.reduce(
+      (total, item) =>
+        total +
+        (item.kind === "block"
+          ? 1
+          : item.kind === "repeat"
+            ? 1 + count(item.body)
+            : item.kind === "if"
+              ? count(item.then) + count(item.otherwise)
+              : item.lanes.reduce((sum, lane) => sum + count(lane), 0)),
+      0,
+    );
 
   return (
     <div
@@ -910,7 +1090,12 @@ export function BlockCanvas(props: BlockCanvasProps) {
           transition: pz.animated ? "transform 160ms ease" : undefined,
         }}
       >
-        <StackView stack={props.main} ctx={ctx(props.main.id)} hat={hat} />
+        <StackView
+          stack={props.main}
+          ctx={ctx(props.main.id)}
+          hat={hat}
+          steps={count(props.main.items)}
+        />
         {props.loose.map((stack) => (
           <StackView key={stack.id} stack={stack} ctx={ctx(stack.id)} />
         ))}
@@ -944,7 +1129,7 @@ export function BlockCanvas(props: BlockCanvasProps) {
           pz.zoomTo(k);
         }}
         onFit={() => {
-          fit(true);
+          fit(true, true);
         }}
       />
     </div>

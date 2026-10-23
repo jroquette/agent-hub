@@ -10,7 +10,7 @@ import { conditionWords, refInWords, shown, text, type BuilderNode, type Json } 
  * and what the script's plan mode says it would do there), its effect, what it gives and keeps.
  * Read from the action's own files and the scenario's keys; nothing is guessed. */
 
-const EFFECT: Readonly<Record<string, { icon: IconName; words: string }>> = {
+export const EFFECT: Readonly<Record<string, { icon: IconName; words: string }>> = {
   read: { icon: "file-text", words: "Only reads: changes nothing" },
   write: { icon: "file-pen", words: "Changes data" },
   destroy: { icon: "triangle-alert", words: "Deletes or replaces data" },
