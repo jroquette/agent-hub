@@ -11,7 +11,17 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-10-23
+
 ### Added
+
+- Scenarios in `hub web` (AGH-364): a **Scenarios** entry under Work, after Workflow runs, opens the list of the
+  hub's scenarios (`/scenarios`, filter with `?q=`). A scenario's page shows its plan and starts a run, the
+  environment pre-filled from `?env=` (the plan never runs on load). A scenario run has its own page
+  (`/scenarios/<project>/<name>/runs/<run>`) with its timeline, the investigation's answer options and its
+  findings; `/runs/<run>` for a scenario run redirects there, and search lists scenario runs. Workflow runs shows only
+  once a run of kind `workflow` exists. An investigation session keeps its read-only permission mode, and its chat
+  shows no mode switch.
 
 - `hub.json` → `repos[].ui_paths` (AGH-474): optional globs of a repo's screen paths, matched from the repo root
   (`**` spans folders); absent means the repo has no UI. The new `hub doctor` rule `repos.ui_paths` warns about each
@@ -1073,7 +1083,8 @@ Includes 0.3.0, which was never tagged.
 - The `hub.json` config model and schema, the generator templates, `hub init` and `hub sync`.
 - The release check on `v*` tags.
 
-[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.20.1...HEAD
+[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/jroquette/agent-hub/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/jroquette/agent-hub/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/jroquette/agent-hub/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/jroquette/agent-hub/compare/v0.18.0...v0.19.0
