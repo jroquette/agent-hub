@@ -5,6 +5,7 @@ merge, and each other one run once at the commit in a throwaway worktree, the ch
 import importlib.util
 import io
 import json
+import shutil
 import sys
 import time
 from importlib.resources import files
@@ -371,3 +372,19 @@ def test_stays_under_output_cap_when_every_selected_ac_fails(wide: str) -> None:
         assert len(found["failures"]) + len(found["more_failed"]) == 2000
         assert len(found["failures"]) == 50
         assert found["more_failed"][0] == f"grp/{'f' * 190}-50 AC-50"
+
+
+def test_runs_again_with_one_worktree_when_resumed_after_a_lost_worktree(
+    workspace: Workspace, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A run killed before its cleanup leaves a worktree entry whose folder is gone.
+    lost = workspace.repo.parent / "lost"
+    workspace.git("worktree", "add", "--detach", "--quiet", str(lost), "HEAD")
+    shutil.rmtree(lost)
+
+    first = verify(workspace, monkeypatch, capsys, "test -f README", "exit 1")
+    again = verify(workspace, monkeypatch, capsys, "test -f README", "exit 1")
+
+    assert first == again
+    assert first[1]["counts"]["passed"] == 1
+    assert len(workspace.git("worktree", "list").splitlines()) == 1
