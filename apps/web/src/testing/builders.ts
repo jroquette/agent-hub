@@ -1994,6 +1994,7 @@ export function renderWithApi(
 export type ScenarioSummary = Schemas["ScenarioSummary"];
 export type ScenarioCatalog = Schemas["ScenarioCatalogView"];
 export type ScenarioDetail = Schemas["ScenarioDetail"];
+export type ScenarioAction = Schemas["ScenarioActionView"];
 export type ScenarioRunRef = Schemas["ScenarioRunRef"];
 export type ScenarioPlan = Schemas["ScenarioPlanView"];
 export type ScenarioPlanRow = Schemas["ScenarioPlanRow"];
@@ -2071,6 +2072,48 @@ export function aScenarioDetail(overrides: Partial<ScenarioDetail> = {}): Scenar
       { name: "qa", access: "read", production: false },
       { name: "live", access: "read", production: true },
     ],
+    path: "scenarios/orders/order-lifecycle.yaml",
+    document_text: "version: 1\nkind: scenario\nname: order-lifecycle\n",
+    actions: [
+      aScenarioAction({ ref: "send-queue-message", name: "send-queue-message", effect: "write" }),
+      aScenarioAction({
+        ref: "get-order-by-ref",
+        name: "get-order-by-ref",
+        description: "Read one order by its ref",
+      }),
+      aScenarioAction({
+        ref: "render-invoice-pdf",
+        name: "render-invoice-pdf",
+        effect: "write",
+        description: "Render the order's invoice PDF",
+      }),
+    ],
+    ...overrides,
+  };
+}
+
+export function aScenarioAction(overrides: Partial<ScenarioAction> = {}): ScenarioAction {
+  const name = overrides.name ?? "get-order-by-ref";
+  return {
+    ref: name,
+    name,
+    pack: "orders",
+    path: `actions/orders/${name}.yaml`,
+    description: "Send one message to the orders queue",
+    effect: "read",
+    runtime: "python",
+    script: `actions/orders/scripts/${name.replace(/-/g, "_")}.py`,
+    timeout: "1m",
+    inputs: [
+      { name: "external_ref", type: "string", required: true, description: "The order's ref." },
+    ],
+    output_format: { type: "object", properties: { status: { type: "string" } } },
+    draft: false,
+    accept_command: null,
+    document_text: `version: 1\nname: ${name}\n`,
+    script_text: "print('{}')\n",
+    script_truncated: false,
+    problem: null,
     ...overrides,
   };
 }

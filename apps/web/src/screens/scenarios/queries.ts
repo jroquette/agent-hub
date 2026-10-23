@@ -13,6 +13,7 @@ export type ScenarioSummary = Schemas["ScenarioSummary"];
 export type ScenarioDetail = Schemas["ScenarioDetail"];
 export type ScenarioRunRef = Schemas["ScenarioRunRef"];
 export type ScenarioStep = Schemas["ScenarioStepView"];
+export type ScenarioAction = Schemas["ScenarioActionView"];
 export type ScenarioPlan = Schemas["ScenarioPlanView"];
 export type ScenarioPlanRow = Schemas["ScenarioPlanRow"];
 export type ScenarioRunDetail = Schemas["ScenarioRunDetail"];

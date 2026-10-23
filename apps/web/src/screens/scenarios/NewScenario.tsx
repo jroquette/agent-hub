@@ -31,7 +31,7 @@ const EXAMPLES: readonly { label: string; text: string }[] = [
   },
 ];
 
-const BRIEF = [
+export const SCENARIO_BRIEF = [
   "Scenarios are YAML files at `scenarios/<pack>/<name>.yaml` in this hub folder, with `kind: scenario`. The actions they call are `actions/<pack>/<name>.yaml`, with their scripts under `actions/<pack>/scripts/` (docs: the hub's scenarios design, ADR 0041).",
   "A scenario is a workflow document (schema v1: `version: 1`, `kind: scenario`, `name` = the file stem, `description`, `revision: 1`, `inputs`, `nodes`) that holds only `action`, `expect`, `approval`, `wait`, `loop_group` and `include` nodes. It may declare `environment: <name>`.",
   "`action` node: `action` (`<name>` in its pack or `<pack>/<name>`), `with`, `capture` ({name: ref} → `$CTX.<name>` downstream), `retry`, `timeout`. `expect`: the same plus `every` and `timeout` (both required) and `until_when`.",
@@ -120,7 +120,7 @@ export function NewScenarioScreen() {
       project: chosenProject,
       kind: "New scenario",
       title: name || "a new scenario",
-      brief: BRIEF,
+      brief: SCENARIO_BRIEF,
       openOnArrive: true,
       starters: [{ label: "Create it", message }],
     });
