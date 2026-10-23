@@ -1,6 +1,6 @@
 import { useMemo, type ReactNode } from "react";
 
-import { highlightable, languageOfPath, useHighlightLines } from "../../components";
+import { highlightable, languageOfPath, useHighlightBlocks } from "../../components";
 import type { DiffLine } from "./ToolCallCard";
 
 /** A code line of the diff: a sign (`+`, `-`, space) then the code. Hunk headers, file headers
@@ -10,10 +10,46 @@ const isCode = (line: DiffLine) =>
   (line.kind === "del" && line.text.startsWith("-")) ||
   (line.kind === "ctx" && line.text.startsWith(" "));
 
+/** Where a row's code sits in the highlighted blocks of one side: its block, then its line. */
+type At = { block: number; line: number } | null;
+
+/** The code of each side of the diff in blocks, one per hunk, and where each row sits in them. */
+function splitSides(lines: readonly DiffLine[]) {
+  const oldBlocks: string[][] = [];
+  const newBlocks: string[][] = [];
+  let oldBlock: string[] = [];
+  let newBlock: string[] = [];
+  // A side's code lines go into its current block; a hunk header closes it, if it has any.
+  const place = (blocks: string[][], block: string[], code: string): At => {
+    if (block.length === 0) blocks.push(block);
+    return { block: blocks.length - 1, line: block.push(code) - 1 };
+  };
+  const at: { old: At; new: At }[] = [];
+  for (const line of lines) {
+    if (line.kind === "hunk") {
+      if (oldBlock.length > 0) oldBlock = [];
+      if (newBlock.length > 0) newBlock = [];
+    }
+    if (!isCode(line)) {
+      at.push({ old: null, new: null });
+      continue;
+    }
+    const code = line.text.slice(1);
+    at.push({
+      old: line.kind === "add" ? null : place(oldBlocks, oldBlock, code),
+      new: line.kind === "del" ? null : place(newBlocks, newBlock, code),
+    });
+  }
+  const join = (blocks: string[][]) => blocks.map((block) => block.join("\n"));
+  return { old: join(oldBlocks), new: join(newBlocks), at };
+}
+
 /**
- * Each line's code coloured in the file's language, as a pull request shows it: the old side
- * (context and removed lines) and the new side (context and added lines) are each highlighted as
- * one text, so a string or comment that spans lines reads right, then split back into the rows.
+ * Each line's code coloured in the file's language, as a pull request shows it: within each hunk,
+ * the old side (context and removed lines) and the new side (context and added lines) are each
+ * highlighted as one text, so a string or comment that spans lines reads right, then split back
+ * into the rows. Hunks are highlighted apart: the lines hidden between two hunks may open or close
+ * a string, so carrying one hunk's state into the next would colour the rest of the file wrongly.
  * An entry is null for a row that is not code, and the whole list is null while the highlighter
  * loads, for an unknown language, or for a diff over the highlight bounds: the rows stay plain.
  */
@@ -21,32 +57,23 @@ export function useDiffSyntax(
   lines: readonly DiffLine[],
   path: string | undefined,
 ): (ReactNode[] | null)[] | null {
-  const sides = useMemo(() => {
-    const oldSide: string[] = [];
-    const newSide: string[] = [];
-    // Each row's line in the old and new side's text, -1 when it is not on that side.
-    const at = lines.map((line) => {
-      if (!isCode(line)) return { old: -1, new: -1 };
-      const code = line.text.slice(1);
-      const old = line.kind === "add" ? -1 : oldSide.push(code) - 1;
-      const next = line.kind === "del" ? -1 : newSide.push(code) - 1;
-      return { old, new: next };
-    });
-    return { old: oldSide.join("\n"), new: newSide.join("\n"), at };
-  }, [lines]);
+  const sides = useMemo(() => splitSides(lines), [lines]);
   const language = path ? languageOfPath(path) : "";
   const enabled =
-    language !== "" && highlightable(sides.old) && highlightable(sides.new) && sides.at.length > 0;
-  const oldLines = useHighlightLines(sides.old, language, enabled);
-  const newLines = useHighlightLines(sides.new, language, enabled);
+    language !== "" &&
+    highlightable(sides.old.join("\n")) &&
+    highlightable(sides.new.join("\n")) &&
+    sides.at.length > 0;
+  const oldBlocks = useHighlightBlocks(sides.old, language, enabled);
+  const newBlocks = useHighlightBlocks(sides.new, language, enabled);
   return useMemo(() => {
-    if (!oldLines || !newLines) return null;
+    if (!oldBlocks || !newBlocks) return null;
     return sides.at.map((row) =>
-      row.new >= 0
-        ? (newLines[row.new] ?? null)
-        : row.old >= 0
-          ? (oldLines[row.old] ?? null)
+      row.new
+        ? (newBlocks[row.new.block]?.[row.new.line] ?? null)
+        : row.old
+          ? (oldBlocks[row.old.block]?.[row.old.line] ?? null)
           : null,
     );
-  }, [sides, oldLines, newLines]);
+  }, [sides, oldBlocks, newBlocks]);
 }

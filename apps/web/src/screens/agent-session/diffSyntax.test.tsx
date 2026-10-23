@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { render, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { useDiffSyntax } from "./diffSyntax";
@@ -41,5 +41,25 @@ describe("useDiffSyntax", () => {
     const { result } = renderHook(() => useDiffSyntax(lines, undefined));
 
     expect(result.current).toBeNull();
+  });
+
+  it("starts each hunk afresh, so a string left open in one does not colour the next", async () => {
+    const lines = diffLines(
+      [
+        "@@ -1,2 +1,2 @@",
+        ' def f():',
+        '+    """Opens a docstring the hunk never closes.',
+        "@@ -40,1 +40,1 @@",
+        "+return value",
+      ].join("\n"),
+    );
+    const { result } = renderHook(() => useDiffSyntax(lines, "src/app.py"));
+
+    await waitFor(() => {
+      expect(result.current).not.toBeNull();
+    });
+    const { container } = render(<>{result.current?.[4]}</>);
+    expect(container.querySelector(".hljs-keyword")?.textContent).toBe("return");
+    expect(container.querySelector(".hljs-string")).toBeNull();
   });
 });
