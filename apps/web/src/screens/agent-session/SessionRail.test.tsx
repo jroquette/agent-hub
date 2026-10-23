@@ -163,4 +163,19 @@ describe("SessionRail", () => {
     await userEvent.keyboard("{Home}");
     expect(window.localStorage.getItem(RAIL_WIDTH_KEY)).toBeNull();
   });
+
+  it("tells the layout how wide it is, so the chat centres past it and never moves", async () => {
+    renderWithApi(<SessionRail current="a" />, { routes });
+    const handle = await screen.findByRole("separator", { name: "Resize the sessions list" });
+    const layout = handle.parentElement;
+    expect(layout?.style.getPropertyValue("--as-chat-rail-w")).toBe("260px");
+
+    handle.focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(layout?.style.getPropertyValue("--as-chat-rail-w")).toBe("300px");
+
+    // Folded, the strip's own width (from the stylesheet) takes over.
+    await userEvent.click(screen.getByRole("button", { name: "Hide sessions" }));
+    expect(layout?.style.getPropertyValue("--as-chat-rail-w")).toBe("");
+  });
 });
