@@ -905,7 +905,7 @@ its Spec step "Brief only · spec not written".
 
 ```
 Features › New
-New feature                                                                     ( ▦ tipple  ⌄ )
+New feature                                                                       ( ▦ demo  ⌄ )
 Describe what to build and attach what Claude should see.
 
 What do you want to build?                                              ┌ Options ────────── All optional ┐

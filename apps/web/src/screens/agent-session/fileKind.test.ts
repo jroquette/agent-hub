@@ -40,8 +40,8 @@ describe("fileKind", () => {
 // AC-424.1: what the code tab counts as a test.
 describe("isTestFile", () => {
   it.each([
-    "/repo/tipple-webshops/tests/order_intents/test_allianz_provider.py",
-    "/repo/common-data-models/tests/test_payments_constants.py",
+    "/repo/demo-shop/tests/order_intents/test_fraud_check_provider.py",
+    "/repo/demo-models/tests/test_payments_constants.py",
     "/repo/pkg/src/thing_test.py",
     "/repo/pkg/conftest.py",
     "/repo/svc/handler_test.go",
@@ -54,8 +54,8 @@ describe("isTestFile", () => {
   });
 
   it.each([
-    "/repo/tipple-webshops/src/tipple_webshops/order_intents/allianz_provider.py",
-    "/repo/common-data-models/src/common_data_models/insurance/constants.py",
+    "/repo/demo-shop/src/demo_shop/order_intents/fraud_check_provider.py",
+    "/repo/demo-models/src/demo_models/insurance/constants.py",
     "/repo/apps/web/src/screens/x/FilesPanel.tsx",
     "/repo/src/testing_utils.py",
     "/repo/src/contest.py",
