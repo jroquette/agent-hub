@@ -301,6 +301,48 @@ def test_finds_secret_files_with_the_rendered_guard_when_repo_commits_one(
     assert ".env.example" not in secret_files
 
 
+# argv: the hub. The rendered guard's own rule id for a Read of .env there.
+RULE_OF_ENV = """
+import sys
+from guard import check_file, rule_of
+from hubhooks import load_config
+verdict = check_file("Read", {"file_path": ".env"}, load_config(sys.argv[1]))
+print(rule_of(verdict[1]) if verdict else "")
+"""
+
+
+def test_finds_secret_files_under_deny_paths_with_the_rendered_guard_when_listed(
+    demo_workspace: Workspace, tmp_path: Path
+) -> None:
+    chain = Chain(demo_workspace, tmp_path)
+    path = chain.hub / "hub.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document.setdefault("guard", {})["deny_paths"] = ["*.env"]
+    path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    hooks = chain.hub / "plugin/hub-workflow/hooks"
+    rule = subprocess.run(  # noqa: S603 - this interpreter, the rendered guard, a tmp hub
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            f"import sys; sys.path.insert(0, {str(hooks)!r})\n{RULE_OF_ENV}",
+            str(chain.hub),
+        ],
+        cwd=chain.hub,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    # The guard answers deny_paths, not secret_file, for this file: the scan must still find it.
+    assert rule.stdout.strip() == "deny_paths", rule.stderr
+
+    scan = chain.run("scan.py", "--repo", "demo-api")
+
+    secret_files = [f["path"] for f in scan["findings"] if f["scanner"] == "guard"]
+    assert ".env" in secret_files
+
+
 def test_reports_without_value_and_lists_none_new_when_chain_runs_twice(
     demo_workspace: Workspace, tmp_path: Path
 ) -> None:

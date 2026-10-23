@@ -610,6 +610,29 @@ def test_finds_secret_files_with_the_hub_guard_when_guard_is_present(
     assert VALUE not in json.dumps(output)
 
 
+# A guard whose deny_paths rule answers first, as guard.py's check_file does: the secret-file
+# rule, asked alone, still names the file.
+DENY_PATHS_GUARD = (
+    STUB_GUARD
+    + """
+def _secret_path(path, cfg):
+    return os.path.basename(path) == ".env"
+def check_file(tool, ti, cfg=None):
+    return "deny", ti.get("file_path", "") + " is under guard.deny_paths `*.env` (hub.json)"
+"""
+)
+
+
+def test_finds_secret_files_under_deny_paths_when_guard_answers_deny_paths_first(
+    sweep: Sweep, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sweep.guard(DENY_PATHS_GUARD)
+
+    output = scanned(capsys)
+
+    assert [(f["scanner"], f["path"]) for f in output["findings"]] == [("guard", ".env")]
+
+
 @pytest.mark.parametrize(
     "source", ["raise RuntimeError('no')", "import sys\nprint('ask')\nsys.exit(0)", "x = 1"]
 )
