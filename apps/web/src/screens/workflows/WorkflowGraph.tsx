@@ -26,6 +26,7 @@ import {
   canvasModel,
   chainOf,
   columnWidth,
+  downPath,
   drawnColumns,
   edgeKey,
   neighbours,
@@ -430,17 +431,18 @@ function GraphCanvas<N extends GraphNode>({
 
   const viewport = useViewportSize(viewportRef);
 
-  // Long chains wrap into rows that fit the canvas at 100%, read left to right, top to bottom.
-  const [wrap, setWrap] = useState(true);
+  // Topological order, top to bottom: each layer is a row and the arrows point down. The other
+  // flow lays the layers out as columns, left to right, wrapped into rows that fit the canvas.
+  const [flow, setFlow] = useState<"down" | "across">("down");
   const rows = useMemo(
     () =>
-      wrap
-        ? wrapRows(
+      flow === "down"
+        ? layers.map((_, i) => [i])
+        : wrapRows(
             layers.map((layer) => columnWidth(layer, model, open)),
             viewport.width,
-          )
-        : [layers.map((_, i) => i)],
-    [wrap, layers, model, open, viewport.width],
+          ),
+    [flow, layers, model, open, viewport.width],
   );
   const rowOf = useMemo(() => {
     const map = new Map<string, number>();
@@ -694,6 +696,14 @@ function GraphCanvas<N extends GraphNode>({
       };
       // Parallel lines get their own lane, 5 px apart, so each can be followed.
       const lane = (lanes.get(`${from}→${to}`) ?? 0) * 5;
+      if (flow === "down") {
+        if (rb === ra + 1) return downPath(a, b);
+        return downPath(a, b, {
+          gapBelow: gap(ra) + lane,
+          gapAbove: gap(rb - 1) - lane,
+          gutter: WORLD_PAD / 2 - lane,
+        });
+      }
       if (rb === ra + 1) return wrapPath(a, b, gap(ra) + lane);
       return wrapPath(a, b, gap(ra) + lane, 10, {
         gapAbove: gap(rb - 1) - lane,
@@ -785,7 +795,7 @@ function GraphCanvas<N extends GraphNode>({
                 );
               })}
             </svg>
-            <div className="wf-rows">
+            <div className="wf-rows" data-flow={flow}>
               {rows.map((row, r) => (
                 <div key={r} className="wf-cols" data-node-id={`row:${String(r)}`} data-row="">
                   {row.map((i) => (
@@ -819,12 +829,16 @@ function GraphCanvas<N extends GraphNode>({
           >
             <IconButton
               size="sm"
-              icon="corner-down-right"
-              label={wrap ? "Show in one line" : "Wrap long chains into rows"}
-              aria-pressed={wrap}
+              icon={flow === "down" ? "corner-down-right" : "arrow-down"}
+              label={
+                flow === "down"
+                  ? "Lay the layers out left to right"
+                  : "Lay the layers out top to bottom"
+              }
+              aria-pressed={flow === "across"}
               onClick={() => {
                 placed.current = false;
-                setWrap((w) => !w);
+                setFlow((f) => (f === "down" ? "across" : "down"));
               }}
             />
           </CanvasControls>
