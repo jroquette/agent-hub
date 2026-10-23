@@ -58,11 +58,15 @@ UNRELEASED = "## [Unreleased]\n"
 UNRELEASED_LINK = re.compile(r"^\[Unreleased\]: (\S+)/compare/\S+\.\.\.HEAD$", re.MULTILINE)
 
 
-class RefusedError(Exception):
+class ScriptError(Exception):
+    """Any of this script's refusals or failures."""
+
+
+class RefusedError(ScriptError):
     """Bad input: exit 2."""
 
 
-class FailedError(Exception):
+class FailedError(ScriptError):
     """A command, the checkout or the release check failed: exit 1."""
 
 
@@ -267,7 +271,7 @@ def release(root: Path, given: argparse.Namespace) -> dict[str, object]:
     base = _git(root, "rev-parse", "HEAD").strip()
     try:
         made = _commit(root, given, subject=subject)
-    except FailedError, RefusedError:
+    except ScriptError:
         _restore(root, base)
         raise
     return _result(root, given, readme=made["readme"], lockstep=made["lockstep"])

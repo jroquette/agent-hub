@@ -18,8 +18,10 @@ listed file (``none`` when nothing changes).
 ``pin.py apply --worktree <hub worktree> --version X.Y.Z --issue <team>-<n>`` sets the pin in
 that worktree, runs its ``./hub sync``, then ``./hub sync --check`` (it must say ``up to date``),
 and commits everything once, ``chore(hub): bump platform to X.Y.Z (<issue>)``, with git hooks
-off. Prints ``{"from", "version", "sha", "count", "files", "summary"}``; ``summary`` (the PR's
-body, at most ``MAX_SUMMARY`` bytes) names the version, the tag and the files sync rewrote.
+off. A failure puts the hub worktree back on its base; a re-run that finds that commit on a
+clean ``HEAD`` prints it again (its files from git). Prints ``{"from", "version", "sha",
+"count", "files", "summary"}``; ``summary`` (the PR's body, at most ``MAX_SUMMARY`` bytes)
+names the version, the tag and the files sync rewrote.
 
 Both edit only the ``version`` value inside ``hub.json``'s ``platform`` object, as text, so the
 file's layout stays. A bad argument or ``hub.json`` (larger than 1 MiB, not a JSON object, no
@@ -58,11 +60,15 @@ HUB_JSON = "hub.json"
 UP_TO_DATE, CONFLICT, PENDING = 0, 3, 4
 
 
-class RefusedError(Exception):
+class ScriptError(Exception):
+    """Any of this script's refusals or failures."""
+
+
+class RefusedError(ScriptError):
     """Bad input: exit 2."""
 
 
-class FailedError(Exception):
+class FailedError(ScriptError):
     """git, the CLI or the hub worktree failed: exit 1."""
 
 
@@ -72,8 +78,16 @@ def read_hub_json(path: Path) -> tuple[str, dict[str, object], str]:
         if path.stat().st_size > MAX_CONFIG_BYTES:
             raise RefusedError("hub.json: larger than 1 MiB")
         text = path.read_text(encoding="utf-8")
-        value = json.loads(text)
     except (OSError, ValueError) as error:
+        raise RefusedError(f"hub.json: {error}") from None
+    return read_pin(text)
+
+
+def read_pin(text: str) -> tuple[str, dict[str, object], str]:
+    """``hub.json``'s text, its JSON object and its ``platform.version``."""
+    try:
+        value = json.loads(text)
+    except ValueError as error:
         raise RefusedError(f"hub.json: {error}") from None
     platform = value.get("platform") if isinstance(value, dict) else None
     pin = platform.get("version") if isinstance(platform, dict) else None
@@ -189,13 +203,42 @@ def summary_of(*, previous: str, version: str, files: list[dict[str, str]]) -> s
     return body.encode()[:MAX_SUMMARY].decode(errors="ignore")
 
 
-def apply_pin(worktree: Path, *, version: str, issue: str, cli: list[str]) -> dict[str, object]:
-    if not (worktree / HUB_JSON).is_file():
-        raise RefusedError(f"--worktree: no hub.json in {worktree}")
-    text, _, previous = read_hub_json(worktree / HUB_JSON)
-    if _git(worktree, "status", "--porcelain", "--untracked-files=all").strip():
-        raise FailedError("the hub worktree is not clean")
-    (worktree / HUB_JSON).write_text(set_pin(text, version), encoding="utf-8")
+STATUS_VERBS = {"A": "created", "M": "updated", "D": "deleted"}
+
+
+def _restore(worktree: Path, base: str) -> None:
+    """Put the hub worktree back on ``base``, clean, after a failed apply (best effort)."""
+    for args in (("reset", "-q", "--hard", base), ("clean", "-fdq")):
+        try:
+            _git(worktree, *args)
+        except FailedError:
+            return
+
+
+def _committed(worktree: Path, *, version: str) -> dict[str, object]:
+    """The pin commit on HEAD, found by a re-run: its files from git, not from the sync."""
+    _, _, previous = read_pin(_git(worktree, "show", f"HEAD^:{HUB_JSON}"))
+    status = _git(worktree, "diff", "--name-status", "HEAD^", "HEAD").splitlines()
+    pairs = (line.split("\t", 1) for line in status if "\t" in line)
+    files = [
+        {"verb": STATUS_VERBS.get(letter[:1], "updated"), "path": path}
+        for letter, path in pairs
+        if path not in {HUB_JSON, HUB_LOCK}
+    ]
+    return {
+        "from": previous,
+        "version": version,
+        "sha": _git(worktree, "rev-parse", "HEAD").strip(),
+        "count": len(files),
+        "files": files[:MAX_FILES],
+        "summary": summary_of(previous=previous, version=version, files=files),
+    }
+
+
+def _sync_and_commit(
+    worktree: Path, *, text: str, subject: str, cli: list[str]
+) -> list[dict[str, str]]:
+    (worktree / HUB_JSON).write_text(text, encoding="utf-8")
     command = cli or ["./hub"]
     _, synced, _ = _run([*command, "sync"], worktree)
     _, checked, _ = _run(
@@ -205,9 +248,28 @@ def apply_pin(worktree: Path, *, version: str, issue: str, cli: list[str]) -> di
         raise FailedError(
             f"./hub sync --check is not up to date after ./hub sync: {checked.strip()[:400]}"
         )
-    files = parsed(synced, DONE)
     _git(worktree, "add", "-A")
-    _git(worktree, "commit", "-q", "-m", f"chore(hub): bump platform to {version} ({issue})")
+    _git(worktree, "commit", "-q", "-m", subject)
+    return parsed(synced, DONE)
+
+
+def apply_pin(worktree: Path, *, version: str, issue: str, cli: list[str]) -> dict[str, object]:
+    """Commit the pin and the synced files; a re-run finds its commit; a failure is undone."""
+    if not (worktree / HUB_JSON).is_file():
+        raise RefusedError(f"--worktree: no hub.json in {worktree}")
+    subject = f"chore(hub): bump platform to {version} ({issue})"
+    if _git(worktree, "status", "--porcelain", "--untracked-files=all").strip():
+        raise FailedError("the hub worktree is not clean")
+    if _git(worktree, "log", "-1", "--format=%s").strip() == subject:
+        return _committed(worktree, version=version)
+    text, _, previous = read_hub_json(worktree / HUB_JSON)
+    pinned = set_pin(text, version)
+    base = _git(worktree, "rev-parse", "HEAD").strip()
+    try:
+        files = _sync_and_commit(worktree, text=pinned, subject=subject, cli=cli)
+    except ScriptError:
+        _restore(worktree, base)
+        raise
     return {
         "from": previous,
         "version": version,
