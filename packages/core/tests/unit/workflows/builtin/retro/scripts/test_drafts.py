@@ -76,9 +76,11 @@ def run_drafts(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[int, dict[str, Any], str]:
+    # The script node runs in the hub: the draft goes under the current folder.
+    monkeypatch.chdir(hub)
     monkeypatch.setattr(sys, "stdin", io.StringIO(stdin))
     given = {"--nothing": "false", "--count": "3", "--decision": "keep", "--note": ""}
-    given |= {"--summary": SUMMARY, "--today": TODAY, "--root": str(hub)} | flags
+    given |= {"--summary": SUMMARY, "--today": TODAY} | flags
     code = load().main([part for flag, value in given.items() for part in (flag, value)])
     captured = capsys.readouterr()
     return code, (json.loads(captured.out) if captured.out else {}), captured.err
@@ -174,14 +176,24 @@ def test_writes_kept_changes_with_evidence_when_owner_keeps_some(
 def test_keeps_all_when_note_says_all(
     hub: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    code, found, _ = run_drafts(
-        hub, {"--note": "Keep ALL of them."}, capsys=capsys, monkeypatch=monkeypatch
-    )
+    code, found, _ = run_drafts(hub, {"--note": "  ALL \n"}, capsys=capsys, monkeypatch=monkeypatch)
 
     assert code == 0
     assert (found["outcome"], found["kept"]) == ("drafted", 3)
     text = (hub / found["path"]).read_text()
     assert all(f"## {n}. Change {n}" in text for n in (1, 2, 3))
+
+
+@pytest.mark.parametrize("note", ["all but 2", "1,3 - not all", "Keep ALL of them."])
+def test_keeps_none_when_note_mixes_all_with_other_words(
+    note: str, *, hub: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    code, found, _ = run_drafts(hub, {"--note": note}, capsys=capsys, monkeypatch=monkeypatch)
+
+    assert code == 0
+    assert (found["outcome"], found["kept"], found["path"]) == ("none kept", 0, "")
+    assert "answer all alone, or the numbers to keep such as 1,3" in found["summary"]
+    assert inbox(hub) == ["note.md"]
 
 
 def test_writes_next_suffix_when_draft_file_exists(
@@ -245,3 +257,10 @@ def test_exits_two_when_input_malformed(
     assert found == {}
     assert err.startswith("drafts.py: ")
     assert inbox(hub) == ["note.md"]
+
+
+def test_refuses_root_option_when_given(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit) as raised:
+        load().main(["--root", str(tmp_path), "--nothing", "true"])
+
+    assert raised.value.code == 2
