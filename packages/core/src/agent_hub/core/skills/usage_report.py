@@ -12,7 +12,7 @@ from typing import Final
 from agent_hub.core.skills.skill_view import ItemKind, SkillUsage, UsageDays, UsageRow
 
 NOT_READ_LINE: Final = "Some items were not read; the list may be incomplete."
-_HEADER: Final = "| Project | Kind | Name | 7 d | 30 d | 90 d | Last used |"
+_HEADER: Final = "| Project | Kind | Name | 7 d | 30 d | 90 d | Last used (UTC) |"
 _RULE: Final = "| --- | --- | --- | --- | --- | --- | --- |"
 _NEVER: Final = "never"
 
