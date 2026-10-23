@@ -17,11 +17,6 @@
   inset: 0 auto auto 0;
   transform-origin: 0 0;
 }
-.bk-controls {
-  position: absolute;
-  right: var(--space-3);
-  bottom: var(--space-3);
-}
 .bk-stack {
   position: absolute;
   min-width: 320px;

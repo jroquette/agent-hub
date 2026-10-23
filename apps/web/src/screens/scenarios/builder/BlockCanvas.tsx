@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useRef,
   type KeyboardEvent,
@@ -63,6 +64,8 @@ export interface BlockCanvasProps {
 }
 
 const DRAG_PX = 4;
+/** Fit never zooms past this: blocks stay at a readable size, not a poster. */
+const FIT_MAX = 1.35;
 /** How near a gap the dragged blocks snap into it, in screen pixels. */
 const SNAP_PX = 48;
 
@@ -504,6 +507,43 @@ export function BlockCanvas(props: BlockCanvasProps) {
   const { drag, onDrag: setDrag } = props;
   const active = drag;
 
+  // Fit the stacks (not a fixed box) in the viewport: on first show, and on Fit.
+  const { setView } = pz;
+  const fit = useCallback(
+    (animate: boolean) => {
+      const stacks = viewport.current?.querySelectorAll<HTMLElement>(".bk-world > .bk-stack") ?? [];
+      let box: { left: number; top: number; right: number; bottom: number } | null = null;
+      stacks.forEach((stack) => {
+        const left = stack.offsetLeft;
+        const top = stack.offsetTop;
+        const right = left + stack.offsetWidth;
+        const bottom = top + stack.offsetHeight;
+        box = box
+          ? {
+              left: Math.min(box.left, left),
+              top: Math.min(box.top, top),
+              right: Math.max(box.right, right),
+              bottom: Math.max(box.bottom, bottom),
+            }
+          : { left, top, right, bottom };
+      });
+      const found = box as { left: number; top: number; right: number; bottom: number } | null;
+      if (!found || size.width === 0) return;
+      const world = { width: found.right - found.left, height: found.bottom - found.top };
+      const view = fitView(world, size, { max: FIT_MAX, min: 0.5, pad: 48 });
+      // Keep the top of a tall scenario in view rather than its middle.
+      const y = world.height * view.k > size.height ? 48 : view.y;
+      setView({ k: view.k, x: view.x - found.left * view.k, y: y - found.top * view.k }, animate);
+    },
+    [setView, size],
+  );
+  const fitted = useRef(false);
+  useEffect(() => {
+    if (fitted.current || size.width === 0) return;
+    fitted.current = true;
+    fit(false);
+  }, [fit, size.width]);
+
   const toWorld = (clientX: number, clientY: number) => {
     const rect = viewport.current?.getBoundingClientRect();
     const { x, y, k } = pz.view;
@@ -670,21 +710,19 @@ export function BlockCanvas(props: BlockCanvasProps) {
           ))}
         </div>
       )}
-      <div className="bk-controls">
-        <CanvasControls
-          view={pz.view}
-          label="Block canvas"
-          onZoomBy={(factor) => {
-            pz.zoomBy(factor);
-          }}
-          onZoomTo={(k) => {
-            pz.zoomTo(k);
-          }}
-          onFit={() => {
-            pz.setView(fitView({ width: 900, height: 900 }, size, { max: 1 }), true);
-          }}
-        />
-      </div>
+      <CanvasControls
+        view={pz.view}
+        label="Block canvas"
+        onZoomBy={(factor) => {
+          pz.zoomBy(factor);
+        }}
+        onZoomTo={(k) => {
+          pz.zoomTo(k);
+        }}
+        onFit={() => {
+          fit(true);
+        }}
+      />
     </div>
   );
 }
