@@ -13,20 +13,30 @@ prompt, an argument or any other payload text (ADR 0019).
   ``resolve_facts`` winners (hook and transcript share ``tool_use_id``), each one a ``model``
   use; no window.
 
-Names are normalised by ``bare_name``. Only signals at or after ``now - USAGE_DAYS`` count. At
-most ``MAX_USAGE_NAMES`` names per kind are kept, the most used first (then by name); past that
-``truncated`` is set.
+Names are normalised by ``bare_name``. The fold reads the signals at or after ``now`` minus the
+longest of ``USAGE_WINDOWS`` (90 days). ``by_skill`` and ``by_agent`` count only the uses at or
+after ``now - USAGE_DAYS`` (the Toolkit's 30 days); ``windows_by_skill`` and ``windows_by_agent``
+give every name used in 90 days its runs over 7, 30 and 90 days (each window inclusive of its
+edge) and its last use (AGH-482). At most ``MAX_USAGE_NAMES`` names per kind are kept, the most
+used first (then by name); past that ``truncated`` is set.
 """
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Final
 
 from agent_hub.core.events.event import Event, EventType
 from agent_hub.core.events.stored_event import StoredEvent
 from agent_hub.core.readmodels.fact_keys import resolve_facts
-from agent_hub.core.skills.skill_view import USAGE_DAYS, SkillUsage, Usage, bare_name
+from agent_hub.core.skills.skill_view import (
+    USAGE_DAYS,
+    USAGE_WINDOWS,
+    SkillUsage,
+    Usage,
+    UsageWindows,
+    bare_name,
+)
 
 DEDUPE_WINDOW: Final = timedelta(seconds=5)
 MAX_USAGE_NAMES: Final = 500
@@ -42,23 +52,21 @@ class _Signal:
     typed: bool
 
 
+@dataclass(frozen=True, slots=True)
+class _Use:
+    at: datetime
+    typed: bool
+
+
 @dataclass(slots=True)
 class _Tally:
-    user_count: int = 0
-    model_count: int = 0
-    last_used_at: datetime | None = None
+    uses: list[_Use] = field(default_factory=list)
 
     def add(self, *, typed: bool, at: datetime) -> None:
-        if typed:
-            self.user_count += 1
-        else:
-            self.model_count += 1
-        if self.last_used_at is None or at > self.last_used_at:
-            self.last_used_at = at
+        self.uses.append(_Use(at, typed))
 
-    @property
-    def count(self) -> int:
-        return self.user_count + self.model_count
+    def since(self, start: datetime) -> list[_Use]:
+        return [use for use in self.uses if use.at >= start]
 
 
 def _name(value: object) -> str | None:
@@ -108,34 +116,53 @@ def _close(name: str, invocation: Sequence[_Signal], skills: dict[str, _Tally]) 
     tally.add(typed=typed, at=max(signal.at for signal in invocation))
 
 
-def _kept(tallies: Mapping[str, _Tally]) -> tuple[dict[str, Usage], bool]:
-    ranked = sorted(tallies.items(), key=lambda item: (-item[1].count, item[0]))
-    kept = ranked[:MAX_USAGE_NAMES]
-    usage = {
-        name: Usage(
-            count=tally.count,
-            user_count=tally.user_count,
-            model_count=tally.model_count,
-            last_used_at=tally.last_used_at,
-        )
-        for name, tally in sorted(kept)
-    }
-    return usage, len(ranked) > MAX_USAGE_NAMES
+def _usage(uses: Sequence[_Use]) -> Usage:
+    user_count = sum(1 for use in uses if use.typed)
+    return Usage(
+        count=len(uses),
+        user_count=user_count,
+        model_count=len(uses) - user_count,
+        last_used_at=max(use.at for use in uses),
+    )
+
+
+def _windows(uses: Sequence[_Use], now: datetime) -> UsageWindows:
+    runs = [
+        sum(1 for use in uses if use.at >= now - timedelta(days=days)) for days in USAGE_WINDOWS
+    ]
+    runs_7d, runs_30d, runs_90d = runs
+    return UsageWindows(
+        runs_7d=runs_7d,
+        runs_30d=runs_30d,
+        runs_90d=runs_90d,
+        last_used_at=max(use.at for use in uses),
+    )
+
+
+def _kept(
+    tallies: Mapping[str, _Tally], *, since: datetime, now: datetime
+) -> tuple[dict[str, Usage], dict[str, UsageWindows], bool]:
+    ranked = sorted(tallies.items(), key=lambda item: (-len(item[1].uses), item[0]))
+    kept = sorted(ranked[:MAX_USAGE_NAMES])
+    usage = {name: _usage(recent) for name, tally in kept if (recent := tally.since(since))}
+    windows = {name: _windows(tally.uses, now) for name, tally in kept}
+    return usage, windows, len(ranked) > MAX_USAGE_NAMES
 
 
 def fold_skill_usage(
     sessions: Mapping[str, Sequence[StoredEvent]], *, project: str, now: datetime
 ) -> SkillUsage:
     """The usage of ``project``'s skills and agents in ``sessions`` (session id -> its events,
-    any order) over the ``USAGE_DAYS`` before ``now``."""
+    any order) over the ``USAGE_DAYS`` before ``now``, and its 7/30/90-day windows."""
     since = now - timedelta(days=USAGE_DAYS)
+    start = now - timedelta(days=max(USAGE_WINDOWS))
     skills: dict[str, _Tally] = {}
     agents: dict[str, _Tally] = {}
     for group in sessions.values():
         events = [
             stored
             for stored in group
-            if stored.event.project == project and stored.event.timestamp >= since
+            if stored.event.project == project and stored.event.timestamp >= start
         ]
         if not events:
             continue
@@ -145,8 +172,13 @@ def fold_skill_usage(
             name = _agent_name(event)
             if name is not None:
                 agents.setdefault(name, _Tally()).add(typed=False, at=event.timestamp)
-    by_skill, skills_cut = _kept(skills)
-    by_agent, agents_cut = _kept(agents)
+    by_skill, windows_by_skill, skills_cut = _kept(skills, since=since, now=now)
+    by_agent, windows_by_agent, agents_cut = _kept(agents, since=since, now=now)
     return SkillUsage(
-        since=since, by_skill=by_skill, by_agent=by_agent, truncated=skills_cut or agents_cut
+        since=since,
+        by_skill=by_skill,
+        by_agent=by_agent,
+        truncated=skills_cut or agents_cut,
+        windows_by_skill=windows_by_skill,
+        windows_by_agent=windows_by_agent,
     )

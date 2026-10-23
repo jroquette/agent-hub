@@ -292,6 +292,12 @@ authored as the hub's author), and nothing changes until the user merges it. Tha
 PR is opened as that `gh` account). Under Docker the hubs are mounted read-only, so both actions are disabled with
 "Hub is read-only here"; run `./hub web` locally to decide learnings. Workflows: [README](../README.md#-workflows).
 
+**The weekly retro.** `/retro` runs the built-in `retro` workflow (`./hub workflow run retro --input since=7 --live`):
+the week's run metrics, at most five changes each backed by those numbers, and, for the ones you keep at its gate,
+issue drafts in `brain/_inbox/retro-<date>.md`. Nothing reaches the tracker on its own: you file the drafts you want,
+then `/triage` them. To run it every week once the pinned release has `hub.json` → `schedules`, add
+`{"workflow": "retro", "cron": "0 10 * * 1", "inputs": {"since": 7}}` there (Mondays at 10:00 UTC).
+
 **Sessions from the app.** On the Sessions screen, New session starts the user's own `claude` (on `PATH`, logged in)
 in the hub, a repo or one of their worktrees, with the hub's CLAUDE.md, hooks (the guard still applies), skills and
 agents; the chat sends messages, answers prompts, interrupts, sets mode and model, resumes an ended session in place

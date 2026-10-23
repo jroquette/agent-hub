@@ -526,7 +526,7 @@
     "plugin/hub-workflow/skills/retro/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "b130c905de879bfc73f867d04ea26268a5bf95acbfa95f6ff6c049e04d9ebdab"
+      "sha256": "811e148ac30d1a2f3418059d8e1a6ba65b3ad47909270d1b6cb8914817835569"
     },
     "plugin/hub-workflow/skills/review/SKILL.md": {
       "executable": false,
@@ -611,6 +611,36 @@
       "ownership": "seeded"
     },
     "workflows/issue-to-pr/prompts/implement.md": {
+      "ownership": "seeded"
+    },
+    "workflows/retro/fixtures/retro-all-dropped.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/retro/fixtures/retro-keep-none.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/retro/fixtures/retro-no-runs.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/retro/fixtures/retro-pending.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/retro/fixtures/retro-week.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/retro/prompts/changes.md": {
+      "ownership": "seeded"
+    },
+    "workflows/retro/retro.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/retro/scripts/drafts.py": {
+      "ownership": "seeded"
+    },
+    "workflows/retro/scripts/metrics.py": {
+      "ownership": "seeded"
+    },
+    "workflows/retro/scripts/vet.py": {
       "ownership": "seeded"
     },
     "workflows/sdlc/deliver.yaml": {

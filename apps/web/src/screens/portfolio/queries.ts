@@ -8,6 +8,9 @@ import { useGlobalStream } from "../../shell/GlobalStream";
 export type ProjectSummary = components["schemas"]["ProjectSummary"];
 export type NeedsYouItem = components["schemas"]["NeedsYouItem"];
 export type ActivityItem = components["schemas"]["ActivityItem"];
+export type UsageReport = components["schemas"]["UsageReport"];
+export type UsageRow = components["schemas"]["UsageRow"];
+export type UsageDays = components["schemas"]["UsageDays"];
 
 /**
  * Live: when the global stream's `counts` change, the given API families refetch (the stream
@@ -40,4 +43,9 @@ export function useNeedsYou(project: string | null) {
 
 export function useActivity(project: string | null, limit: number) {
   return useApi("/api/v1/activity", { query: { project, limit } });
+}
+
+/** The hub skills and agents with their runs, never used in `days` first (AGH-482). */
+export function useSkillUsage(project: string | null, days: UsageDays) {
+  return useApi("/api/v1/skill-usage", { query: { project, days } });
 }

@@ -86,6 +86,7 @@ hub collect --transcript FILE [--project NAME]   # a Claude Code transcript, as 
 hub collect --runs PATH [--project NAME]   # hub run records (.agent-runs/ file or folder) as executor events
 hub web [--host ADDR] [--port N] [--db PATH]   # the control plane: /api/v1 and the web app on 127.0.0.1 (port 7420)
 hub search QUERY [--kind KIND]… [--hub NAME] [--json] [--db PATH]   # full-text search of the brain and the repos' docs, each result with its path and snippet (ADR 0044)
+hub skill-usage [--days 7|30|90] [--db PATH]   # the hub's skills and agents with their runs over 7, 30 and 90 days, never-used first (AGH-482)
 hub brain reindex [--hub NAME] [--db PATH]   # drops and rebuilds the local knowledge index from the checkout (ADR 0044)
 hub mcp   # the hub's knowledge as a local MCP server over stdio: search, read, propose (ADR 0044; declared in .mcp.json)
 ```
@@ -428,7 +429,7 @@ A web app reads the hubs and the agents' events and answers five questions, one 
 
 | View | Question it answers | Content |
 | --- | --- | --- |
-| Portfolio | How are my projects doing? | Hubs, repos, tasks in progress, open PRs, CI, cost of the week |
+| Portfolio | How are my projects doing? | Hubs, repos, tasks in progress, open PRs, CI, cost of the week, skill and agent use |
 | Workflows | How should work flow? | Editor and visualization of steps and gates; which step each task is at; where it gets stuck |
 | Sessions | What are the agents doing right now, and which one needs me? | Every session, observed or driven, in status sections (waiting first) as tiles or a table: last action, accumulated turns and cost, pending approvals |
 | Session timeline | Why did the agent do that? | Messages, reasoning summaries, tool calls, files and diffs, marked decisions and the final outcome |
@@ -646,7 +647,8 @@ only the version history below is stored, and only its restore and the Studio's 
   `hooks/hooks.json` (never `settings.local.json`). Each item has an origin (`managed` per `hub.lock`,
   `project-owned`, `local`), an invocation mode (`user-only`, `model-only`, `both`, or `neither`, shown as "Hidden"),
   its invocation line and its use in the last 30 days (a fold over the stored events: a typed `/name` and a `Skill`
-  call, an `Agent` call by type; signals of one invocation within 5 s count once). Third-party plugins named by the
+  call, an `Agent` call by type; signals of one invocation within 5 s count once; the same fold gives runs over 7,
+  30 and 90 days and the last use, for the Portfolio and `hub skill-usage`, AGH-482). Third-party plugins named by the
   marketplace or `enabledPlugins` are listed with their pin and "not in this hub": nothing is fetched. Search and
   facets (kind, origin, mode, has diagnostics) live in the URL query.
 - **Detail.** An item is addressed by `kind/source/name`, `source` being the folder it comes from (`claude` for

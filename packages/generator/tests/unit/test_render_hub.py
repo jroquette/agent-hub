@@ -167,6 +167,16 @@ DESIGN_PATHS = (
     "workflows/issue-to-pr/fixtures/pr-failure.yaml",
     "workflows/issue-to-pr/issue-to-pr.yaml",
     "workflows/issue-to-pr/prompts/implement.md",
+    "workflows/retro/fixtures/retro-all-dropped.yaml",
+    "workflows/retro/fixtures/retro-keep-none.yaml",
+    "workflows/retro/fixtures/retro-no-runs.yaml",
+    "workflows/retro/fixtures/retro-pending.yaml",
+    "workflows/retro/fixtures/retro-week.yaml",
+    "workflows/retro/prompts/changes.md",
+    "workflows/retro/retro.yaml",
+    "workflows/retro/scripts/drafts.py",
+    "workflows/retro/scripts/metrics.py",
+    "workflows/retro/scripts/vet.py",
     "workflows/sdlc/deliver.yaml",
     "workflows/sdlc/fixtures/deliver-blocked.yaml",
     "workflows/sdlc/fixtures/deliver-check-error.yaml",
@@ -845,6 +855,8 @@ def test_parses_as_python39_when_rendered(demo_render: dict[str, RenderedFile]) 
         "scripts",
         # The sdlc pack's helpers (AGH-229), run by uv on its Python, also parse as 3.9.
         "workflows/sdlc/scripts",
+        # The retro pack's scripts (AGH-488), likewise.
+        "workflows/retro/scripts",
     }
 
 
@@ -4427,6 +4439,8 @@ RUN_TIME_BRAIN_PATHS = {
     "brain/_inbox/runs/": "Makefile",
     # Written by `/onboard propose` (AGH-108).
     "brain/_inbox/onboard-proposal.md": "plugin/hub-workflow/skills/onboard/SKILL.md",
+    # Written by the retro pack's step 4, one issue-draft file per retro (AGH-488).
+    "brain/_inbox/retro-": "workflows/retro/scripts/drafts.py",
 }
 
 
