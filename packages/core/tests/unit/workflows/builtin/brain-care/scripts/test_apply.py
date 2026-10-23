@@ -139,7 +139,7 @@ def test_edits_status_in_place_when_route_applied(tmp_path: Path, action: str) -
 
     assert kinds(found) == [("edit", A)]
     text = (root / A).read_text()
-    assert f"status: {action}\n" in text
+    assert f"status: {'routed' if action == 'route' else 'check'}\n" in text
     assert "routed_to: agent-hub/AGENTS.md\n" in text
     assert "status: proposed" not in text
     assert "Body of 2026-10-01-cache-key." in text
@@ -201,7 +201,12 @@ def test_names_approvers_and_followups_when_summary_built(tmp_path: Path) -> Non
     found = planned(decisions, root)
     unreadable = [{"path": "brain/_inbox/2026-10-11-bad.md", "reason": "not UTF-8"}]
 
-    summary = load().summary_of(decisions, found, unreadable=unreadable)
+    ignored = [{"notes": ["brain/_inbox/2026-10-12-y.md"], "reason": "not read by this run"}]
+    unproposed = ["brain/_inbox/2026-10-13-z.md"]
+
+    summary = load().summary_of(
+        decisions, found, unreadable=unreadable, ignored=ignored, unproposed=unproposed
+    )
 
     assert "apply by Dana Owner" in summary
     assert "Merge them." in summary
@@ -209,6 +214,8 @@ def test_names_approvers_and_followups_when_summary_built(tmp_path: Path) -> Non
     assert "Follow-ups" in summary
     assert f"{EXTERNAL}: check -> agent-hub/AGENTS.md" in summary
     assert "brain/_inbox/2026-10-11-bad.md: not UTF-8" in summary
+    assert "brain/_inbox/2026-10-12-y.md: not read by this run" in summary
+    assert "brain/_inbox/2026-10-13-z.md: in no group" in summary
     assert len(summary) <= 8000
 
 
@@ -283,3 +290,49 @@ def test_exits_two_when_decisions_not_a_list(
     monkeypatch.setattr(sys, "stdin", io.StringIO(stdin))
 
     assert load().main(["--worktree", str(tmp_path), "--base", "HEAD"]) == 2
+
+
+def test_makes_one_commit_when_run_again_after_failed_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``hub workflow resume`` runs a failed node again in the same worktree."""
+    root, base = a_worktree(tmp_path)
+    decisions = json.dumps([a_decision([A, B], "apply"), a_decision([EXTERNAL], "drop")])
+    argv = ["--worktree", str(root), "--base", base, "--today", "2026-10-22"]
+    failing = load()
+    real = failing._git
+
+    def no_commit(folder: Path, *args: str) -> str:
+        if args[0] == "commit":
+            raise failing.GitFailedError("git commit: no identity")
+        return str(real(folder, *args))
+
+    monkeypatch.setattr(failing, "_git", no_commit)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(decisions))
+    assert failing.main(argv) == 1
+    capsys.readouterr()
+
+    outputs = []
+    for _ in range(2):
+        monkeypatch.setattr(sys, "stdin", io.StringIO(decisions))
+        assert load().main(argv) == 0
+        outputs.append(json.loads(capsys.readouterr().out))
+
+    assert outputs[0] == outputs[1]
+    assert outputs[0]["skipped"] == []
+    assert outputs[0]["deleted"] == [A, B, EXTERNAL]
+    assert git(root, "rev-list", "--count", f"{base}..HEAD") == "1"
+    learning = (root / "brain/learnings/cache.md").read_text()
+    assert learning.count("Key the cache by the lockfile hash.") == 1
+    assert git(root, "status", "--porcelain") == ""
+
+
+def test_exits_one_when_head_holds_another_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, base = a_worktree(tmp_path)
+    (root / A).unlink()
+    git(root, "commit", "-qam", "docs(brain): someone else")
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps([a_decision([A], "drop")])))
+
+    assert load().main(["--worktree", str(root), "--base", base]) == 1
