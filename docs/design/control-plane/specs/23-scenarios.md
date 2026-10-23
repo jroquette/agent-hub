@@ -138,8 +138,8 @@ wins.
   panel beside the storyline; an action's name opens a panel with its description, effect, inputs and script, and
   the scenario's file opens as text.
 - **AC-521.11.4 Live run.** Given a scenario run of this scenario that is running, then the page follows it: a banner
-  says it is running with Cancel (which asks first), and each step's card shows its status in that run as it moves;
-  when the run ends the banner links to it.
+  says it is running in its environment, links to the scenario run and offers Cancel (the run page's own command),
+  and each step's card shows its status in that run as it moves (Done, "Running · check 3", Not started).
 
 ## Screen 3: Scenario run (`/scenarios/:project/:name/runs/:runId`)
 
