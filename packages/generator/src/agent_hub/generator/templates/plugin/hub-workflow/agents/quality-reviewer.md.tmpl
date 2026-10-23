@@ -23,6 +23,9 @@ Look for, citing `path:line`:
   Otherwise ask for no bounds, budgets or scale tests.
 - **Extra** (the minimum-sufficient rule at the top of hub-workflow's `/feature` skill): a shared or generic module with
   one consumer, constants, arguments or options nothing sets, defensive branches for inputs nothing sends, tests for code nothing uses.
+- **Comments** (the `plain-language` skill's Code comments rules): a comment that restates the code, narrates the
+  change, names a ticket, or needs more than two or three lines to explain a branch. Ask for a clearer name or a smaller
+  function first, and move the context to the commit or PR body. `minor`, unless the comment is wrong or misleading.
 - **Tests:** do they prove the behaviour (would they fail if the code were wrong)? A scale guard is tested by exact
   results or a structural counter at the smallest size where the regression shows, never by wall-clock time or "it would
   hang"; a stated limit is pinned once as a literal.
