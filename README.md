@@ -264,6 +264,25 @@ built from its `inputs:`; Run detail shows the run's graph with each node's stat
 cancels, resumes or abandons the run. Portfolio's Needs you lists every gate waiting for a person. The format and
 the engine's rules: [workflow-schema.md](docs/design/workflow-schema.md), [workflow-engine-rules.md](docs/design/workflow-engine-rules.md).
 
+### Scenarios
+
+A scenario drives your own system step by step in a declared environment (`hub env`), so a walk you now do by hand
+(send a message, wait, read a table, retry) runs the same way twice and is audited. Actions are your scripts in the
+hub's `actions/<pack>/`, each declaring its effect (`read`, `write` or `destroy`); scenarios are workflow files with
+`kind: scenario` in `scenarios/<pack>/`, made of `action` and `expect` (poll a read action until a condition holds)
+steps. Before each action runs, the access policy decides from the environment's access whether it runs, asks or is
+denied, and only that action's process gets the environment's credentials. `hub init` writes one example of each,
+`demo-get-status` and `demo-service-up`; declare an environment and a service, commit, then plan it:
+
+```bash
+./hub scenario plan demo-service-up --env <environment> --input service=<service>  # each step and its decision
+./hub scenario run demo-service-up --env <environment> --input service=<service>   # interactive by default
+```
+
+A divergence pauses an interactive scenario run. In `hub web` (Scenarios), a read-only Claude session investigates
+and proposes findings and workaround options, each with its plan, and you pick one, retry or stop. Contract and
+limits: [scenarios.md](docs/design/scenarios.md), [ADR 0041](docs/adr/0041-scenarios-actions-and-enforced-access.md).
+
 ## 🔄 Daily workflow
 
 Once the hub exists, you work inside Claude Code. The hub gives it a set of slash commands (*skills*) and helper agents
@@ -605,7 +624,9 @@ This is the most common path: a project with two repos tracked in Linear.
      skeleton, the project plugin `plugin/<project>/`);
    - **links** from `.claude/agents/` and `.claude/skills/` into the plugins.
 
-   `hub.lock` records which is which, so later syncs never touch your files.
+   `hub.lock` records which is which, so later syncs never touch your files. Init also writes an example action and
+   scenario (`actions/demo/`, `scenarios/demo/`, § Scenarios), each only when absent: they are yours from the start,
+   `hub.lock` does not list them and `hub sync` never adds them back.
 
 3. **Make it yours.** Put project rules in `AGENTS.project.md`, project make targets in `Makefile.project`, and the
    current focus in `brain/now.md`. Set each repo's `check_fast` and `check` commands in `hub.json`.
@@ -949,7 +970,9 @@ reached only from `hub web` and `mcp_server` only from `hub mcp`. import-linter 
 | `hub env list\|show NAME [--json]`, `hub env add\|set\|remove NAME … [--local]`, `hub env service add\|remove REPO SERVICE … [--local]` | List, show and change the declared environments and services (`environments`, `repos[].services`); writes `hub.json`, or `hub.local.json` with `--local` (where an access on a `hub.json` environment may only get stricter), without a prompt, checked before the write; exit 0, 1 when refused or invalid (the file unchanged), 2 on a usage error ([environments.md](docs/design/environments.md)) |
 | `hub action list [--json]`, `hub action plan\|run NAME --env ENV [--input NAME=VALUE]…` | List the hub's actions (`actions/<pack>/`) with their draft state; plan one call (its endpoints, content hash, plan-mode summary and policy decision, no credential) or run it: a deny exits 1 before any prompt, without a terminal only `read` actions run, an `ask` prompts `y/N`; the environment's env file and credentials reach the action's process alone ([scenarios.md](docs/design/scenarios.md)) |
 | `hub scenario list`, `hub scenario plan NAME --env ENV [--input NAME=VALUE]… [--json]` | List the hub's scenarios (`scenarios/<pack>/`, `kind: scenario`; `hub workflow list` never shows them); plan one: per step its action, effect, args (a run-time value as `<$CTX.<name> from <node>>`), endpoints, content hash, draft state, plan-mode summary (only when its args are known; no credential, no env file) and policy decision; nothing runs and no event is written; a deny, an undeclared environment or two unordered gates exit 1 ([scenarios.md](docs/design/scenarios.md)) |
-| `hub scenario run NAME --env ENV [--input NAME=VALUE]… --mode regression [--run-id RUN]` | Run a scenario once its plan holds no problem or deny (else exit 1, no scenario run): its snapshot pins each action's files and hash, a policy `ask` is an approval `<step>__ask` (answer with `hub workflow approve\|reject RUN`, which resumes it), each action is decided again when it runs and gets its environment's credentials alone; a write or destroy that started and never ended (the hub died) asks again on resume, and a loop group that may run such a write again asks before each of its writes until it ends; no agent runs, and a divergence fails the scenario run with `step <id>: <reason>`. No flag removes a gate. `--mode interactive` (the default) exits 2 until the investigation ships ([scenarios.md](docs/design/scenarios.md)) |
+| `hub scenario run NAME --env ENV [--input NAME=VALUE]… [--mode interactive\|regression] [--run-id RUN]` | Run a scenario once its plan holds no problem or deny (else exit 1, no scenario run): its snapshot pins each action's files and hash, a policy `ask` is an approval `<step>__ask` (answer with `hub workflow approve\|reject RUN`, which resumes it), each action is decided again when it runs and gets its environment's credentials alone; a write or destroy that started and never ended (the hub died) asks again on resume, and a loop group that may run such a write again asks before each of its writes until it ends. With `--mode regression` no agent runs and a divergence fails the scenario run with `step <id>: <reason>`; `interactive` (the default) pauses it at an investigation gate `<step>__investigation` and prints the link to its page in `hub web`, where a read-only session investigates and you pick an option, retry or stop (or `hub workflow respond RUN --node <step>__investigation --choice pick\|retry\|stop [--text OPTION]`). No flag removes a gate ([scenarios.md](docs/design/scenarios.md)) |
+| `hub scenario findings RUN [--json] [--issue FINDING \| --inbox FINDING]` | List a scenario run's findings; `--issue` prints a finding's tracker issue draft and creates it once after a `y` on a terminal, `--inbox` writes it as a `brain/_inbox/` note ([scenarios.md](docs/design/scenarios.md)) |
+| `hub scenario propose --run RUN` | Record an investigation's findings and workaround options (JSON on stdin), each option planned; the investigation session runs it, not you ([scenarios.md](docs/design/scenarios.md)) |
 | `hub agent [ARGS…]` | Start `claude` with every repo attached; all arguments go to `claude` |
 | `hub next` | Print the tracker's ready issues (`tracker.ready_label`), oldest first: id, repo, title and url |
 | `hub run ISSUE --repo REPO [--live] [--max-turns N] [--budget USD] [--model M] [--effort low\|medium\|high] [--from implement\|verify]` | Take one issue to a PR: worktree, a headless implementing session, the repo's gate, PR, tracker report. Refuses (exit 1) an issue whose description lacks a brief section. A dry run unless `--live`; defaults `--max-turns 40`, `--budget 3.0`, `--model` `hub.json`'s `models.tiers.medium` (else `sonnet`), `--effort medium`; `--from verify` runs the gate, PR and report on the commits already made. A live run exits 0 when it opened its PR or ended with no changes (a comment, no label), 3 when its session stopped to ask a human (the blocked label and a comment with the question) and 1 when it failed (the failed label and a diagnosis) or a tracker write failed ([ADR 0030](docs/adr/0030-run-outcomes-in-the-tracker.md)) |
