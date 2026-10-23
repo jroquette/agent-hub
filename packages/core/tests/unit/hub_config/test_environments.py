@@ -159,6 +159,22 @@ def test_rejects_endpoint_when_neither_url_nor_resource(data: dict[str, Any]) ->
             id="aws_profile_aws",
         ),
         pytest.param(
+            Environment,
+            {"access": "read", "values": {"aws_account_id": AWS_KEY}},
+            ("values", "aws_account_id"),
+            AWS_KEY,
+            "AWS access key",
+            id="value_aws",
+        ),
+        pytest.param(
+            Environment,
+            {"access": "read", "values": {"token": JWT}},
+            ("values", "token"),
+            JWT,
+            "JWT",
+            id="value_jwt",
+        ),
+        pytest.param(
             Endpoint,
             {"url": f"https://api.example.com/{AWS_KEY}"},
             ("url",),
@@ -279,3 +295,39 @@ def test_rejects_env_file_when_path_unsafe(path: str) -> None:
 
     assert [loc for loc, _ in messages] == [("credentials", "env_file")]
     assert all(path not in message for _, message in messages)
+
+
+def test_loads_values_when_names_and_texts_plain() -> None:
+    environment = Environment.model_validate(
+        {
+            "access": "write",
+            "values": {
+                "_note": "a comment key is dropped",
+                "personal_name": "jose-personal",
+                "aws_account_id": "123456789012",
+            },
+        }
+    )
+
+    assert environment.values == {
+        "personal_name": "jose-personal",
+        "aws_account_id": "123456789012",
+    }
+    assert Environment.model_validate({"access": "read"}).values == {}
+
+
+@pytest.mark.parametrize(
+    ("values", "loc"),
+    [
+        pytest.param({"Account": "1"}, ("values", "Account", "[key]"), id="key_upper"),
+        pytest.param({"9lives": "1"}, ("values", "9lives", "[key]"), id="key_digit_first"),
+        pytest.param({"a-b": "1"}, ("values", "a-b", "[key]"), id="key_dash"),
+        pytest.param({"name": ""}, ("values", "name"), id="empty_text"),
+        pytest.param({"name": "x" * 201}, ("values", "name"), id="text_over_200"),
+        pytest.param({"name": "a\nb"}, ("values", "name"), id="text_line_break"),
+        pytest.param({"name": 12}, ("values", "name"), id="text_number"),
+        pytest.param({f"name_{index}": "x" for index in range(33)}, ("values",), id="thirty_three"),
+    ],
+)
+def test_rejects_values_when_fault_given(values: dict[str, Any], loc: tuple[str, ...]) -> None:
+    assert error_locs(Environment, {"access": "read", "values": values}) == [loc]

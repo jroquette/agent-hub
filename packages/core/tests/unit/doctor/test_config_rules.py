@@ -322,7 +322,7 @@ def test_reports_local_conflict_when_local_redeclares_environment(
     assert findings_of(snapshot_of(config=config, local=local)) == [
         local_finding(
             "environments.live.production: hub.json declares live;"
-            " hub.local.json may only tighten its access"
+            " hub.local.json may only tighten its access or set values"
         ),
         local_finding("environments.live.access: may only tighten hub.json's read"),
         local_finding(

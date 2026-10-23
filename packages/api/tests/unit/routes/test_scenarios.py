@@ -923,6 +923,36 @@ def test_returns_plan_rows_when_scenarios_plan_asked(scenarios: Any) -> None:
     assert len(scenarios.launcher.calls) == 2
 
 
+def test_fills_required_input_from_environment_value_when_body_leaves_it_out(
+    scenarios: Any,
+) -> None:
+    # hub.local.json sets a value on hub.json's local: the developer's, never a secret.
+    fake = scenarios.reader.hubs[str(scenarios.hub)]
+    fake.local = LocalConfig.model_validate({"environments": {"local": {"values": {"ref": "T-7"}}}})
+    scenarios.launcher.plan_output = (0, a_plan_output(draft=False))
+
+    detail = scenarios.client.get("/api/v1/scenarios/demo/order-walk").json()
+    planned = _post(scenarios, "/scenarios/demo/order-walk/plan", {"environment": "local"})
+    started = _post(scenarios, "/scenarios/demo/order-walk/runs", {"environment": "local"})
+    elsewhere = _post(scenarios, "/scenarios/demo/order-walk/runs", {"environment": "staging"})
+
+    assert detail["environments"][0] == {
+        "name": "local",
+        "access": "write",
+        "production": False,
+        "values": {"ref": "T-7"},
+    }
+    assert planned.status_code == 200, planned.text
+    assert started.status_code == 202, started.text
+    # The child is given only the body's inputs: it fills the environment's values itself.
+    assert scenarios.launcher.calls[0] == ("plan", ("order-walk", "local", {}))
+    (kind, spec) = scenarios.launcher.calls[1]
+    assert (kind, spec.environment, spec.inputs) == ("start", "local", {})
+    # staging has no value for the required input: refused before any child runs.
+    assert elsewhere.status_code == 422, elsewhere.text
+    assert len(scenarios.launcher.calls) == 2
+
+
 def test_returns_409_conflict_with_steps_when_scenarios_start_denied(scenarios: Any) -> None:
     path = "/scenarios/demo/order-walk/runs"
 
@@ -1455,9 +1485,9 @@ def test_lists_environments_and_run_facts_when_scenarios_detail_read(scenarios: 
     (item,) = scenarios.client.get("/api/v1/scenarios").json()["items"]
 
     assert detail["environments"] == [
-        {"name": "local", "access": "write", "production": False},
-        {"name": "staging", "access": "ask", "production": False},
-        {"name": "live", "access": "read", "production": True},
+        {"name": "local", "access": "write", "production": False, "values": {}},
+        {"name": "staging", "access": "ask", "production": False, "values": {}},
+        {"name": "live", "access": "read", "production": True, "values": {}},
     ]
     shown = [(run["run_id"], run["environment"], run["mode"]) for run in detail["runs"]]
     # A run whose record cannot be read names neither.

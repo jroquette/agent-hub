@@ -71,6 +71,12 @@ gate-needing steps that do not depend on each other are a plan error naming both
 
 ### Credentials
 
+- **Inputs from the environment:** a declared scenario input the request does not give takes the value of the same
+  name in the environment's `values` ([environments.md § Values](environments.md)), typed as the input declares, before
+  its declared default: given input > environment value > default. Core's `with_environment_values` holds the rule;
+  the CLI's `plan` and `run` and hub web's plan and start call it before the defaults are filled, so the run record
+  keeps the effective inputs. Values are never secrets: credentials stay in the `env_file` below.
+
 - An environment's `credentials` (or an endpoint's, which wins when the action's endpoints declare exactly one set; two
   differing sets are a plan problem) may name `env_file`: a dotenv file relative to the workspace holding the hub and
   its repos (`demo-api/.env.staging`), ≤ 200 characters, no `..`, `~`, leading `/` or secret shape, in `hub.json` or

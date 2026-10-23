@@ -51,14 +51,14 @@ def with_change(path: tuple[str | int, ...], value: object) -> dict[str, Any]:
             ("environments", "live"),
             {"production": True},
             "environments.live.production",
-            "hub.json declares live; hub.local.json may only tighten its access",
+            "hub.json declares live; hub.local.json may only tighten its access or set values",
             id="redeclare_live",
         ),
         pytest.param(
             ("environments", "live"),
             {"description": "mine"},
             "environments.live.description",
-            "hub.json declares live; hub.local.json may only tighten its access",
+            "hub.json declares live; hub.local.json may only tighten its access or set values",
             id="describe_live",
         ),
         pytest.param(
@@ -287,3 +287,36 @@ def test_prefers_endpoint_env_file_when_both_declared() -> None:
     assert env_file_for(view, "staging") == "demo-api/.env.staging"
     assert env_file_for(view, "live") is None
     assert env_file_for(view, "qa") is None
+
+
+def test_merges_values_per_key_when_local_sets_values_on_committed_environment() -> None:
+    document = an_environments_document()
+    document["environments"]["staging"]["values"] = {"account_id": "111", "region": "eu-west-1"}
+    local = a_local_environments_document()
+    local["environments"]["staging"] = {"values": {"account_id": "222", "user_name": "jane"}}
+    local["environments"]["jane-cloud"]["values"] = {"user_name": "jane-own"}
+
+    problems = local_environment_problems(HubConfig.model_validate(document), local_config(local))
+    view = effective_environments(HubConfig.model_validate(document), local_config(local))
+
+    assert problems == ()
+    values = {row.name: row.values for row in view.environments}
+    assert values["staging"] == {"account_id": "222", "region": "eu-west-1", "user_name": "jane"}
+    assert values["local"] == {}
+    assert values["jane-cloud"] == {"user_name": "jane-own"}
+    # Values alone never tighten: the access and its source stay the team's.
+    staging = next(row for row in view.environments if row.name == "staging")
+    assert (staging.access, staging.source) == ("ask", "hub.json")
+
+
+def test_rejects_local_values_when_entry_also_sets_production() -> None:
+    document = with_change(
+        ("environments", "live"), {"values": {"user_name": "jane"}, "production": False}
+    )
+
+    assert local_problems(document) == [
+        (
+            "environments.live.production",
+            "hub.json declares live; hub.local.json may only tighten its access or set values",
+        )
+    ]

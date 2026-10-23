@@ -82,10 +82,12 @@ def set_environment(
     file: str,
     may_create: bool,
     credentials: Mapping[str, JsonValue | None] | None = None,
+    values: Mapping[str, JsonValue | None] | None = None,
 ) -> Document | EditRefusal:
     """``document`` with ``changes`` made to the environment ``name``: a key set to ``None`` is
-    removed. ``credentials`` changes keys of its ``credentials`` the same way (an emptied map is
-    dropped). With ``may_create`` an absent environment is added (a local tightening)."""
+    removed. ``credentials`` and ``values`` change keys of its ``credentials`` and ``values``
+    maps the same way (an emptied map is dropped). With ``may_create`` an absent environment is
+    added (the developer's setting on a committed one), and dropped again once emptied."""
     if refusal := _comment_refusal(name):
         return refusal
     edited = copy.deepcopy(document)
@@ -96,13 +98,17 @@ def set_environment(
             return EditRefusal(f"no environment {shown_name(name)} in {file}")
         entry = {}
     _change(entry, changes)
-    if credentials:
-        found = _map(entry, "credentials")
-        _change(found, credentials)
-        entry["credentials"] = found
-        _drop_if_empty(entry, "credentials")
+    for key, key_changes in (("credentials", credentials), ("values", values)):
+        if key_changes:
+            found = _map(entry, key)
+            _change(found, key_changes)
+            entry[key] = found
+            _drop_if_empty(entry, key)
     environments[name] = entry
     edited["environments"] = environments
+    if may_create and not entry:
+        _drop_if_empty(environments, name)
+        _drop_if_empty(edited, "environments")
     return edited
 
 

@@ -764,3 +764,47 @@ def test_refuses_env_file_when_path_unsafe(local_hub: Path, path: str) -> None:
         assert "credentials.env_file" in result.stderr
         assert path not in result.stderr
     assert snapshot(local_hub) == before
+
+
+def test_writes_values_when_add_given_values(hub: Path) -> None:
+    document = json.loads((hub / "hub.json").read_bytes())
+
+    result = run_env(
+        hub, "add", "demo", "--access", "write", "--value", "user_name=demo-user", "--value", "n=3"
+    )
+
+    assert (result.exit_code, result.stderr) == (0, ""), result.output
+    document["environments"]["demo"] = {
+        "access": "write",
+        "values": {"user_name": "demo-user", "n": "3"},
+    }
+    assert (hub / "hub.json").read_bytes() == hub_bytes(document)
+
+
+def test_round_trips_own_values_when_local_sets_then_unsets_them(local_hub: Path) -> None:
+    before = snapshot(local_hub)
+
+    added = run_env(local_hub, "set", "local", "--local", "--value", "user_name=jane")
+    written = json.loads((local_hub / "hub.local.json").read_bytes())
+    shown = run_env(local_hub, "show", "local").stdout.splitlines()
+    removed = run_env(local_hub, "set", "local", "--local", "--unset-value", "user_name")
+
+    assert (added.exit_code, added.stderr) == (0, ""), added.output
+    assert added.stdout.splitlines() == ["hub.local.json: updated environment local"]
+    assert written["environments"]["local"] == {"values": {"user_name": "jane"}}
+    assert "  values: user_name=jane" in shown
+    assert (removed.exit_code, removed.stderr) == (0, ""), removed.output
+    assert snapshot(local_hub) == before
+
+
+def test_refuses_value_when_secret_shaped_or_not_a_pair(local_hub: Path) -> None:
+    before = snapshot(local_hub)
+
+    secret = run_env(local_hub, "set", "live", "--local", "--value", f"account_ref={AWS_KEY}")
+    no_pair = run_env(local_hub, "set", "live", "--local", "--value", "user_name")
+
+    assert (secret.exit_code, secret.stdout) == (1, ""), secret.output
+    assert "values.account_ref" in secret.stderr
+    assert AWS_KEY not in secret.stderr
+    assert no_pair.exit_code == 2
+    assert snapshot(local_hub) == before

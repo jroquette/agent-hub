@@ -807,6 +807,19 @@
           },
           "scope": {
             "$ref": "#/components/schemas/Scope"
+          },
+          "values": {
+            "additionalProperties": {
+              "maxLength": 200,
+              "type": "string"
+            },
+            "maxProperties": 32,
+            "propertyNames": {
+              "maxLength": 200,
+              "minLength": 1
+            },
+            "title": "Values",
+            "type": "object"
           }
         },
         "required": [
@@ -11447,7 +11460,7 @@
       },
       "ScenarioEnvironment": {
         "additionalProperties": false,
-        "description": "An environment the project's hub declares, as the effective config reads now.",
+        "description": "An environment the project's hub declares, as the effective config reads now, with the\nvalues that fill a scenario's inputs of the same name there (hub.local.json's over\nhub.json's, per key).",
         "properties": {
           "access": {
             "title": "Access",
@@ -11460,6 +11473,13 @@
           "production": {
             "title": "Production",
             "type": "boolean"
+          },
+          "values": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Values",
+            "type": "object"
           }
         },
         "required": [
@@ -13138,7 +13158,7 @@
       },
       "SetEnvironment": {
         "additionalProperties": false,
-        "description": "A change to an environment: a field left out stays; an empty text removes the key.",
+        "description": "A change to an environment: a field left out stays; an empty text removes the key.\n\nOn a ``hub.json`` environment, the ``local`` scope may change only ``access`` (stricter)\nand ``values`` (the developer's, which win per key over the team's).",
         "properties": {
           "access": {
             "anyOf": [
@@ -13227,6 +13247,26 @@
           },
           "scope": {
             "$ref": "#/components/schemas/Scope"
+          },
+          "values": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                "maxProperties": 32,
+                "propertyNames": {
+                  "maxLength": 200,
+                  "minLength": 1
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Values"
           }
         },
         "required": [
@@ -13961,6 +14001,13 @@
               }
             ],
             "title": "Team Access"
+          },
+          "values": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Values",
+            "type": "object"
           }
         },
         "required": [

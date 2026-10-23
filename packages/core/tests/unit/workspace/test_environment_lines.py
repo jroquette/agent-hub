@@ -256,6 +256,31 @@ def test_shows_description_and_no_endpoint_when_environment_bare() -> None:
     )
 
 
+def test_shows_values_when_environment_declares_them() -> None:
+    document = a_hub_document()
+    document["environments"] = {
+        "qa": {"access": "ask", "values": {"user_name": "jane", "region": "eu-west-1"}}
+    }
+    view = effective_environments(HubConfig.model_validate(document), LocalConfig())
+
+    assert environment_lines.show_lines(view, "qa") == (
+        "qa (ask, hub.json)",
+        "  values: user_name=jane, region=eu-west-1",
+        "  endpoints: none",
+    )
+    shown = environment_lines.environment_json(view, "qa")
+    assert isinstance(shown, dict)
+    assert shown["environment"] == {
+        "name": "qa",
+        "access": "ask",
+        "production": False,
+        "source": "hub.json",
+        "description": None,
+        "credentials": None,
+        "values": {"user_name": "jane", "region": "eu-west-1"},
+    }
+
+
 def test_suggests_names_when_no_environment_declared() -> None:
     view = effective_environments(HubConfig.model_validate(a_hub_document()), LocalConfig())
 
@@ -285,6 +310,7 @@ def test_builds_json_with_names_only_when_view_given() -> None:
         "source": "hub.json",
         "description": None,
         "credentials": {"aws_profile": "demo-live-ro", "env": ["DEMO_LIVE_DB_URL"]},
+        "values": {},
     }
     assert data["services"][1] == {
         "repo": "demo-api",
