@@ -235,6 +235,13 @@ describe("ProjectCardHead health display", () => {
     expect(screen.getByRole("img", { name: /You can keep using this page/ })).toBeInTheDocument();
   });
 
+  it("shows Setup tips in hint mode for a hub with warnings (AC-521.7.1)", () => {
+    render(<ProjectCardHead p={{ ...card, health: "warning" }} healthDisplay="hint" />);
+    expect(screen.getByText("Setup tips")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /Nothing here is affected/ })).toBeInTheDocument();
+    expect(screen.queryByText(/^Doctor/)).toBeNull();
+  });
+
   it("shows nothing in hint mode when the hub is healthy or not checked", () => {
     const { rerender } = render(
       <ProjectCardHead p={{ ...card, health: "ok" }} healthDisplay="hint" />,

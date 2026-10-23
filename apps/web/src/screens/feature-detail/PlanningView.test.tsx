@@ -5,7 +5,14 @@ import { describe, expect, it } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
 import { aFeatureTickets, aTicketFlow, aTicketPlan, aTicketRow } from "../../testing/builders";
-import { PlanningView, splitTitle, ticketAnchor } from "./PlanningView";
+import {
+  PlanningView,
+  READINESS_ICON,
+  ReadinessText,
+  readinessIcon,
+  splitTitle,
+  ticketAnchor,
+} from "./PlanningView";
 
 const rows = ["T1", "T2", "T3", "T4", "T5"].map((ref) =>
   aTicketRow({ ref, key: ref, id: null, title: `Ticket ${ref}`, url: null }),
@@ -659,5 +666,53 @@ describe("PlanningView", () => {
 
       expect(await seriousViolations(container)).toEqual([]);
     });
+  });
+});
+
+describe("readinessIcon", () => {
+  const blocker = aTicketRow({
+    ref: "T2",
+    key: "T2",
+    id: "AGH-2",
+    readiness: "in_progress",
+    waiting_on: [],
+    blocked_by: [],
+    pr_url: "https://github.com/acme/demo-api/pull/12",
+  });
+  const stacked = aTicketRow({
+    ref: "T3",
+    key: "T3",
+    id: "AGH-3",
+    readiness: "waiting",
+    blocked_by: [{ ref: "T2", source: "plan" }],
+    waiting_on: ["T2"],
+  });
+
+  it("gives a reviewed ticket in progress the double check, a stacked one the branch", () => {
+    const reviewed = aTicketRow({ ref: "T4", readiness: "in_progress", reviewed: true });
+
+    expect(readinessIcon(reviewed, [reviewed])?.icon).toBe("check-check");
+    expect(readinessIcon(stacked, [blocker, stacked])?.icon).toBe("git-branch");
+  });
+
+  it("gives every other readiness its own icon, and none to the states the badge says", () => {
+    for (const readiness of ["can_start", "in_progress", "waiting", "in_cycle"] as const) {
+      const row = aTicketRow({ ref: "T9", readiness, waiting_on: [], blocked_by: [] });
+      expect(readinessIcon(row, [row])).toEqual(READINESS_ICON[readiness]);
+    }
+    const done = aTicketRow({ ref: "T9", readiness: "done" });
+    expect(readinessIcon(done, [done])).toBeUndefined();
+  });
+
+  it("leads the readiness words with the icon only when asked, keeping the old markup", () => {
+    const row = aTicketRow({ ref: "T9", readiness: "can_start", waiting_on: [], blocked_by: [] });
+
+    const plain = render(<ReadinessText row={row} rows={[row]} external={[]} />);
+    expect(plain.container.querySelector(".ah-readiness-line")).toBeNull();
+    expect(plain.container.querySelector("svg")).toBeNull();
+    plain.unmount();
+
+    const led = render(<ReadinessText row={row} rows={[row]} external={[]} withIcon />);
+    expect(led.container.querySelector(".ah-readiness-line svg")).not.toBeNull();
   });
 });

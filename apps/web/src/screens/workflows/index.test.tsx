@@ -739,6 +739,45 @@ describe("The workflow canvas", () => {
     expect(document.activeElement?.id).toBe("wf-node-fixing__fix");
   });
 
+  it("AC-521.10.4 says a round's first step starts the round and its last one ends it", async () => {
+    renderDetail(ROUNDS, "?node=fixing__fix");
+    const first = await screen.findByRole("complementary", { name: /^Node .*fix$/ });
+    expect(first).toHaveTextContent("Waits forStarts the round");
+  });
+
+  it("AC-521.10.4 says the last step of a round ends the round", async () => {
+    renderDetail(ROUNDS, "?node=fixing__check");
+    const last = await screen.findByRole("complementary", { name: /^Node .*check$/ });
+    expect(last).toHaveTextContent("Leads toEnds the round");
+  });
+
+  it("AC-521.10.4 leaves the page its scroll under 1280 px and pans with the wheel above", async () => {
+    const worldAfterWheel = async (laptop: boolean) => {
+      vi.stubGlobal("matchMedia", (query: string) => ({
+        matches: query === "(min-width: 1280px)" ? laptop : false,
+        media: query,
+        addEventListener: () => undefined,
+        removeEventListener: () => undefined,
+      }));
+      const { container, unmount } = renderDetail(ROUNDS);
+      const graph = await screen.findByRole("group", { name: "Workflow graph" });
+      const before = graph.style.transform;
+      const viewport = container.querySelector(".ah-canvas-viewport");
+      if (!viewport) throw new Error("no canvas viewport");
+      fireEvent.wheel(viewport, { deltaY: 120 });
+      const after = graph.style.transform;
+      unmount();
+      vi.unstubAllGlobals();
+      return { before, after };
+    };
+
+    const narrow = await worldAfterWheel(false);
+    const wide = await worldAfterWheel(true);
+
+    expect(narrow.after).toBe(narrow.before);
+    expect(wide.after).not.toBe(wide.before);
+  });
+
   it("AC-WG.3 shows a group's rule and its own steps in the panel, and opens one from there", async () => {
     const user = userEvent.setup();
     renderDetail(ROUNDS, "?node=fixing");

@@ -551,6 +551,21 @@ describe("FeaturesScreen", () => {
 
       expect(screen.getByText(/Stale · as of/)).toBeInTheDocument();
     });
+
+    it("shows no session working on a feature while the collector is offline (AC-521.8.6)", async () => {
+      const busy = aLiveTile({
+        id: "s-busy",
+        group: "live",
+        issue: "AGH-49",
+        last_action: "Edited eval.md",
+      });
+      open({ "/api/v1/live-sessions": aPage([busy]) }, false);
+
+      const row = await waitFor(() => rowOf("layered-memory"));
+      expect(row).not.toHaveTextContent("A session is working");
+      expect(row.querySelector(".ft-row-lead .ah-pulse")).toBeNull();
+      expect(document.querySelector('.ft-summary [data-group="working"]')).toBeNull();
+    });
   });
 
   it("rereads the records every 30 s while open (refresh)", async () => {
