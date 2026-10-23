@@ -13,8 +13,12 @@ import pytest
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.generator.render_hub import render_hub
+from agent_hub.generator.workflow_discovery import BUILTIN_WORKFLOWS
+from agent_hub.generator.workflow_yaml import load_workflow_bytes
 
 SKILL_PATH = "plugin/hub-workflow/skills/review/SKILL.md"
+WORKFLOW = BUILTIN_WORKFLOWS / "review-incoming" / "review-incoming.yaml"
+RUN = "`./hub workflow run review-incoming"
 # AGH-139 E4: the reviewer words the unified vocabulary replaced, matched as whole words.
 OLD_WORDS = re.compile(r"\b(?:APPROVE|CHANGES)\b|(?i:\b(?:blockers?|should-fix|nits?)\b)")
 
@@ -169,3 +173,96 @@ def test_keeps_the_workflow_off_model_invocation_when_skill_rendered() -> None:
 
     assert "disable-model-invocation: true" in head
     assert 'argument-hint: "<PR>"' in head
+
+
+def _flat(text: str) -> str:
+    return " ".join(text.split())
+
+
+def test_starts_the_review_incoming_workflow_with_its_inputs_when_rendered() -> None:
+    [line] = [line for line in _body().splitlines() if RUN in line]
+    command = line[line.index(RUN) :]
+    command = command[: command.index("`", 1) + 1]
+    inputs = load_workflow_bytes(WORKFLOW.read_bytes(), source=str(WORKFLOW)).document["inputs"]
+
+    assert command.endswith(" --live`"), command
+    for name in inputs:
+        assert f"--input {name}=" in command, name
+    assert "review-incoming" in _skill_text().split("\n---\n", 1)[0]
+
+
+def test_passes_pr_text_through_files_when_rendered() -> None:
+    text = _flat(_body())
+
+    assert '`echo "${TMPDIR:-/tmp}"`' in text
+    assert "replacing files left by an earlier run" in text
+    assert "with the Write tool" in text
+    assert "Never paste PR or issue text into a command" in text
+    assert "--input spec=" not in text
+    assert '"$(cat' not in text
+
+
+def test_fetches_the_head_to_a_review_ref_and_deletes_it_when_rendered() -> None:
+    read, post = _flat(_step(1)), _flat(_step(7))
+    commands = re.findall(r"`([^`]+)`", _body())
+
+    assert "+pull/<n>/head:refs/agent-hub/review/<n>" in read
+    assert "never a branch" in read
+    assert "`git update-ref -d refs/agent-hub/review/<n>`" in post
+    assert "in every ended case" in post
+    assert [command for command in commands if "push" in command] == []
+
+
+def test_posts_only_the_approved_payload_when_run_done() -> None:
+    post = _flat(_step(7))
+
+    assert "`run <run>: done, outcome <event>`" in post
+    assert "`COMMENT`, `REQUEST_CHANGES` or the approving event" in post
+    assert '`"node": "final"`' in post
+    assert "`.agent-runs/workflows/<run>/records.jsonl`" in post
+    assert "`sha256sum <path>`" in post
+    assert "--input <path>" in post
+    assert post.index("`sha256sum <path>`") < post.index("one pending review")
+
+
+def test_posts_nothing_when_gate_rejected() -> None:
+    gate, post = _flat(_step(6)), _flat(_step(7))
+
+    assert "`./hub workflow respond <run> --choice reject`" in gate
+    assert "Never decide it yourself" in gate
+    assert "`done` with no outcome" in post
+    assert "post nothing" in post
+
+
+def test_keeps_a_prose_fallback_when_workflow_unavailable() -> None:
+    body = _body()
+    [fallback] = [line for line in body.splitlines() if "If `./hub workflow run`" in line]
+
+    assert not re.match(r"\d+\. ", fallback)
+    assert "do steps 3-5 by hand" in fallback
+    for reviewer in ("`spec-reviewer`", "`quality-reviewer`", "`security-reviewer`"):
+        assert reviewer in fallback, reviewer
+
+
+def test_stops_when_the_pr_json_cannot_be_written_by_redirect_when_rendered() -> None:
+    read = _flat(_step(1))
+
+    assert "write its exact output with the Write tool" not in _flat(_body())
+    assert "If the sandbox refuses the redirect, stop and say why" in read
+    assert "never passes through text you type" in read
+
+
+def test_shows_the_gate_message_before_the_user_answers_when_rendered() -> None:
+    gate = _flat(_step(6))
+
+    assert '`"event": "gate"`' in gate
+    assert "`.agent-runs/workflows/<run>/records.jsonl`" in gate
+    assert "its `message`" in gate
+    assert gate.index("its `message`") < gate.index("then answers")
+
+
+def test_says_the_fallback_posts_nothing_without_a_final_payload_when_rendered() -> None:
+    [fallback] = [line for line in _body().splitlines() if "If `./hub workflow run`" in line]
+
+    assert "posts nothing" in fallback
+    assert "`final` payload" in fallback

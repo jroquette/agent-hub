@@ -1430,6 +1430,7 @@ def test_imports_every_rendered_module_when_run_on_each_python(
         "workflows/incident/scripts",
         "workflows/post-merge-verify/scripts",
         "workflows/retro/scripts",
+        "workflows/review-incoming/scripts",
         "workflows/sdlc/scripts",
         "workflows/security-sweep/scripts",
         "workflows/spike/scripts",

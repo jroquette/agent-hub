@@ -245,6 +245,20 @@ DESIGN_PATHS = (
     "workflows/retro/scripts/drafts.py",
     "workflows/retro/scripts/metrics.py",
     "workflows/retro/scripts/vet.py",
+    "workflows/review-incoming/fixtures/incoming-clean-approved.yaml",
+    "workflows/review-incoming/fixtures/incoming-clean.yaml",
+    "workflows/review-incoming/fixtures/incoming-lens-failed.yaml",
+    "workflows/review-incoming/fixtures/incoming-rejected.yaml",
+    "workflows/review-incoming/fixtures/incoming-security.yaml",
+    "workflows/review-incoming/prompts/draft.md",
+    "workflows/review-incoming/prompts/quality-lens.md",
+    "workflows/review-incoming/prompts/security-lens.md",
+    "workflows/review-incoming/prompts/spec-lens.md",
+    "workflows/review-incoming/review-incoming.yaml",
+    "workflows/review-incoming/scripts/check.py",
+    "workflows/review-incoming/scripts/fetch.py",
+    "workflows/review-incoming/scripts/review.py",
+    "workflows/review-incoming/scripts/surface.py",
     "workflows/sdlc/deliver.yaml",
     "workflows/sdlc/fixtures/deliver-blocked.yaml",
     "workflows/sdlc/fixtures/deliver-check-error.yaml",
@@ -964,6 +978,8 @@ def test_parses_as_python39_when_rendered(demo_render: dict[str, RenderedFile]) 
         "workflows/doc-drift/scripts",
         # The post-merge-verify pack's scripts (AGH-490), run by uv as the sdlc pack's are.
         "workflows/post-merge-verify/scripts",
+        # The review-incoming pack's helpers (AGH-493), as the sdlc pack's, parse as 3.9.
+        "workflows/review-incoming/scripts",
         # The sdlc pack's helpers (AGH-229), run by uv on its Python, also parse as 3.9.
         "workflows/sdlc/scripts",
         # And the backlog-care pack's (AGH-489).

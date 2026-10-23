@@ -531,7 +531,7 @@
     "plugin/hub-workflow/skills/review/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "820813009d14eb54bcb323c1263f84ad763d12adf9e1eefa5c2a3b478800d8d3"
+      "sha256": "52fcb3ccfa64f37acc079589ca10f8619a86e2886c6de7dbdcf5bd58c99e719f"
     },
     "plugin/hub-workflow/skills/summarize/SKILL.md": {
       "executable": false,
@@ -833,6 +833,48 @@
       "ownership": "seeded"
     },
     "workflows/retro/scripts/vet.py": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/fixtures/incoming-clean-approved.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/fixtures/incoming-clean.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/fixtures/incoming-lens-failed.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/fixtures/incoming-rejected.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/fixtures/incoming-security.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/prompts/draft.md": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/prompts/quality-lens.md": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/prompts/security-lens.md": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/prompts/spec-lens.md": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/review-incoming.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/scripts/check.py": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/scripts/fetch.py": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/scripts/review.py": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/scripts/surface.py": {
       "ownership": "seeded"
     },
     "workflows/sdlc/deliver.yaml": {
