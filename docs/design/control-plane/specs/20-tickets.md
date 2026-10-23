@@ -91,6 +91,16 @@ the shared `FacetMenu`, `DerivedLabel`, `EmptyState`, `ProblemError` and `Skelet
   `/incident`, `/triage`, as the hub offers), and starting it creates the session there and opens its chat. Where
   sessions cannot be driven, there is no Start ticket.
 
+- **AC-521.8.7 Every ticket a session worked on** (AGH-521, wins over AC-426.3 on the list). Given sessions that
+  worked on a feature's ticket, then the Tickets list keeps that ticket too, tagged Feature and linked to the ticket in
+  its feature (`?doc=tickets&ticket=<issue>`); each row's session count opens the list of every session that worked
+  on it, and the row opens the ticket page. The Portfolio's recent tickets still leave a feature's tickets to the feature's row.
+- **AC-521.8.8 Ticket page.** Given a ticket row, when the owner opens it, then `/tickets/<project>/<issue>` shows what
+  was done for that issue, read from its sessions (the newest 100): a Changes tab with the commits, files and pull
+  requests its sessions changed; a Sessions tab with each session, its status and what it did; and, for a feature's
+  ticket, a Feature tab linking the feature's records. An issue no session names shows "No session worked on <issue>
+  yet."; sessions run outside hub web show no changes, with a line that says why; the page rereads every 10 s.
+
 ## Departures
 
 - Feature tickets start from the feature (main's `StartTicketButton`: a named ticket, `/feature <id>` at step 5, a

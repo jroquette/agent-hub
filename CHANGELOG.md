@@ -11,6 +11,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- A ticket page, `/tickets/<project>/<issue>`, shows the commits, files and pull requests a ticket's sessions changed,
+  each session with what it did, and for a feature's ticket the feature's records; the Tickets list now also keeps a
+  feature's tickets, tagged Feature (AGH-521).
+
 ### Changed
 
 - `/feature` step 0 asks, in the brief's Outcome, for the line "How we will know after merge that it solved the
@@ -27,6 +33,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   it), and the chat column stays still while it does (AGH-521).
 - The Environments, Brain, Toolkit and Hub config project pickers show a calm setup hint (Setup tips, Setup needs a
   fix) instead of the red Doctor errors badge, and nothing for a healthy hub; the Portfolio keeps the badge (AGH-521).
+- The Features list says each feature's stage in words (step name and "step N of 8"), its criteria as "N of M", what
+  comes next in plain words, its label beside every title, and the features a live session is working on now at the
+  top of In progress; it warms the Linear snapshot so a feature whose tickets are done leaves In progress (AGH-521).
 
 ### Fixed
 

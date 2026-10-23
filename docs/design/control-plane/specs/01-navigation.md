@@ -69,6 +69,7 @@ Every screen carries its phase. A screen tagged P3 or P4 is not shown in the sid
     ?doc=spec|plan|research|eval&ac=:acId
 
 /tickets?project=&q=&kind=          Tickets list (AGH-426, specs/20-tickets.md)      P2 read-only · Start ticket
+/tickets/:project/:issue            Ticket page (AGH-521, specs/20-tickets.md)       P2 read-only
 /environments                       Environments: project picker (AGH-417)           P2
 └ /projects/:project/environments   Environments (specs/23-environments.md)          P2 + ADR 0040 writes
   ├ …/environments/new              Add environment (step by step)                   P2 + ADR 0040 writes

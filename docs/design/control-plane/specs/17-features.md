@@ -572,6 +572,31 @@ this list wins. Records and refusals: [feature-records.md](../../feature-records
   created, unique and never changes, a rename changes only its name), not a link on its own page; the chip that ties a
   session to its feature uses the same tag icon and hover text, plus "Open its panel."
 
+## Departures (AGH-521, the playground's v0.23.0 work)
+
+Built after the owner validated these in the playground (snapshot `20261023T210306Z`); where the sections above say
+otherwise, this list wins.
+
+**Features list (delivery 8)**
+
+- **AC-521.8.1 Stage in words.** Given a feature row, then its Stage column shows the golden path step's name, a state
+  dot and "step N of 8" instead of the segment bar; the columns read Tickets, Stage and Criteria met; the tips at the
+  top of the card open downwards so the card never clips them.
+- **AC-521.8.2 Criteria as "N of M".** Given the criteria bar on the Features list and on the feature page, then it
+  says "3 of 13" in words, and its tip says what passes and what the owner checks by hand.
+- **AC-521.8.3 What comes next.** Given a feature row, then the line under its name says what comes next in plain
+  words ("Next: write the spec", "Building · 1 of 10 tickets merged", "Ready to ship after your manual checks")
+  instead of the record's raw reasons; the group hint and the Linear notice are reworded to match.
+- **AC-521.8.4 Label beside every title.** Given a feature row, named or not, then its label (AC-425.7) follows the
+  title, so an unnamed feature shows its slug as both.
+- **AC-521.8.5 Shipped features leave In progress.** Given a feature whose golden path waits on Linear's ticket states,
+  when the Features list opens, then it reads that feature's tickets once (warming the Linear snapshot) and rereads
+  the list, so a feature whose tickets are all done moves to Shipped.
+- **AC-521.8.6 Working now.** Given a live main session matched to a feature and the collector connected, then the
+  row's lead column shows the live dot, its line says "A session is working · <last action>", the row sorts right
+  after the session warnings in In progress, and the summary line counts "N working now". Nothing shows while the
+  collector is offline.
+
 ## Screen 1: Features list
 
 **Route:** `/features` · **Answers:** "Which features are moving through the golden path, and how close is each to done?"
