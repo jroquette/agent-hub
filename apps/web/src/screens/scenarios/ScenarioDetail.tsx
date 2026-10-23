@@ -1,3 +1,4 @@
+import { CardSkeleton } from "./builder/CardParts";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useParams, useSearchParams } from "react-router";
 
@@ -22,8 +23,9 @@ import { DiscussButton, useDiscuss, useDiscussTarget } from "../../shell/discuss
 import { StaleStamp } from "../portfolio/StaleStamp";
 import { InputField, parsed, type InputSpec } from "../runs-list/StartRun";
 import { ActionPanel, FileText } from "./ActionPanel";
-import { SCENARIO_BRIEF } from "./brief";
+import { ScenarioBuilder } from "./builder/ScenarioBuilder";
 import { useLatestRun } from "./LiveRun";
+import { SCENARIO_BRIEF } from "./brief";
 import { Page, ScenarioRunBadge, shortId, useWaitingRows, WaitingCard } from "./parts";
 import {
   scenarioRunHref,
@@ -735,7 +737,8 @@ function RunsList({ scenario }: { scenario: ScenarioDetail }) {
   );
 }
 
-function Header({ scenario }: { scenario: ScenarioDetail }) {
+/** What Discuss talks about on this page: the scenario file and the actions it calls. */
+function useScenarioDiscuss(scenario: ScenarioDetail) {
   const actions = scenario.actions.map((action) => action.path ?? action.ref);
   useDiscussTarget({
     key: `scenario:${scenario.project}:${scenario.name}`,
@@ -760,6 +763,23 @@ function Header({ scenario }: { scenario: ScenarioDetail }) {
       },
     ],
   });
+}
+
+function Crumbs({ scenario }: { scenario: ScenarioDetail }) {
+  return (
+    <Breadcrumbs
+      items={[
+        { label: "Portfolio", href: "/" },
+        { label: scenario.project, href: `/projects/${encodeURIComponent(scenario.project)}` },
+        { label: "Scenarios", href: "/scenarios" },
+        { label: scenario.name, mono: true },
+      ]}
+    />
+  );
+}
+
+function Header({ scenario }: { scenario: ScenarioDetail }) {
+  useScenarioDiscuss(scenario);
   return (
     <>
       <Breadcrumbs
@@ -811,6 +831,17 @@ function DocumentView({ scenario }: { scenario: ScenarioDetail }) {
   );
 }
 
+/** Build mode: the breadcrumbs, then the builder (its own one-row toolbar) to the bottom. */
+function BuildPage({ scenario, children }: { scenario: ScenarioDetail; children: ReactNode }) {
+  useScenarioDiscuss(scenario);
+  return (
+    <div className="ah-stack sb-page">
+      <Crumbs scenario={scenario} />
+      {children}
+    </div>
+  );
+}
+
 function DetailBody({ scenario }: { scenario: ScenarioDetail }) {
   const [params, setParams] = useSearchParams();
   const { rows } = useWaitingRows(scenario.project);
@@ -834,10 +865,41 @@ function DetailBody({ scenario }: { scenario: ScenarioDetail }) {
       { replace: true },
     );
   };
+  const page: "build" | "run" = params.get("mode") === "run" ? "run" : "build";
+  const modeSwitch = (
+    <SegmentedControl
+      label="Mode"
+      value={page}
+      onChange={(id) => {
+        setParam("mode", id === "run" ? "run" : null);
+      }}
+      options={[
+        { id: "build", label: "Build", icon: "puzzle" },
+        { id: "run", label: "Run", icon: "play" },
+      ]}
+    />
+  );
+  if (page === "build") {
+    return (
+      <BuildPage scenario={scenario}>
+        <WaitingCard rows={mine} named={false} />
+        <ScenarioBuilder
+          scenario={scenario}
+          mode={mode}
+          onRun={() => {
+            setParam("mode", "run");
+          }}
+        />
+      </BuildPage>
+    );
+  }
   return (
     <Page>
       <div className="sc-detail ah-stack" style={{ gap: 16 }}>
         <Header scenario={scenario} />
+        <div className="ah-row ah-wrap" style={{ gap: 12 }}>
+          {modeSwitch}
+        </div>
         <WaitingCard rows={mine} named={false} />
         <div className="sc-columns">
           <div className="ah-stack" style={{ gap: 12, minWidth: 0 }}>
@@ -916,10 +978,11 @@ export function ScenarioDetailScreen() {
       <Page>
         <Skeleton width={320} height={28} />
         <Skeleton width={560} height={14} />
-        <Skeleton height={120} />
-        {Array.from({ length: 6 }, (_, i) => (
-          <Skeleton key={i} height={20} />
-        ))}
+        <div className="bk-skeleton-flow" aria-busy="true" aria-label="Loading the scenario">
+          {Array.from({ length: 3 }, (_, i) => (
+            <CardSkeleton key={i} />
+          ))}
+        </div>
       </Page>
     );
   }

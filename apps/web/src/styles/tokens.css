@@ -52,6 +52,12 @@
   --ev-decision: #7a6a00;
   --ev-learning: #3d7f22;
   --ev-lifecycle: #6a7282;
+  --kind-do: #0b6f7c;
+  --kind-do-soft: #dce5e1;
+  --kind-check: #7e45b8;
+  --kind-check-soft: #e9e0e8;
+  --kind-control: #4d6a00;
+  --kind-control-soft: #e3e4d2;
   --chart-1: #3b45c4;
   --chart-2: #0e7686;
   --chart-3: #b86300;
@@ -127,6 +133,12 @@
   --ev-decision: #d6c64a;
   --ev-learning: #86cf68;
   --ev-lifecycle: #7f8797;
+  --kind-do: #3fc1d0;
+  --kind-do-soft: #1a343a;
+  --kind-check: #c99bf0;
+  --kind-check-soft: #332d40;
+  --kind-control: #a8cf4f;
+  --kind-control-soft: #2d3623;
   --chart-1: #8c96ff;
   --chart-2: #4cc5d4;
   --chart-3: #f0a04a;
