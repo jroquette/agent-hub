@@ -10,9 +10,10 @@ object; never print a scanner's text.
 (no fetch), in a detached worktree under the temporary folder that is removed after, so the
 repo's checkout is never touched. Each scanner runs only when found on ``PATH`` (none is ever
 installed): semgrep, bandit, pip-audit (``--disable-pip --no-deps``, on ``requirements*.txt`` or
-on ``uv.lock`` exported offline by ``uv``), npm audit (``--package-lock-only``) and the hub
-guard's secret-file rule (``plugin/hub-workflow/hooks/guard.py``, loaded in process). A scanner
-that is missing, skipped, fails or times out is a status, never a failed run.
+on ``uv.lock`` exported offline by ``uv``), npm audit (``--package-lock-only``, the public
+registry) and the hub guard's secret-file rule (``plugin/hub-workflow/hooks/guard.py``, loaded
+in process). A scanner that is missing, skipped, fails or times out is a status, never a failed
+run.
 
 Output: ``{"repos": [{"repo", "ref", "head", "date", "status", "note", "scanners": [{"name",
 "status", "note", "count"}]}], "findings": [<FIELDS>], "more", "trimmed"}``; findings sorted by
@@ -325,6 +326,7 @@ REPO_DIR = re.compile(r"[A-Za-z0-9._-]{1,100}")
 BRANCH = re.compile(r"(?!-)(?!.*\.\.)[A-Za-z0-9._/-]{1,100}")
 HEAD = re.compile(r"[0-9a-f]{40}")
 GUARD = "plugin/hub-workflow/hooks/guard.py"
+NPM_REGISTRY = "https://registry.npmjs.org/"
 RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3, "unknown": 4}
 # A caller's git location variables would point every git call at another repo.
 GIT_LOCATION = {
@@ -629,7 +631,8 @@ def npm(run: Run, tree: Tree) -> Outcome:
     locks, over = capped(named(tree.paths, "package-lock.json"))
     if not locks:
         return status("npm", "skipped", "no package-lock.json"), []
-    argv = [exe, "audit", "--json", "--package-lock-only"]
+    # The public registry, whatever a repo's .npmrc names, so the lockfile goes nowhere else.
+    argv = [exe, "audit", "--json", "--package-lock-only", f"--registry={NPM_REGISTRY}"]
     results = [
         call_findings(
             run,
