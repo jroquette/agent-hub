@@ -349,3 +349,16 @@ def test_exits_two_when_settle_options_are_not_json(capsys: pytest.CaptureFixtur
 
     assert (code, out) == (2, "")
     assert err.startswith("budget.py: options")
+
+
+def test_reads_note_and_approver_that_start_with_a_dash_when_settle_runs(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    asked = a_state(spent_s=3600, left_m=60, round=1)
+
+    code, settled, _ = settle(
+        capsys, asked, listed=options("a", "b"), decision="a", note="--no cache", approver="-Dana"
+    )
+
+    assert code == 0
+    assert (settled["note"], settled["approver"], settled["go"]) == ("--no cache", "-Dana", True)
