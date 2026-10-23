@@ -4879,7 +4879,7 @@ def test_denies_input_tool_when_query_or_prompt_holds_word(decide: Decide) -> No
 def test_passes_input_tool_when_word_inside_longer_run(decide: Decide) -> None:
     events = [
         tool_call("mcp__db__query", host="db.product.example.com"),
-        tool_call("mcp__db__query", products=["reproduce", "tippleProd"]),
+        tool_call("mcp__db__query", products=["reproduce", "demoProd"]),
         tool_call("WebSearch", query="product launch", mode="standard"),
         # a tool_input that is not an object is read as {} (D-walk, OQ-3)
         {"tool_name": "mcp__db__query", "tool_input": ["prod"]},
