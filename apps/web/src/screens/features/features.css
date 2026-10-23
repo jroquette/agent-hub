@@ -156,6 +156,17 @@
   align-self: start;
   margin-top: 2px;
 }
+.ft-row-live {
+  color: var(--live);
+}
+.ft-row-lead .ft-row-live {
+  margin-top: 5px;
+}
+.ft-summary [data-group="working"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
 .ft-row-main {
   display: flex;
   flex-direction: column;

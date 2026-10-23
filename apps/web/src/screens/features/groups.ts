@@ -20,7 +20,7 @@ export const GROUPS: readonly {
     id: "progress",
     title: "In progress",
     summary: "in progress",
-    hint: "Features that need you come first, then the ones furthest along",
+    hint: "Features that need you come first, then the ones a session is working on, then the ones furthest along",
     empty: "No feature in progress.",
   },
   {
@@ -76,6 +76,10 @@ export interface Reason {
   line: string;
   /** The row's link query after `doc=` (a tab, or the ticket panel at a change request). */
   doc: string | null;
+  /** How many sessions work on the feature right now (live, not subagents): the row's live dot. */
+  working: number;
+  /** The row's line as it would read with no session working, for its tooltip and screen-reader name. */
+  plainLine: string;
 }
 
 /** The kinds of warning, in the order they lead In progress. */
@@ -103,13 +107,8 @@ export interface SessionWait {
  * one wins over an idle one, then the most recent.
  */
 export function sessionWaitOf(f: Feature, tiles: readonly LiveTile[]): SessionWait | null {
-  const ids = new Set(f.issues.map((i) => issueId(i).toUpperCase()));
-  const ofFeature = (t: LiveTile) => {
-    const issue = (t.label?.issue ?? t.issue ?? "").toUpperCase();
-    return (issue !== "" && ids.has(issue)) || (t.label?.title ?? "").includes(f.slug);
-  };
-  const waits = tiles
-    .filter((t) => (t.group === "waiting" || t.group === "idle") && !t.is_subagent && ofFeature(t))
+  const waits = tilesOf(f, tiles)
+    .filter((t) => t.group === "waiting" || t.group === "idle")
     .sort(
       (a, b) =>
         Number(b.group === "waiting") - Number(a.group === "waiting") ||
@@ -119,7 +118,34 @@ export function sessionWaitOf(f: Feature, tiles: readonly LiveTile[]): SessionWa
   return tile ? { tile, group: tile.group === "waiting" ? "waiting" : "idle" } : null;
 }
 
-function sessionReason(wait: SessionWait): Reason {
+/** The main-session tiles (not subagents) whose issue is one of the feature's, or whose title names it. */
+function tilesOf(f: Feature, tiles: readonly LiveTile[]): LiveTile[] {
+  const ids = new Set(f.issues.map((i) => issueId(i).toUpperCase()));
+  return tiles.filter((t) => {
+    if (t.is_subagent) return false;
+    const issue = (t.label?.issue ?? t.issue ?? "").toUpperCase();
+    return (issue !== "" && ids.has(issue)) || (t.label?.title ?? "").includes(f.slug);
+  });
+}
+
+/** The sessions working on the feature right now (`live`), the most recent first. */
+export function sessionsWorkingOn(f: Feature, tiles: readonly LiveTile[]): LiveTile[] {
+  return tilesOf(f, tiles)
+    .filter((t) => t.group === "live")
+    .sort((a, b) => b.last_activity_at.localeCompare(a.last_activity_at));
+}
+
+/** "A session is working · Edited groups.ts", "2 sessions are working · …". */
+export function workingLine(working: readonly LiveTile[]): string {
+  const [latest] = working;
+  const head =
+    working.length === 1
+      ? "A session is working"
+      : `${String(working.length)} sessions are working`;
+  return latest?.last_action ? `${head} · ${latest.last_action}` : head;
+}
+
+function sessionReason(wait: SessionWait): BaseReason {
   const { tile } = wait;
   if (wait.group === "waiting") {
     const why = tile.waiting_reason ?? "a permission prompt";
@@ -188,7 +214,24 @@ function shortReason(reason: string): string | null {
   return isLinearGap(reason) ? null : reason.replace(/[.;]\s*open the \w+ tab\.?$/i, "");
 }
 
-export function reasonOf(f: Feature, wait: SessionWait | null = null): Reason {
+type BaseReason = Omit<Reason, "working" | "plainLine">;
+
+/**
+ * Why the row sits where it does. A session working on the feature puts the live dot on the row and,
+ * when nothing needs you, says so on the line; a warning that needs you keeps its line.
+ */
+export function reasonOf(
+  f: Feature,
+  wait: SessionWait | null = null,
+  working: readonly LiveTile[] = [],
+): Reason {
+  const base = baseReasonOf(f, wait);
+  const plain = { ...base, working: working.length, plainLine: base.line };
+  if (!working.length || base.needs !== null || base.group === "shipped") return plain;
+  return { ...plain, line: workingLine(working) };
+}
+
+function baseReasonOf(f: Feature, wait: SessionWait | null): BaseReason {
   if (wait && f.phase !== "shipped") return sessionReason(wait);
   if (f.problem) {
     return {
@@ -293,9 +336,14 @@ function acRatio(f: Feature): number {
   return a && a.total > 0 ? (a.passing + a.owner_steps) / a.total : 0;
 }
 
-const needsRank = (r: Reason) => (r.needs ? NEEDS_ORDER.indexOf(r.needs) : NEEDS_ORDER.length);
+/** The sort's ranks: the warnings in their order, with a session working right after the session warnings. */
+const RANK_ORDER = ["session", "your-turn", "working", ...NEEDS_ORDER.slice(2)] as const;
+function needsRank(r: Reason): number {
+  const key = r.needs ?? (r.working > 0 && r.group === "progress" ? "working" : null);
+  return key ? RANK_ORDER.indexOf(key) : RANK_ORDER.length;
+}
 
-/** Orders rows inside one group: the ones that need you first, then furthest along, most done, then by name. */
+/** Orders rows inside one group: the ones that need you first, then the ones a session works on, then furthest along, most done, then by name. */
 export function byGroupOrder(
   a: Feature,
   b: Feature,

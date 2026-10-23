@@ -688,7 +688,12 @@ describe("FeaturesScreen", () => {
       label: aSessionLabel({ issue: null, title: "control-plane plan" }),
       last_action: "Edited plan.md",
     });
-    const busy = aLiveTile({ id: "s-busy", group: "live", issue: "AGH-49" });
+    const busy = aLiveTile({
+      id: "s-busy",
+      group: "live",
+      issue: "AGH-49",
+      last_action: "Edited eval.md",
+    });
     const { router } = open({
       "/api/v1/live-sessions": aPage([permission, yourTurn, busy]),
     });
@@ -697,8 +702,8 @@ describe("FeaturesScreen", () => {
       expect(slugsIn(groupOf(/^In progress · 4$/))).toEqual([
         "tracker-team-cap",
         "control-plane",
-        "broken-record",
         "layered-memory",
+        "broken-record",
       ]);
     });
     expect(rowOf("tracker-team-cap")).toHaveTextContent(
@@ -706,6 +711,14 @@ describe("FeaturesScreen", () => {
     );
     expect(rowOf("control-plane")).toHaveTextContent("Your turn in a session · Edited plan.md");
     expect(rowOf("layered-memory")).not.toHaveAttribute("data-tone");
+    expect(rowOf("layered-memory")).toHaveTextContent("A session is working · Edited eval.md");
+    expect(rowOf("layered-memory").querySelector(".ft-row-lead .ah-pulse")).not.toBeNull();
+    expect(rowOf("layered-memory")).toHaveAccessibleName(
+      /^layered-memory\. A session is working · Edited eval\.md\. Next: evaluate the whole feature/,
+    );
+    expect(document.querySelector('.ft-summary [data-group="working"]')).toHaveTextContent(
+      "1 working now",
+    );
     expect(groupOf(/^In progress · 4$/)).toHaveTextContent(
       "1 session waits on you · 1 your turn in a session",
     );
@@ -734,7 +747,7 @@ describe("FeaturesScreen", () => {
       "owner-held",
     ]);
     expect(groupOf(/^In progress · 6$/)).toHaveTextContent(
-      "Features that need you come first, then the ones furthest along · 1 waits on your steps · 1 no ship · 1 record cannot be read",
+      "Features that need you come first, then the ones a session is working on, then the ones furthest along · 1 waits on your steps · 1 no ship · 1 record cannot be read",
     );
     expect(document.querySelector('.ft-summary [data-group="needs"]')).toHaveTextContent(
       "3 need you",
