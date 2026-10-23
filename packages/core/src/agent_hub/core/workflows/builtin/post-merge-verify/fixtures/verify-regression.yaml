@@ -1,0 +1,34 @@
+# AC-2: a verification fails at the merge; explain names the suspected merge and the report
+# names the AC, the command, its exit code and that merge: the run ends done, regressed.
+workflow: post-merge-verify
+inputs: {repo: demo-api, sha: 0a1b2c3d}
+stubs:
+  select:
+    output:
+      mode: merge
+      sha: 0a1b2c3d4e5f60718293a4b5c6d7e8f901234567
+      repo_path: /ws/demo-api
+      tickets: [DEM-7]
+      changed_paths: 1
+      paths_truncated: false
+      selected: [{feature: grp/DEM-7, ac: AC-7.1, why: ticket}]
+      truncated: 0
+      skipped_not_passing: 0
+      unreadable: []
+  run:
+    output:
+      sha: 0a1b2c3d4e5f60718293a4b5c6d7e8f901234567
+      counts: {selected: 1, passed: 0, failed: 1, timed_out: 0, errors: 0, cannot_run: 0, not_run: 0}
+      broken: 1
+      failures:
+        - {feature: grp/DEM-7, ac: AC-7.1, command: test -f kept.txt, status: failed, exit_code: 1, tail: "", since: ""}
+      more_failed: []
+      cannot_run: []
+      more_cannot_run: 0
+  explain:
+    output:
+      suspects:
+        - {feature: grp/DEM-7, ac: AC-7.1, merge: 0a1b2c3d, subject: "Merge pull request #9 from acme/jdoe/dem-7-drop", kind: regression, evidence: The merge deletes kept.txt.}
+  report: {output: {verdict: regressed, entries: 1, path: brain/_inbox/verify-YYYY-MM-DD.md}}
+expect: {status: done, outcome: regressed}
+reached: [select, run, explain, report]

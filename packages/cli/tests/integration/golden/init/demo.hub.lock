@@ -613,6 +613,33 @@
     "workflows/issue-to-pr/prompts/implement.md": {
       "ownership": "seeded"
     },
+    "workflows/post-merge-verify/fixtures/verify-all-green.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/post-merge-verify/fixtures/verify-cannot-run.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/post-merge-verify/fixtures/verify-explain-failed.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/post-merge-verify/fixtures/verify-regression.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/post-merge-verify/post-merge-verify.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/post-merge-verify/prompts/explain.md": {
+      "ownership": "seeded"
+    },
+    "workflows/post-merge-verify/scripts/report.py": {
+      "ownership": "seeded"
+    },
+    "workflows/post-merge-verify/scripts/selection.py": {
+      "ownership": "seeded"
+    },
+    "workflows/post-merge-verify/scripts/verify.py": {
+      "ownership": "seeded"
+    },
     "workflows/retro/fixtures/retro-all-dropped.yaml": {
       "ownership": "seeded"
     },
