@@ -222,7 +222,8 @@ class SkillUsage(ViewModel):
     500 names of a kind were seen (the most used are kept).
 
     ``windows_by_skill`` and ``windows_by_agent`` hold every name used in the last 90 days with
-    its 7/30/90-day runs (AGH-482); ``by_skill`` and ``by_agent`` stay the 30-day window.
+    its 7/30/90-day runs (AGH-482), at most 500 per kind by 90-day runs, ``windows_truncated``
+    when more were seen; ``by_skill``, ``by_agent`` and ``truncated`` stay the 30-day window's.
     """
 
     since: ApiTimestamp
@@ -231,6 +232,7 @@ class SkillUsage(ViewModel):
     truncated: bool = False
     windows_by_skill: dict[str, UsageWindows] = {}
     windows_by_agent: dict[str, UsageWindows] = {}
+    windows_truncated: bool = False
 
 
 class UsageRow(ViewModel):

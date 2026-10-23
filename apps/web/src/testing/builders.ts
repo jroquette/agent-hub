@@ -1285,7 +1285,6 @@ export function aFeatureShapedBody(): string {
   ].join("\n");
 }
 
-/** The card of the managed skill `feature` of project `demo`: used 3 times in 30 days. */
 /** Project `demo`'s skill `refactor`, never used (as `a_usage_row` in core). */
 export function aUsageRow(overrides: Partial<UsageRow> = {}): UsageRow {
   return {
@@ -1313,6 +1312,7 @@ export function aUsageReport(overrides: Partial<UsageReport> = {}): UsageReport 
   };
 }
 
+/** The card of the managed skill `feature` of project `demo`: used 3 times in 30 days. */
 export function aCatalogItem(overrides: Partial<CatalogItem> = {}): CatalogItem {
   const name = overrides.name ?? "feature";
   const source = overrides.source ?? "hub-workflow";

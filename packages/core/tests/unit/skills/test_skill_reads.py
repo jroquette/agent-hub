@@ -6,7 +6,7 @@ from agent_hub.core.item_versions.capture_item_versions import CaptureItemVersio
 from agent_hub.core.item_versions.item_units import ItemUnit
 from agent_hub.core.item_versions.item_version import UnitKind
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
-from agent_hub.core.skills.skill_catalog import EMPTY_NOTICE
+from agent_hub.core.skills.skill_catalog import EMPTY_NOTICE, LOCK_UNREAD_NOTICE
 from agent_hub.core.skills.skill_reads import SkillReads
 from agent_hub.core.skills.skill_sources import CATALOG_BUDGET_BYTES, MAX_SKILL_FILE_BYTES
 from agent_hub.core.skills.skill_view import (
@@ -495,3 +495,48 @@ def test_marks_usage_truncated_when_catalog_truncated() -> None:
 
     assert truncated
     assert len(rows) == count
+
+
+def test_marks_usage_complete_when_hub_empty() -> None:
+    reads, _, _ = _reads({}, usage=_no_usage())
+
+    rows, truncated = reads.usage_rows(project=FIXTURE_PROJECT, hub_path=HUB)
+
+    assert reads.catalog(project=FIXTURE_PROJECT, hub_path=HUB).notice == EMPTY_NOTICE
+    assert (rows, truncated) == ((), False)
+
+
+def test_marks_usage_complete_when_only_lock_unread() -> None:
+    tree: dict[str, TreeEntry] = {
+        ".claude/skills/refactor/SKILL.md": b"---\nname: refactor\ndescription: Tidy.\n---\nGo.\n"
+    }
+    reads, _, _ = _reads(tree, usage=_no_usage())
+
+    _, truncated = reads.usage_rows(project=FIXTURE_PROJECT, hub_path=HUB)
+
+    assert reads.catalog(project=FIXTURE_PROJECT, hub_path=HUB).notice == LOCK_UNREAD_NOTICE
+    assert not truncated
+
+
+def test_marks_usage_truncated_when_entry_skipped_for_its_name() -> None:
+    tree: dict[str, TreeEntry] = {
+        ".claude/skills/refactor/SKILL.md": b"---\nname: refactor\ndescription: Tidy.\n---\nGo.\n",
+        ".claude/skills/bad.name/SKILL.md": b"---\nname: bad\ndescription: Bad.\n---\nGo.\n",
+    }
+    reads, _, _ = _reads(tree, usage=_no_usage())
+
+    rows, truncated = reads.usage_rows(project=FIXTURE_PROJECT, hub_path=HUB)
+
+    assert [row.name for row in rows] == ["refactor"]
+    assert truncated
+
+
+def test_marks_usage_truncated_when_usage_fold_cut() -> None:
+    usage = SkillUsage(
+        since=datetime(2026, 9, 13, tzinfo=UTC), by_skill={}, by_agent={}, windows_truncated=True
+    )
+    reads, _, _ = _reads(usage=FakeUsage(usage))
+
+    _, truncated = reads.usage_rows(project=FIXTURE_PROJECT, hub_path=HUB)
+
+    assert truncated
