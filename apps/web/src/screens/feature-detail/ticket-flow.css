@@ -134,7 +134,8 @@
   position: relative;
   display: flex;
   align-items: flex-start;
-  gap: 72px;
+  /* The gaps between groups are set per column by the router (flowRoutes.ts): 72 px or wider. */
+  gap: 0;
 }
 .ah-flow-edges {
   position: absolute;
@@ -146,41 +147,70 @@
 .ah-flow-edges-top {
   z-index: 3;
 }
+/* Orthogonal lines, each a width --w (screen px at far zoom, so they never thin to a hairline). */
 .ah-flow-edges path {
+  --w: 1.5;
   fill: none;
   stroke: var(--border-control);
-  stroke-width: 1.5;
+  stroke-width: var(--w);
 }
-.ah-flow-edges path[data-source="plan"] {
+/* Each line's halo in the canvas ground: a later line cuts a gap where it crosses an earlier one. */
+.ah-flow-edges path.ah-flow-halo {
+  --w: 5.5;
+  stroke: var(--surface-sunken);
+  stroke-dasharray: none;
+}
+.ah-flow-edges path[data-source="plan"]:not(.ah-flow-halo) {
   stroke-dasharray: 6 4;
 }
-.ah-flow-edges path[data-source="linear"] {
+.ah-flow-edges path[data-source="linear"]:not(.ah-flow-halo) {
   stroke-dasharray: 2 3;
 }
-/* A settled edge no longer holds anything back: solid green, at full contrast. */
-.ah-flow-edges path[data-settled="true"] {
-  stroke: var(--done);
+/* A settled line no longer holds anything back, and its card says "After X": it goes faint. */
+.ah-flow-edges path[data-settled="true"]:not(.ah-flow-halo) {
+  stroke: var(--border);
 }
 .ah-flow-edges path[data-critical="true"] {
+  --w: 2.25;
   stroke: var(--accent);
-  stroke-width: 2.25;
   opacity: 1;
 }
 .ah-flow-edges path[data-early="true"] {
+  --w: 2;
   stroke: var(--waiting);
-  stroke-width: 2;
 }
 .ah-flow-edges path[data-hot] {
+  --w: 2.5;
   stroke: var(--accent);
-  stroke-width: 2;
   opacity: 1;
 }
 .ah-flow-edges path[data-hot][data-early="true"] {
+  --w: 2.5;
   stroke: var(--waiting);
-  stroke-width: 2.5;
 }
-.ah-flow-edges path[data-dim] {
+.ah-flow-edges [data-dim] {
   opacity: 0.25;
+}
+/* A dot where a line branches off a shared trunk, in the strongest tone through it. */
+.ah-flow-dot {
+  fill: var(--border-control);
+}
+.ah-flow-dot[data-tone="settled"] {
+  fill: var(--border);
+}
+.ah-flow-dot[data-tone="critical"],
+.ah-flow-dot[data-tone="hot"] {
+  fill: var(--accent);
+}
+.ah-flow-dot[data-tone="early"] {
+  fill: var(--waiting);
+}
+/* Far zoom: what is left to do only, strokes at their screen width. */
+.ah-flow[data-zoom="far"] .ah-flow-edges path {
+  stroke-width: calc(var(--w) / var(--k));
+}
+.ah-flow[data-zoom="far"] .ah-flow-edges path[data-settled="true"] {
+  display: none;
 }
 [data-canvas="ticket-flow"] .ah-canvas-arrow path {
   fill: var(--border-control);
@@ -191,7 +221,7 @@
   fill: var(--accent);
 }
 [data-canvas="ticket-flow"] .ah-canvas-arrow[data-tone="settled"] path {
-  fill: var(--done);
+  fill: var(--border);
 }
 [data-canvas="ticket-flow"] .ah-canvas-arrow[data-tone="early"] path {
   fill: var(--waiting);
@@ -410,6 +440,18 @@
   .ah-flow-edges path {
     stroke: CanvasText;
   }
+  .ah-flow-edges path[data-settled="true"]:not(.ah-flow-halo) {
+    stroke: GrayText;
+  }
+  .ah-flow-edges path[data-hot]:not(.ah-flow-halo) {
+    stroke: Highlight;
+  }
+  .ah-flow-edges path.ah-flow-halo {
+    stroke: Canvas;
+  }
+  .ah-flow-dot {
+    fill: CanvasText;
+  }
   .ah-flow-card[aria-current="true"] {
     border-color: Highlight;
   }
@@ -503,7 +545,21 @@
   border-top-style: dotted;
 }
 .ah-flow-line[data-settled="true"] {
-  border-top-color: var(--done);
+  border-top-color: var(--border);
+}
+/* The legend's branch: a line with a junction dot in its middle. */
+.ah-flow-line[data-branch="true"] {
+  position: relative;
+}
+.ah-flow-line[data-branch="true"]::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: -4px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--border-control);
 }
 .ah-flow-line[data-early="true"] {
   border-top: 2px solid var(--waiting);

@@ -486,7 +486,9 @@ describe("PlanningView", () => {
       const edge = (id: string) => container.querySelector(`.ah-flow-edges [data-edge="${id}"]`);
       for (const id of ["T1→T3", "T2→T3", "T3→T5"]) expect(edge(id)).toHaveAttribute("data-hot");
       expect(edge("T4→T5")).toHaveAttribute("data-dim");
-      expect(container.querySelectorAll(".ah-flow-edges-top path")).toHaveLength(3);
+      expect(container.querySelectorAll(".ah-flow-edges-top path:not(.ah-flow-halo)")).toHaveLength(
+        3,
+      );
       expect(screen.getByRole("listitem", { name: "T3 · Ticket T3" })).toHaveAttribute(
         "aria-current",
         "true",
@@ -575,12 +577,36 @@ describe("PlanningView", () => {
       expect(title("T1")).toHaveFocus();
     });
 
-    it("routes an edge that skips a group over the columns, never behind a card", () => {
+    it("routes every edge as orthogonal lines with rounded corners, never a curve", () => {
       const { container } = render(<PlanningView tickets={linked} planning={plan} />);
 
-      // T4 is in group 1 and T5 in group 3: a routed line with rounded corners, not a curve.
+      // T4 is in group 1 and T5 in group 3: it runs in a channel; T3 → T5 goes by T3's trunk.
       expect(container.querySelector('[data-edge="T4→T5"]')?.getAttribute("d")).toContain(" Q ");
-      expect(container.querySelector('[data-edge="T3→T5"]')?.getAttribute("d")).toContain(" C ");
+      for (const path of container.querySelectorAll(".ah-flow-edges path[data-edge]")) {
+        expect(path.getAttribute("d")).not.toContain(" C ");
+      }
+    });
+
+    it("lights only the line a blocker link names, and marks its blocker", async () => {
+      const user = userEvent.setup();
+      const waiting = linked.map((row) =>
+        row.ref === "T5"
+          ? { ...row, readiness: "waiting" as const, waiting_on: ["T3", "T4"] }
+          : row,
+      );
+      const { container } = render(<PlanningView tickets={waiting} planning={plan} />);
+
+      const card = screen.getByRole("listitem", { name: "T5 · Ticket T5" });
+      const link = card.querySelector<HTMLElement>('a[href="#ticket-T3"]');
+      expect(link).not.toBeNull();
+      if (link) await user.hover(link);
+      const edge = (id: string) => container.querySelector(`.ah-flow-edges [data-edge="${id}"]`);
+      expect(edge("T3→T5")).toHaveAttribute("data-hot");
+      expect(edge("T4→T5")).toHaveAttribute("data-dim");
+      expect(screen.getByRole("listitem", { name: "T3 · Ticket T3" })).toHaveAttribute(
+        "data-chain",
+        "true",
+      );
     });
 
     it("draws every edge as an outline, so a routed edge never paints a filled shape", () => {
