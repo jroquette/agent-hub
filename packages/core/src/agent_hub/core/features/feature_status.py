@@ -61,8 +61,11 @@ from agent_hub.core.features.plan_version import plan_version
 from agent_hub.core.features.ticket_planning import TicketBoard, ticket_board
 from agent_hub.core.features.ticket_records import (
     ChangeRequests,
+    OutcomeFile,
     TicketFiles,
+    TicketOutcome,
     change_requests,
+    recorded_outcomes,
     request_view,
 )
 from agent_hub.core.features.ticket_snapshots import SnapshotRead
@@ -133,7 +136,8 @@ class FeatureFolder:
     (``<reviewer>-r<N>.json``, never read). ``ticket_folders`` holds what was read of each
     ``tickets/<ticket>/`` (``ticket_folders_skipped`` counts those left unread over the cap);
     ``change_requests`` the heads of ``change-requests/*.md`` sorted by name
-    (``change_requests_skipped`` counts those left unread).
+    (``change_requests_skipped`` counts those left unread). ``outcomes`` holds each
+    ``tickets/<ticket>/outcome.md`` read (every read of the feature reads them: Build counts them).
     """
 
     slug: str
@@ -153,6 +157,7 @@ class FeatureFolder:
     ticket_folders_skipped: int = 0
     change_requests: tuple[RecordHead, ...] = ()
     change_requests_skipped: int = 0
+    outcomes: tuple[OutcomeFile, ...] = ()
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -268,6 +273,11 @@ def feature_parts(
             ux_problem=ux_problem,
             plan=plan_view(folder),
             requests=requests,
+            merged=frozenset(
+                name
+                for name, outcome in recorded_outcomes(folder.outcomes).items()
+                if isinstance(outcome, TicketOutcome)
+            ),
             source=source,
             not_loaded=read is not None and snapshot is None and read.failure is None,
         )
