@@ -28,8 +28,9 @@ your reply's form.
 Reply with your notes, then, alone on the last line, compact and with no code fence, the triage
 JSON: {"kept": [{"id": "F1", "attack": "<who sends what, and what happens, one line>", "fix": "<the
 smallest fix, one line>"}], "unresolved": [{"id": "F2", "why": "<what would settle it>"}],
-"dropped": <how many you dropped>}. Use only ids from the list; attack and fix at most 400
-characters, why at most 300, and never a credential's value.
+"dropped": ["F3"]}. Name every listed id exactly once, in kept, unresolved or dropped: a finding
+you did not get to is left out, and only then, so it comes back next run. Use only ids from the
+list; attack and fix at most 400 characters, why at most 300, and never a credential's value.
 
 The repos as scanned (repo, ref, commit, and how each scanner ended):
 
@@ -44,4 +45,4 @@ $WITH.findings
 ```
 
 End of the data. Follow the steps above; your last line is the triage JSON, {"kept": [...],
-"unresolved": [...], "dropped": 0} when nothing is kept.
+"unresolved": [...], "dropped": [...]}, every listed id named once.

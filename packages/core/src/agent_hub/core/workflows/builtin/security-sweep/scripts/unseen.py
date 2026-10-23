@@ -11,16 +11,21 @@
 ``MAX_LISTED`` new findings in the scan's order (ids ``F1``...), within ``MAX_LISTED_BYTES``; the
 rest are counted in ``more`` and stay unseen. It writes nothing.
 
-``unseen.py mark --status <findings|clean>`` reads that output on stdin, after the report, and
-updates the store: a ``(repo, scanner)`` that ran this time keeps only the entries it still
-reports (a fixed finding that comes back is new again), one that did not run keeps its entries,
-and the listed findings are added with today's date; past ``MAX_ENTRIES``, the oldest go. The
+``unseen.py mark --status <findings|clean> --triaged <JSON list of ids>`` reads that output on
+stdin, after the report, and updates the store: a ``(repo, scanner)`` that ran this time keeps
+only the entries it still reports (a fixed finding that comes back is new again), one that did
+not run keeps its entries, and the listed findings whose id triage named (kept, unresolved or
+dropped, as the report read them) are added with today's date; a listed finding triage did not
+name stays unseen and comes back next run. Past ``MAX_ENTRIES``, the oldest entries go. The
 store is written to a temporary file, then renamed over. It prints ``{"status", "marked",
 "store_size"}``.
 
 A fingerprint is ``<repo>/<scanner>/<16 hex>``: the SHA-256 of repo, scanner, rule, path,
 package, advisory and the finding's rank among the same ones by line; no line and no code, so a
-line shift is not new and nothing in it can be guessed back to a secret line. A store that is not
+line shift is not new and nothing in it can be guessed back to a secret line. The known limit
+of the rank: a new hit of a seen finding's rule in the same file, at an earlier line, takes the
+seen hit's rank, so the seen hit is listed again in its place (triage then sees the old line,
+not the new one, until both are listed in a later run). A store that is not
 a regular file (a link, a folder), over ``MAX_STORE_BYTES`` or not version 1 reads as empty with
 ``store_problem`` set; ``mark`` rewrites it. Bad stdin or status exits 2; a store that cannot be
 written exits 1. ``--store`` and ``--today`` are for tests.
@@ -56,6 +61,7 @@ TEXTS = ("rule", "path", "severity", "cwe", "package", "version", "advisory", "f
 REPO = re.compile(r"[A-Za-z0-9._-]{1,100}")
 FINGERPRINT = re.compile(r"[A-Za-z0-9._-]{1,100}/[a-z-]{1,10}/[0-9a-f]{16}")
 DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+ID = re.compile(r"F[1-9][0-9]{0,2}")
 STATUSES = ("findings", "clean")
 
 Finding = dict[str, object]
@@ -215,10 +221,16 @@ def strings(items: list[object], pattern: re.Pattern[str]) -> list[str]:
     return [str(item) for item in items]
 
 
-def marked(selected: dict[str, object], seen: Seen, today: str) -> Seen:
+def triaged_prints(selected: dict[str, object], triaged: set[str]) -> list[str]:
+    """The fingerprints of the listed findings whose id triage named."""
+    listed = [as_dict(item) for item in a_list(selected, "findings", MAX_LISTED)]
+    named = [item for item in listed if item.get("id") in triaged]
+    return strings([item.get("fingerprint") for item in named], FINGERPRINT)
+
+
+def marked(selected: dict[str, object], seen: Seen, *, today: str, triaged: set[str]) -> Seen:
     """The store after this run (see the module's docstring)."""
-    listed = a_list(selected, "findings", MAX_LISTED)
-    adds = strings([as_dict(item).get("fingerprint") for item in listed], FINGERPRINT)
+    adds = triaged_prints(selected, triaged)
     current = set(strings(a_list(selected, "current", MAX_FINDINGS), FINGERPRINT))
     ran = {
         f"{as_dict(pair).get('repo')}/{as_dict(pair).get('scanner')}"
@@ -250,9 +262,21 @@ def write_store(path: Path, seen: Seen) -> None:
         raise
 
 
-def mark(selected: dict[str, object], *, store: Path, today: str, status: str) -> int:
-    count = len(a_list(selected, "findings", MAX_LISTED))
-    seen = marked(selected, read_store(store)[0], today)
+def read_ids(text: str | None) -> set[str]:
+    """``--triaged``: a JSON list of listing ids, or ``BadInputError``."""
+    try:
+        ids = json.loads(text) if text is not None else None
+    except ValueError:
+        raise BadInputError from None
+    if not isinstance(ids, list) or len(ids) > 3 * MAX_LISTED:
+        raise BadInputError
+    return set(strings(ids, ID))
+
+
+def mark(selected: dict[str, object], *, store: Path, today: str, status: str, ids: str) -> int:
+    triaged = read_ids(ids)
+    count = len(triaged_prints(selected, triaged))
+    seen = marked(selected, read_store(store)[0], today=today, triaged=triaged)
     try:
         write_store(store, seen)
     except OSError as error:
@@ -266,6 +290,7 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="unseen.py", description=__doc__.split("\n")[0])
     parser.add_argument("command", choices=("select", "mark"))
     parser.add_argument("--status", default="", help="the report's status, for mark")
+    parser.add_argument("--triaged", default=None, help="the ids triage named (JSON), for mark")
     parser.add_argument("--store", default=STORE, help=argparse.SUPPRESS)
     parser.add_argument("--today", default="", help=argparse.SUPPRESS)
     arguments = parser.parse_args(argv)
@@ -280,7 +305,13 @@ def main(argv: list[str]) -> int:
         if arguments.command == "select":
             print(json.dumps(select(data, Path(arguments.store))))
             return 0
-        return mark(data, store=Path(arguments.store), today=today, status=arguments.status)
+        return mark(
+            data,
+            store=Path(arguments.store),
+            today=today,
+            status=arguments.status,
+            ids=arguments.triaged,
+        )
     except BadInputError:
         print(f"unseen.py: stdin is not the {arguments.command} input", file=sys.stderr)
         return 2

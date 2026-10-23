@@ -112,14 +112,14 @@ def inbox(tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: Any) 
     return Inbox(tmp_path, capsys, monkeypatch)
 
 
-def a_triage(*kept: Any, unresolved: Any = (), dropped: int = 0) -> Any:
-    return {"kept": list(kept), "unresolved": list(unresolved), "dropped": dropped}
+def a_triage(*kept: Any, unresolved: Any = (), dropped: Any = ()) -> Any:
+    return {"kept": list(kept), "unresolved": list(unresolved), "dropped": list(dropped)}
 
 
 def test_lists_only_kept_findings_when_triage_keeps_some(inbox: Inbox) -> None:
     kept = {"id": "F2", "attack": "A name reaches the SQL text.", "fix": "Bind it."}
 
-    code, output, text = inbox.report(a_triage(kept, dropped=2))
+    code, output, text = inbox.report(a_triage(kept, dropped=["F1", "F3"]))
 
     assert code == 0
     assert output == {
@@ -127,8 +127,10 @@ def test_lists_only_kept_findings_when_triage_keeps_some(inbox: Inbox) -> None:
         "kept": 1,
         "secrets": 0,
         "missing": [],
+        "triaged": ["F1", "F2", "F3"],
         "status": "findings",
     }
+    assert "## Not triaged" not in text
     assert "[high] `rule-2` - `api/db.py:12` (semgrep, app)" in text
     assert "> Attack: A name reaches the SQL text." in text
     assert "> Fix: Bind it." in text
@@ -296,3 +298,22 @@ def test_exits_two_when_triage_reply_is_not_json(
 
     assert (code, output) == (2, None)
     assert not (inbox.hub / "brain").exists()
+
+
+def test_lists_untriaged_findings_and_flags_mismatch_when_reply_undercounts(inbox: Inbox) -> None:
+    kept = {"id": "F2", "attack": "A name reaches the SQL text.", "fix": "Bind it."}
+
+    code, output, text = inbox.report(a_triage(kept, dropped=["F9"]))
+
+    assert code == 0
+    assert output["triaged"] == ["F2"]
+    assert "## Not triaged" in text
+    not_triaged = text.split("## Not triaged", 1)[1].split("## ", 1)[0]
+    assert "[high] `rule-1` - `api/run.py:11` (semgrep, app)" in not_triaged
+    assert "[high] `rule-3` - `api/views.py:13` (semgrep, app)" in not_triaged
+    assert "rule-2" not in not_triaged
+    assert (
+        "Triage accounted for 1 of 3 listed findings; the other 2 stay unseen and come back"
+        " next run." in text
+    )
+    assert "Triage named 1 id that is not in the listing; ignored." in text

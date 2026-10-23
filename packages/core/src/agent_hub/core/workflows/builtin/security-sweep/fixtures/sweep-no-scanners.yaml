@@ -28,6 +28,7 @@ stubs:
       kept: 0
       secrets: 0
       missing: ["demo-api: semgrep", "demo-api: bandit", "demo-api: pip-audit", "demo-api: npm", "demo-api: guard"]
+      triaged: []
       status: clean
   mark: {output: {status: clean, marked: 0, store_size: 0}}
 expect: {status: done, outcome: clean}
