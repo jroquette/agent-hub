@@ -5,7 +5,8 @@
 """Write the changes the owner kept as issue drafts in the hub's inbox, and say how the retro ended.
 
 ``drafts.py --nothing BOOL --count N --decision ID --note TEXT --summary TEXT [--today
-YYYY-MM-DD] [--root DIR]`` reads the ``vet`` step's output on stdin (empty when it did not run).
+YYYY-MM-DD]``, run in the hub, reads the ``vet`` step's output on stdin (empty when it did
+not run).
 An empty value reads as absent (its producer was skipped). The outcome is:
 
 - ``nothing to change`` when step 1 found no run (``--nothing true``) or no change passed the
@@ -137,7 +138,6 @@ def _arguments(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="drafts.py")
     for flag in ("--nothing", "--count", "--decision", "--note", "--summary", "--today"):
         parser.add_argument(flag, default="")
-    parser.add_argument("--root", default=".")
     return parser.parse_args(argv)
 
 
@@ -188,7 +188,7 @@ def main(argv: list[str]) -> int:
             kept, summary=given.summary, today=today, run_id=os.environ.get("AGENT_HUB_RUN_ID", "")
         )
         try:
-            path = write(Path(given.root), text, today).as_posix()
+            path = write(Path(), text, today).as_posix()
         except (DraftError, OSError) as error:
             print(f"drafts.py: {error}", file=sys.stderr)
             return 1
