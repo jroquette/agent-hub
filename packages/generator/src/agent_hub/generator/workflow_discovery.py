@@ -38,10 +38,10 @@ from importlib.resources import files
 from pathlib import Path, PurePosixPath
 from typing import Final, Literal
 
+from agent_hub.core.regular_files import read_regular
 from agent_hub.core.workflows.document import WorkflowDocument, parse_workflow
 from agent_hub.core.workflows.includes import IncludeResolver
 from agent_hub.generator.errors import GeneratorError
-from agent_hub.generator.regular_files import read_regular
 from agent_hub.generator.workflow_yaml import (
     JSON_SUFFIX,
     MAX_WORKFLOW_BYTES,

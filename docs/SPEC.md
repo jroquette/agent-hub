@@ -440,11 +440,11 @@ A web app reads the hubs and the agents' events and answers five questions, one 
 | Workflows | How should work flow? | Editor and visualization of steps and gates; which step each task is at; where it gets stuck |
 | Sessions | What are the agents doing right now, and which one needs me? | Every session, observed or driven, in status sections (waiting first) as tiles or a table: last action, accumulated turns and cost, pending approvals |
 | Session timeline | Why did the agent do that? | Messages, reasoning summaries, tool calls, files and diffs, marked decisions and the final outcome |
-| Knowledge | What does it know and what did it learn? | Context loaded in the session (rules, brain, memory), search over the brain and docs, links between notes, proposed learnings, inbox triage, evolution over time |
+| Knowledge | What does it know and what did it learn? | Context loaded in the session (rules, brain, memory), search over the brain and docs, links between notes (each note's "Linked from", AGH-393), proposed learnings, inbox triage, evolution over time |
 
 **Decisions as objects.** A decision is a stretch of the session with a choice, discarded alternatives and a rationale. In v1 it is extracted from the transcript. Later, agents can record it explicitly through a skill or hook (`/decide`).
 
-**Learning with provenance.** Every brain item and every learning keeps its source session, its author (human or agent) and its status. The knowledge view shows the path session → proposal → accepted → rule and measures whether the rule reduced the failure that motivated it (which `mine_transcripts.py` and `retro_metrics.py` already start to do).
+**Learning with provenance.** Every brain item and every learning keeps its source session, its author (human or agent) and its status. The knowledge view shows the trail session → proposal → decision (its pull request) → note in the learning detail, each step a link to its record, and on each note where it came from: its provenance and sources, the accepted learnings that put it there and their sessions (AGH-393). It does not measure whether a note or a rule changed later behaviour: no effect metric and no causal claim (design Q16).
 
 **Search and team memory (AGH-388, [ADR 0044](adr/0044-team-memory-git-source-local-index-and-hub-mcp.md), accepted).**
 Git stays the source of truth. Each developer's database holds a derived full-text index (SQLite FTS5) of the hub's
@@ -455,8 +455,13 @@ with no word (`!!!`, `(`) exits 2, and one that starts with `-` goes after `--` 
 writes a new `brain/_inbox/` note on a branch `<prefix>learning-propose-<slug>` and opens a hub pull request through
 `hub_git`, never the default branch; its `kind` names the brain folder the note would join (`learning`, `playbook`,
 `decision`, `domain` or `system`).
-The knowledge view gains the same search, links between notes and the provenance path above. Transcripts are never
-indexed or shared; embeddings and hosting are out of scope.
+`hub web` (AGH-393) searches the same index through one route, `GET /api/v1/projects/{project}/knowledge/search`,
+from the project's Brain screen and the ⌘K palette's "Brain notes" group; it syncs before it searches, as `hub search`
+does, on the same rows when the hub is registered at its main checkout. The index also stores each document's
+Markdown links into `brain/` (read with the doctor's `links.dead` scan), so each note shows "Linked from"
+(`GET /api/v1/projects/{project}/brain/backlinks`, synced on read), and `GET /api/v1/learnings?brain_path=` gives the
+learnings behind a note for the provenance above. Transcripts are never indexed or shared; embeddings and hosting are
+out of scope.
 
 **Actions, not just reading (after v1).** Start a workflow on an issue, approve a gate, pause or cancel a session, accept a learning (built early, through a hub PR: AGH-201 below).
 
@@ -961,7 +966,7 @@ The MVP goes up to Phase 2: generate hubs from Loki and see the agents' sessions
 | 3 · Knowledge and decisions | Provenance in the brain, inbox triage in the UI (accept and reject moved to Phase 2 by AGH-201; snooze stays here), extracted decisions, learning metrics | One learning traced from the session to the rule |
 | 4 · Workflows as data and actions | Generic executor reading the workflow ([ADR 0032](adr/0032-workflow-engine.md)), gates approved from the UI, adapters for other agents | — |
 
-Status (2026-10-22, latest release v0.20.1; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
+Status (2026-10-23, latest release v0.21.0; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
 Phase 1 in progress: `init`, `sync` (`--adopt`), `doctor`, `worktree`, `brief`, `agent`, `next`, `run` and `bench`
 shipped in v0.8.0, and `setup`, `start` and `ship` in v0.9.0. Phase 2's first slice is shipped too: the control plane
 `hub web` (AGH-200) in v0.9.0 and its clarity pass (AGH-201: session labels, problems, learning accept and reject
@@ -982,8 +987,10 @@ AGH-403), scenarios with `hub scenario` and `hub action` (AGH-355 to AGH-360), t
 `/implement` runs the built-in `implement` workflow, plan change requests decided in `hub web`), `hub search` and
 `hub mcp` over the hub's knowledge (ADR 0044), the read-only investigation session (AGH-361) and scenario findings
 and routes (AGH-362, AGH-363), and v0.20.1 the third playground delivery (AGH-415) and the release tag created by
-the dispatched release workflow (ADR 0047); unreleased: the Scenarios screens in `hub web` (AGH-364) and the example
-scenario `hub init` writes (AGH-365); other agents' adapters stay in Phase 4. The Phase 1 gate (Loki hub recreated) is open;
+the dispatched release workflow (ADR 0047), and v0.21.0 the Scenarios screens (AGH-364), the merged ticket's
+outcome and the dependents' preflight (AGH-473) and `repos[].ui_paths` with the `ux` and `overengineering` review
+outputs (AGH-474); unreleased: the example scenario `hub init` writes (AGH-365);
+other agents' adapters stay in Phase 4. The Phase 1 gate (Loki hub recreated) is open;
 pilot: AGH-54.
 
 The order follows dogfooding: the first generated hub is the platform's own, and the second replaces `loki-trader-hub`. Editable workflows come later because they depend on observation already showing where the current flow gets stuck.

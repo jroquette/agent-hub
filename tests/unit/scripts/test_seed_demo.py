@@ -47,12 +47,16 @@ FOLDER = HUB / "brain" / "features" / FEATURE
 class FakeTarget:
     """Records what the seed writes and the hub commands it runs; answers each command 0."""
 
-    def __init__(self, workdir: str = "/data/demo", *, init_stderr: str = "") -> None:
+    def __init__(
+        self, workdir: str = "/data/demo", *, init_stderr: str = "", git_stderr: str = ""
+    ) -> None:
         self.workdir = PurePosixPath(workdir)
         self.files: dict[str, str] = {}
         self.commands: list[list[str]] = []
         self.python_runs: list[tuple[list[str], str]] = []
+        self.git_runs: list[list[str]] = []
         self._init_stderr = init_stderr
+        self._git_stderr = git_stderr
 
     def write(self, path: PurePosixPath, text: str) -> None:
         self.files[str(path)] = text
@@ -66,6 +70,11 @@ class FakeTarget:
     def python(self, arguments: Sequence[str], stdin: str) -> subprocess.CompletedProcess[str]:
         self.python_runs.append((list(arguments), stdin))
         return subprocess.CompletedProcess(arguments, 0, "", "")
+
+    def git(self, arguments: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        self.git_runs.append(list(arguments))
+        code = 1 if self._git_stderr else 0
+        return subprocess.CompletedProcess(arguments, code, "", self._git_stderr)
 
 
 class FakeServer:
@@ -264,6 +273,66 @@ def test_keeps_going_when_hub_exists_and_is_registered(capsys: pytest.CaptureFix
 
     assert code == 0
     assert len(target.commands) == 3
+
+
+def test_makes_demo_hub_git_checkout_when_seeded(capsys: pytest.CaptureFixture[str]) -> None:
+    target = FakeTarget()
+    server = FakeServer()
+
+    code = main(["--url", URL], target=target, transport=httpx.MockTransport(server))
+
+    assert code == 0
+    assert target.git_runs == [["init", "-q", "/data/demo/demo-hub"]]
+
+
+def test_fails_naming_git_when_git_init_fails(capsys: pytest.CaptureFixture[str]) -> None:
+    target = FakeTarget(git_stderr="git: not found\n")
+
+    code = main(["--url", URL], target=target, transport=httpx.MockTransport(FakeServer()))
+
+    assert code == 1
+    assert "error: git init failed: git: not found" in capsys.readouterr().err
+
+
+def test_runs_git_init_when_local_target_runs_git() -> None:
+    calls: list[list[str]] = []
+
+    def runner(command: list[str], stdin: str | None) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    result = LocalTarget(workdir=PurePosixPath("/x"), runner=runner).git(
+        ["init", "-q", "/x/demo-hub"]
+    )
+
+    assert result.returncode == 0
+    assert calls == [["git", "init", "-q", "/x/demo-hub"]]
+
+
+def test_fails_naming_git_when_git_not_found() -> None:
+    calls: list[list[str]] = []
+
+    def runner(command: list[str], stdin: str | None) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        raise FileNotFoundError(command[0])
+
+    with pytest.raises(SeedError, match="^git init failed: git not found$"):
+        LocalTarget(workdir=PurePosixPath("/x"), runner=runner).git(["init", "-q", "/x/hub"])
+    assert calls == [["git", "init", "-q", "/x/hub"]]
+
+
+def test_runs_git_in_service_when_compose_target_runs_git() -> None:
+    calls: list[list[str]] = []
+
+    def runner(command: list[str], stdin: str | None) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    ComposeTarget(runner=runner).git(["init", "-q", "/data/demo/demo-hub"])
+
+    assert calls == [
+        ["docker", "compose", "exec", "-T", "agent-hub", "git", "init", "-q", "/data/demo/demo-hub"]
+    ]
 
 
 def test_fails_naming_command_when_hub_command_fails(capsys: pytest.CaptureFixture[str]) -> None:

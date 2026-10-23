@@ -85,7 +85,7 @@ describe("LearningsScreen", () => {
     expect(within(detail).getByText("Proposed")).toBeInTheDocument();
     expect(within(detail).getByRole("link", { name: /Open at that moment/ })).toHaveAttribute(
       "href",
-      `/sessions/${anId(1, "5091b986")}?tab=timeline&event=${anId(10, "0192aaaa")}`,
+      `/sessions/${anId(1, "5091b986")}?event=${anId(10, "0192aaaa")}`,
     );
   });
 

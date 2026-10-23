@@ -73,7 +73,9 @@ def test_reads_file_when_size_or_mtime_changed(fingerprint: Fingerprint) -> None
 def test_reads_file_when_new() -> None:
     new = _listed("brain/b.md")
 
-    plan = plan_sync(_stored(_indexed("brain/a.md")), (_listed("brain/a.md"), new), version=1)
+    plan = plan_sync(
+        _stored(_indexed("brain/a.md")), (_listed("brain/a.md"), new), version=INDEX_VERSION
+    )
 
     assert plan == NOTHING.model_copy(update={"to_read": (_read(new),)})
 

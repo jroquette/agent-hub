@@ -1,7 +1,8 @@
 # Knowledge › Brain and Skills: project index, page head and Brain tree
 
-**Phase:** P2 (read-only, as built AGH-201, AGH-164, AGH-270) · **Routes:** `/knowledge/brain`, `/knowledge/skills`
-(All projects), `/projects/:project/brain/*`, `/projects/:project/skills` · **Answers:** "What does each project's hub
+**Phase:** P2 (read-only, as built AGH-201, AGH-164, AGH-270, AGH-393) · **Routes:** `/knowledge/brain`,
+`/knowledge/skills` (All projects), `/projects/:project/brain/*?q=` (`?q=` written with `replace`, the note path with
+`push`), `/projects/:project/skills` · **Answers:** "What does each project's hub
 know and what can its agents do, and where do I start reading?"
 
 The owner validated this in the playground (AGH-270). It refines the pickers that `01-navigation.md` describes
@@ -103,9 +104,11 @@ projects, and figures or a problems foot for Hub config.
 - **AC-270.9** Given a brain, when its tree renders, then the root notes are under "Start here" (Index and Now
   first, by those names), the folders under "Folders", and `_inbox/` apart under "Inbox · unreviewed" with a link
   "Triage in Learnings"; every folder shows how many notes it holds, subfolders included, in its accessible name.
-- **AC-270.10** Given the Brain tree, when the user types in "Filter notes" (or presses `/` to focus it), then the
-  tree becomes the flat list of notes whose path contains the text, each with its folder; with none it says
-  "No note matches "<text>"." with "Clear filter", and `Esc` clears the filter.
+- **AC-270.10** (changed by AGH-393) Given the Brain tree, when the user types in "Search notes and repo docs" (or
+  presses `/` to focus it), then the tree gives way to two lists: "Paths matching "<text>" · <n>", the notes whose
+  path contains the text, each with its folder, the first 8 then "Show all <n> path matches" (AM-1); and "Text
+  matching "<text>"", the knowledge index's matches (see the AGH-393 section below). With no match in either it says
+  "Nothing matches "<text>"." with "Clear search", and `Esc` clears the field and brings the tree back.
 - **AC-270.11** Given a hub with no `brain/` notes, when its Brain opens, then the tree shows "No brain in this hub"
   with the command `./hub sync`.
 
@@ -114,7 +117,7 @@ projects, and figures or a problems foot for Hub config.
 Folder rows and note links are at least 24 px high. A picker card is an `article` labelled by its name, which is
 the one link that opens it (the card's click is a mouse convenience); the foot link and Retry are their own Tab
 stops and do not open the card. The tree's groups are sections labelled by their headings; the
-filter has the accessible name "Filter brain notes". Count cells are tabular numbers.
+search field has the accessible name "Search brain notes and repo docs" (AGH-393). Count cells are tabular numbers.
 
 ## UX principles applied
 
@@ -125,6 +128,151 @@ filter has the accessible name "Filter brain notes". Count cells are tabular num
 | Breadcrumb and purpose line | H1 visibility of where you are; five-second test |
 | Scope switcher follows the page | H4 consistency (`01-navigation.md`: changing scope on a project route opens that project's page of the same kind) |
 | Filter with `/` and `Esc` | Keyboard map (`01-navigation.md`) |
+| One field for paths and text, `/` focuses it (AGH-393) | Spec 01 keyboard map ("the page's search or filter field"); H4 consistency |
+| Paths first, text second (AGH-393) | No layout shift under what the user reads (22 loading rules); H1 |
+| Results beside the open note, the query in `?q=` (AGH-393) | H6 recognition over recall; context kept |
+| Path list capped at 8 (AGH-393) | H8 minimalist design; progressive disclosure |
+| Repo docs listed but not linked, the reason in words (AGH-393) | H1 honest status; WCAG 1.4.13 |
+| `inbox · unreviewed`, `ExternalLabel` on a result (AGH-393) | Product principle 4 (provenance) |
+| Snippet as plain text, no colour on kind or status (AGH-393) | Principle 3 (show only what the record shows); AC-271.1 |
+| Body first, the two note sections after it, one-step jumps in the header (AGH-393) | Progressive disclosure (H8); the five-second test for a note is reading it |
+| Fields the note sections show leave the chips (AGH-393) | H8 (no duplicate); Learning detail already drops `provenance` from its chips |
+| No count, no effect wording in "Where this note came from" (AGH-393) | Q16 (`32-decisions.md`) |
+| Search, each note section and the note load and fail on their own (AGH-393) | 22 "Region independence"; H9 |
+
+## Search, Linked from and Where this note came from (AGH-393)
+
+The owner approved these designs with the spec (AGH-393 AM-1). They add a text search over the knowledge index (the
+one `hub search` uses) to a project's Brain, and two sections after the note: where it came from and which documents
+link to it. All of it is read-only; the Brain screen is the only one that shows the two sections (Feature detail's
+tabs render the same `NoteView` without them).
+
+```
++------------------------------------+  +-------------------------------------------------------------+
+| [search] worktrees                 |  | [file] brain/learnings/web-gates.md  Where it came from     |
+|                                    |  |        Linked from · 2                          [Discuss]   |
+| PATHS MATCHING "worktrees" · 1     |  | type: learning  repos: agent-hub  (no provenance, sources)  |
+|  0001-worktrees.md  decisions/     |  | # Web gates need the a11y run                               |
+| TEXT MATCHING "worktrees" · 3      |  | ...note body (80 ch)...                                     |
+| (i) demo-web: not checked out; its |  |-------------------------------------------------------------|
+|     docs are not searched          |  | Where this note came from                                   |
+| [file] Worktrees from origin       |  | Provenance  [agent]                                         |
+|        brain/decisions/0001-w…md   |  | Sources     AGH-272 review notes                            |
+|        decision · accepted         |  | Learnings   [bulb] Run the a11y tests before the PR  In brain|
+|        …every task runs in its own |  |             Accepted 4 Oct 2026 by José · session 5091b986  |
+| [book] Repo guide                  |  |-------------------------------------------------------------|
+|        demo-api/docs/guide.md      |  | Linked from · 2                                             |
+|        doc · repo doc, not opened  |  | [file] Cleanup after merge  brain/playbooks/cleanup.md      |
+| 2 files were not searched. [Show which]  | [book] Repo guide  demo-api/docs/guide.md · repo doc      |
++------------------------------------+  +-------------------------------------------------------------+
+```
+
+**Search panel.** One field, "Search notes and repo docs" (accessible name "Search brain notes and repo docs",
+`type="search"`, at most 500 characters, the route's bound), sits over the tree. With an empty field the panel is the
+tree, as before. Typing shows, in place of the tree:
+
+- **Paths matching "<text>" · <n>**, at once: the AC-270.10 path filter, the first 8 with "Show all <n> path matches"
+  (then "Show the first 8"; the button carries `aria-expanded`); hidden when no path matches.
+- **Text matching "<query>" · <n>**, 120 ms after the last key (`Enter` sends it at once): the results of
+  `GET /projects/{project}/knowledge/search?q=` (no `limit`, so the route's 50) in the index's rank order, one knowledge
+  row each. At 50 the heading reads "· 50 best" and a footnote says "Showing the 50 best matches. Add a word to narrow
+  the search." Each `warnings` line ("demo-web: not checked out; its docs are not searched") is an info `Banner`, not
+  live, above the rows. When the answer skipped files: "<n> files were not searched (a secret rule matched, too
+  large, or unreadable)." with "Show which", which lists each "<path> · <reason>".
+
+The query is kept in `?q=` with `replace`; every link inside the Brain (tree, results, the note's own links, Linked
+from) keeps it, so Back and forward restore the list and the note together. A query with no letter or digit is not
+sent.
+
+**Knowledge row** (a screen-local pattern, `KnowledgeRow.tsx`, shared by the results and Linked from): an icon and
+the **title** (one line, the whole title on hover), the **path** (`PathText`, mono, middle-truncated to 34
+characters, folder dimmed, the full path on hover), the **kind** and status (`decision · accepted`; kind `inbox`
+reads `inbox · unreviewed`; provenance `agent-from-external` adds `ExternalLabel`; neither is coloured), and in search
+the **snippet** as plain text, clamped to 3 lines (2 below 900 px) by CSS so a screen reader reads it all.
+
+- A result under `brain/` that the note route serves is one link to its note (keeping `?q=`), named by its title, the
+  rest its description; the open note's row carries `aria-current="page"`.
+- A result under `<dir>/docs/` is text, not a link: `book` icon, the kind line ends "· repo doc, not opened here", and
+  the tooltip says "Repo docs are not opened in the app".
+- A `brain/` path the note route would refuse (AM-8: not a `.md` file, a hidden or empty segment, under `brain/auto/`,
+  over 16 segments or 512 characters, or a control character or backslash) is text too, `file-text` icon: the kind
+  line ends "· not opened here", the same words as a repo doc, and the tooltip gives the reason, "The app does not
+  open notes at this path (not a .md file, a hidden name, under auto/, too long or deep, or with an empty part or
+  characters the app does not serve)". The row is not in the Tab order: its visible words "not opened here" carry the
+  reason for keyboard and touch users, and the tooltip, which also describes the row for a screen reader, adds the
+  detail on hover.
+- Only a row that opens a note highlights on hover; a text row (repo doc or refused note) does not.
+
+**Note column.** The header row holds the path, two quiet in-page buttons, **"Where it came from"** and **"Linked from
+· <n>"** ("Linked from" until the count is known), and Discuss. Each button scrolls to its section (smooth only
+without reduced motion) and focuses the section's heading; the URL is untouched. Their accessible names are their
+visible text (WCAG 2.5.3 label in name), not a longer "Go to …" name. The frontmatter chips leave out `provenance` and
+`sources`, and `session` while the section below shows it as a link; every other field stays a chip. After the body,
+each behind a `border` hairline and 80 ch wide:
+
+- **Where this note came from** (`h2`), a definition list with a 120 px label column; a row shows only when it has
+  something:
+  - **Provenance:** the frontmatter value; `human`, `agent`, `agent-from-code` and `agent-from-external` render as
+    `ProvenanceBadge` (the last adds `ExternalLabel`), any other value as text.
+  - **Sources:** the frontmatter `sources` as text, never resolved, fetched or linked, one per line; the first 5,
+    then "Show all <n> sources" (then "Show the first 5").
+  - **Learnings:** the accepted learnings whose note this is, from
+    `GET /learnings?project=&brain_path=&status=accepted&limit=10`, in the list's order (newest proposal first, AM-7):
+    `lightbulb`, the title (without "Proposal:") linking to `/knowledge/learnings/<id>`, its `LearningStateBadge`
+    ("In brain", "Accepted · PR open"), then "Accepted <4 Oct 2026> by <person>" (the date in the top bar's time zone,
+    the time on hover; without a decider "Accepted <date>", without a date "Accepted") · "session <short id>" linking
+    to `/sessions/<id>` (name "Session <full id>", the full id on hover) or "no source session recorded". With a next
+    page: "More learnings name this note; the 10 newest are shown."
+  - **Session:** only once the learnings are read and none names a session, and the frontmatter `session:` matches
+    `^[A-Za-z0-9_-]{1,128}$`: "session <short id>" linking to `/sessions/<value>` (tooltip "Opens the session if this
+    app collected it."), then "From the note's frontmatter." Any other value stays a chip.
+  - None of these: "No provenance recorded for this note."
+
+  No count of sessions and no "since", "fixed", "improved", "effect" or "impact" wording (Q16).
+- **Linked from · <total>** (`h2`): the documents whose Markdown links point to this note, from
+  `GET /projects/{project}/brain/backlinks?path=` (the route syncs the index first), sorted by path, as knowledge rows
+  without a snippet; a `brain/` source opens its note and moves the focus to its path line. Over 100: "and <n> more"
+  (text). None: "No note links here."
+
+The note, its backlinks and its learnings are asked for together when the note opens, and each section renders when
+its own answer arrives; a note that does not load (404, 413, an error) shows neither section nor the jump buttons.
+
+**States.**
+
+| State | Search panel | Where this note came from | Linked from |
+|---|---|---|---|
+| Loading | Path list at once; 3 skeleton rows under "Text matching" after 300 ms, held at least 300 ms (`aria-busy`); a screen reader hears "Searching notes" after 1 s | Provenance and sources at once (they come with the note); the Learnings row a 2-line skeleton | 2 skeleton rows (`aria-busy`) |
+| Slow first read (after 2 s) | "Reading the hub's notes for this search. A first search after an update can take a few seconds." | — | "Reading the hub's notes to find the links. A first read after an update can take a few seconds." |
+| Empty | "Nothing matches "<text>"." with "No note path or text contains it." (several words: "Every word must appear: try fewer words.") and "Clear search" | "No provenance recorded for this note." | "No note links here." |
+| No word in the query (`!!!`, or the route answers 400) | "Type a letter or a digit to search the text of notes." (path matches still show) | — | — |
+| Failed | `ProblemError` (compact) in the text section only: the problem's title and detail (e.g. 502 "Could not read the hub's files" with AGH-391's line), "Try again" | Learnings row: `ProblemError` "Could not load the learnings for this note." with "Try again"; the rest shows | `ProblemError` (compact) with the problem's title and detail, "Try again"; the note still shows |
+| Server not responding | "The app's server is not responding" / "Check that hub web is still running, then try again." | as Failed | "The app's server is not responding" / the same detail |
+
+**Keyboard.** `/` focuses the field; `Esc` in it clears it; `Enter` searches at once; `↓` moves to the first result
+(path matches first). In the results `↓`/`↑` and `j`/`k` move between rows (repo-doc rows included, so the list reads
+in rank order; they are not Tab stops), `↑` on the first row returns to the field, `Enter` opens a brain row, and
+`Esc` returns to the field without clearing it. Opening a result keeps the focus on that row; below 900 px, with the panel
+stacked above the note, the focus moves to the note's path line.
+
+**Accessibility.** The two lists and the two note sections are `section`s labelled by their `h2`. One visually hidden
+`role="status"` line announces the counts once per settled query ("1 path and 3 text matches for "worktrees"." /
+"Nothing matches "zebra"."). Rows are at least 24 px with the focus ring on the whole row.
+
+- **AC-393.3** Given the Brain screen with the search route mocked, when the user presses `/`, types `worktrees` and
+  the debounce passes, then "Text matching" lists each result's path, kind, title and snippet, the URL holds
+  `?q=worktrees`, the decision opens its note (the URL keeps `?q=`), a repo doc is text with the tooltip "Repo docs are
+  not opened in the app", and the path list still narrows. Test: `screens/brain/index.test.tsx` "search: …" tests.
+- **AC-393.13** Given the note with the backlinks route mocked, when it answers two items, then "Linked from" lists
+  both, the `brain/` one a link; none → "No note links here."; `total: 130` with 100 items → "and 30 more"; a failure
+  → the problem with "Try again", the note still shown. Test: `screens/brain/LinkedFrom.test.tsx` "linked from: …".
+- **AC-393.16** Given a note with `provenance: agent`, `sources: [a, b]` and an accepted learning from session `s1`,
+  when it renders, then "Where this note came from" shows the provenance and sources as text, the learning's title
+  linking to `/knowledge/learnings/<id>` and "session s1" to `/sessions/s1`; with no learning and `session: s-123`
+  that session links; `"bad id!"` shows no session; none → "No provenance recorded for this note."; no effect words
+  or session counts in any case. Test: `screens/brain/NoteOrigin.test.tsx` "came from: …".
+- **AC-393.18** (this screen) axe reports no serious or critical violation with the search results, no match and a
+  failure, and with both note sections. Tests: `index.test.tsx` "search panel … (a11y)", `LinkedFrom.test.tsx` and
+  `NoteOrigin.test.tsx` "(a11y)".
 
 ## Toolkit catalog and Edit with Claude (AGH-271)
 
