@@ -481,7 +481,7 @@ class ScenarioCatalog:
         runs = tuple(_run_ref(run, hub) for run in page.items)
         summary = _summary(project, plan, pack=pack, last=runs[0] if runs else None)
         steps = tuple(_step_view(node) for node in plan.document.nodes)
-        text = _read_text(file, DOCUMENT_TEXT_BYTES)[0]
+        text = read_text_bounded(file, DOCUMENT_TEXT_BYTES)[0]
         refs = dict.fromkeys(step.action for step in steps if step.action is not None)
         found = discover_actions(Path(hub)) if refs else None
         return ScenarioDetail(
@@ -770,7 +770,7 @@ def _text_of(data: bytes | None, limit: int) -> tuple[str | None, bool]:
     return data[:limit].decode(errors="replace"), len(data) > limit
 
 
-def _read_text(path: Path, limit: int) -> tuple[str | None, bool]:
+def read_text_bounded(path: Path, limit: int) -> tuple[str | None, bool]:
     """A file's text read up to ``limit`` bytes, never through a link; None if unreadable."""
     try:
         descriptor = os.open(path, _READ_FILE)

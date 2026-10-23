@@ -1024,7 +1024,12 @@ export interface paths {
      */
     get: operations["list_actions_api_v1_projects__project__actions_get"];
     put?: never;
-    post?: never;
+    /**
+     * Post Action
+     * @description Writes a new action (its document and its script) into the hub as a draft: a strict
+     *     write that needs the launch cookie; it runs nothing and commits nothing.
+     */
+    post: operations["post_action_api_v1_projects__project__actions_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -1613,6 +1618,47 @@ export interface paths {
      *     but the scripts' plan mode, with no credential and only when a step's args are known.
      */
     post: operations["plan_scenario_api_v1_scenarios__project___name__plan_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/scenarios/{project}/{name}/proposal": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Proposal
+     * @description Claude's proposal for the scenario (a file in the hub's ignored ``.agent-runs/``),
+     *     checked as Save would check it; 404 when there is none.
+     */
+    get: operations["get_proposal_api_v1_scenarios__project___name__proposal_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/scenarios/{project}/{name}/proposal/dismiss": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Delete Proposal
+     * @description Removes Claude's proposal once the owner accepted it into the draft or rejected it.
+     */
+    post: operations["delete_proposal_api_v1_scenarios__project___name__proposal_dismiss_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -2243,6 +2289,24 @@ export interface components {
       reason_kind: string | null;
       /** Status */
       status: string | null;
+    };
+    /** ActionInputDraft */
+    ActionInputDraft: {
+      /** Description */
+      description?: string | null;
+      /** Name */
+      name: string;
+      /**
+       * Required
+       * @default false
+       */
+      required: boolean;
+      /**
+       * Type
+       * @default string
+       * @enum {string}
+       */
+      type: "string" | "integer" | "number" | "boolean" | "service";
     };
     /**
      * ActionInputSpec
@@ -4692,6 +4756,40 @@ export interface components {
     };
     /** @enum {string} */
     NeedsYouKind: "approval" | "failed" | "waiting" | "blocked" | "doctor" | "learning";
+    /**
+     * NewAction
+     * @description A new action from the builder: its facts and its script's text.
+     */
+    NewAction: {
+      /** Description */
+      description: string;
+      /**
+       * Effect
+       * @enum {string}
+       */
+      effect: "read" | "write" | "destroy";
+      /** Inputs */
+      inputs?: components["schemas"]["ActionInputDraft"][];
+      /** Name */
+      name: string;
+      /** Outputs */
+      outputs?: components["schemas"]["OutputFieldDraft"][];
+      /** Pack */
+      pack: string;
+      /**
+       * Runtime
+       * @default python
+       * @enum {string}
+       */
+      runtime: "python" | "sh";
+      /** Script Text */
+      script_text: string;
+      /**
+       * Timeout
+       * @default 5m
+       */
+      timeout: string;
+    };
     /** NodeLines */
     NodeLines: {
       /** First Line */
@@ -4825,6 +4923,17 @@ export interface components {
       path: string;
       /** Type */
       type: string | null;
+    };
+    /** OutputFieldDraft */
+    OutputFieldDraft: {
+      /** Name */
+      name: string;
+      /**
+       * Type
+       * @default string
+       * @enum {string}
+       */
+      type: "string" | "integer" | "number" | "boolean" | "object" | "array";
     };
     /**
      * OwnerSignOffBody
@@ -5398,6 +5507,22 @@ export interface components {
       options: components["schemas"]["OptionEntry"][];
       /** Proposal */
       proposal: number;
+    };
+    /**
+     * ProposalView
+     * @description Claude's proposal for the scenario: the document it wrote, checked as Save would check
+     *     it (never written to the scenario file until the owner accepts it and saves).
+     */
+    ProposalView: {
+      check: components["schemas"]["ValidateResult"] | null;
+      /** Document */
+      document: {
+        [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue-Output"];
+      } | null;
+      /** Path */
+      path: string;
+      /** Problem */
+      problem?: string | null;
     };
     /** @enum {string} */
     ProposedAccess: "read" | "ask" | "write";
@@ -7540,11 +7665,11 @@ export interface components {
     };
     /**
      * UnitKind
-     * @description What a unit is: a skill's folder, an agent's file, a hook file, a hub workflow file or a
-     *     scenario file (the scenario builder's saves).
+     * @description What a unit is: a skill's folder, an agent's file, a hook file, a hub workflow file, a
+     *     scenario file, or an action's document or script (the scenario builder's saves).
      * @enum {string}
      */
-    UnitKind: "skill" | "agent" | "hook" | "workflow" | "scenario";
+    UnitKind: "skill" | "agent" | "hook" | "workflow" | "scenario" | "action";
     /**
      * UnitState
      * @description What the last read found in a unit: stored (or equal to its last version), or why not.
@@ -10327,6 +10452,50 @@ export interface operations {
       };
     };
   };
+  post_action_api_v1_projects__project__actions_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["NewAction"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ScenarioActionView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
   get_brain_tree_api_v1_projects__project__brain_get: {
     parameters: {
       query?: never;
@@ -11731,6 +11900,86 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["ScenarioPlanView"];
         };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_proposal_api_v1_scenarios__project___name__proposal_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        name: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProposalView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  delete_proposal_api_v1_scenarios__project___name__proposal_dismiss_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        name: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       /** @description A client error, as an RFC 9457 problem */
       "4XX": {

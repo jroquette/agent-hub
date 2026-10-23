@@ -1957,3 +1957,62 @@ def test_refuses_stale_invalid_and_taken_when_builder_saves(scenarios: Any) -> N
     assert (invalid.status_code, invalid.json()["code"]) == (409, "document_invalid")
     assert (taken.status_code, taken.json()["code"]) == (409, "name_taken")
     assert writes.calls == []
+
+
+def test_reads_checks_and_drops_claudes_proposal_when_builder_reviews(scenarios: Any) -> None:
+    route = "/api/v1/scenarios/demo/order-walk/proposal"
+    missing = scenarios.client.get(route)
+    proposal = (
+        scenarios.hub / ".agent-runs" / "proposals" / "scenarios" / "demo" / "order-walk.yaml"
+    )
+    proposal.parent.mkdir(parents=True)
+    proposal.write_text(WALK.replace("One demo order from send to hold", "Proposed by Claude"))
+
+    shown = scenarios.client.get(route)
+    dropped = _post(scenarios, "/scenarios/demo/order-walk/proposal/dismiss", {})
+
+    assert missing.status_code == 404
+    assert shown.status_code == 200, shown.text
+    body = shown.json()
+    assert body["path"] == ".agent-runs/proposals/scenarios/demo/order-walk.yaml"
+    assert body["document"]["description"] == "Proposed by Claude"
+    assert body["check"]["loads"] is True
+    assert dropped.status_code == 204
+    assert not proposal.exists()
+
+
+NEW_ACTION = {
+    "pack": "demo",
+    "name": "render-invoice-pdf",
+    "description": "Render the invoice PDF and upload it",
+    "effect": "write",
+    "runtime": "python",
+    "inputs": [{"name": "invoice_no", "type": "string", "required": True}],
+    "outputs": [{"name": "pdf_key", "type": "string"}],
+    "script_text": "import json, sys\nprint(json.dumps({'summary': 'render'}))\n",
+}
+
+
+def test_writes_draft_action_when_builder_creates_one(scenarios: Any) -> None:
+    writes = _DiskWrites()
+    scenarios.wire(item_version_writes=writes)
+
+    created = _post(scenarios, "/projects/demo/actions", NEW_ACTION)
+    again = _post(scenarios, "/projects/demo/actions", NEW_ACTION)
+    bad = _post(
+        scenarios,
+        "/projects/demo/actions",
+        dict(NEW_ACTION, name="bad-schema", outputs=[{"name": "x", "type": "nope"}]),
+    )
+
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert (body["name"], body["effect"], body["draft"]) == ("render-invoice-pdf", "write", True)
+    assert body["script"] == "actions/demo/scripts/render_invoice_pdf.py"
+    assert [item["name"] for item in body["inputs"]] == ["invoice_no"]
+    assert writes.calls == [
+        "actions/demo/scripts/render_invoice_pdf.py",
+        "actions/demo/render-invoice-pdf.yaml",
+    ]
+    assert (again.status_code, again.json()["code"]) == (409, "name_taken")
+    assert bad.status_code == 422
