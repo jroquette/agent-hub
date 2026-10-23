@@ -195,3 +195,39 @@ def test_writes_nothing_when_config_read(
     config_of(run_command, hub)
 
     assert sorted(path.relative_to(hub) for path in hub.rglob("*")) == before
+
+
+def test_prints_null_prefix_when_no_source_gives_one(
+    demo_workspace: Workspace, run_command: CommandRunner
+) -> None:
+    demo_workspace.drop_identity()
+
+    output = config_of(run_command, demo_workspace.hub)
+
+    assert output["branch_prefix"] is None
+    assert output["author_name"] is None
+    assert output["author_email"] is None
+
+
+def test_refuses_branch_when_no_source_gives_a_prefix(
+    demo_workspace: Workspace, run_command: CommandRunner
+) -> None:
+    demo_workspace.drop_identity()
+
+    result = run_command(
+        demo_workspace.hub, "step", "config", "--branch", "doc-drift", "--slug", "x"
+    )
+
+    assert result.exit_code == 2, result.output
+    assert result.stdout == ""
+
+
+def test_prints_the_author_when_hub_json_sets_it(
+    demo_workspace: Workspace, run_command: CommandRunner
+) -> None:
+    project = hub_document(demo_workspace.hub)["project"]
+
+    output = config_of(run_command, demo_workspace.hub)
+
+    assert output["author_name"] == project["author_name"]
+    assert output["author_email"] == project["author_email"]
