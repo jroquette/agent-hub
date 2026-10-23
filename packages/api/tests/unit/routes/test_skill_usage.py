@@ -28,4 +28,8 @@ def test_answers_400_for_usage_when_days_not_a_window(wired: Any) -> None:
     response = wired.client.get(USAGE, params={"days": 14})
 
     assert response.status_code == 400
+    assert response.headers["content-type"] == "application/problem+json"
+    assert [(e["location"], e["parameter"]) for e in response.json()["errors"]] == [
+        ("query", "days")
+    ]
     assert not [call for call in wired.hubs.calls if call[0] == "skill_usage_report"]

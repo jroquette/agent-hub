@@ -806,9 +806,11 @@ def build_catalog(inputs: CatalogInputs) -> FoldedCatalog:
         truncated=fold.truncated,
         notice="; ".join(notices) if notices else None,
     )
+    left_unread = any(notice not in {EMPTY_NOTICE, LOCK_UNREAD_NOTICE} for notice in notices)
     files = {item.id: dict(item.file_paths) for item in fold.items.values() if item.file_paths}
     return FoldedCatalog(
         catalog=catalog,
         details={detail.id: detail for detail in details},
         files=dict(sorted(files.items())),
+        left_unread=left_unread,
     )

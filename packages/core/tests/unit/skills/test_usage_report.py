@@ -126,7 +126,7 @@ def test_prints_usage_markdown_table_when_rows_given() -> None:
     assert text.splitlines() == [
         "Skills and agents: runs in the last 30 days, never used first.",
         "",
-        "| Project | Kind | Name | 7 d | 30 d | 90 d | Last used |",
+        "| Project | Kind | Name | 7 d | 30 d | 90 d | Last used (UTC) |",
         "| --- | --- | --- | --- | --- | --- | --- |",
         "| demo | skill | /refactor | 0 | 0 | 0 | never |",
         "| demo | agent | evaluator | 1 | 2 | 3 | 2026-10-12 |",

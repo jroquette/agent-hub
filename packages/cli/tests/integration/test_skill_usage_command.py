@@ -23,7 +23,7 @@ type CommandRunner = Callable[..., Result]
 type KnowledgeHubFactory = Callable[..., Path]
 
 TABLE_HEAD = (
-    "| Project | Kind | Name | 7 d | 30 d | 90 d | Last used |\n"
+    "| Project | Kind | Name | 7 d | 30 d | 90 d | Last used (UTC) |\n"
     "| --- | --- | --- | --- | --- | --- | --- |\n"
 )
 

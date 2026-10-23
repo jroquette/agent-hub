@@ -18,7 +18,8 @@ longest of ``USAGE_WINDOWS`` (90 days). ``by_skill`` and ``by_agent`` count only
 after ``now - USAGE_DAYS`` (the Toolkit's 30 days); ``windows_by_skill`` and ``windows_by_agent``
 give every name used in 90 days its runs over 7, 30 and 90 days (each window inclusive of its
 edge) and its last use (AGH-482). At most ``MAX_USAGE_NAMES`` names per kind are kept, the most
-used first (then by name); past that ``truncated`` is set.
+used first (then by name): the 30-day maps by 30-day uses (past that ``truncated`` is set), the
+windows by 90-day uses (past that ``windows_truncated`` is set).
 """
 
 from collections.abc import Iterable, Mapping, Sequence
@@ -139,14 +140,24 @@ def _windows(uses: Sequence[_Use], now: datetime) -> UsageWindows:
     )
 
 
+def _ranked(tallies: Mapping[str, list[_Use]]) -> tuple[list[tuple[str, list[_Use]]], bool]:
+    """The ``MAX_USAGE_NAMES`` most used names (then by name) that have a use, sorted by name,
+    and whether any was cut."""
+    used = [(name, uses) for name, uses in tallies.items() if uses]
+    ranked = sorted(used, key=lambda item: (-len(item[1]), item[0]))
+    return sorted(ranked[:MAX_USAGE_NAMES]), len(ranked) > MAX_USAGE_NAMES
+
+
 def _kept(
     tallies: Mapping[str, _Tally], *, since: datetime, now: datetime
-) -> tuple[dict[str, Usage], dict[str, UsageWindows], bool]:
-    ranked = sorted(tallies.items(), key=lambda item: (-len(item[1].uses), item[0]))
-    kept = sorted(ranked[:MAX_USAGE_NAMES])
-    usage = {name: _usage(recent) for name, tally in kept if (recent := tally.since(since))}
-    windows = {name: _windows(tally.uses, now) for name, tally in kept}
-    return usage, windows, len(ranked) > MAX_USAGE_NAMES
+) -> tuple[dict[str, Usage], bool, dict[str, UsageWindows], bool]:
+    """The 30-day usage, capped on the 30-day ranking (the Toolkit's), and the windows, capped
+    on the 90-day ranking, each with its own cut flag."""
+    recent, recent_cut = _ranked({name: tally.since(since) for name, tally in tallies.items()})
+    every, every_cut = _ranked({name: tally.uses for name, tally in tallies.items()})
+    usage = {name: _usage(uses) for name, uses in recent}
+    windows = {name: _windows(uses, now) for name, uses in every}
+    return usage, recent_cut, windows, every_cut
 
 
 def fold_skill_usage(
@@ -172,8 +183,8 @@ def fold_skill_usage(
             name = _agent_name(event)
             if name is not None:
                 agents.setdefault(name, _Tally()).add(typed=False, at=event.timestamp)
-    by_skill, windows_by_skill, skills_cut = _kept(skills, since=since, now=now)
-    by_agent, windows_by_agent, agents_cut = _kept(agents, since=since, now=now)
+    by_skill, skills_cut, windows_by_skill, skill_windows_cut = _kept(skills, since=since, now=now)
+    by_agent, agents_cut, windows_by_agent, agent_windows_cut = _kept(agents, since=since, now=now)
     return SkillUsage(
         since=since,
         by_skill=by_skill,
@@ -181,4 +192,5 @@ def fold_skill_usage(
         truncated=skills_cut or agents_cut,
         windows_by_skill=windows_by_skill,
         windows_by_agent=windows_by_agent,
+        windows_truncated=skill_windows_cut or agent_windows_cut,
     )
