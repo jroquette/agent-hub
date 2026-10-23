@@ -937,6 +937,33 @@
     "workflows/sdlc/ticket-pass.yaml": {
       "ownership": "seeded"
     },
+    "workflows/security-sweep/fixtures/sweep-findings.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/security-sweep/fixtures/sweep-no-scanners.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/security-sweep/fixtures/sweep-nothing-new.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/security-sweep/fixtures/sweep-triage-failed.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/security-sweep/prompts/triage.md": {
+      "ownership": "seeded"
+    },
+    "workflows/security-sweep/scripts/report.py": {
+      "ownership": "seeded"
+    },
+    "workflows/security-sweep/scripts/scan.py": {
+      "ownership": "seeded"
+    },
+    "workflows/security-sweep/scripts/unseen.py": {
+      "ownership": "seeded"
+    },
+    "workflows/security-sweep/security-sweep.yaml": {
+      "ownership": "seeded"
+    },
     "workflows/spike/fixtures/spike-more-paused.yaml": {
       "ownership": "seeded"
     },

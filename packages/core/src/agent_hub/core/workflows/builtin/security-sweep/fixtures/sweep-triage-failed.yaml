@@ -1,0 +1,32 @@
+# Triage fails: the run fails, no note is written and nothing is marked seen, so the findings
+# come back next run.
+workflow: security-sweep
+stubs:
+  scan:
+    output:
+      repos:
+        - repo: demo-api
+          ref: origin/trunk
+          head: 0a1b2c3d4e5f60718293a4b5c6d7e8f901234567
+          date: "YYYY-MM-DDT10:00:00+00:00"
+          status: scanned
+          note: ""
+          scanners:
+            - {name: semgrep, status: ran, note: "", count: 1}
+      findings:
+        - {repo: demo-api, scanner: semgrep, rule: python.lang.security.audit.subprocess-shell-true, path: api/run.py, line: 12, severity: high, cwe: CWE-78, secret: false, package: "", version: "", advisory: "", fixed: "", title: ""}
+      more: 0
+      trimmed: false
+  new:
+    output:
+      findings:
+        - {id: F1, fingerprint: demo-api/semgrep/0123456789abcdef, repo: demo-api, scanner: semgrep, rule: python.lang.security.audit.subprocess-shell-true, path: api/run.py, line: 12, severity: high, cwe: CWE-78, secret: false, package: "", version: "", advisory: "", fixed: "", title: ""}
+      listed: 1
+      counts: {new: 1, seen: 0, more: 0}
+      ran: [{repo: demo-api, scanner: semgrep}]
+      current: [demo-api/semgrep/0123456789abcdef]
+      store_problem: ""
+  triage: {fail: exec_failed}
+expect: {status: failed}
+failed: [triage]
+reached: [scan, new, triage]

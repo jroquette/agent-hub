@@ -277,6 +277,15 @@ DESIGN_PATHS = (
     "workflows/sdlc/scripts/preflight_result.py",
     "workflows/sdlc/scripts/verdict.py",
     "workflows/sdlc/ticket-pass.yaml",
+    "workflows/security-sweep/fixtures/sweep-findings.yaml",
+    "workflows/security-sweep/fixtures/sweep-no-scanners.yaml",
+    "workflows/security-sweep/fixtures/sweep-nothing-new.yaml",
+    "workflows/security-sweep/fixtures/sweep-triage-failed.yaml",
+    "workflows/security-sweep/prompts/triage.md",
+    "workflows/security-sweep/scripts/report.py",
+    "workflows/security-sweep/scripts/scan.py",
+    "workflows/security-sweep/scripts/unseen.py",
+    "workflows/security-sweep/security-sweep.yaml",
     "workflows/spike/fixtures/spike-more-paused.yaml",
     "workflows/spike/fixtures/spike-more.yaml",
     "workflows/spike/fixtures/spike-no-pick.yaml",
@@ -865,6 +874,8 @@ def test_defines_check_returning_none_when_stub_parsed(
 READER_PATH = "plugin/hub-workflow/hooks/stdlib_reader.py"
 READER_MODULE = "hub_stdlib_reader"
 EXTENSION_RUNNER = "plugin/hub-workflow/hooks/project_guard_runner.py"
+SWEEP_SCAN = "workflows/security-sweep/scripts/scan.py"
+GUARD_HOOK = "plugin/hub-workflow/hooks/guard.py"
 # `sys.stdlib_module_names` is the running 3.14's: these stdlib modules came after 3.9 (What's New
 # in Python 3.11 and 3.14), so a rendered file that imports one fails on the system python3.
 POST_39_STDLIB = frozenset(
@@ -933,6 +944,8 @@ def test_parses_as_python39_when_rendered(demo_render: dict[str, RenderedFile]) 
         "workflows/incident/scripts",
         # The retro pack's scripts (AGH-488), likewise.
         "workflows/retro/scripts",
+        # The security-sweep pack's scripts (AGH-486), likewise.
+        "workflows/security-sweep/scripts",
         # The spike pack's helpers (AGH-492), likewise.
         "workflows/spike/scripts",
         # The upgrade pack's (AGH-484), likewise.
@@ -958,6 +971,12 @@ def test_imports_stdlib_or_siblings_when_rendered(demo_render: dict[str, Rendere
             assert not newer, f"{path} imports {name}, added after 3.9"
         for call in by_path_loads(module):
             if path == EXTENSION_RUNNER:
+                continue
+            if path == SWEEP_SCAN:
+                # AGH-486, closed: the security sweep loads the hub's own guard, by its fixed
+                # path, to apply the guard's secret-file rule (no copy of its patterns).
+                assert ast.literal_eval(call.args[0]) == "hub_guard", path
+                assert f'GUARD = "{GUARD_HOOK}"' in demo_render[path].content.decode(), path
                 continue
             assert folder == "scripts", f"{path} loads a module by path"
             [name, location] = call.args

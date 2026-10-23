@@ -319,6 +319,12 @@ then `git branch -D <branch_prefix>brain-care-<workflow>-<run id>` (the outcome'
 Monday, `context` on day 1 of each month. The first live run on a hub is the end-to-end check of `hub step pr` there
 (the push and `gh` on the hub's own repo): tests cover the steps up to the commits only.
 
+**Weekly security sweep.** `./hub workflow run security-sweep --live` (or a weekly `schedules` entry) runs the
+scanners found on `PATH` (Semgrep, Bandit, pip-audit, npm audit; none is installed for you, a missing one is named in
+the note) and the guard's secret-file rule on each repo as last fetched, triages the new findings with the
+security-reviewer's steps, and writes `brain/_inbox/security-YYYY-MM-DD.md`; file an issue for each finding you accept,
+then run `/triage <issue>`. Semgrep's registry rules, pip-audit and npm audit reach the network.
+
 **Sessions from the app.** On the Sessions screen, New session starts the user's own `claude` (on `PATH`, logged in)
 in the hub, a repo or one of their worktrees, with the hub's CLAUDE.md, hooks (the guard still applies), skills and
 agents; the chat sends messages, answers prompts, interrupts, sets mode and model, resumes an ended session in place

@@ -74,6 +74,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   test strength runs on the adapted lines; a major bump, no changelog or more than five touched files asks the
   `size` approval; the full check runs, and the push waits on the `publish` approval. Three red rounds end the run
   `blocked` with the failing check named. Existing hubs get the pack on `./hub sync`.
+- The `security-sweep` built-in pack (AGH-486): weekly read-only scanners on every repo, a security-reviewer triage
+  of the new findings, and a note in `brain/_inbox/` for `/triage`, with no secret value and no tracker write.
 
 ### Changed
 
