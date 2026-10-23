@@ -2,6 +2,8 @@
 # says nothing is new, and the run ends clean.
 workflow: security-sweep
 stubs:
+  config:
+    output: {default_branch: main, branch_prefix: jdoe/, author_name: Jane Doe, author_email: jane@example.com, ready_label: agent-ready, teams: [DEM], hub: {github: acme/demo-hub, default_branch: main, target: {github: acme/demo-hub, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}, repos: [{dir: demo-api, github: acme/demo-api, default_branch: main, check_fast: make check-fast, check: make check, target: {github: acme/demo-api, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}]}
   scan:
     output:
       repos:
@@ -28,4 +30,4 @@ stubs:
   report: {output: {path: brain/_inbox/security-YYYY-MM-DD.md, kept: 0, secrets: 0, missing: [], triaged: [], status: clean}}
   mark: {output: {status: clean, marked: 0, store_size: 1}}
 expect: {status: done, outcome: clean}
-reached: [scan, new, report, mark]
+reached: [config, scan, new, report, mark]

@@ -321,8 +321,19 @@ NPM_HIT = {
 }
 
 
+# What hub step config printed for the current test's hub, as the workflow passes it with
+# ``--config`` (the script opens no hub.json, AGH-480).
+CONFIG: dict[str, str] = {}
+
+
+def main(*argv: str) -> int:
+    """The script's ``main`` with the current config, as the workflow's scan node runs it."""
+    code: int = load().main([*argv, "--config", CONFIG["text"]])
+    return code
+
+
 class Sweep:
-    """``hub/hub.json`` naming ``app``, a git repo at ``app`` with ``origin/main``, and ``bin``."""
+    """A config naming ``app``, a git repo at ``app`` with ``origin/main``, and ``bin``."""
 
     def __init__(self, base: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         self.base = base
@@ -337,7 +348,7 @@ class Sweep:
         for folder in (self.hub, self.repo, self.bin, self.tmp, base / "gitbin"):
             folder.mkdir()
         (base / "gitbin" / "git").symlink_to(git)
-        self.hub_json({"project": {"default_branch": "main"}, "repos": [{"dir": "app"}]})
+        self.config({"default_branch": "main", "repos": [{"dir": "app", "default_branch": "main"}]})
         self.commit(
             {
                 "app.py": "import subprocess\n",
@@ -352,8 +363,8 @@ class Sweep:
         # Every temporary folder the scan makes lands here, so a test sees it removed.
         monkeypatch.setattr(tempfile, "tempdir", str(self.tmp))
 
-    def hub_json(self, document: object) -> None:
-        (self.hub / "hub.json").write_text(json.dumps(document), encoding="utf-8")
+    def config(self, document: object) -> None:
+        CONFIG["text"] = json.dumps(document)
 
     def git(self, *args: str) -> str:
         return subprocess.run(  # noqa: S603 - this test's git, fixed arguments, a tmp folder
@@ -438,7 +449,7 @@ def sweep(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Sweep:
 
 
 def scanned(capsys: pytest.CaptureFixture[str], *argv: str) -> dict[str, Any]:
-    code = load().main(list(argv))
+    code = main(*argv)
     captured = capsys.readouterr()
     assert code == 0, captured.err
     output: dict[str, Any] = json.loads(captured.out)
@@ -721,7 +732,7 @@ def test_keeps_the_value_out_when_scanner_stderr_holds_it(
     sweep.fake("semgrep", VALUE, code=2, stderr=f"error near {VALUE}\n")
     sweep.fake("bandit", {"results": [a_bandit_result("B105", "hardcoded_password_string")]})
 
-    code = load().main([])
+    code = main()
     captured = capsys.readouterr()
 
     assert code == 0
@@ -734,9 +745,9 @@ def test_marks_repo_unreadable_when_origin_ref_is_missing(
     sweep: Sweep, capsys: pytest.CaptureFixture[str]
 ) -> None:
     sweep.git("update-ref", "-d", "refs/remotes/origin/main")
-    sweep.hub_json(
+    sweep.config(
         {
-            "project": {"default_branch": "main"},
+            "default_branch": "main",
             "repos": [{"dir": "app"}, {"dir": "gone"}, {"dir": "app", "default_branch": "-x"}],
         }
     )
@@ -746,7 +757,7 @@ def test_marks_repo_unreadable_when_origin_ref_is_missing(
     assert [(r["repo"], r["status"], r["note"]) for r in output["repos"]] == [
         ("app", "unreadable", "no origin/main: fetch it first"),
         ("gone", "unreadable", "no folder ../gone beside the hub"),
-        ("app", "unreadable", "the default branch in hub.json is not usable"),
+        ("app", "unreadable", "the default branch in the config is not usable"),
     ]
     assert all(repo["scanners"] == [] for repo in output["repos"])
 
@@ -754,17 +765,17 @@ def test_marks_repo_unreadable_when_origin_ref_is_missing(
 def test_scans_only_the_named_repo_when_repo_given(
     sweep: Sweep, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    sweep.hub_json({"repos": [{"dir": "app"}, {"dir": "gone"}]})
+    sweep.config({"repos": [{"dir": "app"}, {"dir": "gone"}]})
 
     output = scanned(capsys, "--repo", "app")
 
     assert [repo["repo"] for repo in output["repos"]] == ["app"]
 
 
-def test_marks_repos_over_the_cap_unreadable_when_hub_json_lists_many(
+def test_marks_repos_over_the_cap_unreadable_when_config_lists_many(
     sweep: Sweep, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    sweep.hub_json({"repos": [{"dir": f"r{n}"} for n in range(22)]})
+    sweep.config({"repos": [{"dir": f"r{n}"} for n in range(22)]})
 
     output = scanned(capsys)
 
@@ -774,39 +785,47 @@ def test_marks_repos_over_the_cap_unreadable_when_hub_json_lists_many(
 
 
 @pytest.mark.parametrize("repo", ["other", "..", "app/../x"])
-def test_exits_two_when_repo_is_not_in_hub_json(
+def test_exits_two_when_repo_is_not_in_the_config(
     sweep: Sweep, capsys: pytest.CaptureFixture[str], repo: str
 ) -> None:
-    code = load().main(["--repo", repo])
+    code = main("--repo", repo)
 
     captured = capsys.readouterr()
     assert (code, captured.out) == (2, "")
-    assert captured.err == f"scan.py: repo {json.dumps(repo)} is not in hub.json\n"
+    assert captured.err == f"scan.py: repo {json.dumps(repo)} is not in the config\n"
 
 
 @pytest.mark.parametrize(
     ("content", "reason"),
     [
-        (None, "not found"),
         ("{", "not JSON"),
         ("[]", "no repos list"),
         ('{"repos": {}}', "no repos list"),
-        ("big", "over 1 MiB"),
+        ("{" + " " * (1024 * 1024), "over 1 MiB"),
     ],
+    ids=["not-json", "not-object", "repos-not-list", "too-big"],
 )
-def test_exits_two_when_hub_json_is_unreadable(
-    sweep: Sweep, capsys: pytest.CaptureFixture[str], *, content: str | None, reason: str
+def test_exits_two_when_config_is_unreadable(
+    sweep: Sweep, capsys: pytest.CaptureFixture[str], *, content: str, reason: str
 ) -> None:
-    path = sweep.hub / "hub.json"
-    path.unlink()
-    if content is not None:
-        path.write_text(" " * (1024 * 1024 + 1) if content == "big" else content, encoding="utf-8")
+    CONFIG["text"] = content
 
-    code = load().main([])
+    code = main()
 
     captured = capsys.readouterr()
     assert (code, captured.out) == (2, "")
-    assert captured.err == f"scan.py: cannot read hub.json: {reason}\n"
+    assert captured.err == f"scan.py: cannot read the config: {reason}\n"
+
+
+def test_reads_no_hub_json_when_config_given(
+    sweep: Sweep, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A hub.json naming another repo: only the config is read.
+    (sweep.hub / "hub.json").write_text(json.dumps({"repos": [{"dir": "gone"}]}), encoding="utf-8")
+
+    output = scanned(capsys)
+
+    assert [repo["repo"] for repo in output["repos"]] == ["app"]
 
 
 def test_stays_under_output_cap_when_findings_are_many(
@@ -820,7 +839,7 @@ def test_stays_under_output_cap_when_findings_are_many(
         results.append(result)
     sweep.fake("semgrep", {"results": results})
 
-    code = load().main([])
+    code = main()
 
     out = capsys.readouterr().out
     assert code == 0

@@ -5,8 +5,9 @@
 """Run the installed security scanners on the hub's repos and print their findings as one JSON
 object; never print a scanner's text.
 
-``scan.py [--repo <dir>]``, run in the hub (it reads ``hub.json`` there): each repo of
-``hub.json`` (or the one named) is scanned as of ``origin/<its default branch>`` as last fetched
+``scan.py --config <json> [--repo <dir>]``, run in the hub: ``--config`` is what ``hub step
+config`` printed (this script opens no ``hub.json``); each repo it lists (or the one named) is
+scanned as of ``origin/<its default branch>`` as last fetched
 (no fetch), in a detached worktree under the temporary folder that is removed after, so the
 repo's checkout is never touched. Each scanner runs only when found on ``PATH`` (none is ever
 installed): semgrep, bandit, pip-audit (``--disable-pip --no-deps``, on ``requirements*.txt`` or
@@ -24,7 +25,7 @@ package, version, advisory, fix, title): never a scanner's message, matched line
 description or stderr (stderr is never read), so a credential in the code cannot reach the
 output. A secret finding (``is_secret``) also drops its line: it is its rule and path only.
 
-Exit 0 with the JSON; 2 when ``hub.json`` cannot be read or ``--repo`` is not in it.
+Exit 0 with the JSON; 2 when the config cannot be read or ``--repo`` is not in it.
 ``--timeout``, ``--budget`` and ``--max-files`` are for tests.
 """
 
@@ -40,7 +41,6 @@ import os
 import re
 import shutil
 import signal
-import stat
 import subprocess
 import sys
 import tempfile
@@ -349,7 +349,7 @@ Outcome = tuple[Record, list[Finding]]
 
 
 class RefusedError(Exception):
-    """``hub.json`` cannot be read; the message says why."""
+    """The config cannot be read; the message says why."""
 
 
 @dataclass(frozen=True)
@@ -363,7 +363,7 @@ class Call:
 
 @dataclass(frozen=True)
 class Target:
-    """A repo of ``hub.json`` to scan; ``problem`` is why it cannot be, else empty."""
+    """A repo of the config to scan; ``problem`` is why it cannot be, else empty."""
 
     repo: str
     branch: str
@@ -741,20 +741,12 @@ def scan_repo(run: Run, target: Target) -> tuple[Record, list[Finding]]:
     return record, findings
 
 
-def read_hub(path: Path) -> dict[str, object]:
-    """``hub.json``: a regular file of at most 1 MiB holding an object with a ``repos`` list."""
-    try:
-        info = path.lstat()
-    except FileNotFoundError:
-        raise RefusedError("not found") from None
-    except OSError as error:
-        raise RefusedError(type(error).__name__) from None
-    if not stat.S_ISREG(info.st_mode):
-        raise RefusedError("not a regular file")
-    if info.st_size > MAX_HUB_BYTES:
+def read_config(text: str) -> dict[str, object]:
+    """``hub step config``'s output: at most 1 MiB, an object with a ``repos`` list."""
+    if len(text.encode()) > MAX_HUB_BYTES:
         raise RefusedError("over 1 MiB")
     try:
-        data = json.loads(path.read_bytes())
+        data = json.loads(text)
     except READ_ERRORS:
         raise RefusedError("not JSON") from None
     if not isinstance(data, dict) or not isinstance(data.get("repos"), list):
@@ -772,16 +764,16 @@ def a_target(entry: object, default: object) -> Target:
     item = as_dict(entry)
     name, branch = item.get("dir"), item.get("default_branch") or default
     if not usable_dir(name):
-        return Target(clip(name, 100), "", "the repo dir in hub.json is not usable")
+        return Target(clip(name, 100), "", "the repo dir in the config is not usable")
     if not (isinstance(branch, str) and BRANCH.fullmatch(branch)):
-        return Target(str(name), "", "the default branch in hub.json is not usable")
+        return Target(str(name), "", "the default branch in the config is not usable")
     return Target(str(name), branch)
 
 
 def targets(hub: dict[str, object], wanted: str) -> list[Target] | None:
-    """The repos to scan, in ``hub.json``'s order (only ``wanted`` when given; None when it is
+    """The repos to scan, in the config's order (only ``wanted`` when given; None when it is
     not there); past ``MAX_REPOS``, each is unreadable."""
-    default = as_dict(hub.get("project")).get("default_branch") or "main"
+    default = hub.get("default_branch") or "main"
     entries = hub["repos"]
     found = [a_target(entry, default) for entry in entries] if isinstance(entries, list) else []
     if wanted:
@@ -828,20 +820,22 @@ def a_run(arguments: argparse.Namespace) -> Run:
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="scan.py", description=__doc__.split("\n")[0])
+    parser.add_argument("--config", required=True, help="what hub step config printed")
     parser.add_argument("--repo", default="", help="one repo's dir in hub.json (default: all)")
     parser.add_argument("--timeout", type=float, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--budget", type=float, default=BUDGET, help=argparse.SUPPRESS)
     parser.add_argument("--max-files", type=int, default=MAX_FILES, help=argparse.SUPPRESS)
     arguments = parser.parse_args(argv)
     try:
-        hub = read_hub(Path("hub.json"))
+        hub = read_config(arguments.config)
     except RefusedError as error:
-        print(f"scan.py: cannot read hub.json: {error}", file=sys.stderr)
+        print(f"scan.py: cannot read the config: {error}", file=sys.stderr)
         return 2
     chosen = targets(hub, arguments.repo)
     if chosen is None:
         print(
-            f"scan.py: repo {json.dumps(arguments.repo[:100])} is not in hub.json", file=sys.stderr
+            f"scan.py: repo {json.dumps(arguments.repo[:100])} is not in the config",
+            file=sys.stderr,
         )
         return 2
     run = a_run(arguments)
