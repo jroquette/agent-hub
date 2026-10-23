@@ -216,27 +216,66 @@ export function listMax(bodyWidth: number): number {
   return Math.max(LIST_MIN, Math.min(bodyWidth * 0.6, bodyWidth - DETAIL_MIN));
 }
 
-function readListWidth(): number | null {
-  const value = Number(readStored(LIST_WIDTH_KEY));
-  return Number.isFinite(value) && value >= LIST_MIN ? value : null;
+/** How wide `element` is, followed as it resizes (0 without a ResizeObserver). */
+export function useWidth(element: HTMLElement | null): number {
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    if (!element || typeof ResizeObserver !== "function") return undefined;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setWidth(entry.contentRect.width);
+    });
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+    };
+  }, [element]);
+  return width;
+}
+
+export interface ListWidthOptions {
+  /** Where the chosen width is kept in this browser. */
+  storageKey?: string;
+  min?: number;
+  defaultWidth?: number;
+  /** The widest the panel may be in a body `bodyWidth` wide. */
+  max?: (bodyWidth: number) => number;
+  /** The CSS custom property the style sets. */
+  cssVar?: string;
+  /** The handle's accessible name. */
+  label?: string;
+  /** The handle's class, after `as-drawer-handle`. */
+  className?: string;
 }
 
 /**
- * The split between the file list and the open file, resized like the drawer: drag the list's
- * right edge, or focus it and press →/← (Home or a double click resets). Kept in local storage;
- * the list never takes the open file below its minimum, however the drawer is resized.
+ * A panel on the left of its body, resized from its right edge like the drawer: drag it, or
+ * focus it and press →/← (Home or a double click resets). Kept in local storage; the panel never
+ * grows past `max` of its body, however the body is resized. The handle's parent is the body.
+ * By default, the split between the file list and the open file.
  */
-export function useListWidth(bodyWidth: number) {
-  const [width, setWidth] = useState<number | null>(readListWidth);
-  const max = listMax(bodyWidth);
-  const shown = Math.min(max, width ?? LIST_DEFAULT);
+export function useListWidth(bodyWidth: number, options: ListWidthOptions = {}) {
+  const {
+    storageKey = LIST_WIDTH_KEY,
+    min = LIST_MIN,
+    defaultWidth = LIST_DEFAULT,
+    max: maxOf = listMax,
+    cssVar = "--as-files-list-w",
+    label = "Resize the file list",
+    className = "as-files-split-handle",
+  } = options;
+  const [width, setWidth] = useState<number | null>(() => readWidth(storageKey, min));
+  const max = maxOf(bodyWidth);
+  const shown = Math.min(max, width ?? defaultWidth);
 
-  const save = useCallback((next: number | null) => {
-    setWidth(next);
-    if (next === null) removeStored(LIST_WIDTH_KEY);
-    else writeStored(LIST_WIDTH_KEY, String(Math.round(next)));
-  }, []);
-  const clamp = (value: number, body: number) => Math.min(listMax(body), Math.max(LIST_MIN, value));
+  const save = useCallback(
+    (next: number | null) => {
+      setWidth(next);
+      if (next === null) removeStored(storageKey);
+      else writeStored(storageKey, String(Math.round(next)));
+    },
+    [storageKey],
+  );
+  const clamp = (value: number, body: number) => Math.min(maxOf(body), Math.max(min, value));
 
   const onPointerDown = (event: PointerEvent<HTMLElement>) => {
     if (event.button !== 0) return;
@@ -262,7 +301,7 @@ export function useListWidth(bodyWidth: number) {
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
-    // The handle is on the list's right edge: → widens the list, ← narrows it.
+    // The handle is on the panel's right edge: → widens it, ← narrows it.
     if (event.key === "ArrowRight") save(clamp(shown + KEY_STEP, bodyWidth));
     else if (event.key === "ArrowLeft") save(clamp(shown - KEY_STEP, bodyWidth));
     else if (event.key === "Home") save(null);
@@ -271,16 +310,16 @@ export function useListWidth(bodyWidth: number) {
   };
 
   return {
-    style: { "--as-files-list-w": `${String(Math.round(shown))}px` } as CSSProperties,
+    style: { [cssVar]: `${String(Math.round(shown))}px` } as CSSProperties,
     handle: {
       role: "separator" as const,
       "aria-orientation": "vertical" as const,
-      "aria-label": "Resize the file list",
-      "aria-valuemin": LIST_MIN,
+      "aria-label": label,
+      "aria-valuemin": min,
       "aria-valuemax": Math.round(max),
       "aria-valuenow": Math.round(shown),
       tabIndex: 0,
-      className: "as-drawer-handle as-files-split-handle",
+      className: `as-drawer-handle ${className}`,
       onPointerDown,
       onKeyDown,
       onDoubleClick: () => {

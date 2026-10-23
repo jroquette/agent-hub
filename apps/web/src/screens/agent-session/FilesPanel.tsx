@@ -23,7 +23,7 @@ import { cx } from "../../lib/cx";
 import { fmtInt } from "../../lib/format";
 import { githubPullHref } from "../../lib/safeHref";
 import { readStored, writeStored } from "../../lib/storage";
-import { useDrawerWidth, useListWidth } from "./DrawerResize";
+import { useDrawerWidth, useListWidth, useWidth } from "./DrawerResize";
 import { ReviewCommentsContext, ReviewDiff, type ReviewComments } from "./ReviewDiff";
 import { canExpand, useExpandableNet, type DiffExpansion } from "./DiffExpand";
 import { DiffText, TOOL_STATE } from "./ToolCallCard";
@@ -351,23 +351,6 @@ function OpenThreads({ path }: { path: string }) {
 export const SPLIT_MIN = 720;
 /** Below this width the file list keeps each name and folder on one line, cut at its end (px). */
 export const LIST_COMPACT = 360;
-
-/** How wide `element` is, followed as it resizes (0 without a ResizeObserver: the narrow,
- * one-pane layout). */
-function useWidth(element: HTMLElement | null): number {
-  const [width, setWidth] = useState(0);
-  useEffect(() => {
-    if (!element || typeof ResizeObserver !== "function") return undefined;
-    const observer = new ResizeObserver(([entry]) => {
-      if (entry) setWidth(entry.contentRect.width);
-    });
-    observer.observe(element);
-    return () => {
-      observer.disconnect();
-    };
-  }, [element]);
-  return width;
-}
 
 /** A folder on one narrow line: its own name first, then where it sits, dimmed and cut at its
  * end; the whole path on hover. */
