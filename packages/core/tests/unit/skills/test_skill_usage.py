@@ -200,6 +200,7 @@ def test_holds_only_names_counts_and_times_when_folded() -> None:
         "truncated",
         "windows_by_skill",
         "windows_by_agent",
+        "windows_truncated",
     }
     assert set(usage.windows_by_skill["feature"].model_dump()) == {
         "runs_7d",
@@ -281,3 +282,42 @@ def test_counts_usage_of_agent_when_parent_agent_call_names_quality_reviewer() -
     assert usage.windows_by_agent == {
         "quality-reviewer": UsageWindows(runs_7d=2, runs_30d=2, runs_90d=2, last_used_at=_at(60)),
     }
+
+
+def test_counts_usage_at_window_edge_when_use_exactly_ninety_days_old() -> None:
+    events = [
+        _prompt_days_ago(90, session="s-90"),
+        _prompt_days_ago(90.0001, session="s-older"),
+    ]
+
+    usage = fold_skill_usage(_sessions(events), project="demo", now=NOW)
+
+    feature = usage.windows_by_skill["feature"]
+    assert (feature.runs_7d, feature.runs_30d, feature.runs_90d) == (0, 0, 1)
+
+
+def _named_days_ago(command: str, days: float, *, session: str) -> Event:
+    return _prompt_days_ago(days, session=session).model_copy(
+        update={"payload": {"role": "user", "slash_command": command}}
+    )
+
+
+def test_keeps_thirty_day_usage_when_ninety_day_names_over_cap() -> None:
+    # MAX_USAGE_NAMES names used twice 40 days ago outrank, over 90 days, one name used once
+    # yesterday: the windows drop it, the Toolkit's 30-day map keeps it.
+    events = [
+        _named_days_ago(f"/old-{index:04d}", 40, session=f"s-{index}-{n}")
+        for index in range(MAX_USAGE_NAMES)
+        for n in range(2)
+    ]
+    events.append(_named_days_ago("/recent", 1, session="s-recent"))
+
+    usage = fold_skill_usage(_sessions(events), project="demo", now=NOW)
+
+    assert usage.windows_truncated
+    assert len(usage.windows_by_skill) == MAX_USAGE_NAMES
+    assert "recent" not in usage.windows_by_skill
+    assert usage.by_skill == {
+        "recent": Usage(count=1, user_count=1, model_count=0, last_used_at=NOW - timedelta(days=1))
+    }
+    assert not usage.truncated

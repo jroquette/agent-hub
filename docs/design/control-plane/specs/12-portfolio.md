@@ -71,7 +71,7 @@ One row per skill or agent in each hub's `.claude/skills` and `.claude/agents` (
 there points at); used names outside the hub (`/clear`, built-in subagents) are not listed. The Project column is
 hidden when one project is in scope, as Activity hides it.
 
-Layer-cake order: page header with "since your last visit" line → Needs you → projects → totals → activity. The first two answer the 10-second question; the rest is for the next 20.
+Layer-cake order: page header with "since your last visit" line → Needs you → projects → totals → skills and agents → activity. The first two answer the 10-second question; the rest is for the next 20.
 
 #### Table view (`?view=table`)
 
@@ -148,7 +148,9 @@ Merged, reverse-chronological events of interest (not every event): PR merged, r
 - Applies to every number on the page: failed runs, cost, delta (previous period of equal length), runs finished, median run, activity window. Live, in flight, ready issues and Needs you are "now" values and say so in their tooltip ("Now, not affected by the period").
 - Every period number's tooltip names the period with absolute dates.
 - The Skills and agents region has its own window switch (7 d, 30 d, 90 d; 30 d by default, as the Toolkit), held in
-  the region's state and not in the URL: `?period=` does not change it.
+  the region's state and not in the URL: `?period=` does not change it. A switch keeps the shown table (the region
+  busy) until the new window's report arrives; a change of project scope shows the skeleton instead, so one
+  project's rows never stand in for another's.
 
 ### Data mapping
 
@@ -200,9 +202,9 @@ Merged, reverse-chronological events of interest (not every event): PR merged, r
 | Partial: one hub invalid | Card in error variant | "hub.json does not match the schema · Open hub settings" |
 | Error | `ProblemError` per region (Needs you, projects, feed fail independently) | title "Could not load projects" · detail · "Try again" |
 | Skills and agents loading (> 300 ms) | 4 skeleton lines in the region | none |
-| Skills and agents empty | One line | "No skills or agents in this hub's .claude folder." |
+| Skills and agents empty | One line (and the incomplete line below when the report says so) | One project in scope: "No skills or agents in this hub's .claude folder." · several: "No skills or agents in the hubs' .claude folders." |
 | Skills and agents error | `ProblemError` compact in the region only | title "Could not load skill and agent usage" · detail · "Try again" |
-| Skills and agents incomplete | A line under the table when the catalog was cut or a file was not read | "Some items were not read; the list may be incomplete." |
+| Skills and agents incomplete | A line under the table, or under the empty copy, when the catalog was cut or a file was not read | "Some items were not read; the list may be incomplete." |
 | Live | Counts update from `counts` stream without re-layout; new Needs-you rows slide in at their sorted place (`dur-base`) | none |
 | Stale (collector offline) | Global banner; `AsOfStamp` in page header | "as of 08:40" |
 | Too few data for delta | Delta replaced | "No previous period to compare" |

@@ -1151,6 +1151,7 @@ def test_counts_skill_usage_when_project_events_folded() -> None:
                 "last_used_at": usage.by_agent["evaluator"].model_dump(mode="json")["last_used_at"],
             }
         },
+        "windows_truncated": False,
     }
 
 
