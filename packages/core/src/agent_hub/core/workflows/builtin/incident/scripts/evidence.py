@@ -14,9 +14,10 @@ Output: ``{since, since_iso, repos: [{dir, ref, head, commits: [{sha, at, subjec
 more_paths}], more_commits, tags: [{name, sha, at}]}], unreadable: [{repo, reason}], left_out,
 trimmed}``. At most ``MAX_REPOS`` repos, ``MAX_COMMITS`` commits, ``MAX_PATHS`` paths a commit
 and ``MAX_TAGS`` tags; texts are cut and their control characters dropped; then the paths of
-the oldest commits, then the oldest commits, go until the JSON fits ``MAX_BYTES``
-(``trimmed: true``). A repo that cannot be read is an ``unreadable`` entry, and the others go
-on. ``left_out`` names what the evidence does not hold (failing checks on main, logs).
+the oldest commits, then the oldest commits, then the oldest tags, then the unreadable entries
+go until the JSON fits ``MAX_BYTES`` (``trimmed: true``). A repo that cannot be read is an
+``unreadable`` entry, and the others go on. ``left_out`` names what the evidence does not hold
+(failing checks on main, logs).
 
 Exit 0 with the JSON; exit 2 on bad input (the report, ``--since``, an unreadable ``hub.json``).
 """
@@ -205,7 +206,8 @@ def size(value: dict[str, Any]) -> int:
 
 
 def trim(result: dict[str, Any]) -> None:
-    """Drop the oldest commits' paths, then the oldest commits, until ``result`` fits."""
+    """Drop the oldest commits' paths, then the oldest commits, then the oldest tags, then the
+    last unreadable entries, until ``result`` fits."""
     total = size(result)
     if total <= MAX_BYTES:
         return
@@ -228,6 +230,19 @@ def trim(result: dict[str, Any]) -> None:
         total -= size(dropped) + len(", ")
         if total <= MAX_BYTES:
             total = size(result)
+    while size(result) > MAX_BYTES and (holder := oldest_tag_holder(result)) is not None:
+        holder["tags"].pop()
+    while size(result) > MAX_BYTES and result["unreadable"]:
+        result["unreadable"].pop()
+
+
+def oldest_tag_holder(result: dict[str, Any]) -> dict[str, Any] | None:
+    """The repo whose last (oldest) tag is the oldest of all, or ``None`` when none is left."""
+    holders = [repo for repo in result["repos"] if repo["tags"]]
+    if not holders:
+        return None
+    oldest: dict[str, Any] = min(holders, key=lambda repo: when(repo["tags"][-1]["at"]))
+    return oldest
 
 
 def when(at: str) -> datetime:
