@@ -2198,6 +2198,21 @@ export interface components {
       status: string | null;
     };
     /**
+     * ActionInputSpec
+     * @description An action input as its document declares it.
+     */
+    ActionInputSpec: {
+      default?: components["schemas"]["agent_hub__core__json_form__JsonValue"];
+      /** Description */
+      description?: string | null;
+      /** Name */
+      name: string;
+      /** Required */
+      required: boolean;
+      /** Type */
+      type: string;
+    };
+    /**
      * ActivityItem
      * @description A notable event in the activity feed.
      */
@@ -5890,6 +5905,60 @@ export interface components {
       status: components["schemas"]["StepStatus"];
     };
     /**
+     * ScenarioActionView
+     * @description An action the scenario's steps call (``ref`` as a step writes it), as the hub's files
+     *     hold it now: its facts, whether it is committed (``draft`` else, with the line that
+     *     accepts it), and the text of its document and script (each cut at ``ACTION_TEXT_BYTES``);
+     *     ``problem`` says why it does not resolve, the other facts then empty.
+     */
+    ScenarioActionView: {
+      /** Accept Command */
+      accept_command?: string | null;
+      /** Description */
+      description?: string | null;
+      /** Document Text */
+      document_text?: string | null;
+      /**
+       * Draft
+       * @default false
+       */
+      draft: boolean;
+      /** Effect */
+      effect?: string | null;
+      /**
+       * Inputs
+       * @default []
+       */
+      inputs: components["schemas"]["ActionInputSpec"][];
+      /** Name */
+      name: string;
+      /** Output Format */
+      output_format?: {
+        [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue"];
+      };
+      /** Pack */
+      pack?: string | null;
+      /** Path */
+      path?: string | null;
+      /** Problem */
+      problem?: string | null;
+      /** Ref */
+      ref: string;
+      /** Runtime */
+      runtime?: string | null;
+      /** Script */
+      script?: string | null;
+      /** Script Text */
+      script_text?: string | null;
+      /**
+       * Script Truncated
+       * @default false
+       */
+      script_truncated: boolean;
+      /** Timeout */
+      timeout?: string | null;
+    };
+    /**
      * ScenarioCatalogView
      * @description The scenarios that load, by project then name, and every file that does not.
      */
@@ -5902,11 +5971,19 @@ export interface components {
     /**
      * ScenarioDetail
      * @description A scenario's steps, its scenario runs, newest first, and the environments it can be
-     *     planned in (empty when ``hub.local.json`` or ``hub.json`` cannot be read).
+     *     planned in (empty when ``hub.local.json`` or ``hub.json`` cannot be read), with its file
+     *     (hub-relative ``path`` and raw ``document_text``) and the actions its steps call.
      */
     ScenarioDetail: {
+      /**
+       * Actions
+       * @default []
+       */
+      actions: components["schemas"]["ScenarioActionView"][];
       /** Description */
       description: string | null;
+      /** Document Text */
+      document_text?: string | null;
       /**
        * Environments
        * @default []
@@ -5924,6 +6001,8 @@ export interface components {
       node_count: number;
       /** Pack */
       pack: string;
+      /** Path */
+      path?: string | null;
       /** Project */
       project: string;
       /** Revision */
@@ -6096,19 +6175,35 @@ export interface components {
     /**
      * ScenarioStepView
      * @description A step in declaration order: its type, the action it calls (an action or expect step)
-     *     and the steps it waits for.
+     *     and the steps it waits for, with the keys of its call as the document writes them (``with``
+     *     values, ``capture`` refs, an expect's ``every``/``timeout``/``until_when``, ``retry``).
      */
     ScenarioStepView: {
       /** Action */
       action: string | null;
+      /** Capture */
+      capture?: {
+        [key: string]: string;
+      };
       /** Depends On */
       depends_on: string[];
       /** Description */
       description?: string | null;
+      /** Every */
+      every?: string | null;
       /** Id */
       id: string;
+      retry?: components["schemas"]["StepRetryView"] | null;
+      /** Timeout */
+      timeout?: string | null;
       /** Type */
       type: string;
+      /** Until When */
+      until_when?: string | null;
+      /** With */
+      with?: {
+        [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue"];
+      };
     };
     /**
      * ScenarioSummary
@@ -6937,6 +7032,19 @@ export interface components {
       done: number;
       /** Total */
       total: number;
+    };
+    /**
+     * StepRetryView
+     * @description A step's ``retry``: retries after the first attempt, the first delay (doubling each
+     *     time) and which errors it retries.
+     */
+    StepRetryView: {
+      /** Delay */
+      delay: string;
+      /** Max Attempts */
+      max_attempts: number;
+      /** On Error */
+      on_error: string;
     };
     /** @enum {string} */
     StepState:
