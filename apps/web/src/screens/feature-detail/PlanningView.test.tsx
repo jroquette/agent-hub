@@ -567,6 +567,14 @@ describe("PlanningView", () => {
       expect(container.querySelector('[data-edge="T3→T5"]')?.getAttribute("d")).toContain(" C ");
     });
 
+    it("draws every edge as an outline, so a routed edge never paints a filled shape", () => {
+      const { container } = render(<PlanningView tickets={linked} planning={plan} />);
+
+      const paths = container.querySelectorAll(".ah-flow-edges path[data-edge]");
+      expect(paths.length).toBeGreaterThan(0);
+      for (const path of paths) expect(path.getAttribute("fill")).toBe("none");
+    });
+
     it("AC-TF.3 keeps other cards' links and buttons out of the tab order", () => {
       render(
         <MemoryRouter>
