@@ -432,3 +432,44 @@ def test_refuses_a_url_or_redirect_off_the_allowed_hosts_when_fetch_asks(url: st
         module.HostRedirects().redirect_request(
             urllib.request.Request("https://pypi.org/a"), io.BytesIO(), 302, "Found", Message(), url
         )
+
+
+@pytest.mark.parametrize(
+    "body", ["", "  \n", "See CHANGELOG.md for details.", "See [the changelog](x)."]
+)
+def test_reads_the_changelog_file_when_releases_in_range_say_nothing(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], *, body: str
+) -> None:
+    module = load()
+    empty = {"tag_name": "0.29.0", "body": body, "prerelease": False}
+    table: dict[str, bytes | Exception] = {
+        PYPI: pypi("https://github.com/encode/httpx"),
+        RELEASES.format(1): json.dumps([empty]).encode(),
+        RAW.format("CHANGELOG.md"): CHANGELOG.encode(),
+    }
+    served(module, monkeypatch, table)
+
+    found = run(module, capsys, ARGS)
+
+    assert found["found"] is True
+    assert found["sources"] == ["https://github.com/encode/httpx/blob/HEAD/CHANGELOG.md"]
+    assert str(found["text"]).startswith("## [0.29.0] - 2026-01-01\n")
+
+
+def test_reports_not_found_when_releases_say_nothing_and_no_file_has_notes(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = load()
+    table: dict[str, bytes | Exception] = {
+        PYPI: pypi("https://github.com/encode/httpx"),
+        RELEASES.format(1): json.dumps([a_release("0.29.0", "See CHANGES.md")]).encode(),
+    }
+    served(module, monkeypatch, table)
+
+    found = run(module, capsys, ARGS)
+
+    assert (found["found"], found["sources"], found["text"]) == (False, [], "")
+    assert found["reason"] == (
+        "the GitHub releases from 0.28.1 to 0.29.0 hold no notes;"
+        " no changelog file names a version from 0.28.1 to 0.29.0"
+    )
