@@ -159,6 +159,20 @@ SEEDED_PACK_FILES = (
     "spike/scripts/budget.py",
     "spike/scripts/draft.py",
     "spike/spike.yaml",
+    "upgrade/fixtures/upgrade-adapt-exhausted.yaml",
+    "upgrade/fixtures/upgrade-lockfile-edited.yaml",
+    "upgrade/fixtures/upgrade-major-breaking.yaml",
+    "upgrade/fixtures/upgrade-patch-green.yaml",
+    "upgrade/fixtures/upgrade-split.yaml",
+    "upgrade/prompts/adapt.md",
+    "upgrade/prompts/changelog.md",
+    "upgrade/scripts/bump.py",
+    "upgrade/scripts/check.py",
+    "upgrade/scripts/fast_gate.py",
+    "upgrade/scripts/outcome.py",
+    "upgrade/scripts/release_notes.py",
+    "upgrade/scripts/strength.py",
+    "upgrade/upgrade.yaml",
 )
 CORE_SOURCES |= {
     f"workflows/{name}": (BUILTIN_PACKAGE, f"{BUILTIN_FOLDER}/{name}") for name in SEEDED_PACK_FILES

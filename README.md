@@ -258,16 +258,21 @@ machine path is listed as "cannot run after merge"; fetch first:
 always-loaded context audit, a trim only after the owner's approval),
 `spike` (`spike`: recall, research, 2 or 3 options, the owner's pick, a premortem of the pick, then
 `brain/features/<slug>/research.md` and an ADR draft for `/adr`, within a timebox of 2h of agent time by default; it
-changes no code) and
+changes no code),
 `incident` (git evidence, a recall of past incidents, at most 5 ranked hypotheses each with a read-only check, the
 checks in a throwaway worktree, a mitigation gate, then a hand-off draft for `/fix` and a blameless postmortem draft in
 `brain/_inbox/`; it writes no tracker and applies nothing; `/incident` starts it with
-`./hub workflow run incident --input report=… --live`). A hub's own file overrides a built-in of the same name.
+`./hub workflow run incident --input report=… --live`) and
+`upgrade` (one uv or npm package from its changelog to a PR: the bump made with the repo's own tooling, the changelog
+read, the fast check, up to three adapt rounds, test strength on the adapted lines, the `size` approval for a risky
+bump, the full check, then the PR behind the `publish` approval; `/upgrade` starts it). A hub's own file
+overrides a built-in of the same name.
 
 ```bash
 ./hub workflow list                          # the workflows that load; problems as <file>:<line>: <key>: <message>
 ./hub workflow run deliver --input issue=DEM-7 --input repo=api --input issue_text="..."  # dry: what would run
 ./hub workflow run spike --input question="..." --input slug=brief-cache --live  # a spike; answer its pick with respond
+./hub workflow run upgrade --input issue=DEM-8 --input repo=api --input package=httpx --input to=0.29.0 --live
 ./hub workflow run deliver --input issue=DEM-7 --input repo=api --input issue_text="..." --live
 ./hub workflow run --resume <run>            # continue a failed or paused run; --abandon ends it
 ./hub workflow approve <run>                 # or reject / respond: decide a paused gate; the run resumes
@@ -396,7 +401,7 @@ The size decides the ceremony:
 | `/release [version]` | Cuts a platform release: merged PRs, the bump, the check on the exact commit, notes with what `hub sync` rewrites, then the hub's pin bump | When `main` holds what the next version ships |
 | `/incident <symptom or issue>` | Starts the `incident` workflow for a problem with no known reproduction: evidence, ranked hypotheses with read-only checks, a gated mitigation, then `/fix` and a postmortem | When `/fix` cannot start because nothing reproduces yet |
 | `/refactor <issue>` | Makes a behaviour-preserving change: characterization tests first, then batched PRs that each pass `check` alone | When a refactor is too big for `/fix` and needs no spec |
-| `/upgrade [package or tool]` | Bumps a dependency, toolchain or plugin pin after reading its changelog, adapting to breaking changes | For dependency and toolchain bumps |
+| `/upgrade [package or tool]` | Starts the `upgrade` workflow for a uv or npm package (bump, changelog, adapt, checks, PR behind an approval); a toolchain, plugin pin, Docker digest or Action goes by hand | For dependency and toolchain bumps |
 | `/adr <question or issue>` | Records an architectural decision: options and trade-offs, your pick, a new ADR that supersedes and never edits | For a decision outside a `/feature` |
 | `/onboard [propose \| apply]` | Reads each repo read-only and proposes `hub.json` values, gates and `AGENTS.project.md` with `path:line` evidence; applies them only after your approval (`propose` only writes the proposal, for a headless run) | The first session in a new hub, or after adding a repo |
 | `/retro [period]` | Turns the period's run metrics into at most five evidence-backed changes to the workflows, drafted for /triage | Weekly, or after a rough stretch |
