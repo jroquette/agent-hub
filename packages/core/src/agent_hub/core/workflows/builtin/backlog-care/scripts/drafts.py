@@ -30,7 +30,10 @@ import re
 import sys
 
 TEXT_BUDGET = 48 * 1024
-MESSAGE_CHARS = 6000
+# Every field Apply writes fits whole (the draft node's output_format bounds them to about 9,000
+# characters); only the context and the ACs are cut to stay within this.
+MESSAGE_CHARS = 12_000
+CUT = " (cut)"
 MAX_DRAFTS = 50
 NEEDS_HUMAN = "needs-human"
 READY_SIZES = frozenset({"fix", "bounded"})
@@ -60,8 +63,13 @@ def texts(found: dict[str, object], key: str) -> list[str]:
 
 
 def inert(value: str) -> str:
-    """Tracker text that can neither close the prompt's fence nor fake a marker."""
-    return MARKER.sub("", FENCE.sub("'''", value))
+    """Tracker text that can neither close the prompt's fence nor fake a marker.
+
+    Markers go first, then fences, again until neither is left: removing one may join another.
+    """
+    while MARKER.search(value) or FENCE.search(value):
+        value = FENCE.sub("'''", MARKER.sub("", value))
+    return value
 
 
 def json_value(given: str, name: str) -> object:
@@ -176,26 +184,35 @@ def listed(title: str, items: list[str]) -> list[str]:
 
 
 def message_of(issue_id: str, draft: dict[str, object], label: str) -> str:
-    """What the owner reads at the issue's gate, the draft whole when it fits."""
+    """What the owner reads at the issue's gate: every field Apply writes, first and whole, then
+    the context and the ACs, cut with a visible marker when the message would be too long."""
     if label == "close":
         head = f"{issue_id}: close as a duplicate of {text(draft, 'superseded_by')}."
     else:
         head = f"{issue_id}: draft, label {label}."
-    lines = [
-        head,
-        "",
-        f"Context: {text(draft, 'context')}",
-        *listed("Acceptance criteria", texts(draft, "acceptance_criteria")),
-        f"Size: {text(draft, 'size')}",
-        f"Repos: {', '.join(texts(draft, 'repos')) or 'none'}",
-        f"Blocked by: {', '.join(texts(draft, 'blocked_by')) or 'none'}",
-        f"Blocks: {', '.join(texts(draft, 'blocks')) or 'none'}",
-        f"Verification: {text(draft, 'verification')}",
-        *listed("Open questions", texts(draft, "open_questions")),
-        f"Guarded path: {'yes' if draft.get('guarded') is True else 'no'}",
-    ]
-    body = "\n".join(lines)
-    return body[: MESSAGE_CHARS - len(GATE_TAIL)] + GATE_TAIL
+    written = "\n".join(
+        [
+            head,
+            "",
+            f"Size: {text(draft, 'size')}",
+            f"Repos: {', '.join(texts(draft, 'repos')) or 'none'}",
+            f"Blocked by: {', '.join(texts(draft, 'blocked_by')) or 'none'}",
+            f"Blocks: {', '.join(texts(draft, 'blocks')) or 'none'}",
+            f"Guarded path: {'yes' if draft.get('guarded') is True else 'no'}",
+            *listed("Open questions", texts(draft, "open_questions")),
+            f"Verification: {text(draft, 'verification')}",
+        ]
+    )
+    described = "\n".join(
+        [
+            f"Context: {text(draft, 'context')}",
+            *listed("Acceptance criteria", texts(draft, "acceptance_criteria")),
+        ]
+    )
+    room = MESSAGE_CHARS - len(written) - len(GATE_TAIL) - 2
+    if len(described) > room:
+        described = described[: max(0, room - len(CUT))] + CUT
+    return f"{written}\n\n{described}{GATE_TAIL}"
 
 
 def problem(draft: dict[str, object], picked: list[str], *, read: list[str], seen: set[str]) -> str:
