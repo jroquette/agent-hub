@@ -93,14 +93,14 @@ describe("ticketsOf", () => {
         fixSession("a", {
           label: aSessionLabel({ issue: "agh-7", workflows: ["/kickoff", "/learn", "/refactor"] }),
         }),
-        fixSession("b", { project: "loki-trader" }),
+        fixSession("b", { project: "demo-shop" }),
       ],
       new Set(),
     );
     expect(rows.map((row) => [row.project, row.issue, row.kind, row.workflows])).toEqual(
       expect.arrayContaining([
         ["agent-hub", "AGH-7", "refactor", ["/refactor"]],
-        ["loki-trader", "AGH-7", "fix", ["/fix"]],
+        ["demo-shop", "AGH-7", "fix", ["/fix"]],
       ]),
     );
   });
