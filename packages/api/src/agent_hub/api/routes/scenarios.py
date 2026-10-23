@@ -16,11 +16,20 @@ from typing import Annotated
 from fastapi import APIRouter, Path, Response
 
 from agent_hub.api.dependencies import (
+    ItemVersionWritesDep,
     ScenarioCommandsDep,
     ScenarioInvestigationsDep,
     ScenarioReadsDep,
 )
 from agent_hub.api.openapi_paths import AGENT_SESSIONS, API_PREFIX
+from agent_hub.api.scenario_builder import (
+    ActionLibrary,
+    SaveRequest,
+    SaveResult,
+    ScenarioBuilder,
+    ValidateRequest,
+    ValidateResult,
+)
 from agent_hub.api.scenario_catalog import (
     FINDING_ID_TEXT,
     FindingIssue,
@@ -58,6 +67,36 @@ def list_scenarios(reads: ScenarioReadsDep, *, project: ProjectParam = None) -> 
 def get_scenario(project: NamePath, name: NamePath, reads: ScenarioReadsDep) -> ScenarioDetail:
     """One scenario: its steps and its scenario runs, newest first."""
     return reads.get_scenario(project, name)
+
+
+@router.post("/projects/{project}/scenarios/validate")
+def validate_scenario(
+    project: NamePath, *, body: ValidateRequest, reads: ScenarioReadsDep
+) -> ValidateResult:
+    """The scenario builder's check: the document as the YAML Save would write, whether it
+    loads, and each problem on its node. Writes nothing."""
+    return ScenarioBuilder(reads).validate(project, body)
+
+
+@router.get("/projects/{project}/actions")
+def list_actions(project: NamePath, reads: ScenarioReadsDep) -> ActionLibrary:
+    """The hub's actions (the builder's palette), with output fields and their scenarios."""
+    return ScenarioBuilder(reads).library(project)
+
+
+@router.put("/scenarios/{project}/{name}")
+def save_scenario(
+    project: NamePath,
+    name: NamePath,
+    *,
+    body: SaveRequest,
+    reads: ScenarioReadsDep,
+    writes: ItemVersionWritesDep,
+) -> SaveResult:
+    """Write the scenario file from the builder's document (a strict write that needs the
+    launch cookie): only a document that loads, over the file the builder last read
+    (409 ``stale_document`` else), recorded as a version; no git command runs."""
+    return ScenarioBuilder(reads).save(project, name, request=body, writes=writes)
 
 
 @router.post("/scenarios/{project}/{name}/plan")
