@@ -158,7 +158,7 @@ def test_finds_four_findings_when_mixed_file_read_then_checked(tmp_path: Path) -
     subprocess.run(["git", "init", "-q", str(tmp_path / "api")], check=True)  # noqa: S603, S607 - git from PATH, a temp repo
     issues_file = tmp_path / "backlog-care.json"
     issues = stubs["read"]["output"]["issues"]
-    document = {"version": 1, "read_at": "1999-10-26T09:00:00Z", "teams": ["DEM"]}
+    document = {"version": 1, "read_at": "1999-10-26T09:00:00Z"}
     document |= {"open_total": len(issues), "issues": issues}
     issues_file.write_text(json.dumps(document), encoding="utf-8")
 

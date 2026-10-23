@@ -62,7 +62,6 @@ def a_document(issues: list[Any], **top: Any) -> dict[str, Any]:
     document = {
         "version": 1,
         "read_at": "2026-10-26T09:00:00Z",
-        "teams": ["DEM"],
         "open_total": len(issues),
         "issues": issues,
     }
@@ -133,12 +132,9 @@ def test_says_none_left_unread_when_every_issue_read(
 def test_prints_ready_label_and_repos_when_hub_json_read(
     hub: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    path = write(hub / "issues.json", a_document([an_issue(1)], teams=["DEM", "OPS"]))
+    path = write(hub / "issues.json", a_document([an_issue(1)]))
 
     found = run(capsys, path)
-
-    # The teams the skill read stay in its file; no later node reads them.
-    assert "teams" not in found
 
     assert found["ready_label"] == "ready-now"
     assert found["repos"] == ["api", "web"]
@@ -257,7 +253,7 @@ def test_cuts_fields_and_drops_control_characters_when_read(
         description="line one\nline\ttwo\x00\x1b" + "d" * 2000,
         state={"name": "In\x7f Progress", "type": "started"},
     )
-    path = write(hub / "issues.json", a_document([issue], teams=["DEM\x00"]))
+    path = write(hub / "issues.json", a_document([issue]))
 
     (found,) = run(capsys, path)["issues"]
 
@@ -343,3 +339,8 @@ def test_exits_two_when_file_nests_too_deep(hub: Path, capsys: pytest.CaptureFix
 
     assert load().main(["--file", str(path), "--limit", "50"]) == 2
     assert capsys.readouterr().err == "read.py: the issues file: not UTF-8 JSON\n"
+
+
+def test_names_no_teams_when_fields_listed() -> None:
+    # Nothing reads the teams the skill read: the file does not carry them.
+    assert "teams" not in load().TOP_FIELDS
