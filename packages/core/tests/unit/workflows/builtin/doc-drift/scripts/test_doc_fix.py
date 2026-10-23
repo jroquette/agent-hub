@@ -530,3 +530,20 @@ def test_exits_one_when_commit_holds_more_than_the_plan(
 
     assert code == 1
     assert "beyond the approved lines" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("note", ["-x", "--looks-like-an-option"])
+def test_applies_when_owner_note_starts_with_a_dash(
+    note: str,
+    *,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The owner's note is data (AGH-480): a leading dash is never read as an option.
+    worktree, base = a_worktree(tmp_path)
+
+    code = apply(monkeypatch, (worktree, base), a_plan(USING_FIX), note=note)
+
+    assert code == 0, capsys.readouterr().err
+    assert note in json.loads(capsys.readouterr().out)["summary"]

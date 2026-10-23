@@ -287,3 +287,12 @@ def test_exits_two_when_an_argument_is_unreadable(
 
     assert raised.value.code == 2
     assert capsys.readouterr().out == ""
+
+
+def test_reads_text_starting_with_a_dash_when_arguments_hold_it(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Owner and upstream text is data (AGH-480): a leading dash is never read as an option.
+    found = outcome(capsys, args(notes_found=False, notes_reason="--no-releases", sources=[]))
+
+    assert "no changelog found: --no-releases" in found["summary"]

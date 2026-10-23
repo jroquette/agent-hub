@@ -130,3 +130,13 @@ def test_exits_two_when_notes_not_sections(monkeypatch: pytest.MonkeyPatch, *, s
     monkeypatch.setattr("sys.stdin", io.StringIO(stdin))
 
     assert load().main(["--version", "0.21.0", "--last-tag", "v0.20.1", "--sync", SYNC]) == 2
+
+
+def test_reads_sync_text_starting_with_a_dash_when_given(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The sync list is data (AGH-480): a leading dash is never read as an option.
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(NOTES)))
+
+    assert load().main(["--version", "0.21.0", "--last-tag", "v0.20.1", "--sync", "-none"]) == 0
+    assert json.loads(capsys.readouterr().out)["notes"]

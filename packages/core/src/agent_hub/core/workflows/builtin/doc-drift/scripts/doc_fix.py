@@ -652,8 +652,27 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+# The apply step's free-text option: the owner's note.
+VALUED = frozenset({"--note"})
+
+
+def joined(argv: list[str], options: frozenset[str]) -> list[str]:
+    """``argv`` with each of ``options`` joined to its value (``--name=value``), so a value may
+    start with ``-``: the owner's text and the steps' outputs are data, never options."""
+    out: list[str] = []
+    index = 0
+    while index < len(argv):
+        if argv[index] in options and index + 1 < len(argv):
+            out.append(f"{argv[index]}={argv[index + 1]}")
+            index += 2
+        else:
+            out.append(argv[index])
+            index += 1
+    return out
+
+
 def main(argv: list[str]) -> int:
-    given = _parser().parse_args(argv)
+    given = _parser().parse_args(joined(argv, VALUED))
     try:
         found = plan(given) if given.command == "plan" else apply(given)
     except InputError as error:

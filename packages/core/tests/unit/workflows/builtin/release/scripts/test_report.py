@@ -98,3 +98,10 @@ def test_exits_two_when_count_not_a_number(capsys: pytest.CaptureFixture[str]) -
     argv[argv.index("--count") + 1] = "many"
 
     assert load().main(argv) == 2
+
+
+def test_reads_values_starting_with_a_dash_when_given(capsys: pytest.CaptureFixture[str]) -> None:
+    # Every value is data (AGH-480): a leading dash is never read as an option.
+    found = report(capsys, RELEASED | {"log": "-check.log"})
+
+    assert found["outcome"] == "released"

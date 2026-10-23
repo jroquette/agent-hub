@@ -90,12 +90,27 @@ def read_sections(text: str) -> dict[str, str]:
     return found
 
 
+def joined(argv: list[str], options: frozenset[str]) -> list[str]:
+    """``argv`` with each of ``options`` joined to its value (``--name=value``), so a value may
+    start with ``-``: the owner's text and the steps' outputs are data, never options."""
+    out: list[str] = []
+    index = 0
+    while index < len(argv):
+        if argv[index] in options and index + 1 < len(argv):
+            out.append(f"{argv[index]}={argv[index + 1]}")
+            index += 2
+        else:
+            out.append(argv[index])
+            index += 1
+    return out
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog=PROG)
     parser.add_argument("--version", required=True)
     parser.add_argument("--last-tag", required=True)
     parser.add_argument("--sync", required=True)
-    given = parser.parse_args(argv)
+    given = parser.parse_args(joined(argv, frozenset({"--version", "--last-tag", "--sync"})))
     try:
         sections = read_sections(sys.stdin.read())
     except ValueError as error:
