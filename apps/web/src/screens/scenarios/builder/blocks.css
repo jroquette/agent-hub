@@ -553,3 +553,45 @@
   font-family: inherit;
   text-overflow: clip;
 }
+
+/* Slots you click to fill: they look like it. */
+.bk-slot {
+  cursor: pointer;
+  text-decoration: underline dotted color-mix(in srgb, var(--text-muted) 60%, transparent);
+  text-underline-offset: 3px;
+  transition:
+    box-shadow 100ms ease,
+    border-color 100ms ease;
+}
+.bk-slot:hover,
+.bk-slot:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
+  outline: none;
+}
+.bk-slot[data-empty] {
+  text-decoration: none;
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+.bk-slot-pop .bk-menu-list {
+  max-height: 260px;
+}
+.bk-textarea {
+  height: auto;
+  min-height: 72px;
+  padding: 6px 8px;
+}
+/* Lighter fills: the words lead, the tint only says the kind. */
+.bk-block,
+.bk-c {
+  background: color-mix(in srgb, var(--kind) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--kind) 45%, var(--border));
+  border-left: 4px solid var(--kind);
+}
+.bk-icon {
+  background: color-mix(in srgb, var(--kind) 30%, var(--surface));
+}
+.bk-pill {
+  font-family: inherit;
+}
