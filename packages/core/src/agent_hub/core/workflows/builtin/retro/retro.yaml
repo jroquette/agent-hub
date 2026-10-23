@@ -4,7 +4,8 @@
 #   1. metrics (metrics.py): the hub's workflow run records folded per workflow (runs, outcomes,
 #      failures, review rounds, gates, NO-SHIP rate), plus retro_metrics.py's issue runs, PRs, CI
 #      and memory, `hub skill-usage`'s idle skills and agents, and mine_transcripts.py's counts.
-#      Every source says whether it was read; no run in the window is "nothing to change".
+#      Every source says whether it was read; no run in the window is "nothing to change", but
+#      only when both run counts (the run records, retro_metrics.py's issue runs) were read.
 #   2. changes (an agent, read-only, fresh): at most 5 changes, each citing step 1's keys and values.
 #   3. vet (vet.py): drops a change whose numbers are not step 1's, as step 1 gave them.
 #   4. pick (the owner) and drafts (drafts.py): the kept changes go to brain/_inbox/retro-<date>.md

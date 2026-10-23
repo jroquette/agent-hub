@@ -19,10 +19,11 @@
 
 It prints ``{"days", "since", "until", "runs", "nothing", "metrics", "idle", "sources",
 "left_out", "summary"}``: ``metrics`` maps each key to a number (at most 300), ``runs`` counts the
-runs started in the window, ``nothing`` is true when there is none, ``idle`` names the skills and
-agents not run, ``sources`` says how each source read (``ok``, ``partial`` or ``missing``, with a
-reason) and ``left_out`` names what the numbers do not cover. Every source missing exits 1; a
-``--days`` outside 1-90 or a bad ``--today`` exits 2.
+runs started in the window, ``nothing`` is true when there is none and both run counts (the
+run records and ``issue_runs``) were read (a missing one is named in ``left_out``), ``idle``
+names the skills and agents not run, ``sources`` says how each source read (``ok``,
+``partial`` or ``missing``, with a reason) and ``left_out`` names what the numbers do not cover.
+Every source missing exits 1; a ``--days`` outside 1-90 or a bad ``--today`` exits 2.
 """
 
 import argparse
@@ -68,6 +69,8 @@ LEFT_OUT = (
     "GitHub review rounds on PRs (scripts get no GitHub token; workflow review rounds are counted)",
 )
 MAX_OUTPUT = MIB
+# The sources the run count comes from: "nothing to change" needs both read.
+COUNT_SOURCES = frozenset({"runs", "issue_runs"})
 TIMED_OUT = 124
 NOT_RUN = 127
 RETRO_METRICS = ["python3", "scripts/retro_metrics.py"]
@@ -326,12 +329,15 @@ def _summary(
 ) -> str:
     """What the owner and the agent read first: the window, the runs, the sources, the gaps."""
     workflow_runs, issue_runs = counts
-    lines = [
-        f"Retro window: {window}.",
-        f"Runs started: {workflow_runs} workflow runs, {issue_runs} issue-to-pr runs.",
-    ]
-    if not sum(counts):
-        lines.append("No run in the window: nothing to change.")
+    counted = f"{workflow_runs} workflow runs, {issue_runs} issue-to-pr runs"
+    if _uncounted(sources):
+        lines = [
+            f"Retro window: {window}.",
+            f"Runs started: unknown ({counted} read; see Left out).",
+        ]
+    else:
+        lines = [f"Retro window: {window}.", f"Runs started: {counted}."]
+        lines += ["No run in the window: nothing to change."] * (not sum(counts))
     lines.append("Sources:")
     lines += [
         f"- {item['name']}: {item['status']}" + (f" ({item['reason']})" * bool(item["reason"]))
@@ -342,6 +348,13 @@ def _summary(
     lines.append("Left out:")
     lines += [f"- {line}" for line in left_out]
     return "\n".join(lines)[:MAX_SUMMARY]
+
+
+def _uncounted(sources: list[Source]) -> list[Source]:
+    """The run-count sources that were not read: with one, no run read is not a quiet window."""
+    return [
+        item for item in sources if item["name"] in COUNT_SOURCES and item["status"] == "missing"
+    ]
 
 
 def assemble(readings: list[Reading], *, days: int, since: date, until: date) -> dict[str, object]:
@@ -357,6 +370,10 @@ def assemble(readings: list[Reading], *, days: int, since: date, until: date) ->
     counts = (_count(merged, "workflow.", ".runs"), _count(merged, "issue_runs.outcome.", ""))
     ordered = sorted(merged, key=_rank)
     left_out = list(LEFT_OUT)
+    uncounted = _uncounted(sources)
+    left_out += [
+        f"the run count: {item['name']} is missing ({item['reason']})" for item in uncounted
+    ]
     if len(ordered) > MAX_KEYS:
         left_out.append(f"{len(ordered) - MAX_KEYS} metrics over the {MAX_KEYS} cap")
     found: dict[str, object] = {
@@ -364,7 +381,7 @@ def assemble(readings: list[Reading], *, days: int, since: date, until: date) ->
         "since": since.isoformat(),
         "until": until.isoformat(),
         "runs": sum(counts),
-        "nothing": sum(counts) == 0,
+        "nothing": sum(counts) == 0 and not uncounted,
         "metrics": {key: merged[key] for key in ordered[:MAX_KEYS]},
         "idle": idle,
         "sources": sources,
