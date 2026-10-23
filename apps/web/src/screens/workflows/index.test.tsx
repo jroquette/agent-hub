@@ -179,7 +179,7 @@ describe("WorkflowDetailScreen history", () => {
           items: [anItemVersion({ origin: "external", author: null })],
         }),
       },
-      path: "/workflows/agent-hub/feature-flow",
+      path: "/workflows/agent-hub/feature-flow?view=document",
       route: "/workflows/:project/:name",
     });
 
@@ -189,8 +189,8 @@ describe("WorkflowDetailScreen history", () => {
     expect(table).toHaveTextContent("Changed outside the app");
     unmount();
 
-    renderDetail(aWorkflowDetail({ source: "builtin" }));
-    await screen.findByRole("group", { name: "Workflow graph" });
+    renderDetail(aWorkflowDetail({ source: "builtin" }), "?view=document");
+    await screen.findByRole("region", { name: "Document" });
     expect(screen.queryByRole("region", { name: "History" })).toBeNull();
   });
 });
@@ -209,7 +209,9 @@ describe("WorkflowDetailScreen", () => {
     const second = layers[1];
     if (!second) throw new Error("No layer 2");
     expect(within(second).getAllByRole("button")).toHaveLength(2);
-    expect(within(graph).getByRole("button", { name: /review.*approval/ })).toBeInTheDocument();
+    expect(
+      within(graph).getByRole("button", { name: /review.*Approval by you/ }),
+    ).toBeInTheDocument();
   });
 
   it("draws an edge for each depends_on", async () => {
@@ -226,14 +228,16 @@ describe("WorkflowDetailScreen", () => {
     const user = userEvent.setup();
     const { router } = renderDetail();
 
-    const build = await screen.findByRole("button", { name: /build.*shell/ });
+    const build = await screen.findByRole("button", { name: /build.*Command/ });
     build.focus();
     await user.keyboard("{Enter}");
 
     const panel = await screen.findByRole("complementary", { name: "Node build" });
-    expect(panel).toHaveTextContent("Waits for");
-    expect(panel).toHaveTextContent("plan");
-    expect(panel).toHaveTextContent("make");
+    expect(panel).toHaveTextContent("Waits forplan");
+    expect(panel).toHaveTextContent("Leads toreview");
+    expect(within(panel).getByRole("group", { name: "Command of build" })).toHaveTextContent(
+      "make check",
+    );
     expect(router.state.location.search).toContain("node=build");
     await waitFor(() => {
       expect(panel).toContainElement(document.activeElement as HTMLElement);
@@ -241,27 +245,24 @@ describe("WorkflowDetailScreen", () => {
 
     await user.click(within(panel).getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("complementary", { name: "Node build" })).toBeNull();
-    expect(screen.getByRole("button", { name: /build.*shell/ })).toHaveFocus();
+    expect(screen.getByRole("button", { name: /build.*Command/ })).toHaveFocus();
   });
 
-  it("offers a list view as the graph's text alternative", async () => {
+  it("offers the Steps view as the graph's text alternative, from the view switch", async () => {
     const user = userEvent.setup();
-    renderDetail();
+    const { router } = renderDetail();
 
-    await user.click(await screen.findByRole("button", { name: "List" }));
+    await screen.findByRole("group", { name: "Workflow graph" });
+    expect(screen.queryByRole("list", { name: "Steps" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Steps" }));
 
-    const table = screen.getByRole("table", { name: "Nodes in run order" });
-    const rows = within(table).getAllByRole("row").slice(1);
-    expect(rows.map((row) => row.textContent)).toEqual([
-      "1planagent—",
-      "2buildshellplan",
-      "2docsscriptplan",
-      "3reviewapprovalbuild, docs",
-    ]);
+    expect(screen.getByRole("list", { name: "Steps" })).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Workflow graph" })).toBeNull();
+    expect(router.state.location.search).toContain("view=steps");
   });
 
   it("AC-427.3 lists the steps in run order in plain words, and what a run takes", async () => {
-    renderDetail();
+    renderDetail(aWorkflowDetail(), "?view=steps");
 
     const steps = await screen.findByRole("list", { name: "Steps" });
     const items = within(steps).getAllByRole("listitem");
@@ -279,7 +280,7 @@ describe("WorkflowDetailScreen", () => {
   });
 
   it("shows the document read-only", async () => {
-    renderDetail();
+    renderDetail(aWorkflowDetail(), "?view=document");
 
     const doc = await screen.findByRole("region", { name: "Document" });
     expect(doc).toHaveTextContent('"name": "feature-flow"');
@@ -294,51 +295,29 @@ describe("WorkflowDetailScreen", () => {
     ).toBeInTheDocument();
   });
 
-  it("draws edges in content coordinates when the graph is scrolled sideways", async () => {
-    // Content x of each node (all at top 4, 40 high); the graph is scrolled 400 px right.
-    const contentX: Record<string, number> = { plan: 4, build: 220, docs: 220, review: 436 };
-    const scrollLeft = 400;
+  it("draws edges in world coordinates when the canvas is zoomed", async () => {
+    // The world is drawn at 50%: 1200 px wide, 600 px on screen. World x of each node, 168 x 40.
+    const worldX: Record<string, number> = { plan: 4, build: 220, docs: 220, review: 436 };
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(1200);
     vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
       this: Element,
     ) {
       const id = this.getAttribute("data-node-id");
-      const x = id === null ? undefined : contentX[id];
+      const x = id === null ? undefined : worldX[id];
       if (x === undefined) return new DOMRect(100, 50, 600, 300);
       const top = id === "docs" ? 104 : 54;
-      return new DOMRect(100 + x - scrollLeft, top, 168, 40);
+      return new DOMRect(100 + x / 2, top, 84, 20);
     });
-    vi.spyOn(Element.prototype, "scrollLeft", "get").mockReturnValue(scrollLeft);
-    vi.spyOn(Element.prototype, "scrollTop", "get").mockReturnValue(0);
-    vi.spyOn(Element.prototype, "scrollWidth", "get").mockReturnValue(1200);
-    vi.spyOn(Element.prototype, "scrollHeight", "get").mockReturnValue(300);
     const { container } = renderDetail();
 
     await screen.findByRole("group", { name: "Workflow graph" });
     await waitFor(() => {
       expect(container.querySelector('[data-edge="plan→docs"]')).toHaveAttribute(
         "d",
-        "M 172 24 C 196 24, 196 74, 220 74",
+        // Top to bottom: from the bottom middle of plan to the top middle of docs.
+        "M 88 48 C 88 78, 304 78, 304 108",
       );
     });
-    const svg = container.querySelector("svg[data-edges]");
-    expect(svg).toHaveAttribute("width", "1200");
-    expect(svg).toHaveAttribute("height", "300");
-  });
-
-  it("gives focus back to the list row that opened the panel", async () => {
-    const user = userEvent.setup();
-    renderDetail();
-
-    await user.click(await screen.findByRole("button", { name: "List" }));
-    const table = screen.getByRole("table", { name: "Nodes in run order" });
-    const row = within(table).getByText("docs").closest("tr");
-    if (!row) throw new Error("No docs row");
-    row.focus();
-    await user.keyboard("{Enter}");
-
-    const panel = await screen.findByRole("complementary", { name: "Node docs" });
-    await user.click(within(panel).getByRole("button", { name: "Close" }));
-    expect(row).toHaveFocus();
   });
 
   it("observes each node so a node that reflows redraws the edges", async () => {
@@ -353,7 +332,9 @@ describe("WorkflowDetailScreen", () => {
     renderDetail();
 
     await screen.findByRole("group", { name: "Workflow graph" });
-    const ids = observed.map((el) => el.getAttribute("data-node-id")).filter(Boolean);
+    const ids = observed
+      .map((el) => el.getAttribute("data-node-id") ?? "")
+      .filter((id) => id !== "" && !id.startsWith("row:"));
     expect(ids.sort()).toEqual(["build", "docs", "plan", "review"]);
   });
 
@@ -362,12 +343,12 @@ describe("WorkflowDetailScreen", () => {
     renderDetail();
 
     // A mouse click in Safari leaves focus on the body.
-    const docs = await screen.findByRole("button", { name: /docs.*script/ });
+    const docs = await screen.findByRole("button", { name: /docs.*Command/ });
     expect(document.activeElement).toBe(document.body);
     fireEvent.click(docs);
     const panel = await screen.findByRole("complementary", { name: "Node docs" });
     await user.click(within(panel).getByRole("button", { name: "Close" }));
-    expect(screen.getByRole("button", { name: /docs.*script/ })).toHaveFocus();
+    expect(screen.getByRole("button", { name: /docs.*Command/ })).toHaveFocus();
   });
 
   it("leaves focus alone when a node is opened by the URL", async () => {
@@ -420,25 +401,30 @@ describe("WorkflowDetailScreen, starting and reading (AC-PG-13)", () => {
     expect(screen.getByText(/Starts from/)).toHaveTextContent("Starts from hub run");
   });
 
-  it("AC-PG-13.4 keeps the graph and document in a closed Advanced disclosure", async () => {
+  it("AC-PG-13.4 opens on the graph, with the steps and the document one view away", async () => {
+    const user = userEvent.setup();
     renderWith("feature-flow", aWorkflowDetail());
 
-    const summary = await screen.findByText("Advanced: graph and document");
-    const details = summary.closest("details");
-    expect(details).not.toBeNull();
-    expect(details).not.toHaveAttribute("open");
-    expect(details).toContainElement(screen.getByRole("group", { name: "Workflow graph" }));
-    expect(details).toContainElement(screen.getByRole("region", { name: "Document" }));
-    expect(details).not.toContainElement(screen.getByRole("list", { name: "Steps" }));
+    const switcher = await screen.findByRole("group", { name: "View" });
+    expect(within(switcher).getByRole("button", { name: "Graph" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("group", { name: "Workflow graph" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Document" })).toBeNull();
+    await user.click(within(switcher).getByRole("button", { name: "Document" }));
+    expect(screen.getByRole("region", { name: "Document" })).toBeInTheDocument();
   });
 
-  it("AC-PG-13.4 opens the Advanced disclosure when a step is selected", async () => {
-    renderWith("feature-flow", aWorkflowDetail(), "?node=plan");
+  it("AC-PG-13.4 links a step of the Steps view to the same step in the graph", async () => {
+    const user = userEvent.setup();
+    const { router } = renderWith("feature-flow", aWorkflowDetail(), "?view=steps");
 
-    await screen.findByRole("complementary", { name: "Node plan" });
-    expect(screen.getByText("Advanced: graph and document").closest("details")).toHaveAttribute(
-      "open",
-    );
+    await user.click(await screen.findByRole("link", { name: "Show plan in the graph" }));
+
+    expect(router.state.location.search).toContain("view=graph");
+    expect(router.state.location.search).toContain("node=plan");
+    expect(await screen.findByRole("complementary", { name: "Node plan" })).toBeInTheDocument();
   });
 
   it("AC-PG-13.4 AC-427.5 AC-427.6 shows each step's kind, its prompt or command, and a repeat's rounds", async () => {
@@ -467,6 +453,7 @@ describe("WorkflowDetailScreen, starting and reading (AC-PG-13)", () => {
           ],
         },
       }),
+      "?view=steps",
     );
 
     const steps = await screen.findByRole("list", { name: "Steps" });
@@ -498,6 +485,7 @@ describe("WorkflowDetailScreen, starting and reading (AC-PG-13)", () => {
           ],
         },
       }),
+      "?view=steps",
     );
 
     const steps = await screen.findByRole("list", { name: "Steps" });
@@ -508,7 +496,7 @@ describe("WorkflowDetailScreen, starting and reading (AC-PG-13)", () => {
     // jsdom has no scrollIntoView.
     Element.prototype.scrollIntoView = vi.fn();
     const user = userEvent.setup();
-    renderWith("feature-flow", aWorkflowDetail());
+    renderWith("feature-flow", aWorkflowDetail(), "?view=steps");
 
     const steps = await screen.findByRole("list", { name: "Steps" });
     const items = within(steps).getAllByRole("listitem");
@@ -547,6 +535,7 @@ describe("WorkflowDetailScreen, starting and reading (AC-PG-13)", () => {
           ],
         },
       }),
+      "?view=steps",
     );
 
     await user.click(await screen.findByText("Read the prompt"));
@@ -584,6 +573,7 @@ describe("WorkflowDetailScreen, starting and reading (AC-PG-13)", () => {
           },
         ],
       }),
+      "?view=steps",
     );
 
     expect(
@@ -609,17 +599,19 @@ describe("WorkflowDetailScreen, starting and reading (AC-PG-13)", () => {
     ).toHaveAttribute("aria-busy", "true");
   });
 
-  it("AC-427.9 opens a chosen node under the graph, its facts beside its document", async () => {
-    renderWith("feature-flow", aWorkflowDetail(), "?node=build");
+  it("AC-427.9 opens a chosen step in the canvas's panel, in place of About", async () => {
+    renderWith("feature-flow", aWorkflowDetail(), "?node=review");
 
-    const panel = await screen.findByRole("complementary", { name: "Node build" });
-    const graph = screen.getByRole("group", { name: "Workflow graph" });
-    expect(graph.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(graph).not.toContainElement(panel);
-    const facts = panel.querySelector(".wf-node-facts");
-    expect(facts).toHaveTextContent("Typeshell");
-    expect(facts).toHaveTextContent("Waits forplan");
-    expect(panel.querySelector(".wf-node-detail")).toHaveTextContent("make");
+    const panel = await screen.findByRole("complementary", { name: "Node review" });
+    expect(screen.queryByRole("complementary", { name: "About this workflow" })).toBeNull();
+    expect(panel.closest(".ah-canvas")).toContainElement(
+      screen.getByRole("group", { name: "Workflow graph" }),
+    );
+    expect(panel).toHaveTextContent("Approval by you");
+    expect(panel).toHaveTextContent("Waits forbuilddocs");
+    expect(panel).toHaveTextContent("Leads toEnds the run");
+    expect(panel).toHaveTextContent("You are asked: “Ship it?”");
+    expect(panel).toHaveTextContent("As written in the file");
   });
 
   it("AC-PG-13.4 says a built-in is not a hub file and how to propose a copy", async () => {
@@ -630,5 +622,159 @@ describe("WorkflowDetailScreen, starting and reading (AC-PG-13)", () => {
     expect(lives).toHaveTextContent(
       "To change it, copy it into the hub's workflows/ folder with the same name: the hub's copy wins.",
     );
+  });
+});
+
+describe("The workflow canvas", () => {
+  const ROUNDS = aWorkflowDetail({
+    layers: [
+      [{ id: "plan", type: "agent", depends_on: [], description: null }],
+      [{ id: "fixing", type: "loop_group", depends_on: ["plan"], description: "Fix until green." }],
+    ],
+    document: {
+      name: "feature-flow",
+      nodes: [
+        { id: "plan", type: "agent" },
+        {
+          id: "fixing",
+          type: "loop_group",
+          depends_on: ["plan"],
+          max_iterations: 3,
+          until_bash: ["make", "check"],
+          nodes: [
+            { id: "fix", type: "agent", context: "fresh" },
+            { id: "check", type: "shell", depends_on: ["fix"], when: "$fix.output.ok" },
+          ],
+        },
+      ],
+    },
+  });
+
+  it("AC-WG.5 is one Tab stop whose arrow keys follow the edges and columns, and j/k run order", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+
+    const graph = await screen.findByRole("group", { name: "Workflow graph" });
+    const stops = within(graph)
+      .getAllByRole("button")
+      .filter((b) => b.tabIndex === 0);
+    expect(stops.map((b) => b.id)).toEqual(["wf-node-plan"]);
+    stops[0]?.focus();
+    await user.keyboard("{ArrowRight}");
+    expect(document.activeElement?.id).toBe("wf-node-build");
+    await user.keyboard("{ArrowDown}");
+    expect(document.activeElement?.id).toBe("wf-node-docs");
+    await user.keyboard("{ArrowRight}");
+    expect(document.activeElement?.id).toBe("wf-node-review");
+    await user.keyboard("{ArrowLeft}");
+    expect(document.activeElement?.id).toBe("wf-node-build");
+    await user.keyboard("k");
+    expect(document.activeElement?.id).toBe("wf-node-plan");
+  });
+
+  it("AC-WG.5 closes the chosen step with Esc and gives focus back to it", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+
+    const build = await screen.findByRole("button", { name: /build.*Command/ });
+    build.focus();
+    await user.keyboard("{Enter}");
+    await screen.findByRole("complementary", { name: "Node build" });
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("complementary", { name: "Node build" })).toBeNull();
+    expect(screen.getByRole("button", { name: /build.*Command/ })).toHaveFocus();
+    expect(screen.getByRole("complementary", { name: "About this workflow" })).toBeInTheDocument();
+  });
+
+  it("AC-WG.2 lights the chosen step's own edges and fades the edges off its chain", async () => {
+    const { container } = renderDetail(aWorkflowDetail(), "?node=build");
+
+    await screen.findByRole("complementary", { name: "Node build" });
+    const edge = (key: string) => container.querySelector(`[data-edge="${key}"]`);
+    expect(edge("plan→build")).toHaveAttribute("data-hot");
+    expect(edge("build→review")).toHaveAttribute("data-hot");
+    expect(edge("plan→docs")).toHaveAttribute("data-dim");
+    expect(edge("docs→review")).toHaveAttribute("data-dim");
+    expect(screen.getByRole("button", { name: /build.*Command/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("AC-WG.3 draws a rounds group as a frame of its own steps, its rule in the head, and folds it", async () => {
+    const user = userEvent.setup();
+    const { container } = renderDetail(ROUNDS);
+
+    const frame = await screen.findByRole("group", { name: "fixing rounds: up to 3" });
+    expect(frame).toHaveTextContent("Fix until green.");
+    expect(frame).toHaveTextContent("Up to 3 rounds · Stops when make check passes");
+    expect(within(frame).getByRole("list", { name: "Layer 2 of fixing" })).toHaveTextContent(
+      "check",
+    );
+    expect(within(frame).getByRole("button", { name: /check.*Only when/ })).toBeInTheDocument();
+    expect(within(frame).getByRole("button", { name: /fix.*Starts afresh/ })).toBeInTheDocument();
+    expect(container.querySelector('[data-edge="fixing__fix→fixing__check"]')).not.toBeNull();
+
+    await user.click(within(frame).getByRole("button", { name: "Collapse rounds" }));
+
+    expect(frame).toHaveTextContent("2 steps inside");
+    expect(within(frame).queryByRole("list")).toBeNull();
+    expect(container.querySelector('[data-edge="fixing__fix→fixing__check"]')).toBeNull();
+    expect(within(frame).getByRole("button", { name: "Expand rounds" })).toBeInTheDocument();
+  });
+
+  it("AC-WG.3 closes a rounds frame with left and opens it with right, from the keyboard", async () => {
+    const user = userEvent.setup();
+    renderDetail(ROUNDS);
+
+    const frame = await screen.findByRole("group", { name: "fixing rounds: up to 3" });
+    document.getElementById("wf-node-fixing")?.focus();
+    await user.keyboard("{ArrowLeft}");
+    expect(frame).toHaveTextContent("2 steps inside");
+    expect(document.activeElement?.id).toBe("wf-node-fixing");
+    await user.keyboard("{ArrowRight}");
+    expect(within(frame).getByRole("list", { name: "Layer 1 of fixing" })).toBeInTheDocument();
+    await user.keyboard("{ArrowRight}");
+    expect(document.activeElement?.id).toBe("wf-node-fixing__fix");
+  });
+
+  it("AC-WG.3 shows a group's rule and its own steps in the panel, and opens one from there", async () => {
+    const user = userEvent.setup();
+    renderDetail(ROUNDS, "?node=fixing");
+
+    const panel = await screen.findByRole("complementary", { name: "Node fixing" });
+    expect(panel).toHaveTextContent("Stops when make check passes.");
+    expect(panel).toHaveTextContent("If round 3 ends without stopping, this step fails.");
+    await user.click(within(panel).getByRole("button", { name: "check" }));
+
+    const step = await screen.findByRole("complementary", { name: "Node fixing__check" });
+    expect(step).toHaveTextContent("Only when$fix.output.ok");
+    expect(step).toHaveTextContent("Waits forfix");
+  });
+
+  it("AC-WG.4 zooms in and out from the controls and resets to 100%", async () => {
+    const user = userEvent.setup();
+    renderDetail();
+
+    const controls = await screen.findByRole("toolbar", { name: "Graph view" });
+    const reset = within(controls).getByRole("button", { name: "Reset zoom to 100%" });
+    expect(reset).toHaveTextContent("100%");
+    await user.click(within(controls).getByRole("button", { name: "Zoom in (+)" }));
+    expect(reset).toHaveTextContent("120%");
+    await user.click(within(controls).getByRole("button", { name: "Zoom out (−)" }));
+    await user.click(within(controls).getByRole("button", { name: "Zoom out (−)" }));
+    expect(reset).toHaveTextContent("83%");
+    await user.click(reset);
+    expect(reset).toHaveTextContent("100%");
+    const world = screen.getByRole("group", { name: "Workflow graph" });
+    expect(world.style.transform).toContain("scale(1)");
+  });
+
+  it("AC-WG.8 has no serious a11y violations with a group open and a step chosen (a11y)", async () => {
+    const { container } = renderDetail(ROUNDS, "?node=fixing__fix");
+
+    await screen.findByRole("complementary", { name: "Node fixing__fix" });
+    expect(await seriousViolations(container)).toEqual([]);
   });
 });
