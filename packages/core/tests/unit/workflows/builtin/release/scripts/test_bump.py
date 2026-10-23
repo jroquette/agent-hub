@@ -1,5 +1,6 @@
 """The release pack's ``bump.py`` (AGH-494), in process: the release commit's edits and commit."""
 
+import datetime
 import importlib.util
 import json
 import subprocess
@@ -370,3 +371,24 @@ def test_reuses_release_commit_when_run_again(
 
     assert again == first
     assert git(repo, "rev-list", "--count", "HEAD") == "2"
+
+
+def test_dates_section_today_in_utc_when_no_today_given(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    given = args()
+    del given[given.index("--today") : given.index("--today") + 2]
+    monkeypatch.chdir(a_repo(tmp_path))
+    today = datetime.datetime.now(datetime.timezone.utc).date().isoformat()  # noqa: UP017
+
+    assert load().main(given) == 0
+    capsys.readouterr()
+
+    assert f"## [0.21.0] - {today}" in (tmp_path / "repo/CHANGELOG.md").read_text()
+
+
+def test_names_no_post_39_utc_alias_when_pack_scripts_read() -> None:
+    """``datetime.UTC`` is 3.11+: a hub imports and may run the pack's scripts on 3.9."""
+    found = [path.name for path in SCRIPT.parent.glob("*.py") if "datetime.UTC" in path.read_text()]
+
+    assert found == []
