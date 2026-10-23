@@ -20289,6 +20289,93 @@
         ]
       }
     },
+    "/api/v1/projects/{project}/actions/{pack}/{name}": {
+      "put": {
+        "description": "Rewrites an action of the hub (its document and its script): a strict write; the\naction is a draft until it is committed again.",
+        "operationId": "put_action_api_v1_projects__project__actions__pack___name__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "pack",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Pack",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewAction"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioActionView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Put Action",
+        "tags": [
+          "scenarios"
+        ]
+      }
+    },
     "/api/v1/projects/{project}/brain": {
       "get": {
         "description": "The ``.md`` notes of the project's hub brain (``auto/`` excluded).",

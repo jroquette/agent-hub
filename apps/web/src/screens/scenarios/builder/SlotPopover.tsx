@@ -145,8 +145,8 @@ export function ActionChoice({
             aria-label="Describe the action"
             placeholder={
               readOnly
-                ? "e.g. Read an order by id from the DB and print its status and cover status"
-                : "e.g. Send a JSON message to an SQS queue"
+                ? "e.g. Read one record by id from a service and print its status"
+                : "e.g. Send one JSON message to a queue"
             }
             value={described}
             onChange={(event) => {

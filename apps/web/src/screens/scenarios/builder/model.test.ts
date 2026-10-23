@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  conditionFromWords,
   conditionWords,
   dependsOn,
   formatCondition,
@@ -128,5 +129,40 @@ describe("scenario builder model", () => {
     expect(formatCondition(groups ?? [])).toBe(text);
     expect(conditionWords(text)).toBe("status is ON_HOLD and cover is PENDING or code is above 2");
     expect(parseCondition("len($x) > 2")).toBeNull();
+  });
+});
+
+describe("a condition typed in words", () => {
+  const fields = [
+    { ref: "$self.output.status", label: "status" },
+    { ref: "$self.output.state", label: "state" },
+    { ref: "$CTX.record_id", label: "record_id (kept by create)" },
+  ];
+
+  it("reads rows from words, matching the fields of this place", () => {
+    const result = conditionFromWords(
+      "status is 200 and state is not DONE or record id >= 3",
+      fields,
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      groups: [
+        [
+          { field: "$self.output.status", op: "==", value: "200" },
+          { field: "$self.output.state", op: "!=", value: "DONE" },
+        ],
+        [{ field: "$CTX.record_id", op: ">=", value: "3" }],
+      ],
+    });
+  });
+
+  it("names what it cannot match, and guesses nothing", () => {
+    expect(conditionFromWords("color is red", fields)).toEqual({
+      ok: false,
+      problem:
+        "No field “color” here. Fields you can compare: status, state, record_id (kept by create).",
+    });
+    expect(conditionFromWords("status 200", fields).ok).toBe(false);
   });
 });

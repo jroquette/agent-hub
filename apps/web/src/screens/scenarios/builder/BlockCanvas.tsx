@@ -10,7 +10,8 @@ import {
 import { CanvasControls, Icon, useViewportSize, type IconName } from "../../../components";
 import { fitView } from "../../../lib/canvasView";
 import { usePanZoom } from "../../../lib/usePanZoom";
-import type { ScenarioAction } from "../queries";
+import type { ScenarioAction, ScenarioPlanRow } from "../queries";
+import { BlockFacts } from "./BlockFacts";
 import { maxChecks } from "../story";
 import { kindLook } from "./FlowCanvas";
 import { conditionWords, refInWords, shown, text, type BuilderNode, type Json } from "./model";
@@ -68,6 +69,9 @@ export interface BlockCanvasProps {
   onSlot: (request: SlotRequest) => void;
   /** Reviewing Claude's proposal: the ids of its new or changed blocks (read-only canvas). */
   suggested?: ReadonlySet<string> | undefined;
+  /** A preview in an environment: the plan's row of a step, and the environment's name. */
+  planOf?: ((id: string) => ScenarioPlanRow | null) | undefined;
+  planEnvironment?: string | null | undefined;
 }
 
 /** A slot of a block clicked to fill it: which block (or C-block), which key, where. */
@@ -575,6 +579,12 @@ function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
               onSlot={ctx.props.onSlot}
             />
           </span>
+          <BlockFacts
+            node={node}
+            action={ctx.props.actionOf(node)}
+            row={ctx.props.planOf?.(node.id) ?? null}
+            environment={ctx.props.planEnvironment ?? null}
+          />
         </span>
         <Badges ctx={ctx} node={node} />
       </div>

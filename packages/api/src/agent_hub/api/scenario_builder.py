@@ -519,20 +519,39 @@ def drop_proposal(builder: ScenarioBuilder, project: str, name: str) -> None:
 
 
 def create_action(
-    builder: ScenarioBuilder, project: str, action: NewAction, *, writes: ItemVersionWrites
+    builder: ScenarioBuilder,
+    project: str,
+    action: NewAction,
+    *,
+    writes: ItemVersionWrites,
+    replace: bool = False,
 ) -> ScenarioActionView:
     """Writes a new action (its document and its script) as a draft; ``name_taken`` when the
-    pack already has one of that name, ``document_invalid`` when the loader refuses it."""
+    pack already has one of that name, ``document_invalid`` when the loader refuses it. With
+    ``replace`` it rewrites an action that exists (``unknown_action`` else), keeping its script's
+    file when the runtime is unchanged; a changed action is a draft until it is committed."""
     hub = Path(builder.catalog.hub_of(project))
     found = discover_actions(hub)
-    if any(
-        entry.pack == action.pack and entry.document.name == action.name for entry in found.actions
-    ):
+    existing = next(
+        (
+            entry
+            for entry in found.actions
+            if entry.pack == action.pack and entry.document.name == action.name
+        ),
+        None,
+    )
+    if existing is not None and not replace:
         raise RunConflictError(
             code="name_taken", reason=f"pack {action.pack} already has an action {action.name}"
         )
+    if existing is None and replace:
+        raise RunConflictError(
+            code="unknown_action", reason=f"pack {action.pack} has no action {action.name}"
+        )
     suffix = ".py" if action.runtime == "python" else ".sh"
     script = f"scripts/{action.name.replace('-', '_')}{suffix}"
+    if existing is not None and existing.document.script.endswith(suffix):
+        script = existing.document.script
     text = _action_yaml(action, script)
     shown = f"actions/{action.pack}/{action.name}.yaml"
     try:

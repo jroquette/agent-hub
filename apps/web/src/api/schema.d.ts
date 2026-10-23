@@ -1036,6 +1036,27 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/projects/{project}/actions/{pack}/{name}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /**
+     * Put Action
+     * @description Rewrites an action of the hub (its document and its script): a strict write; the
+     *     action is a draft until it is committed again.
+     */
+    put: operations["put_action_api_v1_projects__project__actions__pack___name__put"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/projects/{project}/brain": {
     parameters: {
       query?: never;
@@ -10469,6 +10490,52 @@ export interface operations {
     responses: {
       /** @description Successful Response */
       201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ScenarioActionView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  put_action_api_v1_projects__project__actions__pack___name__put: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        pack: string;
+        name: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["NewAction"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
         headers: {
           [name: string]: unknown;
         };

@@ -1,4 +1,4 @@
-import { useState, type RefObject } from "react";
+import { useState, type ReactNode, type RefObject } from "react";
 
 import {
   Button,
@@ -67,12 +67,15 @@ export function ActionPanel({
   openerRef,
   onClose,
   onShowStep,
+  tools,
 }: {
   action: ScenarioAction;
   steps: readonly ScenarioStep[];
   openerRef: RefObject<HTMLElement | null>;
   onClose: () => void;
   onShowStep: (id: string) => void;
+  /** Buttons at the top of the panel (the builder's Edit, Add to the scenario). */
+  tools?: ReactNode;
 }) {
   const [tab, setTab] = useState<"script" | "document">("script");
   const usedBy = steps.filter((step) => step.action === action.ref);
@@ -84,6 +87,11 @@ export function ActionPanel({
       openerRef={openerRef}
     >
       <div className="ah-stack" style={{ gap: 16 }}>
+        {tools && (
+          <div className="ah-row ah-wrap" style={{ gap: 8 }}>
+            {tools}
+          </div>
+        )}
         <div className="ah-row ah-wrap" style={{ gap: 8 }}>
           <EffectBadge effect={action.effect} />
           <span className="ah-small ah-subtle">{action.draft ? "draft" : "committed"}</span>

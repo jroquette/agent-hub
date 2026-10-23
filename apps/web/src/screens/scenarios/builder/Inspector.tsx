@@ -6,6 +6,7 @@ import { maxChecks, pace, stopLines } from "../story";
 import { asStep, kindLook } from "./FlowCanvas";
 import {
   OPERATORS,
+  conditionFromWords,
   dependsOn,
   formatCondition,
   parseCondition,
@@ -130,6 +131,64 @@ export function ValueInput({
   );
 }
 
+/** A condition typed in words, turned into rows the person checks (never sent anywhere). */
+function WordsField({
+  fields,
+  onRows,
+}: {
+  fields: readonly { ref: string; label: string }[];
+  onRows: (rows: ConditionRow[][]) => void;
+}) {
+  const [words, setWords] = useState("");
+  const [problem, setProblem] = useState<string | null>(null);
+  const [read, setRead] = useState(false);
+  const use = () => {
+    const result = conditionFromWords(words, fields);
+    if (result.ok) {
+      onRows(result.groups);
+      setProblem(null);
+      setRead(true);
+    } else {
+      setProblem(result.problem);
+      setRead(false);
+    }
+  };
+  if (fields.length === 0) return null;
+  return (
+    <div className="ah-stack" style={{ gap: 4 }}>
+      <span className="sb-words">
+        <input
+          className="ah-input"
+          aria-label="Type the condition in words"
+          placeholder={`Type it: ${fields[0]?.label ?? "field"} is …${fields[1] ? ` and ${fields[1].label} is not …` : ""}`}
+          value={words}
+          onChange={(event) => {
+            setWords(event.target.value);
+            setRead(false);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              use();
+            }
+          }}
+        />
+        <Button size="sm" disabled={words.trim() === ""} onClick={use}>
+          Use
+        </Button>
+      </span>
+      {problem && (
+        <span className="ah-small sb-field-error">
+          <Icon name="circle-x" size="sm" /> {problem}
+        </span>
+      )}
+      {read && (
+        <span className="ah-small ah-subtle">Read from your words: check the rows below.</span>
+      )}
+    </div>
+  );
+}
+
 /** "Done when" / "Only if": or-groups of and-rows, the grammar's own shape. */
 export function ConditionBuilder({
   label,
@@ -170,6 +229,12 @@ export function ConditionBuilder({
   const blank: ConditionRow = { field: fields[0]?.ref ?? "", op: "==", value: "" };
   return (
     <div className="sb-field">
+      <WordsField
+        fields={fields}
+        onRows={(rows) => {
+          write(rows);
+        }}
+      />
       <span className="ah-small">
         {label}{" "}
         {groups.length > 1
@@ -579,7 +644,7 @@ export function BlockInspector({
                   set("capture_response", event.target.checked ? true : undefined);
                 }}
               />
-              Ask me to type a value (e.g. the order id); later blocks can use it.
+              Ask me to type a value (an id, a reference); later blocks can use it.
             </label>
             <div className="sb-field">
               <span className="ah-small">Answers</span>
@@ -798,7 +863,7 @@ export function BlockInspector({
                 id={fieldId}
                 className="ah-input"
                 value={typeof node.description === "string" ? node.description : ""}
-                placeholder="e.g. Pull the order from Medusa"
+                placeholder="e.g. Fetch the new records"
                 onChange={(event) => {
                   set("description", event.target.value);
                 }}

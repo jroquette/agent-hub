@@ -2016,3 +2016,24 @@ def test_writes_draft_action_when_builder_creates_one(scenarios: Any) -> None:
     ]
     assert (again.status_code, again.json()["code"]) == (409, "name_taken")
     assert bad.status_code == 422
+
+
+def test_rewrites_action_when_builder_edits_one(scenarios: Any) -> None:
+    writes = _DiskWrites()
+    scenarios.wire(item_version_writes=writes)
+    body = dict(
+        NEW_ACTION, name="get-order", runtime="sh", effect="read", description="Read it again"
+    )
+
+    edited = scenarios.client.put(
+        "/api/v1/projects/demo/actions/demo/get-order", json=body, headers=_origin(scenarios)
+    )
+    missing = scenarios.client.put(
+        "/api/v1/projects/demo/actions/demo/nope", json=body, headers=_origin(scenarios)
+    )
+
+    assert edited.status_code == 200, edited.text
+    assert (edited.json()["description"], edited.json()["draft"]) == ("Read it again", True)
+    # The script keeps its file (same runtime), so a scenario that calls it keeps working.
+    assert writes.calls == ["actions/demo/scripts/get-order.sh", "actions/demo/get-order.yaml"]
+    assert (missing.status_code, missing.json()["code"]) == (409, "unknown_action")

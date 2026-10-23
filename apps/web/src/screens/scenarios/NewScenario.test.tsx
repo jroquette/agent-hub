@@ -1,4 +1,4 @@
-import { screen } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
@@ -65,6 +65,43 @@ function renderNew(routes: ApiRoutes = {}) {
 }
 
 describe("NewScenarioScreen", () => {
+  it("creates a blank scenario to build with blocks, and opens it", async () => {
+    const user = userEvent.setup();
+    const { requests, router } = renderNew({
+      "PUT /api/v1/scenarios/agent-hub/record-roundtrip": {
+        path: "scenarios/orders/record-roundtrip.yaml",
+        revision: 1,
+        content_hash: "sha256:new",
+        yaml: "",
+        changed: true,
+        versioned: true,
+      },
+    });
+
+    const blank = await screen.findByRole("button", {
+      name: "Create it blank and build with blocks",
+    });
+    expect(blank).toBeDisabled();
+    await user.selectOptions(await screen.findByLabelText("Pack"), "orders");
+    await user.type(screen.getByLabelText("Name (optional)"), "record-roundtrip");
+    await user.click(blank);
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/scenarios/agent-hub/record-roundtrip");
+    });
+    const put = requests.find((request) => request.method === "PUT");
+    const body = (await put?.clone().json()) as {
+      pack: string;
+      base_content_hash: string | null;
+      document: { nodes: { id: string; type: string }[] };
+    };
+    expect(body.base_content_hash).toBeNull();
+    expect(body.pack).toBe("orders");
+    expect(body.document.nodes).toEqual([
+      expect.objectContaining({ id: "first-step", type: "approval" }),
+    ]);
+  });
+
   it("waits for a description before Claude can be asked", async () => {
     renderNew();
 
@@ -85,7 +122,7 @@ describe("NewScenarioScreen", () => {
     const user = userEvent.setup();
     renderNew();
 
-    await user.click(await screen.findByRole("button", { name: "Order to invoice" }));
+    await user.click(await screen.findByRole("button", { name: "Create, then wait for a state" }));
     await user.selectOptions(await screen.findByLabelText("Environment"), "personal");
     await user.selectOptions(screen.getByLabelText("Pack"), "orders");
     await user.type(screen.getByLabelText("Name (optional)"), "order-to-invoice");
@@ -96,7 +133,7 @@ describe("NewScenarioScreen", () => {
     expect(discuss).toHaveTextContent("Name: order-to-invoice");
     expect(discuss).toHaveTextContent("Pack: orders");
     expect(discuss).toHaveTextContent("Environment: personal");
-    expect(discuss).toHaveTextContent("Place a test order");
+    expect(discuss).toHaveTextContent("Create a test record");
     const draft = Object.keys(window.localStorage).find((key) =>
       key.startsWith("ah.chat.draft.discuss.scenario-new:agent-hub:"),
     );
@@ -130,7 +167,7 @@ describe("NewScenarioScreen", () => {
       }),
     });
 
-    await user.click(await screen.findByRole("button", { name: "Order to invoice" }));
+    await user.click(await screen.findByRole("button", { name: "Create, then wait for a state" }));
     await user.type(screen.getByLabelText("Name (optional)"), "order-to-invoice");
     await user.click(screen.getByRole("button", { name: "Create with Claude" }));
 

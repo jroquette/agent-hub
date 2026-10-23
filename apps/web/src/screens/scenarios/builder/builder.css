@@ -759,3 +759,50 @@ textarea.sb-script {
   gap: 6px;
   align-items: center;
 }
+
+.sb-preview {
+  min-width: 340px;
+  gap: 10px;
+  padding: 12px;
+}
+
+.sb-action-buttons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.sb-action-line {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.sb-action-line > .bk-palette-action {
+  flex: 1;
+  min-width: 0;
+}
+
+.sb-words {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.sb-change {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px dashed var(--accent);
+  border-radius: var(--radius-md);
+}
+.sb-change[data-kind="removed"] {
+  border-color: var(--failed);
+}
+.sb-change-kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  width: 56px;
+}

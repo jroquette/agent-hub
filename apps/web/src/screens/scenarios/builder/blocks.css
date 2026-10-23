@@ -618,3 +618,87 @@
   line-height: 16px;
   z-index: 2;
 }
+
+/* The facts under a block's sentence: what it runs, calls, changes, gives. */
+.bk-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 10px;
+  row-gap: 3px;
+  margin: 6px 0 0;
+  padding-top: 6px;
+  border-top: 1px dashed color-mix(in srgb, var(--kind) 35%, var(--border));
+  font-size: 12px;
+  font-weight: 400;
+}
+.bk-fact-label {
+  color: var(--text-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 10px;
+  padding-top: 2px;
+}
+.bk-fact {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.bk-call {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 10px;
+}
+.bk-fact-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.bk-draft {
+  color: var(--waiting);
+  font-size: 11px;
+}
+.bk-plan {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.bk-script {
+  margin: 6px 0 0;
+  max-height: 260px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre;
+  cursor: text;
+}
+
+/* A fact's parts wrap between them, never inside a word or a path. */
+.bk-runs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+.bk-runs > * {
+  flex: none;
+  max-width: 100%;
+}
+.bk-fact {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+.bk-script {
+  max-width: 640px;
+}
+.bk-block {
+  min-width: 460px;
+}

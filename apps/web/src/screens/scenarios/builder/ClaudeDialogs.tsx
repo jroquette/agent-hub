@@ -3,7 +3,7 @@ import { useState } from "react";
 
 import type { components } from "../../../api/schema";
 import { Banner, Button, Dialog, Icon, SegmentedControl } from "../../../components";
-import { apiCommand, apiKey, apiPost, useApi, type ApiProblem } from "../../../lib/api";
+import { apiCommand, apiKey, apiPost, apiPut, useApi, type ApiProblem } from "../../../lib/api";
 import type { DescribeScope } from "./claude";
 
 /* The builder's dialogs around Claude and new actions: describe a scenario (or its next steps) in
@@ -16,12 +16,12 @@ type InputType = NonNullable<NewAction["inputs"]>[number]["type"];
 type OutputType = NonNullable<NewAction["outputs"]>[number]["type"];
 type ActionView = Schemas["ScenarioActionView"];
 
-const EXAMPLE = `Create a B2B order by hand in the storefront (paid on credit, €1000 or more) and give me its order id.
-Send FETCH_ORDERS for webshop t_ws_7e8111d33041 to the webshop-events queue.
-Wait until the order is ON_HOLD and its cover is PENDING (check every 15 s, up to 10 min).
-Send INSURANCE_RESOLVE_COVER_JOBS to the payments-queue and wait until the cover is QUOTED or REFUSED.
-If QUOTED: switch the order to FedEx with a DB script and reprocess it. If REFUSED: stop.
-Run the poller until the cover is ACTIVATED (at most 3 rounds).`;
+const EXAMPLE = `For example:
+I create a record by hand and type its id.
+Send a message to a queue so the service picks the record up.
+Wait until the service shows the record as processed (check every 15 s, up to 10 min).
+If it was accepted, call the service's API to continue; if it was rejected, stop.
+Run the job until the record reaches its final state (at most 3 rounds).`;
 
 /** Claude's proposal for the scenario, read every few seconds while one is expected. */
 export function useProposal(project: string, name: string, poll: boolean) {
@@ -168,6 +168,7 @@ export function NewActionDialog({
   project,
   pack,
   readOnly,
+  existing = null,
   onCreated,
   onClose,
 }: {
@@ -175,20 +176,44 @@ export function NewActionDialog({
   pack: string;
   /** For a check: the action can only read. */
   readOnly: boolean;
+  /** An action to edit (its form filled in); null writes a new one. */
+  existing?: ActionView | null;
   onCreated: (action: ActionView) => void;
   onClose: () => void;
 }) {
   const client = useQueryClient();
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [effect, setEffect] = useState<NewAction["effect"]>(readOnly ? "read" : "write");
-  const [runtime, setRuntime] = useState<"python" | "sh">("python");
-  const [inputs, setInputs] = useState<Row[]>([]);
-  const [outputs, setOutputs] = useState<Row[]>([]);
-  const [script, setScript] = useState<string | null>(null);
+  const [name, setName] = useState(existing?.name ?? "");
+  const [description, setDescription] = useState(existing?.description ?? "");
+  const [effect, setEffect] = useState<NewAction["effect"]>(
+    existing?.effect === "read" || existing?.effect === "write" || existing?.effect === "destroy"
+      ? existing.effect
+      : readOnly
+        ? "read"
+        : "write",
+  );
+  const [runtime, setRuntime] = useState<"python" | "sh">(
+    existing?.runtime === "sh" ? "sh" : "python",
+  );
+  const [inputs, setInputs] = useState<Row[]>(
+    (existing?.inputs ?? []).map((input) => ({
+      name: input.name,
+      type: input.type,
+      required: input.required,
+    })),
+  );
+  const [outputs, setOutputs] = useState<Row[]>(
+    Object.entries(
+      (existing?.output_format?.properties ?? {}) as Record<string, { type?: string }>,
+    ).map(([field, schema]) => ({ name: field, type: schema.type ?? "string" })),
+  );
+  const [script, setScript] = useState<string | null>(existing?.script_text ?? null);
   const create = useMutation<ActionView, ApiProblem, NewAction>({
     mutationFn: (body) =>
-      apiPost("/api/v1/projects/{project}/actions", body, { path: { project } }),
+      existing
+        ? apiPut("/api/v1/projects/{project}/actions/{pack}/{name}", body, {
+            path: { project, pack, name: existing.name },
+          })
+        : apiPost("/api/v1/projects/{project}/actions", body, { path: { project } }),
     onSuccess: (action) => {
       void client.invalidateQueries({
         queryKey: apiKey("/api/v1/projects/{project}/actions", { path: { project } }),
@@ -280,7 +305,7 @@ export function NewActionDialog({
   );
   return (
     <Dialog
-      title="New action"
+      title={existing ? `Edit action ${existing.name}` : "New action"}
       size="lg"
       onClose={onClose}
       pending={create.isPending}
@@ -315,15 +340,16 @@ export function NewActionDialog({
               } as NewAction);
             }}
           >
-            {create.isPending ? "Writing…" : "Write the action"}
+            {create.isPending ? "Writing…" : existing ? "Save the action" : "Write the action"}
           </Button>
         </>
       }
     >
       <div className="ah-stack" style={{ gap: 12 }}>
         <span className="ah-small ah-muted">
-          Saved as actions/{pack}/{name || "<name>"}.yaml with its script. It is a draft until you
-          commit it in the hub: the plan denies a draft.
+          {existing
+            ? `Every scenario that runs ${existing.name} uses the new version: it is a draft again until you commit it in the hub, and the plan denies a draft.`
+            : `Saved as actions/${pack}/${name || "<name>"}.yaml with its script. It is a draft until you commit it in the hub: the plan denies a draft.`}
         </span>
         {create.error && (
           <Banner tone="error" boxed>
@@ -335,8 +361,9 @@ export function NewActionDialog({
             Name
             <input
               className="ah-input ah-mono"
-              placeholder="render-invoice-pdf"
+              placeholder="send-message"
               value={name}
+              disabled={existing !== null}
               onChange={(event) => {
                 setName(event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"));
               }}
@@ -346,7 +373,7 @@ export function NewActionDialog({
             What it does
             <input
               className="ah-input"
-              placeholder="Render the invoice PDF and upload it"
+              placeholder="Send one JSON message to a queue"
               value={description}
               onChange={(event) => {
                 setDescription(event.target.value);
@@ -417,6 +444,56 @@ export function NewActionDialog({
             }}
           />
         </label>
+      </div>
+    </Dialog>
+  );
+}
+
+/** Ask Claude to write one action from a description (it writes a draft in the hub). */
+export function AskActionDialog({
+  onSend,
+  onClose,
+}: {
+  onSend: (text: string) => void;
+  onClose: () => void;
+}) {
+  const [text, setText] = useState("");
+  return (
+    <Dialog
+      title="Ask Claude to write an action"
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button
+            variant="primary"
+            icon="message-square"
+            disabled={text.trim() === ""}
+            onClick={() => {
+              onSend(text.trim());
+            }}
+          >
+            Ask Claude
+          </Button>
+        </>
+      }
+    >
+      <div className="ah-stack" style={{ gap: 8 }}>
+        <span className="ah-small ah-muted">
+          Say what the action does, what it takes and what it should print back. Claude writes its
+          YAML and its script in the hub as a draft (each file asks you first in the Discuss panel);
+          it shows up in the palette once written.
+        </span>
+        <textarea
+          className="ah-input sb-describe"
+          aria-label="Describe the action"
+          rows={6}
+          placeholder="e.g. Call a service's HTTP API with a JSON body and print the response status and body"
+          value={text}
+          onChange={(event) => {
+            setText(event.target.value);
+          }}
+        />
       </div>
     </Dialog>
   );

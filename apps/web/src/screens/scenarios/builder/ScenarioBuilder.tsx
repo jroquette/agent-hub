@@ -16,7 +16,7 @@ import {
 import { readStored, writeStored } from "../../../lib/storage";
 import { DiscussButton, useDiscuss } from "../../../shell/discuss";
 import { EffectBadge } from "../parts";
-import { useScenario, type ScenarioAction, type ScenarioDetail } from "../queries";
+import { usePlanScenario, useScenario, type ScenarioAction, type ScenarioDetail } from "../queries";
 import {
   BlockCanvas,
   type DragState,
@@ -27,15 +27,24 @@ import {
 } from "./BlockCanvas";
 import { InsertMenu } from "./InsertMenu";
 import { createActionMessage, describeMessage, type DescribeScope } from "./claude";
-import { DescribeDialog, NewActionDialog, useDismissProposal, useProposal } from "./ClaudeDialogs";
+import {
+  AskActionDialog,
+  DescribeDialog,
+  NewActionDialog,
+  useDismissProposal,
+  useProposal,
+} from "./ClaudeDialogs";
 import { StartCard } from "./StartCard";
+import { ActionPanel } from "../ActionPanel";
 import { ActionChoice, ConditionChoice, SlotFrame, TextChoice, ValueChoice } from "./SlotPopover";
 import { CATEGORIES, blockItem } from "./palette";
 import { FlowCanvas, kindLook, type AddChoice } from "./FlowCanvas";
 import { BlockInspector, ConditionBuilder, ScenarioSettings } from "./Inspector";
 import {
   allNodes,
+  dependsOn,
   freshId,
+  removeBlock,
   insertAfter,
   insertBranch,
   newBlock,
@@ -107,12 +116,18 @@ function Palette({
   taken,
   onDrag,
   onAdd,
+  onNewAction,
+  onAskAction,
+  onOpenAction,
 }: {
   library: readonly LibraryAction[];
   pack: string;
   taken: BuilderDocument;
   onDrag: (drag: DragState) => void;
   onAdd: (item: Item) => void;
+  onNewAction: () => void;
+  onAskAction: () => void;
+  onOpenAction: (item: LibraryAction, opener: HTMLElement) => void;
 }) {
   const [query, setQuery] = useState("");
   const shown = library.filter((item) =>
@@ -164,6 +179,17 @@ function Palette({
         </div>
       ))}
       <span className="ah-overline">Actions in this hub</span>
+      <span className="ah-small ah-muted">
+        An action is a script with a declared effect; blocks run them. Make the ones you need.
+      </span>
+      <span className="sb-action-buttons">
+        <Button size="sm" icon="plus" onClick={onNewAction}>
+          New action
+        </Button>
+        <Button size="sm" variant="ghost" icon="message-square" onClick={onAskAction}>
+          Ask Claude
+        </Button>
+      </span>
       <input
         className="ah-input"
         aria-label="Find an action"
@@ -181,26 +207,38 @@ function Palette({
       {shown.map((item) => {
         const asCheck = item.action.effect === "read";
         return (
-          <button
-            key={item.action.ref}
-            type="button"
-            className="bk-palette-action"
-            style={{ ["--kind" as string]: kindLook("action").tint }}
-            title={`${item.action.description ?? ""}${asCheck ? "\nShift: add as a check" : ""}`}
-            aria-label={`Add action ${item.action.name}`}
-            onPointerDown={(event) => {
-              const check = asCheck && event.shiftKey;
-              const make = () => blockItem(taken, check ? "expect" : "action", refOf(item));
-              startPaletteDrag(event, make, onDrag, () => {
-                onAdd(make());
-              });
-            }}
-          >
-            <Icon name="circle-play" size="sm" />
-            <span className="ah-mono">{item.action.name}</span>
-            <span className="ah-grow" />
-            <EffectBadge effect={item.action.effect} />
-          </button>
+          <span key={item.action.ref} className="sb-action-line">
+            <button
+              type="button"
+              className="bk-palette-action"
+              style={{ ["--kind" as string]: kindLook("action").tint }}
+              title={`${item.action.description ?? ""}${asCheck ? "\nShift: add as a check" : ""}`}
+              aria-label={`Add action ${item.action.name}`}
+              onPointerDown={(event) => {
+                const check = asCheck && event.shiftKey;
+                const make = () => blockItem(taken, check ? "expect" : "action", refOf(item));
+                startPaletteDrag(event, make, onDrag, () => {
+                  onAdd(make());
+                });
+              }}
+            >
+              <Icon name="circle-play" size="sm" />
+              <span className="ah-mono">{item.action.name}</span>
+              <span className="ah-grow" />
+              <EffectBadge effect={item.action.effect} />
+            </button>
+            <button
+              type="button"
+              className="sb-icon-btn"
+              aria-label={`About ${item.action.name}`}
+              title="What it does, its script, edit it"
+              onClick={(event) => {
+                onOpenAction(item, event.currentTarget);
+              }}
+            >
+              <Icon name="info" size="sm" />
+            </button>
+          </span>
         );
       })}
     </aside>
@@ -270,7 +308,17 @@ export function ScenarioBuilder({
     anchor: DOMRect;
     where: string;
   } | null>(null);
-  const [menu, setMenu] = useState<"more" | "problems" | null>(null);
+  const [menu, setMenu] = useState<"more" | "problems" | "preview" | null>(null);
+  const planner = usePlanScenario(scenario.project, scenario.name);
+  const [previewEnv, setPreviewEnv] = useState(scenario.environments[0]?.name ?? "");
+  const [previewInputs, setPreviewInputs] = useState<Record<string, string>>({});
+  const preview = planner.data ?? null;
+  const [previewed, setPreviewed] = useState<unknown>(null);
+  if (preview && previewed !== preview) {
+    setPreviewed(preview);
+    if (menu === "preview") setMenu(null);
+  }
+  const planRows = new Map((preview?.rows ?? []).map((row) => [row.step, row]));
   const [slot, setSlot] = useState<SlotRequest | null>(null);
   const [settings, setSettings] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -279,9 +327,15 @@ export function ScenarioBuilder({
   const [describing, setDescribing] = useState(false);
   const [awaiting, setAwaiting] = useState(false);
   const [reviewing, setReviewing] = useState(false);
-  const [newAction, setNewAction] = useState<{ node: string | null; readOnly: boolean } | null>(
-    null,
-  );
+  const [resolved, setResolved] = useState<Set<string>>(() => new Set());
+  const [newAction, setNewAction] = useState<{
+    node: string | null;
+    readOnly: boolean;
+    existing?: ScenarioAction;
+  } | null>(null);
+  const [askingAction, setAskingAction] = useState(false);
+  const [actionPanel, setActionPanel] = useState<string | null>(null);
+  const actionOpener = useRef<HTMLElement | null>(null);
   const { ask } = useDiscuss();
   const proposal = useProposal(scenario.project, scenario.name, awaiting);
   const dismiss = useDismissProposal(scenario.project, scenario.name);
@@ -613,18 +667,58 @@ export function ScenarioBuilder({
     setDescribing(false);
   };
   const proposed = offered?.document ? toDocument(offered.document) : null;
-  const current = new Map(allNodes(document.nodes).map((node) => [node.id, JSON.stringify(node)]));
+  // The proposal's changes, block by block (a top-level step, a repeat with what it holds): new,
+  // changed, or removed; the ones already accepted or rejected drop out.
+  const changes: { id: string; kind: "new" | "changed" | "removed"; node: BuilderNode }[] = [];
+  if (proposed) {
+    const mine = new Map(document.nodes.map((node) => [node.id, node]));
+    const theirs = new Set(proposed.nodes.map((node) => node.id));
+    for (const node of proposed.nodes) {
+      const before = mine.get(node.id);
+      if (!before) changes.push({ id: node.id, kind: "new", node });
+      else if (JSON.stringify(before) !== JSON.stringify(node)) {
+        changes.push({ id: node.id, kind: "changed", node });
+      }
+    }
+    for (const node of document.nodes) {
+      if (!theirs.has(node.id)) changes.push({ id: node.id, kind: "removed", node });
+    }
+  }
+  const open = changes.filter((change) => !resolved.has(change.id));
   const suggestedIds = new Set(
-    proposed
-      ? allNodes(proposed.nodes)
-          .filter((node) => current.get(node.id) !== JSON.stringify(node))
-          .map((node) => node.id)
-      : [],
+    open
+      .filter((change) => change.kind !== "removed")
+      .flatMap((change) => allNodes([change.node]).map((node) => node.id)),
   );
-  const removedCount = proposed
-    ? [...current.keys()].filter((id) => !allNodes(proposed.nodes).some((node) => node.id === id))
-        .length
-    : 0;
+  const removedCount = open.filter((change) => change.kind === "removed").length;
+  const finish = (next: Set<string>) => {
+    if (changes.every((change) => next.has(change.id))) {
+      setReviewing(false);
+      setResolved(new Set());
+      dismiss.mutate();
+    } else setResolved(next);
+  };
+  const acceptOne = (id: string) => {
+    const change = changes.find((item) => item.id === id);
+    if (!change || !proposed) return;
+    if (change.kind === "removed") draft.edit(removeBlock(document, id));
+    else if (change.kind === "changed") draft.edit(updateBlock(document, id, change.node));
+    else {
+      // A new block goes right after the last block it waits for (or at the end).
+      const waits = dependsOn(change.node);
+      const at = Math.max(
+        -1,
+        ...waits.map((wait) => document.nodes.findIndex((node) => node.id === wait)),
+      );
+      const nodes = [...document.nodes];
+      nodes.splice(at === -1 ? nodes.length : at + 1, 0, change.node);
+      draft.edit({ ...document, nodes });
+    }
+    finish(new Set([...resolved, id]));
+  };
+  const rejectOne = (id: string) => {
+    finish(new Set([...resolved, id]));
+  };
   const acceptProposal = () => {
     if (!proposed) return;
     const next: BuilderDocument = { ...document, nodes: proposed.nodes };
@@ -632,8 +726,63 @@ export function ScenarioBuilder({
     if (typeof proposed.description === "string") next.description = proposed.description;
     draft.edit(next);
     setReviewing(false);
+    setResolved(new Set());
     dismiss.mutate();
   };
+  const reviewPanel =
+    reviewing && proposed ? (
+      <section className="sb-inspector" aria-label="Claude's proposal">
+        <header className="sb-inspector-head">
+          <Icon name="message-square" size="sm" />
+          <b>Claude&apos;s proposal</b>
+          <span className="ah-grow" />
+          <span className="ah-small ah-muted">{open.length} to decide</span>
+        </header>
+        <div className="sb-inspector-body">
+          <span className="ah-small ah-muted">
+            Accept or reject each change; the canvas shows the proposal, its new and changed blocks
+            outlined. Nothing is saved until you press Save.
+          </span>
+          {open.map((change) => (
+            <div key={change.id} className="sb-change" data-kind={change.kind}>
+              <span className="sb-change-kind">{change.kind}</span>
+              <span className="ah-stack" style={{ gap: 0, minWidth: 0 }}>
+                <b className="ah-mono">{change.id}</b>
+                <span className="ah-small ah-muted">
+                  {kindLook(change.node.type).label}
+                  {typeof change.node.action === "string" ? ` · ${change.node.action}` : ""}
+                  {typeof change.node.description === "string"
+                    ? ` · ${change.node.description}`
+                    : ""}
+                </span>
+              </span>
+              <span className="ah-row" style={{ gap: 4 }}>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  aria-label={`Accept ${change.id}`}
+                  onClick={() => {
+                    acceptOne(change.id);
+                  }}
+                >
+                  Accept
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  aria-label={`Reject ${change.id}`}
+                  onClick={() => {
+                    rejectOne(change.id);
+                  }}
+                >
+                  Reject
+                </Button>
+              </span>
+            </div>
+          ))}
+        </div>
+      </section>
+    ) : null;
   const reviewProgram = proposed && reviewing ? programOf(proposed.nodes).main : null;
 
   // Keys on the builder (never while typing in a field): Delete removes the selected block (with
@@ -832,7 +981,7 @@ export function ScenarioBuilder({
           multiline={request.kind === "text"}
           placeholder={
             request.kind === "text"
-              ? "e.g. Create a B2B order of €1000 or more"
+              ? "e.g. Create a test record by hand and type its id"
               : "a scenario of this pack"
           }
           onApply={(value) => {
@@ -961,6 +1110,102 @@ export function ScenarioBuilder({
         {draft.saved && !draft.dirty && (
           <span className="ah-small ah-muted">Saved · rev {draft.saved.revision}</span>
         )}
+        <span className="sb-menu-anchor">
+          <Button
+            size="sm"
+            variant={preview ? "primary" : "default"}
+            icon="list-checks"
+            onClick={() => {
+              setMenu(menu === "preview" ? null : "preview");
+            }}
+          >
+            {preview ? `Preview: ${preview.environment}` : "Preview in…"}
+          </Button>
+          {menu === "preview" && (
+            <form
+              className="ah-pop sb-pop sb-pop-right sb-preview"
+              aria-label="Preview in an environment"
+              onSubmit={(event) => {
+                event.preventDefault();
+                planner.mutate({ environment: previewEnv, inputs: previewInputs });
+              }}
+            >
+              <span className="ah-small ah-muted">
+                See what each block would do in an environment: every action&apos;s script runs in
+                plan mode, with no credential; nothing is changed. It plans the saved file
+                {draft.dirty ? " (save first to preview your changes)" : ""}.
+              </span>
+              <label className="ah-stack ah-small" style={{ gap: 4 }}>
+                Environment
+                {scenario.environments.length > 0 ? (
+                  <select
+                    className="ah-input"
+                    value={previewEnv}
+                    onChange={(event) => {
+                      setPreviewEnv(event.target.value);
+                    }}
+                  >
+                    {scenario.environments.map((item) => (
+                      <option key={item.name} value={item.name}>
+                        {item.name} · access {item.access}
+                        {item.production ? " · production" : ""}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    className="ah-input"
+                    placeholder="an environment of hub.json"
+                    value={previewEnv}
+                    onChange={(event) => {
+                      setPreviewEnv(event.target.value);
+                    }}
+                  />
+                )}
+              </label>
+              {scenario.inputs.map((input) => (
+                <label key={input.name} className="ah-stack ah-small" style={{ gap: 4 }}>
+                  {input.name}
+                  {input.required ? " (required)" : ""}
+                  <input
+                    className="ah-input"
+                    value={previewInputs[input.name] ?? ""}
+                    onChange={(event) => {
+                      setPreviewInputs({ ...previewInputs, [input.name]: event.target.value });
+                    }}
+                  />
+                </label>
+              ))}
+              {planner.error && (
+                <span className="ah-small" style={{ color: "var(--failed)" }}>
+                  {planner.error.detail ?? planner.error.title}
+                </span>
+              )}
+              <span className="ah-row" style={{ gap: 6, justifyContent: "flex-end" }}>
+                {preview && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      planner.reset();
+                      setMenu(null);
+                    }}
+                  >
+                    Clear preview
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="primary"
+                  type="submit"
+                  disabled={previewEnv === "" || planner.isPending}
+                >
+                  {planner.isPending ? "Planning…" : "Preview"}
+                </Button>
+              </span>
+            </form>
+          )}
+        </span>
         <Button
           size="sm"
           variant={settings && !selectedItem ? "primary" : "ghost"}
@@ -1034,8 +1279,8 @@ export function ScenarioBuilder({
           {offered ? (
             <>
               <span>
-                <b>Claude proposes</b> {suggestedIds.size} new or changed{" "}
-                {suggestedIds.size === 1 ? "block" : "blocks"}
+                <b>Claude proposes</b> {open.length - removedCount} new or changed{" "}
+                {open.length - removedCount === 1 ? "block" : "blocks"}
                 {removedCount > 0 && `, ${String(removedCount)} removed`}
                 {offered.check
                   ? offered.check.loads
@@ -1057,17 +1302,18 @@ export function ScenarioBuilder({
                 {reviewing ? "Back to my draft" : "Review"}
               </Button>
               <Button size="sm" variant="primary" icon="check" onClick={acceptProposal}>
-                Accept
+                Accept all
               </Button>
               <Button
                 size="sm"
                 variant="ghost"
                 onClick={() => {
                   setReviewing(false);
+                  setResolved(new Set());
                   dismiss.mutate();
                 }}
               >
-                Reject
+                Reject all
               </Button>
             </>
           ) : (
@@ -1124,13 +1370,27 @@ export function ScenarioBuilder({
           file.
         </Banner>
       )}
-      <div className="sb-body" data-panel={inspector ? "open" : undefined} ref={bodyRef}>
+      <div
+        className="sb-body"
+        data-panel={(reviewPanel ?? inspector) ? "open" : undefined}
+        ref={bodyRef}
+      >
         <Palette
           library={items}
           pack={scenario.pack}
           taken={taken}
           onDrag={setDrag}
           onAdd={addAtEnd}
+          onNewAction={() => {
+            setNewAction({ node: null, readOnly: false });
+          }}
+          onAskAction={() => {
+            setAskingAction(true);
+          }}
+          onOpenAction={(item, opener) => {
+            actionOpener.current = opener;
+            setActionPanel(item.action.ref);
+          }}
         />
         <div className="sb-stage">
           {view === "blocks" && help && (
@@ -1174,6 +1434,8 @@ export function ScenarioBuilder({
           {view === "blocks" && (
             <BlockCanvas
               suggested={reviewProgram ? suggestedIds : undefined}
+              planOf={(id) => planRows.get(id) ?? null}
+              planEnvironment={preview?.environment ?? null}
               main={{
                 id: "main",
                 x: layout.main.x,
@@ -1251,7 +1513,7 @@ export function ScenarioBuilder({
             </div>
           )}
         </div>
-        {inspector}
+        {reviewPanel ?? inspector}
       </div>
       {slot && slotPopover(slot)}
       {describing && (
@@ -1266,10 +1528,80 @@ export function ScenarioBuilder({
           }}
         />
       )}
+      {askingAction && (
+        <AskActionDialog
+          onSend={(described) => {
+            ask(
+              createActionMessage({
+                text: described,
+                pack: scenario.pack,
+                step: null,
+                readOnly: false,
+              }),
+            );
+            setAskingAction(false);
+          }}
+          onClose={() => {
+            setAskingAction(false);
+          }}
+        />
+      )}
+      {actionPanel &&
+        (() => {
+          const shownAction = items.find((item) => item.action.ref === actionPanel)?.action;
+          if (!shownAction) return null;
+          return (
+            <ActionPanel
+              action={shownAction}
+              steps={programNodes(program.main).map((node) => ({
+                id: node.id,
+                type: node.type,
+                action: typeof node.action === "string" ? node.action : null,
+                depends_on: [],
+              }))}
+              openerRef={actionOpener}
+              onClose={() => {
+                setActionPanel(null);
+              }}
+              onShowStep={(id) => {
+                setSelected(id);
+                setActionPanel(null);
+              }}
+              tools={
+                <>
+                  <Button
+                    size="sm"
+                    icon="pencil"
+                    onClick={() => {
+                      setNewAction({ node: null, readOnly: false, existing: shownAction });
+                      setActionPanel(null);
+                    }}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    icon="plus"
+                    onClick={() => {
+                      const ref =
+                        shownAction.pack === scenario.pack ? shownAction.name : shownAction.ref;
+                      addAtEnd(blockItem(taken, "action", ref));
+                      setActionPanel(null);
+                    }}
+                  >
+                    Add to the scenario
+                  </Button>
+                </>
+              }
+            />
+          );
+        })()}
       {newAction && (
         <NewActionDialog
           project={scenario.project}
           pack={scenario.pack}
+          existing={newAction.existing ?? null}
           readOnly={newAction.readOnly}
           onCreated={(action) => {
             const target = newAction.node ? findItem(allItems, newAction.node) : null;
