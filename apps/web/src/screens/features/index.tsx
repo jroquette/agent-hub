@@ -38,6 +38,7 @@ import {
   missesLinear,
   reasonOf,
   sessionWaitOf,
+  sessionsWorkingOn,
   type GroupId,
   type Reason,
 } from "./groups";
@@ -229,9 +230,15 @@ function rowLabel(
       ? `ACs ${String(f.acs.passing + f.acs.owner_steps)} of ${String(f.acs.total)}`
       : null;
   const issues = f.issues.length ? `issues ${f.issues.map(issueId).join(", ")}` : null;
+  const more =
+    reason.working > 0 && reason.line === reason.plainLine
+      ? `${String(reason.working)} more session${reason.working === 1 ? "" : "s"} working`
+      : null;
   return [
     name ? `${name} (${f.slug})` : f.slug,
     reason.line,
+    reason.line === reason.plainLine ? null : reason.plainLine,
+    more,
     goldenPathLabel(f.phase, steps),
     acs,
     `verdict ${f.verdict ?? "none"}`,
@@ -334,7 +341,11 @@ function FeatureRow({
         aria-hidden="true"
         style={reason.tone ? { color: TONE_COLOR[reason.tone] } : undefined}
       >
-        {reason.icon && <Icon name={reason.icon} size="sm" />}
+        {reason.icon ? (
+          <Icon name={reason.icon} size="sm" />
+        ) : (
+          reason.working > 0 && <span className="ah-dot ah-pulse ft-row-live" />
+        )}
       </span>
       <div className="ft-row-main">
         <div className="ft-row-head">
@@ -380,7 +391,9 @@ function FeatureRow({
         <div
           id={lineId}
           className="ft-row-line"
-          title={reason.line}
+          title={
+            reason.line === reason.plainLine ? reason.line : `${reason.line} · ${reason.plainLine}`
+          }
           style={
             reason.needs !== null && reason.tone ? { color: TONE_COLOR[reason.tone] } : undefined
           }
@@ -574,11 +587,13 @@ export function FeaturesScreen() {
   const features = useFeatures(scope);
   useWarmTickets(features.data?.items);
   const tiles = useLiveSessions(scope).data?.items ?? [];
-  const reasonFor = (f: Feature) => reasonOf(f, sessionWaitOf(f, tiles));
   const nameOf = useFeatureNames();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const { state, asOf } = useCollectorState();
+  // "Working now" is only said while the collector is connected: a stale tile would claim work that stopped.
+  const working = (f: Feature) => (state === "connected" ? sessionsWorkingOn(f, tiles) : []);
+  const reasonFor = (f: Feature) => reasonOf(f, sessionWaitOf(f, tiles), working(f));
   const { tz } = usePreferences();
   const [collapsed, toggle] = useCollapsed();
   const screenRef = useRef<HTMLDivElement>(null);
@@ -658,6 +673,7 @@ export function FeaturesScreen() {
   const projects = new Set(all.map((f) => f.project));
   const verdicts = listOf(params.get("verdict"));
   const onOpen = (href: string) => void navigate(href);
+  const workingNow = all.filter((f) => reasonFor(f).working > 0).length;
   // The first open card with rows explains the columns; the others only name them.
   const firstCard = GROUPS.find(
     (g) => !collapsed.has(g.id) && (byGroup.get(g.id)?.length ?? 0) > 0,
@@ -684,6 +700,12 @@ export function FeaturesScreen() {
             <span data-group="needs">
               <b>{all.filter((f) => reasonFor(f).needs !== null).length}</b> need you
             </span>
+            {workingNow > 0 && (
+              <span data-group="working">
+                <span className="ah-dot ah-pulse ft-row-live" aria-hidden="true" />
+                <b>{workingNow}</b> working now
+              </span>
+            )}
             {GROUPS.map((g) => {
               const n = all.filter((f) => reasonFor(f).group === g.id).length;
               return (
