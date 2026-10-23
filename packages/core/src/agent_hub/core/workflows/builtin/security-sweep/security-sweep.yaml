@@ -21,7 +21,9 @@
 #
 # Known limit: a finding's fingerprint uses its rank by line among the same rule in the same
 # file, so a new hit above a seen one takes the seen one's fingerprint and the seen hit is listed
-# again instead of the new one, until a later run lists both.
+# again instead of the new one, until a later run lists both. Unresolved findings stay unseen and
+# are triaged again each run: 100 unresolved findings of the top severity can take every listed
+# slot, so lower ones wait until some are settled (kept or dropped).
 #
 # Residual risk: the triage agent may read a hard-coded credential while tracing another finding
 # in the same file and quote it in its text; that text stays in the local run record and, for a
