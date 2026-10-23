@@ -186,6 +186,12 @@ function countSteps(items: readonly Item[]): number {
   }, 0);
 }
 
+const EFFECT_SPOKEN: Readonly<Record<string, string>> = {
+  read: "Reads only",
+  write: "Changes data",
+  destroy: "Deletes data",
+};
+
 const DECISION: Readonly<Record<string, string>> = { ask: "Asks you", deny: "Denied" };
 
 interface Status {
@@ -413,6 +419,7 @@ export function StepList(props: StepListProps) {
     detailText: string,
     right: ReactNode,
     group: boolean,
+    spoken = "",
   ) => {
     const number = numbers.get(id) ?? "";
     const isSelected = selected === id;
@@ -426,7 +433,7 @@ export function StepList(props: StepListProps) {
         aria-level={level}
         aria-selected={isSelected}
         aria-expanded={group ? !folded.has(id) : undefined}
-        aria-label={`Step ${number}, ${kindName(kind)}: ${titleText}.`}
+        aria-label={`Step ${number}, ${kindName(kind)}: ${titleText}.${spoken}`}
         className="st-row"
         data-selected={isSelected ? "true" : undefined}
         data-suggested={suggested?.has(id) ? "true" : undefined}
@@ -530,6 +537,12 @@ export function StepList(props: StepListProps) {
       lines.detailText,
       right,
       group,
+      [
+        (node.type === "action" || node.type === "expect") && action?.effect
+          ? ` ${EFFECT_SPOKEN[action.effect] ?? action.effect}.`
+          : "",
+        status ? ` ${status.label}.` : "",
+      ].join(""),
     );
   };
 

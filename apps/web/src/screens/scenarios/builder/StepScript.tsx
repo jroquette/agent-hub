@@ -2,7 +2,7 @@ import { useState } from "react";
 
 import { Button, DataTable, Dialog, Icon, Tabs } from "../../../components";
 import { FileText } from "../ActionPanel";
-import { DraftLine, EffectBadge } from "../parts";
+import { EffectBadge } from "../parts";
 import type { ScenarioAction } from "../queries";
 import { pace } from "../story";
 import { ValueToken, tokenOf } from "./CardParts";
@@ -138,11 +138,16 @@ export function StepScript({
           <EffectBadge effect={action.effect} words />
           <span>{RUNTIME_WORDS[action.runtime ?? ""] ?? action.runtime}</span>
           {action.timeout && <span>stops after {pace(action.timeout)}</span>}
-          <span>{action.draft ? "Draft" : "Committed"}</span>
+          <span
+            title={
+              action.draft
+                ? `Not committed yet: ${action.accept_command ?? "commit it in the hub checkout"}`
+                : undefined
+            }
+          >
+            {action.draft ? "Draft, not committed yet" : "Committed"}
+          </span>
         </span>
-        {action.draft && action.accept_command && (
-          <DraftLine commands={[action.accept_command]} action={action.name} then="plan again" />
-        )}
       </section>
 
       {rows.length > 0 && (

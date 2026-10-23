@@ -574,3 +574,66 @@
 .sb-script-dialog .sc-file pre {
   max-height: 70vh;
 }
+
+/* v6 review: the toolbar keeps one row below 1600 (Describe and Chat show their icon only); below
+ * 1440 the left column hides while a step is open, so the list keeps its width. */
+@media (max-width: 1599px) {
+  .sb-compact .ah-btn {
+    font-size: 0;
+    gap: 0;
+    padding: 0 8px;
+  }
+}
+.sb-compact {
+  display: inline-flex;
+  gap: var(--space-2);
+}
+.sb-body {
+  position: relative;
+}
+@media (min-width: 1600px) and (max-width: 1919px) {
+  .sb-body {
+    grid-template-columns: 280px minmax(0, 1fr) var(--panel);
+  }
+}
+@media (max-width: 1439px) {
+  /* Below 1440 the left column gives way while a step is open, so list and editor both fit. */
+  .sb-body,
+  .sb-body:not([data-panel]) {
+    grid-template-columns: 264px minmax(0, 1fr);
+  }
+  .sb-body[data-panel] {
+    grid-template-columns: minmax(0, 1fr) 400px;
+  }
+  .sb-body[data-panel] > .sb-left {
+    display: none;
+  }
+}
+.sb-script table td {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Insert menu (v6): an action's description on its own line; the footer makes actions. */
+.bk-menu-row-2 .bk-menu-about {
+  grid-column: 2 / -1;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bk-menu-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sb-var-tip-accent {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.sb-var-tip b {
+  font-weight: 500;
+}
