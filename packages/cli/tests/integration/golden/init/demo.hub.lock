@@ -254,7 +254,7 @@
     "hub.schema.json": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "af18a3378160842d96892d1902d6743644696ba38c3b38499b85470c2193507c"
+      "sha256": "36e634aa05d9043bf3e75de920eaf724837c867f4f9e1321982b7f970f59a2c4"
     },
     "plugin/demo/.claude-plugin/plugin.json": {
       "ownership": "seeded"
@@ -436,7 +436,7 @@
     "plugin/hub-workflow/skills/feature/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "fe0f9ab43373fee8b4462e04731c02aeb0415d41bef39df469c8f28ebbbe3cb4"
+      "sha256": "36f0f99804de704ca09b540aa50f6c22811df7046f9b2eef6485a5764f182411"
     },
     "plugin/hub-workflow/skills/fix/SKILL.md": {
       "executable": false,
@@ -456,17 +456,17 @@
     "plugin/hub-workflow/skills/incident/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "56a6a9eddcf6627ccbbfbd8be40758c5efb28ade19f0a72c01f5fbbb3fa9674c"
+      "sha256": "5713556612c83e610e82ec31878a94c0abf60eb46a3e10e0c2b098853053b3b0"
     },
     "plugin/hub-workflow/skills/kickoff/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "fb13e4ab38fe867717dd7437cd1bc2318dde602057e191611bbe995a5325f5cc"
+      "sha256": "7d0f2e3f34caf8cb168bb6933ab4fec43ef318d9478f36e3b4f57eea7ab4b337"
     },
     "plugin/hub-workflow/skills/learn/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "7642a6ad4883894c562151ea372d323740caff26054a30c4ae23d96e86aa43a0"
+      "sha256": "89d93592da8fb6d344418729a1205113920160e7b7f6182c1170f206ffdcbfa6"
     },
     "plugin/hub-workflow/skills/onboard/SKILL.md": {
       "executable": false,
@@ -516,7 +516,7 @@
     "plugin/hub-workflow/skills/release/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "4347ca13b837f9e96de22b03460be8c7e7badf821c859dc8b1c9e24cc6aaa538"
+      "sha256": "2fea32cbf7568bd9f9d37ebd034b695385fcf0a4fb9d00b4225e7d8f2cdce4b1"
     },
     "plugin/hub-workflow/skills/research/SKILL.md": {
       "executable": false,
@@ -526,12 +526,12 @@
     "plugin/hub-workflow/skills/retro/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "b130c905de879bfc73f867d04ea26268a5bf95acbfa95f6ff6c049e04d9ebdab"
+      "sha256": "9fdd63a50d246b249eb66140ded55977671b3d219d764c304e1843ec405cbd06"
     },
     "plugin/hub-workflow/skills/review/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "820813009d14eb54bcb323c1263f84ad763d12adf9e1eefa5c2a3b478800d8d3"
+      "sha256": "52fcb3ccfa64f37acc079589ca10f8619a86e2886c6de7dbdcf5bd58c99e719f"
     },
     "plugin/hub-workflow/skills/summarize/SKILL.md": {
       "executable": false,
@@ -551,12 +551,12 @@
     "plugin/hub-workflow/skills/triage/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "bc3cf49ece2884afa15dabd788cc3f4d28e5ae3c855084eba82f13c1c2537c10"
+      "sha256": "003a5bf4272d07562a4d0dd30eac6df1d816cc20e9126e56585cb7ce3e401d16"
     },
     "plugin/hub-workflow/skills/upgrade/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "5802b522bc66b279456b7af6d84ac69c58b81852c2d0960cc616fc424dac2a20"
+      "sha256": "1ad5cf0419c8ff8a8cfea4e43887ae369c14a63f0f9a7f39fa328c0983abe54a"
     },
     "plugin/hub-workflow/skills/ux-review/SKILL.md": {
       "executable": false,
@@ -582,6 +582,171 @@
       "executable": true,
       "ownership": "managed",
       "sha256": "fdac169d0ebd59302540f442f0592e39239ede6ca87fc367184c16806f9eff21"
+    },
+    "workflows/backlog-care/backlog-care.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/fixtures/backlog-approve-and-skip.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/fixtures/backlog-mixed.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/fixtures/backlog-over-limit.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/fixtures/backlog-paused.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/fixtures/backlog-read-failed.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/prompts/draft.md": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/scripts/drafts.py": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/scripts/gates.py": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/scripts/hygiene.py": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/scripts/read.py": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/scripts/report.py": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/context.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/fixtures/context-declined.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/fixtures/context-no-commit.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/fixtures/context-over-budget.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/fixtures/context-trimmed.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/fixtures/inbox-all-drop.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/fixtures/inbox-all-skipped.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/fixtures/inbox-empty.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/fixtures/inbox-external-pending.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/fixtures/inbox-three-notes.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/inbox.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/prompts/context-report.md": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/prompts/context-trim.md": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/prompts/group.md": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/scripts/apply.py": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/scripts/check_managed.py": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/scripts/groups.py": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/scripts/hub_branch.py": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/scripts/inventory.py": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/scripts/outcome.py": {
+      "ownership": "seeded"
+    },
+    "workflows/brain-care/scripts/read_inbox.py": {
+      "ownership": "seeded"
+    },
+    "workflows/doc-drift/doc-drift.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/doc-drift/fixtures/drift-adr-only.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/doc-drift/fixtures/drift-declined.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/doc-drift/fixtures/drift-none.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/doc-drift/fixtures/drift-renamed-command.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/doc-drift/prompts/judge.md": {
+      "ownership": "seeded"
+    },
+    "workflows/doc-drift/scripts/branch.py": {
+      "ownership": "seeded"
+    },
+    "workflows/doc-drift/scripts/contract.py": {
+      "ownership": "seeded"
+    },
+    "workflows/doc-drift/scripts/doc_fix.py": {
+      "ownership": "seeded"
+    },
+    "workflows/doc-drift/scripts/mentions.py": {
+      "ownership": "seeded"
+    },
+    "workflows/incident/fixtures/incident-awaiting-mitigation.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/incident/fixtures/incident-confirmed.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/incident/fixtures/incident-mitigation-declined.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/incident/fixtures/incident-none-confirmed.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/incident/incident.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/incident/prompts/hypotheses.md": {
+      "ownership": "seeded"
+    },
+    "workflows/incident/prompts/postmortem.md": {
+      "ownership": "seeded"
+    },
+    "workflows/incident/prompts/recall.md": {
+      "ownership": "seeded"
+    },
+    "workflows/incident/scripts/check.py": {
+      "ownership": "seeded"
+    },
+    "workflows/incident/scripts/evidence.py": {
+      "ownership": "seeded"
+    },
+    "workflows/incident/scripts/inbox.py": {
+      "ownership": "seeded"
+    },
+    "workflows/incident/scripts/mitigation.py": {
+      "ownership": "seeded"
     },
     "workflows/issue-to-pr/fixtures/blocked.yaml": {
       "ownership": "seeded"
@@ -611,6 +776,156 @@
       "ownership": "seeded"
     },
     "workflows/issue-to-pr/prompts/implement.md": {
+      "ownership": "seeded"
+    },
+    "workflows/post-merge-verify/fixtures/verify-all-green.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/post-merge-verify/fixtures/verify-cannot-run.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/post-merge-verify/fixtures/verify-explain-failed.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/post-merge-verify/fixtures/verify-regression.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/post-merge-verify/post-merge-verify.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/post-merge-verify/prompts/explain.md": {
+      "ownership": "seeded"
+    },
+    "workflows/post-merge-verify/scripts/report.py": {
+      "ownership": "seeded"
+    },
+    "workflows/post-merge-verify/scripts/selection.py": {
+      "ownership": "seeded"
+    },
+    "workflows/post-merge-verify/scripts/verify.py": {
+      "ownership": "seeded"
+    },
+    "workflows/release/fixtures/release-check-red.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/release/fixtures/release-declined.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/release/fixtures/release-minor.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/release/fixtures/release-nothing.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/release/fixtures/release-pin-declined.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/release/fixtures/release-pin.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/release/fixtures/release-tag-missing.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/release/prompts/notes.md": {
+      "ownership": "seeded"
+    },
+    "workflows/release/release.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/release/scripts/bump.py": {
+      "ownership": "seeded"
+    },
+    "workflows/release/scripts/compose.py": {
+      "ownership": "seeded"
+    },
+    "workflows/release/scripts/exact_check.py": {
+      "ownership": "seeded"
+    },
+    "workflows/release/scripts/hub_branch.py": {
+      "ownership": "seeded"
+    },
+    "workflows/release/scripts/pin.py": {
+      "ownership": "seeded"
+    },
+    "workflows/release/scripts/report.py": {
+      "ownership": "seeded"
+    },
+    "workflows/release/scripts/since.py": {
+      "ownership": "seeded"
+    },
+    "workflows/release/scripts/tagged.py": {
+      "ownership": "seeded"
+    },
+    "workflows/retro/fixtures/retro-all-dropped.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/retro/fixtures/retro-keep-none.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/retro/fixtures/retro-no-runs.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/retro/fixtures/retro-pending.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/retro/fixtures/retro-week.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/retro/prompts/changes.md": {
+      "ownership": "seeded"
+    },
+    "workflows/retro/retro.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/retro/scripts/drafts.py": {
+      "ownership": "seeded"
+    },
+    "workflows/retro/scripts/metrics.py": {
+      "ownership": "seeded"
+    },
+    "workflows/retro/scripts/vet.py": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/fixtures/incoming-clean-approved.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/fixtures/incoming-clean.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/fixtures/incoming-lens-failed.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/fixtures/incoming-rejected.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/fixtures/incoming-security.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/prompts/draft.md": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/prompts/quality-lens.md": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/prompts/security-lens.md": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/prompts/spec-lens.md": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/review-incoming.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/scripts/check.py": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/scripts/fetch.py": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/scripts/review.py": {
+      "ownership": "seeded"
+    },
+    "workflows/review-incoming/scripts/surface.py": {
       "ownership": "seeded"
     },
     "workflows/sdlc/deliver.yaml": {
@@ -779,6 +1094,111 @@
       "ownership": "seeded"
     },
     "workflows/sdlc/ticket-pass.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/security-sweep/fixtures/sweep-findings.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/security-sweep/fixtures/sweep-no-scanners.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/security-sweep/fixtures/sweep-nothing-new.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/security-sweep/fixtures/sweep-triage-failed.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/security-sweep/prompts/triage.md": {
+      "ownership": "seeded"
+    },
+    "workflows/security-sweep/scripts/report.py": {
+      "ownership": "seeded"
+    },
+    "workflows/security-sweep/scripts/scan.py": {
+      "ownership": "seeded"
+    },
+    "workflows/security-sweep/scripts/unseen.py": {
+      "ownership": "seeded"
+    },
+    "workflows/security-sweep/security-sweep.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/fixtures/spike-more-paused.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/fixtures/spike-more.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/fixtures/spike-no-pick.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/fixtures/spike-pick.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/fixtures/spike-timebox.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/prompts/options.md": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/prompts/premortem.md": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/prompts/recall.md": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/prompts/research.md": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/scripts/budget.py": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/scripts/draft.py": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/spike.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/upgrade/fixtures/upgrade-adapt-exhausted.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/upgrade/fixtures/upgrade-lockfile-edited.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/upgrade/fixtures/upgrade-major-breaking.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/upgrade/fixtures/upgrade-patch-green.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/upgrade/fixtures/upgrade-split.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/upgrade/prompts/adapt.md": {
+      "ownership": "seeded"
+    },
+    "workflows/upgrade/prompts/changelog.md": {
+      "ownership": "seeded"
+    },
+    "workflows/upgrade/scripts/bump.py": {
+      "ownership": "seeded"
+    },
+    "workflows/upgrade/scripts/check.py": {
+      "ownership": "seeded"
+    },
+    "workflows/upgrade/scripts/fast_gate.py": {
+      "ownership": "seeded"
+    },
+    "workflows/upgrade/scripts/outcome.py": {
+      "ownership": "seeded"
+    },
+    "workflows/upgrade/scripts/release_notes.py": {
+      "ownership": "seeded"
+    },
+    "workflows/upgrade/scripts/strength.py": {
+      "ownership": "seeded"
+    },
+    "workflows/upgrade/upgrade.yaml": {
       "ownership": "seeded"
     }
   },

@@ -1,0 +1,24 @@
+# The merge changes no contract name (AC-3): no mention search, no judge, no gate and no PR; the
+# run ends done, clean.
+workflow: doc-drift
+inputs: {repo: demo-api, sha: 0a1b2c3d4e}
+stubs:
+  config:
+    output: {default_branch: main, branch_prefix: jdoe/, author_name: null, author_email: null, ready_label: agent-ready, teams: [DEM], hub: {github: acme/demo-hub, default_branch: main, target: {github: acme/demo-hub, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}, repos: [{dir: demo-api, github: acme/demo-api, default_branch: main, check_fast: make check-fast, check: make check, target: {github: acme/demo-api, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}]}
+  contract:
+    output:
+      mode: merge
+      sha: 0a1b2c3d4e
+      base: 9f8e7d6c5b
+      label: merge 0a1b2c3
+      hub: /ws/hub
+      repo_path: /ws/demo-api
+      count: 0
+      names: []
+      skipped: 0
+      truncated: 0
+      patch_truncated: false
+  plan:
+    output: {verdict: clean, fixes: 0, items: [], superseded: [], refused: [], notes: [], message: ''}
+expect: {status: done, outcome: clean}
+reached: [config, contract, plan]

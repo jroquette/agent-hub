@@ -1,0 +1,30 @@
+# AC-3: the timebox is spent by the end of research; options, the pick and the premortem are
+# skipped, and the run ends done with research.md only, marked incomplete (no step fails).
+workflow: spike
+inputs: {question: "Should the session brief be cached between sessions?", timebox: 2h, slug: brief-cache}
+stubs:
+  setup:
+    output: {slug: brief-cache, timebox_s: 7200, spent_s: 0, at: 946684800, over: false, left_m: 120, round: 0}
+  recall:
+    output:
+      summary: The brief is rebuilt on every session start; no decision covers caching it.
+      sources: [{ref: brain/decisions/index.md, says: No decision on the brief cache.}]
+  t_recall:
+    output: {slug: brief-cache, timebox_s: 7200, spent_s: 600, at: 946685400, over: false, left_m: 110, round: 0}
+  research:
+    output:
+      summary: hub brief reads the brain and the tracker on each start and takes about two seconds.
+      repos: [agent-hub]
+      findings:
+        - {area: brief, fact: The brief is built from the brain and the tracker on each call., where: "packages/cli/src/agent_hub/cli/brief_command.py:40"}
+      invariants: [The brief never holds secrets.]
+      open_questions: ["How stale may a brief be?"]
+  t_research:
+    output: {slug: brief-cache, timebox_s: 7200, spent_s: 7300, at: 946687800, over: true, left_m: 0, round: 0}
+  choose__t_options: {output: {slug: brief-cache, timebox_s: 7200, spent_s: 7300, at: 946690000, over: true, left_m: 0, round: 1}}
+  choose__settle: {output: {slug: brief-cache, timebox_s: 7200, spent_s: 7300, at: 946700000, over: true, left_m: 0, round: 1, picked: '', go: false, done: true, note: '', approver: '', option: {}}}
+  draft:
+    output: {result: incomplete, research: /ws/hub/brain/features/brief-cache/research.md, adr: '', reasons: ["timebox 2h reached after research"], spent_m: 121}
+expect: {status: done, outcome: incomplete}
+failed: []
+reached: [setup, recall, t_recall, research, t_research, choose, choose__t_options, choose__settle, draft]

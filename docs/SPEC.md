@@ -82,12 +82,14 @@ hub run ISSUE --repo REPO [--live] [--budget USD] [--from implement|verify] … 
 hub ship [ISSUE] [--draft] [--dry-run]   # each changed repo's check, push and PR, PRs linked, the issue to review
 hub step worktree|verdict|commits|pr|report …   # one hub run stage as JSON, for the issue-to-pr workflow's nodes
 hub step ticket-brief|preflight|change-request|decide|amend-plan --feature SLUG …   # a ticket record written into the hub, never committed
+hub step config [--branch NAME --slug SLUG|--run-slug]   # the hub.json values a pack script needs, as JSON (read-only)
 hub bench [--validate] [--runs N] [--cases IDS] [--budget USD] …   # configuration benchmark (module bench)
 hub collect [FILE|-] [--db PATH]   # ingests canonical events from JSON Lines (stdin when FILE is omitted or -)
 hub collect --transcript FILE [--project NAME]   # a Claude Code transcript, as metadata-only events
 hub collect --runs PATH [--project NAME]   # hub run records (.agent-runs/ file or folder) as executor events
 hub web [--host ADDR] [--port N] [--db PATH]   # the control plane: /api/v1 and the web app on 127.0.0.1 (port 7420)
 hub search QUERY [--kind KIND]… [--hub NAME] [--json] [--db PATH]   # full-text search of the brain and the repos' docs, each result with its path and snippet (ADR 0044)
+hub skill-usage [--days 7|30|90] [--db PATH]   # the hub's skills and agents with their runs over 7, 30 and 90 days, never-used first (AGH-482)
 hub brain reindex [--hub NAME] [--db PATH]   # drops and rebuilds the local knowledge index from the checkout (ADR 0044)
 hub mcp   # the hub's knowledge as a local MCP server over stdio: search, read, propose (ADR 0044; declared in .mcp.json)
 ```
@@ -204,6 +206,14 @@ The `implement` run's hub writes are `hub step` writers too (two-level-flows P7)
 prints the hub-relative `path` it wrote, follows no link and never commits; a refusal writes nothing. The records and
 their rules are in [feature-records.md](design/feature-records.md).
 
+`hub step config` prints the `hub.json` values the built-in packs' scripts need, read through the CLI's own loader with
+the developer's `hub.local.json` first (AGH-480): the project's `default_branch`, the `branch_prefix` (null when no
+source gives one; `--branch` then exits 2), the author, the
+`ready_label` and team keys, the hub's and each repo's GitHub name, effective default branch and gates, and a `target`
+skeleton (titles not configured) that `hub step commits|pr` read back; `--branch NAME --slug SLUG` (or `--run-slug`,
+the run's id) adds `branch` (`<prefix><name lower>-<slug>`) and `branch_name`. No token, no tracker key, at most 64
+KiB; a pack's `config` node passes it to its scripts, which never open `hub.json` or `hub.local.json` themselves.
+
 `hub start ISSUE` reads the issue once, then looks for its task worktrees in every repo: a name found there resumes the
 task, else the task is named `<issue lower>-<title slug>`. It checks the branches, creates the missing worktrees of the
 touched repos (`--repo`, default all) and, last, moves the issue to `tracker.states.started` (a resume moves it only
@@ -257,6 +267,8 @@ today), and the CLI's model and the hooks' stdlib reader accept it in the same c
 | `guard.blocked_words_files` | Globs of files whose contents the guard checks for a blocked word, besides every `.env*` file: at most 100, each at most 200 printable ASCII characters, no leading `/`, `..` segment or space; a glob without `/` matches the last path component, one with `/` a trailing run of segments; `hub.local.json` and a `hub.json` named by `$HUB_CONFIG` only add to them | `.env*` files only | AGH-277 |
 | `guard.blocked_words_env` | Variable names whose values in the session the guard also checks, besides its fixed list and every `credentials.env` name: at most 50, `^[A-Z_][A-Z0-9_]{0,63}$`, a trailing `*` matching a prefix; `hub.local.json` and a `hub.json` named by `$HUB_CONFIG` only add to them | The fixed list and the `credentials.env` names | AGH-277 |
 | `tracker.states.started`, `tracker.states.review` | The workflow state names: `hub start` moves an issue to `started` on a fresh start, or on a resume while it is unstarted; `review` is reserved for the review step and read by nothing yet; not settable in `hub.local.json` | `In Progress`, `In Review` | AGH-62 |
+| `schedules` | Workflows `hub web` starts by itself at a time: `workflow`, a 5-field `cron` read in UTC, `inputs` and an optional declared `environment`; each slot starts at most once, and a slot missed while `hub web` was down runs once when it comes back ([project-config.md](design/project-config.md), [ADR 0048](adr/0048-scheduled-and-event-starts-in-hub-web.md)) | No scheduled starts | AGH-481 |
+| `events` | Workflows `hub web` starts when something happens in a repo: `workflow`, `on` (`merge`, `ci_red`, `pr_opened`), `repo` (a `repos[].dir`) and `inputs`; GitHub is polled through `gh` every 5 minutes, the first poll is a baseline, and each event starts at most once ([project-config.md](design/project-config.md), [ADR 0048](adr/0048-scheduled-and-event-starts-in-hub-web.md)) | No event starts | AGH-481 |
 | Developer identity: `project.author_name`, `author_email`, `branch_prefix` | Become optional. Effective value: the gitignored `hub.local.json`, else `hub.json`, else the hub repo's `git config user.name`/`user.email`; the prefix, when no file sets it, is the effective email's local part plus `/` (ADR 0016) | Set per developer, by `hub setup` in `hub.local.json`; `hub worktree`, `hub run` and `hub start` refuse without a prefix | AGH-65 |
 
 `hub.local.json` may hold only those identity keys, `tracker.transport`, the developer's own `environments` and their
@@ -436,7 +448,7 @@ A web app reads the hubs and the agents' events and answers five questions, one 
 
 | View | Question it answers | Content |
 | --- | --- | --- |
-| Portfolio | How are my projects doing? | Hubs, repos, tasks in progress, open PRs, CI, cost of the week |
+| Portfolio | How are my projects doing? | Hubs, repos, tasks in progress, open PRs, CI, cost of the week, skill and agent use |
 | Workflows | How should work flow? | Editor and visualization of steps and gates; which step each task is at; where it gets stuck |
 | Sessions | What are the agents doing right now, and which one needs me? | Every session, observed or driven, in status sections (waiting first) as tiles or a table: last action, accumulated turns and cost, pending approvals |
 | Session timeline | Why did the agent do that? | Messages, reasoning summaries, tool calls, files and diffs, marked decisions and the final outcome |
@@ -659,7 +671,8 @@ only the version history below is stored, and only its restore and the Studio's 
   `hooks/hooks.json` (never `settings.local.json`). Each item has an origin (`managed` per `hub.lock`,
   `project-owned`, `local`), an invocation mode (`user-only`, `model-only`, `both`, or `neither`, shown as "Hidden"),
   its invocation line and its use in the last 30 days (a fold over the stored events: a typed `/name` and a `Skill`
-  call, an `Agent` call by type; signals of one invocation within 5 s count once). Third-party plugins named by the
+  call, an `Agent` call by type; signals of one invocation within 5 s count once; the same fold gives runs over 7,
+  30 and 90 days and the last use, for the Portfolio and `hub skill-usage`, AGH-482). Third-party plugins named by the
   marketplace or `enabledPlugins` are listed with their pin and "not in this hub": nothing is fetched. Search and
   facets (kind, origin, mode, has diagnostics) live in the URL query.
 - **Detail.** An item is addressed by `kind/source/name`, `source` being the folder it comes from (`claude` for
@@ -1017,6 +1030,7 @@ The recommendations are a starting point.
 - Deterministic work (tests, lint, contract sync, opening a PR) becomes a `script` step, with no LLM.
 - The UI edits the same document. It is stored on the platform with a version and history, and each execution records the workflow version it used.
 - The format and the engine: [ADR 0032](adr/0032-workflow-engine.md) (proposed; it supersedes [ADR 0027](adr/0027-workflow-format-and-minimum-engine.md) and keeps its invariants) and [docs/design/workflow-schema.md](design/workflow-schema.md).
+- A run starts by hand, from hub web, or by itself: `hub web` starts the `schedules` and `events` declared in `hub.json` (cron in UTC, GitHub polled through `gh` every 5 minutes), recording `trigger` in the run's start record ([ADR 0048](adr/0048-scheduled-and-event-starts-in-hub-web.md), proposed).
 
 **2. Brain: stays in the hub repo, which is private and ours only.**
 

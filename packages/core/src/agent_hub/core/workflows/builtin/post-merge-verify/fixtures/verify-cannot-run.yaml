@@ -1,0 +1,32 @@
+# AC-3: a verification holds an absolute path; it is never run and the report lists it apart, as
+# "cannot run after merge", not as a failure: explain is skipped and the run ends attention.
+workflow: post-merge-verify
+inputs: {repo: demo-api, sha: 0a1b2c3d}
+stubs:
+  config:
+    output: {default_branch: main, branch_prefix: jdoe/, author_name: null, author_email: null, ready_label: agent-ready, teams: [DEM], hub: {github: acme/demo-hub, default_branch: main, target: {github: acme/demo-hub, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}, repos: [{dir: demo-api, github: acme/demo-api, default_branch: main, check_fast: make check-fast, check: make check, target: {github: acme/demo-api, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}]}
+  select:
+    output:
+      mode: merge
+      sha: 0a1b2c3d4e5f60718293a4b5c6d7e8f901234567
+      repo_path: /ws/demo-api
+      tickets: [DEM-7]
+      changed_paths: 1
+      paths_truncated: false
+      selected: [{feature: grp/DEM-7, ac: AC-7.3, why: ticket}]
+      truncated: 0
+      skipped_not_passing: 0
+      unreadable: []
+  run:
+    output:
+      sha: 0a1b2c3d4e5f60718293a4b5c6d7e8f901234567
+      counts: {selected: 1, passed: 0, failed: 0, timed_out: 0, errors: 0, cannot_run: 1, not_run: 0}
+      broken: 0
+      failures: []
+      more_failed: []
+      cannot_run:
+        - {feature: grp/DEM-7, ac: AC-7.3, reason: absolute path, command: cd /home/user/x && true}
+      more_cannot_run: 0
+  report: {output: {verdict: attention, entries: 1, path: brain/_inbox/verify-YYYY-MM-DD.md}}
+expect: {status: done, outcome: attention}
+reached: [config, select, run, report]

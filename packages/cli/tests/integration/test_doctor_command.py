@@ -2221,3 +2221,18 @@ def test_keeps_old_brain_note_when_its_replacement_fails(
     assert note.read_text(encoding="utf-8") == f"# Note\n\n{OWN_LINES}\n{BRAIN_LINE}\n"
     assert "could not fix brain/note.md: Input/output error" in result.stderr
     assert sorted(p.name for p in note.parent.iterdir()) == before
+
+
+def test_prints_fix_line_for_schedule_naming_unknown_workflow_when_doctor_runs(
+    demo_hub: Path, demo_document: dict[str, Any], run_doctor: DoctorRunner
+) -> None:
+    demo_document["schedules"] = [{"workflow": "nope", "cron": "0 9 * * 1"}]
+    (demo_hub / "hub.json").write_bytes(dump_json(demo_document))
+
+    lines = lines_of(run_doctor(demo_hub, "--only", "workflows.starts"), exit_code=1)
+
+    assert lines == [
+        "error workflows.starts hub.json: schedules[0].workflow: unknown workflow nope"
+        " Fix: name a workflow that hub workflow list shows, or add it under workflows/",
+        ONE_ERROR,
+    ]

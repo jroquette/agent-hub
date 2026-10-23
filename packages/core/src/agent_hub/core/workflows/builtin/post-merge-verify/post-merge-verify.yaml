@@ -1,0 +1,221 @@
+# The merged tickets' AC verifications, run again on the default branch. On a merge
+# (sha set), select picks the passing ACs of the tickets the merge names and the ACs whose
+# verification names a path it changed; weekly (sha blank), every passing AC of the repo at ref
+# (as last fetched: fetch first). run runs each verification once, in a throwaway detached git
+# worktree at that commit in TMPDIR (removed after; the repo's checkout is never touched), with WT
+# set to that worktree's path; a verification that cannot run there (an absolute path other than a
+# ${WT:-...} default, a .claude/worktrees/ path, an origin/... diff range, over 8 KiB) is reported
+# as such and never run. explain, only when something broke, reads the merges since each AC's last
+# pass (read-only, no command run) and names the likely culprit, or flaky. report appends the
+# entries to brain/_inbox/verify-YYYY-MM-DD.md, or writes nothing when all is green.
+# Invariants: read-only on code; one run per command, no retry (a retry would hide a failure, so
+# every executable node has retry max_attempts 0); no tracker write (ADR 0030: no issue input, and
+# the one hub step node is config, read-only: the repos from hub.json, which no script opens).
+# Suggested hub.json entries (one schedule per workflow there):
+#   "events": [{"workflow": "post-merge-verify", "on": "merge", "repo": "<dir>",
+#               "inputs": {"repo": "<dir>"}}]
+#   "schedules": [{"workflow": "post-merge-verify", "cron": "0 6 * * 0",
+#                  "inputs": {"repo": "<dir>"}}]
+version: 1
+name: post-merge-verify
+description: The merged tickets' AC verifications, run again on the default branch; failures to the inbox.
+revision: 1
+inputs:
+  repo:
+    required: true
+    description: The repo merged into, its dir in hub.json.
+  sha:
+    default: ""
+    description: The merge commit on the default branch; blank, the weekly run of every passing AC at ref.
+  ref:
+    default: origin/main
+    description: The commit the weekly run verifies (fetch first).
+returns: report
+outcome_field: verdict
+nodes:
+  - id: config
+    type: shell
+    description: The hub.json values this run's scripts need, read by the CLI (read-only).
+    command: [hub, step, config]
+    effect: read
+    mutates_checkout: false
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        default_branch: {type: string}
+        branch_prefix: {type: [string, "null"]}
+        hub: {type: object}
+        repos: {type: array, items: {type: object}}
+      required: [default_branch, branch_prefix, hub, repos]
+
+  - id: select
+    type: script
+    description: The ACs to verify - the merge's tickets and changed paths, or every passing one.
+    depends_on: [config]
+    runtime: python
+    script: selection.py
+    args: [--repo, $INPUTS.repo, --config, $config.output, --sha, $INPUTS.sha, --ref, $INPUTS.ref]
+    mutates_checkout: false
+    retry: {max_attempts: 0}
+    timeout: 5m
+    output_format:
+      type: object
+      required: [mode, sha, repo_path, tickets, changed_paths, paths_truncated, selected, truncated, skipped_not_passing, unreadable]
+      properties:
+        mode: {type: string, enum: [merge, weekly]}
+        sha: {type: string, pattern: "^[0-9a-f]{40}$"}
+        repo_path: {type: string, minLength: 1}
+        tickets:
+          type: array
+          maxItems: 100
+          items: {type: string, pattern: "^[A-Z][A-Z0-9]*-[0-9]+$"}
+        changed_paths: {type: integer, minimum: 0}
+        paths_truncated: {type: boolean}
+        selected:
+          type: array
+          maxItems: 2000
+          items:
+            type: object
+            required: [feature, ac, why]
+            properties:
+              feature: {type: string}
+              ac: {type: string}
+              why: {type: string, enum: [ticket, path, weekly]}
+        truncated: {type: integer, minimum: 0}
+        skipped_not_passing: {type: integer, minimum: 0}
+        unreadable:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            required: [path, reason]
+            properties:
+              path: {type: string}
+              reason: {type: string}
+
+  - id: run
+    type: script
+    description: Each selected verification once, at the commit, in a throwaway worktree.
+    depends_on: [select]
+    runtime: python
+    script: verify.py
+    # On stdin: the selection may be longer than one argument holds.
+    stdin: $select.output
+    retry: {max_attempts: 0}
+    timeout: 12h
+    output_format:
+      type: object
+      required: [sha, counts, broken, failures, more_failed, cannot_run, more_cannot_run]
+      properties:
+        sha: {type: string}
+        counts:
+          type: object
+          required: [selected, passed, failed, timed_out, errors, cannot_run, not_run]
+          properties:
+            selected: {type: integer, minimum: 0}
+            passed: {type: integer, minimum: 0}
+            failed: {type: integer, minimum: 0}
+            timed_out: {type: integer, minimum: 0}
+            errors: {type: integer, minimum: 0}
+            cannot_run: {type: integer, minimum: 0}
+            not_run: {type: integer, minimum: 0}
+        broken: {type: integer, minimum: 0}
+        failures:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            required: [feature, ac, command, status, exit_code, tail, since]
+            properties:
+              feature: {type: string}
+              ac: {type: string}
+              command: {type: string, maxLength: 200}
+              status: {type: string, enum: [failed, timeout, error]}
+              exit_code: {type: [integer, "null"]}
+              tail: {type: string, maxLength: 500}
+              since: {type: string}
+        more_failed:
+          type: array
+          maxItems: 2000
+          items: {type: string}
+        cannot_run:
+          type: array
+          maxItems: 500
+          items:
+            type: object
+            required: [feature, ac, reason, command]
+            properties:
+              feature: {type: string}
+              ac: {type: string}
+              reason: {type: string}
+              command: {type: string, maxLength: 200}
+        more_cannot_run: {type: integer, minimum: 0}
+
+  - id: explain
+    type: agent
+    description: Read-only paper bisect - the likely merge behind each failure, or flaky.
+    depends_on: [select, run]
+    when: "$run.output.broken > 0"
+    prompt_file: explain.md
+    cwd: $select.output.repo_path
+    mutates_checkout: false
+    with:
+      failures: $run.output.failures
+      sha: $select.output.sha
+    retry: {max_attempts: 0}
+    timeout: 30m
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [suspects]
+      properties:
+        suspects:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            additionalProperties: false
+            required: [feature, ac, merge, subject, kind, evidence]
+            properties:
+              # Caps that keep the whole reply, every character four bytes, under one argument's
+              # 128 KiB: the report step reads it as an argument.
+              feature: {type: string, maxLength: 200, pattern: "^[\\x20-\\x7e]*$"}
+              ac: {type: string, maxLength: 64, pattern: "^[\\x20-\\x7e]*$"}
+              merge: {type: string, pattern: "^([0-9a-f]{7,40})?$"}
+              subject: {type: string, maxLength: 120, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+              kind: {type: string, enum: [regression, flaky, unknown]}
+              evidence: {type: string, maxLength: 300, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+
+  - id: report
+    type: script
+    description: The entries appended to the hub's inbox; nothing written when all is green.
+    depends_on: [select, run, explain]
+    trigger_rule: none_failed_min_one_success
+    runtime: python
+    script: report.py
+    stdin: $run.output
+    args:
+      - --mode
+      - $select.output.mode
+      - --sha
+      - $select.output.sha
+      - --repo
+      - $INPUTS.repo
+      - --tickets
+      - $select.output.tickets
+      - --unreadable
+      - $select.output.unreadable
+      - --truncated
+      - $select.output.truncated
+      - --explain
+      - $explain.output
+    retry: {max_attempts: 0}
+    timeout: 5m
+    output_format:
+      type: object
+      required: [verdict, entries, path]
+      properties:
+        verdict: {type: string, enum: [clean, regressed, attention]}
+        entries: {type: integer, minimum: 0}
+        path: {type: string}

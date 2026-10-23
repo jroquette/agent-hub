@@ -1,0 +1,9 @@
+# An empty inbox: nothing to group, no gate, no branch, no PR.
+workflow: inbox
+stubs:
+  read:
+    output: {count: 0, notes: [], paths: [], external: [], unreadable: [], omitted: 0}
+  outcome:
+    output: {outcome: empty, reason: "the inbox holds no note to review"}
+expect: {status: done, outcome: empty}
+reached: [read, outcome]

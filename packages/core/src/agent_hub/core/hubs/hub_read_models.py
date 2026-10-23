@@ -85,13 +85,18 @@ from agent_hub.core.readmodels.filters import Scope
 from agent_hub.core.readmodels.page import Page
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.readmodels.settings_view import SettingsView
+from agent_hub.core.schedules.scheduled_starts import ScheduledHub
 from agent_hub.core.skills.skill_reads import SkillReads, SkillUsageSource
 from agent_hub.core.skills.skill_view import (
     BundledFileText,
     ItemKind,
     SkillCatalog,
     SkillDetail,
+    UsageDays,
+    UsageReport,
+    UsageRow,
 )
+from agent_hub.core.skills.usage_report import ordered_usage
 
 NOW_PATH: Final = "brain/now.md"
 # Portfolio cards and repos need sources not connected in Phase 2.
@@ -340,6 +345,19 @@ class HubFilesReadModels:
         found = self._project(project)
         return self._skills.catalog(project=found.name, hub_path=found.path)
 
+    def skill_usage_report(self, scope: Scope, *, days: UsageDays) -> UsageReport:
+        """The usage rows of each scoped project's hub, in ``ordered_usage`` order; from the
+        registry and ``hub.json`` alone (no doctor), so an unknown project gives no items."""
+        rows: list[UsageRow] = []
+        truncated = False
+        for project, hub_path in self.project_hubs():
+            if scope.project not in {None, project}:
+                continue
+            found, cut = self._skills.usage_rows(project=project, hub_path=hub_path)
+            rows.extend(found)
+            truncated = truncated or cut
+        return UsageReport(days=days, items=ordered_usage(rows, days), truncated=truncated)
+
     def skill_item_names(self, project: str) -> frozenset[tuple[ItemKind, str]]:
         """The kind and name of each of the project's items (``SkillReads.item_names``); the
         project resolved without the doctor (``_hub_path``)."""
@@ -385,6 +403,16 @@ class HubFilesReadModels:
             if config is not None and config.project.name not in seen:
                 seen.add(config.project.name)
                 yield config.project.name, entry.path
+
+    def scheduled_hubs(self) -> Iterator[ScheduledHub]:
+        """Each project with its hub folder and config (``ScheduledHubs``: hub web's scheduled
+        and event starts), the first registered of a name, as ``project_hubs`` reads them."""
+        seen: set[str] = set()
+        for entry, document in self._hubs.documents():
+            config = document.config
+            if config is not None and config.project.name not in seen:
+                seen.add(config.project.name)
+                yield ScheduledHub(project=config.project.name, hub_path=entry.path, config=config)
 
     def _hub_path(self, project: str) -> str:
         """The project's hub folder, as ``project_hubs`` names it; raises ``EntityNotFoundError``

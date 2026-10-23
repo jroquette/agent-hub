@@ -60,8 +60,11 @@ format: ## ruff format --check
 lint: ## ruff check
 	$(RUN) ruff check .
 
-typecheck: ## mypy --strict (config in mypy.ini)
+typecheck: ## mypy --strict (config in mypy.ini); each hyphenated pack's scripts in a run of their own
 	$(RUN) mypy
+	@for dir in packages/core/src/agent_hub/core/workflows/builtin/*-*/scripts; do \
+	  echo "mypy $$dir"; $(RUN) mypy $$dir/*.py || exit 1; \
+	done
 
 layout: ## test layout and names, forbidden modules, packages listed in gate configs
 	$(RUN) python -m scripts.check_test_layout
@@ -151,8 +154,10 @@ migrations: ## upgrade a scratch SQLite database to head, then alembic check (no
 coverage: ## per-package floors (core 90%, others 80%) over the collected coverage data
 	$(RUN) coverage json -q -o coverage.json && $(RUN) python -m scripts.check_coverage coverage.json
 
-# Not part of check: test_build_llms_txt.py (in test-fast) fails while either file is stale.
-llms-txt: ## regenerate llms.txt and llms-full.txt from the docs
+# Not part of check: test_build_llms_txt.py and test_build_flow_catalog.py (in test-fast) fail
+# while a file is stale.
+llms-txt: ## regenerate the flow catalog in FLOWS.md, llms.txt and llms-full.txt
+	$(RUN) python -m scripts.build_flow_catalog
 	$(RUN) python -m scripts.build_llms_txt
 
 # Not part of check: the drift tests in test-fast fail while the shipped file is stale.

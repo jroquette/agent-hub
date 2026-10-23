@@ -137,6 +137,7 @@ from agent_hub.cli.workflow_runs import (
     snapshot_includes,
     snapshot_run,
 )
+from agent_hub.cli.workflow_schedule_command import schedule_app
 from agent_hub.core.approvals.decide_gate import (
     MAX_TEXT_BYTES,
     DecideGate,
@@ -166,6 +167,7 @@ from agent_hub.core.workflows.engine import (
 from agent_hub.core.workflows.events import WorkflowEvents, issue_key
 from agent_hub.core.workflows.gates import GateAnswer, GateAnswers
 from agent_hub.core.workflows.includes import IncludeResolver
+from agent_hub.core.workflows.launch import RUN_TRIGGERS
 from agent_hub.core.workflows.nodes import ActionNode, ExpectNode, Node, ScriptNode, ShellNode
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
 from agent_hub.core.workflows.ports import RunEnd, RunRecorder, RunTrace
@@ -199,6 +201,7 @@ _JITTER: Final = random.SystemRandom()
 workflow_app = typer.Typer(
     name="workflow", no_args_is_help=True, help="List, check and run workflows."
 )
+workflow_app.add_typer(schedule_app, name="schedule")
 
 
 @workflow_app.command("list")
@@ -250,12 +253,16 @@ def run(
         str | None,
         typer.Option("--env", metavar="ENV", help="Run in ENV, over the workflow's environment."),
     ] = None,
+    trigger: Annotated[
+        str | None,
+        # hub web's scheduled and event starts (ADR 0048): recorded in the start record.
+        typer.Option("--trigger", metavar="KIND", hidden=True, help="schedule or event."),
+    ] = None,
 ) -> None:
     """Run a workflow, or resume or abandon a run of one."""
     if [name, resume, abandon].count(None) != 2:
         raise typer.BadParameter("give one of NAME, --resume RUN or --abandon RUN")
-    if env is not None and name is None:
-        raise typer.BadParameter("a run keeps the environment it started in", param_hint="--env")
+    _refuse_start_options(name, env=env, trigger=trigger)
     for option, value in (("--run-id", run_id), ("--resume", resume), ("--abandon", abandon)):
         # A run id names a folder and is the events' session: checked before anything runs.
         if value is not None and not RUN_ID_PATTERN.fullmatch(value):
@@ -271,11 +278,28 @@ def run(
             raise typer.Exit(_resume(hub, resume))
         else:
             started = _start(
-                context, hub, name or "", given=given or [], live=live, run_id=run_id, env=env
+                context,
+                hub,
+                name or "",
+                given=given or [],
+                live=live,
+                run_id=run_id,
+                env=env,
+                trigger=trigger,
             )
             raise typer.Exit(started)
     except (WorkflowRunError, WorkflowEngineError) as error:
         fail(f"{_PREFIX}: {error}")
+
+
+def _refuse_start_options(name: str | None, *, env: str | None, trigger: str | None) -> None:
+    """``--env`` and ``--trigger`` belong to a new run; a trigger is one of ``RUN_TRIGGERS``."""
+    if env is not None and name is None:
+        raise typer.BadParameter("a run keeps the environment it started in", param_hint="--env")
+    if trigger is not None and name is None:
+        raise typer.BadParameter("a run keeps how it started", param_hint="--trigger")
+    if trigger is not None and trigger not in RUN_TRIGGERS:
+        raise typer.BadParameter(" or ".join(RUN_TRIGGERS), param_hint="--trigger")
 
 
 _RUN_ARG = typer.Argument(help="The paused run.")
@@ -481,6 +505,7 @@ def _start(
     live: bool,
     run_id: str | None,
     env: str | None = None,
+    trigger: str | None = None,
 ) -> int:
     plan, found = discovered(hub, name)
     included = _included(hub, found)
@@ -531,6 +556,7 @@ def _start(
             content_hash=content_hash,
             parent=parent,
             policy=policy,
+            trigger=trigger,
         )
 
 
@@ -747,6 +773,7 @@ def _begin(
     content_hash: str,
     parent: IssueToPr | None,
     policy: _StartPolicy | None = None,
+    trigger: str | None = None,
 ) -> int:
     run_id, name = folder.name, plan.document.name
     header: dict[str, JsonValue] = {"event": "start", "run": run_id, "workflow": name}
@@ -760,6 +787,9 @@ def _begin(
     if unwatched:
         # Noted once: a read-only node's git status check does not see these folders.
         header["checkout_unwatched"] = [str(path) for path in unwatched]
+    if trigger is not None:
+        # Only a run hub web started by itself says how (ADR 0048).
+        header["trigger"] = trigger
     append_record(folder, header)
     append_record(folder, {"event": "inputs", "inputs": inputs})
     run_policy = None

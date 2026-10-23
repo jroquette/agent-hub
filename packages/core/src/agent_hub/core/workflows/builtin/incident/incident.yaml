@@ -1,0 +1,358 @@
+# An incident with no known reproduction: git evidence, a recall of past incidents,
+# at most five ranked hypotheses each with a read-only check, the checks run, a mitigation the
+# owner picks behind a gate, a hand-off draft for /fix (or /change) and a blameless postmortem
+# draft, both in brain/_inbox/. The outcome is the postmortem's status: draft when a hypothesis
+# was confirmed, open when none was.
+#
+# Invariants:
+# - No tracker write (ADR 0030): no issue input, and the one hub step node is config (read-only:
+#   the repos from hub.json, which no script opens); follow-ups are listed in the postmortem for
+#   the owner to file through /triage.
+# - No environment: the pack reads no system. evidence, check and mitigation are effect read,
+#   handoff and note write the hub; a run started with --env <production> is refused by policy.
+# - Nothing is applied: the pack records the chosen mitigation; applying it is the owner's step
+#   through /fix (or /change). The run pauses at mitigate before mitigation or handoff runs.
+# - The checks are agent-written, so check.py runs each one as an argv list on an allow-list
+#   (git read subcommands, grep, test, ls, cat, head, tail, wc), never through a shell, with
+#   paths inside the repo, in a detached worktree under $TMPDIR at the evidence's head, with an
+#   environment built from nothing, 60 s each and 300 s for the node. Residual risk: cat, head
+#   and grep follow a symlink committed in the repo, so they can read what it reaches, and the
+#   repo's own .git/config still applies; the repos are the project's own and the record local.
+#
+# The evidence is git only (first-parent commits on origin/<branch> as last fetched, tags,
+# changed files); it leaves out the failing checks on main (GitHub: script nodes get no token)
+# and logs (hub.json declares no log paths): the owner pastes excerpts into the report.
+#
+# The gate: `hub workflow respond <run> --choice record --text "H<n> or a mitigation"`, or
+# `--choice none`, or hub web. No schedule: the run starts from /incident.
+version: 1
+name: incident
+description: An incident - git evidence, ranked hypotheses with read-only checks, a gated mitigation, a hand-off draft and a blameless postmortem draft.
+revision: 1
+inputs:
+  report:
+    required: true
+    description: The symptom and its impact as the owner gives it, pasted log or CI excerpts welcome (untrusted, at most 32 KiB).
+  since:
+    default: 72h
+    description: How far back the evidence reads, <n>h or <n>d, at most 90d.
+returns: note
+outcome_field: status
+nodes:
+  - id: config
+    type: shell
+    description: The hub.json values this run's scripts need, read by the CLI (read-only).
+    command: [hub, step, config]
+    effect: read
+    mutates_checkout: false
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        default_branch: {type: string}
+        branch_prefix: {type: [string, "null"]}
+        hub: {type: object}
+        repos: {type: array, items: {type: object}}
+      required: [default_branch, branch_prefix, hub, repos]
+
+  - id: evidence
+    type: script
+    description: Git evidence since the window - first-parent commits, tags and changed files of each repo.
+    depends_on: [config]
+    runtime: python
+    script: evidence.py
+    args: [--since, $INPUTS.since, --config, $config.output]
+    stdin: $INPUTS.report
+    effect: read
+    mutates_checkout: false
+    timeout: 5m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [since, since_iso, repos, unreadable, left_out, trimmed]
+      properties:
+        since: {type: string}
+        since_iso: {type: string}
+        repos:
+          type: array
+          maxItems: 20
+          items:
+            type: object
+            additionalProperties: false
+            required: [dir, ref, head, commits, more_commits, tags]
+            properties:
+              dir: {type: string, maxLength: 64, pattern: "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$"}
+              ref: {type: string, maxLength: 300}
+              head: {type: string, pattern: "^([0-9a-f]{40})?$"}
+              commits:
+                type: array
+                maxItems: 100
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [sha, at, subject, merge, paths, more_paths]
+                  properties:
+                    sha: {type: string, pattern: "^[0-9a-f]{40}$"}
+                    at: {type: string, maxLength: 40}
+                    subject: {type: string, maxLength: 200}
+                    merge: {type: boolean}
+                    paths: {type: array, maxItems: 50, items: {type: string, maxLength: 300}}
+                    more_paths: {type: integer, minimum: 0}
+              more_commits: {type: integer, minimum: 0}
+              tags:
+                type: array
+                maxItems: 20
+                items:
+                  type: object
+                  additionalProperties: false
+                  required: [name, sha, at]
+                  properties:
+                    name: {type: string, maxLength: 200}
+                    sha: {type: string, pattern: "^[0-9a-f]{40}$"}
+                    at: {type: string, maxLength: 40}
+        unreadable:
+          type: array
+          maxItems: 20
+          items:
+            type: object
+            additionalProperties: false
+            required: [repo, reason]
+            properties:
+              repo: {type: string, maxLength: 300}
+              reason: {type: string, maxLength: 300}
+        left_out: {type: array, maxItems: 5, items: {type: string, maxLength: 200}}
+        trimmed: {type: boolean}
+
+  - id: recall
+    type: agent
+    description: What the brain already knows - past incidents, learnings and verify reports that match the evidence. Read-only.
+    depends_on: [evidence]
+    prompt_file: recall.md
+    context: fresh
+    mutates_checkout: false
+    timeout: 15m
+    retry: {max_attempts: 0}
+    with:
+      evidence: $evidence.output
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [matches, summary]
+      properties:
+        matches:
+          type: array
+          maxItems: 10
+          items:
+            type: object
+            additionalProperties: false
+            required: [path, why]
+            properties:
+              path: {type: string, minLength: 1, maxLength: 300}
+              why: {type: string, maxLength: 400}
+        summary: {type: string, maxLength: 1000}
+
+  - id: hypotheses
+    type: agent
+    description: At most five hypotheses ranked by likelihood times cost to check, each with a read-only check. Read-only.
+    depends_on: [recall]
+    prompt_file: hypotheses.md
+    context: fresh
+    mutates_checkout: false
+    timeout: 30m
+    retry: {max_attempts: 0}
+    with:
+      report: $INPUTS.report
+      evidence: $evidence.output
+      recall: $recall.output
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [hypotheses]
+      properties:
+        hypotheses:
+          type: array
+          minItems: 1
+          maxItems: 5
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, rank, statement, repo, check, confirms_when, mitigation]
+            properties:
+              id: {type: string, pattern: "^H[1-5]$"}
+              rank: {type: integer, minimum: 1, maximum: 5}
+              statement: {type: string, minLength: 1, maxLength: 500}
+              repo: {type: string, maxLength: 64, pattern: "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$"}
+              check:
+                type: array
+                minItems: 1
+                maxItems: 16
+                items: {type: string, minLength: 1, maxLength: 256, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+              confirms_when: {type: string, maxLength: 300}
+              mitigation:
+                anyOf:
+                  - {type: "null"}
+                  - type: object
+                    additionalProperties: false
+                    required: [summary, undo]
+                    properties:
+                      summary: {type: string, minLength: 1, maxLength: 300}
+                      undo: {type: string, minLength: 1, maxLength: 300}
+
+  - id: check
+    type: script
+    description: Each hypothesis's check, read-only, in a throwaway worktree at the evidence's head; exit 0 confirms it.
+    depends_on: [hypotheses]
+    runtime: python
+    script: check.py
+    args: [--repos, $evidence.output.repos]
+    stdin: $hypotheses.output
+    effect: read
+    mutates_checkout: false
+    timeout: 10m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [results, confirmed, mitigations, menu]
+      properties:
+        results:
+          type: array
+          maxItems: 5
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, rank, repo, status, exit_code, reason, tail]
+            properties:
+              id: {type: string, maxLength: 8}
+              rank: {type: integer}
+              repo: {type: string, maxLength: 64}
+              status: {type: string, enum: [confirmed, failed, refused, timeout, error]}
+              exit_code: {type: [integer, "null"]}
+              reason: {type: string, maxLength: 200}
+              tail: {type: string, maxLength: 1000}
+        confirmed: {type: integer, minimum: 0, maximum: 5}
+        mitigations: {type: integer, minimum: 0, maximum: 5}
+        menu: {type: string, maxLength: 4096}
+
+  - id: mitigate
+    type: approval
+    description: The owner records a mitigation of a confirmed hypothesis, or their own, or none. Nothing is applied.
+    depends_on: [check]
+    when: "$check.output.mitigations > 0"
+    message: >-
+      A hypothesis is confirmed and proposes a mitigation. $check.output.menu The run records the
+      mitigation you pick and applies nothing: you apply it through /fix (or /change). Record
+      with the text H<n>, or your own mitigation (blank: the top-ranked one); or none.
+    decisions:
+      - {id: record, label: Record a mitigation}
+      - {id: none, label: No mitigation}
+    capture_response: true
+
+  - id: mitigation
+    type: script
+    description: The chosen mitigation, recorded - a confirmed hypothesis named in the text, else the owner's text.
+    depends_on: [mitigate]
+    when: "$mitigate.output.decision == 'record'"
+    runtime: python
+    script: mitigation.py
+    args: [--check, $check.output, --text, $mitigate.output.text, --approver, $mitigate.output.approver]
+    stdin: $hypotheses.output
+    effect: read
+    mutates_checkout: false
+    timeout: 1m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [id, summary, undo, source, approver]
+      properties:
+        id: {type: string, pattern: "^(H[1-5])?$"}
+        summary: {type: string, maxLength: 2000}
+        undo: {type: string, maxLength: 300}
+        source: {type: string, enum: [hypothesis, owner]}
+        approver: {type: string, maxLength: 200}
+
+  - id: handoff
+    type: script
+    description: The hand-off draft for /fix (or /change) in brain/_inbox/ - the symptom, the reproduction, every hypothesis and the chosen mitigation.
+    depends_on: [check, mitigate, mitigation]
+    trigger_rule: none_failed_min_one_success
+    runtime: python
+    script: inbox.py
+    args: [handoff, --hypotheses, $hypotheses.output, --check, $check.output, --mitigation, $mitigation.output, --decision, $mitigate.output.decision]
+    stdin: $INPUTS.report
+    timeout: 2m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [path, confirmed, mitigation]
+      properties:
+        path: {type: string, minLength: 1}
+        confirmed: {type: integer, minimum: 0}
+        mitigation: {type: string, pattern: "^(H[1-5])?$"}
+
+  - id: postmortem
+    type: agent
+    description: The blameless postmortem - timeline, root cause, detection gap, what fixed it, follow-ups and learnings. Read-only.
+    depends_on: [handoff]
+    prompt_file: postmortem.md
+    context: fresh
+    mutates_checkout: false
+    timeout: 15m
+    retry: {max_attempts: 0}
+    with:
+      report: $INPUTS.report
+      check: $check.output
+      mitigation: {from: $mitigation.output, if_skipped: ""}
+      handoff: $handoff.output.path
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [title, summary, timeline, root_cause, detection_gap, what_fixed_it, follow_ups, learnings]
+      properties:
+        title: {type: string, minLength: 1, maxLength: 120}
+        summary: {type: string, maxLength: 1000}
+        timeline:
+          type: array
+          maxItems: 30
+          items:
+            type: object
+            additionalProperties: false
+            required: [at, what]
+            properties:
+              at: {type: string, maxLength: 40}
+              what: {type: string, maxLength: 300}
+        root_cause: {type: string, maxLength: 2000}
+        detection_gap: {type: string, maxLength: 2000}
+        what_fixed_it: {type: string, maxLength: 2000}
+        follow_ups: {type: array, maxItems: 10, items: {type: string, maxLength: 300}}
+        learnings:
+          type: array
+          maxItems: 5
+          items:
+            type: object
+            additionalProperties: false
+            required: [target, text]
+            properties:
+              target: {type: string, maxLength: 200}
+              text: {type: string, maxLength: 1000}
+
+  - id: note
+    type: script
+    description: The postmortem draft in brain/_inbox/ (provenance agent) - draft when a hypothesis was confirmed, open when none was.
+    depends_on: [postmortem]
+    runtime: python
+    script: inbox.py
+    args: [postmortem, --confirmed, $check.output.confirmed, --handoff, $handoff.output.path]
+    stdin: $postmortem.output
+    timeout: 2m
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [status, path]
+      properties:
+        status: {type: string, enum: [draft, open]}
+        path: {type: string, minLength: 1}

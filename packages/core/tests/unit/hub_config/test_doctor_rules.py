@@ -40,6 +40,7 @@ RULE_TABLE_IDS = [
     "repos.ui_paths",
     "environments.production",
     "environments.env_file",
+    "workflows.starts",
     "brain.memory",
     "sandbox.workflow",
     "workflows.valid",

@@ -9,7 +9,8 @@ entry), so a warm read is one listing walk plus the usage join. Items and bundle
 found by id only: an id the fold did not issue is ``EntityNotFoundError`` (entity ``skill`` or
 ``skill file``); on a cold memo an item the listing alone rules out (``may_hold``) answers so
 before any file is read. ``item_names`` gives the fold's item kinds and names alone, with no
-capture and no usage.
+capture and no usage. ``usage_rows`` gives the usage report's rows of the hub's own skills and
+agents (a real ``.claude/`` entry or one a ``.claude/`` link points at), also with no capture.
 
 With ``capture`` (AGH-295, D2), the catalog hands every unit its items are versioned in (each
 once: the hooks of one file share it) to ``CaptureItemVersions`` with the unit's stat mark, and
@@ -36,6 +37,7 @@ from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.skills.skill_catalog import build_catalog, catalog_reads, may_hold
 from agent_hub.core.skills.skill_sources import (
     CATALOG_BUDGET_BYTES,
+    CLAUDE_SOURCE,
     MAX_SKILL_FILE_BYTES,
     MAX_SKILL_JSON_BYTES,
     CatalogInputs,
@@ -54,9 +56,11 @@ from agent_hub.core.skills.skill_view import (
     SkillFileTooLargeError,
     SkillUsage,
     Usage,
+    UsageRow,
     item_id,
     text_of,
 )
+from agent_hub.core.skills.usage_report import usage_rows
 
 MEMO_ENTRIES: Final = 16
 SKILL_ENTITY: Final = "skill"
@@ -147,6 +151,23 @@ class SkillReads:
         captured and no usage is asked (a Publish's name check, AGH-295)."""
         _, folded = self._folded(project, hub_path)
         return frozenset((item.kind, item.name) for item in folded.catalog.items)
+
+    def usage_rows(self, *, project: str, hub_path: str) -> tuple[tuple[UsageRow, ...], bool]:
+        """The usage report's rows of the skills and agents in the hub's ``.claude/skills`` and
+        ``.claude/agents`` (a real entry, or a plugin item a link there points at), 0 runs when
+        unused, from the (memoized) fold: no unit is captured. The flag is true when the catalog
+        or the usage was cut or a file was not read (AGH-482)."""
+        _, folded = self._folded(project, hub_path)
+        names: dict[tuple[ItemKind, str], None] = {}
+        for item in folded.catalog.items:
+            in_claude = item.source == CLAUDE_SOURCE or bool(item.linked_from)
+            if item.kind is not ItemKind.HOOK and in_claude:
+                names[(item.kind, item.name)] = None
+        usage = self._project_usage(project)
+        truncated = folded.catalog.truncated or folded.left_unread
+        return usage_rows(project, names, usage), truncated or (
+            usage is not None and usage.windows_truncated
+        )
 
     def detail(
         self, *, project: str, hub_path: str, kind: ItemKind, source: str, name: str

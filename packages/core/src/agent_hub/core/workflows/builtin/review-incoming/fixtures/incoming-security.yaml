@@ -1,0 +1,63 @@
+# AC-2: the diff adds a shell=True subprocess call, so surface marks it risky and the security
+# lens runs; its blocking finding reaches the findings and the review file, and the owner
+# requests changes: outcome REQUEST_CHANGES.
+workflow: review-incoming
+inputs: {repo: demo-api, pr: "7", ref: refs/agent-hub/review/7, pr_file: /tmp/pr.json, ci_file: /tmp/ci.json, spec_file: /tmp/spec.txt}
+stubs:
+  config:
+    output: {default_branch: main, branch_prefix: jdoe/, author_name: null, author_email: null, ready_label: agent-ready, teams: [DEM], hub: {github: acme/demo-hub, default_branch: main, target: {github: acme/demo-hub, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}, repos: [{dir: demo-api, github: acme/demo-api, default_branch: main, check_fast: make check-fast, check: make check, target: {github: acme/demo-api, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}]}
+  fetch:
+    output:
+      number: 7
+      url: https://github.com/example/demo-api/pull/7
+      title: Adds the run endpoint
+      body: Runs a job on request. Closes DEM-7.
+      body_cut: false
+      author: someone
+      fork: false
+      head_sha: 1f2e3d4c5b6a79881f2e3d4c5b6a79881f2e3d4c
+      head_ref: feature/run
+      base_ref: main
+      merge_base: 0a1b2c3d4e5f60710a1b2c3d4e5f60710a1b2c3d
+      path: /ws/demo-api
+      hub: /ws/hub
+      check: make check
+      files: [{status: M, path: app/run.py}, {status: M, path: tests/test_run.py}]
+      more_files: false
+      ci: {state: success, runs: [{name: test, status: completed, conclusion: success}], more: false}
+      issues: [DEM-7]
+      spec: "AC-1 Given a job, then the endpoint runs it."
+  check: {output: {status: passed, exit_code: 0, tail: "ok\n", reason: "", command: make check}}
+  spec:
+    output: {reviewer: spec, commit: 1f2e3d4c5b6a79881f2e3d4c5b6a79881f2e3d4c, verdict: PASS, findings: [], coverage: [{ac: AC-1, status: covered, test: "tests/test_run.py::test_runs_the_job"}]}
+  quality:
+    output: {reviewer: quality, commit: 1f2e3d4c5b6a79881f2e3d4c5b6a79881f2e3d4c, verdict: PASS, findings: [], coverage: []}
+  surface:
+    output: {risky: true, categories: [subprocesses], hits: [{category: subprocesses, path: app/run.py, line: 12, rule: "shell=True"}], files: 2, truncated: false, reason: ""}
+  security:
+    output:
+      reviewer: security
+      commit: 1f2e3d4c5b6a79881f2e3d4c5b6a79881f2e3d4c
+      verdict: FAIL
+      findings:
+        - {id: F1, kind: security, severity: blocking, path: app/run.py, line: 12, acs: [], what: The request's text reaches a shell through shell=True., expected: Pass an argument list with no shell.}
+      coverage: []
+  findings:
+    output:
+      findings:
+        - {id: "security:F1", lens: security, kind: security, severity: blocking, path: app/run.py, line: 12, what: The request's text reaches a shell through shell=True., expected: Pass an argument list with no shell.}
+      coverage: [{ac: AC-1, status: covered, test: "tests/test_run.py::test_runs_the_job"}]
+      verdicts: {spec: PASS, quality: PASS, security: FAIL}
+      omitted: 0
+  draft:
+    output:
+      summary: The endpoint works, but it runs the request's text through a shell.
+      comments:
+        - {path: app/run.py, line: 12, severity: blocking, body: "This passes the request's text to a shell. Pass an argument list instead.", sources: ["security:F1"]}
+  compose:
+    output: {path: .agent-runs/review-incoming/run-1.md, blocking: 1, minor: 0, inline: 1, suggested: request-changes, preview: "# Summary\nThe endpoint works, but it runs the request's text through a shell.\n"}
+  gate: {decision: request-changes, approver: Jo}
+  final:
+    output: {path: .agent-runs/review-incoming/run-1.payload.json, sha256: 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae, event: REQUEST_CHANGES, blocking: 1, optional: 0, inline: 1}
+expect: {status: done, outcome: REQUEST_CHANGES}
+reached: [config, fetch, check, surface, spec, quality, security, findings, draft, compose, gate, final]

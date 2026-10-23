@@ -80,6 +80,8 @@ from agent_hub.core.skills.skill_view import (
     Step,
     TocEntry,
     Usage,
+    UsageReport,
+    UsageRow,
 )
 from agent_hub.core.tracker.tracker_reader import IssueState, IssueSummary, TicketSnapshot
 
@@ -763,6 +765,33 @@ def a_skill_usage(**overrides: object) -> SkillUsage:
         },
     }
     return SkillUsage.model_validate(fields | overrides)
+
+
+def a_usage_row(**overrides: object) -> UsageRow:
+    """Project ``demo``'s skill ``refactor``, never used."""
+    fields: dict[str, object] = {
+        "project": "demo",
+        "kind": ItemKind.SKILL,
+        "name": "refactor",
+        "runs_7d": 0,
+        "runs_30d": 0,
+        "runs_90d": 0,
+        "last_used_at": None,
+    }
+    return UsageRow.model_validate(fields | overrides)
+
+
+def a_usage_report(**overrides: object) -> UsageReport:
+    """Project ``demo``'s 30-day report: ``refactor`` never used, then ``feature`` run twice."""
+    feature = a_usage_row(
+        name="feature",
+        runs_7d=1,
+        runs_30d=2,
+        runs_90d=2,
+        last_used_at=datetime(2026, 10, 12, 9, 30, tzinfo=UTC),
+    )
+    fields: dict[str, object] = {"days": 30, "items": (a_usage_row(), feature)}
+    return UsageReport.model_validate(fields | overrides)
 
 
 def a_catalog_item(**overrides: object) -> CatalogItem:

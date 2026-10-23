@@ -108,6 +108,7 @@ SKILL_PATHS: frozenset[tuple[str, str]] = frozenset(
         "/projects/{project}/skills",
         "/projects/{project}/skills/{kind}/{source}/{name}",
         "/projects/{project}/skills/{kind}/{source}/{name}/files/{file_id}",
+        "/skill-usage",
     )
 )
 

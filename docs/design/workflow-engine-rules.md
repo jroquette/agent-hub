@@ -62,6 +62,8 @@ together. The format is the schema's contract; the reasons are in [ADR 0032](../
 - A read-only node's attempt reads `git status` of the hub and its repos before and after; a change fails it `config`
   (never retried). A folder that is not a git checkout is not watched; the run's start record lists it
   (`checkout_unwatched`).
+- A run that `hub web` started by itself records `trigger` (`schedule` or `event`) in its start record
+  ([ADR 0048](../adr/0048-scheduled-and-event-starts-in-hub-web.md)); a run started by hand has no `trigger`.
 - Ctrl-C stops the run: no attempt, retry or group iteration starts after it, a retry's backoff wakes, and the
   running children's process groups are killed.
 

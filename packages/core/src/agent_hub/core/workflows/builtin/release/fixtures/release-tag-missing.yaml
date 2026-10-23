@@ -1,0 +1,59 @@
+# The owner says tagged but origin has no annotated tag on the release commit (a squash merge);
+# asked again, the owner stops: no pin approval, the run ends stopped.
+workflow: release
+inputs: {issue: DEM-9, repo: demo-api, version: ""}
+stubs:
+  config:
+    output: {default_branch: main, branch_prefix: jdoe/, author_name: null, author_email: null, ready_label: agent-ready, teams: [DEM], hub: {github: acme/demo-hub, default_branch: main, target: {github: acme/demo-hub, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}, repos: [{dir: demo-api, github: acme/demo-api, default_branch: main, check_fast: make check-fast, check: make check, target: {github: acme/demo-api, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}]}
+  worktree:
+    output:
+      path: /ws/demo-api/.claude/worktrees/dem-9
+      branch: jdoe/dem-9
+      base: origin/trunk
+      hub: /ws/hub
+      hub_name: hub
+      check: make check
+      prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
+      target: {path: /ws/demo-api/.claude/worktrees/dem-9, branch: jdoe/dem-9, base: origin/trunk}
+  since:
+    output:
+      last_tag: v0.20.1
+      previous: 0.20.1
+      version: 0.21.0
+      bump: minor
+      reason: "minor: a feat in #10"
+      count: 2
+      prs:
+        - {number: 10, title: "feat(core): release pack (DEM-7)", type: feat, breaking: false, sha: "1111111111111111111111111111111111111111"}
+        - {number: 11, title: "fix(cli): exit code (DEM-8)", type: fix, breaking: false, sha: "2222222222222222222222222222222222222222"}
+      text: "#10 feat(core): release pack (DEM-7)\n#11 fix(cli): exit code (DEM-8)"
+      omitted: 0
+  bump:
+    output:
+      version: 0.21.0
+      previous: 0.20.1
+      sha: 0a1b2c3d4e5f60718293a4b5c6d7e8f901234567
+      files: [CHANGELOG.md, README.md, docs/SPEC.md, llms-full.txt, packages/agent-hub/pyproject.toml, packages/cli/pyproject.toml, uv.lock]
+      changelog: "### Added\n\n- The release pack (DEM-7)."
+      changelog_empty: false
+      readme_replaced: 7
+      lockstep: "version lockstep ok"
+  rewrites:
+    output:
+      from: 0.20.1
+      version: 0.21.0
+      count: 2
+      files: [{verb: update, path: .claude/settings.json}, {verb: create, path: workflows/release/release.yaml}]
+      omitted: 0
+      conflicts: []
+      text: "update .claude/settings.json\ncreate workflows/release/release.yaml"
+  notes: {output: {features: "- The release pack (#10).", fixes: "- The exit code (#11).", doctor: "", migration: "", summary: The release pack.}}
+  compose: {output: {notes: "v0.21.0 (since v0.20.1)\n\nThe release pack.\n", chars: 40, trimmed: false}}
+  check: {output: {sha: 0a1b2c3d4e5f60718293a4b5c6d7e8f901234567, passed: true, exit_code: 0, log: /work/release-check-1.log, tail: "ok\n", problem: ""}}
+  go: {decision: approve, approver: Jo}
+  pr: {output: {url: "https://github.com/acme/demo-api/pull/250", found: false, summary: notes, title_unmatched: null}}
+  tagged__ask: [{choice: tagged}, {choice: stop}]
+  tagged__verify: [{output: {ok: false, found: true, annotated: true, peeled: "5555555555555555555555555555555555555555", reason: the release PR was squash merged}}]
+  report: {output: {outcome: stopped, version: 0.21.0, pr: "https://github.com/acme/demo-api/pull/250", pin_pr: "", reason: the run's outcome}}
+expect: {status: done, outcome: stopped}
+reached: [config, worktree, since, bump, rewrites, notes, compose, check, go, pr, tagged, tagged__ask, tagged__verify, report]
