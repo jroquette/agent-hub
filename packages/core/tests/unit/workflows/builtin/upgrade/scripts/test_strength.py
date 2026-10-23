@@ -145,6 +145,7 @@ def test_reports_zero_touched_and_not_run_when_no_commits_follow_the_bump(
         "touched": 0,
         "files": [],
         "lockfiles_edited": [],
+        "lockfile_edit": False,
         "ran": False,
         "tool": "",
         "reason": "no commit after the bump",
@@ -165,6 +166,7 @@ def test_lists_lockfile_edited_when_adapt_commits_touch_uv_lock(
     found = strength(capsys, "--base", base, "--budget", "600")
 
     assert found["lockfiles_edited"] == ["uv.lock", "web/package.json"]
+    assert found["lockfile_edit"] is True
     assert found["touched"] == 3
 
 
@@ -266,7 +268,7 @@ def test_marks_inconclusive_when_tool_exceeds_budget(
     found = strength(capsys, "--base", base, "--budget", "1")
 
     assert (found["ran"], found["tool"]) == (False, "stryker")
-    assert found["reason"] == "inconclusive: stryker ran past its 1 s budget"
+    assert found["reason"] == "inconclusive: stryker ran past its 1 s budget in web"
 
 
 def test_exits_one_when_tool_leaves_a_tracked_change(
@@ -298,3 +300,64 @@ def test_exits_two_when_the_arguments_are_bad(
     assert load().main(argv) == 2
 
     assert capsys.readouterr().out == ""
+
+
+def test_runs_stryker_in_each_folder_and_names_what_it_did_not_measure_when_diff_spans_folders(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write(
+        repo,
+        {
+            "web/package.json": json.dumps(WEB_PACKAGE),
+            "app/package.json": json.dumps(WEB_PACKAGE),
+            "app/src/x.ts": SOURCE,
+            "lib/package.json": json.dumps({"name": "lib"}),
+            "lib/y.ts": SOURCE,
+        },
+    )
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "folders")
+    base = bump_commit(repo)
+    changed_source = SOURCE.replace("3", "5")
+    commit(
+        repo,
+        {
+            "web/src/x.ts": changed_source,
+            "app/src/x.ts": changed_source,
+            "lib/y.ts": changed_source,
+            "src/a.py": "A = 2\n",
+        },
+        "fix: all",
+    )
+    mutants = report((3, "Survived"), (3, "Killed"))
+    fake_npx(
+        repo,
+        "mkdir -p reports/mutation"
+        f" && cat > reports/mutation/mutation.json <<'EOF'\n{mutants}\nEOF",
+    )
+
+    found = strength(capsys, "--base", base, "--budget", "600")
+
+    calls = Path(os.environ["RECORD"]).read_text(encoding="utf-8").splitlines()
+    assert [line.split("|")[0] for line in calls] == [str(repo / "app"), str(repo / "web")]
+    assert (found["ran"], found["mutants"], found["killed"]) == (True, 4, 2)
+    assert [item["path"] for item in found["survived"]] == ["app/src/x.ts", "web/src/x.ts"]  # type: ignore[union-attr]
+    assert found["reason"] == "not measured: lib/y.ts, src/a.py"
+
+
+def test_reports_not_run_and_drops_the_old_report_when_stryker_fails(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write(repo, {"web/package.json": json.dumps(WEB_PACKAGE)})
+    git(repo, "commit", "-qam", "stryker")
+    base = bump_commit(repo)
+    commit(repo, {"web/src/x.ts": SOURCE.replace("2", "4")}, "fix: x")
+    # A report from a run by hand, still in the kept worktree.
+    write(repo, {"web/reports/mutation/mutation.json": report((2, "Survived"))})
+    fake_npx(repo, "exit 1")
+
+    found = strength(capsys, "--base", base, "--budget", "600")
+
+    assert (found["ran"], found["tool"], found["survived"]) == (False, "stryker", [])
+    assert found["reason"] == "stryker exited 1 in web without a report"
+    assert not (repo / "web/reports/mutation/mutation.json").exists()
