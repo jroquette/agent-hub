@@ -233,7 +233,19 @@ def problem(
             return "supersede target not read"
         if seen.get(target) == issue_id:
             return "mutual supersede"
+        if issue_id in chain(target, seen):
+            return "supersede cycle"
     return ""
+
+
+def chain(start: str, seen: dict[str, str]) -> list[str]:
+    """The issues ``start`` is superseded by, in turn, through the drafts kept so far."""
+    found: list[str] = []
+    target = seen.get(start, "")
+    while target and target not in found and len(found) <= len(seen):
+        found.append(target)
+        target = seen.get(target, "")
+    return found
 
 
 def plan(argv: list[str], stdin: str) -> dict[str, object]:
