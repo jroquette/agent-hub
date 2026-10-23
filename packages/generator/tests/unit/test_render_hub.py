@@ -156,6 +156,28 @@ DESIGN_PATHS = (
     "scripts/mine_transcripts.py",
     "scripts/recall_transcripts.py",
     "scripts/retro_metrics.py",
+    # AGH-487: the built-in brain-care pack, seeded.
+    "workflows/brain-care/context.yaml",
+    "workflows/brain-care/fixtures/context-declined.yaml",
+    "workflows/brain-care/fixtures/context-no-commit.yaml",
+    "workflows/brain-care/fixtures/context-over-budget.yaml",
+    "workflows/brain-care/fixtures/context-trimmed.yaml",
+    "workflows/brain-care/fixtures/inbox-all-drop.yaml",
+    "workflows/brain-care/fixtures/inbox-all-skipped.yaml",
+    "workflows/brain-care/fixtures/inbox-empty.yaml",
+    "workflows/brain-care/fixtures/inbox-external-pending.yaml",
+    "workflows/brain-care/fixtures/inbox-three-notes.yaml",
+    "workflows/brain-care/inbox.yaml",
+    "workflows/brain-care/prompts/context-report.md",
+    "workflows/brain-care/prompts/context-trim.md",
+    "workflows/brain-care/prompts/group.md",
+    "workflows/brain-care/scripts/apply.py",
+    "workflows/brain-care/scripts/check_managed.py",
+    "workflows/brain-care/scripts/groups.py",
+    "workflows/brain-care/scripts/hub_branch.py",
+    "workflows/brain-care/scripts/inventory.py",
+    "workflows/brain-care/scripts/outcome.py",
+    "workflows/brain-care/scripts/read_inbox.py",
     # AGH-227: the built-in issue-to-pr pack, seeded.
     "workflows/issue-to-pr/fixtures/blocked.yaml",
     "workflows/issue-to-pr/fixtures/dirty.yaml",
@@ -862,6 +884,8 @@ def test_parses_as_python39_when_rendered(demo_render: dict[str, RenderedFile]) 
         "plugin/demo/hooks",
         "plugin/hub-workflow/hooks",
         "scripts",
+        # The brain-care pack's helpers (AGH-487), as the sdlc pack's.
+        "workflows/brain-care/scripts",
         # The post-merge-verify pack's scripts (AGH-490), run by uv as the sdlc pack's are.
         "workflows/post-merge-verify/scripts",
         # The sdlc pack's helpers (AGH-229), run by uv on its Python, also parse as 3.9.
@@ -2236,7 +2260,7 @@ def test_writes_personal_memory_when_learn_skill_rendered(
     text = skill_text(demo_render, "learn")
     fields = dict(line.split(": ", 1) for line in frontmatter_lines(text))
 
-    assert fields["argument-hint"] == '"[personal] <the learning in one sentence>"'
+    assert fields["argument-hint"] == '"[personal|promote] <the learning in one sentence>"'
     assert "personal" in fields["description"]
     assert "brain/auto/workspace/" in fields["description"]
     assert "Writes a proposal to brain/_inbox/ for human review" not in fields["description"]

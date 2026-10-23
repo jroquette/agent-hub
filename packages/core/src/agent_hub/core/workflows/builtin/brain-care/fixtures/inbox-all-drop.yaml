@@ -1,0 +1,50 @@
+# AC-2: the owner drops both groups: the worktree's commit only deletes the inbox notes, and the
+# hub PR holds nothing else.
+workflow: inbox
+stubs:
+  read:
+    output:
+      count: 2
+      notes:
+        - {path: brain/_inbox/YYYY-MM-DD-stale.md, title: Stale, age_days: 21, provenance: agent, external: false, excerpt: No longer true.}
+        - {path: brain/_inbox/YYYY-MM-DD-known.md, title: Known, age_days: 20, provenance: agent, external: false, excerpt: Already in AGENTS.md.}
+      paths: [brain/_inbox/YYYY-MM-DD-stale.md, brain/_inbox/YYYY-MM-DD-known.md]
+      external: []
+      unreadable: []
+      omitted: 0
+  group:
+    output:
+      groups:
+        - {notes: [brain/_inbox/YYYY-MM-DD-stale.md], action: promote, target: brain/learnings/, reason: Worth keeping., text: ""}
+        - {notes: [brain/_inbox/YYYY-MM-DD-known.md], action: drop, target: "", reason: Already in AGENTS.md., text: ""}
+  plan:
+    output:
+      count: 2
+      groups:
+        - {id: 1, notes: [brain/_inbox/YYYY-MM-DD-stale.md], external: false, action: promote, target: brain/learnings/, reason: Worth keeping., text: ""}
+        - {id: 2, notes: [brain/_inbox/YYYY-MM-DD-known.md], external: false, action: drop, target: "", reason: Already in AGENTS.md., text: ""}
+      ignored: []
+      unproposed: []
+  decide__next:
+    - output: {index: 0, last: false, group: {id: 1}, message: "Group 1 of 2: promote -> brain/learnings/."}
+    - output: {index: 1, last: true, group: {id: 2}, message: "Group 2 of 2: drop."}
+  decide__gate:
+    - {decision: drop, text: No longer true., approver: Dana Owner}
+    - {decision: drop, text: "", approver: Dana Owner}
+  decide__record:
+    - output: {decisions: [{group: {id: 1}, decision: drop, note: No longer true., approver: Dana Owner}], acted: 1}
+    - output: {decisions: [{group: {id: 1}, decision: drop, note: No longer true., approver: Dana Owner}, {group: {id: 2}, decision: drop, note: "", approver: Dana Owner}], acted: 2}
+  branch:
+    output:
+      path: /ws/hub/.claude/worktrees/brain-care-inbox-0a1b2c3d
+      branch: jdoe/brain-care-inbox-0a1b2c3d
+      base: 0a1b2c3d4e5f
+      target: {path: /ws/hub/.claude/worktrees/brain-care-inbox-0a1b2c3d, branch: jdoe/brain-care-inbox-0a1b2c3d, base: 0a1b2c3d4e5f}
+  apply:
+    output: {changes: 2, deleted: [brain/_inbox/YYYY-MM-DD-stale.md, brain/_inbox/YYYY-MM-DD-known.md], written: [], edited: [], skipped: [], summary: Weekly inbox review.}
+  pr:
+    output: {url: "https://github.com/acme/demo-hub/pull/8", found: false, summary: Weekly inbox review., title_unmatched: null}
+  outcome:
+    output: {outcome: pr_opened, reason: "opened https://github.com/acme/demo-hub/pull/8; after the merge, run: git worktree remove /ws/hub/.claude/worktrees/brain-care-inbox-0a1b2c3d && git branch -D jdoe/brain-care-inbox-0a1b2c3d"}
+expect: {status: done, outcome: pr_opened}
+reached: [read, group, plan, decide, decide__next, decide__gate, decide__record, branch, apply, pr, outcome]

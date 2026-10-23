@@ -52,6 +52,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `brain/_inbox/verify-<date>.md` (nothing when all pass); no tracker write. To run it on each merge and every Sunday,
   add to `hub.json` `"events": [{"workflow": "post-merge-verify", "on": "merge", "repo": "<dir>", "inputs": {"repo":
   "<dir>"}}]` and `"schedules": [{"workflow": "post-merge-verify", "cron": "0 6 * * 0", "inputs": {"repo": "<dir>"}}]`.
+- The built-in `brain-care` pack (AGH-487), seeded by `hub sync`: `inbox`, the weekly inbox review (a read-only agent
+  groups `brain/_inbox/` notes, the owner decides each group at its own gate, an external note always alone, then one
+  hub PR with only `brain/` changes), and `context`, the monthly always-loaded context audit (a script names the files
+  past `/context-audit`'s limits; a trim, in a hub PR, only after the owner's approval). `/learn promote` starts `inbox`.
+  Neither writes the tracker.
 
 ### Changed
 

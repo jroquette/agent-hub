@@ -1423,6 +1423,7 @@ def test_imports_every_rendered_module_when_run_on_each_python(
         "plugin/demo/hooks",
         "plugin/hub-workflow/hooks",
         "scripts",
+        "workflows/brain-care/scripts",
         "workflows/post-merge-verify/scripts",
         "workflows/retro/scripts",
         "workflows/sdlc/scripts",

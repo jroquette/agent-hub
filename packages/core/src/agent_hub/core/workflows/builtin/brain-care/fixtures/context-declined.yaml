@@ -1,0 +1,26 @@
+# AC-3: the owner skips this month: nothing is trimmed, no branch is made, no PR is opened.
+workflow: context
+stubs:
+  inventory:
+    output:
+      total_tokens: 4800
+      files:
+        - {path: CLAUDE.md, kind: memory, lines: 2, chars: 30, tokens: 8, managed: true}
+        - {path: docs/rules.md, kind: import, lines: 240, chars: 9600, tokens: 2400, managed: false}
+        - {path: .claude/skills/big/SKILL.md, kind: skill, lines: 1, chars: 1100, tokens: 275, managed: false}
+      over:
+        - {path: docs/rules.md, rule: memory file over 200 lines, value: 240, limit: 200}
+        - {path: .claude/skills/big/SKILL.md, rule: "skill description over 1,024 characters", value: 1100, limit: 1024}
+      unreadable: []
+      summary: "Always-loaded context: about 4800 tokens (an estimate: characters / 4).\nOver the limits:\n- docs/rules.md: memory file over 200 lines (240; limit 200)\n- .claude/skills/big/SKILL.md: skill description over 1,024 characters (1100; limit 1024)"
+  report:
+    output:
+      summary: "Two files are over the limits. Cut docs/rules.md to its always-needed rules (about 1200 tokens); shorten the big skill description (about 50 tokens)."
+      cuts:
+        - {path: docs/rules.md, what: Move the release steps into the release skill., saved_tokens: 1200, managed: false}
+        - {path: .claude/skills/big/SKILL.md, what: Shorten the description to its trigger words., saved_tokens: 50, managed: false}
+  approve: {decision: skip, text: Not this month., approver: Dana Owner}
+  outcome:
+    output: {outcome: declined, reason: "the owner skipped this month's trim"}
+expect: {status: done, outcome: declined}
+reached: [inventory, report, approve, outcome]

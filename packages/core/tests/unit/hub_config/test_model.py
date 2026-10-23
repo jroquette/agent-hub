@@ -645,6 +645,9 @@ PROJECT_BRANCH_READERS = {
     f"{TEMPLATES}/scripts/retro_metrics.py.tmpl": 2,
     # Config.default_branch, and the project's branch in the protected set (also the root file's)
     f"{TEMPLATES}/plugin/hub-workflow/hooks/hubhooks.py.tmpl": 2,
+    # the brain-care pack's hub_branch.py (AGH-487) names the key it needs for the hub
+    # worktree's base (a pack script reads hub.json itself)
+    "core/src/agent_hub/core/workflows/builtin/brain-care/scripts/hub_branch.py": 1,
 }
 
 
