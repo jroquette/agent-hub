@@ -64,7 +64,7 @@ def test_validates_and_passes_every_fixture_when_upgrade_tested(
     tested = run_command(demo_workspace.hub, "workflow", "test", NAME)
 
     assert validated.exit_code == 0, validated.output
-    assert validated.stdout == "upgrade: valid (15 nodes in 15 layers)\n"
+    assert validated.stdout == "upgrade: valid (16 nodes in 16 layers)\n"
     assert tested.exit_code == 0, tested.output
     for fixture in FIXTURES:
         # The hub's seeded copy shadows the built-in.
@@ -95,21 +95,24 @@ def test_declares_one_package_and_the_size_condition_when_document_loaded() -> N
     assert nodes["check-full"].when == "$strength.output.lockfile_edit == false"
 
 
-def test_reads_the_fast_gate_from_hub_json_in_the_hub_when_document_loaded() -> None:
-    gate = nodes_of()["gate"]
+def test_reads_the_fast_gate_from_hub_step_config_when_document_loaded() -> None:
+    nodes = nodes_of()
+    config, gate = nodes["config"], nodes["gate"]
 
-    # The pack's own script, in the hub (no cwd), before any agent: hub step worktree's
-    # output stays as it is.
+    # hub step config reads hub.json before any agent (AGH-480); the pack's own script, in the
+    # hub (no cwd), takes its output and opens no file: hub step worktree's output stays as is.
+    assert (config.type, tuple(config.command)) == ("shell", ("hub", "step", "config"))
+    assert config.depends_on == ("worktree",)
     assert (gate.type, gate.script, gate.cwd) == ("script", "fast_gate.py", None)
     assert gate.args == (
         "--config",
-        "hub.json",
+        "$config.output",
         "--repo",
         "$INPUTS.repo",
         "--full",
         "$worktree.output.check",
     )
-    assert gate.depends_on == ("worktree",)
+    assert gate.depends_on == ("worktree", "config")
 
 
 def test_puts_the_push_behind_an_approval_when_document_loaded() -> None:
@@ -125,7 +128,7 @@ def test_puts_the_push_behind_an_approval_when_document_loaded() -> None:
         for node in nodes.values()
         if node.type == "shell" and tuple(node.command[:2]) == ("hub", "step")
     }
-    assert steps == {"worktree", "commits", "pr", "report"}
+    assert steps == {"worktree", "config", "commits", "pr", "report"}
     assert (loaded.returns, loaded.outcome_field) == ("report", "delivery")
 
 
