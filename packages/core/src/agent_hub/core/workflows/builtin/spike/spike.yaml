@@ -200,6 +200,8 @@ nodes:
           research: $research.output
           feedback: $LOOP_PREV.settle.output.note
           minutes_left: $t_research.output.left_m
+          # The minutes left after the previous round (empty in round 1): the current figure.
+          round_minutes_left: $LOOP_PREV.settle.output.left_m
         output_format:
           type: object
           additionalProperties: false
