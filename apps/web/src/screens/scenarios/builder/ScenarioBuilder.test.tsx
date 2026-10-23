@@ -265,6 +265,33 @@ describe("ScenarioBuilder (scenario builder)", () => {
     window.localStorage.clear();
   });
 
+  it("scenario builder drops a loose copy of a step that is back in the file", async () => {
+    // A loose stack kept in this browser, while the file holds the same step (an undo, a
+    // discarded draft): it must not show twice.
+    window.localStorage.setItem(
+      "ah.builder.layout.demo/order-lifecycle",
+      JSON.stringify({
+        main: { x: 80, y: 40 },
+        loose: [
+          {
+            id: "stack-1",
+            x: 700,
+            y: 40,
+            items: [{ kind: "block", node: { id: "fetch-order", type: "action" } }],
+          },
+        ],
+      }),
+    );
+    renderBuilder();
+
+    await screen.findByRole("treeitem", { name: "Check order-on-hold" });
+    expect(screen.getAllByRole("treeitem", { name: "Script fetch-order" })).toHaveLength(1);
+    expect(screen.queryByText(/loose block/)).not.toBeInTheDocument();
+    expect(
+      JSON.parse(window.localStorage.getItem("ah.builder.layout.demo/order-lifecycle") ?? "{}"),
+    ).toMatchObject({ loose: [] });
+  });
+
   it("scenario builder inserts a block between two others from the + menu", async () => {
     const user = userEvent.setup();
     const { requests } = renderBuilder({ [SAVE]: () => SAVED });
@@ -588,10 +615,9 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const check = await screen.findByRole("treeitem", { name: "Check order-on-hold" });
     await user.click(check);
     const form = screen.getByRole("region", { name: "Inspector: Check order-on-hold" });
-    await user.type(
-      within(form).getAllByLabelText("Type the condition in words")[0]!,
-      "status is DONE{Enter}",
-    );
+    const [words] = within(form).getAllByLabelText("Type the condition in words");
+    if (!words) throw new Error("no words field");
+    await user.type(words, "status is DONE{Enter}");
 
     expect(
       within(form).getByText("Read from your words: check the rows below."),

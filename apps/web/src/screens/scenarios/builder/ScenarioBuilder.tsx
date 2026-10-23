@@ -360,6 +360,20 @@ export function ScenarioBuilder({
   if (synced !== nodesText) {
     const read = programOf(document.nodes);
     setSynced(nodesText);
+    // Steps back in the file (undo, a discarded draft, a file changed outside) leave the loose
+    // stacks kept in this browser: else they would show twice.
+    const inFile = new Set(allNodes(document.nodes).map((node) => node.id));
+    const loose = layout.loose
+      .map((stack) => ({
+        ...stack,
+        items: stack.items.filter(
+          (item) => !programNodes([item]).some((node) => inFile.has(node.id)),
+        ),
+      }))
+      .filter((stack) => stack.items.length > 0);
+    if (JSON.stringify(loose) !== JSON.stringify(layout.loose)) {
+      setLayout({ ...layout, loose });
+    }
     setProgram({
       main: read.main,
       kept:
@@ -379,8 +393,10 @@ export function ScenarioBuilder({
 
   const saveLayout = (next: Layout) => {
     setLayout(next);
-    writeStored(layoutKey(scenario.project, scenario.name), JSON.stringify(next));
   };
+  useEffect(() => {
+    writeStored(layoutKey(scenario.project, scenario.name), JSON.stringify(layout));
+  }, [layout, scenario.project, scenario.name]);
 
   const commit = (main: Item[], kept: Stack[], loose: Stack[]) => {
     const nodes = [...nodesOf(main), ...kept.flatMap((stack) => programNodes(stack.items))];
