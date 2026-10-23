@@ -12,7 +12,8 @@ Each finding names its evidence (the field and its value):
   (``git for-each-ref`` in ``../<dir>``, refs as last fetched) named for the issue
   (``(^|/)<id>(-|$)``, lower case) or its ``branch_name``; ``links: null`` says the PR links
   were not read;
-- stale: no update for ``N`` days (14 by default) before ``--today`` (the clock's date by default);
+- stale: no update for ``N`` days (14 by default) before ``--today`` (by default the clock's
+  UTC date);
 - duplicates: equal titles once case, a leading ``type(scope):``, punctuation and repeated
   spaces are dropped;
 - cycles: groups of more than one issue that block each other through ``blocked_by`` and
@@ -333,7 +334,7 @@ def arguments(argv: list[str]) -> tuple[int, date]:
     if not (days.isascii() and days.isdecimal()) or not 1 <= int(days) <= 3650:
         raise BadInputError(f"--stale-days is not a whole number from 1 to 3650: {days!r}")
     try:
-        today = date.fromisoformat(given.today) if given.today else date.today()
+        today = date.fromisoformat(given.today) if given.today else datetime.now(UTC).date()
     except ValueError as error:
         raise BadInputError(f"--today is not YYYY-MM-DD: {given.today!r}") from error
     return int(days), today

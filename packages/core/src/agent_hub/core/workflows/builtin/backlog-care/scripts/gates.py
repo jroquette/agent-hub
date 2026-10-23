@@ -9,7 +9,8 @@
 "last", "item", "message"}``: one item per iteration, so each issue gets its own approval and
 none is batched with another. An index past the last item exits 2.
 
-``gates.py record --item JSON --decision apply|skip --note TEXT --approver TEXT``, the decisions
+``gates.py record --item JSON --decision apply|skip --note TEXT --approver TEXT`` (each option
+with its value, which is taken as is even when it starts with ``-``), the decisions
 so far on stdin (blank in the first iteration): appends this item's decision. The owner's note
 is recorded beside the draft, never merged into it, cut to ``NOTE_CHARS`` without control
 characters. Prints ``{"decisions": [{"id", "decision", "action", "label", "superseded_by",
@@ -70,28 +71,39 @@ def next_item(argv: list[str], stdin: str) -> dict[str, object]:
     }
 
 
+def paired(argv: list[str], names: tuple[str, ...]) -> dict[str, str]:
+    """Each ``--name value`` pair, the value taken as is: a note may look like an option."""
+    if len(argv) % 2:
+        raise BadInputError("an option has no value")
+    found = dict.fromkeys(names, "")
+    seen: set[str] = set()
+    for name, value in zip(argv[::2], argv[1::2], strict=True):
+        if name not in found or name in seen:
+            raise BadInputError(f"unknown or repeated option: {name!r}")
+        seen.add(name)
+        found[name] = value
+    return found
+
+
 def record(argv: list[str], stdin: str) -> dict[str, object]:
-    parser = argparse.ArgumentParser(prog="gates.py record")
-    for name in ("--item", "--decision", "--note", "--approver"):
-        parser.add_argument(name, default="")
-    given = parser.parse_args(argv)
-    item = json_value(given.item, "--item")
+    given = paired(argv, ("--item", "--decision", "--note", "--approver"))
+    item = json_value(given["--item"], "--item")
     if not isinstance(item, dict) or not isinstance(item.get("id"), str):
         raise BadInputError("--item is not a planned item")
-    if given.decision not in DECISIONS:
-        raise BadInputError(f"--decision is not apply or skip: {given.decision!r}")
+    if given["--decision"] not in DECISIONS:
+        raise BadInputError(f"--decision is not apply or skip: {given['--decision']!r}")
     before = json_value(stdin, "stdin") if stdin.strip() else []
     if not isinstance(before, list) or len(before) >= MAX_DECISIONS:
         raise BadInputError("stdin is not the decisions so far")
     decision = {
         "id": item["id"],
-        "decision": given.decision,
+        "decision": given["--decision"],
         "action": item.get("action", ""),
         "label": item.get("label", ""),
         "superseded_by": item.get("superseded_by", ""),
         "draft": item.get("draft", {}),
-        "note": clean(given.note, NOTE_CHARS),
-        "approver": clean(given.approver, APPROVER_CHARS).replace("\n", " "),
+        "note": clean(given["--note"], NOTE_CHARS),
+        "approver": clean(given["--approver"], APPROVER_CHARS).replace("\n", " "),
     }
     decisions = [*before, decision]
     applied = sum(1 for d in decisions if isinstance(d, dict) and d.get("decision") == "apply")

@@ -30,9 +30,10 @@ import re
 import sys
 
 TEXT_BUDGET = 48 * 1024
-# Every field Apply writes fits whole (the draft node's output_format bounds them to about 9,000
-# characters); only the context and the ACs are cut to stay within this.
-MESSAGE_CHARS = 12_000
+# A draft at every bound of the draft node's output_format prints about 18,000 characters: the
+# whole draft fits, so the owner sees everything Apply writes. The cut of the context and the ACs
+# below is a guard for a draft that exceeds those bounds, never reached by a valid one.
+MESSAGE_CHARS = 20_000
 CUT = " (cut)"
 MAX_DRAFTS = 50
 NEEDS_HUMAN = "needs-human"
@@ -215,7 +216,10 @@ def message_of(issue_id: str, draft: dict[str, object], label: str) -> str:
     return f"{written}\n\n{described}{GATE_TAIL}"
 
 
-def problem(draft: dict[str, object], picked: list[str], *, read: list[str], seen: set[str]) -> str:
+def problem(
+    draft: dict[str, object], picked: list[str], *, read: list[str], seen: dict[str, str]
+) -> str:
+    """Why a draft is ignored, or empty; ``seen`` maps each kept issue to its supersede target."""
     issue_id = text(draft, "id")
     if issue_id not in picked:
         return "not picked for a draft"
@@ -227,6 +231,8 @@ def problem(draft: dict[str, object], picked: list[str], *, read: list[str], see
             return "supersede target is the issue itself"
         if target not in read:
             return "supersede target not read"
+        if seen.get(target) == issue_id:
+            return "mutual supersede"
     return ""
 
 
@@ -244,7 +250,8 @@ def plan(argv: list[str], stdin: str) -> dict[str, object]:
     ignored: list[dict[str, object]] = []
     for draft in (item for item in drafts if isinstance(item, dict)):
         issue_id = text(draft, "id")
-        reason = problem(draft, picked, read=read, seen={str(item["id"]) for item in items})
+        seen = {str(item["id"]): str(item["superseded_by"]) for item in items}
+        reason = problem(draft, picked, read=read, seen=seen)
         if reason:
             ignored.append({"id": issue_id, "reason": reason})
             continue

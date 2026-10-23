@@ -7,7 +7,6 @@ stubs:
     output:
       ready_label: agent-ready
       repos: [api]
-      teams: [DEM]
       read: 7
       open: 7
       unread: 0
