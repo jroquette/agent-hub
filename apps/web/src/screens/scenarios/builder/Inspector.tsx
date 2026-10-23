@@ -6,7 +6,6 @@ import {
   CopyButton,
   Icon,
   IconButton,
-  MenuItem,
   PathText,
   SidePanel,
   type IconName,
@@ -15,6 +14,9 @@ import { DraftLine, EffectBadge } from "../parts";
 import type { ScenarioPlanRow } from "../queries";
 import { maxChecks, pace, stopLines } from "../story";
 import { TokenText, ValueToken, cardTitle, tokenOf } from "./CardParts";
+import { JsonField } from "./JsonField";
+import { looksLikeJson } from "./looseJson";
+import { ValuePicker } from "./ValuePicker";
 import { asStep, kindLook } from "./FlowCanvas";
 import {
   OPERATORS,
@@ -498,15 +500,8 @@ function Disclosure({ label, children }: { label: string; children: ReactNode })
   );
 }
 
-const SOURCE_GROUP_ICON: Readonly<Record<string, IconName>> = {
-  "Scenario inputs": "flag",
-  "Kept values": "bookmark",
-  Answers: "hand",
-  "Earlier outputs": "corner-down-right",
-};
-
-/** An input of the step's action: the label above, the value (literal, reference or long text),
- * the button that puts a value from earlier into it, the help and the default. */
+/** An input of the step's action: the label above, the value (literal, reference, JSON or long
+ * text), the button that puts a value from earlier into it, the help and the default. */
 function ValueField({
   name,
   required,
@@ -528,17 +523,16 @@ function ValueField({
 }) {
   const id = useId();
   const helpId = `${id}-help`;
-  const [menu, setMenu] = useState(false);
   const token = tokenOf(value);
-  const long = type === "object" || type === "array" || /^\s*[[{]/.test(value) || value.length > 40;
+  const json = type === "object" || type === "array" || looksLikeJson(value);
+  const long = !json && value.length > 40;
   const uses = long ? [...value.matchAll(REFERENCES)].map((match) => match[0]) : [];
-  const groups = [...new Set(sources.map((source) => groupOf(source)))];
   const help = [
     description,
     fallback !== null && fallback !== undefined ? `Default: ${shown(fallback)}` : null,
   ].filter(Boolean);
+  const describedBy = help.length > 0 ? helpId : undefined;
   const pick = (ref: string) => {
-    setMenu(false);
     if (long && value !== "" && !token) onChange(`${value}${ref}`);
     else onChange(ref);
   };
@@ -548,104 +542,71 @@ function ValueField({
         <span className="ah-mono">{name}</span>
         {!required && <span className="ah-muted"> (optional)</span>}
       </label>
-      <div className="sb-value-v5">
-        {token ? (
-          <span className="sb-token-field">
+      {json && !token ? (
+        <JsonField
+          id={id}
+          name={name}
+          value={value}
+          sources={sources}
+          describedBy={describedBy}
+          onChange={onChange}
+        />
+      ) : (
+        <div className="sb-value-v5">
+          {token ? (
+            <span className="sb-token-field">
+              <input
+                id={id}
+                className="ah-input ah-mono"
+                readOnly
+                value={token.label}
+                aria-describedby={describedBy}
+                title={token.title}
+              />
+              <span className="sb-token-overlay" aria-hidden>
+                <ValueToken value={value} />
+                <span className="ah-muted">{token.title.replace(token.label, "").trim()}</span>
+              </span>
+              <IconButton
+                icon="x"
+                size="sm"
+                label="Type a value instead"
+                onClick={() => {
+                  onChange("");
+                }}
+              />
+            </span>
+          ) : long ? (
+            <textarea
+              id={id}
+              className="ah-input ah-mono sb-textarea"
+              rows={3}
+              value={value}
+              aria-describedby={describedBy}
+              onChange={(event) => {
+                onChange(event.target.value);
+              }}
+            />
+          ) : (
             <input
               id={id}
-              className="ah-input ah-mono"
-              readOnly
-              value={token.label}
-              aria-describedby={help.length > 0 ? helpId : undefined}
-              title={token.title}
-            />
-            <span className="sb-token-overlay" aria-hidden>
-              <ValueToken value={value} />
-              <span className="ah-muted">{token.title.replace(token.label, "").trim()}</span>
-            </span>
-            <IconButton
-              icon="x"
-              size="sm"
-              label="Type a value instead"
-              onClick={() => {
-                onChange("");
+              className="ah-input"
+              value={value}
+              inputMode={type === "integer" || type === "number" ? "numeric" : undefined}
+              placeholder={
+                fallback !== null && fallback !== undefined
+                  ? shown(fallback)
+                  : `a ${type || "value"}`
+              }
+              aria-describedby={describedBy}
+              onChange={(event) => {
+                onChange(event.target.value);
               }}
             />
-          </span>
-        ) : long ? (
-          <textarea
-            id={id}
-            className="ah-input ah-mono sb-textarea"
-            rows={3}
-            value={value}
-            aria-describedby={help.length > 0 ? helpId : undefined}
-            onChange={(event) => {
-              onChange(event.target.value);
-            }}
-          />
-        ) : (
-          <input
-            id={id}
-            className="ah-input"
-            value={value}
-            inputMode={type === "integer" || type === "number" ? "numeric" : undefined}
-            placeholder={
-              fallback !== null && fallback !== undefined ? shown(fallback) : `a ${type || "value"}`
-            }
-            aria-describedby={help.length > 0 ? helpId : undefined}
-            onChange={(event) => {
-              onChange(event.target.value);
-            }}
-          />
-        )}
-        {sources.length > 0 && (
-          <span className="sb-value-pick">
-            <IconButton
-              icon="corner-down-right"
-              label={`Use a value from earlier for ${name}`}
-              aria-haspopup="menu"
-              aria-expanded={menu}
-              onClick={() => {
-                setMenu(!menu);
-              }}
-            />
-            {menu && (
-              <div
-                className="ah-pop sb-value-menu"
-                role="menu"
-                tabIndex={-1}
-                aria-label={`Values from earlier for ${name}`}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") {
-                    event.stopPropagation();
-                    setMenu(false);
-                  }
-                }}
-              >
-                {groups.map((group) => (
-                  <div key={group} role="group" aria-label={group}>
-                    <div className="sb-menu-group">{group}</div>
-                    {sources
-                      .filter((source) => groupOf(source) === group)
-                      .map((source) => (
-                        <MenuItem
-                          key={source.ref}
-                          icon={SOURCE_GROUP_ICON[group] ?? "corner-down-right"}
-                          hint={<span className="ah-small ah-muted">{source.hint}</span>}
-                          onClick={() => {
-                            pick(source.ref);
-                          }}
-                        >
-                          <span className="ah-mono">{source.label}</span>
-                        </MenuItem>
-                      ))}
-                  </div>
-                ))}
-              </div>
-            )}
-          </span>
-        )}
-      </div>
+          )}
+          <ValuePicker name={name} sources={sources} onPick={pick} />
+        </div>
+      )}
       {uses.length > 0 && (
         <span className="sb-uses">
           Uses{" "}
@@ -664,17 +625,6 @@ function ValueField({
 }
 
 const REFERENCES = /\$(?:INPUTS|CTX)\.[A-Za-z0-9_]+|\$[a-z0-9_-]+\.output(?:\.[A-Za-z0-9_.]+)?/gi;
-
-/** The menu group of a value source, in the design's words. */
-function groupOf(source: ValueSource): string {
-  const words: Record<ValueSource["group"], string> = {
-    "Scenario inputs": "Scenario inputs",
-    "Kept earlier": "Kept values",
-    "Typed by you": "Answers",
-    "Outputs of earlier blocks": "Earlier outputs",
-  };
-  return words[source.group];
-}
 
 const DECISION_WORDS: Readonly<Record<string, string>> = {
   allow: "runs without asking",
