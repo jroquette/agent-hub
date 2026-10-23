@@ -78,6 +78,13 @@ def test_names_the_pick_decisions_when_feature_rendered(raw: str) -> None:
 
     assert f'`./hub workflow respond <run> --choice {ids} --text "<note>"`' in line
     assert "never pick for them" in line
+    # The user sees what the gate asks (the options' brief) before answering it.
+    shown = (
+        'the `message` of the last `"event": "gate"` line of'
+        " `.agent-runs/workflows/<run>/records.jsonl`"
+    )
+    assert shown in line
+    assert line.index(shown) < line.index("`./hub workflow respond")
     assert "do not edit the hub or a repo while it runs" in line
     assert "ends done with what it has, marked incomplete" in line
 
