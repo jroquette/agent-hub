@@ -18,6 +18,11 @@ links, then ``hub.lock``). A delete descends like a write and unlinks a regular 
 link itself, wherever it points); a path already gone is fine, a folder or any other type is
 refused, and a folder emptied by a delete stays. An empty plan does not open the root.
 
+Init also writes files that are the project's from the start (the scenario examples), each only
+where its path is absent (``write_absent``): the missing folders on the way are made, then the file
+is written to its temp name and hard-linked onto its name, which fails when anything is already
+there, so an entry found there is never replaced, whatever it is; the temp entry is then removed.
+
 Every path is checked before anything is touched: it must be relative, with no empty, ``.`` or
 ``..`` segment, because ``openat`` with ``O_NOFOLLOW`` still climbs out of the root through ``..``,
 and no NUL byte.
@@ -130,6 +135,30 @@ def apply_sync(
         _make_and_write(hub, folders=planned_folders, writes=planned_writes, umask=umask)
 
 
+def write_absent(root: Path, files: Iterable[FileWrite]) -> tuple[str, ...]:
+    """Write each of ``files`` under ``root`` only where its path is absent; the paths written.
+
+    Raises ``ValueError``, before anything is written, for a path that is not plain and relative;
+    ``SymlinkedAncestorError`` when a folder above a path is a link; ``FileWriteError`` when an I/O
+    call fails. With nothing to write, the root is not opened.
+    """
+    planned = list(files)
+    for write in planned:
+        _check_plain(write.path)
+    if not planned:
+        return ()
+    umask = _umask()
+    written: list[str] = []
+    with _opened_root(root) as hub:
+        for write in planned:
+            folder, name = _split(write.path)
+            with _made_folder(hub, path=write.path, folder=folder) as folder_fd:
+                mode = (0o777 if write.executable else 0o666) & ~umask
+                if _link_absent(folder_fd, name=name, write=write, mode=mode):
+                    written.append(write.path)
+    return tuple(written)
+
+
 def _checked_leftovers(paths: Iterable[str]) -> list[str]:
     listed = list(paths)
     for path in listed:
@@ -229,6 +258,28 @@ def _folder(hub: _Root, *, path: str, folder: str) -> Iterator[int]:
         os.close(descriptor)
 
 
+@contextlib.contextmanager
+def _made_folder(hub: _Root, *, path: str, folder: str) -> Iterator[int]:
+    """``_folder``, making each missing folder on the way first (one already there is kept)."""
+    descriptor = os.dup(hub.fd)
+    try:
+        segments = folder.split("/") if folder else []
+        for depth, segment in enumerate(segments, start=1):
+            ancestor = "/".join(segments[:depth])
+            try:
+                os.mkdir(segment, dir_fd=descriptor)
+            except FileExistsError:
+                pass
+            except OSError as error:
+                raise FileWriteError(path=ancestor, cause=_cause(error)) from error
+            child = _open_child(descriptor, segment, path=path, ancestor=ancestor)
+            os.close(descriptor)
+            descriptor = child
+        yield descriptor
+    finally:
+        os.close(descriptor)
+
+
 def _open_child(parent_fd: int, segment: str, *, path: str, ancestor: str) -> int:
     try:
         return os.open(segment, _FOLDER_FLAGS, dir_fd=parent_fd)
@@ -270,6 +321,30 @@ def _write_file(folder_fd: int, *, name: str, write: FileWrite, mode: int) -> No
         raise _write_error(
             error, folder_fd, path=write.path, temp=temp if created else None
         ) from error
+
+
+def _link_absent(folder_fd: int, *, name: str, write: FileWrite, mode: int) -> bool:
+    """Write ``write`` at ``name`` unless an entry is there; whether it was written."""
+    temp = temp_name(name, os.urandom(4).hex())
+    created = False
+    try:
+        descriptor = os.open(temp, _TEMP_FLAGS, _TEMP_MODE, dir_fd=folder_fd)
+        created = True
+        with open(descriptor, "wb") as file:
+            file.write(write.content)
+            os.fchmod(file.fileno(), mode)
+        try:
+            os.link(temp, name, src_dir_fd=folder_fd, dst_dir_fd=folder_fd, follow_symlinks=False)
+        except FileExistsError:
+            linked = False
+        else:
+            linked = True
+        os.unlink(temp, dir_fd=folder_fd)
+    except OSError as error:
+        raise _write_error(
+            error, folder_fd, path=write.path, temp=temp if created else None
+        ) from error
+    return linked
 
 
 def _write_link(folder_fd: int, *, name: str, write: LinkWrite) -> None:

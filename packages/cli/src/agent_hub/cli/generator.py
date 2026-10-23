@@ -5,8 +5,10 @@
 ``init`` runs the pipeline of the AGH-12 spec, and every step that fails exits 1 before any write:
 the config (from ``--config``, or from the flags plus git-read defaults; any module set is
 accepted), the target, the tree read and the core planner, then the writes (leftovers removed,
-folders, files, links, ``hub.json``, ``hub.lock`` last) and the report. Output goes to stdout
-only on success, and each error to stderr on its own line. Usage errors are Typer's, exit 2.
+folders, files, links, ``hub.json``, the scenario examples where absent, ``hub.lock`` last) and
+the report. The examples (``scenario_examples``) are not hub files: the planner never sees them,
+the report does not count them and ``hub.lock`` does not list them (AGH-350 AM-6). Output goes to
+stdout only on success, and each error to stderr on its own line. Usage errors are Typer's, exit 2.
 """
 
 import os
@@ -30,16 +32,22 @@ from agent_hub.cli.init_report import created_lines, next_steps, shown_path
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.hub_files.extension_inputs import ExtensionInputs
-from agent_hub.core.hub_files.hub_lock import HUB_JSON_PATH
+from agent_hub.core.hub_files.hub_lock import HUB_JSON_PATH, HUB_LOCK_PATH
 from agent_hub.core.hub_files.plan_init import InitPlan, InitRefusal, plan_init
 from agent_hub.core.hub_files.rendered_file import Ownership
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.hub_files.seed_units import unit_files
 from agent_hub.core.json_form import dump_json
 from agent_hub.generator.errors import GeneratorError
-from agent_hub.generator.file_adapter import apply_writes, ensure_root, remove_leftovers
+from agent_hub.generator.file_adapter import (
+    apply_writes,
+    ensure_root,
+    remove_leftovers,
+    write_absent,
+)
 from agent_hub.generator.hub_tree import read_hub_tree
 from agent_hub.generator.render_hub import project_json_siblings, render_hub
+from agent_hub.generator.scenario_examples import EXAMPLE_FILES, without_examples
 
 _BRANCH_PREFIX: Final = "branch_prefix"
 _DEFAULTABLE: Final = (AUTHOR_NAME, AUTHOR_EMAIL, HUB_REPO)
@@ -210,9 +218,10 @@ def _plan_or_exit(root: str, *, config: HubConfig, hub_json: bytes) -> tuple[Ini
     """
     try:
         siblings = project_json_siblings(config)
-        tree = read_hub_tree(Path(root), wanted=_wanted(render_hub(config), siblings=siblings))
+        read = read_hub_tree(Path(root), wanted=_wanted(render_hub(config), siblings=siblings))
     except GeneratorError as error:
         fail_generator(error)
+    tree = without_examples(read)
     found = extension_inputs_or_exit(tree, project=config.project.name, siblings=siblings)
     extensions = ExtensionInputs(project_json=found.project_json, agents=(), skills=())
     try:
@@ -230,6 +239,11 @@ def _apply_or_exit(root: str, plan: InitPlan) -> None:
     try:
         ensure_root(hub)
         remove_leftovers(hub, plan.leftovers)
-        apply_writes(hub, folders=plan.folders, writes=plan.writes)
+        # The examples go after the hub's files and before hub.lock, which stays last (Q-16).
+        files = [write for write in plan.writes if write.path != HUB_LOCK_PATH]
+        lock = [write for write in plan.writes if write.path == HUB_LOCK_PATH]
+        apply_writes(hub, folders=plan.folders, writes=files)
+        write_absent(hub, EXAMPLE_FILES)
+        apply_writes(hub, folders=(), writes=lock)
     except GeneratorError as error:
         fail_generator(error)

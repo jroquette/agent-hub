@@ -11,6 +11,45 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- Scenarios and actions (AGH-350, [ADR 0041](docs/adr/0041-scenarios-actions-and-enforced-access.md), proposed;
+  [scenarios.md](docs/design/scenarios.md)). The CLI parts shipped in 0.19.0 and 0.20.0 without an entry here, and the screens in
+  0.21.0 (below); this entry covers the whole feature. A hub without `scenarios/`, `actions/` and `environments` renders, syncs and runs
+  workflows as before.
+  - Actions are a project's own scripts in the hub's `actions/<pack>/` (AGH-352, AGH-356): each declares an `effect`
+    (`read`, `write`, `destroy`), typed inputs (a `service` input resolves to its endpoint in the environment) and an
+    output schema; a script reads one JSON object on stdin and prints one JSON value, and in `plan` mode changes
+    nothing. Only an action committed in the hub runs; a new or changed one is a draft. `hub action list|plan|run`.
+  - The access policy in core decides every action before it runs, from the environment's `access` (`hub.local.json`
+    only tightens), the effect and who proposed it: allow, ask (an approval gate `<step>__ask`) or deny. A production
+    write or destroy never runs, and no key or flag turns an ask into an allow (AGH-352).
+  - Credentials: an environment or endpoint may name a git-ignored dotenv file, `credentials.env_file`
+    (`hub env add|set --env-file`). Only the action's process gets its variables, values are redacted from the
+    action's output, and every agent session loses the declared credential names. The guard denies agents any read of
+    a declared env file (rule `env_file`) and asks when a command or URL reaches an endpoint of a read-only or
+    production environment (rule `environment_endpoint`); doctor's `environments.env_file` warns about a missing,
+    not ignored or outside file (AGH-352, AGH-354, AGH-356).
+  - Scenarios are workflow files with `kind: scenario` in `scenarios/<pack>/`, built from `action` and `expect`
+    (poll a read action until `until_when` holds) steps with `capture` and `$CTX` (AGH-355). `hub scenario list|plan`
+    shows each step, its endpoint, content hash, draft state and decision before anything runs (AGH-357);
+    `hub scenario run` pins its actions and gates, runs in `regression` mode (no agent; a divergence fails it) or
+    `interactive` mode, the default (AGH-358, AGH-360).
+  - Process workflows may declare `environment` (`hub workflow run --env`): their `action`, `shell` and `script`
+    nodes get the same policy (`shell` and `script` take `effect`, default `write`) (AGH-359).
+  - An interactive scenario run pauses at an investigation gate when a step diverges. `hub web` starts one read-only
+    Claude session that may read the hub, run read actions and record findings and workaround options with
+    `hub scenario propose`; you pick an option, retry or stop (`hub workflow respond`, or hub web) (AGH-360, AGH-361).
+    `hub scenario findings RUN` lists the findings; `--issue` creates a tracker issue once after a `y`, `--inbox`
+    writes an inbox note (AGH-362).
+  - `hub web` gains the scenario routes (AGH-363) and the Scenarios screens in the sidebar's Work group (AGH-364):
+    the list, a scenario with its plan for a chosen environment and Start, and a scenario run's timeline with the
+    investigation chat, the options with their plans, the pick and its policy asks. `/runs` lists workflow runs only;
+    a scenario run's `/runs/<id>` redirects to its page.
+  - `hub init` writes an example: the read action `actions/demo/demo-get-status.yaml` with its script and the scenario
+    `scenarios/demo/demo-service-up.yaml`, each only where absent (AGH-365). They are your files: `hub sync` never
+    adds them to an existing hub and `hub.lock` does not list them.
+
 ## [0.22.0] - 2026-10-23
 
 ### Added
