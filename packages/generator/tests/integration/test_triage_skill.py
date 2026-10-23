@@ -264,6 +264,11 @@ def test_leaves_each_gate_to_owner_when_backlog_run_paused(text: str) -> None:
     assert "`run <run>: done, outcome <outcome>`" in backlog
     assert '`./hub workflow respond <run> --choice apply|skip --text "<note>"`' in backlog
     assert "one issue per gate, never yours" in backlog
+    # The owner sees what the gate approves, that issue's draft whole, before answering.
+    shown = backlog[backlog.index("Before each answer") : backlog.index("./hub workflow respond")]
+    assert 'the last `"event": "gate"` line of `.agent-runs/workflows/<run>/records.jsonl`' in shown
+    assert "show its `message` whole to the owner (that issue only)" in shown
+    assert "then ask apply or skip" in shown
 
 
 def test_names_fallback_when_backlog_care_missing(text: str) -> None:
