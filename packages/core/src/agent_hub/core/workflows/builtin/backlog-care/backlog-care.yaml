@@ -35,7 +35,6 @@ nodes:
       properties:
         ready_label: {type: string}
         repos: {type: array, items: {type: string}}
-        teams: {type: array, items: {type: string}}
         read: {type: integer, minimum: 0}
         open: {type: integer, minimum: 0}
         unread: {type: integer, minimum: 0}
@@ -50,7 +49,7 @@ nodes:
               reason: {type: string}
             required: [index, reason]
         issues: {type: array, maxItems: 100, items: {type: object}}
-      required: [ready_label, repos, teams, read, open, unread, unread_line, descriptions_dropped, skipped, issues]
+      required: [ready_label, repos, read, open, unread, unread_line, descriptions_dropped, skipped, issues]
 
   - id: hygiene
     type: script
@@ -161,7 +160,7 @@ nodes:
               label: {type: string, enum: [ready, needs-human, close]}
               superseded_by: {type: string}
               draft: {type: object}
-              message: {type: string, maxLength: 12000}
+              message: {type: string, maxLength: 20000}
             required: [index, id, action, label, superseded_by, draft, message]
         ignored: {type: array, items: {type: object, required: [id, reason]}}
         undrafted: {type: array, items: {type: string}}
@@ -189,7 +188,7 @@ nodes:
             index: {type: integer, minimum: 0}
             last: {type: boolean}
             item: {type: object}
-            message: {type: string, maxLength: 12000}
+            message: {type: string, maxLength: 20000}
           required: [index, last, item, message]
 
       - id: gate

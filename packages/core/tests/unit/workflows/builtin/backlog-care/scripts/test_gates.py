@@ -181,3 +181,29 @@ def test_exits_two_when_input_unreadable(
 
     assert load().main(argv) == 2
     assert capsys.readouterr().err.startswith("gates.py: ")
+
+
+@pytest.mark.parametrize("note", ["--later", "-x", "--", "--decision", "--note=x", ""])
+def test_records_note_verbatim_when_note_looks_like_an_option(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, note: str
+) -> None:
+    argv = ["record", "--item", json.dumps(an_item(0, "DEM-3")), "--decision", "skip"]
+    argv += ["--note", note, "--approver", "-Jo"]
+
+    (decision,) = call(capsys, monkeypatch, argv, stdin="")["decisions"]
+
+    assert (decision["decision"], decision["note"], decision["approver"]) == ("skip", note, "-Jo")
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [["--item"], ["--item", "{}", "--other", "x"], ["--decision", "apply", "--decision", "skip"]],
+    ids=["no-value", "unknown", "repeated"],
+)
+def test_exits_two_when_record_arguments_unpaired(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, argv: list[str]
+) -> None:
+    monkeypatch.setattr(sys, "stdin", StringIO(""))
+
+    assert load().main(["record", *argv]) == 2
+    assert capsys.readouterr().err.startswith("gates.py: ")

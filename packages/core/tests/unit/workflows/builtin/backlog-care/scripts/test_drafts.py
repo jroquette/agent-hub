@@ -290,7 +290,7 @@ def test_shows_draft_and_label_in_message_when_item_planned(
         "Skip",
     ):
         assert shown in message, shown
-    assert len(message) <= 6000
+    assert len(message) <= load().MESSAGE_CHARS
 
 
 def test_cuts_message_when_draft_longer_than_limit(
@@ -341,15 +341,16 @@ def test_exits_two_when_input_unreadable(
 def test_names_every_written_field_when_draft_is_maximal(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # What Apply writes is never cut from the gate: only the context and the ACs are.
-    blocked_by = [f"DEM-{n}" for n in range(100, 125)]
-    blocks = [f"DEM-{n}" for n in range(200, 225)]
+    # Every field at the draft node's output_format bound: nothing Apply writes is cut.
+    blocked_by = [f"ABCDEFGHIJ-1{n:08d}" for n in range(25)]
+    blocks = [f"ABCDEFGHIJ-2{n:08d}" for n in range(25)]
     repos = [f"repo{n:02d}" + "r" * 94 for n in range(20)]
     questions = [f"Question {n} " + "q" * 488 for n in range(10)]
+    criteria = [f"AC-{n:02d} " + "a" * 494 for n in range(1, 11)]
     draft = a_draft(
         "DEM-1",
-        context="c" * 4000,
-        acceptance_criteria=[f"AC-{n} " + "a" * 490 for n in range(1, 11)],
+        context="c" * 3999 + "!",
+        acceptance_criteria=criteria,
         size="architectural",
         repos=repos,
         blocked_by=blocked_by,
@@ -364,12 +365,46 @@ def test_names_every_written_field_when_draft_is_maximal(
     message = item["message"]
     assert len(message) <= load().MESSAGE_CHARS
     assert message.startswith("DEM-1: draft, label needs-human.")
-    for shown in [*blocked_by, *blocks, *repos, *questions, "v" * 499 + "!"]:
+    for shown in [*blocked_by, *blocks, *repos, *questions, *criteria, "v" * 499 + "!"]:
         assert shown in message, shown
+    assert "c" * 3999 + "!" in message
     for shown in ("Size: architectural", "Guarded path: yes", "Skip leaves the issue as it is."):
         assert shown in message, shown
     assert message.index("Verification:") < message.index("Context:")
+    assert "(cut)" not in message
+
+
+def test_cuts_only_context_and_criteria_when_message_over_limit(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = load()
+    monkeypatch.setattr(module, "MESSAGE_CHARS", 600)
+    draft = a_draft("DEM-1", context="c" * 4000, blocks=["DEM-9"], verification="make check")
+    monkeypatch.setattr(sys, "stdin", StringIO(json.dumps({"drafts": [draft]})))
+
+    assert module.main(["plan", "--picked", '["DEM-1"]', "--read", '["DEM-1"]']) == 0
+
+    (item,) = json.loads(capsys.readouterr().out)["items"]
+    message = item["message"]
+    assert len(message) <= 600
+    assert "Blocks: DEM-9" in message
+    assert "Verification: make check" in message
     assert "(cut)" in message
+    assert message.endswith("Skip leaves the issue as it is.")
+
+
+def test_ignores_mutual_supersede_when_partners_close_each_other(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    drafts = [
+        a_draft("DEM-3", action="supersede", superseded_by="DEM-4"),
+        a_draft("DEM-4", action="supersede", superseded_by="DEM-3"),
+    ]
+
+    found = plan(capsys, monkeypatch, drafts, picked=["DEM-3", "DEM-4"])
+
+    assert [item["id"] for item in found["items"]] == ["DEM-3"]
+    assert found["ignored"] == [{"id": "DEM-4", "reason": "mutual supersede"}]
 
 
 def test_keeps_context_whole_when_message_fits(

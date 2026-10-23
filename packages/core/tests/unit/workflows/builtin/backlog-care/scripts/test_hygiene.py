@@ -6,6 +6,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+from datetime import UTC, datetime, tzinfo
 from importlib.resources import files
 from io import StringIO
 from pathlib import Path
@@ -325,3 +326,33 @@ def test_exits_two_when_input_unreadable(
 
     assert load().main(argv) == 2
     assert capsys.readouterr().err.startswith("hygiene.py: ")
+
+
+def test_counts_days_from_utc_date_when_today_not_given(
+    hub: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = load()
+    when = datetime(2026, 10, 26, 23, 30, tzinfo=UTC)
+    monkeypatch.setattr(module, "datetime", FixedNow.at(when))
+    issue = an_issue("DEM-2", "Old", updated_at="2026-10-12T00:00:00Z")
+    monkeypatch.setattr(sys, "stdin", StringIO(json.dumps(a_read([issue]))))
+
+    assert module.main([]) == 0
+
+    (stale,) = json.loads(capsys.readouterr().out)["stale"]
+    assert stale["days"] == 14
+
+
+class FixedNow(datetime):
+    """``datetime`` whose ``now`` is a fixed instant, converted to the zone asked for."""
+
+    instant: datetime
+
+    @classmethod
+    def at(cls, instant: datetime) -> type[FixedNow]:
+        return type("Fixed", (cls,), {"instant": instant})
+
+    @classmethod
+    def now(cls, tz: tzinfo | None = None) -> FixedNow:
+        found = cls.instant.astimezone(tz)
+        return cls(*found.timetuple()[:6], tzinfo=found.tzinfo)

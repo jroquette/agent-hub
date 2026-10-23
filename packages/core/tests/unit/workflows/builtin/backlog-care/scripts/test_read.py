@@ -137,9 +137,11 @@ def test_prints_ready_label_and_repos_when_hub_json_read(
 
     found = run(capsys, path)
 
+    # The teams the skill read stay in its file; no later node reads them.
+    assert "teams" not in found
+
     assert found["ready_label"] == "ready-now"
     assert found["repos"] == ["api", "web"]
-    assert found["teams"] == ["DEM", "OPS"]
 
 
 def test_takes_default_ready_label_when_hub_json_names_none(
@@ -333,3 +335,11 @@ def test_exits_two_when_output_over_budget_without_descriptions(
 
     assert module.main(["--file", str(path), "--limit", "50"]) == 2
     assert "over" in capsys.readouterr().err
+
+
+def test_exits_two_when_file_nests_too_deep(hub: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    path = hub / "deep.json"
+    path.write_text("[" * 400_000, encoding="utf-8")
+
+    assert load().main(["--file", str(path), "--limit", "50"]) == 2
+    assert capsys.readouterr().err == "read.py: the issues file: not UTF-8 JSON\n"

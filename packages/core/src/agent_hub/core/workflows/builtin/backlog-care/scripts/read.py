@@ -14,7 +14,7 @@ is skipped and named in ``skipped``. The oldest ``N`` issues (1-100) are kept; `
 open issues were left unread. ``hub.json`` gives ``tracker.ready_label`` and ``repos[].dir``, so
 later scripts read no config.
 
-Prints ``{"ready_label", "repos", "teams", "read", "open", "unread", "unread_line",
+Prints ``{"ready_label", "repos", "read", "open", "unread", "unread_line",
 "descriptions_dropped", "skipped", "issues"}``, at most ``OUTPUT_BUDGET`` bytes: past it,
 descriptions are dropped from the newest issue first. A bad file, ``hub.json`` or limit, or an
 output still over budget without descriptions, exits 2 with ``read.py: <reason>`` on stderr.
@@ -59,7 +59,6 @@ DESCRIPTION_CHARS = 1000
 MAX_LABELS = 20
 MAX_RELATIONS = 25
 MAX_LINKS = 10
-MAX_TEAMS = 20
 # Kept in a description, which is several lines; removed everywhere else.
 LINE_CONTROLS = frozenset("\n\t")
 
@@ -189,7 +188,7 @@ def json_file(path: Path, limit: int, name: str) -> object:
         raise BadInputError(f"{name}: larger than {limit} bytes")
     try:
         return json.loads(path.read_bytes().decode("utf-8"))
-    except (OSError, UnicodeDecodeError, ValueError) as error:
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError) as error:
         raise BadInputError(f"{name}: not UTF-8 JSON") from error
 
 
@@ -259,7 +258,6 @@ def summary(document: dict[str, object], limit: int) -> dict[str, object]:
     result: dict[str, object] = {
         "ready_label": label,
         "repos": repos,
-        "teams": texts(document.get("teams"), NAME_CHARS, MAX_TEAMS),
         "read": len(issues),
         "open": open_count,
         "unread": max(0, open_count - len(issues)),
