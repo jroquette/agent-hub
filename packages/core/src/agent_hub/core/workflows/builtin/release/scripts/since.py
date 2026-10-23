@@ -8,7 +8,8 @@
 The last tag is the highest ``vX.Y.Z`` tag reachable from ``HEAD``; the PRs are the first-parent
 commits after it: a GitHub merge commit (``Merge pull request #N from …``) gives its number and
 its body's first line as the title, or the branch tip's subject when the body is empty; any other
-commit gives its subject (``… (#N)`` gives the number). The bump is ``/release``'s rule: ``!`` or
+commit gives its subject (``… (#N)`` gives the number). A merge whose merged side is already
+in the tag (the tagged release PR's own merge commit: the tag is on that PR's head) is no PR. The bump is ``/release``'s rule: ``!`` or
 ``BREAKING CHANGE`` → major, any ``feat`` → minor, ``fix`` → patch, else patch; no commit since
 the tag is ``none``. A given version must be ``X.Y.Z`` (ASCII digits) and greater than the tag.
 
@@ -112,6 +113,22 @@ def _tips(shas: list[str]) -> dict[str, str]:
     return {sha: subject for sha, subject in pairs}
 
 
+def _released(parents: str, tag: str) -> bool:
+    """A merge that brings nothing past the tag: the tagged release PR's own merge commit.
+
+    The tag goes on the release PR's head, so that PR's merge commit is not reachable from the
+    tag; its merged side (the second parent) is the tagged commit or behind it.
+    """
+    merged = parents.split()[1:]
+    if not merged:
+        return False
+    try:
+        _git("merge-base", "--is-ancestor", merged[-1], f"{tag}^{{commit}}")
+    except GitFailedError:
+        return False
+    return True
+
+
 def prs_since(tag: str) -> list[Pr]:
     text = _git(
         "log",
@@ -123,6 +140,7 @@ def prs_since(tag: str) -> list[Pr]:
     records = [
         record.strip("\n").split(FIELD, 3) for record in text.split(RECORD) if FIELD in record
     ]
+    records = [record for record in records if not _released(record[1], tag)]
     if len(records) > MAX_COMMITS:
         raise RefusedError(
             f"{len(records)} commits since {tag}, more than {MAX_COMMITS}:"
