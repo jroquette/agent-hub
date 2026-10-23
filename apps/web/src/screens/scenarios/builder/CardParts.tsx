@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import { Icon, PathText, type IconName } from "../../../components";
+import { Icon, PathText, Skeleton, type IconName } from "../../../components";
 import { EffectBadge } from "../parts";
 import type { ScenarioAction } from "../queries";
 import { maxChecks, pace } from "../story";
@@ -177,10 +177,34 @@ export function CardHead({
 }
 
 /** What runs: the action, its language and its script file. */
-export function RunsLine({ node, action }: { node: BuilderNode; action: ScenarioAction | null }) {
+export function RunsLine({
+  node,
+  action,
+  actions = "ready",
+}: {
+  node: BuilderNode;
+  action: ScenarioAction | null;
+  /** The hub's actions: still loading, could not be read, or read. */
+  actions?: "loading" | "error" | "ready" | undefined;
+}) {
   if (node.type !== "action" && node.type !== "expect") return null;
   const ref = text(node.action);
   if (!ref) return null;
+  if (!action && actions === "loading") {
+    return (
+      <div className="bk-runs-line" aria-label="Runs">
+        <Skeleton width={220} height={12} />
+      </div>
+    );
+  }
+  if (!action && actions === "error") {
+    return (
+      <div className="bk-runs-line bk-quiet" aria-label="Runs">
+        <Icon name="circle-play" size="sm" /> <span className="ah-mono">{ref}</span> · Action
+        details could not be read.
+      </div>
+    );
+  }
   if (!action) {
     return (
       <div className="bk-runs-line bk-runs-missing" aria-label="Runs">
@@ -422,4 +446,21 @@ export function CardFacts({
   }
   if (rows.length === 0) return null;
   return <dl className="sc-values bk-facts-grid">{rows}</dl>;
+}
+
+/** A card while the scenario loads: the final shape (head, two title lines, runs line, facts). */
+export function CardSkeleton() {
+  return (
+    <div className="bk-card bk-card-skeleton" aria-hidden="true">
+      <div className="bk-card-head">
+        <Skeleton width={24} height={24} radius={4} />
+        <Skeleton width={110} height={12} />
+      </div>
+      <Skeleton lines={2} height={14} />
+      <Skeleton width={240} height={12} />
+      <div className="bk-facts-grid">
+        <Skeleton lines={3} height={12} />
+      </div>
+    </div>
+  );
 }

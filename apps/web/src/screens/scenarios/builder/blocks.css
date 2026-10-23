@@ -621,3 +621,19 @@
     transition: none;
   }
 }
+
+/* Loading: cards of the final shape; a preview made before the last change */
+.bk-skeleton-flow {
+  --card-w: 420px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 44px;
+  padding-top: var(--space-6);
+}
+.bk-card-skeleton {
+  cursor: default;
+}
+.bk-plan-line[data-stale] {
+  color: var(--text-muted);
+}

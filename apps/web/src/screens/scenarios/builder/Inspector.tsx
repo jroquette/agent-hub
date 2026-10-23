@@ -328,10 +328,10 @@ export function ConditionBuilder({
                   );
                 }}
               />
-              <button
-                type="button"
-                className="sb-icon-btn"
-                aria-label="Remove this condition"
+              <IconButton
+                icon="x"
+                size="sm"
+                label="Remove this condition"
                 onClick={() => {
                   write(
                     groups
@@ -339,9 +339,7 @@ export function ConditionBuilder({
                       .filter((items) => items.length > 0),
                   );
                 }}
-              >
-                <Icon name="x" size="sm" />
-              </button>
+              />
             </div>
           ))}
           <Button
@@ -393,8 +391,66 @@ const TRIGGER_WORDS: readonly [string, string][] = [
   ["all_done", "Every block before it ended, even if one failed"],
 ];
 
+/** The builder's side form (the app's SidePanel, inline in the builder's right column): a head
+ * with the kind's tile, an eyebrow and a title; a named region for the body; a foot. */
+export function FormShell({
+  icon,
+  tint,
+  soft,
+  eyebrow,
+  title,
+  region,
+  closeLabel,
+  onClose,
+  openerRef,
+  footer,
+  children,
+}: {
+  icon: IconName;
+  tint: string;
+  soft: string;
+  eyebrow: string;
+  title: ReactNode;
+  /** The body's accessible name ("Inspector: Check order-on-hold", "Scenario settings"). */
+  region: string;
+  closeLabel: string;
+  onClose: () => void;
+  openerRef: RefObject<HTMLElement | null>;
+  footer?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <SidePanel
+      layout="inline"
+      focusOnOpen={false}
+      title={
+        <span className="sb-form-title">
+          <span
+            className="sb-form-eyebrow"
+            style={{ ["--kind" as string]: tint, ["--kind-soft" as string]: soft }}
+          >
+            <span className="bk-icon" aria-hidden>
+              <Icon name={icon} size="sm" />
+            </span>
+            {eyebrow}
+          </span>
+          <span className="sb-form-name">{title}</span>
+        </span>
+      }
+      closeLabel={closeLabel}
+      onClose={onClose}
+      openerRef={openerRef}
+      footer={footer}
+    >
+      <section className="sb-inspector-v5" aria-label={region}>
+        {children}
+      </section>
+    </SidePanel>
+  );
+}
+
 /** A section of the step form: a small heading, then its fields. */
-function Section({
+export function Section({
   title,
   help,
   children,
@@ -630,6 +686,7 @@ export function BlockInspector({
   document,
   node,
   number,
+  libraryError = false,
   library,
   problems,
   mode,
@@ -645,6 +702,8 @@ export function BlockInspector({
   node: BuilderNode;
   /** The step's number on the board ("3", "3.1"). */
   number: string | undefined;
+  /** The hub's actions could not be read: the step's inputs are unknown. */
+  libraryError?: boolean;
   library: readonly LibraryAction[];
   problems: readonly BuilderProblem[];
   mode: "interactive" | "regression";
@@ -705,536 +764,521 @@ export function BlockInspector({
   const stops = callsAction ? stopLines(asStep(node), action, mode, null) : [];
   const conditionSet = typeof node.when === "string" && node.when !== "";
   return (
-    <SidePanel
-      layout="inline"
-      focusOnOpen={false}
-      title={
-        <span className="sb-form-title">
-          <span
-            className="sb-form-eyebrow"
-            style={{ ["--kind" as string]: look.tint, ["--kind-soft" as string]: look.soft }}
-          >
-            <span className="bk-icon" aria-hidden>
-              <Icon name={look.icon} size="sm" />
-            </span>
-            {number ? `Step ${number} · ${look.label}` : look.label}
-          </span>
-          <span className="sb-form-name">
-            <TokenText value={cardTitle(node, action)} />
-          </span>
-        </span>
-      }
+    <FormShell
+      icon={look.icon}
+      tint={look.tint}
+      soft={look.soft}
+      eyebrow={number ? `Step ${number} · ${look.label}` : look.label}
+      title={<TokenText value={cardTitle(node, action)} />}
+      region={`Inspector: ${look.label} ${node.id}`}
       closeLabel={`Close step ${node.id}`}
       onClose={onClose}
       openerRef={openerRef}
       footer={footer}
     >
-      <section className="sb-inspector-v5" aria-label={`Inspector: ${look.label} ${node.id}`}>
-        <div className="sb-form-id">
-          <span className="ah-mono ah-small ah-muted">{node.id}</span>
-          <CopyButton text={node.id} label={`Copy the id ${node.id}`} compact />
-        </div>
-        {errors.length > 0 && (
-          <Banner tone="error" live={false}>
-            {errors.map((problem, index) => (
-              <div key={index}>{problem.message}</div>
-            ))}
-          </Banner>
-        )}
-        {warnings.length > 0 && (
-          <Banner tone="warning" live={false}>
-            {warnings.map((problem, index) => (
-              <div key={index}>{problem.message}</div>
-            ))}
-          </Banner>
-        )}
+      <div className="sb-form-id">
+        <span className="ah-mono ah-small ah-muted">{node.id}</span>
+        <CopyButton text={node.id} label={`Copy the id ${node.id}`} compact />
+      </div>
+      {libraryError && (
+        <Banner tone="error" live={false}>
+          The hub&apos;s actions could not be read, so this step&apos;s inputs are unknown. Reload
+          the page; if it stays, run ./hub doctor.
+        </Banner>
+      )}
+      {errors.length > 0 && (
+        <Banner tone="error" live={false}>
+          {errors.map((problem, index) => (
+            <div key={index}>{problem.message}</div>
+          ))}
+        </Banner>
+      )}
+      {warnings.length > 0 && (
+        <Banner tone="warning" live={false}>
+          {warnings.map((problem, index) => (
+            <div key={index}>{problem.message}</div>
+          ))}
+        </Banner>
+      )}
 
-        <Section title="Name">
+      <Section title="Name">
+        <Field
+          label="Step name"
+          optional
+          help="Shown on the card. Without one, the card shows what the action does."
+        >
+          {(fieldId) => (
+            <input
+              id={fieldId}
+              className="ah-input"
+              value={typeof node.description === "string" ? node.description : ""}
+              placeholder={cardTitle({ ...node, description: "" }, action)}
+              onChange={(event) => {
+                set("description", event.target.value);
+              }}
+            />
+          )}
+        </Field>
+      </Section>
+
+      {callsAction && (
+        <Section title={node.type === "expect" ? "What it reads" : "What it runs"}>
           <Field
-            label="Step name"
-            optional
-            help="Shown on the card. Without one, the card shows what the action does."
+            label={node.type === "expect" ? "Reads with" : "Action"}
+            help={
+              node.type === "expect" ? "Only actions that only read can check a state." : undefined
+            }
+            error={problemOf("action")}
+          >
+            {(fieldId) => (
+              <select
+                id={fieldId}
+                className="ah-input"
+                value={ref}
+                onChange={(event) => {
+                  set("action", event.target.value);
+                }}
+              >
+                <option value="">Choose an action</option>
+                {ref !== "" && !entry && <option value={ref}>{ref} (not in this hub)</option>}
+                {library
+                  .filter((item) => node.type !== "expect" || item.action.effect === "read")
+                  .map((item) => (
+                    <option
+                      key={item.action.ref}
+                      value={item.action.name === ref ? ref : item.action.ref}
+                    >
+                      {item.action.ref} · {item.action.effect ?? "effect not declared"}
+                      {item.action.draft ? " · draft" : ""}
+                    </option>
+                  ))}
+              </select>
+            )}
+          </Field>
+          {action && (
+            <div className="sb-action-well">
+              {action.description && <p className="ah-small">{action.description}</p>}
+              <dl className="sc-values">
+                <div className="sc-value">
+                  <dt>Runs</dt>
+                  <dd>
+                    {action.runtime === "python" ? "Python" : "Shell"} ·{" "}
+                    <span className="ah-mono">
+                      <PathText path={action.script ?? ""} max={40} dimDir />
+                    </span>
+                  </dd>
+                </div>
+                <div className="sc-value">
+                  <dt>Effect</dt>
+                  <dd>
+                    <EffectBadge effect={action.effect} words />
+                  </dd>
+                </div>
+                <div className="sc-value">
+                  <dt>Gives</dt>
+                  <dd>{gives.length > 0 ? gives.join(", ") : "No output declared"}</dd>
+                </div>
+                {action.timeout && (
+                  <div className="sc-value">
+                    <dt>Timeout</dt>
+                    <dd>{pace(action.timeout)}</dd>
+                  </div>
+                )}
+                {plan && (
+                  <div className="sc-value">
+                    <dt>In {plan.environment}</dt>
+                    <dd>
+                      {DECISION_WORDS[plan.row.decision] ?? plan.row.decision}
+                      {plan.row.reason ? ` (${plan.row.reason})` : ""}: {plan.row.plan}
+                    </dd>
+                  </div>
+                )}
+              </dl>
+              {action.draft && (
+                <DraftLine
+                  commands={action.accept_command ? [action.accept_command] : []}
+                  action={action.name}
+                  then="plan again"
+                />
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  onOpenAction(action.ref);
+                }}
+              >
+                Open action {action.name}
+              </Button>
+            </div>
+          )}
+          {actionTools && <div className="sb-action-tools">{actionTools}</div>}
+        </Section>
+      )}
+
+      {node.type === "expect" && (
+        <>
+          <Section title="Done when">
+            <ConditionBuilder
+              label="Done when"
+              value={typeof node.until_when === "string" ? node.until_when : ""}
+              fields={selfFields}
+              onChange={(value) => {
+                set("until_when", value === "" ? "" : value);
+              }}
+            />
+          </Section>
+          <Section title="Timing">
+            <div className="ah-env-grid">
+              <Field label="Check every" help="At least 5 s." error={problemOf("every")}>
+                {(fieldId) => (
+                  <input
+                    id={fieldId}
+                    className="ah-input ah-mono"
+                    value={text(node.every, "")}
+                    onChange={(event) => {
+                      set("every", event.target.value);
+                    }}
+                  />
+                )}
+              </Field>
+              <Field label="For up to" help="At most 24 h." error={problemOf("timeout")}>
+                {(fieldId) => (
+                  <input
+                    id={fieldId}
+                    className="ah-input ah-mono"
+                    value={text(node.timeout, "")}
+                    onChange={(event) => {
+                      set("timeout", event.target.value);
+                    }}
+                  />
+                )}
+              </Field>
+            </div>
+            {typeof node.every === "string" &&
+              typeof node.timeout === "string" &&
+              maxChecks(node.every, node.timeout) !== null && (
+                <span className="ah-small ah-muted">
+                  At most {maxChecks(node.every, node.timeout)} checks.
+                </span>
+              )}
+          </Section>
+        </>
+      )}
+
+      {callsAction && action && action.inputs.length > 0 && (
+        <Section title="Inputs" help={`What this step gives ${action.name}.`}>
+          {action.inputs.map((input) => {
+            const current = given[input.name];
+            return (
+              <ValueField
+                key={input.name}
+                name={input.name}
+                required={input.required}
+                description={input.description ?? null}
+                fallback={input.default as Json | undefined}
+                type={input.type}
+                value={
+                  current === undefined
+                    ? ""
+                    : typeof current === "string"
+                      ? current
+                      : JSON.stringify(current)
+                }
+                sources={sources}
+                onChange={(value) => {
+                  const next =
+                    value === ""
+                      ? without(given, input.name)
+                      : {
+                          ...given,
+                          [input.name]:
+                            input.type === "integer" && /^-?\d+$/.test(value)
+                              ? Number(value)
+                              : value,
+                        };
+                  set("with", Object.keys(next).length > 0 ? next : undefined);
+                }}
+              />
+            );
+          })}
+        </Section>
+      )}
+
+      {node.type === "approval" && (
+        <>
+          <Section title="What you do">
+            <Field
+              label="What to do"
+              help="What the person does by hand before answering. Scenario inputs and kept values can go in the text."
+            >
+              {(fieldId) => (
+                <textarea
+                  id={fieldId}
+                  className="ah-input sb-textarea"
+                  rows={5}
+                  value={text(node.message, "")}
+                  onChange={(event) => {
+                    set("message", event.target.value);
+                  }}
+                />
+              )}
+            </Field>
+            <label className="ah-row ah-small" style={{ gap: 6 }}>
+              <input
+                type="checkbox"
+                checked={node.capture_response === true}
+                onChange={(event) => {
+                  set("capture_response", event.target.checked ? true : undefined);
+                }}
+              />
+              Ask me to type a value (an id, a reference); later steps can use it.
+            </label>
+          </Section>
+          <Section title="Answers">
+            {(Array.isArray(node.decisions) ? node.decisions : []).map((decision, index) => {
+              const item = record(decision);
+              const list = Array.isArray(node.decisions) ? [...node.decisions] : [];
+              return (
+                <div key={index} className="sb-answer">
+                  <Field label="Label" help={<span className="ah-mono">{text(item.id, "")}</span>}>
+                    {(fieldId) => (
+                      <input
+                        id={fieldId}
+                        className="ah-input"
+                        value={text(item.label, "")}
+                        onChange={(event) => {
+                          list[index] = { ...item, label: event.target.value };
+                          set("decisions", list);
+                        }}
+                      />
+                    )}
+                  </Field>
+                  <IconButton
+                    icon="x"
+                    size="sm"
+                    label={`Remove answer ${text(item.label, text(item.id, ""))}`}
+                    onClick={() => {
+                      set(
+                        "decisions",
+                        list.filter((_, at) => at !== index),
+                      );
+                    }}
+                  />
+                </div>
+              );
+            })}
+            <Button
+              variant="ghost"
+              size="sm"
+              icon="plus"
+              onClick={() => {
+                const list = Array.isArray(node.decisions) ? [...node.decisions] : [];
+                list.push({ id: `answer-${String(list.length + 1)}`, label: "New answer" });
+                set("decisions", list);
+              }}
+            >
+              Add an answer
+            </Button>
+          </Section>
+        </>
+      )}
+
+      {node.type === "wait" && (
+        <Section title="Pause">
+          <Field
+            label="Pause for"
+            help="A duration: 30s, 5m, 1h; at most 7 days."
+            error={problemOf("duration")}
           >
             {(fieldId) => (
               <input
                 id={fieldId}
-                className="ah-input"
-                value={typeof node.description === "string" ? node.description : ""}
-                placeholder={cardTitle({ ...node, description: "" }, action)}
+                className="ah-input ah-mono"
+                value={text(node.duration, "")}
                 onChange={(event) => {
-                  set("description", event.target.value);
+                  set("duration", event.target.value);
                 }}
               />
             )}
           </Field>
         </Section>
+      )}
 
-        {callsAction && (
-          <Section title={node.type === "expect" ? "What it reads" : "What it runs"}>
-            <Field
-              label={node.type === "expect" ? "Reads with" : "Action"}
-              help={
-                node.type === "expect"
-                  ? "Only actions that only read can check a state."
-                  : undefined
-              }
-              error={problemOf("action")}
+      {node.type === "loop_group" && (
+        <Section title="Repeat">
+          <ConditionBuilder
+            label="Repeat until"
+            value={typeof node.until_when === "string" ? node.until_when : ""}
+            fields={(Array.isArray(node.nodes) ? (node.nodes as BuilderNode[]) : []).flatMap(
+              (inner) =>
+                outputs(text(inner.action, "")).map((path) => ({
+                  ref: `$${inner.id}.output.${path}`,
+                  label: `${inner.id} · ${path}`,
+                })),
+            )}
+            onChange={(value) => {
+              set("until_when", value);
+            }}
+          />
+          <Field label="At most (rounds)">
+            {(fieldId) => (
+              <input
+                id={fieldId}
+                className="ah-input"
+                type="number"
+                min={1}
+                max={50}
+                value={Number(text(node.max_iterations, "1"))}
+                onChange={(event) => {
+                  set("max_iterations", Number(event.target.value));
+                }}
+              />
+            )}
+          </Field>
+        </Section>
+      )}
+
+      {node.type === "include" && (
+        <Section title="Scenario">
+          <Field label="Scenario" help="Another scenario of this pack; its steps run here.">
+            {(fieldId) => (
+              <input
+                id={fieldId}
+                className="ah-input ah-mono"
+                value={text(node.include, "")}
+                onChange={(event) => {
+                  set("include", event.target.value);
+                }}
+              />
+            )}
+          </Field>
+        </Section>
+      )}
+
+      {callsAction && (
+        <Section
+          title="Keep for later"
+          help="Keep a field of the output so later steps can use it."
+        >
+          {Object.entries(capture).map(([name, from]) => (
+            <div key={name} className="sb-kept-row">
+              <ValueToken value={`$CTX.${name}`} />
+              <span className="ah-small ah-muted">
+                ← {shown(from).replace(/^\$self\.output\.?/, "") || "output"}
+              </span>
+              <span className="ah-grow" />
+              <IconButton
+                icon="x"
+                size="sm"
+                label={`Stop keeping ${name}`}
+                onClick={() => {
+                  const next = without(capture, name);
+                  set("capture", Object.keys(next).length > 0 ? next : undefined);
+                }}
+              />
+            </div>
+          ))}
+          {entry && entry.output_fields.length > 0 && (
+            <select
+              className="ah-input"
+              aria-label="Keep a field of the output"
+              value=""
+              onChange={(event) => {
+                const path = event.target.value;
+                if (!path) return;
+                const name = path.replace(/[^a-z0-9_]/gi, "_").toLowerCase();
+                set("capture", { ...capture, [name]: `$self.output.${path}` });
+              }}
             >
+              <option value="">Keep a field</option>
+              {entry.output_fields.map((field) => (
+                <option key={field.path} value={field.path}>
+                  {field.path}
+                  {field.type ? ` (${field.type})` : ""}
+                </option>
+              ))}
+            </select>
+          )}
+        </Section>
+      )}
+
+      <div className="sb-more">
+        <Disclosure
+          label={
+            conditionSet
+              ? `More: only if ${conditionWords(text(node.when))}`
+              : "More: only if, order and id"
+          }
+        >
+          <ConditionBuilder
+            label="Only if"
+            value={typeof node.when === "string" ? node.when : ""}
+            fields={whenFields}
+            onChange={(value) => {
+              set("when", value);
+            }}
+          />
+          <Field label="Runs after" help="Set by where it sits on the canvas.">
+            {() => (
+              <span className="ah-mono ah-small">{dependsOn(node).join(", ") || "the start"}</span>
+            )}
+          </Field>
+          {dependsOn(node).length > 1 && (
+            <Field label="Runs when">
               {(fieldId) => (
                 <select
                   id={fieldId}
                   className="ah-input"
-                  value={ref}
+                  value={text(node.trigger_rule, "all_success")}
                   onChange={(event) => {
-                    set("action", event.target.value);
+                    set(
+                      "trigger_rule",
+                      event.target.value === "all_success" ? undefined : event.target.value,
+                    );
                   }}
                 >
-                  <option value="">Choose an action</option>
-                  {ref !== "" && !entry && <option value={ref}>{ref} (not in this hub)</option>}
-                  {library
-                    .filter((item) => node.type !== "expect" || item.action.effect === "read")
-                    .map((item) => (
-                      <option
-                        key={item.action.ref}
-                        value={item.action.name === ref ? ref : item.action.ref}
-                      >
-                        {item.action.ref} · {item.action.effect ?? "effect not declared"}
-                        {item.action.draft ? " · draft" : ""}
-                      </option>
-                    ))}
+                  {TRIGGER_WORDS.map(([rule, words]) => (
+                    <option key={rule} value={rule}>
+                      {words}
+                    </option>
+                  ))}
                 </select>
               )}
             </Field>
-            {action && (
-              <div className="sb-action-well">
-                {action.description && <p className="ah-small">{action.description}</p>}
-                <dl className="sc-values">
-                  <div className="sc-value">
-                    <dt>Runs</dt>
-                    <dd>
-                      {action.runtime === "python" ? "Python" : "Shell"} ·{" "}
-                      <span className="ah-mono">
-                        <PathText path={action.script ?? ""} max={40} dimDir />
-                      </span>
-                    </dd>
-                  </div>
-                  <div className="sc-value">
-                    <dt>Effect</dt>
-                    <dd>
-                      <EffectBadge effect={action.effect} words />
-                    </dd>
-                  </div>
-                  <div className="sc-value">
-                    <dt>Gives</dt>
-                    <dd>{gives.length > 0 ? gives.join(", ") : "No output declared"}</dd>
-                  </div>
-                  {action.timeout && (
-                    <div className="sc-value">
-                      <dt>Timeout</dt>
-                      <dd>{pace(action.timeout)}</dd>
-                    </div>
-                  )}
-                  {plan && (
-                    <div className="sc-value">
-                      <dt>In {plan.environment}</dt>
-                      <dd>
-                        {DECISION_WORDS[plan.row.decision] ?? plan.row.decision}
-                        {plan.row.reason ? ` (${plan.row.reason})` : ""}: {plan.row.plan}
-                      </dd>
-                    </div>
-                  )}
-                </dl>
-                {action.draft && (
-                  <DraftLine
-                    commands={action.accept_command ? [action.accept_command] : []}
-                    action={action.name}
-                    then="plan again"
-                  />
-                )}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    onOpenAction(action.ref);
-                  }}
-                >
-                  Open action {action.name}
-                </Button>
-              </div>
-            )}
-            {actionTools && <div className="sb-action-tools">{actionTools}</div>}
-          </Section>
-        )}
-
-        {node.type === "expect" && (
-          <>
-            <Section title="Done when">
-              <ConditionBuilder
-                label="Done when"
-                value={typeof node.until_when === "string" ? node.until_when : ""}
-                fields={selfFields}
-                onChange={(value) => {
-                  set("until_when", value === "" ? "" : value);
+          )}
+          <Field label="Id" help="Unique, kebab-case. Renaming updates what waits for it.">
+            {(fieldId) => (
+              <input
+                id={fieldId}
+                className="ah-input ah-mono"
+                value={id}
+                onChange={(event) => {
+                  setId(event.target.value);
+                }}
+                onBlur={() => {
+                  if (id !== node.id && /^[a-z][a-z0-9-]*$/.test(id)) onChange({ ...node, id });
+                  else setId(node.id);
                 }}
               />
-            </Section>
-            <Section title="Timing">
-              <div className="ah-env-grid">
-                <Field label="Check every" help="At least 5 s." error={problemOf("every")}>
-                  {(fieldId) => (
-                    <input
-                      id={fieldId}
-                      className="ah-input ah-mono"
-                      value={text(node.every, "")}
-                      onChange={(event) => {
-                        set("every", event.target.value);
-                      }}
-                    />
-                  )}
-                </Field>
-                <Field label="For up to" help="At most 24 h." error={problemOf("timeout")}>
-                  {(fieldId) => (
-                    <input
-                      id={fieldId}
-                      className="ah-input ah-mono"
-                      value={text(node.timeout, "")}
-                      onChange={(event) => {
-                        set("timeout", event.target.value);
-                      }}
-                    />
-                  )}
-                </Field>
-              </div>
-              {typeof node.every === "string" &&
-                typeof node.timeout === "string" &&
-                maxChecks(node.every, node.timeout) !== null && (
-                  <span className="ah-small ah-muted">
-                    At most {maxChecks(node.every, node.timeout)} checks.
-                  </span>
-                )}
-            </Section>
-          </>
-        )}
-
-        {callsAction && action && action.inputs.length > 0 && (
-          <Section title="Inputs" help={`What this step gives ${action.name}.`}>
-            {action.inputs.map((input) => {
-              const current = given[input.name];
-              return (
-                <ValueField
-                  key={input.name}
-                  name={input.name}
-                  required={input.required}
-                  description={input.description ?? null}
-                  fallback={input.default as Json | undefined}
-                  type={input.type}
-                  value={
-                    current === undefined
-                      ? ""
-                      : typeof current === "string"
-                        ? current
-                        : JSON.stringify(current)
-                  }
-                  sources={sources}
-                  onChange={(value) => {
-                    const next =
-                      value === ""
-                        ? without(given, input.name)
-                        : {
-                            ...given,
-                            [input.name]:
-                              input.type === "integer" && /^-?\d+$/.test(value)
-                                ? Number(value)
-                                : value,
-                          };
-                    set("with", Object.keys(next).length > 0 ? next : undefined);
-                  }}
-                />
-              );
-            })}
-          </Section>
-        )}
-
-        {node.type === "approval" && (
-          <>
-            <Section title="What you do">
-              <Field
-                label="What to do"
-                help="What the person does by hand before answering. Scenario inputs and kept values can go in the text."
-              >
-                {(fieldId) => (
-                  <textarea
-                    id={fieldId}
-                    className="ah-input sb-textarea"
-                    rows={5}
-                    value={text(node.message, "")}
-                    onChange={(event) => {
-                      set("message", event.target.value);
-                    }}
-                  />
-                )}
-              </Field>
-              <label className="ah-row ah-small" style={{ gap: 6 }}>
-                <input
-                  type="checkbox"
-                  checked={node.capture_response === true}
-                  onChange={(event) => {
-                    set("capture_response", event.target.checked ? true : undefined);
-                  }}
-                />
-                Ask me to type a value (an id, a reference); later steps can use it.
-              </label>
-            </Section>
-            <Section title="Answers">
-              {(Array.isArray(node.decisions) ? node.decisions : []).map((decision, index) => {
-                const item = record(decision);
-                const list = Array.isArray(node.decisions) ? [...node.decisions] : [];
-                return (
-                  <div key={index} className="sb-answer">
-                    <Field
-                      label="Label"
-                      help={<span className="ah-mono">{text(item.id, "")}</span>}
-                    >
-                      {(fieldId) => (
-                        <input
-                          id={fieldId}
-                          className="ah-input"
-                          value={text(item.label, "")}
-                          onChange={(event) => {
-                            list[index] = { ...item, label: event.target.value };
-                            set("decisions", list);
-                          }}
-                        />
-                      )}
-                    </Field>
-                    <IconButton
-                      icon="x"
-                      size="sm"
-                      label={`Remove answer ${text(item.label, text(item.id, ""))}`}
-                      onClick={() => {
-                        set(
-                          "decisions",
-                          list.filter((_, at) => at !== index),
-                        );
-                      }}
-                    />
-                  </div>
-                );
-              })}
-              <Button
-                variant="ghost"
-                size="sm"
-                icon="plus"
-                onClick={() => {
-                  const list = Array.isArray(node.decisions) ? [...node.decisions] : [];
-                  list.push({ id: `answer-${String(list.length + 1)}`, label: "New answer" });
-                  set("decisions", list);
-                }}
-              >
-                Add an answer
-              </Button>
-            </Section>
-          </>
-        )}
-
-        {node.type === "wait" && (
-          <Section title="Pause">
-            <Field
-              label="Pause for"
-              help="A duration: 30s, 5m, 1h; at most 7 days."
-              error={problemOf("duration")}
-            >
-              {(fieldId) => (
-                <input
-                  id={fieldId}
-                  className="ah-input ah-mono"
-                  value={text(node.duration, "")}
-                  onChange={(event) => {
-                    set("duration", event.target.value);
-                  }}
-                />
-              )}
-            </Field>
-          </Section>
-        )}
-
-        {node.type === "loop_group" && (
-          <Section title="Repeat">
-            <ConditionBuilder
-              label="Repeat until"
-              value={typeof node.until_when === "string" ? node.until_when : ""}
-              fields={(Array.isArray(node.nodes) ? (node.nodes as BuilderNode[]) : []).flatMap(
-                (inner) =>
-                  outputs(text(inner.action, "")).map((path) => ({
-                    ref: `$${inner.id}.output.${path}`,
-                    label: `${inner.id} · ${path}`,
-                  })),
-              )}
-              onChange={(value) => {
-                set("until_when", value);
-              }}
-            />
-            <Field label="At most (rounds)">
-              {(fieldId) => (
-                <input
-                  id={fieldId}
-                  className="ah-input"
-                  type="number"
-                  min={1}
-                  max={50}
-                  value={Number(text(node.max_iterations, "1"))}
-                  onChange={(event) => {
-                    set("max_iterations", Number(event.target.value));
-                  }}
-                />
-              )}
-            </Field>
-          </Section>
-        )}
-
-        {node.type === "include" && (
-          <Section title="Scenario">
-            <Field label="Scenario" help="Another scenario of this pack; its steps run here.">
-              {(fieldId) => (
-                <input
-                  id={fieldId}
-                  className="ah-input ah-mono"
-                  value={text(node.include, "")}
-                  onChange={(event) => {
-                    set("include", event.target.value);
-                  }}
-                />
-              )}
-            </Field>
-          </Section>
-        )}
-
-        {callsAction && (
-          <Section
-            title="Keep for later"
-            help="Keep a field of the output so later steps can use it."
-          >
-            {Object.entries(capture).map(([name, from]) => (
-              <div key={name} className="sb-kept-row">
-                <ValueToken value={`$CTX.${name}`} />
-                <span className="ah-small ah-muted">
-                  ← {shown(from).replace(/^\$self\.output\.?/, "") || "output"}
-                </span>
-                <span className="ah-grow" />
-                <IconButton
-                  icon="x"
-                  size="sm"
-                  label={`Stop keeping ${name}`}
-                  onClick={() => {
-                    const next = without(capture, name);
-                    set("capture", Object.keys(next).length > 0 ? next : undefined);
-                  }}
-                />
-              </div>
-            ))}
-            {entry && entry.output_fields.length > 0 && (
-              <select
-                className="ah-input"
-                aria-label="Keep a field of the output"
-                value=""
-                onChange={(event) => {
-                  const path = event.target.value;
-                  if (!path) return;
-                  const name = path.replace(/[^a-z0-9_]/gi, "_").toLowerCase();
-                  set("capture", { ...capture, [name]: `$self.output.${path}` });
-                }}
-              >
-                <option value="">Keep a field</option>
-                {entry.output_fields.map((field) => (
-                  <option key={field.path} value={field.path}>
-                    {field.path}
-                    {field.type ? ` (${field.type})` : ""}
-                  </option>
-                ))}
-              </select>
             )}
-          </Section>
-        )}
-
-        <div className="sb-more">
+          </Field>
+        </Disclosure>
+        {stops.length > 0 && (
           <Disclosure
-            label={
-              conditionSet
-                ? `More: only if ${conditionWords(text(node.when))}`
-                : "More: only if, order and id"
-            }
+            label={`Where it can stop: ${String(stops.length)} ${stops.length === 1 ? "way" : "ways"}`}
           >
-            <ConditionBuilder
-              label="Only if"
-              value={typeof node.when === "string" ? node.when : ""}
-              fields={whenFields}
-              onChange={(value) => {
-                set("when", value);
-              }}
-            />
-            <Field label="Runs after" help="Set by where it sits on the canvas.">
-              {() => (
-                <span className="ah-mono ah-small">
-                  {dependsOn(node).join(", ") || "the start"}
-                </span>
-              )}
-            </Field>
-            {dependsOn(node).length > 1 && (
-              <Field label="Runs when">
-                {(fieldId) => (
-                  <select
-                    id={fieldId}
-                    className="ah-input"
-                    value={text(node.trigger_rule, "all_success")}
-                    onChange={(event) => {
-                      set(
-                        "trigger_rule",
-                        event.target.value === "all_success" ? undefined : event.target.value,
-                      );
-                    }}
-                  >
-                    {TRIGGER_WORDS.map(([rule, words]) => (
-                      <option key={rule} value={rule}>
-                        {words}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </Field>
-            )}
-            <Field label="Id" help="Unique, kebab-case. Renaming updates what waits for it.">
-              {(fieldId) => (
-                <input
-                  id={fieldId}
-                  className="ah-input ah-mono"
-                  value={id}
-                  onChange={(event) => {
-                    setId(event.target.value);
-                  }}
-                  onBlur={() => {
-                    if (id !== node.id && /^[a-z][a-z0-9-]*$/.test(id)) onChange({ ...node, id });
-                    else setId(node.id);
-                  }}
-                />
-              )}
-            </Field>
+            <ul className="sb-stops">
+              {stops.map((line) => (
+                <li key={line.key}>
+                  <Icon name={line.icon} size="sm" /> {line.text}
+                </li>
+              ))}
+            </ul>
           </Disclosure>
-          {stops.length > 0 && (
-            <Disclosure
-              label={`Where it can stop: ${String(stops.length)} ${stops.length === 1 ? "way" : "ways"}`}
-            >
-              <ul className="sb-stops">
-                {stops.map((line) => (
-                  <li key={line.key}>
-                    <Icon name={line.icon} size="sm" /> {line.text}
-                  </li>
-                ))}
-              </ul>
-            </Disclosure>
-          )}
-        </div>
-      </section>
-    </SidePanel>
+        )}
+      </div>
+    </FormShell>
   );
 }
 
@@ -1243,10 +1287,13 @@ export function ScenarioSettings({
   document,
   onChange,
   onClose,
+  openerRef,
 }: {
   document: BuilderDocument;
   onChange: (next: BuilderDocument) => void;
-  onClose?: () => void;
+  onClose: () => void;
+  /** What opened it (the start of the board): focus goes back to it on close. */
+  openerRef: RefObject<HTMLElement | null>;
 }) {
   const inputs = record(document.inputs);
   const setInputs = (next: Record_) => {
@@ -1255,24 +1302,30 @@ export function ScenarioSettings({
     else copy.inputs = next;
     onChange(copy);
   };
+  const setInput = (name: string, field: string, value: Json | undefined) => {
+    const item = record(inputs[name]);
+    const next =
+      value === undefined || value === "" ? without(item, field) : { ...item, [field]: value };
+    setInputs({ ...inputs, [name]: next });
+  };
   return (
-    <section className="sb-inspector" aria-label="Scenario settings">
-      <header className="sb-inspector-head">
-        <Icon name="settings" size="sm" />
-        <b>Scenario: description and inputs</b>
-        <span className="ah-grow" />
-        {onClose && (
-          <button type="button" className="sb-icon-btn" aria-label="Close" onClick={onClose}>
-            <Icon name="x" size="sm" />
-          </button>
-        )}
-      </header>
-      <div className="sb-inspector-body">
-        <Field label="Description" help="When to use this scenario, in one sentence.">
+    <FormShell
+      icon="flag"
+      tint="var(--text-muted)"
+      soft="var(--surface-sunken)"
+      eyebrow="The start of the scenario"
+      title="Scenario settings"
+      region="Scenario settings"
+      closeLabel="Close scenario settings"
+      onClose={onClose}
+      openerRef={openerRef}
+    >
+      <Section title="Description">
+        <Field label="Description" optional help="When to use this scenario, in one sentence.">
           {(id) => (
             <textarea
               id={id}
-              className="ah-input"
+              className="ah-input sb-textarea"
               rows={3}
               value={typeof document.description === "string" ? document.description : ""}
               onChange={(event) => {
@@ -1281,60 +1334,171 @@ export function ScenarioSettings({
             />
           )}
         </Field>
-        <div className="sb-field">
-          <span className="ah-small">Inputs</span>
-          <span className="ah-small ah-subtle">What you give the scenario when you run it.</span>
-          {Object.entries(inputs).map(([name, spec]) => {
-            const item = record(spec);
-            return (
-              <div key={name} className="sb-input-row">
-                <span className="ah-mono ah-small">{name}</span>
-                <select
-                  className="ah-input"
-                  aria-label={`Type of ${name}`}
-                  value={text(item.type, "string")}
-                  onChange={(event) => {
-                    setInputs({ ...inputs, [name]: { ...item, type: event.target.value } });
+      </Section>
+      <Section title="Inputs" help="What you give the scenario when you run it.">
+        {Object.entries(inputs).map(([name, spec]) => {
+          const item = record(spec);
+          return (
+            <div key={name} className="sb-input-card">
+              <div className="sb-input-card-head">
+                <span className="ah-mono">{name}</span>
+                <span className="ah-grow" />
+                <IconButton
+                  icon="x"
+                  size="sm"
+                  label={`Remove input ${name}`}
+                  onClick={() => {
+                    setInputs(without(inputs, name));
                   }}
-                >
-                  {["string", "integer", "number", "boolean"].map((type) => (
-                    <option key={type}>{type}</option>
-                  ))}
-                </select>
-                <label className="ah-row ah-small" style={{ gap: 4 }}>
+                />
+              </div>
+              <div className="ah-env-grid">
+                <Field label="Type">
+                  {(id) => (
+                    <select
+                      id={id}
+                      className="ah-input"
+                      value={text(item.type, "string")}
+                      onChange={(event) => {
+                        setInput(name, "type", event.target.value);
+                      }}
+                    >
+                      {["string", "integer", "number", "boolean"].map((type) => (
+                        <option key={type}>{type}</option>
+                      ))}
+                    </select>
+                  )}
+                </Field>
+                <label className="ah-row ah-small sb-required">
                   <input
                     type="checkbox"
                     checked={item.required === true}
                     onChange={(event) => {
-                      const next = { ...item };
-                      if (event.target.checked) next.required = true;
-                      else delete next.required;
-                      setInputs({ ...inputs, [name]: next });
+                      setInput(name, "required", event.target.checked ? true : undefined);
                     }}
                   />
-                  required
+                  Required
                 </label>
-                <button
-                  type="button"
-                  className="sb-icon-btn"
-                  aria-label={`Remove input ${name}`}
-                  onClick={() => {
-                    setInputs(without(inputs, name));
-                  }}
-                >
-                  <Icon name="x" size="sm" />
-                </button>
               </div>
-            );
-          })}
-          <NewInput
-            onAdd={(name) => {
-              setInputs({ ...inputs, [name]: { type: "string", required: true } });
-            }}
-          />
-        </div>
-      </div>
-    </section>
+              <Field label="Default" optional>
+                {(id) => (
+                  <input
+                    id={id}
+                    className="ah-input ah-mono"
+                    value={item.default === undefined ? "" : shown(item.default)}
+                    onChange={(event) => {
+                      setInput(name, "default", event.target.value);
+                    }}
+                  />
+                )}
+              </Field>
+              <Field label="Description" optional>
+                {(id) => (
+                  <input
+                    id={id}
+                    className="ah-input"
+                    value={text(item.description, "")}
+                    onChange={(event) => {
+                      setInput(name, "description", event.target.value);
+                    }}
+                  />
+                )}
+              </Field>
+            </div>
+          );
+        })}
+        <NewInput
+          onAdd={(name) => {
+            setInputs({ ...inputs, [name]: { type: "string", required: true } });
+          }}
+        />
+      </Section>
+    </FormShell>
+  );
+}
+
+/** The form of an If or an At the same time: its condition, or its paths. */
+export function GroupInspector({
+  kind,
+  number,
+  condition,
+  lanes,
+  fields,
+  onCondition,
+  onLanes,
+  onClose,
+  openerRef,
+  footer,
+}: {
+  kind: "if" | "parallel";
+  number: string | undefined;
+  condition: string;
+  lanes: number;
+  fields: readonly { ref: string; label: string }[];
+  onCondition: (condition: string) => void;
+  onLanes: (count: number) => void;
+  onClose: () => void;
+  openerRef: RefObject<HTMLElement | null>;
+  footer?: ReactNode;
+}) {
+  const look = kindLook(kind === "if" ? "branch" : "parallel");
+  const isIf = kind === "if";
+  return (
+    <FormShell
+      icon={look.icon}
+      tint={look.tint}
+      soft={look.soft}
+      eyebrow={number ? `Step ${number} · ${look.label}` : look.label}
+      title={
+        isIf
+          ? condition
+            ? `If ${conditionWords(condition)}`
+            : "If a condition holds"
+          : `Run ${String(lanes)} paths at the same time`
+      }
+      region={isIf ? "Inspector: If" : "Inspector: At the same time"}
+      closeLabel={isIf ? "Close the If" : "Close At the same time"}
+      onClose={onClose}
+      openerRef={openerRef}
+      footer={footer}
+    >
+      {isIf ? (
+        <Section
+          title="Condition"
+          help="The yes path runs when it holds, the no path when it does not. The steps after the If run after the path taken."
+        >
+          <ConditionBuilder label="If" value={condition} fields={fields} onChange={onCondition} />
+        </Section>
+      ) : (
+        <Section
+          title="Paths"
+          help="The paths start together; the next step waits until every path ends."
+        >
+          <span className="ah-small">{lanes} paths</span>
+          <span className="ah-row" style={{ gap: 6 }}>
+            <Button
+              size="sm"
+              icon="plus"
+              onClick={() => {
+                onLanes(lanes + 1);
+              }}
+            >
+              Add a path
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={lanes <= 2}
+              onClick={() => {
+                onLanes(lanes - 1);
+              }}
+            >
+              Remove the last path
+            </Button>
+          </span>
+        </Section>
+      )}
+    </FormShell>
   );
 }
 

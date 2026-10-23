@@ -43,7 +43,7 @@ import { StartCard } from "./StartCard";
 import { ActionPanel } from "../ActionPanel";
 import { CATEGORIES, blockItem } from "./palette";
 import { FlowCanvas, kindLook, type AddChoice } from "./FlowCanvas";
-import { BlockInspector, ConditionBuilder, ScenarioSettings } from "./Inspector";
+import { BlockInspector, GroupInspector, ScenarioSettings } from "./Inspector";
 import {
   allNodes,
   dependsOn,
@@ -321,6 +321,8 @@ export function ScenarioBuilder({
     if (menu === "preview") setMenu(null);
   }
   const planRows = new Map((preview?.rows ?? []).map((row) => [row.step, row]));
+  // The steps as they were when the preview ran: a change after it makes the preview stale.
+  const [previewFor, setPreviewFor] = useState<string | null>(null);
   const [settings, setSettings] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -582,12 +584,18 @@ export function ScenarioBuilder({
       return globalThis.document.querySelector<HTMLElement>('.bk-world [aria-selected="true"]');
     },
   };
+  const hatButton: RefObject<HTMLElement | null> = {
+    get current() {
+      return globalThis.document.querySelector<HTMLElement>(".bk-hat");
+    },
+  };
   const inspector = (() => {
     if (!selectedItem) {
       return settings ? (
         <ScenarioSettings
           document={document}
           onChange={draft.edit}
+          openerRef={hatButton}
           onClose={() => {
             setSettings(false);
           }}
@@ -609,6 +617,7 @@ export function ScenarioBuilder({
           problems={problems.filter((problem) => problem.node === node.id)}
           mode={mode}
           number={stepNumbers(program.main).get(node.id)}
+          libraryError={library.isError}
           openerRef={selectedCard}
           onOpenAction={setActionPanel}
           plan={(() => {
@@ -656,97 +665,47 @@ export function ScenarioBuilder({
         />
       );
     }
-    const isIf = selectedItem.kind === "if";
+    const group = selectedItem;
+    const groupId = itemId(group);
     return (
-      <section
-        className="sb-inspector"
-        aria-label={isIf ? "Inspector: If" : "Inspector: At the same time"}
-      >
-        <header
-          className="sb-inspector-head"
-          style={{ ["--kind" as string]: "var(--kind-control)" }}
-        >
-          <span className="sb-kind" aria-hidden>
-            <Icon name={isIf ? "split" : "git-branch"} size="sm" />
-          </span>
-          <b>{isIf ? "If … else" : "At the same time"}</b>
-          <span className="ah-grow" />
-          <button
-            type="button"
-            className="sb-icon-btn"
-            aria-label="Delete this block and what it holds"
+      <GroupInspector
+        key={groupId}
+        kind={group.kind}
+        number={stepNumbers(program.main).get(groupId)}
+        condition={group.kind === "if" ? group.condition : ""}
+        lanes={group.kind === "parallel" ? group.lanes.length : 2}
+        fields={everySource(serialized, outputs).map((source) => ({
+          ref: source.ref,
+          label: `${source.label} (${source.hint})`,
+        }))}
+        onCondition={(condition) => {
+          if (group.kind === "if") editItem(groupId, { ...group, condition });
+        }}
+        onLanes={(count) => {
+          if (group.kind !== "parallel") return;
+          const lanes =
+            count > group.lanes.length
+              ? [...group.lanes, ...Array.from({ length: count - group.lanes.length }, () => [])]
+              : group.lanes.slice(0, count);
+          editItem(groupId, { ...group, lanes });
+        }}
+        onClose={() => {
+          setSelected(null);
+        }}
+        openerRef={selectedCard}
+        footer={
+          <Button
+            variant="ghost"
+            icon="trash"
             onClick={() => {
-              removeItem(selectedItem.key);
+              removeItem(groupId);
+              setToast(`Deleted the ${group.kind === "if" ? "If" : "paths"} and what it holds.`);
             }}
           >
-            <Icon name="trash" size="sm" />
-          </button>
-          <button
-            type="button"
-            className="sb-icon-btn"
-            aria-label="Close the inspector"
-            onClick={() => {
-              setSelected(null);
-            }}
-          >
-            <Icon name="x" size="sm" />
-          </button>
-        </header>
-        <div className="sb-inspector-body">
-          {isIf ? (
-            <>
-              <ConditionBuilder
-                label="If"
-                value={selectedItem.condition}
-                fields={everySource(serialized, outputs).map((source) => ({
-                  ref: source.ref,
-                  label: `${source.label} (${source.hint})`,
-                }))}
-                onChange={(condition) => {
-                  editItem(selectedItem.key, { ...selectedItem, condition });
-                }}
-              />
-              <span className="ah-small ah-subtle">
-                The first block of the path runs only when it holds; the else path runs when it does
-                not. The blocks after the If run after the path taken.
-              </span>
-            </>
-          ) : (
-            <>
-              <span className="ah-small">
-                {selectedItem.lanes.length} paths start together; the next block waits for all.
-              </span>
-              <span className="ah-row" style={{ gap: 6 }}>
-                <Button
-                  size="sm"
-                  icon="plus"
-                  onClick={() => {
-                    editItem(selectedItem.key, {
-                      ...selectedItem,
-                      lanes: [...selectedItem.lanes, []],
-                    });
-                  }}
-                >
-                  Add a path
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={selectedItem.lanes.length <= 2}
-                  onClick={() => {
-                    editItem(selectedItem.key, {
-                      ...selectedItem,
-                      lanes: selectedItem.lanes.slice(0, -1),
-                    });
-                  }}
-                >
-                  Remove the last path
-                </Button>
-              </span>
-            </>
-          )}
-        </div>
-      </section>
+            Delete it and what it holds
+          </Button>
+        }
+      />
     );
   })();
 
@@ -1084,6 +1043,7 @@ export function ScenarioBuilder({
               aria-label="Preview in an environment"
               onSubmit={(event) => {
                 event.preventDefault();
+                setPreviewFor(JSON.stringify(document.nodes));
                 planner.mutate({ environment: previewEnv, inputs: previewInputs });
               }}
             >
@@ -1386,6 +1346,8 @@ export function ScenarioBuilder({
             <BlockCanvas
               suggested={reviewProgram ? suggestedIds : undefined}
               planOf={(id) => planRows.get(id) ?? null}
+              planStale={previewFor !== null && previewFor !== JSON.stringify(document.nodes)}
+              actions={library.isPending ? "loading" : library.isError ? "error" : "ready"}
               planEnvironment={preview?.environment ?? null}
               onHat={() => {
                 setSelected(null);

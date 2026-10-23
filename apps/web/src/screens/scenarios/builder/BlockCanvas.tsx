@@ -69,6 +69,10 @@ export interface BlockCanvasProps {
   /** A preview in an environment: the plan's row of a step, and the environment's name. */
   planOf?: ((id: string) => ScenarioPlanRow | null) | undefined;
   planEnvironment?: string | null | undefined;
+  /** The scenario changed after the preview: its lines say so. */
+  planStale?: boolean | undefined;
+  /** The hub's actions: still loading, could not be read, or read. */
+  actions?: "loading" | "error" | "ready" | undefined;
   /** The hat ("when the scenario starts") was clicked: open the scenario's inputs. */
   onHat?: (() => void) | undefined;
 }
@@ -253,10 +257,16 @@ function PlanLine({ ctx, id }: { ctx: Ctx; id: string }) {
   const row = ctx.props.planOf?.(id) ?? null;
   if (!row) return null;
   return (
-    <div className="bk-plan-line" data-decision={row.decision}>
-      <Icon name="scan-eye" size="sm" />
+    <div
+      className="bk-plan-line"
+      data-decision={row.decision}
+      data-stale={ctx.props.planStale === true || undefined}
+    >
+      <Icon name={ctx.props.planStale ? "clock" : "scan-eye"} size="sm" />
       <span>
-        {ctx.props.planEnvironment ? `In ${ctx.props.planEnvironment}: ` : ""}
+        {ctx.props.planEnvironment
+          ? `In ${ctx.props.planEnvironment}${ctx.props.planStale ? " (before your last change)" : ""}: `
+          : ""}
         {row.plan}
       </span>
     </div>
@@ -292,7 +302,7 @@ function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
         <div className="bk-title">
           <TokenText value={cardTitle(node, action)} />
         </div>
-        <RunsLine node={node} action={action} />
+        <RunsLine node={node} action={action} actions={ctx.props.actions} />
         <CardFacts node={node} action={action} selected={selected} />
         <PlanLine ctx={ctx} id={node.id} />
         <Problems ctx={ctx} id={node.id} />

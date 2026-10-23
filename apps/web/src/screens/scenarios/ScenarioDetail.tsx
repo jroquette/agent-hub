@@ -1,3 +1,4 @@
+import { CardSkeleton } from "./builder/CardParts";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useParams, useSearchParams } from "react-router";
 
@@ -977,10 +978,11 @@ export function ScenarioDetailScreen() {
       <Page>
         <Skeleton width={320} height={28} />
         <Skeleton width={560} height={14} />
-        <Skeleton height={120} />
-        {Array.from({ length: 6 }, (_, i) => (
-          <Skeleton key={i} height={20} />
-        ))}
+        <div className="bk-skeleton-flow" aria-busy="true" aria-label="Loading the scenario">
+          {Array.from({ length: 3 }, (_, i) => (
+            <CardSkeleton key={i} />
+          ))}
+        </div>
       </Page>
     );
   }
