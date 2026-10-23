@@ -250,3 +250,19 @@ def test_stops_when_the_pr_json_cannot_be_written_by_redirect_when_rendered() ->
     assert "write its exact output with the Write tool" not in _flat(_body())
     assert "If the sandbox refuses the redirect, stop and say why" in read
     assert "never passes through text you type" in read
+
+
+def test_shows_the_gate_message_before_the_user_answers_when_rendered() -> None:
+    gate = _flat(_step(6))
+
+    assert '`"event": "gate"`' in gate
+    assert "`.agent-runs/workflows/<run>/records.jsonl`" in gate
+    assert "its `message`" in gate
+    assert gate.index("its `message`") < gate.index("then answers")
+
+
+def test_says_the_fallback_posts_nothing_without_a_final_payload_when_rendered() -> None:
+    [fallback] = [line for line in _body().splitlines() if "If `./hub workflow run`" in line]
+
+    assert "posts nothing" in fallback
+    assert "`final` payload" in fallback
