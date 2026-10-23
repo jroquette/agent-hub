@@ -43,7 +43,7 @@ import {
 } from "./groups";
 import { FeatureNameField, RenameButton, useFeatureNames } from "./names";
 import { AcBar, PHASES } from "./parts";
-import { useFeatures, useLiveSessions } from "./queries";
+import { useFeatures, useLiveSessions, useWarmTickets } from "./queries";
 
 export { issueId } from "./groups";
 
@@ -572,6 +572,7 @@ function Group({
 export function FeaturesScreen() {
   const [scope] = useScope();
   const features = useFeatures(scope);
+  useWarmTickets(features.data?.items);
   const tiles = useLiveSessions(scope).data?.items ?? [];
   const reasonFor = (f: Feature) => reasonOf(f, sessionWaitOf(f, tiles));
   const nameOf = useFeatureNames();
