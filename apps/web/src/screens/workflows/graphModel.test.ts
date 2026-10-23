@@ -8,6 +8,7 @@ import {
   columnWidth,
   runOrder,
   visibleEdges,
+  downPath,
   wrapPath,
   wrapRows,
   type Edge,
@@ -168,5 +169,21 @@ describe("the canvas view", () => {
       y: -100,
     });
     expect(zoomAround({ x: 0, y: 0, k: 1 }, 10, { x: 0, y: 0 }).k).toBe(2);
+  });
+});
+
+describe("downPath", () => {
+  const a = { left: 0, right: 200, top: 0, bottom: 40 };
+  const b = { left: 100, right: 300, top: 120, bottom: 160 };
+
+  it("curves from the bottom middle of the source to the top middle of the next layer", () => {
+    expect(downPath(a, b)).toBe("M 100 40 C 100 80, 200 80, 200 120");
+  });
+
+  it("routes an edge that skips layers down the left gutter", () => {
+    const path = downPath(a, b, { gapBelow: 60, gapAbove: 100, gutter: 16 }, 0);
+    expect(path).toContain("L 16 60");
+    expect(path).toContain("L 16 100");
+    expect(path.endsWith("200 120")).toBe(true);
   });
 });

@@ -314,7 +314,8 @@ describe("WorkflowDetailScreen", () => {
     await waitFor(() => {
       expect(container.querySelector('[data-edge="plan→docs"]')).toHaveAttribute(
         "d",
-        "M 172 28 C 196 28, 196 128, 220 128",
+        // Top to bottom: from the bottom middle of plan to the top middle of docs.
+        "M 88 48 C 88 78, 304 78, 304 108",
       );
     });
   });

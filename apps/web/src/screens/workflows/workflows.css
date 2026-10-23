@@ -294,6 +294,15 @@
   padding: 0;
   list-style: none;
 }
+/* Top to bottom: each layer is a centred row, its steps side by side (not inside a rounds frame). */
+.wf-rows[data-flow="down"] {
+  align-items: center;
+}
+.wf-rows[data-flow="down"] > .wf-cols > .wf-col {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 24px;
+}
 .wf-col-item {
   display: flex;
 }

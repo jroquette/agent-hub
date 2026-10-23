@@ -311,3 +311,36 @@ export function wrapPath(
       ];
   return roundedPath(pts, r);
 }
+
+/**
+ * An edge between layers drawn top to bottom: out of the bottom of the source, into the top of the
+ * target. To the next layer it is a vertical curve; an edge that skips layers drops into the gap
+ * under the source's layer, runs down the world's left gutter to the gap above the target's layer
+ * and comes in from above, so it never crosses a card. Corners are rounded with radius `r`.
+ */
+export function downPath(
+  a: { left: number; right: number; bottom: number },
+  b: { left: number; right: number; top: number },
+  skip?: { gapBelow: number; gapAbove: number; gutter: number },
+  r = 10,
+): string {
+  const x1 = (a.left + a.right) / 2;
+  const x2 = (b.left + b.right) / 2;
+  const y1 = a.bottom;
+  const y2 = b.top;
+  if (!skip) {
+    const my = (y1 + y2) / 2;
+    return `M ${String(x1)} ${String(y1)} C ${String(x1)} ${String(my)}, ${String(x2)} ${String(my)}, ${String(x2)} ${String(y2)}`;
+  }
+  return roundedPath(
+    [
+      [x1, y1],
+      [x1, skip.gapBelow],
+      [skip.gutter, skip.gapBelow],
+      [skip.gutter, skip.gapAbove],
+      [x2, skip.gapAbove],
+      [x2, y2],
+    ],
+    r,
+  );
+}
