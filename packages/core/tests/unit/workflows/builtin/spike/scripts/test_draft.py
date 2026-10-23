@@ -367,3 +367,20 @@ def test_exits_one_when_feature_folder_cannot_be_written(
 
     assert (code, out) == (1, "")
     assert err.startswith("draft.py: cannot write brain/features/brief-cache")
+
+
+def test_reads_values_that_start_with_a_dash_when_owner_text_is_passed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    state = json.dumps(a_state(note="--keep it small", approver="-Dana"))
+    argv = ["--slug", "brief-cache", "--question", "-x: cache the brief?", "--state", state]
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+
+    code = load().main([*argv, "--options", json.dumps(OPTIONS), "--now", str(NOW)])
+
+    out = json.loads(capsys.readouterr().out)
+    assert code == 0
+    research = Path(out["research"]).read_text(encoding="utf-8")
+    assert "```text\n-x: cache the brief?\n```" in research
+    assert "Owner's note: --keep it small" in research
