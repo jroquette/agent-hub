@@ -806,3 +806,29 @@ textarea.sb-script {
   color: var(--text-muted);
   width: 56px;
 }
+
+/* v3: the first-open hint, small, at the canvas's bottom left (above the zoom controls). */
+.sb-hint {
+  position: absolute;
+  left: var(--space-3);
+  bottom: 56px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 460px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-overlay, var(--surface));
+  box-shadow: var(--shadow-popover, 0 8px 24px rgb(0 0 0 / 18%));
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.sb-hint b {
+  color: var(--text);
+}
+/* v3: the canvas ground is the sunken surface with a soft dot grid. */
+.sb-stage {
+  background-color: var(--surface-sunken);
+}

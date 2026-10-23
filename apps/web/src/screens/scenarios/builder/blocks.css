@@ -1,5 +1,7 @@
-/* The block canvas: Scratch-like stacks. A block is filled with its kind's tint and has a bump
- * under it that sits in the notch of the next one; a C-block wraps the blocks it holds. */
+/* The block canvas (scenario builder v3): the flow as one column of calm, one-line steps on a
+ * spine, each with a round step badge; the kind's colour only on its icon tile (D-builder-3,
+ * the kind-* tokens); the selected step expands in place; C-blocks frame their lanes. */
+
 .bk-viewport {
   position: relative;
   width: 100%;
@@ -19,304 +21,559 @@
 }
 .bk-stack {
   position: absolute;
-  min-width: 320px;
+  width: 880px;
 }
 .bk-stack[data-loose] {
   opacity: 0.85;
+  width: 640px;
 }
 .bk-loose-note {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-bottom: 4px;
-  font-size: 11px;
+  margin-bottom: 6px;
+  font-size: 12px;
   color: var(--waiting);
 }
 
-/* Hat and cap */
+/* The hat and the end cap */
 .bk-hat {
-  --kind: var(--ev-lifecycle);
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 14px 16px 10px;
-  border-radius: 22px 22px var(--radius-md) var(--radius-md);
-  background: color-mix(in srgb, var(--kind) 30%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--kind) 60%, var(--surface));
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  font-size: 14px;
+  cursor: pointer;
+}
+.bk-hat:hover {
+  background: var(--surface-hover);
+}
+.bk-hat b {
   font-weight: 600;
-  cursor: move;
-  position: relative;
 }
 .bk-cap {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 2px;
-  padding: 6px 12px;
-  border-radius: var(--radius-md) var(--radius-md) 16px 16px;
-  border: 1px dashed var(--border-strong);
-  color: var(--text-muted);
+  gap: 10px;
+  padding: 4px 0 0 4px;
   font-size: 12px;
+  color: var(--text-muted);
+}
+.bk-cap-dot {
+  width: 24px;
+  height: 12px;
+  border-radius: 0 0 12px 12px;
+  border: 2px solid var(--border-control);
+  border-top: 0;
 }
 
-/* A block */
-.bk-block,
-.bk-c {
+/* The spine: a line in the gutter; each step's badge sits on it */
+.bk-list {
   position: relative;
-  border: 1px solid color-mix(in srgb, var(--kind) 55%, var(--surface));
-  background: color-mix(in srgb, var(--kind) 20%, var(--surface));
-  color: var(--text);
-  cursor: grab;
-  transition:
-    filter 120ms ease,
-    box-shadow 120ms ease;
+  display: flex;
+  flex-direction: column;
+  padding-left: 44px;
 }
-.bk-block {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  column-gap: 8px;
-  row-gap: 2px;
-  min-height: 40px;
-  padding: 6px 10px 6px 8px;
-  border-radius: var(--radius-md);
-}
-/* The bump under a block (and a C-block's foot): it sits in the gap above the next block. */
-.bk-block::after,
-.bk-c::after,
-.bk-hat::after {
+.bk-list::before {
   content: "";
   position: absolute;
-  left: 18px;
-  bottom: -6px;
-  width: 28px;
-  height: 6px;
-  border-radius: 0 0 6px 6px;
-  background: inherit;
-  border: 1px solid color-mix(in srgb, var(--kind) 55%, var(--surface));
-  border-top: 0;
-  z-index: 1;
+  left: 15px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--border-control);
+  border-radius: 1px;
 }
-.bk-block:hover,
-.bk-c:hover > .bk-c-head {
-  filter: brightness(1.06);
+.bk-entry {
+  display: flex;
+  flex-direction: column;
 }
-.bk-block[data-selected],
-.bk-c[data-selected] {
-  box-shadow: 0 0 0 2px var(--accent);
+
+/* A step: one row, a neutral card */
+.bk-row {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    background var(--dur-fast, 120ms) ease,
+    box-shadow var(--dur-fast, 120ms) ease;
 }
-.bk-block[data-invalid],
-.bk-c[data-invalid] {
-  border-color: var(--failed);
+.bk-row:hover {
+  background: var(--surface-hover);
 }
-.bk-block:focus-visible,
-.bk-c:focus-visible {
+.bk-row:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
+.bk-row[data-selected] {
+  box-shadow: 0 0 0 2px var(--accent);
+  cursor: default;
+}
+.bk-row[data-selected]:hover {
+  background: var(--surface);
+}
+.bk-row[data-invalid] {
+  border-color: var(--failed);
+}
+.bk-row-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 5px 10px;
+}
+.bk-row[data-expanded] .bk-row-main {
+  align-items: flex-start;
+  padding-top: 8px;
+}
+.bk-badge {
+  position: absolute;
+  left: -40px;
+  top: 6px;
+  display: grid;
+  place-items: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 4px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-control);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.bk-badge[data-selected] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+.bk-badge[data-invalid] {
+  border: 2px solid var(--failed);
+}
+
+/* The kind's colour lives here only: a 24 px tile */
 .bk-icon {
   display: inline-grid;
   place-items: center;
+  flex: none;
   width: 24px;
   height: 24px;
   border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--kind) 45%, var(--surface));
-  color: var(--text);
+  background: var(--kind-soft, var(--surface-sunken));
+  color: var(--kind, var(--text-muted));
 }
-.bk-words {
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 5px;
+.bk-icon-neutral {
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+}
+.bk-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  min-width: 0;
+}
+.bk-name {
   font-weight: 600;
   font-size: 13px;
 }
-.bk-quiet {
-  font-weight: 400;
-  color: var(--text-muted);
+.bk-words {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  font-size: 14px;
+  line-height: 20px;
 }
-.bk-pill {
+.bk-row:not([data-expanded]) .bk-words {
+  flex-wrap: nowrap;
+  overflow: hidden;
+  white-space: nowrap;
+  mask-image: linear-gradient(to right, #000 92%, transparent);
+}
+.bk-verb {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.bk-label,
+.bk-quiet {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.bk-pair {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  max-width: 260px;
-  padding: 2px 10px;
-  border-radius: var(--radius-full);
-  background: var(--surface);
-  border: 1px solid color-mix(in srgb, var(--kind) 40%, var(--border));
-  font-family: var(--font-mono, monospace);
-  font-weight: 500;
+  white-space: nowrap;
+}
+.bk-ref {
+  color: var(--text-subtle);
+  margin-right: 2px;
+}
+.bk-hidden {
   font-size: 12px;
+  color: var(--text-subtle);
+  white-space: nowrap;
+}
+
+/* Slots */
+.bk-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 320px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface-sunken);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.bk-pill-json {
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+}
+.bk-pill-text {
+  max-width: 560px;
+}
+.bk-row[data-expanded] .bk-pill-text {
+  white-space: normal;
+  height: auto;
+  padding: 2px 8px;
+}
 .bk-pill[data-empty] {
   border-style: dashed;
-  color: var(--text-muted);
-  font-family: inherit;
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: transparent;
+}
+.bk-slot {
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast, 120ms) ease,
+    box-shadow var(--dur-fast, 120ms) ease;
+}
+.bk-slot:hover,
+.bk-slot:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
+  outline: none;
 }
 .bk-field {
   height: 24px;
   padding: 0 6px;
-  border-radius: var(--radius-full);
-  border: 1px solid color-mix(in srgb, var(--kind) 40%, var(--border));
-  background: var(--surface);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-control);
+  background: var(--surface-sunken);
   color: var(--text);
   font-family: var(--font-mono, monospace);
   font-size: 12px;
   text-align: center;
   cursor: text;
 }
-.bk-chip {
+
+/* Marks at the right edge */
+.bk-marks {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.bk-mark {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  padding: 1px 7px;
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--surface) 70%, transparent);
-  font-family: var(--font-mono, monospace);
-  font-weight: 400;
-  font-size: 11px;
+  white-space: nowrap;
 }
-.bk-chip-kept {
-  color: var(--ev-learning);
-}
-.bk-badges {
-  grid-column: 2;
-  justify-self: end;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 400;
-}
-.bk-id {
-  font-family: var(--font-mono, monospace);
-  font-size: 11px;
-  color: var(--text-muted);
+.bk-mark-warn {
+  color: var(--waiting);
 }
 .bk-errors {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
   color: var(--failed);
-  font-size: 12px;
 }
 
-/* C-blocks */
-.bk-c {
-  display: flex;
-  flex-direction: column;
-  border-radius: var(--radius-md);
-  padding: 0;
+/* The expanded step */
+.bk-more {
+  padding: 0 12px 10px 44px;
 }
-.bk-c-head,
-.bk-c-mid {
+.bk-footer {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 8px 10px;
-  font-weight: 600;
-  font-size: 13px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
 }
-.bk-c-mid {
-  padding: 4px 10px;
+.bk-id {
+  font-family: var(--font-mono, monospace);
   font-size: 12px;
   color: var(--text-muted);
 }
-.bk-c-foot {
-  height: 14px;
-}
-.bk-mouth {
-  margin-left: 18px;
-  padding: 6px 8px 6px 8px;
-  min-height: 34px;
-  background: var(--bg);
-  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
-  border: 1px solid color-mix(in srgb, var(--kind) 35%, var(--surface));
-  border-right: 0;
-  cursor: default;
-}
-.bk-lanes {
-  display: flex;
-  gap: 8px;
-  margin-left: 18px;
-  margin-right: 8px;
-}
-.bk-lanes .bk-mouth {
-  margin-left: 0;
-  flex: 1;
-  min-width: 260px;
-  border-right: 1px solid color-mix(in srgb, var(--kind) 35%, var(--surface));
-  border-radius: var(--radius-sm);
-}
 
-/* Lists and gaps (drop zones) */
-.bk-list {
-  display: flex;
-  flex-direction: column;
-}
+/* Gaps: a drop zone, and the "+" on the spine */
 .bk-gap {
-  height: 6px;
-  margin: 0;
-  border-radius: 4px;
-  transition:
-    height 100ms ease,
-    background 100ms ease;
+  position: relative;
+  height: 8px;
+  transition: height var(--dur-fast, 120ms) ease;
+}
+.bk-stack:not([data-loose]) .bk-gap:hover,
+.bk-gap:focus-within {
+  height: 18px;
+}
+.bk-gap .bk-plus {
+  position: absolute;
+  left: -40px;
+  top: 50%;
+  transform: translateY(-50%) scale(0.8);
+  opacity: 0;
+  z-index: 2;
+}
+.bk-gap:hover .bk-plus,
+.bk-gap .bk-plus:focus-visible,
+.bk-entry:has(> .bk-row[data-selected]) > .bk-gap .bk-plus {
+  opacity: 1;
+  transform: translateY(-50%) scale(1);
 }
 .bk-viewport[data-dragging] .bk-gap {
   height: 14px;
 }
 .bk-gap[data-active] {
-  height: 34px !important;
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
-  outline: 2px dashed var(--accent);
+  height: 38px !important;
+  border: 1px dashed var(--border-control);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.bk-plus {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-overlay, var(--surface));
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    opacity var(--dur-fast, 120ms) ease,
+    transform var(--dur-fast, 120ms) ease,
+    color var(--dur-fast, 120ms) ease;
+}
+.bk-plus:hover {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 .bk-mouth-empty {
-  display: grid;
-  place-items: center;
-  min-height: 30px;
-  padding: 4px 10px;
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-sm);
-  color: var(--text-subtle);
-  font-size: 12px;
+  display: flex;
+  min-height: 34px;
+}
+.bk-mouth-empty .bk-plus {
+  width: 100%;
+  height: 34px;
+  border-style: dashed;
+  border-color: var(--border-control);
+  justify-content: flex-start;
+  padding: 0 10px;
 }
 .bk-mouth-empty[data-active] {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  color: var(--text);
+  border: 1px dashed var(--accent);
+  border-radius: var(--radius-lg);
 }
 
-/* The dragged blocks follow the pointer above everything. */
+/* C-blocks: a head row, then framed lanes on the canvas */
+.bk-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.bk-lanes {
+  display: flex;
+  gap: 12px;
+}
+.bk-lane {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px 8px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.bk-loop {
+  border-color: color-mix(in srgb, var(--kind-control) 45%, var(--border));
+  border-style: dashed;
+}
+.bk-lane-label {
+  display: block;
+  margin: 0 0 4px 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-subtle);
+}
+.bk-foot {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.bk-loop .bk-foot {
+  color: var(--kind-control);
+}
+
+/* Suggested by Claude: dashed accent outline and a tag */
+.bk-row[data-suggested] {
+  outline: 2px dashed var(--accent);
+  outline-offset: 3px;
+}
+.bk-row[data-suggested]::after {
+  content: "Suggested";
+  position: absolute;
+  top: -9px;
+  right: 10px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+/* The dragged steps follow the pointer */
 .bk-ghost {
   position: fixed;
   z-index: 50;
   pointer-events: none;
   transform-origin: 0 0;
-  min-width: 320px;
-  filter: drop-shadow(0 10px 18px rgb(0 0 0 / 30%));
-  opacity: 0.92;
+  width: 640px;
+  filter: drop-shadow(0 10px 18px rgb(0 0 0 / 28%));
+  opacity: 0.94;
 }
 
-/* Palette blocks: the same look, small. */
+/* The facts (BlockFacts) inside an expanded step */
+.bk-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 12px;
+  row-gap: 4px;
+  margin: 4px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+.bk-fact-label {
+  color: var(--text-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10px;
+  padding-top: 3px;
+}
+.bk-fact {
+  margin: 0;
+  color: var(--text);
+}
+.bk-runs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+.bk-runs > * {
+  flex: none;
+  max-width: 100%;
+}
+.bk-call {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 10px;
+}
+.bk-fact-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.bk-draft {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.bk-plan {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.bk-script {
+  margin: 8px 0 0;
+  max-height: 300px;
+  overflow: auto;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre;
+  cursor: text;
+}
+.bk-line {
+  display: none;
+}
+
+/* Palette (left rail): neutral tiles, the kind's colour on the icon */
 .bk-palette-block {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
+  padding: 5px 8px;
   border-radius: var(--radius-md);
-  border: 1px solid color-mix(in srgb, var(--kind) 55%, var(--surface));
-  background: color-mix(in srgb, var(--kind) 20%, var(--surface));
+  border: 1px solid var(--border);
+  background: var(--surface);
   color: var(--text);
   text-align: left;
   cursor: grab;
   touch-action: none;
-  transition: transform 120ms ease;
+}
+.bk-palette-block > svg {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--kind) 16%, var(--surface));
+  color: var(--kind);
 }
 .bk-palette-block:hover {
-  transform: translateX(3px);
+  background: var(--surface-hover);
 }
 .bk-palette-hint {
   font-size: 11px;
@@ -329,154 +586,24 @@
   gap: 6px;
   padding: 4px 8px;
   border-radius: var(--radius-sm);
-  border: 1px solid color-mix(in srgb, var(--kind) 40%, var(--surface));
-  background: color-mix(in srgb, var(--kind) 10%, var(--surface));
+  border: 1px solid var(--border);
+  background: var(--surface);
   color: var(--text);
   font-size: 12px;
   cursor: grab;
   touch-action: none;
   text-align: left;
 }
+.bk-palette-action:hover {
+  background: var(--surface-hover);
+}
 .bk-palette-action .ah-mono {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-@media (prefers-reduced-motion: reduce) {
-  .bk-gap,
-  .bk-palette-block,
-  .bk-block {
-    transition: none;
-  }
-}
 
-/* v2: blocks read as one sentence; a step number in the gutter; marks at the right edge. */
-.bk-block {
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  min-width: 380px;
-  max-width: 760px;
-  padding: 8px 12px 8px 10px;
-}
-.bk-body {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.bk-caption {
-  font-size: 12px;
-  color: var(--text-muted);
-  font-weight: 500;
-}
-.bk-words {
-  font-size: 14px;
-  row-gap: 6px;
-}
-.bk-num {
-  position: absolute;
-  right: calc(100% + 10px);
-  top: 12px;
-  font-family: var(--font-mono, monospace);
-  font-size: 11px;
-  color: var(--text-subtle);
-  white-space: nowrap;
-}
-.bk-c-head {
-  position: relative;
-}
-.bk-c-head .bk-num {
-  top: 10px;
-}
-.bk-marks {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  align-self: start;
-  margin-top: 4px;
-  color: var(--text-muted);
-}
-.bk-mark {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-}
-.bk-mark-warn {
-  color: var(--waiting);
-}
-.bk-badges {
-  grid-column: auto;
-}
-.bk-pair {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-.bk-label,
-.bk-sep {
-  font-weight: 400;
-  color: var(--text-muted);
-}
-.bk-pill-kept {
-  color: var(--ev-learning);
-}
-.bk-c-foot {
-  height: auto;
-  min-height: 14px;
-  padding: 2px 12px 6px;
-  font-size: 11px;
-  color: var(--text-muted);
-}
-
-/* The "+" in a gap: shown on hover of the stack, always in an empty mouth. */
-.bk-gap {
-  position: relative;
-  height: 12px;
-}
-.bk-gap .bk-plus {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%) scale(0.85);
-  opacity: 0;
-  z-index: 2;
-}
-.bk-stack:hover .bk-gap .bk-plus,
-.bk-gap .bk-plus:focus-visible {
-  opacity: 1;
-}
-.bk-gap .bk-plus:hover {
-  transform: translate(-50%, -50%) scale(1.05);
-}
-.bk-plus {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 24px;
-  min-width: 24px;
-  justify-content: center;
-  padding: 0 6px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-  color: var(--text-muted);
-  font-size: 12px;
-  cursor: pointer;
-  transition:
-    opacity 120ms ease,
-    transform 120ms ease,
-    color 120ms ease;
-}
-.bk-plus:hover {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-.bk-mouth-empty .bk-plus {
-  border-style: dashed;
-  width: 100%;
-  height: 30px;
-}
-
-/* Insert menu */
+/* Insert menu and slot popovers */
 .bk-menu-scrim {
   position: fixed;
   inset: 0;
@@ -500,6 +627,9 @@
   display: flex;
   flex-direction: column;
 }
+.bk-slot-pop .bk-menu-list {
+  max-height: 260px;
+}
 .bk-menu-group {
   margin: 6px 4px 2px;
   font-size: 11px;
@@ -521,7 +651,9 @@
   text-align: left;
   cursor: pointer;
 }
-.bk-menu-row[aria-selected="true"] {
+.bk-menu-row[aria-selected="true"],
+.bk-menu-row[aria-current="true"],
+.bk-menu-row:hover {
   background: var(--surface-hover);
 }
 .bk-menu-label {
@@ -546,178 +678,37 @@
   border-top: 1px solid var(--border);
   padding-top: 6px;
 }
-
-.bk-pill-text {
-  max-width: 520px;
-  white-space: normal;
-  font-family: inherit;
-  text-overflow: clip;
-}
-
-/* Slots you click to fill: they look like it. */
-.bk-slot {
-  cursor: pointer;
-  text-decoration: underline dotted color-mix(in srgb, var(--text-muted) 60%, transparent);
-  text-underline-offset: 3px;
-  transition:
-    box-shadow 100ms ease,
-    border-color 100ms ease;
-}
-.bk-slot:hover,
-.bk-slot:focus-visible {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
-  outline: none;
-}
-.bk-slot[data-empty] {
-  text-decoration: none;
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-}
-.bk-slot-pop .bk-menu-list {
-  max-height: 260px;
-}
 .bk-textarea {
   height: auto;
   min-height: 72px;
   padding: 6px 8px;
 }
-/* Lighter fills: the words lead, the tint only says the kind. */
-.bk-block,
-.bk-c {
-  background: color-mix(in srgb, var(--kind) 12%, var(--surface));
-  border-color: color-mix(in srgb, var(--kind) 45%, var(--border));
-  border-left: 4px solid var(--kind);
-}
-.bk-icon {
-  background: color-mix(in srgb, var(--kind) 30%, var(--surface));
-}
-.bk-pill {
-  font-family: inherit;
+
+@media (prefers-reduced-motion: reduce) {
+  .bk-row,
+  .bk-gap,
+  .bk-plus,
+  .bk-slot {
+    transition: none;
+  }
 }
 
-/* A block Claude proposes: dashed accent outline and a "Suggested" tag, never mistaken for one
- * of yours. */
-.bk-block[data-suggested],
-.bk-c[data-suggested] {
-  outline: 2px dashed var(--accent);
-  outline-offset: 3px;
-}
-.bk-block[data-suggested]::before,
-.bk-c[data-suggested]::before {
-  content: "Suggested";
-  position: absolute;
-  top: -10px;
-  right: 10px;
-  padding: 0 6px;
-  border-radius: var(--radius-sm);
-  background: var(--accent);
-  color: var(--text-inverse);
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 16px;
-  z-index: 2;
-}
-
-/* The facts under a block's sentence: what it runs, calls, changes, gives. */
-.bk-facts {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  column-gap: 10px;
-  row-gap: 3px;
-  margin: 6px 0 0;
-  padding-top: 6px;
-  border-top: 1px dashed color-mix(in srgb, var(--kind) 35%, var(--border));
-  font-size: 12px;
-  font-weight: 400;
-}
-.bk-fact-label {
-  color: var(--text-subtle);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  font-size: 10px;
-  padding-top: 2px;
-}
-.bk-fact {
-  margin: 0;
-  color: var(--text);
-  overflow-wrap: anywhere;
-}
-.bk-call {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-right: 10px;
-}
-.bk-fact-link {
-  border: 0;
-  background: none;
+/* The selected step's problems, in its own words, above its footer. */
+.bk-problems {
+  margin: 10px 0 0;
   padding: 0;
-  color: var(--accent);
-  font-size: 12px;
-  cursor: pointer;
-  text-decoration: underline;
-}
-.bk-draft {
-  color: var(--waiting);
-  font-size: 11px;
-}
-.bk-plan {
-  display: inline-flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.bk-script {
-  margin: 6px 0 0;
-  max-height: 260px;
-  overflow: auto;
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  background: var(--surface-sunken);
-  font-family: var(--font-mono, monospace);
-  font-size: 11px;
-  line-height: 1.5;
-  white-space: pre;
-  cursor: text;
-}
-
-/* A fact's parts wrap between them, never inside a word or a path. */
-.bk-runs {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
-}
-.bk-runs > * {
-  flex: none;
-  max-width: 100%;
-}
-.bk-fact {
-  overflow-wrap: normal;
-  word-break: normal;
-}
-.bk-script {
-  max-width: 640px;
-}
-.bk-block {
-  min-width: 460px;
-}
-
-/* The facts in one line, on every block that is not selected. */
-.bk-line {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px 12px;
-  margin-top: 4px;
-  font-size: 12px;
-  font-weight: 400;
-  color: var(--text-muted);
-}
-.bk-line > span {
-  display: inline-flex;
-  align-items: center;
+  list-style: none;
+  display: grid;
   gap: 4px;
+  font-size: 13px;
 }
-.bk-line-plan {
-  color: var(--text);
+.bk-problems li {
+  padding: 6px 10px;
+  border-radius: var(--radius-md, 6px);
+  background: var(--failed-soft);
+  color: var(--failed);
+}
+.bk-problems li[data-severity="warning"] {
+  background: var(--waiting-soft);
+  color: var(--waiting);
 }
