@@ -155,9 +155,8 @@ describe("SkillsPickerScreen cards (AGH-427)", () => {
     expect(card).toHaveTextContent("AGH");
     expect(card).toHaveTextContent("acme/demo-hub · 2 repos · platform 0.4.0");
     expect(within(card).getByTitle("api, web")).toHaveTextContent("2 repos");
-    expect(
-      within(card).getByRole("img", { name: "Health: no doctor errors or warnings" }),
-    ).toBeInTheDocument();
+    // A healthy hub shows no health badge here: the picker is not the place for it.
+    expect(within(card).queryByRole("img", { name: /^Health:/ })).toBeNull();
     expect(card.querySelector(".ah-pick-chevron")).not.toBeNull();
     expect(within(card).getByRole("heading", { level: 3 })).toContainElement(
       within(card).getByRole("link", { name: "demo" }),
