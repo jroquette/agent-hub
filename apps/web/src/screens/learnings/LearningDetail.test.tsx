@@ -677,7 +677,7 @@ describe("LearningDetail", () => {
     expect(within(note).getByText("brain/auto/workspace/me.md")).toBeInTheDocument();
     expect(note).toHaveTextContent("In the brain · not opened here");
     expect(within(note).getByRole("tooltip")).toHaveTextContent(
-      "The app does not open notes at this path (not a .md file, a hidden name, under auto/, or too long or deep)",
+      "The app does not open notes at this path (not a .md file, a hidden name, under auto/, too long or deep, or with an empty part or characters the app does not serve)",
     );
     expect(
       within(note).getByTitle("brain/auto/workspace/me.md").parentElement,

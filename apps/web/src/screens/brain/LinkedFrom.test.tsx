@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -163,7 +164,7 @@ describe("BrainScreen Linked from", () => {
     expect(within(section).getByTitle("brain/.hidden/x.md")).toBeInTheDocument();
     // The reason in the tooltip, and the same words as a repo doc on the kind line (K5, H9).
     expect(within(section).getByRole("tooltip")).toHaveTextContent(
-      "The app does not open notes at this path (not a .md file, a hidden name, under auto/, or too long or deep)",
+      "The app does not open notes at this path (not a .md file, a hidden name, under auto/, too long or deep, or with an empty part or characters the app does not serve)",
     );
     const row = within(section).getByText("Hidden note").closest("li");
     expect(row?.querySelector(".ah-know-kind")).toHaveTextContent(/^playbook · not opened here$/);
@@ -171,12 +172,19 @@ describe("BrainScreen Linked from", () => {
   });
 
   it("linked from: lights up only the rows that open a note on hover", () => {
-    // Read as a file: Vitest runs from apps/web and jsdom applies no stylesheet.
-    const css = readFileSync("src/screens/brain/Brain.css", "utf8");
+    // Read as a file next to this test (jsdom applies no stylesheet), whatever the cwd. The module URL
+    // goes through a constant: Vite rewrites a literal `new URL("…", import.meta.url)` to a served URL.
+    const here = import.meta.url;
+    const css = readFileSync(fileURLToPath(new URL("./Brain.css", here)), "utf8");
     const hovers = [...css.matchAll(/^([^{}\n]*\.ah-know-row[^{}\n]*:hover)\s*\{/gm)].map(
       (match) => match[1],
     );
     expect(hovers).toEqual([":where(a).ah-know-row:hover"]);
+    // The open note's row keeps its background on hover: same specificity, so the later rule wins.
+    const hover = css.indexOf(":where(a).ah-know-row:hover {");
+    const current = css.indexOf('.ah-know-row[aria-current="page"] {');
+    expect(hover).toBeGreaterThan(-1);
+    expect(current).toBeGreaterThan(hover);
   });
 
   it("linked from: shows skeletons, then says the first read can take a few seconds", async () => {

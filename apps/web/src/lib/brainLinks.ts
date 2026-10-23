@@ -17,7 +17,7 @@ const NO_PLACE = "Link not shown: this note's place in the brain is unknown";
  * Brain's knowledge rows and the learning trail's Note step say it in their tooltip.
  */
 export const UNSERVED_NOTE_REASON =
-  "The app does not open notes at this path (not a .md file, a hidden name, under auto/, or too long or deep)";
+  "The app does not open notes at this path (not a .md file, a hidden name, under auto/, too long or deep, or with an empty part or characters the app does not serve)";
 /** The words a row or step that is not opened adds, the same for repo docs and refused notes. */
 export const NOT_OPENED_HERE = "not opened here";
 

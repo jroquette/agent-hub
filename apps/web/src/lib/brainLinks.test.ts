@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   OUTSIDE_BRAIN,
+  UNSERVED_NOTE_REASON,
   anchorId,
   brainRoute,
   headingSlug,
   isRelativeHref,
+  isServedNote,
   resolveBrainLink,
   stepAnchor,
   tocAnchors,
@@ -183,5 +185,21 @@ describe("isRelativeHref", () => {
 describe("stepAnchor", () => {
   it("names the element of a numbered step", () => {
     expect(stepAnchor(3)).toBe("step-3");
+  });
+});
+
+describe("UNSERVED_NOTE_REASON", () => {
+  it.each([
+    ["playbooks/notes.txt", "not a .md file"],
+    [".hidden/x.md", "a hidden name"],
+    ["auto/workspace/me.md", "under auto/"],
+    [`${"a".repeat(510)}.md`, "too long or deep"],
+    [`${"a/".repeat(16)}x.md`, "too long or deep"],
+    ["playbooks//x.md", "an empty part"],
+    ["playbooks/a\\b.md", "characters the app does not serve"],
+    ["playbooks/a\u0007b.md", "characters the app does not serve"],
+  ])("names why isServedNote refuses %j", (path, cause) => {
+    expect(isServedNote(path)).toBe(false);
+    expect(UNSERVED_NOTE_REASON).toContain(cause);
   });
 });

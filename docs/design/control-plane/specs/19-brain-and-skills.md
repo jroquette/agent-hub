@@ -197,8 +197,10 @@ the **snippet** as plain text, clamped to 3 lines (2 below 900 px) by CSS so a s
 - A `brain/` path the note route would refuse (AM-8: not a `.md` file, a hidden or empty segment, under `brain/auto/`,
   over 16 segments or 512 characters, or a control character or backslash) is text too, `file-text` icon: the kind
   line ends "· not opened here", the same words as a repo doc, and the tooltip gives the reason, "The app does not
-  open notes at this path (not a .md file, a hidden name, under auto/, or too long or deep)". The row is focusable
-  and described by the tooltip, so the reason reaches the keyboard and a screen reader too.
+  open notes at this path (not a .md file, a hidden name, under auto/, too long or deep, or with an empty part or
+  characters the app does not serve)". The row is not in the Tab order: its visible words "not opened here" carry the
+  reason for keyboard and touch users, and the tooltip, which also describes the row for a screen reader, adds the
+  detail on hover.
 - Only a row that opens a note highlights on hover; a text row (repo doc or refused note) does not.
 
 **Note column.** The header row holds the path, two quiet in-page buttons, **"Where it came from"** and **"Linked from
