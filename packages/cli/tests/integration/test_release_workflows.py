@@ -81,7 +81,7 @@ def test_validates_release_when_pack_loaded(
     validated = run_command(demo_workspace.hub, "workflow", "validate", "release")
 
     assert validated.exit_code == 0, validated.output
-    assert validated.stdout == "release: valid (15 nodes in 15 layers)\n"
+    assert validated.stdout == "release: valid (17 nodes in 17 layers)\n"
 
 
 def test_puts_every_pr_behind_an_approval_when_release_loaded() -> None:
@@ -120,7 +120,16 @@ def test_writes_no_tracker_when_release_loaded() -> None:
     shells = sorted(" ".join(node.command[:3]) for node in nodes.values() if node.type == "shell")
     prompt = (PACK / "prompts/notes.md").read_text(encoding="utf-8").lower()
 
-    assert shells == ["hub step pr", "hub step pr", "hub step worktree"]
+    # config and branch_config read hub.json for pin.py and hub_branch.py (AGH-480), read-only.
+    assert shells == [
+        "hub step config",
+        "hub step config",
+        "hub step pr",
+        "hub step pr",
+        "hub step worktree",
+    ]
+    for name in ("config", "branch_config"):
+        assert nodes[name].mutates_checkout is False, name
     assert [word for word in TRACKER_WORDS if word in prompt] == []
     assert nodes["notes"].mutates_checkout is False
 
@@ -271,14 +280,27 @@ def a_git_hub(workspace: Workspace) -> Path:
     return hub
 
 
-def test_lists_sync_changes_when_pin_list_runs_on_demo_hub(demo_workspace: Workspace) -> None:
+def test_lists_sync_changes_when_pin_list_runs_on_demo_hub(
+    demo_workspace: Workspace, run_command: CommandRunner
+) -> None:
     hub = demo_workspace.hub
     # A managed file the hub lost: the new version's sync would restore it.
     (hub / "AGENTS.md").unlink()
     a_git_hub(demo_workspace)
+    # The workflow's config node: the real hub step config output, as --config takes it.
+    config = run_command(hub, "step", "config")
+    assert config.exit_code == 0, config.output
 
     listed = script(
-        "pin.py", "list", "--repo", str(REPO_ROOT), "--version", current_version(), cwd=hub
+        "pin.py",
+        "list",
+        "--repo",
+        str(REPO_ROOT),
+        "--version",
+        current_version(),
+        "--config",
+        config.stdout,
+        cwd=hub,
     )
 
     assert listed.returncode == 0, listed.stderr
@@ -295,7 +317,19 @@ def test_accepts_hub_target_when_commits_step_reads_it(
 ) -> None:
     hub = a_git_hub(demo_workspace)
 
-    branched = script("hub_branch.py", "--issue", "DEM-9", "--slug", "bump-platform", cwd=hub)
+    # The workflow's branch_config node: the real hub step config output, as --config takes it.
+    config = run_command(hub, "step", "config", "--branch", "DEM-9", "--slug", "bump-platform")
+    assert config.exit_code == 0, config.output
+    branched = script(
+        "hub_branch.py",
+        "--issue",
+        "DEM-9",
+        "--slug",
+        "bump-platform",
+        "--config",
+        config.stdout,
+        cwd=hub,
+    )
     assert branched.returncode == 0, branched.stderr
     target = json.loads(branched.stdout)["target"]
     commits = run_command(hub, "step", "commits", "--target", json.dumps(target))

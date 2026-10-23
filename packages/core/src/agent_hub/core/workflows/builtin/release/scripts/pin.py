@@ -4,9 +4,11 @@
 # ///
 """The hub's platform pin: what ``hub sync`` rewrites at a new version, then the pin's commit.
 
-``pin.py list --repo <platform checkout> --version X.Y.Z`` runs in the hub (the node's default
-cwd). It adds a detached git worktree of the hub at its local ``origin/<default_branch>`` in a
-temporary folder, sets that copy's ``platform.version`` to the new version and runs the
+``pin.py list --repo <platform checkout> --version X.Y.Z --config <json>`` runs in the hub (the
+node's default cwd). ``--config`` is what ``hub step config`` printed: the hub's default branch
+(this script reads no config from ``hub.json``). It adds a detached git worktree of the hub at its
+local ``origin/<default_branch>`` in a temporary folder, reads the pin there (``from``), sets that
+copy's ``platform.version`` to the new version and runs the
 platform checkout's CLI there (``uv run --project <repo> --locked --all-packages hub sync
 --check``, which renders the new version without fetching a release); the ``would <verb>
 <path>`` lines are the list (``hub.lock`` aside). The worktree is removed at the end. Prints
@@ -23,9 +25,10 @@ clean ``HEAD`` prints it again (its files from git). Prints ``{"from", "version"
 "count", "files", "summary"}``; ``summary`` (the PR's body, at most ``MAX_SUMMARY`` bytes)
 names the version, the tag and the files sync rewrote.
 
-Both edit only the ``version`` value inside ``hub.json``'s ``platform`` object, as text, so the
-file's layout stays. A bad argument or ``hub.json`` (larger than 1 MiB, not a JSON object, no
-``platform.version``, no default branch in ``project``) exits 2; a git or CLI failure, a dirty hub
+Both edit only the ``version`` value inside the copy's or the worktree's ``hub.json``
+``platform`` object, as text, so the file's layout stays: the file they change, never a config
+they read. A bad argument, config (no hub default branch) or edited ``hub.json`` (larger than 1
+MiB, not a JSON object, no ``platform.version``) exits 2; a git or CLI failure, a dirty hub
 worktree or a sync still pending after ``apply`` exits 1. Both say why on stderr.
 """
 
@@ -160,19 +163,32 @@ def sync_list(copy: Path, cli: list[str]) -> tuple[list[dict[str, str]], list[st
     return parsed(out, WOULD), []
 
 
-def list_changes(hub: Path, *, repo: Path, version: str, cli: list[str]) -> dict[str, object]:
-    _, value, previous = read_hub_json(hub / HUB_JSON)
-    project = value.get("project")
-    default = project.get("default_branch") if isinstance(project, dict) else None
+def hub_branch(text: str) -> str:
+    """The hub's default branch, from ``hub step config``'s output."""
+    if len(text.encode()) > MAX_CONFIG_BYTES:
+        raise RefusedError("the config: larger than 1 MiB")
+    try:
+        value = json.loads(text)
+    except ValueError as error:
+        raise RefusedError(f"the config: {error}") from None
+    hub = value.get("hub") if isinstance(value, dict) else None
+    default = hub.get("default_branch") if isinstance(hub, dict) else None
     if not isinstance(default, str) or not default:
-        raise RefusedError("hub.json: no project.default_branch")
+        raise RefusedError("the config: no hub.default_branch")
+    return default
+
+
+def list_changes(
+    hub: Path, *, repo: Path, version: str, cli: list[str], config: str
+) -> dict[str, object]:
+    default = hub_branch(config)
     command = cli or ["uv", "run", "--project", str(repo), "--locked", "--all-packages", "hub"]
     folder = Path(tempfile.mkdtemp(prefix="release-pin-"))
     copy = folder / "hub"
     try:
         _git(hub, "worktree", "add", "-q", "--detach", str(copy), f"origin/{default}")
         try:
-            copy_text, _, _ = read_hub_json(copy / HUB_JSON)
+            copy_text, _, previous = read_hub_json(copy / HUB_JSON)
             (copy / HUB_JSON).write_text(set_pin(copy_text, version), encoding="utf-8")
             files, conflicts = sync_list(copy, command)
         finally:
@@ -285,6 +301,7 @@ def _parser() -> argparse.ArgumentParser:
     actions = parser.add_subparsers(dest="action", required=True)
     listing = actions.add_parser("list")
     listing.add_argument("--repo", required=True)
+    listing.add_argument("--config", required=True, help="What hub step config printed.")
     applying = actions.add_parser("apply")
     applying.add_argument("--worktree", required=True)
     applying.add_argument("--issue", required=True)
@@ -301,7 +318,9 @@ def run(given: argparse.Namespace) -> dict[str, object]:
     cli = shlex.split(given.cli)
     if given.action == "list":
         repo = Path(given.repo).resolve()
-        return list_changes(Path.cwd().resolve(), repo=repo, version=given.version, cli=cli)
+        return list_changes(
+            Path.cwd().resolve(), repo=repo, version=given.version, cli=cli, config=given.config
+        )
     if not ISSUE.fullmatch(given.issue):
         raise RefusedError("--issue must be <team>-<n>")
     if not given.worktree:
