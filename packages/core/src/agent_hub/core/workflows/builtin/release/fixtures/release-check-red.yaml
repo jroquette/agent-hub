@@ -2,6 +2,8 @@
 workflow: release
 inputs: {issue: DEM-9, repo: demo-api, version: ""}
 stubs:
+  config:
+    output: {default_branch: main, branch_prefix: jdoe/, author_name: Jane Doe, author_email: jane@example.com, ready_label: agent-ready, teams: [DEM], hub: {github: acme/demo-hub, default_branch: main, target: {github: acme/demo-hub, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}, repos: [{dir: demo-api, github: acme/demo-api, default_branch: main, check_fast: make check-fast, check: make check, target: {github: acme/demo-api, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}]}
   worktree:
     output:
       path: /ws/demo-api/.claude/worktrees/dem-9
@@ -49,4 +51,4 @@ stubs:
   check: {output: {sha: 0a1b2c3d4e5f60718293a4b5c6d7e8f901234567, passed: false, exit_code: 2, log: /work/release-check-1.log, tail: "1 failed\n", problem: the check exited 2}}
   report: {output: {outcome: blocked, version: 0.21.0, pr: "", pin_pr: "", reason: the run's outcome}}
 expect: {status: done, outcome: blocked}
-reached: [worktree, since, bump, rewrites, notes, compose, check, report]
+reached: [config, worktree, since, bump, rewrites, notes, compose, check, report]

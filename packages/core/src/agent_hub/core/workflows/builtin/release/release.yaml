@@ -10,7 +10,9 @@
 # tag (ADR 0047); no node here makes, moves or pushes one. The run waits until the owner says the
 # tag exists (tagged.py checks it on origin: annotated, on the release commit), then a second
 # approval opens the hub PR that sets platform.version and runs ./hub sync (hub_branch.py,
-# pin.py apply); the owner merges both PRs. Started only by /release or ./hub workflow run release
+# pin.py apply; hub step config reads the branch and the hub's facts from hub.json for them, as
+# config does for pin.py list: no script reads its config from hub.json); the owner merges both
+# PRs. Started only by /release or ./hub workflow run release
 # (never scheduled or event-started). No node reads or writes the tracker (ADR 0030): /release
 # finds or creates the release issue before the run and comments after it.
 version: 1
@@ -128,13 +130,30 @@ nodes:
         lockstep: {type: string}
       required: [version, previous, sha, files, changelog, changelog_empty, readme_replaced, lockstep]
 
+  - id: config
+    type: shell
+    description: The hub.json values this run's scripts need, read by the CLI (read-only).
+    depends_on: [bump]
+    command: [hub, step, config]
+    effect: read
+    mutates_checkout: false
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        default_branch: {type: string}
+        branch_prefix: {type: [string, "null"]}
+        hub: {type: object}
+        repos: {type: array, items: {type: object}}
+      required: [default_branch, branch_prefix, hub, repos]
+
   - id: rewrites
     type: script
     description: What hub sync rewrites in every hub at the new version, rendered by the release's own CLI.
-    depends_on: [bump]
+    depends_on: [bump, config]
     runtime: python
     script: pin.py
-    args: [list, --repo, $worktree.output.path, --version, $bump.output.version]
+    args: [list, --repo, $worktree.output.path, --version, $bump.output.version, --config, $config.output]
     timeout: 20m
     retry: {max_attempts: 0}
     output_format:
@@ -302,14 +321,34 @@ nodes:
       Tag v$bump.output.version is on $bump.output.sha. Approve: a hub PR sets platform.version
       to $bump.output.version and runs ./hub sync ($rewrites.output.count managed files).
 
+  - id: branch_config
+    type: shell
+    description: The pin's hub branch (the developer's prefix) and the hub's target from hub.json, read by the CLI (read-only).
+    depends_on: [pin_go]
+    when: "$pin_go.output.decision == 'approve'"
+    command: [hub, step, config, --branch, $INPUTS.issue, --slug, bump-platform]
+    effect: read
+    mutates_checkout: false
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        default_branch: {type: string}
+        branch_prefix: {type: [string, "null"]}
+        hub: {type: object}
+        repos: {type: array, items: {type: object}}
+        branch_name: {type: string}
+        branch: {type: string}
+      required: [default_branch, branch_prefix, hub, repos, branch_name, branch]
+
   - id: hub_branch
     type: script
     description: The hub worktree and branch the pin is committed on (never the hub's default branch).
-    depends_on: [pin_go]
+    depends_on: [pin_go, branch_config]
     when: "$pin_go.output.decision == 'approve'"
     runtime: python
     script: hub_branch.py
-    args: [--issue, $INPUTS.issue, --slug, bump-platform]
+    args: [--issue, $INPUTS.issue, --slug, bump-platform, --config, $branch_config.output]
     timeout: 5m
     retry: {max_attempts: 0}
     output_format:

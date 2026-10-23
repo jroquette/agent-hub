@@ -103,10 +103,16 @@ def seen(tmp_path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in lines]
 
 
-def list_pin(hub: Path, monkeypatch: pytest.MonkeyPatch, *, cli: str) -> int:
+# What hub step config prints for the hub, as the workflow passes it with --config (AGH-480).
+CONFIG = json.dumps(
+    {"default_branch": "trunk", "hub": {"github": "acme/demo-hub", "default_branch": "trunk"}}
+)
+
+
+def list_pin(hub: Path, monkeypatch: pytest.MonkeyPatch, *, cli: str, config: str = CONFIG) -> int:
     monkeypatch.chdir(hub)
     argv = ["list", "--repo", str(hub.parent), "--version", "0.21.0", "--cli", cli]
-    code: int = load().main(argv)
+    code: int = load().main([*argv, "--config", config])
     return code
 
 
@@ -138,8 +144,34 @@ def test_exits_two_when_platform_version_missing(
     monkeypatch.chdir(hub)
     cli = a_fake_hub(tmp_path, check="up to date", check_exit=0)
 
-    assert load().main(["list", "--repo", ".", "--version", "0.21.0", "--cli", cli]) == 2
+    assert list_pin(hub, monkeypatch, cli=cli) == 2
     assert capsys.readouterr().err.startswith("pin.py: hub.json: ")
+
+
+@pytest.mark.parametrize("config", ["not json", "[]", json.dumps({"hub": {"default_branch": ""}})])
+def test_exits_two_when_config_gives_no_hub_branch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    config: str,
+) -> None:
+    hub = a_hub(tmp_path)
+    cli = a_fake_hub(tmp_path, check="up to date", check_exit=0)
+
+    assert list_pin(hub, monkeypatch, cli=cli, config=config) == 2
+    assert capsys.readouterr().err.startswith("pin.py: the config: ")
+
+
+def test_lists_from_the_config_branch_when_hub_json_names_another(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The checkout's hub.json is never read for the branch: the config's is the one used.
+    hub = a_hub(tmp_path, HUB_JSON.replace('"default_branch": "trunk"', '"default_branch": "gone"'))
+    cli = a_fake_hub(tmp_path, check="up to date", check_exit=0)
+
+    assert list_pin(hub, monkeypatch, cli=cli) == 0
+    assert json.loads(capsys.readouterr().out)["from"] == "0.20.1"
 
 
 def test_lists_would_lines_when_sync_check_pending(
