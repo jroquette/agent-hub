@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
@@ -221,6 +222,31 @@ def test_stays_under_byte_cap_when_history_is_large(
     assert all(len(path) <= 300 for c in found["commits"] for path in c["paths"])
     # The newest commits are kept; the oldest go first.
     assert found["commits"][0]["subject"] == "change 149"
+
+
+def test_stays_under_byte_cap_when_every_repo_has_many_long_tags(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    first = a_repo(tmp_path, "r00")
+    for n in range(20):
+        git(first, "tag", f"{'t' * 190}{n:02d}")
+    for number in range(1, 20):
+        shutil.copytree(first, tmp_path / f"r{number:02d}", symlinks=True)
+    # Twenty more entries past the repo cap, each an unreadable entry with a long label.
+    names = [f"r{n:02d}" for n in range(20)] + [f"{'x' * 300}{n}" for n in range(20)]
+    hub = a_hub(tmp_path, *names)
+    monkeypatch.chdir(hub)
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(REPORT.encode())))
+
+    code = load().main(["--since", "72h"])
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert len(out.encode()) <= 49152
+    output = json.loads(out)
+    assert output["trimmed"] is True
+    assert len(output["repos"]) == 20
+    assert sum(len(repo["tags"]) for repo in output["repos"]) < 400
 
 
 @pytest.mark.parametrize("since", ["0h", "72", "91d", "2161h", "3w", "1d ", "072h"])
