@@ -208,3 +208,26 @@ def test_lists_at_most_fifty_hits_when_many_match(surface: ModuleType) -> None:
 
     assert len(result["hits"]) == 50
     assert result["categories"] == ["subprocesses"]
+
+
+def test_marks_risky_when_a_file_is_renamed_into_github_workflows(clone: Clone, run: Any) -> None:
+    text = (clone.repo / "app/core.py").read_text(encoding="utf-8")
+    clone.commit({"app/core.py": "", ".github/workflows/core.py": text})
+
+    code, result = run()
+
+    assert code == 0
+    assert result["risky"] is True
+    assert "subprocesses" in result["categories"]
+    assert result["files"] == 2
+
+
+def test_marks_risky_when_a_binary_secret_file_is_added(clone: Clone, run: Any) -> None:
+    clone.commit({"token.pem": "\x00\x01key\x00"})
+
+    code, result = run()
+
+    assert code == 0
+    assert result["risky"] is True
+    assert "secrets" in result["categories"]
+    assert result["files"] == 1
