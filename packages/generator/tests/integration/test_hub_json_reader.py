@@ -1424,12 +1424,13 @@ def test_imports_every_rendered_module_when_run_on_each_python(
         "plugin/hub-workflow/hooks",
         "scripts",
         "workflows/brain-care/scripts",
+        "workflows/incident/scripts",
         "workflows/post-merge-verify/scripts",
         "workflows/retro/scripts",
         "workflows/sdlc/scripts",
-        # The incident pack's helpers (AGH-483), likewise.
-        "workflows/incident/scripts",
         "workflows/spike/scripts",
+        "workflows/upgrade/scripts",
+        # The incident pack's helpers (AGH-483), likewise.
     }
 
 

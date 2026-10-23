@@ -289,6 +289,20 @@ DESIGN_PATHS = (
     "workflows/spike/scripts/budget.py",
     "workflows/spike/scripts/draft.py",
     "workflows/spike/spike.yaml",
+    "workflows/upgrade/fixtures/upgrade-adapt-exhausted.yaml",
+    "workflows/upgrade/fixtures/upgrade-lockfile-edited.yaml",
+    "workflows/upgrade/fixtures/upgrade-major-breaking.yaml",
+    "workflows/upgrade/fixtures/upgrade-patch-green.yaml",
+    "workflows/upgrade/fixtures/upgrade-split.yaml",
+    "workflows/upgrade/prompts/adapt.md",
+    "workflows/upgrade/prompts/changelog.md",
+    "workflows/upgrade/scripts/bump.py",
+    "workflows/upgrade/scripts/check.py",
+    "workflows/upgrade/scripts/fast_gate.py",
+    "workflows/upgrade/scripts/outcome.py",
+    "workflows/upgrade/scripts/release_notes.py",
+    "workflows/upgrade/scripts/strength.py",
+    "workflows/upgrade/upgrade.yaml",
 )
 # AGH-19 spec "The rendered set": the base plugin's agents, by file stem, and its skills, by
 # folder name.
@@ -921,6 +935,8 @@ def test_parses_as_python39_when_rendered(demo_render: dict[str, RenderedFile]) 
         "workflows/retro/scripts",
         # The spike pack's helpers (AGH-492), likewise.
         "workflows/spike/scripts",
+        # The upgrade pack's (AGH-484), likewise.
+        "workflows/upgrade/scripts",
     }
 
 

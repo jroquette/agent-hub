@@ -1,0 +1,29 @@
+# An adapt round edits uv.lock: strength lists it, size asks (major) and the owner approves; the
+# full check is skipped, no push or PR, and the run ends done with the outcome blocked.
+workflow: upgrade
+inputs: {issue: DEM-1, repo: demo-api, package: httpx, to: "1.0.0"}
+stubs:
+  worktree:
+    output:
+      path: /ws/demo-api/.claude/worktrees/dem-1
+      branch: jdoe/dem-1
+      base: origin/trunk
+      hub: /ws/hub
+      hub_name: hub
+      check: make check
+      prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
+      target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
+  gate: {output: {check_fast: make check-fast, source: check_fast, reason: ""}}
+  bump: {output: {manager: uv, dir: ., from: "0.28.1", to: "1.0.0", major: true, files: [pyproject.toml, uv.lock], commit: 0a1b2c3d4e5f60718293a4b5c6d7e8f901234567}}
+  notes: {output: {found: true, sources: ["https://github.com/encode/httpx/releases/tag/1.0.0"], text: "Changes the client.", truncated: false, reason: ""}}
+  changelog: {output: {breaking: [{change: Client.get drops the verify argument., path: src/api.py, line: 12, action: Pass verify through the transport.}], summary: One breaking change hits the repo.}}
+  check: {output: {passed: false, exit_code: 2, round: 1, tail: "FAILED tests/test_api.py::test_get\n"}}
+  adapt__fix: {output: {status: done, summary: Adapts the client calls., question: ""}}
+  adapt__recheck: {output: {passed: true, exit_code: 0, round: 1, tail: "ok\n"}}
+  strength: {output: {touched: 3, files: [src/api.py, tests/test_api.py, uv.lock], lockfiles_edited: [uv.lock], lockfile_edit: true, ran: false, tool: "", reason: no mutation tool found in the repo, mutants: 0, killed: 0, inconclusive: 0, survived: [], more_survived: 0}}
+  size: {decision: approve, approver: Jo}
+  outcome: {output: {status: blocked, question: "the adapt commits edited uv.lock: only the tooling may change manifests and lockfiles", summary: "httpx 0.28.1 -> 1.0.0, major."}}
+  report: {output: {delivery: blocked, stage: implementing, reason: "the implementing session stopped: the adapt commits edited uv.lock: only the tooling may change manifests and lockfiles", question: "the adapt commits edited uv.lock: only the tooling may change manifests and lockfiles", pr: "", summary: ""}}
+expect: {status: done, outcome: blocked}
+failed: []
+reached: [worktree, gate, bump, notes, changelog, check, adapt, adapt__fix, adapt__recheck, strength, size, outcome, report]

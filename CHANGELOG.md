@@ -67,12 +67,22 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   as an argv on an allow-list in a throwaway worktree with an environment built from nothing, a mitigation gate, then a
   hand-off draft for `/fix` (or `/change`) and a blameless postmortem draft (`draft`, or `open` when nothing was
   confirmed) in `brain/_inbox/`. The pack applies nothing and writes no tracker.
+- The built-in `upgrade` workflow pack (AGH-484): one uv or npm package from its changelog to a PR. The bump is made
+  with the repo's own tooling (`uv add`/`uv lock --upgrade-package`, `npm install --ignore-scripts`), never by
+  editing a lockfile; the upstream release notes are read without a token; a read-only agent lists where each
+  breaking change hits the repo; the repo's `check_fast` (read from `hub.json`) runs, then up to three adapt rounds;
+  test strength runs on the adapted lines; a major bump, no changelog or more than five touched files asks the
+  `size` approval; the full check runs, and the push waits on the `publish` approval. Three red rounds end the run
+  `blocked` with the failing check named. Existing hubs get the pack on `./hub sync`.
 
 ### Changed
 
 - `ticket-pass` now includes the preflight from the new built-in `preflight-check` workflow (AGH-473), so its
   preflight steps are recorded as `<pass>__check__<step>` (`pass-1__check__preflight`, `pass-1__check__gate`…). A
   hub's own fixtures or scripts that name `pass-1__preflight` and the like need the new names.
+- `/upgrade` starts the `upgrade` workflow (`./hub workflow run upgrade … --live`) for a uv or npm package, one run
+  per package; a toolchain, plugin pin, Docker digest, GitHub Action or lock-maintenance bump follows its steps by
+  hand, as before.
 
 ## [0.20.1] - 2026-10-22
 
