@@ -1,0 +1,16 @@
+# Every proposed change fails the evidence check: the gate is skipped, nothing to change.
+workflow: retro
+inputs: {since: 7}
+stubs:
+  metrics:
+    output: {days: 7, since: "YYYY-MM-08", until: "YYYY-MM-15", runs: 3, nothing: false, metrics: {workflow.deliver.runs: 3}, idle: {skills: [], agents: []}, sources: [{name: runs, status: ok, reason: ""}], left_out: [], summary: "Runs started: 3 workflow runs."}
+  changes:
+    output:
+      changes:
+        - {title: An invented number, kind: workflow, change: Add a step., metrics: [{key: workflow.deliver.runs, value: 30}], links: [], expected_effect: Faster runs., how_to_tell: runs drop.}
+  vet:
+    output: {count: 0, kept: [], dropped: [{title: An invented number, reason: "cites 30 for workflow.deliver.runs, step 1 has 3"}], message: "No change kept: the retro proposes nothing this time."}
+  drafts:
+    output: {outcome: nothing to change, kept: 0, path: "", summary: "Nothing to change: no change passed the evidence check; no draft written."}
+expect: {status: done, outcome: nothing to change}
+reached: [metrics, changes, vet, drafts]

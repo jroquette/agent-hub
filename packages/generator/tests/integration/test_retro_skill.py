@@ -12,6 +12,8 @@ import pytest
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.generator.render_hub import render_hub
+from agent_hub.generator.workflow_discovery import BUILTIN_WORKFLOWS
+from agent_hub.generator.workflow_yaml import load_workflow_bytes
 
 RETRO_PATH = "plugin/hub-workflow/skills/retro/SKILL.md"
 KICKOFF_PATH = "plugin/hub-workflow/skills/kickoff/SKILL.md"
@@ -64,6 +66,13 @@ def test_names_every_data_source_when_hub_rendered(retro_text: str) -> None:
         "brain/journal/",
     ):
         assert source in retro_text, source
+
+
+def test_gathers_skill_usage_table_when_hub_rendered(retro_text: str) -> None:
+    gather = retro_text.split("\n2. ", 1)[0]
+
+    assert "`./hub skill-usage` when the pinned CLI has it" in gather
+    assert "never-used first" in gather
 
 
 def test_drops_proposals_without_evidence_when_hub_rendered(retro_text: str) -> None:
@@ -149,3 +158,55 @@ def test_names_no_project_value_when_hub_rendered(retro_text: str, kickoff_branc
     for value in ("demo", "acme", "jdoe", "Jane Doe"):
         assert value not in body, value
     assert re.search(r"\b(?:DEM|AGH)\b", body) is None
+
+
+WORKFLOW = BUILTIN_WORKFLOWS / "retro" / "retro.yaml"
+FALLBACK = (
+    "if `./hub workflow run` or the `retro` workflow is not available, follow the steps below"
+    " by hand"
+)
+
+
+def before_steps(retro_text: str) -> str:
+    """The text above step 1: the "With the workflow" block and its fallback line."""
+    return body_of(retro_text).split("\n1. ", 1)[0]
+
+
+def test_starts_the_retro_workflow_with_its_inputs_when_hub_rendered(retro_text: str) -> None:
+    block = before_steps(retro_text)
+    [line] = [line for line in block.splitlines() if "`./hub workflow run retro" in line]
+    command = line[line.index("`./hub workflow run retro") :]
+    command = command[: command.index("`", 1) + 1]
+    inputs = load_workflow_bytes(WORKFLOW.read_bytes(), source=str(WORKFLOW)).document["inputs"]
+
+    assert "`./hub workflow list`" in block
+    assert command.endswith(" --live`"), command
+    for name in inputs:
+        assert f"--input {name}=" in command, name
+    assert "redirected to a file and `$?` checked" in block
+
+
+def test_leaves_the_pick_to_the_owner_when_hub_rendered(retro_text: str) -> None:
+    block = before_steps(retro_text)
+
+    assert '`./hub workflow respond <run> --choice keep --text "1,3"`' in block
+    assert "`./hub workflow respond <run> --choice none`" in block
+    assert "never yourself" in block
+
+
+def test_names_the_draft_file_and_triage_when_hub_rendered(retro_text: str) -> None:
+    block = before_steps(retro_text)
+    description = next(line for line in retro_text.splitlines() if line.startswith("description:"))
+
+    assert description.endswith(", as issue drafts for /triage.")
+    assert "`brain/_inbox/retro-<date>.md`" in block
+    assert "`/triage`" in block
+    for outcome in ("`drafted`", "`none kept`", "`nothing to change`"):
+        assert outcome in block, outcome
+
+
+def test_follows_the_steps_by_hand_when_workflow_missing(retro_text: str) -> None:
+    block = before_steps(retro_text)
+
+    assert FALLBACK in block
+    assert not re.search(r"^\d+\.", block, re.MULTILINE)

@@ -1135,7 +1135,35 @@ def test_counts_skill_usage_when_project_events_folded() -> None:
             }
         },
         "truncated": False,
+        "windows_by_skill": {
+            "feature": {
+                "runs_7d": 3,
+                "runs_30d": 3,
+                "runs_90d": 4,
+                "last_used_at": feature.model_dump(mode="json")["last_used_at"],
+            }
+        },
+        "windows_by_agent": {
+            "evaluator": {
+                "runs_7d": 3,
+                "runs_30d": 3,
+                "runs_90d": 3,
+                "last_used_at": usage.by_agent["evaluator"].model_dump(mode="json")["last_used_at"],
+            }
+        },
     }
+
+
+def test_counts_skill_usage_windows_when_events_older_than_thirty_days() -> None:
+    service, _ = _service(_skill_usage_store(), NOW)
+
+    usage = service.skill_usage("demo")
+
+    feature = usage.windows_by_skill["feature"]
+    evaluator = usage.windows_by_agent["evaluator"]
+    assert (feature.runs_7d, feature.runs_30d, feature.runs_90d) == (3, 3, 4)
+    assert (evaluator.runs_7d, evaluator.runs_30d, evaluator.runs_90d) == (3, 3, 3)
+    assert usage.by_skill["feature"].count == 3
 
 
 def test_reuses_skill_usage_when_store_and_second_unchanged() -> None:

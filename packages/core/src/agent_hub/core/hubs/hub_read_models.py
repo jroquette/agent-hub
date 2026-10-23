@@ -93,7 +93,11 @@ from agent_hub.core.skills.skill_view import (
     ItemKind,
     SkillCatalog,
     SkillDetail,
+    UsageDays,
+    UsageReport,
+    UsageRow,
 )
+from agent_hub.core.skills.usage_report import ordered_usage
 
 NOW_PATH: Final = "brain/now.md"
 # Portfolio cards and repos need sources not connected in Phase 2.
@@ -346,6 +350,19 @@ class HubFilesReadModels:
         """The project's skills, agents and hooks with their usage (``SkillReads``)."""
         found = self._project(project)
         return self._skills.catalog(project=found.name, hub_path=found.path)
+
+    def skill_usage_report(self, scope: Scope, *, days: UsageDays) -> UsageReport:
+        """The usage rows of each scoped project's hub, in ``ordered_usage`` order; from the
+        registry and ``hub.json`` alone (no doctor), so an unknown project gives no items."""
+        rows: list[UsageRow] = []
+        truncated = False
+        for project, hub_path in self.project_hubs():
+            if scope.project not in {None, project}:
+                continue
+            found, cut = self._skills.usage_rows(project=project, hub_path=hub_path)
+            rows.extend(found)
+            truncated = truncated or cut
+        return UsageReport(days=days, items=ordered_usage(rows, days), truncated=truncated)
 
     def skill_item_names(self, project: str) -> frozenset[tuple[ItemKind, str]]:
         """The kind and name of each of the project's items (``SkillReads.item_names``); the

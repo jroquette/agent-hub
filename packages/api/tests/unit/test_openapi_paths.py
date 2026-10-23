@@ -80,11 +80,13 @@ CLARITY_SPEC_PATHS = {
 # The one path ticket planning adds (AC-136.33).
 TICKET_SPEC_PATHS = {("get", "/api/v1/features/{project}/{slug}/tickets")}
 
-# The three paths the Skills tab adds (AC-164.11, amendment A1), all GET.
+# The three paths the Skills tab adds (AC-164.11, amendment A1), and the usage report
+# (AGH-482), all GET.
 SKILL_SPEC_PATHS = {
     ("get", "/api/v1/projects/{project}/skills"),
     ("get", "/api/v1/projects/{project}/skills/{kind}/{source}/{name}"),
     ("get", "/api/v1/projects/{project}/skills/{kind}/{source}/{name}/files/{file_id}"),
+    ("get", "/api/v1/skill-usage"),
 }
 
 

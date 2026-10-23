@@ -21,6 +21,7 @@ from agent_hub.cli.scenario_command import scenario_app
 from agent_hub.cli.search_command import search
 from agent_hub.cli.setup_command import setup
 from agent_hub.cli.ship_command import ship
+from agent_hub.cli.skill_usage_command import skill_usage
 from agent_hub.cli.start_command import start
 from agent_hub.cli.step_command import step_app
 from agent_hub.cli.sync_command import sync
@@ -71,6 +72,7 @@ app.command("web")(web)
 app.command("validate-output")(validate_output)
 app.command("search")(search)
 app.command("mcp")(mcp)
+app.command("skill-usage")(skill_usage)
 app.add_typer(workflow_app, name="workflow")
 app.add_typer(step_app, name="step")
 app.add_typer(env_app, name="env")

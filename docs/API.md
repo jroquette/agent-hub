@@ -29,7 +29,8 @@ the first routes were written ([ADR 0017](adr/0017-api-second-composition-root.m
   `GET /projects/{project}/brain` and `GET /projects/{project}/brain/note?path=…`, and the one AGH-136 added
   (`TICKET_PATHS`): `GET /features/{project}/{slug}/tickets` ([Feature tickets](#feature-tickets)), and the three
   AGH-164 added (`SKILL_PATHS`, all GET): `/projects/{project}/skills`, `/projects/{project}/skills/{kind}/{source}/{name}`
-  and `/projects/{project}/skills/{kind}/{source}/{name}/files/{file_id}` ([Skills](#skills)), and the two AGH-225
+  and `/projects/{project}/skills/{kind}/{source}/{name}/files/{file_id}`, with `/skill-usage` that AGH-482 added to
+  them ([Skills](#skills)), and the two AGH-225
   added (`WORKFLOW_PATHS`, both GET): `/workflows` and `/workflows/{project}/{name}` ([Workflows](#workflows)), and the
   four AGH-232 added (`RUN_COMMAND_PATHS`, all POST): `/workflow-runs` and `/workflow-runs/{run_id}/cancel|resume|abandon`
   ([Workflow run commands](#workflow-run-commands)), and the two AGH-231 added (`GATE_PATHS`):
@@ -509,6 +510,13 @@ Other methods answer 405; no route runs a script, a hook or a command.
   and, for a hook, `hook` (event, matcher, type, command, timeout, active, state).
 - `GET /api/v1/projects/{project}/skills/{kind}/{source}/{name}/files/{file_id}` → `BundledFileText`: id, path,
   role, size and `text`, or `binary: true` and no text for a file with a NUL or that is not UTF-8.
+- `GET /api/v1/skill-usage[?project=…&days=7|30|90]` → `UsageReport` (AGH-482): `days` (default 30), `items` and
+  `truncated`. One row per skill or agent in each scoped hub's `.claude/skills` and `.claude/agents` (a real entry, or
+  a plugin item a link there points at), each `{project, kind, name, runs_7d, runs_30d, runs_90d, last_used_at}`
+  (names, counts and a time only, ADR 0019; 0 runs and `null` when unused in 90 days). Rows never run in `days` come
+  first, then by runs descending, then project, kind and name. Not paginated (the catalog's bounds cap it); `days`
+  outside 7, 30 or 90 → 400; a scope naming no registered project answers no items. `truncated` is `true` when the
+  catalog was cut or a file was not read, or the usage fold kept only 500 names. It records no item version.
 - `GET /api/v1/projects/{project}/skills/{kind}/{source}/{name}/versions[?limit=…&cursor=…]` → `ItemVersionPage`:
   the versions of the item's unit (a skill's folder, an agent's file, a hook's whole file) newest first, `limit` 1 to
   200 (default 50) with a cursor ([Pagination](#pagination)), each `{id, origin, first, author, recorded_at,

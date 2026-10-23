@@ -1,0 +1,46 @@
+# A week with runs: the agent proposes five changes, the evidence check drops one, the owner keeps
+# 1 and 3, and they are drafted as issues for /triage.
+workflow: retro
+inputs: {since: 7}
+stubs:
+  metrics:
+    output:
+      days: 7
+      since: "YYYY-MM-08"
+      until: "YYYY-MM-15"
+      runs: 6
+      nothing: false
+      metrics: {workflow.deliver.runs: 4, workflow.deliver.failed: 2, workflow.deliver.failed_at.rounds__check: 2, workflow.deliver.review_rounds: 9, workflow.implement.runs: 2, workflow.implement.no_ship_rate: 0.5, skills.idle: 3, transcripts.guard_blocks: 7}
+      idle: {skills: [refactor, upgrade, adr], agents: []}
+      sources:
+        - {name: runs, status: ok, reason: ""}
+        - {name: issue_runs, status: ok, reason: ""}
+        - {name: github, status: missing, reason: "warning: gh pr list failed: HTTP 503"}
+        - {name: skill_usage, status: ok, reason: ""}
+        - {name: transcripts, status: ok, reason: ""}
+      left_out: [per-workflow cost (not recorded per workflow yet)]
+      summary: "Retro window: YYYY-MM-08 .. YYYY-MM-15 (7 days). Runs started: 6 workflow runs, 0 issue-to-pr runs."
+  changes:
+    output:
+      changes:
+        - {title: Run the lint before the tests, kind: workflow, change: Add a lint step before rounds__check., metrics: [{key: workflow.deliver.failed_at.rounds__check, value: 2}, {key: workflow.deliver.runs, value: 4}], links: [.agent-runs/workflows/deliver-1/], expected_effect: Fewer failed checks., how_to_tell: failed_at.rounds__check drops to 0.}
+        - {title: Shorter review lens prompt, kind: agent, change: Cut the quality lens to blocking findings., metrics: [{key: workflow.deliver.review_rounds, value: 9}], links: [], expected_effect: Fewer review rounds., how_to_tell: review_rounds drops below 6.}
+        - {title: Plan the eval's commands, kind: plan, change: Each AC names its command in the plan., metrics: [{key: workflow.implement.no_ship_rate, value: 0.5}, {key: workflow.implement.runs, value: 2}], links: [.agent-runs/workflows/implement-1/], expected_effect: Fewer NO-SHIP verdicts., how_to_tell: no_ship_rate drops.}
+        - {title: Retire idle skills, kind: skill, change: Drop or merge the three idle skills., metrics: [{key: skills.idle, value: 3}], links: [], expected_effect: A shorter skill list., how_to_tell: skills.idle drops to 0.}
+        - {title: An invented number, kind: guard, change: Loosen the push guard., metrics: [{key: transcripts.guard_blocks, value: 70}], links: [], expected_effect: Fewer blocks., how_to_tell: guard_blocks drops.}
+  vet:
+    output:
+      count: 4
+      kept:
+        - {n: 1, title: Run the lint before the tests, kind: workflow, change: Add a lint step before rounds__check., metrics: [{key: workflow.deliver.failed_at.rounds__check, value: 2}, {key: workflow.deliver.runs, value: 4}], links: [.agent-runs/workflows/deliver-1/], expected_effect: Fewer failed checks., how_to_tell: failed_at.rounds__check drops to 0.}
+        - {n: 2, title: Shorter review lens prompt, kind: agent, change: Cut the quality lens to blocking findings., metrics: [{key: workflow.deliver.review_rounds, value: 9}], links: [], expected_effect: Fewer review rounds., how_to_tell: review_rounds drops below 6.}
+        - {n: 3, title: Plan the eval's commands, kind: plan, change: Each AC names its command in the plan., metrics: [{key: workflow.implement.no_ship_rate, value: 0.5}, {key: workflow.implement.runs, value: 2}], links: [.agent-runs/workflows/implement-1/], expected_effect: Fewer NO-SHIP verdicts., how_to_tell: no_ship_rate drops.}
+        - {n: 4, title: Retire idle skills, kind: skill, change: Drop or merge the three idle skills., metrics: [{key: skills.idle, value: 3}], links: [], expected_effect: A shorter skill list., how_to_tell: skills.idle drops to 0.}
+      dropped:
+        - {title: An invented number, reason: "cites 70 for transcripts.guard_blocks, step 1 has 7"}
+      message: "The retro proposes 4 changes, each citing step 1's numbers: 1. Run the lint before the tests (workflow) ..."
+  pick: {decision: keep, text: "1,3", approver: Jo}
+  drafts:
+    output: {outcome: drafted, kept: 2, path: brain/_inbox/retro-YYYY-MM-15.md, summary: "Drafted 2 changes: file them in the tracker, then /triage them."}
+expect: {status: done, outcome: drafted}
+reached: [metrics, changes, vet, pick, drafts]
