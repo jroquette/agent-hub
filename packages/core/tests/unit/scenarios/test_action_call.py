@@ -10,7 +10,11 @@ from agent_hub.core.hub_config.effective_environments import (
 )
 from agent_hub.core.hub_config.local_config import LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
-from agent_hub.core.scenarios.action_call import ActionCallError, plan_action_call
+from agent_hub.core.scenarios.action_call import (
+    ActionCallError,
+    plan_action_call,
+    with_run_values,
+)
 from agent_hub.core.scenarios.action_document import ActionDocument, parse_action
 from agent_hub.core.testing.builders import a_second_repo, an_environments_document
 
@@ -103,3 +107,15 @@ def test_refuses_value_when_input_type_mismatch(given: dict[str, Any], message: 
         plan_action_call(action, given, environment="staging", view=a_view())
 
     assert str(raised.value) == message
+
+
+def test_takes_run_values_when_step_leaves_declared_inputs_out() -> None:
+    given = with_run_values(
+        ["account", "region", "queue"],
+        {"queue": "payments", "region": "us-east-1"},
+        {"account": "123", "region": "eu-west-1", "unused": "x"},
+    )
+
+    # A declared input the step leaves out takes the run's value; the step's own value wins; a
+    # run value no input declares stays out.
+    assert given == {"account": "123", "region": "us-east-1", "queue": "payments"}

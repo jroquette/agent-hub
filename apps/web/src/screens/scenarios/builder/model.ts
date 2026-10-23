@@ -88,6 +88,41 @@ export function allNodes(nodes: readonly BuilderNode[]): BuilderNode[] {
   ]);
 }
 
+/** A `with` value that only repeats the run's value of the same name (`x: $INPUTS.x`). */
+export function passesRunValue(name: string, value: Json | undefined): boolean {
+  return value === `$INPUTS.${name}`;
+}
+
+/** The document without the `with` values that only repeat a run value: each such input takes
+ * the run's value anyway (an action input a step leaves out takes the scenario input of its
+ * name). Returns the document and how many values it dropped. */
+export function withoutRunRepeats(document: BuilderDocument): {
+  document: BuilderDocument;
+  dropped: number;
+} {
+  let dropped = 0;
+  const clean = (nodes: readonly BuilderNode[]): BuilderNode[] =>
+    nodes.map((node) => {
+      let next: BuilderNode = node;
+      const given = node.with;
+      if (typeof given === "object" && given !== null && !Array.isArray(given)) {
+        const kept = Object.entries(given).filter(([name, value]) => {
+          const repeat = passesRunValue(name, value);
+          if (repeat) dropped += 1;
+          return !repeat;
+        });
+        if (kept.length !== Object.keys(given).length) {
+          next =
+            kept.length > 0 ? { ...node, with: Object.fromEntries(kept) } : without(node, "with");
+        }
+      }
+      if (Array.isArray(node.nodes)) next = { ...next, nodes: clean(node.nodes.filter(isNode)) };
+      return next;
+    });
+  const nodes = clean(document.nodes);
+  return { document: { ...document, nodes }, dropped };
+}
+
 const BASE_ID: Readonly<Record<BlockKind, string>> = {
   action: "script",
   expect: "check",

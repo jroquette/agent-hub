@@ -30,6 +30,7 @@ import {
   text,
   valueSources,
   without,
+  withoutRunRepeats,
   type BuilderDocument,
   type BuilderNode,
   type ConditionRow,
@@ -511,6 +512,7 @@ function ValueField({
   value,
   sources,
   onChange,
+  runValue = false,
 }: {
   name: string;
   required: boolean;
@@ -520,9 +522,13 @@ function ValueField({
   value: string;
   sources: readonly ValueSource[];
   onChange: (value: string) => void;
+  /** The scenario has an input of this name: left out, the step takes the run's value. */
+  runValue?: boolean;
 }) {
   const id = useId();
   const helpId = `${id}-help`;
+  const [ownValue, setOwnValue] = useState(false);
+  const fromRun = runValue && !ownValue && (value === "" || value === `$INPUTS.${name}`);
   const token = tokenOf(value);
   const json = type === "object" || type === "array" || looksLikeJson(value);
   const long = !json && value.length > 40;
@@ -542,7 +548,29 @@ function ValueField({
         <span className="ah-mono">{name}</span>
         {!required && <span className="ah-muted"> (optional)</span>}
       </label>
-      {json && !token ? (
+      {fromRun ? (
+        <div className="sb-value-v5">
+          <span
+            className="sb-run-value"
+            id={id}
+            role="note"
+            aria-label={`${name}: the run's value, the same in every step`}
+          >
+            <ValueToken value={`$INPUTS.${name}`} />
+            <span className="ah-small ah-muted">from the run</span>
+          </span>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setOwnValue(true);
+              onChange("");
+            }}
+          >
+            Set for this step
+          </Button>
+        </div>
+      ) : json && !token ? (
         <JsonField
           id={id}
           name={name}
@@ -607,12 +635,31 @@ function ValueField({
           <ValuePicker name={name} sources={sources} onPick={pick} />
         </div>
       )}
+      {runValue && !fromRun && (
+        <Button
+          className="sb-use-run"
+          size="sm"
+          variant="ghost"
+          icon="flag"
+          onClick={() => {
+            setOwnValue(false);
+            onChange("");
+          }}
+        >
+          Use the run&apos;s value
+        </Button>
+      )}
       {uses.length > 0 && (
         <span className="sb-uses">
           Uses{" "}
           {uses.map((ref, index) => (
             <ValueToken key={`${ref}-${String(index)}`} value={ref} />
           ))}
+        </span>
+      )}
+      {fromRun && (
+        <span className="ah-small ah-muted">
+          Set once when the run starts, the same in every step.
         </span>
       )}
       {help.length > 0 && (
@@ -693,6 +740,7 @@ export function BlockInspector({
   const given = record(node.with);
   const capture = record(node.capture);
   const callsAction = node.type === "action" || node.type === "expect";
+  const runInputs = Object.keys(record(document.inputs));
   const selfFields =
     entry?.output_fields.map((field) => ({
       ref: `$self.output.${field.path}`,
@@ -924,6 +972,7 @@ export function BlockInspector({
               <ValueField
                 key={input.name}
                 name={input.name}
+                runValue={runInputs.includes(input.name)}
                 required={input.required}
                 description={input.description ?? null}
                 fallback={input.default as Json | undefined}
@@ -1238,10 +1287,13 @@ export function ScenarioSettings({
   onChange,
   onClose,
   openerRef,
+  usage = {},
 }: {
   document: BuilderDocument;
   onChange: (next: BuilderDocument) => void;
   onClose: () => void;
+  /** How many steps take each input as the run's value. */
+  usage?: Readonly<Record<string, number>>;
   /** What opened it (the start of the board): focus goes back to it on close. */
   openerRef: RefObject<HTMLElement | null>;
 }) {
@@ -1285,6 +1337,7 @@ export function ScenarioSettings({
           )}
         </Field>
       </Section>
+      <RunValues document={document} usage={usage} onChange={onChange} />
       <Section title="Inputs" help="What you give the scenario when you run it.">
         {Object.entries(inputs).map(([name, spec]) => {
           const item = record(spec);
@@ -1364,6 +1417,61 @@ export function ScenarioSettings({
         />
       </Section>
     </FormShell>
+  );
+}
+
+/** The run's values: each scenario input reaches every step whose action has an input of its
+ * name, so a run cannot start with one account and end with another; repeating it in a step's
+ * `with` is not needed. */
+function RunValues({
+  document,
+  usage,
+  onChange,
+}: {
+  document: BuilderDocument;
+  usage: Readonly<Record<string, number>>;
+  onChange: (next: BuilderDocument) => void;
+}) {
+  const names = Object.keys(record(document.inputs));
+  const { document: clean, dropped } = withoutRunRepeats(document);
+  if (names.length === 0) return null;
+  return (
+    <Section
+      title="Run values"
+      help="Each input is a value of the run, set once when it starts. A step whose action has an input of the same name gets it, unless the step sets its own: one run cannot start in one account and end in another."
+    >
+      <ul className="sb-run-values">
+        {names.map((name) => (
+          <li key={name}>
+            <ValueToken value={`$INPUTS.${name}`} />
+            <span className="ah-small ah-muted">
+              {usage[name]
+                ? `${String(usage[name])} ${usage[name] === 1 ? "step" : "steps"} take it`
+                : "no step takes it by name"}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {dropped > 0 && (
+        <Banner
+          tone="info"
+          live={false}
+          action={
+            <Button
+              size="sm"
+              onClick={() => {
+                onChange(clean);
+              }}
+            >
+              Remove the repeats
+            </Button>
+          }
+        >
+          {dropped} {dropped === 1 ? "value repeats" : "values repeat"} a run value in a step (as{" "}
+          <span className="ah-mono">name: $INPUTS.name</span>). The steps get them anyway.
+        </Banner>
+      )}
+    </Section>
   );
 }
 

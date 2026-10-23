@@ -1120,3 +1120,42 @@ textarea.sb-json-text {
 .sb-json > .ah-btn {
   align-self: flex-start;
 }
+
+/* The run's values: an input that takes the scenario input of its name */
+.sb-run-value {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  border: 1px dashed var(--border-control);
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+.sb-use-run {
+  align-self: flex-start;
+}
+.sb-run-values {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.sb-run-values li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.sb-inspector-v5 .ah-env-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-3);
+}
+.sb-inspector-v5 .ah-env-grid .ah-input {
+  width: 100%;
+  min-width: 0;
+}

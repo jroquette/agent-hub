@@ -10,10 +10,12 @@ import {
   layersOf,
   newBlock,
   parseCondition,
+  passesRunValue,
   removeBlock,
   toDocument,
   updateBlock,
   valueSources,
+  withoutRunRepeats,
   type BuilderDocument,
   type BuilderNode,
 } from "./model";
@@ -129,6 +131,44 @@ describe("scenario builder model", () => {
     expect(formatCondition(groups ?? [])).toBe(text);
     expect(conditionWords(text)).toBe("status is ON_HOLD and cover is PENDING or code is above 2");
     expect(parseCondition("len($x) > 2")).toBeNull();
+  });
+});
+
+describe("run values", () => {
+  it("drops the with values that only repeat a run value, inside groups too", () => {
+    const document = {
+      version: 1,
+      kind: "scenario",
+      name: "walk",
+      revision: 1,
+      inputs: { account: { type: "string" }, ref: { type: "string" } },
+      nodes: [
+        { id: "a", type: "action", action: "x", with: { account: "$INPUTS.account" } },
+        {
+          id: "loop",
+          type: "loop_group",
+          nodes: [
+            {
+              id: "b",
+              type: "action",
+              action: "x",
+              with: { account: "$INPUTS.account", ref: "$INPUTS.other", queue: "q" },
+            },
+          ],
+        },
+      ],
+    } as BuilderDocument;
+
+    const { document: clean, dropped } = withoutRunRepeats(document);
+
+    expect(dropped).toBe(2);
+    expect(clean.nodes[0]).toEqual({ id: "a", type: "action", action: "x" });
+    expect((clean.nodes[1]?.nodes as BuilderNode[])[0]?.with).toEqual({
+      ref: "$INPUTS.other",
+      queue: "q",
+    });
+    expect(passesRunValue("account", "$INPUTS.account")).toBe(true);
+    expect(passesRunValue("account", "$INPUTS.other")).toBe(false);
   });
 });
 

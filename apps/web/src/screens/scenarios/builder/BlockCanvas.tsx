@@ -303,7 +303,7 @@ function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
           <TokenText value={cardTitle(node, action)} />
         </div>
         <RunsLine node={node} action={action} actions={ctx.props.actions} />
-        <CardFacts node={node} action={action} selected={selected} />
+        <CardFacts node={node} action={action} selected={selected} runInputs={ctx.props.inputs} />
         <PlanLine ctx={ctx} id={node.id} />
         <Problems ctx={ctx} id={node.id} />
       </div>

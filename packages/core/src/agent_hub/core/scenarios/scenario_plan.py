@@ -36,7 +36,12 @@ from agent_hub.core.scenarios.access_policy import (
     decide,
     find_environment,
 )
-from agent_hub.core.scenarios.action_call import ActionCallError, ActionCallPlan, plan_action_call
+from agent_hub.core.scenarios.action_call import (
+    ActionCallError,
+    ActionCallPlan,
+    plan_action_call,
+    with_run_values,
+)
 from agent_hub.core.scenarios.action_catalog import ActionEntry, ActionRefError, resolve_action
 from agent_hub.core.workflows.document import Loc
 from agent_hub.core.workflows.nodes import (
@@ -190,6 +195,11 @@ def _row(
             shown[name] = canonical_text(known[name])
         else:
             shown[name] = canonical_text(_placeholders(value, plan, inputs))
+    # The run's values the step leaves out: known before the run, like its own $INPUTS.
+    for name, value in with_run_values(entry.document.inputs, node.with_, inputs).items():
+        if name not in node.with_:
+            known[name] = value
+            shown[name] = canonical_text(value)
     pending = frozenset(shown) - frozenset(known)
     call: ActionCallPlan | None = None
     problem: str | None = None

@@ -55,7 +55,12 @@ from agent_hub.core.scenarios.access_policy import (
     deny_reason,
     find_environment,
 )
-from agent_hub.core.scenarios.action_call import ActionCallError, ActionCallPlan, plan_action_call
+from agent_hub.core.scenarios.action_call import (
+    ActionCallError,
+    ActionCallPlan,
+    plan_action_call,
+    with_run_values,
+)
 from agent_hub.core.scenarios.action_catalog import ActionEntry, ActionRefError, resolve_action
 from agent_hub.core.scenarios.credentials import CredentialNames
 from agent_hub.core.scenarios.policy_gates import NodeDecision, ask_gate
@@ -254,8 +259,15 @@ class ActionExecutors:
         node = call.node
         if not isinstance(node, ActionNode | ExpectNode):
             raise NodeFailedError("config", f"{node.type} nodes do not run as actions")
+        entry = self._entry(node.action)
+        # The run's values (its scenario inputs) for the action's inputs the step leaves out.
+        inputs = (
+            call.inputs
+            if entry is None
+            else with_run_values(entry.document.inputs, call.inputs, call.context.inputs)
+        )
         return self.run_call(
-            node.id, action=node.action, attempt=call.attempt, poll=call.poll, inputs=call.inputs
+            node.id, action=node.action, attempt=call.attempt, poll=call.poll, inputs=inputs
         )
 
     def run_call(

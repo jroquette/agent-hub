@@ -42,6 +42,13 @@ document, script and its pack's other `scripts/` files (no other action's script
 the hub's `HEAD` (a local commit suffices); else it is a **draft**, listed but never run (outside a git checkout, all
 are). A run pins each action's `content_hash` (`sha256:` over each file's path, length, bytes) and runs that snapshot.
 
+**Run values.** A scenario input is a value of the run, set once when it starts. An action input a step leaves out of its
+`with` takes the scenario input of the same name, at plan and at run time (`with_run_values`), included steps too; a
+value the step gives always wins, and an input with neither takes the action's default. So a value every step needs (an
+account, a stack name) is declared once as a scenario input, not repeated as `name: $INPUTS.name` in each step, and one
+run cannot start in one account and end in another. The builder shows such an input as "from the run" and offers to
+drop the repeats.
+
 ### Policy
 
 `decide(effective access, production, effect, origin)` in core returns `allow`, `ask` or `deny`; the effective access is
