@@ -1,0 +1,356 @@
+/* The block canvas: Scratch-like stacks. A block is filled with its kind's tint and has a bump
+ * under it that sits in the notch of the next one; a C-block wraps the blocks it holds. */
+.bk-viewport {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+}
+.bk-viewport[data-dragging] {
+  cursor: grabbing;
+  user-select: none;
+}
+.bk-world {
+  position: absolute;
+  inset: 0 auto auto 0;
+  transform-origin: 0 0;
+}
+.bk-controls {
+  position: absolute;
+  right: var(--space-3);
+  bottom: var(--space-3);
+}
+.bk-stack {
+  position: absolute;
+  min-width: 320px;
+}
+.bk-stack[data-loose] {
+  opacity: 0.85;
+}
+.bk-loose-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+  font-size: 11px;
+  color: var(--waiting);
+}
+
+/* Hat and cap */
+.bk-hat {
+  --kind: var(--ev-lifecycle);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px 10px;
+  border-radius: 22px 22px var(--radius-md) var(--radius-md);
+  background: color-mix(in srgb, var(--kind) 30%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--kind) 60%, var(--surface));
+  font-weight: 600;
+  cursor: move;
+  position: relative;
+}
+.bk-cap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  padding: 6px 12px;
+  border-radius: var(--radius-md) var(--radius-md) 16px 16px;
+  border: 1px dashed var(--border-strong);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* A block */
+.bk-block,
+.bk-c {
+  position: relative;
+  border: 1px solid color-mix(in srgb, var(--kind) 55%, var(--surface));
+  background: color-mix(in srgb, var(--kind) 20%, var(--surface));
+  color: var(--text);
+  cursor: grab;
+  transition:
+    filter 120ms ease,
+    box-shadow 120ms ease;
+}
+.bk-block {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 2px;
+  min-height: 40px;
+  padding: 6px 10px 6px 8px;
+  border-radius: var(--radius-md);
+}
+/* The bump under a block (and a C-block's foot): it sits in the gap above the next block. */
+.bk-block::after,
+.bk-c::after,
+.bk-hat::after {
+  content: "";
+  position: absolute;
+  left: 18px;
+  bottom: -6px;
+  width: 28px;
+  height: 6px;
+  border-radius: 0 0 6px 6px;
+  background: inherit;
+  border: 1px solid color-mix(in srgb, var(--kind) 55%, var(--surface));
+  border-top: 0;
+  z-index: 1;
+}
+.bk-block:hover,
+.bk-c:hover > .bk-c-head {
+  filter: brightness(1.06);
+}
+.bk-block[data-selected],
+.bk-c[data-selected] {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.bk-block[data-invalid],
+.bk-c[data-invalid] {
+  border-color: var(--failed);
+}
+.bk-block:focus-visible,
+.bk-c:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.bk-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--kind) 45%, var(--surface));
+  color: var(--text);
+}
+.bk-words {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  font-weight: 600;
+  font-size: 13px;
+}
+.bk-quiet {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.bk-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 260px;
+  padding: 2px 10px;
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--kind) 40%, var(--border));
+  font-family: var(--font-mono, monospace);
+  font-weight: 500;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bk-pill[data-empty] {
+  border-style: dashed;
+  color: var(--text-muted);
+  font-family: inherit;
+}
+.bk-field {
+  height: 24px;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  border: 1px solid color-mix(in srgb, var(--kind) 40%, var(--border));
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  text-align: center;
+  cursor: text;
+}
+.bk-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+  font-family: var(--font-mono, monospace);
+  font-weight: 400;
+  font-size: 11px;
+}
+.bk-chip-kept {
+  color: var(--ev-learning);
+}
+.bk-badges {
+  grid-column: 2;
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 400;
+}
+.bk-id {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.bk-errors {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--failed);
+  font-size: 12px;
+}
+
+/* C-blocks */
+.bk-c {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-md);
+  padding: 0;
+}
+.bk-c-head,
+.bk-c-mid {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px;
+  font-weight: 600;
+  font-size: 13px;
+}
+.bk-c-mid {
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.bk-c-foot {
+  height: 14px;
+}
+.bk-mouth {
+  margin-left: 18px;
+  padding: 6px 8px 6px 8px;
+  min-height: 34px;
+  background: var(--bg);
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--kind) 35%, var(--surface));
+  border-right: 0;
+  cursor: default;
+}
+.bk-lanes {
+  display: flex;
+  gap: 8px;
+  margin-left: 18px;
+  margin-right: 8px;
+}
+.bk-lanes .bk-mouth {
+  margin-left: 0;
+  flex: 1;
+  min-width: 260px;
+  border-right: 1px solid color-mix(in srgb, var(--kind) 35%, var(--surface));
+  border-radius: var(--radius-sm);
+}
+
+/* Lists and gaps (drop zones) */
+.bk-list {
+  display: flex;
+  flex-direction: column;
+}
+.bk-gap {
+  height: 6px;
+  margin: 0;
+  border-radius: 4px;
+  transition:
+    height 100ms ease,
+    background 100ms ease;
+}
+.bk-viewport[data-dragging] .bk-gap {
+  height: 14px;
+}
+.bk-gap[data-active] {
+  height: 34px !important;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  outline: 2px dashed var(--accent);
+}
+.bk-mouth-empty {
+  display: grid;
+  place-items: center;
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-subtle);
+  font-size: 12px;
+}
+.bk-mouth-empty[data-active] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--text);
+}
+
+/* The dragged blocks follow the pointer above everything. */
+.bk-ghost {
+  position: fixed;
+  z-index: 50;
+  pointer-events: none;
+  transform-origin: 0 0;
+  min-width: 320px;
+  filter: drop-shadow(0 10px 18px rgb(0 0 0 / 30%));
+  opacity: 0.92;
+}
+
+/* Palette blocks: the same look, small. */
+.bk-palette-block {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--kind) 55%, var(--surface));
+  background: color-mix(in srgb, var(--kind) 20%, var(--surface));
+  color: var(--text);
+  text-align: left;
+  cursor: grab;
+  touch-action: none;
+  transition: transform 120ms ease;
+}
+.bk-palette-block:hover {
+  transform: translateX(3px);
+}
+.bk-palette-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+.bk-palette-action {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--kind) 40%, var(--surface));
+  background: color-mix(in srgb, var(--kind) 10%, var(--surface));
+  color: var(--text);
+  font-size: 12px;
+  cursor: grab;
+  touch-action: none;
+  text-align: left;
+}
+.bk-palette-action .ah-mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  .bk-gap,
+  .bk-palette-block,
+  .bk-block {
+    transition: none;
+  }
+}

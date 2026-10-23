@@ -131,7 +131,7 @@ function ValueInput({
 }
 
 /** "Done when" / "Only if": or-groups of and-rows, the grammar's own shape. */
-function ConditionBuilder({
+export function ConditionBuilder({
   label,
   value,
   fields,
@@ -324,7 +324,8 @@ export function BlockInspector({
   mode: "interactive" | "regression";
   onChange: (next: BuilderNode) => void;
   onDelete: () => void;
-  onMove: (by: -1 | 1) => void;
+  /** Moves the block in its list; absent where dragging moves blocks. */
+  onMove?: ((by: -1 | 1) => void) | undefined;
   onClose: () => void;
 }) {
   const look = kindLook(node.type);
@@ -359,7 +360,11 @@ export function BlockInspector({
     label: `${source.label} (${source.hint})`,
   }));
   const problemOf = (key: string) =>
-    problems.find((problem) => problem.key === key || problem.key?.endsWith(`.${key}`))?.message;
+    problems.find(
+      (problem) =>
+        problem.severity === "error" &&
+        (problem.key === key || problem.key?.endsWith(`.${key}`) === true),
+    )?.message;
   return (
     <section className="sb-inspector" aria-label={`Inspector: ${look.label} ${node.id}`}>
       <header className="sb-inspector-head" style={{ ["--kind" as string]: look.tint }}>
@@ -369,26 +374,30 @@ export function BlockInspector({
         <b>{look.label}</b>
         <span className="ah-mono ah-small ah-muted">{node.id}</span>
         <span className="ah-grow" />
-        <button
-          type="button"
-          className="sb-icon-btn"
-          aria-label="Move up"
-          onClick={() => {
-            onMove(-1);
-          }}
-        >
-          <Icon name="arrow-up" size="sm" />
-        </button>
-        <button
-          type="button"
-          className="sb-icon-btn"
-          aria-label="Move down"
-          onClick={() => {
-            onMove(1);
-          }}
-        >
-          <Icon name="arrow-down" size="sm" />
-        </button>
+        {onMove && (
+          <>
+            <button
+              type="button"
+              className="sb-icon-btn"
+              aria-label="Move up"
+              onClick={() => {
+                onMove(-1);
+              }}
+            >
+              <Icon name="arrow-up" size="sm" />
+            </button>
+            <button
+              type="button"
+              className="sb-icon-btn"
+              aria-label="Move down"
+              onClick={() => {
+                onMove(1);
+              }}
+            >
+              <Icon name="arrow-down" size="sm" />
+            </button>
+          </>
+        )}
         <button
           type="button"
           className="sb-icon-btn"

@@ -1,0 +1,690 @@
+import {
+  useEffect,
+  useRef,
+  type KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
+
+import { CanvasControls, Icon, useViewportSize, type IconName } from "../../../components";
+import { fitView } from "../../../lib/canvasView";
+import { usePanZoom } from "../../../lib/usePanZoom";
+import { EffectBadge } from "../parts";
+import type { ScenarioAction } from "../queries";
+import { maxChecks } from "../story";
+import { kindLook } from "./FlowCanvas";
+import { conditionWords, refInWords, shown, text, type BuilderNode, type Json } from "./model";
+import { itemId, type Item, type Slot } from "./program";
+import type { BuilderProblem } from "./useScenarioDraft";
+
+/* The block canvas: the scenario as Scratch-like stacks on a free canvas. A block snapped under
+ * another runs after it; C-blocks hold blocks (Repeat, If / else, At the same time). Dragging a
+ * block takes the blocks under it along and drops them into any gap or mouth; dropped on the empty
+ * canvas they become a loose stack (not part of the flow until snapped back). The canvas pans and
+ * zooms; where the stacks sit is the only thing kept outside the file (in this browser). */
+
+export interface Stack {
+  id: string;
+  x: number;
+  y: number;
+  items: Item[];
+  /** Blocks of the file the blocks cannot place: saved as written. */
+  kept?: boolean;
+}
+
+export type DropTarget =
+  { stack: string; slot: Slot; index: number } | { free: { x: number; y: number } };
+
+export interface DragState {
+  items: Item[];
+  /** Where the pointer grabbed the first block, from its top left. */
+  grab: { x: number; y: number };
+  client: { x: number; y: number };
+  target: DropTarget | null;
+}
+
+export interface BlockCanvasProps {
+  main: Stack;
+  loose: readonly Stack[];
+  selected: string | null;
+  actionOf: (node: BuilderNode) => ScenarioAction | null;
+  problemsOf: (id: string) => readonly BuilderProblem[];
+  inputs: readonly string[];
+  onSelect: (id: string | null) => void;
+  /** A press on a block that moved: the caller takes the items out and answers them. */
+  onTake: (stack: string, id: string, alone: boolean) => Item[];
+  onDrop: (items: Item[], target: DropTarget) => void;
+  onMoveStack: (stack: string, x: number, y: number) => void;
+  onEditNode: (node: BuilderNode) => void;
+  /** The drag in progress (from a block or from the palette), owned by the builder. */
+  drag: DragState | null;
+  onDrag: (next: DragState | null) => void;
+  statusOf?: (id: string) => ReactNode;
+}
+
+const DRAG_PX = 4;
+/** How near a gap the dragged blocks snap into it, in screen pixels. */
+const SNAP_PX = 48;
+
+function Field({
+  value,
+  label,
+  width = 56,
+  onChange,
+}: {
+  value: string;
+  label: string;
+  width?: number;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <input
+      className="bk-field"
+      aria-label={label}
+      value={value}
+      style={{ width }}
+      onPointerDown={(event) => {
+        event.stopPropagation();
+      }}
+      onChange={(event) => {
+        onChange(event.target.value);
+      }}
+    />
+  );
+}
+
+function Pill({
+  children,
+  title,
+  empty,
+}: {
+  children: ReactNode;
+  title?: string;
+  empty?: boolean;
+}) {
+  return (
+    <span className="bk-pill" data-empty={empty === true ? true : undefined} title={title}>
+      {children}
+    </span>
+  );
+}
+
+function Condition({ value, placeholder }: { value: string; placeholder: string }) {
+  return value.trim() === "" ? (
+    <Pill empty title="Select the block to set its condition">
+      {placeholder}
+    </Pill>
+  ) : (
+    <Pill title={value}>
+      <Icon name="split" size="sm" /> {conditionWords(value)}
+    </Pill>
+  );
+}
+
+function firstLine(value: string): string | null {
+  const line = value.split("\n")[0] ?? "";
+  return line === "" ? null : line;
+}
+
+function values(node: BuilderNode): [string, Json][] {
+  const given = node.with;
+  return typeof given === "object" && given !== null && !Array.isArray(given)
+    ? Object.entries(given)
+    : [];
+}
+
+/** The words of a block, Scratch-like: verbs and inline fields. */
+function BlockWords({
+  node,
+  onEditNode,
+}: {
+  node: BuilderNode;
+  onEditNode: (node: BuilderNode) => void;
+}) {
+  const set = (key: string, value: Json) => {
+    onEditNode({ ...node, [key]: value });
+  };
+  const action = text(node.action);
+  const actionPill = (
+    <Pill empty={action === ""}>{action === "" ? "choose an action" : action}</Pill>
+  );
+  const kept = Object.keys(
+    typeof node.capture === "object" && node.capture !== null && !Array.isArray(node.capture)
+      ? node.capture
+      : {},
+  );
+  const chips = (
+    <>
+      {values(node)
+        .slice(0, 3)
+        .map(([key, value]) => {
+          const words = refInWords(shown(value));
+          return (
+            <span key={key} className="bk-chip" title={`${key} = ${shown(value)}`}>
+              {key} {words.ref && <Icon name="bookmark" size="sm" />}
+              {words.text}
+            </span>
+          );
+        })}
+      {kept.map((name) => (
+        <span key={name} className="bk-chip bk-chip-kept">
+          keep {name}
+        </span>
+      ))}
+    </>
+  );
+  switch (node.type) {
+    case "action":
+      return (
+        <>
+          <span>run</span>
+          {actionPill}
+          {chips}
+        </>
+      );
+    case "expect": {
+      const every = text(node.every);
+      const timeout = text(node.timeout);
+      const checks = every && timeout ? maxChecks(every, timeout) : null;
+      return (
+        <>
+          <span>wait until</span>
+          <Condition value={text(node.until_when)} placeholder="a state holds" />
+          <span>reading</span>
+          {actionPill}
+          <span>every</span>
+          <Field
+            value={every}
+            label={`Check every, ${node.id}`}
+            width={44}
+            onChange={(value) => {
+              set("every", value);
+            }}
+          />
+          <span>for up to</span>
+          <Field
+            value={timeout}
+            label={`For up to, ${node.id}`}
+            width={44}
+            onChange={(value) => {
+              set("timeout", value);
+            }}
+          />
+          {checks !== null && <span className="bk-quiet">({checks} checks)</span>}
+          {chips}
+        </>
+      );
+    }
+    case "approval":
+      return (
+        <>
+          <span>ask me to</span>
+          <Pill title={text(node.message)}>
+            {firstLine(text(node.message)) ?? "do something by hand"}
+          </Pill>
+          {node.capture_response === true && <span className="bk-quiet">and type a value</span>}
+        </>
+      );
+    case "wait":
+      return (
+        <>
+          <span>wait</span>
+          <Field
+            value={text(node.duration)}
+            label={`Wait for, ${node.id}`}
+            width={48}
+            onChange={(value) => {
+              set("duration", value);
+            }}
+          />
+        </>
+      );
+    case "include":
+      return (
+        <>
+          <span>run scenario</span>
+          <Pill empty={text(node.include) === ""}>{text(node.include) || "choose one"}</Pill>
+        </>
+      );
+    default:
+      return <span>{node.type}</span>;
+  }
+}
+
+interface Ctx {
+  props: BlockCanvasProps;
+  stack: string;
+  dragging: boolean;
+  target: DropTarget | null;
+  startPress: (event: ReactPointerEvent, stack: string, id: string) => void;
+}
+
+function isTarget(target: DropTarget | null, stack: string, slot: Slot, index: number): boolean {
+  if (!target || !("slot" in target)) return false;
+  return (
+    target.stack === stack &&
+    target.index === index &&
+    JSON.stringify(target.slot) === JSON.stringify(slot)
+  );
+}
+
+function Gap({ ctx, slot, index, empty }: { ctx: Ctx; slot: Slot; index: number; empty?: string }) {
+  const active = isTarget(ctx.target, ctx.stack, slot, index);
+  return (
+    <div
+      className={empty ? "bk-mouth-empty" : "bk-gap"}
+      data-drop={JSON.stringify({ stack: ctx.stack, slot, index })}
+      data-active={active || undefined}
+      aria-hidden
+    >
+      {empty && <span>{ctx.dragging ? "drop here" : empty}</span>}
+    </div>
+  );
+}
+
+function List({
+  ctx,
+  items,
+  slot,
+  empty,
+}: {
+  ctx: Ctx;
+  items: readonly Item[];
+  slot: Slot;
+  empty: string;
+}) {
+  if (items.length === 0) return <Gap ctx={ctx} slot={slot} index={0} empty={empty} />;
+  return (
+    <div className="bk-list">
+      <Gap ctx={ctx} slot={slot} index={0} />
+      {items.map((item, index) => (
+        <div key={itemId(item)} className="bk-entry">
+          <ItemView ctx={ctx} item={item} />
+          <Gap ctx={ctx} slot={slot} index={index + 1} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Badges({ ctx, node }: { ctx: Ctx; node: BuilderNode }) {
+  const action = ctx.props.actionOf(node);
+  const errors = ctx.props.problemsOf(node.id).filter((problem) => problem.severity === "error");
+  return (
+    <span className="bk-badges">
+      <span className="bk-id">{node.id}</span>
+      {action?.effect && <EffectBadge effect={action.effect} />}
+      {action?.draft && (
+        <span className="ah-badge ah-badge-quiet" title="Draft: needs acceptance">
+          <Icon name="pencil" />
+        </span>
+      )}
+      {errors.length > 0 && (
+        <span className="bk-errors" title={errors.map((problem) => problem.message).join("\n")}>
+          <Icon name="circle-x" size="sm" /> {errors.length}
+        </span>
+      )}
+      {ctx.props.statusOf?.(node.id)}
+    </span>
+  );
+}
+
+function blockProps(ctx: Ctx, id: string, kind: string, label: string) {
+  const look = kindLook(kind);
+  return {
+    "data-no-pan": "",
+    "data-selected": ctx.props.selected === id || undefined,
+    "data-invalid":
+      ctx.props.problemsOf(id).some((problem) => problem.severity === "error") || undefined,
+    style: { ["--kind" as string]: look.tint },
+    role: "button",
+    tabIndex: 0,
+    "aria-label": label,
+    "aria-pressed": ctx.props.selected === id,
+    onPointerDown: (event: ReactPointerEvent) => {
+      ctx.startPress(event, ctx.stack, id);
+    },
+    onKeyDown: (event: KeyboardEvent) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        ctx.props.onSelect(id);
+      }
+    },
+  };
+}
+
+function ControlHead({ icon, children }: { icon: IconName; children: ReactNode }) {
+  return (
+    <div className="bk-c-head">
+      <Icon name={icon} size="sm" />
+      {children}
+    </div>
+  );
+}
+
+function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
+  if (item.kind === "block") {
+    const node = item.node;
+    const look = kindLook(node.type);
+    return (
+      <div
+        className="bk-block"
+        {...blockProps(ctx, node.id, node.type, `${look.label} ${node.id}`)}
+      >
+        <span className="bk-icon" aria-hidden>
+          <Icon name={look.icon} size="sm" />
+        </span>
+        <span className="bk-words">
+          <BlockWords node={node} onEditNode={ctx.props.onEditNode} />
+        </span>
+        <Badges ctx={ctx} node={node} />
+      </div>
+    );
+  }
+  if (item.kind === "repeat") {
+    const node = item.node;
+    return (
+      <div className="bk-c" {...blockProps(ctx, node.id, "loop_group", `Repeat ${node.id}`)}>
+        <ControlHead icon="refresh-cw">
+          <span>repeat until</span>
+          <Condition value={text(node.until_when)} placeholder="a state holds" />
+          <span>· at most</span>
+          <Field
+            value={text(node.max_iterations, "1")}
+            label={`Rounds, ${node.id}`}
+            width={36}
+            onChange={(value) => {
+              ctx.props.onEditNode({
+                ...node,
+                max_iterations: /^\d+$/.test(value) ? Number(value) : value,
+              });
+            }}
+          />
+          <span>rounds</span>
+          <Badges ctx={ctx} node={node} />
+        </ControlHead>
+        <div className="bk-mouth">
+          <List
+            ctx={ctx}
+            items={item.body}
+            slot={{ in: "body", owner: node.id }}
+            empty="blocks each round runs"
+          />
+        </div>
+        <div className="bk-c-foot" />
+      </div>
+    );
+  }
+  if (item.kind === "if") {
+    return (
+      <div className="bk-c" {...blockProps(ctx, item.key, "branch", "If")}>
+        <ControlHead icon="split">
+          <span>if</span>
+          <Condition value={item.condition} placeholder="a condition" />
+        </ControlHead>
+        <div className="bk-mouth">
+          <List
+            ctx={ctx}
+            items={item.then}
+            slot={{ in: "then", owner: item.key }}
+            empty="blocks when it holds"
+          />
+        </div>
+        <div className="bk-c-mid">else</div>
+        <div className="bk-mouth">
+          <List
+            ctx={ctx}
+            items={item.otherwise}
+            slot={{ in: "otherwise", owner: item.key }}
+            empty="blocks otherwise (or nothing)"
+          />
+        </div>
+        <div className="bk-c-foot" />
+      </div>
+    );
+  }
+  return (
+    <div className="bk-c" {...blockProps(ctx, item.key, "parallel", "At the same time")}>
+      <ControlHead icon="git-branch">
+        <span>at the same time</span>
+      </ControlHead>
+      <div className="bk-lanes">
+        {item.lanes.map((lane, index) => (
+          <div key={index} className="bk-mouth bk-lane">
+            <List
+              ctx={ctx}
+              items={lane}
+              slot={{ in: "lane", owner: item.key, lane: index }}
+              empty="a path"
+            />
+          </div>
+        ))}
+      </div>
+      <div className="bk-c-mid">then continue when every path finished</div>
+      <div className="bk-c-foot" />
+    </div>
+  );
+}
+
+function StackView({ stack, ctx, hat }: { stack: Stack; ctx: Ctx; hat?: ReactNode }) {
+  return (
+    <div
+      className="bk-stack"
+      style={{ left: stack.x, top: stack.y }}
+      data-loose={!hat || undefined}
+    >
+      {hat}
+      {!hat && (
+        <div className="bk-loose-note">
+          <Icon name="triangle-alert" size="sm" />
+          {stack.kept
+            ? "Kept as written: the blocks cannot show how these connect"
+            : "Not connected: snap under a block to use it (not saved)"}
+        </div>
+      )}
+      <List
+        ctx={ctx}
+        items={stack.items}
+        slot={{ in: "main" }}
+        empty={hat ? "drag blocks here" : ""}
+      />
+      {hat && (
+        <div className="bk-cap">
+          <Icon name="flag" size="sm" /> end of the scenario
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function BlockCanvas(props: BlockCanvasProps) {
+  const viewport = useRef<HTMLDivElement>(null);
+  const pz = usePanZoom(viewport, { wheel: "pan", min: 0.4, max: 1.6 });
+  const size = useViewportSize(viewport);
+  const { drag, onDrag: setDrag } = props;
+  const active = drag;
+
+  const toWorld = (clientX: number, clientY: number) => {
+    const rect = viewport.current?.getBoundingClientRect();
+    const { x, y, k } = pz.view;
+    return { x: (clientX - (rect?.left ?? 0) - x) / k, y: (clientY - (rect?.top ?? 0) - y) / k };
+  };
+
+  const targetAt = (
+    clientX: number,
+    clientY: number,
+    grab: { x: number; y: number },
+  ): DropTarget | null => {
+    const hit = document.elementFromPoint(clientX, clientY)?.closest<HTMLElement>("[data-drop]");
+    if (hit?.dataset.drop) return JSON.parse(hit.dataset.drop) as DropTarget;
+    // Snap, as Scratch does: the nearest gap or mouth to the dragged block's top left corner.
+    const corner = { x: clientX - grab.x * pz.view.k, y: clientY - grab.y * pz.view.k };
+    let best: { distance: number; drop: string } | null = null;
+    viewport.current?.querySelectorAll<HTMLElement>(".bk-world [data-drop]").forEach((zone) => {
+      const box = zone.getBoundingClientRect();
+      const dx =
+        corner.x < box.left ? box.left - corner.x : corner.x > box.right ? corner.x - box.right : 0;
+      const dy = Math.abs(corner.y - (box.top + box.bottom) / 2);
+      const distance = Math.hypot(dx, dy);
+      if (zone.dataset.drop && distance < SNAP_PX && (best === null || distance < best.distance)) {
+        best = { distance, drop: zone.dataset.drop };
+      }
+    });
+    const snapped = best as { distance: number; drop: string } | null;
+    if (snapped) return JSON.parse(snapped.drop) as DropTarget;
+    const rect = viewport.current?.getBoundingClientRect();
+    if (
+      !rect ||
+      clientX < rect.left ||
+      clientX > rect.right ||
+      clientY < rect.top ||
+      clientY > rect.bottom
+    )
+      return null;
+    const at = toWorld(clientX - grab.x, clientY - grab.y);
+    return { free: { x: Math.round(at.x), y: Math.round(at.y) } };
+  };
+
+  // While a drag runs (from a block or from the palette), the window follows the pointer.
+  useEffect(() => {
+    if (!active) return;
+    const move = (event: PointerEvent) => {
+      const grab = active.grab;
+      setDrag({
+        ...active,
+        client: { x: event.clientX, y: event.clientY },
+        target: targetAt(event.clientX, event.clientY, grab),
+      });
+    };
+    const up = (event: PointerEvent) => {
+      const target = targetAt(event.clientX, event.clientY, active.grab);
+      setDrag(null);
+      props.onDrop(active.items, target ?? { free: toWorld(event.clientX, event.clientY) });
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up, { once: true });
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+  });
+
+  const startPress = (event: ReactPointerEvent, stack: string, id: string) => {
+    if (event.button !== 0) return;
+    event.stopPropagation();
+    const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    // The press lives in these handlers' closure: a click selects, a move past DRAG_PX drags.
+    const p = { stack, id, x: event.clientX, y: event.clientY, alt: event.altKey, box };
+    let pressed = true;
+    const move = (moved: PointerEvent) => {
+      if (!pressed || Math.hypot(moved.clientX - p.x, moved.clientY - p.y) < DRAG_PX) return;
+      pressed = false;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      const items = props.onTake(p.stack, p.id, p.alt);
+      if (items.length === 0) return;
+      const k = pz.view.k;
+      const grab = { x: (p.x - p.box.left) / k, y: (p.y - p.box.top) / k };
+      setDrag({ items, grab, client: { x: moved.clientX, y: moved.clientY }, target: null });
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      if (pressed) props.onSelect(p.id);
+      pressed = false;
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up, { once: true });
+  };
+
+  const ctx = (stack: string): Ctx => ({
+    props,
+    stack,
+    dragging: active !== null,
+    target: active?.target ?? null,
+    startPress,
+  });
+
+  const hat = (
+    <div
+      className="bk-hat"
+      data-no-pan=""
+      onPointerDown={(event) => {
+        event.stopPropagation();
+        const h = { x: event.clientX, y: event.clientY, sx: props.main.x, sy: props.main.y };
+        const move = (moved: PointerEvent) => {
+          props.onMoveStack(
+            "main",
+            h.sx + (moved.clientX - h.x) / pz.view.k,
+            h.sy + (moved.clientY - h.y) / pz.view.k,
+          );
+        };
+        const up = () => {
+          window.removeEventListener("pointermove", move);
+        };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up, { once: true });
+      }}
+      title="Drag to move the scenario on the canvas"
+    >
+      <Icon name="flag" size="sm" />
+      <span>when the scenario starts</span>
+      {props.inputs.length > 0 && <span className="bk-quiet">with {props.inputs.join(", ")}</span>}
+    </div>
+  );
+
+  return (
+    <div
+      ref={viewport}
+      className="bk-viewport"
+      data-dragging={active ? "" : undefined}
+      {...pz.handlers}
+    >
+      <div
+        className="bk-world"
+        style={{
+          transform: `translate(${String(pz.view.x)}px, ${String(pz.view.y)}px) scale(${String(pz.view.k)})`,
+          transition: pz.animated ? "transform 160ms ease" : undefined,
+        }}
+      >
+        <StackView stack={props.main} ctx={ctx(props.main.id)} hat={hat} />
+        {props.loose.map((stack) => (
+          <StackView key={stack.id} stack={stack} ctx={ctx(stack.id)} />
+        ))}
+      </div>
+      {active && (
+        <div
+          className="bk-ghost"
+          style={{
+            left: active.client.x - active.grab.x * pz.view.k,
+            top: active.client.y - active.grab.y * pz.view.k,
+            transform: `scale(${String(pz.view.k)})`,
+          }}
+          aria-hidden
+        >
+          {active.items.map((item) => (
+            <ItemView
+              key={itemId(item)}
+              item={item}
+              ctx={{ ...ctx("ghost"), dragging: false, target: null }}
+            />
+          ))}
+        </div>
+      )}
+      <div className="bk-controls">
+        <CanvasControls
+          view={pz.view}
+          label="Block canvas"
+          onZoomBy={(factor) => {
+            pz.zoomBy(factor);
+          }}
+          onZoomTo={(k) => {
+            pz.zoomTo(k);
+          }}
+          onFit={() => {
+            pz.setView(fitView({ width: 900, height: 900 }, size, { max: 1 }), true);
+          }}
+        />
+      </div>
+    </div>
+  );
+}
