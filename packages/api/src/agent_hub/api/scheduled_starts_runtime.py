@@ -112,4 +112,6 @@ def _log_report(report: StartReport) -> None:
             failure.project,
             failure.workflow or "-",
             failure.reason,
+            # An unexpected error's traceback stays in the local log, never in the reason.
+            exc_info=failure.error,
         )

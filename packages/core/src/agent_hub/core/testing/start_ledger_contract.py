@@ -11,7 +11,11 @@ import pytest
 from agent_hub.core.schedules.scheduled_starts import StartLedger, StartState
 
 SLOT = datetime(2026, 10, 26, 9, 0, tzinfo=UTC)
-STATE = StartState(slots={"retro": SLOT}, seen={"verify merge demo-api": ("a" * 40,)})
+STATE = StartState(
+    slots={"retro": SLOT},
+    seen={"verify merge demo-api": ("a" * 40,), "triage ci_red demo-api": ("101", "100")},
+    marks={"notes pr_opened demo-api": 9, "triage ci_red demo-api": 99},
+)
 
 
 class _RefusedError(Exception):

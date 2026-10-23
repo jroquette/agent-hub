@@ -95,3 +95,25 @@ async def test_ignores_exit_when_scheduler_never_started() -> None:
 
     runtime.begin_exit()
     await runtime.stop()
+
+
+async def test_logs_the_start_error_when_a_scheduled_start_raises(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    error = OSError(2, "No such file or directory")
+    failure = StartFailure(
+        project="demo", workflow="retro", reason="the run could not start (OSError)", error=error
+    )
+
+    class RaisingStarts(FakeStarts):
+        def start_due_slots(self, now: datetime) -> StartReport:
+            return StartReport(failures=(failure,))
+
+    runtime = ScheduledStartsRuntime(RaisingStarts(), clock=lambda: NOW, monotonic=Ticks())
+    caplog.set_level(logging.INFO)
+
+    await runtime.tick()
+
+    [record] = [r for r in caplog.records if "retro" in r.getMessage()]
+    assert record.exc_info is not None
+    assert record.exc_info[1] is error
