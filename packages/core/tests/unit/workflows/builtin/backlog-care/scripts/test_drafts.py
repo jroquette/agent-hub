@@ -300,7 +300,7 @@ def test_cuts_message_when_draft_longer_than_limit(
 
     (item,) = plan(capsys, monkeypatch, [draft], picked=["DEM-1"])["items"]
 
-    assert len(item["message"]) == 6000
+    assert len(item["message"]) <= load().MESSAGE_CHARS
     assert item["message"].endswith("Skip leaves the issue as it is.")
 
 
@@ -336,3 +336,62 @@ def test_exits_two_when_input_unreadable(
 
     assert load().main(argv) == 2
     assert capsys.readouterr().err.startswith("drafts.py: ")
+
+
+def test_names_every_written_field_when_draft_is_maximal(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # What Apply writes is never cut from the gate: only the context and the ACs are.
+    blocked_by = [f"DEM-{n}" for n in range(100, 125)]
+    blocks = [f"DEM-{n}" for n in range(200, 225)]
+    repos = [f"repo{n:02d}" + "r" * 94 for n in range(20)]
+    questions = [f"Question {n} " + "q" * 488 for n in range(10)]
+    draft = a_draft(
+        "DEM-1",
+        context="c" * 4000,
+        acceptance_criteria=[f"AC-{n} " + "a" * 490 for n in range(1, 11)],
+        size="architectural",
+        repos=repos,
+        blocked_by=blocked_by,
+        blocks=blocks,
+        verification="v" * 499 + "!",
+        open_questions=questions,
+        guarded=True,
+    )
+
+    (item,) = plan(capsys, monkeypatch, [draft], picked=["DEM-1"])["items"]
+
+    message = item["message"]
+    assert len(message) <= load().MESSAGE_CHARS
+    assert message.startswith("DEM-1: draft, label needs-human.")
+    for shown in [*blocked_by, *blocks, *repos, *questions, "v" * 499 + "!"]:
+        assert shown in message, shown
+    for shown in ("Size: architectural", "Guarded path: yes", "Skip leaves the issue as it is."):
+        assert shown in message, shown
+    assert message.index("Verification:") < message.index("Context:")
+    assert "(cut)" in message
+
+
+def test_keeps_context_whole_when_message_fits(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (item,) = plan(capsys, monkeypatch, [a_draft("DEM-1")], picked=["DEM-1"])["items"]
+
+    assert "(cut)" not in item["message"]
+    assert item["message"].index("Open questions") < item["message"].index("Context:")
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    ["`<<<<<``", "``>>>>>`", "`<<<<<`>>>>>`", "``<>><<<>`", "````", "<<<<<>>>>>"],
+)
+def test_leaves_no_fence_or_marker_when_markers_hide_one(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, hostile: str
+) -> None:
+    issues = [an_issue(1, description=f"a{hostile}b", title=f"t{hostile}")]
+
+    text = pick(capsys, monkeypatch, a_read(issues), "--drafts", "10")["text"]
+
+    assert "```" not in text
+    assert text.count("<<<<<") == 1
+    assert text.count(">>>>>") == 1

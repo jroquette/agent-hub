@@ -161,7 +161,7 @@ nodes:
               label: {type: string, enum: [ready, needs-human, close]}
               superseded_by: {type: string}
               draft: {type: object}
-              message: {type: string, maxLength: 6000}
+              message: {type: string, maxLength: 12000}
             required: [index, id, action, label, superseded_by, draft, message]
         ignored: {type: array, items: {type: object, required: [id, reason]}}
         undrafted: {type: array, items: {type: string}}
@@ -189,7 +189,7 @@ nodes:
             index: {type: integer, minimum: 0}
             last: {type: boolean}
             item: {type: object}
-            message: {type: string, maxLength: 6000}
+            message: {type: string, maxLength: 12000}
           required: [index, last, item, message]
 
       - id: gate
