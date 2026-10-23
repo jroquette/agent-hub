@@ -40,9 +40,14 @@ setup per operating system, and its only new network traffic is `gh`'s own calls
   missed slots never run (no backlog).
 - Every 5 minutes it polls each declared event source with `gh api` (REST, `repos/<owner>/<name>/…`, the newest 20
   items, bounded output and time). The first successful poll of a source records what it sees as a baseline and starts
-  nothing; later polls start one run per new event id (a commit sha, a pull request number, an Actions run id). The
-  event's data reaches the run only as ordinary inputs the workflow declares: `sha`, `pr`, `ci_run`. No workflow
-  document key is added.
+  nothing. Later polls start, for `merge`, one run per poll on the newest new commit of the default branch (every new
+  sha is recorded, so a many-commit merge is one run); for `pr_opened`, one run per pull request number above the
+  highest one the source has recorded (its mark); for `ci_red`, one run per failed Actions run id not seen yet above a
+  floor (the lowest id of the baseline's page, raised to the highest id that leaves the bounded set of ids kept), as
+  runs fail out of id order. So an older item that comes back onto the page, or one that stays there, never starts a
+  run. Only the repo's own events count: `ci_red` reads push runs of the repo's own branch, and a pull request from a
+  fork (or a deleted fork) is dropped. The event's data reaches the run only as ordinary inputs the workflow declares:
+  `sha`, `pr`, `ci_run`. No workflow document key is added.
 - Each start is a normal `hub workflow run --live` child; a hidden `--trigger schedule|event` writes `trigger` into the
   run's start record.
 - Idempotency key: workflow + slot, or workflow + source + event id, kept in a per-hub ledger

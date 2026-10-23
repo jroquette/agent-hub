@@ -21,7 +21,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.hub_config.model import HubConfig
-from agent_hub.core.hub_config.schedules import EventKind, EventStart, Schedule
+from agent_hub.core.hub_config.schedules import MAX_STARTS, EventKind, EventStart, Schedule
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.schedules.cron import parse_cron
 from agent_hub.core.workflows.launch import (
@@ -35,8 +35,16 @@ from agent_hub.core.workflows.launch import (
 EVENT_PAGE: Final = 20
 # The ids kept per source: more than a page, so an id leaves the page before it leaves the ledger.
 MAX_SEEN: Final = 100
-MAX_LEDGER_SLOTS: Final = 32
-MAX_LEDGER_SOURCES: Final = 32
+# The ledger holds what hub.json may declare, never less (one entry per schedule or source).
+MAX_LEDGER_SLOTS: Final = MAX_STARTS
+MAX_LEDGER_SOURCES: Final = MAX_STARTS
+# Feeds whose items leave the page (a PR closes, a red run is re-run green) keep a number per
+# source in ``marks``: for pr_opened the highest PR number recorded (a PR is open from its
+# creation, so they come in number order); for ci_red a floor under which no run starts (a run's
+# id is given when it is created, not when it fails, so red runs come out of id order).
+MARKED_KINDS: Final = frozenset({"pr_opened", "ci_red"})
+# The sources whose ids are kept in ``seen``.
+SEEN_KINDS: Final = frozenset({"merge", "ci_red"})
 
 
 @dataclass(frozen=True)
@@ -67,7 +75,9 @@ class EventSource(Protocol):
 
 
 class StartState(BaseModel):
-    """A hub's ledger: the last slot started per workflow and the event ids seen per source."""
+    """A hub's ledger: the last slot started per workflow, the ids seen per ``merge`` and
+    ``ci_red`` source, the highest PR number per ``pr_opened`` source and the floor per
+    ``ci_red`` source."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -78,6 +88,9 @@ class StartState(BaseModel):
     seen: Annotated[
         dict[str, Annotated[tuple[str, ...], Field(max_length=MAX_SEEN)]],
         Field(max_length=MAX_LEDGER_SOURCES),
+    ] = Field(default_factory=dict)
+    marks: Annotated[
+        dict[str, Annotated[int, Field(ge=0)]], Field(max_length=MAX_LEDGER_SOURCES)
     ] = Field(default_factory=dict)
 
 
@@ -138,11 +151,14 @@ class StartedRun:
 
 @dataclass(frozen=True)
 class StartFailure:
-    """A start, a poll or a ledger read that failed; ``workflow`` is None for a whole hub."""
+    """A start, a poll or a ledger read that failed; ``workflow`` is None for a whole hub.
+    ``error`` is an unexpected exception, for the caller's local log only (its text can name
+    local paths, so ``reason`` gives only its kind)."""
 
     project: str
     workflow: str | None
     reason: str
+    error: Exception | None = None
 
 
 @dataclass(frozen=True)
@@ -158,8 +174,12 @@ class _Report:
         self.started: list[StartedRun] = []
         self.failures: list[StartFailure] = []
 
-    def fail(self, project: str, workflow: str | None, reason: str) -> None:
-        self.failures.append(StartFailure(project=project, workflow=workflow, reason=reason))
+    def fail(
+        self, project: str, workflow: str | None, reason: str, *, error: Exception | None = None
+    ) -> None:
+        self.failures.append(
+            StartFailure(project=project, workflow=workflow, reason=reason, error=error)
+        )
 
     def done(self) -> StartReport:
         return StartReport(started=tuple(self.started), failures=tuple(self.failures))
@@ -223,10 +243,10 @@ class StartScheduledRuns:
         polled = self._polled(hub, report)
         if not polled:
             return
-        declared = tuple(source_key(event) for event in hub.config.events)
+        declared = {source_key(event): event.on for event in hub.config.events}
         try:
             new = self._ledger.update(
-                hub.hub_path, partial(_record_seen, polled=polled, declared=declared)
+                hub.hub_path, partial(_record_events, polled=polled, declared=declared)
             )
         except StartLedgerError as error:
             report.fail(hub.project, None, str(error))
@@ -289,6 +309,11 @@ class StartScheduledRuns:
         except (AgentHubError, ValueError) as error:
             report.fail(hub.project, workflow, str(error))
             return
+        except Exception as error:  # noqa: BLE001 -- one start's failure never stops the next
+            # An OSError's text can name local paths: only its kind is reported.
+            reason = f"the run could not start ({type(error).__name__})"
+            report.fail(hub.project, workflow, reason, error=error)
+            return
         report.started.append(
             StartedRun(
                 project=hub.project, workflow=workflow, run_id=accepted.run_id, trigger=trigger
@@ -313,23 +338,71 @@ def _record_slots(
     return state.model_copy(update={"slots": slots}), tuple(due)
 
 
-def _record_seen(
+def _record_events(
     state: StartState,
     *,
     polled: Sequence[tuple[EventStart, tuple[EventRef, ...]]],
-    declared: tuple[str, ...],
+    declared: Mapping[str, EventKind],
 ) -> tuple[StartState, tuple[tuple[EventStart, EventRef], ...]]:
-    # A source no longer declared is dropped; one whose poll failed keeps what it had. A
-    # source seen for the first time records a baseline and starts nothing.
-    seen = {key: ids for key, ids in state.seen.items() if key in declared}
+    # A source no longer declared is dropped, and so is what its kind does not keep; one whose
+    # poll failed keeps what it had. A source polled for the first time records a baseline and
+    # starts nothing.
+    seen = {key: ids for key, ids in state.seen.items() if declared.get(key) in SEEN_KINDS}
+    marks = {key: mark for key, mark in state.marks.items() if declared.get(key) in MARKED_KINDS}
     new: list[tuple[EventStart, EventRef]] = []
     for event, refs in polled:
         key = source_key(event)
-        known = seen.get(key)
-        if known is None:
-            seen[key] = tuple(ref.id for ref in refs)[:MAX_SEEN]
-            continue
-        fresh = [ref for ref in refs if ref.id not in known]
-        new.extend((event, ref) for ref in reversed(fresh))
-        seen[key] = (*(ref.id for ref in fresh), *known)[:MAX_SEEN]
-    return state.model_copy(update={"seen": seen}), tuple(new)
+        if event.on == "pr_opened":
+            marks[key], fresh = _above_mark(marks.get(key), refs)
+        elif event.on == "ci_red":
+            marks[key], seen[key], fresh = _unseen_above_floor(marks.get(key), seen.get(key), refs)
+        else:
+            seen[key], fresh = _newest_unseen(seen.get(key), refs)
+        new.extend((event, ref) for ref in fresh)
+    return state.model_copy(update={"seen": seen, "marks": marks}), tuple(new)
+
+
+def _numbered(refs: Sequence[EventRef]) -> list[tuple[int, EventRef]]:
+    """The events with a numeric id, by id, lowest first."""
+    numbered = ((int(ref.id), ref) for ref in refs if ref.id.isdecimal())
+    return sorted(numbered, key=lambda pair: pair[0])
+
+
+def _above_mark(mark: int | None, refs: Sequence[EventRef]) -> tuple[int, list[EventRef]]:
+    """The new mark and the events above the old one, oldest first (none at the baseline)."""
+    numbered = _numbered(refs)
+    top = max((number for number, _ in numbered), default=0)
+    if mark is None:
+        return top, []
+    return max(mark, top), [ref for number, ref in numbered if number > mark]
+
+
+def _unseen_above_floor(
+    floor: int | None, known: tuple[str, ...] | None, refs: Sequence[EventRef]
+) -> tuple[int, tuple[str, ...], list[EventRef]]:
+    """The new floor, the ids to keep and the events to start, oldest first: each id above the
+    floor not seen yet. The baseline's floor is its page's lowest id; the ids kept are the
+    newest ``MAX_SEEN``, and the floor rises to the highest id dropped from them."""
+    numbered = _numbered(refs)
+    if floor is None or known is None:
+        ids = {number for number, _ in numbered}
+        fresh: list[EventRef] = []
+        floor = min(ids, default=0)
+    else:
+        fresh = [ref for number, ref in numbered if number > floor and ref.id not in known]
+        ids = {int(id_) for id_ in known if id_.isdecimal()} | {int(ref.id) for ref in fresh}
+    ordered = sorted(ids, reverse=True)
+    kept, dropped = ordered[:MAX_SEEN], ordered[MAX_SEEN:]
+    floor = max(floor, *dropped) if dropped else floor
+    return floor, tuple(str(number) for number in kept), fresh
+
+
+def _newest_unseen(
+    known: tuple[str, ...] | None, refs: Sequence[EventRef]
+) -> tuple[tuple[str, ...], list[EventRef]]:
+    """The ids to keep and the run to start: at most one per poll, on the newest new commit,
+    while every new commit is recorded (none at the baseline)."""
+    if known is None:
+        return tuple(ref.id for ref in refs)[:MAX_SEEN], []
+    fresh = [ref for ref in refs if ref.id not in known]
+    return (*(ref.id for ref in fresh), *known)[:MAX_SEEN], fresh[:1]

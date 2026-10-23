@@ -3,7 +3,6 @@ the run starter and the registered hubs."""
 
 from collections.abc import Callable, Iterable, Mapping
 
-from agent_hub.core.errors import AgentHubError
 from agent_hub.core.schedules.scheduled_starts import (
     EventPollError,
     EventQuery,
@@ -56,7 +55,7 @@ class RecordingRunStarter:
 
     def __init__(self) -> None:
         self.calls: list[tuple[StartRunRequest, RunTrigger | None, str | None]] = []
-        self.refused: dict[str, AgentHubError] = {}
+        self.refused: dict[str, Exception] = {}
 
     def __call__(
         self,
