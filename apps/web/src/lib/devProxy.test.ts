@@ -80,9 +80,9 @@ describe("apiProxy", () => {
 
     expect(proxy[DISCOVERIES_PATH]?.target).toBe("http://127.0.0.1:7420");
     expect(
-      new RegExp(DISCOVERIES_PATH).test("/api/v1/projects/demo/environment-discoveries"),
+      new RegExp(DISCOVERIES_PATH).test("/api/v1/projects/demo-shop/environment-discoveries"),
     ).toBe(true);
-    expect(new RegExp(DISCOVERIES_PATH).test("/api/v1/projects/demo/config")).toBe(false);
+    expect(new RegExp(DISCOVERIES_PATH).test("/api/v1/projects/demo-shop/config")).toBe(false);
   });
 
   it("sends make playground's token login to the sessions server as its own /?token=", () => {

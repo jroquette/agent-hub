@@ -40,7 +40,7 @@ describe("fileKind", () => {
 // AC-424.1: what the code tab counts as a test.
 describe("isTestFile", () => {
   it.each([
-    "/repo/demo-shop/tests/order_intents/test_fraud_check_provider.py",
+    "/repo/demo-webshops/tests/order_intents/test_demo_provider.py",
     "/repo/common-data-models/tests/test_payments_constants.py",
     "/repo/pkg/src/thing_test.py",
     "/repo/pkg/conftest.py",
@@ -54,7 +54,7 @@ describe("isTestFile", () => {
   });
 
   it.each([
-    "/repo/demo-shop/src/demo_shop/order_intents/fraud_check_provider.py",
+    "/repo/demo-webshops/src/demo_webshops/order_intents/demo_provider.py",
     "/repo/common-data-models/src/common_data_models/insurance/constants.py",
     "/repo/apps/web/src/screens/x/FilesPanel.tsx",
     "/repo/src/testing_utils.py",
