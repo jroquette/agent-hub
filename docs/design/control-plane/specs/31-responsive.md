@@ -45,7 +45,7 @@ Below 768 px, every non-glance screen shows: "This view needs a wider screen." �
 | Run detail | Pipeline full labels; Gantt + gate results side by side | Pipeline shows short labels (Pick, Tree, Impl, Verify, PR, Report) with full names in tooltip; Gantt above gate results |
 | Approvals | List 440 + detail panel docked | List 360; detail panel overlays (`panel` 480, `scrim` none, `shadow-overlay`) |
 | Health | Findings table + rule rail | Rail becomes filter chips row |
-| Knowledge | Tree 280 + note + rail 280 | Tree 240; rail becomes a "Backlinks (4)" popover; Provenance lineage nodes 148 px, effect panels 2 × 2 |
+| Knowledge | As built (AGH-393): search panel 280 + note; Where this note came from and Linked from follow the note at every width; no rail, no effect panels | The same; the collapsed sidebar widens the note column, the panel keeps its width. At 900 px and narrower the panel stacks above the note; below 900 px the note's jump buttons wrap under its path. The provenance lineage is the vertical trail of the learning detail, not a row of nodes |
 | Metrics | 2-column chart grid | 1 column below 1360; KPI sparklines hidden |
 | Workflows | Steps timeline + sticky About rail (AGH-427); in Advanced, the chosen node opens under the graph at full width | Under 1200 px the rail moves above the steps; editor panes switch via "Visual | YAML" segmented control |
 | Feature detail (ticket panel, AGH-330) | Ticket panel docked beside the Tickets tab at ≥ 1600 (640 px) | Ticket panel overlays (`panel` 480, `scrim` none, `shadow-overlay`); the page keeps its scroll |

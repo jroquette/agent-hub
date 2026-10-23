@@ -2351,62 +2351,57 @@ pre {
   color: var(--failed);
 }
 
-/* Provenance lineage */
+/* ProvenanceLineage (AGH-393): steps down a narrow column, each led by its 16 px icon; a 1 px
+   border-strong line joins the icons. No node border, no status colour, no dashed node. */
 .ah-lineage {
   display: flex;
-  align-items: stretch;
-  gap: 0;
-  overflow-x: auto;
-  padding: 2px;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 .ah-lin-node {
-  flex: 1 1 0;
-  min-width: 170px;
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: var(--space-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  min-width: 0;
+  gap: var(--space-1);
+  padding: 0 0 0 calc(var(--icon) + var(--space-2));
 }
-.ah-lin-node[data-pending="true"] {
-  border-style: dashed;
-  background: var(--surface-sunken);
+.ah-lin-node:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  top: calc(var(--icon) + var(--space-1));
+  bottom: calc(var(--space-1) - var(--space-3));
+  left: calc(var(--icon) / 2);
+  width: 1px;
+  background: var(--border-strong);
 }
 .ah-lin-kind {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-height: var(--icon);
   font-size: 12px;
+  line-height: 16px;
   font-weight: 500;
   color: var(--text-subtle);
 }
-.ah-lin-title {
-  overflow-wrap: anywhere;
-  font-size: 13px;
-  line-height: 18px;
-  font-weight: 500;
+.ah-lin-kind > .ah-icon {
+  position: absolute;
+  top: 0;
+  left: 0;
 }
-.ah-lin-meta {
-  font: 400 12px/16px var(--font-mono);
-  color: var(--text-subtle);
-}
-.ah-lin-edge {
-  flex: none;
-  width: 36px;
+.ah-lin-body {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-subtle);
-  font-size: 10px;
-}
-.ah-lin-edge::before {
-  content: "";
-  width: 100%;
-  height: 1px;
-  background: var(--border-strong);
+  gap: var(--space-1);
+  min-width: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 /* Workflow graph */
@@ -2917,6 +2912,12 @@ pre {
   background: none;
   color: var(--accent);
   font-weight: 600;
+}
+/* A Brain notes row's path: the sub line, mono and quiet (AGH-393). */
+.ah-palette-item .ah-path {
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-subtle);
 }
 .ah-palette-hint {
   margin-left: auto;

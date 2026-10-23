@@ -153,8 +153,11 @@ Every `EmptyState` names the source that feeds the screen and the next action. P
 | Run detail › Gantt | hooks + executor | "No sessions in this run yet" | "The run is at Picked. Sessions appear when the Implement step starts." |
 | Run detail › PR and CI | github | "No PR yet" | "The PR appears when the run reaches PR open. GitHub is polled every minute." |
 | Knowledge › Brain (P3) | hub files `brain/` | "No brain in this hub" | "This reads brain/ in the hub. Run `./hub sync` to create the skeleton." |
+| Knowledge › Brain › search (AGH-393) | the knowledge index (`brain/`, each repo's `docs/`) and the tree's paths | "Nothing matches "<text>"." | "No note path or text contains it." (several words: "Every word must appear: try fewer words."), with "Clear search" |
+| Knowledge › Brain › Where this note came from (AGH-393) | the note's frontmatter, accepted learnings naming it | "No provenance recorded for this note." | — |
+| Knowledge › Brain › Linked from (AGH-393) | the knowledge index's links | "No note links here." | — |
 | Knowledge › Learnings (P3) | learning.proposed events + `brain/_inbox/` | "Inbox empty" | "Agents propose learnings with /learn; notes in brain/_inbox/ appear here for triage." |
-| Knowledge › Provenance trace (P3) | learnings + git history | "Nothing to trace yet" | "Accept a learning to see its path from the session to the rule in effect." |
+| Knowledge › Provenance trace (P3). **Departed (AGH-393), not built:** no trace screen; the trail from session to note is in the learning detail ([18-learnings.md](18-learnings.md)), and the copy's "rule in effect" reads as an effect claim (Q16) | learnings + git history | "Nothing to trace yet" (not shown) | "Accept a learning to see its path from the session to the rule in effect." (not shown) |
 | Knowledge › Decisions log (P3) | `brain/decisions/`, `docs/adr/`, extracted decisions | "No decisions yet" | "This lists brain/decisions/index.md, ADRs in each repo's docs/adr/, and decisions extracted from sessions." |
 | Knowledge › Context inspector (P3) | instruction files, brain, session.start | "No session to inspect" | "The inspector shows what a session loaded. Start a session in the hub first." |
 | Features | `brain/features/` | "No feature records yet." | "Features appear when /feature writes brain/features/<slug>/spec.md. Start one in a session: `/feature AGH-112`" |

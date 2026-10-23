@@ -88,3 +88,151 @@
 .ah-brain-note > :last-child {
   max-width: 80ch;
 }
+/* The Brain search's knowledge rows (AGH-393): title, path, kind and snippet in the narrow panel. */
+.ah-know-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ah-know-row {
+  display: block;
+  min-height: 24px;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-muted);
+}
+/* Only a row that opens a note lights up: a text row (repo doc, refused note) stays still.
+   `:where` keeps the old specificity, so the open note's row keeps its background on hover. */
+:where(a).ah-know-row:hover {
+  background: var(--surface-hover);
+  text-decoration: none;
+}
+.ah-know-row[aria-current="page"] {
+  background: var(--surface-sunken);
+}
+.ah-know-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ah-know-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text);
+  font-weight: 500;
+}
+.ah-know-title .ah-icon {
+  flex: none;
+  color: var(--text-subtle);
+}
+.ah-know-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ah-know-details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ah-know-details .ah-path {
+  font-size: 12px;
+  color: var(--text-subtle);
+}
+.ah-know-kind {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-subtle);
+}
+/* Clamped for the eye only: the whole snippet stays in the DOM for a screen reader. */
+.ah-know-snippet {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  color: var(--text-muted);
+}
+@media (max-width: 899px) {
+  .ah-know-snippet {
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
+}
+.ah-know-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-1) var(--space-2);
+}
+.ah-know-skipped {
+  margin: 0;
+  padding-left: var(--space-4);
+  color: var(--text-muted);
+}
+/* The note column's sections after the body (AGH-393): Where this note came from, Linked from. */
+.ah-note-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+.ah-note-section > h2:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+@media (max-width: 899px) {
+  .ah-brain-note-head {
+    flex-wrap: wrap;
+  }
+  .ah-brain-jumps {
+    order: 3;
+    flex-basis: 100%;
+  }
+}
+.ah-origin {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+}
+.ah-origin-row {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: var(--space-3);
+}
+.ah-origin-row > dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.ah-origin-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ah-origin-learning {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ah-origin-learning .ah-icon {
+  color: var(--text-subtle);
+}

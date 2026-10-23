@@ -1,10 +1,10 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { ReactNode } from "react";
-import { useLocation, useNavigate } from "react-router";
+import { useLocation, useNavigate, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
 import { Banner, EmptyState, Markdown, ProblemError, Skeleton } from "../../components";
-import { anchorId } from "../../lib/brainLinks";
+import { anchorId, withBrainQuery } from "../../lib/brainLinks";
 import { useBrainNote } from "./queries";
 
 type FrontmatterValue = components["schemas"]["FrontmatterValue"];
@@ -37,17 +37,45 @@ export interface NoteViewProps {
    * with `lead` (e.g. the note's path) first inside it. For views where the body is the point.
    */
   foldFrontmatter?: { lead?: ReactNode };
+  /** Frontmatter keys left out of the chips because the screen shows them elsewhere (AGH-393). */
+  hiddenFields?: readonly string[] | undefined;
 }
 
 /**
  * One brain note rendered with the safe `Markdown` (D3, AC-201.35/36): frontmatter as chips, links
  * to other notes open in the app, and the URL's `#anchor` scrolls to its heading once loaded.
  */
-export function NoteView({ project, path, missing, foldFrontmatter }: NoteViewProps) {
+export function NoteView({
+  project,
+  path,
+  missing,
+  foldFrontmatter,
+  hiddenFields = [],
+}: NoteViewProps) {
   const note = useBrainNote(project, path);
   const navigate = useNavigate();
   const { hash } = useLocation();
+  const [params] = useSearchParams();
   const loaded = note.data !== undefined;
+  // The Brain search writes `?q=` on each key: the link handler reads it when clicked, so the note
+  // (parsed in full by Markdown) is rendered again only when its text or place changes.
+  const query = params.get("q");
+  const queryRef = useRef(query);
+  useEffect(() => {
+    queryRef.current = query;
+  }, [query]);
+  const markdown = note.data?.markdown;
+  const body = useMemo(
+    () =>
+      markdown === undefined ? null : (
+        <Markdown
+          source={markdown}
+          note={{ project, path }}
+          onBrainLink={(link) => void navigate(withBrainQuery(link.route, queryRef.current))}
+        />
+      ),
+    [markdown, project, path, navigate],
+  );
 
   useEffect(() => {
     if (!loaded) return;
@@ -93,9 +121,9 @@ export function NoteView({ project, path, missing, foldFrontmatter }: NoteViewPr
   }
 
   const data = note.data;
-  const fields = Object.entries(data.frontmatter).map(
-    ([key, value]) => [key, valueText(value)] as const,
-  );
+  const fields = Object.entries(data.frontmatter)
+    .filter(([key]) => !hiddenFields.includes(key))
+    .map(([key, value]) => [key, valueText(value)] as const);
   const chips = fields.filter(([, text]) => text.length <= CHIP_MAX);
   const long = fields.filter(([, text]) => text.length > CHIP_MAX);
   const frontmatter = (
@@ -143,11 +171,7 @@ export function NoteView({ project, path, missing, foldFrontmatter }: NoteViewPr
       ) : (
         frontmatter
       )}
-      <Markdown
-        source={data.markdown}
-        note={{ project, path }}
-        onBrainLink={(link) => void navigate(link.route)}
-      />
+      {body}
     </div>
   );
 }

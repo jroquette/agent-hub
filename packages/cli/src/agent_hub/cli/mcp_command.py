@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING, Final
 from agent_hub.cli.database_path import default_database_path
 from agent_hub.cli.effective_config import git_identity_reader, load_effective_config_or_exit
 from agent_hub.cli.hub_config_reader import DISTRIBUTION
-from agent_hub.cli.knowledge_checkout import GitKnowledgeCheckout
 from agent_hub.cli.knowledge_hub import knowledge_hub_or_exit
 from agent_hub.core.hub_config.effective_identity import (
     IdentityKey,
@@ -31,6 +30,7 @@ from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.knowledge.knowledge_index import KnowledgeIndex
 from agent_hub.core.knowledge.sync_knowledge import KnowledgeCheckoutError
 from agent_hub.core.learnings.brain_change_requests import CommitAuthor
+from agent_hub.hub_git.knowledge_checkout import GitKnowledgeCheckout
 from agent_hub.storage.knowledge_index import open_knowledge_index
 
 if TYPE_CHECKING:
