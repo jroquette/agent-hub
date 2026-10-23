@@ -3,8 +3,7 @@ import { describe, expect, it } from "vitest";
 import { asBare, bareRef, isBare, looksLikeJson, parseLoose, stringifyLoose } from "./looseJson";
 
 describe("loose JSON (scenario bodies)", () => {
-  const body =
-    '{"event_type":"FETCH","ids":["$INPUTS.external_ref"],"minutes":$INPUTS.minutes}';
+  const body = '{"event_type":"FETCH","ids":["$INPUTS.external_ref"],"minutes":$INPUTS.minutes}';
 
   it("loose json reads a bare reference as a marked value and writes it back bare", () => {
     const read = parseLoose(body);
@@ -13,9 +12,7 @@ describe("loose JSON (scenario bodies)", () => {
     const value = read.value as Record<string, unknown>;
     expect(value.ids).toEqual(["$INPUTS.external_ref"]);
     expect(isBare(value.minutes)).toBe(true);
-    expect(bareRef(value.minutes as string)).toBe(
-      "$INPUTS.minutes",
-    );
+    expect(bareRef(value.minutes as string)).toBe("$INPUTS.minutes");
     expect(stringifyLoose(read.value)).toBe(body);
   });
 

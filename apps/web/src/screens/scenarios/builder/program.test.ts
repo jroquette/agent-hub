@@ -81,7 +81,11 @@ describe("scenario block program", () => {
       "create-order",
       "fetch",
       "review",
-      { if: "$CTX.review_state == 'REVIEWED'", then: ["set-carrier", "reprocess"], else: ["note-refused"] },
+      {
+        if: "$CTX.review_state == 'REVIEWED'",
+        then: ["set-carrier", "reprocess"],
+        else: ["note-refused"],
+      },
       "invoice",
       { repeat: "poll", body: ["poll-again", "check"] },
     ]);
@@ -145,7 +149,11 @@ describe("scenario block program", () => {
       "create-order",
       "fetch",
       "review",
-      { if: "$CTX.review_state == 'REVIEWED'", then: ["set-carrier"], else: ["reprocess", "note-refused"] },
+      {
+        if: "$CTX.review_state == 'REVIEWED'",
+        then: ["set-carrier"],
+        else: ["reprocess", "note-refused"],
+      },
       "invoice",
       { repeat: "poll", body: ["poll-again", "check"] },
     ]);
