@@ -13,6 +13,12 @@ inputs:
 stages:
 - name: Poll cover
   steps:
+  - wait_until: order-state
+    until: $self.output.order_id != ''
+    every: 15s
+    timeout: 10m
+    capture:
+      order_id: $self.output.order_id
   - repeat:
       max: 5
       until: $poll.output.cover_status == 'ACTIVATED'

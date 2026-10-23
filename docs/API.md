@@ -835,7 +835,7 @@ Debugging and migration (AGH-507, [ADR 0049](adr/0049-scenario-blocks-and-run-co
 
 - `PUT /api/v1/scenario-runs/{run_id}/breakpoints` with `{blocks: [<address>…]}` (at most 512 addresses of the run's
   pinned tree, e.g. `2.3`, `2.3.then.1`) → 200 `Breakpoints` (`run_id`, `blocks`): replaces the run's breakpoints
-  through `hub scenario break`; one set while the run runs takes effect at its next block. An address the pinned tree
+  through `hub scenario break RUN --set ADDR…`; one set while the run runs takes effect at its next block. An address the pinned tree
   does not hold is 422 naming it.
 - `POST /api/v1/scenario-runs/{run_id}/step` and `…/continue` → 202 `RunAccepted` (`action` `step` or `continue`): the
   run must be in a debug pause (409 `workflow-run-not-debug-paused`, for example at a gate, which keeps its own paths);

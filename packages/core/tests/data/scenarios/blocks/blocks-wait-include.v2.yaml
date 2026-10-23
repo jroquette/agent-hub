@@ -16,3 +16,7 @@ stages:
   - wait:
       duration: 1m
   - include: blocks-repeat
+    with:
+      webshop_order_id: $INPUTS.webshop_order_id
+      personal_name: $INPUTS.personal_name
+      aws_account_id: $INPUTS.aws_account_id
