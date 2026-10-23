@@ -12,6 +12,7 @@ from typer.testing import Result
 
 from agent_hub.core.workflows import dry_run
 from agent_hub.core.workflows.document import parse_workflow
+from agent_hub.core.workflows.failures import NodeFailedError
 from agent_hub.core.workflows.fixtures import parse_fixture, run_fixture
 from agent_hub.core.workflows.plan import plan_workflow
 from agent_hub.core.workflows.ports import NodeCall
@@ -234,3 +235,15 @@ def test_stays_under_the_prompt_cap_when_inputs_are_at_their_bound() -> None:
 
     for name, context in (("changelog.md", changelog), ("adapt.md", adapt)):
         assert len(prompt(name, context).encode()) < MAX_PROMPT_BYTES, name
+
+
+@pytest.mark.parametrize("field", ["change", "path", "action"])
+def test_refuses_backticks_in_a_breaking_item_when_changelog_replies(field: str) -> None:
+    # The items reach the adapt prompt inside a fence: a backtick run could close it.
+    item = {"change": "verify is gone", "path": "src/api.py", "line": 12, "action": "Drop it."}
+    reply = {"breaking": [item | {field: "x ``` y"}], "summary": "One hit."}
+    outputs, schema = JsonSchemaOutputs(), nodes_of()["changelog"].output_format
+
+    outputs.check(schema, {"breaking": [item], "summary": "One hit."})
+    with pytest.raises(NodeFailedError):
+        outputs.check(schema, reply)

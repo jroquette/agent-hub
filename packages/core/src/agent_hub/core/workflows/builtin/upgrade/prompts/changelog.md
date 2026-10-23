@@ -17,7 +17,8 @@ Steps:
 3. Changelog found: $WITH.found; when it is false (the reason: $WITH.reason), list nothing and
    say in `summary` that no changelog was found; the run then asks a person before it goes on.
 4. Keep `change` and `action` to one line each (at most 200 characters), `path` relative to the
-   repo root, `line` a number or null. At most 30 items.
+   repo root, `line` a number or null. No backtick in `change`, `action` or `path`. At most 30
+   items.
 
 The notes' sources: $WITH.sources
 

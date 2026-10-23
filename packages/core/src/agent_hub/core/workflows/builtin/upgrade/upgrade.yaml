@@ -153,16 +153,17 @@ nodes:
         breaking:
           type: array
           maxItems: 30
+          # No backtick: the items reach the adapt prompt inside a fence.
           items:
             type: object
             additionalProperties: false
             required: [change, path, line, action]
             properties:
-              change: {type: string, minLength: 1, maxLength: 200, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
-              path: {type: string, minLength: 1, maxLength: 256, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+              change: {type: string, minLength: 1, maxLength: 200, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f`]*$"}
+              path: {type: string, minLength: 1, maxLength: 256, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f`]*$"}
               line:
                 anyOf: [{type: integer, minimum: 1, maximum: 10000000}, {type: "null"}]
-              action: {type: string, minLength: 1, maxLength: 200, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+              action: {type: string, minLength: 1, maxLength: 200, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f`]*$"}
         summary: {type: string, maxLength: 2000}
 
   - id: check
