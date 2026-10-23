@@ -329,6 +329,17 @@ the note) and the guard's secret-file rule on each repo as last fetched, triages
 security-reviewer's steps, and writes `brain/_inbox/security-YYYY-MM-DD.md`; file an issue for each finding you accept,
 then run `/triage <issue>`. Semgrep's registry rules, pip-audit and npm audit reach the network.
 
+**Doc drift.** The built-in `doc-drift` workflow finds doc lines a contract change made wrong and, once you approve
+them at its gate, opens a docs-only PR in the repo (ADRs are reported, never edited). Fetch the repo, then run
+`./hub workflow run doc-drift --input repo=<dir> --input sha=<merge sha> --live` after a merge, or with `sha` blank
+for the last month. To run it on every merge and once a month, add to `hub.json`:
+`"events": [{"workflow": "doc-drift", "on": "merge", "repo": "<dir>", "inputs": {"repo": "<dir>"}}]` and
+`"schedules": [{"workflow": "doc-drift", "cron": "0 6 1 * *", "inputs": {"repo": "<dir>"}}]`. Known limit: a command
+renamed in one command group while another group keeps the same name is not seen as gone. Each approved run
+leaves a worktree at `<repo>/.claude/worktrees/doc-drift-<run id>` on the branch `<branch_prefix>doc-drift-<run id>`
+(a resumed run reuses both); once its PR is merged or closed, or it committed nothing, remove them in the repo with
+`git worktree remove .claude/worktrees/doc-drift-<run id>` and `git branch -D <branch_prefix>doc-drift-<run id>`.
+
 **Sessions from the app.** On the Sessions screen, New session starts the user's own `claude` (on `PATH`, logged in)
 in the hub, a repo or one of their worktrees, with the hub's CLAUDE.md, hooks (the guard still applies), skills and
 agents; the chat sends messages, answers prompts, interrupts, sets mode and model, resumes an ended session in place

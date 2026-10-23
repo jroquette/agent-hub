@@ -82,6 +82,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   with neither the ready label nor `needs-human`, and opens one approval per issue (apply or skip). No node reads or
   writes the tracker: `/triage` applies the approved drafts after the run, one issue at a time, and leaves skipped
   ones as they were. A schedule cannot start it (it needs the file the skill writes): run `/triage --backlog` weekly.
+- The built-in `doc-drift` workflow pack (AGH-491): after a merge (or monthly), it lists the contract names the change
+  removed, finds the doc lines that still name them, has a read-only judge propose each corrected line, and after the
+  owner's approval opens a docs-only PR in the repo. ADR lines are reported, never edited; nothing writes the tracker.
 
 ### Changed
 

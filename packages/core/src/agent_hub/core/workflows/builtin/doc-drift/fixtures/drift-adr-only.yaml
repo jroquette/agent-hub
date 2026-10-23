@@ -1,0 +1,39 @@
+# Only an accepted ADR names the old command (AC-2): no doc line to fix, so no judge and no gate;
+# the ADR line is reported as superseded wording and never edited.
+workflow: doc-drift
+inputs: {repo: demo-api, sha: 0a1b2c3d4e}
+stubs:
+  contract:
+    output:
+      mode: merge
+      sha: 0a1b2c3d4e
+      base: 9f8e7d6c5b
+      label: merge 0a1b2c3
+      hub: /ws/hub
+      repo_path: /ws/demo-api
+      count: 1
+      names:
+        - {kind: command, name: old-cmd, new: [new-cmd], source: src/demo/cli.py}
+      skipped: 0
+      truncated: 0
+      patch_truncated: false
+  mentions:
+    output:
+      fixable_count: 0
+      fixable: []
+      adr:
+        - {path: docs/adr/0009-x.md, line: 14, text: "We add `demo old-cmd`.", names: [old-cmd], status: accepted}
+      notes: []
+      truncated: 0
+  plan:
+    output:
+      verdict: reported
+      fixes: 0
+      items: []
+      superseded:
+        - {path: docs/adr/0009-x.md, line: 14, text: "We add `demo old-cmd`.", names: [old-cmd], status: accepted}
+      refused: []
+      notes: []
+      message: "Superseded wording (accepted ADRs, not edited): docs/adr/0009-x.md:14"
+expect: {status: done, outcome: reported}
+reached: [contract, mentions, plan]

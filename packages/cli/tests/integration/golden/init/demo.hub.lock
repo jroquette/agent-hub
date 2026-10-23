@@ -682,6 +682,36 @@
     "workflows/brain-care/scripts/read_inbox.py": {
       "ownership": "seeded"
     },
+    "workflows/doc-drift/doc-drift.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/doc-drift/fixtures/drift-adr-only.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/doc-drift/fixtures/drift-declined.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/doc-drift/fixtures/drift-none.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/doc-drift/fixtures/drift-renamed-command.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/doc-drift/prompts/judge.md": {
+      "ownership": "seeded"
+    },
+    "workflows/doc-drift/scripts/branch.py": {
+      "ownership": "seeded"
+    },
+    "workflows/doc-drift/scripts/contract.py": {
+      "ownership": "seeded"
+    },
+    "workflows/doc-drift/scripts/doc_fix.py": {
+      "ownership": "seeded"
+    },
+    "workflows/doc-drift/scripts/mentions.py": {
+      "ownership": "seeded"
+    },
     "workflows/incident/fixtures/incident-awaiting-mitigation.yaml": {
       "ownership": "seeded"
     },

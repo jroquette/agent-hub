@@ -191,6 +191,17 @@ DESIGN_PATHS = (
     "workflows/brain-care/scripts/inventory.py",
     "workflows/brain-care/scripts/outcome.py",
     "workflows/brain-care/scripts/read_inbox.py",
+    # AGH-491: the built-in doc-drift pack, seeded.
+    "workflows/doc-drift/doc-drift.yaml",
+    "workflows/doc-drift/fixtures/drift-adr-only.yaml",
+    "workflows/doc-drift/fixtures/drift-declined.yaml",
+    "workflows/doc-drift/fixtures/drift-none.yaml",
+    "workflows/doc-drift/fixtures/drift-renamed-command.yaml",
+    "workflows/doc-drift/prompts/judge.md",
+    "workflows/doc-drift/scripts/branch.py",
+    "workflows/doc-drift/scripts/contract.py",
+    "workflows/doc-drift/scripts/doc_fix.py",
+    "workflows/doc-drift/scripts/mentions.py",
     # AGH-483: the built-in incident pack, seeded.
     "workflows/incident/fixtures/incident-awaiting-mitigation.yaml",
     "workflows/incident/fixtures/incident-confirmed.yaml",
@@ -949,6 +960,8 @@ def test_parses_as_python39_when_rendered(demo_render: dict[str, RenderedFile]) 
         "scripts",
         # The brain-care pack's helpers (AGH-487), as the sdlc pack's.
         "workflows/brain-care/scripts",
+        # The doc-drift pack's scripts (AGH-491), run by uv on its Python, also parse as 3.9.
+        "workflows/doc-drift/scripts",
         # The post-merge-verify pack's scripts (AGH-490), run by uv as the sdlc pack's are.
         "workflows/post-merge-verify/scripts",
         # The sdlc pack's helpers (AGH-229), run by uv on its Python, also parse as 3.9.
