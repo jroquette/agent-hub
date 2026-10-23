@@ -268,7 +268,7 @@ def test_leaves_each_gate_to_owner_when_backlog_run_paused(text: str) -> None:
 
 def test_names_fallback_when_backlog_care_missing(text: str) -> None:
     backlog = backlog_text(text)
-    fallback = backlog[backlog.index("When `./hub workflow list` has no `backlog-care`") :]
+    fallback = backlog[backlog.index("If `./hub workflow run backlog-care` is not available") :]
 
-    assert "an older platform pin" in fallback
+    assert "(the hub's copy of the pack is missing)" in fallback
     assert "take them one at a time, oldest first" in fallback
