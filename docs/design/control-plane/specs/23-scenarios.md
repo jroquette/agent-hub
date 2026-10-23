@@ -121,6 +121,26 @@ The step list and the Scenario runs card stack below 1600 px, so the Started col
 | Not found | "Scenario order-lifecycle not found" / "Project demo has no scenario order-lifecycle that loads. It may have been renamed, or its file may not load." |
 | No scenario runs | "No scenario runs yet." / "Start one from the plan above." |
 
+### Departures (AGH-521, storyline and live run)
+
+The owner validated these in the playground (snapshot `20261023T210306Z`); where the section above says otherwise, this
+wins.
+
+- **AC-521.11.1 Step keys, file and actions.** Given `GET /api/v1/scenarios/{project}/{name}`, then each step carries
+  its `with`, `capture`, `every`, `timeout`, `until_when` and `retry`, and the detail carries the scenario's `path`,
+  its YAML and the actions its steps call, each with its effect, runtime, inputs, script and draft state
+  ([API.md](../../../API.md#scenarios)).
+- **AC-521.11.2 Storyline.** Given the scenario page, then its steps read as a numbered storyline of cards before any
+  plan: each step in words with its action, the values it passes, what it keeps for later and where it stops; an
+  `expect` step words its wait (every, until, timeout) and its stop changes with the mode (Interactive pauses,
+  Regression fails). The plan's facts (effect, endpoint, policy, a draft's commit line) land in the step's own card.
+- **AC-521.11.3 Run panel beside the steps.** Given a wide screen, then the plan, mode and start controls sit in a run
+  panel beside the storyline; an action's name opens a panel with its description, effect, inputs and script, and
+  the scenario's file opens as text.
+- **AC-521.11.4 Live run.** Given a scenario run of this scenario that is running, then the page follows it: a banner
+  says it is running with Cancel (which asks first), and each step's card shows its status in that run as it moves;
+  when the run ends the banner links to it.
+
 ## Screen 3: Scenario run (`/scenarios/:project/:name/runs/:runId`)
 
 **Answers:** "Where did this scenario run get to, why did it stop, and what do I decide now?"

@@ -748,6 +748,12 @@ folder, the server's environment minus `LINEAR_API_KEY`); no problem quotes its 
   newest first (at most 50, each as `last_run`), and `environments`, the project's declared environments to plan in
   (`name`, `access`, `production`, from `hub.json` tightened by `hub.local.json`; empty when either cannot be read). An unknown project is a 404 (entity `project`); an unknown scenario, or one listed as a
   problem, a 404 (entity `scenario`, id `<project>/<name>`).
+  Each step also carries its keys (AGH-521): `with`, `capture`, `every`, `timeout`, `until_when` and `retry`
+  (`max_attempts`, `delay`, `on_error`). The detail adds `path` (the scenario file, relative to the hub),
+  `document_text` (its YAML) and `actions`, one per action the steps call: `ref`, `name`, `pack`, `path`,
+  `description`, `effect`, `runtime`, `script`, `timeout`, `inputs` (`name`, `type`, `required`, `default`,
+  `description`), `output_format`, `draft` with its `accept_command`, `document_text`, `script_text` (cut with
+  `script_truncated`) and `problem` when the action does not load.
 - `POST /api/v1/scenarios/{project}/{name}/plan` with `{environment, inputs?}` → 200 `ScenarioPlanView`: what `hub
   scenario plan NAME --env ENV --json` prints (`scenario`, `environment`, `access` (`null` when undeclared),
   `production`, `denied`, `problems` and `rows`, each `step`, `type`, `action`, `effect`, `args` (a value known only

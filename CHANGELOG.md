@@ -45,6 +45,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   panel, zoom, fit and a minimap; run detail uses the same canvas. The feature's ticket flow moves onto that canvas:
   cards with the AI session, step bar, ACs and assignee, one trunk per blocker, one Tab stop with arrow keys along the
   edges, and a full window view (`f`) (AGH-521).
+- The scenario page reads as a storyline of steps beside a run panel, with each step's action, values and stops in
+  words, the actions' scripts and the scenario file one click away, and it follows a running scenario run live, with
+  Cancel; `GET /api/v1/scenarios/{project}/{name}` adds each step's keys, the file and the actions it calls (AGH-521).
 
 ### Fixed
 
