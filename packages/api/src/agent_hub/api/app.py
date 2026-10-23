@@ -90,6 +90,29 @@ class AppLifecycle(Protocol):
         ...
 
 
+class CombinedLifecycle:
+    """Several ``AppLifecycle`` parts as one: started in order, each told to exit, stopped in
+    reverse order (the agent sessions, then the scheduled starts)."""
+
+    def __init__(self, *parts: AppLifecycle) -> None:
+        self._parts = parts
+
+    async def start(self) -> None:
+        """Start each part, in order."""
+        for part in self._parts:
+            await part.start()
+
+    def begin_exit(self) -> None:
+        """Begin each part's exit."""
+        for part in self._parts:
+            part.begin_exit()
+
+    async def stop(self) -> None:
+        """Stop each part, last started first."""
+        for part in reversed(self._parts):
+            await part.stop()
+
+
 class _Serving:
     """The app's start, signal hook and stop: the change feed and the lifecycle."""
 

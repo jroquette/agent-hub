@@ -83,6 +83,9 @@ IGNORED_PATHS: tuple[tuple[str | int, ...], ...] = (
     ("tracker", "states"),
     ("tracker", "blocked_label"),
     ("models",),
+    # hub web's scheduled and event starts (AGH-481): no hook reads them.
+    ("schedules",),
+    ("events",),
 )
 
 # Read leniently by the hooks; absent is ``None`` in both; agreement is the shared cases'

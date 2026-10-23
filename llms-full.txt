@@ -276,6 +276,19 @@ you. To read the brain, open Knowledge › Brain (or a project's Brain): it list
 `brain/auto/`) and renders any one, with links between notes; a feature's Spec, Research, Plan, Eval and Criteria tabs
 show its records. The app reads the registered hub's checkout as it is on disk, so pull the hub to see merged changes.
 
+**Scheduled and event starts.** `hub web` can start a workflow by itself. Declare it in `hub.json`: a schedule such
+as `"schedules": [{"workflow": "retro", "cron": "0 9 * * 1", "inputs": {"since": 7}}]` starts `retro` every Monday at
+09:00, and an event such as `"events": [{"workflow": "post-merge-verify", "on": "merge", "repo": "<repo dir>"}]`
+starts `post-merge-verify` after each new commit on that repo's default branch (`on` may also be `ci_red`, a failed
+Actions run on it, or `pr_opened`, a newly opened pull request). The cron has 5 numeric fields and is read in UTC.
+Nothing starts while `hub web` is not running; when it comes back, the most recent missed slot runs once and older
+ones never do. Events are polled through `gh` every 5 minutes, so `gh` must be signed in; only the repo's own push runs and pull
+requests count (one from a fork never starts a run); the first poll only records
+what is there, and the run gets the event's `sha`, `pr` or `ci_run` when the workflow declares that input. Each run
+records `trigger` in its start record and is listed in Runs like any other. `./hub workflow schedule list` prints each
+schedule's next start, and `./hub doctor --only workflows.starts` flags a misspelled workflow. In Docker no run starts
+by itself, as no run starts from the app there.
+
 The Skills tab (Knowledge › Skills, or a project's Skills) lists the hub's skills, agents and hooks with how each is
 invoked, whether it is managed or the project's, and how often it was used in the last 30 days; a skill's page shows
 its text (rendered or raw), the steps, agents and commands derived from it, its bundled files and its diagnostics
@@ -1514,12 +1527,38 @@ generated file and `hub` command takes project values from it and nowhere else. 
 | `models.agents.<agent>` | closed list `small`, `medium`, `large`; `<agent>` one of the 8 plugin agents (`architect`, `evaluator`, `planner`, `quality-reviewer`, `requirements-analyst`, `researcher`, `spec-reviewer`, `ux-designer`) | the template's tier | generator: the agent renders that tier's model instead; an unknown tier or agent is a schema error (`config.schema`) |
 | `environments` | object keyed by environment name (`S`, ≤ 40, unique ignoring case): `access`, `production`, `description` (≤ 80), `credentials` names ([environments.md](environments.md)) | `{}` | `AGENTS.md`, `hub brief`, `hub env`, `hub doctor`, `hub sync`, `hub setup`, guard (credential names) |
 | `environments.<name>.credentials.env_file` (and an endpoint's) | a dotenv path relative to the workspace (the hub's parent folder), printable ASCII, ≤ 200, no `..` segment, no leading `/` or `~`, no secret shape ([scenarios.md](scenarios.md)) | absent | the action runner only (never `AGENTS.md` or the brief), `hub env add\|set --env-file`, `hub doctor` (`environments.env_file`) |
+| `schedules` | list of ≤ 32 objects, one per workflow; not in `hub.local.json` ([ADR 0048](../adr/0048-scheduled-and-event-starts-in-hub-web.md)) | `[]` | `hub web`, `hub workflow schedule list`, `hub doctor` (`workflows.starts`) |
+| `schedules[].workflow` | a workflow name, kebab-case, ≤ 128 | req. | `hub web` starts it; `hub doctor` reports an unknown name or `issue-to-pr` |
+| `schedules[].cron` | 5 numeric fields (minute hour day month weekday; `*`, lists, `A-B`, `*/S`, `A-B/S`), ≤ 100 characters, read in UTC; a cron that never fires is an error | req. | `hub web`, `hub workflow schedule list` |
+| `schedules[].inputs` | object of ≤ 64 run inputs: names `^[a-z][a-z0-9_]{0,63}$`, values a boolean, a number or a text of ≤ 1 000 characters with no NUL and no secret shape | `{}` | `hub web` (checked against the workflow's declared inputs at each start) |
+| `schedules[].environment` | a declared `environments` name | absent | `hub web` (the run's `--env`) |
+| `events` | list of ≤ 32 objects, one per workflow, `on` and `repo`; not in `hub.local.json` ([ADR 0048](../adr/0048-scheduled-and-event-starts-in-hub-web.md)) | `[]` | `hub web`, `hub doctor` (`workflows.starts`) |
+| `events[].workflow` | as `schedules[].workflow` | req. | as `schedules[].workflow` |
+| `events[].on` | closed list `merge` (a new commit on the repo's default branch), `ci_red` (a failed push run of GitHub Actions on it, in the repo itself), `pr_opened` (a newly opened pull request whose head is in the repo itself; one from a fork, or a deleted fork, never starts a run) | req. | `hub web` (`gh api`) |
+| `events[].repo` | a `repos[].dir` (its `github` is polled) | req. | `hub web` |
+| `events[].inputs` | as `schedules[].inputs`, without `sha`, `pr` or `ci_run`, which come from the event | `{}` | `hub web` |
 
 Unknown keys are an error at every object level; `_` keys (such as `_comment`) are accepted and ignored at every level,
 and the exported schema says the same ([ADR 0010](../adr/0010-hub-json-config-contract.md)). Cross-field checks are
 model validators JSON Schema cannot express, so an editor accepts what the CLI rejects: unique `repos[].dir`, team keys
 unique ignoring case, guard path roots, `doctor.rules` entries of an unselected module, `contract-sync` repos, a
-`pr_title` part (not `{ISSUE}`) the repo's effective `commit_title` lacks, `guard.infra` patterns that compile.
+`pr_title` part (not `{ISSUE}`) the repo's effective `commit_title` lacks, `guard.infra` patterns that compile, a
+`schedules[].environment` that is declared, an `events[].repo` that is a `repos[].dir`, one schedule per workflow and
+one event per workflow, `on` and `repo`, and no `sha`, `pr` or `ci_run` in `events[].inputs`.
+
+`schedules` and `events` are started by `hub web` while it runs (not with the agent sessions off, as in the container),
+each as a `hub workflow run --live` child whose start record holds `trigger` (`schedule` or `event`). A cron is read in
+UTC; each minute, the most recent slot at or before now starts once, so a slot missed while `hub web` was down runs once
+when it comes back, and older ones never do. Every 5 minutes `hub web` asks GitHub through `gh api` for each event
+source's newest 20 items; the first successful poll is a baseline and starts nothing, and later polls start one run per
+new merge commit, failed Actions run or opened pull request. The event's data reaches the run only as inputs the
+workflow declares: `sha` (every kind), `pr` (`pr_opened`) and `ci_run` (`ci_red`). The slots and event ids already
+started are kept in `<hub>/.agent-runs/schedules/state.json` ([ADR 0048](../adr/0048-scheduled-and-event-starts-in-hub-web.md)).
+Only the repo's own events count: `ci_red` reads push runs only and drops a run whose head repository or branch is not
+the polled repo's, and `pr_opened` drops a pull request whose head is in a fork (or a deleted fork), so no one else's
+code starts a run on your machine. The ledger keeps only what `hub.json` declares now: when a schedule or an event
+source is removed, its entry goes, so a schedule added back runs its most recent past slot once again, and a source
+added back starts from a new baseline.
 
 ### Rendered values
 
@@ -2426,6 +2465,7 @@ functions registered when the module ships.
 | `config.stop_gate` | warning | each repo whose `check_fast` is absent, empty or blank: `no Stop gate for <dir>` at `repos[<i>].check_fast`; can be disabled, cannot be retuned (a `severity` is a `config.schema` error) | AGH-52 |
 | `environments.production` | warning | one finding per production environment (the `production` flag, never a name) of `hub.json` and `hub.local.json`, at its source (the file its effective `access` comes from), message `production environment: <name> (access <a>, <source>)`: a warning for `write` or `ask` (ending `; actions: writes and destroys are denied there`, the access policy of [scenarios.md](scenarios.md)), an info for `read`; a local file `config.schema` refuses adds nothing; an ordinary `doctor.rules` entry (disabled or retuned like the others) | [environments.md](environments.md) |
 | `environments.env_file` | warning | each env file a declared environment or endpoint names (`credentials.env_file`, both files), at the file that declares it: `env file <path> of <env> is missing`, `is outside the hub and every declared repo` (by real path: a link leading out of them is outside), `is not ignored by git in <dir>` (`git check-ignore` in that checkout; a tracked file is never ignored), or `is reached through a link` (a link on its path below the hub's or repo's folder it names, which `hub action run` refuses to follow); no finding without a declared env file | [scenarios.md](scenarios.md) |
+| `workflows.starts` | error | each `schedules[]` and `events[]` entry of `hub.json` names a workflow that loads and plans (the hub's or a built-in, as `workflows.valid` reads them) and is not `issue-to-pr`: one finding per entry at `hub.json`, message `<list>[<i>].workflow: unknown workflow <name>` (fix "name a workflow that hub workflow list shows, or add it under workflows/") or `<list>[<i>].workflow: issue-to-pr writes to the tracker and cannot start from hub web` (fix "start issue-to-pr with hub run, or remove this entry"); no finding when no workflow was read | AGH-481, [ADR 0048](../adr/0048-scheduled-and-event-starts-in-hub-web.md) |
 | `brain.memory` | warning | personal memory in `brain/auto/workspace/` stays out of git: (a) on a git listing only (`listed_by_git`), each tracked or not-ignored path under the folder but its `.gitkeep` (at most 10, then one `N more` at the folder); (b) the root `.gitignore` has no line ignoring the folder (a line match, not git's matcher: a nested `.gitignore` and a later `!` line are not evaluated). Paths and counts only. Details, messages, fix and limits: [memory-layers.md](memory-layers.md#doctor-rule-brainmemory) | AGH-48 |
 | `sandbox.workflow` | error | the hub's own commands work inside the Claude Code sandbox the managed settings turn on: with `.claude/settings.json` → `sandbox.enabled` not `true`, one info (nothing to check); with it on, one error naming each command of `WORKFLOW_EXCLUDED_COMMANDS` (`gh *`, `git push/fetch/pull/clone/ls-remote *`, `./hub worktree *`, `hub worktree *`, `make worktree *`, `make worktree-remove *`) missing from `sandbox.excludedCommands`; run from a Claude Code session (`CLAUDECODE=1`, so `hub doctor` itself runs sandboxed), each git checkout of `repos` gets `git ls-remote -q origin HEAD` (20 s, no prompt) and a failure is a warning at `../<dir>` whose fix names the bare `./hub worktree` call and the `git fetch` + `--no-fetch` path. A missing or invalid `settings.json` is `settings.weakening`'s. `uv`'s folders are the `hub` shim's (it moves them to `.hub-uv/` when they cannot be written), not a settings key | AGH-134 |
 | `workflows.valid` | error | every workflow of the hub's `workflows/` and the built-ins loads and plans, as `hub workflow validate` reads them (core's `WorkflowSource`, filled by the generator): one finding per problem at its file and line (a built-in's file shown as `<builtin>/…`), message `<key>: <problem>`, fix "fix the workflow file; hub workflow validate lists each problem"; fixtures are not run (the hub's `make check` runs `hub workflow test`) | AGH-227 |

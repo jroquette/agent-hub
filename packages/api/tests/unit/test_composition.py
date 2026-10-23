@@ -50,6 +50,7 @@ from agent_hub.core.learnings.learning_ports import LearningHub
 from agent_hub.core.learnings.read_learnings import HUB_NOT_REGISTERED, UnavailableHub
 from agent_hub.core.projects.project_views import ProjectActivity
 from agent_hub.core.readmodels.filters import Scope
+from agent_hub.core.schedules.scheduled_starts import StartScheduledRuns
 from agent_hub.core.sessions.session_label import LabelRules
 from agent_hub.core.skills.skill_view import SkillUsage
 from agent_hub.core.testing.brain_fakes import FakeBrainOrigin, InMemoryBrainChangeRequests
@@ -65,6 +66,7 @@ from agent_hub.core.testing.read_model_builders import (
     a_skill_usage,
     an_agent_session,
 )
+from agent_hub.core.testing.schedule_fakes import ScriptedEventSource
 from agent_hub.core.testing.session_driver_fakes import InMemorySessionDriver
 from agent_hub.core.testing.skill_trees import a_skills_fixture_tree, fake_hub_of
 from agent_hub.core.testing.tracker_reader_fakes import (
@@ -635,3 +637,35 @@ def test_wires_skill_usage_when_app_built() -> None:
     assert alpha.usage.count == 3
     assert usage.asked == ["demo"]
     assert models.settings().db_path == "/data/agent-hub.db"
+
+
+def test_wires_scheduler_when_sessions_on_and_none_when_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    built: list[Any] = []
+    real = composition.ScheduledStartsRuntime
+
+    def record(starts: Any, **options: Any) -> Any:
+        runtime = real(starts, **options)
+        built.append((starts, runtime))
+        return runtime
+
+    monkeypatch.setattr(composition, "ScheduledStartsRuntime", record)
+    events = ScriptedEventSource()
+
+    _build(_session_settings(tmp_path, sessions_off=True), tmp_path, event_source=events)
+    assert built == []
+
+    app = _build(
+        _session_settings(tmp_path),
+        tmp_path,
+        session_driver=InMemorySessionDriver(),
+        event_source=events,
+    )
+    with TestClient(app):
+        pass
+
+    [(starts, _)] = built
+    assert isinstance(starts, StartScheduledRuns)
+    # No hub is registered: the tick at start read nothing and polled nothing.
+    assert events.queries == []
