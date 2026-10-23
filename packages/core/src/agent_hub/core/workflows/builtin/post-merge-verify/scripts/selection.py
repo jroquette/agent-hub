@@ -4,8 +4,9 @@
 # ///
 """Pick the ACs to verify after a merge (or every week) and print them as one JSON object.
 
-``selection.py --repo <dir> [--sha <sha>] [--ref <ref>]``, run in the hub: ``repo`` is a dir of
-``hub.json`` → ``repos``, a sibling of the hub. With a ``sha`` (the merge commit on the default
+``selection.py --repo <dir> --config <json> [--sha <sha>] [--ref <ref>]``, run in the hub:
+``--config`` is what ``hub step config`` printed (this script opens no ``hub.json``), and ``repo``
+one of its ``repos[].dir``, a sibling of the hub. With a ``sha`` (the merge commit on the default
 branch, 7 to 40 hex digits) the mode is ``merge``: the tickets are the ``(KEY-n)`` of the subjects
 of ``git log <sha>^1..<sha>`` and the ``KEY-n`` that starts the merged branch's last segment
 (``Merge pull request #N from <owner>/<...>/<key>-<n>-...``), and the changed paths are
@@ -24,7 +25,8 @@ cannot be read is listed in ``unreadable`` (``{path, reason}``) and the others a
 Output: ``{"mode", "sha", "repo_path", "tickets", "changed_paths", "paths_truncated", "selected":
 [{"feature", "ac", "why"}], "truncated", "skipped_not_passing", "unreadable"}``; ``why`` is
 ``ticket``, ``path`` or ``weekly``, ``feature`` the record's folder under ``brain/features/``.
-Bad input (an unknown repo, a bad or unknown sha or ref, a commit with no parent, git failing)
+Bad input (an unreadable config, an unknown repo, a bad or unknown sha or ref, a commit with no
+parent, git failing)
 exits 2 with ``selection.py: <reason>`` on stderr.
 """
 
@@ -37,7 +39,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
-USAGE = "usage: selection.py --repo <dir> [--sha <sha>] [--ref <ref>]"
+USAGE = "usage: selection.py --repo <dir> --config <json> [--sha <sha>] [--ref <ref>]"
 FEATURES = Path("brain/features")
 MAX_DEPTH = 4
 MAX_RECORDS = 500
@@ -89,11 +91,11 @@ class Selection:
 
 def options(argv: list[str]) -> dict[str, str]:
     """``--name value`` pairs; a value may start with ``-`` (it is data, never an option)."""
-    names = {"--repo", "--sha", "--ref"}
+    names = {"--repo", "--config", "--sha", "--ref"}
     if len(argv) % 2:
         raise BadInputError(USAGE)
     found = dict(zip(argv[::2], argv[1::2], strict=True))
-    if not set(found) <= names or "--repo" not in found:
+    if not set(found) <= names or not {"--repo", "--config"} <= set(found):
         raise BadInputError(USAGE)
     return found
 
@@ -114,15 +116,18 @@ def git(repo: Path, *args: str) -> str:
     return done.stdout.decode(errors="replace")
 
 
-def repo_path(name: str) -> Path:
+def repo_path(name: str, text: str) -> Path:
+    """``name``'s checkout beside the hub, once ``hub step config``'s output lists it."""
     try:
-        config = json.loads(Path("hub.json").read_text(encoding="utf-8"))
+        config = json.loads(text)
     except READ_ERRORS as error:
-        raise BadInputError(f"cannot read hub.json: {type(error).__name__}") from None
+        raise BadInputError(f"cannot read the config: {type(error).__name__}") from None
     repos = config.get("repos") if isinstance(config, dict) else None
-    dirs = [item.get("dir") for item in repos or [] if isinstance(item, dict)]
+    if not isinstance(repos, list):
+        raise BadInputError("cannot read the config: no repos list")
+    dirs = [item.get("dir") for item in repos if isinstance(item, dict)]
     if name not in dirs:
-        raise BadInputError(f"{name!r} is not a repo of hub.json")
+        raise BadInputError(f"{name!r} is not a repo of the config")
     path = (Path.cwd().parent / name).resolve()
     if not path.is_dir():
         raise BadInputError(f"the repo {name!r} is not checked out at {path}")
@@ -292,7 +297,7 @@ def select(run: Selection) -> None:
 
 
 def selection(given: dict[str, str]) -> dict[str, object]:
-    repo = repo_path(given["--repo"])
+    repo = repo_path(given["--repo"], given["--config"])
     sha = given.get("--sha", "")
     if sha and not SHA.fullmatch(sha):
         raise BadInputError(f"not a commit sha: {sha!r}")

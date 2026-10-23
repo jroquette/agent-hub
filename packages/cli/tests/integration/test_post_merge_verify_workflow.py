@@ -52,7 +52,7 @@ def test_validates_and_passes_every_fixture_when_post_merge_verify_tested(
     tested = run_command(demo_workspace.hub, "workflow", "test", "post-merge-verify")
 
     assert validated.exit_code == 0, validated.output
-    assert validated.stdout == "post-merge-verify: valid (4 nodes in 4 layers)\n"
+    assert validated.stdout == "post-merge-verify: valid (5 nodes in 5 layers)\n"
     assert tested.exit_code == 0, tested.output
     for fixture in FIXTURES:
         # The hub's seeded copy shadows the built-in (AGH-227).
@@ -65,11 +65,12 @@ def test_declares_no_retry_and_read_only_nodes_when_document_loaded() -> None:
     document = loaded()
     nodes = nodes_of()
 
-    assert set(nodes) == {"select", "run", "explain", "report"}
-    for node_id in ("select", "run", "explain", "report"):
+    assert set(nodes) == {"config", "select", "run", "explain", "report"}
+    for node_id in ("config", "select", "run", "explain", "report"):
         assert nodes[node_id].retry is not None
         assert nodes[node_id].retry.max_attempts == 0, node_id
     assert nodes["select"].mutates_checkout is False
+    assert nodes["config"].mutates_checkout is False
     assert nodes["explain"].mutates_checkout is False
     assert nodes["run"].timeout == "12h"
     assert nodes["explain"].when is not None
@@ -77,9 +78,9 @@ def test_declares_no_retry_and_read_only_nodes_when_document_loaded() -> None:
     assert set(document.inputs) == {"repo", "sha", "ref"}
     assert "issue" not in document.inputs
     assert document.name != "issue-to-pr"
-    for node in document.nodes:
-        if isinstance(node, ShellNode):
-            assert list(node.command[:2]) != ["hub", "step"], node.id
+    # The one hub step node reads hub.json for selection.py (AGH-480) and writes nothing.
+    steps = [node.command for node in document.nodes if isinstance(node, ShellNode)]
+    assert steps == [("hub", "step", "config")]
     assert document.returns == "report"
     assert document.outcome_field == "verdict"
 
@@ -177,7 +178,7 @@ def git(repo: Path, *args: str) -> str:
 
 
 def test_reports_regression_and_cannot_run_when_merge_breaks_a_verification(
-    demo_workspace: Workspace,
+    demo_workspace: Workspace, run_command: CommandRunner
 ) -> None:
     hub, repo = demo_workspace.hub, demo_workspace.ws / "demo-api"
     base = git(repo, "branch", "--show-current")
@@ -225,7 +226,12 @@ def test_reports_regression_and_cannot_run_when_merge_breaks_a_verification(
     )
     before = [git(repo, "rev-parse", "HEAD"), git(repo, "status", "--porcelain")]
 
-    selected = script("selection.py", "--repo", "demo-api", "--sha", sha, cwd=hub)
+    # The workflow's config node: the real hub step config output, as --config takes it.
+    config = run_command(hub, "step", "config")
+    assert config.exit_code == 0, config.output
+    selected = script(
+        "selection.py", "--repo", "demo-api", "--config", config.stdout, "--sha", sha, cwd=hub
+    )
     verified = script("verify.py", cwd=hub, stdin=selected.stdout)
     selection = json.loads(selected.stdout or "{}")
     explain = {
