@@ -61,6 +61,20 @@ scenarios/orders/returns.yaml:14   nodes[2].type   shell nodes are not allowed i
 | Error | `ProblemError` "Could not load scenarios" + detail + Retry |
 | Stale | "As of 14:02" |
 
+### New scenario with Claude (AGH-521)
+
+- **AC-521.12.1 Entry.** Given the Scenarios list, with or without scenarios, then a New scenario button (in the
+  header, and in the empty state) opens `/scenarios/new`.
+- **AC-521.12.2 Guided form.** Given `/scenarios/new`, then it asks what to check (at least 10 characters, with
+  example requests to start from), the environment, the pack (an existing one or a new kebab-case one) and an
+  optional kebab-case name; "Create with Claude" waits until the request is valid.
+- **AC-521.12.3 Hand-off to Claude.** Given a valid form, when the owner clicks Create with Claude, then the Discuss
+  panel opens in the hub folder with the request (name, pack, environment, what to check) and the scenario format
+  brief (`scenarios/brief.ts`, shared with the scenario page) as its first message, kept as a draft in this browser,
+  as New workflow does.
+- **AC-521.12.4 Watch the catalog.** Given the request sent, then the page watches the scenario catalog and, once a
+  scenario of that name loads, links to it.
+
 ## Screen 2: Scenario detail (`/scenarios/:project/:name`)
 
 **Answers:** "What will this scenario do in this environment, step by step, and may it start?" The primary action is

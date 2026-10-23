@@ -16,6 +16,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - A ticket page, `/tickets/<project>/<issue>`, shows the commits, files and pull requests a ticket's sessions changed,
   each session with what it did, and for a feature's ticket the feature's records; the Tickets list now also keeps a
   feature's tickets, tagged Feature (AGH-521).
+- A New scenario button on the Scenarios list and in its empty state opens `/scenarios/new`, a guided form (what to
+  check, environment, pack, name) that hands Claude the request and the scenario format in the Discuss panel, then
+  watches the catalog for the new scenario, as New workflow does (AGH-521).
 
 ### Changed
 
