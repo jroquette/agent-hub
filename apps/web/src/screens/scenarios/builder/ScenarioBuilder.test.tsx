@@ -222,6 +222,32 @@ describe("ScenarioBuilder (scenario builder)", () => {
     ).toBeInTheDocument();
   });
 
+  it("scenario builder keeps unsaved changes across a reload, and drops them for a changed file", async () => {
+    window.localStorage.clear();
+    const user = userEvent.setup();
+    const first = renderBuilder();
+    await user.click(await screen.findByRole("button", { name: "Add block: wait 30s" }));
+    await screen.findByRole("button", { name: "Pause pause" });
+    first.unmount();
+
+    const second = renderBuilder();
+    expect(await screen.findByRole("button", { name: "Pause pause" })).toBeInTheDocument();
+    expect(
+      screen.getByText(/Your unsaved changes came back from this browser/),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Discard them" }));
+    expect(screen.queryByRole("button", { name: "Pause pause" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add block: wait 30s" }));
+    second.unmount();
+
+    renderBuilder({
+      [DETAIL]: aScenarioDetail({ document, content_hash: "sha256:changed-outside" }),
+    });
+    await screen.findByRole("button", { name: "Check order-on-hold" });
+    expect(screen.queryByRole("button", { name: "Pause pause" })).not.toBeInTheDocument();
+    window.localStorage.clear();
+  });
+
   it("scenario builder shows the generated YAML", async () => {
     const user = userEvent.setup();
     renderBuilder({

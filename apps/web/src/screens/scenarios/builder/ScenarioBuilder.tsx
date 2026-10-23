@@ -14,7 +14,7 @@ import {
 import { readStored, writeStored } from "../../../lib/storage";
 import { useDiscuss } from "../../../shell/discuss";
 import { EffectBadge } from "../parts";
-import type { ScenarioAction, ScenarioDetail } from "../queries";
+import { useScenario, type ScenarioAction, type ScenarioDetail } from "../queries";
 import { BlockCanvas, type DragState, type DropTarget, type Stack } from "./BlockCanvas";
 import { FlowCanvas, kindLook, type AddChoice } from "./FlowCanvas";
 import { BlockInspector, ConditionBuilder, ScenarioSettings } from "./Inspector";
@@ -50,6 +50,8 @@ import { useActionLibrary, useScenarioDraft, type LibraryAction } from "./useSce
  * rewrites the scenario's `nodes`, which the server checks a moment later. */
 
 type View = "blocks" | "graph" | "yaml";
+
+const FILE_POLL_MS = 4000;
 
 interface PaletteEntry {
   key: string;
@@ -328,12 +330,14 @@ export function ScenarioBuilder({
 }) {
   const library = useActionLibrary(scenario.project);
   const items = library.data?.items ?? [];
+  // The file read again every few seconds: a change made outside (Claude, an editor) shows here.
+  const fresh = useScenario(scenario.project, scenario.name, FILE_POLL_MS).data ?? scenario;
   const draft = useScenarioDraft({
     project: scenario.project,
     name: scenario.name,
     pack: scenario.pack,
-    initial: toDocument(scenario.document),
-    contentHash: scenario.content_hash ?? null,
+    initial: toDocument(fresh.document),
+    contentHash: fresh.content_hash ?? null,
   });
   const { setOpen } = useDiscuss();
   const [selected, setSelected] = useState<string | null>(null);
@@ -705,6 +709,40 @@ export function ScenarioBuilder({
       {draft.saveError && (
         <Banner tone="error" boxed>
           Could not save: {draft.saveError.detail ?? draft.saveError.title}
+        </Banner>
+      )}
+      {draft.conflict && (
+        <Banner
+          tone="warning"
+          boxed
+          action={
+            <span className="ah-row" style={{ gap: 6 }}>
+              <Button size="sm" onClick={draft.takeFile}>
+                Load the file&apos;s version
+              </Button>
+              <Button size="sm" variant="ghost" onClick={draft.keepMine}>
+                Keep mine
+              </Button>
+            </span>
+          }
+        >
+          The scenario file changed outside the builder (Claude or an editor) while you had unsaved
+          changes. Keep mine replaces the file&apos;s new version when you save.
+        </Banner>
+      )}
+      {draft.restored && !draft.conflict && (
+        <Banner
+          tone="info"
+          boxed
+          live={false}
+          action={
+            <Button size="sm" variant="ghost" onClick={draft.discard}>
+              Discard them
+            </Button>
+          }
+        >
+          Your unsaved changes came back from this browser. Save them, or discard them to see the
+          file.
         </Banner>
       )}
       <div className="sb-body">

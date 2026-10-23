@@ -3,7 +3,12 @@ import { useEffect, useRef, useState } from "react";
 
 import type { components } from "../../../api/schema";
 import { apiKey, apiPost, apiPut, useApi, type ApiProblem } from "../../../lib/api";
-import type { BuilderDocument } from "./model";
+import { readStored, removeStored, writeStored } from "../../../lib/storage";
+import { toDocument, type BuilderDocument } from "./model";
+
+function toDocumentText(text: string): BuilderDocument {
+  return toDocument(JSON.parse(text));
+}
 
 /* The builder's working copy of a scenario: the document as edited, undo and redo, whether it
  * differs from the file, the server's check of it (the YAML Save would write, whether it loads,
@@ -38,6 +43,34 @@ export interface ScenarioDraft {
   saveError: ApiProblem | null;
   saved: SaveResult | null;
   reset: (document: BuilderDocument) => void;
+  /** The unsaved changes came back from this browser (kept across Build/Run and reloads). */
+  restored: boolean;
+  /** Throws the unsaved changes away and shows the file again. */
+  discard: () => void;
+  /** The file changed outside the builder while it held unsaved changes. */
+  conflict: boolean;
+  /** Takes the file's new version, dropping the unsaved changes. */
+  takeFile: () => void;
+  /** Keeps the unsaved changes; Save then replaces the file's new version. */
+  keepMine: () => void;
+}
+
+interface Stored {
+  base: string | null;
+  document: BuilderDocument;
+}
+
+function draftKey(project: string, name: string): string {
+  return `ah.builder.draft.${project}/${name}`;
+}
+
+function readDraft(project: string, name: string): Stored | null {
+  try {
+    const value = JSON.parse(readStored(draftKey(project, name)) ?? "null") as Stored | null;
+    return value && Array.isArray(value.document.nodes) ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 export function useScenarioDraft({
@@ -56,11 +89,41 @@ export function useScenarioDraft({
   const client = useQueryClient();
   const [past, setPast] = useState<BuilderDocument[]>([]);
   const [future, setFuture] = useState<BuilderDocument[]>([]);
-  const [document, setDocument] = useState<BuilderDocument>(initial);
+  // A draft this browser kept for the same file comes back; one for an older file does not.
+  const [stored] = useState(() => {
+    const kept = readDraft(project, name);
+    return kept?.base === contentHash ? kept : null;
+  });
+  const [document, setDocument] = useState<BuilderDocument>(stored?.document ?? initial);
+  const [restored, setRestored] = useState(stored !== null);
   const [base, setBase] = useState<{ text: string; hash: string | null }>({
     text: JSON.stringify(initial),
     hash: contentHash,
   });
+  // The file as the page last read it: a new hash is a change made outside the builder.
+  const [seen, setSeen] = useState(contentHash);
+  const [conflict, setConflict] = useState(false);
+  const dirtyNow = JSON.stringify(document) !== base.text;
+  if (seen !== contentHash) {
+    setSeen(contentHash);
+    if (contentHash !== base.hash) {
+      if (dirtyNow) setConflict(true);
+      else {
+        setDocument(initial);
+        setBase({ text: JSON.stringify(initial), hash: contentHash });
+        setPast([]);
+        setFuture([]);
+      }
+    }
+  }
+
+  useEffect(() => {
+    if (dirtyNow) {
+      writeStored(draftKey(project, name), JSON.stringify({ base: base.hash, document }));
+    } else {
+      removeStored(draftKey(project, name));
+    }
+  }, [dirtyNow, document, base.hash, project, name]);
   const [check, setCheck] = useState<ValidateResult | null>(null);
   const latest = useRef(0);
 
@@ -99,6 +162,9 @@ export function useScenarioDraft({
       const next = { ...body, revision: result.revision };
       setDocument(next);
       setBase({ text: JSON.stringify(next), hash: result.content_hash });
+      setSeen(result.content_hash);
+      setConflict(false);
+      setRestored(false);
       void client.invalidateQueries({
         queryKey: apiKey("/api/v1/scenarios/{project}/{name}", { path: { project, name } }),
       });
@@ -114,7 +180,27 @@ export function useScenarioDraft({
 
   return {
     document,
-    dirty: JSON.stringify(document) !== base.text,
+    dirty: dirtyNow,
+    restored: restored && dirtyNow,
+    discard: () => {
+      setDocument(toDocumentText(base.text));
+      setPast([]);
+      setFuture([]);
+      setRestored(false);
+    },
+    conflict,
+    takeFile: () => {
+      setDocument(initial);
+      setBase({ text: JSON.stringify(initial), hash: contentHash });
+      setPast([]);
+      setFuture([]);
+      setConflict(false);
+      setRestored(false);
+    },
+    keepMine: () => {
+      setBase({ text: JSON.stringify(initial), hash: contentHash });
+      setConflict(false);
+    },
     edit,
     undo: () => {
       const previous = past.at(-1);
