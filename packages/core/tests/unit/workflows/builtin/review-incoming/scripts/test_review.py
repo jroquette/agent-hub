@@ -192,6 +192,8 @@ def test_counts_no_blocking_finding_when_lenses_pass_clean(clone: Clone, compose
         "blocking": 0,
         "minor": 0,
         "inline": 0,
+        "moved": 0,
+        "note": "",
         "suggested": "comment",
         "preview": "",
     }
@@ -493,3 +495,75 @@ def test_round_trips_compose_output_when_file_unedited(
         "**Blocking.** `app/core.py:1`: Also the adder."
     )
     assert (result["blocking"], result["optional"], result["inline"]) == (2, 0, 1)
+
+
+def test_keeps_a_blocking_finding_when_only_a_minor_comment_cites_it(
+    clone: Clone, compose: Any
+) -> None:
+    minor = a_comment(line=4, severity="minor", body="Maybe a list.", sources=["security:F1"])
+
+    code, result, _ = compose(
+        {"summary": "One problem.", "comments": [minor]}, merged_of(a_finding(1))
+    )
+
+    assert code == 0
+    assert result["blocking"] >= 1
+    assert result["suggested"] == "request-changes"
+    text = written(clone)
+    assert "# Blocking\n## app/run.py:5\nThe command reaches a shell." in text
+
+
+def test_accepts_the_same_file_when_compose_runs_again(clone: Clone, compose: Any) -> None:
+    draft = {"summary": "One problem.", "comments": [a_comment()]}
+
+    first = compose(draft, merged_of(a_finding(1)))
+    again = compose(draft, merged_of(a_finding(1)))
+
+    assert (first[0], again[0]) == (0, 0)
+    assert first[1] == again[1]
+
+
+def test_exits_one_when_git_cannot_diff_for_compose(
+    review: ModuleType, *, clone: Clone, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    monkeypatch.setenv("AGENT_HUB_RUN_ID", RUN_ID)
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"summary": "x", "comments": []})))
+    argv = ["compose", "--findings", json.dumps(merged_of()), "--path", str(clone.repo)]
+    argv += ["--base", clone.base, "--head", "e" * 40, "--repo", "api", "--pr", "7"]
+
+    code = review.main(argv)
+
+    assert code == 1
+    assert "git cannot diff" in capsys.readouterr().err
+    assert not (clone.hub / REVIEW_FILE).exists()
+
+
+def test_says_why_comments_moved_when_the_diff_was_cut(
+    review: ModuleType, *, clone: Clone, compose: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(review, "DIFF_CAP", 40)
+
+    code, result, _ = compose({"summary": "x", "comments": [a_comment()]}, merged_of())
+
+    assert code == 0
+    assert result["moved"] == 1
+    assert "over 40 bytes" in result["note"]
+    assert "over 40 bytes" in written(clone)
+
+
+def test_says_why_comments_moved_when_final_cuts_the_diff(
+    review: ModuleType,
+    *,
+    clone: Clone,
+    compose: Any,
+    final: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    composed(compose, a_comment())
+    monkeypatch.setattr(review, "DIFF_CAP", 40)
+
+    code, result, _ = final("request-changes")
+
+    assert code == 0
+    assert (result["inline"], result["moved"]) == (0, 1)
+    assert "over 40 bytes" in result["note"]

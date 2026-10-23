@@ -207,20 +207,27 @@ def run_merge(given: argparse.Namespace) -> int:
     return 0
 
 
-def git_diff(path: str, base: str, head: str) -> str:
-    """The diff (``-U3``) from ``base`` to ``head`` in the clone, at most ``DIFF_CAP`` bytes."""
+def git_diff(path: str, base: str, head: str) -> tuple[str, str]:
+    """The diff (``-U3``) from ``base`` to ``head`` in the clone, at most ``DIFF_CAP`` bytes,
+    and a note when it was cut. A git error is a refusal: the node can run again."""
     with tempfile.TemporaryFile() as output:
         done = subprocess.run(  # noqa: S603 - a git read with fixed arguments, hooks off
             [*GIT, "-C", path, "diff", "--no-color", "--no-ext-diff", "--no-textconv", "-U3"]
-            + [base, head],
+            + ["--no-renames", base, head],
             stdout=output,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             stdin=subprocess.DEVNULL,
             check=False,
         )
+        if done.returncode != 0:
+            reason = one_line(done.stderr.decode("utf-8", errors="replace"), 500).strip()
+            raise RefusedError(f"git cannot diff the PR: {reason}")
         output.seek(0)
-        data = output.read(DIFF_CAP)
-    return data.decode("utf-8", errors="replace") if done.returncode == 0 else ""
+        data = output.read(DIFF_CAP + 1)
+    note = ""
+    if len(data) > DIFF_CAP:
+        note = f"the diff is over {DIFF_CAP} bytes: a comment past it moved to the body"
+    return data[:DIFF_CAP].decode("utf-8", errors="replace"), note
 
 
 def hunks(diff: str) -> dict[str, set[int]]:
@@ -279,7 +286,13 @@ def kept_blocking(
     comments: list[dict[str, object]], merged: dict[str, object]
 ) -> list[dict[str, object]]:
     """The draft's comments plus one for each blocking finding no comment cites."""
-    cited = {source for comment in comments for source in listed_text(comment["sources"])}
+    # Only a blocking comment keeps a blocking finding: a minor one never downgrades it.
+    cited = {
+        source
+        for comment in comments
+        if comment["severity"] == "blocking"
+        for source in listed_text(comment["sources"])
+    }
     added: list[dict[str, object]] = []
     for finding in listed(merged.get("findings")):
         ids = {finding.get("id"), *listed_text(finding.get("also"))}
@@ -326,7 +339,8 @@ def render_review(
     order = (SUMMARY, BLOCKING, minor_heading, OFF_DIFF)
     text = header + "\n" + "".join(f"{name}\n{sections[name]}" for name in order)
     inline = sum(1 for c in on_diff if c["severity"] == "blocking" or not held)
-    counts = {"blocking": len(blocking), "minor": len(minor), "inline": inline}
+    moved = sum(1 for c in comments if c not in on_diff and isinstance(c["line"], int))
+    counts = {"blocking": len(blocking), "minor": len(minor), "inline": inline, "moved": moved}
     return text, counts
 
 
@@ -335,6 +349,18 @@ def run_id() -> str:
     if not RUN_ID.fullmatch(found):
         raise InputError("AGENT_HUB_RUN_ID is not a run id")
     return found
+
+
+def write_once(path: Path, text: str) -> None:
+    """Write the review file; an existing one is kept when it holds these exact bytes (a
+    compose run again), and refused when it differs (the owner's edits)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with path.open("x", encoding="utf-8") as handle:
+            handle.write(text)
+    except FileExistsError:
+        if path.is_symlink() or path.read_bytes() != text.encode("utf-8"):
+            raise RefusedError(f"the review file exists: {path}; start a new run") from None
 
 
 def run_compose(given: argparse.Namespace) -> int:
@@ -358,16 +384,19 @@ def run_compose(given: argparse.Namespace) -> int:
         f"<!-- review-incoming {given.repo}#{given.pr} at {given.head}. Edit the text, delete a"
         " comment's block to drop it, keep the headings. -->"
     )
-    anchors = hunks(git_diff(given.path, given.base, given.head))
-    text, counts = render_review(draft, merged, anchors, header=header)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with path.open("x", encoding="utf-8") as handle:
-            handle.write(text)
-    except FileExistsError:
-        raise RefusedError(f"the review file exists: {path}; start a new run") from None
+    diff, note = git_diff(given.path, given.base, given.head)
+    if note:
+        header += f"\n<!-- {note}. -->"
+    text, counts = render_review(draft, merged, hunks(diff), header=header)
+    write_once(path, text)
     suggested = "request-changes" if counts["blocking"] else "comment"
-    result = {"path": str(path), **counts, "suggested": suggested, "preview": text[:PREVIEW_CHARS]}
+    result = {
+        "path": str(path),
+        **counts,
+        "note": note,
+        "suggested": suggested,
+        "preview": text[:PREVIEW_CHARS],
+    }
     print(json.dumps(result, ensure_ascii=False))
     return 0
 
@@ -464,6 +493,7 @@ def payload(
         "blocking": len(listed_items["Blocking"]),
         "optional": len(listed_items["Optional"]),
         "inline": len(comments),
+        "moved": len(moved),
     }
     return {"commit_id": head, "body": body, "comments": comments}, counts
 
@@ -505,13 +535,14 @@ def run_final(given: argparse.Namespace) -> int:
     text = read_review(FOLDER / f"{run}.md")
     if ATTRIBUTION.search(text):
         raise RefusedError("the review holds AI attribution: remove it and run /review again")
-    anchors = hunks(git_diff(given.path, given.base, given.head))
-    sent, counts = payload(parse_review(text), anchors, head=given.head)
+    diff, note = git_diff(given.path, given.base, given.head)
+    sent, counts = payload(parse_review(text), hunks(diff), head=given.head)
     data = (json.dumps(sent, ensure_ascii=False) + "\n").encode()
     path = FOLDER / f"{run}.payload.json"
     write_payload(path, data)
     digest = hashlib.sha256(data).hexdigest()
-    print(json.dumps({"path": str(path), "sha256": digest, "event": event, **counts}))
+    shown = {"path": str(path), "sha256": digest, "event": event, **counts, "note": note}
+    print(json.dumps(shown))
     return 0
 
 
