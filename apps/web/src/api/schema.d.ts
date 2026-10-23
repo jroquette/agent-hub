@@ -2448,6 +2448,10 @@ export interface components {
        */
       production: boolean;
       scope: components["schemas"]["Scope"];
+      /** Values */
+      values?: {
+        [key: string]: string;
+      };
     };
     /**
      * AddService
@@ -6296,7 +6300,9 @@ export interface components {
     };
     /**
      * ScenarioEnvironment
-     * @description An environment the project's hub declares, as the effective config reads now.
+     * @description An environment the project's hub declares, as the effective config reads now, with the
+     *     values that fill a scenario's inputs of the same name there (hub.local.json's over
+     *     hub.json's, per key).
      */
     ScenarioEnvironment: {
       /** Access */
@@ -6305,6 +6311,10 @@ export interface components {
       name: string;
       /** Production */
       production: boolean;
+      /** Values */
+      values?: {
+        [key: string]: string;
+      };
     };
     /** @enum {string} */
     ScenarioMode: "interactive" | "regression";
@@ -6862,6 +6872,9 @@ export interface components {
     /**
      * SetEnvironment
      * @description A change to an environment: a field left out stays; an empty text removes the key.
+     *
+     *     On a ``hub.json`` environment, the ``local`` scope may change only ``access`` (stricter)
+     *     and ``values`` (the developer's, which win per key over the team's).
      */
     SetEnvironment: {
       access?: components["schemas"]["Access"] | null;
@@ -6883,6 +6896,10 @@ export interface components {
       /** Production */
       production?: boolean | null;
       scope: components["schemas"]["Scope"];
+      /** Values */
+      values?: {
+        [key: string]: string;
+      } | null;
     };
     /**
      * SetService
@@ -7176,6 +7193,10 @@ export interface components {
       source: string;
       /** Team Access */
       team_access?: ("read" | "write" | "ask") | null;
+      /** Values */
+      values?: {
+        [key: string]: string;
+      };
     };
     /**
      * SourcedService

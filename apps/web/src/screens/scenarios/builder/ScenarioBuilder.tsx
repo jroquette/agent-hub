@@ -1,13 +1,9 @@
 import "./builder.css";
 import "./blocks.css";
+import "./steps.css";
 
-import {
-  useEffect,
-  useRef,
-  useState,
-  type PointerEvent as ReactPointerEvent,
-  type RefObject,
-} from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
+import { useNavigate, useSearchParams } from "react-router";
 
 import {
   Banner,
@@ -17,19 +13,22 @@ import {
   IconButton,
   MenuItem,
   SegmentedControl,
+  Tabs,
   Toast,
 } from "../../../components";
 import { readStored, writeStored } from "../../../lib/storage";
+import { environmentsPage } from "../../hub-config/environments";
 import { DiscussButton, useDiscuss } from "../../../shell/discuss";
 import { EffectBadge } from "../parts";
-import { usePlanScenario, useScenario, type ScenarioAction, type ScenarioDetail } from "../queries";
 import {
-  BlockCanvas,
-  type DragState,
-  type DropTarget,
-  type InsertTarget,
-  type Stack,
-} from "./BlockCanvas";
+  usePlanScenario,
+  useSaveEnvironmentValue,
+  useScenario,
+  type ScenarioAction,
+  type ScenarioDetail,
+} from "../queries";
+import { StepList, type InsertTarget } from "./StepList";
+import { VariablesPanel, type KeptValue } from "./VariablesPanel";
 import { InsertMenu } from "./InsertMenu";
 import { createActionMessage, describeMessage, type DescribeScope } from "./claude";
 import {
@@ -41,7 +40,7 @@ import {
 } from "./ClaudeDialogs";
 import { StartCard } from "./StartCard";
 import { ActionPanel } from "../ActionPanel";
-import { CATEGORIES, blockItem } from "./palette";
+import { blockItem } from "./palette";
 import { FlowCanvas, kindLook, type AddChoice } from "./FlowCanvas";
 import { BlockInspector, GroupInspector, ScenarioSettings } from "./Inspector";
 import {
@@ -56,13 +55,14 @@ import {
   updateBlock,
   valueSources,
   without,
+  withoutRunRepeats,
   type BuilderDocument,
   type BuilderNode,
 } from "./model";
 import {
   findItem,
-  freshKey,
   insertAt,
+  listAt,
   itemId,
   locate,
   stepNumbers,
@@ -75,199 +75,104 @@ import {
 } from "./program";
 import { useActionLibrary, useScenarioDraft, type LibraryAction } from "./useScenarioDraft";
 
-/* The scenario builder (Build mode of the scenario page). Its main view is the block canvas
- * (Scratch-like stacks and C-blocks you drag and snap); Graph shows the same flow as connected
- * nodes, and YAML the file Save writes. The program is a reading of the document: every snap
+/* The scenario builder (Build mode of the scenario page, v6). Its main view is the step list:
+ * the scenario read top to bottom, a numbered row per step, Repeat / If / At the same time as
+ * indented groups. On the left, the Variables (where every value comes from) and the Actions of
+ * the hub; on the right, the editor of the selected step. Graph shows the same flow as connected
+ * nodes, and YAML the file Save writes. The list is a reading of the document: every edit
  * rewrites the scenario's `nodes`, which the server checks a moment later. */
 
 type View = "blocks" | "graph" | "yaml";
 
 const FILE_POLL_MS = 4000;
-const HELP_KEY = "ah.builder.help";
+const HELP_KEY = "ah.builder.help.v6";
 
-function startPaletteDrag(
-  event: ReactPointerEvent,
-  make: () => Item,
-  onDrag: (drag: DragState) => void,
-  onClick: () => void,
-) {
-  if (event.button !== 0) return;
-  const start = { x: event.clientX, y: event.clientY };
-  const move = (moved: PointerEvent) => {
-    if (Math.hypot(moved.clientX - start.x, moved.clientY - start.y) < 4) return;
-    window.removeEventListener("pointermove", move);
-    window.removeEventListener("pointerup", up);
-    onDrag({
-      items: [make()],
-      grab: { x: 24, y: 16 },
-      client: { x: moved.clientX, y: moved.clientY },
-      target: null,
-    });
-  };
-  const up = () => {
-    window.removeEventListener("pointermove", move);
-    onClick();
-  };
-  window.addEventListener("pointermove", move);
-  window.addEventListener("pointerup", up, { once: true });
-}
-
-function Palette({
+/** The Actions tab: the hub's actions, what each does, its effect and how many steps use it. */
+function ActionsTab({
   library,
-  pack,
-  taken,
-  onDrag,
-  onAdd,
+  libraryError,
+  usage,
+  onOpen,
   onNewAction,
   onAskAction,
-  onOpenAction,
 }: {
   library: readonly LibraryAction[];
-  pack: string;
-  taken: BuilderDocument;
-  onDrag: (drag: DragState) => void;
-  onAdd: (item: Item) => void;
+  libraryError: boolean;
+  usage: ReadonlyMap<string, number>;
+  onOpen: (item: LibraryAction, opener: HTMLElement) => void;
   onNewAction: () => void;
   onAskAction: () => void;
-  onOpenAction: (item: LibraryAction, opener: HTMLElement) => void;
 }) {
   const [query, setQuery] = useState("");
+  const needle = query.trim().toLowerCase();
   const shown = library.filter((item) =>
-    `${item.action.ref} ${item.action.description ?? ""}`
-      .toLowerCase()
-      .includes(query.toLowerCase()),
+    `${item.action.ref} ${item.action.description ?? ""}`.toLowerCase().includes(needle),
   );
-  const refOf = (item: LibraryAction) =>
-    item.action.pack === pack ? item.action.name : item.action.ref;
   return (
-    <aside className="sb-palette" aria-label="Blocks">
-      <span className="ah-small ah-muted">
-        Drag a block onto the canvas, or click to add it at the end.
-      </span>
-      {CATEGORIES.map((category) => (
-        <div key={category.title} className="ah-stack" style={{ gap: 4 }}>
-          <span className="ah-overline">{category.title}</span>
-          {category.entries.map((entry) => (
-            <button
-              key={entry.key}
-              type="button"
-              className="bk-palette-block"
-              style={{ ["--kind" as string]: entry.tint }}
-              onPointerDown={(event) => {
-                startPaletteDrag(
-                  event,
-                  () => entry.make(taken),
-                  onDrag,
-                  () => {
-                    onAdd(entry.make(taken));
-                  },
-                );
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  onAdd(entry.make(taken));
-                }
-              }}
-              aria-label={`Add block: ${entry.label}`}
-            >
-              <Icon name={entry.icon} size="sm" />
-              <span className="ah-stack" style={{ gap: 0 }}>
-                <b>{entry.label}</b>
-                <span className="bk-palette-hint">{entry.hint}</span>
-              </span>
-            </button>
-          ))}
-        </div>
-      ))}
-      <span className="ah-overline">Actions in this hub</span>
-      <span className="ah-small ah-muted">
-        An action is a script with a declared effect; blocks run them. Make the ones you need.
-      </span>
-      <span className="sb-action-buttons">
-        <Button size="sm" icon="plus" onClick={onNewAction}>
-          New action
-        </Button>
-        <Button size="sm" variant="ghost" icon="message-square" onClick={onAskAction}>
-          Ask Claude
-        </Button>
-      </span>
+    <div className="sb-left-body">
       <input
         className="ah-input"
+        type="search"
         aria-label="Find an action"
         placeholder="Find an action"
+        data-left-search
         value={query}
         onChange={(event) => {
           setQuery(event.target.value);
         }}
       />
-      {library.length === 0 && (
-        <span className="ah-small ah-subtle">
-          No actions yet: an action is a script in actions/&lt;pack&gt;/.
+      {libraryError && (
+        <Banner tone="error" live={false}>
+          Could not load the actions. Reload the page; if it stays, run ./hub doctor.
+        </Banner>
+      )}
+      {!libraryError && library.length === 0 && (
+        <span className="ah-small ah-muted">
+          No actions yet. An action is a script with a declared effect, in actions/&lt;pack&gt;/.
         </span>
       )}
-      {shown.map((item) => {
-        const asCheck = item.action.effect === "read";
-        return (
-          <span key={item.action.ref} className="sb-action-line">
-            <button
-              type="button"
-              className="bk-palette-action"
-              style={{ ["--kind" as string]: kindLook("action").tint }}
-              title={`${item.action.description ?? ""}${asCheck ? "\nShift: add as a check" : ""}`}
-              aria-label={`Add action ${item.action.name}`}
-              onPointerDown={(event) => {
-                const check = asCheck && event.shiftKey;
-                const make = () => blockItem(taken, check ? "expect" : "action", refOf(item));
-                startPaletteDrag(event, make, onDrag, () => {
-                  onAdd(make());
-                });
-              }}
-            >
-              <Icon name="circle-play" size="sm" />
-              <span className="ah-mono">{item.action.name}</span>
-              <span className="ah-grow" />
-              <EffectBadge effect={item.action.effect} />
-            </button>
-            <button
-              type="button"
-              className="sb-icon-btn"
-              aria-label={`About ${item.action.name}`}
-              title="What it does, its script, edit it"
-              onClick={(event) => {
-                onOpenAction(item, event.currentTarget);
-              }}
-            >
-              <Icon name="info" size="sm" />
-            </button>
-          </span>
-        );
-      })}
-    </aside>
+      <ul className="sb-actions" aria-label="Actions in this hub">
+        {shown.map((item) => {
+          const used = usage.get(item.action.ref) ?? 0;
+          return (
+            <li key={item.action.ref}>
+              <button
+                type="button"
+                className="sb-action-entry"
+                onClick={(event) => {
+                  onOpen(item, event.currentTarget);
+                }}
+              >
+                <span className="sb-action-entry-head">
+                  <Icon name="circle-play" size="sm" />
+                  <span className="ah-mono">{item.action.name}</span>
+                  <span className="ah-grow" />
+                  <EffectBadge effect={item.action.effect} words />
+                </span>
+                {item.action.description && (
+                  <span className="sb-action-entry-desc">{item.action.description}</span>
+                )}
+                <span className="sb-action-entry-foot">
+                  {used > 0
+                    ? `used by ${String(used)} ${used === 1 ? "step" : "steps"}`
+                    : "not used"}
+                  {item.action.draft ? " · Draft" : ""}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      <span className="sb-action-buttons">
+        <Button size="sm" icon="plus" onClick={onNewAction}>
+          New action
+        </Button>
+        <Button size="sm" variant="ghost" icon="message-square" onClick={onAskAction}>
+          Ask Claude to write one
+        </Button>
+      </span>
+    </div>
   );
-}
-
-interface Layout {
-  main: { x: number; y: number };
-  loose: Stack[];
-}
-
-function layoutKey(project: string, name: string): string {
-  return `ah.builder.layout.${project}/${name}`;
-}
-
-function readLayout(project: string, name: string): Layout {
-  try {
-    const value = JSON.parse(
-      readStored(layoutKey(project, name)) ?? "null",
-    ) as Partial<Layout> | null;
-    return {
-      main: value?.main ?? { x: 80, y: 40 },
-      loose: Array.isArray(value?.loose) ? value.loose.filter((stack) => !stack.kept) : [],
-    };
-  } catch {
-    return { main: { x: 80, y: 40 }, loose: [] };
-  }
 }
 
 /** Every value a condition may compare anywhere in the flow. */
@@ -304,7 +209,6 @@ export function ScenarioBuilder({
   const { setOpen } = useDiscuss();
   const [selected, setSelected] = useState<string | null>(null);
   const [view, setView] = useState<View>("blocks");
-  const [drag, setDrag] = useState<DragState | null>(null);
   const [inserting, setInserting] = useState<{
     target: InsertTarget;
     anchor: DOMRect;
@@ -312,8 +216,27 @@ export function ScenarioBuilder({
   } | null>(null);
   const [menu, setMenu] = useState<"more" | "problems" | "preview" | null>(null);
   const planner = usePlanScenario(scenario.project, scenario.name);
-  const [previewEnv, setPreviewEnv] = useState(scenario.environments[0]?.name ?? "");
-  const [previewInputs, setPreviewInputs] = useState<Record<string, string>>({});
+  const [params, setParams] = useSearchParams();
+  const environment =
+    params.get("env") ??
+    (scenario.environments.length > 0 ? (scenario.environments[0]?.name ?? "") : "");
+  const setEnvironment = (next: string) => {
+    setParams(
+      (current) => {
+        const copy = new URLSearchParams(current);
+        if (next === "") copy.delete("env");
+        else copy.set("env", next);
+        return copy;
+      },
+      { replace: true },
+    );
+  };
+  const [planValues, setPlanValues] = useState<Record<string, string>>({});
+  const [planAfterSave, setPlanAfterSave] = useState<Record<string, string> | null>(null);
+  const [leftTab, setLeftTab] = useState<"variables" | "actions">("variables");
+  const [rowMenu, setRowMenu] = useState<{ id: string; anchor: DOMRect } | null>(null);
+  const [announce, setAnnounce] = useState("");
+  const [variable, setVariable] = useState<string | null>(null);
   const preview = planner.data ?? null;
   const [previewed, setPreviewed] = useState<unknown>(null);
   if (preview && previewed !== preview) {
@@ -344,6 +267,8 @@ export function ScenarioBuilder({
   const [actionPanel, setActionPanel] = useState<string | null>(null);
   const actionOpener = useRef<HTMLElement | null>(null);
   const { ask } = useDiscuss();
+  const navigate = useNavigate();
+  const saveValue = useSaveEnvironmentValue(scenario.project);
   const proposal = useProposal(scenario.project, scenario.name, awaiting);
   const dismiss = useDismissProposal(scenario.project, scenario.name);
   const offered = proposal.data?.document ? proposal.data : null;
@@ -361,63 +286,29 @@ export function ScenarioBuilder({
 
   // The program, read again whenever the document changes from elsewhere (undo, the graph).
   const [synced, setSynced] = useState("");
-  const [program, setProgram] = useState<{ main: Item[]; kept: Stack[] }>({ main: [], kept: [] });
-  const [layout, setLayout] = useState<Layout>(() => readLayout(scenario.project, scenario.name));
+  const [program, setProgram] = useState<{ main: Item[]; kept: BuilderNode[] }>({
+    main: [],
+    kept: [],
+  });
   const nodesText = JSON.stringify(document.nodes);
   if (synced !== nodesText) {
     const read = programOf(document.nodes);
     setSynced(nodesText);
-    // Steps back in the file (undo, a discarded draft, a file changed outside) leave the loose
-    // stacks kept in this browser: else they would show twice.
-    const inFile = new Set(allNodes(document.nodes).map((node) => node.id));
-    const loose = layout.loose
-      .map((stack) => ({
-        ...stack,
-        items: stack.items.filter(
-          (item) => !programNodes([item]).some((node) => inFile.has(node.id)),
-        ),
-      }))
-      .filter((stack) => stack.items.length > 0);
-    if (JSON.stringify(loose) !== JSON.stringify(layout.loose)) {
-      setLayout({ ...layout, loose });
-    }
-    setProgram({
-      main: read.main,
-      kept:
-        read.loose.length > 0
-          ? [
-              {
-                id: "kept",
-                x: layout.main.x + 560,
-                y: layout.main.y,
-                items: read.loose.map((node) => ({ kind: "block", node })),
-                kept: true,
-              },
-            ]
-          : [],
-    });
+    setProgram({ main: read.main, kept: read.loose });
   }
 
-  const saveLayout = (next: Layout) => {
-    setLayout(next);
-  };
-  useEffect(() => {
-    writeStored(layoutKey(scenario.project, scenario.name), JSON.stringify(layout));
-  }, [layout, scenario.project, scenario.name]);
-
-  const commit = (main: Item[], kept: Stack[], loose: Stack[]) => {
-    const nodes = [...nodesOf(main), ...kept.flatMap((stack) => programNodes(stack.items))];
+  // Writes the list back to the scenario's nodes (steps the list cannot place stay as written).
+  const commit = (main: Item[], kept: BuilderNode[] = program.kept) => {
+    const nodes = [...nodesOf(main), ...kept];
     setProgram({ main, kept });
-    saveLayout({ ...layout, loose: loose.filter((stack) => stack.items.length > 0) });
     const text = JSON.stringify(nodes);
     setSynced(text);
     if (text !== nodesText) draft.edit({ ...document, nodes });
   };
 
-  const allItems = [
+  const allItems: Item[] = [
     ...program.main,
-    ...program.kept.flatMap((s) => s.items),
-    ...layout.loose.flatMap((s) => s.items),
+    ...program.kept.map((node): Item => ({ kind: "block", node })),
   ];
   const taken: BuilderDocument = { ...document, nodes: programNodes(allItems) };
 
@@ -434,47 +325,25 @@ export function ScenarioBuilder({
   const problems = draft.check?.problems ?? [];
   const errors = problems.filter((problem) => problem.severity === "error");
 
-  const onTake = (stack: string, id: string, alone: boolean): Item[] => {
-    if (stack === "main") {
-      const { rest, taken: moved } = takeFrom(program.main, id, alone);
-      setProgram({ ...program, main: rest });
-      return moved;
-    }
-    const inKept = program.kept.some((s) => s.id === stack);
-    const source = inKept ? program.kept : layout.loose;
-    let moved: Item[] = [];
-    const next = source.map((s) => {
-      if (s.id !== stack) return s;
-      const out = takeFrom(s.items, id, alone);
-      moved = out.taken;
-      return { ...s, items: out.rest };
-    });
-    if (inKept) setProgram({ ...program, kept: next });
-    else setLayout({ ...layout, loose: next });
-    return moved;
-  };
-
-  const onDrop = (moved: Item[], target: DropTarget) => {
+  // Puts `moved` at a place of the list.
+  const placeAt = (moved: Item[], target: InsertTarget) => {
     const first = moved[0];
     if (first) setSelected(itemId(first));
-    if ("free" in target) {
-      commit(program.main, program.kept, [
-        ...layout.loose,
-        { id: freshKey("stack"), x: target.free.x, y: target.free.y, items: moved },
-      ]);
-      return;
-    }
-    if (target.stack === "main") {
-      commit(insertAt(program.main, target.slot, target.index, moved), program.kept, layout.loose);
-      return;
-    }
-    const into = (list: Stack[]) =>
-      list.map((s) =>
-        s.id === target.stack
-          ? { ...s, items: insertAt(s.items, target.slot, target.index, moved) }
-          : s,
-      );
-    commit(program.main, into(program.kept), into(layout.loose));
+    commit(insertAt(program.main, target.slot, target.index, moved));
+  };
+
+  // Moves the step `id` to a gap of the list (by its handle, or the row menu).
+  const moveTo = (id: string, target: InsertTarget) => {
+    const from = locate(program.main, id);
+    if (!from) return;
+    const { rest, taken: moved } = takeFrom(program.main, id, true);
+    if (moved.length === 0) return;
+    const sameList = JSON.stringify(from.slot) === JSON.stringify(target.slot);
+    const index = sameList && target.index > from.index ? target.index - 1 : target.index;
+    if (sameList && index === from.index) return;
+    commit(insertAt(rest, target.slot, index, moved));
+    setSelected(id);
+    setAnnounce(`Moved step ${id} to position ${String(index + 1)}.`);
   };
 
   // A click on the palette adds after the selected block (in its list), else at the end.
@@ -483,20 +352,19 @@ export function ScenarioBuilder({
     const main = at
       ? insertAt(program.main, at.slot, at.index + 1, [item])
       : [...program.main, item];
-    commit(main, program.kept, layout.loose);
+    commit(main);
     setSelected(itemId(item));
   };
   const insertHere = (item: Item) => {
     if (!inserting) return;
-    onDrop([item], inserting.target);
+    placeAt([item], inserting.target);
     setInserting(null);
   };
 
   const editItem = (id: string, next: Item) => {
     commit(
       replaceItem(program.main, id, next),
-      program.kept.map((s) => ({ ...s, items: replaceItem(s.items, id, next) })),
-      layout.loose.map((s) => ({ ...s, items: replaceItem(s.items, id, next) })),
+      program.kept.map((node) => (node.id === id && next.kind === "block" ? next.node : node)),
     );
   };
 
@@ -507,19 +375,31 @@ export function ScenarioBuilder({
   };
 
   const removeItem = (id: string) => {
-    const strip = (list: Item[]) => takeFrom(list, id, true).rest;
     commit(
-      strip(program.main),
-      program.kept.map((s) => ({ ...s, items: strip(s.items) })),
-      layout.loose.map((s) => ({ ...s, items: strip(s.items) })),
+      takeFrom(program.main, id, true).rest,
+      program.kept.filter((node) => node.id !== id),
     );
     setSelected(null);
+  };
+
+  // A copy of the step right after it (a fresh id; a group is not copied).
+  const duplicate = (id: string) => {
+    const item = findItem(program.main, id);
+    const at = locate(program.main, id);
+    if (item?.kind !== "block" || !at) return;
+    const copy: Item = {
+      kind: "block",
+      node: { ...item.node, id: freshId(taken, item.node.id) },
+    };
+    commit(insertAt(program.main, at.slot, at.index + 1, [copy]));
+    setSelected(itemId(copy));
+    setAnnounce(`Duplicated step ${id}.`);
   };
 
   const selectedItem = selected ? findItem(allItems, selected) : null;
   const serialized: BuilderDocument = {
     ...document,
-    nodes: [...nodesOf(program.main), ...program.kept.flatMap((s) => programNodes(s.items))],
+    nodes: [...nodesOf(program.main), ...program.kept],
   };
 
   const onGraphAdd = (choice: AddChoice, after: string | null, group: string | null) => {
@@ -551,18 +431,10 @@ export function ScenarioBuilder({
         variant="ghost"
         icon="copy"
         onClick={() => {
-          const item = findItem(program.main, id);
-          const at = locate(program.main, id);
-          if (item?.kind !== "block" || !at) return;
-          const copy: Item = {
-            kind: "block",
-            node: { ...item.node, id: freshId(taken, item.node.id) },
-          };
-          commit(insertAt(program.main, at.slot, at.index + 1, [copy]), program.kept, layout.loose);
-          setSelected(itemId(copy));
+          duplicate(id);
         }}
       >
-        Duplicate step
+        Duplicate
       </Button>
       <Button
         variant="ghost"
@@ -573,7 +445,7 @@ export function ScenarioBuilder({
           );
         }}
       >
-        Ask Claude about it
+        Ask Claude about this step
       </Button>
     </>
   );
@@ -581,7 +453,7 @@ export function ScenarioBuilder({
   // The selected card, read when the form closes: focus goes back to it.
   const selectedCard: RefObject<HTMLElement | null> = {
     get current() {
-      return globalThis.document.querySelector<HTMLElement>('.bk-world [aria-selected="true"]');
+      return globalThis.document.querySelector<HTMLElement>('.st-tree [aria-selected="true"]');
     },
   };
   // How many steps take each scenario input as the run's value (left out, or only repeated).
@@ -902,7 +774,7 @@ export function ScenarioBuilder({
       const to = at.index + (event.key === "ArrowUp" ? -1 : 1);
       const { rest, taken: moved } = takeFrom(program.main, selected, true);
       if (to < 0 || moved.length === 0) return;
-      commit(insertAt(rest, at.slot, to, moved), program.kept, layout.loose);
+      commit(insertAt(rest, at.slot, to, moved));
     } else if (mod && event.key.toLowerCase() === "d") {
       event.preventDefault();
       const item = findItem(program.main, selected);
@@ -912,7 +784,7 @@ export function ScenarioBuilder({
         kind: "block",
         node: { ...item.node, id: freshId(taken, item.node.id) },
       };
-      commit(insertAt(program.main, at.slot, at.index + 1, [copy]), program.kept, layout.loose);
+      commit(insertAt(program.main, at.slot, at.index + 1, [copy]));
       setSelected(itemId(copy));
     }
   };
@@ -931,21 +803,201 @@ export function ScenarioBuilder({
     };
   }, []);
 
-  const inputs =
-    typeof document.inputs === "object" &&
-    document.inputs !== null &&
-    !Array.isArray(document.inputs)
-      ? Object.keys(document.inputs)
-      : [];
   const drafts = new Set(
     programNodes(program.main)
       .map((node) => actionFacts(node))
       .filter((action) => action?.draft === true)
       .map((action) => action?.ref),
   ).size;
-  const unsaved = layout.loose.reduce(
-    (count, stack) => count + programNodes(stack.items).length,
-    0,
+
+  // Where values come from, in the chosen environment.
+  const environmentInfo = scenario.environments.find((item) => item.name === environment) ?? null;
+  const environmentValues: Record<string, string> | null = environmentInfo
+    ? (environmentInfo.values ?? {})
+    : null;
+  const declaredInputs = Object.entries(
+    typeof document.inputs === "object" &&
+      document.inputs !== null &&
+      !Array.isArray(document.inputs)
+      ? document.inputs
+      : {},
+  );
+  // Required run inputs nothing else gives a value: asked at start (and before a plan).
+  const asksAtStart = declaredInputs
+    .filter(([name, spec]) => {
+      const item = typeof spec === "object" && spec !== null && !Array.isArray(spec) ? spec : {};
+      return item.default === undefined && !(environmentValues && name in environmentValues);
+    })
+    .map(([name]) => name);
+  const missingToPlan = asksAtStart.filter((name) => (planValues[name] ?? "") === "");
+  const planNow = (values: Record<string, string>) => {
+    setMenu(null);
+    if (draft.dirty) {
+      setPlanAfterSave(values);
+      draft.save();
+      return;
+    }
+    setPreviewFor(JSON.stringify(document.nodes));
+    planner.mutate({ environment, inputs: values });
+  };
+  // "Save and plan": the plan runs once the save has written the file.
+  if (planAfterSave !== null && !draft.dirty && !draft.saving) {
+    const values = planAfterSave;
+    setPlanAfterSave(null);
+    if (!draft.saveError) {
+      setPreviewFor(JSON.stringify(document.nodes));
+      queueMicrotask(() => {
+        planner.mutate({ environment, inputs: values });
+      });
+    }
+  }
+
+  // Which steps use a variable: a reference to it, or an action input of its name the step
+  // leaves to the run (or the environment).
+  const nodeUses = (node: BuilderNode, name: string): boolean => {
+    const written = JSON.stringify(without(node, "nodes"));
+    if (written.includes(`$INPUTS.${name}`) || written.includes(`$CTX.${name}`)) return true;
+    const facts = actionFacts(node);
+    const given =
+      typeof node.with === "object" && node.with !== null && !Array.isArray(node.with)
+        ? node.with
+        : {};
+    return facts?.inputs.some((input) => input.name === name && !(name in given)) ?? false;
+  };
+  const everyNode = allNodes(document.nodes);
+  const numbersNow = stepNumbers(program.main);
+  const keptValues: KeptValue[] = everyNode.flatMap((node) =>
+    Object.keys(
+      typeof node.capture === "object" && node.capture !== null && !Array.isArray(node.capture)
+        ? node.capture
+        : {},
+    ).map((name) => ({ name, step: node.id, number: numbersNow.get(node.id) ?? node.id })),
+  );
+  const variableUsage = new Map<string, number>();
+  for (const name of [
+    ...declaredInputs.map(([name]) => name),
+    ...Object.keys(environmentValues ?? {}),
+    ...keptValues.map((item) => item.name),
+  ]) {
+    variableUsage.set(name, everyNode.filter((node) => nodeUses(node, name)).length);
+  }
+  const actionUsage = new Map<string, number>();
+  for (const node of everyNode) {
+    const ref = actionFacts(node)?.ref;
+    if (ref) actionUsage.set(ref, (actionUsage.get(ref) ?? 0) + 1);
+  }
+  const repeats = withoutRunRepeats(document);
+  const variablesPanel = (
+    <VariablesPanel
+      document={document}
+      environment={environment || null}
+      environmentValues={environmentValues}
+      kept={keptValues}
+      usage={variableUsage}
+      repeats={repeats.dropped}
+      selected={variable}
+      onSelect={setVariable}
+      onEditInputs={() => {
+        setSelected(null);
+        setSettings(true);
+      }}
+      onRemoveRepeats={() => {
+        draft.edit(repeats.document);
+        setToast(`Removed ${String(repeats.dropped)} repeats.`);
+      }}
+      onSaveValue={
+        environmentInfo
+          ? async (name, value) => {
+              await saveValue.mutateAsync({ environment, name, value });
+              setToast(
+                value === null
+                  ? `Removed ${name} from ${environment}.`
+                  : `Saved ${name} in ${environment}.`,
+              );
+            }
+          : null
+      }
+      onOpenEnvironments={() => {
+        void navigate(environmentsPage(scenario.project));
+      }}
+      onOpenStep={(id) => {
+        setSettings(false);
+        setSelected(id);
+      }}
+    />
+  );
+
+  // The row menu (right click, Shift F10, or a click on the handle): move, duplicate, delete.
+  const rowMenuAt = rowMenu ? locate(program.main, rowMenu.id) : null;
+  const rowMenuLength = rowMenuAt ? (listAt(program.main, rowMenuAt.slot)?.length ?? 0) : 0;
+  const closeRowMenu = () => {
+    setRowMenu(null);
+  };
+  const rowMenuView = rowMenu && (
+    <>
+      <div className="sb-menu-scrim" onClick={closeRowMenu} aria-hidden />
+      <div
+        className="ah-pop sb-row-menu"
+        role="menu"
+        aria-label={`Step ${rowMenu.id}`}
+        style={{
+          top: Math.min(rowMenu.anchor.bottom + 4, window.innerHeight - 260),
+          left: rowMenu.anchor.left,
+        }}
+      >
+        <MenuItem
+          icon="pencil"
+          onClick={() => {
+            setSettings(false);
+            setSelected(rowMenu.id);
+            closeRowMenu();
+          }}
+        >
+          Open
+        </MenuItem>
+        {rowMenuAt && rowMenuAt.index > 0 && (
+          <MenuItem
+            icon="arrow-up"
+            onClick={() => {
+              moveTo(rowMenu.id, { slot: rowMenuAt.slot, index: rowMenuAt.index - 1 });
+              closeRowMenu();
+            }}
+          >
+            Move up
+          </MenuItem>
+        )}
+        {rowMenuAt && rowMenuAt.index < rowMenuLength - 1 && (
+          <MenuItem
+            icon="arrow-down"
+            onClick={() => {
+              moveTo(rowMenu.id, { slot: rowMenuAt.slot, index: rowMenuAt.index + 2 });
+              closeRowMenu();
+            }}
+          >
+            Move down
+          </MenuItem>
+        )}
+        <MenuItem
+          icon="copy"
+          onClick={() => {
+            duplicate(rowMenu.id);
+            closeRowMenu();
+          }}
+        >
+          Duplicate
+        </MenuItem>
+        <MenuItem
+          icon="trash"
+          onClick={() => {
+            removeItem(rowMenu.id);
+            setToast(`Deleted step ${rowMenu.id}.`);
+            closeRowMenu();
+          }}
+        >
+          Delete step
+        </MenuItem>
+      </div>
+    </>
   );
 
   return (
@@ -1034,12 +1086,6 @@ export function ScenarioBuilder({
             </div>
           )}
         </span>
-        {unsaved > 0 && (
-          <span className="ah-small" style={{ color: "var(--waiting)" }}>
-            <Icon name="triangle-alert" size="sm" /> {unsaved} loose{" "}
-            {unsaved === 1 ? "block" : "blocks"} not in the flow
-          </span>
-        )}
         <span className="ah-grow" />
         {draft.dirty && (
           <span className="ah-small ah-muted">
@@ -1049,114 +1095,6 @@ export function ScenarioBuilder({
         {draft.saved && !draft.dirty && (
           <span className="ah-small ah-muted">Saved · rev {draft.saved.revision}</span>
         )}
-        <span className="sb-menu-anchor">
-          <Button
-            size="sm"
-            variant={preview ? "primary" : "default"}
-            icon="list-checks"
-            onClick={() => {
-              setMenu(menu === "preview" ? null : "preview");
-            }}
-          >
-            {preview ? `Preview: ${preview.environment}` : "Preview in…"}
-          </Button>
-          {menu === "preview" && (
-            <form
-              className="ah-pop sb-pop sb-pop-right sb-preview"
-              aria-label="Preview in an environment"
-              onSubmit={(event) => {
-                event.preventDefault();
-                setPreviewFor(JSON.stringify(document.nodes));
-                planner.mutate({ environment: previewEnv, inputs: previewInputs });
-              }}
-            >
-              <span className="ah-small ah-muted">
-                See what each block would do in an environment: every action&apos;s script runs in
-                plan mode, with no credential; nothing is changed. It plans the saved file
-                {draft.dirty ? " (save first to preview your changes)" : ""}.
-              </span>
-              <label className="ah-stack ah-small" style={{ gap: 4 }}>
-                Environment
-                {scenario.environments.length > 0 ? (
-                  <select
-                    className="ah-input"
-                    value={previewEnv}
-                    onChange={(event) => {
-                      setPreviewEnv(event.target.value);
-                    }}
-                  >
-                    {scenario.environments.map((item) => (
-                      <option key={item.name} value={item.name}>
-                        {item.name} · access {item.access}
-                        {item.production ? " · production" : ""}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    className="ah-input"
-                    placeholder="an environment of hub.json"
-                    value={previewEnv}
-                    onChange={(event) => {
-                      setPreviewEnv(event.target.value);
-                    }}
-                  />
-                )}
-              </label>
-              {scenario.inputs.map((input) => (
-                <label key={input.name} className="ah-stack ah-small" style={{ gap: 4 }}>
-                  {input.name}
-                  {input.required ? " (required)" : ""}
-                  <input
-                    className="ah-input"
-                    value={previewInputs[input.name] ?? ""}
-                    onChange={(event) => {
-                      setPreviewInputs({ ...previewInputs, [input.name]: event.target.value });
-                    }}
-                  />
-                </label>
-              ))}
-              {planner.error && (
-                <span className="ah-small" style={{ color: "var(--failed)" }}>
-                  {planner.error.detail ?? planner.error.title}
-                </span>
-              )}
-              <span className="ah-row" style={{ gap: 6, justifyContent: "flex-end" }}>
-                {preview && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => {
-                      planner.reset();
-                      setMenu(null);
-                    }}
-                  >
-                    Clear preview
-                  </Button>
-                )}
-                <Button
-                  size="sm"
-                  variant="primary"
-                  type="submit"
-                  disabled={previewEnv === "" || planner.isPending}
-                >
-                  {planner.isPending ? "Planning…" : "Preview"}
-                </Button>
-              </span>
-            </form>
-          )}
-        </span>
-        <Button
-          size="sm"
-          variant={settings && !selectedItem ? "primary" : "ghost"}
-          icon="settings"
-          onClick={() => {
-            setSelected(null);
-            setSettings(!settings);
-          }}
-        >
-          Inputs
-        </Button>
         <IconButton
           icon="undo-2"
           label="Undo (⌘Z)"
@@ -1207,6 +1145,115 @@ export function ScenarioBuilder({
             </div>
           )}
         </span>
+      </div>
+      <div className="sb-context">
+        <label className="sb-env">
+          <span className="ah-small ah-muted">Environment</span>
+          <select
+            className="ah-input"
+            aria-label="Environment"
+            value={environment}
+            disabled={scenario.environments.length === 0}
+            onChange={(event) => {
+              setEnvironment(event.target.value);
+            }}
+          >
+            {scenario.environments.length === 0 && <option value="">No environment</option>}
+            {scenario.environments.map((item) => (
+              <option key={item.name} value={item.name}>
+                {item.name} · {item.access}
+                {item.production ? " · production" : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span className="sb-menu-anchor">
+          <Button
+            size="sm"
+            icon="list-checks"
+            disabled={environment === "" || planner.isPending || draft.saving || errors.length > 0}
+            title={
+              errors.length > 0
+                ? "Fix the problems first"
+                : "Each action's script runs in plan mode, with no credential: nothing is changed."
+            }
+            onClick={() => {
+              if (missingToPlan.length > 0) setMenu(menu === "preview" ? null : "preview");
+              else planNow({});
+            }}
+          >
+            {planner.isPending
+              ? "Planning…"
+              : draft.dirty
+                ? "Save and plan"
+                : `Plan in ${environment || "…"}`}
+          </Button>
+          {menu === "preview" && (
+            <form
+              className="ah-pop sb-pop sb-preview"
+              aria-label="Values to plan with"
+              onSubmit={(event) => {
+                event.preventDefault();
+                planNow(planValues);
+              }}
+            >
+              <b className="ah-small">Values to plan with</b>
+              <span className="ah-small ah-muted">
+                Nothing gives these a value in {environment}. Nothing is changed by a plan.
+              </span>
+              {missingToPlan.map((name) => (
+                <label key={name} className="ah-stack ah-small" style={{ gap: 4 }}>
+                  {name}
+                  <input
+                    className="ah-input"
+                    value={planValues[name] ?? ""}
+                    onChange={(event) => {
+                      setPlanValues({ ...planValues, [name]: event.target.value });
+                    }}
+                  />
+                </label>
+              ))}
+              <span className="ah-row" style={{ gap: 6, justifyContent: "flex-end" }}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setMenu(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button size="sm" variant="primary" type="submit">
+                  {draft.dirty ? "Save and plan" : `Plan in ${environment}`}
+                </Button>
+              </span>
+            </form>
+          )}
+        </span>
+        {preview && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              planner.reset();
+            }}
+          >
+            Clear plan
+          </Button>
+        )}
+        {planner.error && (
+          <span className="ah-small" style={{ color: "var(--failed)" }}>
+            {planner.error.detail ?? planner.error.title}
+          </span>
+        )}
+        <span className="ah-grow" />
+        {environmentInfo && (
+          <span className="ah-small ah-muted">
+            {Object.keys(environmentValues ?? {}).length > 0
+              ? `${String(Object.keys(environmentValues ?? {}).length)} values from ${environment} fill the steps`
+              : `${environment} has no values yet: add them in Variables`}
+          </span>
+        )}
       </div>
       {draft.saveError && (
         <Banner tone="error" boxed>
@@ -1315,98 +1362,112 @@ export function ScenarioBuilder({
         data-panel={(reviewPanel ?? inspector) ? "open" : undefined}
         ref={bodyRef}
       >
-        <Palette
-          library={items}
-          pack={scenario.pack}
-          taken={taken}
-          onDrag={setDrag}
-          onAdd={addAtEnd}
-          onNewAction={() => {
-            setNewAction({ node: null, readOnly: false });
-          }}
-          onAskAction={() => {
-            setAskingAction({ step: null, readOnly: false });
-          }}
-          onOpenAction={(item, opener) => {
-            actionOpener.current = opener;
-            setActionPanel(item.action.ref);
-          }}
-        />
-        <div className="sb-stage">
-          {view === "blocks" && help && (
-            <div className="sb-hint" role="note">
-              <span>
-                Press <b>+</b> on an arrow to add a step. Click a step to edit it on the right. Drag
-                a step to move it.
-              </span>
-              <Button
-                size="sm"
-                onClick={() => {
-                  setHelp(false);
-                  writeStored(HELP_KEY, "hidden");
-                }}
-              >
-                Got it
-              </Button>
-            </div>
+        <aside className="sb-left" aria-label="Variables and actions">
+          <Tabs
+            label="Left column"
+            value={leftTab}
+            onChange={(id) => {
+              setLeftTab(id === "actions" ? "actions" : "variables");
+            }}
+            tabs={[
+              { id: "variables", label: "Variables", icon: "braces" },
+              { id: "actions", label: "Actions", icon: "circle-play", count: items.length },
+            ]}
+          />
+          {leftTab === "variables" ? (
+            variablesPanel
+          ) : (
+            <ActionsTab
+              library={items}
+              libraryError={library.isError}
+              usage={actionUsage}
+              onOpen={(item, opener) => {
+                actionOpener.current = opener;
+                setActionPanel(item.action.ref);
+              }}
+              onNewAction={() => {
+                setNewAction({ node: null, readOnly: false });
+              }}
+              onAskAction={() => {
+                setAskingAction({ step: null, readOnly: false });
+              }}
+            />
           )}
+        </aside>
+        <div className="sb-stage">
           {view === "blocks" &&
             program.main.length === 0 &&
             program.kept.length === 0 &&
-            layout.loose.length === 0 &&
             !reviewProgram && (
               <StartCard
                 onDescribe={() => {
                   setDescribing(true);
                 }}
                 onTemplate={(items_) => {
-                  commit(items_, program.kept, layout.loose);
+                  commit(items_);
                 }}
                 taken={taken}
               />
             )}
-          {view === "blocks" && (
-            <BlockCanvas
-              suggested={reviewProgram ? suggestedIds : undefined}
-              planOf={(id) => planRows.get(id) ?? null}
-              planStale={previewFor !== null && previewFor !== JSON.stringify(document.nodes)}
-              actions={library.isPending ? "loading" : library.isError ? "error" : "ready"}
-              planEnvironment={preview?.environment ?? null}
-              onHat={() => {
-                setSelected(null);
-                setSettings(true);
-              }}
-              main={{
-                id: "main",
-                x: layout.main.x,
-                y: layout.main.y,
-                items: reviewProgram ?? program.main,
-              }}
-              loose={[...program.kept, ...layout.loose]}
+          {view === "blocks" && (program.main.length > 0 || reviewProgram) && (
+            <StepList
+              scenarioName={scenario.name}
+              items={reviewProgram ?? program.main}
+              numbers={stepNumbers(reviewProgram ?? program.main)}
               selected={selected}
               actionOf={actionFacts}
               problemsOf={(id) => problems.filter((problem) => problem.node === id)}
-              inputs={inputs}
-              onSelect={setSelected}
-              onTake={reviewProgram ? () => [] : onTake}
-              onDrop={onDrop}
-              onMoveStack={(_stack, x, y) => {
-                saveLayout({ ...layout, main: { x, y } });
+              planOf={(id) => planRows.get(id) ?? null}
+              planStale={previewFor !== null && previewFor !== JSON.stringify(document.nodes)}
+              start={{
+                environment: environment || null,
+                asks: asksAtStart,
+                selected: settings && !selectedItem,
               }}
-              drag={drag}
-              onDrag={setDrag}
-              numbers={stepNumbers(program.main)}
-              onInsert={(target, anchor) => {
+              onStart={() => {
+                setSelected(null);
+                setSettings(true);
+              }}
+              onSelect={(id) => {
+                setSettings(false);
+                setSelected(id);
+              }}
+              onInsert={(target, anchor, label) => {
                 if (reviewProgram) return;
-                const list =
-                  target.slot.in === "main" && target.stack === "main" ? program.main : null;
-                const before = list?.[target.index - 1];
-                setInserting({
-                  target,
-                  anchor,
-                  where: before ? `after ${itemId(before)}` : "here",
-                });
+                setInserting({ target, anchor, where: label });
               }}
+              onMove={moveTo}
+              onRowMenu={(id, anchor) => {
+                if (reviewProgram) return;
+                setRowMenu({ id, anchor });
+              }}
+              variable={variable}
+              usesVariable={(node) => (variable ? nodeUses(node, variable) : false)}
+              suggested={reviewProgram ? suggestedIds : undefined}
+              readOnly={reviewProgram !== null}
+              loose={program.kept}
+              onOpenYaml={() => {
+                setView("yaml");
+              }}
+              footer={
+                help ? (
+                  <div className="sb-hint" role="note">
+                    <span>
+                      Steps run top to bottom, each after the one above. Drag the handle or press
+                      Alt ↑ / Alt ↓ to move one; the + between two steps adds one there.
+                    </span>
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        setHelp(false);
+                        writeStored(HELP_KEY, "hidden");
+                      }}
+                    >
+                      Got it
+                    </Button>
+                  </div>
+                ) : null
+              }
             />
           )}
           {view === "graph" && (
@@ -1558,6 +1619,10 @@ export function ScenarioBuilder({
           </Toast>
         </div>
       )}
+      {rowMenuView}
+      <span className="ah-sr" role="status" aria-live="polite">
+        {announce}
+      </span>
       {inserting && (
         <InsertMenu
           anchor={inserting.anchor}

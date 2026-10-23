@@ -274,6 +274,18 @@ function mapLists(items: Item[], slot: Slot, fn: (list: Item[]) => Item[]): Item
   });
 }
 
+/** The list `slot` addresses (null when its owner is gone). */
+export function listAt(items: readonly Item[], slot: Slot): readonly Item[] | null {
+  if (slot.in === "main") return items;
+  const owner = findItem(items, slot.owner);
+  if (!owner) return null;
+  if (owner.kind === "repeat" && slot.in === "body") return owner.body;
+  if (owner.kind === "if" && slot.in === "then") return owner.then;
+  if (owner.kind === "if" && slot.in === "otherwise") return owner.otherwise;
+  if (owner.kind === "parallel" && slot.in === "lane") return owner.lanes[slot.lane] ?? null;
+  return null;
+}
+
 /** Puts `moved` into `slot` at `index` (an index past the end appends). */
 export function insertAt(items: Item[], slot: Slot, index: number, moved: readonly Item[]): Item[] {
   return mapLists(items, slot, (list) => [...list.slice(0, index), ...moved, ...list.slice(index)]);

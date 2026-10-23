@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
 import { apiCommand, apiKey, apiPost, useApi, type ApiProblem } from "../../lib/api";
 import { useEventStream } from "../../lib/sse";
+import { postEnvironmentEdit } from "../hub-config/environments";
 import type { Approval } from "../approvals/queries";
 
 /* The Scenarios screens' reads and writes (docs/API.md § Scenarios, AGH-350 T13). */
@@ -188,5 +189,28 @@ export function useFindingInbox(runId: string, findingId: string) {
       apiCommand("/api/v1/scenario-runs/{run_id}/findings/{finding_id}/inbox", {
         path: { run_id: runId, finding_id: findingId },
       }),
+  });
+}
+
+/** Sets (or, with `value` null, removes) one value of an environment in hub.local.json: the
+ * developer's own layer, which may add values to a team environment too. The scenario is read
+ * again, so its environments show the new value. */
+export function useSaveEnvironmentValue(project: string) {
+  const client = useQueryClient();
+  return useMutation<
+    unknown,
+    ApiProblem,
+    { environment: string; name: string; value: string | null }
+  >({
+    mutationFn: ({ environment, name, value }) =>
+      postEnvironmentEdit(client, project, {
+        op: "set_environment",
+        scope: "local",
+        name: environment,
+        values: { [name]: value ?? "" },
+      }),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: ["api", "/api/v1/scenarios/{project}/{name}"] });
+    },
   });
 }
