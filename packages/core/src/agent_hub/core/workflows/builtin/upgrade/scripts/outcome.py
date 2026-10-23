@@ -203,13 +203,29 @@ def _json(parser: argparse.ArgumentParser, name: str, value: str, *, kind: type)
     return parsed
 
 
+def joined(argv: list[str], options: frozenset[str]) -> list[str]:
+    """``argv`` with each of ``options`` joined to its value (``--name=value``), so a value may
+    start with ``-``: the owner's text and the steps' outputs are data, never options."""
+    out: list[str] = []
+    index = 0
+    while index < len(argv):
+        if argv[index] in options and index + 1 < len(argv):
+            out.append(f"{argv[index]}={argv[index + 1]}")
+            index += 2
+        else:
+            out.append(argv[index])
+            index += 1
+    return out
+
+
 def parse(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="outcome.py")
     for name in ("fast-gate", "full-gate", "package", "notes-found", "notes-reason", "sources"):
         parser.add_argument(f"--{name}", required=True)
     for name in OBJECTS:
         parser.add_argument(f"--{name}", required=True)
-    args = parser.parse_args(argv)
+    names = ("fast-gate", "full-gate", "package", "notes-found", "notes-reason", "sources")
+    args = parser.parse_args(joined(argv, frozenset(f"--{name}" for name in (*names, *OBJECTS))))
     if any(len(value) > MAX_ARGUMENT_CHARS for value in vars(args).values()):
         parser.error(f"an argument is longer than {MAX_ARGUMENT_CHARS} characters")
     if not (args.fast_gate.strip() and args.full_gate.strip() and args.package.strip()):

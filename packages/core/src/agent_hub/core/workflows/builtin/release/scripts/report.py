@@ -38,11 +38,26 @@ def outcome(given: dict[str, str]) -> tuple[str, str]:
     return "released", f"{version} is tagged; the hub pin PR is open: {given['pin-pr']}"
 
 
+def joined(argv: list[str], options: frozenset[str]) -> list[str]:
+    """``argv`` with each of ``options`` joined to its value (``--name=value``), so a value may
+    start with ``-``: the owner's text and the steps' outputs are data, never options."""
+    out: list[str] = []
+    index = 0
+    while index < len(argv):
+        if argv[index] in options and index + 1 < len(argv):
+            out.append(f"{argv[index]}={argv[index + 1]}")
+            index += 2
+        else:
+            out.append(argv[index])
+            index += 1
+    return out
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog=PROG)
     for name in OPTIONS:
         parser.add_argument(f"--{name}", required=True)
-    values = vars(parser.parse_args(argv))
+    values = vars(parser.parse_args(joined(argv, frozenset(f"--{name}" for name in OPTIONS))))
     given = {name: str(values[name.replace("-", "_")]).strip() for name in OPTIONS}
     if not given["count"].isascii() or not given["count"].isdecimal():
         print(f"{PROG}: --count is not a number: {given['count']!r}", file=sys.stderr)

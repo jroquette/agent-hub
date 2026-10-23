@@ -145,11 +145,27 @@ def write(root: Path, text: str, today: date) -> Path:
     raise DraftError(f"{MAX_SUFFIX} drafts for {today.isoformat()} exist already; no draft written")
 
 
+def joined(argv: list[str], options: frozenset[str]) -> list[str]:
+    """``argv`` with each of ``options`` joined to its value (``--name=value``), so a value may
+    start with ``-``: the owner's text and the steps' outputs are data, never options."""
+    out: list[str] = []
+    index = 0
+    while index < len(argv):
+        if argv[index] in options and index + 1 < len(argv):
+            out.append(f"{argv[index]}={argv[index + 1]}")
+            index += 2
+        else:
+            out.append(argv[index])
+            index += 1
+    return out
+
+
 def _arguments(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="drafts.py")
-    for flag in ("--nothing", "--count", "--decision", "--note", "--summary", "--today"):
+    flags = ("--nothing", "--count", "--decision", "--note", "--summary", "--today")
+    for flag in flags:
         parser.add_argument(flag, default="")
-    return parser.parse_args(argv)
+    return parser.parse_args(joined(argv, frozenset(flags)))
 
 
 def _count(text: str) -> int | None:

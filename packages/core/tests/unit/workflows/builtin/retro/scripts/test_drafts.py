@@ -264,3 +264,21 @@ def test_refuses_root_option_when_given(tmp_path: Path) -> None:
         load().main(["--root", str(tmp_path), "--nothing", "true"])
 
     assert raised.value.code == 2
+
+
+@pytest.mark.parametrize(
+    ("note", "outcome"), [("-1", "drafted"), ("--all", "none kept"), ("- see 2", "drafted")]
+)
+def test_reads_a_note_starting_with_a_dash_when_owner_keeps(
+    note: str,
+    outcome: str,
+    *,
+    hub: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The owner's text is data (AGH-480): a leading dash is never read as an option.
+    code, found, err = run_drafts(hub, {"--note": note}, capsys=capsys, monkeypatch=monkeypatch)
+
+    assert code == 0, err
+    assert found["outcome"] == outcome
