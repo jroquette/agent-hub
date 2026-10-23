@@ -4,21 +4,21 @@
 # ///
 """Decide whether a PR's diff touches a risky surface; print the answer as one JSON object.
 
-``surface.py --path <clone> --base <sha> --head <sha>`` reads ``git diff -U0 <base> <head>`` in
-the clone (hooks, external diffs, text conversions and rename detection off) into a temporary
-file, at most ``READ_CAP`` bytes, and the changed paths from ``git diff --name-only``, so a
-binary, renamed or mode-only file meets the path rules too. The security lens runs when this
-says ``risky``: a script decides it, never an agent. The six categories are those of the hub's
-security-reviewer (input handling, auth, secrets, subprocesses, file paths, parsing). A changed path matches the path rules; an added line
-(never a removed one) matches the line rules. ``---`` and ``+++`` are file headers only between a
-``diff --git`` line and the file's first hunk, so an added line that starts with ``++`` is read
-as one; an added line over ``LINE_CHARS`` characters is not read but counted as a hit
-(``unread``), so it makes the diff ``risky``.
+``surface.py --path <clone> --base <sha> --head <sha>`` reads ``git diff -U0 <base> <head>`` in the
+clone (hooks, external diffs, text conversions and rename detection off) into a temporary file, at
+most ``READ_CAP`` bytes, and the changed paths from ``git diff --name-only``, so a binary, renamed
+or mode-only file meets the path rules too. The security lens runs when this says ``risky``: a
+script decides it, never an agent. The six categories are those of the hub's security-reviewer
+(input handling, auth, secrets, subprocesses, file paths, parsing). A changed path matches the path
+rules; an added line (never a removed one) matches the line rules. ``---`` and ``+++`` are file
+headers only between a ``diff --git`` line and the file's first hunk, so an added line that starts
+with ``++`` is read as one; an added line over ``LINE_CHARS`` characters is not read but counted as
+a hit (``unread``), so it makes the diff ``risky``.
 
-It fails closed: a diff over the cap is ``risky`` and ``truncated``, a git error is ``risky``,
-each with a ``reason``. The output: ``{"risky", "categories", "hits", "files", "truncated",
-"reason"}``, ``hits`` at most ``HITS_MAX`` ``{"category", "path", "line", "rule"}`` (``line`` null
-for a path rule). Commits that are not full shas exit 2.
+It fails closed: a diff over the cap is ``risky`` and ``truncated``, a git error is ``risky``, each
+with a ``reason``. The output: ``{"risky", "categories", "hits", "files", "truncated", "reason"}``,
+``hits`` at most ``HITS_MAX`` ``{"category", "path", "line", "rule"}`` (``line`` null for a path
+rule). Commits that are not full shas exit 2.
 """
 
 from __future__ import annotations
