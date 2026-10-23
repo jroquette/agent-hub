@@ -245,25 +245,10 @@ With no human present, run it headless. It only writes its proposal to `brain/_i
 
 A human then reads the proposal and sets its `status` to `approved`, and `/onboard apply` runs in a session (`./agent`).
 
-For an outage or a bug with no known reproduction, `/incident` in a session starts the built-in `incident` workflow;
-its gate is answered in hub web or with `./hub workflow respond <run>`, and its drafts land in `brain/_inbox/`.
-
 `/onboard` needs a hub whose `.claude/skills/onboard` exists. If it does not, the hub's release is older than
 `/onboard`: raise `platform.version` in `hub.json` to the version of § Find the version and check the CLI, run
 `./hub sync`, and commit that change through a PR. If the newest release has no `.claude/skills/onboard` either, stop
 and tell the user; do not try other versions.
-
-Once a week (on Mondays, after the brain's inbox), run `/triage --backlog` in a session: it reads the open issues,
-runs the `backlog-care` workflow on them, asks the owner to apply or skip each draft one issue at a time, and writes
-only the approved ones to the tracker. A schedule cannot start it: the run needs the issues file the skill writes.
-
-To review someone else's PR, type `/review <PR>` in a session. It reads the PR with `gh` and starts the built-in
-`review-incoming` workflow, which drafts one review in `.agent-runs/review-incoming/<run>.md` and pauses; you edit that
-file and answer `./hub workflow respond <run> --choice comment|request-changes|approve` (or `--choice reject`), and only
-then does `/review` post it. The repo's check runs at the PR's head in a throwaway worktree, never for a fork.
-
-The platform's own releases come from `/release`, which runs the built-in `release` workflow: the owner approves
-the release PR, merges it with a merge commit, and approves the hub PR that raises `platform.version`.
 
 ### Run the control plane
 
@@ -291,20 +276,6 @@ you. To read the brain, open Knowledge › Brain (or a project's Brain): it list
 `brain/auto/`) and renders any one, with links between notes; a feature's Spec, Research, Plan, Eval and Criteria tabs
 show its records. The app reads the registered hub's checkout as it is on disk, so pull the hub to see merged changes.
 
-**Scheduled and event starts.** `hub web` can start a workflow by itself. Declare it in `hub.json`: a schedule such
-as `"schedules": [{"workflow": "retro", "cron": "0 9 * * 1", "inputs": {"since": 7}}]` starts `retro` every Monday at
-09:00, and an event such as `"events": [{"workflow": "post-merge-verify", "on": "merge", "repo": "<repo dir>"}]`
-starts `post-merge-verify` after merges to that repo's default branch: at most one run per poll (every 5 minutes), on
-the newest new commit (`on` may also be `ci_red`, one run per failed Actions run on it, or `pr_opened`, one run per
-newly opened pull request; an older pull request or run that comes back onto GitHub's page never starts one). The cron has 5 numeric fields and is read in UTC.
-Nothing starts while `hub web` is not running; when it comes back, the most recent missed slot runs once and older
-ones never do. Events are polled through `gh` every 5 minutes, so `gh` must be signed in; only the repo's own push runs and pull
-requests count (one from a fork never starts a run); the first poll only records
-what is there, and the run gets the event's `sha`, `pr` or `ci_run` when the workflow declares that input. Each run
-records `trigger` in its start record and is listed in Runs like any other. `./hub workflow schedule list` prints each
-schedule's next start, and `./hub doctor --only workflows.starts` flags a misspelled workflow. In Docker no run starts
-by itself, as no run starts from the app there.
-
 The Skills tab (Knowledge › Skills, or a project's Skills) lists the hub's skills, agents and hooks with how each is
 invoked, whether it is managed or the project's, and how often it was used in the last 30 days; a skill's page shows
 its text (rendered or raw), the steps, agents and commands derived from it, its bundled files and its diagnostics
@@ -325,8 +296,102 @@ checkout: each opens a pull request in the hub repo (branch `<branch_prefix>lear
 authored as the hub's author), and nothing changes until the user merges it. That needs, on the machine running
 `hub web`, a writable hub checkout whose `origin` is the hub's GitHub repo, `git`, and `gh` signed in to GitHub (the
 PR is opened as that `gh` account). Under Docker the hubs are mounted read-only, so both actions are disabled with
-"Hub is read-only here"; run `./hub web` locally to decide learnings. Workflows: [README](../README.md#-workflows);
+"Hub is read-only here"; run `./hub web` locally to decide learnings. Workflows: [README](../README.md#-workflows), [FLOWS.md](FLOWS.md).
+
+**Sessions from the app.** On the Sessions screen, New session starts the user's own `claude` (on `PATH`, logged in)
+in the hub, a repo or one of their worktrees, with the hub's CLAUDE.md, hooks (the guard still applies), skills and
+agents; the chat sends messages, answers prompts, interrupts, sets mode and model, resumes an ended session in place
+and forks it. It needs the `sessions` extra (Claude Agent SDK, about 240 MiB): from the hub folder, run `uvx --from
+'agent-hub[sessions] @ git+https://github.com/jroquette/agent-hub@v<version>#subdirectory=packages/agent-hub' hub web`
+instead of `./hub web`; without it the screen says what is missing. Open the printed address once per browser: the
+token becomes a cookie the session routes need. Limits are `hub web` options with `AGENT_HUB_*` variables (`hub web
+--help`; 4 live sessions, 30 min idle, 10 min to answer a prompt). Their conversations are kept, redacted, in `hub
+web`'s database for 30 days after they end (Delete removes one at once). Off in Docker. From another device, keep
+`hub web` on loopback and bring the port to it: `ssh -L 7420:127.0.0.1:7420 <host>`, or `tailscale serve` to
+`http://127.0.0.1:7420` on your own tailnet, then open the token address there; never Tailscale Funnel, ngrok or
+`--host 0.0.0.0`. Claude's Remote Control also reaches a session from a phone. Cloud sessions (claude.ai/code) are not
+driven from the app: it gives the `claude --cloud` command, then the session's link and `claude --teleport <id>`.
+
+Release notes, for reviewing the sync PR's diff. Control plane: `./hub sync` adds the hook `event_sensor.py` and
+rewrites `hooks.json`, `.claude/settings.json` (the sensor joins eleven hook events), `guard.py`, `stop_gate.py` and
+`hubhooks.py`, decisions unchanged. Read-only gate (AGH-141): adds the hook `readonly_gate.py` and rewrites
+`hooks.json`, `.claude/settings.json` and the researcher, spec-reviewer and quality-reviewer (`mutates_checkout: false`,
+which any agent may add); one that changes a checkout is held at its stop once, or the change is reported.
+
+---
+
+Source: `docs/FLOWS.md` (https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/FLOWS.md)
+
+# Flows
+
+The built-in flows a hub gets from its pinned release, for after `/onboard`. Setting up a hub is in [USING.md](USING.md).
+
+## Pick a flow
+
+Which built-in flow to use, how it starts and what you decide in it. `/kickoff` and `/triage` route work by
+this table, and a new hub's `README.md` ends with the same one. A flow's scripts read your `hub.json` (and your
+`hub.local.json` prefix) only through `./hub step config`, which prints those values and changes nothing.
+
+<!-- flow-catalog:start -->
+| Flow | Use when | Start | Your gates | Skills and agents inside |
+|---|---|---|---|---|
+| `backlog-care` (`backlog-care` pack) | The weekly backlog pass - hygiene findings and drafts for the oldest unready issues, one approval per issue. | `/triage` | The owner applies this issue's draft and label, or skips the issue. | `/triage` |
+| `context` (`brain-care` pack) | The monthly context audit - measure the always-loaded text, the owner picks the cuts, one hub PR. | `./hub workflow run context` | The owner picks the cuts (a note keeps some), or skips this month. | `/context-audit` |
+| `inbox` (`brain-care` pack) | The weekly inbox review - group duplicate notes, the owner decides each group, one hub PR. | `/learn` | The owner decides the group; an external note needs his explicit apply. | own prompts |
+| `doc-drift` (`doc-drift` pack) | Doc lines a contract change made wrong, fixed in a docs-only PR the owner approves first. | `./hub workflow run doc-drift` | The owner approves the proposed doc lines, or rejects them (no PR). | `/plain-language` |
+| `incident` (`incident` pack) | An incident - git evidence, ranked hypotheses with read-only checks, a gated mitigation, a hand-off draft and a blameless postmortem draft. | `/incident` | The owner records a mitigation of a confirmed hypothesis, or their own, or none. Nothing is applied. | `/recall`, `/learn` |
+| `issue-to-pr` (`issue-to-pr` pack) | One tracker issue to a PR, as hub run takes it. | `./hub run <issue>` | none | own prompts |
+| `post-merge-verify` (`post-merge-verify` pack) | The merged tickets' AC verifications, run again on the default branch; failures to the inbox. | `./hub workflow run post-merge-verify` | none | own prompts |
+| `release` (`release` pack) | Cut a platform release when the owner asks: the PRs merged since the last tag, the version bump, the check on the exact release commit and the notes with what hub sync rewrites, then, once the platform repo's release workflow has tagged it, the hub's pin bump, each PR behind its own approval. | `/release` | The owner approves the release PR.; The owner merges the release PR, /release dispatches the release workflow, then the owner answers.; The owner approves the hub PR that bumps the pin. | `/plain-language` |
+| `retro` (`retro` pack) | The week's run metrics, at most five evidence-backed changes, and issue drafts for the ones the owner keeps. | `/retro` | The owner keeps some of the changes (their numbers, or all), or none. | own prompts |
+| `review-incoming` (`review-incoming` pack) | Someone else's PR through the spec, quality and security lenses, drafted as one review posted only after the owner approves it. | `/review` | The owner edits the review file, then picks how it is posted, or rejects it. | `/plain-language`, `security-reviewer` agent |
+| `deliver` (`sdlc` pack) | One issue to a PR, implemented and reviewed in rounds until the check and both reviewers pass. | `./hub workflow run deliver` | none | own prompts |
+| `implement` (`sdlc` pack) | One ticket of a planned feature to a PR - context, preflight and plan change gate, review rounds, ticket eval. | `/implement` | The owner approves the plan change, or declines it with a note. | own prompts |
+| `preflight` (`sdlc` pack) | A dependent ticket's read-only preflight after a blocker's merge - once per outcome, a plan change gate on plan drift. | `./hub workflow run preflight` | The owner approves the plan change, or declines it with a note. | own prompts |
+| `preflight-check` (`sdlc` pack) | One ticket's preflight - the read-only check, a plan change gate on plan drift, and the re-check after the owner's decision. | inside `preflight`, inside `ticket-pass` | The owner approves the plan change, or declines it with a note. | own prompts |
+| `review` (`sdlc` pack) | The spec and quality lenses on a checkout, then one verdict. | `./hub workflow run review` | none | own prompts |
+| `ticket-pass` (`sdlc` pack) | One ticket pass - preflight, a plan change gate on plan drift, the worktree, the ticket plan and the review rounds. | inside `implement` | The owner approves the plan change, or declines it with a note. | own prompts |
+| `security-sweep` (`security-sweep` pack) | Weekly scanners on every repo, new findings triaged by the security reviewer, kept ones to brain/_inbox for /triage. | `./hub workflow run security-sweep` | none | `security-reviewer` agent |
+| `spike` (`spike` pack) | A timeboxed spike - recall, research, options, the owner's pick, a premortem, then research.md and an ADR draft. | `/feature` | The owner picks an option, or asks for more with a note. | `/recall`, `/research`, `/adr`, `/premortem`, `researcher` agent |
+| `upgrade` (`upgrade` pack) | One package bumped with the repo's tooling, its changelog read, the code adapted, checked and opened as a PR. | `/upgrade` | A risky bump (major, no changelog, or more than five files touched) asks before the full check.; Every push waits on a person; a reject stops the run with the branch kept. | own prompts |
+
+Any flow can also start from `hub web` (Workflow runs › Start run; `issue-to-pr` only through `./hub run`), or by itself from `hub.json` → `schedules` (a time) and `events` (a merge, a new PR, a red CI run). Each pack's file suggests its own entries.
+<!-- flow-catalog:end -->
+
+## Start a flow by itself
+
+**Scheduled and event starts.** `hub web` can start a workflow by itself. Declare it in `hub.json`: a schedule such
+as `"schedules": [{"workflow": "retro", "cron": "0 9 * * 1", "inputs": {"since": 7}}]` starts `retro` every Monday at
+09:00, and an event such as `"events": [{"workflow": "post-merge-verify", "on": "merge", "repo": "<repo dir>"}]`
+starts `post-merge-verify` after merges to that repo's default branch: at most one run per poll (every 5 minutes), on
+the newest new commit (`on` may also be `ci_red`, one run per failed Actions run on it, or `pr_opened`, one run per
+newly opened pull request; an older pull request or run that comes back onto GitHub's page never starts one). The cron has 5 numeric fields and is read in UTC.
+Nothing starts while `hub web` is not running; when it comes back, the most recent missed slot runs once and older
+ones never do. Events are polled through `gh` every 5 minutes, so `gh` must be signed in; only the repo's own push runs and pull
+requests count (one from a fork never starts a run); the first poll only records
+what is there, and the run gets the event's `sha`, `pr` or `ci_run` when the workflow declares that input. Each run
+records `trigger` in its start record and is listed in Runs like any other. `./hub workflow schedule list` prints each
+schedule's next start, and `./hub doctor --only workflows.starts` flags a misspelled workflow. In Docker no run starts
+by itself, as no run starts from the app there.
+
+## Each flow
+
 `/feature` sends a spike to the `spike` workflow.
+
+For an outage or a bug with no known reproduction, `/incident` in a session starts the built-in `incident` workflow;
+its gate is answered in hub web or with `./hub workflow respond <run>`, and its drafts land in `brain/_inbox/`.
+
+Once a week (on Mondays, after the brain's inbox), run `/triage --backlog` in a session: it reads the open issues,
+runs the `backlog-care` workflow on them, asks the owner to apply or skip each draft one issue at a time, and writes
+only the approved ones to the tracker. A schedule cannot start it: the run needs the issues file the skill writes.
+
+To review someone else's PR, type `/review <PR>` in a session. It reads the PR with `gh` and starts the built-in
+`review-incoming` workflow, which drafts one review in `.agent-runs/review-incoming/<run>.md` and pauses; you edit that
+file and answer `./hub workflow respond <run> --choice comment|request-changes|approve` (or `--choice reject`), and only
+then does `/review` post it. The repo's check runs at the PR's head in a throwaway worktree, never for a fork.
+
+The platform's own releases come from `/release`, which runs the built-in `release` workflow: the owner approves
+the release PR, merges it with a merge commit, and approves the hub PR that raises `platform.version`.
 
 **The weekly retro.** `/retro` runs the built-in `retro` workflow (`./hub workflow run retro --input since=7 --live`):
 the week's run metrics, at most five changes each backed by those numbers, and, for the ones you keep at its gate,
@@ -367,58 +432,6 @@ renamed in one command group while another group keeps the same name is not seen
 leaves a worktree at `<repo>/.claude/worktrees/doc-drift-<run id>` on the branch `<branch_prefix>doc-drift-<run id>`
 (a resumed run reuses both); once its PR is merged or closed, or it committed nothing, remove them in the repo with
 `git worktree remove .claude/worktrees/doc-drift-<run id>` and `git branch -D <branch_prefix>doc-drift-<run id>`.
-
-**Sessions from the app.** On the Sessions screen, New session starts the user's own `claude` (on `PATH`, logged in)
-in the hub, a repo or one of their worktrees, with the hub's CLAUDE.md, hooks (the guard still applies), skills and
-agents; the chat sends messages, answers prompts, interrupts, sets mode and model, resumes an ended session in place
-and forks it. It needs the `sessions` extra (Claude Agent SDK, about 240 MiB): from the hub folder, run `uvx --from
-'agent-hub[sessions] @ git+https://github.com/jroquette/agent-hub@v<version>#subdirectory=packages/agent-hub' hub web`
-instead of `./hub web`; without it the screen says what is missing. Open the printed address once per browser: the
-token becomes a cookie the session routes need. Limits are `hub web` options with `AGENT_HUB_*` variables (`hub web
---help`; 4 live sessions, 30 min idle, 10 min to answer a prompt). Their conversations are kept, redacted, in `hub
-web`'s database for 30 days after they end (Delete removes one at once). Off in Docker. From another device, keep
-`hub web` on loopback and bring the port to it: `ssh -L 7420:127.0.0.1:7420 <host>`, or `tailscale serve` to
-`http://127.0.0.1:7420` on your own tailnet, then open the token address there; never Tailscale Funnel, ngrok or
-`--host 0.0.0.0`. Claude's Remote Control also reaches a session from a phone. Cloud sessions (claude.ai/code) are not
-driven from the app: it gives the `claude --cloud` command, then the session's link and `claude --teleport <id>`.
-
-Release notes, for reviewing the sync PR's diff. Control plane: `./hub sync` adds the hook `event_sensor.py` and
-rewrites `hooks.json`, `.claude/settings.json` (the sensor joins eleven hook events), `guard.py`, `stop_gate.py` and
-`hubhooks.py`, decisions unchanged. Read-only gate (AGH-141): adds the hook `readonly_gate.py` and rewrites
-`hooks.json`, `.claude/settings.json` and the researcher, spec-reviewer and quality-reviewer (`mutates_checkout: false`,
-which any agent may add); one that changes a checkout is held at its stop once, or the change is reported.
-
-## Pick a flow
-
-Which built-in flow to use, how it starts and what you decide in it. `/kickoff` and `/triage` route work by
-this table, and a new hub's `README.md` ends with the same one. A flow's scripts read your `hub.json` (and your
-`hub.local.json` prefix) only through `./hub step config`, which prints those values and changes nothing.
-
-<!-- flow-catalog:start -->
-| Flow | Use when | Start | Your gates | Skills and agents inside |
-|---|---|---|---|---|
-| `backlog-care` (`backlog-care` pack) | The weekly backlog pass - hygiene findings and drafts for the oldest unready issues, one approval per issue. | `/triage` | The owner applies this issue's draft and label, or skips the issue. | `/triage` |
-| `context` (`brain-care` pack) | The monthly context audit - measure the always-loaded text, the owner picks the cuts, one hub PR. | `./hub workflow run context` | The owner picks the cuts (a note keeps some), or skips this month. | `/context-audit` |
-| `inbox` (`brain-care` pack) | The weekly inbox review - group duplicate notes, the owner decides each group, one hub PR. | `/learn` | The owner decides the group; an external note needs his explicit apply. | own prompts |
-| `doc-drift` (`doc-drift` pack) | Doc lines a contract change made wrong, fixed in a docs-only PR the owner approves first. | `./hub workflow run doc-drift` | The owner approves the proposed doc lines, or rejects them (no PR). | `/plain-language` |
-| `incident` (`incident` pack) | An incident - git evidence, ranked hypotheses with read-only checks, a gated mitigation, a hand-off draft and a blameless postmortem draft. | `/incident` | The owner records a mitigation of a confirmed hypothesis, or their own, or none. Nothing is applied. | `/recall`, `/learn` |
-| `issue-to-pr` (`issue-to-pr` pack) | One tracker issue to a PR, as hub run takes it. | `./hub run <issue>` | none | own prompts |
-| `post-merge-verify` (`post-merge-verify` pack) | The merged tickets' AC verifications, run again on the default branch; failures to the inbox. | `./hub workflow run post-merge-verify` | none | own prompts |
-| `release` (`release` pack) | Cut a platform release when the owner asks: the PRs merged since the last tag, the version bump, the check on the exact release commit and the notes with what hub sync rewrites, then, once the platform repo's release workflow has tagged it, the hub's pin bump, each PR behind its own approval. | `/release` | The owner approves the release PR.; The owner merges the release PR, /release dispatches the release workflow, then the owner answers.; The owner approves the hub PR that bumps the pin. | `/plain-language` |
-| `retro` (`retro` pack) | The week's run metrics, at most five evidence-backed changes, and issue drafts for the ones the owner keeps. | `/retro` | The owner keeps some of the changes (their numbers, or all), or none. | own prompts |
-| `review-incoming` (`review-incoming` pack) | Someone else's PR through the spec, quality and security lenses, drafted as one review posted only after the owner approves it. | `/review` | The owner edits the review file, then picks how it is posted, or rejects it. | `/plain-language`, `security-reviewer` agent |
-| `deliver` (`sdlc` pack) | One issue to a PR, implemented and reviewed in rounds until the check and both reviewers pass. | `./hub workflow run deliver` | none | own prompts |
-| `implement` (`sdlc` pack) | One ticket of a planned feature to a PR - context, preflight and plan change gate, review rounds, ticket eval. | `/implement` | The owner approves the plan change, or declines it with a note. | own prompts |
-| `preflight` (`sdlc` pack) | A dependent ticket's read-only preflight after a blocker's merge - once per outcome, a plan change gate on plan drift. | `./hub workflow run preflight` | The owner approves the plan change, or declines it with a note. | own prompts |
-| `preflight-check` (`sdlc` pack) | One ticket's preflight - the read-only check, a plan change gate on plan drift, and the re-check after the owner's decision. | inside `preflight`, inside `ticket-pass` | The owner approves the plan change, or declines it with a note. | own prompts |
-| `review` (`sdlc` pack) | The spec and quality lenses on a checkout, then one verdict. | `./hub workflow run review` | none | own prompts |
-| `ticket-pass` (`sdlc` pack) | One ticket pass - preflight, a plan change gate on plan drift, the worktree, the ticket plan and the review rounds. | inside `implement` | The owner approves the plan change, or declines it with a note. | own prompts |
-| `security-sweep` (`security-sweep` pack) | Weekly scanners on every repo, new findings triaged by the security reviewer, kept ones to brain/_inbox for /triage. | `./hub workflow run security-sweep` | none | `security-reviewer` agent |
-| `spike` (`spike` pack) | A timeboxed spike - recall, research, options, the owner's pick, a premortem, then research.md and an ADR draft. | `/feature` | The owner picks an option, or asks for more with a note. | `/recall`, `/research`, `/adr`, `/premortem`, `researcher` agent |
-| `upgrade` (`upgrade` pack) | One package bumped with the repo's tooling, its changelog read, the code adapted, checked and opened as a PR. | `/upgrade` | A risky bump (major, no changelog, or more than five files touched) asks before the full check.; Every push waits on a person; a reject stops the run with the branch kept. | own prompts |
-
-Any flow can also start from `hub web` (Workflow runs › Start run; `issue-to-pr` only through `./hub run`), or by itself from `hub.json` → `schedules` (a time) and `events` (a merge, a new PR, a red CI run). Each pack's file suggests its own entries.
-<!-- flow-catalog:end -->
 
 ---
 
@@ -725,7 +738,7 @@ built from its `inputs:`; Run detail shows the run's graph with each node's stat
 cancels, resumes or abandons the run. Portfolio's Needs you lists every gate waiting for a person. The format and
 the engine's rules: [workflow-schema.md](docs/design/workflow-schema.md), [workflow-engine-rules.md](docs/design/workflow-engine-rules.md).
 
-Which flow to use, how each starts and what you decide in it: [docs/USING.md › Pick a flow](docs/USING.md#pick-a-flow).
+Which flow to use, how each starts and what you decide in it: [docs/FLOWS.md](docs/FLOWS.md).
 
 ## 🔄 Daily workflow
 

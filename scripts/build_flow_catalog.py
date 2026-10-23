@@ -1,4 +1,4 @@
-"""Rewrite the flow table in ``docs/USING.md`` from the built-in workflows (AGH-495).
+"""Rewrite the flow table in ``docs/FLOWS.md`` from the built-in workflows (AGH-495).
 
 The table sits between ``<!-- flow-catalog:start -->`` and ``<!-- flow-catalog:end -->``; the
 generator's ``flow_catalog`` builds it from each built-in's description, the skill templates and
@@ -14,7 +14,7 @@ from pathlib import Path
 from agent_hub.generator.flow_catalog import builtin_flows, flow_table
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-USING_DOC = REPO_ROOT / "docs" / "USING.md"
+FLOWS_DOC = REPO_ROOT / "docs" / "FLOWS.md"
 START = "<!-- flow-catalog:start -->"
 END = "<!-- flow-catalog:end -->"
 
@@ -38,7 +38,7 @@ def catalog_block(text: str) -> str | None:
 
 
 def main(argv: Sequence[str] = ()) -> int:
-    path = Path(argv[0]) if argv else USING_DOC
+    path = Path(argv[0]) if argv else FLOWS_DOC
     text = path.read_text(encoding="utf-8")
     updated = with_catalog(text, flow_table(builtin_flows()))
     if updated is None:
