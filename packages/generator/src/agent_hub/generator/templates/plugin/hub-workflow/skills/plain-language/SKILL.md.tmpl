@@ -55,6 +55,12 @@ A reviewer reads the code before the comments. Most comments repeat the code or 
 - Docstrings say what a public function does and what it returns. They do not repeat its body.
 - The repo's own `AGENTS.md` wins on comment and docstring style, and on the language of code comments.
 
+```
+# Before: a STANDARD order on PENDING_REVIEW waits for its buyer's KYC_OK flag, then the retry job
+# re-reads it and moves it to READY, unless the first pass already set HOLD.
+# After: hold the order until the buyer's identity check passes.
+```
+
 ## Document rules
 
 These apply to all text for people.
@@ -64,6 +70,8 @@ These apply to all text for people.
 - Use simple tenses and the active voice.
 - Do not hedge with "should", "would", "may" or "might". Use "can", "will" or "must".
 - Use one word for one meaning, and keep that word in the whole text.
+- Prefer the common word to the internal one. If you must use an internal name (an enum, a status, a flag),
+  say in plain words what it means.
 - No decorative words, such as "crucial", "robust" or "seamless".
 - Short, but not terse: keep the articles and the small words.
 - Use lists and headings where they help a person scan. SimpleEnglish asks for prose only in chat. We do not follow
