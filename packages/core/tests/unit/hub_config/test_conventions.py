@@ -376,6 +376,10 @@ CONVENTIONS_READERS = {
     # (all empty: titles not configured), which hub step commits|pr read back; a pack script
     # cannot import the model
     f"{CORE}/workflows/builtin/brain-care/scripts/hub_branch.py": 1,
+    # the doc-drift pack's branch.py (AGH-491) writes the repo target's "conventions" key (all
+    # empty: titles not configured), which hub step commits|pr read back; a pack script cannot
+    # import the model
+    f"{CORE}/workflows/builtin/doc-drift/scripts/branch.py": 1,
 }
 
 # Lines per file that build a branch as the prefix followed by a name.
@@ -391,6 +395,9 @@ BRANCH_BUILDERS = {
     # the brain-care pack's hub_branch.py (AGH-487): a scheduled run's hub branch,
     # <prefix>brain-care-<workflow>-<run id> (no issue, so no repo convention applies)
     f"{CORE}/workflows/builtin/brain-care/scripts/hub_branch.py": 1,
+    # the doc-drift pack's branch.py (AGH-491): a run's repo branch, <prefix>doc-drift-<run id>
+    # (no tracker issue, so no repo branch convention applies)
+    f"{CORE}/workflows/builtin/doc-drift/scripts/branch.py": 1,
 }
 
 

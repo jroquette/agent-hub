@@ -268,9 +268,14 @@ read, the fast check, up to three adapt rounds, test strength on the adapted lin
 bump, the full check, then the PR behind the `publish` approval; `/upgrade` starts it),
 `security-sweep` (the installed scanners on every repo as of `origin/<branch>`, read-only, then one security-reviewer
 triage of the new findings; the kept ones go to `brain/_inbox/security-YYYY-MM-DD.md` for `/triage`, no secret value
-and no tracker write; suggested weekly in `hub.json` `schedules`: `{"workflow": "security-sweep", "cron": "0 6 * * 1"}`) and
+and no tracker write; suggested weekly in `hub.json` `schedules`: `{"workflow": "security-sweep", "cron": "0 6 * * 1"}`),
 `backlog-care` (what `/triage --backlog` runs: hygiene findings on the issues it read, then a draft for each of the
-oldest unready issues, one approval per issue; `/triage` applies the approved ones after the run). A hub's own file
+oldest unready issues, one approval per issue; `/triage` applies the approved ones after the run) and
+`doc-drift` (after a merge, or monthly with `sha` blank: the contract names the change removed, such as commands,
+make targets, flags, config keys, skills, workflows, paths, tables and columns, then the doc lines that still name
+them, a read-only judge's corrected lines, the owner's approval, and a docs-only PR in the repo; ADR lines are reported,
+never edited; nothing writes the tracker; fetch the repo first: `doc-drift` reads `origin/<default branch>` as last
+fetched). A hub's own file
 overrides a built-in of the same name.
 
 ```bash
@@ -279,6 +284,7 @@ overrides a built-in of the same name.
 ./hub workflow run spike --input question="..." --input slug=brief-cache --live  # a spike; answer its pick with respond
 ./hub workflow run upgrade --input issue=DEM-8 --input repo=api --input package=httpx --input to=0.29.0 --live
 ./hub workflow run deliver --input issue=DEM-7 --input repo=api --input issue_text="..." --live
+./hub workflow run doc-drift --input repo=api --input sha=<merge sha> --live  # sha blank: the last month
 ./hub workflow run --resume <run>            # continue a failed or paused run; --abandon ends it
 ./hub workflow approve <run>                 # or reject / respond: decide a paused gate; the run resumes
 ./hub workflow test                          # every pack's fixtures, in memory (the hub's make check runs it)
