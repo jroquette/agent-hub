@@ -20,6 +20,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Fixed
 
+- Start on a ticket free to start runs `/implement`, so its Context and Preflight steps are recorded; a stacked ticket
+  stays on `/feature`'s in-line steps (AGH-521).
 - An AskUserQuestion question or answer longer than 200 characters can be answered from hub web: the key and the
   answer take up to 8192 characters and the Other field up to 4096 (AGH-521).
 - Skipping a question, or denying a tool use without a message, no longer breaks the session: the deny carries a

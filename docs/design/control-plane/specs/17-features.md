@@ -166,6 +166,11 @@ otherwise, this list wins. Each item is an acceptance criterion.
   review, not merged" below) instead of "Waiting on X", and it offers the same Start (default, not primary), which
   first confirms the risk in a dialog, then starts a session that creates the worktree from X's pull request branch
   and opens a pull request stacked on it.
+- **AC-521.2.1 Start runs /implement** (AGH-521, supersedes AC-268.21's skill). Given a created ticket free to start,
+  then Start's session opens with `/implement <ticket>`, so the `implement` workflow writes the ticket's context brief
+  and preflight and its Context and Preflight steps are recorded; the prompt never sends the session through
+  `/feature`'s in-line steps. A stacked ticket (AC-268.22) keeps `/feature <ticket>` from step 6 (Implement), since the
+  `implement` workflow cannot start a worktree from a blocker's branch.
 
 ---
 
