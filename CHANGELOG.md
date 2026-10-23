@@ -11,6 +11,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-10-23
+
 ### Added
 
 - `hub web` starts workflows by itself (AGH-481, ADR 0048, proposed): `hub.json` declares `schedules` (a workflow, a
@@ -1226,7 +1228,8 @@ Includes 0.3.0, which was never tagged.
 - The `hub.json` config model and schema, the generator templates, `hub init` and `hub sync`.
 - The release check on `v*` tags.
 
-[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/jroquette/agent-hub/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/jroquette/agent-hub/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/jroquette/agent-hub/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/jroquette/agent-hub/compare/v0.20.0...v0.20.1
