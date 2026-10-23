@@ -372,7 +372,8 @@ which any agent may add); one that changes a checkout is held at its stop once, 
 ## Pick a flow
 
 Which built-in flow to use, how it starts and what you decide in it. `/kickoff` and `/triage` route work by
-this table, and a new hub's `README.md` ends with the same one.
+this table, and a new hub's `README.md` ends with the same one. A flow's scripts read your `hub.json` (and your
+`hub.local.json` prefix) only through `./hub step config`, which prints those values and changes nothing.
 
 <!-- flow-catalog:start -->
 | Flow | Use when | Start | Your gates | Skills and agents inside |

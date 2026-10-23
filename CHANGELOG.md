@@ -102,6 +102,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   with it, and `docs/USING.md` › Pick a flow holds the same table; an existing hub can copy it from there (`hub sync`
   does not rewrite the README). `/kickoff` and `/triage` now route work to the flows by name.
 
+- `hub step config [--branch NAME --slug SLUG|--run-slug]` prints, as one JSON object, the `hub.json` values the
+  built-in packs' scripts need (the project's branch, the developer's branch prefix with `hub.local.json` first, the
+  author, the ready label and team keys, each repo's GitHub name, default branch and gates, and target skeletons for
+  `hub step commits|pr`), read-only and without any token (AGH-480). Every pack's scripts now take these values from a
+  `config` node instead of opening `hub.json` or `hub.local.json`.
+
 ### Changed
 
 - `ticket-pass` now includes the preflight from the new built-in `preflight-check` workflow (AGH-473), so its
