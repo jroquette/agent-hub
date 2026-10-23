@@ -32,21 +32,25 @@ does not list them, and the init report does not count them.
 ### Tree format (version 2)
 
 A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blocks-and-run-control.md)):
-`version: 2` and `stages:` in place of `nodes:` (a version-2 document with `nodes`, `depends_on` or `trigger_rule` fails
-the load; version 1 loads as before, with doctor's `scenarios.graph_format` warning).
+`version: 2` and `stages:` in place of `nodes:`, with `kind: scenario` (a version-2 document without it fails at
+`version`; one with `nodes`, `depends_on` or `trigger_rule` fails the load; version 1 loads as before, with doctor's
+`scenarios.graph_format` warning).
 
 - A stage is `name`, optional `description`, and `steps`. Its slug is the name in lowercase, each run of other
   characters one `-`; a slug that does not start with a letter (`1. Fetch`, `Étape`), or two stages with the same
   slug, fail the load naming the stage. Position is order: a block runs after the one before it, a stage after the
   stage before it.
-- A step is one of `do: <action>` (an `action` node), `wait_until: <action>` with `until`, `every`, `timeout` (an
-  `expect` node), `you: <message>` with optional `decisions`, `capture_response` (an `approval`), `wait:` with
-  `duration`, `until` or `attention` (a `wait`) and `include: <scenario>` with `with` (an `include`). Common optional
-  keys: `id`, `description`, `with`, `capture`, `retry`, `timeout` (on `do`).
-- A container is `repeat: {max, until, steps}` (a `loop_group`; none inside another), `if: <cond>` with `then` (not
-  empty) and optional `else`, or `together: [[…], […]]` (two or more paths, none empty).
-- Conditions use the `when:` grammar. An else is the complement of its If's condition (each operator's opposite, `&&`
-  and `||` swapped, expanded to or-of-ands); more than 8 atoms, or more than 64 terms after expansion, fails the load.
+- A step is one of `do: <action>` with optional `with`, `capture`, `retry`, `timeout` (an `action` node),
+  `wait_until: <action>` with `until`, `every`, `timeout` and optional `with`, `capture`, `retry` (an `expect` node),
+  `you: <message>` with optional `decisions`, `capture_response` (an `approval`), `wait:` with `duration`, `until` or
+  `attention` (a `wait`) and `include: <scenario>` with `with` (an `include`). Every block takes an optional
+  `description`, and every block but an If and a Together (they have no node) an optional `id`.
+- A container is `repeat: {max, until, steps}` (a `loop_group`, holding no Repeat or Include), `if: <cond>` with `then`
+  and an optional `else` (neither empty), or `together: [[…], […]]` (two or more paths, none empty).
+- Conditions use the `when:` grammar. An If's condition must parse and holds at most 8 atoms; its else is its
+  complement (each operator's opposite, `&&` and `||` swapped, expanded to or-of-ands: at most 18 terms).
+- Bounds: at most 64 stages, containers nested 3 deep (an If in a Together in a Repeat), and 512 nodes after
+  translation, the cap of an expanded document.
 - **Addresses.** A stage is `<s>` (from 1); a block in it `<s>.<n>`; inside a block, `then.<n>` and `else.<n>` (an
   If), `p<k>.<n>` (path k of a Together) and `<n>` (a Repeat's steps), e.g. `2.3`, `2.3.then.1`, `2.3.p2.1`, `4.1.2`.
 - **Ids.** A block without `id` gets `<stage slug>--<address in the stage, dots as ->`: `fetch-order--2`,
@@ -62,11 +66,12 @@ the load; version 1 loads as before, with doctor's `scenarios.graph_format` warn
   distributing `&&` over the or-of-ands form, at most 64 terms. The If's exit nodes are both branches' last nodes,
   or, with no `else`, the last node of `then` and the exit nodes of the block before the If in its list; so an If
   with no `else` must not be the first block of a list: not the scenario's first block, nor the first of a branch, a
-  path or a Repeat body (write the `else`, or put a block before it). The block after an If takes `trigger_rule:
-  none_failed_min_one_success`. A Together's paths start on
-  the previous block and its exit nodes are each path's last node. The **block map** gives each address its node
-  ids, entry nodes (with the `<step>__ask` gate in front of a gated step), exit nodes and key path. A problem on a
-  generated node is reported on the tree's key path.
+  path or a Repeat body (write the `else`, or put a block before it). A Together's paths start on the previous block
+  and its exit nodes are each path's last node. The block after an If, or after a Together a path of which ends with
+  one, takes `trigger_rule: none_failed_min_one_success` (a run may skip some of their exit nodes). The **block map**
+  gives each address its kind, label, node ids (a Repeat body's as recorded, `<group>__<id>`), entry nodes (in a
+  run's plan, the `<step>__ask` gate in front of a gated step and an include's first nodes), exit nodes and key path.
+  A problem on a generated node, at load or by planning, is reported on the tree's key path.
 - **Canonical YAML**, written by `generator`'s scenario writer and shared by hub web's Save and `hub scenario
   migrate`: `yaml.safe_dump` (no key sorting, Unicode kept, width 100, so a long `until` folds), with keys in this
   order: `version`, `kind`, `name`, `revision`, `description`, `inputs`, `stages`; a stage's `name`, `description`,
