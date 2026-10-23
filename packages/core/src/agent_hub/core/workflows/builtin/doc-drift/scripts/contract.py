@@ -4,9 +4,10 @@
 # ///
 """The contract names a change removed that nothing still declares, as JSON.
 
-``contract.py --repo <dir> --sha <sha>`` runs in the hub (the node's default cwd). It reads
-``hub.json`` → ``repos[]`` (the entry whose ``dir`` is ``<dir>``; its ``default_branch``, else
-the ``project`` one, else ``main``) and works in the repo's clone next to the hub, never
+``contract.py --repo <dir> --sha <sha> --config <json>`` runs in the hub (the node's default
+cwd). ``--config`` is what ``hub step config`` printed (this script opens no ``hub.json``): the
+entry of ``repos[]`` whose ``dir`` is ``<dir>`` gives the default branch (the CLI's effective
+one; else the config's, else ``main``). It works in the repo's clone next to the hub, never
 fetching (a script gets no token: fetch first). ``base`` is the local ``origin/<default>``.
 
 - Merge mode (``--sha`` given): the diff from the commit's first parent to the commit; a name is
@@ -25,7 +26,7 @@ or ``column`` an added migration's ``upgrade()`` drops or renames. Docs (``*.md`
 
 Prints ``{"mode", "sha", "base", "label", "hub", "repo_path", "count", "names": [{"kind",
 "name", "new", "source"}], "skipped", "truncated", "patch_truncated"}``. Bad input (a config not
-readable, a repo not in ``hub.json`` or not cloned, an unknown commit, no parent, no
+readable, a repo not in the config or not cloned, an unknown commit, no parent, no
 ``origin/<default>``) exits 2; a git failure exits 1. Both say why on stderr.
 """
 
@@ -390,30 +391,23 @@ class Span(NamedTuple):
     label: str
 
 
-def _config(root: Path) -> dict[str, object]:
-    path = root / "hub.json"
+def default_branch(text: str, repo: str) -> str:
+    """The repo's default branch, from ``hub step config``'s output: its entry's, else the
+    config's, else ``main``."""
+    if len(text.encode()) > MAX_CONFIG_BYTES:
+        raise RefusedError("the config: larger than 1 MiB")
     try:
-        if path.stat().st_size > MAX_CONFIG_BYTES:
-            raise RefusedError("hub.json: larger than 1 MiB")
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
-        raise RefusedError(f"hub.json: {error}") from None
-    if not isinstance(value, dict):
-        raise RefusedError("hub.json: not a JSON object")
-    return value
-
-
-def default_branch(root: Path, repo: str) -> str:
-    """The repo's default branch: its own, else the project's, else ``main``."""
-    config = _config(root)
+        config = json.loads(text)
+    except ValueError as error:
+        raise RefusedError(f"the config: {error}") from None
+    if not isinstance(config, dict):
+        raise RefusedError("the config: not a JSON object")
     repos = config.get("repos")
     entries = [e for e in repos if isinstance(e, dict)] if isinstance(repos, list) else []
     entry = next((e for e in entries if e.get("dir") == repo), None)
     if entry is None or not REPO_DIR.match(repo):
-        raise RefusedError(f"hub.json: no repo {repo} in repos")
-    project = config.get("project")
-    project_branch = project.get("default_branch") if isinstance(project, dict) else None
-    for branch in (entry.get("default_branch"), project_branch):
+        raise RefusedError(f"the config: no repo {repo} in repos")
+    for branch in (entry.get("default_branch"), config.get("default_branch")):
         if isinstance(branch, str) and branch:
             return branch
     return "main"
@@ -511,11 +505,13 @@ def gone(repo: Path, at: str, names: list[Name]) -> tuple[list[Name], int]:
     return kept, max(0, len(names) - MAX_CHECKS)
 
 
-def contract_for(root: Path, *, repo: str, sha: str, now: datetime) -> dict[str, object]:
+def contract_for(
+    root: Path, *, repo: str, sha: str, now: datetime, config: str
+) -> dict[str, object]:
     """The run's contract output; ``RefusedError`` or ``GitFailedError``."""
     if sha and not SHA.fullmatch(sha):
         raise RefusedError("--sha is not a commit id")
-    branch = default_branch(root, repo)
+    branch = default_branch(config, repo)
     repo_path = (root.parent / repo).resolve()
     if not (repo_path / ".git").exists():
         raise RefusedError(f"{repo} is not cloned at {repo_path}")
@@ -558,10 +554,15 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--repo", required=True)
     parser.add_argument("--sha", default="")
     parser.add_argument("--now", default="", help=argparse.SUPPRESS)
+    parser.add_argument("--config", required=True, help="What hub step config printed.")
     given = parser.parse_args(argv)
     try:
         found = contract_for(
-            Path.cwd().resolve(), repo=given.repo, sha=given.sha.strip(), now=_now(given.now)
+            Path.cwd().resolve(),
+            repo=given.repo,
+            sha=given.sha.strip(),
+            now=_now(given.now),
+            config=given.config,
         )
     except RefusedError as error:
         print(f"{PROG}: {error}", file=sys.stderr)
