@@ -8,7 +8,7 @@ import {
   aSessionLabel,
   at,
 } from "../../testing/builders";
-import { NEEDS_ORDER, byGroupOrder, reasonOf, sessionWaitOf } from "./groups";
+import { NEEDS_ORDER, byGroupOrder, reasonOf, sessionWaitOf, sessionsWorkingOn } from "./groups";
 
 const feature = aFeature({ slug: "claims", issues: ["AGH-300", "AGH-301 (provisional)"] });
 
@@ -202,5 +202,85 @@ describe("byGroupOrder", () => {
       "a-manual",
       "f-plain",
     ]);
+  });
+});
+
+describe("sessions working on a feature", () => {
+  const working = aLiveTile({
+    id: "s-work",
+    group: "live",
+    label: aSessionLabel({ issue: "AGH-300" }),
+    last_action: "Edited groups.ts",
+    last_activity_at: at(60),
+  });
+
+  it("keeps the live main sessions of the feature, the most recent first", () => {
+    const newer = aLiveTile({
+      id: "s-newer",
+      group: "live",
+      label: aSessionLabel({ issue: null, title: "claims follow-up" }),
+      last_activity_at: at(120),
+    });
+    const subagent = aLiveTile({
+      id: "s-sub",
+      group: "live",
+      is_subagent: true,
+      label: aSessionLabel({ issue: "AGH-300" }),
+    });
+    const waiting = aLiveTile({
+      id: "s-wait",
+      group: "waiting",
+      label: aSessionLabel({ issue: "AGH-300" }),
+    });
+    const other = aLiveTile({
+      id: "s-other",
+      group: "live",
+      label: aSessionLabel({ issue: "AGH-999" }),
+    });
+
+    expect(sessionsWorkingOn(feature, [working, subagent, waiting, other, newer])).toEqual([
+      newer,
+      working,
+    ]);
+  });
+
+  it("says a session is working on the line, and keeps the next step for the tooltip", () => {
+    const plain = reasonOf(feature);
+    const reason = reasonOf(feature, null, [working]);
+
+    expect(reason).toMatchObject({ needs: null, working: 1, plainLine: plain.line });
+    expect(reason.line).toBe("A session is working · Edited groups.ts");
+    expect(reasonOf(feature, null, [working, working]).line).toBe(
+      "2 sessions are working · Edited groups.ts",
+    );
+  });
+
+  it("lets a warning that needs you keep its line", () => {
+    const wait = sessionWaitOf(feature, [
+      aLiveTile({ group: "waiting", label: aSessionLabel({ issue: "AGH-300" }) }),
+    ]);
+
+    const reason = reasonOf(feature, wait, [working]);
+
+    expect(reason.needs).toBe("session");
+    expect(reason.working).toBe(1);
+    expect(reason.line).toBe(reason.plainLine);
+  });
+
+  it("sorts a working feature after the session warnings and before the other warnings", () => {
+    const turn = aFeature({ slug: "c-turn", issues: ["AGH-2"] });
+    const busy = aFeature({ slug: "b-busy", phase: "spec", issues: ["AGH-3"] });
+    const broken = aFeature({ slug: "a-broken", problem: "features.json is empty" });
+    const ahead = aFeature({ slug: "a-ahead", phase: "acceptance" });
+    const tiles = [
+      aLiveTile({ id: "s-2", group: "idle", label: aSessionLabel({ issue: "AGH-2" }) }),
+      aLiveTile({ id: "s-3", group: "live", label: aSessionLabel({ issue: "AGH-3" }) }),
+    ];
+    const reason = (f: typeof turn) =>
+      reasonOf(f, sessionWaitOf(f, tiles), sessionsWorkingOn(f, tiles));
+
+    const sorted = [ahead, broken, busy, turn].sort((a, b) => byGroupOrder(a, b, reason));
+
+    expect(sorted.map((f) => f.slug)).toEqual(["c-turn", "b-busy", "a-broken", "a-ahead"]);
   });
 });
