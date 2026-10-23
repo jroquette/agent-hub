@@ -5,24 +5,25 @@
 """Run the repo's check at a PR's head, in a throwaway worktree; print the result as JSON, exit 0.
 
 ``check.py --path <clone> --head <sha> --command <check> --fork true|false [--timeout <s>]``:
-``command`` is the repo's ``check`` from ``hub.json``. It is never run for a fork (``not_run``),
-so only a same-repo author's code runs, and the owner starts every run by hand. Otherwise git
-adds a detached worktree of ``head`` (the already fetched object, no branch, hooks off) under a
-new temporary folder, and ``bash -c <command>`` runs there with no stdin, in its own process
-group, and an environment built from nothing: ``PATH``, ``LANG``, ``HOME`` and ``TMPDIR`` in the
-temporary folder, plus the parent's proxy and CA variables (no token of any kind). After
-``--timeout`` seconds (2400) the whole group is killed. The worktree and the folder are removed
+``command`` is the repo's ``check`` from ``hub.json``. It is never run for a fork (``not_run``), so
+only a same-repo author's code runs, and the owner starts every run by hand. Otherwise git adds a
+detached worktree of ``head`` (the already fetched object, no branch, hooks off) under a new
+temporary folder, and ``bash -c <command>`` runs there with no stdin, in its own process group, and
+an environment built from nothing: ``PATH``, ``LANG``, ``HOME`` and ``TMPDIR`` in the temporary
+folder, plus the parent's proxy and CA variables (no token of any kind). After ``--timeout`` seconds
+(2400), and once the check ends, the whole group is killed. The worktree and the folder are removed
 in every case. Residual risk: the command can still read the owner's files by absolute path and
 reach the network.
 
 The output: ``{"status": passed|failed|timeout|not_run|error, "exit_code", "tail", "reason",
-"command"}``, ``tail`` the last ``TAIL_CHARS`` characters of the output's last ``TAIL_BYTES``
-bytes, without control characters or backtick fences. Bad arguments exit 2.
+"command"}``, ``tail`` the last ``TAIL_CHARS`` characters of the output's last ``TAIL_BYTES`` bytes,
+without control characters or backtick fences. Bad arguments exit 2.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -106,6 +107,12 @@ def git(path: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
     )
 
 
+def kill_group(pid: int) -> None:
+    """Kill the check's process group; one already gone is fine."""
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(pid, signal.SIGKILL)
+
+
 def run_check(
     command: str, worktree: Path, *, env: dict[str, str], timeout: float
 ) -> dict[str, object]:
@@ -122,10 +129,12 @@ def run_check(
         try:
             code = child.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
-            os.killpg(child.pid, signal.SIGKILL)
+            kill_group(child.pid)
             child.wait()
             reason = f"the check ran over {timeout:g} s and was stopped"
             return result("timeout", command, tail=tail(output), reason=reason)
+        # What the check left running (a server, a watcher) never outlives it.
+        kill_group(child.pid)
         status = "passed" if code == 0 else "failed"
         return result(status, command, exit_code=code, tail=tail(output))
 
