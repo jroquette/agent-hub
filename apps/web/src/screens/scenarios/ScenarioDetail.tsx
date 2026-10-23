@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
 
 import {
@@ -8,8 +8,6 @@ import {
   CodeBlock,
   ConfirmDialog,
   Dialog,
-  DataTable,
-  EmptyState,
   Icon,
   ProblemError,
   SegmentedControl,
@@ -20,23 +18,12 @@ import type { ApiProblem } from "../../lib/api";
 import { readStored, writeStored } from "../../lib/storage";
 import { TABLET, useMediaQuery } from "../../lib/useMediaQuery";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
-import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
+import { DiscussButton, useDiscuss, useDiscussTarget } from "../../shell/discuss";
 import { StaleStamp } from "../portfolio/StaleStamp";
 import { InputField, parsed, type InputSpec } from "../runs-list/StartRun";
-import { STEP_KINDS, stepKind } from "../workflows/steps";
-import {
-  DraftLine,
-  BreakId,
-  EffectBadge,
-  Page,
-  PlanGrid,
-  PolicyBadge,
-  ScenarioRunBadge,
-  shortId,
-  useWaitingRows,
-  WaitingCard,
-  WhereText,
-} from "./parts";
+import { ActionPanel, FileText } from "./ActionPanel";
+import { SCENARIO_BRIEF } from "./brief";
+import { Page, ScenarioRunBadge, shortId, useWaitingRows, WaitingCard } from "./parts";
 import {
   scenarioRunHref,
   usePlanScenario,
@@ -46,13 +33,17 @@ import {
   type ScenarioDetail,
   type ScenarioMode,
   type ScenarioPlan,
-  type ScenarioPlanRow,
-  type ScenarioStep,
 } from "./queries";
+import { Storyline } from "./StepCard";
+import { shapeLine } from "./story";
 
-/* Scenario detail (AGH-350 T13, spec 23 screen 2): what the scenario does in an environment,
- * step by step, and whether it may start. The plan runs only on the person's click (a strict
- * write that starts plan-mode scripts), never on load; a start is confirmed. */
+export { pace } from "./story";
+
+/* Scenario detail (AGH-350 T13, spec 23 screen 2): the scenario as a storyline of steps (what
+ * each does, the script it runs, where it can stop) beside a sticky run panel (environment,
+ * inputs, mode, plan, start, its scenario runs). The plan runs only on the person's click (a
+ * strict write that starts plan-mode scripts), never on load, and lays over the step cards; a
+ * start is confirmed. */
 
 const RUN_CONTROL_OFF = "urn:agent-hub:problem:run-control-off";
 const RECENT = 5;
@@ -143,101 +134,6 @@ function verdict(plan: ScenarioPlan, stale: string | null): { ok: boolean; text:
   return { ok: true, text: `Can start in ${plan.environment}.${tail}` };
 }
 
-const UNIT: Readonly<Record<string, string>> = { s: "s", m: "min", h: "h", ms: "ms" };
-
-/** "10s" → "10 s", "5m" → "5 min" (Content › Formatting); anything else as written. */
-export function pace(value: string): string {
-  const match = /^(\d+)(ms|s|m|h)$/.exec(value.trim());
-  return match ? `${match[1] ?? ""} ${UNIT[match[2] ?? ""] ?? ""}` : value;
-}
-
-/** Each arg's value; a run-time one stays its placeholder, with a tooltip (principle 3). */
-function Values({ row }: { row: ScenarioPlanRow }) {
-  const entries = Object.entries(row.args);
-  const suffix =
-    row.every !== null && row.timeout !== null
-      ? ` (every ${pace(row.every)}, up to ${pace(row.timeout)})`
-      : "";
-  if (entries.length === 0) return <span className="ah-small ah-subtle">No values{suffix}</span>;
-  return (
-    <span className="ah-small">
-      {entries.map(([key, value], index) => {
-        const runtime = /^<\$CTX\.([a-z0-9_]+) from ([^>]+)>$/i.exec(value);
-        return (
-          <span key={key}>
-            {index > 0 && ", "}
-            {runtime ? (
-              <span
-                className="ah-mono ah-subtle"
-                title={`Known at run time: captured by step ${runtime[2] ?? ""}`}
-              >
-                {value}
-              </span>
-            ) : (
-              <span className="ah-mono">{value}</span>
-            )}
-          </span>
-        );
-      })}
-      {suffix}
-    </span>
-  );
-}
-
-function whatItDoes(row: ScenarioPlanRow): string {
-  return row.plan === "runs with values known at run time"
-    ? "Runs with values known at run time"
-    : row.plan;
-}
-
-const PLAN_COLUMNS = [
-  { id: "step", label: "Step", width: "24%" },
-  { id: "action", label: "Action", width: "18%" },
-  { id: "effect", label: "Effect", width: 96 },
-  { id: "where", label: "Service → endpoint" },
-  { id: "policy", label: "Policy", width: 168 },
-] as const;
-
-function PlanTable({ plan, scenario }: { plan: ScenarioPlan; scenario: string }) {
-  return (
-    <PlanGrid
-      caption={`Plan of ${scenario} in ${plan.environment}`}
-      columns={PLAN_COLUMNS}
-      rows={plan.rows.map((row) => ({
-        key: row.step,
-        cells: {
-          step: (
-            <span
-              className="ah-stack"
-              style={{ gap: 2 }}
-              title={`Pinned when the scenario run starts: ${row.content_hash}`}
-            >
-              <BreakId id={row.step} />
-              <Values row={row} />
-            </span>
-          ),
-          action: <BreakId id={row.action} className="ah-mono ah-small" />,
-          effect: <EffectBadge effect={row.effect} />,
-          where: (
-            <span className="ah-stack" style={{ gap: 2 }}>
-              <WhereText endpoints={row.endpoints} environment={plan.environment} />
-              <span className="ah-small ah-muted">{whatItDoes(row)}</span>
-            </span>
-          ),
-          policy: <PolicyBadge decision={row.decision} reason={row.reason} />,
-        },
-        ...(row.needs_acceptance && row.accept_command
-          ? {
-              extra: (
-                <DraftLine commands={[row.accept_command]} action={row.action} then="plan again" />
-              ),
-            }
-          : {}),
-      }))}
-    />
-  );
-}
-
 /** Why a plan could not be made, in the design's words (states table). */
 function PlanProblem({
   error,
@@ -285,112 +181,12 @@ function PlanProblem({
   );
 }
 
-function StepByStep({ steps }: { steps: readonly ScenarioStep[] }) {
-  return (
-    <section
-      aria-label="Step by step"
-      className="ah-card ah-card-body ah-stack"
-      style={{ gap: 12 }}
-    >
-      <h2 className="ah-h3" style={{ margin: 0 }}>
-        Step by step
-      </h2>
-      <ol className="ah-stack" style={{ gap: 8, margin: 0, paddingLeft: 0, listStyle: "none" }}>
-        {steps.map((step, index) => {
-          const kind = STEP_KINDS[stepKind(step.type)];
-          const what =
-            step.type === "action"
-              ? `Action ${step.action ?? ""}`
-              : step.type === "expect"
-                ? `Expect ${step.action ?? ""}`
-                : step.type === "approval"
-                  ? "Approval by you"
-                  : step.type === "wait"
-                    ? "Wait"
-                    : kind.one;
-          return (
-            <li key={step.id} className="ah-row" style={{ gap: 8, alignItems: "flex-start" }}>
-              <span className="ah-num ah-subtle" style={{ width: 20 }}>
-                {index + 1}
-              </span>
-              <span title={kind.hint}>
-                <Icon name={kind.icon} />
-              </span>
-              <span className="ah-stack" style={{ gap: 2 }}>
-                <span className="ah-mono">{step.id}</span>
-                <span className="ah-small ah-muted">
-                  {what}
-                  {step.depends_on.length > 0 && ` · after ${step.depends_on.join(", ")}`}
-                </span>
-              </span>
-            </li>
-          );
-        })}
-      </ol>
-    </section>
-  );
-}
-
-function RunsCard({ scenario }: { scenario: ScenarioDetail }) {
-  const runs = scenario.runs;
-  return (
-    <section
-      aria-label="Scenario runs"
-      className="ah-card ah-card-body ah-stack"
-      style={{ gap: 12 }}
-    >
-      <h2 className="ah-h3" style={{ margin: 0 }}>
-        Scenario runs ({runs.length})
-      </h2>
-      {runs.length === 0 ? (
-        <EmptyState icon="clipboard-list" title="No scenario runs yet.">
-          Start one from the plan above.
-        </EmptyState>
-      ) : (
-        <DataTable
-          caption={`Scenario runs of ${scenario.name}`}
-          density="compact"
-          rows={[...runs]}
-          rowKey={(run) => run.run_id}
-          columns={[
-            {
-              id: "run",
-              label: "Scenario run",
-              render: (run) => (
-                <AppLink
-                  href={scenarioRunHref(scenario.project, scenario.name, run.run_id)}
-                  className="ah-mono"
-                  data-nav-row=""
-                >
-                  {shortId(run.run_id)}
-                </AppLink>
-              ),
-            },
-            {
-              id: "status",
-              label: "Status",
-              render: (run) => <ScenarioRunBadge status={run.status} />,
-            },
-            {
-              id: "where",
-              label: "Environment",
-              render: (run) => (
-                <span className="ah-small">
-                  {run.environment ?? "—"}
-                  {run.mode ? ` · ${run.mode}` : ""}
-                </span>
-              ),
-            },
-            {
-              id: "started",
-              label: "Started",
-              render: (run) => <Time iso={run.started_at} absolute />,
-            },
-          ]}
-        />
-      )}
-    </section>
-  );
+/** An environment's access in words, as the Environments screen says it. */
+function accessWords(environment: ScenarioDetail["environments"][number]): string {
+  if (environment.production) return "Production: writes and destroys are denied here.";
+  if (environment.access === "write") return "Agents may change data here.";
+  if (environment.access === "ask") return "Agents ask before changing data here.";
+  return "Agents only read here.";
 }
 
 const MODE_LINE: Record<ScenarioMode, string> = {
@@ -441,7 +237,18 @@ function useAfter(ms: number, active: boolean): boolean {
   return passed && active;
 }
 
-function PlanCard({ scenario }: { scenario: ScenarioDetail }) {
+function PlanCard({
+  scenario,
+  mode,
+  onModeChange,
+  onCurrentPlan,
+}: {
+  scenario: ScenarioDetail;
+  mode: ScenarioMode;
+  onModeChange: (mode: ScenarioMode) => void;
+  /** The plan the cards lay over: the latest one, while the form still matches it. */
+  onCurrentPlan: (plan: ScenarioPlan | null) => void;
+}) {
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const environment = params.get("env") ?? "";
@@ -451,7 +258,6 @@ function PlanCard({ scenario }: { scenario: ScenarioDetail }) {
   );
   const [bad, setBad] = useState<Record<string, boolean>>({});
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
-  const [mode, setMode] = useState<ScenarioMode>("interactive");
   const [planned, setPlanned] = useState<{
     key: string;
     request: PlanRequest;
@@ -550,6 +356,10 @@ function PlanCard({ scenario }: { scenario: ScenarioDetail }) {
       : null;
   const judged = shown === null || undeclared ? null : verdict(shown, stale);
   const canStart = judged?.ok === true && !controlOff && !locked;
+  const current = shown !== null && !undeclared && stale === null ? shown : null;
+  useEffect(() => {
+    onCurrentPlan(current);
+  }, [current, onCurrentPlan]);
 
   const field = (spec: InputSpec): ReactNode => (
     <InputField
@@ -565,10 +375,19 @@ function PlanCard({ scenario }: { scenario: ScenarioDetail }) {
     />
   );
 
+  const planLabel = plan.isPending
+    ? "Planning…"
+    : canStart
+      ? "Plan again"
+      : environment === ""
+        ? "Plan"
+        : `Plan in ${environment}`;
+  const access = declared.find((item) => item.name === environment) ?? null;
+
   return (
-    <section aria-label="Plan" className="ah-card ah-card-body ah-stack" style={{ gap: 12 }}>
+    <section aria-label="Run it" className="ah-card ah-card-body ah-stack" style={{ gap: 14 }}>
       <h2 className="ah-h3" style={{ margin: 0 }}>
-        Plan
+        Run it
       </h2>
       {controlOff && (
         <Banner tone="info" boxed>
@@ -584,8 +403,8 @@ function PlanCard({ scenario }: { scenario: ScenarioDetail }) {
         </Banner>
       )}
       <form
-        className="ah-row ah-wrap"
-        style={{ gap: 12, alignItems: "flex-end" }}
+        className="ah-stack"
+        style={{ gap: 12 }}
         onSubmit={(event) => {
           event.preventDefault();
           sendPlan();
@@ -601,6 +420,7 @@ function PlanCard({ scenario }: { scenario: ScenarioDetail }) {
               className="ah-input"
               value={environment}
               disabled={plan.isPending}
+              aria-describedby={`${envId}-help`}
               onChange={(event) => {
                 setEnvironment(event.target.value);
               }}
@@ -633,25 +453,48 @@ function PlanCard({ scenario }: { scenario: ScenarioDetail }) {
             </>
           )}
           <span id={`${envId}-help`} className="ah-small ah-subtle">
-            {environment === ""
-              ? "Name an environment to plan in."
-              : "The environment to plan in, as declared in hub.json or hub.local.json."}
+            {access !== null
+              ? accessWords(access)
+              : declared.length === 0
+                ? "No environment is declared in this hub: name one to plan in."
+                : environment === ""
+                  ? "Name an environment to plan in."
+                  : "The environment to plan in, as declared in hub.json or hub.local.json."}
           </span>
         </div>
         {specs.map(field)}
-        <Button
-          type="submit"
-          variant="primary"
-          icon="list-checks"
-          disabled={environment === "" || plan.isPending || controlOff || locked}
-        >
-          {plan.isPending ? "Planning…" : environment === "" ? "Plan" : `Plan in ${environment}`}
-        </Button>
+        <div className="ah-stack" style={{ gap: 4 }}>
+          <span className="ah-small">Mode</span>
+          <SegmentedControl
+            label="Mode"
+            value={mode}
+            onChange={(id) => {
+              onModeChange(id === "regression" ? "regression" : "interactive");
+            }}
+            options={[
+              { id: "interactive", label: "Interactive" },
+              { id: "regression", label: "Regression" },
+            ]}
+          />
+          <span className="ah-small ah-muted">
+            {MODE_LINE[mode]} Steps that ask still pause for your approval.
+          </span>
+        </div>
+        <div className="ah-stack" style={{ gap: 4 }}>
+          <Button
+            type="submit"
+            variant={canStart ? "default" : "primary"}
+            icon="list-checks"
+            disabled={environment === "" || plan.isPending || controlOff || locked}
+          >
+            {planLabel}
+          </Button>
+          <span className="ah-small ah-subtle">
+            Plans run each action&apos;s script in plan mode, with no credential. Nothing acts on
+            the system.
+          </span>
+        </div>
       </form>
-      <span className="ah-small ah-subtle">
-        Plans run each action&apos;s script in plan mode, with no credential. Nothing acts on the
-        system.
-      </span>
       {plan.isPending && (
         <span role="status" className="ah-small">
           Planning in {environment}… each step&apos;s script runs in plan mode.
@@ -689,16 +532,20 @@ function PlanCard({ scenario }: { scenario: ScenarioDetail }) {
       {shown !== null && !undeclared && (
         <div
           className="ah-stack"
-          style={{ gap: 10, opacity: plan.isPending ? 0.6 : 1 }}
+          style={{
+            gap: 8,
+            opacity: plan.isPending ? 0.6 : 1,
+            borderTop: "1px solid var(--border)",
+            paddingTop: 12,
+          }}
           aria-busy={plan.isPending}
         >
-          <div className="ah-row ah-wrap ah-small" style={{ gap: 12 }}>
+          <span className="ah-small">
             <b className="ah-mono">
               {shown.environment} · {shown.production ? "production · " : ""}access {shown.access}
             </b>
-            <span className="ah-grow" />
-            <span className="ah-muted">{planCounts(shown)}</span>
-          </div>
+          </span>
+          <span className="ah-small ah-muted">{planCounts(shown)}</span>
           {shown.production && (
             <Banner tone="info" boxed live={false}>
               {shown.environment} is a production environment: writes and destroys are denied there.
@@ -714,14 +561,10 @@ function PlanCard({ scenario }: { scenario: ScenarioDetail }) {
               {problem}
             </span>
           ))}
-          <PlanTable plan={shown} scenario={scenario.name} />
         </div>
       )}
       {judged !== null && (
-        <div
-          className="ah-stack"
-          style={{ gap: 8, borderTop: "1px solid var(--border)", paddingTop: 12 }}
-        >
+        <div className="ah-stack" style={{ gap: 8 }}>
           <span
             id={verdictId}
             role="status"
@@ -731,40 +574,22 @@ function PlanCard({ scenario }: { scenario: ScenarioDetail }) {
             <Icon name={judged.ok ? "circle-check" : "octagon-x"} size="sm" />
             {judged.text}
           </span>
-          <div className="ah-row ah-wrap" style={{ gap: 12 }}>
-            <span className="ah-small">Mode</span>
-            <SegmentedControl
-              label="Mode"
-              value={mode}
-              onChange={(id) => {
-                setMode(id === "regression" ? "regression" : "interactive");
+          {tablet ? (
+            <span className="ah-small">Starting a scenario run needs a desktop screen.</span>
+          ) : (
+            <Button
+              variant="primary"
+              icon="play"
+              disabled={!canStart || startedId !== null}
+              aria-describedby={verdictId}
+              onClick={() => {
+                start.reset();
+                setConfirming(true);
               }}
-              options={[
-                { id: "interactive", label: "Interactive" },
-                { id: "regression", label: "Regression" },
-              ]}
-            />
-            <span className="ah-grow" />
-            {tablet ? (
-              <span className="ah-small">Starting a scenario run needs a desktop screen.</span>
-            ) : (
-              <Button
-                variant="primary"
-                icon="play"
-                disabled={!canStart || startedId !== null}
-                aria-describedby={verdictId}
-                onClick={() => {
-                  start.reset();
-                  setConfirming(true);
-                }}
-              >
-                Start scenario run
-              </Button>
-            )}
-          </div>
-          <span className="ah-small ah-muted">
-            {MODE_LINE[mode]} Steps that ask still pause for your approval.
-          </span>
+            >
+              Start scenario run
+            </Button>
+          )}
         </div>
       )}
       {confirming && shown !== null && planned !== null && startedId === null && (
@@ -854,13 +679,86 @@ function PlanCard({ scenario }: { scenario: ScenarioDetail }) {
   );
 }
 
+const RUNS_SHOWN = 5;
+
+function RunsList({ scenario }: { scenario: ScenarioDetail }) {
+  const [all, setAll] = useState(false);
+  const runs = scenario.runs;
+  const shown = all ? runs : runs.slice(0, RUNS_SHOWN);
+  return (
+    <section
+      aria-label="Scenario runs"
+      className="ah-card ah-card-body ah-stack"
+      style={{ gap: 10 }}
+    >
+      <h2 className="ah-h3" style={{ margin: 0 }}>
+        Scenario runs ({runs.length})
+      </h2>
+      {runs.length === 0 ? (
+        <span className="ah-small ah-muted">No scenario runs yet. Plan, then start one above.</span>
+      ) : (
+        <ul className="ah-stack" style={{ gap: 6, margin: 0, padding: 0, listStyle: "none" }}>
+          {shown.map((run) => (
+            <li
+              key={run.run_id}
+              className="ah-row ah-small"
+              style={{ gap: 8 }}
+              title={[run.environment, run.mode].filter(Boolean).join(" · ")}
+            >
+              <ScenarioRunBadge status={run.status} />
+              <AppLink
+                href={scenarioRunHref(scenario.project, scenario.name, run.run_id)}
+                className="ah-mono"
+                data-nav-row=""
+              >
+                {shortId(run.run_id)}
+              </AppLink>
+              <span className="ah-muted">{run.environment ?? "—"}</span>
+              <span className="ah-grow" />
+              <Time iso={run.started_at} />
+            </li>
+          ))}
+        </ul>
+      )}
+      {runs.length > RUNS_SHOWN && (
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            setAll(!all);
+          }}
+        >
+          {all ? "Show fewer" : `Show all ${String(runs.length)}`}
+        </Button>
+      )}
+    </section>
+  );
+}
+
 function Header({ scenario }: { scenario: ScenarioDetail }) {
+  const actions = scenario.actions.map((action) => action.path ?? action.ref);
   useDiscussTarget({
     key: `scenario:${scenario.project}:${scenario.name}`,
     project: scenario.project,
     kind: "Scenario",
     title: scenario.name,
-    brief: `It is a scenario in the hub's \`scenarios/${scenario.pack}/\` folder.`,
+    path: scenario.path ?? null,
+    brief: [
+      SCENARIO_BRIEF,
+      `This conversation is about the scenario \`${scenario.path ?? `scenarios/${scenario.pack}/${scenario.name}.yaml`}\`${
+        actions.length > 0 ? ` and the actions it calls (${actions.join(", ")})` : ""
+      }. Read them before you answer.`,
+    ].join("\n"),
+    starters: [
+      {
+        label: "Explain this scenario",
+        message: `Explain step by step what ${scenario.name} does, which scripts it runs and where it can stop.`,
+      },
+      {
+        label: "Add a step",
+        message: `Add a step to ${scenario.name}: `,
+      },
+    ],
   });
   return (
     <>
@@ -886,28 +784,122 @@ function Header({ scenario }: { scenario: ScenarioDetail }) {
   );
 }
 
+type DetailView = "steps" | "document";
+
+function DocumentView({ scenario }: { scenario: ScenarioDetail }) {
+  const { setOpen } = useDiscuss();
+  return (
+    <section aria-label="Document" className="ah-card ah-card-body ah-stack" style={{ gap: 10 }}>
+      <span className="ah-small ah-muted">
+        The scenario file, read-only. Edit the file, or ask Claude, and this page updates.
+      </span>
+      <FileText
+        path={scenario.path ?? `scenarios/${scenario.pack}/${scenario.name}.yaml`}
+        text={scenario.document_text}
+      />
+      <div className="ah-row" style={{ gap: 8 }}>
+        <Button
+          icon="message-square"
+          onClick={() => {
+            setOpen(true);
+          }}
+        >
+          Edit with Claude
+        </Button>
+      </div>
+    </section>
+  );
+}
+
 function DetailBody({ scenario }: { scenario: ScenarioDetail }) {
-  const wide = useMediaQuery("(min-width: 1600px)");
+  const [params, setParams] = useSearchParams();
   const { rows } = useWaitingRows(scenario.project);
   const mine = rows.filter((row) => row.scenario === scenario.name);
+  const [mode, setMode] = useState<ScenarioMode>("interactive");
+  const [plan, setPlan] = useState<ScenarioPlan | null>(null);
+  const opener = useRef<HTMLElement | null>(null);
+  const view: DetailView = params.get("view") === "document" ? "document" : "steps";
+  const actionRef = params.get("action");
+  const actions = scenario.actions;
+  const openAction = actions.find((action) => action.ref === actionRef) ?? null;
+  const setParam = (key: string, value: string | null) => {
+    setParams(
+      (current) => {
+        const copy = new URLSearchParams(current);
+        if (value === null) copy.delete(key);
+        else copy.set(key, value);
+        return copy;
+      },
+      { replace: true },
+    );
+  };
   return (
     <Page>
-      <Header scenario={scenario} />
-      <WaitingCard rows={mine} named={false} />
-      <PlanCard scenario={scenario} />
-      <div
-        style={{
-          display: "grid",
-          // Side by side only from 1600 px, so the Scenario runs table keeps its Started column
-          // (review N1).
-          gridTemplateColumns: wide ? "minmax(0, 1fr) minmax(0, 1fr)" : "minmax(0, 1fr)",
-          gap: 16,
-          alignItems: "start",
-        }}
-      >
-        <StepByStep steps={scenario.steps} />
-        <RunsCard scenario={scenario} />
+      <div className="sc-detail ah-stack" style={{ gap: 16 }}>
+        <Header scenario={scenario} />
+        <WaitingCard rows={mine} named={false} />
+        <div className="sc-columns">
+          <div className="ah-stack" style={{ gap: 12, minWidth: 0 }}>
+            <div className="ah-row ah-wrap" style={{ gap: 12 }}>
+              <SegmentedControl
+                label="View"
+                value={view}
+                onChange={(id) => {
+                  setParam("view", id === "document" ? "document" : null);
+                }}
+                options={[
+                  { id: "steps", label: "Steps", icon: "list-checks" },
+                  { id: "document", label: "Document", icon: "file-text" },
+                ]}
+              />
+              <span className="ah-grow" />
+              <span className="ah-small ah-muted">{shapeLine(scenario)}</span>
+            </div>
+            {view === "steps" ? (
+              <Storyline
+                name={scenario.name}
+                steps={scenario.steps}
+                actions={actions}
+                mode={mode}
+                plan={plan}
+                onOpenAction={(ref) => {
+                  opener.current = document.activeElement as HTMLElement | null;
+                  setParam("action", ref);
+                }}
+              />
+            ) : (
+              <DocumentView scenario={scenario} />
+            )}
+          </div>
+          <aside
+            className="sc-run-panel ah-stack"
+            style={{ gap: 12 }}
+            aria-label={`Run ${scenario.name}`}
+          >
+            <PlanCard
+              scenario={scenario}
+              mode={mode}
+              onModeChange={setMode}
+              onCurrentPlan={setPlan}
+            />
+            <RunsList scenario={scenario} />
+          </aside>
+        </div>
       </div>
+      {openAction && (
+        <ActionPanel
+          action={openAction}
+          steps={scenario.steps}
+          openerRef={opener}
+          onClose={() => {
+            setParam("action", null);
+          }}
+          onShowStep={(id) => {
+            setParam("action", null);
+            document.getElementById(`step-${id}`)?.scrollIntoView({ block: "start" });
+          }}
+        />
+      )}
     </Page>
   );
 }
