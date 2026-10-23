@@ -367,6 +367,120 @@ describe("ScenarioBuilder (scenario builder)", () => {
     );
   });
 
+  it("scenario builder shows Claude's proposal as suggested blocks to accept", async () => {
+    const user = userEvent.setup();
+    const proposed = {
+      ...document,
+      nodes: [
+        ...document.nodes,
+        {
+          id: "notify",
+          type: "action",
+          action: "send-queue-message",
+          depends_on: ["order-on-hold"],
+        },
+      ],
+    };
+    const { requests } = renderBuilder({
+      [`${DETAIL}/proposal`]: {
+        path: ".agent-runs/proposals/scenarios/orders/order-lifecycle.yaml",
+        document: proposed,
+        check: { loads: true, yaml: "", problems: [], nodes: [] },
+        problem: null,
+      },
+      [`POST ${DETAIL}/proposal/dismiss`]: {},
+    });
+
+    const proposes = await screen.findByText("Claude proposes");
+    expect(proposes.parentElement).toHaveTextContent(
+      "Claude proposes 1 new or changed block · it loads",
+    );
+    await user.click(screen.getByRole("button", { name: "Review" }));
+    expect(screen.getByRole("button", { name: "Script notify" })).toHaveAttribute(
+      "data-suggested",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Script fetch-order" })).not.toHaveAttribute(
+      "data-suggested",
+    );
+    await user.click(screen.getByRole("button", { name: "Accept" }));
+
+    expect(await screen.findByText("Unsaved")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Script notify" })).not.toHaveAttribute(
+      "data-suggested",
+    );
+    await waitFor(() => {
+      expect(
+        requests.some(
+          (request) => request.method === "POST" && request.url.endsWith("/proposal/dismiss"),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it("scenario builder writes a new action from the action slot and uses it", async () => {
+    const user = userEvent.setup();
+    const { requests } = renderBuilder({
+      "POST /api/v1/projects/demo/actions": aScenarioAction({
+        ref: "orders/render-invoice-pdf",
+        name: "render-invoice-pdf",
+        effect: "write",
+        draft: true,
+      }),
+    });
+
+    const fetch = await screen.findByRole("button", { name: "Script fetch-order" });
+    await user.click(within(fetch).getByRole("button", { name: "action: change" }));
+    await user.click(screen.getByRole("button", { name: "New action…" }));
+    const dialog = screen.getByRole("dialog", { name: "New action" });
+    await user.type(
+      within(dialog).getByPlaceholderText("render-invoice-pdf"),
+      "render-invoice-pdf",
+    );
+    await user.type(
+      within(dialog).getByPlaceholderText("Render the invoice PDF and upload it"),
+      "Render the PDF",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Write the action" }));
+
+    await waitFor(() => {
+      expect(within(fetch).getByRole("button", { name: "action: change" })).toHaveTextContent(
+        "render-invoice-pdf",
+      );
+    });
+    const sent = requests.find(
+      (request) => request.method === "POST" && request.url.endsWith("/projects/demo/actions"),
+    );
+    const body = (await sent?.clone().json()) as {
+      name: string;
+      effect: string;
+      script_text: string;
+    };
+    expect(body.name).toBe("render-invoice-pdf");
+    expect(body.effect).toBe("write");
+    expect(body.script_text).toContain('request["mode"] == "plan"');
+  });
+
+  it("scenario builder starts an empty scenario from a shape", async () => {
+    const user = userEvent.setup();
+    renderBuilder({
+      [DETAIL]: aScenarioDetail({
+        document: { ...document, nodes: [] },
+        content_hash: "sha256:aaa",
+      }),
+    });
+
+    const start = await screen.findByRole("region", { name: "Start the scenario" });
+    expect(
+      within(start).getByRole("button", { name: "Describe it to Claude" }),
+    ).toBeInTheDocument();
+    await user.click(within(start).getByRole("button", { name: /Do something, then wait/ }));
+
+    expect(await screen.findByRole("button", { name: "Script script" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Check check" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Start the scenario" })).not.toBeInTheDocument();
+  });
+
   it("scenario builder shows the generated YAML", async () => {
     const user = userEvent.setup();
     renderBuilder({

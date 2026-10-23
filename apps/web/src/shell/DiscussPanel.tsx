@@ -14,7 +14,7 @@ import {
   Popover,
 } from "../components";
 import { usePanelDismiss } from "../components/usePanelDismiss";
-import { ApiProblem } from "../lib/api";
+import { ApiProblem, apiPost } from "../lib/api";
 import { captureScreen } from "../lib/screenCapture";
 import type { MessageFile } from "../lib/messageFile";
 import { Composer, DEFAULT_MESSAGE_MAX_BYTES } from "../screens/agent-session/Composer";
@@ -276,6 +276,19 @@ function ConversationMenu({
   );
 }
 
+/** Sends the outbox message into the open conversation (the builder's "describe it to Claude"). */
+function useOutboxInto(sessionId: string | null) {
+  const { outbox, takeOutbox } = useDiscuss();
+  useEffect(() => {
+    if (!outbox || sessionId === null || !takeOutbox(outbox.id)) return;
+    void apiPost(
+      "/api/v1/agent-sessions/{agent_session_id}/messages",
+      { text: outbox.text },
+      { path: { agent_session_id: sessionId } },
+    );
+  }, [outbox, sessionId, takeOutbox]);
+}
+
 function DiscussBody({ target }: { target: DiscussTarget }) {
   const { references, removeReference, clearReferences } = useDiscuss();
   const owner = target.ownerSession ?? null;
@@ -284,6 +297,7 @@ function DiscussBody({ target }: { target: DiscussTarget }) {
     () => owner?.id ?? readDiscussSession(target),
   );
   const [statusSlot, setStatusSlot] = useState<HTMLSpanElement | null>(null);
+  useOutboxInto(sessionId);
   const onOwner = owner !== null && sessionId === owner.id;
   const forget = useCallback(() => {
     if (!onOwner) rememberDiscussSession(target, null);
@@ -398,6 +412,36 @@ function StartDiscussion({
   } = useStartDiscussion(target.project);
   const [mode, setMode] = useState<PermissionMode>("default");
   const [model, setModel] = useState<string | null>(null);
+  // A screen's ask with no conversation yet starts one with that message.
+  const { outbox, takeOutbox } = useDiscuss();
+  useEffect(() => {
+    // Wait until the panel could start a conversation (the starters' own rule).
+    if (!outbox || unavailable || pending || reason !== null) return;
+    if (!takeOutbox(outbox.id)) return;
+    void startSession({
+      target,
+      prompt: discussPrompt(target, referencedMessage(references, outbox.text)),
+      images: [],
+      files: [],
+      capture: null,
+      mode,
+      model,
+    }).then((id) => {
+      if (id) onStarted(id);
+    });
+  }, [
+    outbox,
+    unavailable,
+    pending,
+    reason,
+    takeOutbox,
+    startSession,
+    target,
+    references,
+    mode,
+    model,
+    onStarted,
+  ]);
 
   if (unavailable) {
     return (

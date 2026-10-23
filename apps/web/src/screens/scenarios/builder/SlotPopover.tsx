@@ -61,14 +61,22 @@ export function ActionChoice({
   readOnly,
   current,
   onPick,
+  onNew,
+  onAskClaude,
 }: {
   library: readonly LibraryAction[];
   pack: string;
   readOnly: boolean;
   current: string;
   onPick: (ref: string) => void;
+  /** Opens the new action form. */
+  onNew: () => void;
+  /** Asks Claude to write an action from this description. */
+  onAskClaude: (description: string) => void;
 }) {
   const [query, setQuery] = useState("");
+  const [asking, setAsking] = useState(false);
+  const [described, setDescribed] = useState("");
   const field = useRef<HTMLInputElement>(null);
   useEffect(() => {
     field.current?.focus();
@@ -121,9 +129,52 @@ export function ActionChoice({
           </span>
         )}
       </div>
-      <span className="ah-small ah-subtle">
-        No action fits? Ask Claude to write one, or add a script in actions/{pack}/.
-      </span>
+      <div className="bk-menu-group">No action fits?</div>
+      {asking ? (
+        <form
+          className="ah-stack"
+          style={{ gap: 6 }}
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (described.trim() !== "") onAskClaude(described.trim());
+          }}
+        >
+          <textarea
+            className="ah-input bk-textarea"
+            rows={3}
+            aria-label="Describe the action"
+            placeholder={
+              readOnly
+                ? "e.g. Read an order by id from the DB and print its status and cover status"
+                : "e.g. Send a JSON message to an SQS queue"
+            }
+            value={described}
+            onChange={(event) => {
+              setDescribed(event.target.value);
+            }}
+          />
+          <span className="ah-row" style={{ gap: 6, justifyContent: "flex-end" }}>
+            <Button size="sm" variant="primary" type="submit" icon="message-square">
+              Ask Claude to write it
+            </Button>
+          </span>
+        </form>
+      ) : (
+        <span className="ah-row" style={{ gap: 6 }}>
+          <Button
+            size="sm"
+            icon="message-square"
+            onClick={() => {
+              setAsking(true);
+            }}
+          >
+            Ask Claude to write it
+          </Button>
+          <Button size="sm" variant="ghost" icon="plus" onClick={onNew}>
+            New action…
+          </Button>
+        </span>
+      )}
     </>
   );
 }
