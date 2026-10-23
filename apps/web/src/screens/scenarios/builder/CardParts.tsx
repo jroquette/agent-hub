@@ -101,9 +101,18 @@ export function cardTitle(node: BuilderNode, action: ScenarioAction | null): str
   }
   const condition = text(node.until_when);
   switch (node.type) {
-    case "action":
+    case "action": {
+      // The id the author chose ("fetch-orders") says why the step is there; an id the builder
+      // made (the action's name, "script-2") does not.
+      const ref = text(node.action).split("/").at(-1) ?? "";
+      const base = node.id.replace(/-\d+$/, "");
+      if (base !== ref && base !== "script" && /^[a-z][a-z0-9-]*$/.test(node.id)) {
+        const words = node.id.replace(/-/g, " ");
+        return words.charAt(0).toUpperCase() + words.slice(1);
+      }
       if (action?.description) return firstSentence(action.description);
       return text(node.action) ? `Run ${text(node.action)}` : "Choose what to run";
+    }
     case "expect":
       return condition ? `Wait until ${conditionWords(condition)}` : "Wait until a state holds";
     case "approval":
