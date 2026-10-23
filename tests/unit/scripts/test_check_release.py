@@ -167,6 +167,10 @@ def test_exits_zero_when_tag_matches_both_versions(
         pytest.param("v0.2.0\n", '"v0.2.0\\n"', id="final-newline"),
         pytest.param("v٠.2.0", '"v\\u0660.2.0"', id="arabic-indic-digit"),
         pytest.param("V0.2.0", '"V0.2.0"', id="capital-v"),
+        pytest.param("v", '"v"', id="empty-version"),
+        pytest.param("v 0.2.0", '"v 0.2.0"', id="leading-space"),
+        pytest.param("vv0.2.0", '"vv0.2.0"', id="v-prefixed-version"),
+        pytest.param("v0.2.0;true", '"v0.2.0;true"', id="shell-suffix"),
     ],
 )
 def test_rejects_tag_when_form_invalid(

@@ -29,6 +29,7 @@ from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Literal
+from urllib.parse import quote
 
 from agent_hub.core.agent_sessions.links import AgentSessionLink
 from agent_hub.core.approvals.approval import Approval, ApprovalKind
@@ -1253,7 +1254,7 @@ def _entity_hits(snapshot: _Snapshot, needle: str) -> list[SearchHit]:
                     label=run.id,
                     detail=issue or None,
                     project=run.project,
-                    href=f"/runs/{run.id}",
+                    href=_run_href(run),
                 )
             )
     hits.extend(
@@ -1316,3 +1317,12 @@ def _call_hits(snapshot: _Snapshot, needle: str) -> list[SearchHit]:
 
 def _search(snapshot: _Snapshot, needle: str) -> list[SearchHit]:
     return [*_entity_hits(snapshot, needle), *_call_hits(snapshot, needle)]
+
+
+def _run_href(run: WorkflowRun) -> str:
+    """A run's page: a scenario run's own (``/scenarios/<project>/<name>/runs/<id>``, AGH-350
+    E-15), Run detail for a workflow run."""
+    if run.kind == "scenario":
+        name = run.workflow.removeprefix("scenario:")
+        return f"/scenarios/{quote(run.project, safe='')}/{quote(name, safe='')}/runs/{run.id}"
+    return f"/runs/{run.id}"

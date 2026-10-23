@@ -68,7 +68,11 @@ Every node has `id`, `type` and optional `description`, `depends_on`, `trigger_r
   reference), `attention` (text, or an `options` id), ≤ 7d; output `{at}`, `{text}`, `{choice, text}`; ends on a resume.
 - `include` takes only `id`, `description`, `depends_on`, `when`, `trigger_rule`, `include`, `with` and names a workflow
   of its pack: `with` fills its `inputs`, its nodes become `<include id>__<id>`, its roots take the include's graph
-  keys, depending on it waits on every sink, and `$<include id>.output` reads `returns` or the single sink.
+  keys, depending on it waits on every sink, and `$<include id>.output` reads `returns` or the single sink. A
+  workflow can be included and also run on its own: the built-in `sdlc` pack's `preflight-check` (a ticket's
+  read-only preflight, its plan change gate and re-check, `returns` a summary node) is included by `ticket-pass` and
+  by `preflight`, the standalone run `/merge` starts for a merged ticket's dependents; a parent reads only its
+  `returns` (`$check.output.status`), never a node inside it.
 
 ### Running: joins, conditions, outputs, status, retry and events
 

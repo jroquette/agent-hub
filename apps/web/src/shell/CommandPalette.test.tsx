@@ -337,4 +337,24 @@ describe("CommandPalette", () => {
 
     expect(await seriousViolations(container)).toEqual([]);
   });
+  it("calls a scenario run 'Scenario run …' in its own group, never 'Run …'", async () => {
+    renderWithApi(<CommandPalette onClose={vi.fn()} initialQuery="3f2a" />, {
+      routes: {
+        "/api/v1/search": aPage([
+          aSearchHit({
+            kind: "run",
+            label: "3f2a91c1",
+            href: "/scenarios/demo/order-lifecycle/runs/3f2a91c1",
+          }),
+          aSearchHit({ kind: "run", label: "3f2a91c0", href: "/runs/3f2a91c0" }),
+        ]),
+      },
+    });
+
+    expect(await screen.findByText("Scenario run 3f2a91c1")).toBeInTheDocument();
+    expect(screen.getByText("Scenario runs")).toBeInTheDocument();
+    expect(screen.getByText("Workflow runs")).toBeInTheDocument();
+    expect(screen.getByText("3f2a91c0")).toBeInTheDocument();
+    expect(screen.queryByText(/^Run 3f2a91c1/)).toBeNull();
+  });
 });

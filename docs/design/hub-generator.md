@@ -26,7 +26,7 @@ Kind: `generic` (same for every project), `module` (only when selected in `modul
 | `scripts/` transcript mining, recall and retro metrics | generic | managed (until Phase 2) |
 | `scripts/cloud-setup.sh`, `scripts/contract-sync.sh`, `mk/<module>.mk`, `.claude-plugin/marketplace.json` (merged with a seeded `.claude-plugin/marketplace.project.json`) | module: `cloud`, `contract-sync`, the selecting module, `marketplace` | managed (+ seeded) |
 | Worktree, brief, runner, benchmark, config-lint and feature-check scripts | generic (`bench`: module) | not generated: `hub` commands |
-| `workflows/<pack>/**`: the built-in packs (`issue-to-pr`: `issue-to-pr.yaml`, `prompts/`, `fixtures/`; `sdlc`: `deliver.yaml`, `review.yaml`, `implement.yaml`, `ticket-pass.yaml`, `prompts/`, `scripts/`, `fixtures/`), core package data copied byte for byte. A pack is seeded as a unit: only when `hub.lock` holds none of its paths and its folder holds nothing but the render's own folders and bytes (an interrupted seed is completed); else no file of it is written, so a release that adds a fixture never adds it to a hub's own pack. The hub's copy is the one discovery and `hub run` read ([workflow-schema.md](workflow-schema.md)); to follow the built-in again, delete `workflows/<pack>/`: sync neither re-seeds it nor reports drift for seeded files | generic | seeded |
+| `workflows/<pack>/**`: the built-in packs (`issue-to-pr`: `issue-to-pr.yaml`, `prompts/`, `fixtures/`; `sdlc`: `deliver.yaml`, `review.yaml`, `implement.yaml`, `ticket-pass.yaml`, `preflight.yaml`, `preflight-check.yaml`, `prompts/`, `scripts/`, `fixtures/`), core package data copied byte for byte. A pack is seeded as a unit: only when `hub.lock` holds none of its paths and its folder holds nothing but the render's own folders and bytes (an interrupted seed is completed); else no file of it is written, so a release that adds a fixture never adds it to a hub's own pack. The hub's copy is the one discovery and `hub run` read ([workflow-schema.md](workflow-schema.md)); to follow the built-in again, delete `workflows/<pack>/`: sync neither re-seeds it nor reports drift for seeded files | generic | seeded |
 | Brain content, bench cases, hub `tests/`, other `workflows/` packs, run output (`.agent-runs/`), domain rules (for Loki: red-chain, Decimal, paper/testnet, kept in `AGENTS.project.md`) | project-owned | not generated |
 
 Output depends only on `hub.json` (values validated or quoted: [project-config.md](project-config.md)), the platform
@@ -193,8 +193,9 @@ cloud setup). Order: `worktree`, `brief`, `doctor`, `agent`, `next`/`run`, `benc
 
 ### Distribution
 
-Releases are annotated semver tags `vX.Y.Z` (`git tag -a`) on agent-hub `main`, made by the owner; `release.yml` checks
-their form, that they are annotated and on `main`, and the meta-package version `agent-hub-cli` shares in lockstep
+Releases are annotated semver tags `vX.Y.Z` (`git tag -a`) on agent-hub `main`, created by `release.yml` on a dispatch
+(ADR 0047) or pushed by hand; `release.yml` checks their form, that they are annotated and on `main`, and the
+meta-package version `agent-hub-cli` shares in lockstep
 (`make lockstep`); no PyPI. A shim runs the pinned release with no install (`hub init` takes the same source):
 `uvx --from <platform.repository>@v<platform.version>#subdirectory=packages/agent-hub hub …`, the repository read from
 `hub.json` at run time (default `git+https://github.com/jroquette/agent-hub`, public: no credential). A private mirror

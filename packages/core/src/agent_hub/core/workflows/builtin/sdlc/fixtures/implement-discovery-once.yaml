@@ -12,7 +12,7 @@ stubs:
       commit: 0a1b2c3d4e}
   pending:
     output: {request: null, decision: '', input: none, note: '', summary: '', superseded: ''}
-  pass-1__preflight:
+  pass-1__check__preflight:
     output:
       drift: none
       local_notes: []
@@ -21,8 +21,10 @@ stubs:
       proposal: ''
       affected: ''
       summary: ''
-  pass-1__record:
+  pass-1__check__record:
     output: {runs: 1}
+  pass-1__check__result:
+    output: {status: passed, superseded: ''}
   pass-1__worktree:
     output:
       path: /ws/demo-api/.claude/worktrees/dem-1
@@ -51,7 +53,7 @@ stubs:
       path: /ws/demo-api/.claude/worktrees/dem-1
       base: origin/trunk
       target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
-  pass-2__preflight:
+  pass-2__check__preflight:
     output:
       drift: local
       local_notes: ['T3''s list is paged here, in the ticket.']
@@ -60,8 +62,10 @@ stubs:
       proposal: ''
       affected: ''
       summary: ''
-  pass-2__record:
+  pass-2__check__record:
     output: {runs: 2}
+  pass-2__check__result:
+    output: {status: passed, superseded: ''}
   pass-2__worktree:
     output:
       path: /ws/demo-api/.claude/worktrees/dem-1
@@ -177,8 +181,8 @@ stubs:
       hub_files: [tickets/DEM-1/brief.md, tickets/DEM-1/plan.md, tickets/DEM-1/preflight.json]
       superseded: ''
 expect: {status: done, outcome: delivered}
-reached: [context, pending, pass-1__preflight, pass-1__record, pass-1__worktree, pass-1__plan, pass-1__rounds,
-  pass-1__rounds__implement, pass-1__rounds__verdict, pass-1__outcome, pass-2__preflight, pass-2__record,
-  pass-2__worktree, pass-2__plan, pass-2__rounds, pass-2__rounds__implement, pass-2__rounds__verdict,
+reached: [context, pending, pass-1__check__preflight, pass-1__check__record, pass-1__check__result, pass-1__worktree, pass-1__plan, pass-1__rounds,
+  pass-1__rounds__implement, pass-1__rounds__verdict, pass-1__outcome, pass-2__check__preflight, pass-2__check__record,
+  pass-2__check__result, pass-2__worktree, pass-2__plan, pass-2__rounds, pass-2__rounds__implement, pass-2__rounds__verdict,
   pass-2__rounds__check, pass-2__rounds__spec, pass-2__rounds__quality, pass-2__rounds__review, pass-2__rounds__notes,
   pass-2__rounds__feedback, pass-2__outcome, last, eval, commits, pr, report, delivery]

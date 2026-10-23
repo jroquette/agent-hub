@@ -11,6 +11,7 @@ from agent_hub.core.features.feature_record import RecordAc
 from agent_hub.core.features.feature_status import RecordHead
 from agent_hub.core.features.plan_version import plan_version
 from agent_hub.core.features.ticket_records import (
+    MAX_OUTCOME_BYTES,
     MAX_PREFLIGHT_BYTES,
     change_requests,
     preflight_record,
@@ -19,6 +20,7 @@ from agent_hub.core.features.ticket_writes import (
     MAX_REQUEST_BYTES,
     Blocker,
     TicketBrief,
+    TicketOutcomeText,
     TicketRecordError,
     amended_plan,
     appended_brief,
@@ -28,9 +30,11 @@ from agent_hub.core.features.ticket_writes import (
     decision_text,
     named_paths,
     next_request,
+    outcome_text,
     plan_ids,
     plan_section,
     ticket_acs,
+    with_blocker_read,
 )
 
 AT = datetime(2026, 10, 21, 10, 0, tzinfo=UTC)
@@ -502,3 +506,56 @@ class TestAmendment:
 
         with pytest.raises(TicketRecordError, match="would not read as A2"):
             self.amend(PLAN, decision=odd)
+
+
+def an_outcome_text(built: str = "The reader.", pr: str = "demo-api#4") -> TicketOutcomeText:
+    return TicketOutcomeText(
+        ticket="DEM-7",
+        merged_at=datetime(2026, 10, 22, 8, 0, tzinfo=UTC),
+        pr=pr,
+        dependents=("DEM-8",),
+        built=built,
+        changes="None.",
+        interfaces="None.",
+    )
+
+
+# AC-3.1, NFR read budgets: the writer keeps an outcome within what its readers read.
+def test_accepts_the_outcome_only_when_it_fits_its_read_cap_exactly() -> None:
+    base = len(outcome_text(an_outcome_text("x")))
+    fits = an_outcome_text("x" * (MAX_OUTCOME_BYTES - base + 1))
+
+    assert len(outcome_text(fits)) == MAX_OUTCOME_BYTES
+    with pytest.raises(TicketRecordError, match="larger than 16384 bytes"):
+        outcome_text(an_outcome_text("x" * (MAX_OUTCOME_BYTES - base + 2)))
+
+
+def test_refuses_with_the_readers_problem_when_the_outcome_would_not_read_back() -> None:
+    with pytest.raises(TicketRecordError) as refused:
+        outcome_text(an_outcome_text(pr="#pending"))
+
+    assert str(refused.value) == (
+        "outcome.md could not be read (pr names no pull request: #pending). Fix it in a hub PR."
+    )
+
+
+# AGH-473 review F4: an automatic preflight records the blocker it was started for.
+@pytest.mark.parametrize(
+    ("listed", "expected"),
+    [([], ["T1"]), (["dem-7"], ["dem-7"]), (["DEM-6"], ["DEM-6", "T1"])],
+)
+def test_adds_the_blocker_read_only_when_no_name_of_it_is_listed(
+    listed: list[str], expected: list[str]
+) -> None:
+    findings = json.dumps({"drift": "none", "blockers_read": listed}).encode()
+
+    added = with_blocker_read(findings, "T1", names=("T1", "DEM-7"))
+
+    assert json.loads(added) == {"drift": "none", "blockers_read": expected}
+
+
+@pytest.mark.parametrize("findings", [b"[1]", b'{"blockers_read": "T1"}', b"{"])
+def test_leaves_findings_unchanged_when_they_are_not_an_object_with_a_list(
+    findings: bytes,
+) -> None:
+    assert with_blocker_read(findings, "T1", names=("T1",)) == findings

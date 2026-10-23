@@ -139,4 +139,13 @@ describe("RunCommands", () => {
 
     expect(await seriousViolations(container)).toEqual([]);
   });
+  it("names a scenario run and offers Cancel only when asked to", async () => {
+    renderWithApi(<RunCommands run={live} noun="scenario run" only={["cancel"]} />);
+
+    expect(names()).toEqual(["Cancel scenario run"]);
+    await userEvent.click(screen.getByRole("button", { name: "Cancel scenario run" }));
+    const dialog = screen.getByRole("dialog", { name: "Cancel this scenario run?" });
+    expect(within(dialog).getByRole("button", { name: "Keep scenario run" })).toBeInTheDocument();
+    expect(within(dialog).getByText(/then ends the scenario run cancelled/)).toBeInTheDocument();
+  });
 });

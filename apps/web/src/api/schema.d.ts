@@ -406,7 +406,8 @@ export interface paths {
     };
     /**
      * List Approvals
-     * @description Approvals, oldest first.
+     * @description Approvals, oldest first; an engine run's open gate names its kind (``gate_kind``) when
+     *     its run's record does.
      */
     get: operations["list_approvals_api_v1_approvals_get"];
     put?: never;
@@ -1854,7 +1855,7 @@ export interface paths {
     };
     /**
      * Get Run
-     * @description One workflow run with its steps.
+     * @description One workflow run with its steps, and the environment its record names (when any).
      */
     get: operations["get_run_api_v1_workflow_runs__run_id__get"];
     put?: never;
@@ -2145,6 +2146,38 @@ export interface components {
     /** @enum {string} */
     Access: "read" | "write" | "ask";
     /**
+     * ActionCallEntry
+     * @description An action call's policy facts, from its record line: never its inputs or output.
+     */
+    ActionCallEntry: {
+      /** Action */
+      action: string | null;
+      /** Approver */
+      approver: string | null;
+      /** At */
+      at: string | null;
+      /** Attempt */
+      attempt: number | null;
+      /** Content Hash */
+      content_hash: string | null;
+      /** Decision */
+      decision: string | null;
+      /** Effect */
+      effect: string | null;
+      /** Failure Kind */
+      failure_kind: string | null;
+      /** Node */
+      node: string;
+      /** Origin */
+      origin: string | null;
+      /** Poll */
+      poll: number | null;
+      /** Reason Kind */
+      reason_kind: string | null;
+      /** Status */
+      status: string | null;
+    };
+    /**
      * ActivityItem
      * @description A notable event in the activity feed.
      */
@@ -2325,6 +2358,8 @@ export interface components {
       open_permission?: components["schemas"]["OpenPermission"] | null;
       /** Project */
       project: string;
+      /** Restricted */
+      restricted?: boolean | null;
       /**
        * Review Targets
        * @default []
@@ -2400,6 +2435,7 @@ export interface components {
       feature?: string | null;
       /** Gate Id */
       gate_id: string;
+      gate_kind?: components["schemas"]["GateKindName"] | null;
       /** How To Decide */
       how_to_decide?: string | null;
       /** Hub Path */
@@ -3586,6 +3622,8 @@ export interface components {
     };
     /** @enum {string} */
     GateForm: "decision" | "choice" | "text" | "timer";
+    /** @enum {string} */
+    GateKindName: "policy" | "investigation";
     /**
      * GoldenPath
      * @description The feature's steps in their fixed order; ``phase`` is the first step neither done nor
@@ -3848,8 +3886,13 @@ export interface components {
       /** Step */
       step: string;
     };
-    /** InvestigationEntry */
+    /**
+     * InvestigationEntry
+     * @description An investigation; ``agent_session_id`` is the session its link file names, if any.
+     */
     InvestigationEntry: {
+      /** Agent Session Id */
+      agent_session_id?: string | null;
       /** Approver */
       approver: string | null;
       /** Choice */
@@ -5737,6 +5780,20 @@ export interface components {
     /** @enum {string} */
     RunDelivery: "delivered" | "no_changes" | "blocked" | "failed";
     /**
+     * RunEnvironment
+     * @description The environment a run's own start record names (AGH-350 E-15, the best-effort banner),
+     *     with its access and production flag in the hub's effective config as read now; both are
+     *     ``None`` when that config cannot be read or no longer declares it.
+     */
+    RunEnvironment: {
+      /** Access */
+      access: string | null;
+      /** Name */
+      name: string;
+      /** Production */
+      production: boolean | null;
+    };
+    /**
      * RunFailure
      * @description Where and why a run failed, and the event to open ("Open failing moment").
      */
@@ -5808,11 +5865,17 @@ export interface components {
     };
     /**
      * ScenarioDetail
-     * @description A scenario's steps and its scenario runs, newest first.
+     * @description A scenario's steps, its scenario runs, newest first, and the environments it can be
+     *     planned in (empty when ``hub.local.json`` or ``hub.json`` cannot be read).
      */
     ScenarioDetail: {
       /** Description */
       description: string | null;
+      /**
+       * Environments
+       * @default []
+       */
+      environments: components["schemas"]["ScenarioEnvironment"][];
       /**
        * Inputs
        * @default []
@@ -5833,6 +5896,18 @@ export interface components {
       runs: components["schemas"]["ScenarioRunRef"][];
       /** Steps */
       steps: components["schemas"]["ScenarioStepView"][];
+    };
+    /**
+     * ScenarioEnvironment
+     * @description An environment the project's hub declares, as the effective config reads now.
+     */
+    ScenarioEnvironment: {
+      /** Access */
+      access: string;
+      /** Name */
+      name: string;
+      /** Production */
+      production: boolean;
     };
     /** @enum {string} */
     ScenarioMode: "interactive" | "regression";
@@ -5916,6 +5991,11 @@ export interface components {
      *     none; ``open_investigation`` is the number of the investigation waiting for an answer.
      */
     ScenarioRunDetail: {
+      /**
+       * Actions
+       * @default []
+       */
+      actions: components["schemas"]["ActionCallEntry"][];
       /** Captures */
       captures: components["schemas"]["CaptureEntry"][];
       /** Decisions */
@@ -5952,10 +6032,15 @@ export interface components {
     };
     /**
      * ScenarioRunRef
-     * @description A scenario run as the folded events show it.
+     * @description A scenario run as the folded events show it, with the environment and mode its start
+     *     record names (``None`` when the record cannot be read).
      */
     ScenarioRunRef: {
       ended_at: components["schemas"]["ApiTimestamp"] | null;
+      /** Environment */
+      environment?: string | null;
+      /** Mode */
+      mode?: string | null;
       /** Run Id */
       run_id: string;
       started_at: components["schemas"]["ApiTimestamp"];
@@ -7006,12 +7091,20 @@ export interface components {
     TicketsSource: "linear" | "plan";
     /** @enum {string} */
     TileGroup: "waiting" | "live" | "idle" | "ended_recently";
-    /** TimelineEntry */
+    /**
+     * TimelineEntry
+     * @description A line of the run's timeline; an investigation read (``agent_action``) names its action
+     *     and effect.
+     */
     TimelineEntry: {
+      /** Action */
+      action?: string | null;
       /** At */
       at: string | null;
       /** Attempt */
       attempt: number | null;
+      /** Effect */
+      effect?: string | null;
       /** Event */
       event: string;
       /** Node */
@@ -7452,6 +7545,7 @@ export interface components {
        */
       derived: boolean;
       ended_at: components["schemas"]["ApiTimestamp"] | null;
+      environment?: components["schemas"]["RunEnvironment"] | null;
       failure: components["schemas"]["RunFailure"] | null;
       /**
        * Gate Results

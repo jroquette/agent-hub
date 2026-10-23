@@ -13,7 +13,7 @@ stubs:
   pending:
     output: {request: 1, decision: declined, input: declined_change, note: Keep T2 on the current handler.,
       summary: Route T2 through routes.py., superseded: ''}
-  pass-1__preflight:
+  pass-1__check__preflight:
     output:
       drift: local
       local_notes: [The route stays in the planned handler.]
@@ -22,8 +22,10 @@ stubs:
       proposal: ''
       affected: ''
       summary: ''
-  pass-1__record:
+  pass-1__check__record:
     output: {runs: 2}
+  pass-1__check__result:
+    output: {status: passed, superseded: ''}
   pass-1__worktree:
     output:
       path: /ws/demo-api/.claude/worktrees/dem-1
@@ -140,7 +142,7 @@ stubs:
         tickets/DEM-1/preflight.json]
       superseded: ''
 expect: {status: done, outcome: delivered}
-reached: [context, pending, pass-1__preflight, pass-1__record, pass-1__worktree, pass-1__plan, pass-1__rounds,
+reached: [context, pending, pass-1__check__preflight, pass-1__check__record, pass-1__check__result, pass-1__worktree, pass-1__plan, pass-1__rounds,
   pass-1__rounds__implement, pass-1__rounds__verdict, pass-1__rounds__check, pass-1__rounds__spec, pass-1__rounds__quality,
   pass-1__rounds__review, pass-1__rounds__notes, pass-1__rounds__feedback, pass-1__outcome, last, eval,
   commits, pr, report, delivery]

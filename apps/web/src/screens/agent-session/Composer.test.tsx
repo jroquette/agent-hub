@@ -503,6 +503,12 @@ describe("Composer (images)", () => {
     expect(screen.queryByRole("list", { name: "Attached to this message" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Add an image" })).toBeNull();
   });
+  it("hides the mode switch when the session's mode is locked (scenario investigation)", () => {
+    open({ modeLocked: true });
+
+    expect(screen.queryByRole("combobox", { name: "Mode" })).toBeNull();
+    expect(screen.getByRole("combobox", { name: "Model" })).toBeInTheDocument();
+  });
 });
 
 describe("Composer (the floating card, AGH-422)", () => {

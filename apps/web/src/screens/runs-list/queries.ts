@@ -19,11 +19,24 @@ export interface RunFilters {
   failure_kind: FailureKind | null;
 }
 
+/** Workflow runs only: scenario runs are listed in Scenarios (AM-7). */
 export function useRuns(filters: RunFilters, limit: number) {
-  return useApi("/api/v1/workflow-runs", { query: { ...filters, limit } });
+  return useApi("/api/v1/workflow-runs", { query: { ...filters, kind: "workflow", limit } });
 }
 
-/** Whether any workflow run exists, of any project: the sidebar shows Workflow runs only then. */
+/** Whether any workflow run (kind `workflow`) exists, of any project: the sidebar shows Workflow
+ * runs only then (AC-382.9), so a hub with only scenario runs shows no empty item. */
 export function useHasWorkflowRuns(): boolean {
-  return (useApi("/api/v1/workflow-runs", { query: { limit: 1 } }).data?.items.length ?? 0) > 0;
+  return (
+    (useApi("/api/v1/workflow-runs", { query: { kind: "workflow", limit: 1 } }).data?.items
+      .length ?? 0) > 0
+  );
+}
+
+/** Whether the project in scope (or any) has a scenario run: the empty list points to Scenarios. */
+export function useHasScenarioRuns(project: string | null): boolean {
+  return (
+    (useApi("/api/v1/workflow-runs", { query: { project, kind: "scenario", limit: 1 } }).data?.items
+      .length ?? 0) > 0
+  );
 }

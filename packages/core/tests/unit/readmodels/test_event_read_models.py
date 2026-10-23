@@ -1151,6 +1151,28 @@ def test_reuses_skill_usage_when_store_and_second_unchanged() -> None:
     assert service.skill_usage("nobody").by_skill == {}
 
 
+def test_links_scenario_run_to_its_page_when_search_finds_it() -> None:
+    """A scenario run found by search opens on its own page (AGH-350 E-15), a workflow run on
+    Run detail."""
+    store = InMemoryEventStore()
+    store.append(
+        [
+            *a_workflow_run_events([NodeVisit("build")], run="3f2a91c0", workflow="ship"),
+            *a_workflow_run_events(
+                [NodeVisit("order-held")], run="3f2a91c1", workflow="scenario:order-walk"
+            ),
+        ]
+    )
+    service = _service(store, NOW)[0]
+
+    hrefs = {hit.label: hit.href for hit in service.search_events("3f2a91c", PageRequest()).items}
+
+    assert hrefs == {
+        "3f2a91c0": "/runs/3f2a91c0",
+        "3f2a91c1": "/scenarios/demo/order-walk/runs/3f2a91c1",
+    }
+
+
 def _accepted_into(proposal: str, brain_path: str, *, hours: int) -> list[Event]:
     """A learning proposed ``hours`` after the scenario start, accepted into ``brain_path``."""
     events = learning_events(

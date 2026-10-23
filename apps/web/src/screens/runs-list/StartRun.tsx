@@ -24,7 +24,7 @@ export const REPORT_WAIT_MS = 30_000;
 /** The longest text input the API takes (one argv element). */
 export const MAX_INPUT_CHARS = 16_384;
 
-interface InputSpec {
+export interface InputSpec {
   name: string;
   type: "string" | "integer" | "number" | "boolean";
   required: boolean;
@@ -53,7 +53,7 @@ export function inputSpecs(document: unknown): InputSpec[] {
   });
 }
 
-function initialValue(spec: InputSpec): string | boolean {
+export function initialValue(spec: InputSpec): string | boolean {
   if (spec.type === "boolean") return spec.default === true;
   const value = spec.default;
   return typeof value === "string" || typeof value === "number" ? String(value) : "";
@@ -61,7 +61,7 @@ function initialValue(spec: InputSpec): string | boolean {
 
 /** The value sent for one input, or a problem; `undefined` leaves an optional input out. A
  * number field the browser could not parse (`badInput`) reads as empty: it is a problem. */
-function parsed(
+export function parsed(
   spec: InputSpec,
   raw: string | boolean,
   bad = false,
@@ -94,7 +94,7 @@ function useStartRun() {
   });
 }
 
-function InputField({
+export function InputField({
   spec,
   value,
   error,

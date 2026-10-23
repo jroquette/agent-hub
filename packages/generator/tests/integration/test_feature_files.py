@@ -21,8 +21,10 @@ from agent_hub.core.features.feature_status import (
 from agent_hub.core.features.ticket_records import (
     CHANGE_REQUEST_HEAD_BYTES,
     MAX_CHANGE_REQUEST_FILES,
+    MAX_OUTCOME_BYTES,
     MAX_PREFLIGHT_BYTES,
     MAX_TICKET_FOLDERS,
+    OutcomeFile,
     TicketFiles,
 )
 from agent_hub.generator.feature_files import (
@@ -796,3 +798,77 @@ def test_reads_nothing_when_record_folder_is_link(tmp_path: Path, name: str) -> 
     assert read is not None
 
     assert (read.ticket_folders, read.change_requests) == ((), ())
+
+
+# two-level-flows AC-3.1: every read of a feature (the list, the detail, the tickets route) reads
+# its tickets' outcomes, so Build counts them the same everywhere; nothing else of tickets/.
+@pytest.mark.parametrize("how", ["listed", "detail", "tickets"])
+def test_reads_ticket_outcomes_when_feature_read(tmp_path: Path, how: str) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    tickets = folder / "tickets"
+    for ticket in ("DEM-7", "DEM-8", "DEM-9", ".hidden"):
+        (tickets / ticket).mkdir(parents=True)
+    (tickets / "DEM-7" / "outcome.md").write_bytes(b"---\nmerged_at: x\n---\n")
+    (tickets / "DEM-8" / "outcome.md").symlink_to(tickets / "DEM-7" / "outcome.md")
+    (tickets / ".hidden" / "outcome.md").write_bytes(b"---\n---\n")
+    (tickets / "DEM-9" / "brief.md").write_bytes(b"# Ticket\n")
+
+    if how == "listed":
+        (read,) = read_feature_folders(tmp_path)
+    else:
+        found = read_feature_folder(tmp_path, "demo-feature", tickets=how == "tickets")
+        assert found is not None
+        read = found
+
+    assert read.outcomes == (
+        OutcomeFile(name="DEM-7", read=b"---\nmerged_at: x\n---\n"),
+        OutcomeFile(name="DEM-8", read="not a regular file"),
+    )
+    assert bool(read.ticket_folders) is (how == "tickets")
+
+
+def test_reports_problem_when_outcome_over_cap(tmp_path: Path) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    (folder / "tickets" / "DEM-7").mkdir(parents=True)
+    (folder / "tickets" / "DEM-7" / "outcome.md").write_bytes(b" " * (MAX_OUTCOME_BYTES + 1))
+
+    (read,) = read_feature_folders(tmp_path)
+
+    assert read.outcomes == (
+        OutcomeFile(name="DEM-7", read=f"larger than {MAX_OUTCOME_BYTES} bytes"),
+    )
+    assert MAX_OUTCOME_BYTES == 16_384
+
+
+def test_reads_first_ticket_folders_outcomes_only_when_tickets_over_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    for ticket in ("DEM-9", "DEM-7", "DEM-8"):
+        (folder / "tickets" / ticket).mkdir(parents=True)
+        (folder / "tickets" / ticket / "outcome.md").write_bytes(b"x")
+    monkeypatch.setattr("agent_hub.generator.feature_files.MAX_TICKET_FOLDERS", 2)
+
+    (read,) = read_feature_folders(tmp_path)
+
+    assert [found.name for found in read.outcomes] == ["DEM-7", "DEM-8"]
+
+
+# The outcomes are read before the preflights, which get the budget left (NFR read budgets).
+def test_counts_outcome_bytes_before_preflight_room_when_tickets_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = a_feature(features_of(tmp_path), "demo-feature", {})
+    for ticket in ("DEM-7", "DEM-8"):
+        (folder / "tickets" / ticket).mkdir(parents=True)
+        (folder / "tickets" / ticket / "preflight.json").write_bytes(b"{}")
+    (folder / "tickets" / "DEM-7" / "outcome.md").write_bytes(b"o" * 50)
+    monkeypatch.setattr("agent_hub.generator.feature_files.MAX_PREFLIGHT_BYTES", 100)
+    monkeypatch.setattr("agent_hub.generator.feature_files.READ_BUDGET_BYTES", 50 + 2 * 101 - 1)
+
+    read = read_feature_folder(tmp_path, "demo-feature", tickets=True)
+    assert read is not None
+
+    assert read.outcomes == (OutcomeFile(name="DEM-7", read=b"o" * 50),)
+    assert read.ticket_folders == (TicketFiles(name="DEM-7", preflight=b"{}"),)
+    assert read.ticket_folders_skipped == 1

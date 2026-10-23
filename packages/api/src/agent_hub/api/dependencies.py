@@ -186,6 +186,16 @@ def workflow_gates(request: Request) -> WorkflowGates:
     return port
 
 
+def optional_workflow_gates(request: Request) -> WorkflowGates | None:
+    """The open gates of workflow runs, or None when this build does not wire them."""
+    return _ports(request).workflow_gates
+
+
+def optional_scenario_reads(request: Request) -> ScenarioCatalog | None:
+    """The scenario reads, or None when this build does not wire them."""
+    return _ports(request).scenario_reads
+
+
 def gate_decisions(request: Request) -> DecideWorkflowGate:
     """A workflow gate's decision from hub web, or 501 when not wired."""
     port = _ports(request).gate_decisions
@@ -378,6 +388,8 @@ ScenarioInvestigationsDep = Annotated[ScenarioInvestigations, Depends(scenario_i
 ScenarioReadsDep = Annotated[ScenarioCatalog, Depends(scenario_reads)]
 ScenarioCommandsDep = Annotated[ScenarioCommands, Depends(scenario_commands)]
 WorkflowGatesDep = Annotated[WorkflowGates, Depends(workflow_gates)]
+OptionalWorkflowGatesDep = Annotated[WorkflowGates | None, Depends(optional_workflow_gates)]
+OptionalScenarioReadsDep = Annotated[ScenarioCatalog | None, Depends(optional_scenario_reads)]
 GateDecisionsDep = Annotated[DecideWorkflowGate, Depends(gate_decisions)]
 ItemVersionReadsDep = Annotated[ItemVersionReads, Depends(item_version_reads)]
 ItemVersionWritesDep = Annotated[ItemVersionWrites, Depends(item_version_writes)]

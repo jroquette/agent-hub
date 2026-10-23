@@ -106,6 +106,7 @@ SCREEN_ROUTES: Mapping[str, tuple[Route, ...]] = {
     "project-overview": (Route("project", "/projects/demo"),),
     "run-detail": (Route("run", "/runs", follow="/runs/"),),
     "runs-list": (Route("runs", "/runs"),),
+    "scenarios": (Route("scenarios", "/scenarios"),),
     "session-detail": (Route("session", "/sessions", follow="/sessions/"),),
     "sessions-list": (Route("sessions", "/sessions"),),
     "settings": (Route("settings", "/settings/appearance"),),
