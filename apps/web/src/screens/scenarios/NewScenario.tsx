@@ -6,6 +6,7 @@ import { useScope } from "../../lib/scope";
 import { writeStored } from "../../lib/storage";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { useDiscuss, useDiscussTarget, type DiscussTarget } from "../../shell/discuss";
+import { SCENARIO_BRIEF } from "./brief";
 import { Page } from "./parts";
 import { scenarioHref, useScenarios } from "./queries";
 
@@ -30,14 +31,6 @@ const EXAMPLES: readonly { label: string; text: string }[] = [
     text: "Send a message to the queue, then wait until the consumer has processed it and its result is stored.",
   },
 ];
-
-const BRIEF = [
-  "Scenarios are YAML files at `scenarios/<pack>/<name>.yaml` in this hub folder, with `kind: scenario`. The actions they call are `actions/<pack>/<name>.yaml`, with their scripts under `actions/<pack>/scripts/` (docs: the hub's scenarios design, ADR 0041).",
-  "A scenario is a workflow document (schema v1: `version: 1`, `kind: scenario`, `name` = the file stem, `description`, `revision: 1`, `inputs`, `nodes`) that holds only `action`, `expect`, `approval`, `wait`, `loop_group` and `include` nodes. It may declare `environment: <name>`.",
-  "`action` node: `action` (`<name>` in its pack or `<pack>/<name>`), `with`, `capture` ({name: ref} → `$CTX.<name>` downstream), `retry`, `timeout`. `expect`: the same plus `every` and `timeout` (both required) and `until_when`.",
-  'An action declares `version`, `name`, `description`, `effect` (`read`, `write`, `destroy`), `runtime` (`sh` or `python`), `script`, `timeout`, `inputs` (string, integer, number, boolean or service) and `output_format` (a JSON Schema). Its script reads one JSON object on stdin (`mode` plan|run, `inputs`, `endpoint`) and prints one JSON value; in plan mode `{"summary": "..."}`, changing nothing.',
-  "Reuse the actions that already exist (`./hub action list`) before writing new ones; prefer `read` effects. Never put a credential or secret value in a file. Check the result with `./hub scenario list` (and `./hub scenario plan <name> --env <env>`) until it reports no problem. A new action stays a draft until it is committed. Then say in two or three lines what the scenario does, step by step.",
-].join("\n");
 
 function composeMessage(fields: {
   name: string;
@@ -120,7 +113,7 @@ export function NewScenarioScreen() {
       project: chosenProject,
       kind: "New scenario",
       title: name || "a new scenario",
-      brief: BRIEF,
+      brief: SCENARIO_BRIEF,
       openOnArrive: true,
       starters: [{ label: "Create it", message }],
     });
