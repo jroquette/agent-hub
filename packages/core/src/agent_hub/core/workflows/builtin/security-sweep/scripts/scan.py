@@ -379,13 +379,20 @@ class Tree:
 
 @dataclass(frozen=True)
 class Guard:
-    """The hub guard's own functions, so its secret-file rule is the one applied."""
+    """The hub guard's own functions, so its secret-file rule is the one applied.
+
+    ``secret_path`` is the guard's own predicate for that rule (``_secret_path``), asked alone:
+    ``check_file`` answers ``guard.deny_paths`` first, which would hide a secret file under a
+    denied path. A guard without it is asked through ``check_file``."""
 
     check_file: Callable[..., object]
     rule_of: Callable[[str], object]
     config: object
+    secret_path: Callable[..., object] | None = None
 
     def secret(self, path: str) -> bool:
+        if self.secret_path is not None:
+            return self.secret_path(path, self.config) is True
         verdict = self.check_file("Read", {"file_path": path}, self.config)
         if not (isinstance(verdict, tuple) and len(verdict) == 2 and verdict[0] == "deny"):
             return False
@@ -440,7 +447,8 @@ def load_guard(path: Path, hub: Path) -> Guard | None:
     finally:
         sys.path[:] = saved
         sys.dont_write_bytecode = writes
-    return Guard(check_file, rule_of, config)
+    secret_path = getattr(module, "_secret_path", None)
+    return Guard(check_file, rule_of, config, secret_path if callable(secret_path) else None)
 
 
 def stop(child: subprocess.Popen[bytes]) -> None:
