@@ -18,7 +18,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   feature's tickets, tagged Feature (AGH-521).
 - A New scenario button on the Scenarios list and in its empty state opens `/scenarios/new`, a guided form (what to
   check, environment, pack, name) that hands Claude the request and the scenario format in the Discuss panel, then
-  watches the catalog for the new scenario, as New workflow does (AGH-521).
+  watches the catalog for the new scenario, as New workflow does; "Create it blank and build with blocks" saves a
+  one-step scenario and opens it in the builder (AGH-521).
 - The scenario page has a builder: a numbered step list with a Blocks tab to build by hand, Variables and Actions
   tabs, the environment in view, and a step editor with Settings and Script tabs; values read as name, value and what
   it is, shared values move into the environment, JSON values are edited as fields or JSON, Claude can propose steps

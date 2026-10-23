@@ -31,6 +31,10 @@ does not list them, and the init report does not count them.
 
 ### Tree format (version 2)
 
+**Proposed, not built yet** ([ADR 0049](../adr/0049-scenario-blocks-and-run-control.md), AGH-507): this section is
+the contract for a later change. Today's builder reads and writes `version: 1` files and Save goes through the API
+(see the ADR's delivery notes).
+
 A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blocks-and-run-control.md)):
 `version: 2` and `stages:` in place of `nodes:` (a version-2 document with `nodes`, `depends_on` or `trigger_rule` fails
 the load; version 1 loads as before, with doctor's `scenarios.graph_format` warning).
@@ -80,6 +84,10 @@ the load; version 1 loads as before, with doctor's `scenarios.graph_format` warn
   scenario read-only, with a Migrate action.
 
 ### Debugging
+
+**Proposed, not built yet** ([ADR 0049](../adr/0049-scenario-blocks-and-run-control.md), AGH-507): this section is
+the contract for a later change. Today's builder reads and writes `version: 1` files and Save goes through the API
+(see the ADR's delivery notes).
 
 A scenario run may pause before a block: by a **breakpoint**, or by **Step** ([ADR
 0049](../adr/0049-scenario-blocks-and-run-control.md)). It is not a gate and Approvals does not list it.
@@ -216,7 +224,7 @@ web makes it once: a named issue or a running create refuses both; only a warned
 Metadata only ([ADR 0019](../adr/0019-metadata-only-events-and-redaction.md)), each with a `payload_keys` row:
 `action.start`/`action.end` (`action`, `content_hash`, `environment`, `service`, `effect`, `origin`, `decision`,
 `approver`, `status`, `failure_kind`), `policy.decision` (`action` or node, `environment`, `effect`, `origin`,
-`decision`, `reason_kind`), `debug.pause` (`node`, `block`, `reason`), `debug.command` (`command`, `approver`),
+`decision`, `reason_kind`), (proposed, AGH-507) `debug.pause` (`node`, `block`, `reason`), `debug.command` (`command`, `approver`),
 `debug.breakpoints` (`count`), `expect.poll` (`poll`, `held`), `context.capture` (`name`), `finding` (`finding_id`,
 `step`), `workaround.start`/`workaround.end` (`workaround_id`, `option`, `steps`, `status`); `gate.request` gains
 `reason`. Args, outputs, captures, findings, chat stay in the run record. Bounds: `expect` `every` ≥ 5 s, `timeout` ≤ 24

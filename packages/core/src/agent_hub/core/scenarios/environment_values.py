@@ -1,4 +1,4 @@
-"""An environment's values as a scenario's inputs (docs/design/scenarios.md § Inputs).
+"""An environment's values as a scenario's inputs (docs/design/environments.md § Values).
 
 A scenario planned or started in environment E takes, for each declared input the request does
 not give, E's value of the same name, typed as the input declares; the input's declared default

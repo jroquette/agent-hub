@@ -450,7 +450,7 @@ instruction" for actions and for the deterministic nodes of a workflow that decl
   breakpoint (Continue), and show its inputs, captures and each finished block's inputs and output while paused. A
   pause never answers an ask, edits a value or rewinds; debugging is refused on a production environment. `hub
   scenario migrate` converts graph scenarios; `hub doctor` warns on the graph format until it is removed.
-- **In `hub web`** (Scenarios, in the sidebar's Work group after Workflow runs): the list with each scenario's last
+- **In `hub web`** (Scenarios, in the sidebar's Work group after Tickets): the list with each scenario's last
   scenario run, a scenario's steps and its plan for a chosen environment, and a scenario run's page with its timeline
   and, while paused, the investigation chat, the options with their plans and the pick; a policy ask is answered on
   that page ([screen spec 23](design/control-plane/specs/23-scenarios.md), Layer 2 § Scenarios).

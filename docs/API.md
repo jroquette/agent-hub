@@ -45,7 +45,10 @@ the first routes were written ([ADR 0017](adr/0017-api-second-composition-root.m
   the nine AGH-350 added (`SCENARIO_PATHS`): `GET /scenarios`, `GET /scenarios/{project}/{name}`, `POST
   /scenarios/{project}/{name}/plan|runs`, `GET /scenario-runs/{run_id}` and `POST
   /scenario-runs/{run_id}/investigation|answer|findings/{finding_id}/issue|findings/{finding_id}/inbox`
-  ([Scenarios](#scenarios)), the five AGH-507 will add (proposed, not built): `PUT /scenario-runs/{run_id}/breakpoints`, `POST
+  ([Scenarios](#scenarios)) and the seven AGH-521 added to them (the scenario builder: `POST
+  /projects/{project}/scenarios/validate`, `GET|POST /projects/{project}/actions`, `PUT
+  /projects/{project}/actions/{pack}/{name}`, `PUT /scenarios/{project}/{name}`, `GET
+  /scenarios/{project}/{name}/proposal` and `POST …/proposal/dismiss`), the five AGH-507 will add (proposed, not built): `PUT /scenario-runs/{run_id}/breakpoints`, `POST
   /scenario-runs/{run_id}/step|continue`, `GET /scenario-runs/{run_id}/values` and `POST
   /scenarios/{project}/{name}/migrate`, and the two AGH-393 added (`KNOWLEDGE_PATHS`, both GET):
   `/projects/{project}/knowledge/search` and `/projects/{project}/brain/backlinks` ([Knowledge](#knowledge)). A test
@@ -753,7 +756,8 @@ folder, the server's environment minus `LINEAR_API_KEY`); no problem quotes its 
   problem, a 404 (entity `scenario`, id `<project>/<name>`).
   Each step also carries its keys (AGH-521): `with`, `capture`, `every`, `timeout`, `until_when` and `retry`
   (`max_attempts`, `delay`, `on_error`). The detail adds `path` (the scenario file, relative to the hub),
-  `document_text` (its YAML) and `actions`, one per action the steps call: `ref`, `name`, `pack`, `path`,
+  `document_text` (its YAML), `document` (the file as JSON, read with the strict loader: the builder's starting
+  point), `content_hash` (`sha256:` of the file's bytes, the `base_content_hash` a save sends) and `actions`, one per action the steps call: `ref`, `name`, `pack`, `path`,
   `description`, `effect`, `runtime`, `script`, `timeout`, `inputs` (`name`, `type`, `required`, `default`,
   `description`), `output_format`, `draft` with its `accept_command`, `document_text`, `script_text` (cut with
   `script_truncated`) and `problem` when the action does not load.
@@ -805,10 +809,10 @@ folder, the server's environment minus `LINEAR_API_KEY`); no problem quotes its 
   `scenario`, `pack`, `environment`, `mode`, `status` (the end's, `null` while it has none), `open_investigation`
   and `paused_step` (the investigation waiting for an answer), `timeline` (each line's `event`, `node`, `attempt`,
   `status`, `at`, and an investigation read's (`agent_action`) `action` and `effect`), `polls` (an expect's polls:
-  `held`, never the output; outputs only through `…/values`, below), `captures` (`name`, `value`), `decisions` (every gate's answer: `choice`, `text`,
+  `held`, never the output; outputs only through `…/values`, proposed below), `captures` (`name`, `value`), `decisions` (every gate's answer: `choice`, `text`,
   `approver`, `where`), `actions` (each action call's policy facts: `node`, `attempt`, `poll`, `action`, `effect`,
   `origin`, `decision`, `reason_kind`, `content_hash`, `approver`, `status`, `failure_kind`, `at`; never its inputs
-  or output, which only `…/values` gives), `findings`, `investigations` (each with `agent_session_id`, the session its
+  or output, which only the proposed `…/values` would give), `findings`, `investigations` (each with `agent_session_id`, the session its
   `investigation-<n>.session` link names, read never through a link, else `null`), `workarounds` and `proposal`: the latest investigation's latest proposal, each option with its `steps`, its
   `plan` as shown, `needs_acceptance`, `accept_commands` (one per drafted action that is still a draft),
   `pickable` and `refusal`, judged now as an answer would be (only while its investigation waits; `the
@@ -906,7 +910,7 @@ Problems:
 | 400 | "Invalid request parameter" | `run_id` does not match `^[a-z0-9][a-z0-9-]{0,31}$`, or `finding_id` does not match `^f[0-9]{1,6}$` |
 | 401 · 403 · 415 | as in [Local security](#local-security) | a `POST` or `PUT`, or the values `GET`, without the launch cookie · a foreign `Origin` or fetch site · a body that is not JSON |
 | 404 | `about:blank` | no registered hub holds the run (or its record), the run is not a scenario run, an unknown project, scenario or finding, or the hub has no workdir |
-| 404 | `urn:agent-hub:problem:run-control-off` | a `POST` or `PUT` in the container (`AGENT_HUB_IN_CONTAINER=1`) |
+| 404 | `urn:agent-hub:problem:run-control-off` | a run write in the container (`AGENT_HUB_IN_CONTAINER=1`); the builder's save, dismiss and action writes answer 409 `hub_read_only` there instead, and its `POST …/scenarios/validate` needs no cookie |
 | 409 | `workflow-run-undeclared-environment` · `-denied` (`steps`) · `-plan-problem` | a start whose plan may not start; no run is created |
 | 409 | `workflow-run-not-paused` | not a scenario run, or not paused at an open, unanswered investigation |
 | 409 | `workflow-run-pick-refused` | a pick of no option of the latest proposal, of one holding a `deny` or a draft action, or of one whose plan changed since it was shown |
@@ -937,10 +941,11 @@ index rows, which a foreign page can trigger but whose answer it cannot read ([K
 The agent-session routes add a cookie and stricter Origin rules ([Agent sessions](#agent-sessions)), and the workflow
 run writes (`RUN_WRITES`: start, cancel, resume and abandon a run, a gate's decision, an AC's check run, a
 change request's decision, and the scenario writes: a plan, a start, an investigation's session and answer, a
-finding's issue and inbox note, a run's breakpoints, Step and Continue), the restores, the Publish, the scenario builder's save, proposal dismiss and action writes (AGH-521), and a
-scenario's migrate (proposed, AGH-507) (`ITEM_WRITES`) need that cookie too, as does the read of a scenario run's values ([Workflow run commands](#workflow-run-commands), [Skills](#skills),
+finding's issue and inbox note; and, proposed with AGH-507, a run's breakpoints, Step and Continue), the restores,
+the Publish, the scenario builder's save, proposal dismiss and action writes (AGH-521) and, proposed, a scenario's
+migrate (`ITEM_WRITES`) need that cookie too, as would the proposed read of a scenario run's values ([Workflow run commands](#workflow-run-commands), [Skills](#skills),
 [Workflows](#workflows)); every other route is unchanged and needs no cookie. In the container (`AGENT_HUB_IN_CONTAINER=1`, where no token is
-minted and the hubs are mounted read-only) a restore, a publish or a migrate answers 409 `hub_read_only` before the
+minted and the hubs are mounted read-only) a restore, a publish or a scenario builder write answers 409 `hub_read_only` before the
 cookie is checked.
 
 The two learning decisions, which reach the network, the four workflow run commands and a workflow gate's decision,

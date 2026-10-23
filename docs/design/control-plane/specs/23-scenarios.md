@@ -12,8 +12,8 @@ scenario; the UI always says "scenario run", and "run" alone means a workflow ru
 
 ## Navigation
 
-- Sidebar, **Work** group: Sessions, Workflow runs, **Scenarios** (`clipboard-list`), Features (right after
-  Workflow runs, since AGH-382 removed Workflows). Always shown: a place to start work, not a log. No badge; no `g`
+- Sidebar, **Work** group: Features, Tickets, **Scenarios** (`clipboard-list`), Sessions, Workflow runs,
+  Environments (AC-521.4.1). Always shown: a place to start work, not a log. No badge; no `g`
   shortcut; the command palette lists it under Screens, and lists a scenario run found by search as "Scenario run
   <id>" in its own group.
 - Breadcrumbs: Portfolio › project › Scenarios › name › Scenario run `<id>`.
@@ -74,6 +74,9 @@ scenarios/orders/returns.yaml:14   nodes[2].type   shell nodes are not allowed i
   as New workflow does.
 - **AC-521.12.4 Watch the catalog.** Given the request sent, then the page watches the scenario catalog and, once a
   scenario of that name loads, links to it.
+- **AC-521.12.5 Blank scenario.** Given a project, a kebab-case name and a pack, when the owner clicks "Create it blank
+  and build with blocks", then a one-step scenario (a You step to replace) is saved through the builder's save, with
+  no Claude, and its page opens in the builder; the button stays off until the name and pack are set.
 
 ## Screen 2: Scenario detail (`/scenarios/:project/:name`)
 
@@ -180,8 +183,9 @@ rejected and are not built. Its relation to ADR 0049's tree format is in that AD
   what it gives back and the script's source. A new action can be written from the editor and used at once.
 - **AC-521.13.5 A scenario's values.** Given the Start editor, then each value reads as name, value and what it is: a
   value left empty is asked each time the scenario runs, a value set is its default (typed as the input declares); the
-  Variables tab and the editor call these "Set in the scenario". An action input a step leaves out shows as the run's
-  value ("+ N from the run" on the step), and repeats of a run value can be dropped in one click.
+  Variables tab and the editor call these "Set in the scenario". In the step editor, an action input the step leaves
+  out shows the run's value ("from the run", with Set for this step), and repeats of a run value can be dropped in
+  one click.
 - **AC-521.13.6 Shared values in the environment.** Given a value most steps share (an account id, a stack name), then
   one click moves it into the chosen environment's values (a `hub env` write) and drops its repeats; the Variables tab
   saves an environment value.
@@ -199,8 +203,10 @@ rejected and are not built. Its relation to ADR 0049's tree format is in that AD
   draft, or reject; the proposal is dismissed either way. A condition typed in words becomes condition rows, naming
   what it cannot match and guessing nothing.
 - **AC-521.13.10 Save and unsaved work.** Given changes, then the server's check pins each problem on its step and keeps
-  Save off while the document does not load; Save writes over the file the builder read; unsaved work is kept in this
-  browser across a reload and dropped, with a notice, when the file changed outside.
+  Save off while the document does not load; Save writes over the file the builder read, and an unchanged document
+  writes nothing. Unsaved work is kept in this browser across a reload; while the page is open, a change made outside
+  asks whether to load the file's version or keep yours (Keep mine replaces it on save); after a reload, work kept for
+  an older version of the file is not restored.
 
 ## Screen 3: Scenario run (`/scenarios/:project/:name/runs/:runId`)
 
