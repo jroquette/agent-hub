@@ -208,6 +208,8 @@ def test_finds_path_in_link_when_file_renamed() -> None:
         ("docs/adr/0001-x.md", "adr"),
         ("design/decisions/0001-x.md", "adr"),
         ("adrs/0001-x.md", "adr"),
+        ("docs/ADR/0001-x.md", "adr"),
+        ("docs/Decisions/x.md", "adr"),
         ("CHANGELOG.md", None),
         ("docs/CHANGELOG.md", None),
         (".claude/x.md", None),
@@ -282,3 +284,10 @@ def test_shrinks_fixable_budget_when_names_are_large() -> None:
         mentions.MAX_PROMPT_DATA - len(json.dumps(large).encode())
     )
     assert mentions.fixable_budget(large) < mentions.MAX_FIXABLE_BYTES
+
+
+def test_finds_name_in_long_line_without_reading_its_spans() -> None:
+    names = [{"kind": "command", "name": "old-cmd"}]
+    text = "`a` " * 5000 + "old-cmd\n`old-cmd`\n"
+
+    assert mentions.mentions_in(text, names) == [(1, ["old-cmd"]), (2, ["old-cmd"])]
