@@ -78,7 +78,7 @@ from agent_hub.core.runs.workflow_run import (
     scenario_label,
 )
 from agent_hub.core.scenarios.access_policy import PolicyDecision, deny_reason
-from agent_hub.core.scenarios.action_catalog import ActionEntry
+from agent_hub.core.scenarios.action_catalog import ActionEntry, ActionRefError, resolve_action
 from agent_hub.core.scenarios.findings import (
     FindingIssueError,
     FindingsError,
@@ -136,6 +136,9 @@ INBOX_FOLDER: Final = Path("brain", "_inbox")
 FINDING_ID_TEXT: Final = r"^f[0-9]{1,6}$"
 _NEW_FILE: Final = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
 _READ_FILE: Final = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+# A scenario file loads only up to 256 KiB; an action's document or script is shown up to 64 KiB.
+DOCUMENT_TEXT_BYTES: Final = 256 << 10
+ACTION_TEXT_BYTES: Final = 64 << 10
 # A run record's first line (its start record) is read up to this size for a run's facts.
 HEADER_BYTES: Final = 64 << 10
 ANSWERED: Final = "the investigation is answered; its options can no longer be picked"
@@ -186,24 +189,79 @@ class ScenarioSummary(ViewModel):
     last_run: ScenarioRunRef | None = None
 
 
+class StepRetryView(ViewModel):
+    """A step's ``retry``: retries after the first attempt, the first delay (doubling each
+    time) and which errors it retries."""
+
+    max_attempts: int
+    delay: str
+    on_error: str
+
+
 class ScenarioStepView(ViewModel):
     """A step in declaration order: its type, the action it calls (an action or expect step)
-    and the steps it waits for."""
+    and the steps it waits for, with the keys of its call as the document writes them (``with``
+    values, ``capture`` refs, an expect's ``every``/``timeout``/``until_when``, ``retry``)."""
 
     id: str
     type: str
     action: str | None
     depends_on: tuple[str, ...]
     description: str | None = None
+    with_: dict[str, JsonValue] = Field(default_factory=dict, alias="with")
+    capture: dict[str, str] = Field(default_factory=dict)
+    every: str | None = None
+    timeout: str | None = None
+    until_when: str | None = None
+    retry: StepRetryView | None = None
+
+
+class ActionInputSpec(ViewModel):
+    """An action input as its document declares it."""
+
+    name: str
+    type: str
+    required: bool
+    default: JsonValue = None
+    description: str | None = None
+
+
+class ScenarioActionView(ViewModel):
+    """An action the scenario's steps call (``ref`` as a step writes it), as the hub's files
+    hold it now: its facts, whether it is committed (``draft`` else, with the line that
+    accepts it), and the text of its document and script (each cut at ``ACTION_TEXT_BYTES``);
+    ``problem`` says why it does not resolve, the other facts then empty."""
+
+    ref: str
+    name: str
+    pack: str | None = None
+    path: str | None = None
+    description: str | None = None
+    effect: str | None = None
+    runtime: str | None = None
+    script: str | None = None
+    timeout: str | None = None
+    inputs: tuple[ActionInputSpec, ...] = ()
+    output_format: dict[str, JsonValue] = Field(default_factory=dict)
+    draft: bool = False
+    accept_command: str | None = None
+    document_text: str | None = None
+    script_text: str | None = None
+    script_truncated: bool = False
+    problem: str | None = None
 
 
 class ScenarioDetail(ScenarioSummary):
     """A scenario's steps, its scenario runs, newest first, and the environments it can be
-    planned in (empty when ``hub.local.json`` or ``hub.json`` cannot be read)."""
+    planned in (empty when ``hub.local.json`` or ``hub.json`` cannot be read), with its file
+    (hub-relative ``path`` and raw ``document_text``) and the actions its steps call."""
 
     steps: tuple[ScenarioStepView, ...]
     runs: tuple[ScenarioRunRef, ...]
     environments: tuple[ScenarioEnvironment, ...] = ()
+    path: str | None = None
+    document_text: str | None = None
+    actions: tuple[ScenarioActionView, ...] = ()
 
 
 class ScenarioCatalogView(ViewModel):
@@ -410,7 +468,7 @@ class ScenarioCatalog:
 
     def get_scenario(self, project: str, name: str) -> ScenarioDetail:
         """One scenario that loads, its steps and runs; ``EntityNotFoundError`` else."""
-        hub, plan, pack = self.scenario(project, name)
+        hub, plan, pack, file = self._scenario_file(project, name)
         page = self._runs.list_runs(
             RunFilter(
                 project=project, kind="scenario", workflow=scenario_label(name), limit=RUN_PAGE
@@ -418,21 +476,17 @@ class ScenarioCatalog:
         )
         runs = tuple(_run_ref(run, hub) for run in page.items)
         summary = _summary(project, plan, pack=pack, last=runs[0] if runs else None)
-        steps = tuple(
-            ScenarioStepView(
-                id=node.id,
-                type=node.type,
-                action=_action_of(node),
-                depends_on=tuple(node.depends_on),
-                description=node.description,
-            )
-            for node in plan.document.nodes
-        )
+        steps = tuple(_step_view(node) for node in plan.document.nodes)
+        refs = dict.fromkeys(step.action for step in steps if step.action is not None)
+        found = discover_actions(Path(hub)) if refs else None
         return ScenarioDetail(
             **summary.model_dump(),
             steps=steps,
             runs=runs,
             environments=self._environments(hub, project),
+            path=_hub_relative(file, hub),
+            document_text=_read_text(file, DOCUMENT_TEXT_BYTES)[0],
+            actions=tuple(_action_view(ref, pack, found) for ref in refs if found is not None),
         )
 
     def _environments(self, hub: str, project: str) -> tuple[ScenarioEnvironment, ...]:
@@ -478,13 +532,19 @@ class ScenarioCatalog:
     def scenario(self, project: str, name: str) -> tuple[str, WorkflowPlan, str]:
         """The project's hub, the scenario's plan and its pack; ``EntityNotFoundError`` when
         the project or a scenario of that name that loads is unknown."""
+        hub, plan, pack, _ = self._scenario_file(project, name)
+        return hub, plan, pack
+
+    def _scenario_file(self, project: str, name: str) -> tuple[str, WorkflowPlan, str, Path]:
+        """``scenario`` and the scenario's file."""
         hub = self.hub_of(project)
         source = DiscoveredScenarioSource(Path(hub), only=name)
         catalog = check_workflows(source)
         plan = next((item for item in catalog.plans if item.document.name == name), None)
         if plan is None:
             raise EntityNotFoundError(entity="scenario", entity_id=f"{project}/{name}")
-        return hub, plan, source.found[name].pack
+        found = source.found[name]
+        return hub, plan, found.pack, found.path
 
     def scenario_run(self, run_id: str) -> ScenarioRun:
         """Scenario run ``run_id``'s folder and record; ``EntityNotFoundError`` when no
@@ -603,6 +663,94 @@ def _summary(
 def _action_of(node: object) -> str | None:
     action = getattr(node, "action", None)
     return action if isinstance(action, str) else None
+
+
+def _step_view(node: object) -> ScenarioStepView:
+    """A step as the page reads it: the keys of an action or expect call as written."""
+    retry = getattr(node, "retry", None)
+    every, timeout, until = (getattr(node, key, None) for key in ("every", "timeout", "until_when"))
+    return ScenarioStepView.model_validate(
+        {
+            "id": getattr(node, "id"),  # noqa: B009 -- every node has one; typed as object
+            "type": getattr(node, "type"),  # noqa: B009
+            "action": _action_of(node),
+            "depends_on": tuple(getattr(node, "depends_on", ())),
+            "description": getattr(node, "description", None),
+            "with": dict(getattr(node, "with_", None) or {}),
+            "capture": dict(getattr(node, "capture", None) or {}),
+            "every": every if isinstance(every, str) else None,
+            "timeout": timeout if isinstance(timeout, str) else None,
+            "until_when": until if isinstance(until, str) else None,
+            "retry": None
+            if retry is None
+            else StepRetryView(
+                max_attempts=retry.max_attempts, delay=retry.delay, on_error=retry.on_error
+            ),
+        }
+    )
+
+
+def _action_view(ref: str, pack: str, found: ActionDiscovery) -> ScenarioActionView:
+    """The action ``ref`` (as a step of ``pack`` writes it), or why it does not resolve."""
+    try:
+        entry = resolve_action(found.actions, ref, pack=pack)
+    except ActionRefError as error:
+        return ScenarioActionView(ref=ref, name=ref.rsplit("/", 1)[-1], problem=str(error))
+    document = entry.document
+    files = dict(found.files.get(entry.document_path, ()))
+    script, truncated = _text_of(files.get(entry.script_path), ACTION_TEXT_BYTES)
+    return ScenarioActionView(
+        ref=ref,
+        name=document.name,
+        pack=entry.pack,
+        path=entry.document_path,
+        description=document.description,
+        effect=document.effect,
+        runtime=document.runtime,
+        script=entry.script_path,
+        timeout=document.timeout,
+        inputs=tuple(
+            ActionInputSpec(
+                name=name,
+                type=item.type,
+                required=item.required,
+                default=item.default,
+                description=item.description,
+            )
+            for name, item in document.inputs.items()
+        ),
+        output_format=dict(document.output_format),
+        draft=entry.draft,
+        accept_command=accept_command(_files_of(entry, found), entry.ref) if entry.draft else None,
+        document_text=_text_of(files.get(entry.document_path), ACTION_TEXT_BYTES)[0],
+        script_text=script,
+        script_truncated=truncated,
+    )
+
+
+def _hub_relative(path: Path, hub: str) -> str:
+    try:
+        return path.relative_to(hub).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _text_of(data: bytes | None, limit: int) -> tuple[str | None, bool]:
+    """``data`` as text, cut at ``limit`` bytes (and whether it was); None without data."""
+    if data is None:
+        return None, False
+    return data[:limit].decode(errors="replace"), len(data) > limit
+
+
+def _read_text(path: Path, limit: int) -> tuple[str | None, bool]:
+    """A file's text read up to ``limit`` bytes, never through a link; None if unreadable."""
+    try:
+        descriptor = os.open(path, _READ_FILE)
+    except OSError:
+        return None, False
+    with os.fdopen(descriptor, "rb") as file:
+        data = file.read(limit + 1)
+    return _text_of(data, limit)
 
 
 def _run_ref(run: WorkflowRun, hub: str) -> ScenarioRunRef:

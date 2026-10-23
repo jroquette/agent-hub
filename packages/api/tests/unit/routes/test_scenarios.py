@@ -1464,6 +1464,42 @@ def test_lists_environments_and_run_facts_when_scenarios_detail_read(scenarios: 
     assert (item["last_run"]["environment"], item["last_run"]["mode"]) == ("live", "interactive")
 
 
+def test_shows_step_keys_file_and_action_facts_when_scenarios_detail_read(scenarios: Any) -> None:
+    detail = scenarios.client.get("/api/v1/scenarios/demo/order-walk").json()
+
+    send, held = detail["steps"]
+    assert send["with"] == {"target": "api", "ref": "$INPUTS.ref"}
+    assert (send["every"], send["until_when"], send["retry"]) == (None, None, None)
+    assert (held["every"], held["timeout"]) == ("10s", "5m")
+    assert held["until_when"] == "$self.output.status == 'ON_HOLD'"
+    assert held["capture"] == {"order_id": "$self.output.order"}
+    assert detail["path"] == "scenarios/demo/order-walk.yaml"
+    assert detail["document_text"] == WALK
+    # One entry per distinct action, as the steps name it; a committed hub has no draft.
+    by_ref = {action["ref"]: action for action in detail["actions"]}
+    assert list(by_ref) == ["send-order", "demo/get-order"]
+    get_order = by_ref["demo/get-order"]
+    assert (get_order["effect"], get_order["runtime"], get_order["draft"]) == ("read", "sh", False)
+    assert get_order["script"] == "actions/demo/scripts/get-order.sh"
+    assert get_order["path"] == "actions/demo/get-order.yaml"
+    assert [item["name"] for item in get_order["inputs"]] == ["target", "ref"]
+    assert get_order["script_text"].startswith("printf")
+    assert get_order["accept_command"] is None
+
+
+def test_names_problem_and_draft_when_scenarios_detail_action_changes(scenarios: Any) -> None:
+    (scenarios.hub / "actions" / "demo" / "scripts" / "send-order.sh").write_text("echo changed\n")
+    (scenarios.hub / "actions" / "demo" / "get-order.yaml").unlink()
+
+    detail = scenarios.client.get("/api/v1/scenarios/demo/order-walk")
+
+    assert detail.status_code == 200, detail.text
+    by_ref = {action["ref"]: action for action in detail.json()["actions"]}
+    assert by_ref["send-order"]["draft"] is True
+    assert "git add" in by_ref["send-order"]["accept_command"]
+    assert "unknown action" in by_ref["demo/get-order"]["problem"]
+
+
 def test_lists_no_environments_when_scenarios_local_file_invalid(scenarios: Any) -> None:
     fake = scenarios.reader.hubs[str(scenarios.hub)]
     fake.local = LocalConfig.model_validate({"environments": {"staging": {"access": "write"}}})

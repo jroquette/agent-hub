@@ -409,6 +409,45 @@
         "title": "ActionCallEntry",
         "type": "object"
       },
+      "ActionInputSpec": {
+        "additionalProperties": false,
+        "description": "An action input as its document declares it.",
+        "properties": {
+          "default": {
+            "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "required": {
+            "title": "Required",
+            "type": "boolean"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type",
+          "required"
+        ],
+        "title": "ActionInputSpec",
+        "type": "object"
+      },
       "ActivityItem": {
         "additionalProperties": false,
         "description": "A notable event in the activity feed.",
@@ -10635,6 +10674,172 @@
         "title": "RunStep",
         "type": "object"
       },
+      "ScenarioActionView": {
+        "additionalProperties": false,
+        "description": "An action the scenario's steps call (``ref`` as a step writes it), as the hub's files\nhold it now: its facts, whether it is committed (``draft`` else, with the line that\naccepts it), and the text of its document and script (each cut at ``ACTION_TEXT_BYTES``);\n``problem`` says why it does not resolve, the other facts then empty.",
+        "properties": {
+          "accept_command": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accept Command"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "document_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Text"
+          },
+          "draft": {
+            "default": false,
+            "title": "Draft",
+            "type": "boolean"
+          },
+          "effect": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effect"
+          },
+          "inputs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ActionInputSpec"
+            },
+            "title": "Inputs",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "output_format": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue"
+            },
+            "title": "Output Format",
+            "type": "object"
+          },
+          "pack": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pack"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "problem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Problem"
+          },
+          "ref": {
+            "title": "Ref",
+            "type": "string"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runtime"
+          },
+          "script": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Script"
+          },
+          "script_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Script Text"
+          },
+          "script_truncated": {
+            "default": false,
+            "title": "Script Truncated",
+            "type": "boolean"
+          },
+          "timeout": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout"
+          }
+        },
+        "required": [
+          "ref",
+          "name"
+        ],
+        "title": "ScenarioActionView",
+        "type": "object"
+      },
       "ScenarioCatalogView": {
         "additionalProperties": false,
         "description": "The scenarios that load, by project then name, and every file that does not.",
@@ -10663,8 +10868,16 @@
       },
       "ScenarioDetail": {
         "additionalProperties": false,
-        "description": "A scenario's steps, its scenario runs, newest first, and the environments it can be\nplanned in (empty when ``hub.local.json`` or ``hub.json`` cannot be read).",
+        "description": "A scenario's steps, its scenario runs, newest first, and the environments it can be\nplanned in (empty when ``hub.local.json`` or ``hub.json`` cannot be read), with its file\n(hub-relative ``path`` and raw ``document_text``) and the actions its steps call.",
         "properties": {
+          "actions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ScenarioActionView"
+            },
+            "title": "Actions",
+            "type": "array"
+          },
           "description": {
             "anyOf": [
               {
@@ -10675,6 +10888,17 @@
               }
             ],
             "title": "Description"
+          },
+          "document_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Text"
           },
           "environments": {
             "default": [],
@@ -10713,6 +10937,17 @@
           "pack": {
             "title": "Pack",
             "type": "string"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
           },
           "project": {
             "title": "Project",
@@ -11257,7 +11492,7 @@
       },
       "ScenarioStepView": {
         "additionalProperties": false,
-        "description": "A step in declaration order: its type, the action it calls (an action or expect step)\nand the steps it waits for.",
+        "description": "A step in declaration order: its type, the action it calls (an action or expect step)\nand the steps it waits for, with the keys of its call as the document writes them (``with``\nvalues, ``capture`` refs, an expect's ``every``/``timeout``/``until_when``, ``retry``).",
         "properties": {
           "action": {
             "anyOf": [
@@ -11269,6 +11504,13 @@
               }
             ],
             "title": "Action"
+          },
+          "capture": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Capture",
+            "type": "object"
           },
           "depends_on": {
             "items": {
@@ -11288,13 +11530,63 @@
             ],
             "title": "Description"
           },
+          "every": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Every"
+          },
           "id": {
             "title": "Id",
             "type": "string"
           },
+          "retry": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StepRetryView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "timeout": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeout"
+          },
           "type": {
             "title": "Type",
             "type": "string"
+          },
+          "until_when": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Until When"
+          },
+          "with": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue"
+            },
+            "title": "With",
+            "type": "object"
           }
         },
         "required": [
@@ -13545,6 +13837,31 @@
           "total"
         ],
         "title": "StepProgress",
+        "type": "object"
+      },
+      "StepRetryView": {
+        "additionalProperties": false,
+        "description": "A step's ``retry``: retries after the first attempt, the first delay (doubling each\ntime) and which errors it retries.",
+        "properties": {
+          "delay": {
+            "title": "Delay",
+            "type": "string"
+          },
+          "max_attempts": {
+            "title": "Max Attempts",
+            "type": "integer"
+          },
+          "on_error": {
+            "title": "On Error",
+            "type": "string"
+          }
+        },
+        "required": [
+          "max_attempts",
+          "delay",
+          "on_error"
+        ],
+        "title": "StepRetryView",
         "type": "object"
       },
       "StepState": {
