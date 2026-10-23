@@ -2241,3 +2241,53 @@ def test_raises_symlinked_ancestor_when_write_absent_meets_link(tmp_path: Path) 
         write_absent(root, [FileWrite(path="actions/x.yaml", content=b"x\n", executable=False)])
 
     assert list(outside.iterdir()) == []
+
+
+@pytest.mark.parametrize("mask", [0o022, 0o077], ids=["umask-022", "umask-077"])
+def test_writes_exact_mode_when_write_absent_under_umask(
+    tmp_path: Path, set_umask: Callable[[int], None], mask: int
+) -> None:
+    root = a_root(tmp_path)
+    set_umask(mask)
+    files = [
+        FileWrite(path="a/plain.yaml", content=b"x\n", executable=False),
+        FileWrite(path="a/run.py", content=b"x\n", executable=True),
+    ]
+
+    write_absent(root, files)
+
+    for write in files:
+        wanted = (0o777 if write.executable else 0o666) & ~mask
+        assert stat.S_IMODE((root / write.path).lstat().st_mode) == wanted, write.path
+
+
+@pytest.mark.parametrize("path", ["../out.yaml", "/abs.yaml", "a//b.yaml", "a/./b.yaml", "a\x00b"])
+def test_raises_value_error_when_write_absent_path_not_plain(tmp_path: Path, path: str) -> None:
+    root = a_root(tmp_path)
+    files = [
+        FileWrite(path="first.yaml", content=b"x\n", executable=False),
+        FileWrite(path=path, content=b"x\n", executable=False),
+    ]
+
+    with pytest.raises(ValueError, match="not a relative path inside the hub"):
+        write_absent(root, files)
+
+    assert list(root.iterdir()) == []
+
+
+def test_links_without_following_when_write_absent_links(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = a_root(tmp_path)
+    link = os.link
+    calls: list[dict[str, Any]] = []
+
+    def recording_link(*args: Any, **kwargs: Any) -> None:
+        calls.append(kwargs)
+        link(*args, **kwargs)
+
+    monkeypatch.setattr(os, "link", recording_link)
+
+    write_absent(root, [FileWrite(path="x.yaml", content=b"x\n", executable=False)])
+
+    assert [call.get("follow_symlinks") for call in calls] == [False]

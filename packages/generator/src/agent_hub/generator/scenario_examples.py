@@ -46,24 +46,44 @@ It reads one JSON object on stdin:
 {"mode": "plan" | "run", "inputs": {"target": ..., "path": ...},
  "endpoint": {"target": {"url": ..., "resource": ...}}}
 In plan mode it changes nothing and prints {"summary": "<one line>"}; in run mode it prints
-one JSON value that matches the action's output_format.
+one JSON value that matches the action's output_format: the HTTP status, a redirect's own, or 0
+when the service cannot be reached.
 """
 
+import http.client
 import json
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never follow a redirect: its 3xx status is the answer, so no other host is read."""
+
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
 call = json.load(sys.stdin)
-url = str(call["endpoint"]["target"]["url"]).rstrip("/") + call["inputs"]["path"]
+base = str(call["endpoint"]["target"]["url"]).rstrip("/")
+path = str(call["inputs"]["path"])
+url = base + path
+# The path may only add a path to the endpoint: anything that changes its host is refused.
+if not path.startswith("/") or urllib.parse.urlsplit(url)[:2] != urllib.parse.urlsplit(base)[:2]:
+    sys.exit(f"demo-get-status: path must start with / and stay on the endpoint: {path!r}")
 if call["mode"] == "plan":
     print(json.dumps({"summary": f"GET {url}"}))
     sys.exit(0)
+urllib.request.install_opener(urllib.request.build_opener(NoRedirect))
 try:
     with urllib.request.urlopen(url, timeout=10) as response:
         status = response.status
 except urllib.error.HTTPError as error:
     status = error.code
+except (urllib.error.URLError, http.client.HTTPException, OSError):
+    # Not up yet (refused, timed out, reset): 0, so an expect keeps polling.
+    status = 0
 print(json.dumps({"status": status}))
 '''
 

@@ -334,7 +334,7 @@ def _link_absent(folder_fd: int, *, name: str, write: FileWrite, mode: int) -> b
             file.write(write.content)
             os.fchmod(file.fileno(), mode)
         try:
-            os.link(temp, name, src_dir_fd=folder_fd, dst_dir_fd=folder_fd)
+            os.link(temp, name, src_dir_fd=folder_fd, dst_dir_fd=folder_fd, follow_symlinks=False)
         except FileExistsError:
             linked = False
         else:

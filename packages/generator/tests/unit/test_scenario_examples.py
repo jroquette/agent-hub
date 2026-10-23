@@ -62,3 +62,10 @@ def test_keeps_tree_when_examples_absent() -> None:
     )
 
     assert dict(without_examples(tree).entries) == dict(tree.entries)
+
+
+def test_keeps_link_when_example_path_is_link() -> None:
+    link = LinkEntry(target="../elsewhere.yaml", outside=True)
+    tree = TreeSnapshot(entries={"scenarios": FolderEntry(), SCENARIO: link}, git_present=True)
+
+    assert dict(without_examples(tree).entries) == {SCENARIO: link}
