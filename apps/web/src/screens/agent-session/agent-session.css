@@ -3376,6 +3376,18 @@ button.as-bg-head {
   flex: 1 1 auto;
   min-width: 0;
 }
+/* The reading column is centred on the whole layout, rail included, not on what the rail leaves:
+   resizing or folding the rail never moves the chat. Where the room runs out, it hugs the rail. */
+.as-chat-layout:has(> .as-rail-folded) {
+  --as-chat-rail-w: 48px;
+}
+.as-chat-layout .as-column {
+  margin-left: max(
+    0px,
+    (100% - var(--chat-column) - 2 * var(--as-gutter) - var(--as-chat-rail-w, 260px)) / 2
+  );
+  margin-right: auto;
+}
 .as-rail {
   flex: none;
   display: flex;
