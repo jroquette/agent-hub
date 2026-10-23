@@ -292,7 +292,7 @@ REPO = Path(__file__).resolve().parents[8]
 FULL_GOLDEN = REPO / "packages/generator/tests/integration/golden/retro_metrics/full.golden"
 TABLE_HEAD = (
     "Skills and agents: runs in the last 7 days, never used first.\n\n"
-    "| Project | Kind | Name | 7 d | 30 d | 90 d | Last used |\n"
+    "| Project | Kind | Name | 7 d | 30 d | 90 d | Last used (UTC) |\n"
     "| --- | --- | --- | --- | --- | --- | --- |\n"
 )
 SKILL_TABLE = TABLE_HEAD + (
@@ -426,6 +426,16 @@ def test_lists_idle_skills_when_skill_usage_table_parsed() -> None:
     wider = load().parse_skill_usage(0, SKILL_TABLE, "", days=90)
     assert wider.metrics["skill.refactor.runs_90d"] == 3
     assert wider.extras == {"skills": [], "agents": []}
+
+
+def test_lists_idle_skills_when_skill_usage_header_predates_utc() -> None:
+    older = SKILL_TABLE.replace("| Last used (UTC) |", "| Last used |")
+
+    reading = load().parse_skill_usage(0, older, "", days=7)
+
+    assert older != SKILL_TABLE
+    assert reading.extras == {"skills": ["refactor"], "agents": ["evaluator"]}
+    assert reading.sources == [{"name": "skill_usage", "status": "ok", "reason": ""}]
 
 
 @pytest.mark.parametrize(

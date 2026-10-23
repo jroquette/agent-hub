@@ -191,7 +191,7 @@ def test_parses_real_skill_usage_output_when_metrics_reads_it(
 
 HUB_STUB = """#!/bin/sh
 printf 'Skills and agents: runs in the last 7 days, never used first.\\n\\n'
-printf '| Project | Kind | Name | 7 d | 30 d | 90 d | Last used |\\n'
+printf '| Project | Kind | Name | 7 d | 30 d | 90 d | Last used (UTC) |\\n'
 printf '| --- | --- | --- | --- | --- | --- | --- |\\n'
 """
 EMPTY_REPORT = {
