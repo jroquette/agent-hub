@@ -23,7 +23,9 @@ brief's sections and placeholders from core, read at render time so core stays t
 from ``models.tiers``; ``agent_model_overlay`` maps every tier key of one agent's file to the
 tier ``models.agents`` gives it. A hub without ``models`` renders the models the templates pinned
 before tiers (AGH-180). A hub that declares ``environments`` gets ``AGENTS.md``'s Environments and
-services section, from ``hub.json`` only; a hub without keeps its bytes (AGH-282).
+services section, from ``hub.json`` only; a hub without keeps its bytes (AGH-282). The README's
+Pick a flow table is ``flow_catalog``'s, built from the built-in packs, the same in every hub
+(AGH-495).
 """
 
 import re
@@ -47,6 +49,7 @@ from agent_hub.core.workspace.shown_conventions import (
     shown_conventions,
     shown_prefix,
 )
+from agent_hub.generator.flow_catalog import builtin_flows, flow_table
 from agent_hub.generator.registry import REGISTRY
 
 # The platform's default git source, unpinned: shims append ``@v<platform.version>`` read from
@@ -195,6 +198,7 @@ def substitution_mapping(config: HubConfig) -> dict[str, str]:
         ),
         "prefix_note": "" if project.branch_prefix is not None else _PREFIX_NOTE,
         "identity_email": _USER_EMAIL if project.author_email is not None else _DEVELOPER_EMAIL,
+        "flow_catalog": flow_table(builtin_flows()).rstrip("\n"),
     }
 
 

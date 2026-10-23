@@ -21,6 +21,7 @@ from agent_hub.core.testing.builders import (
 )
 from agent_hub.core.testing.platform_repository_cases import CUSTOM_REPOSITORY
 from agent_hub.generator import placeholders
+from agent_hub.generator.flow_catalog import builtin_flows, flow_table
 from agent_hub.generator.placeholders import (
     AGENTS_FOLDER,
     PLATFORM_REPOSITORY,
@@ -79,6 +80,7 @@ RENDERED_KEYS = {
     "model_small",
     "model_medium",
     "model_large",
+    "flow_catalog",
 }
 
 # AGH-138: /feature step 0 names core's brief sections and placeholders as code spans, in order.
@@ -168,6 +170,8 @@ def test_takes_values_from_model_when_demo_mapped(demo_config: HubConfig) -> Non
         "model_small": "haiku",
         "model_medium": "sonnet",
         "model_large": "opus",
+        # AGH-495: the same table in every hub, built from the built-in packs.
+        "flow_catalog": flow_table(builtin_flows()).rstrip("\n"),
     }
 
 
