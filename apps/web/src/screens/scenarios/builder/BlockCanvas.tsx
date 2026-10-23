@@ -66,6 +66,8 @@ export interface BlockCanvasProps {
   onInsert: (target: { stack: string; slot: Slot; index: number }, anchor: DOMRect) => void;
   /** A slot was clicked: open its popover. */
   onSlot: (request: SlotRequest) => void;
+  /** Reviewing Claude's proposal: the ids of its new or changed blocks (read-only canvas). */
+  suggested?: ReadonlySet<string> | undefined;
 }
 
 /** A slot of a block clicked to fill it: which block (or C-block), which key, where. */
@@ -519,6 +521,7 @@ function blockProps(ctx: Ctx, id: string, kind: string, label: string) {
   return {
     "data-no-pan": "",
     "data-selected": ctx.props.selected === id || undefined,
+    "data-suggested": ctx.props.suggested?.has(id) === true || undefined,
     "data-invalid":
       ctx.props.problemsOf(id).some((problem) => problem.severity === "error") || undefined,
     style: { ["--kind" as string]: look.tint },

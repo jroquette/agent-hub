@@ -26,6 +26,9 @@ import {
   type Stack,
 } from "./BlockCanvas";
 import { InsertMenu } from "./InsertMenu";
+import { createActionMessage, describeMessage, type DescribeScope } from "./claude";
+import { DescribeDialog, NewActionDialog, useDismissProposal, useProposal } from "./ClaudeDialogs";
+import { StartCard } from "./StartCard";
 import { ActionChoice, ConditionChoice, SlotFrame, TextChoice, ValueChoice } from "./SlotPopover";
 import { CATEGORIES, blockItem } from "./palette";
 import { FlowCanvas, kindLook, type AddChoice } from "./FlowCanvas";
@@ -273,6 +276,17 @@ export function ScenarioBuilder({
   const bodyRef = useRef<HTMLDivElement>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [help, setHelp] = useState(() => readStored(HELP_KEY) !== "hidden");
+  const [describing, setDescribing] = useState(false);
+  const [awaiting, setAwaiting] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
+  const [newAction, setNewAction] = useState<{ node: string | null; readOnly: boolean } | null>(
+    null,
+  );
+  const { ask } = useDiscuss();
+  const proposal = useProposal(scenario.project, scenario.name, awaiting);
+  const dismiss = useDismissProposal(scenario.project, scenario.name);
+  const offered = proposal.data?.document ? proposal.data : null;
+  if (awaiting && offered) setAwaiting(false);
   useEffect(() => {
     if (toast === null) return;
     const timer = setTimeout(() => {
@@ -282,7 +296,6 @@ export function ScenarioBuilder({
       clearTimeout(timer);
     };
   }, [toast]);
-  const { addReference } = useDiscuss();
   const document = draft.document;
 
   // The program, read again whenever the document changes from elsewhere (undo, the graph).
@@ -582,6 +595,47 @@ export function ScenarioBuilder({
     );
   })();
 
+  // Describe in words → Claude proposes the scenario as blocks (a proposal file it writes).
+  const sendDescription = (described: string, scope: DescribeScope, after: string | null) => {
+    ask(
+      describeMessage({
+        text: described,
+        scope,
+        after,
+        scenario: scenario.name,
+        pack: scenario.pack,
+        draftYaml: draft.check?.yaml ?? "",
+        proposalPath: `.agent-runs/proposals/scenarios/${scenario.pack}/${scenario.name}.yaml`,
+        actions: items,
+      }),
+    );
+    setAwaiting(true);
+    setDescribing(false);
+  };
+  const proposed = offered?.document ? toDocument(offered.document) : null;
+  const current = new Map(allNodes(document.nodes).map((node) => [node.id, JSON.stringify(node)]));
+  const suggestedIds = new Set(
+    proposed
+      ? allNodes(proposed.nodes)
+          .filter((node) => current.get(node.id) !== JSON.stringify(node))
+          .map((node) => node.id)
+      : [],
+  );
+  const removedCount = proposed
+    ? [...current.keys()].filter((id) => !allNodes(proposed.nodes).some((node) => node.id === id))
+        .length
+    : 0;
+  const acceptProposal = () => {
+    if (!proposed) return;
+    const next: BuilderDocument = { ...document, nodes: proposed.nodes };
+    if (proposed.inputs !== undefined) next.inputs = proposed.inputs;
+    if (typeof proposed.description === "string") next.description = proposed.description;
+    draft.edit(next);
+    setReviewing(false);
+    dismiss.mutate();
+  };
+  const reviewProgram = proposed && reviewing ? programOf(proposed.nodes).main : null;
+
   // Keys on the builder (never while typing in a field): Delete removes the selected block (with
   // an Undo toast), Alt+↑/↓ moves it in its list, ⌘D duplicates it, ⌘Z/⇧⌘Z undo and redo, ⌘S
   // saves, Esc clears the selection.
@@ -687,6 +741,21 @@ export function ScenarioBuilder({
             current={typeof node.action === "string" ? node.action : ""}
             onPick={(ref) => {
               apply("action", ref);
+            }}
+            onNew={() => {
+              setNewAction({ node: node.id, readOnly: node.type === "expect" });
+              close();
+            }}
+            onAskClaude={(described) => {
+              ask(
+                createActionMessage({
+                  text: described,
+                  pack: scenario.pack,
+                  step: node.id,
+                  readOnly: node.type === "expect",
+                }),
+              );
+              close();
             }}
           />
         </SlotFrame>
@@ -910,7 +979,16 @@ export function ScenarioBuilder({
           onClick={draft.undo}
         />
         <IconButton icon="redo-2" label="Redo" disabled={!draft.canRedo} onClick={draft.redo} />
-        <DiscussButton label="Ask Claude" />
+        <Button
+          size="sm"
+          icon="message-square"
+          onClick={() => {
+            setDescribing(true);
+          }}
+        >
+          Describe with Claude
+        </Button>
+        <DiscussButton label="Chat" />
         <Button
           variant="primary"
           icon="save"
@@ -949,6 +1027,68 @@ export function ScenarioBuilder({
         <Banner tone="error" boxed>
           Could not save: {draft.saveError.detail ?? draft.saveError.title}
         </Banner>
+      )}
+      {(awaiting || offered) && (
+        <div className="sb-proposal" role="status">
+          <Icon name="message-square" size="sm" />
+          {offered ? (
+            <>
+              <span>
+                <b>Claude proposes</b> {suggestedIds.size} new or changed{" "}
+                {suggestedIds.size === 1 ? "block" : "blocks"}
+                {removedCount > 0 && `, ${String(removedCount)} removed`}
+                {offered.check
+                  ? offered.check.loads
+                    ? " · it loads"
+                    : ` · ${String(offered.check.problems.filter((p) => p.severity === "error").length)} problems to fix after accepting`
+                  : offered.problem
+                    ? ` · ${offered.problem}`
+                    : ""}
+              </span>
+              <span className="ah-grow" />
+              <Button
+                size="sm"
+                variant={reviewing ? "primary" : "default"}
+                onClick={() => {
+                  setReviewing(!reviewing);
+                  setView("blocks");
+                }}
+              >
+                {reviewing ? "Back to my draft" : "Review"}
+              </Button>
+              <Button size="sm" variant="primary" icon="check" onClick={acceptProposal}>
+                Accept
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setReviewing(false);
+                  dismiss.mutate();
+                }}
+              >
+                Reject
+              </Button>
+            </>
+          ) : (
+            <>
+              <span>
+                Waiting for Claude&apos;s proposal… follow it in the Discuss panel; it shows here as
+                suggested blocks when it is written.
+              </span>
+              <span className="ah-grow" />
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setAwaiting(false);
+                }}
+              >
+                Stop waiting
+              </Button>
+            </>
+          )}
+        </div>
       )}
       {draft.conflict && (
         <Banner
@@ -1020,16 +1160,33 @@ export function ScenarioBuilder({
               />
             </div>
           )}
+          {view === "blocks" && program.main.length === 0 && !reviewProgram && (
+            <StartCard
+              onDescribe={() => {
+                setDescribing(true);
+              }}
+              onTemplate={(items_) => {
+                commit(items_, program.kept, layout.loose);
+              }}
+              taken={taken}
+            />
+          )}
           {view === "blocks" && (
             <BlockCanvas
-              main={{ id: "main", x: layout.main.x, y: layout.main.y, items: program.main }}
+              suggested={reviewProgram ? suggestedIds : undefined}
+              main={{
+                id: "main",
+                x: layout.main.x,
+                y: layout.main.y,
+                items: reviewProgram ?? program.main,
+              }}
               loose={[...program.kept, ...layout.loose]}
               selected={selected}
               actionOf={actionFacts}
               problemsOf={(id) => problems.filter((problem) => problem.node === id)}
               inputs={inputs}
               onSelect={setSelected}
-              onTake={onTake}
+              onTake={reviewProgram ? () => [] : onTake}
               onDrop={onDrop}
               onMoveStack={(_stack, x, y) => {
                 saveLayout({ ...layout, main: { x, y } });
@@ -1039,10 +1196,12 @@ export function ScenarioBuilder({
               onDrag={setDrag}
               numbers={stepNumbers(program.main)}
               onSlot={(request) => {
+                if (reviewProgram) return;
                 setSelected(request.id);
                 setSlot(request);
               }}
               onInsert={(target, anchor) => {
+                if (reviewProgram) return;
                 const list =
                   target.slot.in === "main" && target.stack === "main" ? program.main : null;
                 const before = list?.[target.index - 1];
@@ -1095,6 +1254,33 @@ export function ScenarioBuilder({
         {inspector}
       </div>
       {slot && slotPopover(slot)}
+      {describing && (
+        <DescribeDialog
+          empty={program.main.length === 0}
+          after={selected}
+          onSend={(described, scope) => {
+            sendDescription(described, scope, scope === "after" ? selected : null);
+          }}
+          onClose={() => {
+            setDescribing(false);
+          }}
+        />
+      )}
+      {newAction && (
+        <NewActionDialog
+          project={scenario.project}
+          pack={scenario.pack}
+          readOnly={newAction.readOnly}
+          onCreated={(action) => {
+            const target = newAction.node ? findItem(allItems, newAction.node) : null;
+            if (target?.kind === "block") editNode({ ...target.node, action: action.name });
+            setNewAction(null);
+          }}
+          onClose={() => {
+            setNewAction(null);
+          }}
+        />
+      )}
       {toast && (
         <div className="sb-toast">
           <Toast
@@ -1116,12 +1302,8 @@ export function ScenarioBuilder({
           taken={taken}
           onPick={insertHere}
           onAskClaude={(described) => {
-            addReference({
-              id: `insert:${inserting.where}`,
-              label: `Add ${inserting.where}`,
-              source: scenario.path ?? null,
-              quote: `In the scenario ${scenario.name}, add a step ${inserting.where}: ${described}. Write it into the scenario file with the actions it needs (new ones as drafts), then tell me what you added.`,
-            });
+            const before = inserting.where.startsWith("after ") ? inserting.where.slice(6) : null;
+            sendDescription(described, "after", before);
             setInserting(null);
           }}
           onClose={() => {

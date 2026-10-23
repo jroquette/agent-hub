@@ -283,6 +283,71 @@ describe("DiscussPanel", () => {
     expect(body.prompt).toBe(discussPrompt(skill, "Check it against the code."));
   });
 
+  it("sends a screen's ask: it starts the conversation, then goes into the open one", async () => {
+    function Asker() {
+      useDiscussTarget(feature);
+      const { ask } = useDiscuss();
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              ask("Turn this description into blocks");
+            }}
+          >
+            ask first
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              ask("And add a check after it");
+            }}
+          >
+            ask again
+          </button>
+          <DiscussPanel />
+        </>
+      );
+    }
+    const view = renderWithApi(
+      <DiscussProvider>
+        <Asker />
+      </DiscussProvider>,
+      {
+        routes: {
+          "/api/v1/agent-sessions/capabilities": aCapabilities(),
+          "/api/v1/agent-sessions/workdirs": { items: [aWorkdir()], warnings: [] },
+          "POST /api/v1/agent-sessions": anAgentSession({ id: ID, status: "running" }),
+          [SESSION]: anAgentSession({ id: ID, status: "idle", last_seq: 0 }),
+          [`${SESSION}/events`]: { items: [], next_after: null },
+          [`POST ${SESSION}/messages`]: { seq: 1 },
+        },
+      },
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "ask first" }));
+    const created = await waitFor(() => {
+      const found = view.requests.find(
+        (r) => r.method === "POST" && new URL(r.url).pathname === "/api/v1/agent-sessions",
+      );
+      if (!found) throw new Error("no POST");
+      return found;
+    });
+    const body = JSON.parse(await created.clone().text()) as { prompt: string };
+    expect(body.prompt).toBe(discussPrompt(feature, "Turn this description into blocks"));
+
+    await screen.findByRole("textbox", { name: "Message Claude" });
+    await userEvent.click(screen.getByRole("button", { name: "ask again" }));
+    const sent = await waitFor(() => {
+      const found = view.requests.find(
+        (r) => r.method === "POST" && new URL(r.url).pathname === `${SESSION}/messages`,
+      );
+      if (!found) throw new Error("no message");
+      return found;
+    });
+    expect(JSON.parse(await sent.clone().text())).toEqual({ text: "And add a check after it" });
+  });
+
   it("offers no starters when the target has none", async () => {
     window.localStorage.setItem("ah.discuss.open", "1");
     renderPanel();
