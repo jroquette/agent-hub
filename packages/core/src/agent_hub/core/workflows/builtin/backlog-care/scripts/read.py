@@ -4,19 +4,20 @@
 # ///
 """Read the issues file ``/triage --backlog`` wrote, bounded, and print it as one JSON object.
 
-``read.py --file PATH --limit N``, cwd the hub. ``PATH`` is the absolute path of a regular file
+``read.py --file PATH --limit N --config JSON``, cwd the hub; ``JSON`` is what ``hub step config``
+printed (this script opens no ``hub.json``). ``PATH`` is the absolute path of a regular file
 (not a link) of at most 1 MiB: one UTF-8 JSON object ``{"version": 1, "read_at", "open_total",
 "issues": [...]}`` (``TOP_FIELDS``), each issue with ``ISSUE_FIELDS``. Its text is
 the tracker's, written by anyone: every field is cut and control characters are removed. An
 entry without a well-formed ``id``, a ``title``, a ``state.name`` or ISO-8601 dates with an offset
 is skipped and named in ``skipped``. The oldest ``N`` issues (1-100) are kept; ``open`` is
 ``open_total`` or the file's entry count, whichever is larger, and ``unread_line`` says how many
-open issues were left unread. ``hub.json`` gives ``tracker.ready_label`` and ``repos[].dir``, so
-later scripts read no config.
+open issues were left unread. The config gives the ready label and each repo's dir, so later
+scripts read no config.
 
 Prints ``{"ready_label", "repos", "read", "open", "unread", "unread_line",
 "descriptions_dropped", "skipped", "issues"}``, at most ``OUTPUT_BUDGET`` bytes: past it,
-descriptions are dropped from the newest issue first. A bad file, ``hub.json`` or limit, or an
+descriptions are dropped from the newest issue first. A bad file, config or limit, or an
 output still over budget without descriptions, exits 2 with ``read.py: <reason>`` on stderr.
 """
 
@@ -47,7 +48,6 @@ ISSUE_FIELDS = (
 TOP_FIELDS = ("version", "read_at", "open_total", "issues")
 ISSUE_ID = re.compile(r"[A-Z][A-Z0-9]{0,9}-[1-9][0-9]{0,8}")
 REPO_DIR = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,99}")
-DEFAULT_READY_LABEL = "agent-ready"
 MAX_FILE_BYTES = 1 << 20
 MAX_ENTRIES = 500
 MAX_LIMIT = 100
@@ -64,7 +64,7 @@ LINE_CONTROLS = frozenset("\n\t")
 
 
 class BadInputError(Exception):
-    """The file, hub.json or an argument cannot be read: the run fails at this node."""
+    """The file, the config or an argument cannot be read: the run fails at this node."""
 
 
 def clean(value: object, limit: int, *, lines: bool = False) -> str:
@@ -210,21 +210,25 @@ def issues_file(given: str) -> dict[str, object]:
     return document
 
 
-def hub_config() -> tuple[str, list[str]]:
-    """``tracker.ready_label`` (its default when absent) and each ``repos[].dir`` of hub.json."""
-    document = json_file(Path("hub.json"), MAX_FILE_BYTES, "hub.json")
+def hub_config(text: str) -> tuple[str, list[str]]:
+    """The ready label and each repo's dir, from ``hub step config``'s output."""
+    if len(text.encode()) > MAX_FILE_BYTES:
+        raise BadInputError("the config: larger than 1 MiB")
+    try:
+        document = json.loads(text)
+    except (ValueError, RecursionError):
+        raise BadInputError("the config: not JSON") from None
     if not isinstance(document, dict):
-        raise BadInputError("hub.json: not a JSON object")
-    tracker = document.get("tracker", {})
-    label = tracker.get("ready_label", DEFAULT_READY_LABEL) if isinstance(tracker, dict) else None
+        raise BadInputError("the config: not a JSON object")
+    label = document.get("ready_label")
     if not isinstance(label, str) or not label:
-        raise BadInputError("hub.json: tracker.ready_label is not text")
+        raise BadInputError("the config: ready_label is not text")
     repos = document.get("repos")
     if not isinstance(repos, list):
-        raise BadInputError("hub.json: repos is not a list")
+        raise BadInputError("the config: repos is not a list")
     dirs = [repo.get("dir") if isinstance(repo, dict) else None for repo in repos]
     if not all(isinstance(d, str) and REPO_DIR.fullmatch(d) and d != ".." for d in dirs):
-        raise BadInputError("hub.json: a repos[].dir is not a folder name")
+        raise BadInputError("the config: a repos[].dir is not a folder name")
     return label, [str(d) for d in dirs]
 
 
@@ -248,8 +252,8 @@ def fit_budget(result: dict[str, object], issues: list[dict[str, object]]) -> in
     return dropped
 
 
-def summary(document: dict[str, object], limit: int) -> dict[str, object]:
-    label, repos = hub_config()
+def summary(document: dict[str, object], limit: int, config: str) -> dict[str, object]:
+    label, repos = hub_config(config)
     issues, skipped = bounded_issues(document, limit)
     given = document.get("open_total")
     entries = entries_of(document)
@@ -274,9 +278,10 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="read.py")
     parser.add_argument("--file", required=True)
     parser.add_argument("--limit", default="50")
+    parser.add_argument("--config", required=True, help="What hub step config printed.")
     given = parser.parse_args(argv)
     try:
-        result = summary(issues_file(given.file), limit_of(given.limit))
+        result = summary(issues_file(given.file), limit_of(given.limit), given.config)
     except BadInputError as error:
         print(f"read.py: {error}", file=sys.stderr)
         return 2

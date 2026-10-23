@@ -2,6 +2,7 @@
 
 ``/triage --backlog`` writes the open issues it read to one JSON file; ``read.py`` checks it, keeps
 the oldest ``--limit`` issues, cuts every field, and says how many open issues were left unread.
+The ready label and repo dirs come from ``hub step config``'s output (``--config``, AGH-480).
 """
 
 import importlib.util
@@ -37,7 +38,13 @@ def load() -> ModuleType:
 
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
-HUB_JSON = {"tracker": {"ready_label": "ready-now"}, "repos": [{"dir": "api"}, {"dir": "web"}]}
+CONFIG = {"ready_label": "ready-now", "repos": [{"dir": "api"}, {"dir": "web"}]}
+# What hub step config printed for the current test, as the workflow passes it with --config.
+CURRENT: dict[str, str] = {}
+
+
+def argv(*given: str) -> list[str]:
+    return [*given, "--config", CURRENT["config"]]
 
 
 def an_issue(n: int, **fields: Any) -> dict[str, Any]:
@@ -70,7 +77,7 @@ def a_document(issues: list[Any], **top: Any) -> dict[str, Any]:
 
 @pytest.fixture
 def hub(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    (tmp_path / "hub.json").write_text(json.dumps(HUB_JSON), encoding="utf-8")
+    CURRENT["config"] = json.dumps(CONFIG)
     monkeypatch.chdir(tmp_path)
     return tmp_path
 
@@ -81,7 +88,7 @@ def write(path: Path, document: object) -> Path:
 
 
 def run(capsys: pytest.CaptureFixture[str], path: Path, limit: str = "50") -> dict[str, Any]:
-    assert load().main(["--file", str(path), "--limit", limit]) == 0
+    assert load().main(argv("--file", str(path), "--limit", limit)) == 0
     found: dict[str, Any] = json.loads(capsys.readouterr().out)
     return found
 
@@ -129,7 +136,7 @@ def test_says_none_left_unread_when_every_issue_read(
     assert found["unread_line"] == "No open issue was left unread (1 of 1 read)"
 
 
-def test_prints_ready_label_and_repos_when_hub_json_read(
+def test_prints_ready_label_and_repos_when_config_read(
     hub: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     path = write(hub / "issues.json", a_document([an_issue(1)]))
@@ -140,38 +147,33 @@ def test_prints_ready_label_and_repos_when_hub_json_read(
     assert found["repos"] == ["api", "web"]
 
 
-def test_takes_default_ready_label_when_hub_json_names_none(
-    hub: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    (hub / "hub.json").write_text(json.dumps({"repos": [{"dir": "api"}]}), encoding="utf-8")
+def test_reads_no_hub_json_when_config_given(hub: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    (hub / "hub.json").write_text(json.dumps({"repos": [{"dir": "other"}]}), encoding="utf-8")
     path = write(hub / "issues.json", a_document([an_issue(1)]))
 
-    assert run(capsys, path)["ready_label"] == "agent-ready"
+    assert run(capsys, path)["repos"] == ["api", "web"]
 
 
 @pytest.mark.parametrize(
-    "hub_json",
+    "config",
     [
         "not json",
         "[1]",
-        json.dumps({"repos": "api"}),
-        json.dumps({"repos": [{"dir": "../etc"}]}),
-        json.dumps({"tracker": {"ready_label": 3}, "repos": []}),
-        None,
+        json.dumps({"ready_label": "x", "repos": "api"}),
+        json.dumps({"ready_label": "x", "repos": [{"dir": "../etc"}]}),
+        json.dumps({"ready_label": 3, "repos": []}),
+        json.dumps({"repos": []}),
     ],
-    ids=["text", "array", "repos-not-list", "dir-escapes", "label-not-text", "missing"],
+    ids=["text", "array", "repos-not-list", "dir-escapes", "label-not-text", "label-missing"],
 )
-def test_exits_two_when_hub_json_unreadable(
-    hub: Path, capsys: pytest.CaptureFixture[str], hub_json: str | None
+def test_exits_two_when_config_unreadable(
+    hub: Path, capsys: pytest.CaptureFixture[str], config: str
 ) -> None:
-    if hub_json is None:
-        (hub / "hub.json").unlink()
-    else:
-        (hub / "hub.json").write_text(hub_json, encoding="utf-8")
+    CURRENT["config"] = config
     path = write(hub / "issues.json", a_document([an_issue(1)]))
 
-    assert load().main(["--file", str(path), "--limit", "50"]) == 2
-    assert capsys.readouterr().err.startswith("read.py: hub.json: ")
+    assert load().main(argv("--file", str(path), "--limit", "50")) == 2
+    assert capsys.readouterr().err.startswith("read.py: the config: ")
 
 
 def test_exits_two_when_file_is_link_or_large_or_not_json(
@@ -201,10 +203,10 @@ def test_exits_two_when_file_is_link_or_large_or_not_json(
     }
 
     for name, given in cases.items():
-        assert load().main(["--file", given, "--limit", "50"]) == 2, name
+        assert load().main(argv("--file", given, "--limit", "50")) == 2, name
         assert capsys.readouterr().err.startswith("read.py: "), name
     for limit in ("0", "101", "x"):
-        assert load().main(["--file", str(good), "--limit", limit]) == 2, limit
+        assert load().main(argv("--file", str(good), "--limit", limit)) == 2, limit
         assert capsys.readouterr().err.startswith("read.py: "), limit
 
 
@@ -314,7 +316,7 @@ def test_drops_newest_descriptions_when_output_over_budget(
     path = write(hub / "issues.json", a_document(issues))
     monkeypatch.setattr(module, "OUTPUT_BUDGET", 4000)
 
-    assert module.main(["--file", str(path), "--limit", "50"]) == 0
+    assert module.main(argv("--file", str(path), "--limit", "50")) == 0
 
     found = json.loads(capsys.readouterr().out)
     descriptions = [issue["description"] for issue in found["issues"]]
@@ -329,7 +331,7 @@ def test_exits_two_when_output_over_budget_without_descriptions(
     path = write(hub / "issues.json", a_document([an_issue(n) for n in range(1, 6)]))
     monkeypatch.setattr(module, "OUTPUT_BUDGET", 100)
 
-    assert module.main(["--file", str(path), "--limit", "50"]) == 2
+    assert module.main(argv("--file", str(path), "--limit", "50")) == 2
     assert "over" in capsys.readouterr().err
 
 
@@ -337,7 +339,7 @@ def test_exits_two_when_file_nests_too_deep(hub: Path, capsys: pytest.CaptureFix
     path = hub / "deep.json"
     path.write_text("[" * 400_000, encoding="utf-8")
 
-    assert load().main(["--file", str(path), "--limit", "50"]) == 2
+    assert load().main(argv("--file", str(path), "--limit", "50")) == 2
     assert capsys.readouterr().err == "read.py: the issues file: not UTF-8 JSON\n"
 
 
