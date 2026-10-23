@@ -20,6 +20,25 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `links.dead` and `repos.agents` now gets the missing or unlistable checkout findings under `repos.ui_paths`.
 - Review outputs accept `reviewer` `ux` and `overengineering`, saved as `reviews/<ticket>/ux-r<N>.json` and
   `overengineering-r<N>.json` (AGH-474). Existing review files stay valid. The lenses that write them come later.
+- A merged ticket's outcome (two-level-flows S3, AGH-473): `hub step outcome --feature --ticket --pr --built --changes
+  --interfaces [--merged-at]` writes `tickets/<ticket>/outcome.md` once (frontmatter `merged_at`, `pr`, `dependents`;
+  what was built, what changed against the plan, the final interfaces), never committing; a second run writes
+  nothing. In `hub web` the ticket's Merged step reads "Outcome recorded" and Build counts the ticket merged when
+  Linear has it Done or its outcome exists, on the Features list, the detail and the Tickets tab alike (Build is done
+  without Linear once every ticket has an outcome). A dependent whose latest preflight predates a blocker's outcome
+  reads Preflight "stale" with "<blocker> merged: re-run preflight" until a newer preflight runs. A malformed outcome
+  (16 KiB at most) turns only its Merged step unknown.
+- A built-in `preflight` workflow (`sdlc` pack, AGH-473): a dependent ticket's read-only preflight after a blocker
+  merged (`hub workflow run preflight --input feature=… --input ticket=… --input blocker=…`, which `/merge` will
+  start). It changes no checkout and makes no branch, commit or PR; on plan drift it opens a change request and waits
+  for you, as `/implement` does. `hub step preflight-due` says first whether the dependent still has to read the
+  outcome, so running it again for the same merge adds no second preflight.
+
+### Changed
+
+- `ticket-pass` now includes the preflight from the new built-in `preflight-check` workflow (AGH-473), so its
+  preflight steps are recorded as `<pass>__check__<step>` (`pass-1__check__preflight`, `pass-1__check__gate`…). A
+  hub's own fixtures or scripts that name `pass-1__preflight` and the like need the new names.
 
 ## [0.20.1] - 2026-10-22
 

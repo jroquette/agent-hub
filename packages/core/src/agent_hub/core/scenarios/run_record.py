@@ -15,13 +15,16 @@ The lines a scenario run's investigation writes (``cli/scenario_investigation.py
 - ``proposal``: ``gate``, ``number``, ``proposal`` (from 1 in the run), ``findings`` (each
   ``finding_id``, ``title``, ``text``, ``evidence``) and ``options`` (each ``option_id``,
   ``summary``, ``steps`` and their ``plan``);
-- ``agent_action``: an investigation read (``hub action run --run``);
+- ``agent_action``: an investigation read (``hub action run --run``), its timeline line naming
+  its action and effect;
 - ``workaround_start`` and ``workaround_end``: ``workaround_id``, ``number``, ``option``, ``steps``,
   ``approver``, ``status``.
 
 The gate is answered by a ``decision`` line and closed by a ``step_end`` line on it. The view
 also keeps each ``expect.poll`` (its node, attempt, poll and whether the condition held; never
-its output), each ``context.capture`` (its name and value) and each ``decision`` on any gate.
+its output), each ``context.capture`` (its name and value), each ``decision`` on any gate and
+each ``action`` line: an action call's policy facts (action, effect, origin, decision, content
+hash, status), never its inputs or output.
 """
 
 import dataclasses
@@ -40,6 +43,7 @@ WORKAROUND_START: Final = "workaround_start"
 WORKAROUND_END: Final = "workaround_end"
 EXPECT_POLL: Final = "expect.poll"
 CONTEXT_CAPTURE: Final = "context.capture"
+ACTION_CALL: Final = "action"
 TIMELINE_EVENTS: Final = frozenset(
     {
         "start",
@@ -71,13 +75,15 @@ class RecordTooLargeError(RunRecordError):
 @dataclass(frozen=True, kw_only=True, slots=True)
 class TimelineItem:
     """One line of the timeline: its event, the node (or step, or gate) and attempt it is
-    about, its status and when."""
+    about, its status and when; an investigation read's (``agent_action``) action and effect."""
 
     event: str
     node: str | None
     attempt: int | None
     status: str | None
     at: str | None
+    action: str | None = None
+    effect: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -171,6 +177,28 @@ class DecisionView:
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
+class ActionCallView:
+    """One action call's policy facts, from its ``action`` line: the step (node, attempt and
+    an expect's poll), the action and its pinned content hash, its effect, who planned it
+    (``origin``), the policy's decision and who answered an ask; its inputs and output are
+    left out."""
+
+    node: str
+    attempt: int | None
+    poll: int | None
+    action: str | None
+    effect: str | None
+    origin: str | None
+    decision: str | None
+    reason_kind: str | None
+    content_hash: str | None
+    approver: str | None
+    status: str | None
+    failure_kind: str | None
+    at: str | None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
 class ScenarioRunView:
     """A scenario run as its record holds it; ``status`` is its last end's, ``None`` while it
     has none."""
@@ -187,6 +215,7 @@ class ScenarioRunView:
     polls: tuple[PollView, ...] = ()
     captures: tuple[CaptureView, ...] = ()
     decisions: tuple[DecisionView, ...] = ()
+    actions: tuple[ActionCallView, ...] = ()
 
     @property
     def findings(self) -> tuple[FindingView, ...]:
@@ -242,6 +271,7 @@ def fold_records(records: Iterable[Record]) -> ScenarioRunView:
         polls=tuple(fold.polls),
         captures=tuple(fold.captures),
         decisions=tuple(fold.decisions),
+        actions=tuple(fold.actions),
     )
 
 
@@ -257,6 +287,7 @@ class _Fold:
         self.polls: list[PollView] = []
         self.captures: list[CaptureView] = []
         self.decisions: list[DecisionView] = []
+        self.actions: list[ActionCallView] = []
 
     def add(self, record: Record) -> None:
         event = _text(record.get("event"))
@@ -276,6 +307,7 @@ class _Fold:
             WORKAROUND_END: self._workaround_end,
             EXPECT_POLL: self._poll,
             CONTEXT_CAPTURE: self._capture,
+            ACTION_CALL: self._action,
         }
         if (handler := handlers.get(event)) is not None:
             handler(record)
@@ -330,6 +362,26 @@ class _Fold:
                     attempt=_int(record.get("attempt")),
                     name=name,
                     value=record.get("value"),
+                )
+            )
+
+    def _action(self, record: Record) -> None:
+        if (node := _text(record.get("node"))) is not None:
+            self.actions.append(
+                ActionCallView(
+                    node=node,
+                    attempt=_int(record.get("attempt")),
+                    poll=_int(record.get("poll")),
+                    action=_text(record.get("action")),
+                    effect=_text(record.get("effect")),
+                    origin=_text(record.get("origin")),
+                    decision=_text(record.get("decision")),
+                    reason_kind=_text(record.get("reason_kind")),
+                    content_hash=_text(record.get("content_hash")),
+                    approver=_text(record.get("approver")),
+                    status=_text(record.get("status")),
+                    failure_kind=_text(record.get("failure_kind")),
+                    at=_text(record.get("ts")),
                 )
             )
 
@@ -392,12 +444,15 @@ def _item(event: str, record: Record) -> TimelineItem:
         None,
     )
     attempt = record.get("attempt", record.get("number"))
+    read = event == AGENT_ACTION
     return TimelineItem(
         event=event,
         node=node,
         attempt=attempt if isinstance(attempt, int) else None,
         status=_text(record.get("status")),
         at=_text(record.get("ts")),
+        action=_text(record.get("action")) if read else None,
+        effect=_text(record.get("effect")) if read else None,
     )
 
 

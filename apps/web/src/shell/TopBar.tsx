@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router";
+import { useMatch, useNavigate } from "react-router";
 
 import {
   Button,
@@ -131,6 +131,8 @@ export function TopBar({
   onPalette,
 }: TopBarProps) {
   const { theme, cycleTheme, tz, setTz } = usePreferences();
+  // A scenario run's page has its own, read-only investigation chat: no second chat there (E-15).
+  const scenarioRun = useMatch("/scenarios/:project/:name/runs/:runId");
   return (
     <header className="ah-topbar">
       <IconButton
@@ -145,7 +147,7 @@ export function TopBar({
         <Kbd>Ctrl K</Kbd>
       </button>
       <span className="ah-grow" />
-      <DiscussToggle />
+      {scenarioRun === null && <DiscussToggle />}
       <CollectorPill health={health} />
       <SegmentedControl
         label="Time zone"

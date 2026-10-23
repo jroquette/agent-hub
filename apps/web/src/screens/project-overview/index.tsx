@@ -37,6 +37,8 @@ import { useNeedsYou, useRefreshOnCounts } from "../portfolio/queries";
 import { StaleStamp } from "../portfolio/StaleStamp";
 import { budgetOf, durationSeconds, finishedCosts, median } from "../runs-list/model";
 import type { WorkflowRun } from "../runs-list/queries";
+import { ScenarioRunBadge } from "../scenarios/parts";
+import { scenarioOfLabel, scenarioRunHref } from "../scenarios/queries";
 import { TicketItem } from "../tickets";
 import { ticketsOf } from "../tickets/model";
 import {
@@ -472,24 +474,46 @@ function TaskRow({ run, now }: { run: WorkflowRun; now: number }) {
   if (failed) note = run.failure?.reason ? `Problem: ${run.failure.reason}` : "Needs a look";
   else if (done) note = run.pr_url ? "Pull request opened" : "Finished without a pull request";
   else note = `Started ${fmtDuration(durationSeconds(run.started_at, null, now))} ago`;
+  // A scenario run is called so, never "run" alone, and opens on its own page (E-15); it has
+  // no workflow stages and no pull request: its own status and times say where it is (F4).
+  const scenario = run.kind === "scenario" ? scenarioOfLabel(run.workflow) : null;
+  if (scenario !== null) {
+    note =
+      run.ended_at === null
+        ? `Started ${fmtDuration(durationSeconds(run.started_at, null, now))} ago`
+        : `Ended ${fmtDuration(durationSeconds(run.ended_at, null, now))} ago`;
+  }
   return (
     <AppLink
-      href={`/runs/${encodeURIComponent(run.id)}`}
+      href={
+        scenario === null
+          ? `/runs/${encodeURIComponent(run.id)}`
+          : scenarioRunHref(run.project, scenario, run.id)
+      }
       className="po-task"
       data-failed={failed || undefined}
     >
       <span className="po-task-title">
-        <span>
-          <span className="ah-mono ah-small" style={{ fontWeight: 500, marginRight: 6 }}>
-            {run.issue?.key ?? run.id.slice(0, 8)}
+        {scenario === null ? (
+          <span>
+            <span className="ah-mono ah-small" style={{ fontWeight: 500, marginRight: 6 }}>
+              {run.issue?.key ?? run.id.slice(0, 8)}
+            </span>
+            {run.issue?.title ?? ""}
           </span>
-          {run.issue?.title ?? ""}
-        </span>
+        ) : (
+          <span>
+            <span className="ah-small" style={{ fontWeight: 500, marginRight: 6 }}>
+              Scenario run <span className="ah-mono">{run.id.slice(0, 8)}</span>
+            </span>
+            <span className="ah-mono">{scenario}</span>
+          </span>
+        )}
         <span className="ah-small ah-subtle po-task-note">{note}</span>
       </span>
-      <StepProgress run={run} />
+      {scenario === null ? <StepProgress run={run} /> : <ScenarioRunBadge status={run.status} />}
       <span>
-        {budget !== null && cost !== null && !done && !failed ? (
+        {scenario !== null ? null : budget !== null && cost !== null && !done && !failed ? (
           <BudgetBar spent={cost} budget={budget} label="Budget" />
         ) : (
           <span className="ah-small ah-num" style={{ fontWeight: 400 }}>

@@ -1,7 +1,8 @@
-"""A feature's ticket records and plan change requests (two-level-flows AC-2.5, AC-2.8, AC-2.14):
-read into what the folds need, a malformed file kept as its problem."""
+"""A feature's ticket records and plan change requests (two-level-flows AC-2.5, AC-2.8, AC-2.14,
+AC-3.1, AC-3.3): read into what the folds need, a malformed file kept as its problem."""
 
 import json
+from datetime import UTC, datetime
 
 import pytest
 
@@ -10,10 +11,16 @@ from agent_hub.core.features.feature_view import ChangeDecisionView
 from agent_hub.core.features.ticket_records import (
     CHANGE_REQUEST_HEAD_BYTES,
     MAX_CHANGE_REQUEST_FILES,
+    MAX_OUTCOME_BYTES,
     MAX_PREFLIGHT_BYTES,
     ChangeRequest,
+    OutcomeFile,
+    TicketOutcome,
+    already_read,
     change_requests,
+    outcome_record,
     preflight_record,
+    recorded_outcomes,
     request_view,
     ticket_folder,
 )
@@ -313,3 +320,111 @@ def test_picks_the_folder_the_flow_reads_when_key_and_id_folders_differ_in_case(
     assert ticket_folder(folders, ("T2", "DEM-8")) == "dem-8"
     assert ticket_folder(folders, ("T2",)) == "T2"
     assert ticket_folder(folders, ("T9",)) is None
+
+
+def an_outcome(**fields: str) -> bytes:
+    values = {
+        "type": "ticket-outcome",
+        "ticket": "DEM-7",
+        "merged_at": "2026-10-22T08:00:00Z",
+        "pr": "https://github.com/acme/demo-api/pull/4",
+        "dependents": "[DEM-8, T3]",
+    } | fields
+    front = "".join(f"{key}: {value}\n" for key, value in values.items() if value != "-")
+    return f"---\n{front}---\n\n# Outcome: DEM-7\n\n## What was built\n\nThe reader.\n".encode()
+
+
+# AC-3.1: the outcome's frontmatter, read as the Merged step and Build need it.
+def test_reads_merged_at_pr_and_dependents_when_outcome_recorded() -> None:
+    assert outcome_record(an_outcome(), folder="dem-7") == TicketOutcome(
+        ticket="DEM-7",
+        merged_at=datetime(2026, 10, 22, 8, 0, tzinfo=UTC),
+        pr="https://github.com/acme/demo-api/pull/4",
+        dependents=("DEM-8", "T3"),
+    )
+    assert outcome_record(an_outcome(dependents="[]", pr="demo-api#4"), folder="DEM-7") == (
+        TicketOutcome(
+            ticket="DEM-7",
+            merged_at=datetime(2026, 10, 22, 8, 0, tzinfo=UTC),
+            pr="demo-api#4",
+            dependents=(),
+        )
+    )
+    assert outcome_record(None, folder="DEM-7") is None
+
+
+@pytest.mark.parametrize(
+    ("fields", "why"),
+    [
+        ({"type": "ticket-brief"}, "type is ticket-brief, not ticket-outcome"),
+        ({"ticket": "DEM-9"}, "ticket: DEM-9 is not the folder's ticket DEM-7"),
+        ({"ticket": "-"}, "ticket is missing"),
+        ({"merged_at": "-"}, "merged_at is missing"),
+        ({"merged_at": "2026-10-22T08:00:00"}, "merged_at needs a time with an offset"),
+        ({"merged_at": "2026-10-22"}, "merged_at needs a time with an offset"),
+        ({"pr": "#pending"}, "pr names no pull request: #pending"),
+        ({"pr": "-"}, "pr names no pull request: none"),
+        ({"dependents": "[DEM-8, 9x]"}, "dependents has an invalid item: 9x"),
+    ],
+)
+def test_names_the_problem_when_outcome_malformed(fields: dict[str, str], why: str) -> None:
+    assert outcome_record(an_outcome(**fields), folder="DEM-7") == (
+        f"outcome.md could not be read ({why}). Fix it in a hub PR."
+    )
+
+
+def test_says_why_when_outcome_not_read() -> None:
+    assert outcome_record(f"larger than {MAX_OUTCOME_BYTES} bytes", folder="DEM-7") == (
+        "outcome.md could not be read (larger than 16384 bytes). Fix it in a hub PR."
+    )
+    assert outcome_record(b"no frontmatter\n", folder="DEM-7") == (
+        "outcome.md could not be read (no frontmatter). Fix it in a hub PR."
+    )
+
+
+def test_keeps_the_first_folder_by_name_when_outcomes_recorded_under_one_ticket() -> None:
+    found = recorded_outcomes(
+        (
+            OutcomeFile(name="dem-7", read=an_outcome(merged_at="2026-10-22T09:00:00Z")),
+            OutcomeFile(name="DEM-7", read=an_outcome()),
+            OutcomeFile(name="DEM-9", read="a link, not a regular file"),
+        )
+    )
+
+    assert sorted(found) == ["DEM-7", "DEM-9"]
+    recorded = found["DEM-7"]
+    assert isinstance(recorded, TicketOutcome)
+    assert recorded.merged_at == datetime(2026, 10, 22, 8, 0, tzinfo=UTC)
+    assert found["DEM-9"] == (
+        "outcome.md could not be read (a link, not a regular file). Fix it in a hub PR."
+    )
+
+
+# AC-3.3: a preflight run since the merge that lists the blocker read its outcome.
+def test_finds_the_run_that_read_the_outcome_when_blockers_read_name_the_blocker() -> None:
+    merged = datetime(2026, 10, 21, 9, 0, tzinfo=UTC)
+    before = a_preflight(ran_at="2026-10-21T08:00:00Z", blockers_read=["DEM-7"])
+    since = a_preflight(ran_at="2026-10-21T09:30:00Z", blockers_read=["t1"])
+    unread = a_preflight(ran_at="2026-10-21T09:30:00Z", blockers_read=["DEM-6"])
+
+    for content, found in ((before, False), (since, True), (unread, False)):
+        record = preflight_record(content, folder="DEM-8")
+        assert not isinstance(record, str)
+        run = already_read(record, names=("T1", "DEM-7"), merged_at=merged)
+        assert (run is not None) is found
+    assert already_read(None, names=("DEM-7",), merged_at=merged) is None
+
+
+# AGH-473 review Q2: times compare as instants, whatever their offsets.
+@pytest.mark.parametrize(
+    ("ran_at", "found"), [("2026-10-21T06:30:00-03:00", True), ("2026-10-21T05:30:00-03:00", False)]
+)
+def test_compares_instants_when_run_and_merge_have_different_offsets(
+    ran_at: str, *, found: bool
+) -> None:
+    record = preflight_record(a_preflight(ran_at=ran_at, blockers_read=["DEM-7"]), folder="DEM-8")
+    assert not isinstance(record, str)
+
+    run = already_read(record, names=("DEM-7",), merged_at=datetime(2026, 10, 21, 9, 0, tzinfo=UTC))
+
+    assert (run is not None) is found

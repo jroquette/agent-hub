@@ -15,14 +15,18 @@ decide``: the CLI's ``DecideGate`` over the run's record, where ``web``) and res
 detached. A record that refuses the decision (the gate closed or was decided meanwhile) answers
 409 and nothing resumes; a resume that cannot start leaves the decision recorded (502), and the
 run can be resumed later.
+
+``WorkflowGates.with_gate_kinds`` names, on ``GET /approvals``, each open gate of an engine run
+that its run's record classifies (``policy`` or ``investigation``, E-10, E-15), so hub web tells
+an investigation from an approval without reading the gate's id.
 """
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Annotated, Final, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
-from agent_hub.core.approvals.approval import ApprovalKind
+from agent_hub.core.approvals.approval import Approval, ApprovalKind
 from agent_hub.core.approvals.decide_gate import MAX_TEXT_BYTES
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError, EventReadModels
 from agent_hub.core.workflows.events import issue_key
@@ -127,6 +131,34 @@ class WorkflowGates:
         kinds: RunGateKinds | None = None,
     ) -> None:
         self._runs, self._hubs, self._plans, self._kinds = runs, hubs, plans, kinds
+
+    def with_gate_kinds(self, approvals: Sequence[Approval]) -> list[Approval]:
+        """``approvals``, each open gate of an engine run with the kind its run's record names
+        (each run's record read once); the others as they are."""
+        if self._kinds is None:
+            return list(approvals)
+        hubs = dict(self._hubs.project_hubs())
+        read: dict[str, Mapping[str, str]] = {}
+        named: list[Approval] = []
+        for approval in approvals:
+            parts = approval.gate_id.split(":")
+            hub = hubs.get(approval.project)
+            if (
+                approval.kind != ApprovalKind.HUMAN_GATE
+                or approval.decided
+                or hub is None
+                or len(parts) != 3  # noqa: PLR2004 -- <run>:<node>:<attempt>
+                or approval.session_id != f"{RUN_SESSION_PREFIX}{parts[0]}"
+            ):
+                named.append(approval)
+                continue
+            if parts[0] not in read:
+                read[parts[0]] = self._kinds.gate_kinds(hub, parts[0])
+            kind = read[parts[0]].get(parts[1])
+            if kind in ("policy", "investigation"):
+                approval = approval.model_copy(update={"gate_kind": kind})
+            named.append(approval)
+        return named
 
     def gate(self, approval_id: str) -> WorkflowGate:
         """The open gate ``approval_id`` names; ``RunConflictError`` when it is no open gate a

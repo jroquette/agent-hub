@@ -1,4 +1,4 @@
-"""The Tickets view of a feature (AGH-136 C.2; AC-136.7, E5, E9)."""
+"""The Tickets view of a feature (AGH-136 C.2; AC-136.7, E5, E9; two-level-flows AC-3.1, AC-3.3)."""
 
 import json
 from dataclasses import replace
@@ -19,7 +19,7 @@ from agent_hub.core.features.feature_tickets import (
     ticket_records,
 )
 from agent_hub.core.features.golden_path import LINEAR_NOT_CONNECTED, LINEAR_NOT_LOADED
-from agent_hub.core.features.ticket_records import TicketFiles
+from agent_hub.core.features.ticket_records import OutcomeFile, TicketFiles
 from agent_hub.core.features.ticket_snapshots import SnapshotRead
 from agent_hub.core.hub_config.model import Tracker
 from agent_hub.core.testing.read_model_builders import READ_TIME
@@ -406,3 +406,52 @@ def test_serves_preflight_problem_when_record_malformed() -> None:
 
 def test_serves_nothing_when_ticket_not_in_feature() -> None:
     assert ticket_records(a_folder(), "DEM-99", project="demo") is None
+
+
+# AC-3.1, AC-3.3: T1's outcome merges it for its flow and Build, and makes T2's older preflight
+# stale, named by the blocker's id though its folder is named by its key.
+def test_serves_outcome_and_stale_dependent_when_blocker_outcome_recorded() -> None:
+    outcome = (
+        b"---\ntype: ticket-outcome\nticket: T1\nmerged_at: 2026-10-21T10:00:00Z\n"
+        b"pr: demo-api#4\ndependents: [DEM-8]\n---\n"
+    )
+    preflight = {
+        "schema": "agent-hub/preflight/1",
+        "ticket": "DEM-8",
+        "runs": [
+            {
+                "ran_at": "2026-10-20T09:00:00Z",
+                "plan_version": 1,
+                "commit": "4e1a9c2",
+                "blockers_read": [],
+                "input": "none",
+                "input_text": None,
+                "drift": "none",
+                "local_notes": [],
+                "change_request": None,
+                "run_id": "implement-8",
+            }
+        ],
+    }
+    folder = replace(
+        a_folder(),
+        ticket_folders=(TicketFiles(name="DEM-8", preflight=json.dumps(preflight).encode()),),
+        outcomes=(OutcomeFile(name="T1", read=outcome),),
+    )
+    snapshot = TicketSnapshot(
+        summaries=(a_summary("DEM-7", "started"), a_summary("DEM-8", "unstarted")),
+        missing=(),
+        external=(),
+    )
+
+    tickets = feature_tickets(
+        folder, a_read(snapshot=snapshot), project="demo", tracker=a_tracker(), now=READ_TIME
+    )
+
+    first, second = (row.flow for row in tickets.tickets)
+    assert first is not None
+    assert second is not None
+    assert (first.steps[-1].state, first.steps[-1].meta) == ("done", "Outcome recorded")
+    assert (second.steps[1].state, second.signal) == ("stale", "DEM-7 merged: re-run preflight")
+    build = tickets.golden_path.steps[5]
+    assert (build.name, build.meta) == ("build", "1 of 2 merged")
