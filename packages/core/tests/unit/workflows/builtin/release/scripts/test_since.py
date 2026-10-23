@@ -210,6 +210,42 @@ def test_reports_none_when_no_merge_since_tag(
     assert found["version"] == "0.20.1"
 
 
+def test_reports_none_when_only_tagged_release_pr_merged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The shape the release pack makes: the tag on the release PR's head, merged --no-ff."""
+    repo = a_repo(tmp_path)
+    merge_pr(repo, 10, "feat(core): release pack (AGH-494)")
+    git(repo, "checkout", "-q", "-b", "release")
+    git(repo, "commit", "-q", "--allow-empty", "-m", "chore(repo): release 0.21.0 (AGH-9)")
+    git(repo, "tag", "-a", "v0.21.0", "-m", "notes")
+    git(repo, "checkout", "-q", "main")
+    message = "Merge pull request #11 from acme/release\n\nchore(repo): release 0.21.0 (AGH-9)"
+    git(repo, "merge", "-q", "--no-ff", "-m", message, "release")
+
+    found = run(repo, monkeypatch, capsys)
+
+    assert (found["last_tag"], found["count"], found["bump"]) == ("v0.21.0", 0, "none")
+    assert (found["prs"], found["version"]) == ([], "0.21.0")
+
+
+def test_lists_later_pr_when_merged_after_tagged_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = a_repo(tmp_path)
+    git(repo, "checkout", "-q", "-b", "release")
+    git(repo, "commit", "-q", "--allow-empty", "-m", "chore(repo): release 0.21.0 (AGH-9)")
+    git(repo, "tag", "-a", "v0.21.0", "-m", "notes")
+    git(repo, "checkout", "-q", "main")
+    git(repo, "merge", "-q", "--no-ff", "-m", "Merge pull request #11 from acme/release", "release")
+    merge_pr(repo, 12, "fix(cli): after the release (AGH-10)")
+
+    found = run(repo, monkeypatch, capsys)
+
+    assert [pr["number"] for pr in found["prs"]] == [12]
+    assert (found["bump"], found["version"]) == ("patch", "0.21.1")
+
+
 def test_takes_highest_tag_when_several_reachable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
