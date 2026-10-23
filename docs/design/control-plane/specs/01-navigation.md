@@ -163,6 +163,12 @@ otherwise, this list wins:
   place (`?needs=all`), as the Portfolio does; a Needs you list with nowhere to go shows no "more" line.
 - **AC-426.1** (AGH-426, [20-tickets.md](20-tickets.md)) **Work** lists Tickets (`list-todo`, no badge) right after
   Features: the single-ticket work outside features.
+- **AC-521.4.1** (AGH-521, wins over AC-273.20, AGH-364 and AC-426.1 on order) The sidebar lists, in order:
+  Portfolio (no caption); **Work**, everything about the work in the codebase: Features (the needs-you badge),
+  Tickets, Scenarios, Sessions (the live badge), Workflow runs (once a workflow has run) and Environments;
+  **Knowledge**, what the project knows: Brain, Learnings (the to-triage badge) and Toolkit; and the Hub foot
+  (Health, Hub config, Settings). There is no Activity and no Setup group: the playground tried them and folded
+  Sessions and Workflow runs back into Work, Environments into Work and Toolkit into Knowledge.
 
 
 Groups appear in this order with `caption` style group labels in `text-subtle`. The selected item uses `accent-soft` ground, `accent` icon and a 2px `accent` left bar; hover uses `surface-hover`. Each item is a 32px (`size.control`) row; collapsed, each becomes a 40×40 icon button with a `Tooltip` showing the label and its shortcut.

@@ -21,6 +21,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   example and a rule to prefer the common word to an internal name, the rendered `AGENTS.md` rule 6 counts code
   comments as text for people, and the `quality-reviewer` flags comments that restate the code, narrate the change or
   name a ticket. A hub gets it with `hub sync` after it bumps `platform.version` (AGH-521).
+- The sidebar has two groups: Work (Features, Tickets, Scenarios, Sessions, Workflow runs, Environments) and Knowledge
+  (Brain, Learnings, Toolkit) (AGH-521).
 
 ### Fixed
 
