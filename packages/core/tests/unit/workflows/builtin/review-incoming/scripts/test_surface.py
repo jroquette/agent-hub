@@ -124,10 +124,47 @@ def test_ignores_removed_lines_when_classifying(surface: ModuleType) -> None:
     assert result["hits"] == []
 
 
-def test_skips_long_lines_when_content_rules_run(surface: ModuleType) -> None:
+def test_marks_risky_when_an_added_line_is_too_long_to_read(surface: ModuleType) -> None:
     result = surface.classify(a_diff("app/data.py", "x = '" + "a" * 2001 + "' # eval("), cut=False)
 
-    assert result["risky"] is False
+    assert result["risky"] is True
+    assert result["hits"] == [
+        {
+            "category": "unread",
+            "path": "app/data.py",
+            "line": 4,
+            "rule": "line over 2000 characters",
+        }
+    ]
+    assert "over 2000 characters" in result["reason"]
+
+
+def test_reads_an_added_line_starting_with_plus_signs_when_classifying(
+    surface: ModuleType,
+) -> None:
+    # In the diff the added line "++ subprocess.run(cmd, shell=True)" reads "+++ subprocess...".
+    # A removed line "-- old" reads "--- old" just before it.
+    diff = a_diff("app/run.py", "++ subprocess.run(cmd, shell=True)", removed=("-- old",))
+
+    result = surface.classify(diff, cut=False)
+
+    assert result["risky"] is True
+    assert "subprocesses" in result["categories"]
+    assert {h["path"] for h in result["hits"]} == {"app/run.py"}
+    assert result["files"] == 1
+
+
+def test_marks_risky_when_a_real_diff_adds_a_line_starting_with_plus_signs(
+    clone: Clone, run: Any
+) -> None:
+    clone.commit({"app/notes.txt": "intro\n++ os.system(cmd)\n"})
+
+    code, result = run()
+
+    assert code == 0
+    assert result["risky"] is True
+    assert "subprocesses" in result["categories"]
+    assert result["files"] == 1
 
 
 def test_marks_risky_when_diff_exceeds_read_cap(

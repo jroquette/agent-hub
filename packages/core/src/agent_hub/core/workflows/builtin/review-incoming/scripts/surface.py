@@ -9,7 +9,10 @@ the clone (hooks, external diffs and text conversions off) into a temporary file
 ``READ_CAP`` bytes. The security lens runs when this says ``risky``: a script decides it, never
 an agent. The six categories are those of the hub's security-reviewer (input handling, auth,
 secrets, subprocesses, file paths, parsing). A changed path matches the path rules; an added line
-(never a removed one, never one over ``LINE_CHARS`` characters) matches the line rules.
+(never a removed one) matches the line rules. ``---`` and ``+++`` are file headers only between a
+``diff --git`` line and the file's first hunk, so an added line that starts with ``++`` is read
+as one; an added line over ``LINE_CHARS`` characters is not read but counted as a hit
+(``unread``), so it makes the diff ``risky``.
 
 It fails closed: a diff over the cap is ``risky`` and ``truncated``, a git error is ``risky``,
 each with a ``reason``. The output: ``{"risky", "categories", "hits", "files", "truncated",
@@ -33,6 +36,7 @@ HITS_MAX = 50
 PATH_CHARS = 160
 SHA = re.compile(r"[0-9a-f]{40}")
 CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f`]")
+UNREAD = f"line over {LINE_CHARS} characters"
 HUNK = re.compile(r"^@{2} -[0-9,]+ \+([0-9]+)")
 CATEGORIES = ("input handling", "auth", "secrets", "subprocesses", "file paths", "parsing")
 PATH_RULES = (
@@ -94,6 +98,7 @@ class Finder:
         self.categories: set[str] = set()
         self.hits: list[dict[str, object]] = []
         self.files = 0
+        self.unread = False
 
     def hit(self, category: str, path: str, *, line: int | None, rule: str) -> None:
         self.categories.add(category)
@@ -111,6 +116,10 @@ class Finder:
 
     def added(self, path: str, number: int, text: str) -> None:
         if len(text) > LINE_CHARS:
+            self.unread = True
+            self.hits.append(
+                {"category": "unread", "path": shown(path), "line": number, "rule": UNREAD}
+            )
             return
         for category, pattern in LINE_RULES:
             for match in pattern.finditer(text):
@@ -119,26 +128,32 @@ class Finder:
 
 def classify(diff_text: str, *, cut: bool) -> dict[str, object]:
     """What ``diff_text`` (``git diff -U0``) touches; ``cut`` when it is not the whole diff."""
-    finder, path, previous, number = Finder(), "", "", 0
+    finder, path, previous, number, header = Finder(), "", "", 0, False
     for line in diff_text.splitlines():
-        if line.startswith("--- "):
+        if line.startswith("diff --git "):
+            # A content line always starts with "+", "-", " " or "\\": this is a new file.
+            header, path, previous = True, "", ""
+        elif header and line.startswith("--- "):
             previous = line[4:].strip()
-        elif line.startswith("+++ "):
+        elif header and line.startswith("+++ "):
             path = path_of(line, previous)
             finder.path(path)
         elif match := HUNK.match(line):
-            number = int(match.group(1))
-        elif line.startswith("+") and path:
+            header, number = False, int(match.group(1))
+        elif not header and line.startswith("+") and path:
             finder.added(path, number, line[1:])
             number += 1
     categories = [category for category in CATEGORIES if category in finder.categories]
+    reasons = [f"the diff is over {READ_CAP} bytes: read as risky"] if cut else []
+    if finder.unread:
+        reasons.append(f"an added line is over {LINE_CHARS} characters: read as risky")
     return {
-        "risky": bool(categories) or cut,
+        "risky": bool(categories) or cut or finder.unread,
         "categories": categories,
-        "hits": finder.hits,
+        "hits": finder.hits[:HITS_MAX],
         "files": finder.files,
         "truncated": cut,
-        "reason": f"the diff is over {READ_CAP} bytes: read as risky" if cut else "",
+        "reason": "; ".join(reasons),
     }
 
 
