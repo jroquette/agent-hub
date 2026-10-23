@@ -635,6 +635,8 @@ PROJECT_BRANCH_READERS = {
     "cli/src/agent_hub/cli/mcp_command.py": 1,
     # the hub checkout's branch in the brief
     "cli/src/agent_hub/cli/brief_command.py": 1,
+    # the hub repo's branch hub step config prints for the packs' scripts (the hub target's base)
+    "cli/src/agent_hub/cli/step_command.py": 1,
     # project_default_branch for ci.yml, and the project branch in AGENTS.md's mentions
     "generator/src/agent_hub/generator/placeholders.py": 2,
     # the project's branch in the managed settings' push denies (the guard's protected set)

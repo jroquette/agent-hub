@@ -57,6 +57,8 @@ Every node has `id`, `type` and optional `description`, `depends_on`, `trigger_r
   (`command[0:2]` is `[hub, step]`) runs the engine's own hub with `child_env`, refuses `env`
   and a referenced `cwd`, and narrows per call (`push_env` only for fetch, push, gh). Tracker writes (ADR 0030) are the
   parent's; `hub run --live`'s (`issue-to-pr`) runs `hub step` in process: per-call tokens and timeouts, no `timeout`.
+  A pack script gets `hub.json` values from a `config` node (`[hub, step, config]`, read-only, its output passed as an
+  argument), never by opening `hub.json` or `hub.local.json`.
 - `loop`: `max_iterations` (1–50) and at least one channel: `until` (text the final line equals), `until_field` (a
   `required` boolean of its `output_format`), `until_bash` (argv; exit 0 is done). `fresh_context: false` (default)
   resumes the previous iteration's session. The output is the last iteration's; past the cap it fails `max_iterations`.

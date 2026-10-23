@@ -80,6 +80,7 @@ hub run ISSUE --repo REPO [--live] [--budget USD] [--from implement|verify] … 
 hub ship [ISSUE] [--draft] [--dry-run]   # each changed repo's check, push and PR, PRs linked, the issue to review
 hub step worktree|verdict|commits|pr|report …   # one hub run stage as JSON, for the issue-to-pr workflow's nodes
 hub step ticket-brief|preflight|change-request|decide|amend-plan --feature SLUG …   # a ticket record written into the hub, never committed
+hub step config [--branch NAME --slug SLUG|--run-slug]   # the hub.json values a pack script needs, as JSON (read-only)
 hub bench [--validate] [--runs N] [--cases IDS] [--budget USD] …   # configuration benchmark (module bench)
 hub collect [FILE|-] [--db PATH]   # ingests canonical events from JSON Lines (stdin when FILE is omitted or -)
 hub collect --transcript FILE [--project NAME]   # a Claude Code transcript, as metadata-only events
@@ -202,6 +203,13 @@ The `implement` run's hub writes are `hub step` writers too (two-level-flows P7)
 --request N --summary`. Each writes one record under the hub's `brain/features/<slug>/`, checked as its reader reads it,
 prints the hub-relative `path` it wrote, follows no link and never commits; a refusal writes nothing. The records and
 their rules are in [feature-records.md](design/feature-records.md).
+
+`hub step config` prints the `hub.json` values the built-in packs' scripts need, read through the CLI's own loader with
+the developer's `hub.local.json` first (AGH-480): the project's `default_branch`, the `branch_prefix`, the author, the
+`ready_label` and team keys, the hub's and each repo's GitHub name, effective default branch and gates, and a `target`
+skeleton (titles not configured) that `hub step commits|pr` read back; `--branch NAME --slug SLUG` (or `--run-slug`,
+the run's id) adds `branch` (`<prefix><name lower>-<slug>`) and `branch_name`. No token, no tracker key, at most 64
+KiB; a pack's `config` node passes it to its scripts, which never open `hub.json` or `hub.local.json` themselves.
 
 `hub start ISSUE` reads the issue once, then looks for its task worktrees in every repo: a name found there resumes the
 task, else the task is named `<issue lower>-<title slug>`. It checks the branches, creates the missing worktrees of the
