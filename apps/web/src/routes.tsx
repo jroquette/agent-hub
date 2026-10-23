@@ -24,7 +24,12 @@ import { PortfolioScreen } from "./screens/portfolio";
 import { ProjectOverviewScreen } from "./screens/project-overview";
 import { RunDetailScreen } from "./screens/run-detail";
 import { RunsListScreen } from "./screens/runs-list";
-import { ScenarioDetailScreen, ScenarioRunScreen, ScenariosScreen } from "./screens/scenarios";
+import {
+  NewScenarioScreen,
+  ScenarioDetailScreen,
+  ScenarioRunScreen,
+  ScenariosScreen,
+} from "./screens/scenarios";
 import { SessionDetailScreen } from "./screens/session-detail";
 import { SessionsListScreen } from "./screens/sessions-list";
 import { liveRedirectTarget } from "./screens/sessions-list/liveRedirect";
@@ -102,6 +107,7 @@ export const appRoutes: RouteObject[] = [
           { path: "runs/:runId", element: <RunDetailScreen /> },
           // Scenarios carry their project (AM-17): names are unique per project only.
           { path: "scenarios", element: <ScenariosScreen /> },
+          { path: "scenarios/new", element: <NewScenarioScreen /> },
           { path: "scenarios/:project/:name", element: <ScenarioDetailScreen /> },
           { path: "scenarios/:project/:name/runs/:runId", element: <ScenarioRunScreen /> },
           { path: "knowledge", element: <Navigate to="/knowledge/learnings" replace /> },
