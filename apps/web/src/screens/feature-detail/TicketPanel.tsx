@@ -1,12 +1,6 @@
-import {
-  Fragment,
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  type ReactNode,
-  type RefObject,
-} from "react";
+import "./ticket-panel.css";
+
+import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Link, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
@@ -24,6 +18,9 @@ import {
   ProvenanceBadge,
   SidePanel,
   Skeleton,
+  StatusBadge,
+  Banner,
+  type Status,
   type StepperStep,
 } from "../../components";
 import { brainRoute } from "../../lib/brainLinks";
@@ -40,20 +37,22 @@ import {
 } from "./EvalTab";
 import { usePreferences } from "../../lib/preferences";
 import {
+  AcCount,
   LinearLink,
   ReadinessText,
+  STATE_STATUS,
   StateBadge,
   TICKET_STEP_LABEL,
+  TicketIdLine,
   TicketOpenLink,
   TicketPrLink,
-  TicketSignal,
   signalKind,
   ticketParam,
   ticketSearch,
   type TicketOpener,
 } from "./PlanningView";
 import { useDecideChangeRequest, useTicketRecords } from "./queries";
-import { AcList, TicketSessions } from "./TicketsTab";
+import { AcList, Assignee, EDGE_TITLE, TicketSessions, useTicketSessions } from "./TicketsTab";
 
 type FeatureTickets = components["schemas"]["FeatureTickets"];
 type TicketRow = components["schemas"]["TicketRow"];
@@ -64,8 +63,31 @@ type TicketRecords = components["schemas"]["TicketRecords"];
 type TicketRecordsQuery = ReturnType<typeof useTicketRecords>;
 type ChangeRequestView = components["schemas"]["ChangeRequestView"];
 type PreflightRun = components["schemas"]["PreflightRun"];
+type StepState = components["schemas"]["StepState"];
+type EdgeSource = components["schemas"]["EdgeSource"];
+type ExternalBlocker = components["schemas"]["ExternalBlocker"];
 
 const NOT_REACHED = "Not reached.";
+
+/** A step's state as the step card's badge: its word (GOLDEN_STATE_TEXT) in its tone. */
+const STEP_STATUS: Record<StepState, { status: Status; quiet?: boolean }> = {
+  current: { status: "live" },
+  partial: { status: "live" },
+  done: { status: "done" },
+  pending: { status: "idle" },
+  unrecorded: { status: "idle", quiet: true },
+  skipped: { status: "idle", quiet: true },
+  waiting: { status: "waiting" },
+  stale: { status: "stale" },
+  blocked: { status: "blocked" },
+  unknown: { status: "idle" },
+};
+
+/** How a step came out, when its meta says more than its state ("Changes requested"); else null. */
+function stepOutcome(step: StepperStep<string>): string | null {
+  if (!step.meta) return null;
+  return step.meta.toLowerCase() === GOLDEN_STATE_TEXT[step.state].toLowerCase() ? null : step.meta;
+}
 
 const DRIFT_WORDS: Record<PreflightRun["drift"], string> = {
   none: "no drift",
@@ -481,6 +503,9 @@ function StepDetail({
   const id = row.id ?? row.ref;
   const found = records.data;
   const discoveries = (found?.preflight?.runs ?? []).filter((run) => run.input === "discovery");
+  // The step card says the outcome above the detail: the detail never repeats it.
+  const outcome = stepOutcome(step);
+  const unsaid = (text: string) => (text === outcome ? null : text);
   if (step.name === "preflight" && step.state !== "pending" && step.state !== "unrecorded") {
     // The ticket's own records say more than its step: wait for them, or say why they failed.
     if (records.isPending) return <Skeleton width="80%" height={16} />;
@@ -507,7 +532,7 @@ function StepDetail({
           <>Not recorded: tickets picked up before /implement have no context brief or preflight.</>
         );
       }
-      return <>{step.state === "pending" ? NOT_REACHED : (step.meta ?? NOT_REACHED)}</>;
+      return <>{step.state === "pending" ? NOT_REACHED : unsaid(step.meta ?? NOT_REACHED)}</>;
     case "implement":
       return (
         <>
@@ -515,7 +540,7 @@ function StepDetail({
             ? "A review round exists."
             : unrecorded
               ? "Not recorded."
-              : (step.meta ?? NOT_REACHED)}
+              : unsaid(step.meta ?? NOT_REACHED)}
           {discoveries.length > 0 && (
             <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
               {discoveries.map((run, index) => (
@@ -532,7 +557,7 @@ function StepDetail({
       if (unrecorded) return <>Not recorded: no review record names this ticket.</>;
       return (
         <>
-          {step.meta ?? "Approved"}.{" "}
+          {outcome === null && `${step.meta ?? "Approved"}. `}
           <Link to={brainRoute(project, `features/${slug}/reviews/${id}.md`)}>
             Open the review record in Brain
           </Link>
@@ -559,50 +584,273 @@ function StepDetail({
     case "merged":
       if (step.state === "done") return <>Done in Linear.</>;
       return (
-        <>{step.state === "unknown" ? (step.meta ?? GOLDEN_STATE_TEXT.unknown) : NOT_REACHED}</>
+        <>
+          {step.state === "unknown" ? unsaid(step.meta ?? GOLDEN_STATE_TEXT.unknown) : NOT_REACHED}
+        </>
       );
   }
 }
 
-/** Other tickets named by `refs`, each opening its own panel in place; plain text otherwise. */
-function TicketRefs({
-  refs,
-  rows,
-  onOpen,
+/**
+ * One section of the panel: its `h3`, a short summary beside it ("4 of 7") and an optional slot
+ * on the right (the AC meter); sections are told apart by a hairline, not a colour.
+ */
+function Section({
+  title,
+  summary,
+  aside,
+  children,
 }: {
-  refs: readonly string[];
-  rows: readonly TicketRow[];
-  onOpen: TicketOpener;
+  title: string;
+  summary?: ReactNode;
+  aside?: ReactNode;
+  children: ReactNode;
 }) {
-  if (refs.length === 0) return <span className="ah-subtle">—</span>;
+  const headingId = useId();
   return (
-    <>
-      {refs.map((ref, i) => {
-        const row = rows.find((r) => r.ref === ref);
-        return (
-          <Fragment key={ref}>
-            {i > 0 && ", "}
-            {row ? (
-              <TicketOpenLink row={row} onOpen={onOpen} className="ah-mono">
-                {ref}
-              </TicketOpenLink>
-            ) : (
-              <span className="ah-mono">{ref}</span>
-            )}
-          </Fragment>
-        );
-      })}
-    </>
+    <section className="ah-ticket-panel-section" aria-labelledby={headingId}>
+      <div className="ah-ticket-panel-section-head">
+        <h3 id={headingId} className="ah-small">
+          {title}
+        </h3>
+        {summary != null && summary !== "" && <span className="ah-small ah-subtle">{summary}</span>}
+        {aside != null && <span className="ah-ticket-panel-section-aside">{aside}</span>}
+      </div>
+      {children}
+    </section>
   );
 }
 
-function Section({ title, children }: { title: string; children: ReactNode }) {
+/** How many dependency rows one sub-list shows before the rest fold away. */
+const DEPENDENCIES_SHOWN = 8;
+
+interface Dependency {
+  ref: string;
+  /** Where a blocker edge comes from; none for the tickets it blocks. */
+  source?: EdgeSource | undefined;
+}
+
+/** A dependency as a row draws it: the ticket of this feature, or the tracker issue outside it. */
+function resolve(
+  dependency: Dependency,
+  rows: readonly TicketRow[],
+  external: readonly ExternalBlocker[],
+) {
+  const row = rows.find((r) => r.ref === dependency.ref);
+  const outside = row ? undefined : external.find((b) => b.id === dependency.ref);
+  const done = row
+    ? row.readiness === "done" || row.readiness === "canceled"
+    : (outside?.done ?? false);
+  return { ...dependency, row, outside, done };
+}
+
+/** An issue outside the feature, as Linear names its state; Unknown when it was not read. */
+function OutsideBadge({ blocker }: { blocker: ExternalBlocker }) {
+  if (!blocker.state) {
+    return (
+      <StatusBadge
+        status="idle"
+        quiet
+        label="Unknown"
+        title="No status: Linear was not read for this issue"
+      />
+    );
+  }
   return (
-    <section className="ah-stack" style={{ gap: 6 }}>
-      <h3 className="ah-small ah-muted" style={{ margin: 0, fontWeight: 500 }}>
-        {title}
-      </h3>
-      {children}
+    <StatusBadge
+      status={STATE_STATUS[blocker.state.type]}
+      label={blocker.state.name}
+      title={`${blocker.state.name} (${blocker.state.type})`}
+    />
+  );
+}
+
+/**
+ * Other tickets as rows: each one's status, then one link on its id and title that opens its own
+ * panel in place; an issue outside the feature links to Linear. Not done first, done last.
+ */
+function TicketRefRows({
+  dependencies,
+  rows,
+  external,
+  onOpen,
+}: {
+  dependencies: readonly Dependency[];
+  rows: readonly TicketRow[];
+  external: readonly ExternalBlocker[];
+  onOpen: TicketOpener;
+}) {
+  const items = dependencies
+    .map((dependency) => resolve(dependency, rows, external))
+    .sort((a, b) => Number(a.done) - Number(b.done));
+  const list = (part: typeof items) => (
+    <ul className="ah-ticket-panel-rows">
+      {part.map(({ ref, source, row, outside }) => (
+        <li key={ref} className="ah-ticket-dep-row" title={source ? EDGE_TITLE[source] : undefined}>
+          <span className="ah-ticket-dep-badge">
+            {row ? <StateBadge row={row} /> : outside && <OutsideBadge blocker={outside} />}
+          </span>
+          {row ? (
+            <TicketOpenLink
+              row={row}
+              onOpen={onOpen}
+              className="ah-ticket-dep-link"
+              title={row.title ?? undefined}
+            >
+              <span className="ah-mono">{ref}</span>{" "}
+              {row.title && <span className="ah-small ah-ticket-panel-clamp">{row.title}</span>}
+            </TicketOpenLink>
+          ) : outside ? (
+            <span className="ah-ticket-dep-link">
+              <LinearLink id={ref} url={outside.url} />{" "}
+              {outside.title && (
+                <span className="ah-small ah-ticket-panel-clamp" title={outside.title}>
+                  {outside.title}
+                </span>
+              )}
+            </span>
+          ) : (
+            <span className="ah-mono">{ref}</span>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+  const rest = items.length - DEPENDENCIES_SHOWN;
+  return (
+    <div className="ah-stack" style={{ gap: 4 }}>
+      {list(rest > 0 ? items.slice(0, DEPENDENCIES_SHOWN) : items)}
+      {rest > 0 && (
+        <details className="ah-ticket-panel-more">
+          <summary className="ah-small">
+            Show {rest} more ticket{rest === 1 ? "" : "s"}
+          </summary>
+          {list(items.slice(DEPENDENCIES_SHOWN))}
+        </details>
+      )}
+    </div>
+  );
+}
+
+/** "all 1 done", "1 of 2 not done", or "none". */
+function blockedBySummary(items: readonly { done: boolean }[]): string {
+  if (items.length === 0) return "none";
+  const open = items.filter((item) => !item.done).length;
+  if (open === 0) return `all ${String(items.length)} done`;
+  return `${String(open)} of ${String(items.length)} not done`;
+}
+
+/** "7, none started", "7 · 2 in progress", "7 · 3 done", or "none". */
+function blocksSummary(items: readonly { done: boolean; row?: TicketRow | undefined }[]): string {
+  if (items.length === 0) return "none";
+  const total = String(items.length);
+  const started = items.filter((item) => item.row?.readiness === "in_progress").length;
+  if (started > 0) return `${total} · ${String(started)} in progress`;
+  const done = items.filter((item) => item.done).length;
+  if (done > 0) return `${total} · ${String(done)} done`;
+  return `${total}, none started`;
+}
+
+/** What the ticket waits on and what it holds back, each as rows of tickets. */
+function Dependencies({
+  row,
+  data,
+  onOpen,
+}: {
+  row: TicketRow;
+  data: FeatureTickets;
+  onOpen: TicketOpener;
+}) {
+  const external = data.planning.external_blockers;
+  const blockedBy: Dependency[] = row.blocked_by.map((edge) => ({
+    ref: edge.ref,
+    source: edge.source,
+  }));
+  const blocks: Dependency[] = row.blocks.map((ref) => ({ ref }));
+  const sub = (title: string, dependencies: Dependency[], summary: string) => (
+    <div className="ah-stack" style={{ gap: 4 }}>
+      <h4 className="ah-small ah-ticket-panel-sub">
+        {title} <span className="ah-subtle">· {summary}</span>
+      </h4>
+      {dependencies.length > 0 && (
+        <TicketRefRows
+          dependencies={dependencies}
+          rows={data.tickets}
+          external={external}
+          onOpen={onOpen}
+        />
+      )}
+    </div>
+  );
+  const resolved = (list: Dependency[]) => list.map((d) => resolve(d, data.tickets, external));
+  return (
+    <Section title="Dependencies">
+      {sub("Blocked by", blockedBy, blockedBySummary(resolved(blockedBy)))}
+      {sub("Blocks", blocks, blocksSummary(resolved(blocks)))}
+    </Section>
+  );
+}
+
+/** The ticket's sessions as rows, the count beside the heading ("3+" when there are more). */
+function SessionsSection({ row, project }: { row: TicketRow; project: string }) {
+  const sessions = useTicketSessions(project, row);
+  const count =
+    row.id && sessions.data
+      ? `${String(sessions.data.items.length)}${sessions.data.next_cursor ? "+" : ""}`
+      : undefined;
+  return (
+    <Section title="Sessions" summary={count}>
+      <TicketSessions row={row} project={project} variant="row" shown={3} />
+    </Section>
+  );
+}
+
+/**
+ * The open step's card: where it is in the seven, its state in words, how it came out, its
+ * evidence; on the current step, the readiness line; on another, the way back to the current one.
+ */
+function StepCard({
+  step,
+  flow,
+  readiness,
+  onShowCurrent,
+  children,
+}: {
+  step: StepperStep<TicketStepName>;
+  flow: NonNullable<TicketRow["flow"]>;
+  readiness: ReactNode;
+  onShowCurrent: () => void;
+  children: ReactNode;
+}) {
+  const position = flow.steps.findIndex((s) => s.name === step.name) + 1;
+  const place = `${TICKET_STEP_LABEL[step.name]} · step ${String(position)} of ${String(flow.steps.length)}`;
+  const current = step.name === flow.current;
+  const look = STEP_STATUS[step.state];
+  const outcome = stepOutcome(step);
+  return (
+    <section className="ah-ticket-step-card" aria-label={place}>
+      <div className="ah-ticket-step-card-head">
+        <span className="ah-small ah-muted">
+          {current && "Current step · "}
+          {place}
+        </span>
+        <StatusBadge
+          status={look.status}
+          quiet={look.quiet}
+          label={GOLDEN_STATE_TEXT[step.state]}
+        />
+      </div>
+      {outcome && <p className="ah-ticket-step-outcome">{outcome}</p>}
+      <div className="ah-small ah-ticket-step-detail">{children}</div>
+      {current ? (
+        <div className="ah-small ah-ticket-step-ready">{readiness}</div>
+      ) : (
+        <span>
+          <Button size="sm" variant="ghost" onClick={onShowCurrent}>
+            Show the current step ({TICKET_STEP_LABEL[flow.current]})
+          </Button>
+        </span>
+      )}
     </section>
   );
 }
@@ -625,10 +873,11 @@ export interface TicketPanelProps {
 }
 
 /**
- * The ticket panel (two-level-flows AC-1.10, ux-new-ticket-panel.md Addendum 1): one ticket's
- * seven steps (the current one, or `?step=`, disclosed), its ACs, blockers and sessions, read from
- * the tickets route (A7). Its one signal points to the Eval tab when a ticket eval waits on owner
- * steps. No Start: Start stays once per view, on the card or the row (A15).
+ * The ticket panel (two-level-flows AC-1.10, ux-change-ticket-panel.md): one ticket's head and
+ * facts, one callout for whatever waits on the owner or holds the ticket, its seven steps across
+ * with the open one's evidence in a card under them, then its ACs, dependencies and sessions as
+ * rows, read from the tickets route (A7). No Start: Start stays once per view, on the card or the
+ * row (A15).
  */
 export function TicketPanel({
   project,
@@ -645,7 +894,8 @@ export function TicketPanel({
 }: TicketPanelProps) {
   const [params, setParams] = useSearchParams();
   const records = useTicketRecords(project, slug, ticket);
-  const shell = (title: string, children: ReactNode) => (
+  const body = useRef<HTMLDivElement>(null);
+  const shell = (title: ReactNode, children: ReactNode) => (
     <SidePanel
       key={ticket}
       title={title}
@@ -696,80 +946,150 @@ export function TicketPanel({
   const asking = records.data?.change_requests.find(
     (request) => request.status === "open" && namesRow(row, request.ticket),
   );
-  const toggle = (step: TicketStepName) => {
+  const setStep = (step: string) => {
     setParams(
       (current) => {
         const next = new URLSearchParams(current);
-        next.set("step", step === open ? "" : step);
+        next.set("step", step);
         return next;
       },
       { replace: true },
     );
   };
-  const title = `Ticket ${row.ref}${row.title ? ` · ${row.title}` : ""}`;
-  return shell(
-    title,
-    <div className="ah-stack" style={{ gap: 16 }}>
-      <div className="ah-stack" style={{ gap: 6 }}>
-        <span className="ah-row ah-wrap ah-small" style={{ gap: 8 }}>
-          {row.id && <LinearLink id={row.id} url={row.url} />}
-          <StateBadge row={row} />
-          {row.assignee && <span>{row.assignee}</span>}
+  const toggle = (step: TicketStepName) => {
+    setStep(step === open ? "" : step);
+  };
+  const showCurrent = () => {
+    setStep(flow.current);
+    // The card's button goes away with the card: focus lands on the current step's button.
+    requestAnimationFrame(() => {
+      body.current
+        ?.querySelector<HTMLElement>(`.ah-golden-select[data-step="${flow.current}"]`)
+        ?.focus();
+    });
+  };
+  const kind = signalKind(flow);
+  const critical =
+    data.planning.critical_path.length > 1 && data.planning.critical_path.includes(row.ref);
+  const at = flow.steps.findIndex((s) => s.name === flow.current);
+  const merged = flow.current === "merged" && flow.steps[at]?.state === "done";
+  const total = String(flow.steps.length);
+  const stepsSummary = merged ? `${total} of ${total} · merged` : `${String(at + 1)} of ${total}`;
+
+  // What waits on the owner comes first and amber; a hold or a re-run only when nothing does.
+  const ownerLines: ReactNode[] = [];
+  if (asking) {
+    ownerLines.push(
+      <div key="asking" className="ah-ticket-callout-line">
+        <span>
+          <b style={{ fontWeight: 500 }}>
+            Waiting for you: plan change request {asking.n}, plan {version(asking.plan_from)} →{" "}
+            {version(asking.plan_to)}
+          </b>{" "}
+          <WaitAge openedAt={asking.opened_at} />
         </span>
-        <ReadinessText row={row} rows={data.tickets} external={data.planning.external_blockers} />
-        {asking && (
-          <span>
-            <Button
-              size="sm"
-              variant="primary"
-              icon="arrow-right"
-              onClick={() => {
-                setParams(
-                  (current) => {
-                    const next = new URLSearchParams(current);
-                    next.set("step", "preflight");
-                    return next;
-                  },
-                  { replace: true },
-                );
-                // The request's block is drawn once Preflight opens: focus it then (U12).
-                requestAnimationFrame(() => {
-                  document.getElementById(requestAnchor(asking.n))?.focus();
-                });
-              }}
-            >
-              Review change request
-            </Button>
+        <Button
+          size="sm"
+          variant="primary"
+          icon="arrow-right"
+          onClick={() => {
+            setStep("preflight");
+            // The request's block is drawn once Preflight opens: focus it then (U12).
+            requestAnimationFrame(() => {
+              document.getElementById(requestAnchor(asking.n))?.focus();
+            });
+          }}
+        >
+          Review change request
+        </Button>
+      </div>,
+    );
+  } else if (kind === "waiting") {
+    // Its own request waits, its record not read yet: the signal's words until it is.
+    ownerLines.push(
+      <div key="signal" className="ah-ticket-callout-line">
+        <b style={{ fontWeight: 500 }}>{flow.signal}</b>
+      </div>,
+    );
+  }
+  if (waiting) {
+    ownerLines.push(
+      <div key="owner-steps" className="ah-ticket-callout-line">
+        <b style={{ fontWeight: 500 }}>Waiting for you: {waiting.label} passed with owner steps</b>
+        <Link
+          to={{ search: evalSearch(params, waiting.record.delivery) }}
+          replace
+          state={FOCUS_EVAL}
+        >
+          Settle them in the Eval tab
+        </Link>
+      </div>,
+    );
+  }
+  let callout: ReactNode = null;
+  if (ownerLines.length > 0) {
+    callout = (
+      <Banner tone="warning" icon="hand" boxed live={false}>
+        <div className="ah-stack" style={{ gap: 6 }}>
+          {ownerLines}
+        </div>
+      </Banner>
+    );
+  } else if (kind === "held" || kind === "stale") {
+    callout = (
+      <Banner tone="info" icon={kind === "held" ? "circle-pause" : "clock"} boxed live={false}>
+        <b style={{ fontWeight: 500 }}>{flow.signal}</b>
+      </Banner>
+    );
+  }
+
+  const heading = (
+    <>
+      {/* The spaces sit between the spans: a name is read from each span's trimmed text. */}
+      <span className="ah-sr">Ticket</span>{" "}
+      <span className="ah-ticket-panel-id" data-alone={row.title ? undefined : true}>
+        {row.ref}
+      </span>
+      {row.title && (
+        <>
+          {" "}
+          <span className="ah-sr">·</span>{" "}
+          <span className="ah-ticket-panel-title">{row.title}</span>
+        </>
+      )}
+    </>
+  );
+  return shell(
+    heading,
+    <div ref={body} className="ah-ticket-panel">
+      <div className="ah-ticket-panel-facts">
+        <StateBadge row={row} />
+        <TicketIdLine row={row} />
+        <span className="ah-small ah-ticket-panel-fact">
+          <Icon name="user" size="sm" />
+          <span className="ah-sr">Assignee: </span>
+          <Assignee row={row} />
+        </span>
+        <TicketPrLink row={row} />
+        {critical && (
+          <span
+            className="ah-small ah-flow-critical ah-ticket-panel-fact"
+            title="On the longest chain of tickets not done"
+          >
+            Critical path
           </span>
         )}
       </div>
-      {signalKind(flow) !== null && signalKind(flow) !== "local" && (
-        <p className="ah-small" style={{ margin: 0 }}>
-          <TicketSignal flow={flow} />
-        </p>
-      )}
-      {waiting && (
-        <p className="ah-small ah-row ah-wrap" style={{ gap: 6, margin: 0 }}>
-          <Icon name="hand" size="sm" />
-          <b style={{ fontWeight: 500 }}>
-            Waiting for you: {waiting.label} passed with owner steps
-          </b>
-          <Link
-            to={{ search: evalSearch(params, waiting.record.delivery) }}
-            replace
-            state={FOCUS_EVAL}
-          >
-            Settle them in the Eval tab
-          </Link>
-        </p>
-      )}
-      <Section title="Steps">
+      {callout}
+      <Section title="Steps" summary={stepsSummary}>
         <GoldenPathStepper
           steps={flow.steps}
           labels={TICKET_STEP_LABEL}
           label="Steps"
           open={open}
           onSelect={toggle}
+          orientation="horizontal"
+          detailPlacement="below"
           selectLabel={(name) => {
             const step = flow.steps.find((s) => s.name === name);
             const state = step ? GOLDEN_STATE_TEXT[step.state].toLowerCase() : "";
@@ -779,33 +1099,36 @@ export function TicketPanel({
             return `${TICKET_STEP_LABEL[name]}, ${state}${meta}, ${name === open ? "hide" : "show"} details`;
           }}
           detail={(step) => (
-            <StepDetail
+            <StepCard
               step={step}
-              row={row}
-              project={project}
-              slug={slug}
-              latest={latest}
-              records={records}
-            />
+              flow={flow}
+              onShowCurrent={showCurrent}
+              readiness={
+                <ReadinessText
+                  row={row}
+                  rows={data.tickets}
+                  external={data.planning.external_blockers}
+                  withIcon
+                />
+              }
+            >
+              <StepDetail
+                step={step}
+                row={row}
+                project={project}
+                slug={slug}
+                latest={latest}
+                records={records}
+              />
+            </StepCard>
           )}
         />
       </Section>
-      <Section title="Acceptance criteria">
-        <AcList ids={row.acs} acPasses={acPasses} acRows={acRows} />
+      <Section title="Acceptance criteria" aside={<AcCount row={row} acPasses={acPasses} />}>
+        <AcList ids={row.acs} acPasses={acPasses} acRows={acRows} layout="rows" />
       </Section>
-      <Section title="Blocked by">
-        <span>
-          <TicketRefs refs={row.blocked_by.map((e) => e.ref)} rows={data.tickets} onOpen={onOpen} />
-        </span>
-      </Section>
-      <Section title="Blocks">
-        <span>
-          <TicketRefs refs={row.blocks} rows={data.tickets} onOpen={onOpen} />
-        </span>
-      </Section>
-      <Section title="Sessions">
-        <TicketSessions row={row} project={project} />
-      </Section>
+      <Dependencies row={row} data={data} onOpen={onOpen} />
+      <SessionsSection row={row} project={project} />
     </div>,
   );
 }
