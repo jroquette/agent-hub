@@ -36,10 +36,14 @@ Chosen option: 1.
   fixed set: `do` (an action), `wait_until` (a read action polled with `until`, `every`, `timeout`), `you` (an
   approval), `wait` and `include`; a container is `repeat` (a `loop_group`), `if`/`then`/`else`, or `together`
   (parallel paths joined by the next step). Conditions use the existing `when:` grammar; an else is the complement of
-  its condition, computed at translation (bounded: 8 atoms, 64 terms). Ids are optional: a block without one gets
-  `<stage slug>-<n>`. `version: 1` scenarios load exactly as before.
+  its condition, computed at translation (bounded: 8 atoms, 64 terms). Each block has an address (`2.3`, `2.3.then.1`,
+  `2.3.p2.1`); ids are optional, and a block without one gets `<stage slug>--<its address in the stage>`
+  (`payment--3-then-1`), which no other derived id can equal; an explicit id equal to another block's fails the load.
+  An If with no else exits through its branch and the block before it, so a false condition skips only the branch.
+  `version: 1` scenarios load exactly as before.
 - **Translation at load.** `parse_workflow` translates a version-2 document to a version-1 `WorkflowDocument` plus a
-  **block map** (block address → its node ids, its entry nodes, its tree key path). Planning, policy gates, events,
+  **block map** (block address → its node ids, its entry and exit nodes, its tree key path); an included version-2
+  scenario is translated the same way before includes are expanded. Planning, policy gates, events,
   plan mode, investigation, workarounds and fixtures run on the graph unchanged; a problem on a generated node is put
   back on the tree's key path, as includes do. A run's snapshot keeps the tree; every resume translates it again,
   which is deterministic because ids come from positions and stage names.
@@ -48,8 +52,8 @@ Chosen option: 1.
 - **Run control.** `EnginePorts` gains an optional run-control port. Before visiting a node (after resume reuse,
   before `trigger_rule` and `when:`), the engine asks it whether to pause; a yes ends the pass as a gate pause does
   (the report is `paused`, with reason `breakpoint` or `step` and the block address; a pause inside a `loop_group`
-  body holds its iteration as a body gate does). With breakpoints set, a layer that holds one runs its nodes one at a
-  time in declaration order, so "before this block" is exact. The resume is today's resume; Step and Continue are
+  body holds its iteration as a body gate does). With a breakpoint or step mode on, a layer that holds a node to pause at runs
+  its nodes one at a time in declaration order, so "before this block" is exact. The resume is today's resume; Step and Continue are
   recorded commands read by the port. Without the port, or with no breakpoint and no step, the engine behaves as
   before.
 - **Breakpoints are run data.** Block addresses of the run's pinned tree, kept in the run folder, written whole by
@@ -57,10 +61,13 @@ Chosen option: 1.
   change neither the plan nor the `content_hash`.
 - **What the debugger never does.** It answers no gate (a breakpoint on a gated step pauses before its `<step>__ask`,
   and the ask still opens after Continue or Step), edits no value, re-runs or skips no block, and rewinds nothing.
-- **Production.** Breakpoints, Step, Continue and a start with breakpoints are refused on an environment with
-  `production: true`; scenario runs without them keep ADR 0041's policy there.
-- **Inspect.** A paused run's view adds the run's inputs, each capture, and each finished block's rendered inputs,
-  status and last output, from lines the run record already holds (already redacted of credential values).
+- **Production.** Breakpoints, Step, Continue and a start with breakpoints are refused when the run's environment is
+  `production: true` in the effective config as read then; clearing breakpoints and cancelling stay allowed, and
+  scenario runs without breakpoints keep ADR 0041's policy there.
+- **Inspect.** A paused run's values (its effective inputs, and each finished block's rendered inputs, status and last
+  output) come from lines the run record already holds (already redacted of credential values), through a separate
+  read that needs hub web's launch cookie, as the agent-session routes do, and never for a production run. The run
+  view itself stays metadata plus the captures it already shows.
 - **Migration.** hub web's builder opens a graph scenario read-only, with a Migrate action; the graph editing of the
   builder goes. `hub scenario migrate [NAME…] [--check]` writes a graph scenario as a tree (one stage named after
   the scenario, ids kept where they differ from the derived ones) when its graph is series-parallel with the shapes the
@@ -86,10 +93,12 @@ Chosen option: 1.
   intact; a pause changes when a run stops, never its path or results.
 - Bad: two scenario formats live side by side until the graph one is removed; doctor and migrate carry the window.
 - Bad: a translator and a block map must stay in step with the builder's model (covered by round-trip tests).
-- Bad: with breakpoints set, a layer holding one runs one node at a time, so At the same time paths run in turn while
+- Bad: while debugging, a layer holding a node to pause at runs one node at a time, so At the same time paths run in turn while
   debugging.
-- Bad: inspect shows action inputs and outputs in hub web, which no screen showed before; the session-token holder of
-  the local `hub web` sees business values of a non-production run.
+- Bad: inspect shows action inputs and outputs in hub web, which no screen showed before: whoever holds the launch
+  cookie of the local `hub web` (the developer's browser) sees business values of a non-production run. Other local
+  processes cannot read them, since the read needs the cookie; the record on disk was already readable by them.
+- Bad: an Include is one block: nothing inside the scenario it includes takes a breakpoint.
 - Neutral: a debug pause is not a gate; Approvals does not list it.
 
 ## More Information
