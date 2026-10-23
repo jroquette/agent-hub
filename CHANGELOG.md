@@ -97,6 +97,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   tagged the release commit (the PR's head: merge it with a merge commit), a second approval opens the hub PR that
   raises `platform.version` and runs `./hub sync`. A red check ends the run blocked; no node creates a tag or writes
   the tracker.
+- A flow table (AGH-495): which built-in flow to use, how it starts, the gates you decide and the hub skills and
+  agents it reuses, generated from each built-in workflow's description and its pack. A new hub's `README.md` ends
+  with it, and `docs/USING.md` › Pick a flow holds the same table; an existing hub can copy it from there (`hub sync`
+  does not rewrite the README). `/kickoff` and `/triage` now route work to the flows by name.
 
 ### Changed
 

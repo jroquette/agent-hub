@@ -53,6 +53,7 @@ from agent_hub.generator.placeholders import (
 )
 from agent_hub.generator.registry import REGISTRY, TemplateEntry, TemplateSource
 from agent_hub.generator.render_hub import project_json_siblings, render_entries, render_hub
+from agent_hub.generator.workflow_discovery import discover_workflows
 
 # AC-3.13: the D5 path set of docs/design/hub-generator.md, in code-point order; AC-4.1 adds
 # AGH-19's rendered set (spec "The rendered set", for project `demo`).
@@ -1818,6 +1819,67 @@ def test_routes_work_to_shipped_skills_when_entry_skill_rendered(
         assert f"`/{target}`" in text, target
     named = set(SKILL_REFERENCE.findall(text)) - {skill}
     assert named <= set(BASE_SKILLS), named
+
+
+# AGH-495 (AC-2): `/kickoff` routes work by flow, each named "the `<flow>` flow" with the skill
+# that starts it. A name is a built-in on disk or a pack still in review.
+FLOW_ROUTES = (
+    ("implement", "implement"),
+    ("incident", "incident"),
+    ("upgrade", "upgrade"),
+    ("feature", "spike"),
+    ("learn", "inbox"),
+)
+# Packs still in review (AGH-480); a name may stay once its pack lands.
+FLOWS_IN_FLIGHT = frozenset({"incident", "upgrade", "spike", "inbox"})
+FLOW_NAME = re.compile(r"the `([a-z][a-z0-9-]*)` flow")
+STARTS_WORKFLOW = re.compile(r"\./hub workflow run ([a-z][a-z0-9-]*)")
+
+
+def flow_names(text: str) -> set[str]:
+    return set(FLOW_NAME.findall(text))
+
+
+def kickoff_step_five(text: str) -> list[str]:
+    """Step 5 of ``/kickoff``: its ``5. `` line up to the ``Never start editing`` line."""
+    lines = text.splitlines()
+    start = next(index for index, line in enumerate(lines) if line.startswith("5. "))
+    end = next(index for index, line in enumerate(lines) if line.startswith("Never start editing"))
+    return lines[start:end]
+
+
+def test_routes_by_flow_when_kickoff_rendered(
+    demo_render: dict[str, RenderedFile], tmp_path: Path
+) -> None:
+    step = kickoff_step_five(skill_text(demo_render, "kickoff"))
+    block = "\n".join(step)
+    builtins = {workflow.name for workflow in discover_workflows(tmp_path).workflows}
+
+    for skill, flow in FLOW_ROUTES:
+        assert f"the `{flow}` flow" in block, flow
+        assert f"`/{skill}`" in block, skill
+    assert "(or /change" in step[0], step[0]
+    assert flow_names(block) <= FLOWS_IN_FLIGHT | builtins, flow_names(block)
+
+
+# AGH-495: a skill that starts a pack says so in its description (the line a session reads to
+# pick it), naming the workflow it runs.
+def test_names_its_workflow_when_skill_starts_a_pack_rendered(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    starters = 0
+    for path, file in demo_render.items():
+        if not (path.startswith("plugin/hub-workflow/skills/") and path.endswith("/SKILL.md")):
+            continue
+        text = file.content.decode("utf-8")
+        description = " ".join(
+            line for line in frontmatter_lines(text) if line.startswith("description:")
+        )
+        for workflow in set(STARTS_WORKFLOW.findall(text)):
+            starters += 1
+            assert re.search(rf"\b{re.escape(workflow)}\b", description), (path, workflow)
+            assert re.search(r"\bworkflow\b", description), path
+    assert starters
 
 
 # AGH-108 (AC-2.15c): step 1 of `/kickoff` and `/feature` sends a hub with no project rules yet, or
@@ -4868,7 +4930,7 @@ def test_names_app_repo_agents_once_when_readme_rendered(demo_config: HubConfig)
     assert lines[heading - 4] == "Repos, checked out next to this hub: demo-api."
 
 
-# AGH-51: the README's last section, for a teammate joining the hub.
+# AGH-51: the README's last hand-written section, for a teammate joining the hub.
 JOIN_HEADING = "## Join this hub"
 URL_WITH_CREDENTIAL = re.compile(r"https://[^\s/]*@")
 
@@ -4908,7 +4970,8 @@ def test_keeps_join_section_within_60_lines_when_readme_rendered() -> None:
 
     section = join_section(readme)
 
-    assert readme.endswith(section)
+    # AGH-495: only the generated Pick a flow table follows it.
+    assert readme.split(section, 1)[1].startswith("## Pick a flow\n")
     assert len(section.splitlines()) <= 60
 
 
@@ -5201,6 +5264,8 @@ ADAPTER_MODULES = frozenset(
         "env_file_reader.py",
         # A scenario finding's issue marker, shared by the CLI and hub web (AGH-363).
         "finding_issues.py",
+        # Reads the built-in packs and the skill templates, package data (AGH-495).
+        "flow_catalog.py",
     }
 )
 RENDERING_MODULES = frozenset(

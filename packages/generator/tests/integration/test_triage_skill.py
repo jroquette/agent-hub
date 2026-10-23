@@ -278,3 +278,23 @@ def test_names_fallback_when_backlog_care_missing(text: str) -> None:
 
     assert "(the hub's copy of the pack is missing)" in fallback
     assert "take them one at a time, oldest first" in fallback
+
+
+# AGH-495 (AC-2): the draft names the flow that takes the issue next, by flow name.
+TRIAGE_ROUTES = (
+    "the `implement` flow",
+    "the `spike` flow",
+    "the `incident` flow",
+    "the `upgrade` flow",
+    "`/fix`",
+    "`/feature`",
+    "(or /change)",
+)
+
+
+def test_routes_by_flow_when_triage_rendered(text: str) -> None:
+    start = text.index("3. **Draft**")
+    draft = text[start : text.index("4. **Approve**", start)]
+
+    for route in TRIAGE_ROUTES:
+        assert route in draft, route

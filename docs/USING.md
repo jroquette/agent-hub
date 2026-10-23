@@ -367,3 +367,34 @@ rewrites `hooks.json`, `.claude/settings.json` (the sensor joins eleven hook eve
 `hubhooks.py`, decisions unchanged. Read-only gate (AGH-141): adds the hook `readonly_gate.py` and rewrites
 `hooks.json`, `.claude/settings.json` and the researcher, spec-reviewer and quality-reviewer (`mutates_checkout: false`,
 which any agent may add); one that changes a checkout is held at its stop once, or the change is reported.
+
+## Pick a flow
+
+Which built-in flow to use, how it starts and what you decide in it. `/kickoff` and `/triage` route work by
+this table, and a new hub's `README.md` ends with the same one.
+
+<!-- flow-catalog:start -->
+| Flow | Use when | Start | Your gates | Skills and agents inside |
+|---|---|---|---|---|
+| `backlog-care` (`backlog-care` pack) | The weekly backlog pass - hygiene findings and drafts for the oldest unready issues, one approval per issue. | `/triage` | The owner applies this issue's draft and label, or skips the issue. | `/triage` |
+| `context` (`brain-care` pack) | The monthly context audit - measure the always-loaded text, the owner picks the cuts, one hub PR. | `./hub workflow run context` | The owner picks the cuts (a note keeps some), or skips this month. | `/context-audit` |
+| `inbox` (`brain-care` pack) | The weekly inbox review - group duplicate notes, the owner decides each group, one hub PR. | `/learn` | The owner decides the group; an external note needs his explicit apply. | own prompts |
+| `doc-drift` (`doc-drift` pack) | Doc lines a contract change made wrong, fixed in a docs-only PR the owner approves first. | `./hub workflow run doc-drift` | The owner approves the proposed doc lines, or rejects them (no PR). | `/plain-language` |
+| `incident` (`incident` pack) | An incident - git evidence, ranked hypotheses with read-only checks, a gated mitigation, a hand-off draft and a blameless postmortem draft. | `/incident` | The owner records a mitigation of a confirmed hypothesis, or their own, or none. Nothing is applied. | `/recall`, `/learn` |
+| `issue-to-pr` (`issue-to-pr` pack) | One tracker issue to a PR, as hub run takes it. | `./hub run <issue>` | none | own prompts |
+| `post-merge-verify` (`post-merge-verify` pack) | The merged tickets' AC verifications, run again on the default branch; failures to the inbox. | `./hub workflow run post-merge-verify` | none | own prompts |
+| `release` (`release` pack) | Cut a platform release when the owner asks: the PRs merged since the last tag, the version bump, the check on the exact release commit and the notes with what hub sync rewrites, then, once the platform repo's release workflow has tagged it, the hub's pin bump, each PR behind its own approval. | `/release` | The owner approves the release PR.; The owner merges the release PR, /release dispatches the release workflow, then the owner answers.; The owner approves the hub PR that bumps the pin. | `/plain-language` |
+| `retro` (`retro` pack) | The week's run metrics, at most five evidence-backed changes, and issue drafts for the ones the owner keeps. | `/retro` | The owner keeps some of the changes (their numbers, or all), or none. | own prompts |
+| `review-incoming` (`review-incoming` pack) | Someone else's PR through the spec, quality and security lenses, drafted as one review posted only after the owner approves it. | `/review` | The owner edits the review file, then picks how it is posted, or rejects it. | `/plain-language`, `security-reviewer` agent |
+| `deliver` (`sdlc` pack) | One issue to a PR, implemented and reviewed in rounds until the check and both reviewers pass. | `./hub workflow run deliver` | none | own prompts |
+| `implement` (`sdlc` pack) | One ticket of a planned feature to a PR - context, preflight and plan change gate, review rounds, ticket eval. | `/implement` | The owner approves the plan change, or declines it with a note. | own prompts |
+| `preflight` (`sdlc` pack) | A dependent ticket's read-only preflight after a blocker's merge - once per outcome, a plan change gate on plan drift. | `./hub workflow run preflight` | The owner approves the plan change, or declines it with a note. | own prompts |
+| `preflight-check` (`sdlc` pack) | One ticket's preflight - the read-only check, a plan change gate on plan drift, and the re-check after the owner's decision. | inside `preflight`, inside `ticket-pass` | The owner approves the plan change, or declines it with a note. | own prompts |
+| `review` (`sdlc` pack) | The spec and quality lenses on a checkout, then one verdict. | `./hub workflow run review` | none | own prompts |
+| `ticket-pass` (`sdlc` pack) | One ticket pass - preflight, a plan change gate on plan drift, the worktree, the ticket plan and the review rounds. | inside `implement` | The owner approves the plan change, or declines it with a note. | own prompts |
+| `security-sweep` (`security-sweep` pack) | Weekly scanners on every repo, new findings triaged by the security reviewer, kept ones to brain/_inbox for /triage. | `./hub workflow run security-sweep` | none | `security-reviewer` agent |
+| `spike` (`spike` pack) | A timeboxed spike - recall, research, options, the owner's pick, a premortem, then research.md and an ADR draft. | `/feature` | The owner picks an option, or asks for more with a note. | `/recall`, `/research`, `/adr`, `/premortem`, `researcher` agent |
+| `upgrade` (`upgrade` pack) | One package bumped with the repo's tooling, its changelog read, the code adapted, checked and opened as a PR. | `/upgrade` | A risky bump (major, no changelog, or more than five files touched) asks before the full check.; Every push waits on a person; a reject stops the run with the branch kept. | own prompts |
+
+Any flow can also start from `hub web` (Workflow runs › Start run; `issue-to-pr` only through `./hub run`), or by itself from `hub.json` → `schedules` (a time) and `events` (a merge, a new PR, a red CI run). Each pack's file suggests its own entries.
+<!-- flow-catalog:end -->
