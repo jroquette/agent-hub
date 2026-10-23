@@ -1,7 +1,7 @@
 import "./builder.css";
 import "./blocks.css";
 
-import { useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
 import {
   Banner,
@@ -11,6 +11,7 @@ import {
   IconButton,
   MenuItem,
   SegmentedControl,
+  Toast,
 } from "../../../components";
 import { readStored, writeStored } from "../../../lib/storage";
 import { DiscussButton, useDiscuss } from "../../../shell/discuss";
@@ -21,14 +22,17 @@ import {
   type DragState,
   type DropTarget,
   type InsertTarget,
+  type SlotRequest,
   type Stack,
 } from "./BlockCanvas";
 import { InsertMenu } from "./InsertMenu";
+import { ActionChoice, ConditionChoice, SlotFrame, TextChoice, ValueChoice } from "./SlotPopover";
 import { CATEGORIES, blockItem } from "./palette";
 import { FlowCanvas, kindLook, type AddChoice } from "./FlowCanvas";
 import { BlockInspector, ConditionBuilder, ScenarioSettings } from "./Inspector";
 import {
   allNodes,
+  freshId,
   insertAfter,
   insertBranch,
   newBlock,
@@ -38,6 +42,8 @@ import {
   without,
   type BuilderDocument,
   type BuilderNode,
+  type Json,
+  text,
 } from "./model";
 import {
   findItem,
@@ -63,6 +69,7 @@ import { useActionLibrary, useScenarioDraft, type LibraryAction } from "./useSce
 type View = "blocks" | "graph" | "yaml";
 
 const FILE_POLL_MS = 4000;
+const HELP_KEY = "ah.builder.help";
 
 function startPaletteDrag(
   event: ReactPointerEvent,
@@ -261,6 +268,20 @@ export function ScenarioBuilder({
     where: string;
   } | null>(null);
   const [menu, setMenu] = useState<"more" | "problems" | null>(null);
+  const [slot, setSlot] = useState<SlotRequest | null>(null);
+  const [settings, setSettings] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const [help, setHelp] = useState(() => readStored(HELP_KEY) !== "hidden");
+  useEffect(() => {
+    if (toast === null) return;
+    const timer = setTimeout(() => {
+      setToast(null);
+    }, 6000);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [toast]);
   const { addReference } = useDiscuss();
   const document = draft.document;
 
@@ -423,7 +444,17 @@ export function ScenarioBuilder({
   };
 
   const inspector = (() => {
-    if (!selectedItem) return <ScenarioSettings document={document} onChange={draft.edit} />;
+    if (!selectedItem) {
+      return settings ? (
+        <ScenarioSettings
+          document={document}
+          onChange={draft.edit}
+          onClose={() => {
+            setSettings(false);
+          }}
+        />
+      ) : null;
+    }
     if (selectedItem.kind === "block" || selectedItem.kind === "repeat") {
       // The block as it is written (with the `depends_on` its place in the stack gives it).
       const written = allNodes(serialized.nodes).find((item) => item.id === selectedItem.node.id);
@@ -551,6 +582,198 @@ export function ScenarioBuilder({
     );
   })();
 
+  // Keys on the builder (never while typing in a field): Delete removes the selected block (with
+  // an Undo toast), Alt+↑/↓ moves it in its list, ⌘D duplicates it, ⌘Z/⇧⌘Z undo and redo, ⌘S
+  // saves, Esc clears the selection.
+  const onKeys = (event: KeyboardEvent) => {
+    const target = event.target as HTMLElement;
+    if (!bodyRef.current?.contains(target) && target !== window.document.body) return;
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName);
+    const mod = event.metaKey || event.ctrlKey;
+    if (mod && event.key.toLowerCase() === "s") {
+      event.preventDefault();
+      if (draft.dirty && errors.length === 0 && draft.check !== null) draft.save();
+      return;
+    }
+    if (typing) return;
+    if (mod && event.key.toLowerCase() === "z") {
+      event.preventDefault();
+      if (event.shiftKey) draft.redo();
+      else draft.undo();
+      return;
+    }
+    if (!selected) return;
+    if (event.key === "Escape") {
+      setSelected(null);
+    } else if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      removeItem(selected);
+      setToast(`Deleted ${selected}.`);
+    } else if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+      event.preventDefault();
+      const at = locate(program.main, selected);
+      if (!at) return;
+      const to = at.index + (event.key === "ArrowUp" ? -1 : 1);
+      const { rest, taken: moved } = takeFrom(program.main, selected, true);
+      if (to < 0 || moved.length === 0) return;
+      commit(insertAt(rest, at.slot, to, moved), program.kept, layout.loose);
+    } else if (mod && event.key.toLowerCase() === "d") {
+      event.preventDefault();
+      const item = findItem(program.main, selected);
+      const at = locate(program.main, selected);
+      if (item?.kind !== "block" || !at) return;
+      const copy: Item = {
+        kind: "block",
+        node: { ...item.node, id: freshId(taken, item.node.id) },
+      };
+      commit(insertAt(program.main, at.slot, at.index + 1, [copy]), program.kept, layout.loose);
+      setSelected(itemId(copy));
+    }
+  };
+
+  const keys = useRef(onKeys);
+  useEffect(() => {
+    keys.current = onKeys;
+  });
+  useEffect(() => {
+    const listen = (event: KeyboardEvent) => {
+      keys.current(event);
+    };
+    window.addEventListener("keydown", listen);
+    return () => {
+      window.removeEventListener("keydown", listen);
+    };
+  }, []);
+
+  // The popover of a clicked slot: fill it on the block, without the side panel.
+  const slotPopover = (request: SlotRequest) => {
+    const item = findItem(allItems, request.id);
+    const close = () => {
+      setSlot(null);
+    };
+    if (!item) return null;
+    if (item.kind === "if") {
+      return (
+        <SlotFrame anchor={request.anchor} title="If" onClose={close} wide>
+          <ConditionChoice
+            value={item.condition}
+            fields={everySource(serialized, outputs).map((source) => ({
+              ref: source.ref,
+              label: `${source.label} (${source.hint})`,
+            }))}
+            onApply={(condition) => {
+              editItem(item.key, { ...item, condition });
+              close();
+            }}
+          />
+        </SlotFrame>
+      );
+    }
+    if (item.kind === "parallel") return null;
+    const node = item.node;
+    const apply = (key: string, value: Json | undefined) => {
+      const next: BuilderNode =
+        value === undefined || value === "" ? without(node, key) : { ...node, [key]: value };
+      editNode(next);
+      close();
+    };
+    if (request.kind === "action") {
+      return (
+        <SlotFrame anchor={request.anchor} title="Choose the action" onClose={close} wide>
+          <ActionChoice
+            library={items}
+            pack={scenario.pack}
+            readOnly={node.type === "expect"}
+            current={typeof node.action === "string" ? node.action : ""}
+            onPick={(ref) => {
+              apply("action", ref);
+            }}
+          />
+        </SlotFrame>
+      );
+    }
+    if (request.kind === "value") {
+      const name = request.key.replace(/^with\./, "");
+      const given =
+        typeof node.with === "object" && node.with !== null && !Array.isArray(node.with)
+          ? node.with
+          : {};
+      const current = given[name];
+      const facts = actionFacts(node);
+      const spec = facts?.inputs.find((input) => input.name === name);
+      return (
+        <SlotFrame anchor={request.anchor} title={`Value of ${name}`} onClose={close}>
+          <ValueChoice
+            value={
+              current === undefined
+                ? ""
+                : typeof current === "string"
+                  ? current
+                  : JSON.stringify(current)
+            }
+            description={spec?.description ?? null}
+            sources={valueSources(serialized, node.id, outputs)}
+            onApply={(value) => {
+              const typed =
+                spec?.type === "integer" && /^-?\d+$/.test(value) ? Number(value) : value;
+              const next = value === "" ? without(given, name) : { ...given, [name]: typed };
+              apply("with", Object.keys(next).length > 0 ? next : undefined);
+            }}
+          />
+        </SlotFrame>
+      );
+    }
+    if (request.kind === "condition") {
+      const fields =
+        node.type === "loop_group" && item.kind === "repeat"
+          ? programNodes(item.body).flatMap((inner) =>
+              outputs(typeof inner.action === "string" ? inner.action : "").map((path) => ({
+                ref: `$${inner.id}.output.${path}`,
+                label: `${inner.id} · ${path}`,
+              })),
+            )
+          : (
+              findAction(typeof node.action === "string" ? node.action : "")?.output_fields ?? []
+            ).map((field) => ({ ref: `$self.output.${field.path}`, label: field.path }));
+      return (
+        <SlotFrame
+          anchor={request.anchor}
+          title={node.type === "loop_group" ? "Repeat until" : "Wait until"}
+          onClose={close}
+          wide
+        >
+          <ConditionChoice
+            value={typeof node.until_when === "string" ? node.until_when : ""}
+            fields={fields}
+            onApply={(value) => {
+              apply("until_when", value);
+            }}
+          />
+        </SlotFrame>
+      );
+    }
+    return (
+      <SlotFrame
+        anchor={request.anchor}
+        title={request.kind === "text" ? "What to do by hand" : "The scenario to run"}
+        onClose={close}
+      >
+        <TextChoice
+          value={text(node[request.key])}
+          multiline={request.kind === "text"}
+          placeholder={
+            request.kind === "text"
+              ? "e.g. Create a B2B order of €1000 or more"
+              : "a scenario of this pack"
+          }
+          onApply={(value) => {
+            apply(request.key, value);
+          }}
+        />
+      </SlotFrame>
+    );
+  };
+
   const inputs =
     typeof document.inputs === "object" &&
     document.inputs !== null &&
@@ -580,13 +803,14 @@ export function ScenarioBuilder({
         </span>
         <SegmentedControl
           label="View"
-          value={view === "graph" ? "blocks" : view}
+          value={view}
           onChange={(id) => {
             if (id === "run") onRun();
-            else setView(id === "yaml" ? "yaml" : "blocks");
+            else setView(id === "yaml" || id === "graph" ? id : "blocks");
           }}
           options={[
             { id: "blocks", label: "Blocks", icon: "puzzle" },
+            { id: "graph", label: "Graph", icon: "workflow" },
             { id: "yaml", label: "YAML", icon: "file-text" },
             { id: "run", label: "Run", icon: "play" },
           ]}
@@ -668,7 +892,23 @@ export function ScenarioBuilder({
         {draft.saved && !draft.dirty && (
           <span className="ah-small ah-muted">Saved · rev {draft.saved.revision}</span>
         )}
-        <IconButton icon="undo-2" label="Undo" disabled={!draft.canUndo} onClick={draft.undo} />
+        <Button
+          size="sm"
+          variant={settings && !selectedItem ? "primary" : "ghost"}
+          icon="settings"
+          onClick={() => {
+            setSelected(null);
+            setSettings(!settings);
+          }}
+        >
+          Inputs
+        </Button>
+        <IconButton
+          icon="undo-2"
+          label="Undo (⌘Z)"
+          disabled={!draft.canUndo}
+          onClick={draft.undo}
+        />
         <IconButton icon="redo-2" label="Redo" disabled={!draft.canRedo} onClick={draft.redo} />
         <DiscussButton label="Ask Claude" />
         <Button
@@ -690,16 +930,6 @@ export function ScenarioBuilder({
           />
           {menu === "more" && (
             <div className="ah-pop sb-pop sb-pop-right" role="menu" aria-label="More">
-              <MenuItem
-                icon="workflow"
-                selected={view === "graph"}
-                onClick={() => {
-                  setView(view === "graph" ? "blocks" : "graph");
-                  setMenu(null);
-                }}
-              >
-                {view === "graph" ? "Show as blocks" : "Show as graph"}
-              </MenuItem>
               {draft.check && (
                 <MenuItem
                   icon="copy"
@@ -754,7 +984,7 @@ export function ScenarioBuilder({
           file.
         </Banner>
       )}
-      <div className="sb-body">
+      <div className="sb-body" data-panel={inspector ? "open" : undefined} ref={bodyRef}>
         <Palette
           library={items}
           pack={scenario.pack}
@@ -763,6 +993,33 @@ export function ScenarioBuilder({
           onAdd={addAtEnd}
         />
         <div className="sb-stage">
+          {view === "blocks" && help && (
+            <div className="sb-help" role="note">
+              <b>How to build</b>
+              <span>
+                <Icon name="plus" size="sm" /> Hover between two blocks and press + to add a step
+              </span>
+              <span>
+                <Icon name="pencil" size="sm" /> Click an underlined word to fill it
+              </span>
+              <span>
+                <Icon name="grip-vertical" size="sm" /> Drag a block to move it (the blocks under it
+                come along)
+              </span>
+              <span>
+                <Icon name="keyboard" size="sm" /> Delete removes · Alt+↑/↓ moves · ⌘Z undoes · ⌘S
+                saves
+              </span>
+              <IconButton
+                icon="x"
+                label="Hide these tips"
+                onClick={() => {
+                  setHelp(false);
+                  writeStored(HELP_KEY, "hidden");
+                }}
+              />
+            </div>
+          )}
           {view === "blocks" && (
             <BlockCanvas
               main={{ id: "main", x: layout.main.x, y: layout.main.y, items: program.main }}
@@ -781,6 +1038,10 @@ export function ScenarioBuilder({
               drag={drag}
               onDrag={setDrag}
               numbers={stepNumbers(program.main)}
+              onSlot={(request) => {
+                setSelected(request.id);
+                setSlot(request);
+              }}
               onInsert={(target, anchor) => {
                 const list =
                   target.slot.in === "main" && target.stack === "main" ? program.main : null;
@@ -833,6 +1094,19 @@ export function ScenarioBuilder({
         </div>
         {inspector}
       </div>
+      {slot && slotPopover(slot)}
+      {toast && (
+        <div className="sb-toast">
+          <Toast
+            onUndo={() => {
+              draft.undo();
+              setToast(null);
+            }}
+          >
+            {toast}
+          </Toast>
+        </div>
+      )}
       {inserting && (
         <InsertMenu
           anchor={inserting.anchor}

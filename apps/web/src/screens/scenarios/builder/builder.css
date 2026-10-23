@@ -609,3 +609,83 @@ button.sb-check:hover {
 .sb-problem-row[data-severity="error"] svg {
   color: var(--failed);
 }
+
+/* The right panel shows only when a block is selected or the inputs are open. */
+.sb-body:not([data-panel]) {
+  grid-template-columns: 248px minmax(0, 1fr);
+}
+@media (max-width: 1599px) {
+  .sb-body:not([data-panel]) {
+    grid-template-columns: 216px minmax(0, 1fr);
+  }
+}
+.sb-help {
+  position: absolute;
+  top: var(--space-3);
+  left: var(--space-3);
+  right: var(--space-3);
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-overlay, var(--surface));
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.sb-help span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.sb-help b {
+  color: var(--text);
+}
+.sb-help {
+  padding-right: 40px;
+}
+.sb-help > :last-child {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+}
+.sb-toast {
+  position: fixed;
+  bottom: var(--space-6);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+}
+.sb-section {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-2);
+}
+.sb-section > summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.sb-section > summary::before {
+  content: "›";
+  display: inline-block;
+  width: 10px;
+  transition: transform 120ms ease;
+  color: var(--text-muted);
+}
+.sb-section[open] > summary::before {
+  transform: rotate(90deg);
+}
+.sb-section[open] > summary {
+  margin-bottom: var(--space-2);
+}
+.sb-section > :not(summary) {
+  margin-bottom: var(--space-2);
+}

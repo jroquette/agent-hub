@@ -64,6 +64,17 @@ export interface BlockCanvasProps {
   numbers: ReadonlyMap<string, string>;
   /** A "+" was pressed: insert at this place; `anchor` is the button, for the menu. */
   onInsert: (target: { stack: string; slot: Slot; index: number }, anchor: DOMRect) => void;
+  /** A slot was clicked: open its popover. */
+  onSlot: (request: SlotRequest) => void;
+}
+
+/** A slot of a block clicked to fill it: which block (or C-block), which key, where. */
+export interface SlotRequest {
+  id: string;
+  kind: "action" | "value" | "condition" | "text" | "include";
+  /** The key it edits: `action`, `with.<input>`, `until_when`, `message`, `include`, `if`. */
+  key: string;
+  anchor: DOMRect;
 }
 
 export interface InsertTarget {
@@ -109,25 +120,61 @@ function Pill({
   children,
   title,
   empty,
+  label,
+  onOpen,
+  className = "bk-pill",
 }: {
   children: ReactNode;
-  title?: string;
+  title?: string | undefined;
   empty?: boolean;
+  /** The slot's name, for its accessible name ("action: demo-get-status, change"). */
+  label?: string;
+  onOpen?: ((anchor: DOMRect) => void) | undefined;
+  className?: string;
 }) {
+  if (!onOpen) {
+    return (
+      <span className={className} data-empty={empty === true ? true : undefined} title={title}>
+        {children}
+      </span>
+    );
+  }
   return (
-    <span className="bk-pill" data-empty={empty === true ? true : undefined} title={title}>
+    <button
+      type="button"
+      className={`${className} bk-slot`}
+      data-empty={empty === true ? true : undefined}
+      data-no-pan=""
+      title={title ?? "Click to change"}
+      aria-label={label ? `${label}: ${empty ? "choose" : "change"}` : undefined}
+      onPointerDown={(event) => {
+        event.stopPropagation();
+      }}
+      onClick={(event) => {
+        event.stopPropagation();
+        onOpen(event.currentTarget.getBoundingClientRect());
+      }}
+    >
       {children}
-    </span>
+    </button>
   );
 }
 
-function Condition({ value, placeholder }: { value: string; placeholder: string }) {
+function Condition({
+  value,
+  placeholder,
+  onOpen,
+}: {
+  value: string;
+  placeholder: string;
+  onOpen?: (anchor: DOMRect) => void;
+}) {
   return value.trim() === "" ? (
-    <Pill empty title="Select the block to set its condition">
+    <Pill empty label="condition" onOpen={onOpen}>
       {placeholder}
     </Pill>
   ) : (
-    <Pill title={value}>
+    <Pill title={value} label="condition" onOpen={onOpen}>
       <Icon name="split" size="sm" /> {conditionWords(value)}
     </Pill>
   );
@@ -148,18 +195,31 @@ function values(node: BuilderNode): [string, Json][] {
 /** The words of a block, Scratch-like: verbs and inline fields. */
 function BlockWords({
   node,
+  facts,
   onEditNode,
+  onSlot,
 }: {
   node: BuilderNode;
+  facts: ScenarioAction | null;
   onEditNode: (node: BuilderNode) => void;
+  onSlot: (request: SlotRequest) => void;
 }) {
   const set = (key: string, value: Json) => {
     onEditNode({ ...node, [key]: value });
   };
+  const open =
+    (kind: SlotRequest["kind"], key: string) =>
+    (anchor: DOMRect): void => {
+      onSlot({ id: node.id, kind, key, anchor });
+    };
   const action = text(node.action);
   const actionPill = (
-    <Pill empty={action === ""}>{action === "" ? "choose an action" : action}</Pill>
+    <Pill empty={action === ""} label="action" onOpen={open("action", "action")}>
+      {action === "" ? "choose an action" : action}
+    </Pill>
   );
+  const given = new Set(values(node).map(([key]) => key));
+  const missing = (facts?.inputs ?? []).filter((input) => input.required && !given.has(input.name));
   const kept = Object.keys(
     typeof node.capture === "object" && node.capture !== null && !Array.isArray(node.capture)
       ? node.capture
@@ -170,15 +230,27 @@ function BlockWords({
       {values(node).map(([key, value]) => {
         const words = refInWords(shown(value));
         return (
-          <span key={key} className="bk-pair" title={`${key} = ${shown(value)}`}>
+          <span key={key} className="bk-pair">
             <span className="bk-label">{key.replace(/_/g, " ")}</span>
-            <Pill>
+            <Pill
+              title={`${key} = ${shown(value)} · click to change`}
+              label={key}
+              onOpen={open("value", `with.${key}`)}
+            >
               {words.ref && <Icon name="bookmark" size="sm" />}
               {words.text}
             </Pill>
           </span>
         );
       })}
+      {missing.map((input) => (
+        <span key={input.name} className="bk-pair">
+          <span className="bk-label">{input.name.replace(/_/g, " ")}</span>
+          <Pill empty label={input.name} onOpen={open("value", `with.${input.name}`)}>
+            {input.description ?? "a value"}
+          </Pill>
+        </span>
+      ))}
       {kept.map((name) => (
         <span key={name} className="bk-pair">
           <span className="bk-label">keep as</span>
@@ -206,7 +278,11 @@ function BlockWords({
       return (
         <>
           <span>wait until</span>
-          <Condition value={text(node.until_when)} placeholder="a state holds" />
+          <Condition
+            value={text(node.until_when)}
+            placeholder="a state holds"
+            onOpen={open("condition", "until_when")}
+          />
           <span className="bk-sep">·</span>
           <span className="bk-label">reading</span>
           {actionPill}
@@ -238,9 +314,15 @@ function BlockWords({
       return (
         <>
           <span>ask me to</span>
-          <span className="bk-pill bk-pill-text" title={text(node.message)}>
+          <Pill
+            className="bk-pill bk-pill-text"
+            title={text(node.message)}
+            label="what to do"
+            empty={firstLine(text(node.message)) === null}
+            onOpen={open("text", "message")}
+          >
             {firstLine(text(node.message)) ?? "do something by hand"}
-          </span>
+          </Pill>
           {node.capture_response === true && <span className="bk-label">and keep what I type</span>}
         </>
       );
@@ -262,7 +344,13 @@ function BlockWords({
       return (
         <>
           <span>run the scenario</span>
-          <Pill empty={text(node.include) === ""}>{text(node.include) || "choose one"}</Pill>
+          <Pill
+            empty={text(node.include) === ""}
+            label="scenario"
+            onOpen={open("include", "include")}
+          >
+            {text(node.include) || "choose one"}
+          </Pill>
         </>
       );
     default:
@@ -477,7 +565,12 @@ function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
             <span className="bk-caption">{node.description}</span>
           )}
           <span className="bk-words">
-            <BlockWords node={node} onEditNode={ctx.props.onEditNode} />
+            <BlockWords
+              node={node}
+              facts={ctx.props.actionOf(node)}
+              onEditNode={ctx.props.onEditNode}
+              onSlot={ctx.props.onSlot}
+            />
           </span>
         </span>
         <Badges ctx={ctx} node={node} />
@@ -491,7 +584,13 @@ function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
         <ControlHead icon="refresh-cw">
           <Num ctx={ctx} id={node.id} />
           <span>repeat until</span>
-          <Condition value={text(node.until_when)} placeholder="a state holds" />
+          <Condition
+            value={text(node.until_when)}
+            placeholder="a state holds"
+            onOpen={(anchor) => {
+              ctx.props.onSlot({ id: node.id, kind: "condition", key: "until_when", anchor });
+            }}
+          />
           <span>· at most</span>
           <Field
             value={text(node.max_iterations, "1")}
@@ -525,7 +624,13 @@ function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
         <ControlHead icon="split">
           <Num ctx={ctx} id={item.key} />
           <span>if</span>
-          <Condition value={item.condition} placeholder="a condition" />
+          <Condition
+            value={item.condition}
+            placeholder="a condition"
+            onOpen={(anchor) => {
+              ctx.props.onSlot({ id: itemId(item), kind: "condition", key: "if", anchor });
+            }}
+          />
         </ControlHead>
         <div className="bk-mouth">
           <List

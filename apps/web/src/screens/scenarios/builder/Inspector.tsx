@@ -62,7 +62,7 @@ function Field({
 }
 
 /** A literal or a picked reference: the text field, and a picker of what exists upstream. */
-function ValueInput({
+export function ValueInput({
   id,
   value,
   sources,
@@ -426,36 +426,6 @@ export function BlockInspector({
         </ul>
       )}
       <div className="sb-inspector-body">
-        <Field label="Name" help="What this block does, in a few words. Shown on the block.">
-          {(fieldId) => (
-            <input
-              id={fieldId}
-              className="ah-input"
-              value={typeof node.description === "string" ? node.description : ""}
-              placeholder="e.g. Pull the order from Medusa"
-              onChange={(event) => {
-                set("description", event.target.value);
-              }}
-            />
-          )}
-        </Field>
-        <Field label="Id" help="Unique, kebab-case. Renaming updates what waits for it.">
-          {(fieldId) => (
-            <input
-              id={fieldId}
-              className="ah-input ah-mono"
-              value={id}
-              onChange={(event) => {
-                setId(event.target.value);
-              }}
-              onBlur={() => {
-                if (id !== node.id && /^[a-z][a-z0-9-]*$/.test(id)) onChange({ ...node, id });
-                else setId(node.id);
-              }}
-            />
-          )}
-        </Field>
-
         {callsAction && (
           <>
             <Field
@@ -586,57 +556,6 @@ export function BlockInspector({
           </>
         )}
 
-        {callsAction && (
-          <div className="sb-field">
-            <span className="ah-small">Keep for later</span>
-            <span className="ah-small ah-subtle">
-              A value of the output that later blocks can use.
-            </span>
-            {Object.entries(capture).map(([name, from]) => (
-              <div key={name} className="sb-value-row">
-                <span className="sb-chip sb-chip-kept">
-                  <Icon name="bookmark" size="sm" /> {name}
-                </span>
-                <span className="ah-small ah-muted">
-                  ← {shown(from).replace(/^\$self\.output\.?/, "") || "output"}
-                </span>
-                <button
-                  type="button"
-                  className="sb-icon-btn"
-                  aria-label={`Stop keeping ${name}`}
-                  onClick={() => {
-                    const next = without(capture, name);
-                    set("capture", Object.keys(next).length > 0 ? next : undefined);
-                  }}
-                >
-                  <Icon name="x" size="sm" />
-                </button>
-              </div>
-            ))}
-            {entry && entry.output_fields.length > 0 && (
-              <select
-                className="ah-input"
-                aria-label="Keep a field of the output"
-                value=""
-                onChange={(event) => {
-                  const path = event.target.value;
-                  if (!path) return;
-                  const name = path.replace(/[^a-z0-9_]/gi, "_").toLowerCase();
-                  set("capture", { ...capture, [name]: `$self.output.${path}` });
-                }}
-              >
-                <option value="">＋ Keep a field…</option>
-                {entry.output_fields.map((field) => (
-                  <option key={field.path} value={field.path}>
-                    {field.path}
-                    {field.type ? ` (${field.type})` : ""}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-        )}
-
         {node.type === "approval" && (
           <>
             <Field label="What to do" help="What the person does by hand before answering.">
@@ -763,57 +682,146 @@ export function BlockInspector({
           </Field>
         )}
 
-        <ConditionBuilder
-          label="Only if"
-          value={typeof node.when === "string" ? node.when : ""}
-          fields={whenFields}
-          onChange={(value) => {
-            set("when", value);
-          }}
-        />
-        <Field
-          label="Runs after"
-          help="The blocks it waits for (set by where it sits on the canvas)."
-        >
-          {() => (
-            <span className="ah-mono ah-small">{dependsOn(node).join(", ") || "the start"}</span>
-          )}
-        </Field>
-        {dependsOn(node).length > 1 && (
-          <Field label="Runs when">
-            {(fieldId) => (
-              <select
-                id={fieldId}
-                className="ah-input"
-                value={text(node.trigger_rule, "all_success")}
-                onChange={(event) => {
-                  set(
-                    "trigger_rule",
-                    event.target.value === "all_success" ? undefined : event.target.value,
-                  );
-                }}
-              >
-                {TRIGGER_WORDS.map(([rule, words]) => (
-                  <option key={rule} value={rule}>
-                    {words}
-                  </option>
-                ))}
-              </select>
+        {callsAction && (
+          <details className="sb-section">
+            <summary>Keep for later</summary>
+            <div className="sb-field">
+              <span className="ah-small ah-subtle">
+                A value of the output that later blocks can use.
+              </span>
+              {Object.entries(capture).map(([name, from]) => (
+                <div key={name} className="sb-value-row">
+                  <span className="sb-chip sb-chip-kept">
+                    <Icon name="bookmark" size="sm" /> {name}
+                  </span>
+                  <span className="ah-small ah-muted">
+                    ← {shown(from).replace(/^\$self\.output\.?/, "") || "output"}
+                  </span>
+                  <button
+                    type="button"
+                    className="sb-icon-btn"
+                    aria-label={`Stop keeping ${name}`}
+                    onClick={() => {
+                      const next = without(capture, name);
+                      set("capture", Object.keys(next).length > 0 ? next : undefined);
+                    }}
+                  >
+                    <Icon name="x" size="sm" />
+                  </button>
+                </div>
+              ))}
+              {entry && entry.output_fields.length > 0 && (
+                <select
+                  className="ah-input"
+                  aria-label="Keep a field of the output"
+                  value=""
+                  onChange={(event) => {
+                    const path = event.target.value;
+                    if (!path) return;
+                    const name = path.replace(/[^a-z0-9_]/gi, "_").toLowerCase();
+                    set("capture", { ...capture, [name]: `$self.output.${path}` });
+                  }}
+                >
+                  <option value="">＋ Keep a field…</option>
+                  {entry.output_fields.map((field) => (
+                    <option key={field.path} value={field.path}>
+                      {field.path}
+                      {field.type ? ` (${field.type})` : ""}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          </details>
+        )}
+        <details className="sb-section">
+          <summary>Only if, and what it waits for</summary>
+          <ConditionBuilder
+            label="Only if"
+            value={typeof node.when === "string" ? node.when : ""}
+            fields={whenFields}
+            onChange={(value) => {
+              set("when", value);
+            }}
+          />
+          <Field
+            label="Runs after"
+            help="The blocks it waits for (set by where it sits on the canvas)."
+          >
+            {() => (
+              <span className="ah-mono ah-small">{dependsOn(node).join(", ") || "the start"}</span>
             )}
           </Field>
-        )}
+          {dependsOn(node).length > 1 && (
+            <Field label="Runs when">
+              {(fieldId) => (
+                <select
+                  id={fieldId}
+                  className="ah-input"
+                  value={text(node.trigger_rule, "all_success")}
+                  onChange={(event) => {
+                    set(
+                      "trigger_rule",
+                      event.target.value === "all_success" ? undefined : event.target.value,
+                    );
+                  }}
+                >
+                  {TRIGGER_WORDS.map(([rule, words]) => (
+                    <option key={rule} value={rule}>
+                      {words}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </Field>
+          )}
+        </details>
         {callsAction && (
-          <div className="sb-field">
-            <span className="ah-small">Where it can stop</span>
-            <ul className="sb-stops">
-              {stopLines(asStep(node), entry?.action ?? null, mode, null).map((line) => (
-                <li key={line.key}>
-                  <Icon name={line.icon} size="sm" /> {line.text}
-                </li>
-              ))}
-            </ul>
-          </div>
+          <details className="sb-section" open>
+            <summary>Where it can stop</summary>
+            <div className="sb-field">
+              <ul className="sb-stops">
+                {stopLines(asStep(node), entry?.action ?? null, mode, null).map((line) => (
+                  <li key={line.key}>
+                    <Icon name={line.icon} size="sm" /> {line.text}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </details>
         )}
+        <details className="sb-section">
+          <summary>Name and id</summary>
+          <Field label="Name" help="What this block does, in a few words. Shown on the block.">
+            {(fieldId) => (
+              <input
+                id={fieldId}
+                className="ah-input"
+                value={typeof node.description === "string" ? node.description : ""}
+                placeholder="e.g. Pull the order from Medusa"
+                onChange={(event) => {
+                  set("description", event.target.value);
+                }}
+              />
+            )}
+          </Field>
+          <Field label="Id" help="Unique, kebab-case. Renaming updates what waits for it.">
+            {(fieldId) => (
+              <input
+                id={fieldId}
+                className="ah-input ah-mono"
+                value={id}
+                onChange={(event) => {
+                  setId(event.target.value);
+                }}
+                onBlur={() => {
+                  if (id !== node.id && /^[a-z][a-z0-9-]*$/.test(id)) onChange({ ...node, id });
+                  else setId(node.id);
+                }}
+              />
+            )}
+          </Field>
+        </details>
         {node.type === "expect" && typeof node.timeout === "string" && (
           <span className="ah-small ah-subtle">Runs up to {pace(node.timeout)}.</span>
         )}
@@ -826,9 +834,11 @@ export function BlockInspector({
 export function ScenarioSettings({
   document,
   onChange,
+  onClose,
 }: {
   document: BuilderDocument;
   onChange: (next: BuilderDocument) => void;
+  onClose?: () => void;
 }) {
   const inputs = record(document.inputs);
   const setInputs = (next: Record_) => {
@@ -841,8 +851,13 @@ export function ScenarioSettings({
     <section className="sb-inspector" aria-label="Scenario settings">
       <header className="sb-inspector-head">
         <Icon name="settings" size="sm" />
-        <b>Scenario</b>
-        <span className="ah-small ah-muted">select a block to edit it</span>
+        <b>Scenario: description and inputs</b>
+        <span className="ah-grow" />
+        {onClose && (
+          <button type="button" className="sb-icon-btn" aria-label="Close" onClick={onClose}>
+            <Icon name="x" size="sm" />
+          </button>
+        )}
       </header>
       <div className="sb-inspector-body">
         <Field label="Description" help="When to use this scenario, in one sentence.">

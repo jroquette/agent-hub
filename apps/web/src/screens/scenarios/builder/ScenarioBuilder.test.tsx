@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   aPage,
@@ -97,6 +97,11 @@ async function savedNodes(requests: Request[]): Promise<SentNode[]> {
 }
 
 describe("ScenarioBuilder (scenario builder)", () => {
+  // Each test starts with no draft kept in this browser.
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
   it("scenario builder reads the scenario as blocks that say what they do", async () => {
     renderBuilder();
 
@@ -219,8 +224,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const user = userEvent.setup();
     renderBuilder();
 
-    await user.click(await screen.findByRole("button", { name: "More" }));
-    await user.click(screen.getByRole("button", { name: "Show as graph" }));
+    await user.click(await screen.findByRole("button", { name: "Graph" }));
     await user.click(await screen.findByRole("button", { name: "Add a block after fetch-order" }));
     await user.click(screen.getByRole("menuitem", { name: "Pause" }));
 
@@ -302,6 +306,65 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(
       await screen.findByRole("region", { name: "Inspector: Check order-on-hold" }),
     ).toBeInTheDocument();
+  });
+
+  it("scenario builder fills a block's slots on the block itself", async () => {
+    const user = userEvent.setup();
+    const { requests } = renderBuilder({ [SAVE]: () => SAVED });
+
+    const fetch = await screen.findByRole("button", { name: "Script fetch-order" });
+    await user.click(within(fetch).getByRole("button", { name: "action: change" }));
+    const picker = screen.getByRole("dialog", { name: "Choose the action" });
+    await user.click(within(picker).getByRole("button", { name: /get-order-by-ref/ }));
+    expect(within(fetch).getByRole("button", { name: "action: change" })).toHaveTextContent(
+      "get-order-by-ref",
+    );
+    // The action asks for external_ref: an empty slot says so, and fills from a popover.
+    await user.click(within(fetch).getByRole("button", { name: "external_ref: choose" }));
+    const value = screen.getByRole("dialog", { name: "Value of external_ref" });
+    await user.type(within(value).getByRole("textbox"), "T-1");
+    await user.click(within(value).getByRole("button", { name: "Done" }));
+
+    const save = screen.getByRole("button", { name: "Save scenario" });
+    await waitFor(() => {
+      expect(save).toBeEnabled();
+    });
+    await user.click(save);
+    await screen.findByText("Saved · rev 2");
+    const nodes = (await savedNodes(requests)) as (SentNode & { action?: string; with?: object })[];
+    expect(nodes[0]).toMatchObject({ action: "get-order-by-ref", with: { external_ref: "T-1" } });
+  });
+
+  it("scenario builder deletes with Delete, undoes from the toast, and moves with Alt+arrows", async () => {
+    const user = userEvent.setup();
+    renderBuilder();
+
+    const check = await screen.findByRole("button", { name: "Check order-on-hold" });
+    check.focus();
+    await user.keyboard("{Enter}");
+    await user.keyboard("{Alt>}{ArrowUp}{/Alt}");
+    const blocks = screen.getAllByRole("button", { name: /^(Check|Script) / });
+    expect(blocks.map((block) => block.getAttribute("aria-label"))).toEqual([
+      "Check order-on-hold",
+      "Script fetch-order",
+    ]);
+
+    await user.keyboard("{Delete}");
+    expect(screen.queryByRole("button", { name: "Check order-on-hold" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    expect(await screen.findByRole("button", { name: "Check order-on-hold" })).toBeInTheDocument();
+  });
+
+  it("scenario builder shows the side panel only for a block or the inputs", async () => {
+    const user = userEvent.setup();
+    renderBuilder();
+
+    await screen.findByRole("button", { name: "Check order-on-hold" });
+    expect(screen.queryByRole("region", { name: "Scenario settings" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Inputs" }));
+    expect(screen.getByRole("region", { name: "Scenario settings" })).toHaveTextContent(
+      "external_ref",
+    );
   });
 
   it("scenario builder shows the generated YAML", async () => {
