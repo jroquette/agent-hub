@@ -1,5 +1,6 @@
-"""The review-incoming scripts' shared setup: each script loaded in process, and a hub (its
-``hub.json``) beside a real git clone with ``origin/main`` and the review ref of PR 7."""
+"""The review-incoming scripts' shared setup: each script loaded in process, and a hub (with
+what ``hub step config`` prints for it) beside a real git clone with ``origin/main`` and the
+review ref of PR 7."""
 
 import importlib.util
 import json
@@ -45,6 +46,14 @@ def git(folder: Path, *args: str) -> str:
     return done.stdout.strip()
 
 
+CONFIG = json.dumps(
+    {
+        "teams": ["DEM"],
+        "repos": [{"dir": "api", "github": "example/api", "check": "make check"}],
+    }
+)
+
+
 @dataclass
 class Clone:
     """A hub and its repo's clone: ``base`` is ``origin/main``, ``head`` the review ref's commit."""
@@ -53,6 +62,8 @@ class Clone:
     repo: Path
     base: str
     head: str
+    # What hub step config printed for the hub, as the workflow passes it with --config.
+    config: str = CONFIG
 
     def commit(self, changes: dict[str, str], *, ref: str = REF) -> str:
         """A commit on ``base`` with ``changes`` (path to text, or "" to delete), left in ``ref``
@@ -95,16 +106,11 @@ def script() -> Callable[[str], ModuleType]:
 
 @pytest.fixture
 def clone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Clone:
-    """The hub as the cwd (scripts read ``hub.json`` there) and ``../api``, its clone."""
+    """The hub as the cwd and ``../api``, its clone."""
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
     hub, repo = tmp_path / "hub", tmp_path / "api"
     hub.mkdir()
-    config = {
-        "tracker": {"kind": "linear", "team": "DEM"},
-        "repos": [{"dir": "api", "github": "example/api", "check": "make check"}],
-    }
-    (hub / "hub.json").write_text(json.dumps(config), encoding="utf-8")
     repo.mkdir()
     git(repo, "init", "-q", "-b", "main")
     (repo / "app").mkdir()

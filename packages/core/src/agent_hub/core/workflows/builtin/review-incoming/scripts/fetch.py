@@ -5,10 +5,12 @@
 """Read a PR's facts from the files /review wrote and the local clone; print them as JSON.
 
 ``fetch.py --repo <dir> --pr <n> --ref refs/agent-hub/review/<n> --pr-file <abs> --ci-file <abs>
---spec-file <abs>``, run in the hub (it reads ``hub.json`` there). Read-only: it runs only git
-reads in the clone ``../<dir>``. Every file is untrusted: an absolute path to a regular file (not
-a link), within its byte cap, UTF-8. Its text loses control characters (but newline and tab) and
-runs of three or more backticks, and is cut to its bound.
+--spec-file <abs> --config <json>``, run in the hub; ``--config`` is the ``config`` node's
+output, the CLI's read of the hub's config (the repo's check and the team keys; this script
+opens no ``hub.json``). Read-only: it
+runs only git reads in the clone ``../<dir>``. Every file is untrusted: an absolute path to a
+regular file (not a link), within its byte cap, UTF-8. Its text loses control characters (but
+newline and tab) and runs of three or more backticks, and is cut to its bound.
 
 The output: ``{number, url, title, body, body_cut, author, fork, head_sha, head_ref, base_ref,
 merge_base, path, hub, check, files[], more_files, ci{state, runs[], more}, issues[], spec}``,
@@ -180,20 +182,22 @@ def issue_keys(texts: list[str], keys: list[str]) -> list[str]:
     return found[:ISSUES_MAX]
 
 
-def hub_repo(repo: str) -> tuple[str, list[str]]:
-    """The repo's ``check`` and the tracker team keys, from ``hub.json`` in the cwd."""
+def hub_repo(repo: str, text: str) -> tuple[str, list[str]]:
+    """The repo's ``check`` and the tracker team keys, from the ``config`` node's output."""
+    if len(text.encode()) > PR_CAP:
+        raise InputError("cannot read the config: too large")
     try:
-        config = json.loads(read_bounded(str(Path.cwd() / "hub.json"), PR_CAP, "hub.json"))
+        config = json.loads(text)
     except ValueError as error:
-        raise InputError(f"cannot read hub.json: {error}") from None
+        raise InputError(f"cannot read the config: {error}") from None
     repos = field(config, "repos")
-    entries = (
-        [entry for entry in repos if field(entry, "dir") == repo] if isinstance(repos, list) else []
-    )
+    if not isinstance(repos, list):
+        raise InputError("cannot read the config: no repos list")
+    entries = [entry for entry in repos if field(entry, "dir") == repo]
     if not entries:
-        raise InputError(f"no repo {repo} in hub.json")
-    team, teams = field(config, "tracker", "team"), field(config, "tracker", "teams")
-    keys = [team] if isinstance(team, str) else teams if isinstance(teams, list) else []
+        raise InputError(f"no repo {repo} in the config")
+    teams = field(config, "teams")
+    keys = teams if isinstance(teams, list) else []
     return text_of(field(entries[0], "check")), [key for key in keys if isinstance(key, str)]
 
 
@@ -250,7 +254,7 @@ def facts(given: argparse.Namespace) -> dict[str, object]:
         raise InputError("pr must be a PR number")
     if given.ref != f"refs/agent-hub/review/{given.pr}":
         raise InputError("ref must be refs/agent-hub/review/<pr>")
-    check, keys = hub_repo(given.repo)
+    check, keys = hub_repo(given.repo, given.config)
     clone = (Path.cwd().parent / given.repo).resolve()
     if not clone.is_dir():
         raise InputError(f"no clone at ../{given.repo}")
@@ -278,7 +282,7 @@ def facts(given: argparse.Namespace) -> dict[str, object]:
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="fetch.py")
-    for name in ("--repo", "--pr", "--ref", "--pr-file", "--ci-file", "--spec-file"):
+    for name in ("--repo", "--pr", "--ref", "--pr-file", "--ci-file", "--spec-file", "--config"):
         parser.add_argument(name, required=True)
     given = parser.parse_args(argv)
     try:

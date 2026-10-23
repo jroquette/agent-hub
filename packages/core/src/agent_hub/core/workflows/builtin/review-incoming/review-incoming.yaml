@@ -4,8 +4,9 @@
 # /review posts the payload `final` wrote, and only that. No pr_opened start yet (a follow-up): the
 # pack is started by /review only.
 #
-# Invariants. The run never posts and never pushes: no hub step node, no gh in any command, and the
-# scripts get no token. The PR's text (title, body, branch, CI names, the spec) reaches the run only
+# Invariants. The run never posts and never pushes: the one hub step node is config (read-only:
+# the repo's check and team keys from hub.json, which no script opens), no gh in any command, and
+# the scripts get no token. The PR's text (title, body, branch, CI names, the spec) reaches the run only
 # through the files /review wrote, never a command line, and every prompt fences it after its
 # instructions. The head lives in refs/agent-hub/review/<pr>, never a branch: fetch.py refuses any
 # other ref, and /review deletes it once the run ended. No node writes the tracker (ADR 0030).
@@ -50,9 +51,26 @@ inputs:
 returns: final
 outcome_field: event
 nodes:
+  - id: config
+    type: shell
+    description: The hub.json values this run's scripts need, read by the CLI (read-only).
+    command: [hub, step, config]
+    effect: read
+    mutates_checkout: false
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        default_branch: {type: string}
+        branch_prefix: {type: [string, "null"]}
+        hub: {type: object}
+        repos: {type: array, items: {type: object}}
+      required: [default_branch, branch_prefix, hub, repos]
+
   - id: fetch
     type: script
     description: Read the PR's files and the local clone - the facts every node reads; read-only.
+    depends_on: [config]
     runtime: python
     script: fetch.py
     args:
@@ -68,6 +86,8 @@ nodes:
       - $INPUTS.ci_file
       - --spec-file
       - $INPUTS.spec_file
+      - --config
+      - $config.output
     mutates_checkout: false
     timeout: 2m
     retry: {max_attempts: 0}

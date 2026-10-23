@@ -3,6 +3,8 @@
 workflow: review-incoming
 inputs: {repo: demo-api, pr: "7", ref: refs/agent-hub/review/7, pr_file: /tmp/pr.json, ci_file: /tmp/ci.json, spec_file: /tmp/spec.txt}
 stubs:
+  config:
+    output: {default_branch: main, branch_prefix: jdoe/, author_name: Jane Doe, author_email: jane@example.com, ready_label: agent-ready, teams: [DEM], hub: {github: acme/demo-hub, default_branch: main, target: {github: acme/demo-hub, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}, repos: [{dir: demo-api, github: acme/demo-api, default_branch: main, check_fast: make check-fast, check: make check, target: {github: acme/demo-api, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}]}
   fetch:
     output:
       number: 7
@@ -36,4 +38,4 @@ stubs:
   compose:
     output: {path: .agent-runs/review-incoming/run-1.md, blocking: 0, minor: 0, inline: 0, suggested: comment, preview: "# Summary\nThe change does what DEM-7 asks and its test covers it.\n"}
 expect: {status: paused}
-reached: [fetch, check, surface, spec, quality, findings, draft, compose, gate]
+reached: [config, fetch, check, surface, spec, quality, findings, draft, compose, gate]

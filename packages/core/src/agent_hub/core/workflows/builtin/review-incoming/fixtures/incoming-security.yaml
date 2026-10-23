@@ -4,6 +4,8 @@
 workflow: review-incoming
 inputs: {repo: demo-api, pr: "7", ref: refs/agent-hub/review/7, pr_file: /tmp/pr.json, ci_file: /tmp/ci.json, spec_file: /tmp/spec.txt}
 stubs:
+  config:
+    output: {default_branch: main, branch_prefix: jdoe/, author_name: Jane Doe, author_email: jane@example.com, ready_label: agent-ready, teams: [DEM], hub: {github: acme/demo-hub, default_branch: main, target: {github: acme/demo-hub, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}, repos: [{dir: demo-api, github: acme/demo-api, default_branch: main, check_fast: make check-fast, check: make check, target: {github: acme/demo-api, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}]}
   fetch:
     output:
       number: 7
@@ -58,4 +60,4 @@ stubs:
   final:
     output: {path: .agent-runs/review-incoming/run-1.payload.json, sha256: 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae, event: REQUEST_CHANGES, blocking: 1, optional: 0, inline: 1}
 expect: {status: done, outcome: REQUEST_CHANGES}
-reached: [fetch, check, surface, spec, quality, security, findings, draft, compose, gate, final]
+reached: [config, fetch, check, surface, spec, quality, security, findings, draft, compose, gate, final]
