@@ -259,6 +259,7 @@ nodes:
         touched: {type: integer, minimum: 0}
         files: {type: array, maxItems: 200, items: {type: string}}
         lockfiles_edited: {type: array, maxItems: 50, items: {type: string}}
+        lockfile_edit: {type: boolean}
         ran: {type: boolean}
         tool: {type: string}
         reason: {type: string}
@@ -278,7 +279,7 @@ nodes:
               replacement: {type: string}
             required: [path, line, mutator, replacement]
         more_survived: {type: integer, minimum: 0}
-      required: [touched, files, lockfiles_edited, ran, tool, reason, mutants, killed, inconclusive, survived, more_survived]
+      required: [touched, files, lockfiles_edited, lockfile_edit, ran, tool, reason, mutants, killed, inconclusive, survived, more_survived]
 
   - id: size
     type: approval
@@ -296,6 +297,8 @@ nodes:
     description: The repo's full check, once the fast one is green.
     depends_on: [strength, size]
     trigger_rule: none_failed_min_one_success
+    # An adapt edit to a manifest or lockfile blocks the run (outcome.py): no full check first.
+    when: "$strength.output.lockfile_edit == false"
     runtime: python
     script: check.py
     args: [$worktree.output.check]
