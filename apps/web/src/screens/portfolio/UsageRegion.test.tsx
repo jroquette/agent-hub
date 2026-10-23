@@ -1,5 +1,6 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../../testing/axe";
@@ -140,6 +141,40 @@ describe("UsageRegion", () => {
 
     await screen.findByText("/ship");
     expect(within(region()).queryByRole("columnheader", { name: "Project" })).toBeNull();
+  });
+
+  it("drops the old rows when the project in scope changes", async () => {
+    const user = userEvent.setup();
+    function Scoped() {
+      const [project, setProject] = useState("demo");
+      return (
+        <>
+          <button
+            type="button"
+            onClick={() => {
+              setProject("loki");
+            }}
+          >
+            Scope loki
+          </button>
+          <UsageRegion project={project} single />
+        </>
+      );
+    }
+    renderWithApi(<Scoped />, {
+      routes: {
+        [USAGE]: (request: Request) =>
+          new URL(request.url).searchParams.get("project") === "loki" ? "pending" : aUsageReport(),
+      },
+    });
+    await screen.findByText("/refactor");
+
+    await user.click(screen.getByRole("button", { name: "Scope loki" }));
+
+    await waitFor(() => {
+      expect(screen.queryByText("/refactor")).not.toBeInTheDocument();
+    });
+    expect(region()).toHaveAttribute("aria-busy", "true");
   });
 
   describe("states", () => {

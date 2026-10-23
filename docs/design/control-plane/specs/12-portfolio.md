@@ -149,7 +149,8 @@ Merged, reverse-chronological events of interest (not every event): PR merged, r
 - Every period number's tooltip names the period with absolute dates.
 - The Skills and agents region has its own window switch (7 d, 30 d, 90 d; 30 d by default, as the Toolkit), held in
   the region's state and not in the URL: `?period=` does not change it. A switch keeps the shown table (the region
-  busy) until the new window's report arrives.
+  busy) until the new window's report arrives; a change of project scope shows the skeleton instead, so one
+  project's rows never stand in for another's.
 
 ### Data mapping
 
