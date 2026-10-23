@@ -260,8 +260,9 @@ show its records. The app reads the registered hub's checkout as it is on disk, 
 **Scheduled and event starts.** `hub web` can start a workflow by itself. Declare it in `hub.json`: a schedule such
 as `"schedules": [{"workflow": "retro", "cron": "0 9 * * 1", "inputs": {"since": 7}}]` starts `retro` every Monday at
 09:00, and an event such as `"events": [{"workflow": "post-merge-verify", "on": "merge", "repo": "<repo dir>"}]`
-starts `post-merge-verify` after each new commit on that repo's default branch (`on` may also be `ci_red`, a failed
-Actions run on it, or `pr_opened`, a newly opened pull request). The cron has 5 numeric fields and is read in UTC.
+starts `post-merge-verify` once per merge to that repo's default branch, on its newest commit (`on` may also be
+`ci_red`, one run per failed Actions run on it, or `pr_opened`, one run per newly opened pull request; an older pull
+request or run that comes back onto GitHub's page never starts one). The cron has 5 numeric fields and is read in UTC.
 Nothing starts while `hub web` is not running; when it comes back, the most recent missed slot runs once and older
 ones never do. Events are polled through `gh` every 5 minutes, so `gh` must be signed in; only the repo's own push runs and pull
 requests count (one from a fork never starts a run); the first poll only records

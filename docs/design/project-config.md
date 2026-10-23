@@ -87,10 +87,16 @@ one event per workflow, `on` and `repo`, and no `sha`, `pr` or `ci_run` in `even
 each as a `hub workflow run --live` child whose start record holds `trigger` (`schedule` or `event`). A cron is read in
 UTC; each minute, the most recent slot at or before now starts once, so a slot missed while `hub web` was down runs once
 when it comes back, and older ones never do. Every 5 minutes `hub web` asks GitHub through `gh api` for each event
-source's newest 20 items; the first successful poll is a baseline and starts nothing, and later polls start one run per
-new merge commit, failed Actions run or opened pull request. The event's data reaches the run only as inputs the
+source's newest 20 items; the first successful poll is a baseline and starts nothing. Later polls start, for `merge`,
+one run per poll on the newest new commit of the default branch (a merge or rebase of a many-commit pull request is
+one run, on its last commit; every new commit is recorded, so none of them starts later), for `ci_red` one run per
+failed Actions run (a push with two failing workflows starts two runs), and for `pr_opened` one run per opened pull
+request. `pr_opened` and `ci_red` start only ids above the highest one recorded (pull request numbers and Actions run
+ids only grow): an older pull request or failed run that comes onto the page when a newer one closes or turns green
+starts nothing, and an id is never started twice however long it stays on the page. The event's data reaches the run only as inputs the
 workflow declares: `sha` (every kind), `pr` (`pr_opened`) and `ci_run` (`ci_red`). The slots and event ids already
-started are kept in `<hub>/.agent-runs/schedules/state.json` ([ADR 0048](../adr/0048-scheduled-and-event-starts-in-hub-web.md)).
+started (the shas seen per `merge` source, the highest id per `pr_opened` and `ci_red` source) are kept in
+`<hub>/.agent-runs/schedules/state.json` ([ADR 0048](../adr/0048-scheduled-and-event-starts-in-hub-web.md)).
 Only the repo's own events count: `ci_red` reads push runs only and drops a run whose head repository or branch is not
 the polled repo's, and `pr_opened` drops a pull request whose head is in a fork (or a deleted fork), so no one else's
 code starts a run on your machine. The ledger keeps only what `hub.json` declares now: when a schedule or an event
