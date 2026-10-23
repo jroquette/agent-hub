@@ -3,12 +3,19 @@ import type { MouseEvent } from "react";
 import { Link } from "react-router";
 
 import { ExternalLabel, Icon, PathText, Tooltip } from "../../components";
-import { BRAIN_PREFIX, brainRoute, isServedNote, withBrainQuery } from "../../lib/brainLinks";
+import {
+  BRAIN_PREFIX,
+  NOT_OPENED_HERE,
+  UNSERVED_NOTE_REASON,
+  brainRoute,
+  isServedNote,
+  withBrainQuery,
+} from "../../lib/brainLinks";
 
 /** Why a repo doc is listed but not opened (D-results-web). */
 export const REPO_DOC_TOOLTIP = "Repo docs are not opened in the app";
 /** Why a path under `brain/` that the note route refuses is listed but not opened (AM-8). */
-export const UNSERVED_NOTE_TOOLTIP = "This note is not opened in the app";
+export const UNSERVED_NOTE_TOOLTIP = UNSERVED_NOTE_REASON;
 const EXTERNAL = "agent-from-external";
 /** The path's room in the 280 px panel, in characters. */
 const PATH_CHARS = 34;
@@ -37,13 +44,17 @@ function fileName(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1);
 }
 
-/** The kind line: `decision · accepted`; the inbox is unreviewed; a repo doc says it stays shut. */
-function kindLine(item: KnowledgeItem, repoDoc: boolean): string {
+/**
+ * The kind line: `decision · accepted`; the inbox is unreviewed; a repo doc and a refused note
+ * (AM-8) say they stay shut.
+ */
+function kindLine(item: KnowledgeItem, repoDoc: boolean, served: boolean): string {
   const parts =
     item.kind === "inbox"
       ? ["inbox", "unreviewed"]
       : [item.kind, ...(item.status ? [item.status] : [])];
-  if (repoDoc) parts.push("repo doc, not opened here");
+  if (repoDoc) parts.push(`repo doc, ${NOT_OPENED_HERE}`);
+  else if (!served) parts.push(NOT_OPENED_HERE);
   return parts.join(" · ");
 }
 
@@ -56,12 +67,13 @@ export function KnowledgeRow({ item, project, query, selected, onOpen }: Knowled
   const id = useId();
   const repoDoc = !item.path.startsWith(BRAIN_PREFIX);
   const note = item.path.slice(BRAIN_PREFIX.length);
+  const served = !repoDoc && isServedNote(note);
   const title = item.title || fileName(item.path);
   const details = (
     <span id={`${id}-details`} className="ah-know-details">
       <PathText path={item.path} max={PATH_CHARS} dimDir />
       <span className="ah-know-kind">
-        {kindLine(item, repoDoc)}
+        {kindLine(item, repoDoc, served)}
         {item.provenance === EXTERNAL && <ExternalLabel />}
       </span>
       {item.snippet && <span className="ah-know-snippet">{item.snippet}</span>}
@@ -75,7 +87,7 @@ export function KnowledgeRow({ item, project, query, selected, onOpen }: Knowled
       </span>
     </span>
   );
-  if (repoDoc || !isServedNote(note)) {
+  if (repoDoc || !served) {
     return (
       <li className="ah-know-row" data-search-row="" tabIndex={-1} aria-describedby={`${id}-tip`}>
         <Tooltip label={repoDoc ? REPO_DOC_TOOLTIP : UNSERVED_NOTE_TOOLTIP} id={`${id}-tip`} block>

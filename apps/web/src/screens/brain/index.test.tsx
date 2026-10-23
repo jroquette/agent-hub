@@ -418,9 +418,11 @@ describe("BrainScreen search", () => {
     const paths = screen.getByRole("region", { name: "Paths matching “topic” · 10" });
     expect(within(paths).getAllByRole("link")).toHaveLength(8);
     const more = within(paths).getByRole("button", { name: "Show all 10 path matches" });
+    expect(more).toHaveAttribute("aria-expanded", "false");
     await userEvent.click(more);
     expect(within(paths).getAllByRole("link")).toHaveLength(10);
     expect(more).toHaveAccessibleName("Show the first 8");
+    expect(more).toHaveAttribute("aria-expanded", "true");
     expect(more).toHaveFocus();
   });
 

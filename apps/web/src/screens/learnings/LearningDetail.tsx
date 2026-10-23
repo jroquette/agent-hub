@@ -24,7 +24,13 @@ import {
   type LineageStep,
   type Status,
 } from "../../components";
-import { BRAIN_PREFIX, brainRoute, isServedNote } from "../../lib/brainLinks";
+import {
+  BRAIN_PREFIX,
+  NOT_OPENED_HERE,
+  UNSERVED_NOTE_REASON,
+  brainRoute,
+  isServedNote,
+} from "../../lib/brainLinks";
 import { fmtAgo } from "../../lib/format";
 import { githubPullHref, safeHref } from "../../lib/safeHref";
 import { DiscussButton, useDiscussTarget } from "../../shell/discuss";
@@ -263,13 +269,8 @@ function DecisionStep({
 }) {
   if (decided === null) return <span className="ah-muted">Not decided yet</span>;
   const verb = decided === "accepted" ? "Accepted" : "Rejected";
-  const by = l.decided_by ? ` by ${l.decided_by}` : "";
-  const when = l.decided_at ? (
-    <>
-      {" "}
-      <Time iso={l.decided_at} absolute />
-    </>
-  ) : null;
+  const time = l.decided_at ? <Time iso={l.decided_at} absolute /> : null;
+  const by = l.decided_by ? `by ${l.decided_by}` : "";
   return (
     <>
       {justNow ? (
@@ -277,16 +278,16 @@ function DecisionStep({
       ) : prUrl ? (
         <span>
           {verb}
-          {when}
-          {by}
+          {time && <> {time}</>}
+          {by && ` ${by}`}
         </span>
       ) : (
         <>
-          <span>Decided outside the app</span>
-          {(when ?? by) && (
+          <span>{verb} outside the app</span>
+          {(time ?? by) && (
             <span className="ah-small ah-muted">
-              {verb}
-              {when}
+              {time}
+              {time && by ? " " : ""}
               {by}
             </span>
           )}
@@ -309,12 +310,22 @@ function NoteStep({
   path: string | null;
   state: LearningState;
 }) {
+  const tipId = useId();
   if (!path) return <span className="ah-subtle">No note path recorded.</span>;
   const rest = brainRest(path);
+  const served = isServedNote(rest);
   const shown = <PathText path={`${BRAIN_PREFIX}${rest}`} />;
+  // A path the note route refuses (AM-8) says so, as a knowledge row does.
+  const shut = served ? "" : ` · ${NOT_OPENED_HERE}`;
   return (
     <>
-      {state === "in_brain" && isServedNote(rest) ? (
+      {!served ? (
+        <span>
+          <Tooltip label={UNSERVED_NOTE_REASON} id={tipId}>
+            <span aria-describedby={tipId}>{shown}</span>
+          </Tooltip>
+        </span>
+      ) : state === "in_brain" ? (
         <span>
           <Link
             to={brainRoute(project, rest)}
@@ -328,10 +339,10 @@ function NoteStep({
       ) : (
         <span>{shown}</span>
       )}
-      {state === "in_brain" && <span className="ah-small ah-muted">In the brain</span>}
+      {state === "in_brain" && <span className="ah-small ah-muted">In the brain{shut}</span>}
       {state === "accepted_pr_open" && (
         <span className="ah-small ah-muted">
-          In the brain once the pull request is merged and pulled
+          In the brain once the pull request is merged and pulled{shut}
         </span>
       )}
     </>
@@ -836,7 +847,8 @@ export function LearningDetail({ id, row, now, onDecide, claude }: LearningDetai
               l={l}
               state={state}
               prUrl={prUrl}
-              justNow={result !== null}
+              // "just now" until the refetched learning records the decision, then its time.
+              justNow={result !== null && !l.decided_at}
               notePath={l.brain_path ?? acceptedTo}
             />
           </Section>

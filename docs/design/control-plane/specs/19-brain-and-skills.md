@@ -172,7 +172,7 @@ tabs render the same `NoteView` without them).
 tree, as before. Typing shows, in place of the tree:
 
 - **Paths matching "<text>" · <n>**, at once: the AC-270.10 path filter, the first 8 with "Show all <n> path matches"
-  (then "Show the first 8"); hidden when no path matches.
+  (then "Show the first 8"; the button carries `aria-expanded`); hidden when no path matches.
 - **Text matching "<query>" · <n>**, 120 ms after the last key (`Enter` sends it at once): the results of
   `GET /projects/{project}/knowledge/search?q=` (no `limit`, so the route's 50) in the index's rank order, one knowledge
   row each. At 50 the heading reads "· 50 best" and a footnote says "Showing the 50 best matches. Add a word to narrow
@@ -194,8 +194,12 @@ the **snippet** as plain text, clamped to 3 lines (2 below 900 px) by CSS so a s
   rest its description; the open note's row carries `aria-current="page"`.
 - A result under `<dir>/docs/` is text, not a link: `book` icon, the kind line ends "· repo doc, not opened here", and
   the tooltip says "Repo docs are not opened in the app".
-- A `brain/` path the note route would refuse (AM-8) is text too, with the tooltip "This note is not opened in the
-  app".
+- A `brain/` path the note route would refuse (AM-8: not a `.md` file, a hidden or empty segment, under `brain/auto/`,
+  over 16 segments or 512 characters, or a control character or backslash) is text too, `file-text` icon: the kind
+  line ends "· not opened here", the same words as a repo doc, and the tooltip gives the reason, "The app does not
+  open notes at this path (not a .md file, a hidden name, under auto/, or too long or deep)". The row is focusable
+  and described by the tooltip, so the reason reaches the keyboard and a screen reader too.
+- Only a row that opens a note highlights on hover; a text row (repo doc or refused note) does not.
 
 **Note column.** The header row holds the path, two quiet in-page buttons, **"Where it came from"** and **"Linked from
 · <n>"** ("Linked from" until the count is known), and Discuss. Each button scrolls to its section (smooth only

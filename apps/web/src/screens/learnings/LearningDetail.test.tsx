@@ -480,16 +480,40 @@ describe("LearningDetail", () => {
     ).toBeInTheDocument();
   });
 
-  it("trail: says Decided outside the app without a pull request", async () => {
+  it("trail: says Accepted outside the app without a pull request", async () => {
     open({ [DETAIL]: inBrain({ pr_url: null }) });
     await region();
     const { step, trail } = await trailSteps();
 
     const decision = step("Decision");
-    expect(decision).toHaveTextContent("Decided outside the app");
-    expect(decision).toHaveTextContent("by Ana Lima");
+    const [main, muted] = Array.from(decision.querySelector(".ah-lin-body")?.children ?? []);
+    expect(main).toHaveTextContent(/^Accepted outside the app$/);
+    // The time and the person on a muted line below, without the verb again.
+    expect(muted).toHaveClass("ah-muted");
+    expect(muted?.querySelector("time")).toHaveAttribute("datetime", at(900));
+    expect(muted?.textContent).toMatch(/^\S.* by Ana Lima$/);
+    expect(muted?.textContent).not.toMatch(/Accepted|Rejected/);
     expect(within(decision).queryByRole("link")).toBeNull();
     expect(trail.textContent).not.toMatch(EFFECT_WORDS);
+  });
+
+  it("trail: says Rejected outside the app, the person alone below", async () => {
+    open({
+      [DETAIL]: inBrain({
+        status: "rejected",
+        state: "archived",
+        brain_path: null,
+        pr_url: null,
+        decided_at: null,
+      }),
+    });
+    await region();
+    const { step } = await trailSteps();
+
+    const body = step("Decision").querySelector(".ah-lin-body");
+    const [main, muted] = Array.from(body?.children ?? []);
+    expect(main).toHaveTextContent(/^Rejected outside the app$/);
+    expect(muted).toHaveTextContent(/^by Ana Lima$/);
   });
 
   it("trail: says No source session recorded.", async () => {
@@ -560,6 +584,33 @@ describe("LearningDetail", () => {
     expect(note).toHaveTextContent("In the brain once the pull request is merged and pulled");
   });
 
+  it("trail: drops just now once the refetched learning records the decision", async () => {
+    let accepted = false;
+    open({
+      [DETAIL]: () =>
+        accepted
+          ? inBrain({ state: "accepted_pr_open", pr_url: "https://github.com/acme/hub/pull/12" })
+          : aLearningDetail(),
+      [ACCEPT]: () => {
+        accepted = true;
+        return aLearningActionResult();
+      },
+    });
+    const detail = await region();
+
+    await userEvent.click(within(detail).getByRole("button", { name: "Accept" }));
+    await userEvent.click(screen.getByRole("button", { name: "Open pull request" }));
+    await screen.findByText("Pull request opened");
+
+    await waitFor(async () => {
+      const { step } = await trailSteps();
+      expect(step("Decision").querySelector("time")).toHaveAttribute("datetime", at(900));
+    });
+    const decision = (await trailSteps()).step("Decision");
+    expect(decision).not.toHaveTextContent("just now");
+    expect(decision).toHaveTextContent(/^DecisionAccepted \S.* by Ana Lima/);
+  });
+
   it("trail: places a folder target's note at once", async () => {
     open({ [ACCEPT]: aLearningActionResult() });
     const detail = await region();
@@ -624,7 +675,23 @@ describe("LearningDetail", () => {
     const note = step("Note");
     expect(within(note).queryByRole("link")).toBeNull();
     expect(within(note).getByText("brain/auto/workspace/me.md")).toBeInTheDocument();
-    expect(note).toHaveTextContent("In the brain");
+    expect(note).toHaveTextContent("In the brain · not opened here");
+    expect(within(note).getByRole("tooltip")).toHaveTextContent(
+      "The app does not open notes at this path (not a .md file, a hidden name, under auto/, or too long or deep)",
+    );
+    expect(
+      within(note).getByTitle("brain/auto/workspace/me.md").parentElement,
+    ).toHaveAccessibleDescription(/^The app does not open notes at this path/);
+  });
+
+  it("trail: keeps a served note's path free of the refusal", async () => {
+    open({ [DETAIL]: inBrain() });
+    await region();
+    const note = (await trailSteps()).step("Note");
+
+    expect(within(note).getByRole("link")).toBeInTheDocument();
+    expect(note).not.toHaveTextContent("not opened here");
+    expect(within(note).queryByRole("tooltip")).toBeNull();
   });
 
   it("trail: shows a refused pull request URL as text, never as a new tab", async () => {
