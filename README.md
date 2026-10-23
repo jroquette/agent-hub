@@ -270,12 +270,15 @@ bump, the full check, then the PR behind the `publish` approval; `/upgrade` star
 triage of the new findings; the kept ones go to `brain/_inbox/security-YYYY-MM-DD.md` for `/triage`, no secret value
 and no tracker write; suggested weekly in `hub.json` `schedules`: `{"workflow": "security-sweep", "cron": "0 6 * * 1"}`),
 `backlog-care` (what `/triage --backlog` runs: hygiene findings on the issues it read, then a draft for each of the
-oldest unready issues, one approval per issue; `/triage` applies the approved ones after the run) and
+oldest unready issues, one approval per issue; `/triage` applies the approved ones after the run),
 `doc-drift` (after a merge, or monthly with `sha` blank: the contract names the change removed, such as commands,
 make targets, flags, config keys, skills, workflows, paths, tables and columns, then the doc lines that still name
 them, a read-only judge's corrected lines, the owner's approval, and a docs-only PR in the repo; ADR lines are reported,
 never edited; nothing writes the tracker; fetch the repo first: `doc-drift` reads `origin/<default branch>` as last
-fetched). A hub's own file
+fetched) and
+`review-incoming` (11 nodes, started by
+`/review`: someone else's PR through the spec, quality and security lenses, the repo's check at the head (never for a
+fork) and one draft you edit; `/review` reads the PR and posts the draft only after you approve it). A hub's own file
 overrides a built-in of the same name.
 
 ```bash
@@ -408,7 +411,7 @@ The size decides the ceremony:
 | `/learn [personal\|promote] <one sentence>` | Proposes one verified, non-obvious learning to `brain/_inbox/`; you decide whether and where it lands. With `personal`, writes your own preference or machine detail to `brain/auto/workspace/` (gitignored, never committed). With `promote`, starts the `inbox` workflow: you decide each group of inbox notes at its gate, then merge one hub PR | When the next session should know something |
 | `/triage <issue \| --backlog \| --hygiene> [--limit N]` | Brings a tracker issue to Definition of Ready (ACs, size, repos, dependencies, a verification command), then labels it ready or `needs-human`; `--backlog` runs the `backlog-care` workflow on the open issues it reads (hygiene findings and drafts, one approval per issue, then it applies only the approved ones; weekly, on Mondays), `--hygiene` reports orphan, stale and duplicate issues (at most 50 read per run, or `--limit N`) | Before an issue goes to `/fix`, `/feature` or `hub run` |
 | `/deliver <PR or issue>` | Drives an open PR to merged: conflicts, red CI and review threads, the gates before each push, the default branch's CI after the merge, then the tracker | After the PR is open |
-| `/review <PR>` | Reviews someone else's PR against its ticket, the ADRs and the brain; posts only what you approve | For a teammate's PR or one `hub run` opened |
+| `/review <PR>` | Reviews someone else's PR against its ticket, the ADRs and the brain through the `review-incoming` workflow; posts only what you approve | For a teammate's PR or one `hub run` opened |
 | `/release [version]` | Cuts a platform release: merged PRs, the bump, the check on the exact commit, notes with what `hub sync` rewrites, then the hub's pin bump | When `main` holds what the next version ships |
 | `/incident <symptom or issue>` | Starts the `incident` workflow for a problem with no known reproduction: evidence, ranked hypotheses with read-only checks, a gated mitigation, then `/fix` and a postmortem | When `/fix` cannot start because nothing reproduces yet |
 | `/refactor <issue>` | Makes a behaviour-preserving change: characterization tests first, then batched PRs that each pass `check` alone | When a refactor is too big for `/fix` and needs no spec |

@@ -238,6 +238,11 @@ Once a week (on Mondays, after the brain's inbox), run `/triage --backlog` in a 
 runs the `backlog-care` workflow on them, asks the owner to apply or skip each draft one issue at a time, and writes
 only the approved ones to the tracker. A schedule cannot start it: the run needs the issues file the skill writes.
 
+To review someone else's PR, type `/review <PR>` in a session. It reads the PR with `gh` and starts the built-in
+`review-incoming` workflow, which drafts one review in `.agent-runs/review-incoming/<run>.md` and pauses; you edit that
+file and answer `./hub workflow respond <run> --choice comment|request-changes|approve` (or `--choice reject`), and only
+then does `/review` post it. The repo's check runs at the PR's head in a throwaway worktree, never for a fork.
+
 ### Run the control plane
 
 The control plane (`hub web`) shows the hub's sessions, runs, approvals and health; old `/live` links open the Sessions
