@@ -88,7 +88,7 @@ describe("TicketsScreen", () => {
     open();
 
     const link = await screen.findByRole("link", { name: "AGH-112" });
-    expect(link).toHaveAttribute("href", "/sessions/s-waiting");
+    expect(link).toHaveAttribute("href", "/tickets/agent-hub/AGH-112");
     const row = link.closest("li") as HTMLElement;
     expect(within(row).getByText("Tracker team cap")).toBeInTheDocument();
     expect(within(row).getByText("Fix")).toBeInTheDocument();
@@ -129,7 +129,7 @@ describe("TicketsScreen", () => {
       .getAllByRole("link")
       .map((link) => link.getAttribute("href"))
       .filter((href) => href?.startsWith("/sessions/"));
-    expect(links).toEqual(["/sessions/s-waiting", "/sessions/s-waiting", "/sessions/s-earlier"]);
+    expect(links).toEqual(["/sessions/s-waiting", "/sessions/s-earlier"]);
     expect(view.router.state.location.pathname).toBe("/tickets");
   });
 
@@ -180,7 +180,7 @@ describe("TicketsScreen", () => {
     expect(query.get("limit")).toBe("200");
     row.focus();
     await userEvent.keyboard("{Enter}");
-    expect(view.router.state.location.pathname).toBe("/sessions/s-live");
+    expect(view.router.state.location.pathname).toBe("/tickets/agent-hub/AGH-7");
   });
 
   it("has no serious accessibility violations (a11y)", async () => {
