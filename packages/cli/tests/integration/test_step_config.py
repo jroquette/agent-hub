@@ -116,6 +116,20 @@ def test_prints_no_token_or_tracker_key_when_config_read(
     assert len(result.stdout.encode()) < 64 * 1024
 
 
+def test_prints_nothing_when_config_over_size_cap(
+    demo_workspace: Workspace, run_command: CommandRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_hub.cli import step_command
+
+    monkeypatch.setattr(step_command, "MAX_CONFIG_BYTES", 64)
+
+    result = run_command(demo_workspace.hub, "step", "config")
+
+    assert result.exit_code == 1, result.output
+    assert result.stdout == ""
+    assert "the config is larger than 0 KiB" in result.output
+
+
 def test_takes_local_branch_prefix_first_when_hub_local_json_sets_one(
     demo_workspace: Workspace, run_command: CommandRunner
 ) -> None:
