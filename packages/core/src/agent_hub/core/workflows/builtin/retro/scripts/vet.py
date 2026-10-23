@@ -27,6 +27,19 @@ MAX_CHANGES = 5
 MAX_MESSAGE = 16000
 FIELDS = ("title", "kind", "change", "metrics", "links", "expected_effect", "how_to_tell")
 NONE_KEPT = "No change kept: the retro proposes nothing this time."
+CUT = "(cut)"
+# The changes output format's caps; the message cuts the free text below them when it must.
+TEXT_CAPS = {
+    "title": 120,
+    "key": 120,
+    "change": 1500,
+    "link": 310,
+    "expected_effect": 600,
+    "how_to_tell": 400,
+}
+MAX_LINKS = 5
+MAX_DROPPED_SHOWN = 10
+SCALES = (1.0, 0.5, 0.25, 0.1, 0.05)
 
 
 def _is_number(value: object) -> TypeGuard[int | float]:
@@ -62,33 +75,62 @@ def _why_dropped(change: Change, metrics: Metrics) -> str:
     return ""
 
 
-def _section(change: Change) -> list[str]:
-    """One kept change, numbered, with its evidence, links and expected effect."""
-    lines = [f"{change['n']}. {change['title']} ({change['kind']})", f"   {change['change']}"]
+def _cut(value: object, limit: int) -> str:
+    """``value`` as text, at most ``limit`` characters, marked when cut."""
+    text = str(value)
+    return text if len(text) <= limit else f"{text[:limit]} {CUT}"
+
+
+def _section(change: Change, scale: float) -> list[str]:
+    """One kept change, numbered, with its evidence, links and expected effect; its free text
+    cut to ``scale`` of its format's cap, its title and evidence never cut below that cap."""
+    limit = {name: max(20, int(cap * scale)) for name, cap in TEXT_CAPS.items()}
+    title = _cut(change["title"], TEXT_CAPS["title"])
+    lines = [
+        f"{change['n']}. {title} ({change['kind']})",
+        f"   {_cut(change['change'], limit['change'])}",
+    ]
     lines.append("   Evidence:")
     refs = change["metrics"]
     for ref in refs if isinstance(refs, list) else ():
-        lines.append(f"   - {ref['key']} = {_shown(ref['value'])}")
+        lines.append(f"   - {_cut(ref['key'], TEXT_CAPS['key'])} = {_shown(ref['value'])}")
     links = change["links"]
     if isinstance(links, list) and links:
-        lines.append(f"   Links: {', '.join(str(link) for link in links)}")
-    lines.append(f"   Expected effect: {change['expected_effect']}")
-    lines.append(f"   How to tell: {change['how_to_tell']}")
+        shown = ", ".join(_cut(link, limit["link"]) for link in links[:MAX_LINKS])
+        lines.append(f"   Links: {shown}")
+    lines.append(f"   Expected effect: {_cut(change['expected_effect'], limit['expected_effect'])}")
+    lines.append(f"   How to tell: {_cut(change['how_to_tell'], limit['how_to_tell'])}")
     return lines
 
 
-def _message(kept: list[Change], dropped: list[dict[str, str]]) -> str:
+def _render(kept: list[Change], dropped: list[dict[str, str]], scale: float) -> str:
     lines: list[str] = []
     if kept:
         lines.append(f"The retro proposes {len(kept)} changes, each citing step 1's numbers:")
         for change in kept:
-            lines += ["", *_section(change)]
+            lines += ["", *_section(change, scale)]
     else:
         lines.append(NONE_KEPT)
     if dropped:
         lines += ["", f"Dropped ({len(dropped)}):"]
-        lines += [f"- {item['title']}: {item['reason']}" for item in dropped]
-    return "\n".join(lines)[:MAX_MESSAGE]
+        lines += [
+            f"- {_cut(item['title'], TEXT_CAPS['title'])}: {_cut(item['reason'], 200)}"
+            for item in dropped[:MAX_DROPPED_SHOWN]
+        ]
+        lines += [f"- and {len(dropped) - MAX_DROPPED_SHOWN} more"] * (
+            len(dropped) > MAX_DROPPED_SHOWN
+        )
+    return "\n".join(lines)
+
+
+def _message(kept: list[Change], dropped: list[dict[str, str]]) -> str:
+    """The gate's text: every kept change and the dropped ones, each change's free text cut
+    further until all of it fits, so the owner never keeps a change the text did not show."""
+    for scale in SCALES:
+        text = _render(kept, dropped, scale)
+        if len(text) <= MAX_MESSAGE:
+            return text
+    return f"{text[: MAX_MESSAGE - len(CUT) - 1]} {CUT}"
 
 
 def vet(changes: list[object], metrics: Metrics) -> dict[str, object]:
