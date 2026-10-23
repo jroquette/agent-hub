@@ -1072,7 +1072,13 @@ const MINI_STATE: Record<Readiness, string> = {
 };
 
 /** The canvas is never shorter than this; when the page has less room, the page scrolls. */
-const MIN_HEIGHT = 420;
+const MIN_HEIGHT = 560;
+/**
+ * Nor shorter than this share of the scroll area's height: the header, golden path and tabs above
+ * would otherwise leave the flow a thin strip, so the page scrolls and the flow keeps most of the
+ * window for features with many tickets.
+ */
+const MIN_SHARE = 0.85;
 /** The gap kept between the flow's card and the bottom of the window. */
 const BOTTOM_GUTTER = 24;
 /** Room the first view keeps clear around the world: "How to read" on top, the toolbar below. */
@@ -1080,8 +1086,9 @@ const SAFE = { top: 24, bottom: 24 };
 
 /**
  * The canvas's height: the room left in the page's scroll area below its top, so the flow fills
- * the window under the tab (never under MIN_HEIGHT). It follows window resizes and the rows above
- * it (a banner shown or gone), never the zoom.
+ * the window under the tab (never under MIN_HEIGHT, nor under MIN_SHARE of the scroll area outside
+ * full window). It follows window resizes and the rows above it (a banner shown or gone), never
+ * the zoom.
  */
 function useFillHeight(canvas: RefObject<HTMLElement | null>, expanded: boolean): number {
   const [height, setHeight] = useState(MIN_HEIGHT);
@@ -1100,7 +1107,8 @@ function useFillHeight(canvas: RefObject<HTMLElement | null>, expanded: boolean)
         ? card.getBoundingClientRect().bottom - el.getBoundingClientRect().bottom
         : 0;
       const room = main.clientHeight - top - below - BOTTOM_GUTTER;
-      setHeight(Math.round(Math.max(MIN_HEIGHT, room)));
+      const floor = Math.max(MIN_HEIGHT, main.clientHeight * (expanded ? 0 : MIN_SHARE));
+      setHeight(Math.round(Math.max(floor, room)));
     };
     measure();
     if (typeof ResizeObserver === "undefined") return;
