@@ -167,6 +167,15 @@ DESIGN_PATHS = (
     "workflows/issue-to-pr/fixtures/pr-failure.yaml",
     "workflows/issue-to-pr/issue-to-pr.yaml",
     "workflows/issue-to-pr/prompts/implement.md",
+    "workflows/post-merge-verify/fixtures/verify-all-green.yaml",
+    "workflows/post-merge-verify/fixtures/verify-cannot-run.yaml",
+    "workflows/post-merge-verify/fixtures/verify-explain-failed.yaml",
+    "workflows/post-merge-verify/fixtures/verify-regression.yaml",
+    "workflows/post-merge-verify/post-merge-verify.yaml",
+    "workflows/post-merge-verify/prompts/explain.md",
+    "workflows/post-merge-verify/scripts/report.py",
+    "workflows/post-merge-verify/scripts/selection.py",
+    "workflows/post-merge-verify/scripts/verify.py",
     "workflows/retro/fixtures/retro-all-dropped.yaml",
     "workflows/retro/fixtures/retro-keep-none.yaml",
     "workflows/retro/fixtures/retro-no-runs.yaml",
@@ -853,6 +862,8 @@ def test_parses_as_python39_when_rendered(demo_render: dict[str, RenderedFile]) 
         "plugin/demo/hooks",
         "plugin/hub-workflow/hooks",
         "scripts",
+        # The post-merge-verify pack's scripts (AGH-490), run by uv as the sdlc pack's are.
+        "workflows/post-merge-verify/scripts",
         # The sdlc pack's helpers (AGH-229), run by uv on its Python, also parse as 3.9.
         "workflows/sdlc/scripts",
         # The retro pack's scripts (AGH-488), likewise.

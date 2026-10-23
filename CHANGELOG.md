@@ -44,6 +44,14 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   same report.
 - The Portfolio shows the hub's skills and agents with their runs over 7, 30 or 90 days (a switch, 30 days by
   default), never-used first, with the last use; the first 10 rows, then "Show all" (AGH-482).
+- The built-in `post-merge-verify` pack (AGH-490) runs the merged tickets' AC verifications again on the default
+  branch: `./hub workflow run post-merge-verify --input repo=<dir> --input sha=<merge sha> --live` (a blank `sha`
+  verifies every passing AC at `ref`, default `origin/main`; fetch first). Each verification runs once, in a throwaway
+  worktree at the commit with `WT` set to it; one with a machine path is listed as "cannot run after merge", never as a
+  failure. A read-only agent names the merge likely behind each failure, and the report goes to
+  `brain/_inbox/verify-<date>.md` (nothing when all pass); no tracker write. To run it on each merge and every Sunday,
+  add to `hub.json` `"events": [{"workflow": "post-merge-verify", "on": "merge", "repo": "<dir>", "inputs": {"repo":
+  "<dir>"}}]` and `"schedules": [{"workflow": "post-merge-verify", "cron": "0 6 * * 0", "inputs": {"repo": "<dir>"}}]`.
 
 ### Changed
 

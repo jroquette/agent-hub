@@ -247,8 +247,13 @@ A workflow is data: a YAML (or JSON) file in the hub's `workflows/<pack>/` folde
 `script`, `loop`, `loop_group`, `include`, `approval`, `wait`, `halt`) depend on each other and run in layers
 ([format](docs/design/workflow-schema.md), [ADR 0032](docs/adr/0032-workflow-engine.md)). `hub init` and `hub sync`
 seed the built-in packs once: `issue-to-pr` (what `hub run` runs) and `sdlc` (`deliver`: implement, validate and
-review in a loop until green, then the PR; `review`: a spec lens and a quality lens side by side, then one verdict) and `retro` (the
-week's run metrics, at most five changes each backed by those numbers, then issue drafts for the ones the owner keeps). A hub's own file
+review in a loop until green, then the PR; `review`: a spec lens and a quality lens side by side, then one verdict), `retro` (the
+week's run metrics, at most five changes each backed by those numbers, then issue drafts for the ones the owner keeps) and
+`post-merge-verify` (after a merge, or weekly with a blank `sha`: `select` the passing ACs of the merged tickets and of
+the paths it changed, `run` each verification once in a throwaway worktree at the commit, `explain` a failure from the
+merges since its last pass, read-only, and `report` it to `brain/_inbox/verify-<date>.md`; a verification with a
+machine path is listed as "cannot run after merge"; fetch first:
+`./hub workflow run post-merge-verify --input repo=<dir> --input sha=<sha> --live`). A hub's own file
 overrides a built-in of the same name.
 
 ```bash
