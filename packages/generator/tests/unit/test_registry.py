@@ -135,6 +135,18 @@ SEEDED_PACK_FILES = (
     "sdlc/scripts/preflight_result.py",
     "sdlc/scripts/verdict.py",
     "sdlc/ticket-pass.yaml",
+    "spike/fixtures/spike-more-paused.yaml",
+    "spike/fixtures/spike-more.yaml",
+    "spike/fixtures/spike-no-pick.yaml",
+    "spike/fixtures/spike-pick.yaml",
+    "spike/fixtures/spike-timebox.yaml",
+    "spike/prompts/options.md",
+    "spike/prompts/premortem.md",
+    "spike/prompts/recall.md",
+    "spike/prompts/research.md",
+    "spike/scripts/budget.py",
+    "spike/scripts/draft.py",
+    "spike/spike.yaml",
 )
 CORE_SOURCES |= {
     f"workflows/{name}": (BUILTIN_PACKAGE, f"{BUILTIN_FOLDER}/{name}") for name in SEEDED_PACK_FILES

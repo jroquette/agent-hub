@@ -436,7 +436,7 @@
     "plugin/hub-workflow/skills/feature/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "fe0f9ab43373fee8b4462e04731c02aeb0415d41bef39df469c8f28ebbbe3cb4"
+      "sha256": "b6f9faa891ee76a4e26cd8d79ae4ac0cbfc564946c1bd3c51479741c0d5c8c03"
     },
     "plugin/hub-workflow/skills/fix/SKILL.md": {
       "executable": false,
@@ -899,6 +899,42 @@
       "ownership": "seeded"
     },
     "workflows/sdlc/ticket-pass.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/fixtures/spike-more-paused.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/fixtures/spike-more.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/fixtures/spike-no-pick.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/fixtures/spike-pick.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/fixtures/spike-timebox.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/prompts/options.md": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/prompts/premortem.md": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/prompts/recall.md": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/prompts/research.md": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/scripts/budget.py": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/scripts/draft.py": {
+      "ownership": "seeded"
+    },
+    "workflows/spike/spike.yaml": {
       "ownership": "seeded"
     }
   },

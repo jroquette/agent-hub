@@ -264,6 +264,18 @@ DESIGN_PATHS = (
     "workflows/sdlc/scripts/preflight_result.py",
     "workflows/sdlc/scripts/verdict.py",
     "workflows/sdlc/ticket-pass.yaml",
+    "workflows/spike/fixtures/spike-more-paused.yaml",
+    "workflows/spike/fixtures/spike-more.yaml",
+    "workflows/spike/fixtures/spike-no-pick.yaml",
+    "workflows/spike/fixtures/spike-pick.yaml",
+    "workflows/spike/fixtures/spike-timebox.yaml",
+    "workflows/spike/prompts/options.md",
+    "workflows/spike/prompts/premortem.md",
+    "workflows/spike/prompts/recall.md",
+    "workflows/spike/prompts/research.md",
+    "workflows/spike/scripts/budget.py",
+    "workflows/spike/scripts/draft.py",
+    "workflows/spike/spike.yaml",
 )
 # AGH-19 spec "The rendered set": the base plugin's agents, by file stem, and its skills, by
 # folder name.
@@ -892,6 +904,8 @@ def test_parses_as_python39_when_rendered(demo_render: dict[str, RenderedFile]) 
         "workflows/sdlc/scripts",
         # The retro pack's scripts (AGH-488), likewise.
         "workflows/retro/scripts",
+        # The spike pack's helpers (AGH-492), likewise.
+        "workflows/spike/scripts",
     }
 
 
