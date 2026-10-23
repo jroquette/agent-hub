@@ -234,6 +234,10 @@ its gate is answered in hub web or with `./hub workflow respond <run>`, and its 
 `./hub sync`, and commit that change through a PR. If the newest release has no `.claude/skills/onboard` either, stop
 and tell the user; do not try other versions.
 
+Once a week (on Mondays, after the brain's inbox), run `/triage --backlog` in a session: it reads the open issues,
+runs the `backlog-care` workflow on them, asks the owner to apply or skip each draft one issue at a time, and writes
+only the approved ones to the tracker. A schedule cannot start it: the run needs the issues file the skill writes.
+
 ### Run the control plane
 
 The control plane (`hub web`) shows the hub's sessions, runs, approvals and health; old `/live` links open the Sessions

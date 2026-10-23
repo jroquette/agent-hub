@@ -1,0 +1,9 @@
+# A bad issues file (a link, over 1 MiB, not JSON, not version 1): read.py exits 2, the run fails
+# at read, and nothing after it runs.
+workflow: backlog-care
+inputs: {issues_file: /tmp/backlog.json}
+stubs:
+  read: {fail: exec_failed}
+expect: {status: failed}
+failed: [read]
+reached: [read]

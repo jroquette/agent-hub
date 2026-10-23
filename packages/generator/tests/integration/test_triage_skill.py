@@ -7,7 +7,9 @@ text is kept; ``--hygiene`` only reports until the gate. The skill is generic: n
 is written into it.
 """
 
+import importlib.util
 import re
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -19,6 +21,8 @@ from agent_hub.core.doctor.instruction_rules import DEFAULT_MAX_LINES
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.testing import builders
 from agent_hub.generator.render_hub import render_hub
+from agent_hub.generator.workflow_discovery import BUILTIN_WORKFLOWS
+from agent_hub.generator.workflow_yaml import load_workflow_bytes
 
 SKILL_PATH = "plugin/hub-workflow/skills/triage/SKILL.md"
 TEMPLATE = (
@@ -187,3 +191,90 @@ def test_names_no_project_value_when_triage_rendered(
         assert repo.dir not in body, repo.dir
     assert "@@{" not in text
     assert PROJECT_ID.search(TEMPLATE.read_text(encoding="utf-8")) is None
+
+
+# AGH-489: `--backlog` hands the issues it read to the backlog-care workflow through one file,
+# leaves each issue's gate to the owner, and applies only the run's approved items.
+BACKLOG_PACK = BUILTIN_WORKFLOWS / "backlog-care"
+BACKLOG_WORKFLOW = BACKLOG_PACK / "backlog-care.yaml"
+READ_SCRIPT = BACKLOG_PACK / "scripts" / "read.py"
+BACKLOG_RUN = "`./hub workflow run backlog-care"
+
+
+def backlog_text(text: str) -> str:
+    """Step 1's `--backlog` part, its whitespace folded to single spaces."""
+    read = text[text.index("1. **Read**") : text.index("2. **Size**")]
+    return " ".join(read[read.index("`--backlog`") :].split())
+
+
+def test_writes_issues_file_and_passes_its_path_when_backlog_flag_given(text: str) -> None:
+    backlog = backlog_text(text)
+    command = backlog[backlog.index(BACKLOG_RUN) :]
+    command = command[: command.index("`", 1) + 1]
+    inputs = load_workflow_bytes(
+        BACKLOG_WORKFLOW.read_bytes(), source=str(BACKLOG_WORKFLOW)
+    ).document["inputs"]
+
+    assert isinstance(inputs, dict)
+    assert command.endswith(" --live`"), command
+    assert "--input issues_file=<file>" in command
+    for name in inputs:
+        assert f"--input {name}=" in command, name
+    assert '`echo "${TMPDIR:-/tmp}"`' in backlog
+    assert "`/backlog-care.json`" in backlog
+    assert "with the Write tool" in backlog
+    assert "replacing a file left by an earlier run" in backlog
+    assert "never through a command line" in backlog
+    assert backlog.index("`test -s <file>`") < backlog.index(BACKLOG_RUN)
+    assert "output redirected to a file and `$?` checked" in backlog
+
+
+def test_names_every_field_read_requires_when_backlog_flag_given(text: str) -> None:
+    spec = importlib.util.spec_from_file_location("backlog_care_read", READ_SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    writes, sys.dont_write_bytecode = sys.dont_write_bytecode, True
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.dont_write_bytecode = writes
+    backlog = backlog_text(text)
+
+    for name in (*module.TOP_FIELDS, *module.ISSUE_FIELDS):
+        assert f"`{name}`" in backlog, name
+    assert "`links` `null` when the issue's links cannot be read" in backlog
+    assert "`teams`" not in backlog
+
+
+def test_applies_only_report_apply_items_when_backlog_run_done(text: str) -> None:
+    backlog = backlog_text(text)
+    done = backlog[backlog.index("When `done`") :]
+
+    assert '`"node": "report"`' in done
+    assert "`.agent-runs/workflows/<run>/records.jsonl`" in done
+    assert "its `summary`" in done
+    assert "each item of its `apply` list, and only those, with step 5, one issue at a time" in done
+    assert "An issue in `skipped` is left as it was." in done
+    assert "`superseded_by`" in done
+
+
+def test_leaves_each_gate_to_owner_when_backlog_run_paused(text: str) -> None:
+    backlog = backlog_text(text)
+
+    assert "`run <run>: paused at <gate>`" in backlog
+    assert "`run <run>: done, outcome <outcome>`" in backlog
+    assert '`./hub workflow respond <run> --choice apply|skip --text "<note>"`' in backlog
+    assert "one issue per gate, never yours" in backlog
+    # The owner sees what the gate approves, that issue's draft whole, before answering.
+    shown = backlog[backlog.index("Before each answer") : backlog.index("./hub workflow respond")]
+    assert 'the last `"event": "gate"` line of `.agent-runs/workflows/<run>/records.jsonl`' in shown
+    assert "show its `message` whole to the owner (that issue only)" in shown
+    assert "then ask apply or skip" in shown
+
+
+def test_names_fallback_when_backlog_care_missing(text: str) -> None:
+    backlog = backlog_text(text)
+    fallback = backlog[backlog.index("If `./hub workflow run backlog-care` is not available") :]
+
+    assert "(the hub's copy of the pack is missing)" in fallback
+    assert "take them one at a time, oldest first" in fallback

@@ -1,0 +1,28 @@
+# AC-3: 63 open issues, 50 read: the report says 13 were left unread. Every issue read is ready
+# or needs a human, so nothing is drafted, no gate opens, and the run only reports.
+workflow: backlog-care
+inputs: {issues_file: /tmp/backlog.json}
+stubs:
+  read:
+    output:
+      ready_label: agent-ready
+      repos: [api]
+      read: 50
+      open: 63
+      unread: 13
+      unread_line: 13 open issues were left unread (50 of 63 read, oldest first)
+      descriptions_dropped: 0
+      skipped: []
+      issues: []
+  hygiene:
+    output: {orphans: [], stale: [], duplicates: [], cycles: [], unreadable: [], summary: "Hygiene of 50 issues read: 0 orphans, 0 stale, 0 duplicate groups, 0 cycles."}
+  pick:
+    output: {count: 0, ids: [], read_ids: [], waiting: [], text: ""}
+  report:
+    output:
+      outcome: report_only
+      summary: "Backlog care.\n13 open issues were left unread (50 of 63 read, oldest first)\nNothing to apply: the tracker stays as it is."
+      apply: []
+      skipped: []
+expect: {status: done, outcome: report_only}
+reached: [read, hygiene, pick, report]

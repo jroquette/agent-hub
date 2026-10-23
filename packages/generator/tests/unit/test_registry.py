@@ -29,6 +29,18 @@ CORE_SOURCES: dict[str, tuple[str, str]] = {
 BUILTIN_PACKAGE = "agent_hub.core"
 BUILTIN_FOLDER = "workflows/builtin"
 SEEDED_PACK_FILES = (
+    "backlog-care/backlog-care.yaml",
+    "backlog-care/fixtures/backlog-approve-and-skip.yaml",
+    "backlog-care/fixtures/backlog-mixed.yaml",
+    "backlog-care/fixtures/backlog-over-limit.yaml",
+    "backlog-care/fixtures/backlog-paused.yaml",
+    "backlog-care/fixtures/backlog-read-failed.yaml",
+    "backlog-care/prompts/draft.md",
+    "backlog-care/scripts/drafts.py",
+    "backlog-care/scripts/gates.py",
+    "backlog-care/scripts/hygiene.py",
+    "backlog-care/scripts/read.py",
+    "backlog-care/scripts/report.py",
     "brain-care/context.yaml",
     "brain-care/fixtures/context-declined.yaml",
     "brain-care/fixtures/context-no-commit.yaml",
