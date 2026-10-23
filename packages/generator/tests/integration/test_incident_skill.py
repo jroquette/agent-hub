@@ -215,3 +215,19 @@ def test_keeps_a_one_line_fallback_when_hub_web_is_down(skill: str) -> None:
     assert "`brain/_inbox/`" in line
     assert "`provenance: agent`" in line
     assert "`/fix` (or `/change`)" in line
+
+
+def test_keeps_the_log_in_the_session_until_the_handoff_when_rendered(skill: str) -> None:
+    log, handoff = _step(skill, 2), _step(skill, 5)
+
+    # The hand-off draft exists only after the gate: the log waits in the session until then.
+    assert "in the session (or a file in the scratchpad) while steps 2 to 4 run" in log
+    assert "add the incident log under a `## Log` heading" in handoff
+
+
+def test_shows_the_gate_message_before_the_owner_answers_when_rendered(skill: str) -> None:
+    text = _step(skill, 4)
+
+    assert '`"event": "gate"`' in text
+    assert "`message`" in text
+    assert text.index("`message`") < text.index("`./hub workflow respond <run> --choice record")
