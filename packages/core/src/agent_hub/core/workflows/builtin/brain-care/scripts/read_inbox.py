@@ -21,6 +21,9 @@ relative to the hub; ``age_days`` is read from a ``YYYY-MM-DD-`` name (else null
 is not a folder, or a ``--today`` that is not a date, exits 2.
 """
 
+# The hub runs pack scripts with uv, but they still import on the hooks' Python 3.9 floor.
+from __future__ import annotations
+
 import argparse
 import datetime
 import json

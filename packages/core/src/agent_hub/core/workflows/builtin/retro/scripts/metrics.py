@@ -26,6 +26,9 @@ names the skills and agents not run, ``sources`` says how each source read (``ok
 Every source missing exits 1; a ``--days`` outside 1-90 or a bad ``--today`` exits 2.
 """
 
+# The hub runs pack scripts with uv, but they still import on the hooks' Python 3.9 floor.
+from __future__ import annotations
+
 import argparse
 import json
 import re
@@ -35,10 +38,13 @@ import sys
 from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from functools import partial
 from pathlib import Path
 from typing import NamedTuple
+
+# Not datetime.UTC: the hub's copy also imports on Python 3.9.
+UTC = timezone.utc  # noqa: UP017
 
 Record = dict[str, object]
 Metrics = dict[str, float]

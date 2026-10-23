@@ -25,6 +25,9 @@ are counted in ``truncated``. Bad input on stdin exits 2; a git failure exits 1.
 on stderr.
 """
 
+# The hub runs pack scripts with uv, but they still import on the hooks' Python 3.9 floor.
+from __future__ import annotations
+
 import json
 import re
 import subprocess

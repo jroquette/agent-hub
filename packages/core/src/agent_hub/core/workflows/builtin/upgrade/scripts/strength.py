@@ -21,6 +21,9 @@ readable report is ``ran: false`` with the reason, never a clean result. The out
 A bad argument exits 2; a tool that leaves a tracked file changed exits 1.
 """
 
+# The hub runs pack scripts with uv, but they still import on the hooks' Python 3.9 floor.
+from __future__ import annotations
+
 import argparse
 import json
 import os

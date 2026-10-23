@@ -22,6 +22,8 @@ def load() -> ModuleType:
     spec = importlib.util.spec_from_file_location(MODULE, SCRIPT)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    # Registered before it runs: its dataclasses look their module up (string annotations).
+    sys.modules[MODULE] = module
     # No __pycache__ beside the pack's files: the pack is seeded into hubs file by file.
     writes, sys.dont_write_bytecode = sys.dont_write_bytecode, True
     try:

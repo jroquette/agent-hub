@@ -23,13 +23,19 @@ It prints ``{"outcome", "kept", "path", "summary"}`` (``path`` is ``""`` when no
 written). Malformed input exits 2; an inbox that is a link, or no free file name, exits 1.
 """
 
+# The hub runs pack scripts with uv, but they still import on the hooks' Python 3.9 floor.
+from __future__ import annotations
+
 import argparse
 import json
 import os
 import re
 import sys
-from datetime import UTC, date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
+
+# Not datetime.UTC: the hub's copy also imports on Python 3.9.
+UTC = timezone.utc  # noqa: UP017
 
 Change = dict[str, object]
 

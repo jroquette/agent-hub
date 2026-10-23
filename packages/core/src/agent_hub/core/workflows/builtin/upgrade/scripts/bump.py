@@ -22,6 +22,9 @@ nothing, or a change outside the manifests and lockfiles exits 1, with the tool'
 (only the changes git did not show before the tool ran are the tool's).
 """
 
+# The hub runs pack scripts with uv, but they still import on the hooks' Python 3.9 floor.
+from __future__ import annotations
+
 import argparse
 import json
 import os

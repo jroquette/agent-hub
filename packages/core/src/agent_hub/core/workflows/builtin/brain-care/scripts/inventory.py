@@ -27,6 +27,9 @@ it cannot read is listed in ``unreadable`` with the reason. Prints ``{"total_tok
 a folder exits 2.
 """
 
+# The hub runs pack scripts with uv, but they still import on the hooks' Python 3.9 floor.
+from __future__ import annotations
+
 import argparse
 import json
 import re

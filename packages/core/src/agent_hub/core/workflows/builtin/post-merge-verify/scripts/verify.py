@@ -26,6 +26,9 @@ the AC's evidence, its last pass. The output stays within ``MAX_OUTPUT_BYTES``. 
 2; a worktree that cannot be made exits 1. Both say why on stderr.
 """
 
+# The hub runs pack scripts with uv, but they still import on the hooks' Python 3.9 floor.
+from __future__ import annotations
+
 import contextlib
 import json
 import os
