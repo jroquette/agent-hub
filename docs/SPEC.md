@@ -430,11 +430,11 @@ A web app reads the hubs and the agents' events and answers five questions, one 
 | Workflows | How should work flow? | Editor and visualization of steps and gates; which step each task is at; where it gets stuck |
 | Sessions | What are the agents doing right now, and which one needs me? | Every session, observed or driven, in status sections (waiting first) as tiles or a table: last action, accumulated turns and cost, pending approvals |
 | Session timeline | Why did the agent do that? | Messages, reasoning summaries, tool calls, files and diffs, marked decisions and the final outcome |
-| Knowledge | What does it know and what did it learn? | Context loaded in the session (rules, brain, memory), search over the brain and docs, links between notes, proposed learnings, inbox triage, evolution over time |
+| Knowledge | What does it know and what did it learn? | Context loaded in the session (rules, brain, memory), search over the brain and docs, links between notes (each note's "Linked from", AGH-393), proposed learnings, inbox triage, evolution over time |
 
 **Decisions as objects.** A decision is a stretch of the session with a choice, discarded alternatives and a rationale. In v1 it is extracted from the transcript. Later, agents can record it explicitly through a skill or hook (`/decide`).
 
-**Learning with provenance.** Every brain item and every learning keeps its source session, its author (human or agent) and its status. The knowledge view shows the path session → proposal → accepted → rule and measures whether the rule reduced the failure that motivated it (which `mine_transcripts.py` and `retro_metrics.py` already start to do).
+**Learning with provenance.** Every brain item and every learning keeps its source session, its author (human or agent) and its status. The knowledge view shows the trail session → proposal → decision (its pull request) → note in the learning detail, each step a link to its record, and on each note where it came from: its provenance and sources, the accepted learnings that put it there and their sessions (AGH-393). It does not measure whether a note or a rule changed later behaviour: no effect metric and no causal claim (design Q16).
 
 **Search and team memory (AGH-388, [ADR 0044](adr/0044-team-memory-git-source-local-index-and-hub-mcp.md), accepted).**
 Git stays the source of truth. Each developer's database holds a derived full-text index (SQLite FTS5) of the hub's
@@ -445,8 +445,13 @@ with no word (`!!!`, `(`) exits 2, and one that starts with `-` goes after `--` 
 writes a new `brain/_inbox/` note on a branch `<prefix>learning-propose-<slug>` and opens a hub pull request through
 `hub_git`, never the default branch; its `kind` names the brain folder the note would join (`learning`, `playbook`,
 `decision`, `domain` or `system`).
-The knowledge view gains the same search, links between notes and the provenance path above. Transcripts are never
-indexed or shared; embeddings and hosting are out of scope.
+`hub web` (AGH-393) searches the same index through one route, `GET /api/v1/projects/{project}/knowledge/search`,
+from the project's Brain screen and the ⌘K palette's "Brain notes" group; it syncs before it searches, as `hub search`
+does, on the same rows when the hub is registered at its main checkout. The index also stores each document's
+Markdown links into `brain/` (read with the doctor's `links.dead` scan), so each note shows "Linked from"
+(`GET /api/v1/projects/{project}/brain/backlinks`, synced on read), and `GET /api/v1/learnings?brain_path=` gives the
+learnings behind a note for the provenance above. Transcripts are never indexed or shared; embeddings and hosting are
+out of scope.
 
 **Actions, not just reading (after v1).** Start a workflow on an issue, approve a gate, pause or cancel a session, accept a learning (built early, through a hub PR: AGH-201 below).
 

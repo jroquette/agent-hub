@@ -200,3 +200,24 @@ def test_maps_change_request_error_when_pull_request_not_opened(
 
     assert response.status_code == status
     assert response.headers["content-type"] == "application/problem+json"
+
+
+@pytest.mark.parametrize("brain_path", ["auto/x.md", "../x.md"])
+def test_refuses_brain_path_when_outside_brain(wired: Any, brain_path: str) -> None:
+    response = wired.client.get("/api/v1/learnings", params={"brain_path": brain_path})
+
+    assert response.status_code == 400
+    assert [error["parameter"] for error in response.json()["errors"]] == ["brain_path"]
+    assert brain_path not in response.text
+    assert wired.events.calls == []
+
+
+def test_passes_note_filter_when_brain_path_given(wired: Any) -> None:
+    response = wired.client.get(
+        "/api/v1/learnings", params={"brain_path": "brain/learnings/web-gates.md"}
+    )
+
+    assert response.status_code == 200
+    assert wired.events.calls == [
+        ("list_learnings", LearningFilter(brain_path="learnings/web-gates.md"))
+    ]

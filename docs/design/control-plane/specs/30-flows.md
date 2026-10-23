@@ -72,6 +72,11 @@ Persona: auditor.
 | 6 | Learnings › Accepted | Opens the item's "Trace" | Provenance trace: 5 nodes; nodes 4–5 dashed ("PR #142 open · not merged") | `GET /learnings/{id}/trace` | < 1 s |
 | 7 | Trace (after merge, days later) | Opens again | Node 5 "loaded in 9 sessions since 2026-10-03"; effect small multiples with n and caveats | same + `GET /metrics/learning-effect` | < 2 s |
 
+Steps 6 and 7 departed (AGH-393): there is no trace screen, no `GET /learnings/{id}/trace` and no effect metric
+(Q16, [32-decisions.md](32-decisions.md)). The learning detail shows the trail Session → Proposal → Decision (PR) →
+Note, each step a link to its record and nothing claimed after the note ([18-learnings.md](18-learnings.md)); the
+note's Brain page shows where it came from and what links to it ([19-brain-and-skills.md](19-brain-and-skills.md)).
+
 ---
 
 ## Flow 5 · Approve plan (P4) · Specified only

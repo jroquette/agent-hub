@@ -2,8 +2,8 @@
 
 The file is opened relative to the folder's descriptor with ``O_NOFOLLOW`` (and ``O_NONBLOCK``,
 so a FIFO cannot block the read), then checked with ``fstat``: a link, a folder or any other
-non-regular file is ``NOT_REGULAR`` and never read. The feature folder reader and the agent
-output reader share it.
+non-regular file is ``NOT_REGULAR`` and never read. The feature folder reader, the agent
+output reader and the knowledge checkout share it, so it lives in core (AGH-393 Q-1).
 """
 
 import errno

@@ -14,6 +14,13 @@ Synchronous (SQLite FTS5 in production). ``KnowledgeIndexContract`` checks every
 - ``search`` answers the hub's documents holding every word, a title match weighted above a body
   match, best first and then by path, at most ``limit``, of the listed kinds only when given;
   none when no word is given. A hit's snippet is one line around the first match in the body.
+
+``KnowledgeLinksContract`` checks each document's links (AGH-393):
+
+- A document's links are written with it and replaced when it is indexed again; a touched path
+  keeps them; a skipped or dropped path loses them, and a rebuild drops the hub's.
+- ``backlinks`` answers the hub's documents linking to a note, sorted by path, at most ``limit``,
+  with the full count; a note that is not indexed (a dead link) still has its sources.
 """
 
 from collections.abc import Mapping
@@ -38,8 +45,11 @@ type Kind = Literal[
 KINDS: Final[tuple[Kind, ...]] = get_args(Kind.__value__)
 
 # Bumped by any change to what is indexed or how (D-version): a hub whose rows hold another
-# version is rebuilt by the next search.
-INDEX_VERSION: Final = 1
+# version is rebuilt by the next search. 2: each document's links to brain notes are stored.
+INDEX_VERSION: Final = 2
+
+# At most this many backlinks are answered for one note (D-backlinks-route), with the full count.
+MAX_BACKLINKS: Final = 100
 
 # A file's text hash: 64 lowercase hex digits of its sha256.
 type TextHash = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
@@ -81,7 +91,8 @@ class StoredIndex(_Frozen):
 
 
 class IndexedDocument(_Frozen):
-    """A file to index: its searchable title and body, and what a result shows."""
+    """A file to index: its searchable title and body, what a result shows, and the brain notes
+    it links to (``brain/<rest>``, D-links)."""
 
     path: str = Field(min_length=1)
     kind: Kind
@@ -91,6 +102,7 @@ class IndexedDocument(_Frozen):
     fingerprint: Fingerprint
     sha256: TextHash
     body: str
+    links: tuple[str, ...] = ()
 
 
 class SkippedFile(_Frozen):
@@ -129,6 +141,21 @@ class SearchHit(_Frozen):
     snippet: str
 
 
+class Backlink(_Frozen):
+    """A document holding a link to a note: its path, kind and title."""
+
+    path: str
+    kind: Kind
+    title: str
+
+
+class Backlinks(_Frozen):
+    """The documents linking to a note, by path, at most the limit asked; ``total`` counts all."""
+
+    items: tuple[Backlink, ...]
+    total: int = Field(ge=0)
+
+
 class KnowledgeIndex(Protocol):
     """Where the documents of each hub are indexed for search."""
 
@@ -146,4 +173,9 @@ class KnowledgeIndex(Protocol):
         """The hub's documents holding every word, best first, of ``kinds`` when not empty.
 
         ``words`` are the non-empty output of ``query_words``; with no word the answer is ``()``."""
+        ...
+
+    def backlinks(self, hub: str, target: str, *, limit: int) -> Backlinks:
+        """The hub's documents linking to ``target`` (``brain/<rest>``), by path, at most
+        ``limit``, with the full count."""
         ...

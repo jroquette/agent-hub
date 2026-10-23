@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from typing import Final
 
 from agent_hub.core.knowledge.knowledge_index import (
+    Backlink,
+    Backlinks,
     Fingerprint,
     IndexChange,
     IndexedDocument,
@@ -29,7 +31,9 @@ _WORD: Final = re.compile(r"[^\W_]+")
 @dataclass(frozen=True)
 class _Row:
     """What a row holds: the file as a sync sees it, the version that wrote it, and the indexed
-    text (None for a skipped file)."""
+    text and links (None for a skipped file). A row's links live and die with its document, so
+    a re-indexed document replaces them, a touched one keeps them, and a skipped, dropped or
+    rebuilt path loses them."""
 
     file: StoredFile
     version: int
@@ -101,6 +105,20 @@ class InMemoryKnowledgeIndex:
         scored.sort(key=lambda pair: (-pair[0], pair[1].path))
         return tuple(_hit(document, wanted) for _, document in scored[:limit])
 
+    def backlinks(self, hub: str, target: str, *, limit: int) -> Backlinks:
+        """The hub's documents linking to ``target``, by path, at most ``limit``, all counted."""
+        with self._lock:
+            rows = list(self._rows.get(hub, {}).values())
+        sources = sorted(
+            (row.document for row in rows if row.document and target in row.document.links),
+            key=lambda document: document.path,
+        )
+        items = tuple(
+            Backlink(path=source.path, kind=source.kind, title=source.title)
+            for source in sources[:limit]
+        )
+        return Backlinks(items=items, total=len(sources))
+
 
 def _score(document: IndexedDocument, words: list[str]) -> int | None:
     """The document's score, or None when a word is in neither its title nor its body."""
@@ -140,7 +158,7 @@ class FakeKnowledgeCheckout:
     only the mtime, ``remove`` deletes it. ``skip_when_listed`` lists a path with a skip reason,
     ``answer_read`` makes its read return a reason (a ``str``) or None (gone since the listing).
     ``reads`` holds the paths read, in order; ``before_read`` runs before each read (a test's
-    barrier).
+    barrier). ``missing`` names the repo folders ``not_checked_out`` reports.
     """
 
     def __init__(self, *, before_read: Callable[[str], None] | None = None) -> None:
@@ -151,6 +169,7 @@ class FakeKnowledgeCheckout:
         self._read_answers: dict[str, str | None] = {}
         self._before_read = before_read
         self.reads: list[str] = []
+        self.missing: tuple[str, ...] = ()
 
     def write(self, path: str, data: bytes, *, mtime_ns: int | None = None) -> None:
         """Set the file's bytes; its mtime moves on unless ``mtime_ns`` is given."""
@@ -181,6 +200,10 @@ class FakeKnowledgeCheckout:
     def answer_read(self, path: str, answer: str | None) -> None:
         """Make the read of ``path`` return ``answer`` instead of its bytes."""
         self._read_answers[path] = answer
+
+    def not_checked_out(self) -> tuple[str, ...]:
+        """The repo folders set in ``missing``, as a checkout that cannot find them names them."""
+        return self.missing
 
     def listed(self) -> tuple[ListedFile, ...]:
         """Every file and listed skip, sorted by path."""

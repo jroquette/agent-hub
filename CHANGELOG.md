@@ -11,6 +11,18 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Added
+
+- `hub web`'s knowledge view (AGH-393): search a project's notes and repo docs from its Brain screen and from ⌘K's
+  "Brain notes" group, over the `hub search` index, synced on each search
+  (`GET /projects/{project}/knowledge/search`); "Linked from" under each note lists the notes and repo docs that link
+  to it (`GET /projects/{project}/brain/backlinks`; the index now stores each document's links into `brain/`, read
+  with the doctor's `links.dead` scan); "Where this note came from" shows its provenance, sources, the accepted
+  learnings that put it there and their sessions; and the learning detail shows the trail session → proposal →
+  decision (pull request) → note. `GET /learnings` takes `brain_path`. The database gains migration 0010 (the
+  `knowledge_links` table), and the index's version becomes 2, so each hub's index is rebuilt once by its first
+  search, reindex or note read after the upgrade. Nothing measures a note's effect.
+
 ## [0.21.0] - 2026-10-23
 
 ### Added

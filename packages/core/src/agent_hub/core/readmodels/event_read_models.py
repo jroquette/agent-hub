@@ -34,6 +34,7 @@ from urllib.parse import quote
 from agent_hub.core.agent_sessions.links import AgentSessionLink
 from agent_hub.core.approvals.approval import Approval, ApprovalKind
 from agent_hub.core.approvals.fold_approvals import fold_approvals
+from agent_hub.core.brain.brain_path import BRAIN_FOLDER
 from agent_hub.core.events.event import EventType
 from agent_hub.core.events.event_query import MAX_QUERY_LIMIT, EventQuery
 from agent_hub.core.events.event_reader import EventReader
@@ -351,6 +352,15 @@ def _whole[T](items: Sequence[T]) -> Page[T]:
 
 def _in_scope(project: str, scope: Scope) -> bool:
     return scope.project is None or scope.project == project
+
+
+def _names_note(learning: Learning, note: str | None) -> bool:
+    """Whether the learning's ``brain_path`` is ``note`` (under ``brain/``): app decisions store
+    it with the ``brain/`` prefix, other producers without (D-brain-path)."""
+    if note is None:
+        return True
+    stored = learning.brain_path
+    return stored is not None and stored.removeprefix(f"{BRAIN_FOLDER}/") == note
 
 
 class FoldedEventReadModels:
@@ -700,6 +710,7 @@ class FoldedEventReadModels:
             for learning in snapshot.learnings.values()
             if _in_scope(learning.project, learning_filter)
             and (learning_filter.status is None or learning.status == learning_filter.status)
+            and _names_note(learning, learning_filter.brain_path)
         ]
         return _paginate(
             matching,

@@ -1171,3 +1171,36 @@ def test_links_scenario_run_to_its_page_when_search_finds_it() -> None:
         "3f2a91c0": "/runs/3f2a91c0",
         "3f2a91c1": "/scenarios/demo/order-walk/runs/3f2a91c1",
     }
+
+
+def _accepted_into(proposal: str, brain_path: str, *, hours: int) -> list[Event]:
+    """A learning proposed ``hours`` after the scenario start, accepted into ``brain_path``."""
+    events = learning_events(
+        proposal,
+        session=f"s-{proposal}",
+        start=SCENARIO_START + timedelta(hours=hours),
+        decisions=(("learning.accepted", 5),),
+    )
+    accepted = events[1]
+    payload = {**accepted.payload, "brain_path": brain_path}
+    return [events[0], accepted.model_copy(update={"payload": payload})]
+
+
+def test_lists_learnings_of_note_when_brain_path_given() -> None:
+    store = InMemoryEventStore()
+    store.append(
+        [
+            *_accepted_into("prefixed", "brain/learnings/web-gates.md", hours=1),
+            *_accepted_into("bare", "learnings/web-gates.md", hours=3),
+            *_accepted_into("other", "brain/learnings/other.md", hours=2),
+            *learning_events("open", session="s-open", start=SCENARIO_START),
+        ]
+    )
+    service = _service(store, NOW)[0]
+
+    for asked in ("brain/learnings/web-gates.md", "learnings/web-gates.md"):
+        found = service.list_learnings(LearningFilter(project="demo", brain_path=asked))
+        assert [item.id for item in found.items] == ["bare", "prefixed"]
+        assert found.total_estimate == 2
+    nothing = service.list_learnings(LearningFilter(brain_path="learnings/none.md"))
+    assert nothing.items == ()

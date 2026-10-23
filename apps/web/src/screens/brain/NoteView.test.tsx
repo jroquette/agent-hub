@@ -147,6 +147,25 @@ describe("NoteView", () => {
     expect(container.querySelector('dl[aria-label="Frontmatter, long fields"]')).not.toBeNull();
   });
 
+  it("hides the fields the Brain screen shows elsewhere", async () => {
+    renderWithApi(
+      <NoteView project="agent-hub" path="index.md" hiddenFields={["provenance", "sources"]} />,
+      {
+        routes: {
+          [NOTE]: aBrainNote({
+            frontmatter: { type: "learning", provenance: "agent", sources: ["a", "b"] },
+          }),
+        },
+        path: "/here",
+      },
+    );
+
+    const chips = await screen.findByRole("list", { name: "Frontmatter" });
+    expect(chips).toHaveTextContent("type: learning");
+    expect(chips).not.toHaveTextContent("provenance");
+    expect(chips).not.toHaveTextContent("sources");
+  });
+
   it.each([
     ["", null],
     ["#", null],

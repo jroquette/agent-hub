@@ -10,6 +10,7 @@ from agent_hub.api.openapi_paths import (
     FEATURE_NAME_PATHS,
     GATE_PATHS,
     ITEM_VERSION_PATHS,
+    KNOWLEDGE_PATHS,
     LINEAR_PATHS,
     OWNER_SIGNOFF_PATHS,
     P2_PATHS,
@@ -156,6 +157,7 @@ def test_lists_agent_session_paths_when_document_built(api_settings: ApiSettings
         | PLATFORM_SYNC_PATHS
         | DOCTOR_FIX_PATHS
         | AC_CHECK_PATHS
+        | KNOWLEDGE_PATHS
         | DISCOVERY_PATHS
     )
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
@@ -185,6 +187,7 @@ def test_lists_skill_paths_when_document_built(api_settings: ApiSettings) -> Non
         | PLATFORM_SYNC_PATHS
         | DOCTOR_FIX_PATHS
         | AC_CHECK_PATHS
+        | KNOWLEDGE_PATHS
         | DISCOVERY_PATHS
     )
     assert document_paths(create_app(api_settings)) == SERVED_PATHS
@@ -307,6 +310,16 @@ def test_documents_screenshot_when_create_schema_read(api_settings: ApiSettings)
     assert schemas["Screenshot"]["properties"]["media_type"]["const"] == "image/png"
 
 
+def test_lists_knowledge_paths_when_document_built(api_settings: ApiSettings) -> None:
+    # AGH-393: the knowledge search and a note's backlinks, both GET, and nothing else.
+    knowledge = set(KNOWLEDGE_PATHS)
+    assert knowledge == {
+        ("get", "/api/v1/projects/{project}/knowledge/search"),
+        ("get", "/api/v1/projects/{project}/brain/backlinks"),
+    }
+    assert document_paths(create_app(api_settings)) >= knowledge
+
+
 def test_lists_discovery_paths_when_document_built(api_settings: ApiSettings) -> None:
     # ADR 0046: start, list, read and discard a project's environment discoveries.
     discoveries = "/api/v1/projects/{project}/environment-discoveries"
@@ -354,6 +367,7 @@ def test_lists_scenario_paths_when_document_built(api_settings: ApiSettings) -> 
         | PLATFORM_SYNC_PATHS
         | DOCTOR_FIX_PATHS
         | AC_CHECK_PATHS
+        | KNOWLEDGE_PATHS
         | DISCOVERY_PATHS
         | SCENARIO_PATHS
     )

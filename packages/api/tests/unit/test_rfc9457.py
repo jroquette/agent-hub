@@ -1,12 +1,14 @@
 import json
 from typing import Any
 
+from agent_hub.api.composition import COMPOSED_PROBLEMS
 from agent_hub.api.dependencies import ApiPorts
 from agent_hub.api.rfc9457 import (
     PROBLEM_MEDIA_TYPE,
     PROBLEMS,
     NotImplementedInBuildError,
     busy_problem,
+    fts5_unavailable_problem,
     hub_conflict_problem,
     hub_invalid_problem,
     hub_registry_problem,
@@ -35,6 +37,7 @@ from agent_hub.core.item_versions.record_and_write import (
 )
 from agent_hub.core.item_versions.unit_content import CorruptVersionError
 from agent_hub.core.item_versions.version_store import ItemVersionSequenceError
+from agent_hub.core.knowledge.sync_knowledge import KnowledgeCheckoutError
 from agent_hub.core.learnings.brain_change_requests import (
     ChangeRequestConflictError,
     ChangeRequestError,
@@ -45,6 +48,8 @@ from agent_hub.core.learnings.brain_change_requests import (
 from agent_hub.core.learnings.learning_ports import HubReadOnlyError, LearningConflictError
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.skills.skill_view import SkillFileTooLargeError
+from agent_hub.storage.errors import Fts5UnavailableError
+from agent_hub.storage.knowledge_index import FTS5_MISSING
 
 
 def test_writes_problem_document_when_problem_built() -> None:
@@ -470,3 +475,13 @@ def test_words_version_problems_neutrally_when_read_or_written() -> None:
 
     for found in (corrupt, race):
         assert "written" not in str(found.detail)
+
+
+def test_maps_knowledge_errors_when_raised() -> None:
+    checkout = _mapped(KnowledgeCheckoutError("brain: git exited with 128: fatal: x"))
+    fts5 = fts5_unavailable_problem(Fts5UnavailableError(FTS5_MISSING))
+
+    assert (checkout.status, checkout.title) == (502, "Could not read the hub's files")
+    assert checkout.detail == "brain: git exited with 128: fatal: x"
+    assert (fts5.status, fts5.title, fts5.detail) == (503, "Search unavailable", FTS5_MISSING)
+    assert COMPOSED_PROBLEMS[Fts5UnavailableError] is fts5_unavailable_problem
