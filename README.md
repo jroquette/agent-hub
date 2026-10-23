@@ -262,10 +262,13 @@ changes no code),
 `incident` (git evidence, a recall of past incidents, at most 5 ranked hypotheses each with a read-only check, the
 checks in a throwaway worktree, a mitigation gate, then a hand-off draft for `/fix` and a blameless postmortem draft in
 `brain/_inbox/`; it writes no tracker and applies nothing; `/incident` starts it with
-`./hub workflow run incident --input report=… --live`) and
+`./hub workflow run incident --input report=… --live`),
 `upgrade` (one uv or npm package from its changelog to a PR: the bump made with the repo's own tooling, the changelog
 read, the fast check, up to three adapt rounds, test strength on the adapted lines, the `size` approval for a risky
-bump, the full check, then the PR behind the `publish` approval; `/upgrade` starts it). A hub's own file
+bump, the full check, then the PR behind the `publish` approval; `/upgrade` starts it) and
+`security-sweep` (the installed scanners on every repo as of `origin/<branch>`, read-only, then one security-reviewer
+triage of the new findings; the kept ones go to `brain/_inbox/security-YYYY-MM-DD.md` for `/triage`, no secret value
+and no tracker write; suggested weekly in `hub.json` `schedules`: `{"workflow": "security-sweep", "cron": "0 6 * * 1"}`). A hub's own file
 overrides a built-in of the same name.
 
 ```bash
