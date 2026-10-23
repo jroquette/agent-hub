@@ -13,12 +13,12 @@ import {
   EmptyState,
   FacetMenu,
   FilterChip,
+  GOLDEN_STATE_TEXT,
   Icon,
   Kbd,
   Popover,
   ProblemError,
   Skeleton,
-  StepBar,
   Tooltip,
   goldenStepSummary,
   shownGoldenSteps,
@@ -251,6 +251,48 @@ function goldenPathLabel(phase: Feature["phase"], steps: readonly GoldenStep[]):
     : where;
 }
 
+/** The colour of the dot before the stage's name; the state is also said in words. */
+const STAGE_DOT: Partial<Record<GoldenStep["state"], string>> = {
+  done: "var(--done)",
+  partial: "var(--done)",
+  current: "var(--live)",
+  waiting: "var(--waiting)",
+  blocked: "var(--blocked)",
+  stale: "var(--idle)",
+};
+
+/**
+ * The step the feature is at, in words ("Build", "step 6 of 8"), with its state when it is not
+ * simply in progress or unknown (the notice above the list says why ticket status is unknown).
+ * Every step is on the feature's page.
+ */
+function StageCell({ phase, steps }: { phase: Feature["phase"]; steps: readonly GoldenStep[] }) {
+  const at = steps.findIndex((s) => s.name === phase);
+  const step = steps[at];
+  const shipped = phase === "shipped" && step?.state === "done";
+  const state =
+    step && !shipped && step.state !== "current" && step.state !== "unknown"
+      ? GOLDEN_STATE_TEXT[step.state]
+      : null;
+  return (
+    <span className="ft-stage" aria-hidden="true">
+      <span className="ft-stage-name">
+        <span
+          className="ft-stage-dot"
+          style={{ background: (step && STAGE_DOT[step.state]) ?? "var(--text-subtle)" }}
+        />
+        {GOLDEN_STEP_LABEL[phase]}
+      </span>
+      {!shipped && at >= 0 && (
+        <span className="ft-stage-of">
+          step {at + 1} of {steps.length}
+          {state && ` · ${state.toLowerCase()}`}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function FeatureRow({
   f,
   name,
@@ -350,12 +392,7 @@ function FeatureRow({
         <span className="ft-col-issues">
           <IssuesCell issues={f.issues} />
         </span>
-        <StepBar
-          name="Golden path"
-          label={GOLDEN_STEP_LABEL[f.golden_path.phase]}
-          current={steps.findIndex((s) => s.name === f.golden_path.phase)}
-          steps={steps.map((s) => ({ state: s.state, summary: goldenStepSummary(s) }))}
-        />
+        <StageCell phase={f.golden_path.phase} steps={steps} />
         <AcCell f={f} />
       </div>
     </li>
@@ -411,14 +448,18 @@ function ColumnHeads({ withHints }: { withHints: boolean }) {
       <span aria-hidden="true" />
       <span>Feature</span>
       <div className="ft-cols-meta">
-        {head("Issues", "The tracker issues of the feature.", "ft-col-issues")}
         {head(
-          "Golden path",
-          `One segment per step: ${Object.values(GOLDEN_STEP_LABEL).join(" → ")}. Derived from the record files, the tickets' status read from Linear, and the eval records.`,
+          "Tickets",
+          "The feature's tickets in the tracker. Click +N to see them all.",
+          "ft-col-issues",
         )}
         {head(
-          "ACs",
-          "Acceptance criteria passing, of the total. Owner steps are counted and hatched in amber.",
+          "Stage",
+          `The step the feature is at, of eight: ${Object.values(GOLDEN_STEP_LABEL).join(" → ")}. Open the feature to see each one.`,
+        )}
+        {head(
+          "Criteria met",
+          "Acceptance criteria that pass, of all the feature's criteria. Amber stripes are checks you do by hand.",
         )}
       </div>
     </div>

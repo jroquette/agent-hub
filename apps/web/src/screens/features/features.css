@@ -218,6 +218,40 @@
   column-gap: var(--space-4);
   font-size: 13px;
 }
+/* The card clips what overflows it, so the tips at its top (the column heads, the first rows)
+   open downwards, into the rows. */
+.ft-cols .ah-tip,
+.ft-rows > li:nth-child(-n + 2) .ah-tip {
+  bottom: auto;
+  top: calc(100% + 6px);
+}
+/* The Stage column: the step's name with a state dot, its position under it. */
+.ft-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: fit-content;
+}
+.ft-stage-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.ft-stage-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.ft-stage-of {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
 .ft-more-link {
   all: unset;
   margin-top: var(--space-2);

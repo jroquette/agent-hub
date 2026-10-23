@@ -201,7 +201,9 @@ describe("FeaturesScreen", () => {
     open();
 
     await screen.findByRole("link", { name: "tracker-team-cap" });
-    expect(rowOf("tracker-team-cap")).toHaveTextContent("Plan · plan.md");
+    const row = rowOf("tracker-team-cap");
+    expect(row.querySelector(".ft-stage")).toHaveTextContent(/^Plan\s*step 4 of 8$/);
+    expect(row.querySelector(".ft-row-line")).toHaveTextContent(/^plan\.md/);
   });
 
   it("shows five shipped features until asked for more (shipped)", async () => {
@@ -271,7 +273,7 @@ describe("FeaturesScreen", () => {
     open({ "/api/v1/features": aPage([unread]) });
 
     await screen.findByRole("link", { name: "unread" });
-    expect(rowOf("unread").querySelector(".ft-row-line")).toHaveTextContent(/^Build$/);
+    expect(rowOf("unread").querySelector(".ft-row-line")).toHaveTextContent(/^$/);
     expect(screen.getByRole("note")).toHaveTextContent(
       "Ticket status is not read from Linear on this list, so Build shows as unknown, and so does Shipped once Acceptance is done.",
     );
@@ -344,33 +346,7 @@ describe("FeaturesScreen", () => {
     expect(row).toHaveTextContent("evaluator says ship after your steps");
   });
 
-  it("draws the server's golden path with each state's text and reason (golden)", async () => {
-    open();
-
-    await screen.findByRole("link", { name: "tracker-team-cap" });
-    const row = rowOf("tracker-team-cap");
-    const bar = within(row).getByRole("img", { name: /^Golden path: Plan\./ });
-    const name = bar.getAttribute("aria-label") ?? "";
-    expect(name).toContain("Build: unknown (Linear not connected)");
-    expect(name).toContain(
-      "Acceptance: partial · Ticket evals cover 2 of 9 ACs (Plan is not done)",
-    );
-    expect(name).toContain("Shipped: blocked (Plan is not done)");
-    expect(
-      [...bar.querySelectorAll("[data-state]")].map((s) => s.getAttribute("data-state")),
-    ).toEqual([
-      "done",
-      "skipped",
-      "skipped",
-      "current",
-      "pending",
-      "unknown",
-      "partial",
-      "blocked",
-    ]);
-  });
-
-  it("draws the eight feature steps on each row's bar, labelled 'Build · 6/8', and 'Shipped' alone once shipped (AC-1.12)", async () => {
+  it("names the stage a row is at with its position of eight, and 'Shipped' alone once shipped (AC-1.12)", async () => {
     const shipped = aFeature({
       slug: "shipped-one",
       phase: "shipped",
@@ -383,14 +359,10 @@ describe("FeaturesScreen", () => {
     open({ "/api/v1/features": aPage([shipped, ...features]) });
 
     await screen.findByRole("link", { name: "control-plane" });
-    const bar = within(rowOf("control-plane")).getByRole("img", { name: /^Golden path: Build\./ });
-    expect(bar.querySelectorAll("[data-state]")).toHaveLength(8);
-    expect(bar.getAttribute("aria-label")).toMatch(
-      /Spec: .*; UX design: .*; Research: .*; Plan: .*; Tickets: .*; Build: .*; Acceptance: .*; Shipped: /,
+    expect(rowOf("control-plane").querySelector(".ft-stage")).toHaveTextContent(
+      /^Build\s*step 6 of 8$/,
     );
-    expect(bar.parentElement).toHaveTextContent(/^Build · 6\/8$/);
-    const done = within(rowOf("shipped-one")).getByRole("img", { name: /^Golden path: Shipped\./ });
-    expect(done.parentElement).toHaveTextContent(/^Shipped$/);
+    expect(rowOf("shipped-one").querySelector(".ft-stage")).toHaveTextContent(/^Shipped$/);
   });
 
   it("offers the eight feature steps in the Step filter (AC-1.12)", async () => {
@@ -671,7 +643,9 @@ describe("FeaturesScreen", () => {
     expect(screen.queryByRole("button", { name: /^Evaluated/ })).not.toBeInTheDocument();
     expect(slugsIn(groupOf(/^In progress · 6$/))).toContain("evaluated-one");
     expect(rowOf("evaluated-one")).not.toHaveAttribute("data-tone");
-    expect(rowOf("evaluated-one")).toHaveTextContent("Build · 1 of 3 merged · 1 in progress");
+    expect(rowOf("evaluated-one").querySelector(".ft-row-line")).toHaveTextContent(
+      /^1 of 3 merged · 1 in progress/,
+    );
     expect(rowOf("evaluated-one")).toHaveTextContent("evaluator says ship");
     expect(container.querySelector(".ft-summary")).toHaveTextContent(
       /^2 need you\s*6 in progress\s*0 shipped/,
