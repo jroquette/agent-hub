@@ -22,6 +22,7 @@ import { DiscussButton, useDiscuss, useDiscussTarget } from "../../shell/discuss
 import { StaleStamp } from "../portfolio/StaleStamp";
 import { InputField, parsed, type InputSpec } from "../runs-list/StartRun";
 import { ActionPanel, FileText } from "./ActionPanel";
+import { ScenarioBuilder } from "./builder/ScenarioBuilder";
 import { useLatestRun } from "./LiveRun";
 import { SCENARIO_BRIEF } from "./NewScenario";
 import { Page, ScenarioRunBadge, shortId, useWaitingRows, WaitingCard } from "./parts";
@@ -834,10 +835,44 @@ function DetailBody({ scenario }: { scenario: ScenarioDetail }) {
       { replace: true },
     );
   };
+  const page: "build" | "run" = params.get("mode") === "run" ? "run" : "build";
+  const modeSwitch = (
+    <SegmentedControl
+      label="Mode"
+      value={page}
+      onChange={(id) => {
+        setParam("mode", id === "run" ? "run" : null);
+      }}
+      options={[
+        { id: "build", label: "Build", icon: "puzzle" },
+        { id: "run", label: "Run", icon: "play" },
+      ]}
+    />
+  );
+  if (page === "build") {
+    return (
+      <Page>
+        <div className="ah-stack" style={{ gap: 12 }}>
+          <Header scenario={scenario} />
+          <div className="ah-row ah-wrap" style={{ gap: 12 }}>
+            {modeSwitch}
+            <span className="ah-small ah-muted">
+              Build the flow with blocks; switch to Run to plan it in an environment and start it.
+            </span>
+          </div>
+          <WaitingCard rows={mine} named={false} />
+          <ScenarioBuilder scenario={scenario} mode={mode} />
+        </div>
+      </Page>
+    );
+  }
   return (
     <Page>
       <div className="sc-detail ah-stack" style={{ gap: 16 }}>
         <Header scenario={scenario} />
+        <div className="ah-row ah-wrap" style={{ gap: 12 }}>
+          {modeSwitch}
+        </div>
         <WaitingCard rows={mine} named={false} />
         <div className="sc-columns">
           <div className="ah-stack" style={{ gap: 12, minWidth: 0 }}>
