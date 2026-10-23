@@ -255,10 +255,14 @@ merges since its last pass, read-only, and `report` it to `brain/_inbox/verify-<
 machine path is listed as "cannot run after merge"; fetch first:
 `./hub workflow run post-merge-verify --input repo=<dir> --input sha=<sha> --live`),
 `brain-care` (`inbox`: the weekly inbox review, one owner gate per group of notes, then one hub PR; `context`: the monthly
-always-loaded context audit, a trim only after the owner's approval) and
+always-loaded context audit, a trim only after the owner's approval),
 `spike` (`spike`: recall, research, 2 or 3 options, the owner's pick, a premortem of the pick, then
 `brain/features/<slug>/research.md` and an ADR draft for `/adr`, within a timebox of 2h of agent time by default; it
-changes no code). A hub's own file overrides a built-in of the same name.
+changes no code) and
+`incident` (git evidence, a recall of past incidents, at most 5 ranked hypotheses each with a read-only check, the
+checks in a throwaway worktree, a mitigation gate, then a hand-off draft for `/fix` and a blameless postmortem draft in
+`brain/_inbox/`; it writes no tracker and applies nothing; `/incident` starts it with
+`./hub workflow run incident --input report=… --live`). A hub's own file overrides a built-in of the same name.
 
 ```bash
 ./hub workflow list                          # the workflows that load; problems as <file>:<line>: <key>: <message>
@@ -390,7 +394,7 @@ The size decides the ceremony:
 | `/deliver <PR or issue>` | Drives an open PR to merged: conflicts, red CI and review threads, the gates before each push, the default branch's CI after the merge, then the tracker | After the PR is open |
 | `/review <PR>` | Reviews someone else's PR against its ticket, the ADRs and the brain; posts only what you approve | For a teammate's PR or one `hub run` opened |
 | `/release [version]` | Cuts a platform release: merged PRs, the bump, the check on the exact commit, notes with what `hub sync` rewrites, then the hub's pin bump | When `main` holds what the next version ships |
-| `/incident <symptom or issue>` | Investigates a problem with no known reproduction: evidence, ranked hypotheses, a gated mitigation, then `/fix` and a postmortem | When `/fix` cannot start because nothing reproduces yet |
+| `/incident <symptom or issue>` | Starts the `incident` workflow for a problem with no known reproduction: evidence, ranked hypotheses with read-only checks, a gated mitigation, then `/fix` and a postmortem | When `/fix` cannot start because nothing reproduces yet |
 | `/refactor <issue>` | Makes a behaviour-preserving change: characterization tests first, then batched PRs that each pass `check` alone | When a refactor is too big for `/fix` and needs no spec |
 | `/upgrade [package or tool]` | Bumps a dependency, toolchain or plugin pin after reading its changelog, adapting to breaking changes | For dependency and toolchain bumps |
 | `/adr <question or issue>` | Records an architectural decision: options and trade-offs, your pick, a new ADR that supersedes and never edits | For a decision outside a `/feature` |

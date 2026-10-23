@@ -178,6 +178,19 @@ DESIGN_PATHS = (
     "workflows/brain-care/scripts/inventory.py",
     "workflows/brain-care/scripts/outcome.py",
     "workflows/brain-care/scripts/read_inbox.py",
+    # AGH-483: the built-in incident pack, seeded.
+    "workflows/incident/fixtures/incident-awaiting-mitigation.yaml",
+    "workflows/incident/fixtures/incident-confirmed.yaml",
+    "workflows/incident/fixtures/incident-mitigation-declined.yaml",
+    "workflows/incident/fixtures/incident-none-confirmed.yaml",
+    "workflows/incident/incident.yaml",
+    "workflows/incident/prompts/hypotheses.md",
+    "workflows/incident/prompts/postmortem.md",
+    "workflows/incident/prompts/recall.md",
+    "workflows/incident/scripts/check.py",
+    "workflows/incident/scripts/evidence.py",
+    "workflows/incident/scripts/inbox.py",
+    "workflows/incident/scripts/mitigation.py",
     # AGH-227: the built-in issue-to-pr pack, seeded.
     "workflows/issue-to-pr/fixtures/blocked.yaml",
     "workflows/issue-to-pr/fixtures/dirty.yaml",
@@ -902,6 +915,8 @@ def test_parses_as_python39_when_rendered(demo_render: dict[str, RenderedFile]) 
         "workflows/post-merge-verify/scripts",
         # The sdlc pack's helpers (AGH-229), run by uv on its Python, also parse as 3.9.
         "workflows/sdlc/scripts",
+        # The incident pack's helpers (AGH-483), likewise.
+        "workflows/incident/scripts",
         # The retro pack's scripts (AGH-488), likewise.
         "workflows/retro/scripts",
         # The spike pack's helpers (AGH-492), likewise.
