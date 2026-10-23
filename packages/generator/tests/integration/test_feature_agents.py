@@ -502,3 +502,21 @@ def test_records_adrs_on_both_paths_when_feature_step_three_rendered_with_implem
         "(its steps 1–5 on this issue; in-line on the feature's worktree, and on the Build"
         " path its step 6 too)" in research
     )
+
+
+# AGH-451: the brief's Outcome says how we will know after the merge that it solved the problem,
+# with a signal someone can check later; step 0 asks for it before sizing (brief.py does not parse
+# it).
+POST_MERGE_LINE = "How we will know after merge that it solved the problem"
+ASKS_BEFORE_SIZING = "ask for one (one question) before sizing"
+
+
+def test_asks_for_a_post_merge_signal_when_brief_outcome_has_none(texts: dict[str, str]) -> None:
+    brief = step(texts[FEATURE], 0)
+
+    assert brief.startswith("0. **Brief**")
+    assert POST_MERGE_LINE in brief
+    assert "not a restatement of the ACs" in brief
+    for signal in ("`post-merge-verify`", "`/retro` number", "no new bug of a given kind"):
+        assert signal in brief, signal
+    assert brief.index(ASKS_BEFORE_SIZING) < brief.index("Then size it")
