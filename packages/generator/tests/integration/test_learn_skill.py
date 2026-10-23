@@ -72,3 +72,17 @@ def test_keeps_personal_mode_when_learn_promote_added(raw: str) -> None:
     assert "## personal" in raw
     assert "brain/auto/workspace/MEMORY.md" in raw
     assert raw.index("## personal") < raw.index("## promote")
+
+
+# AGH-480: the owner sees what a gate asks before answering it.
+GATE_RECORDS = "`.agent-runs/workflows/<run>/records.jsonl`"
+GATE_MESSAGE = f'the `message` of the last `"event": "gate"` line of {GATE_RECORDS}'
+
+
+def test_shows_the_gate_message_before_the_owner_answers_when_learn_promote_rendered(
+    text: str,
+) -> None:
+    respond = "`./hub workflow respond <run> --choice apply|drop|keep --text"
+
+    assert GATE_MESSAGE in text
+    assert text.index(GATE_MESSAGE) < text.index(respond)

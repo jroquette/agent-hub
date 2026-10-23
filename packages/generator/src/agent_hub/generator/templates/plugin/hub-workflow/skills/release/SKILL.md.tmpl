@@ -17,7 +17,7 @@ The built-in `release` workflow runs steps 1-4, 6 and 7's pin; you resolve its i
 - Resolve the platform repo (above), then find or create the release's tracker issue.
 - From the hub: `./hub workflow run release --input issue=<issue> --input repo=<repo dir> --input version=<argument, or empty> --live`, output redirected to a file and `$?` checked (without `--live` it only prints what would run).
 - Report its last line (`run <run>: paused at <gate>` or `run <run>: done, outcome <outcome>`) and the `report` step's `output` in `.agent-runs/workflows/<run>/records.jsonl`.
-- The gates are the owner's, never yours: `go` (the release PR) and `pin_go` (the hub pin PR) with `./hub workflow approve <run>` or `reject <run>`.
+- The gates are the owner's, never yours: at `go` (the release PR) and `pin_go` (the hub pin PR), first show the owner the `message` of the last `"event": "gate"` line of `.agent-runs/workflows/<run>/records.jsonl`, then the owner answers with `./hub workflow approve <run>` or `reject <run>`.
 - After `go`, the owner merges the release PR with a merge commit, not squash: the tag goes on the `bump` step's `sha`, the PR's head.
 - Then resolve one absolute path from `echo "${TMPDIR:-/tmp}"` plus `/release-notes.md`, write the `compose` step's `output.notes` there with the Write tool (replacing an earlier file), check `test -s <notes file>`, and do step 5 (dispatch and watch) and step 6 below with that `sha`.
 - Then the owner answers `./hub workflow respond <run> --choice tagged` (or `--choice stop`); after the run, step 7's tracker comments.
