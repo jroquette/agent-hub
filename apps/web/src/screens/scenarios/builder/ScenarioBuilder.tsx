@@ -526,6 +526,53 @@ export function ScenarioBuilder({
     setSelected(block.id);
   };
 
+  // What a step's form footer offers: ask Claude about it, duplicate it, delete it.
+  const stepButtons = (id: string) => (
+    <>
+      <Button
+        size="sm"
+        variant="ghost"
+        icon="message-square"
+        onClick={() => {
+          ask(
+            `About the step \`${id}\` of the scenario \`${scenario.name}\` (the file \`${scenario.path ?? ""}\`): explain in a few lines what it does, what it runs and where it can stop. Change nothing.`,
+          );
+        }}
+      >
+        Ask Claude
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        icon="copy"
+        onClick={() => {
+          const item = findItem(program.main, id);
+          const at = locate(program.main, id);
+          if (item?.kind !== "block" || !at) return;
+          const copy: Item = {
+            kind: "block",
+            node: { ...item.node, id: freshId(taken, item.node.id) },
+          };
+          commit(insertAt(program.main, at.slot, at.index + 1, [copy]), program.kept, layout.loose);
+          setSelected(itemId(copy));
+        }}
+      >
+        Duplicate
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        icon="trash"
+        onClick={() => {
+          removeItem(id);
+          setToast(`Deleted ${id}.`);
+        }}
+      >
+        Delete step
+      </Button>
+    </>
+  );
+
   const inspector = (() => {
     if (!selectedItem) {
       return settings ? (
@@ -594,6 +641,7 @@ export function ScenarioBuilder({
               editItem(node.id, { ...selectedItem, node: without(next, "nodes") });
             } else editItem(node.id, { kind: "block", node: next });
           }}
+          footer={stepButtons(node.id)}
           onDelete={() => {
             removeItem(node.id);
           }}
@@ -1338,55 +1386,6 @@ export function ScenarioBuilder({
                 setSelected(null);
                 setSettings(true);
               }}
-              stepActions={(id) => (
-                <>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    icon="message-square"
-                    onClick={() => {
-                      ask(
-                        `About the step \`${id}\` of the scenario \`${scenario.name}\` (the file \`${scenario.path ?? ""}\`): explain in a few lines what it does, what it runs and where it can stop. Change nothing.`,
-                      );
-                    }}
-                  >
-                    Ask Claude
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    icon="copy"
-                    onClick={() => {
-                      const item = findItem(program.main, id);
-                      const at = locate(program.main, id);
-                      if (item?.kind !== "block" || !at) return;
-                      const copy: Item = {
-                        kind: "block",
-                        node: { ...item.node, id: freshId(taken, item.node.id) },
-                      };
-                      commit(
-                        insertAt(program.main, at.slot, at.index + 1, [copy]),
-                        program.kept,
-                        layout.loose,
-                      );
-                      setSelected(itemId(copy));
-                    }}
-                  >
-                    Duplicate
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    icon="trash"
-                    onClick={() => {
-                      removeItem(id);
-                      setToast(`Deleted ${id}.`);
-                    }}
-                  >
-                    Delete step
-                  </Button>
-                </>
-              )}
               main={{
                 id: "main",
                 x: layout.main.x,

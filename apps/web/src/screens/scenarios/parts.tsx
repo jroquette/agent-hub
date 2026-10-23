@@ -71,12 +71,25 @@ const EFFECT_ICON: Readonly<Record<string, IconName>> = {
   destroy: "triangle-alert",
 };
 
-export function EffectBadge({ effect }: { effect: string | null | undefined }) {
+const EFFECT_WORDS: Readonly<Record<string, string>> = {
+  read: "Reads only",
+  write: "Changes data",
+  destroy: "Deletes data",
+};
+
+/** An action's effect; `words` says it as a person would ("Changes data"), not the key. */
+export function EffectBadge({
+  effect,
+  words = false,
+}: {
+  effect: string | null | undefined;
+  words?: boolean;
+}) {
   if (!effect) return <span className="ah-subtle">—</span>;
   return (
     <span className="ah-badge ah-badge-quiet">
       <Icon name={EFFECT_ICON[effect] ?? "circle-dashed"} />
-      {effect}
+      {words ? (EFFECT_WORDS[effect] ?? effect) : effect}
     </span>
   );
 }

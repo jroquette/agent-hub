@@ -387,6 +387,7 @@ export function BlockInspector({
   onClose,
   summary,
   actionTools,
+  footer,
 }: {
   document: BuilderDocument;
   node: BuilderNode;
@@ -402,6 +403,8 @@ export function BlockInspector({
   summary?: ReactNode;
   /** Under the action field: make a new action, or ask Claude to write one. */
   actionTools?: ReactNode;
+  /** The form's foot: what can be done with the step (delete, duplicate, ask Claude). */
+  footer?: ReactNode;
 }) {
   const look = kindLook(node.type);
   const [id, setId] = useState(node.id);
@@ -904,6 +907,7 @@ export function BlockInspector({
           <span className="ah-small ah-subtle">Runs up to {pace(node.timeout)}.</span>
         )}
       </div>
+      {footer && <footer className="sb-inspector-foot">{footer}</footer>}
     </section>
   );
 }
