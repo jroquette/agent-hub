@@ -269,15 +269,24 @@ def test_names_the_store_problem_when_new_reports_one(inbox: Inbox) -> None:
     assert f"Store: {problem}." in text
 
 
-def test_lists_unresolved_findings_when_triage_names_them(inbox: Inbox) -> None:
-    triage = a_triage(unresolved=[{"id": "F3", "why": "checkout differs"}])
+def test_leaves_unresolved_findings_unseen_when_triage_names_them(inbox: Inbox) -> None:
+    triage = a_triage(
+        {"id": "F1", "attack": "a", "fix": "f"},
+        unresolved=[{"id": "F3", "why": "checkout differs"}],
+        dropped=["F2"],
+    )
 
     code, output, text = inbox.report(triage)
 
-    assert (code, output["status"]) == (0, "clean")
+    assert (code, output["status"]) == (0, "findings")
+    # Not settled: only kept and dropped ids are marked seen, so F3 comes back next run.
+    assert output["triaged"] == ["F1", "F2"]
     assert "## Unresolved" in text
-    assert "[high] `rule-3` - `api/views.py:13` (semgrep, app)" in text
-    assert "> checkout differs" in text
+    unresolved = text.split("## Unresolved", 1)[1].split("## ", 1)[0]
+    assert "Not settled: these stay unseen and come back next run." in unresolved
+    assert "[high] `rule-3` - `api/views.py:13` (semgrep, app)" in unresolved
+    assert "> checkout differs" in unresolved
+    assert "## Not triaged" not in text
 
 
 @pytest.mark.parametrize(
