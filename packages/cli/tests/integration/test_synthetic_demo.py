@@ -38,6 +38,7 @@ from agent_hub.core.hub_files.rendered_file import Ownership
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.json_form import dump_json
 from agent_hub.generator.render_hub import render_hub
+from agent_hub.generator.scenario_examples import EXAMPLE_FILES
 
 # Found before any test puts a fake git first on PATH.
 REAL_GIT = shutil.which("git")
@@ -261,6 +262,7 @@ def test_indexes_modes_in_git_when_demo_added(
         **{link.path: GIT_MODE_LINK for link in rendered.links},
         "hub.json": GIT_MODE_FILE,
         "hub.lock": GIT_MODE_FILE,
+        **{example.path: GIT_MODE_FILE for example in EXAMPLE_FILES},  # AGH-365: init's examples
     }
     assert indexed == expected
 

@@ -25,6 +25,7 @@ from agent_hub.core.hub_files.rendered_file import Ownership
 from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.hub_files.tree_snapshot import TreeSnapshot, is_leftover_name
 from agent_hub.core.json_form import dump_json
+from agent_hub.core.testing.builders import an_environments_document
 from agent_hub.generator.errors import GeneratorError
 from agent_hub.generator.hub_tree import read_hub_tree
 from agent_hub.generator.render_hub import render_hub
@@ -1464,3 +1465,85 @@ def test_writes_nothing_into_pack_when_target_holds_custom_pack(
     ]
     assert (target / PACK / "mine.yaml").read_bytes() == b"# our own\n"
     assert lock_files(target)[f"{PACK}/issue-to-pr.yaml"] == {"ownership": "seeded"}
+
+
+# AGH-365 (AC-350.31, AM-6): init writes the example action, its script and the example scenario
+# that uses it, each only when absent. They are the project's files from then on, not hub files:
+# the report does not count them and hub.lock does not list them.
+EXAMPLE_ACTION = "actions/demo/demo-get-status.yaml"
+EXAMPLE_SCRIPT = "actions/demo/scripts/demo_get_status.py"
+EXAMPLE_SCENARIO = "scenarios/demo/demo-service-up.yaml"
+
+
+def test_writes_examples_when_scenario_seed_init(target: Path, *, demo_flags: list[str]) -> None:
+    write_planted(target / EXAMPLE_SCENARIO, b"# our own walk\n")
+
+    result = run_init([*demo_flags, "--dir", str(target)])
+
+    assert result.exit_code == 0, result.stderr
+    assert result.stdout.splitlines()[0] == created_line(written_config(target), target)
+    for path in (EXAMPLE_ACTION, EXAMPLE_SCRIPT):
+        written = target / path
+        assert written.is_file()
+        assert not written.is_symlink()
+        assert written.read_text(encoding="utf-8").startswith("# ")
+    assert (target / EXAMPLE_SCENARIO).read_bytes() == b"# our own walk\n"
+    assert not [path for path in lock_files(target) if path.startswith(("actions/", "scenarios/"))]
+    assert not any(
+        part.startswith(".") and is_leftover_name(part)
+        for path, _ in listing(target)
+        for part in path.split("/")
+    )
+
+
+def run_scenario_cli(root: Path, *args: str) -> Result:
+    environ = {"AGENT_HUB_ROOT": str(root), "AGENT_HUB_DB": str(root.parent / "events.db")}
+    return CliRunner().invoke(app, list(args), env=environ, input="")
+
+
+def commit_hub(root: Path) -> None:
+    found = shutil.which("git")
+    assert found is not None
+    identity = ("-c", "user.name=Demo Dev", "-c", "user.email=dev@example.com")
+    for args in (("init", "-q", "-b", "main"), ("add", "-A"), ("commit", "-q", "-m", "hub")):
+        subprocess.run([found, *identity, *args], cwd=root, check=True, capture_output=True)  # noqa: S603 - absolute git, fixed arguments
+
+
+def test_plans_example_when_scenario_seed_init_hub_declares_environment(
+    target: Path, *, demo_flags: list[str]
+) -> None:
+    # The seeded example loads and plans with the real engine once the project declares an
+    # environment and a service: plan mode runs the example script and reads no network.
+    assert run_init([*demo_flags, "--dir", str(target)]).exit_code == 0
+    document = json.loads((target / "hub.json").read_bytes())
+    declared = an_environments_document()
+    document["environments"] = declared["environments"]
+    document["repos"][0]["services"] = declared["repos"][0]["services"]
+    (target / "hub.json").write_bytes(dump_json(document))
+    commit_hub(target)
+
+    actions = run_scenario_cli(target, "action", "list")
+    scenarios = run_scenario_cli(target, "scenario", "list")
+    planned = run_scenario_cli(
+        target, "scenario", "plan", "demo-service-up", "--env", "local", "--input", "service=api"
+    )
+
+    assert (actions.exit_code, actions.stderr) == (0, ""), actions.output
+    assert actions.stdout.splitlines() == [
+        "demo/demo-get-status  read  target (service), path (string)"
+    ]
+    assert (scenarios.exit_code, scenarios.stderr) == (0, ""), scenarios.output
+    assert scenarios.stdout.startswith("demo-service-up  demo  2 nodes  ")
+    assert (planned.exit_code, planned.stderr) == (0, ""), planned.output
+    lines = planned.stdout.splitlines()
+    assert lines[0] == "scenario: demo-service-up (environment local, access write)"
+    assert [line for line in lines if not line.startswith(" ")][1:] == [
+        "service-up  expect  demo/demo-get-status  read  allow",
+        "read-root  action  demo/demo-get-status  read  allow",
+    ]
+    assert [line.strip() for line in lines if "plan:" in line or "draft:" in line] == [
+        "draft: no",
+        "plan: GET http://localhost:8000/health",
+        "draft: no",
+        "plan: GET http://localhost:8000/",
+    ]

@@ -45,6 +45,7 @@ from agent_hub.generator.file_adapter import (
     apply_writes,
     ensure_root,
     remove_leftovers,
+    write_absent,
 )
 from agent_hub.generator.hub_tree import (
     LinkFolder,
@@ -2203,3 +2204,40 @@ def test_raises_when_root_moves_before_sync_applied(
     assert (raised.value.path, raised.value.cause) == (str(via / "root"), "the hub folder moved")
     assert (first / "root" / "old.md").read_bytes() == b"old\n"
     assert (second / "root" / "old.md").read_bytes() == b"old\n"
+
+
+# AGH-365 (AM-6): the scenario examples are written only where their path is absent.
+def test_writes_only_absent_paths_when_write_absent_called(tmp_path: Path) -> None:
+    root = a_root(tmp_path)
+    (root / "kept").mkdir()
+    (root / "kept" / "mine.yaml").write_bytes(b"mine\n")
+    (root / "kept" / "link.yaml").symlink_to("mine.yaml")
+    files = [
+        FileWrite(path="kept/mine.yaml", content=b"example\n", executable=False),
+        FileWrite(path="kept/link.yaml", content=b"example\n", executable=False),
+        FileWrite(path="new/deep/example.py", content=b"print()\n", executable=True),
+    ]
+
+    written = write_absent(root, files)
+
+    assert written == ("new/deep/example.py",)
+    assert (root / "kept" / "mine.yaml").read_bytes() == b"mine\n"
+    assert os.readlink(root / "kept" / "link.yaml") == "mine.yaml"
+    example = root / "new" / "deep" / "example.py"
+    assert example.read_bytes() == b"print()\n"
+    assert example.stat().st_mode & stat.S_IXUSR
+    assert not [p for p in root.rglob("*") if TEMP_NAME.fullmatch(p.name)]
+    assert write_absent(root, files) == ()
+    assert write_absent(root, []) == ()
+
+
+def test_raises_symlinked_ancestor_when_write_absent_meets_link(tmp_path: Path) -> None:
+    root = a_root(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (root / "actions").symlink_to(outside)
+
+    with pytest.raises(SymlinkedAncestorError):
+        write_absent(root, [FileWrite(path="actions/x.yaml", content=b"x\n", executable=False)])
+
+    assert list(outside.iterdir()) == []
