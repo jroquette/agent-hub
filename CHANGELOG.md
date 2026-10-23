@@ -22,39 +22,6 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   decision (pull request) → note. `GET /learnings` takes `brain_path`. The database gains migration 0010 (the
   `knowledge_links` table), and the index's version becomes 2, so each hub's index is rebuilt once by its first
   search, reindex or note read after the upgrade. Nothing measures a note's effect.
-
-## [0.21.0] - 2026-10-23
-
-### Added
-
-- Scenarios in `hub web` (AGH-364): a **Scenarios** entry under Work, after Workflow runs, opens the list of the
-  hub's scenarios (`/scenarios`, filter with `?q=`). A scenario's page shows its plan and starts a run, the
-  environment pre-filled from `?env=` (the plan never runs on load). A scenario run has its own page
-  (`/scenarios/<project>/<name>/runs/<run>`) with its timeline, the investigation's answer options and its
-  findings; `/runs/<run>` for a scenario run redirects there, and search lists scenario runs. Workflow runs shows only
-  once a run of kind `workflow` exists. An investigation session keeps its read-only permission mode, and its chat
-  shows no mode switch.
-
-- `hub.json` → `repos[].ui_paths` (AGH-474): optional globs of a repo's screen paths, matched from the repo root
-  (`**` spans folders); absent means the repo has no UI. The new `hub doctor` rule `repos.ui_paths` warns about each
-  glob that matches no file of the repo's checkout. A hub can set the key only once its pin carries this release.
-  The rule reads the repo checkouts even when no repo sets `ui_paths`: a hub that turned off `brain.leak`,
-  `links.dead` and `repos.agents` now gets the missing or unlistable checkout findings under `repos.ui_paths`.
-- Review outputs accept `reviewer` `ux` and `overengineering`, saved as `reviews/<ticket>/ux-r<N>.json` and
-  `overengineering-r<N>.json` (AGH-474). Existing review files stay valid. The lenses that write them come later.
-- A merged ticket's outcome (two-level-flows S3, AGH-473): `hub step outcome --feature --ticket --pr --built --changes
-  --interfaces [--merged-at]` writes `tickets/<ticket>/outcome.md` once (frontmatter `merged_at`, `pr`, `dependents`;
-  what was built, what changed against the plan, the final interfaces), never committing; a second run writes
-  nothing. In `hub web` the ticket's Merged step reads "Outcome recorded" and Build counts the ticket merged when
-  Linear has it Done or its outcome exists, on the Features list, the detail and the Tickets tab alike (Build is done
-  without Linear once every ticket has an outcome). A dependent whose latest preflight predates a blocker's outcome
-  reads Preflight "stale" with "<blocker> merged: re-run preflight" until a newer preflight runs. A malformed outcome
-  (16 KiB at most) turns only its Merged step unknown.
-- A built-in `preflight` workflow (`sdlc` pack, AGH-473): a dependent ticket's read-only preflight after a blocker
-  merged (`hub workflow run preflight --input feature=… --input ticket=… --input blocker=…`, which `/merge` will
-  start). It changes no checkout and makes no branch, commit or PR; on plan drift it opens a change request and waits
-  for you, as `/implement` does. `hub step preflight-due` says first whether the dependent still has to read the
-  outcome, so running it again for the same merge adds no second preflight.
 - `hub web` starts workflows by itself (AGH-481, ADR 0048, proposed): `hub.json` declares `schedules` (a workflow, a
   5-field cron read in UTC, inputs and an optional environment) and `events` (a workflow started on a repo's `merge`,
   `ci_red` or `pr_opened`, polled through `gh` every 5 minutes, the first poll a baseline). Each slot and each event
@@ -139,15 +106,51 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Changed
 
-- `ticket-pass` now includes the preflight from the new built-in `preflight-check` workflow (AGH-473), so its
-  preflight steps are recorded as `<pass>__check__<step>` (`pass-1__check__preflight`, `pass-1__check__gate`…). A
-  hub's own fixtures or scripts that name `pass-1__preflight` and the like need the new names.
 - `/upgrade` starts the `upgrade` workflow (`./hub workflow run upgrade … --live`) for a uv or npm package, one run
   per package; a toolchain, plugin pin, Docker digest, GitHub Action or lock-maintenance bump follows its steps by
   hand, as before.
 - `/review` reads the PR into files, fetches its head to `refs/agent-hub/review/<n>` (never a branch) and starts
   `review-incoming`; it posts only when the run ended with an outcome, after the payload's sha256 matches the run's
   record, and deletes the ref once the run ended (AGH-493).
+
+## [0.21.0] - 2026-10-23
+
+### Added
+
+- Scenarios in `hub web` (AGH-364): a **Scenarios** entry under Work, after Workflow runs, opens the list of the
+  hub's scenarios (`/scenarios`, filter with `?q=`). A scenario's page shows its plan and starts a run, the
+  environment pre-filled from `?env=` (the plan never runs on load). A scenario run has its own page
+  (`/scenarios/<project>/<name>/runs/<run>`) with its timeline, the investigation's answer options and its
+  findings; `/runs/<run>` for a scenario run redirects there, and search lists scenario runs. Workflow runs shows only
+  once a run of kind `workflow` exists. An investigation session keeps its read-only permission mode, and its chat
+  shows no mode switch.
+
+- `hub.json` → `repos[].ui_paths` (AGH-474): optional globs of a repo's screen paths, matched from the repo root
+  (`**` spans folders); absent means the repo has no UI. The new `hub doctor` rule `repos.ui_paths` warns about each
+  glob that matches no file of the repo's checkout. A hub can set the key only once its pin carries this release.
+  The rule reads the repo checkouts even when no repo sets `ui_paths`: a hub that turned off `brain.leak`,
+  `links.dead` and `repos.agents` now gets the missing or unlistable checkout findings under `repos.ui_paths`.
+- Review outputs accept `reviewer` `ux` and `overengineering`, saved as `reviews/<ticket>/ux-r<N>.json` and
+  `overengineering-r<N>.json` (AGH-474). Existing review files stay valid. The lenses that write them come later.
+- A merged ticket's outcome (two-level-flows S3, AGH-473): `hub step outcome --feature --ticket --pr --built --changes
+  --interfaces [--merged-at]` writes `tickets/<ticket>/outcome.md` once (frontmatter `merged_at`, `pr`, `dependents`;
+  what was built, what changed against the plan, the final interfaces), never committing; a second run writes
+  nothing. In `hub web` the ticket's Merged step reads "Outcome recorded" and Build counts the ticket merged when
+  Linear has it Done or its outcome exists, on the Features list, the detail and the Tickets tab alike (Build is done
+  without Linear once every ticket has an outcome). A dependent whose latest preflight predates a blocker's outcome
+  reads Preflight "stale" with "<blocker> merged: re-run preflight" until a newer preflight runs. A malformed outcome
+  (16 KiB at most) turns only its Merged step unknown.
+- A built-in `preflight` workflow (`sdlc` pack, AGH-473): a dependent ticket's read-only preflight after a blocker
+  merged (`hub workflow run preflight --input feature=… --input ticket=… --input blocker=…`, which `/merge` will
+  start). It changes no checkout and makes no branch, commit or PR; on plan drift it opens a change request and waits
+  for you, as `/implement` does. `hub step preflight-due` says first whether the dependent still has to read the
+  outcome, so running it again for the same merge adds no second preflight.
+
+### Changed
+
+- `ticket-pass` now includes the preflight from the new built-in `preflight-check` workflow (AGH-473), so its
+  preflight steps are recorded as `<pass>__check__<step>` (`pass-1__check__preflight`, `pass-1__check__gate`…). A
+  hub's own fixtures or scripts that name `pass-1__preflight` and the like need the new names.
 
 ## [0.20.1] - 2026-10-22
 
