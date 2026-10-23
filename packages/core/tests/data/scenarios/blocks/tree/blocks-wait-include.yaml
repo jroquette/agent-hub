@@ -1,0 +1,22 @@
+version: 2
+kind: scenario
+name: blocks-wait-include
+revision: 1
+description: 'Sample of the tree format: wait include'
+inputs:
+  webshop_order_id:
+    required: true
+  personal_name:
+    required: true
+  aws_account_id:
+    required: true
+stages:
+- name: Settle
+  steps:
+  - wait:
+      duration: 1m
+  - include: blocks-repeat
+    with:
+      webshop_order_id: $INPUTS.webshop_order_id
+      personal_name: $INPUTS.personal_name
+      aws_account_id: $INPUTS.aws_account_id

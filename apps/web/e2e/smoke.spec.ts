@@ -266,8 +266,9 @@ test("Feature detail Tickets tab shows the plan's tickets, planning and the not-
     // Flow opens first; Table is the other view of the same list (two-level-flows AC-1.11).
     const flow = page.getByRole("region", { name: "Ticket flow" });
     await expect(flow.getByRole("heading", { name: "Ticket flow" })).toBeVisible();
-    await expect(flow.getByRole("listitem", { name: /^Group 1 · / })).toBeVisible();
-    await expect(flow.getByRole("listitem", { name: /^Group 2 · / })).toBeVisible();
+    // One card per ticket: the created one by its Linear id, the other by its plan key.
+    await expect(flow.getByRole("listitem", { name: /^DEM-7 · / })).toBeVisible();
+    await expect(flow.getByRole("listitem", { name: /^T2 · / })).toBeVisible();
     await page.getByRole("button", { name: "Table" }).click();
     const table = page.getByRole("table", { name: "Tickets" });
     await expect(table.getByRole("row")).toHaveCount(3);

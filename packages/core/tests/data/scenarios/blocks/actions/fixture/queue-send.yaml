@@ -1,0 +1,20 @@
+version: 1
+name: queue-send
+description: Send one message to the stack's work queue
+effect: write
+runtime: sh
+script: scripts/fixture_write.sh
+timeout: 1m
+inputs:
+  message: {type: string, required: true}
+  order_id: {type: string, default: ""}
+  webshop_id: {type: string, default: ""}
+  brand_id: {type: string, default: ""}
+  fetch_timedelta_minutes: {type: integer, default: 0}
+  personal_name: {type: string, required: true, description: "The developer's stack, from the environment"}
+  aws_account_id: {type: string, required: true, description: "The stack's account, from the environment"}
+output_format:
+  type: object
+  required: [ok]
+  properties:
+    ok: {type: boolean}

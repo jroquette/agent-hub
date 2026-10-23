@@ -1,0 +1,49 @@
+version: 2
+kind: scenario
+name: blocks-nested
+revision: 1
+description: 'Sample of the tree format: nested'
+inputs:
+  webshop_order_id:
+    required: true
+  personal_name:
+    required: true
+  aws_account_id:
+    required: true
+stages:
+- name: Route order
+  steps:
+  - wait_until: order-state
+    until: $self.output.order_status != ''
+    every: 15s
+    timeout: 10m
+    capture:
+      order_id: $self.output.order_id
+      order_status: $self.output.order_status
+      cover_status: $self.output.cover_status
+  - if: $CTX.order_status == 'ON_HOLD'
+    then:
+    - if: $CTX.cover_status == 'PENDING' || $CTX.cover_status == 'QUOTED'
+      then:
+      - do: order-tasks-resolve
+        with:
+          order_id: $CTX.order_id
+      else:
+      - you: 'The cover is neither pending nor quoted: check it by hand, then approve.'
+    - do: order-set-fedex
+      with:
+        order_id: $CTX.order_id
+    - if: $CTX.cover_status == 'QUOTED'
+      then:
+      - do: shipments-regenerate
+        with:
+          order_id: $CTX.order_id
+    else:
+    - do: queue-send
+      with:
+        message: order-process
+        order_id: $CTX.order_id
+  - do: queue-send
+    with:
+      message: poller
+      order_id: $CTX.order_id

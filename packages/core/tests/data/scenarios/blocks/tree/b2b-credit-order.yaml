@@ -1,0 +1,122 @@
+version: 2
+kind: scenario
+name: b2b-credit-order
+revision: 1
+description: One B2B credit order on a personal stack, from fetch to a settled cover
+inputs:
+  webshop_order_id:
+    required: true
+    description: The order to follow, from the webshop
+  webshop_id:
+    default: ws-0001
+  brand_id:
+    default: brand-0001
+  fetch_timedelta_minutes:
+    type: integer
+    default: 60
+  personal_name:
+    required: true
+    description: From the environment's values
+  aws_account_id:
+    required: true
+    description: From the environment's values
+stages:
+- name: Fetch order
+  steps:
+  - do: queue-send
+    with:
+      message: FETCH_ORDERS
+  - wait_until: order-state
+    until: $self.output.order_status == 'ON_HOLD' && $self.output.cover_status == 'PENDING'
+    every: 15s
+    timeout: 10m
+    capture:
+      order_id: $self.output.order_id
+- name: Quote
+  steps:
+  - do: queue-send
+    with:
+      message: INSURANCE_RESOLVE_COVER_JOBS
+      order_id: $CTX.order_id
+  - wait_until: order-state
+    until: $self.output.cover_status == 'QUOTED' && $self.output.payment_status == 'CREDIT_CONFIRMED'
+      && $self.output.open_tasks > 0
+    every: 15s
+    timeout: 10m
+- name: Switch to FedEx
+  steps:
+  - do: order-set-fedex
+    with:
+      order_id: $CTX.order_id
+  - do: order-tasks-resolve
+    with:
+      order_id: $CTX.order_id
+  - do: shipments-regenerate
+    with:
+      order_id: $CTX.order_id
+  - do: queue-send
+    with:
+      message: order-process
+      order_id: $CTX.order_id
+  - wait_until: order-state
+    until: $self.output.order_status == 'PROCESSING_COMPLETED'
+    every: 15s
+    timeout: 10m
+- name: Dispatch
+  steps:
+  - do: shipments-mark-in-transit
+    with:
+      order_id: $CTX.order_id
+  - wait_until: order-state
+    until: $self.output.invoice_status == 'CREATED'
+    every: 15s
+    timeout: 10m
+    capture:
+      invoice_number: $self.output.invoice_number
+- name: Invoice PDF
+  steps:
+  - you: Render the PDF of invoice $CTX.invoice_number by hand, then approve.
+- name: Send invoice
+  steps:
+  - do: queue-send
+    with:
+      message: GENERATE_WEBSHOP_INVOICE
+      order_id: $CTX.order_id
+  - wait_until: order-state
+    until: $self.output.invoice_status == 'CREATED_ON_PLATFORM' && $self.output.invoice_update_job_id
+      != ''
+    every: 15s
+    timeout: 10m
+- name: Activation
+  steps:
+  - do: queue-send
+    with:
+      message: poller
+      order_id: $CTX.order_id
+  - wait_until: order-state
+    until: $self.output.activation_job_id != ''
+    every: 15s
+    timeout: 10m
+  - do: queue-send
+    with:
+      message: poller
+      order_id: $CTX.order_id
+  - wait_until: order-state
+    until: $self.output.cover_status == 'ACTIVATED'
+    every: 15s
+    timeout: 10m
+- name: Payment
+  steps:
+  - you: Pay order $CTX.order_id in Stripe test mode, then approve.
+  - wait_until: order-state
+    until: $self.output.paid == true && $self.output.payment_job_id != ''
+    every: 15s
+    timeout: 15m
+  - do: queue-send
+    with:
+      message: poller
+      order_id: $CTX.order_id
+  - wait_until: order-state
+    until: $self.output.cover_status == 'SETTLED'
+    every: 15s
+    timeout: 10m

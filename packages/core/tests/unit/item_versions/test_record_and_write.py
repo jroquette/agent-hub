@@ -173,7 +173,7 @@ def test_writes_and_records_scenario_file_when_builder_saves() -> None:
     assert (result.changed, result.versioned) == (True, True)
 
 
-def test_refuses_scenario_unit_outside_scenarios_folder() -> None:
+def test_refuses_scenario_unit_when_outside_scenarios_folder() -> None:
     with pytest.raises(SkillPathError):
         unit_parts("workflows/demo/walk.yaml", UnitKind.SCENARIO)
     with pytest.raises(SkillPathError):
