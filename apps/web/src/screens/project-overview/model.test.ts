@@ -64,7 +64,7 @@ describe("recentTickets", () => {
       runsInOrder(runs, NOW).ordered.flatMap((r) => (r.issue ? [r.issue.key] : [])),
     );
 
-    const rows = recentTickets(ticketsOf(sessions, new Set()), shown, NOW);
+    const rows = recentTickets(ticketsOf(sessions), shown, NOW);
 
     expect(rows.map((r) => r.issue)).toEqual(["ACME-8"]);
   });

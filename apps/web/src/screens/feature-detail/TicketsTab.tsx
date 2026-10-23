@@ -122,7 +122,7 @@ function TitleCell({
 /** How many sessions one ticket row shows before the rest fold away. */
 const SESSIONS_SHOWN = 2;
 
-function SessionLink({
+export function SessionLink({
   session,
   context,
 }: {

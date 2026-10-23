@@ -67,22 +67,20 @@ function groupOf(title: string): HTMLElement {
 const issuesIn = (el: HTMLElement) =>
   within(el)
     .queryAllByRole("link")
-    .map((link) => link.textContent);
+    .map((link) => link.textContent)
+    .filter((text) => /^[A-Z]+-\d+$/.test(text));
 
 describe("TicketsScreen", () => {
-  it("lists the tickets outside features by Needs you, In progress and Ended (AC-426.2, AC-426.3, AC-426.4)", async () => {
+  it("lists every ticket a session worked on by Needs you, In progress and Ended (AC-426.2, AC-426.4)", async () => {
     open();
 
     await waitFor(() => {
       expect(issuesIn(groupOf("Needs you"))).toEqual(["AGH-112"]);
     });
-    expect(issuesIn(groupOf("In progress"))).toEqual(["AGH-7"]);
+    expect(issuesIn(groupOf("In progress")).sort()).toEqual(["AGH-200", "AGH-48", "AGH-7"]);
     expect(issuesIn(groupOf("Ended"))).toEqual(["AGH-3"]);
-    // AGH-200 is a feature's ticket, AGH-48 went the feature path: both belong to Features.
-    expect(screen.queryByRole("link", { name: "AGH-200" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "AGH-48" })).not.toBeInTheDocument();
     const summary = screen.getByText("need you").closest("p");
-    expect(summary).toHaveTextContent(/1 need you\s*1 in progress\s*1 ended/);
+    expect(summary).toHaveTextContent(/1 need you\s*3 in progress\s*1 ended/);
     expect(within(summary as HTMLElement).getByText("derived")).toBeInTheDocument();
   });
 
@@ -108,11 +106,38 @@ describe("TicketsScreen", () => {
     ).toBeInTheDocument();
   });
 
+  it("names a feature's ticket by its feature, linking to the ticket there", async () => {
+    open();
+
+    const row = (await screen.findByRole("link", { name: "AGH-200" })).closest("li") as HTMLElement;
+    expect(within(row).getByText("Feature")).toBeInTheDocument();
+    expect(within(row).getByRole("link", { name: "control-plane" })).toHaveAttribute(
+      "href",
+      "/features/agent-hub/control-plane?doc=tickets&ticket=AGH-200",
+    );
+  });
+
+  it("opens every session of a ticket from its row's sessions toggle", async () => {
+    const view = open();
+
+    const row = (await screen.findByRole("link", { name: "AGH-112" })).closest("li") as HTMLElement;
+    const toggle = within(row).getByRole("button", { name: /2 sessions/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    const links = within(row)
+      .getAllByRole("link")
+      .map((link) => link.getAttribute("href"))
+      .filter((href) => href?.startsWith("/sessions/"));
+    expect(links).toEqual(["/sessions/s-waiting", "/sessions/s-waiting", "/sessions/s-earlier"]);
+    expect(view.router.state.location.pathname).toBe("/tickets");
+  });
+
   it("filters by search and kind, keeps them in the URL and counts the matches (AC-426.7)", async () => {
     const view = open();
 
     await userEvent.type(await screen.findByRole("searchbox", { name: "Find tickets" }), "agh-7");
-    expect(screen.getByRole("status")).toHaveTextContent("1 of 3 tickets");
+    expect(screen.getByRole("status")).toHaveTextContent("1 of 5 tickets");
     expect(screen.queryByRole("heading", { name: /^Needs you/ })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "AGH-7" })).toBeInTheDocument();
     expect(view.router.state.location.search).toBe("?q=agh-7");
@@ -121,13 +146,17 @@ describe("TicketsScreen", () => {
     await userEvent.click(screen.getByRole("button", { name: /Kind:/ }));
     await userEvent.click(screen.getByRole("checkbox", { name: /Review/ }));
     expect(view.router.state.location.search).toBe("?kind=review");
-    expect(screen.getByRole("status")).toHaveTextContent("1 of 3 tickets");
+    expect(screen.getByRole("status")).toHaveTextContent("1 of 5 tickets");
     expect(screen.queryByRole("link", { name: "AGH-112" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "AGH-3" })).toBeInTheDocument();
   });
 
-  it("explains how to start when no session worked on a ticket outside a feature (AC-426.8)", async () => {
-    open({ [SESSIONS]: aPage([featurePath]) });
+  it("explains how to start when no session worked on a ticket (AC-426.8)", async () => {
+    open({
+      [SESSIONS]: aPage([
+        aSession({ id: "s-none", issue: null, label: aSessionLabel({ issue: null }) }),
+      ]),
+    });
 
     expect(await screen.findByText("No ticket work yet.")).toBeInTheDocument();
     expect(screen.getByText("/fix AGH-112")).toBeInTheDocument();

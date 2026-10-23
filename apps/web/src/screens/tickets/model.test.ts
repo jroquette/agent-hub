@@ -13,13 +13,10 @@ const fixSession = (id: string, overrides: Partial<Session> = {}): Session =>
 
 describe("ticketsOf", () => {
   it("groups the sessions of one issue into one row, the newest session first (AC-426.2)", () => {
-    const rows = ticketsOf(
-      [
-        fixSession("a", { last_activity_at: "2026-10-20T10:00:00Z", status: "ended" }),
-        fixSession("b", { last_activity_at: "2026-10-20T11:00:00Z", status: "ended" }),
-      ],
-      new Set(),
-    );
+    const rows = ticketsOf([
+      fixSession("a", { last_activity_at: "2026-10-20T10:00:00Z", status: "ended" }),
+      fixSession("b", { last_activity_at: "2026-10-20T11:00:00Z", status: "ended" }),
+    ]);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       issue: "AGH-7",
@@ -31,27 +28,43 @@ describe("ticketsOf", () => {
     expect(rows[0]?.latest.id).toBe("b");
   });
 
-  it("leaves out the tickets a feature plans and the ones the feature path worked on (AC-426.3)", () => {
+  it("lists the tickets a feature plans and the ones the feature path worked on, naming the feature", () => {
     const planned = fixSession("a");
     const featurePath = aSession({
       id: "b",
       label: aSessionLabel({ issue: "AGH-9", workflows: ["/feature"] }),
     });
-    expect(ticketsOf([planned, featurePath], new Set(["AGH-7"]))).toEqual([]);
+    const features = new Map([
+      ["AGH-7", { project: "agent-hub", slug: "team-cap", title: "Cap the teams" }],
+    ]);
+    const rows = Object.fromEntries(
+      ticketsOf([planned, featurePath], features).map((row) => [row.issue, row]),
+    );
+    expect(rows["AGH-7"]).toMatchObject({
+      kind: "feature",
+      title: "Cap the teams",
+      feature: { slug: "team-cap" },
+    });
+    expect(rows["AGH-9"]).toMatchObject({ kind: "feature", feature: null });
+  });
+
+  it("keeps every session of the ticket, newest first", () => {
+    const [row] = ticketsOf([
+      fixSession("a", { last_activity_at: "2026-10-20T10:00:00Z" }),
+      fixSession("b", { last_activity_at: "2026-10-20T11:00:00Z" }),
+    ]);
+    expect(row?.sessionList.map((s) => s.id)).toEqual(["b", "a"]);
   });
 
   it("leaves out sessions with no issue (AC-426.2)", () => {
     expect(
-      ticketsOf(
-        [fixSession("a", { label: aSessionLabel({ issue: null, workflows: [] }) })],
-        new Set(),
-      ),
+      ticketsOf([fixSession("a", { label: aSessionLabel({ issue: null, workflows: [] }) })]),
     ).toEqual([]);
   });
 
   it("puts a ticket with a waiting session under Needs you, a live one under In progress (AC-426.4)", () => {
-    const waiting = ticketsOf([fixSession("a", { status: "waiting" })], new Set());
-    const live = ticketsOf([fixSession("a", { status: "live" })], new Set());
+    const waiting = ticketsOf([fixSession("a", { status: "waiting" })]);
+    const live = ticketsOf([fixSession("a", { status: "live" })]);
     expect(waiting[0]?.group).toBe("needs");
     expect(live[0]?.group).toBe("active");
   });
@@ -66,37 +79,34 @@ describe("ticketsOf", () => {
     });
     const other = fixSession("c", { label: aSessionLabel({ issue: "AGH-9", workflows: [] }) });
     const kinds = Object.fromEntries(
-      ticketsOf([upgrade, run, other], new Set()).map((row) => [row.issue, row.kind]),
+      ticketsOf([upgrade, run, other]).map((row) => [row.issue, row.kind]),
     );
     expect(kinds).toEqual({ "AGH-7": "upgrade", "AGH-8": "run", "AGH-9": "other" });
   });
 
   it("finds a row by its issue, repo or skill (AC-426.7)", () => {
-    const [row] = ticketsOf([fixSession("a")], new Set());
+    const [row] = ticketsOf([fixSession("a")]);
     if (!row) throw new Error("no row");
     expect(matchesQuery(row, "agh-7")).toBe(true);
     expect(matchesQuery(row, "/fix")).toBe(true);
     expect(matchesQuery(row, "nothing")).toBe(false);
   });
 
-  it("leaves out a ticket the feature's ticket flow worked on (AC-426.3)", () => {
+  it("names a ticket the feature's ticket flow worked on a feature ticket", () => {
     const implement = aSession({
       id: "a",
       label: aSessionLabel({ issue: "AGH-11", workflows: ["/implement"] }),
     });
-    expect(ticketsOf([implement], new Set())).toEqual([]);
+    expect(ticketsOf([implement])[0]?.kind).toBe("feature");
   });
 
   it("groups one issue per project, in upper case, and keeps routine commands out of its skills (AC-426.2, AC-426.6)", () => {
-    const rows = ticketsOf(
-      [
-        fixSession("a", {
-          label: aSessionLabel({ issue: "agh-7", workflows: ["/kickoff", "/learn", "/refactor"] }),
-        }),
-        fixSession("b", { project: "demo-shop" }),
-      ],
-      new Set(),
-    );
+    const rows = ticketsOf([
+      fixSession("a", {
+        label: aSessionLabel({ issue: "agh-7", workflows: ["/kickoff", "/learn", "/refactor"] }),
+      }),
+      fixSession("b", { project: "demo-shop" }),
+    ]);
     expect(rows.map((row) => [row.project, row.issue, row.kind, row.workflows])).toEqual(
       expect.arrayContaining([
         ["agent-hub", "AGH-7", "refactor", ["/refactor"]],
@@ -107,17 +117,14 @@ describe("ticketsOf", () => {
 
   it("sums the cost and keeps the newest pull request (AC-426.5)", () => {
     const pr = { number: 41, state: "open", url: "https://github.com/acme/app/pull/41" };
-    const [row] = ticketsOf(
-      [
-        fixSession("a", { cost_usd: "1.00", last_activity_at: "2026-10-20T10:00:00Z" }),
-        fixSession("b", {
-          cost_usd: "0.25",
-          last_activity_at: "2026-10-20T11:00:00Z",
-          pr,
-        }),
-      ],
-      new Set(),
-    );
+    const [row] = ticketsOf([
+      fixSession("a", { cost_usd: "1.00", last_activity_at: "2026-10-20T10:00:00Z" }),
+      fixSession("b", {
+        cost_usd: "0.25",
+        last_activity_at: "2026-10-20T11:00:00Z",
+        pr,
+      }),
+    ]);
     expect(row?.costUsd).toBeCloseTo(1.25);
     expect(row?.pr?.number).toBe(41);
   });
