@@ -698,3 +698,111 @@
 .sb-input .ah-input::placeholder {
   font-family: var(--font-sans);
 }
+
+/* Blocks tab (v6): the block language, by hand. Each block is a tile you drag or click. */
+.sb-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sb-blocks ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sb-blocks-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.sb-pal {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: 44px;
+  padding: 6px var(--space-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--tile);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: grab;
+  touch-action: none;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.sb-pal:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+  border-left-color: var(--tile);
+}
+.sb-pal:active {
+  cursor: grabbing;
+}
+.sb-pal-tile {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  background: var(--tile-soft);
+  color: var(--tile);
+}
+.sb-pal-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.sb-pal-label {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-pal-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sb-pal-grip {
+  color: var(--text-subtle);
+  opacity: 0;
+}
+.sb-pal:hover .sb-pal-grip {
+  opacity: 1;
+}
+.sb-pal-ghost {
+  position: fixed;
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px var(--space-3) 6px var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--tile);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-popover);
+  font-size: 13px;
+  font-weight: 600;
+  pointer-events: none;
+  opacity: 0.85;
+}
+.sb-pal-ghost[data-over="list"] {
+  opacity: 1;
+  border-color: var(--accent);
+  border-left-color: var(--tile);
+}
