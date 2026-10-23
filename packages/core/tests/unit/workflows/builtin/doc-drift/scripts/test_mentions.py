@@ -286,7 +286,7 @@ def test_shrinks_fixable_budget_when_names_are_large() -> None:
     assert mentions.fixable_budget(large) < mentions.MAX_FIXABLE_BYTES
 
 
-def test_finds_name_in_long_line_without_reading_its_spans() -> None:
+def test_finds_name_without_reading_spans_when_line_is_long() -> None:
     names = [{"kind": "command", "name": "old-cmd"}]
     text = "`a` " * 5000 + "old-cmd\n`old-cmd`\n"
 
