@@ -724,6 +724,24 @@
   flex: 1;
   min-width: 0;
 }
+/* Full window: the flow and its ticket panel as one modal layer over the app. */
+.ah-ticket-layout[data-expanded] {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-dialog);
+  padding: var(--space-4);
+  background: var(--bg);
+  overflow: hidden;
+}
+.ah-ticket-layout[data-expanded]:focus {
+  outline: none;
+}
+.ah-ticket-layout[data-expanded] .ah-side-panel[data-layout="overlay"] {
+  top: 0;
+}
+.ah-ticket-layout[data-expanded] .ah-side-panel[data-layout="docked"] {
+  max-height: calc(100vh - 2 * var(--space-4));
+}
 .ah-ticket-table tbody tr[data-ticket-open]:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;

@@ -1,4 +1,12 @@
-import { useEffect, useId, useRef, useState, type MutableRefObject, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type MutableRefObject,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
@@ -13,6 +21,7 @@ import {
 } from "../../components";
 import { goSequencePending, typingIn } from "../../shell/goSequence";
 import { useApi, type ApiProblem } from "../../lib/api";
+import { useModalFocus } from "../../lib/modalFocus";
 import { fmtClock, fmtDateTime, fmtMoney } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
 import { badgeOf } from "../sessions-list/badge";
@@ -169,6 +178,21 @@ function useTicketSessions(project: string, row: TicketRow) {
     { query: { project, issue: row.id ?? "", limit: 20 } },
     { enabled: row.id != null, refetchInterval: TICKETS_REFRESH_MS },
   );
+}
+
+/**
+ * The keyboard of the flow's full window, a modal layer: focus moves to Exit on open and back to
+ * what opened it on close, Tab stays inside, Escape closes the ticket panel first, then exits.
+ */
+function FullWindowKeys({
+  layout,
+  onEscape,
+}: {
+  layout: RefObject<HTMLElement | null>;
+  onEscape: () => void;
+}) {
+  useModalFocus(layout, { locked: false, onEscape, initial: "[data-flow-expand]" });
+  return null;
 }
 
 /** Whether a ticket's own plan change waits for the owner: Start is then no view's primary. */
@@ -692,9 +716,23 @@ export function TicketsTab({
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const root = useRef<HTMLDivElement>(null);
+  const layout = useRef<HTMLDivElement>(null);
   // The view is kept in `?tickets=`: `table`, else Flow, the default, with no parameter.
   const view = params.get("tickets") === "table" ? "table" : "flow";
   const ticket = params.get("ticket");
+  // Full window is kept in `?flow=full`, so a reload keeps it; it is the flow's only.
+  const full = view === "flow" && params.get("flow") === "full";
+  const setFull = (on: boolean) => {
+    setParams(
+      (current) => {
+        const search = new URLSearchParams(current);
+        if (on) search.set("flow", "full");
+        else search.delete("flow");
+        return search;
+      },
+      { replace: true },
+    );
+  };
   const setView = (next: string) => {
     setParams(
       (current) => {
@@ -709,15 +747,22 @@ export function TicketsTab({
   // `v` toggles the views while focus is in the tab and not in a text field; focus stays on the
   // same ticket (card title <-> row), else goes to the toggle.
   const refocus = useRef<string | null | undefined>(undefined);
-  const latest = useRef({ view, setView });
+  const latest = useRef({ view, setView, full, setFull });
   useEffect(() => {
-    latest.current = { view, setView };
+    latest.current = { view, setView, full, setFull };
   });
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "v" || event.defaultPrevented) return;
+      if ((event.key !== "v" && event.key !== "f") || event.defaultPrevented) return;
       if (event.ctrlKey || event.metaKey || event.altKey || typingIn(event.target)) return;
       if (!(event.target instanceof HTMLElement) || !root.current?.contains(event.target)) return;
+      if (event.key === "f") {
+        // `f` expands the flow to the full window, or brings it back.
+        if (!root.current.querySelector("[data-flow-expand]")) return;
+        event.preventDefault();
+        latest.current.setFull(!latest.current.full);
+        return;
+      }
       if (!root.current.querySelector(".ah-seg")) return;
       event.preventDefault();
       refocus.current =
@@ -821,7 +866,26 @@ export function TicketsTab({
       ) : (
         <>
           {!quiet && <div className="ah-row">{viewSwitch}</div>}
-          <div className="ah-ticket-layout">
+          <div
+            ref={layout}
+            className="ah-ticket-layout"
+            data-expanded={full || undefined}
+            {...(full && {
+              role: "dialog",
+              "aria-modal": true,
+              "aria-label": "Ticket flow, full window",
+              tabIndex: -1,
+            })}
+          >
+            {full && (
+              <FullWindowKeys
+                layout={layout}
+                onEscape={() => {
+                  if (ticket) closeTicket(shown?.ref);
+                  else setFull(false);
+                }}
+              />
+            )}
             <div className="ah-ticket-main">
               {view === "flow" ? (
                 <PlanningView
@@ -831,6 +895,8 @@ export function TicketsTab({
                   ticketAction={cardAction}
                   onOpenTicket={remember}
                   chosen={shown?.ref ?? null}
+                  expanded={full}
+                  onExpand={setFull}
                 />
               ) : (
                 <TicketsTable

@@ -8,12 +8,14 @@ import type { components } from "../../api/schema";
 import {
   ArrowMarkers,
   Banner,
+  Button,
   CANVAS_ZOOM_STEP,
   CanvasControls,
   CanvasGrid,
   CanvasMinimap,
   GOLDEN_STATE_TEXT,
   Icon,
+  IconButton,
   StatusBadge,
   StepBar,
   Tooltip,
@@ -1081,11 +1083,14 @@ const SAFE = { top: 24, bottom: 24 };
  * the window under the tab (never under MIN_HEIGHT). It follows window resizes and the rows above
  * it (a banner shown or gone), never the zoom.
  */
-function useFillHeight(canvas: RefObject<HTMLElement | null>): number {
+function useFillHeight(canvas: RefObject<HTMLElement | null>, expanded: boolean): number {
   const [height, setHeight] = useState(MIN_HEIGHT);
   useLayoutEffect(() => {
     const el = canvas.current;
-    const main = el?.closest<HTMLElement>(".ah-shell-main");
+    // Full window, the flow fills the layer that holds it; else the page's scroll area.
+    const main = el?.closest<HTMLElement>(
+      expanded ? ".ah-ticket-layout[data-expanded]" : ".ah-shell-main",
+    );
     if (!el || !main) return;
     const measure = () => {
       const top =
@@ -1106,7 +1111,7 @@ function useFillHeight(canvas: RefObject<HTMLElement | null>): number {
     return () => {
       observer.disconnect();
     };
-  }, [canvas]);
+  }, [canvas, expanded]);
   return height;
 }
 
@@ -1129,6 +1134,8 @@ function FlowGraph({
   ticketAction,
   onOpenTicket,
   legend,
+  expanded,
+  onExpand,
 }: {
   columns: readonly FlowColumn[];
   byRef: ReadonlyMap<string, TicketRow>;
@@ -1141,6 +1148,8 @@ function FlowGraph({
   ticketAction?: TicketAction | undefined;
   onOpenTicket?: TicketOpener | undefined;
   legend: ReactNode;
+  expanded: boolean;
+  onExpand?: ((on: boolean) => void) | undefined;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const worldRef = useRef<HTMLDivElement>(null);
@@ -1162,7 +1171,7 @@ function FlowGraph({
   const viewport = useViewportSize(viewportRef);
   const { boxes, size } = useNodeBoxes(worldRef, shape);
   const canvasRef = useRef<HTMLDivElement>(null);
-  const height = useFillHeight(canvasRef);
+  const height = useFillHeight(canvasRef, expanded);
   const [hover, setHover] = useState<string | null>(null);
   const [focusRef, setFocusRef] = useState<string | null>(null);
   // The card whose title holds keyboard focus now (its edges light), cleared on blur.
@@ -1497,7 +1506,8 @@ function FlowGraph({
         </div>
         <span id={hintId} className="ah-sr">
           Arrow keys follow the arrows, up and down move in a group, Enter opens a ticket, plus and
-          minus zoom, 0 fits the flow, v shows the same tickets as a table.
+          minus zoom, 0 fits the flow, f expands it to the full window, v shows the same tickets as
+          a table.
         </span>
         <div className="ah-canvas-overlay">{legend}</div>
         <CanvasControls
@@ -1509,7 +1519,22 @@ function FlowGraph({
             pz.zoomTo(k);
           }}
           onFit={fit}
-        />
+        >
+          {onExpand && (
+            <>
+              <span className="ah-canvas-sep" aria-hidden="true" />
+              <IconButton
+                size="sm"
+                icon={expanded ? "shrink" : "expand"}
+                label={expanded ? "Exit full window (f)" : "Expand the flow (f)"}
+                data-flow-expand=""
+                onClick={() => {
+                  onExpand(!expanded);
+                }}
+              />
+            </>
+          )}
+        </CanvasControls>
         {overflow && size.width > 0 && (
           <CanvasMinimap
             boxes={boxes}
@@ -1613,6 +1638,10 @@ export interface PlanningViewProps {
   onOpenTicket?: TicketOpener | undefined;
   /** The ticket whose panel is open (its ref): the flow lights its chain. */
   chosen?: string | null | undefined;
+  /** The flow fills the window; banners and the epic stay on the page. */
+  expanded?: boolean | undefined;
+  /** Given, the canvas offers Expand (and Exit) to the full window. */
+  onExpand?: ((on: boolean) => void) | undefined;
 }
 
 /** The control a ticket's card or row shows next to its readiness, or null for none. */
@@ -1632,6 +1661,8 @@ export function PlanningView({
   ticketAction,
   onOpenTicket,
   chosen = null,
+  expanded = false,
+  onExpand,
 }: PlanningViewProps) {
   const external = planning.external_blockers;
   const byRef = new Map(tickets.map((t) => [t.ref, t]));
@@ -1647,9 +1678,22 @@ export function PlanningView({
         <h2 id="planning-h" className="ah-h3" style={{ margin: 0 }}>
           Ticket flow
         </h2>
-        <ReadinessSummary tickets={work} />
+        <div className="ah-row" style={{ gap: 8 }}>
+          <ReadinessSummary tickets={work} />
+          {expanded && onExpand && (
+            <Button
+              size="sm"
+              icon="shrink"
+              onClick={() => {
+                onExpand(false);
+              }}
+            >
+              Exit full window
+            </Button>
+          )}
+        </div>
       </div>
-      {planning.cycles.length > 0 && (
+      {!expanded && planning.cycles.length > 0 && (
         <Banner tone="error" icon="octagon-x">
           <b style={{ fontWeight: 500 }}>
             Dependency cycle{planning.cycles.length === 1 ? "" : "s"}:
@@ -1664,7 +1708,7 @@ export function PlanningView({
           plan or in Linear.
         </Banner>
       )}
-      {holding.length > 0 && (
+      {!expanded && holding.length > 0 && (
         <Banner tone="warning" icon="triangle-alert">
           <b style={{ fontWeight: 500 }}>Blocked from outside this feature:</b>
           <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
@@ -1678,7 +1722,7 @@ export function PlanningView({
           </ul>
         </Banner>
       )}
-      {planning.warnings.length > 0 && (
+      {!expanded && planning.warnings.length > 0 && (
         <Banner tone="info">
           <ul style={{ margin: 0, paddingLeft: 18 }}>
             {planning.warnings.map((w) => (
@@ -1687,9 +1731,10 @@ export function PlanningView({
           </ul>
         </Banner>
       )}
-      {epics.map((epic) => (
-        <EpicCard key={epic.ref} epic={epic} rows={tickets} acPasses={acPasses} />
-      ))}
+      {!expanded &&
+        epics.map((epic) => (
+          <EpicCard key={epic.ref} epic={epic} rows={tickets} acPasses={acPasses} />
+        ))}
       {columns.length === 0 ? (
         <span className="ah-small ah-muted">No ticket to show.</span>
       ) : (
@@ -1705,6 +1750,8 @@ export function PlanningView({
           onOpenTicket={onOpenTicket}
           chosen={chosen}
           legend={<FlowLegend showCritical={critical.size > 0} epic={epics.length > 0} />}
+          expanded={expanded}
+          onExpand={onExpand}
         />
       )}
     </section>

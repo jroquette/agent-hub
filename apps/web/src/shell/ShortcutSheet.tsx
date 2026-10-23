@@ -39,6 +39,7 @@ export const SHORTCUTS: readonly { title: string; rows: readonly [string, string
     title: "Tickets",
     rows: [
       ["Flow / table", "v"],
+      ["Flow full window", "f"],
       ["Next / previous row", "j k ↓ ↑"],
       ["Open the ticket panel", "↵ o"],
       ["Close the ticket panel", "Esc"],
