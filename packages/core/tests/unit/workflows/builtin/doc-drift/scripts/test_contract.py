@@ -448,3 +448,19 @@ def test_exits_two_when_origin_branch_was_never_fetched(
 
     assert code == 2
     assert err == "contract.py: no origin/trunk in demo-api; fetch it first\n"
+
+
+def test_reads_names_only_from_bounded_lines_when_a_removed_line_is_long() -> None:
+    long = "add_typer(" * 20000 + 'name="lost-group")'
+    patch = patch_of("src/demo/cli.py", [long, 'app.add_typer(x, name="old-group")'], [])
+
+    assert found([("M", "src/demo/cli.py", "")], patch) == [("command", "old-group", ())]
+
+
+def test_ignores_long_upgrade_line_when_migration_added() -> None:
+    long = "    op.alter_column(" * 5000 + '"runs", "lost", new_column_name="x")'
+    patch = new_file(
+        MIGRATION, ["def upgrade() -> None:", long, '    op.drop_column("runs", "old_col")']
+    )
+
+    assert found([("A", MIGRATION, "")], patch) == [("column", "old_col", ())]

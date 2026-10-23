@@ -57,6 +57,8 @@ MAX_NAMES_BYTES = 64 * 1024
 MAX_NAME = 200
 MAX_NEW = 5
 MIN_NAME = 3
+# Longer lines (generated or minified) are skipped: the patterns stay linear on what is read.
+MAX_LINE = 1000
 NAME = re.compile(r"^[A-Za-z0-9_./@:-]+$")
 DOC_SUFFIXES = (".md", ".txt", ".rst", ".adoc")
 SCHEMA_KEYWORDS = frozenset(
@@ -253,6 +255,8 @@ def _function(text: str, current: str) -> str:
 def _found(finder: Finder, lines: Iterable[str]) -> list[str]:
     seen: dict[str, None] = {}
     for line in lines:
+        if len(line) > MAX_LINE:
+            continue
         for name in finder(line):
             seen.setdefault(name, None)
     return list(seen)
@@ -268,7 +272,7 @@ def _line_names(path: str, change: FileChange) -> list[Name]:
 
 
 def _migration_names(path: str, change: FileChange) -> list[Name]:
-    text = "\n".join(change.upgrade)
+    text = "\n".join(line for line in change.upgrade if len(line) <= MAX_LINE)
     names = [Name("table", table, (), path) for table in DROP_TABLE.findall(text)]
     names += [Name("table", old, (new,), path) for old, new in RENAME_TABLE.findall(text)]
     names += [Name("column", column, (), path) for column in DROP_COLUMN.findall(text)]

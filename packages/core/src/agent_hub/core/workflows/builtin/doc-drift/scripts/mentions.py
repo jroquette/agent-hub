@@ -86,7 +86,7 @@ def doc_role(path: str) -> str | None:
         return None
     if not base.endswith(".md") or base.upper().startswith("CHANGELOG"):
         return None
-    if ADR_FOLDERS.intersection(parts[:-1]):
+    if ADR_FOLDERS.intersection(part.lower() for part in parts[:-1]):
         return "adr"
     if parts[0] == "docs" or (len(parts) == 1 and base in ROOT_DOCS) or base in NESTED_DOCS:
         return "edit"
@@ -141,6 +141,9 @@ def _code_lines(text: str) -> Iterator[tuple[int, str, list[str]]]:
                 yield number, line, [line]
         elif marker:
             fence = marker.group(1)
+        elif len(line) > MAX_LINE:
+            # Too long to fix: searched whole (linear), so it is still noted, never offered.
+            yield number, line, [line]
         else:
             yield number, line, _code_spans(line)
 

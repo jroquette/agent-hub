@@ -293,6 +293,7 @@ def test_notes_truncation_when_upstream_counts_it(
         ("docs/adr/0001-x.md", "- Status: accepted\n"),
         ("docs/adr/0002-x.md", "- Status: proposed\n"),
         ("decisions/0003-x.md", "## Status\n\nSuperseded by 0004\n"),
+        ("docs/ADR/0005-x.md", "- Status: accepted\n"),
         ("CHANGELOG.md", ""),
         (".github/README.md", ""),
         ("node_modules/a/README.md", ""),
@@ -494,3 +495,38 @@ def test_names_superseded_wording_in_summary_when_plan_has_some(
     assert "Superseded wording (accepted ADRs, not edited):\n- `docs/adr/0009-x.md:5`" in summary
     assert "ADR wording to change by hand" in summary
     assert "`docs/adr/0010-y.md:5`" in summary
+
+
+def test_names_regenerate_target_when_makefile_holds_a_long_line(tmp_path: Path) -> None:
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    (worktree / "Makefile").write_text("x = " + "llms" * 10000 + "\nllms-txt:\n\tpython b.py\n")
+
+    assert "`make llms-txt`" in doc_fix._regenerate(worktree)
+
+
+# M1: the commit itself breaks the plan; only the numstat check sees it.
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"CHANGELOG.md": "- Changed.\n"},
+        {"docs/USING.md": USING.replace("old-cmd", "new-cmd").replace("# Using", "# Use")},
+    ],
+)
+def test_exits_one_when_commit_holds_more_than_the_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    extra: dict[str, str],
+) -> None:
+    worktree, base = a_worktree(tmp_path)
+    (worktree / "docs/USING.md").write_text(USING.replace("old-cmd", "new-cmd"))
+    for name, text in extra.items():
+        (worktree / name).write_text(text)
+    git(worktree, "commit", "-qam", "docs(repo): fix doc lines stale after merge 0a1b2c3")
+
+    code = apply(monkeypatch, (worktree, base), a_plan(USING_FIX))
+
+    assert code == 1
+    assert "beyond the approved lines" in capsys.readouterr().err
