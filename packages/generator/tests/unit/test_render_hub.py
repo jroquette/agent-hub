@@ -203,6 +203,8 @@ DESIGN_PATHS = (
     "workflows/doc-drift/scripts/contract.py",
     "workflows/doc-drift/scripts/doc_fix.py",
     "workflows/doc-drift/scripts/mentions.py",
+    # AGH-449: the flaky pack.
+    "workflows/flaky/scripts/repeat.py",
     # AGH-483: the built-in incident pack, seeded.
     "workflows/incident/fixtures/incident-awaiting-mitigation.yaml",
     "workflows/incident/fixtures/incident-confirmed.yaml",
@@ -994,6 +996,8 @@ def test_parses_as_python39_when_rendered(demo_render: dict[str, RenderedFile]) 
         "workflows/brain-care/scripts",
         # The doc-drift pack's scripts (AGH-491), run by uv on its Python, also parse as 3.9.
         "workflows/doc-drift/scripts",
+        # The flaky pack's scripts (AGH-449), likewise.
+        "workflows/flaky/scripts",
         # The post-merge-verify pack's scripts (AGH-490), run by uv as the sdlc pack's are.
         "workflows/post-merge-verify/scripts",
         # The release pack's helpers (AGH-494), as the sdlc pack's.

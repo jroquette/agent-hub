@@ -114,7 +114,7 @@ def ran(passed: int = 0, **others: int) -> dict[str, int]:
     ],
 )
 def test_rejects_test_id_when_unsafe(
-    repeat: Repeat, workspace: Workspace, test: str, reason: str
+    repeat: Repeat, workspace: Workspace, *, test: str, reason: str
 ) -> None:
     # A link that leaves the worktree, committed as such: the file check resolves it.
     outside = workspace.repo.parent / "outside.py"
@@ -262,6 +262,7 @@ def test_removes_worktree_when_run_ends(
     repeat: Repeat,
     workspace: Workspace,
     monkeypatch: pytest.MonkeyPatch,
+    *,
     tmp_path: Path,
     case: str,
     test: str,
@@ -328,9 +329,7 @@ def test_skips_mode_when_plugin_missing(repeat: Repeat) -> None:
     assert found["reproduced"] is False
 
 
-def test_reproduces_order_dependence_when_suite_fails(
-    repeat: Repeat, workspace: Workspace
-) -> None:
+def test_reproduces_order_dependence_when_suite_fails(repeat: Repeat, workspace: Workspace) -> None:
     repeat.plugins(NO_PLUGINS)
     sha = workspace.git("rev-parse", "HEAD")
 
@@ -340,7 +339,11 @@ def test_reproduces_order_dependence_when_suite_fails(
     assert counts(found, "alone") == ran(passed=2)
     assert counts(found, "suite") == ran(failed=2)
     assert found["reproduced"] is True
-    assert (found["test"], found["repo"], found["sha"]) == ("tests/test_x.py::test_y", "demo-api", sha)
+    assert (found["test"], found["repo"], found["sha"]) == (
+        "tests/test_x.py::test_y",
+        "demo-api",
+        sha,
+    )
     assert found["repo_path"] == str(workspace.repo.resolve())
     assert found["runner"] == [sys.executable]
     assert found["runs"] == 2
@@ -509,4 +512,3 @@ def test_drops_script_venv_when_running(monkeypatch: pytest.MonkeyPatch) -> None
 
     assert "VIRTUAL_ENV" not in env
     assert env["PATH"] == "/usr/bin"
-

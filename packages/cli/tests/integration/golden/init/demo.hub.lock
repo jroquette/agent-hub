@@ -712,6 +712,9 @@
     "workflows/doc-drift/scripts/mentions.py": {
       "ownership": "seeded"
     },
+    "workflows/flaky/scripts/repeat.py": {
+      "ownership": "seeded"
+    },
     "workflows/incident/fixtures/incident-awaiting-mitigation.yaml": {
       "ownership": "seeded"
     },
