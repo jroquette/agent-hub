@@ -12,7 +12,8 @@ An empty value reads as absent (its producer was skipped). The outcome is:
 - ``nothing to change`` when step 1 found no run (``--nothing true``) or no change passed the
   evidence check (``--count`` empty or 0);
 - ``none kept`` when the owner chose ``none``, or ``keep`` with a note that names no change number
-  from 1 to N (the note is numbers such as ``1,3``, or the word ``all``);
+  from 1 to N (the note is numbers such as ``1,3``, or ``all`` alone; ``all`` with other words
+  keeps none);
 - ``drafted`` otherwise: the kept changes go to ``brain/_inbox/retro-<date>.md`` (``-2`` … ``-9``
   when taken), front matter ``status: to-file``, one section per change with its evidence, then
   the metrics summary. The owner files them in the tracker and runs /triage; nothing here writes
@@ -43,6 +44,7 @@ INBOX = ("brain", "_inbox")
 RUN_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 ALL = re.compile(r"\ball\b", re.IGNORECASE)
 NUMBER = re.compile(r"\d+")
+ANSWER = "answer all alone, or the numbers to keep such as 1,3"
 
 
 class DraftError(Exception):
@@ -62,11 +64,14 @@ def decide(
     if decision != "keep":
         return NONE_KEPT, [], "no decision from the owner"
     text = note[:MAX_NOTE]
-    if ALL.search(text):
+    if text.strip().lower() == "all":
         return DRAFTED, list(range(1, count + 1)), ""
+    if ALL.search(text):
+        # "all but 2" or "1,3 - not all": guessing either way may draft what the owner did not keep.
+        return NONE_KEPT, [], "the note mixes 'all' with other words; " + ANSWER
     picked = sorted({n for n in map(int, NUMBER.findall(text)) if 1 <= n <= count})
     if not picked:
-        return NONE_KEPT, [], "no change number understood in the owner's note"
+        return NONE_KEPT, [], "no change number understood in the owner's note; " + ANSWER
     return DRAFTED, picked, ""
 
 
