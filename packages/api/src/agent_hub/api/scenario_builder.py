@@ -239,7 +239,7 @@ class ScenarioBuilder:
                 return SaveResult(
                     path=unit_path,
                     revision=current,
-                    content_hash=disk_hash,
+                    content_hash=content_hash(on_disk),
                     yaml=kept,
                     changed=False,
                     versioned=False,

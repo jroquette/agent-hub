@@ -436,7 +436,7 @@ def test_runs_hub_in_service_when_compose_target_runs_command() -> None:
 
 
 def test_ends_runs_passed_failed_and_one_running_when_scenario_runs_built() -> None:
-    events, records = scenario_runs(NOW)
+    events, records = scenario_runs()
 
     statuses = {run: fold_records(lines).status for run, lines in records.items()}
     assert set(statuses.values()) == {"done", "failed", None}
@@ -455,7 +455,7 @@ def test_loads_scenarios_actions_and_environment_when_scenario_files_written(
     tmp_path: Path,
 ) -> None:
     hub = tmp_path / "demo-hub"
-    for path, text in scenario_files(PurePosixPath(hub), NOW).items():
+    for path, text in scenario_files(PurePosixPath(hub)).items():
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         Path(path).write_text(text, encoding="utf-8")
 
@@ -473,3 +473,8 @@ def test_loads_scenarios_actions_and_environment_when_scenario_files_written(
     assert isinstance(local, LocalConfig)
     for run in hub.glob(".agent-runs/workflows/*/records.jsonl"):
         assert record_lines(run.read_bytes())
+
+
+def test_gives_same_scenario_events_when_seeded_again() -> None:
+    # hub collect refuses a known event key with other content: a rerun must repeat them.
+    assert scenario_runs() == scenario_runs()

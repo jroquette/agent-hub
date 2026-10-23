@@ -103,11 +103,14 @@ always agree.
 """
 # The demo's scenarios (docs/design/scenarios.md): hub init writes demo-service-up and its
 # action; the seed adds a scenario of its own whose actions' scripts reach nothing, a local
-# environment to plan and run them in, and three runs. Every name is synthetic.
+# environment whose value fills the scenario's input, and three runs. Nothing is committed, so
+# the actions stay drafts and a plan in the demo says so. Every name is synthetic.
 SCENARIO_PACK = "demo"
 SERVICE_SCENARIO = "demo-service-up"
 ORDER_SCENARIO = "demo-order-roundtrip"
 SCENARIO_ENV = "local"
+# Fixed, as the run records' times are: a second make demo finds the same events already there.
+SCENARIO_RUNS_AT = datetime(2026, 10, 11, 9, 0, tzinfo=UTC)
 SCENARIO_RUNS = (
     ("7d1e5a20", SERVICE_SCENARIO, "done"),
     ("7d1e5a21", ORDER_SCENARIO, "failed"),
@@ -719,10 +722,11 @@ def hub_files(hub: PurePosixPath) -> dict[PurePosixPath, str]:
     }
 
 
-def scenario_runs(now: datetime) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+def scenario_runs() -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
     """The three demo scenario runs: their events (canonical, for ``hub collect``) and each
-    run's record lines by run id. The oldest passed two hours ago, the failed one an hour ago,
-    the running one started two minutes ago and waits on its order's payment."""
+    run's record lines by run id, the same on every call. The first passed, the second failed
+    an hour later, and the third, an hour after that, still waits on its order's payment."""
+    now = SCENARIO_RUNS_AT + timedelta(hours=2, minutes=2)
     events: list[dict[str, Any]] = []
     records: dict[str, list[dict[str, Any]]] = {}
     starts = (now - timedelta(hours=2), now - timedelta(hours=1), now - timedelta(minutes=2))
@@ -777,11 +781,11 @@ def scenario_runs(now: datetime) -> tuple[list[dict[str, Any]], dict[str, list[d
     return events, records
 
 
-def scenario_files(hub: PurePosixPath, now: datetime) -> dict[PurePosixPath, str]:
+def scenario_files(hub: PurePosixPath) -> dict[PurePosixPath, str]:
     """The demo's actions, scenario, local environment and scenario run records, by path."""
     files = {hub / path: text for path, text in SCENARIO_FILES.items()}
     files[hub / "hub.local.json"] = json.dumps(LOCAL_CONFIG, indent=2) + "\n"
-    for run_id, lines in scenario_runs(now)[1].items():
+    for run_id, lines in scenario_runs()[1].items():
         record = hub / ".agent-runs" / "workflows" / run_id / "records.jsonl"
         files[record] = "".join(json.dumps(line) + "\n" for line in lines)
     return files
@@ -825,10 +829,10 @@ def seed(client: httpx.Client, target: Target, *, db_path: str, now: datetime) -
     target.write(transcript, demo_transcript(now))
     _checked_hub(target, ["collect", "--transcript", str(transcript), *labels])
     store_chat(target, db_path=db_path, now=now)
-    for path, text in scenario_files(hub, now).items():
+    for path, text in scenario_files(hub).items():
         target.write(path, text)
     scenario_events = target.workdir / "runs" / "scenario-runs.jsonl"
-    events = scenario_runs(now)[0]
+    events = scenario_runs()[0]
     target.write(scenario_events, "".join(json.dumps(event) + "\n" for event in events))
     _checked_hub(target, ["collect", str(scenario_events), "--db", db_path])
 

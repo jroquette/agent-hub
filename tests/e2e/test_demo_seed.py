@@ -16,6 +16,9 @@ from scripts.seed_demo import (
     DEMO_PROJECT,
     INBOX_NOTE,
     LIVE_SESSION,
+    ORDER_SCENARIO,
+    SCENARIO_RUNS,
+    SERVICE_SCENARIO,
     STUCK_SESSION,
 )
 from tests.e2e.conftest import RunningWeb
@@ -51,7 +54,10 @@ def test_fills_every_screen_when_demo_loaded_twice(
         hubs = _items(client, "/api/v1/hubs")
         projects = _items(client, "/api/v1/projects")
         sessions = _items(client, "/api/v1/sessions")
-        runs = _items(client, "/api/v1/workflow-runs")
+        runs = _items(client, "/api/v1/workflow-runs?kind=workflow")
+        scenario_runs = _items(client, "/api/v1/workflow-runs?kind=scenario")
+        scenarios = client.get("/api/v1/scenarios").json()
+        order = client.get(f"/api/v1/scenarios/{DEMO_PROJECT}/{ORDER_SCENARIO}")
         approvals = _items(client, "/api/v1/approvals")
         features = _items(client, "/api/v1/features")
         findings = client.get("/api/v1/doctor/findings")
@@ -86,6 +92,14 @@ def test_fills_every_screen_when_demo_loaded_twice(
         STUCK_SESSION: ["idle", "idle"],
     }
     assert len(runs) == 1
+    # The scenarios and their three runs (passed, failed, running), the same after a rerun.
+    assert sorted((run["id"], run["status"]) for run in scenario_runs) == sorted(
+        (run_id, status) for run_id, _scenario, status in SCENARIO_RUNS
+    )
+    assert scenarios["problems"] == []
+    assert sorted(item["name"] for item in scenarios["items"]) == [ORDER_SCENARIO, SERVICE_SCENARIO]
+    assert order.status_code == 200, order.text
+    assert [env["values"] for env in order.json()["environments"]] == [{"shop_id": "shop-0001"}]
     assert any(approval["session_id"].startswith(ASK_SESSION) for approval in approvals)
     assert [feature["slug"] for feature in features] == ["export-button"]
     assert findings.status_code == 200, findings.text
