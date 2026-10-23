@@ -115,10 +115,7 @@
 /* The flow on a pan and zoom canvas (components/Canvas.css): the groups as columns in the world,
    left to right, edges from each blocker to the ticket it holds back. */
 .ah-flow-canvas {
-  min-height: 240px;
-}
-.ah-flow.ah-canvas-world {
-  padding-top: 52px;
+  min-height: 420px;
 }
 .ah-flow-cols {
   position: relative;

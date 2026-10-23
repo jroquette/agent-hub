@@ -81,3 +81,43 @@ export function roundedPath(points: readonly (readonly [number, number])[], r = 
   const last = points.at(-1) ?? [0, 0];
   return `${d} L ${String(last[0])} ${String(last[1])}`;
 }
+
+/** An edge that runs beside the graph from row `start` to row `end`; edges with one `trunk` share a lane. */
+export interface LaneSpan {
+  id: string;
+  start: number;
+  end: number;
+  trunk?: string;
+}
+
+/**
+ * Gives each span the smallest lane (0, 1, …) no overlapping span already holds, shortest first, so
+ * parallel lines never share an x. Spans that share a `trunk` take one lane over their whole range.
+ * Two spans overlap when their rows overlap; one ending at a row and one starting there do not.
+ */
+export function assignLanes(spans: readonly LaneSpan[]): Map<string, number> {
+  const groups = new Map<string, { start: number; end: number; ids: string[] }>();
+  for (const span of spans) {
+    const key = span.trunk ?? `#${span.id}`;
+    const group = groups.get(key);
+    if (group) {
+      group.start = Math.min(group.start, span.start);
+      group.end = Math.max(group.end, span.end);
+      group.ids.push(span.id);
+    } else {
+      groups.set(key, { start: span.start, end: span.end, ids: [span.id] });
+    }
+  }
+  const ordered = [...groups.values()].sort(
+    (a, b) => a.end - a.start - (b.end - b.start) || a.start - b.start,
+  );
+  const taken: { start: number; end: number }[][] = [];
+  const lanes = new Map<string, number>();
+  for (const group of ordered) {
+    let lane = 0;
+    while (taken[lane]?.some((s) => s.start < group.end && group.start < s.end)) lane += 1;
+    (taken[lane] ??= []).push(group);
+    for (const id of group.ids) lanes.set(id, lane);
+  }
+  return lanes;
+}
