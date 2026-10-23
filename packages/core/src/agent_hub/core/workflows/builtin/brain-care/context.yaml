@@ -4,7 +4,8 @@
 # agent follows the skill's steps 3-4 and proposes cuts, largest first. The owner sees the
 # script's summary (the files over the limit, verbatim) and the proposal at one gate: trim or
 # skip, with a note. Only on trim does the run add a hub worktree on
-# <branch_prefix>brain-care-context-<run id> from origin/<default branch>, let an agent make the
+# <branch_prefix>brain-care-context-<run id> from origin/<default branch> (both read from hub.json
+# by hub step config: no script opens it), let an agent make the
 # cuts the owner kept there (never a managed file: that changes through hub.json or its seeded
 # sibling; check_managed.py refuses a trim that touches one, as hub.lock at the base records it),
 # and open a hub PR he merges. The hub only: a repo's files are trimmed in that repo.
@@ -104,14 +105,34 @@ nodes:
       - {id: skip, label: Skip}
     capture_response: true
 
+  - id: branch_config
+    type: shell
+    description: The run's hub branch (the developer's prefix) and the hub's target from hub.json, read by the CLI (read-only).
+    depends_on: [approve]
+    when: "$approve.output.decision == 'trim'"
+    command: [hub, step, config, --branch, brain-care-context, --run-slug]
+    effect: read
+    mutates_checkout: false
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        default_branch: {type: string}
+        branch_prefix: {type: [string, "null"]}
+        hub: {type: object}
+        repos: {type: array, items: {type: object}}
+        branch_name: {type: string}
+        branch: {type: string}
+      required: [default_branch, branch_prefix, hub, repos, branch_name, branch]
+
   - id: branch
     type: script
     description: The run's hub worktree and branch, from origin's default branch; its PR target.
-    depends_on: [approve]
+    depends_on: [approve, branch_config]
     when: "$approve.output.decision == 'trim'"
     runtime: python
     script: hub_branch.py
-    args: [--workflow, context]
+    args: [--workflow, context, --config, $branch_config.output]
     retry: {max_attempts: 0}
     output_format:
       type: object
