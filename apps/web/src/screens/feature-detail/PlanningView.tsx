@@ -1,7 +1,7 @@
 import "./ticket-flow.css";
 
 import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import type { CSSProperties, KeyboardEvent, ReactNode } from "react";
+import type { CSSProperties, KeyboardEvent, ReactNode, RefObject } from "react";
 import { Link, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
@@ -21,6 +21,7 @@ import {
   useViewportSize,
 } from "../../components";
 import { fitView, roundedPath } from "../../lib/canvasView";
+import type { View } from "../../lib/canvasView";
 import { curvePath, useNodeBoxes } from "../../lib/nodeBoxes";
 import { usePanZoom } from "../../lib/usePanZoom";
 import { goSequencePending, typingIn } from "../../shell/goSequence";
@@ -1062,7 +1063,6 @@ function chainOf(edges: readonly FlowEdge[], ref: string, whole: boolean) {
 const FAR = 0.6;
 /** The first view fits the flow only when its text still reads (cards at 85% or more). */
 const FIRST_FIT = 0.85;
-const PAD = 32;
 
 /** A ticket's readiness as the minimap's state colours (Canvas.css). */
 const MINI_STATE: Record<Readiness, string> = {
@@ -1076,9 +1076,44 @@ const MINI_STATE: Record<Readiness, string> = {
   unknown: "pending",
 };
 
-/** The tallest the canvas grows: 75% of the window, between 320 and 900 px. */
-function heightCap(): number {
-  return Math.min(900, Math.max(320, window.innerHeight * 0.75));
+/** The canvas is never shorter than this; when the page has less room, the page scrolls. */
+const MIN_HEIGHT = 420;
+/** The gap kept between the flow's card and the bottom of the window. */
+const BOTTOM_GUTTER = 24;
+/** Room the first view keeps clear around the world: "How to read" on top, the toolbar below. */
+const SAFE = { top: 24, bottom: 24 };
+
+/**
+ * The canvas's height: the room left in the page's scroll area below its top, so the flow fills
+ * the window under the tab (never under MIN_HEIGHT). It follows window resizes and the rows above
+ * it (a banner shown or gone), never the zoom.
+ */
+function useFillHeight(canvas: RefObject<HTMLElement | null>): number {
+  const [height, setHeight] = useState(MIN_HEIGHT);
+  useLayoutEffect(() => {
+    const el = canvas.current;
+    const main = el?.closest<HTMLElement>(".ah-shell-main");
+    if (!el || !main) return;
+    const measure = () => {
+      const top = el.getBoundingClientRect().top - main.getBoundingClientRect().top + main.scrollTop;
+      const card = el.closest<HTMLElement>(".ah-card");
+      const below = card
+        ? card.getBoundingClientRect().bottom - el.getBoundingClientRect().bottom
+        : 0;
+      const room = main.clientHeight - top - below - BOTTOM_GUTTER;
+      setHeight(Math.round(Math.max(MIN_HEIGHT, room)));
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(main);
+    const content = main.firstElementChild;
+    if (content) observer.observe(content);
+    return () => {
+      observer.disconnect();
+    };
+  }, [canvas]);
+  return height;
 }
 
 /**
@@ -1132,7 +1167,8 @@ function FlowGraph({
     .join(",")}|${far ? "far" : "near"}`;
   const viewport = useViewportSize(viewportRef);
   const { boxes, size } = useNodeBoxes(worldRef, shape);
-  const [height, setHeight] = useState(320);
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const height = useFillHeight(canvasRef);
   const [hover, setHover] = useState<string | null>(null);
   const [focusRef, setFocusRef] = useState<string | null>(null);
   // The card whose title holds keyboard focus now (its edges light), cleared on blur.
@@ -1160,28 +1196,33 @@ function FlowGraph({
     }
   });
 
-  // The first view, once: fit when it reads (60% or more), else 100% from the left; the canvas's
-  // height follows it. Live refreshes never move it.
-  const placed = useRef(false);
+  // The first view: fit and centred inside the safe area when it reads (85% or more), else 100%
+  // from the top left. It runs again as the canvas or the cards settle (the sessions load, the
+  // window resizes) until the user pans or zooms; after that nothing moves the view for them.
+  const auto = useRef<View | null>(null);
+  const inner = height - 2;
   useLayoutEffect(() => {
-    if (placed.current || size.width === 0 || viewport.width === 0) return;
-    const cap = heightCap();
-    let k = Math.min(1, (viewport.width - 2 * PAD) / size.width, (cap - 2 * PAD) / size.height);
-    if (k < FIRST_FIT) k = 1;
-    const h = Math.round(Math.max(240, Math.min(cap, size.height * k + 2)));
-    setHeight(h);
+    if (size.width === 0 || viewport.width === 0) return;
+    const was = auto.current;
+    const { view: now } = pz;
+    if (was && (was.x !== now.x || was.y !== now.y || was.k !== now.k)) return;
+    const room = { width: viewport.width, height: inner - SAFE.top - SAFE.bottom };
+    const fitted = fitView(size, room, { max: 1, pad: 0 });
+    const k = fitted.k < FIRST_FIT ? 1 : fitted.k;
     const box = shown ? boxes[shown] : undefined;
+    let next: View;
     if (box && size.width * k > viewport.width) {
-      pz.setView({ k, x: viewport.width / 2 - ((box.left + box.right) / 2) * k, y: 0 });
+      next = { k, x: viewport.width / 2 - ((box.left + box.right) / 2) * k, y: SAFE.top };
     } else {
-      pz.setView({
+      next = {
         k,
         x: size.width * k <= viewport.width ? (viewport.width - size.width * k) / 2 : 0,
-        y: size.height * k <= h ? (h - size.height * k) / 2 : 0,
-      });
+        y: SAFE.top + Math.max(0, (room.height - size.height * k) / 2),
+      };
     }
-    placed.current = true;
-  }, [boxes, size, viewport, shown, pz]);
+    auto.current = next;
+    if (next.x !== now.x || next.y !== now.y || next.k !== now.k) pz.setView(next);
+  }, [boxes, size, viewport.width, inner, shown, pz]);
 
   /** Keep a focused card on screen, with a margin. */
   const reveal = (ref: string) => {
@@ -1203,7 +1244,9 @@ function FlowGraph({
   };
 
   const fit = () => {
-    pz.setView(fitView(size, viewport, { max: 1 }), true);
+    const room = { width: viewport.width, height: inner - SAFE.top - SAFE.bottom };
+    const fitted = fitView(size, room, { max: 1, pad: 0 });
+    pz.setView({ ...fitted, y: fitted.y + SAFE.top }, true);
   };
 
   const moveTo = (ref: string | undefined) => {
@@ -1307,6 +1350,7 @@ function FlowGraph({
     // press on a card's background are pointer extras (the title link is the keyboard's way in).
     // eslint-disable-next-line jsx-a11y/no-static-element-interactions
     <div
+      ref={canvasRef}
       className="ah-canvas ah-flow-canvas"
       data-canvas="ticket-flow"
       style={{ height }}
@@ -1355,7 +1399,13 @@ function FlowGraph({
           data-chosen={chain ? "" : undefined}
           style={worldStyle}
         >
-          <svg className="ah-flow-edges" aria-hidden="true" data-edges="" width={1} height={1}>
+          <svg
+            className="ah-flow-edges"
+            aria-hidden="true"
+            data-edges=""
+            width={Math.max(1, size.width)}
+            height={Math.max(1, size.height)}
+          >
             <ArrowMarkers id={arrowId} tones={["plain", "critical", "early", "hot"]} />
             {edges.map((e) => {
               const key = `${e.from}→${e.to}`;
@@ -1371,6 +1421,7 @@ function FlowGraph({
                   data-hot={hot ? "" : undefined}
                   data-dim={(chain ?? near) && !hot ? "" : undefined}
                   d={path(e)}
+                  fill="none"
                   markerEnd={`url(#${arrowId}-${tone(e)})`}
                 />
               );
@@ -1428,7 +1479,12 @@ function FlowGraph({
             ))}
           </div>
           {/* The lit edges again, above the cards, so a blocker two groups back is never hidden. */}
-          <svg className="ah-flow-edges ah-flow-edges-top" aria-hidden="true" width={1} height={1}>
+          <svg
+            className="ah-flow-edges ah-flow-edges-top"
+            aria-hidden="true"
+            width={Math.max(1, size.width)}
+            height={Math.max(1, size.height)}
+          >
             {edges
               .filter((e) => hotEdges.has(`${e.from}→${e.to}`))
               .map((e) => (
@@ -1438,6 +1494,7 @@ function FlowGraph({
                   data-early={e.early || undefined}
                   data-hot=""
                   d={path(e)}
+                  fill="none"
                   markerEnd={`url(#${arrowId}-${e.early ? "early" : "hot"})`}
                 />
               ))}

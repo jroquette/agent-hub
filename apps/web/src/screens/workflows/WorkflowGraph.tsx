@@ -18,7 +18,7 @@ import {
   useViewportSize,
 } from "../../components";
 import type { IconName } from "../../components";
-import { centreOn, fitView } from "../../lib/canvasView";
+import { assignLanes, centreOn, fitView } from "../../lib/canvasView";
 import { curvePath, useNodeBoxes } from "../../lib/nodeBoxes";
 import { usePanZoom, type WheelMode } from "../../lib/usePanZoom";
 import { goSequencePending, typingIn } from "../../shell/goSequence";
@@ -94,6 +94,11 @@ export function kindLabelOf(type: string): string {
 
 /** Below this zoom the cards show only their kind and title. */
 const FAR = 0.6;
+/** Top to bottom, the first view fits the whole graph only at this zoom or more. */
+const READABLE = 0.85;
+/** How far a skip edge's first lane runs from the cards it passes, and the step between lanes. */
+const LANE_OFFSET = 24;
+const LANE_STEP = 12;
 
 export interface WorkflowGraphProps<N extends GraphNode> {
   layers: N[][];
@@ -458,7 +463,7 @@ function GraphCanvas<N extends GraphNode>({
   }, [rows, layers, model]);
   // Re-measure when the shape changes, not on every render (a live run re-renders each second).
   const shape = `${edges.map(edgeKey).join(" ")}|${order.join(",")}|${far ? "far" : "near"}|${rows.map((r) => r.join(".")).join("/")}`;
-  const { boxes, size } = useNodeBoxes(worldRef, shape);
+  const { boxes, size, measured } = useNodeBoxes(worldRef, shape);
 
   // The first view, once the world and the viewport have a size.
   const placed = useRef(false);
@@ -466,9 +471,9 @@ function GraphCanvas<N extends GraphNode>({
   useLayoutEffect(() => {
     if (placed.current) return;
     if (size.width === 0 || viewport.width === 0) return;
-    // Wait for the measure of the rows as now laid out (the rows follow the viewport's width).
-    const measuredRows = Object.keys(boxes).filter((id) => id.startsWith("row:")).length;
-    if (measuredRows !== rows.length) return;
+    // Wait for the measure of the graph as now laid out: after closing the rounds, the boxes and
+    // the size are still the open graph's until the next measure.
+    if (measured !== shape) return;
     const target = selected ?? focusFirst ?? null;
     const box = target ? boxes[target] : undefined;
     if (box) {
@@ -486,7 +491,8 @@ function GraphCanvas<N extends GraphNode>({
       return;
     }
     const fit = fitView(size, viewport, { max: 1, min: MIN_ZOOM });
-    if (fit.k >= FAR) {
+    // Top to bottom, the whole graph only when it stays readable; else 100% from the top.
+    if (fit.k >= (flow === "down" ? READABLE : FAR)) {
       pz.setView(fit);
       placed.current = true;
       return;
@@ -495,6 +501,12 @@ function GraphCanvas<N extends GraphNode>({
       // Too big to read whole: close the rounds and look again.
       triedClosing.current = true;
       closeAll();
+      return;
+    }
+    if (flow === "down") {
+      const x = size.width < viewport.width ? (viewport.width - size.width) / 2 : 0;
+      pz.setView({ k: 1, x, y: 0 });
+      placed.current = true;
       return;
     }
     if (rows.length > 1) {
@@ -506,7 +518,21 @@ function GraphCanvas<N extends GraphNode>({
     }
     pz.setView({ k: 0.8, x: 0, y: Math.max(0, (viewport.height - size.height * 0.8) / 2) });
     placed.current = true;
-  }, [boxes, size, viewport, selected, focusFirst, open, closeAll, pz, rows.length, model.groups]);
+  }, [
+    boxes,
+    size,
+    measured,
+    shape,
+    flow,
+    viewport,
+    selected,
+    focusFirst,
+    open,
+    closeAll,
+    pz,
+    rows.length,
+    model.groups,
+  ]);
 
   // The chain of the chosen step, or the direct edges of the one under the pointer or focus.
   const [hover, setHover] = useState<string | null>(null);
@@ -669,7 +695,22 @@ function GraphCanvas<N extends GraphNode>({
     return <NodeCard key={step.id} {...common} />;
   };
 
-  // The lane of each edge that crosses to a later row: its rank among those leaving the same row.
+  // Top to bottom, each edge that skips rows gets its own lane over the rows it spans, so no two
+  // run on the same line; edges from one step share a trunk.
+  const downLanes = useMemo(
+    () =>
+      assignLanes(
+        edges.flatMap(([from, to]) => {
+          const ra = rowOf.get(from);
+          const rb = rowOf.get(to);
+          if (ra === undefined || rb === undefined || rb <= ra + 1) return [];
+          return [{ id: `${from}→${to}`, start: ra, end: rb, trunk: from }];
+        }),
+      ),
+    [edges, rowOf],
+  );
+  const laneCount = downLanes.size === 0 ? 0 : Math.max(...downLanes.values()) + 1;
+  // Across, the lane of each edge that crosses to a later row: its rank among those leaving the same row.
   const lanes = new Map<string, number>();
   {
     const perRow = new Map<number, number>();
@@ -698,10 +739,17 @@ function GraphCanvas<N extends GraphNode>({
       const lane = (lanes.get(`${from}→${to}`) ?? 0) * 5;
       if (flow === "down") {
         if (rb === ra + 1) return downPath(a, b);
+        // Beside the rows it passes, not at the world's edge.
+        const n = downLanes.get(`${from}→${to}`) ?? 0;
+        let left = Math.min(a.left, b.left);
+        for (let r = ra + 1; r < rb; r += 1) {
+          const row = boxes[`row:${String(r)}`];
+          if (row) left = Math.min(left, row.left);
+        }
         return downPath(a, b, {
-          gapBelow: gap(ra) + lane,
-          gapAbove: gap(rb - 1) - lane,
-          gutter: WORLD_PAD / 2 - lane,
+          gapBelow: gap(ra) - n * 6,
+          gapAbove: gap(rb - 1) + n * 6,
+          gutter: Math.max(4, left - LANE_OFFSET - n * LANE_STEP),
         });
       }
       if (rb === ra + 1) return wrapPath(a, b, gap(ra) + lane);
@@ -795,7 +843,18 @@ function GraphCanvas<N extends GraphNode>({
                 );
               })}
             </svg>
-            <div className="wf-rows" data-flow={flow}>
+            <div
+              className="wf-rows"
+              data-flow={flow}
+              // Room beside the column for the lanes of the edges that skip rows.
+              style={
+                flow === "down"
+                  ? {
+                      paddingInline: LANE_OFFSET + LANE_STEP * laneCount,
+                    }
+                  : undefined
+              }
+            >
               {rows.map((row, r) => (
                 <div key={r} className="wf-cols" data-node-id={`row:${String(r)}`} data-row="">
                   {row.map((i) => (

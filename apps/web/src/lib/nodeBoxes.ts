@@ -14,14 +14,20 @@ export interface NodeBox {
 /**
  * Measures every `[data-node-id]` element under `root` so an SVG layer can draw edges between
  * them. Re-measures when `shape` changes (not on every render) and when the root or a node
- * resizes, since a node that reflows moves its edges without resizing the root.
+ * resizes, since a node that reflows moves its edges without resizing the root. `measured` is the
+ * `shape` the boxes belong to: until it equals the current one, the boxes are of the last shape.
  */
 export function useNodeBoxes(
   root: RefObject<HTMLElement | null>,
   shape: string,
-): { boxes: Readonly<Record<string, NodeBox>>; size: { width: number; height: number } } {
+): {
+  boxes: Readonly<Record<string, NodeBox>>;
+  size: { width: number; height: number };
+  measured: string | null;
+} {
   const [boxes, setBoxes] = useState<Record<string, NodeBox>>({});
   const [size, setSize] = useState({ width: 0, height: 0 });
+  const [measured, setMeasured] = useState<string | null>(null);
 
   useLayoutEffect(() => {
     const el = root.current;
@@ -49,6 +55,7 @@ export function useNodeBoxes(
       });
       setBoxes(next);
       setSize({ width: el.scrollWidth, height: el.scrollHeight });
+      setMeasured(shape);
     };
     measure();
     if (typeof ResizeObserver === "undefined") return;
@@ -62,7 +69,7 @@ export function useNodeBoxes(
     };
   }, [root, shape]);
 
-  return { boxes, size };
+  return { boxes, size, measured };
 }
 
 /** A left-to-right S-curve from `a`'s right edge to `b`'s left edge (0,0 while unmeasured). */
