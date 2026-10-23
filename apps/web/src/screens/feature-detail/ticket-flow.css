@@ -49,12 +49,14 @@
   background: var(--failed);
 }
 
-/* The epic heads the flow: the parent that tracks the tickets, never a step itself. */
+/* The epic heads the flow as one strip: the parent that tracks the tickets, never a step itself.
+   It wraps to two lines only on narrow screens. */
 .ah-flow-epic {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 12px;
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius-md, 8px);
   background: var(--surface-sunken);
@@ -77,8 +79,15 @@
   color: var(--accent);
   background: var(--accent-soft);
 }
+.ah-flow-epic-tag:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.ah-flow-epic > .ah-flow-track {
+  flex: 0 0 120px;
+}
 .ah-flow-epic-title {
-  flex: 1 1 240px;
+  flex: 1 1 200px;
   min-width: 0;
   font-size: 13px;
   font-weight: 500;
@@ -108,8 +117,12 @@
 .ah-flow-header {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--space-3);
+}
+.ah-flow-legend-intro {
+  color: var(--text-muted);
 }
 
 /* The flow on a pan and zoom canvas (components/Canvas.css): the groups as columns in the world,
@@ -144,8 +157,9 @@
 .ah-flow-edges path[data-source="linear"] {
   stroke-dasharray: 2 3;
 }
+/* A settled edge no longer holds anything back: solid green, at full contrast. */
 .ah-flow-edges path[data-settled="true"] {
-  opacity: 0.5;
+  stroke: var(--done);
 }
 .ah-flow-edges path[data-critical="true"] {
   stroke: var(--accent);
@@ -175,6 +189,9 @@
 [data-canvas="ticket-flow"] .ah-canvas-arrow[data-tone="critical"] path,
 [data-canvas="ticket-flow"] .ah-canvas-arrow[data-tone="hot"] path {
   fill: var(--accent);
+}
+[data-canvas="ticket-flow"] .ah-canvas-arrow[data-tone="settled"] path {
+  fill: var(--done);
 }
 [data-canvas="ticket-flow"] .ah-canvas-arrow[data-tone="early"] path {
   fill: var(--waiting);
@@ -486,7 +503,7 @@
   border-top-style: dotted;
 }
 .ah-flow-line[data-settled="true"] {
-  opacity: 0.5;
+  border-top-color: var(--done);
 }
 .ah-flow-line[data-early="true"] {
   border-top: 2px solid var(--waiting);

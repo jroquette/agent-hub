@@ -224,9 +224,25 @@ describe("PlanningView", () => {
     const outside = screen.getByText("Blocked from outside this feature:").closest("[role=status]");
     expect(outside).toHaveTextContent("Upgrade the runtime · In Progress (not done)");
     expect(outside).toHaveTextContent("ACME-8 · status unknown");
-    expect(outside).toHaveTextContent("ACME-7 · Done elsewhere · done");
+    // A done blocker holds nothing back, so the banner leaves it out.
+    expect(outside).not.toHaveTextContent("ACME-7");
     expect(within(outside as HTMLElement).getAllByRole("link")).toHaveLength(1);
     expect(screen.getByText(/more than 50 relations/)).toBeInTheDocument();
+  });
+
+  it("shows no outside-blocker banner when every blocker outside is done (planning)", () => {
+    render(
+      <PlanningView
+        tickets={rows}
+        planning={aTicketPlan({
+          external_blockers: [
+            { id: "ACME-7", title: "Done elsewhere", state: null, url: null, done: true },
+          ],
+        })}
+      />,
+    );
+
+    expect(screen.queryByText("Blocked from outside this feature:")).toBeNull();
   });
 
   it("says when there is no ticket to show (flow states)", () => {

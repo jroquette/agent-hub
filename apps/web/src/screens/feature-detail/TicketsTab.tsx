@@ -782,12 +782,35 @@ export function TicketsTab({
   const cardAction: TicketAction = (row) => (
     <CardAction project={project} slug={slug} row={row} rows={data.tickets} />
   );
+  // Linear answered: the view switch and the quiet source line share one row; a warning about
+  // the source stays a banner of its own, above the switch.
+  const quiet = data.source !== "plan" && !data.stale;
+  const viewSwitch = (
+    <SegmentedControl
+      label="Show the tickets as"
+      options={[
+        { id: "flow", label: "Flow" },
+        { id: "table", label: "Table" },
+      ]}
+      value={view}
+      onChange={setView}
+    />
+  );
   const shown = ticket
     ? data.tickets.find((r) => r.id === ticket || r.key === ticket || r.ref === ticket)
     : undefined;
   return (
     <div ref={root} className="ah-stack" style={{ gap: 12 }}>
-      <TicketNotice tickets={data} onRefresh={onRefresh} refreshing={refreshing} />
+      {quiet && data.tickets.length > 0 ? (
+        <TicketNotice
+          tickets={data}
+          onRefresh={onRefresh}
+          refreshing={refreshing}
+          lead={<span style={{ marginRight: 8 }}>{viewSwitch}</span>}
+        />
+      ) : (
+        <TicketNotice tickets={data} onRefresh={onRefresh} refreshing={refreshing} />
+      )}
       {data.tickets.length === 0 ? (
         <div className="ah-card">
           <EmptyState icon="list-todo" title="No tickets for this feature yet.">
@@ -797,15 +820,7 @@ export function TicketsTab({
         </div>
       ) : (
         <>
-          <SegmentedControl
-            label="Show the tickets as"
-            options={[
-              { id: "flow", label: "Flow" },
-              { id: "table", label: "Table" },
-            ]}
-            value={view}
-            onChange={setView}
-          />
+          {!quiet && <div className="ah-row">{viewSwitch}</div>}
           <div className="ah-ticket-layout">
             <div className="ah-ticket-main">
               {view === "flow" ? (
