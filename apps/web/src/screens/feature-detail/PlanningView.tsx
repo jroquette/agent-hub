@@ -23,12 +23,13 @@ import {
   type Status,
   useViewportSize,
 } from "../../components";
-import { fitView, roundedPath } from "../../lib/canvasView";
+import { fitView } from "../../lib/canvasView";
 import type { View } from "../../lib/canvasView";
-import { curvePath, useNodeBoxes } from "../../lib/nodeBoxes";
+import { useNodeBoxes } from "../../lib/nodeBoxes";
 import { usePanZoom } from "../../lib/usePanZoom";
 import { goSequencePending, typingIn } from "../../shell/goSequence";
 import { githubPullHref, linearHref } from "../../lib/safeHref";
+import { GUTTER_MIN, orderUnderBlockers, routeFlow } from "./flowRoutes";
 
 type TicketRow = components["schemas"]["TicketRow"];
 type TicketFlow = components["schemas"]["TicketFlow"];
@@ -901,8 +902,9 @@ interface FlowColumn {
  * ticket keeps its step once done and the steps after it stay where they were. The server's
  * ``layers`` cover only what is left to do (they drive ``can_start`` and the order); here the
  * done tickets are put back in by their blockers, and an open ticket stays at or after its server
- * layer. Inside a step, done tickets come first, then the server's order. A ticket that cannot be
- * placed (a cycle through a done ticket) is returned apart.
+ * layer. Inside a step, each ticket sits under its blockers, then by id (orderUnderBlockers), so
+ * no card moves when a ticket changes state. A ticket that cannot be placed (a cycle through a
+ * done ticket) is returned apart.
  */
 function stableSteps(
   work: readonly TicketRow[],
@@ -911,7 +913,6 @@ function stableSteps(
   const open = planning.layers.flat();
   const done = work.filter((t) => t.readiness === "done").map((t) => t.ref);
   const nodes = new Set([...open, ...done]);
-  const rank = new Map([...done, ...open].map((ref, i) => [ref, i]));
   const byRef = new Map(work.map((t) => [t.ref, t]));
   const pending = new Map(
     [...nodes].map((ref) => [
@@ -934,9 +935,10 @@ function stableSteps(
   }
   const byLevel = new Map<number, string[]>();
   for (const [ref, n] of level) byLevel.set(n, [...(byLevel.get(n) ?? []), ref]);
-  const steps = [...byLevel]
-    .sort(([a], [b]) => a - b)
-    .map(([, refs]) => refs.sort((a, b) => (rank.get(a) ?? 0) - (rank.get(b) ?? 0)));
+  const levels = [...byLevel].sort(([a], [b]) => a - b).map(([, refs]) => refs);
+  const steps = orderUnderBlockers(levels, (ref) =>
+    (byRef.get(ref)?.blocked_by ?? []).map((e) => e.ref),
+  );
   return { steps, unplaced: [...pending.keys()] };
 }
 
@@ -1053,6 +1055,14 @@ function chainOf(edges: readonly FlowEdge[], ref: string, whole: boolean) {
   walk(false);
   return { nodes, edges: hot };
 }
+
+/** Which line tone is drawn on top where lines share a trunk. */
+const TONE_RANK: Record<"settled" | "plain" | "early" | "critical", number> = {
+  settled: 0,
+  plain: 1,
+  early: 2,
+  critical: 3,
+};
 
 /** Below this zoom the cards show only their id, status and title. */
 const FAR = 0.6;
@@ -1173,22 +1183,64 @@ function FlowGraph({
   const pz = usePanZoom(viewportRef, { wheel: "page" });
   const { view } = pz;
   const far = view.k < FAR;
+  // The gutters widen to hold the lines' slots, and the world makes room for the channels: both
+  // come from the routes of the last measure, so they join the shape and the cards are measured
+  // again once they apply.
+  const [spacing, setSpacing] = useState<{ gutters: number[]; top: number; bottom: number }>({
+    gutters: [],
+    top: 0,
+    bottom: 0,
+  });
   const shape = `${columns.map((column) => column.refs.join(",")).join("|")}#${edges
     .map((e) => `${e.from}>${e.to}`)
-    .join(",")}|${far ? "far" : "near"}`;
+    .join(
+      ",",
+    )}|${far ? "far" : "near"}|${spacing.gutters.join(",")}|${String(spacing.top)},${String(spacing.bottom)}`;
   const viewport = useViewportSize(viewportRef);
-  const { boxes, size } = useNodeBoxes(worldRef, shape);
+  const { boxes, size, measured } = useNodeBoxes(worldRef, shape);
+  const drawnColumns = columns.filter(({ key }) => key !== "held" && key !== "done");
+  // No line is drawn until the cards of this shape are measured (never from the canvas corner).
+  const routes =
+    measured === shape
+      ? routeFlow(
+          drawnColumns.map((column) => column.refs),
+          boxes,
+          edges,
+        )
+      : null;
+  const nextSpacing = routes
+    ? { gutters: routes.gutters, top: routes.room.top, bottom: routes.room.bottom }
+    : null;
+  const spacingKey = nextSpacing
+    ? `${nextSpacing.gutters.join(",")}|${String(nextSpacing.top)},${String(nextSpacing.bottom)}`
+    : null;
+  // Set during render (React's "adjust state when a value changes"), so no effect cascades.
+  if (
+    nextSpacing &&
+    spacingKey !== `${spacing.gutters.join(",")}|${String(spacing.top)},${String(spacing.bottom)}`
+  ) {
+    setSpacing(nextSpacing);
+  }
   const canvasRef = useRef<HTMLDivElement>(null);
   const height = useFillHeight(canvasRef, expanded);
   const [hover, setHover] = useState<string | null>(null);
   const [focusRef, setFocusRef] = useState<string | null>(null);
   // The card whose title holds keyboard focus now (its edges light), cleared on blur.
   const [lit, setLit] = useState<string | null>(null);
+  // A blocker link ("Waiting on X") pointed at or focused: that one line lights.
+  const [linked, setLinked] = useState<{ from: string; to: string } | null>(null);
   const shown = chosen !== null && drawn.has(chosen) ? chosen : null;
   const chain = shown ? chainOf(edges, shown, true) : null;
   const pointed = hover ?? lit;
-  const near = !chain && pointed ? chainOf(edges, pointed, false) : null;
-  const hotEdges = chain?.edges ?? near?.edges ?? new Set<string>();
+  const link =
+    linked && edges.some((e) => e.from === linked.from && e.to === linked.to) ? linked : null;
+  const near = link
+    ? { nodes: new Set([link.from, link.to]), edges: new Set([`${link.from}→${link.to}`]) }
+    : !chain && pointed
+      ? chainOf(edges, pointed, false)
+      : null;
+  const lighted = link ? near : (chain ?? near);
+  const hotEdges = lighted?.edges ?? new Set<string>();
   const current =
     focusRef && inFlow.has(focusRef) ? focusRef : chosen && inFlow.has(chosen) ? chosen : order[0];
 
@@ -1321,31 +1373,14 @@ function FlowGraph({
     moveTo(to);
   };
 
-  const columnOf = new Map(columns.flatMap((column, i) => column.refs.map((r) => [r, i])));
-  // The lanes of the edges that skip a column, 5 px apart over the columns.
-  const lanes = new Map<string, number>();
-  for (const e of edges) {
-    if ((columnOf.get(e.to) ?? 0) - (columnOf.get(e.from) ?? 0) > 1) {
-      lanes.set(`${e.from}→${e.to}`, lanes.size % 4);
-    }
-  }
-  /** A curve to the next column; over the columns (in their gaps) to one further on. */
-  const path = (e: FlowEdge) => {
-    const a = boxes[e.from];
-    const b = boxes[e.to];
-    const lane = lanes.get(`${e.from}→${e.to}`);
-    if (!a || !b || lane === undefined) return curvePath(a, b);
-    const top = 14 - lane * 5;
-    const out = a.right + 30 + lane * 5;
-    const into = b.left - 30 - lane * 5;
-    return roundedPath([
-      [a.right, a.mid],
-      [out, a.mid],
-      [out, top],
-      [into, top],
-      [into, b.mid],
-      [b.left, b.mid],
-    ]);
+  /** The blocker link under a pointer or focus, inside a card: the line it names. */
+  const linkOf = (target: EventTarget): { from: string; to: string } | null => {
+    if (!(target instanceof Element)) return null;
+    const anchor = target.closest<HTMLAnchorElement>('a[href^="#ticket-"]');
+    const to = anchor?.closest<HTMLElement>(".ah-flow-card")?.dataset.nodeId;
+    const href = anchor?.getAttribute("href")?.slice(1);
+    const from = href ? tickets.find((t) => ticketAnchor(t.ref) === href)?.ref : undefined;
+    return from && to && from !== to ? { from, to } : null;
   };
   const cardOf = (target: EventTarget) =>
     target instanceof Element ? target.closest<HTMLElement>(".ah-flow-card") : null;
@@ -1357,6 +1392,19 @@ function FlowGraph({
   };
   const tone = (e: FlowEdge) =>
     e.early ? "early" : e.critical ? "critical" : e.settled ? "settled" : "plain";
+  // Each blocker's lines drawn together, weakest first so the stronger tone is on top of a shared
+  // trunk; the blockers left to right.
+  const bySource = [...new Set(edges.map((e) => e.from))]
+    .sort((a, b) => order.indexOf(a) - order.indexOf(b))
+    .map(
+      (from) =>
+        [
+          from,
+          edges
+            .filter((e) => e.from === from)
+            .sort((x, y) => TONE_RANK[tone(x)] - TONE_RANK[tone(y)]),
+        ] as const,
+    );
   return (
     // The flow's keys (arrows, zoom) bubble here from its cards' links and buttons; hover and a
     // press on a card's background are pointer extras (the title link is the keyboard's way in).
@@ -1368,6 +1416,7 @@ function FlowGraph({
       style={{ height }}
       onKeyDown={onKeyDown}
       onFocus={(event) => {
+        setLinked(linkOf(event.target));
         if (!(event.target instanceof HTMLElement) || !event.target.matches("[data-ticket-open]")) {
           return;
         }
@@ -1379,12 +1428,15 @@ function FlowGraph({
       }}
       onBlur={() => {
         setLit(null);
+        setLinked(null);
       }}
       onMouseOver={(event) => {
         setHover(cardOf(event.target)?.dataset.nodeId ?? null);
+        setLinked(linkOf(event.target));
       }}
       onMouseLeave={() => {
         setHover(null);
+        setLinked(null);
       }}
       onClick={(event) => {
         // A press on a card's background opens its panel as its title does; a drag does not.
@@ -1416,34 +1468,80 @@ function FlowGraph({
             aria-hidden="true"
             data-edges=""
             width={Math.max(1, size.width)}
-            height={Math.max(1, size.height)}
+            height={Math.max(1, size.height + (routes?.room.bottom ?? 0))}
           >
             <ArrowMarkers id={arrowId} tones={["plain", "settled", "critical", "early", "hot"]} />
-            {edges.map((e) => {
-              const key = `${e.from}→${e.to}`;
-              const hot = hotEdges.has(key);
-              return (
-                <path
-                  key={key}
-                  data-edge={key}
-                  data-source={e.source}
-                  data-critical={e.critical || undefined}
-                  data-early={e.early || undefined}
-                  data-settled={e.settled || undefined}
-                  data-hot={hot ? "" : undefined}
-                  data-dim={(chain ?? near) && !hot ? "" : undefined}
-                  d={path(e)}
-                  fill="none"
-                  markerEnd={`url(#${arrowId}-${tone(e)})`}
-                />
-              );
-            })}
+            {routes &&
+              bySource.map(([from, group]) => (
+                // A blocker's halos go under all its lines, so its own lines never cut each other;
+                // a later blocker's halo cuts a gap where its line crosses an earlier one.
+                <g key={from} data-from={from}>
+                  {group.map((e) => {
+                    const key = `${e.from}→${e.to}`;
+                    const hot = hotEdges.has(key);
+                    return (
+                      <path
+                        key={`halo-${key}`}
+                        className="ah-flow-halo"
+                        data-settled={e.settled || undefined}
+                        data-dim={lighted && !hot ? "" : undefined}
+                        d={routes.paths.get(key)}
+                        fill="none"
+                      />
+                    );
+                  })}
+                  {group.map((e) => {
+                    const key = `${e.from}→${e.to}`;
+                    const hot = hotEdges.has(key);
+                    return (
+                      <path
+                        key={key}
+                        data-edge={key}
+                        data-source={e.source}
+                        data-critical={e.critical || undefined}
+                        data-early={e.early || undefined}
+                        data-settled={e.settled || undefined}
+                        data-hot={hot ? "" : undefined}
+                        data-dim={lighted && !hot ? "" : undefined}
+                        d={routes.paths.get(key)}
+                        fill="none"
+                        markerEnd={far ? undefined : `url(#${arrowId}-${tone(e)})`}
+                      />
+                    );
+                  })}
+                </g>
+              ))}
+            {routes &&
+              !far &&
+              routes.junctions.map((j) => {
+                const through = edges.filter((e) => j.edges.includes(`${e.from}→${e.to}`));
+                const hot = j.edges.some((k) => hotEdges.has(k));
+                const strongest = [...through].sort(
+                  (a, b) => TONE_RANK[tone(b)] - TONE_RANK[tone(a)],
+                )[0];
+                return (
+                  <circle
+                    key={`${String(j.x)},${String(j.y)}`}
+                    className="ah-flow-dot"
+                    data-tone={strongest ? tone(strongest) : "plain"}
+                    data-hot={hot ? "" : undefined}
+                    data-dim={lighted && !hot ? "" : undefined}
+                    cx={j.x}
+                    cy={j.y}
+                    r={hot ? 3 : 2.5}
+                  />
+                );
+              })}
           </svg>
-          <div className="ah-flow-cols">
-            {columns.map((column) => (
+          <div
+            className="ah-flow-cols"
+            style={{ paddingTop: spacing.top, paddingBottom: spacing.bottom }}
+          >
+            {columns.map((column, i) => (
               <section
                 key={column.key}
                 className="ah-flow-col"
+                style={i > 0 ? { marginLeft: spacing.gutters[i] ?? GUTTER_MIN } : undefined}
                 data-kind={column.kind}
                 aria-label={`${column.title} · ${column.hint}`}
               >
@@ -1476,7 +1574,7 @@ function FlowGraph({
                         external={external}
                         critical={critical.has(r)}
                         chosen={chosen === r}
-                        onChain={chain?.nodes.has(r) ?? false}
+                        onChain={(link ? link.from === r : chain?.nodes.has(r)) ?? false}
                         current={current === r}
                         holds={edges.filter((e) => e.from === r).map((e) => e.to)}
                         inFlow={inFlow}
@@ -1495,27 +1593,61 @@ function FlowGraph({
             className="ah-flow-edges ah-flow-edges-top"
             aria-hidden="true"
             width={Math.max(1, size.width)}
-            height={Math.max(1, size.height)}
+            height={Math.max(1, size.height + (routes?.room.bottom ?? 0))}
           >
-            {edges
-              .filter((e) => hotEdges.has(`${e.from}→${e.to}`))
-              .map((e) => (
-                <path
-                  key={`${e.from}→${e.to}`}
-                  data-source={e.source}
-                  data-early={e.early || undefined}
-                  data-hot=""
-                  d={path(e)}
-                  fill="none"
-                  markerEnd={`url(#${arrowId}-${e.early ? "early" : "hot"})`}
-                />
-              ))}
+            {routes &&
+              edges
+                .filter((e) => hotEdges.has(`${e.from}→${e.to}`))
+                .flatMap((e) => {
+                  const key = `${e.from}→${e.to}`;
+                  return [
+                    <path
+                      key={`halo-${key}`}
+                      className="ah-flow-halo"
+                      d={routes.paths.get(key)}
+                      fill="none"
+                    />,
+                    <path
+                      key={key}
+                      data-source={e.source}
+                      data-early={e.early || undefined}
+                      data-hot=""
+                      d={routes.paths.get(key)}
+                      fill="none"
+                      markerEnd={far ? undefined : `url(#${arrowId}-${e.early ? "early" : "hot"})`}
+                    />,
+                  ];
+                })}
+            {routes &&
+              !far &&
+              routes.junctions
+                .filter((j) => j.edges.some((k) => hotEdges.has(k)))
+                .map((j) => (
+                  <circle
+                    key={`${String(j.x)},${String(j.y)}`}
+                    className="ah-flow-dot"
+                    data-tone={
+                      edges.some(
+                        (e) =>
+                          e.early &&
+                          j.edges.includes(`${e.from}→${e.to}`) &&
+                          hotEdges.has(`${e.from}→${e.to}`),
+                      )
+                        ? "early"
+                        : "hot"
+                    }
+                    data-hot=""
+                    cx={j.x}
+                    cy={j.y}
+                    r={3}
+                  />
+                ))}
           </svg>
         </div>
         <span id={hintId} className="ah-sr">
           Arrow keys follow the arrows, up and down move in a group, Enter opens a ticket, plus and
           minus zoom, 0 fits the flow, f expands it to the full window, v shows the same tickets as
-          a table.
+          a table. A ticket's lines light when you focus it or one of its blocker links.
         </span>
         <div className="ah-canvas-overlay">{legend}</div>
         <CanvasControls
@@ -1583,8 +1715,10 @@ function FlowLegend({ showCritical, epic }: { showCritical: boolean; epic: boole
       </summary>
       <div className="ah-flow-legend-body" aria-label="Legend">
         <span className="ah-flow-legend-intro">
-          Groups run left to right; tickets in one group can run in parallel. Each line goes from a
-          blocker to the ticket it holds back. Choose a ticket to see its whole chain.
+          Groups run left to right; tickets in one group can run in parallel. Each line runs from a
+          blocker to a ticket it holds back: a blocker&apos;s lines share one trunk and branch off
+          to each ticket. Each card also says what it waits on. Choose a ticket to see its whole
+          chain.
           {epic && " The epic only tracks them, so it is in no group."}
         </span>
         {lines.map(([r, text]) => {
@@ -1618,7 +1752,7 @@ function FlowLegend({ showCritical, epic }: { showCritical: boolean; epic: boole
         </span>
         <span>
           <span className="ah-flow-line" data-settled="true" aria-hidden="true" />
-          Green: its blocker is done
+          Faint: its blocker is done
         </span>
         <span>
           <span className="ah-flow-line" data-critical="true" aria-hidden="true" />
@@ -1627,8 +1761,13 @@ function FlowLegend({ showCritical, epic }: { showCritical: boolean; epic: boole
             : "Accent: the chosen ticket's chain"}
         </span>
         <span>
-          Drag to move · Shift + scroll moves sideways · ⌘ or Ctrl + scroll zooms · arrow keys
-          follow the arrows · v shows the table
+          <span className="ah-flow-line" data-branch="true" aria-hidden="true" />A dot is where a
+          line branches; a gap is where two lines only cross
+        </span>
+        <span>
+          Drag to move · Shift + scroll moves sideways · ⌘ or Ctrl + scroll zooms · point at a
+          ticket or a blocker link to light its lines · arrow keys follow the arrows · v shows the
+          table
         </span>
       </div>
     </details>
