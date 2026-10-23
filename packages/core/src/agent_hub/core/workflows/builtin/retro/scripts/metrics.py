@@ -85,7 +85,12 @@ CI_KEYS = ("runs", "failed")
 MEMORY_KEYS = ("inbox_pending", "learnings_added_or_changed")
 # retro_metrics.py prints these on stderr and zeros on stdout: zeros that must not become evidence.
 GH_FAILED = {"prs": "gh pr list failed", "ci": "gh run list failed"}
-USAGE_HEADER = "| Project | Kind | Name | 7 d | 30 d | 90 d | Last used |"
+# hub skill-usage's table header; an older CLI printed the last one (no "(UTC)").
+USAGE_HEADERS = (
+    "| Project | Kind | Name | 7 d | 30 d | 90 d | Last used (UTC) |",
+    "| Project | Kind | Name | 7 d | 30 d | 90 d | Last used |",
+)
+USAGE_CELLS = 7
 USAGE_RULE = "| --- | --- | --- | --- | --- | --- | --- |"
 NOT_READ_LINE = "Some items were not read; the list may be incomplete."
 USAGE_COLUMN = {7: 3, 30: 4, 90: 5}
@@ -479,7 +484,7 @@ def skill_window(since: int) -> int:
 def _usage_row(line: str, column: int) -> tuple[str, str, int] | None:
     """``(kind, name, runs)`` from one table row, or None when it does not parse."""
     cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-    if len(cells) != len(USAGE_HEADER.strip("|").split("|")) or cells[1] not in USAGE_KINDS:
+    if len(cells) != USAGE_CELLS or cells[1] not in USAGE_KINDS:
         return None
     if not cells[column].isdigit() or not cells[2]:
         return None
@@ -495,12 +500,13 @@ def _usage_problems(out: str, *, unparsed: int, over: int) -> list[str]:
 def parse_skill_usage(code: int, out: str, err: str, *, days: int) -> Reading:
     """The ``skill_usage`` source from ``hub skill-usage --days <days>``'s table."""
     lines = [line.strip() for line in out.splitlines()]
-    if code or USAGE_HEADER not in lines:
+    header = next((line for line in USAGE_HEADERS if line in lines), None)
+    if code or header is None:
         reason = _failed(code, err) if code else "no usage table in the output"
         return Reading({}, [_source("skill_usage", "missing", reason)], {})
     rows: list[tuple[str, str, int]] = []
     unparsed = over = 0
-    for line in lines[lines.index(USAGE_HEADER) + 1 :]:
+    for line in lines[lines.index(header) + 1 :]:
         if not line.startswith("|") or line == USAGE_RULE:
             continue
         row = _usage_row(line, USAGE_COLUMN[days])
