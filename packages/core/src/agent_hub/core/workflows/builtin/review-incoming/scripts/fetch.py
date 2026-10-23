@@ -102,7 +102,8 @@ def bounded_body(body: str) -> tuple[str, bool]:
     cut = clean(body, BODY_CHARS)
     while len(cut.encode()) > BODY_BYTES:
         cut = cut[: len(cut) - (len(cut.encode()) - BODY_BYTES + 3) // 4 - 1]
-    return cut, cut != CONTROL.sub("", BACKTICKS.sub("`", body.replace("\r\n", "\n")))
+    # Cut when the bounds dropped text: compared with the same cleaning and no bound.
+    return cut, cut != clean(body, len(body))
 
 
 def pr_facts(pr: object, number: int) -> dict[str, object]:

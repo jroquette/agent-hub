@@ -305,3 +305,13 @@ def test_leaves_repo_unchanged_when_facts_read(clone: Clone, run: Any) -> None:
     assert code == 0
     assert clone.state() == before
     assert clone.git("rev-parse", REF) == clone.head
+
+
+def test_reads_body_as_whole_when_cleaning_shortens_nothing_it_keeps(
+    clone: Clone, run: Any
+) -> None:
+    code, facts, _ = run(given(clone, a_pr(clone, body="a``\x00`b")))
+
+    assert code == 0
+    assert facts["body"] == "a`b"
+    assert facts["body_cut"] is False
