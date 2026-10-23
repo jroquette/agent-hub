@@ -337,6 +337,71 @@ describe("ScenarioBuilder (scenario builder)", () => {
     );
   });
 
+  it("scenario builder edits a JSON body as fields or as JSON, keeping bare references", async () => {
+    const user = userEvent.setup();
+    const body = '{"event_type":"FETCH","ids":["$INPUTS.external_ref"],"minutes":$INPUTS.minutes}';
+    const { requests } = renderBuilder({
+      [DETAIL]: aScenarioDetail({
+        document: {
+          ...document,
+          nodes: [
+            {
+              id: "fetch-order",
+              type: "action",
+              action: "send-queue-message",
+              with: { body },
+            },
+          ],
+        },
+        content_hash: "sha256:aaa",
+      }),
+      "/api/v1/projects/demo/actions": {
+        ...library,
+        items: [
+          {
+            action: aScenarioAction({
+              ref: "orders/send-queue-message",
+              name: "send-queue-message",
+              effect: "write",
+              inputs: [
+                { name: "body", type: "string", required: true, description: "One JSON object" },
+              ],
+            }),
+            output_fields: [],
+            used_by: [],
+          },
+        ],
+      },
+      [SAVE]: () => SAVED,
+    });
+
+    await user.click(await screen.findByRole("treeitem", { name: "Script fetch-order" }));
+    const form = screen.getByRole("region", { name: "Inspector: Script fetch-order" });
+    // Fields: one row per key; a bare reference stays a token, "as a number".
+    const event = await within(form).findByLabelText("Value of event_type in body");
+    await user.clear(event);
+    await user.type(event, "RESOLVE");
+    expect(within(form).getByText("as a number")).toBeInTheDocument();
+
+    // JSON: indented, checked as you type; an invalid text does not reach the file.
+    await user.click(within(form).getByRole("button", { name: "JSON" }));
+    const text = within(form).getByLabelText("body");
+    expect((text as HTMLTextAreaElement).value).toContain('\n  "event_type": "RESOLVE",');
+    await user.type(text, "{{");
+    expect(within(form).getByText(/Not valid JSON yet/)).toBeInTheDocument();
+
+    const save = screen.getByRole("button", { name: "Save scenario" });
+    await waitFor(() => {
+      expect(save).toBeEnabled();
+    });
+    await user.click(save);
+    await screen.findByText("Saved · rev 2");
+    const nodes = (await savedNodes(requests)) as (SentNode & { with?: { body?: string } })[];
+    expect(nodes[0]?.with?.body).toBe(
+      '{"event_type":"RESOLVE","ids":["$INPUTS.external_ref"],"minutes":$INPUTS.minutes}',
+    );
+  });
+
   it("scenario builder inserts a block between two others from the + menu", async () => {
     const user = userEvent.setup();
     const { requests } = renderBuilder({ [SAVE]: () => SAVED });

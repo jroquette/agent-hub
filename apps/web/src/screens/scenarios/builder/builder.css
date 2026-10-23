@@ -1040,3 +1040,83 @@ textarea.sb-script {
   align-self: end;
   min-height: 32px;
 }
+
+/* A JSON value: Fields (one row per key) or JSON (indented text checked as you type) */
+.sb-json {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.sb-json-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.sb-json-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.sb-json-rows {
+  gap: var(--space-2);
+}
+.sb-json-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px var(--space-1);
+}
+.sb-json-row-head {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+input.sb-json-key {
+  flex: 1;
+  height: 24px;
+  padding: 0 4px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+input.sb-json-key:hover,
+input.sb-json-key:focus {
+  border-color: var(--border-control);
+}
+.sb-json-value {
+  min-width: 0;
+}
+.sb-json-value > .ah-input {
+  width: 100%;
+}
+.sb-json-token {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 32px;
+  min-width: 0;
+}
+textarea.sb-json-text {
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 18px;
+  tab-size: 2;
+  resize: vertical;
+  white-space: pre;
+}
+.sb-json-text[aria-invalid="true"] {
+  border-color: var(--failed);
+}
+.sb-json-insert {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.sb-json > .ah-btn {
+  align-self: flex-start;
+}
