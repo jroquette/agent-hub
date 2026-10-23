@@ -3,6 +3,8 @@
 workflow: upgrade
 inputs: {issue: DEM-1, repo: demo-api, package: httpx, to: "1.0.0"}
 stubs:
+  config:
+    output: {default_branch: main, branch_prefix: jdoe/, author_name: Jane Doe, author_email: jane@example.com, ready_label: agent-ready, teams: [DEM], hub: {github: acme/demo-hub, default_branch: main, target: {github: acme/demo-hub, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}, repos: [{dir: demo-api, github: acme/demo-api, default_branch: main, check_fast: make check-fast, check: make check, target: {github: acme/demo-api, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}]}
   worktree:
     output:
       path: /ws/demo-api/.claude/worktrees/dem-1
@@ -23,4 +25,4 @@ stubs:
   strength: {output: {touched: 3, files: [src/api.py, src/client.py, tests/test_api.py], lockfiles_edited: [], lockfile_edit: false, ran: false, tool: "", reason: no mutation tool found in the repo, mutants: 0, killed: 0, inconclusive: 0, survived: [], more_survived: 0}}
   size: {decision: reject, approver: Jo}
 expect: {status: cancelled}
-reached: [worktree, gate, bump, notes, changelog, check, adapt, adapt__fix, adapt__recheck, strength, size]
+reached: [config, worktree, gate, bump, notes, changelog, check, adapt, adapt__fix, adapt__recheck, strength, size]

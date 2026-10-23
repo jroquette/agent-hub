@@ -1,5 +1,6 @@
 """The upgrade pack's ``fast_gate.py`` (AGH-484), in process: the run's repo's ``check_fast``,
-read from the hub's ``hub.json`` in the cwd; a missing one is reported, never a crash."""
+read from what ``hub step config`` printed (AGH-480: no script opens ``hub.json``); a missing one
+is reported, never a crash."""
 
 import importlib.util
 import json
@@ -32,24 +33,40 @@ def load() -> ModuleType:
     return module
 
 
-def hub_json(root: Path, repo: dict[str, object]) -> None:
+def config(repo: dict[str, object]) -> str:
+    """``hub step config``'s output, as the workflow passes it: the run's repo and another."""
     other = {"dir": "demo-web", "check_fast": "npm test", "check": "npm run check"}
-    (root / "hub.json").write_text(json.dumps({"repos": [other, repo]}), encoding="utf-8")
+    return json.dumps({"default_branch": "main", "repos": [other, repo]})
 
 
-def test_prints_the_repo_fast_gate_when_hub_json_names_one(
+def test_prints_the_repo_fast_gate_when_config_names_one(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    hub_json(tmp_path, {"dir": "demo-api", "check_fast": "make check-fast", "check": FULL})
+    given = config({"dir": "demo-api", "check_fast": "make check-fast", "check": FULL})
     monkeypatch.chdir(tmp_path)
 
-    assert load().main(["--config", "hub.json", "--repo", "demo-api", "--full", FULL]) == 0
+    assert load().main(["--config", given, "--repo", "demo-api", "--full", FULL]) == 0
 
     assert json.loads(capsys.readouterr().out) == {
         "check_fast": "make check-fast",
         "source": "check_fast",
         "reason": "",
     }
+
+
+def test_opens_no_hub_json_when_config_given(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "hub.json").write_text(
+        json.dumps({"repos": [{"dir": "demo-api", "check_fast": "from the file"}]}),
+        encoding="utf-8",
+    )
+    given = config({"dir": "demo-api", "check_fast": "make check-fast", "check": FULL})
+    monkeypatch.chdir(tmp_path)
+
+    assert load().main(["--config", given, "--repo", "demo-api", "--full", FULL]) == 0
+
+    assert json.loads(capsys.readouterr().out)["check_fast"] == "make check-fast"
 
 
 @pytest.mark.parametrize("given", [{}, {"check_fast": ""}, {"check_fast": "  "}, {"check_fast": 3}])
@@ -60,10 +77,10 @@ def test_reports_and_runs_the_full_gate_when_check_fast_is_missing_or_empty(
     *,
     given: dict[str, object],
 ) -> None:
-    hub_json(tmp_path, {"dir": "demo-api", "check": FULL, **given})
+    text = config({"dir": "demo-api", "check": FULL, **given})
     monkeypatch.chdir(tmp_path)
 
-    assert load().main(["--config", "hub.json", "--repo", "demo-api", "--full", FULL]) == 0
+    assert load().main(["--config", text, "--repo", "demo-api", "--full", FULL]) == 0
 
     found = json.loads(capsys.readouterr().out)
     assert (found["check_fast"], found["source"]) == (FULL, "check")
@@ -73,26 +90,23 @@ def test_reports_and_runs_the_full_gate_when_check_fast_is_missing_or_empty(
 @pytest.mark.parametrize(
     ("text", "reason"),
     [
-        (None, "hub.json cannot be read"),
-        ("{not json", "hub.json is not JSON"),
-        ("[]", "hub.json has no repos list"),
+        ("{not json", "the config is not JSON"),
+        ("[]", "the config has no repos list"),
         ('{"repos": [{"dir": "other"}]}', "hub.json lists no repo demo-api"),
-        (" " * (1024 * 1024 + 1), "hub.json is larger than 1 MiB"),
+        ("{" + " " * (1024 * 1024), "the config is larger than 1 MiB"),
     ],
 )
-def test_reports_and_runs_the_full_gate_when_hub_json_is_unreadable(
+def test_reports_and_runs_the_full_gate_when_config_is_unreadable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     *,
-    text: str | None,
+    text: str,
     reason: str,
 ) -> None:
-    if text is not None:
-        (tmp_path / "hub.json").write_text(text, encoding="utf-8")
     monkeypatch.chdir(tmp_path)
 
-    assert load().main(["--config", "hub.json", "--repo", "demo-api", "--full", FULL]) == 0
+    assert load().main(["--config", text, "--repo", "demo-api", "--full", FULL]) == 0
 
     found = json.loads(capsys.readouterr().out)
     assert found == {
@@ -106,9 +120,9 @@ def test_reports_and_runs_the_full_gate_when_hub_json_is_unreadable(
     "argv",
     [
         [],
-        ["--config", "hub.json", "--repo", "demo-api"],
-        ["--config", "hub.json", "--repo", "", "--full", FULL],
-        ["--config", "hub.json", "--repo", "a", "--full", " "],
+        ["--config", "{}", "--repo", "demo-api"],
+        ["--config", "{}", "--repo", "", "--full", FULL],
+        ["--config", "{}", "--repo", "a", "--full", " "],
         ["--config", "", "--repo", "a", "--full", FULL],
     ],
 )

@@ -1,5 +1,6 @@
 # One dependency upgrade, from the package's changelog to a PR: the issue's worktree, the
-# repo's fast gate read from the hub's hub.json (fast_gate.py, before any agent runs), the bump
+# repo's fast gate from the hub's hub.json (hub step config, then fast_gate.py, before any agent
+# runs; no script opens hub.json), the bump
 # made with the repo's own tooling (bump.py: uv or npm, which regenerate the lockfiles; the script
 # writes none and refuses a change outside the manifests and lockfiles), the upstream release
 # notes (release_notes.py: a workflow agent cannot reach the network), a read-only agent that
@@ -57,15 +58,28 @@ nodes:
         target: {type: object}
       required: [path, branch, base, hub, hub_name, check, prompt, target]
 
+  - id: config
+    type: shell
+    description: The hub.json values this run's scripts need, read by the CLI (read-only).
+    depends_on: [worktree]
+    command: [hub, step, config]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        default_branch: {type: string}
+        branch_prefix: {type: [string, "null"]}
+        hub: {type: object}
+        repos: {type: array, items: {type: object}}
+      required: [default_branch, branch_prefix, hub, repos]
+
   - id: gate
     type: script
     description: The repo's check_fast from the hub's hub.json; none, and the full check runs (said why).
-    depends_on: [worktree]
+    depends_on: [worktree, config]
     runtime: python
     script: fast_gate.py
-    # The file is named here, not in the script: the hub's hooks read hub.json only through
-    # their reader, and this script is not a hook.
-    args: [--config, hub.json, --repo, $INPUTS.repo, --full, $worktree.output.check]
+    args: [--config, $config.output, --repo, $INPUTS.repo, --full, $worktree.output.check]
     timeout: 5m
     retry: {max_attempts: 0}
     output_format:
