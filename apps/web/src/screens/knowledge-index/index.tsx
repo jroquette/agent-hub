@@ -142,6 +142,7 @@ function ProjectPickCard({
           p={projectCard(project)}
           nameHref={href}
           nameId={nameId}
+          healthDisplay="hint"
           trailing={<Icon name="chevron-right" size="sm" className="ah-pick-chevron" />}
         />
         {lead && <div className="ah-small ah-muted ah-pick-lead">{lead(project)}</div>}
