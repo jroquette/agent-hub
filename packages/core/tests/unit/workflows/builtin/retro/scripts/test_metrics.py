@@ -163,8 +163,10 @@ def source(found: dict[str, Any], name: str) -> dict[str, Any]:
     return next(item for item in found["sources"] if item["name"] == name)
 
 
-def run_main(argv: list[str], capsys: pytest.CaptureFixture[str]) -> tuple[int, dict[str, Any]]:
-    code = load().main(argv)
+def run_main(
+    argv: list[str], capsys: pytest.CaptureFixture[str], *, runner: Any = None
+) -> tuple[int, dict[str, Any]]:
+    code = load().main(argv, runner=runner)
     out = capsys.readouterr().out
     return code, (json.loads(out) if out else {})
 
@@ -243,8 +245,11 @@ def test_says_nothing_when_no_run_in_window(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     (tmp_path / ".agent-runs" / "workflows").mkdir(parents=True)
+    # Both run counts read: the run records and retro_metrics.py's issue runs.
+    runner = FakeRunner({"retro_metrics.py": (0, EMPTY_REPORT, "")})
+    argv = ["--days", "7", "--root", str(tmp_path), "--today", TODAY]
 
-    code, found = run_main(["--days", "7", "--root", str(tmp_path), "--today", TODAY], capsys)
+    code, found = run_main(argv, capsys, runner=runner)
 
     assert code == 0
     assert (found["days"], found["since"], found["until"]) == (7, "2026-10-15", TODAY)
@@ -524,3 +529,36 @@ def test_exits_one_when_every_source_missing(
     assert code == 1
     assert captured.out == ""
     assert captured.err.startswith("metrics.py: every source is missing")
+
+
+def test_says_run_count_unknown_when_issue_runs_missing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / ".agent-runs" / "workflows").mkdir(parents=True)
+    failing = (1, "", "hub.json: project.hub_repo and every repos[].github are required\n")
+    runner = FakeRunner({"retro_metrics.py": failing, "mine_transcripts.py": (0, MINING, "")})
+    argv = ["--days", "7", "--root", str(tmp_path), "--today", TODAY]
+
+    code, found = run_main(argv, capsys, runner=runner)
+
+    assert code == 0
+    assert (found["runs"], found["nothing"]) == (0, False)
+    assert (
+        "the run count: issue_runs is missing (exit 1: hub.json: project.hub_repo and every"
+        " repos[].github are required)"
+    ) in found["left_out"]
+    assert "Runs started: unknown" in found["summary"]
+    assert "nothing to change" not in found["summary"]
+
+
+def test_says_run_count_unknown_when_run_records_missing() -> None:
+    metrics = load()
+    readings = [
+        metrics.Reading({}, [{"name": "runs", "status": "missing", "reason": "no folder"}], {}),
+        metrics.Reading({}, [{"name": "issue_runs", "status": "ok", "reason": ""}], {}),
+    ]
+
+    found = metrics.assemble(readings, days=7, since=SINCE, until=date(2026, 10, 22))
+
+    assert (found["runs"], found["nothing"]) == (0, False)
+    assert "the run count: runs is missing (no folder)" in found["left_out"]
