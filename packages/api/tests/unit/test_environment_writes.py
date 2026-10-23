@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
 from agent_hub.api.environment_writes import EnvironmentEdit, write_environment_edit
 from agent_hub.core.hubs.hub_registry import HubInvalidError
@@ -542,13 +542,25 @@ def test_writes_own_values_over_team_environment_when_scope_is_local(tmp_path: P
     assert _read(hub / "hub.json")["environments"]["staging"]["values"] == {"user_name": "ci"}
 
 
+@pytest.mark.parametrize("name", ["Bad-Name", "_token", "1st"])
+def test_refuses_value_name_when_not_an_input_name(tmp_path: Path, name: str) -> None:
+    # A "_" name is a comment key in the file, which the secret check never reads.
+    hub = _hub(tmp_path, environments={"staging": {"access": "ask"}})
+    before = (hub / "hub.json").read_bytes()
+    secret_shaped = "ey" + "J" + "a" * 15 + "." + "b" * 15
+
+    with pytest.raises(ValidationError):
+        _edit(hub, op="set_environment", scope="team", name="staging", values={name: secret_shaped})
+
+    assert (hub / "hub.json").read_bytes() == before
+
+
 @pytest.mark.parametrize(
     ("values", "pointer"),
     [
         ({"token": "ey" + "J" + "a" * 15 + "." + "b" * 15}, "environments.staging.values.token"),
-        ({"Bad-Name": "x"}, "environments.staging.values.Bad-Name"),
     ],
-    ids=["secret_shaped", "bad_name"],
+    ids=["secret_shaped"],
 )
 def test_refuses_value_when_file_check_fails(
     tmp_path: Path, values: dict[str, str], pointer: str

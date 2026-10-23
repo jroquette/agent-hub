@@ -163,7 +163,8 @@ def comment_keyed_map(schema: dict[str, Any]) -> None:
 MAX_VALUES: Final = 32
 MAX_VALUE_CHARS: Final = 200
 # A scenario input's name (``workflows/substitution.py``'s grammar, bounded as launch bounds it).
-ValueName = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")]
+VALUE_NAME_PATTERN: Final = r"^[a-z][a-z0-9_]{0,63}$"
+ValueName = Annotated[str, Field(pattern=VALUE_NAME_PATTERN)]
 ValueText = Annotated[
     str,
     Field(min_length=1, max_length=MAX_VALUE_CHARS, pattern=ENVIRONMENT_TEXT_PATTERN),

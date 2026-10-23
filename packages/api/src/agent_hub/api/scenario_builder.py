@@ -231,7 +231,20 @@ class ScenarioBuilder:
         document = dict(request.document)
         document["name"] = name
         document["kind"] = "scenario"
-        document["revision"] = _revision(on_disk) + 1
+        current = _revision(on_disk)
+        if on_disk is not None:
+            # An unchanged document writes nothing and keeps the file's revision.
+            kept = render_document({**document, "revision": current})
+            if kept.encode() == on_disk:
+                return SaveResult(
+                    path=unit_path,
+                    revision=current,
+                    content_hash=disk_hash,
+                    yaml=kept,
+                    changed=False,
+                    versioned=False,
+                )
+        document["revision"] = current + 1
         checked = _validate(hub, request.pack, document, found=discover_actions(hub))
         if not checked.loads:
             first = next(problem for problem in checked.problems if problem.severity == "error")
@@ -492,15 +505,13 @@ def read_proposal(builder: ScenarioBuilder, project: str, name: str) -> Proposal
     text, _ = _read_text_no_link(hub / relative)
     if text is None:
         raise EntityNotFoundError(entity="proposal", entity_id=f"{project}/{name}")
+    # The strict loader: no anchors, aliases or tags (an alias bomb never expands), JSON
+    # scalars only, a mapping at the top.
     try:
-        value = yaml.safe_load(text)
-    except yaml.YAMLError as error:
+        loaded = load_workflow_bytes(text.encode(), source=relative.as_posix())
+    except WorkflowFileError as error:
         return ProposalView(path=relative.as_posix(), document=None, check=None, problem=str(error))
-    if not isinstance(value, dict):
-        return ProposalView(
-            path=relative.as_posix(), document=None, check=None, problem="not a YAML mapping"
-        )
-    document = dict(value)
+    document = dict(loaded.document)
     document["name"] = name
     document["kind"] = "scenario"
     check = _validate(hub, plan_pack, document, found=discover_actions(hub))
@@ -511,11 +522,13 @@ def drop_proposal(builder: ScenarioBuilder, project: str, name: str) -> None:
     """Removes Claude's proposal (accepted into the draft, or rejected); none is fine."""
     hub = Path(builder.catalog.hub_of(project))
     pack = builder.catalog.scenario(project, name)[2]
-    target = hub / proposal_path(pack, name)
-    if target.is_symlink():
-        raise RunConflictError(code="link_in_path", reason="the proposal is a link; not removed")
+    relative = proposal_path(pack, name)
+    # Every folder below the hub, and the file: unlink would follow a linked folder.
+    below = (relative, *(parent for parent in relative.parents if parent != Path()))
+    if any((hub / part).is_symlink() for part in below):
+        raise RunConflictError(code="link_in_path", reason="the proposal path holds a link")
     with contextlib.suppress(FileNotFoundError):
-        target.unlink()
+        (hub / relative).unlink()
 
 
 def create_action(
@@ -552,6 +565,23 @@ def create_action(
     script = f"scripts/{action.name.replace('-', '_')}{suffix}"
     if existing is not None and existing.document.script.endswith(suffix):
         script = existing.document.script
+    # A script another action of the pack runs is never rewritten from one action's form.
+    shared = sorted(
+        entry.document.name
+        for entry in found.actions
+        if entry.pack == action.pack
+        and entry.document.name != action.name
+        and entry.document.script == script
+    )
+    if shared:
+        raise RunConflictError(
+            code="script_shared",
+            reason=f"actions/{action.pack}/{script} is also run by: {', '.join(shared)}",
+        )
+    if existing is None and (hub / "actions" / action.pack / script).exists():
+        raise RunConflictError(
+            code="name_taken", reason=f"actions/{action.pack}/{script} already exists"
+        )
     text = _action_yaml(action, script)
     shown = f"actions/{action.pack}/{action.name}.yaml"
     try:

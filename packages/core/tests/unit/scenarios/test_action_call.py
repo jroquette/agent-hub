@@ -119,3 +119,10 @@ def test_takes_run_values_when_step_leaves_declared_inputs_out() -> None:
     # A declared input the step leaves out takes the run's value; the step's own value wins; a
     # run value no input declares stays out.
     assert given == {"account": "123", "region": "us-east-1", "queue": "payments"}
+
+
+def test_keeps_action_default_when_run_value_is_none() -> None:
+    # An optional scenario input with no default starts as None: it gives the step nothing.
+    given = with_run_values(["ref", "count"], {}, {"ref": None, "count": None})
+
+    assert given == {}

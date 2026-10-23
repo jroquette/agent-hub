@@ -16,6 +16,7 @@ line. Exit 0 on success, 1 on an invalid file or a refused change, 2 on a usage 
 """
 
 import os
+import re
 from collections.abc import Callable
 from importlib.metadata import version
 from pathlib import Path
@@ -51,6 +52,7 @@ from agent_hub.core.hub_config.environment_edits import (
     set_environment,
     shown_name,
 )
+from agent_hub.core.hub_config.environments import VALUE_NAME_PATTERN
 from agent_hub.core.hub_config.local_config import (
     LOCAL_FILE,
     LOCAL_FILE_MAX_BYTES,
@@ -69,6 +71,8 @@ from agent_hub.core.workspace.environment_lines import (
     show_lines,
 )
 from agent_hub.generator.hub_config_files import UnreadFile, parse_json, read_file_bytes
+
+VALUE_NAME: Final = re.compile(VALUE_NAME_PATTERN)
 
 COMMAND: Final = "env"
 SYNC_HINT: Final = "run ./hub sync to update AGENTS.md"
@@ -244,7 +248,9 @@ def set_command(
     if env_file is not None:
         credentials["env_file"] = env_file
     value_changes: dict[str, JsonValue | None] = dict(_value_pairs(values or []))
-    value_changes.update(dict.fromkeys(unset_values or []))
+    value_changes.update(
+        dict.fromkeys(_value_name(name, hint="--unset-value") for name in unset_values or [])
+    )
     if not changes and not credentials and not value_changes:
         context.fail(
             "nothing to change: give --access, --production/--no-production, --description,"
@@ -382,8 +388,19 @@ def _value_pairs(given: list[str]) -> dict[str, str]:
         key, sep, text = item.partition("=")
         if not sep or not key or not text:
             raise typer.BadParameter("give NAME=VALUE", param_hint="--value")
-        pairs[key] = text
+        pairs[_value_name(key, hint="--value")] = text
     return pairs
+
+
+def _value_name(name: str, *, hint: str) -> str:
+    """``name`` when it names a scenario input; else exit 2. A ``_`` name is a comment key in
+    the file, never checked for a secret's shape, so it is refused here."""
+    if not VALUE_NAME.fullmatch(name):
+        raise typer.BadParameter(
+            f"{name!r} is not a value name: lowercase letters, digits and _, from a letter",
+            param_hint=hint,
+        )
+    return name
 
 
 def _file(*, is_local: bool) -> str:

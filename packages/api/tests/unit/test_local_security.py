@@ -339,6 +339,36 @@ def test_is_item_write_when_restore_or_publish_path_posted(path: str) -> None:
     assert not is_run_write("POST", path)
 
 
+# The scenario builder's writes (AGH-521): its save, a proposal's dismiss and the action writes.
+BUILDER_WRITES = (
+    ("PUT", "/api/v1/scenarios/demo/walk"),
+    ("POST", "/api/v1/scenarios/demo/walk/proposal/dismiss"),
+    ("POST", "/api/v1/projects/demo/actions"),
+    ("PUT", "/api/v1/projects/demo/actions/demo/send"),
+)
+
+
+@pytest.mark.parametrize(("method", "path"), BUILDER_WRITES)
+def test_is_item_write_when_builder_writes(method: str, path: str) -> None:
+    assert is_item_write(method, path)
+    assert is_strict_write(method, path)
+    assert not is_run_write(method, path)
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/api/v1/scenarios/demo/walk"),
+        ("GET", "/api/v1/scenarios/demo/walk/proposal"),
+        ("GET", "/api/v1/projects/demo/actions"),
+        ("POST", "/api/v1/projects/demo/scenarios/validate"),
+    ],
+)
+def test_keeps_builder_reads_and_check_open_when_not_item_write(method: str, path: str) -> None:
+    assert not is_item_write(method, path)
+    assert not is_strict_write(method, path)
+
+
 @pytest.mark.parametrize(
     ("method", "path"),
     [

@@ -2,6 +2,7 @@
 (P-7, AM-2, AM-9, AC-350.20, AC-350.22, AC-350.41)."""
 
 import json
+import os
 import shutil
 import subprocess
 import threading
@@ -2067,3 +2068,100 @@ def test_rewrites_action_when_builder_edits_one(scenarios: Any) -> None:
     # The script keeps its file (same runtime), so a scenario that calls it keeps working.
     assert writes.calls == ["actions/demo/scripts/get-order.sh", "actions/demo/get-order.yaml"]
     assert (missing.status_code, missing.json()["code"]) == (409, "unknown_action")
+
+
+def test_writes_nothing_when_builder_saves_unchanged_document(scenarios: Any) -> None:
+    writes = _DiskWrites()
+    scenarios.wire(item_version_writes=writes)
+    detail = scenarios.client.get("/api/v1/scenarios/demo/order-walk").json()
+    first = scenarios.client.put(
+        "/api/v1/scenarios/demo/order-walk",
+        json={
+            "pack": "demo",
+            "document": detail["document"],
+            "base_content_hash": detail["content_hash"],
+        },
+        headers=_origin(scenarios),
+    ).json()
+    # The file is now the canonical YAML: the same document again writes nothing.
+    reread = scenarios.client.get("/api/v1/scenarios/demo/order-walk").json()
+
+    again = scenarios.client.put(
+        "/api/v1/scenarios/demo/order-walk",
+        json={
+            "pack": "demo",
+            "document": reread["document"],
+            "base_content_hash": reread["content_hash"],
+        },
+        headers=_origin(scenarios),
+    )
+
+    assert again.status_code == 200, again.text
+    body = again.json()
+    assert (body["changed"], body["versioned"]) == (False, False)
+    assert body["revision"] == first["revision"]
+    assert body["content_hash"] == reread["content_hash"]
+    assert writes.calls == ["scenarios/demo/order-walk.yaml"]
+
+
+def test_shows_problem_when_claudes_proposal_holds_an_alias(scenarios: Any) -> None:
+    proposal = (
+        scenarios.hub / ".agent-runs" / "proposals" / "scenarios" / "demo" / "order-walk.yaml"
+    )
+    proposal.parent.mkdir(parents=True)
+    # An alias would expand with every level: the strict loader refuses it unread.
+    proposal.write_text("a: &a [x, x]\nb: [*a, *a]\nnodes: []\n")
+
+    shown = scenarios.client.get("/api/v1/scenarios/demo/order-walk/proposal")
+
+    assert shown.status_code == 200, shown.text
+    body = shown.json()
+    assert body["document"] is None
+    assert "alias" in body["problem"] or "anchor" in body["problem"]
+
+
+def test_refuses_dismiss_when_a_proposal_folder_is_a_link(scenarios: Any, tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "order-walk.yaml").write_text("kept")
+    folder = scenarios.hub / ".agent-runs" / "proposals" / "scenarios"
+    folder.mkdir(parents=True)
+    (folder / "demo").symlink_to(outside)
+
+    dropped = _post(scenarios, "/scenarios/demo/order-walk/proposal/dismiss", {})
+
+    assert (dropped.status_code, dropped.json()["code"]) == (409, "link_in_path")
+    assert (outside / "order-walk.yaml").read_text() == "kept"
+
+
+def test_refuses_action_write_when_script_is_shared_or_taken(scenarios: Any) -> None:
+    writes = _DiskWrites()
+    scenarios.wire(item_version_writes=writes)
+    pack = scenarios.hub / "actions" / "demo"
+    shared = (pack / "send-order.yaml").read_text().replace("send-order.sh", "get-order.sh")
+    (pack / "send-order.yaml").write_text(shared)
+    (pack / "scripts" / "taken_one.sh").write_text("echo hand-written\n")
+    body = dict(NEW_ACTION, name="get-order", runtime="sh", effect="read")
+
+    edited = scenarios.client.put(
+        "/api/v1/projects/demo/actions/demo/get-order", json=body, headers=_origin(scenarios)
+    )
+    clobber = _post(
+        scenarios, "/projects/demo/actions", dict(NEW_ACTION, name="taken-one", runtime="sh")
+    )
+
+    assert (edited.status_code, edited.json()["code"]) == (409, "script_shared")
+    assert "send-order" in edited.json()["detail"]
+    assert (clobber.status_code, clobber.json()["code"]) == (409, "name_taken")
+    assert writes.calls == []
+
+
+def test_reads_no_proposal_when_its_path_is_a_fifo(scenarios: Any) -> None:
+    folder = scenarios.hub / ".agent-runs" / "proposals" / "scenarios" / "demo"
+    folder.mkdir(parents=True)
+    os.mkfifo(folder / "order-walk.yaml")
+
+    # Opened without blocking and refused as not a regular file.
+    shown = scenarios.client.get("/api/v1/scenarios/demo/order-walk/proposal")
+
+    assert shown.status_code == 404

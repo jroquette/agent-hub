@@ -31,8 +31,12 @@ def with_run_values(
 ) -> dict[str, JsonValue]:
     """A step's inputs with the run's values for the declared inputs it leaves out: each input of
     the action named like a scenario input, with no ``with`` value, takes that input's value. A
-    value the step gives always wins."""
-    return {name: run[name] for name in declared if name not in given and name in run} | dict(given)
+    value the step gives always wins, and a run value that is None (an optional scenario input
+    with no default) is no value: the action's own default still applies."""
+    taken = {
+        name: run[name] for name in declared if name not in given and run.get(name) is not None
+    }
+    return taken | dict(given)
 
 
 class ActionCallError(AgentHubError):

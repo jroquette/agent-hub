@@ -808,3 +808,16 @@ def test_refuses_value_when_secret_shaped_or_not_a_pair(local_hub: Path) -> None
     assert AWS_KEY not in secret.stderr
     assert no_pair.exit_code == 2
     assert snapshot(local_hub) == before
+
+
+def test_refuses_value_name_when_not_an_input_name(local_hub: Path) -> None:
+    before = snapshot(local_hub)
+
+    # A "_" name is a comment key in the file, which the secret check never reads.
+    commented = run_env(local_hub, "set", "live", "--local", "--value", f"_ref={AWS_KEY}")
+    unset = run_env(local_hub, "set", "live", "--local", "--unset-value", "Bad-Name")
+
+    assert commented.exit_code == 2, commented.output
+    assert AWS_KEY not in commented.output
+    assert unset.exit_code == 2, unset.output
+    assert snapshot(local_hub) == before

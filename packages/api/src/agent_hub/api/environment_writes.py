@@ -50,7 +50,7 @@ from agent_hub.core.hub_config.environment_edits import (
     set_service,
     shown_name,
 )
-from agent_hub.core.hub_config.environments import MAX_VALUES
+from agent_hub.core.hub_config.environments import MAX_VALUES, ValueName
 from agent_hub.core.hub_config.local_config import (
     LOCAL_FILE,
     LOCAL_FILE_MAX_BYTES,
@@ -95,7 +95,7 @@ class AddEnvironment(_Edit):
     credential_env: tuple[Name, ...] = Field(default=(), max_length=_MAX_NAMES)
     env_file: Text | None = None
     # Scenario input values by input name; an empty text is left out.
-    values: dict[Name, Text] = Field(default_factory=dict, max_length=MAX_VALUES)
+    values: dict[ValueName, Text] = Field(default_factory=dict, max_length=MAX_VALUES)
 
 
 class SetEnvironment(_Edit):
@@ -115,7 +115,7 @@ class SetEnvironment(_Edit):
     # Replaces ``credentials.env``; an empty list removes it.
     credential_env: tuple[Name, ...] | None = Field(default=None, max_length=_MAX_NAMES)
     # Sets each value named; an empty text removes that value. A value not named stays.
-    values: dict[Name, Text] | None = Field(default=None, max_length=MAX_VALUES)
+    values: dict[ValueName, Text] | None = Field(default=None, max_length=MAX_VALUES)
 
 
 class RenameEnvironment(_Edit):

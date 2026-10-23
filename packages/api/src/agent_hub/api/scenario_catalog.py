@@ -37,6 +37,7 @@ import dataclasses
 import hashlib
 import json
 import os
+import stat
 import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -44,7 +45,6 @@ from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Final, Literal, Protocol, Self
 
-import yaml
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -130,6 +130,7 @@ from agent_hub.core.workflows.workflow_reads import WorkflowInputView, WorkflowP
 from agent_hub.generator.action_discovery import ActionDiscovery, discover_actions
 from agent_hub.generator.finding_issues import HeldIssue, IssueMarked, claim_issue
 from agent_hub.generator.scenario_discovery import DiscoveredScenarioSource
+from agent_hub.generator.workflow_yaml import WorkflowFileError, load_workflow_bytes
 
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
@@ -139,7 +140,8 @@ RUN_PAGE: Final = 50
 INBOX_FOLDER: Final = Path("brain", "_inbox")
 FINDING_ID_TEXT: Final = r"^f[0-9]{1,6}$"
 _NEW_FILE: Final = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
-_READ_FILE: Final = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+# Never through a link, and never blocking on a FIFO: only a regular file is read (_read_bytes).
+_READ_FILE: Final = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 # A scenario file loads only up to 256 KiB; an action's document or script is shown up to 64 KiB.
 DOCUMENT_TEXT_BYTES: Final = 256 << 10
 ACTION_TEXT_BYTES: Final = 64 << 10
@@ -486,7 +488,10 @@ class ScenarioCatalog:
         runs = tuple(_run_ref(run, hub) for run in page.items)
         summary = _summary(project, plan, pack=pack, last=runs[0] if runs else None)
         steps = tuple(_step_view(node) for node in plan.document.nodes)
-        text = read_text_bounded(file, DOCUMENT_TEXT_BYTES)[0]
+        # One read for the text and its hash, so a write in between cannot pair old text with
+        # the new file's hash (the builder's save checks that hash).
+        data = _read_bytes(file, DOCUMENT_TEXT_BYTES)
+        text, cut = _text_of(data, DOCUMENT_TEXT_BYTES)
         refs = dict.fromkeys(step.action for step in steps if step.action is not None)
         found = discover_actions(Path(hub)) if refs else None
         return ScenarioDetail(
@@ -496,8 +501,8 @@ class ScenarioCatalog:
             environments=self._environments(hub, project),
             path=_hub_relative(file, hub),
             document_text=text,
-            document=_document_of(text),
-            content_hash=None if text is None else _hash_text(file),
+            document=_document_of(data, source=_hub_relative(file, hub)),
+            content_hash=None if data is None or cut else _hash_of(data),
             actions=tuple(action_view(ref, pack, found) for ref in refs if found is not None),
         )
 
@@ -745,25 +750,20 @@ def action_view(ref: str, pack: str, found: ActionDiscovery) -> ScenarioActionVi
     )
 
 
-def _document_of(text: str | None) -> dict[str, JsonValue] | None:
-    """The scenario file as the builder edits it: its mapping, keys as written."""
-    if text is None:
+def _document_of(data: bytes | None, *, source: str) -> dict[str, JsonValue] | None:
+    """The scenario file as the builder edits it: its mapping, keys as written, read with the
+    strict loader the catalog uses (no anchors, aliases or tags; JSON scalars only)."""
+    if data is None:
         return None
     try:
-        value = yaml.safe_load(text)
-    except yaml.YAMLError:
+        return dict(load_workflow_bytes(data, source=source).document)
+    except WorkflowFileError:
         return None
-    return value if isinstance(value, dict) else None
 
 
-def _hash_text(path: Path) -> str | None:
-    """``sha256:`` of the file's bytes, never through a link; None when unreadable."""
-    try:
-        descriptor = os.open(path, _READ_FILE)
-    except OSError:
-        return None
-    with os.fdopen(descriptor, "rb") as file:
-        return f"sha256:{hashlib.sha256(file.read()).hexdigest()}"
+def _hash_of(data: bytes) -> str:
+    """``sha256:`` of a file's bytes."""
+    return f"sha256:{hashlib.sha256(data).hexdigest()}"
 
 
 def _hub_relative(path: Path, hub: str) -> str:
@@ -782,13 +782,23 @@ def _text_of(data: bytes | None, limit: int) -> tuple[str | None, bool]:
 
 def read_text_bounded(path: Path, limit: int) -> tuple[str | None, bool]:
     """A file's text read up to ``limit`` bytes, never through a link; None if unreadable."""
+    return _text_of(_read_bytes(path, limit), limit)
+
+
+def _read_bytes(path: Path, limit: int) -> bytes | None:
+    """Up to ``limit`` + 1 bytes of a regular file, never through a link and never waiting on a
+    FIFO or a device; None when it is not one or cannot be read."""
     try:
         descriptor = os.open(path, _READ_FILE)
     except OSError:
-        return None, False
+        return None
     with os.fdopen(descriptor, "rb") as file:
-        data = file.read(limit + 1)
-    return _text_of(data, limit)
+        if not stat.S_ISREG(os.fstat(file.fileno()).st_mode):
+            return None
+        try:
+            return file.read(limit + 1)
+        except OSError:
+            return None
 
 
 def _run_ref(run: WorkflowRun, hub: str) -> ScenarioRunRef:
@@ -810,12 +820,10 @@ def run_header(hub: str, run_id: str) -> Mapping[str, JsonValue] | None:
     folder = Path(hub) / RUN_FOLDERS / run_id
     if not RUN_ID_PATTERN.fullmatch(run_id) or folder.is_symlink():
         return None
-    try:
-        descriptor = os.open(folder / RECORDS, _READ_FILE)
-    except OSError:
+    data = _read_bytes(folder / RECORDS, HEADER_BYTES)
+    if data is None:
         return None
-    with os.fdopen(descriptor, "rb") as file:
-        first = file.read(HEADER_BYTES).split(b"\n", 1)
+    first = data[:HEADER_BYTES].split(b"\n", 1)
     if len(first) < 2:  # noqa: PLR2004 -- the line and what follows its newline
         return None
     try:
