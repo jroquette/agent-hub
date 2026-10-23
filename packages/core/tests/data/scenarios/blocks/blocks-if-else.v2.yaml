@@ -18,6 +18,7 @@ stages:
     every: 15s
     timeout: 10m
     capture:
+      order_id: $self.output.order_id
       order_status: $self.output.order_status
   - if: $CTX.order_status == 'ON_HOLD' && $CTX.order_id != ''
     then:

@@ -64,18 +64,19 @@ A scenario run may pause before a block: by a **breakpoint**, or by **Step** ([A
 0049](../adr/0049-scenario-blocks-and-run-control.md)). It is not a gate and Approvals does not list it.
 
 - Breakpoints are block addresses of the run's pinned tree, kept in the run folder (`breakpoints.json`, written whole),
-  set by `hub scenario run --break ADDR…`, `hub scenario break RUN ADDR… [--off]` or hub web, read before each node:
+  set by `hub scenario run --break ADDR…`, `hub scenario break RUN ADDR… [--off]` (adds or removes), `hub scenario break RUN --set [ADDR…]` (replaces the set; none
+  clears it) or hub web, read before each node:
   one set while the run runs takes effect at the next block. They are never in the document.
 - Before a block means before its first node and before its `<step>__ask` gate; for a stage, before its first block;
   a Repeat, before the group (a body block's breakpoint pauses in every iteration); an If, before its condition is
   read; a Together, before any path. The pause answers no gate.
-- `hub scenario step RUN` runs exactly the next leaf block (Do, Wait until, You, Wait, Include) in declaration order and
+- `hub scenario step RUN` runs exactly the next leaf block (Do, Wait until, You, Wait, and an Include as one block) in declaration order and
   pauses before the one after it, entering containers; the run stays in step mode until `hub scenario continue RUN`,
   which runs to the next breakpoint or the end. A gate met meanwhile pauses as before; once answered, a stepping run
   pauses before the next block. Both are resumes, recorded with who sent them.
 - With a breakpoint or step mode on, a layer holding a block to pause at runs one node at a time in declaration
   order; without either, the engine runs as before.
-- A paused run shows its inputs, every capture, and each finished block's rendered inputs, status and last output
+- A paused run shows its inputs (the effective ones, environment values included), every capture, and each finished block's rendered inputs, status and last output
   (a Wait until's last poll and its count), from its record.
 - Breakpoints, Step, Continue and a start with breakpoints are refused, recording nothing, on a `production: true`
   environment; runs without them keep the policy above there.

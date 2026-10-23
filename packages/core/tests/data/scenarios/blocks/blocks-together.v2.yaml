@@ -13,6 +13,12 @@ inputs:
 stages:
 - name: Fix shipping
   steps:
+  - wait_until: order-state
+    until: $self.output.order_id != ''
+    every: 15s
+    timeout: 10m
+    capture:
+      order_id: $self.output.order_id
   - together:
     - - do: order-set-carrier
         with:

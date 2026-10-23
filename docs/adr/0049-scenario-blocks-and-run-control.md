@@ -61,7 +61,8 @@ Chosen option: 1.
   `production: true`; scenario runs without them keep ADR 0041's policy there.
 - **Inspect.** A paused run's view adds the run's inputs, each capture, and each finished block's rendered inputs,
   status and last output, from lines the run record already holds (already redacted of credential values).
-- **Migration.** `hub scenario migrate [NAME…] [--check]` writes a graph scenario as a tree (one stage named after
+- **Migration.** hub web's builder opens a graph scenario read-only, with a Migrate action; the graph editing of the
+  builder goes. `hub scenario migrate [NAME…] [--check]` writes a graph scenario as a tree (one stage named after
   the scenario, ids kept where they differ from the derived ones) when its graph is series-parallel with the shapes the
   tree has; otherwise it writes nothing and names each node it cannot map. `hub doctor` warns
   (`scenarios.graph_format`) for each graph-format scenario. The graph format is removed in its own change, two minor
