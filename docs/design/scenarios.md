@@ -13,7 +13,10 @@ All optional and project-owned; a hub without `scenarios/`, `actions/` and `envi
 `actions/<pack>/<name>.yaml`, scripts under `actions/<pack>/scripts/` (by real path, no symlink); scenarios are
 `scenarios/<pack>/<name>.yaml` with `kind: scenario` (each root refuses the other kind). Both load as workflows do
 (strict YAML, 256 KiB, unknown keys refused, errors name file, line and key), ≤ 200 files per root. `hub init` writes
-one example action (`effect: read`) and scenario; `hub sync` never adds them and `hub.lock` does not list them.
+one example, each file only where absent: the read action `actions/demo/demo-get-status.yaml` (a Python script that
+GETs one path of a `service` input's endpoint; plan mode prints the URL) and the scenario `demo-service-up` (an `expect`
+until `/health` answers 200, then one `action`). They are the project's files: `hub sync` never adds them, `hub.lock`
+does not list them, and the init report does not count them.
 
 ### Kind and node keys
 

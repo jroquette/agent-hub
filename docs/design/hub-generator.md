@@ -49,7 +49,11 @@ its flag and why (no value, `git not found`, `git timed out`, `git could not run
 the pinned `uvx` command), schema and model, and copies it byte for byte (a team's may leave the identity out). `--dir` (default: the cwd) is created after every check. The target may hold only `.git`, seeded files (kept),
 paths equal to their render and leftovers: a `hub.lock` exits 1 pointing to `hub sync`; a differing managed path, an
 unknown entry or a `hub.json` other than this run's to `hub sync --adopt`; any other problem names its cause. It writes
-through the sync writer ([hub-sync.md](hub-sync.md), Apply), `hub.lock` last. Output:
+through the sync writer ([hub-sync.md](hub-sync.md), Apply), `hub.lock` last. It also writes the init-only scenario
+examples (`actions/demo/demo-get-status.yaml`, its script, `scenarios/demo/demo-service-up.yaml`;
+[scenarios.md](scenarios.md)): not registry entries and not in `hub.lock`, each only where absent (an example file
+already there, and the folders above it, are kept, not refused), after the hub's files and before `hub.lock`, and left
+out of the counts. Output:
 `created N files (M managed, K seeded) and L links in <root>`; if any, `kept X files already there (Y seeded, Z equal to
 the render)` (`and L links`) and `removed X leftover temporary files`; next steps. Exits: 0 done, 1 error, 2 usage.
 

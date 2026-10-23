@@ -33,6 +33,8 @@ Success for v1 is recreating `loki-trader-hub` through the platform without losi
   running the CLI and the hooks on their own machine or cloud session ([Team use and per-repo config](#team-use-and-per-repo-config)).
 - It does not edit the brain on its own. It keeps the current hub's rule: agents propose in `_inbox/`, and the human decides.
 - It does not promise to read the model's "mind". It shows what the transcript records, nothing more.
+- It ships no infra client and no built-in action. A project drives its own system only through its own scripts
+  (actions), under the access policy ([Scenarios and actions](#scenarios-and-actions-agh-350)).
 
 ## Core concepts
 
@@ -46,7 +48,7 @@ The model has nine entities. All of them already exist implicitly in Loki Trader
 | Workflow | A sequence of steps with gates, approvers and limits | The states of `agent_runner.py` and the plugin's `/feature` |
 | Agent | A role with instructions, tools and a model | Agents in `plugin/loki-workflow/agents/` |
 | Session | One concrete execution of an agent, with transcript, cost and outcome | JSONL transcripts and `.agent-runs/*.jsonl` |
-| WorkflowRun | One execution of a workflow; it contains the Sessions it starts ("run" is never a synonym for Session) | One `agent_runner.py` pass from issue to PR |
+| WorkflowRun | One execution of a workflow; it contains the Sessions it starts ("run" is never a synonym for Session). A WorkflowRun of a scenario is always called a scenario run | One `agent_runner.py` pass from issue to PR |
 | Brain | Curated, versioned knowledge, with provenance | `brain/` (index, now, decisions, learnings…) |
 | Learning | Something learned in a session, proposed and then accepted or rejected | `brain/_inbox/` → `brain/learnings/` (team); `brain/auto/workspace/` (personal auto memory, gitignored, never committed) |
 
@@ -431,6 +433,14 @@ instruction" for actions and for the deterministic nodes of a workflow that decl
   (an ask when a command or URL names an endpoint of a read-only or production environment), and the docs and the run
   view say so. Scenario runs are local only in v1, and a scenario run is a WorkflowRun that is always called a
   scenario run.
+- **Seed:** `hub init` writes one example, the read action `demo-get-status` (with its Python script) and the
+  scenario `demo-service-up` that uses it, each file only where absent. They are the project's files: `hub sync`
+  never adds them and `hub.lock` does not list them, so a hub without `scenarios/`, `actions/` and `environments`
+  renders and syncs as before.
+- **In `hub web`** (Scenarios, in the sidebar's Work group after Workflow runs): the list with each scenario's last
+  scenario run, a scenario's steps and its plan for a chosen environment, and a scenario run's page with its timeline
+  and, while paused, the investigation chat, the options with their plans and the pick; a policy ask is answered on
+  that page ([screen spec 23](design/control-plane/specs/23-scenarios.md), Layer 2 § Scenarios).
 
 ## Layer 2: control plane and observability
 
@@ -738,6 +748,20 @@ keyboard-reachable node panel) and shows its document read-only. Run detail draw
 node with its state, attempt, skip cause and failure kind (issue-to-pr runs keep their stage pipeline), and the
 Workflow runs list filters by workflow and failure kind.
 
+**Scenarios (AGH-363 API, AGH-364 screens, built).** `GET /api/v1/scenarios` lists each project's scenarios and the
+files that do not load, `GET /api/v1/scenarios/{project}/{name}` gives one with its steps, the project's environments
+and its scenario runs, and `GET /api/v1/scenario-runs/{id}` a scenario run's record (steps, polls, captures,
+decisions, findings, workarounds, investigations and the actions' draft state, read on each request). The writes are
+strict local writes ([ADR 0040](adr/0040-hub-web-keeps-local-settings-writes-hub-files-and-runs-checks.md)) that go
+through the CLI: `POST …/plan` (a `hub scenario plan --json` child), `POST …/runs` (plans first; a deny answers 409
+and starts nothing), `POST /scenario-runs/{id}/investigation` (one read-only session per investigation gate),
+`POST …/answer` (pick, retry or stop) and a finding's issue (created at most once) or inbox note. `GET /workflow-runs`
+takes `kind=workflow|scenario`, and the Workflow runs screen asks for workflow runs only. The screens are Scenarios
+(`/scenarios`), a scenario (`/scenarios/:project/:name`: steps, the plan for a chosen environment, Start) and a
+scenario run (`/scenarios/:project/:name/runs/:runId`); `/runs/:id` of a scenario run redirects there
+([screen spec 23](design/control-plane/specs/23-scenarios.md)). The tablet layout, the timeline keys and polish are
+AGH-458.
+
 **Playground delivery (AGH-314, built).** What the owner validated in the live playground of 2026-10-17/18
 ([ADR 0036](adr/0036-live-playground-and-auto-mode.md)), delivered as one change; the writes and runs it adds are
 [ADR 0040](adr/0040-hub-web-keeps-local-settings-writes-hub-files-and-runs-checks.md):
@@ -979,7 +1003,8 @@ and routes (AGH-362, AGH-363), and v0.20.1 the third playground delivery (AGH-41
 the dispatched release workflow (ADR 0047), and v0.21.0 the Scenarios screens (AGH-364), the merged ticket's
 outcome and the dependents' preflight (AGH-473) and `repos[].ui_paths` with the `ux` and `overengineering` review
 outputs (AGH-474), and v0.22.0 the knowledge view in `hub web`: search, note backlinks and the learning trail
-(AGH-393); other agents' adapters stay in Phase 4. The Phase 1 gate (Loki hub recreated) is open;
+(AGH-393); unreleased: the example scenario `hub init` writes (AGH-365);
+other agents' adapters stay in Phase 4. The Phase 1 gate (Loki hub recreated) is open;
 pilot: AGH-54.
 
 The order follows dogfooding: the first generated hub is the platform's own, and the second replaces `loki-trader-hub`. Editable workflows come later because they depend on observation already showing where the current flow gets stuck.
@@ -1000,7 +1025,7 @@ The recommendations are a starting point.
 
 **1. Workflow: declarative YAML executed by a Python engine.**
 
-- The workflow is a declarative document (YAML or JSON) validated by a Pydantic schema. It holds the nodes, the type of each one (`agent`, `shell`, `script`, `loop`, `loop_group`, `approval`, `wait`, `halt`, `include`), their joins and conditions, inputs, outputs and what to execute.
+- The workflow is a declarative document (YAML or JSON) validated by a Pydantic schema. It holds the nodes, the type of each one (`agent`, `shell`, `script`, `loop`, `loop_group`, `approval`, `wait`, `halt`, `include`, and since AGH-350 `action` and `expect`), their joins and conditions, inputs, outputs and what to execute.
 - A deterministic Python engine reads the document and drives the steps. Orchestration spends no tokens: the LLM only runs inside `agent` steps and only receives that step's instruction, not the whole workflow.
 - Deterministic work (tests, lint, contract sync, opening a PR) becomes a `script` step, with no LLM.
 - The UI edits the same document. It is stored on the platform with a version and history, and each execution records the workflow version it used.
@@ -1055,6 +1080,19 @@ Continuity between sessions comes from the brain and the summaries, not from rer
   on `<prefix>learning-propose-<slug>`, never the default branch). The app repos get no MCP configuration, so direction 2 holds.
 - Out of scope: hosting, Postgres, accounts, sharing transcripts, embeddings. A move to hosted later replaces only where
   the index is stored.
+
+**6. Scenarios: the project's own actions on the workflow engine, under an access policy core enforces (2026-10-19, AGH-350, [ADR 0041](adr/0041-scenarios-actions-and-enforced-access.md), proposed).**
+
+- A scenario is a workflow document (`kind: scenario`) of `action` and `expect` steps; an action is a project script
+  with a declared effect. agent-hub ships no built-in action and no infra client; the engine stays the one of
+  direction 1 ([Scenarios and actions](#scenarios-and-actions-agh-350), [design/scenarios.md](design/scenarios.md)).
+- `access` is enforced for actions (and for the deterministic nodes of a workflow that declares an environment):
+  core decides allow, ask or deny before each one runs; a production write or destroy never runs, and no key or flag
+  turns an ask into an allow. Agent nodes keep a best-effort guard check.
+- Credentials come from a git-ignored env file per environment that only the action's process gets; agent sessions
+  never see the declared names, and the guard denies them the file.
+- When a scenario run diverges, an agent may investigate read-only and propose; a person picks every write. Local only
+  in v1.
 
 **Open questions**
 

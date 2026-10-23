@@ -79,10 +79,10 @@ describe("apiProxy", () => {
     const proxy = apiProxy("http://127.0.0.1:7421", "http://127.0.0.1:7420");
 
     expect(proxy[DISCOVERIES_PATH]?.target).toBe("http://127.0.0.1:7420");
-    expect(
-      new RegExp(DISCOVERIES_PATH).test("/api/v1/projects/tipple/environment-discoveries"),
-    ).toBe(true);
-    expect(new RegExp(DISCOVERIES_PATH).test("/api/v1/projects/tipple/config")).toBe(false);
+    expect(new RegExp(DISCOVERIES_PATH).test("/api/v1/projects/demo/environment-discoveries")).toBe(
+      true,
+    );
+    expect(new RegExp(DISCOVERIES_PATH).test("/api/v1/projects/demo/config")).toBe(false);
   });
 
   it("sends make playground's token login to the sessions server as its own /?token=", () => {
