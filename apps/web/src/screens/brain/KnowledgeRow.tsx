@@ -14,8 +14,6 @@ import {
 
 /** Why a repo doc is listed but not opened (D-results-web). */
 export const REPO_DOC_TOOLTIP = "Repo docs are not opened in the app";
-/** Why a path under `brain/` that the note route refuses is listed but not opened (AM-8). */
-export const UNSERVED_NOTE_TOOLTIP = UNSERVED_NOTE_REASON;
 const EXTERNAL = "agent-from-external";
 /** The path's room in the 280 px panel, in characters. */
 const PATH_CHARS = 34;
@@ -90,7 +88,7 @@ export function KnowledgeRow({ item, project, query, selected, onOpen }: Knowled
   if (repoDoc || !served) {
     return (
       <li className="ah-know-row" data-search-row="" tabIndex={-1} aria-describedby={`${id}-tip`}>
-        <Tooltip label={repoDoc ? REPO_DOC_TOOLTIP : UNSERVED_NOTE_TOOLTIP} id={`${id}-tip`} block>
+        <Tooltip label={repoDoc ? REPO_DOC_TOOLTIP : UNSERVED_NOTE_REASON} id={`${id}-tip`} block>
           <span className="ah-know-body">
             {heading(repoDoc ? "book" : "file-text")}
             {details}
