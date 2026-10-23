@@ -159,9 +159,11 @@ DESIGN_PATHS = (
     # AGH-487: the built-in brain-care pack, seeded.
     "workflows/brain-care/context.yaml",
     "workflows/brain-care/fixtures/context-declined.yaml",
+    "workflows/brain-care/fixtures/context-no-commit.yaml",
     "workflows/brain-care/fixtures/context-over-budget.yaml",
     "workflows/brain-care/fixtures/context-trimmed.yaml",
     "workflows/brain-care/fixtures/inbox-all-drop.yaml",
+    "workflows/brain-care/fixtures/inbox-all-skipped.yaml",
     "workflows/brain-care/fixtures/inbox-empty.yaml",
     "workflows/brain-care/fixtures/inbox-external-pending.yaml",
     "workflows/brain-care/fixtures/inbox-three-notes.yaml",
@@ -170,9 +172,11 @@ DESIGN_PATHS = (
     "workflows/brain-care/prompts/context-trim.md",
     "workflows/brain-care/prompts/group.md",
     "workflows/brain-care/scripts/apply.py",
+    "workflows/brain-care/scripts/check_managed.py",
     "workflows/brain-care/scripts/groups.py",
     "workflows/brain-care/scripts/hub_branch.py",
     "workflows/brain-care/scripts/inventory.py",
+    "workflows/brain-care/scripts/outcome.py",
     "workflows/brain-care/scripts/read_inbox.py",
     # AGH-227: the built-in issue-to-pr pack, seeded.
     "workflows/issue-to-pr/fixtures/blocked.yaml",

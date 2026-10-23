@@ -6,13 +6,18 @@
 # skip, with a note. Only on trim does the run add a hub worktree on
 # <branch_prefix>brain-care-context-<run id> from origin/<default branch>, let an agent make the
 # cuts the owner kept there (never a managed file: that changes through hub.json or its seeded
-# sibling), and open a hub PR he merges. The hub only: a repo's files are trimmed in that repo.
-# Nothing reads or writes the tracker (ADR 0030). Suggested schedule: day 1 of each month
+# sibling; check_managed.py refuses a trim that touches one, as hub.lock at the base records it),
+# and open a hub PR he merges. The hub only: a repo's files are trimmed in that repo.
+# Nothing reads or writes the tracker (ADR 0030). The run returns an outcome (declined,
+# pr_opened or no_pr) whose reason says why, and how to remove the run's worktree and branch
+# (git worktree remove <path> && git branch -D <branch>). Suggested schedule: day 1 of each month
 # (hub.json schedules).
 version: 1
 name: context
 description: The monthly context audit - measure the always-loaded text, the owner picks the cuts, one hub PR.
 revision: 1
+returns: outcome
+outcome_field: outcome
 nodes:
   - id: inventory
     type: script
@@ -137,10 +142,25 @@ nodes:
         summary: {type: string, minLength: 1, maxLength: 4000}
         skipped: {type: array, maxItems: 20, items: {type: string, maxLength: 512}}
 
+  - id: managed
+    type: script
+    description: Refuse a trim that changes a file hub.lock (at the base) records as managed.
+    depends_on: [trim]
+    runtime: python
+    script: check_managed.py
+    args: [--worktree, $branch.output.path, --base, $branch.output.base]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        changed: {type: array, items: {type: string}}
+        managed: {type: array, maxItems: 0}
+      required: [changed, managed]
+
   - id: commits
     type: shell
     description: The commits on the branch, and whether a tracked change sits beside them.
-    depends_on: [trim]
+    depends_on: [managed]
     command: [hub, step, commits, --target, $branch.output.target]
     retry: {max_attempts: 0}
     output_format:
@@ -167,3 +187,32 @@ nodes:
         summary: {type: string}
         title_unmatched: {type: [string, "null"]}
       required: [url, found, summary, title_unmatched]
+
+  - id: outcome
+    type: script
+    description: How the run ended, said even when no PR opened, with the worktree's cleanup.
+    depends_on: [approve, branch, commits, pr]
+    trigger_rule: none_failed_min_one_success
+    runtime: python
+    script: outcome.py
+    args:
+      - context
+      - --decision
+      - $approve.output.decision
+      - --commits
+      - $commits.output.count
+      - --dirty
+      - $commits.output.dirty
+      - --pr
+      - $pr.output.url
+      - --worktree
+      - $branch.output.path
+      - --branch
+      - $branch.output.branch
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        outcome: {type: string, enum: [declined, pr_opened, no_pr]}
+        reason: {type: string}
+      required: [outcome, reason]
