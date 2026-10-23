@@ -669,8 +669,9 @@ make run                             # the same as uv run hub web
 ```
 
 **See it with sample data.** With the app running (either way), `make demo` loads a synthetic demo hub, a live session
-with a guard denial, a session waiting on a guard ask, a failed run, an ended session with its cost and an ended
-chat driven from the app, so every screen has content. It never reads your real transcripts.
+with a guard denial, a session waiting on a guard ask, a failed run, an ended session with its cost, an ended
+chat driven from the app, and two scenarios with their actions and three scenario runs (passed, failed, running), so
+every screen has content. It never reads your real transcripts.
 
 **Work on the web app.** `make dev` starts the API on 7420 and the Vite dev server with hot reload on
 `http://127.0.0.1:5173`, which forwards `/api` to the API; Ctrl C stops both.
