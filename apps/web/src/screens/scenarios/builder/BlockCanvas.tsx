@@ -92,6 +92,8 @@ export interface InsertTarget {
 const DRAG_PX = 4;
 /** Fit never zooms past this: blocks stay at a readable size, not a poster. */
 const FIT_MAX = 1.2;
+/** Fit never zooms out past this: below it the words cannot be read; the rest scrolls. */
+const FIT_MIN = 0.8;
 /** How near a gap the dragged blocks snap into it, in screen pixels. */
 const SNAP_PX = 48;
 
@@ -579,11 +581,13 @@ function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
               onSlot={ctx.props.onSlot}
             />
           </span>
+          {/* The full facts on the selected block; a one-line summary on the others. */}
           <BlockFacts
             node={node}
             action={ctx.props.actionOf(node)}
             row={ctx.props.planOf?.(node.id) ?? null}
             environment={ctx.props.planEnvironment ?? null}
+            compact={ctx.props.selected !== node.id}
           />
         </span>
         <Badges ctx={ctx} node={node} />
@@ -750,7 +754,7 @@ export function BlockCanvas(props: BlockCanvasProps) {
       const found = box as { left: number; top: number; right: number; bottom: number } | null;
       if (!found || size.width === 0) return;
       const world = { width: found.right - found.left, height: found.bottom - found.top };
-      const view = fitView(world, size, { max: FIT_MAX, min: 0.5, pad: 48 });
+      const view = fitView(world, size, { max: FIT_MAX, min: FIT_MIN, pad: 48 });
       // Keep the top of a tall scenario in view rather than its middle.
       const y = world.height * view.k > size.height ? 48 : view.y;
       setView({ k: view.k, x: view.x - found.left * view.k, y: y - found.top * view.k }, animate);

@@ -702,3 +702,22 @@
 .bk-block {
   min-width: 460px;
 }
+
+/* The facts in one line, on every block that is not selected. */
+.bk-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.bk-line > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.bk-line-plan {
+  color: var(--text);
+}
