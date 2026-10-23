@@ -17,6 +17,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   problem" with a signal anyone can check (a command `post-merge-verify` can run, a `/retro` number by a date, or no
   new bug of a kind for N weeks). `/triage` drafts it, and the Definition of Ready lists it. `./hub run` still checks
   the headings only. A hub gets it with `hub sync` after it bumps `platform.version` (AGH-451).
+- The hub's agents keep code comments short and plain: the `plain-language` skill gains a Code comments section with an
+  example and a rule to prefer the common word to an internal name, the rendered `AGENTS.md` rule 6 counts code
+  comments as text for people, and the `quality-reviewer` flags comments that restate the code, narrate the change or
+  name a ticket. A hub gets it with `hub sync` after it bumps `platform.version` (AGH-521).
 
 ### Fixed
 
