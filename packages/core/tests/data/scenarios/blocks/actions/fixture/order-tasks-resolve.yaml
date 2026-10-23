@@ -3,7 +3,7 @@ name: order-tasks-resolve
 description: Resolve the order's open tasks
 effect: write
 runtime: sh
-script: scripts/fixture_action.sh
+script: scripts/fixture_write.sh
 timeout: 1m
 inputs:
   order_id: {type: string, required: true}

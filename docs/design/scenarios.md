@@ -35,51 +35,70 @@ A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blo
 `version: 2` and `stages:` in place of `nodes:` (a version-2 document with `nodes`, `depends_on` or `trigger_rule` fails
 the load; version 1 loads as before, with doctor's `scenarios.graph_format` warning).
 
-- A stage is `name` (unique, case and blanks folded), optional `description`, and `steps`. Position is order: a block
-  runs after the one before it, a stage after the stage before it.
+- A stage is `name`, optional `description`, and `steps`. Two stage names with the same slug (lowercase, each run of
+  other characters one `-`) fail the load. Position is order: a block runs after the one before it, a stage after the
+  stage before it.
 - A step is one of `do: <action>` (an `action` node), `wait_until: <action>` with `until`, `every`, `timeout` (an
   `expect` node), `you: <message>` with optional `decisions`, `capture_response` (an `approval`), `wait:` with
   `duration`, `until` or `attention` (a `wait`) and `include: <scenario>` with `with` (an `include`). Common optional
   keys: `id`, `description`, `with`, `capture`, `retry`, `timeout` (on `do`).
-- A container is `repeat: {max, until, steps}` (a `loop_group`; none inside another), `if: <cond>` with `then` and
-  optional `else`, or `together: [[…], […]]` (two or more paths; the next block waits for every path).
+- A container is `repeat: {max, until, steps}` (a `loop_group`; none inside another), `if: <cond>` with `then` (not
+  empty) and optional `else`, or `together: [[…], […]]` (two or more paths, none empty).
 - Conditions use the `when:` grammar. An else is the complement of its If's condition (each operator's opposite, `&&`
   and `||` swapped, expanded to or-of-ands); more than 8 atoms, or more than 64 terms after expansion, fails the load.
-- A block without `id` gets `<stage slug>-<n>`, nested `<stage slug>-<n>-<m>`; an `id` follows the node id rules.
-- Translation: core turns the tree into nodes at load, before includes are expanded: a block's entry nodes depend on
-  the previous block's exit nodes; an If puts its condition (or the complement) on each branch's first node and the
-  block after it takes `trigger_rule: none_failed_min_one_success`; a Together's paths start on the previous block and
-  the next block depends on each path's last. It also keeps a **block map** (address such as `2.3` or `2.3.then.1` →
-  node ids, entry nodes, key path). A problem on a generated node is reported on the tree's key path.
-- One canonical YAML form, written by `generator`'s scenario writer, shared by hub web's Save and `hub scenario
-  migrate`. Save writes nothing when the canonical bytes equal the file's, and keeps `revision` then.
+- **Addresses.** A stage is `<s>` (from 1); a block in it `<s>.<n>`; inside a block, `then.<n>` and `else.<n>` (an
+  If), `p<k>.<n>` (path k of a Together) and `<n>` (a Repeat's steps), e.g. `2.3`, `2.3.then.1`, `2.3.p2.1`, `4.1.2`.
+- **Ids.** A block without `id` gets `<stage slug>--<address in the stage, dots as ->`: `fetch-order--2`,
+  `payment--3-then-1`, `fix-shipping--1-p2-1`. A slug never holds `--`, so two derived ids never meet; an explicit
+  `id` (the node id rules) that equals another block's id fails the load.
+- **Translation.** Core turns the tree into nodes at load; an included version-2 scenario is translated the same way
+  when the include resolver reads it, before includes are expanded. Each block has entry and exit nodes: a block's
+  entry nodes depend on the previous block's exit nodes. An If puts its condition on the first node of `then` and
+  the complement on the first node of `else`; its exit nodes are both branches' last nodes, or, with no `else`, the
+  last node of `then` and the exit nodes of the block before the If (an If with no `else` cannot be a scenario's
+  first block); the block after it takes `trigger_rule: none_failed_min_one_success`. A Together's paths start on
+  the previous block and its exit nodes are each path's last node. The **block map** gives each address its node
+  ids, entry nodes (with the `<step>__ask` gate in front of a gated step), exit nodes and key path. A problem on a
+  generated node is reported on the tree's key path.
+- **Canonical YAML**, written by `generator`'s scenario writer and shared by hub web's Save and `hub scenario
+  migrate`: `yaml.safe_dump` (no key sorting, Unicode kept, width 100, so a long `until` folds), with keys in this
+  order: `version`, `kind`, `name`, `revision`, `description`, `inputs`, `stages`; a stage's `name`, `description`,
+  `steps`; a step's kind key first, then `id`, `description`, `with`, the kind's own keys (`until`, `every`,
+  `timeout`; `decisions`, `capture_response`; `max`, `until`, `steps`; `then`, `else`), `capture`, `retry`. Save
+  writes nothing, and keeps `revision`, when the canonical bytes equal the file's.
 - `hub scenario migrate [NAME…] [--check]` writes a graph scenario as a tree (one stage named after the scenario, each
   id kept as `id:` where it differs from the derived one) when the graph is series-parallel with only `all_success`
   joins, `when` branches and the joins an If makes; otherwise nothing is written and each node it cannot map is named
-  with why (exit 1). The new file translates to the same nodes, edges and conditions.
+  with why (exit 1). The new file translates to the same nodes, edges and conditions. hub web's builder opens a graph
+  scenario read-only, with a Migrate action.
 
 ### Debugging
 
 A scenario run may pause before a block: by a **breakpoint**, or by **Step** ([ADR
 0049](../adr/0049-scenario-blocks-and-run-control.md)). It is not a gate and Approvals does not list it.
 
-- Breakpoints are block addresses of the run's pinned tree, kept in the run folder (`breakpoints.json`, written whole),
-  set by `hub scenario run --break ADDR…`, `hub scenario break RUN ADDR… [--off]` (adds or removes), `hub scenario break RUN --set [ADDR…]` (replaces the set; none
-  clears it) or hub web, read before each node:
-  one set while the run runs takes effect at the next block. They are never in the document.
+- Breakpoints are block addresses of the run's pinned tree, kept in the run folder: `breakpoints.json`, written whole
+  (a temporary file, then a rename), at most 64 KiB and 512 addresses, read before each node, never through a link; a
+  file that cannot be read or parsed counts as no breakpoint and adds a record line. They are set by `hub scenario
+  run --break ADDR…`, `hub scenario break RUN ADDR… [--off]` (adds or removes), `hub scenario break RUN --set
+  [ADDR…]` (replaces the set; none clears it) or hub web. One set while the run runs takes effect at its next block.
+  They are never in the document.
 - Before a block means before its first node and before its `<step>__ask` gate; for a stage, before its first block;
   a Repeat, before the group (a body block's breakpoint pauses in every iteration); an If, before its condition is
-  read; a Together, before any path. The pause answers no gate.
-- `hub scenario step RUN` runs exactly the next leaf block (Do, Wait until, You, Wait, and an Include as one block) in declaration order and
-  pauses before the one after it, entering containers; the run stays in step mode until `hub scenario continue RUN`,
-  which runs to the next breakpoint or the end. A gate met meanwhile pauses as before; once answered, a stepping run
-  pauses before the next block. Both are resumes, recorded with who sent them.
+  read; a Together, before any path. An Include is one block: nothing inside the scenario it includes takes a
+  breakpoint. The pause answers no gate.
+- `hub scenario step RUN` runs exactly the next leaf block (Do, Wait until, You, Wait, and an Include as one block)
+  in declaration order and pauses before the one after it, entering containers; the run stays in step mode until
+  `hub scenario continue RUN`, which runs to the next breakpoint or the end. A gate met meanwhile pauses as before;
+  once answered, a stepping run pauses before the next block. Both are resumes, recorded with who sent them.
 - With a breakpoint or step mode on, a layer holding a block to pause at runs one node at a time in declaration
   order; without either, the engine runs as before.
-- A paused run shows its inputs (the effective ones, environment values included), every capture, and each finished block's rendered inputs, status and last output
-  (a Wait until's last poll and its count), from its record.
-- Breakpoints, Step, Continue and a start with breakpoints are refused, recording nothing, on a `production: true`
-  environment; runs without them keep the policy above there.
+- While a run is paused, hub web may read its inputs (the effective ones, environment values included) and each
+  finished block's rendered inputs, status and last output (a Wait until's last poll and its count), from its record,
+  through a route that needs the launch cookie; never for a run on a `production: true` environment.
+- Breakpoints, Step, Continue and a start with breakpoints are refused, recording nothing, when the run's environment
+  is `production: true` in the effective config as read at that moment; clearing breakpoints and cancelling a run
+  stay allowed. Runs without breakpoints keep the policy above there.
 - Nothing is rewound: no captured value is edited, no finished block re-run or skipped.
 
 ### Actions and the script contract

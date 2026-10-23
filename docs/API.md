@@ -45,7 +45,9 @@ the first routes were written ([ADR 0017](adr/0017-api-second-composition-root.m
   the nine AGH-350 added (`SCENARIO_PATHS`): `GET /scenarios`, `GET /scenarios/{project}/{name}`, `POST
   /scenarios/{project}/{name}/plan|runs`, `GET /scenario-runs/{run_id}` and `POST
   /scenario-runs/{run_id}/investigation|answer|findings/{finding_id}/issue|findings/{finding_id}/inbox`
-  ([Scenarios](#scenarios)), and the two AGH-393 added (`KNOWLEDGE_PATHS`, both GET):
+  ([Scenarios](#scenarios)), the five AGH-507 adds: `PUT /scenario-runs/{run_id}/breakpoints`, `POST
+  /scenario-runs/{run_id}/step|continue`, `GET /scenario-runs/{run_id}/values` and `POST
+  /scenarios/{project}/{name}/migrate`, and the two AGH-393 added (`KNOWLEDGE_PATHS`, both GET):
   `/projects/{project}/knowledge/search` and `/projects/{project}/brain/backlinks` ([Knowledge](#knowledge)). A test
   fails on any other path.
 - A field kept only for compatibility is marked `deprecated` in the document and stays until `/api/v2`: a session's
@@ -778,10 +780,10 @@ folder, the server's environment minus `LINEAR_API_KEY`); no problem quotes its 
   `scenario`, `pack`, `environment`, `mode`, `status` (the end's, `null` while it has none), `open_investigation`
   and `paused_step` (the investigation waiting for an answer), `timeline` (each line's `event`, `node`, `attempt`,
   `status`, `at`, and an investigation read's (`agent_action`) `action` and `effect`), `polls` (an expect's polls:
-  `held`, never the output), `captures` (`name`, `value`), `decisions` (every gate's answer: `choice`, `text`,
+  `held`, never the output; outputs only through `…/values`, below), `captures` (`name`, `value`), `decisions` (every gate's answer: `choice`, `text`,
   `approver`, `where`), `actions` (each action call's policy facts: `node`, `attempt`, `poll`, `action`, `effect`,
   `origin`, `decision`, `reason_kind`, `content_hash`, `approver`, `status`, `failure_kind`, `at`; never its inputs
-  or output), `findings`, `investigations` (each with `agent_session_id`, the session its
+  or output, which only `…/values` gives), `findings`, `investigations` (each with `agent_session_id`, the session its
   `investigation-<n>.session` link names, read never through a link, else `null`), `workarounds` and `proposal`: the latest investigation's latest proposal, each option with its `steps`, its
   `plan` as shown, `needs_acceptance`, `accept_commands` (one per drafted action that is still a draft),
   `pickable` and `refusal`, judged now as an answer would be (only while its investigation waits; `the
@@ -841,26 +843,35 @@ folder, the server's environment minus `LINEAR_API_KEY`); no problem quotes its 
   `finding_id` matches `^f[0-9]{1,6}$` (else 400); an unknown finding is a 404 (entity `finding`).
 
 Debugging and migration (AGH-507, [ADR 0049](adr/0049-scenario-blocks-and-run-control.md), [design](design/scenarios.md)
-§ Debugging): each command runs the CLI as a child and waits for it, as a gate decision does.
+§ Debugging): each command runs the CLI as a child and waits for it, as a gate decision does; all of them are run
+writes (`RUN_WRITES`, migrate an item write, `ITEM_WRITES`: [Local security](#local-security)).
 
 - `PUT /api/v1/scenario-runs/{run_id}/breakpoints` with `{blocks: [<address>…]}` (at most 512 addresses of the run's
-  pinned tree, e.g. `2.3`, `2.3.then.1`) → 200 `Breakpoints` (`run_id`, `blocks`): replaces the run's breakpoints
-  through `hub scenario break RUN --set ADDR…`; one set while the run runs takes effect at its next block. An address the pinned tree
-  does not hold is 422 naming it.
+  pinned tree, as [design](design/scenarios.md) § Tree format writes them) → 200 `Breakpoints` (`run_id`, `blocks`):
+  replaces the run's breakpoints through `hub scenario break RUN --set ADDR…`; one set while the run runs takes effect
+  at its next block. An address the pinned tree does not hold is 422 `workflow-run-unknown-block` naming it. An empty
+  list clears them, also on production.
 - `POST /api/v1/scenario-runs/{run_id}/step` and `…/continue` → 202 `RunAccepted` (`action` `step` or `continue`): the
-  run must be in a debug pause (409 `workflow-run-not-debug-paused`, for example at a gate, which keeps its own paths);
-  `hub scenario step|continue` records the command with the approver and resumes the run in a detached child.
+  run must be in a debug pause (409 `workflow-run-not-debug-paused`; a gate keeps its own paths) and its child must
+  have ended (409 `workflow-run-in-use`); `hub scenario step|continue` records the command with the approver and
+  resumes the run in a detached child.
 - `POST /api/v1/scenarios/{project}/{name}/runs` also takes `breakpoints` (as above, addresses of the tree it pins).
-- On an environment with `production: true`, each of these is 409 `workflow-run-debug-production` and nothing is
+- When the run's environment is `production: true` in the effective config as read then, breakpoints other than an
+  empty list, Step, Continue and a start with breakpoints are 409 `workflow-run-debug-production` and nothing is
   recorded; a start without breakpoints is unchanged.
 - `ScenarioRunDetail` adds `debug` (`null` unless the run is in a debug pause: `block`, `node`, `reason` `breakpoint` or
-  `step`), `breakpoints`, `stepping`, `inputs` (the run's effective inputs) and, per finished block, `blocks` (`address`,
-  `node`, `status`, `with` as rendered, `output`, and for a Wait until `polls` and `last_poll`), from the record (values
-  as it holds them, credential values already redacted). `ScenarioDetail` adds `version` and, for version 2, `blocks`
-  (`address`, `kind`, `label`, `entry_nodes`).
+  `step`), `breakpoints` and `stepping`: metadata only, as the rest of it. `ScenarioDetail` adds `version` and, for
+  version 2, `blocks` (`address`, `kind`, `label`, `entry_nodes`).
+- `GET /api/v1/scenario-runs/{run_id}/values` → 200 `ScenarioRunValues`: `inputs` (the run's effective inputs,
+  environment values included) and `blocks`, one per finished block (`address`, `node`, `status`, `with` as rendered,
+  `output`, and for a Wait until `polls` and `last_poll`), from the record (values as it holds them, credential values
+  already redacted). It needs the launch cookie, as the agent-session routes do, so no other local process reads it;
+  the run must be paused (409 `workflow-run-not-paused`) and its environment not production (409
+  `workflow-run-debug-production`).
 - `POST /api/v1/scenarios/{project}/{name}/migrate` with `{check?}` → 200 `ScenarioMigration` (`path`, `written`,
   `yaml` (the tree, canonical), `problems` (`node`, `message`)): what `hub scenario migrate NAME [--check]` does; with
-  problems nothing is written (200, `written: false`). A version-2 scenario is 409 `scenario-already-tree`.
+  problems nothing is written (200, `written: false`). A version-2 scenario is 409 `scenario-already-tree`; in the
+  container it is 409 `hub_read_only`.
 
 Problems:
 
@@ -869,12 +880,12 @@ Problems:
 | 400 | "Invalid request parameter" | `run_id` does not match `^[a-z0-9][a-z0-9-]{0,31}$`, or `finding_id` does not match `^f[0-9]{1,6}$` |
 | 401 · 403 · 415 | as in [Local security](#local-security) | a `POST` without the launch cookie · a foreign `Origin` or fetch site · a body that is not JSON |
 | 404 | `about:blank` | no registered hub holds the run (or its record), the run is not a scenario run, an unknown project, scenario or finding, or the hub has no workdir |
-| 404 | `urn:agent-hub:problem:run-control-off` | a `POST` in the container (`AGENT_HUB_IN_CONTAINER=1`) |
+| 404 | `urn:agent-hub:problem:run-control-off` | a `POST` or `PUT` in the container (`AGENT_HUB_IN_CONTAINER=1`) |
 | 409 | `workflow-run-undeclared-environment` · `-denied` (`steps`) · `-plan-problem` | a start whose plan may not start; no run is created |
 | 409 | `workflow-run-not-paused` | not a scenario run, or not paused at an open, unanswered investigation |
 | 409 | `workflow-run-pick-refused` | a pick of no option of the latest proposal, of one holding a `deny` or a draft action, or of one whose plan changed since it was shown |
 | 409 | `workflow-run-in-use` · `-refused` | the run's child still runs · `hub workflow decide` refused the answer |
-| 409 | `workflow-run-not-debug-paused` · `-debug-production` · `scenario-already-tree` | Step or Continue outside a debug pause · a debug command or a start with breakpoints on a production environment · migrate of a version-2 scenario |
+| 409 | `workflow-run-not-debug-paused` · `-debug-production` · `scenario-already-tree` | Step or Continue outside a debug pause · a debug write, a start with breakpoints or a values read on a production environment · migrate of a version-2 scenario |
 | 422 | `workflow-run-unknown-block` | a breakpoint address the run's pinned tree does not hold |
 | 409 | `workflow-run-issue-exists` · `-tracker-not-connected` · `-note-exists` · `-link-in-path` · `-finding-unusable` | a finding's issue or note cannot be made (see above) |
 | 409 | `workflow-run-link-in-path` | the link file `investigation-<n>.session` is a symbolic link |
@@ -900,11 +911,11 @@ index rows, which a foreign page can trigger but whose answer it cannot read ([K
 The agent-session routes add a cookie and stricter Origin rules ([Agent sessions](#agent-sessions)), and the workflow
 run writes (`RUN_WRITES`: start, cancel, resume and abandon a run, a gate's decision, an AC's check run, a
 change request's decision, and the scenario writes: a plan, a start, an investigation's session and answer, a
-finding's issue and inbox note), the restores and the
-Publish (`ITEM_WRITES`) need that cookie too ([Workflow run commands](#workflow-run-commands), [Skills](#skills),
+finding's issue and inbox note, a run's breakpoints, Step and Continue), the restores, the Publish and a scenario's
+migrate (`ITEM_WRITES`) need that cookie too, as does the read of a scenario run's values ([Workflow run commands](#workflow-run-commands), [Skills](#skills),
 [Workflows](#workflows)); every other route is unchanged and needs no cookie. In the container (`AGENT_HUB_IN_CONTAINER=1`, where no token is
-minted and the hubs are mounted read-only) a restore or a publish answers 409 `hub_read_only` before the cookie is
-checked.
+minted and the hubs are mounted read-only) a restore, a publish or a migrate answers 409 `hub_read_only` before the
+cookie is checked.
 
 The two learning decisions, which reach the network, the four workflow run commands and a workflow gate's decision,
 which start or stop processes, and the two restores and the Publish (`ITEM_WRITES`), which write into a hub's tree,

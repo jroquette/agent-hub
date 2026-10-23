@@ -30,7 +30,7 @@
   },
   "nodes": [
     {
-      "id": "fetch-order-1",
+      "id": "fetch-order--1",
       "type": "action",
       "action": "queue-send",
       "with": {
@@ -38,11 +38,11 @@
       }
     },
     {
-      "id": "fetch-order-2",
+      "id": "fetch-order--2",
       "type": "expect",
       "action": "order-state",
       "depends_on": [
-        "fetch-order-1"
+        "fetch-order--1"
       ],
       "every": "15s",
       "timeout": "10m",
@@ -52,11 +52,11 @@
       }
     },
     {
-      "id": "quote-1",
+      "id": "review--1",
       "type": "action",
       "action": "queue-send",
       "depends_on": [
-        "fetch-order-2"
+        "fetch-order--2"
       ],
       "with": {
         "message": "demo.review-orders",
@@ -64,55 +64,55 @@
       }
     },
     {
-      "id": "quote-2",
+      "id": "review--2",
       "type": "expect",
       "action": "order-state",
       "depends_on": [
-        "quote-1"
+        "review--1"
       ],
       "every": "15s",
       "timeout": "10m",
       "until_when": "$self.output.review_status == 'REVIEWED' && $self.output.payment_status == 'CONFIRMED' && $self.output.open_tasks > 0"
     },
     {
-      "id": "switch-carrier-1",
+      "id": "switch-carrier--1",
       "type": "action",
       "action": "order-set-carrier",
       "depends_on": [
-        "quote-2"
+        "review--2"
       ],
       "with": {
         "order_id": "$CTX.order_id"
       }
     },
     {
-      "id": "switch-carrier-2",
+      "id": "switch-carrier--2",
       "type": "action",
       "action": "order-tasks-resolve",
       "depends_on": [
-        "switch-carrier-1"
+        "switch-carrier--1"
       ],
       "with": {
         "order_id": "$CTX.order_id"
       }
     },
     {
-      "id": "switch-carrier-3",
+      "id": "switch-carrier--3",
       "type": "action",
       "action": "shipments-regenerate",
       "depends_on": [
-        "switch-carrier-2"
+        "switch-carrier--2"
       ],
       "with": {
         "order_id": "$CTX.order_id"
       }
     },
     {
-      "id": "switch-carrier-4",
+      "id": "switch-carrier--4",
       "type": "action",
       "action": "queue-send",
       "depends_on": [
-        "switch-carrier-3"
+        "switch-carrier--3"
       ],
       "with": {
         "message": "demo.process-order",
@@ -120,33 +120,33 @@
       }
     },
     {
-      "id": "switch-carrier-5",
+      "id": "switch-carrier--5",
       "type": "expect",
       "action": "order-state",
       "depends_on": [
-        "switch-carrier-4"
+        "switch-carrier--4"
       ],
       "every": "15s",
       "timeout": "10m",
       "until_when": "$self.output.order_status == 'PROCESSED'"
     },
     {
-      "id": "dispatch-1",
+      "id": "dispatch--1",
       "type": "action",
       "action": "shipments-mark-in-transit",
       "depends_on": [
-        "switch-carrier-5"
+        "switch-carrier--5"
       ],
       "with": {
         "order_id": "$CTX.order_id"
       }
     },
     {
-      "id": "dispatch-2",
+      "id": "dispatch--2",
       "type": "expect",
       "action": "order-state",
       "depends_on": [
-        "dispatch-1"
+        "dispatch--1"
       ],
       "every": "15s",
       "timeout": "10m",
@@ -156,19 +156,19 @@
       }
     },
     {
-      "id": "invoice-pdf-1",
+      "id": "invoice-pdf--1",
       "type": "approval",
       "message": "Render the PDF of invoice $CTX.invoice_number by hand, then approve.",
       "depends_on": [
-        "dispatch-2"
+        "dispatch--2"
       ]
     },
     {
-      "id": "send-invoice-1",
+      "id": "send-invoice--1",
       "type": "action",
       "action": "queue-send",
       "depends_on": [
-        "invoice-pdf-1"
+        "invoice-pdf--1"
       ],
       "with": {
         "message": "demo.invoice",
@@ -176,22 +176,22 @@
       }
     },
     {
-      "id": "send-invoice-2",
+      "id": "send-invoice--2",
       "type": "expect",
       "action": "order-state",
       "depends_on": [
-        "send-invoice-1"
+        "send-invoice--1"
       ],
       "every": "15s",
       "timeout": "10m",
       "until_when": "$self.output.invoice_status == 'SENT' && $self.output.invoice_update_job_id != ''"
     },
     {
-      "id": "activation-1",
+      "id": "approval--1",
       "type": "action",
       "action": "queue-send",
       "depends_on": [
-        "send-invoice-2"
+        "send-invoice--2"
       ],
       "with": {
         "message": "demo.poll",
@@ -199,22 +199,22 @@
       }
     },
     {
-      "id": "activation-2",
+      "id": "approval--2",
       "type": "expect",
       "action": "order-state",
       "depends_on": [
-        "activation-1"
+        "approval--1"
       ],
       "every": "15s",
       "timeout": "10m",
       "until_when": "$self.output.approval_job_id != ''"
     },
     {
-      "id": "activation-3",
+      "id": "approval--3",
       "type": "action",
       "action": "queue-send",
       "depends_on": [
-        "activation-2"
+        "approval--2"
       ],
       "with": {
         "message": "demo.poll",
@@ -222,41 +222,41 @@
       }
     },
     {
-      "id": "activation-4",
+      "id": "approval--4",
       "type": "expect",
       "action": "order-state",
       "depends_on": [
-        "activation-3"
+        "approval--3"
       ],
       "every": "15s",
       "timeout": "10m",
       "until_when": "$self.output.review_status == 'APPROVED'"
     },
     {
-      "id": "payment-1",
+      "id": "payment--1",
       "type": "approval",
       "message": "Pay order $CTX.order_id in the payment sandbox, then approve.",
       "depends_on": [
-        "activation-4"
+        "approval--4"
       ]
     },
     {
-      "id": "payment-2",
+      "id": "payment--2",
       "type": "expect",
       "action": "order-state",
       "depends_on": [
-        "payment-1"
+        "payment--1"
       ],
       "every": "15s",
       "timeout": "15m",
       "until_when": "$self.output.paid == true && $self.output.payment_job_id != ''"
     },
     {
-      "id": "payment-3",
+      "id": "payment--3",
       "type": "action",
       "action": "queue-send",
       "depends_on": [
-        "payment-2"
+        "payment--2"
       ],
       "with": {
         "message": "demo.poll",
@@ -264,11 +264,11 @@
       }
     },
     {
-      "id": "payment-4",
+      "id": "payment--4",
       "type": "expect",
       "action": "order-state",
       "depends_on": [
-        "payment-3"
+        "payment--3"
       ],
       "every": "15s",
       "timeout": "10m",
