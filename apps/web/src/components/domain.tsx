@@ -414,6 +414,23 @@ const HEALTH_BADGE = {
   error: { status: "failed", label: "Doctor errors" },
 } as const;
 
+/**
+ * The calm form of health, for screens about something else (Environments, Brain, Toolkit, Hub
+ * config): a neutral hint that the setup check has something to suggest, never an alarm.
+ */
+const HEALTH_HINT = {
+  warning: {
+    label: "Setup tips",
+    detail:
+      "The setup check (hub doctor) has a few suggestions for this hub's files. Nothing here is affected; open Health to see them.",
+  },
+  error: {
+    label: "Setup needs a fix",
+    detail:
+      "The setup check (hub doctor) found something to fix in this hub's files. You can keep using this page; open Health to see what to change.",
+  },
+} as const;
+
 /** One figure of a project card: a label above, the value below, an optional note under it. */
 export function CardStat({
   label,
@@ -459,13 +476,17 @@ export function ProjectCardHead({
   nameHref,
   nameId,
   trailing,
+  healthDisplay = "status",
 }: {
   p: ProjectCardHeadData;
   nameHref?: string | undefined;
   nameId?: string | undefined;
   trailing?: ReactNode;
+  /** `status`: the doctor badge (Portfolio). `hint`: a neutral setup hint, only when there is one. */
+  healthDisplay?: "status" | "hint" | undefined;
 }) {
   const health = p.health ? HEALTH_BADGE[p.health] : null;
+  const hint = p.health && p.health !== "ok" ? HEALTH_HINT[p.health] : null;
   return (
     <div className="ah-pcard-head">
       <div className="ah-stack" style={{ gap: 2, minWidth: 0 }}>
@@ -499,15 +520,26 @@ export function ProjectCardHead({
           Sync pending
         </span>
       )}
-      <Tooltip label={p.healthLabel}>
-        <span role="img" aria-label={p.healthLabel}>
-          {health ? (
-            <StatusBadge status={health.status} label={health.label} />
-          ) : (
-            <StatusBadge status="idle" label="Not checked" quiet />
-          )}
-        </span>
-      </Tooltip>
+      {healthDisplay === "status" ? (
+        <Tooltip label={p.healthLabel}>
+          <span role="img" aria-label={p.healthLabel}>
+            {health ? (
+              <StatusBadge status={health.status} label={health.label} />
+            ) : (
+              <StatusBadge status="idle" label="Not checked" quiet />
+            )}
+          </span>
+        </Tooltip>
+      ) : (
+        hint && (
+          <Tooltip label={hint.detail}>
+            <span className="ah-badge ah-badge-idle" role="img" aria-label={hint.detail}>
+              <Icon name="stethoscope" />
+              {hint.label}
+            </span>
+          </Tooltip>
+        )
+      )}
       {trailing}
     </div>
   );

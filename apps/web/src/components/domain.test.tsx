@@ -20,6 +20,7 @@ import {
   shownGoldenSteps,
   NeedsYouList,
   ProjectCard,
+  ProjectCardHead,
   SessionTile,
   type LiveSession,
   type ProjectCardData,
@@ -218,6 +219,29 @@ describe("NeedsYouList", () => {
 
     expect(screen.getByText(/Nothing needs you\./)).toBeInTheDocument();
     expect(screen.getByText(/1 session running/)).toBeInTheDocument();
+  });
+});
+
+describe("ProjectCardHead health display", () => {
+  it("shows the doctor badge by default", () => {
+    render(<ProjectCardHead p={{ ...card, health: "error" }} />);
+    expect(screen.getByText("Doctor errors")).toBeInTheDocument();
+  });
+
+  it("shows a calm setup hint instead of the doctor badge in hint mode", () => {
+    render(<ProjectCardHead p={{ ...card, health: "error" }} healthDisplay="hint" />);
+    expect(screen.queryByText("Doctor errors")).toBeNull();
+    expect(screen.getByText("Setup needs a fix")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /You can keep using this page/ })).toBeInTheDocument();
+  });
+
+  it("shows nothing in hint mode when the hub is healthy or not checked", () => {
+    const { rerender } = render(
+      <ProjectCardHead p={{ ...card, health: "ok" }} healthDisplay="hint" />,
+    );
+    expect(screen.queryByRole("img")).toBeNull();
+    rerender(<ProjectCardHead p={{ ...card, health: null }} healthDisplay="hint" />);
+    expect(screen.queryByRole("img")).toBeNull();
   });
 });
 
