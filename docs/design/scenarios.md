@@ -35,8 +35,9 @@ A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blo
 `version: 2` and `stages:` in place of `nodes:` (a version-2 document with `nodes`, `depends_on` or `trigger_rule` fails
 the load; version 1 loads as before, with doctor's `scenarios.graph_format` warning).
 
-- A stage is `name`, optional `description`, and `steps`. Two stage names with the same slug (lowercase, each run of
-  other characters one `-`) fail the load. Position is order: a block runs after the one before it, a stage after the
+- A stage is `name`, optional `description`, and `steps`. Its slug is the name in lowercase, each run of other
+  characters one `-`; a slug that does not start with a letter (`1. Fetch`, `Étape`), or two stages with the same
+  slug, fail the load naming the stage. Position is order: a block runs after the one before it, a stage after the
   stage before it.
 - A step is one of `do: <action>` (an `action` node), `wait_until: <action>` with `until`, `every`, `timeout` (an
   `expect` node), `you: <message>` with optional `decisions`, `capture_response` (an `approval`), `wait:` with
@@ -53,10 +54,16 @@ the load; version 1 loads as before, with doctor's `scenarios.graph_format` warn
   `id` (the node id rules) that equals another block's id fails the load.
 - **Translation.** Core turns the tree into nodes at load; an included version-2 scenario is translated the same way
   when the include resolver reads it, before includes are expanded. Each block has entry and exit nodes: a block's
-  entry nodes depend on the previous block's exit nodes. An If puts its condition on the first node of `then` and
-  the complement on the first node of `else`; its exit nodes are both branches' last nodes, or, with no `else`, the
-  last node of `then` and the exit nodes of the block before the If (an If with no `else` cannot be a scenario's
-  first block); the block after it takes `trigger_rule: none_failed_min_one_success`. A Together's paths start on
+  entry nodes depend on the exit nodes of the block before it **in the same step list**: the stages' steps form one list, in
+  order, and each branch, path and Repeat body is a list of its own, whose first block depends on what its container
+  depends on (a Repeat body's on nothing inside the body). An If puts
+  its condition on every entry node of the first block of `then`, and the complement on those of `else`; when such
+  an entry node already carries a condition (an If or a Together inside the branch), the two are joined by
+  distributing `&&` over the or-of-ands form, at most 64 terms. The If's exit nodes are both branches' last nodes,
+  or, with no `else`, the last node of `then` and the exit nodes of the block before the If in its list; so an If
+  with no `else` must not be the first block of a list: not the scenario's first block, nor the first of a branch, a
+  path or a Repeat body (write the `else`, or put a block before it). The block after an If takes `trigger_rule:
+  none_failed_min_one_success`. A Together's paths start on
   the previous block and its exit nodes are each path's last node. The **block map** gives each address its node
   ids, entry nodes (with the `<step>__ask` gate in front of a gated step), exit nodes and key path. A problem on a
   generated node is reported on the tree's key path.
