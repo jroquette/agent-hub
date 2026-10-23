@@ -166,9 +166,10 @@ describe("ScenariosScreen (scenarios list)", () => {
       "/api/v1/approvals": aPage([]),
     });
     await screen.findByText("No scenarios yet.");
-    const buttons = screen.getAllByRole("button", { name: "New scenario" });
-    expect(buttons).toHaveLength(2);
-    await user.click(buttons[1]!);
+    const [header, inEmptyState] = screen.getAllByRole("button", { name: "New scenario" });
+    expect(header).toBeInTheDocument();
+    if (!inEmptyState) throw new Error("the empty state offers no New scenario");
+    await user.click(inEmptyState);
     expect(empty.router.state.location.pathname).toBe("/scenarios/new");
   });
 
