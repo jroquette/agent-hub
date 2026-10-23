@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useState } from "react";
 
 import {
   AppLink,
@@ -211,6 +211,16 @@ export function SessionRail({ current }: { current: string }) {
     label: "Resize the sessions list",
     className: "as-rail-handle",
   });
+  // The chat centres its column on the whole layout, rail included, so it must know how wide the
+  // rail is: widening the rail then never moves the chat.
+  const railWidth = (resize.style as Record<string, string | undefined>)["--as-rail-w"] ?? null;
+  useLayoutEffect(() => {
+    if (!layout) return;
+    layout.style.setProperty("--as-chat-rail-w", railWidth);
+    return () => {
+      layout.style.removeProperty("--as-chat-rail-w");
+    };
+  }, [layout, railWidth]);
   const items = sessions.data?.items;
   const tagsOf = useMemo(
     () => railTagsOf(observed.data?.items ?? [], tickets),
