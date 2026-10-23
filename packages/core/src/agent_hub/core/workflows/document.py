@@ -6,7 +6,9 @@ located by its key path (``loc``), never by a line: the loader that read the fil
 lines, and the catalog maps a key path to one (``catalog.WorkflowFile.line_of``).
 
 A document translated from another source carries a ``ProblemLocator``, so a problem found on
-its generated nodes (``located``) is put back where the source holds it.
+its generated nodes (``located``) is put back where the source holds it: a scenario in the tree
+format (``version: 2``, docs/design/scenarios.md § Tree format), which ``parse_workflow`` hands
+to ``scenarios.tree_translate``, on the tree's key path.
 """
 
 import json
@@ -59,6 +61,8 @@ _NODE_TYPES = (
 )
 # The node types a ``kind: scenario`` document may hold (docs/design/scenarios.md).
 SCENARIO_NODE_TYPES: Final = ("action", "expect", "approval", "wait", "loop_group", "include")
+# A scenario's tree format: ordered stages of blocks in place of nodes.
+TREE_VERSION: Final = 2
 UNKNOWN_KEY: Final = "unknown key"
 _MESSAGES = {
     "extra_forbidden": UNKNOWN_KEY,
@@ -193,8 +197,22 @@ def with_locator(document: WorkflowDocument, locator: ProblemLocator) -> Workflo
     return copied
 
 
+def is_tree(content: object) -> bool:
+    """Whether ``content`` is a document in the tree format: ``version`` is the integer 2."""
+    if not isinstance(content, dict):
+        return False
+    version = content.get("version")
+    return type(version) is int and version == TREE_VERSION
+
+
 def parse_workflow(content: object) -> WorkflowDocument:
-    """The document ``content`` holds; raises ``WorkflowLoadError`` naming every problem."""
+    """The document ``content`` holds, a tree translated to its graph; raises
+    ``WorkflowLoadError`` naming every problem."""
+    if is_tree(content):
+        # Imported here: the tree modules build on this one.
+        from agent_hub.core.scenarios.tree_translate import translate_tree
+
+        return translate_tree(content).document
     try:
         document = WorkflowDocument.model_validate(content)
     except ValidationError as error:
