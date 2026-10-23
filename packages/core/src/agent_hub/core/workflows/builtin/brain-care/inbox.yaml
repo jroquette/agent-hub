@@ -6,7 +6,8 @@
 # its merged text), and its gate asks for explicit approval. The first gate also lists the notes
 # no gate shows.
 # Only after the gates, and only when a decision changes something, the run adds a hub worktree
-# on <branch_prefix>brain-care-inbox-<run id> from origin/<default branch>, writes the approved
+# on <branch_prefix>brain-care-inbox-<run id> from origin/<default branch> (both read from hub.json by
+# hub step config: no script opens it), writes the approved
 # changes there (only brain/ paths) and opens a hub PR the owner merges (hub step pr). Nothing
 # runs on the default branch, brain/decisions/ is never edited, and nothing reads or writes the
 # tracker (ADR 0030). The run returns an outcome (empty, nothing_decided, kept, pr_opened or
@@ -170,14 +171,34 @@ nodes:
             acted: {type: integer, minimum: 0}
           required: [decisions, acted]
 
+  - id: branch_config
+    type: shell
+    description: The run's hub branch (the developer's prefix) and the hub's target from hub.json, read by the CLI (read-only).
+    depends_on: [decide]
+    when: "$decide.output.record.acted > 0"
+    command: [hub, step, config, --branch, brain-care-inbox, --run-slug]
+    effect: read
+    mutates_checkout: false
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        default_branch: {type: string}
+        branch_prefix: {type: [string, "null"]}
+        hub: {type: object}
+        repos: {type: array, items: {type: object}}
+        branch_name: {type: string}
+        branch: {type: string}
+      required: [default_branch, branch_prefix, hub, repos, branch_name, branch]
+
   - id: branch
     type: script
     description: The run's hub worktree and branch, from origin's default branch; its PR target.
-    depends_on: [decide]
+    depends_on: [decide, branch_config]
     when: "$decide.output.record.acted > 0"
     runtime: python
     script: hub_branch.py
-    args: [--workflow, inbox]
+    args: [--workflow, inbox, --config, $branch_config.output]
     retry: {max_attempts: 0}
     output_format:
       type: object

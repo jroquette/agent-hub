@@ -1,6 +1,8 @@
 # The owner keeps the first cut only: the run trims it in the hub worktree, one commit, one PR.
 workflow: context
 stubs:
+  branch_config:
+    output: {default_branch: main, branch_prefix: jdoe/, author_name: Jane Doe, author_email: jane@example.com, ready_label: agent-ready, teams: [DEM], hub: {github: acme/demo-hub, default_branch: main, target: {github: acme/demo-hub, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}, repos: [{dir: demo-api, github: acme/demo-api, default_branch: main, check_fast: make check-fast, check: make check, target: {github: acme/demo-api, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}], branch_name: brain-care-context-0a1b2c3d, branch: jdoe/brain-care-context-0a1b2c3d}
   inventory:
     output:
       total_tokens: 4800
@@ -37,4 +39,4 @@ stubs:
   outcome:
     output: {outcome: pr_opened, reason: "opened https://github.com/acme/demo-hub/pull/9; after the merge, run: git worktree remove /ws/hub/.claude/worktrees/brain-care-context-0a1b2c3d && git branch -D jdoe/brain-care-context-0a1b2c3d"}
 expect: {status: done, outcome: pr_opened}
-reached: [inventory, report, approve, branch, trim, managed, commits, pr, outcome]
+reached: [branch_config, inventory, report, approve, branch, trim, managed, commits, pr, outcome]

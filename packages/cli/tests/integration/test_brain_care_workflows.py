@@ -67,7 +67,7 @@ def test_validates_inbox_when_pack_loaded(
     validated = run_command(demo_workspace.hub, "workflow", "validate", "inbox")
 
     assert validated.exit_code == 0, validated.output
-    assert validated.stdout == "inbox: valid (8 nodes in 8 layers)\n"
+    assert validated.stdout == "inbox: valid (9 nodes in 9 layers)\n"
 
 
 def test_validates_context_when_pack_loaded(
@@ -76,7 +76,7 @@ def test_validates_context_when_pack_loaded(
     validated = run_command(demo_workspace.hub, "workflow", "validate", "context")
 
     assert validated.exit_code == 0, validated.output
-    assert validated.stdout == "context: valid (9 nodes in 9 layers)\n"
+    assert validated.stdout == "context: valid (10 nodes in 10 layers)\n"
 
 
 def test_shows_inventory_summary_in_gate_when_context_loaded() -> None:
@@ -188,7 +188,12 @@ def test_writes_no_tracker_when_brain_care_loaded(name: str) -> None:
         if node.type == "agent"
     ]
 
-    assert commands <= {("hub", "step", "commits"), ("hub", "step", "pr")}
+    # config reads hub.json for hub_branch.py (AGH-480): read-only, no tracker.
+    assert commands <= {
+        ("hub", "step", "config"),
+        ("hub", "step", "commits"),
+        ("hub", "step", "pr"),
+    }
     assert prompts
     for prompt in prompts:
         assert "linear" not in prompt
@@ -224,8 +229,19 @@ def a_hub(workspace: Workspace) -> Path:
     return hub
 
 
-def branched(hub: Path) -> dict[str, Any]:
-    made = script("hub_branch.py", "--workflow", "inbox", cwd=hub)
+def branched(hub: Path, run_command: CommandRunner) -> dict[str, Any]:
+    # The workflow's branch_config node: the real hub step config output, as --config takes it.
+    config = run_command(
+        hub,
+        "step",
+        "config",
+        "--branch",
+        "brain-care-inbox",
+        "--run-slug",
+        env={"AGENT_HUB_RUN_ID": RUN_ID},
+    )
+    assert config.exit_code == 0, config.output
+    made = script("hub_branch.py", "--workflow", "inbox", "--config", config.stdout, cwd=hub)
     assert made.returncode == 0, made.stderr
     found: dict[str, Any] = json.loads(made.stdout)
     return found
@@ -235,7 +251,7 @@ def test_accepts_hub_target_when_commits_step_reads_it(
     demo_workspace: Workspace, run_command: CommandRunner
 ) -> None:
     hub = a_hub(demo_workspace)
-    made = branched(hub)
+    made = branched(hub, run_command)
 
     result = run_command(hub, "step", "commits", "--target", json.dumps(made["target"]))
 
@@ -251,7 +267,7 @@ def test_commits_only_inbox_deletions_when_apply_runs_all_drop(
     demo_workspace: Workspace, run_command: CommandRunner
 ) -> None:
     hub = a_hub(demo_workspace)
-    made = branched(hub)
+    made = branched(hub, run_command)
     decisions = [
         {
             "group": {
