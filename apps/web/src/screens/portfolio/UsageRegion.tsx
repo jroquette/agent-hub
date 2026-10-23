@@ -15,7 +15,8 @@ import { useSkillUsage, type UsageDays, type UsageRow } from "./queries";
 /** The rows shown before "Show all N" (spec 12's cap rule: working memory, as Needs you). */
 export const USAGE_VISIBLE = 10;
 const WINDOWS: readonly UsageDays[] = [7, 30, 90];
-const EMPTY = "No skills or agents in this hub's .claude folder.";
+const EMPTY_ONE = "No skills or agents in this hub's .claude folder.";
+const EMPTY_ALL = "No skills or agents in the hubs' .claude folders.";
 const NOT_READ = "Some items were not read; the list may be incomplete.";
 
 function runsIn(row: UsageRow, days: UsageDays): number {
@@ -66,6 +67,14 @@ function usageColumns(days: UsageDays, single: boolean, now: number): DataTableC
   return [{ id: "project", label: "Project", render: (row) => row.project }, ...columns];
 }
 
+function NotRead() {
+  return (
+    <p className="ah-small ah-muted" style={{ margin: "8px 0 0" }}>
+      {NOT_READ}
+    </p>
+  );
+}
+
 /**
  * Skills and agents (spec 12, AGH-482): the hub's own skills and agents with their runs in the
  * chosen window, never used first. The window is local state (30 d by default, as the Toolkit),
@@ -91,9 +100,12 @@ export function UsageRegion({ project, single }: { project: string | null; singl
     );
   } else if (usage.data.items.length === 0) {
     body = (
-      <p className="ah-small ah-muted" style={{ margin: 0 }}>
-        {EMPTY}
-      </p>
+      <>
+        <p className="ah-small ah-muted" style={{ margin: 0 }}>
+          {single ? EMPTY_ONE : EMPTY_ALL}
+        </p>
+        {usage.data.truncated && <NotRead />}
+      </>
     );
   } else {
     const items = usage.data.items;
@@ -119,16 +131,15 @@ export function UsageRegion({ project, single }: { project: string | null; singl
             Show all {items.length}
           </Button>
         )}
-        {usage.data.truncated && (
-          <p className="ah-small ah-muted" style={{ margin: "8px 0 0" }}>
-            {NOT_READ}
-          </p>
-        )}
+        {usage.data.truncated && <NotRead />}
       </>
     );
   }
   return (
-    <section aria-labelledby="usage-title" aria-busy={usage.isPending ? "true" : undefined}>
+    <section
+      aria-labelledby="usage-title"
+      aria-busy={usage.isPending || usage.isPlaceholderData ? "true" : undefined}
+    >
       <div className="ah-section-title ah-wrap">
         <div className="ah-stack" style={{ gap: 2 }}>
           <h2 id="usage-title" className="ah-h3" style={{ fontSize: 14 }}>
