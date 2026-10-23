@@ -17,6 +17,12 @@ Against the app at ``--url`` (``make run`` or ``make up``), it:
 5. stores an ended chat ``hub web`` drove (id ``CHAT_SESSION``, fixed: the playground export
    captures its screen at ``/agent-sessions/<id>``), with its log, through the agent session
    store (``agent_hub.storage``) of the same database.
+6. gives the hub scenarios beside the example ``hub init`` writes (``demo-service-up`` and its
+   ``demo-get-status``): two actions whose scripts reach nothing (``demo-create-order``,
+   ``demo-order-status``), the scenario ``demo-order-roundtrip`` that calls them, and a ``local``
+   environment with a value (``hub.local.json``); then three scenario runs, passed, failed and
+   running, as their records (``.agent-runs/workflows/<run>/records.jsonl``) and their events
+   (``hub collect``), so the scenario screens have content.
 
 Everything is synthetic, built from ``agent_hub.core.testing``; nothing is read from
 ``~/.claude``. ``--via compose`` runs ``hub`` and writes the files inside the Compose service
@@ -54,6 +60,9 @@ from agent_hub.core.testing.transcript_lines import (
     an_assistant_line,
     transcript_text,
 )
+from agent_hub.core.workflows.events import WorkflowEvents
+from agent_hub.core.workflows.failures import FailureKind
+from agent_hub.core.workflows.ports import RunEnd, RunStatus, StepEnd, StepStart, StepStatus
 
 DEFAULT_URL = "http://127.0.0.1:7420"
 REQUEST_SECONDS = 10
@@ -92,6 +101,122 @@ The export test failed because the CSV header listed the columns alphabetically 
 followed the table's order. Build the header from the same column list as the rows, so both
 always agree.
 """
+# The demo's scenarios (docs/design/scenarios.md): hub init writes demo-service-up and its
+# action; the seed adds a scenario of its own whose actions' scripts reach nothing, a local
+# environment to plan and run them in, and three runs. Every name is synthetic.
+SCENARIO_PACK = "demo"
+SERVICE_SCENARIO = "demo-service-up"
+ORDER_SCENARIO = "demo-order-roundtrip"
+SCENARIO_ENV = "local"
+SCENARIO_RUNS = (
+    ("7d1e5a20", SERVICE_SCENARIO, "done"),
+    ("7d1e5a21", ORDER_SCENARIO, "failed"),
+    ("7d1e5a22", ORDER_SCENARIO, "running"),
+)
+LOCAL_CONFIG = {
+    "environments": {
+        SCENARIO_ENV: {
+            "access": "write",
+            "description": "Your own demo stack",
+            "values": {"shop_id": "shop-0001"},
+        }
+    }
+}
+
+
+def _fixture_script(summary: str, answer: str) -> str:
+    """A demo action's script, which reaches no system: plan mode prints ``summary``, run mode
+    prints ``answer``, a JSON value that matches the action's ``output_format``."""
+    plan = json.dumps({"summary": summary})
+    return (
+        "#!/bin/sh\n"
+        "# A demo action's script, written by make demo: it reaches no system.\n"
+        "call=$(cat)\n"
+        "case $call in\n"
+        '  *\'"mode": "plan"\'* | *\'"mode":"plan"\'*)\n'
+        f"    printf '%s\\n' '{plan}' ;;\n"
+        f"  *) printf '%s\\n' '{answer}' ;;\n"
+        "esac\n"
+    )
+
+
+SCENARIO_FILES = {
+    "actions/demo/demo-create-order.yaml": """\
+version: 1
+name: demo-create-order
+description: Place a test order in the demo shop
+effect: write
+runtime: sh
+script: scripts/demo_create_order.sh
+timeout: 1m
+inputs:
+  shop_id: {type: string, required: true, description: "The demo shop, from the environment"}
+  sku: {type: string, default: SKU-1, description: "The product to order"}
+output_format:
+  type: object
+  required: [order_id]
+  properties:
+    order_id: {type: string}
+""",
+    "actions/demo/demo-order-status.yaml": """\
+version: 1
+name: demo-order-status
+description: Read one order's status in the demo shop
+effect: read
+runtime: sh
+script: scripts/demo_order_status.sh
+timeout: 1m
+inputs:
+  shop_id: {type: string, required: true, description: "The demo shop, from the environment"}
+  order_id: {type: string, required: true}
+output_format:
+  type: object
+  required: [status]
+  properties:
+    status: {type: string}
+    paid: {type: boolean}
+""",
+    "actions/demo/scripts/demo_create_order.sh": _fixture_script(
+        "place a demo order", '{"order_id": "ORD-1001"}'
+    ),
+    "actions/demo/scripts/demo_order_status.sh": _fixture_script(
+        "read a demo order", '{"status": "PAID", "paid": true}'
+    ),
+    f"scenarios/demo/{ORDER_SCENARIO}.yaml": """\
+version: 1
+kind: scenario
+name: demo-order-roundtrip
+revision: 1
+description: Place a test order in the demo shop, wait until it is paid, then check its receipt
+inputs:
+  shop_id: {type: string, required: true, description: "The demo shop, from the environment"}
+  sku: {type: string, default: SKU-1}
+nodes:
+  - id: place-order
+    type: action
+    action: demo-create-order
+    with: {sku: $INPUTS.sku}
+    capture: {order_id: $self.output.order_id}
+  - id: order-paid
+    type: expect
+    depends_on: [place-order]
+    action: demo-order-status
+    with: {order_id: $CTX.order_id}
+    every: 10s
+    timeout: 5m
+    until_when: "$self.output.paid == true"
+  - id: check-receipt
+    type: approval
+    depends_on: [order-paid]
+    message: Open the receipt of order $CTX.order_id and approve once it reads paid.
+""",
+}
+# Each run's steps: the node, its status (None: still running) and its failure.
+_RUN_STEPS: dict[str, tuple[tuple[str, StepStatus | None, FailureKind | None], ...]] = {
+    "done": (("service-up", "ok", None), ("read-root", "ok", None)),
+    "failed": (("place-order", "ok", None), ("order-paid", "failed", "timeout")),
+    "running": (("place-order", "ok", None), ("order-paid", None, None)),
+}
 ALREADY_A_HUB = "already a hub"
 # The hub-init flags, so git is never asked; all values are made up.
 HUB_FLAGS = (
@@ -594,6 +719,74 @@ def hub_files(hub: PurePosixPath) -> dict[PurePosixPath, str]:
     }
 
 
+def scenario_runs(now: datetime) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+    """The three demo scenario runs: their events (canonical, for ``hub collect``) and each
+    run's record lines by run id. The oldest passed two hours ago, the failed one an hour ago,
+    the running one started two minutes ago and waits on its order's payment."""
+    events: list[dict[str, Any]] = []
+    records: dict[str, list[dict[str, Any]]] = {}
+    starts = (now - timedelta(hours=2), now - timedelta(hours=1), now - timedelta(minutes=2))
+    for (run_id, scenario, status), started in zip(SCENARIO_RUNS, starts, strict=True):
+        recorder = WorkflowEvents(
+            project=DEMO_PROJECT,
+            run_id=run_id,
+            workflow=f"scenario:{scenario}",
+            revision=1,
+            content_hash=f"sha256:{run_id * 8}",
+        )
+        inputs = (
+            {"service": DEMO_REPO} if scenario == SERVICE_SCENARIO else {"shop_id": "shop-0001"}
+        )
+        lines: list[dict[str, Any]] = [
+            {"event": "start", "run": run_id, "scenario": scenario, "pack": SCENARIO_PACK}
+            | {"environment": SCENARIO_ENV, "mode": "regression", "kind": "scenario"}
+            | {"inputs": inputs, "ts": started.isoformat()}
+        ]
+        at = started
+        for node, step_status, failure in _RUN_STEPS[status]:
+            recorder.step_started(StepStart(node=node, attempt=1, at=at))
+            lines.append({"event": "step_start", "node": node, "attempt": 1, "ts": at.isoformat()})
+            if node == "order-paid":
+                for poll in range(1, 4):
+                    lines.append(
+                        {"event": "expect.poll", "node": node, "attempt": 1, "poll": poll}
+                        | {"held": False, "ts": (at + timedelta(seconds=10 * poll)).isoformat()}
+                    )
+            if node == "place-order":
+                lines.append(
+                    {"event": "context.capture", "node": node, "name": "order_id"}
+                    | {"value": "ORD-1001"}
+                )
+            if step_status is None:
+                break
+            at += timedelta(minutes=5 if failure else 1)
+            recorder.step_ended(
+                StepEnd(node=node, attempt=1, status=step_status, at=at, failure_kind=failure)
+            )
+            ended = {"event": "step_end", "node": node, "attempt": 1, "status": step_status}
+            lines.append(
+                ended | ({"failure_kind": failure} if failure else {}) | {"ts": at.isoformat()}
+            )
+        if status != "running":
+            ended_as: RunStatus = "failed" if status == "failed" else "done"
+            reason = "order-paid" if ended_as == "failed" else None
+            recorder.run_ended(RunEnd(status=ended_as, at=at, reason=reason))
+            lines.append({"event": "end", "status": status, "ts": at.isoformat()})
+        events.extend(event.model_dump(mode="json") for event in recorder.events)
+        records[run_id] = lines
+    return events, records
+
+
+def scenario_files(hub: PurePosixPath, now: datetime) -> dict[PurePosixPath, str]:
+    """The demo's actions, scenario, local environment and scenario run records, by path."""
+    files = {hub / path: text for path, text in SCENARIO_FILES.items()}
+    files[hub / "hub.local.json"] = json.dumps(LOCAL_CONFIG, indent=2) + "\n"
+    for run_id, lines in scenario_runs(now)[1].items():
+        record = hub / ".agent-runs" / "workflows" / run_id / "records.jsonl"
+        files[record] = "".join(json.dumps(line) + "\n" for line in lines)
+    return files
+
+
 def _checked_hub(target: Target, arguments: Sequence[str], *, tolerate: str = "") -> None:
     result = target.hub(arguments)
     if result.returncode != 0 and not (tolerate and tolerate in result.stderr):
@@ -632,6 +825,12 @@ def seed(client: httpx.Client, target: Target, *, db_path: str, now: datetime) -
     target.write(transcript, demo_transcript(now))
     _checked_hub(target, ["collect", "--transcript", str(transcript), *labels])
     store_chat(target, db_path=db_path, now=now)
+    for path, text in scenario_files(hub, now).items():
+        target.write(path, text)
+    scenario_events = target.workdir / "runs" / "scenario-runs.jsonl"
+    events = scenario_runs(now)[0]
+    target.write(scenario_events, "".join(json.dumps(event) + "\n" for event in events))
+    _checked_hub(target, ["collect", str(scenario_events), "--db", db_path])
 
 
 def main(

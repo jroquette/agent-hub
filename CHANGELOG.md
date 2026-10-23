@@ -61,6 +61,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - The scenario page reads as a storyline of steps beside a run panel, with each step's action, values and stops in
   words, the actions' scripts and the scenario file one click away, and it follows a running scenario run live, with
   Cancel; `GET /api/v1/scenarios/{project}/{name}` adds each step's keys, the file and the actions it calls (AGH-521).
+- `make demo` also seeds scenarios: two synthetic actions whose scripts reach nothing, the scenario
+  `demo-order-roundtrip` beside the `demo-service-up` example `hub init` writes, a `local` environment with a value,
+  and three scenario runs (passed, failed, running) (AGH-521).
 
 ### Fixed
 
