@@ -567,3 +567,22 @@ def test_says_why_comments_moved_when_final_cuts_the_diff(
     assert code == 0
     assert (result["inline"], result["moved"]) == (0, 1)
     assert "over 40 bytes" in result["note"]
+
+
+def test_moves_comment_to_body_when_its_line_is_unchanged_in_a_renamed_file(
+    clone: Clone, compose: Any, final: Any
+) -> None:
+    original = "".join(f"line {n}\n" for n in range(1, 21))
+    clone.base = clone.commit({"app/long.py": original})
+    clone.commit({"app/long.py": "", "app/longer.py": original.replace("line 20", "line 20!")})
+    unchanged = a_comment(path="app/longer.py", line=2, body="Line two.", sources=["q:F1"])
+
+    composed(compose, unchanged)
+    code, result, _ = final("comment")
+
+    text = written(clone)
+    assert "## app/longer.py:2" not in text
+    assert "**Blocking.** `app/longer.py:2`: Line two." in text
+    assert code == 0
+    assert (result["inline"], result["moved"]) == (0, 0)
+    assert payload(clone)["comments"] == []

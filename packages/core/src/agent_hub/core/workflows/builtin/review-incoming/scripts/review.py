@@ -213,7 +213,8 @@ def git_diff(path: str, base: str, head: str) -> tuple[str, str]:
     with tempfile.TemporaryFile() as output:
         done = subprocess.run(  # noqa: S603 - a git read with fixed arguments, hooks off
             [*GIT, "-C", path, "diff", "--no-color", "--no-ext-diff", "--no-textconv", "-U3"]
-            + ["--no-renames", base, head],
+            # Renames detected, as GitHub's PR diff does: a comment sits only on its lines.
+            + ["-M", base, head],
             stdout=output,
             stderr=subprocess.PIPE,
             stdin=subprocess.DEVNULL,
