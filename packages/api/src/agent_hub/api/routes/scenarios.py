@@ -132,6 +132,22 @@ def post_action(
     return create_action(ScenarioBuilder(reads), project, body, writes=writes)
 
 
+@router.put("/projects/{project}/actions/{pack}/{name}")
+def put_action(
+    project: NamePath,
+    pack: NamePath,
+    name: NamePath,
+    *,
+    body: NewAction,
+    reads: ScenarioReadsDep,
+    writes: ItemVersionWritesDep,
+) -> ScenarioActionView:
+    """Rewrites an action of the hub (its document and its script): a strict write; the
+    action is a draft until it is committed again."""
+    action = body.model_copy(update={"pack": pack, "name": name})
+    return create_action(ScenarioBuilder(reads), project, action, writes=writes, replace=True)
+
+
 @router.post("/scenarios/{project}/{name}/plan")
 def plan_scenario(
     project: NamePath, name: NamePath, *, body: ScenarioPlanRequest, commands: ScenarioCommandsDep

@@ -1,7 +1,9 @@
+import { useMutation } from "@tanstack/react-query";
 import { useId, useState } from "react";
+import { useNavigate } from "react-router";
 
 import { AppLink, Button, EmptyState, Icon } from "../../components";
-import { useApi } from "../../lib/api";
+import { apiPut, useApi, type ApiProblem } from "../../lib/api";
 import { useScope } from "../../lib/scope";
 import { writeStored } from "../../lib/storage";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
@@ -18,8 +20,8 @@ const NEW_PACK = "__new__";
 
 const EXAMPLES: readonly { label: string; text: string }[] = [
   {
-    label: "Order to invoice",
-    text: "Place a test order through the API, wait until the order shows as paid, then check that its invoice PDF was rendered.",
+    label: "Create, then wait for a state",
+    text: "Create a test record through the service's API, wait until it shows as processed, then check that the expected file was produced.",
   },
   {
     label: "Health check",
@@ -109,6 +111,37 @@ export function NewScenarioScreen() {
   const badName = name !== "" && !KEBAB.test(name);
   const badPack = packChoice === NEW_PACK && newPack !== "" && !KEBAB.test(newPack);
   const ready = chosenProject !== "" && what.trim().length >= 10 && !badName && !badPack;
+
+  // A blank scenario: one manual step to replace, written by the builder's save (no Claude).
+  const navigate = useNavigate();
+  const blankReady = chosenProject !== "" && KEBAB.test(name) && KEBAB.test(pack);
+  const blank = useMutation<unknown, ApiProblem>({
+    mutationFn: () =>
+      apiPut(
+        "/api/v1/scenarios/{project}/{name}",
+        {
+          pack,
+          base_content_hash: null,
+          document: {
+            version: 1,
+            kind: "scenario",
+            name,
+            description: what.trim() || `What ${name} checks`,
+            nodes: [
+              {
+                id: "first-step",
+                type: "approval",
+                message: "Replace this block with the first step of the scenario.",
+              },
+            ],
+          },
+        },
+        { path: { project: chosenProject, name } },
+      ),
+    onSuccess: () => {
+      void navigate(scenarioHref(chosenProject, name));
+    },
+  });
 
   const ask = () => {
     const message = composeMessage({ name, what, environment, pack });
@@ -297,7 +330,7 @@ export function NewScenarioScreen() {
               id={ids.name}
               className="ah-input ah-mono"
               value={name}
-              placeholder="order-to-invoice"
+              placeholder="record-roundtrip"
               aria-invalid={badName || undefined}
               aria-describedby={ids.hint}
               onChange={(event) => {
@@ -318,6 +351,25 @@ export function NewScenarioScreen() {
             <Button type="submit" variant="primary" icon="message-square" disabled={!ready}>
               Create with Claude
             </Button>
+            <Button
+              icon="puzzle"
+              disabled={!blankReady || blank.isPending}
+              title={
+                blankReady
+                  ? "An empty scenario you build with blocks"
+                  : "Name it and choose its pack first"
+              }
+              onClick={() => {
+                blank.mutate();
+              }}
+            >
+              {blank.isPending ? "Creating…" : "Create it blank and build with blocks"}
+            </Button>
+            {blank.error && (
+              <span role="alert" className="ah-small" style={{ color: "var(--failed)" }}>
+                {blank.error.detail ?? blank.error.title}
+              </span>
+            )}
             {target && !created && (
               <span role="status" className="ah-small ah-subtle">
                 Claude has your request in the panel: send it, then follow along there.

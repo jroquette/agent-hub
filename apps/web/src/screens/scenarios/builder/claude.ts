@@ -58,9 +58,9 @@ export function describeMessage({
     where,
     "",
     "Abstract it into our scenario structure:",
-    '- One step per thing that happens. A message to a queue, an API call, a DB change or a script in a container is an `action` step; "wait until X is Y" or "check that X" is an `expect` step (a read action polled `every` until `until_when` holds, up to `timeout`); something I do by hand is an `approval` step (set `capture_response: true` when I type a value back, such as an order id, and read it later as `$<step>.output.text`); a fixed pause is a `wait` with `duration`; "run X until Y" is a `loop_group` with `max_iterations` and `until_when`; "if approved … otherwise …" is two steps after the same one, each with a `when` (the second with the condition negated), and the step after both gets `trigger_rule: none_failed_min_one_success`.',
+    '- One step per thing that happens. A message to a queue, an API call, a DB change or a script in a container is an `action` step; "wait until X is Y" or "check that X" is an `expect` step (a read action polled `every` until `until_when` holds, up to `timeout`); something I do by hand is an `approval` step (set `capture_response: true` when I type a value back, such as an id, and read it later as `$<step>.output.text`); a fixed pause is a `wait` with `duration`; "run X until Y" is a `loop_group` with `max_iterations` and `until_when`; "if approved … otherwise …" is two steps after the same one, each with a `when` (the second with the condition negated), and the step after both gets `trigger_rule: none_failed_min_one_success`.',
     "- Values that later steps need are kept with `capture: {name: $self.output.<field>}` and read as `$CTX.<name>`; scenario inputs (ids, environments' services) go in `inputs` and are read as `$INPUTS.<name>`.",
-    "- Use kebab-case ids that say what the step does (`fetch-orders`, `order-on-hold`).",
+    "- Use kebab-case ids that say what the step does (`send-message`, `record-processed`).",
     "- Reuse the hub's actions below. When none fits, write a new action as a draft in `actions/" +
       pack +
       "/` (its YAML and its script under `scripts/`, following the plan/run contract), and use it.",

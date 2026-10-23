@@ -52,6 +52,13 @@ BODIES: dict[tuple[str, str], object] = {
     # The scenario builder's writes.
     ("put", "/api/v1/scenarios/{project}/{name}"): {"pack": "demo", "document": {}},
     ("post", "/api/v1/scenarios/{project}/{name}/proposal/dismiss"): {},
+    ("put", "/api/v1/projects/{project}/actions/{pack}/{name}"): {
+        "pack": "demo",
+        "name": "send",
+        "description": "Send it",
+        "effect": "write",
+        "script_text": "print(1)\n",
+    },
     ("post", "/api/v1/projects/{project}/actions"): {
         "pack": "demo",
         "name": "send",

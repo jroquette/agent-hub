@@ -400,7 +400,7 @@ export function valueSources(
   return sources;
 }
 
-/** A reference in words: "input webshop_id", "kept order_id", "from fetch · status". */
+/** A reference in words: "input target", "kept record_id", "from fetch · status". */
 export function refInWords(value: string): { text: string; ref: boolean } {
   const input = /^\$INPUTS\.([A-Za-z0-9_]+)$/.exec(value);
   if (input) return { text: `input ${input[1] ?? ""}`, ref: true };
@@ -471,7 +471,7 @@ export function formatCondition(groups: readonly (readonly ConditionRow[])[]): s
     .join(" || ");
 }
 
-/** A condition in words: "status is ON_HOLD and cover is PENDING". */
+/** A condition in words: "status is 200 and state is DONE". */
 export function conditionWords(text: string): string {
   const groups = parseCondition(text);
   if (groups === null) return text;
@@ -485,4 +485,88 @@ export function conditionWords(text: string): string {
         .join(" and "),
     )
     .join(" or ");
+}
+
+/* ---------- A condition typed in words ---------- */
+
+// Longest phrases first, so "is not" wins over "is".
+const PHRASES: readonly [string, string][] = [
+  ["is greater than or equal to", ">="],
+  ["is less than or equal to", "<="],
+  ["is greater than", ">"],
+  ["is less than", "<"],
+  ["is at least", ">="],
+  ["is at most", "<="],
+  ["is above", ">"],
+  ["is below", "<"],
+  ["is not", "!="],
+  ["isn't", "!="],
+  ["equals", "=="],
+  ["is", "=="],
+  ["!=", "!="],
+  [">=", ">="],
+  ["<=", "<="],
+  ["==", "=="],
+  ["=", "=="],
+  [">", ">"],
+  ["<", "<"],
+];
+
+function plain(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+export type WordsResult = { ok: true; groups: ConditionRow[][] } | { ok: false; problem: string };
+
+/**
+ * A condition typed in words ("status is 200 and state is not DONE", "count >= 3 or ready is
+ * true") as or-groups of and-rows, each field matched against the `fields` this place may
+ * compare (by name, ignoring case, spaces and `_`). Generic: it knows only these field names and
+ * the operator words, nothing about any system; what it cannot match it says, and guesses nothing.
+ */
+export function conditionFromWords(
+  text: string,
+  fields: readonly { ref: string; label: string }[],
+): WordsResult {
+  const groups: ConditionRow[][] = [];
+  for (const group of text.split(/\s+or\s+/i)) {
+    const rows: ConditionRow[] = [];
+    for (const atom of group.split(/\s+and\s+/i)) {
+      const lower = atom.toLowerCase();
+      let found: { at: number; phrase: string; op: string } | null = null;
+      for (const [phrase, op] of PHRASES) {
+        const symbolic = /^[!<>=]+$/.test(phrase);
+        const at = symbolic
+          ? lower.indexOf(phrase)
+          : lower.search(new RegExp(`\\s${phrase.replace(/'/g, "'")}\\s`));
+        if (at > 0) {
+          found = { at: symbolic ? at : at + 1, phrase, op };
+          break;
+        }
+      }
+      if (!found)
+        return {
+          ok: false,
+          problem: `No comparison in “${atom.trim()}”: use is, is not, is above, is below, is at least, is at most.`,
+        };
+      const left = atom.slice(0, found.at).trim();
+      const right = atom
+        .slice(found.at + found.phrase.length)
+        .trim()
+        .replace(/^['"]|['"]$/g, "");
+      const wanted = plain(left);
+      const field =
+        fields.find((item) => plain(item.label) === wanted) ??
+        fields.find((item) => plain(item.ref.split(".").at(-1) ?? "") === wanted) ??
+        fields.find((item) => plain(item.label).endsWith(wanted) && wanted.length >= 3);
+      if (!field) {
+        const names = fields.map((item) => item.label).join(", ") || "none here";
+        return { ok: false, problem: `No field “${left}” here. Fields you can compare: ${names}.` };
+      }
+      if (right === "") return { ok: false, problem: `No value after “${left} ${found.phrase}”.` };
+      rows.push({ field: field.ref, op: found.op, value: right });
+    }
+    groups.push(rows);
+  }
+  return { ok: true, groups };
 }

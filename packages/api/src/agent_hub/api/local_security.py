@@ -58,7 +58,7 @@ ITEM_WRITES = re.compile(
     r"|workflows/[^/]+/[^/]+)/versions/[^/]+/restore"
     r"|projects/[^/]+/skills/drafts/[^/]+/publish"
     r"|scenarios/[^/]+/[^/]+(/proposal/dismiss)?"
-    r"|projects/[^/]+/actions)$"
+    r"|projects/[^/]+/actions(/[^/]+/[^/]+)?)$"
 )
 STRICT_WRITES = re.compile(
     rf"^{re.escape(API_PREFIX)}/learnings/[^/]+/(accept|reject)$|{RUN_WRITES.pattern}"
