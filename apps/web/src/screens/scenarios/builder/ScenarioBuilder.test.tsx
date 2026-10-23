@@ -109,11 +109,15 @@ describe("ScenarioBuilder (scenario builder)", () => {
 
     const check = await screen.findByRole("treeitem", { name: "Check order-on-hold" });
     expect(check).toHaveTextContent("Wait until status is ON_HOLD");
-    expect(check).toHaveTextContent("every10s");
-    expect(check).toHaveTextContent("up to5m");
-    expect(screen.getByRole("treeitem", { name: "Script fetch-order" })).toHaveTextContent(
-      "Run send-queue-message",
-    );
+    expect(check).toHaveTextContent("every 10 s, up to 5 min (at most 30 checks)");
+    // What runs: the action's own description, its script and what it gives.
+    const fetch = screen.getByRole("treeitem", { name: "Script fetch-order" });
+    await waitFor(() => {
+      expect(fetch).toHaveTextContent("Send one message to the orders queue");
+    });
+    expect(fetch).toHaveTextContent("send-queue-message· Python· scripts/send_queue_message.py");
+    expect(fetch).toHaveTextContent("Changes data");
+    expect(fetch).toHaveTextContent("Givesstatus");
     expect(screen.getByText("When the scenario starts")).toBeInTheDocument();
     expect(await screen.findByText("Loads")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save scenario" })).toBeDisabled();
@@ -132,7 +136,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     await user.click(within(inspector).getByLabelText(/Ask me to type a value/));
     const block = screen.getByRole("treeitem", { name: "Manual step manual-step" });
     expect(block).toHaveTextContent("Create the order");
-    expect(block).toHaveTextContent("asks for a value");
+    expect(block).toHaveTextContent("a typed value later steps can use");
 
     const save = screen.getByRole("button", { name: "Save scenario" });
     await waitFor(() => {
@@ -157,7 +161,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     await user.type(field, "10m");
     expect(within(form).getByText("At most 60 checks.")).toBeInTheDocument();
     expect(screen.getByRole("treeitem", { name: "Check order-on-hold" })).toHaveTextContent(
-      "up to10m",
+      "up to 10 min",
     );
     const save = screen.getByRole("button", { name: "Save scenario" });
     await waitFor(() => {
@@ -349,9 +353,9 @@ describe("ScenarioBuilder (scenario builder)", () => {
     await user.click(fetch);
     const form = screen.getByRole("region", { name: "Inspector: Script fetch-order" });
     await user.selectOptions(within(form).getByLabelText("Action"), "orders/get-order-by-ref");
-    expect(fetch).toHaveTextContent("Run orders/get-order-by-ref");
+    expect(fetch).toHaveTextContent("get-order-by-ref· Python");
     await user.type(within(form).getByLabelText("Value of external_ref"), "T-1");
-    expect(fetch).toHaveTextContent("external refT-1");
+    expect(fetch).toHaveTextContent("external_refT-1");
 
     const save = screen.getByRole("button", { name: "Save scenario" });
     await waitFor(() => {
@@ -521,7 +525,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     // The card marks its effect; the side form tells every fact.
     const fetch = screen.getByRole("treeitem", { name: "Script fetch-order" });
     await waitFor(() => {
-      expect(within(fetch).getByLabelText(/changes data/i)).toBeInTheDocument();
+      expect(fetch).toHaveTextContent("Changes data");
     });
     check.focus();
     await user.keyboard("{Enter}");

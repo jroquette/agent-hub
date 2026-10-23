@@ -53,7 +53,7 @@
   text-align: left;
   font-size: 14px;
   cursor: pointer;
-  box-shadow: var(--shadow-sm, 0 1px 2px rgb(0 0 0 / 12%));
+  box-shadow: var(--shadow-sm);
 }
 .bk-hat:hover {
   border-color: var(--accent);
@@ -88,40 +88,25 @@
   align-items: center;
 }
 
-/* A step: a card */
+/* A step: a card (v5: no colour bar, no shadow at rest; the kind's colour only on the tile) */
 .bk-card {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-1);
   width: var(--card-w);
-  padding: 12px 14px;
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
   color: var(--text);
   cursor: pointer;
-  box-shadow: var(--shadow-sm, 0 1px 2px rgb(0 0 0 / 12%));
   transition:
     border-color var(--dur-fast, 120ms) ease,
-    box-shadow var(--dur-fast, 120ms) ease,
-    transform var(--dur-fast, 120ms) ease;
-}
-.bk-card::before {
-  /* the kind's colour as a thin bar at the left edge */
-  content: "";
-  position: absolute;
-  left: -1px;
-  top: 10px;
-  bottom: 10px;
-  width: 3px;
-  border-radius: 0 3px 3px 0;
-  background: var(--kind, var(--border-strong));
+    box-shadow var(--dur-fast, 120ms) ease;
 }
 .bk-card:hover {
   border-color: var(--border-strong);
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-md, 0 4px 12px rgb(0 0 0 / 18%));
 }
 .bk-card:focus-visible {
   outline: 2px solid var(--focus-ring);
@@ -129,8 +114,7 @@
 }
 .bk-card[data-selected] {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
-  transform: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
   cursor: default;
 }
 .bk-card[data-invalid] {
@@ -139,23 +123,22 @@
 .bk-card-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   min-height: 24px;
 }
 .bk-kind {
   font-size: 12px;
-  font-weight: 600;
-  color: var(--kind, var(--text-muted));
+  line-height: 16px;
+  color: var(--text-muted);
 }
 .bk-num {
-  font-size: 12px;
   color: var(--text-subtle);
   font-variant-numeric: tabular-nums;
 }
 .bk-title {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
-  line-height: 21px;
+  line-height: 20px;
   overflow-wrap: break-word;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -165,42 +148,111 @@
 .bk-card[data-selected] .bk-title {
   -webkit-line-clamp: unset;
 }
-.bk-chips {
+.bk-runs-line {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  max-height: 52px;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 18px;
+  white-space: nowrap;
   overflow: hidden;
 }
-.bk-card[data-selected] .bk-chips {
-  max-height: none;
+.bk-runs-line > svg {
+  flex: none;
+  color: var(--text-muted);
 }
-.bk-chip {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 4px;
-  max-width: 100%;
-  padding: 1px 8px;
-  border-radius: var(--radius-full);
-  background: var(--surface-sunken);
-  color: var(--text);
+.bk-runs-line .ah-mono {
+  font-size: 12px;
+}
+.bk-runs-missing {
+  color: var(--failed);
+}
+.bk-runs-missing > svg {
+  color: var(--failed);
+}
+.bk-facts-grid {
+  margin-top: var(--space-1);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
+}
+.bk-facts-grid dt {
   font-size: 12px;
   line-height: 20px;
+  color: var(--text-muted);
+}
+.bk-facts-grid dd {
+  min-width: 0;
+  line-height: 20px;
+}
+.bk-with {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: var(--space-3);
+}
+.bk-key {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.bk-val {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.bk-chip-label {
+.bk-card[data-selected] .bk-val {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+.bk-val .ah-mono {
+  font-size: 12px;
+}
+.bk-clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.bk-call,
+.bk-keep {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: var(--space-3);
+}
+/* A value that comes from elsewhere: its source's icon and its name */
+.bk-token {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 100%;
+  height: 20px;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.bk-token > svg {
+  flex: none;
   color: var(--text-muted);
 }
 .bk-plan-line {
   display: flex;
   align-items: flex-start;
   gap: 6px;
+  margin-top: var(--space-1);
   padding: 6px 8px;
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  font-size: 12px;
+  background: var(--surface-sunken);
+  font-size: 13px;
   color: var(--text);
 }
 
@@ -223,11 +275,11 @@
   color: var(--text-muted);
 }
 
-/* Marks at the top right */
+/* Marks at the top right: icon + word */
 .bk-marks {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   flex: none;
   color: var(--text-muted);
   font-size: 12px;
@@ -238,46 +290,27 @@
   gap: 3px;
   white-space: nowrap;
 }
-.bk-mark[data-effect="write"] {
-  color: var(--waiting);
-}
-.bk-mark[data-effect="destroy"] {
-  color: var(--failed);
-}
-.bk-mark-warn {
-  color: var(--waiting);
-}
 .bk-errors {
   color: var(--failed);
 }
 
-/* The selected card's footer */
-.bk-footer {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 4px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
-}
+/* The selected card's problems, one line each */
 .bk-problems {
-  margin: 0;
+  margin: var(--space-1) 0 0;
   padding: 0;
   list-style: none;
   display: grid;
-  gap: 4px;
+  gap: 2px;
   font-size: 13px;
 }
 .bk-problems li {
-  padding: 6px 10px;
-  border-radius: var(--radius-md);
-  background: var(--failed-soft);
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
   color: var(--failed);
 }
 .bk-problems li[data-severity="warning"] {
-  background: var(--waiting-soft);
-  color: var(--waiting);
+  color: var(--text-muted);
 }
 
 /* The arrow between two cards: a line, a head, and a "+" on it */
@@ -446,11 +479,12 @@
 /* The dragged cards follow the pointer */
 .bk-ghost {
   position: fixed;
+  box-shadow: var(--shadow-popover);
+  border-radius: var(--radius-lg);
   z-index: 50;
   pointer-events: none;
   transform-origin: 0 0;
   --card-w: 420px;
-  filter: drop-shadow(0 12px 20px rgb(0 0 0 / 30%));
   opacity: 0.94;
 }
 

@@ -11,9 +11,9 @@ import { CanvasControls, Icon, useViewportSize } from "../../../components";
 import { fitView } from "../../../lib/canvasView";
 import { usePanZoom } from "../../../lib/usePanZoom";
 import type { ScenarioAction, ScenarioPlanRow } from "../queries";
-import { EFFECT } from "./BlockFacts";
+import { CardFacts, CardHead, RunsLine, TokenText, cardTitle } from "./CardParts";
 import { kindLook } from "./FlowCanvas";
-import { conditionWords, refInWords, shown, text, type BuilderNode, type Json } from "./model";
+import { conditionWords, type BuilderNode } from "./model";
 import { itemId, type Item, type Slot } from "./program";
 import type { BuilderProblem } from "./useScenarioDraft";
 
@@ -69,8 +69,6 @@ export interface BlockCanvasProps {
   /** A preview in an environment: the plan's row of a step, and the environment's name. */
   planOf?: ((id: string) => ScenarioPlanRow | null) | undefined;
   planEnvironment?: string | null | undefined;
-  /** The buttons in the selected step's footer (Ask Claude, Duplicate, Delete). */
-  stepActions?: ((id: string) => ReactNode) | undefined;
   /** The hat ("when the scenario starts") was clicked: open the scenario's inputs. */
   onHat?: (() => void) | undefined;
 }
@@ -88,146 +86,6 @@ const FIT_MAX = 1.2;
 const FIT_MIN = 0.8;
 /** How near a gap the dragged blocks snap into it, in screen pixels. */
 const SNAP_PX = 48;
-
-/** `$CTX.x` and `$INPUTS.x` in a text drawn as `⬩ x`. */
-function refsInText(value: string): string {
-  return value.replace(/\$(?:CTX|INPUTS)\.([A-Za-z0-9_]+)/g, "⬩ $1");
-}
-
-function firstLine(value: string): string | null {
-  const line = value.split("\n")[0] ?? "";
-  return line === "" ? null : line;
-}
-
-function values(node: BuilderNode): [string, Json][] {
-  const given = node.with;
-  return typeof given === "object" && given !== null && !Array.isArray(given)
-    ? Object.entries(given)
-    : [];
-}
-
-/** A value passed straight from the scenario input of the same name. */
-function passThrough(key: string, value: Json): boolean {
-  return value === `$INPUTS.${key}`;
-}
-
-/** A JSON value read short: literal keys as `key: value`, referenced or nested ones bare. */
-export function summarize(value: Json): string | null {
-  let data: Json = value;
-  if (typeof value === "string" && /^\s*[[{]/.test(value)) {
-    try {
-      data = JSON.parse(value) as Json;
-    } catch {
-      // Not strict JSON (a reference written bare): read its keys and literal values as written.
-      const parts = [...value.matchAll(/"([^"]+)"\s*:\s*("([^"$]*)"|[^,}\]]+)?/g)].map((match) =>
-        match[3] !== undefined && match[3] !== ""
-          ? `${match[1] ?? ""}: ${match[3]}`
-          : (match[1] ?? ""),
-      );
-      if (parts.length === 0) return null;
-      const short = `{${parts.join(", ")}}`;
-      return short.length > 64 ? `${short.slice(0, 63)}…}` : short;
-    }
-  }
-  if (typeof data !== "object" || data === null || Array.isArray(data)) return null;
-  const parts = Object.entries(data).map(([key, item]) =>
-    (typeof item === "string" && !item.startsWith("$")) ||
-    typeof item === "number" ||
-    typeof item === "boolean"
-      ? `${key}: ${String(item)}`
-      : key,
-  );
-  const text = `{${parts.join(", ")}}`;
-  return text.length > 64 ? `${text.slice(0, 63)}…}` : text;
-}
-
-/** What a step does, as a title a person reads: its name, else a sentence from its fields. */
-export function stepTitle(node: BuilderNode): string {
-  if (typeof node.description === "string" && node.description.trim() !== "") {
-    return node.description;
-  }
-  const condition = text(node.until_when);
-  switch (node.type) {
-    case "action":
-      return text(node.action) ? `Run ${text(node.action)}` : "Choose what to run";
-    case "expect":
-      return condition ? `Wait until ${conditionWords(condition)}` : "Wait until a state holds";
-    case "approval":
-      return refsInText(firstLine(text(node.message)) ?? "Do something by hand");
-    case "wait":
-      return `Pause ${text(node.duration) || "for a while"}`;
-    case "include":
-      return `Run the scenario ${text(node.include) || "…"}`;
-    case "loop_group":
-      return condition ? `Repeat until ${conditionWords(condition)}` : "Repeat";
-    default:
-      return node.type;
-  }
-}
-
-/** The facts under a step's title, as short label · value chips (pass-throughs counted, not shown). */
-export function stepChips(node: BuilderNode): { key: string; label: string; value: string }[] {
-  const named = typeof node.description === "string" && node.description.trim() !== "";
-  const chips: { key: string; label: string; value: string }[] = [];
-  const action = text(node.action);
-  const condition = text(node.until_when);
-  if (node.type === "action" && named && action) {
-    chips.push({ key: "action", label: "runs", value: action });
-  }
-  if (node.type === "expect") {
-    if (named && condition) {
-      chips.push({ key: "until", label: "until", value: conditionWords(condition) });
-    }
-    if (action) chips.push({ key: "action", label: "reads", value: action });
-    if (text(node.every)) chips.push({ key: "every", label: "every", value: text(node.every) });
-    if (text(node.timeout))
-      chips.push({ key: "timeout", label: "up to", value: text(node.timeout) });
-  }
-  if (node.type === "approval") {
-    const message = firstLine(text(node.message));
-    if (named && message) chips.push({ key: "message", label: "", value: refsInText(message) });
-    const answers = (Array.isArray(node.decisions) ? node.decisions : [])
-      .map((decision) =>
-        typeof decision === "object" && decision !== null && !Array.isArray(decision)
-          ? text(decision.label) || text(decision.id)
-          : "",
-      )
-      .filter((label) => label !== "");
-    if (answers.length > 0) {
-      chips.push({ key: "answers", label: "answers", value: answers.join(" · ") });
-    }
-    if (node.capture_response === true) {
-      chips.push({ key: "capture", label: "", value: "asks for a value" });
-    }
-  }
-  if (node.type === "wait" && named && text(node.duration)) {
-    chips.push({ key: "duration", label: "for", value: text(node.duration) });
-  }
-  if (node.type === "loop_group" && text(node.max_iterations)) {
-    chips.push({ key: "rounds", label: "at most", value: `${text(node.max_iterations)} rounds` });
-  }
-  const given = values(node);
-  for (const [key, value] of given) {
-    if (passThrough(key, value)) continue;
-    const words = refInWords(shown(value));
-    chips.push({
-      key: `with.${key}`,
-      label: key.replace(/_/g, " "),
-      value: summarize(value) ?? `${words.ref ? "⬩ " : ""}${words.text}`,
-    });
-  }
-  const passed = given.filter(([key, value]) => passThrough(key, value)).length;
-  if (passed > 0) {
-    chips.push({ key: "inputs", label: "", value: `+${String(passed)} from inputs` });
-  }
-  const kept = node.capture;
-  if (typeof kept === "object" && kept !== null && !Array.isArray(kept)) {
-    for (const name of Object.keys(kept)) {
-      chips.push({ key: `keep.${name}`, label: "keeps", value: `⬩ ${name}` });
-    }
-  }
-  return chips;
-}
 
 interface Ctx {
   props: BlockCanvasProps;
@@ -333,71 +191,6 @@ function List({
   );
 }
 
-/** The marks at a card's top right: services, gives-up time, effect, draft, problems. */
-function Marks({ ctx, node }: { ctx: Ctx; node: BuilderNode }) {
-  const action = ctx.props.actionOf(node);
-  const problems = ctx.props.problemsOf(node.id);
-  const errors = problems.filter((problem) => problem.severity === "error");
-  const warnings = problems.filter(
-    (problem) => problem.severity !== "error" && !/draft/i.test(problem.message),
-  );
-  const effect = action?.effect ? EFFECT[action.effect] : undefined;
-  const given =
-    typeof node.with === "object" && node.with !== null && !Array.isArray(node.with)
-      ? node.with
-      : {};
-  const services = (action?.inputs ?? [])
-    .filter((input) => input.type === "service")
-    .map((input) => given[input.name])
-    .filter((value): value is Json => value !== undefined)
-    .map((value) => refInWords(shown(value)).text);
-  return (
-    <span className="bk-marks">
-      {services.map((service) => (
-        <span key={service} className="bk-mark" title={`Calls ${service}`}>
-          <Icon name="globe" size="sm" /> {service}
-        </span>
-      ))}
-      {effect && (
-        <span
-          className="bk-mark"
-          data-effect={action?.effect}
-          title={effect.words}
-          aria-label={effect.words}
-        >
-          <Icon name={effect.icon} size="sm" />
-        </span>
-      )}
-      {action?.draft && (
-        <span
-          className="bk-mark"
-          title="Draft action: commit it in the hub before the scenario can run"
-          aria-label="Draft action"
-        >
-          <Icon name="circle-dashed" size="sm" />
-        </span>
-      )}
-      {warnings.length > 0 && (
-        <span
-          className="bk-mark bk-mark-warn"
-          title={warnings.map((problem) => problem.message).join("\n")}
-        >
-          <Icon name="triangle-alert" size="sm" /> {warnings.length}
-        </span>
-      )}
-      {errors.length > 0 && (
-        <span
-          className="bk-mark bk-errors"
-          title={errors.map((problem) => problem.message).join("\n")}
-        >
-          <Icon name="circle-x" size="sm" /> {errors.length}
-        </span>
-      )}
-      {ctx.props.statusOf?.(node.id)}
-    </span>
-  );
-}
-
 function cardProps(ctx: Ctx, id: string, kind: string, label: string) {
   const look = kindLook(kind);
   return {
@@ -424,45 +217,34 @@ function cardProps(ctx: Ctx, id: string, kind: string, label: string) {
   };
 }
 
-/** The card's top line: the kind's tile and name, the step number, the marks. */
-function CardHead({
+/** The card's head for a block: kind, number, effect, draft, problems, run status. */
+function Head({
   ctx,
   id,
   kind,
-  node,
+  action,
 }: {
   ctx: Ctx;
   id: string;
   kind: string;
-  node?: BuilderNode;
+  action?: ScenarioAction | null;
 }) {
   const look = kindLook(kind);
-  const n = ctx.props.numbers.get(id);
+  const problems = ctx.props.problemsOf(id);
   return (
-    <div className="bk-card-head">
-      <span className="bk-icon" aria-hidden>
-        <Icon name={look.icon} size="sm" />
-      </span>
-      <span className="bk-kind">{look.label}</span>
-      {n && <span className="bk-num">Step {n}</span>}
-      <span className="ah-grow" />
-      {node && <Marks ctx={ctx} node={node} />}
-    </div>
-  );
-}
-
-function Chips({ node }: { node: BuilderNode }) {
-  const chips = stepChips(node);
-  if (chips.length === 0) return null;
-  return (
-    <div className="bk-chips">
-      {chips.map((chip) => (
-        <span key={chip.key} className="bk-chip" title={`${chip.label} ${chip.value}`.trim()}>
-          {chip.label && <span className="bk-chip-label">{chip.label}</span>}
-          {chip.value}
-        </span>
-      ))}
-    </div>
+    <CardHead
+      icon={look.icon}
+      kind={look.label}
+      number={ctx.props.numbers.get(id)}
+      action={action ?? null}
+      errors={problems.filter((problem) => problem.severity === "error").length}
+      warnings={
+        problems.filter(
+          (problem) => problem.severity !== "error" && !/draft/i.test(problem.message),
+        ).length
+      }
+      extra={ctx.props.statusOf?.(id)}
+    />
   );
 }
 
@@ -481,23 +263,20 @@ function PlanLine({ ctx, id }: { ctx: Ctx; id: string }) {
   );
 }
 
-/** The selected card's footer: its id, its problems and what you can do with it. */
-function Footer({ ctx, id }: { ctx: Ctx; id: string }) {
-  if (ctx.props.selected !== id || ctx.stack === "ghost") return null;
+/** The selected card's problems, one line each (the form has the fields to fix them). */
+function Problems({ ctx, id }: { ctx: Ctx; id: string }) {
+  if (ctx.props.selected !== id) return null;
   const problems = ctx.props.problemsOf(id);
+  if (problems.length === 0) return null;
   return (
-    <>
-      {problems.length > 0 && (
-        <ul className="bk-problems">
-          {problems.map((problem, index) => (
-            <li key={index} data-severity={problem.severity}>
-              {problem.message}
-            </li>
-          ))}
-        </ul>
-      )}
-      <div className="bk-footer">{ctx.props.stepActions?.(id)}</div>
-    </>
+    <ul className="bk-problems">
+      {problems.map((problem, index) => (
+        <li key={index} data-severity={problem.severity}>
+          <Icon name={problem.severity === "error" ? "circle-x" : "triangle-alert"} size="sm" />
+          {problem.message}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -505,13 +284,18 @@ function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
   if (item.kind === "block") {
     const node = item.node;
     const look = kindLook(node.type);
+    const action = ctx.props.actionOf(node);
+    const selected = ctx.props.selected === node.id;
     return (
       <div className="bk-card" {...cardProps(ctx, node.id, node.type, `${look.label} ${node.id}`)}>
-        <CardHead ctx={ctx} id={node.id} kind={node.type} node={node} />
-        <div className="bk-title">{stepTitle(node)}</div>
-        <Chips node={node} />
+        <Head ctx={ctx} id={node.id} kind={node.type} action={action} />
+        <div className="bk-title">
+          <TokenText value={cardTitle(node, action)} />
+        </div>
+        <RunsLine node={node} action={action} />
+        <CardFacts node={node} action={action} selected={selected} />
         <PlanLine ctx={ctx} id={node.id} />
-        <Footer ctx={ctx} id={node.id} />
+        <Problems ctx={ctx} id={node.id} />
       </div>
     );
   }
@@ -523,10 +307,10 @@ function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
           className="bk-card bk-head"
           {...cardProps(ctx, node.id, "loop_group", `Repeat ${node.id}`)}
         >
-          <CardHead ctx={ctx} id={node.id} kind="loop_group" node={node} />
-          <div className="bk-title">{stepTitle(node)}</div>
-          <Chips node={node} />
-          <Footer ctx={ctx} id={node.id} />
+          <Head ctx={ctx} id={node.id} kind="loop_group" />
+          <div className="bk-title">{cardTitle(node, null)}</div>
+          <CardFacts node={node} action={null} selected={ctx.props.selected === node.id} />
+          <Problems ctx={ctx} id={node.id} />
         </div>
         <div className="bk-lane bk-loop">
           <List
@@ -546,11 +330,10 @@ function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
     return (
       <div className="bk-group" data-kind="if">
         <div className="bk-card bk-head" {...cardProps(ctx, item.key, "branch", "If")}>
-          <CardHead ctx={ctx} id={item.key} kind="branch" />
+          <Head ctx={ctx} id={item.key} kind="branch" />
           <div className="bk-title">
             {item.condition ? `If ${conditionWords(item.condition)}` : "If a condition holds"}
           </div>
-          <Footer ctx={ctx} id={item.key} />
         </div>
         <div className="bk-lanes">
           <div className="bk-lane">
@@ -581,9 +364,14 @@ function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
         className="bk-card bk-head"
         {...cardProps(ctx, item.key, "parallel", "At the same time")}
       >
-        <CardHead ctx={ctx} id={item.key} kind="parallel" />
+        <Head ctx={ctx} id={item.key} kind="parallel" />
         <div className="bk-title">Run {item.lanes.length} paths at the same time</div>
-        <Footer ctx={ctx} id={item.key} />
+        <dl className="sc-values bk-facts-grid">
+          <div className="sc-value">
+            <dt>Then</dt>
+            <dd>continues when every path ends</dd>
+          </div>
+        </dl>
       </div>
       <div className="bk-lanes">
         {item.lanes.map((lane, index) => (

@@ -846,3 +846,13 @@ textarea.sb-script {
   gap: 4px;
   margin-top: -4px;
 }
+
+/* The step form's foot: what can be done with the step */
+.sb-inspector-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  border-top: 1px solid var(--border);
+}
