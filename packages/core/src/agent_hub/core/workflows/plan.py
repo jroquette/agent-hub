@@ -369,6 +369,23 @@ def _path_problem(producer: Node, ref: NodeRef) -> str | None:
     return None
 
 
+def ref_mentions(ref: Ref) -> tuple[str, ...]:
+    """The texts by which this module's reference problems name ``ref``: each message about it
+    holds one, and none about another reference does (a translated tree finds by them the If
+    whose condition a problem on a joined ``when`` is about)."""
+    if isinstance(ref, CtxRef):
+        return (f"$CTX.{ref.name} ",)
+    if isinstance(ref, InputRef):
+        return (f"input {echo(ref.name)}",)
+    if isinstance(ref, WithRef):
+        return (f"named {echo(ref.name)}",)
+    if isinstance(ref, SelfRef):
+        return ("$self ",)
+    node = echo(ref.node)
+    mentions = (f"id {node}", f"node {node} ", f"of {node}")
+    return (*mentions, "$LOOP_PREV ") if isinstance(ref, LoopPrevRef) else mentions
+
+
 def _group_problems(graph: _Graph) -> Iterator[WorkflowProblem]:
     for index, group in enumerate(graph.document.nodes):
         if not isinstance(group, LoopGroupNode):

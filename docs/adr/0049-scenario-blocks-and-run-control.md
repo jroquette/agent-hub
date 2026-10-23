@@ -36,7 +36,8 @@ Chosen option: 1.
   fixed set: `do` (an action), `wait_until` (a read action polled with `until`, `every`, `timeout`), `you` (an
   approval), `wait` and `include`; a container is `repeat` (a `loop_group`), `if`/`then`/`else`, or `together`
   (parallel paths joined by the next step). Conditions use the existing `when:` grammar; an else is the complement of
-  its condition, computed at translation (bounded: 8 atoms, 64 terms). Each block has an address (`2.3`, `2.3.then.1`,
+  its condition, computed at translation (bounded: 8 atoms and 1,024 characters per If, 64 terms per joined
+  condition, 262,144 characters of conditions written in all). Each block has an address (`2.3`, `2.3.then.1`,
   `2.3.p2.1`); ids are optional, and a block without one gets `<stage slug>--<its address in the stage>`
   (`payment--3-then-1`), which no other derived id can equal; an explicit id equal to another block's fails the load.
   An If with no else exits through its branch and the block before it in the same step list, so a false condition

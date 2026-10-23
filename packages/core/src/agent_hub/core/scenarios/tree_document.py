@@ -31,6 +31,7 @@ from pydantic import (
 from agent_hub.core.workflows.conditions import ConditionParseError, parse_condition
 from agent_hub.core.workflows.document import (
     UNKNOWN_KEY,
+    Loc,
     WorkflowInput,
     WorkflowLoadError,
     WorkflowProblem,
@@ -70,8 +71,11 @@ STEP_KINDS: Final[tuple[StepKind, ...]] = (
 MAX_STAGES: Final = 64
 # At the same time: two paths at least.
 MIN_PATHS: Final = 2
-# An If's condition: its else is its complement, expanded to the grammar's or-of-ands form.
+# An If's condition: its else is its complement, expanded to the grammar's or-of-ands form,
+# and translation writes both on every entry node of a branch, so both its atoms and its
+# characters are bounded.
 MAX_CONDITION_ATOMS: Final = 8
+MAX_CONDITION_CHARS: Final = 1024
 _STEP_KIND_MESSAGE: Final = "a step holds exactly one of " + ", ".join(STEP_KINDS)
 # Why a graph key has no place in a tree, by the key a document gave.
 _GRAPH_KEYS: Final = {
@@ -82,6 +86,8 @@ _GRAPH_KEYS: Final = {
         " by its place"
     ),
 }
+# The keys whose items are stages or steps.
+_BLOCK_LISTS: Final = frozenset({"stages", "steps", "then", "else"})
 _NOT_A_TREE: Final = "must be 2, a scenario's tree format"
 _NOT_A_SCENARIO: Final = (
     "version 2 is a scenario's tree format: set kind: scenario, or write version 1"
@@ -113,6 +119,13 @@ def _stage_count[Item](items: tuple[Item, ...]) -> tuple[Item, ...]:
 
 
 def _condition(value: str) -> str:
+    if len(value) > MAX_CONDITION_CHARS:
+        msg = (
+            f"holds {len(value):,} characters: an If's condition holds at most"
+            f" {MAX_CONDITION_CHARS:,} characters, as translation writes it on each branch's"
+            " entry nodes"
+        )
+        raise ValueError(msg)
     try:
         condition = parse_condition(value, scenario=True)
     except ConditionParseError as error:
@@ -127,7 +140,8 @@ def _condition(value: str) -> str:
     return value
 
 
-Condition = Annotated[Text, AfterValidator(_condition)]
+# An If's condition as written; checked here, parsed again by translation.
+IfCondition = Annotated[Text, AfterValidator(_condition)]
 Values = Annotated[Mapping[VariableName, JsonValue], *READ_ONLY]
 Captures = Annotated[Mapping[VariableName, WholeRef], *READ_ONLY]
 
@@ -248,7 +262,7 @@ class IfStep(_Block):
     """``if: <condition>`` with ``then`` and an optional ``else``: no node of its own."""
 
     kind: ClassVar[StepKind] = "if"
-    if_: Condition = Field(alias="if")
+    if_: IfCondition = Field(alias="if")
     then: Annotated[tuple[Step, ...], AfterValidator(_steps_not_empty)]
     else_: Annotated[tuple[Step, ...], AfterValidator(_steps_not_empty)] | None = Field(
         default=None, alias="else"
@@ -354,11 +368,22 @@ def parse_tree(content: object) -> TreeDocument:
 
 
 def _explained(problem: WorkflowProblem) -> WorkflowProblem:
-    """``problem``, a graph key's refusal saying why."""
+    """``problem``, a graph key's refusal saying why: ``nodes`` on the document, ``depends_on``
+    and ``trigger_rule`` on a stage or a step (anywhere else they are only unknown keys)."""
     loc = problem.loc
     if problem.message != UNKNOWN_KEY or not loc or not isinstance(loc[-1], str):
         return problem
     reason = _GRAPH_KEYS.get(loc[-1])
-    if reason is None or (loc[-1] == "nodes" and len(loc) > 1):
-        return problem
-    return WorkflowProblem(loc, reason)
+    where = len(loc) == 1 if loc[-1] == "nodes" else _of_a_block(loc[:-1])
+    return problem if reason is None or not where else WorkflowProblem(loc, reason)
+
+
+def _of_a_block(loc: Loc) -> bool:
+    """Whether ``loc`` is a stage's or a step's: an item of ``stages``, of a step list
+    (``steps``, ``then``, ``else``) or of a Together's path."""
+    if len(loc) < 2 or not isinstance(loc[-1], int):
+        return False
+    owner = loc[-2]
+    if isinstance(owner, int):
+        return len(loc) > 2 and loc[-3] == "together"
+    return owner in _BLOCK_LISTS

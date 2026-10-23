@@ -1,4 +1,5 @@
-"""The dry run: the real engine over stubbed node results, in memory (AC-213.11)."""
+"""The dry run: the real engine over stubbed node results, in memory (AC-213.11), and the tree
+format's If, Together and Repeat samples run on it (AC-507.3, .4, .5)."""
 
 from collections.abc import Mapping
 from pathlib import Path
@@ -21,6 +22,7 @@ from agent_hub.core.workflows.dry_run import (
     placeholder,
     skeleton_stub,
 )
+from agent_hub.core.workflows.fixtures import parse_fixture, run_fixture
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
 
 OBJECT = {
@@ -416,6 +418,27 @@ def test_takes_the_branch_its_condition_picks_when_an_if_else_tree_runs(
 
     assert (report.run.status, report.reached) == ("done", ("check--1", branch, "check--3"))
     assert next(step for step in report.steps if step.node == other).skip_cause == "condition"
+
+
+def test_passes_the_fixture_when_an_if_else_tree_runs_through_run_fixture() -> None:
+    # AC-507.3: a fixture file's checks (stub ids, status, reached) on a translated tree.
+    fixture = parse_fixture(
+        {
+            "workflow": "blocks-if-else",
+            "inputs": ORDER_INPUTS,
+            "stubs": {
+                "check--1": {"output": {"order_status": "PENDING", "order_id": "o-1"}},
+                "check--2-else-1": {"decision": "approve", "approver": "Ada"},
+                "check--3": OK,
+            },
+            "expect": {"status": "done"},
+            "reached": ["check--1", "check--2-else-1", "check--3"],
+        }
+    )
+
+    result = run_fixture(tree_plan("blocks-if-else"), fixture, outputs=KeysOutputs())
+
+    assert (result.problems, result.warnings) == ((), ())
 
 
 def test_runs_every_path_before_the_next_step_when_a_together_tree_runs() -> None:

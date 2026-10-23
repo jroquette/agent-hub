@@ -26,8 +26,13 @@ graph.
   its steps the body, which holds no Repeat or Include.
 
 Bounds: ``MAX_TREE_NODES`` nodes, containers ``MAX_DEPTH`` deep, ``MAX_TERMS`` terms in a joined
-condition. A problem on a generated node, found here or by planning, is
-put back on the tree's key path by the document's ``TreeLocator`` (``WorkflowDocument.located``).
+condition, and ``MAX_CONDITION_TEXT`` characters of conditions written in all (a branch's
+condition counts on each entry node it is written to). Translation stops at the node or the
+condition that passes a cap, and reads nothing inside a container it refuses, so the work stays
+within the caps whatever the document holds. A problem on a generated node, found here or by
+planning, is put back on the tree's key path by the document's ``TreeLocator``
+(``WorkflowDocument.located``); one on a joined condition goes to the If whose condition holds
+the reference it names.
 """
 
 import itertools
@@ -36,7 +41,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from types import MappingProxyType
-from typing import Final, Literal
+from typing import Final, Literal, NoReturn
 
 from pydantic import ValidationError
 
@@ -68,7 +73,7 @@ from agent_hub.core.workflows.document import (
 )
 from agent_hub.core.workflows.includes import MAX_EXPANDED_NODES
 from agent_hub.core.workflows.nodes import LoopGroupNode, Node
-from agent_hub.core.workflows.plan import WorkflowPlan
+from agent_hub.core.workflows.plan import WorkflowPlan, ref_mentions
 from agent_hub.core.workflows.rewrite import SEPARATOR
 from agent_hub.core.workflows.substitution import echo
 
@@ -82,6 +87,9 @@ type _NodeSpec = dict[str, object]
 MAX_TREE_NODES: Final = MAX_EXPANDED_NODES
 MAX_DEPTH: Final = 3
 MAX_TERMS: Final = 64
+# The characters of conditions a translation writes, each time it writes one: as much as the
+# largest file the loader reads (256 KiB).
+MAX_CONDITION_TEXT: Final = 262_144
 JOIN_RULE: Final = "none_failed_min_one_success"
 _OPPOSITE: Final[Mapping[Op, Op]] = {
     "==": "!=",
@@ -163,13 +171,34 @@ class BlockMap:
 
 
 @dataclass(frozen=True)
+class ConditionOrigin:
+    """An If whose condition a node's ``when`` holds: its ``if`` key, and the texts by which
+    planning's problems name each reference of it (``plan.ref_mentions``)."""
+
+    key: Loc
+    mentions: frozenset[str]
+
+    def names(self, message: str) -> bool:
+        """Whether ``message`` names a reference of this condition."""
+        return any(mention in message for mention in self.mentions)
+
+
+@dataclass(frozen=True)
 class NodeOrigin:
-    """Where a translated node comes from: its block's kind and key path, and the ``if`` key of
-    the If whose condition its ``when`` holds first."""
+    """Where a translated node comes from: its block's kind and key path, and the Ifs whose
+    conditions its ``when`` joins, outermost first."""
 
     kind: StepKind
     key: Loc
-    when: Loc | None = None
+    conditions: tuple[ConditionOrigin, ...] = ()
+
+    def condition_key(self, message: str) -> Loc:
+        """The ``if`` key of the If whose condition holds the reference ``message`` names: the
+        outermost such If, else the outermost If (a single If's, whatever it names)."""
+        named = next((c for c in self.conditions if c.names(message)), None)
+        if named is not None:
+            return named.key
+        return self.conditions[0].key if self.conditions else self.key
 
 
 # Each top-level node's id, and its body's ids when it is a loop group.
@@ -201,13 +230,15 @@ class TreeLocator:
             and isinstance(rest[1], int)
             and rest[1] < len(body)
         ):
-            node_id, rest = body[rest[1]], rest[2:]
+            # A body id is its group's: an included group's body takes the include's prefix.
+            head, separator, _ = node_id.rpartition(SEPARATOR)
+            node_id, rest = f"{head}{separator}{body[rest[1]]}", rest[2:]
         return self._on_node(node_id, rest, problem)
 
     def _on_node(self, node_id: str, rest: Loc, problem: WorkflowProblem) -> WorkflowProblem:
         origin = self.origins.get(node_id) or self.origins.get(node_id.removesuffix(ASK_SUFFIX))
         if origin is not None:
-            return WorkflowProblem(_tree_loc(origin, rest), problem.message)
+            return WorkflowProblem(_tree_loc(origin, rest, problem.message), problem.message)
         include = self.origins.get(node_id.split(SEPARATOR, 1)[0])
         if include is None:
             return problem
@@ -278,13 +309,14 @@ def _literal_text(literal: str | Decimal) -> str:
     return "'" + literal.replace("'", "''") + "'"
 
 
-def _tree_loc(origin: NodeOrigin, rest: Loc) -> Loc:
-    """A node's key path ``rest`` as its block spells it."""
+def _tree_loc(origin: NodeOrigin, rest: Loc, message: str) -> Loc:
+    """A node's key path ``rest``, where a problem ``message`` was found, as its block spells
+    it."""
     head = rest[0] if rest else None
     if not isinstance(head, str) or head in _WRITTEN:
         return (*origin.key, "wait") if origin.kind == "wait" and not rest else origin.key
     if head == "when":
-        return origin.when or origin.key
+        return origin.condition_key(message)
     spelled = _TREE_KEYS.get(origin.kind, {}).get(head, (head,))
     return (*origin.key, *spelled, *rest[1:])
 
@@ -371,14 +403,14 @@ class _At:
 
 @dataclass
 class _Made:
-    """A node made: its content, its block's kind and key path, its id as recorded, and the
-    ``if`` key its condition came from."""
+    """A node made: its content, its block's kind and key path, its id as recorded, and the Ifs
+    its condition joins, outermost first."""
 
     node: _NodeSpec
     kind: StepKind
     key: Loc
     recorded: str
-    when: Loc | None = None
+    conditions: tuple[ConditionOrigin, ...] = ()
 
 
 @dataclass
@@ -392,6 +424,8 @@ class _Translator:
     blocks: list[Block | None] = field(default_factory=list)
     ids: dict[str, tuple[str, Loc, bool]] = field(default_factory=dict)
     problems: list[WorkflowProblem] = field(default_factory=list)
+    # The characters of conditions written so far, each time one is written.
+    written: int = 0
 
     def translate(self) -> Translation:
         flow = _Flow()
@@ -404,6 +438,12 @@ class _Translator:
 
     def _refuse(self, loc: Loc, message: str) -> None:
         self.problems.append(WorkflowProblem(loc, message))
+
+    def _stop(self, loc: Loc, message: str) -> NoReturn:
+        """Refuses ``loc`` and ends the translation there: past a cap, going on would only
+        grow the work the cap bounds."""
+        self._refuse(loc, message)
+        raise WorkflowLoadError(_unique_problems(self.problems))
 
     def _slugs(self) -> list[str]:
         slugs = [stage_slug(stage.name) for stage in self.tree.stages]
@@ -467,7 +507,9 @@ class _Translator:
         return flow, entry
 
     def _block(self, step: Step, at: _At, before: tuple[str, ...]) -> _Span:
-        self._check(step, at)
+        if not self._admitted(step, at):
+            # Nothing inside a refused block is read: its problems would only repeat.
+            return _Span((), before)
         slot, start = self._slot(), len(self.order)
         if isinstance(step, IfStep):
             span = self._if(step, at, before)
@@ -480,16 +522,21 @@ class _Translator:
         self._record(slot, at, shown=(step.kind, step.label), start=start, span=span)
         return span
 
-    def _check(self, step: Step, at: _At) -> None:
+    def _admitted(self, step: Step, at: _At) -> bool:
+        """Whether ``step`` may stand where it is; a refusal is recorded."""
         within = at.within
         container = isinstance(step, IfStep | TogetherStep | RepeatStep)
         if container and within.depth >= MAX_DEPTH:
             self._refuse((*at.key, step.kind), f"containers nest at most {MAX_DEPTH} deep")
+            return False
         contained = _CONTAINED.get(step.kind)
         if within.group is not None and contained is not None:
             self._refuse((*at.key, step.kind), f"a Repeat holds no {contained}")
+            return False
+        return True
 
     def _leaf(self, step: _Leaf, at: _At, before: tuple[str, ...]) -> _Span:
+        self._reserve(at)
         node_id = self._id(step.id, at)
         node: _NodeSpec = {"id": node_id, **_node_keys(step)}
         if before:
@@ -498,6 +545,7 @@ class _Translator:
         return _Span((node_id,), (node_id,))
 
     def _repeat(self, step: RepeatStep, at: _At, before: tuple[str, ...]) -> _Span:
+        self._reserve(at)
         group = self._id(step.id, at)
         body: list[_NodeSpec] = []
         self.bodies[group] = body
@@ -515,15 +563,17 @@ class _Translator:
 
     def _if(self, step: IfStep, at: _At, before: tuple[str, ...]) -> _Span:
         condition = parse_condition(step.if_, scenario=True)
+        mentions = (ref_mentions(atom.ref) for clause in condition.clauses for atom in clause)
+        origin = ConditionOrigin((*at.key, "if"), frozenset(itertools.chain(*mentions)))
         then = at.within.inner(f"{at.address}.then", (*at.key, "then"))
         flow, entry = self._steps(step.then, then, _Flow(before))
-        self._condition(entry, (condition, step.if_), at)
+        self._condition(entry, (condition, step.if_), origin)
         if step.else_ is None:
             return _Span(entry, _unique((*flow.exits, *before)), branching=True)
         otherwise = at.within.inner(f"{at.address}.else", (*at.key, "else"))
         other, other_entry = self._steps(step.else_, otherwise, _Flow(before))
         negated = complement(condition)
-        self._condition(other_entry, (negated, condition_text(negated)), at)
+        self._condition(other_entry, (negated, condition_text(negated)), origin)
         exits = _unique((*flow.exits, *other.exits))
         return _Span((*entry, *other_entry), exits, branching=True)
 
@@ -541,7 +591,9 @@ class _Translator:
             branching = branching or flow.branching
         return _Span(tuple(entry), _unique(exits), branching)
 
-    def _condition(self, entry: Iterable[str], condition: tuple[Condition, str], at: _At) -> None:
+    def _condition(
+        self, entry: Iterable[str], condition: tuple[Condition, str], origin: ConditionOrigin
+    ) -> None:
         """A branch's condition (parsed, and as written) on each entry node of its first block,
         joined with the one the node holds (an If or a Together inside the branch)."""
         parsed, text = condition
@@ -555,11 +607,23 @@ class _Translator:
                     message = (
                         f"joined with a condition inside its branch, it passes {MAX_TERMS} terms"
                     )
-                    self._refuse((*at.key, "if"), message)
+                    self._refuse(origin.key, message)
                     continue
                 when = condition_text(joined)
+            self._written(when, origin)
             made.node["when"] = when
-            made.when = made.when or (*at.key, "if")
+            made.conditions = (origin, *made.conditions)
+
+    def _written(self, text: str, origin: ConditionOrigin) -> None:
+        """Counts ``text``, a condition about to be written; past ``MAX_CONDITION_TEXT`` in all,
+        stops at ``origin``'s If."""
+        self.written += len(text)
+        if self.written > MAX_CONDITION_TEXT:
+            message = (
+                f"the conditions written for it pass {MAX_CONDITION_TEXT:,} characters in all"
+                " (a branch's condition counts once per entry node of its first block)"
+            )
+            self._stop(origin.key, message)
 
     def _id(self, explicit: str | None, at: _At) -> str:
         """The block's node id, given or derived; an id another block has is refused where it
@@ -580,8 +644,11 @@ class _Translator:
         self.made[node_id] = _Made(node, kind, at.key, recorded)
         self.order.append(recorded)
         at.within.sink.append(node)
-        if len(self.order) == MAX_TREE_NODES + 1:
-            self._refuse(at.key, f"the translated scenario passes {MAX_TREE_NODES} nodes")
+
+    def _reserve(self, at: _At) -> None:
+        """Stops at the block whose node would pass ``MAX_TREE_NODES``, before it is built."""
+        if len(self.order) >= MAX_TREE_NODES:
+            self._stop(at.key, f"the translated scenario passes {MAX_TREE_NODES} nodes")
 
     def _document(self) -> WorkflowDocument:
         tree = self.tree
@@ -595,7 +662,9 @@ class _Translator:
         }
         if tree.description is not None:
             content["description"] = tree.description
-        origins = {node_id: NodeOrigin(m.kind, m.key, m.when) for node_id, m in self.made.items()}
+        origins = {
+            node_id: NodeOrigin(m.kind, m.key, m.conditions) for node_id, m in self.made.items()
+        }
         locator = TreeLocator(MappingProxyType(origins))
         try:
             document = WorkflowDocument.model_validate(content)

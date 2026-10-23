@@ -8,8 +8,10 @@ from typing import Any
 import pytest
 import yaml
 
+from agent_hub.core.scenarios import tree_translate
 from agent_hub.core.scenarios.policy_gates import PolicyAsk, gated_plan
 from agent_hub.core.scenarios.tree_translate import (
+    MAX_CONDITION_TEXT,
     MAX_TREE_NODES,
     block_map,
     complement,
@@ -324,7 +326,7 @@ def test_names_the_tree_key_when_a_block_breaks_a_translation_rule(
     with pytest.raises(WorkflowLoadError) as caught:
         parse_workflow(content)
 
-    assert key in [problem.key for problem in caught.value.problems]
+    assert [problem.key for problem in caught.value.problems] == [key]
 
 
 def nested(depth: int) -> dict[str, object]:
@@ -343,6 +345,14 @@ def test_refuses_the_fourth_container_when_containers_nest_too_deep() -> None:
     assert [problem.key for problem in caught.value.problems] == [key]
 
 
+def test_reads_nothing_inside_a_too_deep_container_when_containers_nest_far_deeper() -> None:
+    with pytest.raises(WorkflowLoadError) as caught:
+        parse_workflow(a_tree(WAIT_UNTIL, nested(50)))
+
+    key = "stages[0].steps[1].together[0][0].together[0][0].together[0][0].together"
+    assert [problem.key for problem in caught.value.problems] == [key]
+
+
 def test_refuses_the_block_that_passes_the_cap_when_a_tree_has_too_many_nodes() -> None:
     stages = [{"name": f"Stage {number}", "steps": [DO] * 16} for number in range(33)]
 
@@ -351,6 +361,69 @@ def test_refuses_the_block_that_passes_the_cap_when_a_tree_has_too_many_nodes() 
 
     assert MAX_TREE_NODES == 512
     assert [problem.key for problem in caught.value.problems] == ["stages[32].steps[0]"]
+
+
+def counting_made(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Count the nodes translation makes: one entry per node, its ``depends_on`` length."""
+    made: list[int] = []
+    make = tree_translate._Translator._make
+
+    def counted(translator: Any, node: dict[str, Any], *rest: Any) -> None:
+        made.append(len(node.get("depends_on", ())))
+        make(translator, node, *rest)
+
+    monkeypatch.setattr(tree_translate._Translator, "_make", counted)
+    return made
+
+
+def test_stops_at_the_node_that_passes_the_cap_when_wide_blocks_follow_each_other(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    made = counting_made(monkeypatch)
+    paths = {"together": [[DO]] * 300}
+
+    with pytest.raises(WorkflowLoadError) as caught:
+        parse_workflow(a_tree(DO, paths, paths))
+
+    # The 513th node is the second Together's 212th path: nothing after it is built.
+    keys = [problem.key for problem in caught.value.problems]
+    assert keys == ["stages[0].steps[2].together[211][0]"]
+    assert len(made) == MAX_TREE_NODES
+    assert sum(made) == 300 + 211 * 300
+
+
+def condition_of(length: int) -> str:
+    """A one-atom If condition of exactly ``length`` characters."""
+    return "$CTX.order_id == '" + "x" * (length - len("$CTX.order_id == ''")) + "'"
+
+
+def test_refuses_the_if_that_passes_the_budget_when_conditions_write_too_much_text() -> None:
+    wide = {"if": condition_of(1023), "then": [{"together": [[DO]] * 63}], "else": [YOU]}
+    # Four Ifs write 1,023 characters on 64 entry nodes each: 261,888, so 256 more is the
+    # budget exactly.
+    assert MAX_CONDITION_TEXT == 262_144
+    assert parse_workflow(a_tree(WAIT_UNTIL, *[wide] * 4, {"if": condition_of(256), "then": [DO]}))
+
+    with pytest.raises(WorkflowLoadError) as caught:
+        parse_workflow(a_tree(WAIT_UNTIL, *[wide] * 4, {"if": condition_of(257), "then": [DO]}))
+
+    [problem] = caught.value.problems
+    assert problem.key == "stages[0].steps[5].if"
+    assert "262,144 characters" in problem.message
+
+
+def test_refuses_the_outer_if_when_its_else_joins_a_long_condition_on_many_paths() -> None:
+    eight = " && ".join(f"$CTX.order_id != '{'x' * 100}{n}'" for n in range(8))
+    inner = {"if": "$CTX.order_id != ''", "then": [{"together": [[DO]] * 250}], "else": [YOU]}
+    content = a_tree(WAIT_UNTIL, {"if": eight, "then": [DO], "else": [inner]})
+
+    # Its 988 characters load, but its else writes 1,172 on each of 251 entry nodes.
+    assert len(eight) == 988
+
+    with pytest.raises(WorkflowLoadError) as caught:
+        parse_workflow(content)
+
+    assert [problem.key for problem in caught.value.problems] == ["stages[0].steps[1].if"]
 
 
 def test_refuses_the_join_when_a_nested_condition_passes_sixty_four_terms() -> None:
@@ -410,6 +483,31 @@ def test_puts_a_plan_problem_on_the_tree_key_when_a_generated_node_has_it(
     steps: list[object], key: str
 ) -> None:
     assert [found for found, _ in problems_of(a_tree(*steps))] == [key]
+
+
+@pytest.mark.parametrize(
+    ("outer", "inner", "otherwise", "key"),
+    [
+        ("$CTX.nope == 'x'", "$CTX.order_id != ''", None, "stages[0].steps[1].if"),
+        ("$CTX.nope == 'x'", "$CTX.order_id != ''", [DO], "stages[0].steps[1].if"),
+        ("$CTX.order_id != ''", "$CTX.nope == 'x'", None, "stages[0].steps[1].then[0].if"),
+        ("$INPUTS.nope == 'x'", "$CTX.order_id != ''", None, "stages[0].steps[1].if"),
+        ("$ghost.output.ok == true", "$CTX.order_id != ''", None, "stages[0].steps[1].if"),
+        ("$CTX.order_id != ''", "$CTX.order_idx == 'x'", None, "stages[0].steps[1].then[0].if"),
+    ],
+    ids=["outer", "outer-with-else", "inner", "outer-input", "outer-node", "inner-name-prefix"],
+)
+def test_puts_a_joined_condition_problem_on_the_if_that_holds_it_when_ifs_nest(
+    *, outer: str, inner: str, otherwise: list[object] | None, key: str
+) -> None:
+    branch: dict[str, object] = {
+        "if": outer,
+        "then": [{"if": inner, "then": [DO], "else": [YOU]}],
+    }
+    if otherwise is not None:
+        branch["else"] = otherwise
+
+    assert [found for found, _ in problems_of(a_tree(WAIT_UNTIL, branch))] == [key]
 
 
 def test_puts_an_included_problem_on_the_include_when_the_included_tree_breaks() -> None:
@@ -590,6 +688,21 @@ def test_puts_a_gated_problem_on_the_include_when_an_included_step_is_gated() ->
     [problem] = caught.value.problems
     assert problem.key == "stages[0].steps[1].together[1][0].include"
     assert problem.message.startswith('"fetch-order--2-p2-1__fetch-order--1__ask": $: ')
+
+
+def test_puts_a_gated_body_problem_on_the_include_when_an_included_repeat_holds_it() -> None:
+    body = {"together": [[YOU], [DO]]}
+    until = "$fetch-order--1-1-p2-1.output.ok == true"
+    sub = a_tree({"repeat": {"max": 2, "until": until, "steps": [body]}}, name="sub")
+    content = a_tree(DO, {"include": "sub"})
+    asks = {"fetch-order--2__fetch-order--1__fetch-order--1-1-p2-1": ASK}
+
+    with pytest.raises(WorkflowLoadError) as caught:
+        gated_plan(parse_workflow(content), includes={"sub": parse_workflow(sub)}.get, asks=asks)
+
+    [problem] = caught.value.problems
+    assert problem.key == "stages[0].steps[1].include"
+    assert problem.message.startswith('"fetch-order--2__fetch-order--1-1-p')
 
 
 def test_keeps_the_description_on_its_node_when_a_block_has_one() -> None:

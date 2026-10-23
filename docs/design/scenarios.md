@@ -43,14 +43,18 @@ A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blo
 - A step is one of `do: <action>` with optional `with`, `capture`, `retry`, `timeout` (an `action` node),
   `wait_until: <action>` with `until`, `every`, `timeout` and optional `with`, `capture`, `retry` (an `expect` node),
   `you: <message>` with optional `decisions`, `capture_response` (an `approval`), `wait:` with `duration`, `until` or
-  `attention` (a `wait`) and `include: <scenario>` with `with` (an `include`). Every block takes an optional
+  `attention`, and optional `options` (a `wait`) and `include: <scenario>` with `with` (an `include`). Every block takes an optional
   `description`, and every block but an If and a Together (they have no node) an optional `id`.
 - A container is `repeat: {max, until, steps}` (a `loop_group`, holding no Repeat or Include), `if: <cond>` with `then`
   and an optional `else` (neither empty), or `together: [[…], […]]` (two or more paths, none empty).
-- Conditions use the `when:` grammar. An If's condition must parse and holds at most 8 atoms; its else is its
-  complement (each operator's opposite, `&&` and `||` swapped, expanded to or-of-ands: at most 18 terms).
-- Bounds: at most 64 stages, containers nested 3 deep (an If in a Together in a Repeat), and 512 nodes after
-  translation, the cap of an expanded document.
+- Conditions use the `when:` grammar. An If's condition must parse and holds at most 8 atoms and 1,024 characters;
+  its else is its complement (each operator's opposite, `&&` and `||` swapped, expanded to or-of-ands: at most 18
+  terms). An atom with a number literal over a value that is not a number skips its node rather than reading false
+  (workflow-schema.md), so an If whose two branches both reach such an atom skips both, and the blocks after it.
+- Bounds: at most 64 stages, containers nested 3 deep (an If in a Together in a Repeat), 512 nodes after
+  translation (the cap of an expanded document), and 262,144 characters of conditions written by translation in all
+  (a branch's condition counts once for each entry node it is written to). The load fails at the block whose node,
+  or the If whose condition, passes a cap, and translation stops there; nothing inside a refused container is read.
 - **Addresses.** A stage is `<s>` (from 1); a block in it `<s>.<n>`; inside a block, `then.<n>` and `else.<n>` (an
   If), `p<k>.<n>` (path k of a Together) and `<n>` (a Repeat's steps), e.g. `2.3`, `2.3.then.1`, `2.3.p2.1`, `4.1.2`.
 - **Ids.** A block without `id` gets `<stage slug>--<address in the stage, dots as ->`: `fetch-order--2`,
@@ -71,7 +75,8 @@ A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blo
   one, takes `trigger_rule: none_failed_min_one_success` (a run may skip some of their exit nodes). The **block map**
   gives each address its kind, label, node ids (a Repeat body's as recorded, `<group>__<id>`), entry nodes (in a
   run's plan, the `<step>__ask` gate in front of a gated step and an include's first nodes), exit nodes and key path.
-  A problem on a generated node, at load or by planning, is reported on the tree's key path.
+  A problem on a generated node, at load or by planning, is reported on the tree's key path; one on a joined
+  condition, on the `if` of the If whose condition holds the reference it names.
 - **Canonical YAML**, written by `generator`'s scenario writer and shared by hub web's Save and `hub scenario
   migrate`: `yaml.safe_dump` (no key sorting, Unicode kept, width 100, so a long `until` folds), with keys in this
   order: `version`, `kind`, `name`, `revision`, `description`, `inputs`, `stages`; a stage's `name`, `description`,

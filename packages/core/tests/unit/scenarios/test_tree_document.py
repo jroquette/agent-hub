@@ -8,6 +8,7 @@ import pytest
 import yaml
 
 from agent_hub.core.scenarios.tree_document import (
+    MAX_CONDITION_CHARS,
     DoStep,
     IfStep,
     RepeatStep,
@@ -139,7 +140,7 @@ def test_reads_the_containers_when_a_tree_holds_if_together_and_repeat() -> None
     ],
 )
 def test_names_the_tree_key_when_a_shape_is_refused(content: dict[str, Any], key: str) -> None:
-    assert key in keys_of(content)
+    assert keys_of(content) == [key]
 
 
 @pytest.mark.parametrize(
@@ -219,7 +220,51 @@ def test_names_the_tree_key_when_a_shape_is_refused(content: dict[str, Any], key
     ],
 )
 def test_names_the_tree_key_when_a_step_breaks_its_kind(content: dict[str, Any], key: str) -> None:
-    assert key in keys_of(content)
+    assert keys_of(content) == [key]
+
+
+def condition_of(length: int) -> str:
+    """A one-atom If condition of exactly ``length`` characters."""
+    return "$CTX.order_id == '" + "x" * (length - len("$CTX.order_id == ''")) + "'"
+
+
+def test_refuses_the_condition_when_an_if_holds_more_than_its_characters() -> None:
+    assert MAX_CONDITION_CHARS == 1024
+    longest = a_tree(WAIT_UNTIL, {"if": condition_of(1024), "then": [DO], "else": [YOU]})
+    assert parse_tree(longest)
+
+    content = a_tree(WAIT_UNTIL, {"if": condition_of(1025), "then": [DO], "else": [YOU]})
+
+    assert keys_of(content) == ["stages[0].steps[1].if"]
+    assert any("at most 1,024 characters" in message for message in messages_of(content))
+
+
+@pytest.mark.parametrize(
+    ("content", "key"),
+    [
+        (
+            a_tree(inputs={"order": {"required": True, "depends_on": ["x"]}}),
+            "inputs.order.depends_on",
+        ),
+        (
+            a_tree(DO | {"retry": {"max_attempts": 2, "trigger_rule": "all_done"}}),
+            "stages[0].steps[0].retry.trigger_rule",
+        ),
+        (
+            a_tree(YOU | {"decisions": [{"id": "go", "label": "Go", "depends_on": ["x"]}]}),
+            "stages[0].steps[0].decisions[0].depends_on",
+        ),
+    ],
+    ids=["input", "retry", "decision"],
+)
+def test_says_unknown_key_when_a_graph_key_is_inside_a_block_key(
+    content: dict[str, Any], key: str
+) -> None:
+    with pytest.raises(WorkflowLoadError) as caught:
+        parse_workflow(content)
+
+    # A refused item also fails its list's length check: only the item's message is read.
+    assert {p.key: p.message for p in caught.value.problems}[key] == "unknown key"
 
 
 @pytest.mark.parametrize(
