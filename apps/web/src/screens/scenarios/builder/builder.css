@@ -832,3 +832,17 @@ textarea.sb-script {
 .sb-stage {
   background-color: var(--surface-sunken);
 }
+
+/* The step's facts at the top of the side form, and the action tools under its field. */
+.sb-summary .bk-facts {
+  margin: 0;
+  padding: 0 0 10px;
+  border-top: 0;
+  border-bottom: 1px solid var(--border);
+}
+.sb-action-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: -4px;
+}

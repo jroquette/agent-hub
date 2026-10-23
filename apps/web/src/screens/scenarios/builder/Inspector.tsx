@@ -69,8 +69,11 @@ export function ValueInput({
   sources,
   onChange,
   placeholder,
+  label,
 }: {
   id?: string;
+  /** The field's accessible name when no visible label points at it. */
+  label?: string;
   value: string;
   sources: readonly ValueSource[];
   onChange: (value: string) => void;
@@ -97,6 +100,7 @@ export function ValueInput({
         <input
           id={id}
           className="ah-input"
+          aria-label={label}
           value={value}
           placeholder={placeholder ?? "a value"}
           onChange={(event) => {
@@ -381,6 +385,8 @@ export function BlockInspector({
   onDelete,
   onMove,
   onClose,
+  summary,
+  actionTools,
 }: {
   document: BuilderDocument;
   node: BuilderNode;
@@ -392,6 +398,10 @@ export function BlockInspector({
   /** Moves the block in its list; absent where dragging moves blocks. */
   onMove?: ((by: -1 | 1) => void) | undefined;
   onClose: () => void;
+  /** What the step does, read-only, above the form (its facts). */
+  summary?: ReactNode;
+  /** Under the action field: make a new action, or ask Claude to write one. */
+  actionTools?: ReactNode;
 }) {
   const look = kindLook(node.type);
   const [id, setId] = useState(node.id);
@@ -491,6 +501,7 @@ export function BlockInspector({
         </ul>
       )}
       <div className="sb-inspector-body">
+        {summary && <div className="sb-summary">{summary}</div>}
         {callsAction && (
           <>
             <Field
@@ -522,6 +533,7 @@ export function BlockInspector({
                 </select>
               )}
             </Field>
+            {actionTools && <div className="sb-action-tools">{actionTools}</div>}
             {entry && (
               <div className="ah-row ah-small" style={{ gap: 8 }}>
                 <EffectBadge effect={entry.action.effect} />
@@ -540,6 +552,7 @@ export function BlockInspector({
                         {input.required ? " *" : ""}
                       </span>
                       <ValueInput
+                        label={`Value of ${input.name}`}
                         value={
                           current === undefined
                             ? ""

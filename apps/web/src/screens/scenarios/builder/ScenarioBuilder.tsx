@@ -22,9 +22,9 @@ import {
   type DragState,
   type DropTarget,
   type InsertTarget,
-  type SlotRequest,
   type Stack,
 } from "./BlockCanvas";
+import { BlockFacts } from "./BlockFacts";
 import { InsertMenu } from "./InsertMenu";
 import { createActionMessage, describeMessage, type DescribeScope } from "./claude";
 import {
@@ -36,7 +36,6 @@ import {
 } from "./ClaudeDialogs";
 import { StartCard } from "./StartCard";
 import { ActionPanel } from "../ActionPanel";
-import { ActionChoice, ConditionChoice, SlotFrame, TextChoice, ValueChoice } from "./SlotPopover";
 import { CATEGORIES, blockItem } from "./palette";
 import { FlowCanvas, kindLook, type AddChoice } from "./FlowCanvas";
 import { BlockInspector, ConditionBuilder, ScenarioSettings } from "./Inspector";
@@ -54,8 +53,6 @@ import {
   without,
   type BuilderDocument,
   type BuilderNode,
-  type Json,
-  text,
 } from "./model";
 import {
   findItem,
@@ -319,9 +316,7 @@ export function ScenarioBuilder({
     if (menu === "preview") setMenu(null);
   }
   const planRows = new Map((preview?.rows ?? []).map((row) => [row.step, row]));
-  const [slot, setSlot] = useState<SlotRequest | null>(null);
   const [settings, setSettings] = useState(false);
-  const [details, setDetails] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [help, setHelp] = useState(() => readStored(HELP_KEY) !== "hidden");
@@ -334,7 +329,11 @@ export function ScenarioBuilder({
     readOnly: boolean;
     existing?: ScenarioAction;
   } | null>(null);
-  const [askingAction, setAskingAction] = useState(false);
+  // Ask Claude for an action: for a step (and whether it may only read), or for the scenario.
+  const [askingAction, setAskingAction] = useState<{
+    step: string | null;
+    readOnly: boolean;
+  } | null>(null);
   const [actionPanel, setActionPanel] = useState<string | null>(null);
   const actionOpener = useRef<HTMLElement | null>(null);
   const { ask } = useDiscuss();
@@ -512,8 +511,7 @@ export function ScenarioBuilder({
   };
 
   const inspector = (() => {
-    // The board shows a step in place; the graph has only the panel to show it in.
-    if (!selectedItem || (!details && view === "blocks")) {
+    if (!selectedItem) {
       return settings ? (
         <ScenarioSettings
           document={document}
@@ -538,6 +536,38 @@ export function ScenarioBuilder({
           library={items}
           problems={problems.filter((problem) => problem.node === node.id)}
           mode={mode}
+          summary={
+            <BlockFacts
+              node={node}
+              action={actionFacts(node)}
+              row={planRows.get(node.id) ?? null}
+              environment={preview?.environment ?? null}
+            />
+          }
+          actionTools={
+            <>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon="file-plus"
+                onClick={() => {
+                  setNewAction({ node: node.id, readOnly: node.type === "expect" });
+                }}
+              >
+                New action
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon="message-square"
+                onClick={() => {
+                  setAskingAction({ step: node.id, readOnly: node.type === "expect" });
+                }}
+              >
+                Ask Claude to write one
+              </Button>
+            </>
+          }
           onChange={(next) => {
             if (next.id !== node.id) {
               draft.edit(updateBlock(serialized, node.id, next));
@@ -552,7 +582,7 @@ export function ScenarioBuilder({
             removeItem(node.id);
           }}
           onClose={() => {
-            setDetails(false);
+            setSelected(null);
           }}
         />
       );
@@ -849,150 +879,6 @@ export function ScenarioBuilder({
       window.removeEventListener("keydown", listen);
     };
   }, []);
-
-  // The popover of a clicked slot: fill it on the block, without the side panel.
-  const slotPopover = (request: SlotRequest) => {
-    const item = findItem(allItems, request.id);
-    const close = () => {
-      setSlot(null);
-    };
-    if (!item) return null;
-    if (item.kind === "if") {
-      return (
-        <SlotFrame anchor={request.anchor} title="If" onClose={close} wide>
-          <ConditionChoice
-            value={item.condition}
-            fields={everySource(serialized, outputs).map((source) => ({
-              ref: source.ref,
-              label: `${source.label} (${source.hint})`,
-            }))}
-            onApply={(condition) => {
-              editItem(item.key, { ...item, condition });
-              close();
-            }}
-          />
-        </SlotFrame>
-      );
-    }
-    if (item.kind === "parallel") return null;
-    const node = item.node;
-    const apply = (key: string, value: Json | undefined) => {
-      const next: BuilderNode =
-        value === undefined || value === "" ? without(node, key) : { ...node, [key]: value };
-      editNode(next);
-      close();
-    };
-    if (request.kind === "action") {
-      return (
-        <SlotFrame anchor={request.anchor} title="Choose the action" onClose={close} wide>
-          <ActionChoice
-            library={items}
-            pack={scenario.pack}
-            readOnly={node.type === "expect"}
-            current={typeof node.action === "string" ? node.action : ""}
-            onPick={(ref) => {
-              apply("action", ref);
-            }}
-            onNew={() => {
-              setNewAction({ node: node.id, readOnly: node.type === "expect" });
-              close();
-            }}
-            onAskClaude={(described) => {
-              ask(
-                createActionMessage({
-                  text: described,
-                  pack: scenario.pack,
-                  step: node.id,
-                  readOnly: node.type === "expect",
-                }),
-              );
-              close();
-            }}
-          />
-        </SlotFrame>
-      );
-    }
-    if (request.kind === "value") {
-      const name = request.key.replace(/^with\./, "");
-      const given =
-        typeof node.with === "object" && node.with !== null && !Array.isArray(node.with)
-          ? node.with
-          : {};
-      const current = given[name];
-      const facts = actionFacts(node);
-      const spec = facts?.inputs.find((input) => input.name === name);
-      return (
-        <SlotFrame anchor={request.anchor} title={`Value of ${name}`} onClose={close}>
-          <ValueChoice
-            value={
-              current === undefined
-                ? ""
-                : typeof current === "string"
-                  ? current
-                  : JSON.stringify(current)
-            }
-            description={spec?.description ?? null}
-            sources={valueSources(serialized, node.id, outputs)}
-            onApply={(value) => {
-              const typed =
-                spec?.type === "integer" && /^-?\d+$/.test(value) ? Number(value) : value;
-              const next = value === "" ? without(given, name) : { ...given, [name]: typed };
-              apply("with", Object.keys(next).length > 0 ? next : undefined);
-            }}
-          />
-        </SlotFrame>
-      );
-    }
-    if (request.kind === "condition") {
-      const fields =
-        node.type === "loop_group" && item.kind === "repeat"
-          ? programNodes(item.body).flatMap((inner) =>
-              outputs(typeof inner.action === "string" ? inner.action : "").map((path) => ({
-                ref: `$${inner.id}.output.${path}`,
-                label: `${inner.id} · ${path}`,
-              })),
-            )
-          : (
-              findAction(typeof node.action === "string" ? node.action : "")?.output_fields ?? []
-            ).map((field) => ({ ref: `$self.output.${field.path}`, label: field.path }));
-      return (
-        <SlotFrame
-          anchor={request.anchor}
-          title={node.type === "loop_group" ? "Repeat until" : "Wait until"}
-          onClose={close}
-          wide
-        >
-          <ConditionChoice
-            value={typeof node.until_when === "string" ? node.until_when : ""}
-            fields={fields}
-            onApply={(value) => {
-              apply("until_when", value);
-            }}
-          />
-        </SlotFrame>
-      );
-    }
-    return (
-      <SlotFrame
-        anchor={request.anchor}
-        title={request.kind === "text" ? "What to do by hand" : "The scenario to run"}
-        onClose={close}
-      >
-        <TextChoice
-          value={text(node[request.key])}
-          multiline={request.kind === "text"}
-          placeholder={
-            request.kind === "text"
-              ? "e.g. Create a test record by hand and type its id"
-              : "a scenario of this pack"
-          }
-          onApply={(value) => {
-            apply(request.key, value);
-          }}
-        />
-      </SlotFrame>
-    );
-  };
 
   const inputs =
     typeof document.inputs === "object" &&
@@ -1387,7 +1273,7 @@ export function ScenarioBuilder({
             setNewAction({ node: null, readOnly: false });
           }}
           onAskAction={() => {
-            setAskingAction(true);
+            setAskingAction({ step: null, readOnly: false });
           }}
           onOpenAction={(item, opener) => {
             actionOpener.current = opener;
@@ -1398,8 +1284,8 @@ export function ScenarioBuilder({
           {view === "blocks" && help && (
             <div className="sb-hint" role="note">
               <span>
-                Hover between two steps and press <b>+</b> to add one. Click a step to see
-                everything it does. Drag a step to move it.
+                Press <b>+</b> on an arrow to add a step. Click a step to edit it on the right. Drag
+                a step to move it.
               </span>
               <Button
                 size="sm"
@@ -1412,17 +1298,21 @@ export function ScenarioBuilder({
               </Button>
             </div>
           )}
-          {view === "blocks" && program.main.length === 0 && !reviewProgram && (
-            <StartCard
-              onDescribe={() => {
-                setDescribing(true);
-              }}
-              onTemplate={(items_) => {
-                commit(items_, program.kept, layout.loose);
-              }}
-              taken={taken}
-            />
-          )}
+          {view === "blocks" &&
+            program.main.length === 0 &&
+            program.kept.length === 0 &&
+            layout.loose.length === 0 &&
+            !reviewProgram && (
+              <StartCard
+                onDescribe={() => {
+                  setDescribing(true);
+                }}
+                onTemplate={(items_) => {
+                  commit(items_, program.kept, layout.loose);
+                }}
+                taken={taken}
+              />
+            )}
           {view === "blocks" && (
             <BlockCanvas
               suggested={reviewProgram ? suggestedIds : undefined}
@@ -1434,16 +1324,6 @@ export function ScenarioBuilder({
               }}
               stepActions={(id) => (
                 <>
-                  <Button
-                    size="sm"
-                    variant={details ? "primary" : "ghost"}
-                    icon="settings"
-                    onClick={() => {
-                      setDetails(!details);
-                    }}
-                  >
-                    More settings
-                  </Button>
                   <Button
                     size="sm"
                     variant="ghost"
@@ -1508,15 +1388,9 @@ export function ScenarioBuilder({
               onMoveStack={(_stack, x, y) => {
                 saveLayout({ ...layout, main: { x, y } });
               }}
-              onEditNode={editNode}
               drag={drag}
               onDrag={setDrag}
               numbers={stepNumbers(program.main)}
-              onSlot={(request) => {
-                if (reviewProgram) return;
-                setSelected(request.id);
-                setSlot(request);
-              }}
               onInsert={(target, anchor) => {
                 if (reviewProgram) return;
                 const list =
@@ -1570,7 +1444,6 @@ export function ScenarioBuilder({
         </div>
         {reviewPanel ?? inspector}
       </div>
-      {slot && slotPopover(slot)}
       {describing && (
         <DescribeDialog
           empty={program.main.length === 0}
@@ -1590,14 +1463,14 @@ export function ScenarioBuilder({
               createActionMessage({
                 text: described,
                 pack: scenario.pack,
-                step: null,
-                readOnly: false,
+                step: askingAction.step,
+                readOnly: askingAction.readOnly,
               }),
             );
-            setAskingAction(false);
+            setAskingAction(null);
           }}
           onClose={() => {
-            setAskingAction(false);
+            setAskingAction(null);
           }}
         />
       )}
