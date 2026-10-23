@@ -16,6 +16,7 @@ License: Apache-2.0.
 ## Use agent-hub
 
 - [Using agent-hub for another project](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/USING.md): `docs/USING.md`
+- [Flows](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/FLOWS.md): `docs/FLOWS.md`
 - [agent-hub README: Quick Start, daily workflow, recipes and configuration](https://raw.githubusercontent.com/jroquette/agent-hub/main/README.md): `README.md`
 - [Project config: `hub.json`](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/project-config.md): `docs/design/project-config.md`
 - [Developer identity: `hub.local.json`, then `hub.json`, then git config](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/developer-identity.md): `docs/design/developer-identity.md`

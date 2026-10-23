@@ -299,7 +299,7 @@ built from its `inputs:`; Run detail shows the run's graph with each node's stat
 cancels, resumes or abandons the run. Portfolio's Needs you lists every gate waiting for a person. The format and
 the engine's rules: [workflow-schema.md](docs/design/workflow-schema.md), [workflow-engine-rules.md](docs/design/workflow-engine-rules.md).
 
-Which flow to use, how each starts and what you decide in it: [docs/USING.md › Pick a flow](docs/USING.md#pick-a-flow).
+Which flow to use, how each starts and what you decide in it: [docs/FLOWS.md](docs/FLOWS.md).
 
 ## 🔄 Daily workflow
 
