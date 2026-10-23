@@ -3380,12 +3380,16 @@ button.as-bg-head {
   flex: none;
   display: flex;
   flex-direction: column;
-  width: 260px;
+  width: var(--as-rail-w, 260px);
   height: 100%;
   min-height: 0;
   overflow: hidden;
   /* Between the app's frame (bg) and the chat (surface): the columns step in by tone, not lines. */
   background: var(--surface-sunken);
+}
+/* The rail's right edge: the drawer's grip, on the layout beside the rail. */
+.as-rail-handle {
+  left: calc(var(--as-rail-w, 260px) - 4px);
 }
 .as-rail-head {
   display: flex;
