@@ -125,7 +125,7 @@ def test_validates_and_passes_every_fixture_when_review_incoming_tested(
     tested = run_command(demo_workspace.hub, "workflow", "test", "review-incoming")
 
     assert validated.exit_code == 0, validated.output
-    assert validated.stdout == "review-incoming: valid (11 nodes in 8 layers)\n"
+    assert validated.stdout == "review-incoming: valid (12 nodes in 9 layers)\n"
     assert tested.exit_code == 0, tested.output
     for fixture in FIXTURES:
         # The hub's seeded copy shadows the built-in (AGH-227).
@@ -137,7 +137,10 @@ def test_validates_and_passes_every_fixture_when_review_incoming_tested(
 def test_runs_no_github_call_when_document_loaded() -> None:
     document, nodes = document_of(), nodes_of()
 
-    assert [node.type for node in nodes.values() if node.type == "shell"] == []
+    # The one shell node is hub step config: it reads hub.json for fetch.py (AGH-480), no gh.
+    shells = [node.command for node in nodes.values() if node.type == "shell"]
+    assert shells == [("hub", "step", "config")]
+    assert nodes["config"].mutates_checkout is False
     for node in nodes.values():
         for arg in getattr(node, "args", ()):
             assert not FORBIDDEN.search(arg), (node.id, arg)
@@ -338,9 +341,12 @@ def a_lens_reply(reviewer: str, *findings: dict[str, Any]) -> str:
 
 
 def test_writes_approved_payload_and_keeps_security_finding_when_scripts_chain_on_real_git(
-    demo_workspace: Workspace, tmp_path: Path
+    demo_workspace: Workspace, tmp_path: Path, run_command: CommandRunner
 ) -> None:
     hub, repo = demo_workspace.hub, demo_workspace.ws / "demo-api"
+    # The workflow's config node: the real hub step config output, as --config takes it.
+    config = run_command(hub, "step", "config")
+    assert config.exit_code == 0, config.output
     git = demo_workspace.git
     base = git(repo, "rev-parse", "origin/trunk")
     before = (git(repo, "branch", "-a"), git(repo, "status", "--porcelain"))
@@ -376,6 +382,7 @@ def test_writes_approved_payload_and_keeps_security_finding_when_scripts_chain_o
         files = [f"--{n}-file" for n in ("pr", "ci", "spec")]
         paths = [str(tmp_path / n) for n in ("pr.json", "ci.json", "spec.txt")]
         argv = ["--repo", "demo-api", "--pr", "7", "--ref", "refs/agent-hub/review/7"]
+        argv += ["--config", config.stdout]
         for flag, path in zip(files, paths, strict=True):
             argv += [flag, path]
         return a_script("fetch.py", *argv, cwd=hub)

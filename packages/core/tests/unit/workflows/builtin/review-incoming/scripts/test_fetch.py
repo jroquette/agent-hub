@@ -70,6 +70,8 @@ def given(
         str(ci_file),
         "--spec-file",
         str(spec_file),
+        "--config",
+        clone.config,
         *extra,
     ]
 
@@ -214,12 +216,32 @@ def test_exits_two_when_pr_is_closed(clone: Clone, run: Any, changes: dict[str, 
 
 def test_exits_two_when_repo_is_unknown(clone: Clone, run: Any) -> None:
     argv = given(clone)
-    argv[1] = "web"
+    argv[argv.index("--repo") + 1] = "web"
 
     code, _, err = run(argv)
 
     assert code == 2
-    assert "no repo web in hub.json" in err
+    assert "no repo web in the config" in err
+
+
+@pytest.mark.parametrize("config", ["not json", "[]", '{"repos": {}}'])
+def test_exits_two_when_config_is_unreadable(clone: Clone, run: Any, config: str) -> None:
+    argv = given(clone)
+    argv[argv.index("--config") + 1] = config
+
+    code, _, err = run(argv)
+
+    assert code == 2
+    assert "the config" in err
+
+
+def test_reads_no_hub_json_when_config_given(clone: Clone, run: Any) -> None:
+    (clone.hub / "hub.json").write_text(json.dumps({"repos": []}), encoding="utf-8")
+
+    code, facts, _ = run(given(clone))
+
+    assert code == 0
+    assert facts["check"] == "make check"
 
 
 @pytest.mark.parametrize("number", ["0", "07", "7a", "-7", "1234567890", ""])
