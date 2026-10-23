@@ -66,6 +66,7 @@ LINE_CONTROLS = frozenset("\n\t")
 # A tuple, so the clause stays parenthesized for Python 3.9's grammar.
 JSON_ERRORS = (ValueError, RecursionError)
 
+
 class BadInputError(Exception):
     """The file, the config or an argument cannot be read: the run fails at this node."""
 
