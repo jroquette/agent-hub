@@ -169,6 +169,10 @@ otherwise, this list wins:
   **Knowledge**, what the project knows: Brain, Learnings (the to-triage badge) and Toolkit; and the Hub foot
   (Health, Hub config, Settings). There is no Activity and no Setup group: the playground tried them and folded
   Sessions and Workflow runs back into Work, Environments into Work and Toolkit into Knowledge.
+- **AC-521.7.1** (AGH-521) The project pickers (Environments, Brain, Toolkit, Hub config) never show the red Doctor
+  errors badge on a project card: a hub with warnings shows a neutral "Setup tips" hint, one with errors "Setup
+  needs a fix", each with a tooltip that says the page still works and Health has the detail; a healthy hub shows
+  nothing. The Portfolio keeps the doctor badge (`ProjectCardHead`'s `healthDisplay`).
 
 
 Groups appear in this order with `caption` style group labels in `text-subtle`. The selected item uses `accent-soft` ground, `accent` icon and a 2px `accent` left bar; hover uses `surface-hover`. Each item is a 32px (`size.control`) row; collapsed, each becomes a 40×40 icon button with a `Tooltip` showing the label and its shortcut.

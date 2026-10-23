@@ -25,6 +25,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   (Brain, Learnings, Toolkit) (AGH-521).
 - The sessions rail beside the chat resizes from its right edge (drag or arrow keys, kept in this browser, Home resets
   it), and the chat column stays still while it does (AGH-521).
+- The Environments, Brain, Toolkit and Hub config project pickers show a calm setup hint (Setup tips, Setup needs a
+  fix) instead of the red Doctor errors badge, and nothing for a healthy hub; the Portfolio keeps the badge (AGH-521).
 
 ### Fixed
 
