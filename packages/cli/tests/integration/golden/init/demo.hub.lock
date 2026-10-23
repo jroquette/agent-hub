@@ -556,7 +556,7 @@
     "plugin/hub-workflow/skills/upgrade/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "5802b522bc66b279456b7af6d84ac69c58b81852c2d0960cc616fc424dac2a20"
+      "sha256": "1b2a98049d9da37e40b784c306ec3d854772ec07f0c779357090e0f451fffdf4"
     },
     "plugin/hub-workflow/skills/ux-review/SKILL.md": {
       "executable": false,
@@ -761,6 +761,9 @@
       "ownership": "seeded"
     },
     "workflows/upgrade/fixtures/upgrade-adapt-exhausted.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/upgrade/fixtures/upgrade-lockfile-edited.yaml": {
       "ownership": "seeded"
     },
     "workflows/upgrade/fixtures/upgrade-major-breaking.yaml": {

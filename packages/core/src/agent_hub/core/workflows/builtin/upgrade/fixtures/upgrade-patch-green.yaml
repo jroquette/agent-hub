@@ -18,7 +18,7 @@ stubs:
   notes: {output: {found: true, sources: ["https://github.com/encode/httpx/releases/tag/0.28.2"], text: "Changes the client.", truncated: false, reason: ""}}
   changelog: {output: {breaking: [], summary: No breaking change hits the repo.}}
   check: {output: {passed: true, exit_code: 0, round: 1, tail: "ok\n"}}
-  strength: {output: {touched: 0, files: [], lockfiles_edited: [], ran: false, tool: "", reason: no mutation tool found in the repo, mutants: 0, killed: 0, inconclusive: 0, survived: [], more_survived: 0}}
+  strength: {output: {touched: 0, files: [], lockfiles_edited: [], lockfile_edit: false, ran: false, tool: "", reason: no mutation tool found in the repo, mutants: 0, killed: 0, inconclusive: 0, survived: [], more_survived: 0}}
   check-full: {output: {passed: true, exit_code: 0, round: 1, tail: "ok\n"}}
   commits: {output: {count: 1, subjects: ["chore(deps): bump httpx (DEM-1)"], summary: Bumps httpx., dirty: false}}
   outcome: {output: {status: done, question: "", summary: "httpx 0.28.1 -> 0.28.2."}}

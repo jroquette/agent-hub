@@ -217,6 +217,7 @@ DESIGN_PATHS = (
     "workflows/sdlc/scripts/verdict.py",
     "workflows/sdlc/ticket-pass.yaml",
     "workflows/upgrade/fixtures/upgrade-adapt-exhausted.yaml",
+    "workflows/upgrade/fixtures/upgrade-lockfile-edited.yaml",
     "workflows/upgrade/fixtures/upgrade-major-breaking.yaml",
     "workflows/upgrade/fixtures/upgrade-patch-green.yaml",
     "workflows/upgrade/fixtures/upgrade-split.yaml",

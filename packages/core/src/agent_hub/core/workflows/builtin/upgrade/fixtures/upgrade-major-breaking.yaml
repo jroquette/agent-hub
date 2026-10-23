@@ -21,7 +21,7 @@ stubs:
   check: {output: {passed: false, exit_code: 2, round: 1, tail: "FAILED tests/test_api.py::test_get\n"}}
   adapt__fix: {output: {status: done, summary: Adapts the client calls., question: ""}}
   adapt__recheck: {output: {passed: true, exit_code: 0, round: 1, tail: "ok\n"}}
-  strength: {output: {touched: 3, files: [src/api.py, src/client.py, tests/test_api.py], lockfiles_edited: [], ran: false, tool: "", reason: no mutation tool found in the repo, mutants: 0, killed: 0, inconclusive: 0, survived: [], more_survived: 0}}
+  strength: {output: {touched: 3, files: [src/api.py, src/client.py, tests/test_api.py], lockfiles_edited: [], lockfile_edit: false, ran: false, tool: "", reason: no mutation tool found in the repo, mutants: 0, killed: 0, inconclusive: 0, survived: [], more_survived: 0}}
   size: {decision: approve, approver: Jo}
   check-full: {output: {passed: true, exit_code: 0, round: 1, tail: "ok\n"}}
   commits: {output: {count: 2, subjects: ["chore(deps): bump httpx (DEM-1)", "fix(api): adapt to httpx (DEM-1)"], summary: Bumps httpx., dirty: false}}

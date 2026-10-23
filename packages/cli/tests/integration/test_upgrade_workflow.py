@@ -35,6 +35,7 @@ MAX_PROMPT_BYTES = 131072
 NAME = "upgrade"
 FIXTURES = (
     "upgrade-adapt-exhausted",
+    "upgrade-lockfile-edited",
     "upgrade-major-breaking",
     "upgrade-patch-green",
     "upgrade-split",
@@ -69,7 +70,7 @@ def test_validates_and_passes_every_fixture_when_upgrade_tested(
         # The hub's seeded copy shadows the built-in.
         assert f"workflows/upgrade/fixtures/{fixture}.yaml: ok" in tested.stdout
     assert "warning" not in tested.stdout
-    assert tested.stdout.endswith("4 fixtures: 4 passed, 0 failed\n")
+    assert tested.stdout.endswith("5 fixtures: 5 passed, 0 failed\n")
 
 
 def test_declares_one_package_and_the_size_condition_when_document_loaded() -> None:
@@ -90,6 +91,8 @@ def test_declares_one_package_and_the_size_condition_when_document_loaded() -> N
             assert node.retry is not None and node.retry.max_attempts == 0, node.id
     assert nodes["check"].args == ("$gate.output.check_fast",)
     assert nodes["check-full"].args == ("$worktree.output.check",)
+    # An adapt edit to a manifest or lockfile blocks the run: no 20-minute full check first.
+    assert nodes["check-full"].when == "$strength.output.lockfile_edit == false"
 
 
 def test_reads_the_fast_gate_from_hub_json_in_the_hub_when_document_loaded() -> None:
