@@ -1558,7 +1558,9 @@ failed Actions run (a push with two failing workflows starts two runs), and for 
 request. `pr_opened` starts only pull request numbers above the highest one recorded (a pull request is open from its
 creation, so numbers come in order). `ci_red` starts each failed run id not seen yet that is above a floor: the lowest
 id of the baseline's page, raised to the highest id that leaves the 100 ids it keeps (a run's id is given when it
-starts, so a slow run can fail after a newer one and still starts). Either way, an older pull request or failed run
+starts, so a slow run can fail after a newer one and still starts). The one gap is at the baseline: a run still in
+progress at a source's first poll that fails later with an id below that page's lowest id does not start (once per
+source). Either way, an older pull request or failed run
 that comes onto the page when a newer one closes or turns green starts nothing, and an id is never started twice
 however long it stays on the page. The event's data reaches the run only as inputs the workflow declares: `sha`
 (every kind), `pr` (`pr_opened`) and `ci_run` (`ci_red`). The slots and event ids already started (the ids seen per
