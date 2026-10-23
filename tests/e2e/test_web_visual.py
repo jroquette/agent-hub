@@ -46,6 +46,6 @@ def test_matches_baselines_when_demo_screens_rendered(tmp_path: Path) -> None:
     output = result.stdout + result.stderr
     assert result.returncode == 0, output
     # Every baseline is a test, and every test ran.
-    assert len(baselines) == 20, baselines
+    assert len(baselines) == 27, baselines
     assert re.search(rf"\b{len(baselines)} passed\b", output), output
     assert "skipped" not in output, output
