@@ -13,27 +13,38 @@
   (``base_content_hash``), else ``stale_document``. No git command runs.
 """
 
+import contextlib
 import hashlib
 import re
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Final
+from typing import Final, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
-from agent_hub.api.scenario_catalog import ScenarioActionView, ScenarioCatalog, action_view
+from agent_hub.api.scenario_catalog import (
+    DOCUMENT_TEXT_BYTES,
+    ScenarioActionView,
+    ScenarioCatalog,
+    action_view,
+    read_text_bounded,
+)
 from agent_hub.core.item_versions.item_units import ItemUnit
 from agent_hub.core.item_versions.item_version import UnitKind
 from agent_hub.core.item_versions.item_version_ports import ItemVersionWrites, ItemWriteResult
 from agent_hub.core.json_form import JsonValue
+from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.readmodels.view_types import ViewModel
 from agent_hub.core.scenarios.action_catalog import ActionRefError, resolve_action
+from agent_hub.core.scenarios.action_document import parse_action
 from agent_hub.core.workflows.catalog import LoadProblem, WorkflowFile, check_workflows
+from agent_hub.core.workflows.document import WorkflowLoadError
 from agent_hub.core.workflows.launch import RunConflictError
 from agent_hub.generator.action_discovery import ActionDiscovery, discover_actions
 from agent_hub.generator.scenario_discovery import HUB_SCENARIOS, discover_scenarios
 from agent_hub.generator.workflow_discovery import pack_resolver
+from agent_hub.generator.workflow_outputs import JsonSchemaOutputs
 from agent_hub.generator.workflow_yaml import WorkflowFileError, load_workflow_bytes
 
 KEBAB: Final = r"^[a-z][a-z0-9-]{0,63}$"
@@ -383,3 +394,168 @@ def _walk(nodes: object) -> list[dict[str, object]]:
                 out.append(node)
                 out.extend(_walk(node.get("nodes")))
     return out
+
+
+# Claude's proposal for a scenario, and actions written from the builder.
+
+PROPOSALS_FOLDER: Final = Path(".agent-runs", "proposals", "scenarios")
+_ACTION_NAME: Final = re.compile(KEBAB)
+_INPUT_NAME: Final = r"^[a-z][a-z0-9_]{0,63}$"
+
+
+def proposal_path(pack: str, name: str) -> Path:
+    """Where Claude writes its proposal for scenario ``name`` of ``pack`` (git ignores it)."""
+    return PROPOSALS_FOLDER / pack / f"{name}.yaml"
+
+
+class ProposalView(ViewModel):
+    """Claude's proposal for the scenario: the document it wrote, checked as Save would check
+    it (never written to the scenario file until the owner accepts it and saves)."""
+
+    path: str
+    document: dict[str, JsonValue] | None
+    check: ValidateResult | None
+    problem: str | None = None
+
+
+class ActionInputDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(pattern=_INPUT_NAME)
+    type: Literal["string", "integer", "number", "boolean", "service"] = "string"
+    required: bool = False
+    description: str | None = Field(default=None, max_length=500)
+
+
+class OutputFieldDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(pattern=_INPUT_NAME)
+    type: Literal["string", "integer", "number", "boolean", "object", "array"] = "string"
+
+
+class NewAction(BaseModel):
+    """A new action from the builder: its facts and its script's text."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pack: str = Field(pattern=KEBAB)
+    name: str = Field(pattern=KEBAB)
+    description: str = Field(min_length=1, max_length=500)
+    effect: Literal["read", "write", "destroy"]
+    runtime: Literal["python", "sh"] = "python"
+    timeout: str = Field(default="5m", pattern=r"^[1-9][0-9]*(s|m|h)$")
+    inputs: list[ActionInputDraft] = Field(default_factory=list, max_length=64)
+    outputs: list[OutputFieldDraft] = Field(default_factory=list, max_length=64)
+    script_text: str = Field(min_length=1, max_length=256 << 10)
+
+
+def _action_yaml(action: NewAction, script: str) -> str:
+    """The action document a new action is saved as."""
+    document: dict[str, JsonValue] = {
+        "version": 1,
+        "name": action.name,
+        "description": action.description,
+        "effect": action.effect,
+        "runtime": action.runtime,
+        "script": script,
+        "timeout": action.timeout,
+    }
+    if action.inputs:
+        document["inputs"] = {
+            item.name: {
+                key: value
+                for key, value in (
+                    ("type", item.type),
+                    ("required", item.required or None),
+                    ("description", item.description),
+                )
+                if value is not None
+            }
+            for item in action.inputs
+        }
+    document["output_format"] = {
+        "type": "object",
+        "properties": {item.name: {"type": item.type} for item in action.outputs},
+    }
+    return yaml.safe_dump(document, sort_keys=False, allow_unicode=True, width=100)
+
+
+def read_proposal(builder: ScenarioBuilder, project: str, name: str) -> ProposalView:
+    """Claude's proposal for scenario ``name``, checked; ``EntityNotFoundError`` when none."""
+    hub_text, plan_pack = (
+        builder.catalog.hub_of(project),
+        builder.catalog.scenario(project, name)[2],
+    )
+    hub = Path(hub_text)
+    relative = proposal_path(plan_pack, name)
+    text, _ = _read_text_no_link(hub / relative)
+    if text is None:
+        raise EntityNotFoundError(entity="proposal", entity_id=f"{project}/{name}")
+    try:
+        value = yaml.safe_load(text)
+    except yaml.YAMLError as error:
+        return ProposalView(path=relative.as_posix(), document=None, check=None, problem=str(error))
+    if not isinstance(value, dict):
+        return ProposalView(
+            path=relative.as_posix(), document=None, check=None, problem="not a YAML mapping"
+        )
+    document = dict(value)
+    document["name"] = name
+    document["kind"] = "scenario"
+    check = _validate(hub, plan_pack, document, found=discover_actions(hub))
+    return ProposalView(path=relative.as_posix(), document=document, check=check)
+
+
+def drop_proposal(builder: ScenarioBuilder, project: str, name: str) -> None:
+    """Removes Claude's proposal (accepted into the draft, or rejected); none is fine."""
+    hub = Path(builder.catalog.hub_of(project))
+    pack = builder.catalog.scenario(project, name)[2]
+    target = hub / proposal_path(pack, name)
+    if target.is_symlink():
+        raise RunConflictError(code="link_in_path", reason="the proposal is a link; not removed")
+    with contextlib.suppress(FileNotFoundError):
+        target.unlink()
+
+
+def create_action(
+    builder: ScenarioBuilder, project: str, action: NewAction, *, writes: ItemVersionWrites
+) -> ScenarioActionView:
+    """Writes a new action (its document and its script) as a draft; ``name_taken`` when the
+    pack already has one of that name, ``document_invalid`` when the loader refuses it."""
+    hub = Path(builder.catalog.hub_of(project))
+    found = discover_actions(hub)
+    if any(
+        entry.pack == action.pack and entry.document.name == action.name for entry in found.actions
+    ):
+        raise RunConflictError(
+            code="name_taken", reason=f"pack {action.pack} already has an action {action.name}"
+        )
+    suffix = ".py" if action.runtime == "python" else ".sh"
+    script = f"scripts/{action.name.replace('-', '_')}{suffix}"
+    text = _action_yaml(action, script)
+    shown = f"actions/{action.pack}/{action.name}.yaml"
+    try:
+        document = parse_action(load_workflow_bytes(text.encode(), source=shown).document)
+    except (WorkflowFileError, WorkflowLoadError) as error:
+        raise RunConflictError(code="document_invalid", reason=str(error)) from None
+    if problems := JsonSchemaOutputs().schema_problems(document.output_format):
+        raise RunConflictError(code="document_invalid", reason="; ".join(problems))
+    base = f"actions/{action.pack}"
+    writes.write_file(
+        str(hub),
+        ItemUnit(project=project, unit_path=f"{base}/{script}", kind=UnitKind.ACTION),
+        action.script_text.encode(),
+    )
+    writes.write_file(
+        str(hub),
+        ItemUnit(project=project, unit_path=shown, kind=UnitKind.ACTION),
+        text.encode(),
+    )
+    return action_view(action.name, action.pack, discover_actions(hub))
+
+
+def _read_text_no_link(path: Path) -> tuple[str | None, bool]:
+    if path.is_symlink() or any(parent.is_symlink() for parent in path.parents):
+        return None, False
+    return read_text_bounded(path, DOCUMENT_TEXT_BYTES)

@@ -208,6 +208,9 @@ SCENARIO_PATHS: frozenset[tuple[str, str]] = frozenset(
         ("post", "/projects/{project}/scenarios/validate"),
         ("get", "/projects/{project}/actions"),
         ("put", "/scenarios/{project}/{name}"),
+        ("get", "/scenarios/{project}/{name}/proposal"),
+        ("post", "/scenarios/{project}/{name}/proposal/dismiss"),
+        ("post", "/projects/{project}/actions"),
     )
 )
 

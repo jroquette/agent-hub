@@ -57,7 +57,8 @@ ITEM_WRITES = re.compile(
     rf"^{re.escape(API_PREFIX)}/((projects/[^/]+/skills/[^/]+/[^/]+/[^/]+"
     r"|workflows/[^/]+/[^/]+)/versions/[^/]+/restore"
     r"|projects/[^/]+/skills/drafts/[^/]+/publish"
-    r"|scenarios/[^/]+/[^/]+)$"
+    r"|scenarios/[^/]+/[^/]+(/proposal/dismiss)?"
+    r"|projects/[^/]+/actions)$"
 )
 STRICT_WRITES = re.compile(
     rf"^{re.escape(API_PREFIX)}/learnings/[^/]+/(accept|reject)$|{RUN_WRITES.pattern}"

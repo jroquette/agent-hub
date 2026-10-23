@@ -409,6 +409,50 @@
         "title": "ActionCallEntry",
         "type": "object"
       },
+      "ActionInputDraft": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "required": {
+            "default": false,
+            "title": "Required",
+            "type": "boolean"
+          },
+          "type": {
+            "default": "string",
+            "enum": [
+              "string",
+              "integer",
+              "number",
+              "boolean",
+              "service"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ActionInputDraft",
+        "type": "object"
+      },
       "ActionInputSpec": {
         "additionalProperties": false,
         "description": "An action input as its document declares it.",
@@ -7228,6 +7272,83 @@
         ],
         "type": "string"
       },
+      "NewAction": {
+        "additionalProperties": false,
+        "description": "A new action from the builder: its facts and its script's text.",
+        "properties": {
+          "description": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "effect": {
+            "enum": [
+              "read",
+              "write",
+              "destroy"
+            ],
+            "title": "Effect",
+            "type": "string"
+          },
+          "inputs": {
+            "items": {
+              "$ref": "#/components/schemas/ActionInputDraft"
+            },
+            "maxItems": 64,
+            "title": "Inputs",
+            "type": "array"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9-]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "outputs": {
+            "items": {
+              "$ref": "#/components/schemas/OutputFieldDraft"
+            },
+            "maxItems": 64,
+            "title": "Outputs",
+            "type": "array"
+          },
+          "pack": {
+            "pattern": "^[a-z][a-z0-9-]{0,63}$",
+            "title": "Pack",
+            "type": "string"
+          },
+          "runtime": {
+            "default": "python",
+            "enum": [
+              "python",
+              "sh"
+            ],
+            "title": "Runtime",
+            "type": "string"
+          },
+          "script_text": {
+            "maxLength": 262144,
+            "minLength": 1,
+            "title": "Script Text",
+            "type": "string"
+          },
+          "timeout": {
+            "default": "5m",
+            "pattern": "^[1-9][0-9]*(s|m|h)$",
+            "title": "Timeout",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pack",
+          "name",
+          "description",
+          "effect",
+          "script_text"
+        ],
+        "title": "NewAction",
+        "type": "object"
+      },
       "NodeLines": {
         "additionalProperties": false,
         "properties": {
@@ -7553,6 +7674,34 @@
           "type"
         ],
         "title": "OutputField",
+        "type": "object"
+      },
+      "OutputFieldDraft": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "type": {
+            "default": "string",
+            "enum": [
+              "string",
+              "integer",
+              "number",
+              "boolean",
+              "object",
+              "array"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "OutputFieldDraft",
         "type": "object"
       },
       "OwnerSignOffBody": {
@@ -9300,6 +9449,58 @@
           "options"
         ],
         "title": "ProposalEntry",
+        "type": "object"
+      },
+      "ProposalView": {
+        "additionalProperties": false,
+        "description": "Claude's proposal for the scenario: the document it wrote, checked as Save would check\nit (never written to the scenario file until the owner accepts it and saves).",
+        "properties": {
+          "check": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ValidateResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "document": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue-Output"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "problem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Problem"
+          }
+        },
+        "required": [
+          "path",
+          "document",
+          "check"
+        ],
+        "title": "ProposalView",
         "type": "object"
       },
       "ProposedAccess": {
@@ -15161,13 +15362,14 @@
         "type": "object"
       },
       "UnitKind": {
-        "description": "What a unit is: a skill's folder, an agent's file, a hook file, a hub workflow file or a\nscenario file (the scenario builder's saves).",
+        "description": "What a unit is: a skill's folder, an agent's file, a hook file, a hub workflow file, a\nscenario file, or an action's document or script (the scenario builder's saves).",
         "enum": [
           "skill",
           "agent",
           "hook",
           "workflow",
-          "scenario"
+          "scenario",
+          "action"
         ],
         "title": "UnitKind",
         "type": "string"
@@ -20022,6 +20224,69 @@
         "tags": [
           "scenarios"
         ]
+      },
+      "post": {
+        "description": "Writes a new action (its document and its script) into the hub as a draft: a strict\nwrite that needs the launch cookie; it runs nothing and commits nothing.",
+        "operationId": "post_action_api_v1_projects__project__actions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewAction"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioActionView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Post Action",
+        "tags": [
+          "scenarios"
+        ]
       }
     },
     "/api/v1/projects/{project}/brain": {
@@ -22291,6 +22556,131 @@
           }
         },
         "summary": "Plan Scenario",
+        "tags": [
+          "scenarios"
+        ]
+      }
+    },
+    "/api/v1/scenarios/{project}/{name}/proposal": {
+      "get": {
+        "description": "Claude's proposal for the scenario (a file in the hub's ignored ``.agent-runs/``),\nchecked as Save would check it; 404 when there is none.",
+        "operationId": "get_proposal_api_v1_scenarios__project___name__proposal_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposalView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Proposal",
+        "tags": [
+          "scenarios"
+        ]
+      }
+    },
+    "/api/v1/scenarios/{project}/{name}/proposal/dismiss": {
+      "post": {
+        "description": "Removes Claude's proposal once the owner accepted it into the draft or rejected it.",
+        "operationId": "delete_proposal_api_v1_scenarios__project___name__proposal_dismiss_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Delete Proposal",
         "tags": [
           "scenarios"
         ]
