@@ -59,6 +59,10 @@ def server() -> Iterator[Served]:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 - http.server's method name
             served.paths.append(self.path)
+            if self.path == "/drop":
+                # Close without an answer: the client sees the connection reset.
+                self.close_connection = True
+                return
             if self.path == "/redirect":
                 self.send_response(302)
                 self.send_header("Location", "/target")
@@ -124,3 +128,82 @@ def test_prints_redirect_status_when_endpoint_redirects(tmp_path: Path, server: 
     assert (completed.returncode, completed.stderr) == (0, "")
     assert json.loads(completed.stdout) == {"status": 302}
     assert server.paths == ["/redirect"]
+
+
+# Review round 2: Q9 (each refusal), Q11 (malformed paths, errors other than unreachable), Q12
+# (userinfo never printed).
+@pytest.mark.parametrize("mode", ["plan", "run"])
+@pytest.mark.parametrize(
+    "path",
+    ["?x=1", "/a b", "/a\tb", "/a\r\nHost: evil.example.com", "/caf\u00e9", "/a\x7f"],
+    ids=["query-only", "space", "tab", "crlf", "non-ascii", "delete"],
+)
+def test_refuses_path_when_path_malformed(
+    tmp_path: Path, server: Served, *, mode: str, path: str
+) -> None:
+    completed = run_script(tmp_path, mode=mode, url=f"http://localhost:{server.port}", path=path)
+
+    assert completed.returncode != 0
+    assert completed.stdout == ""
+    assert "path must start with /" in completed.stderr
+    assert server.paths == []
+
+
+def test_stays_on_endpoint_when_path_starts_with_two_slashes(
+    tmp_path: Path, server: Served
+) -> None:
+    # A path starting with / follows the endpoint's host, so it cannot change it: no host check.
+    url = f"http://localhost:{server.port}"
+
+    planned = run_script(tmp_path, mode="plan", url=url, path="//evil.example.com/x")
+    ran = run_script(tmp_path, mode="run", url=url, path="//evil.example.com/x")
+
+    assert json.loads(planned.stdout) == {"summary": f"GET {url}//evil.example.com/x"}
+    assert json.loads(ran.stdout) == {"status": 200}
+    # The request reaches the endpoint's own server (urllib folds the leading //).
+    assert server.paths == ["/evil.example.com/x"]
+
+
+def test_prints_status_zero_when_connection_reset(tmp_path: Path, server: Served) -> None:
+    completed = run_script(
+        tmp_path, mode="run", url=f"http://localhost:{server.port}", path="/drop"
+    )
+
+    assert (completed.returncode, completed.stderr) == (0, "")
+    assert json.loads(completed.stdout) == {"status": 0}
+
+
+@pytest.mark.parametrize(
+    ("url", "shown"),
+    [
+        ("https://localhost:{port}", "GET https://localhost:{port}/health: "),
+        ("http://localhost:not-a-port", "GET http://localhost:not-a-port/health: "),
+    ],
+    ids=["tls-to-plain-http", "invalid-url"],
+)
+def test_exits_with_reason_when_error_is_not_unreachable(
+    tmp_path: Path, server: Served, *, url: str, shown: str
+) -> None:
+    completed = run_script(tmp_path, mode="run", url=url.format(port=server.port), path="/health")
+
+    assert completed.returncode != 0
+    assert completed.stdout == ""
+    assert completed.stderr.startswith(f"demo-get-status: {shown.format(port=server.port)}")
+
+
+@pytest.mark.parametrize("mode", ["plan", "run"])
+def test_never_prints_userinfo_when_endpoint_holds_it(
+    tmp_path: Path, server: Served, *, mode: str
+) -> None:
+    url = f"http://u:secret@localhost:{server.port}"
+
+    completed = run_script(tmp_path, mode=mode, url=url, path="/health")
+
+    assert completed.returncode == 0, completed.stderr
+    assert "secret" not in completed.stdout + completed.stderr
+    expected = (
+        {"summary": f"GET http://localhost:{server.port}/health"}
+        if mode == "plan"
+        else {"status": 200}
+    )
+    assert json.loads(completed.stdout) == expected

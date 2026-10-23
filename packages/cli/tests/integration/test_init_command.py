@@ -9,7 +9,6 @@ import socket
 import stat
 import subprocess
 import threading
-import time
 from collections.abc import Callable, Collection, Iterator, Sequence
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.metadata import version
@@ -1571,12 +1570,18 @@ def test_writes_no_lock_when_scenario_seed_write_fails(
     assert all((target / file.path).is_file() for file in flags_render().files)
 
 
-# The service refuses connections for this long, then answers 200 to every path.
-LATE_SERVICE_SECONDS = 3
+# The paths FirstDropHandler was asked for, in order; the test clears it.
+FIRST_DROP_SEEN: list[str] = []
 
 
-class OkHandler(BaseHTTPRequestHandler):
+class FirstDropHandler(BaseHTTPRequestHandler):
+    """Drops the first request without an answer (a reset: not up yet), then answers 200."""
+
     def do_GET(self) -> None:  # noqa: N802 - http.server's method name
+        FIRST_DROP_SEEN.append(self.path)
+        if len(FIRST_DROP_SEEN) == 1:
+            self.close_connection = True
+            return
         self.send_response(200)
         self.send_header("Content-Length", "0")
         self.end_headers()
@@ -1588,9 +1593,10 @@ class OkHandler(BaseHTTPRequestHandler):
 def test_polls_until_up_when_scenario_seed_service_starts_late(
     target: Path, *, demo_flags: list[str]
 ) -> None:
-    # The example's expect keeps polling while the service refuses connections (review Q2).
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), OkHandler, bind_and_activate=False)
-    httpd.server_bind()
+    # The example's expect keeps polling while the service is not up (review Q2): the first
+    # poll's connection is reset, the next one gets 200. No clock decides it (review Q10).
+    FIRST_DROP_SEEN.clear()
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), FirstDropHandler)
     port = httpd.server_address[1]
     assert run_init([*demo_flags, "--dir", str(target)]).exit_code == 0
     document = json.loads((target / "hub.json").read_bytes())
@@ -1601,12 +1607,7 @@ def test_polls_until_up_when_scenario_seed_service_starts_late(
     (target / "hub.json").write_bytes(dump_json(document))
     commit_hub(target)
 
-    def serve_later() -> None:
-        time.sleep(LATE_SERVICE_SECONDS)
-        httpd.server_activate()
-        httpd.serve_forever()
-
-    threading.Thread(target=serve_later, daemon=True).start()
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
     try:
         result = run_scenario_cli(
             target,
@@ -1632,3 +1633,4 @@ def test_polls_until_up_when_scenario_seed_service_starts_late(
     )
     polls = [json.loads(line) for line in records.splitlines() if '"poll"' in line]
     assert len({line.get("poll") for line in polls}) >= 2, records
+    assert FIRST_DROP_SEEN[:2] == ["/health", "/health"]
