@@ -18,7 +18,8 @@ semver's: the first number moves, or the second when the version starts with ``0
 argument, a package found in no manifest, in both managers or in several package folders, one
 already at (or past) ``to``, or a manifest that cannot be read (too large, not TOML, not JSON)
 exits 2 with ``bump.py: <reason>`` on stderr. A tool that fails or times out, a tool that changes
-nothing, or a change outside the manifests and lockfiles exits 1.
+nothing, or a change outside the manifests and lockfiles exits 1, with the tool's changes undone
+(only the changes git did not show before the tool ran are the tool's).
 """
 
 import argparse
@@ -29,7 +30,7 @@ import signal
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 PYPI_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
 NPM_NAME = re.compile(r"(@[a-z0-9][a-z0-9._~-]*/)?[a-z0-9][a-z0-9._~-]{0,213}")
@@ -406,28 +407,50 @@ def run_tool(argv: list[str], cwd: str) -> None:
         raise BumpError(f"{label} failed (exit {child.returncode}): {tail}", 1)
 
 
-def changed() -> list[str]:
-    """Every path git sees changed or new, a rename's two paths included."""
+def status() -> set[tuple[str, str]]:
+    """Every ``(code, path)`` git sees changed or new, a rename's two paths included."""
     entries = git("status", "--porcelain", "-z", "--untracked-files=all").split("\0")
-    paths, index = [], 0
+    found, index = set(), 0
     while index < len(entries):
         entry = entries[index]
         index += 1
         if not entry:
             continue
-        paths.append(entry[3:])
+        found.add((entry[:2], entry[3:]))
         if entry[0] in "RC":
-            paths.append(entries[index])
+            found.add((entry[:2], entries[index]))
             index += 1
-    return sorted(set(paths))
+    return found
+
+
+def restore(before: set[tuple[str, str]]) -> None:
+    """Undo what changed since ``before``: tracked files back to HEAD, new files removed."""
+    made = status() - before
+    tracked = sorted({path for code, path in made if code != "??"})
+    if tracked:
+        git("checkout", "-q", "HEAD", "--", *tracked)
+    for code, path in made:
+        if code == "??":
+            Path(path).unlink(missing_ok=True)
 
 
 def apply(found: Found, name: str, to: str) -> list[str]:
-    """Make the bump with the tool, and the manifests and lockfiles it changed."""
-    for argv, cwd in commands(found, name, to):
-        run_tool(argv, cwd)
-    paths = changed()
-    tool = found.manager
+    """Make the bump with the tool, and the manifests and lockfiles it changed.
+
+    Only what the tool changed counts (a file the worktree's setup left is not the tool's), and
+    a refusal or a failed tool undoes the tool's changes, so a rerun starts from a clean tree.
+    """
+    before = status()
+    try:
+        for argv, cwd in commands(found, name, to):
+            run_tool(argv, cwd)
+        return checked(found.manager, sorted({path for _, path in status() - before}))
+    except BumpError:
+        restore(before)
+        raise
+
+
+def checked(tool: str, paths: list[str]) -> list[str]:
     if not paths:
         raise BumpError(f"{tool} changed no manifest or lockfile", 1)
     others = [path for path in paths if PurePosixPath(path).name not in MANIFESTS | LOCKFILES]

@@ -405,6 +405,8 @@ def test_exits_one_when_tool_changes_a_file_that_is_not_a_manifest_or_lockfile(
     err = capsys.readouterr().err
     assert err == "bump.py: uv changed a file that is not a manifest or lockfile: src.py\n"
     assert git(repo, "rev-parse", "HEAD") == head
+    # The tool's writes are undone: a rerun starts from a clean worktree.
+    assert git(repo, "status", "--porcelain", "--untracked-files=all") == ""
 
 
 def test_exits_one_with_tool_tail_when_tool_fails(
@@ -437,3 +439,34 @@ def test_exits_one_when_the_tool_runs_past_its_time(
 
     assert capsys.readouterr().err == "bump.py: uv lock ran past 0.2 s\n"
     assert repo.is_dir()
+
+
+def test_leaves_the_worktree_as_it_was_when_a_later_tool_call_fails(
+    repo: Path, record: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The first uv add (packages/core) writes; the second (the root) fails.
+    body = (
+        'case "$*" in *--package*) sed -i s/0.28.1/0.29.0/ uv.lock packages/core/pyproject.toml;'
+        " echo new > packages/core/new.txt;; *) echo 'no solution' >&2; exit 1;; esac"
+    )
+    fake_tool(record.parent / "bin", "uv", body)
+    lock = (repo / "uv.lock").read_bytes()
+
+    assert load().main(bump("httpx", "0.29.0")) == 1
+
+    assert capsys.readouterr().err == "bump.py: uv add failed (exit 1): no solution\n"
+    assert git(repo, "status", "--porcelain", "--untracked-files=all") == ""
+    assert (repo / "uv.lock").read_bytes() == lock
+
+
+def test_judges_only_the_tool_changes_when_setup_left_an_untracked_file(
+    repo: Path, record: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (repo / "setup.env").write_text("PORT=8100\n", encoding="utf-8")
+    fake_tool(record.parent / "bin", "uv", "sed -i 's/13.9.4/14.0.0/' uv.lock")
+
+    assert load().main(bump("rich", "14.0.0")) == 0
+
+    assert json.loads(capsys.readouterr().out)["files"] == ["uv.lock"]
+    assert git(repo, "show", "--name-only", "--format=", "HEAD").split() == ["uv.lock"]
+    assert git(repo, "status", "--porcelain") == "?? setup.env\n"
