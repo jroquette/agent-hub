@@ -5,8 +5,8 @@
 """Read the issues file ``/triage --backlog`` wrote, bounded, and print it as one JSON object.
 
 ``read.py --file PATH --limit N``, cwd the hub. ``PATH`` is the absolute path of a regular file
-(not a link) of at most 1 MiB: one UTF-8 JSON object ``{"version": 1, "read_at", "teams",
-"open_total", "issues": [...]}`` (``TOP_FIELDS``), each issue with ``ISSUE_FIELDS``. Its text is
+(not a link) of at most 1 MiB: one UTF-8 JSON object ``{"version": 1, "read_at", "open_total",
+"issues": [...]}`` (``TOP_FIELDS``), each issue with ``ISSUE_FIELDS``. Its text is
 the tracker's, written by anyone: every field is cut and control characters are removed. An
 entry without a well-formed ``id``, a ``title``, a ``state.name`` or ISO-8601 dates with an offset
 is skipped and named in ``skipped``. The oldest ``N`` issues (1-100) are kept; ``open`` is
@@ -44,7 +44,7 @@ ISSUE_FIELDS = (
     "branch_name",
     "description",
 )
-TOP_FIELDS = ("version", "read_at", "teams", "open_total", "issues")
+TOP_FIELDS = ("version", "read_at", "open_total", "issues")
 ISSUE_ID = re.compile(r"[A-Z][A-Z0-9]{0,9}-[1-9][0-9]{0,8}")
 REPO_DIR = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,99}")
 DEFAULT_READY_LABEL = "agent-ready"

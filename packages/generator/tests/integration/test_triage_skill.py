@@ -243,6 +243,7 @@ def test_names_every_field_read_requires_when_backlog_flag_given(text: str) -> N
     for name in (*module.TOP_FIELDS, *module.ISSUE_FIELDS):
         assert f"`{name}`" in backlog, name
     assert "`links` `null` when the issue's links cannot be read" in backlog
+    assert "`teams`" not in backlog
 
 
 def test_applies_only_report_apply_items_when_backlog_run_done(text: str) -> None:

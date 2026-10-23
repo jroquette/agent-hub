@@ -82,7 +82,6 @@ def a_read(issues: list[dict[str, Any]], repos: tuple[str, ...] = ("api",)) -> d
     return {
         "ready_label": "agent-ready",
         "repos": list(repos),
-        "teams": ["DEM"],
         "read": len(issues),
         "open": len(issues),
         "unread": 0,
