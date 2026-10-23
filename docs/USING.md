@@ -226,6 +226,9 @@ With no human present, run it headless. It only writes its proposal to `brain/_i
 
 A human then reads the proposal and sets its `status` to `approved`, and `/onboard apply` runs in a session (`./agent`).
 
+For an outage or a bug with no known reproduction, `/incident` in a session starts the built-in `incident` workflow;
+its gate is answered in hub web or with `./hub workflow respond <run>`, and its drafts land in `brain/_inbox/`.
+
 `/onboard` needs a hub whose `.claude/skills/onboard` exists. If it does not, the hub's release is older than
 `/onboard`: raise `platform.version` in `hub.json` to the version of § Find the version and check the CLI, run
 `./hub sync`, and commit that change through a PR. If the newest release has no `.claude/skills/onboard` either, stop

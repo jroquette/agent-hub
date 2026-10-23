@@ -61,6 +61,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   options, the owner's pick or a request for more, a premortem of the pick), which writes
   `brain/features/<slug>/research.md` and an unnumbered ADR draft for `/adr`, changes no code, and ends done, marked
   incomplete, when its timebox of agent time (`--input timebox=2h` by default) runs out.
+- The built-in `incident` pack, started by `/incident` (AGH-483): git evidence since a window (first-parent commits,
+  tags and changed files of each repo as last fetched; failing checks on main and logs are left out, so the owner pastes
+  excerpts into the report), a recall of past incidents, at most 5 ranked hypotheses each with a read-only check, run
+  as an argv on an allow-list in a throwaway worktree with an environment built from nothing, a mitigation gate, then a
+  hand-off draft for `/fix` (or `/change`) and a blameless postmortem draft (`draft`, or `open` when nothing was
+  confirmed) in `brain/_inbox/`. The pack applies nothing and writes no tracker.
 
 ### Changed
 
