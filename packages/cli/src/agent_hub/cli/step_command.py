@@ -59,11 +59,13 @@ from agent_hub.cli import step_records
 from agent_hub.cli.command_exits import fail
 from agent_hub.cli.effective_config import (
     EffectiveConfig,
+    branch_prefix_or_lines,
+    effective_or_problems,
     effective_with_prefix_or_fail,
     git_identity_reader,
 )
 from agent_hub.cli.errors import ChildTimedOutError, PrStepError, WorktreeError
-from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
+from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit, local_lines
 from agent_hub.cli.hub_root import hub_checkout, hub_root_or_exit
 from agent_hub.cli.pr_steps import (
     PrTarget,
@@ -657,11 +659,19 @@ def config(
     """Print the hub.json values a pack script needs, read as hub run reads them; write nothing."""
     branch_slug = _branch_slug(branch, slug=slug, run_slug=run_slug)
     hub = _hub()
-    effective, prefix = effective_with_prefix_or_fail(
-        context, load_hub_config_or_exit(hub / FILE_LABEL), home=hub
-    )
-    value = _config_value(effective.config, prefix=prefix, author=_author(effective, hub))
+    hub_config = load_hub_config_or_exit(hub / FILE_LABEL)
+    prefix: str | None
     if branch:
+        effective, prefix = effective_with_prefix_or_fail(context, hub_config, home=hub)
+    else:
+        # Without --branch, a hub with no prefix still prints the rest (branch_prefix null).
+        loaded = effective_or_problems(hub_config, home=hub)
+        if not isinstance(loaded, EffectiveConfig):
+            context.fail("\n".join(local_lines(loaded)))
+        effective, found = loaded, branch_prefix_or_lines(loaded)
+        prefix = found if isinstance(found, str) else None
+    value = _config_value(effective.config, prefix=prefix, author=_author(effective, hub))
+    if branch and prefix is not None:
         value["branch_name"] = render_branch(
             DEFAULT_BRANCH, prefix="", issue_id=branch, slug=branch_slug
         )
@@ -709,7 +719,7 @@ def _author(effective: EffectiveConfig, hub: Path) -> tuple[str | None, str | No
 
 
 def _config_value(
-    hub_config: HubConfig, *, prefix: str, author: tuple[str | None, str | None]
+    hub_config: HubConfig, *, prefix: str | None, author: tuple[str | None, str | None]
 ) -> dict[str, JsonValue]:
     """``config``'s object: the project's and each repo's facts, and their target skeletons."""
     project = hub_config.project
