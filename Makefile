@@ -60,8 +60,11 @@ format: ## ruff format --check
 lint: ## ruff check
 	$(RUN) ruff check .
 
-typecheck: ## mypy --strict (config in mypy.ini)
+typecheck: ## mypy --strict (config in mypy.ini); each hyphenated pack's scripts in a run of their own
 	$(RUN) mypy
+	@for dir in packages/core/src/agent_hub/core/workflows/builtin/*-*/scripts; do \
+	  echo "mypy $$dir"; $(RUN) mypy $$dir/*.py || exit 1; \
+	done
 
 layout: ## test layout and names, forbidden modules, packages listed in gate configs
 	$(RUN) python -m scripts.check_test_layout
