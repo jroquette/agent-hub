@@ -1423,6 +1423,7 @@ def test_imports_every_rendered_module_when_run_on_each_python(
         "plugin/demo/hooks",
         "plugin/hub-workflow/hooks",
         "scripts",
+        "workflows/backlog-care/scripts",
         "workflows/brain-care/scripts",
         # The incident pack's helpers (AGH-483), likewise.
         "workflows/incident/scripts",

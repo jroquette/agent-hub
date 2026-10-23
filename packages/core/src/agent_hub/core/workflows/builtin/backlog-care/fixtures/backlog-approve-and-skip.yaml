@@ -1,0 +1,61 @@
+# AC-2: the owner applies DEM-3's draft and skips DEM-4, each at its own gate: the report's apply
+# list holds DEM-3 alone, and DEM-4 is in skipped, left as it was.
+workflow: backlog-care
+inputs: {issues_file: /tmp/backlog.json}
+stubs:
+  read:
+    output:
+      ready_label: agent-ready
+      repos: [api]
+      read: 7
+      open: 7
+      unread: 0
+      unread_line: No open issue was left unread (7 of 7 read)
+      descriptions_dropped: 0
+      skipped: []
+      issues:
+        - {id: DEM-1, title: Add the export button, url: "", state: {name: In Progress, type: started}, created_at: "1999-09-01T10:00:00Z", updated_at: "1999-10-20T10:00:00Z", labels: [agent-ready], blocked_by: [], blocks: [], links: [], branch_name: "", description: The export button.}
+        - {id: DEM-2, title: Fix the login timeout, url: "", state: {name: Todo, type: unstarted}, created_at: "1999-09-02T10:00:00Z", updated_at: "1999-09-01T10:00:00Z", labels: [needs-human], blocked_by: [], blocks: [], links: [], branch_name: "", description: Login times out.}
+        - {id: DEM-3, title: "feat(api): Add CSV export", url: "", state: {name: Todo, type: unstarted}, created_at: "1999-09-03T10:00:00Z", updated_at: "1999-10-20T10:00:00Z", labels: [], blocked_by: [], blocks: [], links: [], branch_name: "", description: Export reports as CSV.}
+        - {id: DEM-4, title: "Add  csv export!", url: "", state: {name: Backlog, type: backlog}, created_at: "1999-09-04T10:00:00Z", updated_at: "1999-10-20T10:00:00Z", labels: [], blocked_by: [], blocks: [], links: [], branch_name: "", description: CSV export please.}
+        - {id: DEM-5, title: Split the importer, url: "", state: {name: Todo, type: unstarted}, created_at: "1999-09-05T10:00:00Z", updated_at: "1999-10-20T10:00:00Z", labels: [agent-ready], blocked_by: [DEM-6], blocks: [], links: [], branch_name: "", description: Split it.}
+        - {id: DEM-6, title: Retry the importer, url: "", state: {name: Todo, type: unstarted}, created_at: "1999-09-06T10:00:00Z", updated_at: "1999-10-20T10:00:00Z", labels: [agent-ready], blocked_by: [DEM-5], blocks: [], links: [], branch_name: "", description: Retry it.}
+        - {id: DEM-7, title: Show the export size, url: "", state: {name: In Review, type: started}, created_at: "1999-09-07T10:00:00Z", updated_at: "1999-10-20T10:00:00Z", labels: [agent-ready], blocked_by: [], blocks: [], links: ["https://github.com/acme/api/pull/7"], branch_name: "", description: Show it.}
+  hygiene:
+    output:
+      orphans: [{id: DEM-1, state: In Progress, evidence: "state In Progress (started); no PR link; no branch ref matching (^|/)dem-1(-|$)"}]
+      stale: [{id: DEM-2, updated_at: "1999-09-01T10:00:00Z", days: 55, evidence: "updated_at 1999-09-01T10:00:00Z: 55 days without an update (stale after 14)"}]
+      duplicates: [{ids: [DEM-3, DEM-4], title: add csv export, evidence: "titles DEM-3 'feat(api): Add CSV export', DEM-4 'Add  csv export!' all read as 'add csv export'"}]
+      cycles: [{ids: [DEM-5, DEM-6], evidence: DEM-5 blocked by DEM-6; DEM-6 blocked by DEM-5}]
+      unreadable: []
+      summary: "Hygiene of 7 issues read: 1 orphan, 1 stale, 1 duplicate group, 1 cycle."
+  pick:
+    output: {count: 2, ids: [DEM-3, DEM-4], read_ids: [DEM-1, DEM-2, DEM-3, DEM-4, DEM-5, DEM-6, DEM-7], waiting: [], text: "### Issue DEM-3\n### Issue DEM-4\n"}
+  draft:
+    output:
+      drafts:
+        - {id: DEM-3, action: draft, superseded_by: "", context: Reports export only as PDF (api/export.py:12)., acceptance_criteria: ["AC-1 Given a report, when exported as CSV, then a CSV file is written."], size: fix, repos: [api], blocked_by: [], blocks: [], verification: pytest tests/test_export.py, open_questions: [], guarded: false}
+        - {id: DEM-4, action: supersede, superseded_by: DEM-3, context: DEM-3 asks for the same CSV export., acceptance_criteria: [], size: fix, repos: [api], blocked_by: [], blocks: [], verification: "", open_questions: [], guarded: false}
+  plan:
+    output:
+      count: 2
+      items:
+        - {index: 0, id: DEM-3, action: draft, label: ready, superseded_by: "", draft: {size: fix}, message: "DEM-3: draft, label ready."}
+        - {index: 1, id: DEM-4, action: supersede, label: close, superseded_by: DEM-3, draft: {size: fix}, message: "DEM-4: close as a duplicate of DEM-3."}
+      ignored: []
+      undrafted: []
+  decide__next:
+    - {output: {index: 0, last: false, item: {index: 0, id: DEM-3, action: draft, label: ready, superseded_by: "", draft: {size: fix}}, message: "DEM-3: draft, label ready."}}
+    - {output: {index: 1, last: true, item: {index: 1, id: DEM-4, action: supersede, label: close, superseded_by: DEM-3, draft: {size: fix}}, message: "DEM-4: close as a duplicate of DEM-3."}}
+  decide__gate: [{decision: apply, text: "", approver: Jo}, {decision: skip, text: Not now., approver: Jo}]
+  decide__record:
+    - {output: {decisions: [{id: DEM-3, decision: apply}], applied: 1}}
+    - {output: {decisions: [{id: DEM-3, decision: apply}, {id: DEM-4, decision: skip}], applied: 1}}
+  report:
+    output:
+      outcome: apply
+      summary: "Backlog care.\n- DEM-3: apply (write the draft, label ready) by Jo\n- DEM-4: skipped, left as it is by Jo; note: Not now."
+      apply: [{id: DEM-3, action: draft, label: ready, superseded_by: "", draft: {size: fix}, note: "", approver: Jo}]
+      skipped: [{id: DEM-4, note: Not now., approver: Jo}]
+expect: {status: done, outcome: apply}
+reached: [read, hygiene, pick, draft, plan, decide, decide__next, decide__gate, decide__record, report]

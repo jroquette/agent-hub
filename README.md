@@ -265,10 +265,12 @@ checks in a throwaway worktree, a mitigation gate, then a hand-off draft for `/f
 `./hub workflow run incident --input report=… --live`),
 `upgrade` (one uv or npm package from its changelog to a PR: the bump made with the repo's own tooling, the changelog
 read, the fast check, up to three adapt rounds, test strength on the adapted lines, the `size` approval for a risky
-bump, the full check, then the PR behind the `publish` approval; `/upgrade` starts it) and
+bump, the full check, then the PR behind the `publish` approval; `/upgrade` starts it),
 `security-sweep` (the installed scanners on every repo as of `origin/<branch>`, read-only, then one security-reviewer
 triage of the new findings; the kept ones go to `brain/_inbox/security-YYYY-MM-DD.md` for `/triage`, no secret value
-and no tracker write; suggested weekly in `hub.json` `schedules`: `{"workflow": "security-sweep", "cron": "0 6 * * 1"}`). A hub's own file
+and no tracker write; suggested weekly in `hub.json` `schedules`: `{"workflow": "security-sweep", "cron": "0 6 * * 1"}`) and
+`backlog-care` (what `/triage --backlog` runs: hygiene findings on the issues it read, then a draft for each of the
+oldest unready issues, one approval per issue; `/triage` applies the approved ones after the run). A hub's own file
 overrides a built-in of the same name.
 
 ```bash
@@ -398,7 +400,7 @@ The size decides the ceremony:
 | `/create-plan <issue or slug>` | Turns a spec and its research into `plan.md`: small tasks, contracts first, each with a verification command; waits for your approval before any code | When a spec is ready and needs a plan |
 | `/recall <topic>` | Answers "what do we know about X, why was Y decided" from the brain, ADRs and past session transcripts, with sources | Before deciding something again |
 | `/learn [personal\|promote] <one sentence>` | Proposes one verified, non-obvious learning to `brain/_inbox/`; you decide whether and where it lands. With `personal`, writes your own preference or machine detail to `brain/auto/workspace/` (gitignored, never committed). With `promote`, starts the `inbox` workflow: you decide each group of inbox notes at its gate, then merge one hub PR | When the next session should know something |
-| `/triage <issue \| --backlog \| --hygiene> [--limit N]` | Brings a tracker issue to Definition of Ready (ACs, size, repos, dependencies, a verification command), then labels it ready or `needs-human`; `--backlog` takes the unlabeled open issues one by one, `--hygiene` reports orphan, stale and duplicate issues (at most 50 read per run, or `--limit N`) | Before an issue goes to `/fix`, `/feature` or `hub run` |
+| `/triage <issue \| --backlog \| --hygiene> [--limit N]` | Brings a tracker issue to Definition of Ready (ACs, size, repos, dependencies, a verification command), then labels it ready or `needs-human`; `--backlog` runs the `backlog-care` workflow on the open issues it reads (hygiene findings and drafts, one approval per issue, then it applies only the approved ones; weekly, on Mondays), `--hygiene` reports orphan, stale and duplicate issues (at most 50 read per run, or `--limit N`) | Before an issue goes to `/fix`, `/feature` or `hub run` |
 | `/deliver <PR or issue>` | Drives an open PR to merged: conflicts, red CI and review threads, the gates before each push, the default branch's CI after the merge, then the tracker | After the PR is open |
 | `/review <PR>` | Reviews someone else's PR against its ticket, the ADRs and the brain; posts only what you approve | For a teammate's PR or one `hub run` opened |
 | `/release [version]` | Cuts a platform release: merged PRs, the bump, the check on the exact commit, notes with what `hub sync` rewrites, then the hub's pin bump | When `main` holds what the next version ships |

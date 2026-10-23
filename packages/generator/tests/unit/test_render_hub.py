@@ -156,6 +156,19 @@ DESIGN_PATHS = (
     "scripts/mine_transcripts.py",
     "scripts/recall_transcripts.py",
     "scripts/retro_metrics.py",
+    # AGH-489: the built-in backlog-care pack, seeded.
+    "workflows/backlog-care/backlog-care.yaml",
+    "workflows/backlog-care/fixtures/backlog-approve-and-skip.yaml",
+    "workflows/backlog-care/fixtures/backlog-mixed.yaml",
+    "workflows/backlog-care/fixtures/backlog-over-limit.yaml",
+    "workflows/backlog-care/fixtures/backlog-paused.yaml",
+    "workflows/backlog-care/fixtures/backlog-read-failed.yaml",
+    "workflows/backlog-care/prompts/draft.md",
+    "workflows/backlog-care/scripts/drafts.py",
+    "workflows/backlog-care/scripts/gates.py",
+    "workflows/backlog-care/scripts/hygiene.py",
+    "workflows/backlog-care/scripts/read.py",
+    "workflows/backlog-care/scripts/report.py",
     # AGH-487: the built-in brain-care pack, seeded.
     "workflows/brain-care/context.yaml",
     "workflows/brain-care/fixtures/context-declined.yaml",
@@ -940,6 +953,8 @@ def test_parses_as_python39_when_rendered(demo_render: dict[str, RenderedFile]) 
         "workflows/post-merge-verify/scripts",
         # The sdlc pack's helpers (AGH-229), run by uv on its Python, also parse as 3.9.
         "workflows/sdlc/scripts",
+        # And the backlog-care pack's (AGH-489).
+        "workflows/backlog-care/scripts",
         # The incident pack's helpers (AGH-483), likewise.
         "workflows/incident/scripts",
         # The retro pack's scripts (AGH-488), likewise.

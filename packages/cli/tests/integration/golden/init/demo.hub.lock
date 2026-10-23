@@ -551,7 +551,7 @@
     "plugin/hub-workflow/skills/triage/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "bc3cf49ece2884afa15dabd788cc3f4d28e5ae3c855084eba82f13c1c2537c10"
+      "sha256": "447c8a9364db91df01b002ac11b01150db70e9f6b17584a70948d610c5d67b11"
     },
     "plugin/hub-workflow/skills/upgrade/SKILL.md": {
       "executable": false,
@@ -582,6 +582,42 @@
       "executable": true,
       "ownership": "managed",
       "sha256": "fdac169d0ebd59302540f442f0592e39239ede6ca87fc367184c16806f9eff21"
+    },
+    "workflows/backlog-care/backlog-care.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/fixtures/backlog-approve-and-skip.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/fixtures/backlog-mixed.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/fixtures/backlog-over-limit.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/fixtures/backlog-paused.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/fixtures/backlog-read-failed.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/prompts/draft.md": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/scripts/drafts.py": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/scripts/gates.py": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/scripts/hygiene.py": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/scripts/read.py": {
+      "ownership": "seeded"
+    },
+    "workflows/backlog-care/scripts/report.py": {
+      "ownership": "seeded"
     },
     "workflows/brain-care/context.yaml": {
       "ownership": "seeded"
