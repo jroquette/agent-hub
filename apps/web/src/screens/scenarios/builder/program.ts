@@ -348,3 +348,55 @@ export function programNodes(items: readonly Item[]): BuilderNode[] {
     return item.lanes.flatMap(programNodes);
   });
 }
+
+type Located = { slot: Slot; index: number } | null;
+
+/** Where the item `id` sits: its list and its index there (null when absent). */
+export function locate(items: readonly Item[], id: string, slot: Slot = { in: "main" }): Located {
+  for (const [index, item] of items.entries()) {
+    if (itemId(item) === id) return { slot, index };
+    let inner: Located = null;
+    if (item.kind === "repeat") inner = locate(item.body, id, { in: "body", owner: item.node.id });
+    else if (item.kind === "if") {
+      const owner = itemId(item);
+      inner =
+        locate(item.then, id, { in: "then", owner }) ??
+        locate(item.otherwise, id, { in: "otherwise", owner });
+    } else if (item.kind === "parallel") {
+      const owner = itemId(item);
+      inner = item.lanes.reduce<Located>(
+        (found, lane, at) => found ?? locate(lane, id, { in: "lane", owner, lane: at }),
+        null,
+      );
+    }
+    if (inner) return inner;
+  }
+  return null;
+}
+
+/** The step numbers the gutter shows: 1, 2, 3, then 3.1, 3.2 … inside a C-block, counting on
+ * across an If's two paths and across lanes, so each block has its own number. */
+export function stepNumbers(items: readonly Item[], prefix = ""): Map<string, string> {
+  const out = new Map<string, string>();
+  const walk = (list: readonly Item[], head: string, start: number): number => {
+    let n = start;
+    for (const item of list) {
+      n += 1;
+      const label = `${head}${String(n)}`;
+      out.set(itemId(item), label);
+      const inner =
+        item.kind === "repeat"
+          ? [item.body]
+          : item.kind === "if"
+            ? [item.then, item.otherwise]
+            : item.kind === "parallel"
+              ? item.lanes
+              : [];
+      let m = 0;
+      for (const body of inner) m = walk(body, `${label}.`, m);
+    }
+    return n;
+  };
+  walk(items, prefix, 0);
+  return out;
+}

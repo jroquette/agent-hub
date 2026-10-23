@@ -8,17 +8,27 @@ import {
   Button,
   CopyButton,
   Icon,
+  IconButton,
+  MenuItem,
   SegmentedControl,
-  type IconName,
 } from "../../../components";
 import { readStored, writeStored } from "../../../lib/storage";
-import { useDiscuss } from "../../../shell/discuss";
+import { DiscussButton, useDiscuss } from "../../../shell/discuss";
 import { EffectBadge } from "../parts";
 import { useScenario, type ScenarioAction, type ScenarioDetail } from "../queries";
-import { BlockCanvas, type DragState, type DropTarget, type Stack } from "./BlockCanvas";
+import {
+  BlockCanvas,
+  type DragState,
+  type DropTarget,
+  type InsertTarget,
+  type Stack,
+} from "./BlockCanvas";
+import { InsertMenu } from "./InsertMenu";
+import { CATEGORIES, blockItem } from "./palette";
 import { FlowCanvas, kindLook, type AddChoice } from "./FlowCanvas";
 import { BlockInspector, ConditionBuilder, ScenarioSettings } from "./Inspector";
 import {
+  allNodes,
   insertAfter,
   insertBranch,
   newBlock,
@@ -26,7 +36,6 @@ import {
   updateBlock,
   valueSources,
   without,
-  type BlockKind,
   type BuilderDocument,
   type BuilderNode,
 } from "./model";
@@ -35,6 +44,8 @@ import {
   freshKey,
   insertAt,
   itemId,
+  locate,
+  stepNumbers,
   nodesOf,
   programNodes,
   programOf,
@@ -52,108 +63,6 @@ import { useActionLibrary, useScenarioDraft, type LibraryAction } from "./useSce
 type View = "blocks" | "graph" | "yaml";
 
 const FILE_POLL_MS = 4000;
-
-interface PaletteEntry {
-  key: string;
-  label: string;
-  hint: string;
-  icon: IconName;
-  tint: string;
-  make: (taken: BuilderDocument) => Item;
-}
-
-function blockItem(document: BuilderDocument, kind: BlockKind, action?: string): Item {
-  const node = newBlock(document, kind, action);
-  if (kind === "loop_group") return { kind: "repeat", node: without(node, "nodes"), body: [] };
-  return { kind: "block", node };
-}
-
-const CATEGORIES: readonly { title: string; entries: readonly PaletteEntry[] }[] = [
-  {
-    title: "Do",
-    entries: [
-      {
-        key: "action",
-        label: "run an action",
-        hint: "A script, once",
-        icon: "circle-play",
-        tint: kindLook("action").tint,
-        make: (d) => blockItem(d, "action"),
-      },
-      {
-        key: "include",
-        label: "run a scenario",
-        hint: "Reuse another one",
-        icon: "layers",
-        tint: kindLook("include").tint,
-        make: (d) => blockItem(d, "include"),
-      },
-    ],
-  },
-  {
-    title: "Check",
-    entries: [
-      {
-        key: "expect",
-        label: "wait until …",
-        hint: "Read until a state holds",
-        icon: "timer",
-        tint: kindLook("expect").tint,
-        make: (d) => blockItem(d, "expect"),
-      },
-      {
-        key: "wait",
-        label: "wait 30s",
-        hint: "A set time",
-        icon: "hourglass",
-        tint: kindLook("wait").tint,
-        make: (d) => blockItem(d, "wait"),
-      },
-    ],
-  },
-  {
-    title: "Control",
-    entries: [
-      {
-        key: "repeat",
-        label: "repeat until …",
-        hint: "Rounds until done",
-        icon: "refresh-cw",
-        tint: kindLook("loop_group").tint,
-        make: (d) => blockItem(d, "loop_group"),
-      },
-      {
-        key: "if",
-        label: "if … else",
-        hint: "Take one path",
-        icon: "split",
-        tint: "var(--ev-decision)",
-        make: () => ({ kind: "if", key: freshKey("if"), condition: "", then: [], otherwise: [] }),
-      },
-      {
-        key: "parallel",
-        label: "at the same time",
-        hint: "Paths side by side",
-        icon: "git-branch",
-        tint: "var(--ev-reasoning)",
-        make: () => ({ kind: "parallel", key: freshKey("together"), lanes: [[], []] }),
-      },
-    ],
-  },
-  {
-    title: "You",
-    entries: [
-      {
-        key: "approval",
-        label: "ask me to …",
-        hint: "A step by hand",
-        icon: "stamp",
-        tint: kindLook("approval").tint,
-        make: (d) => blockItem(d, "approval"),
-      },
-    ],
-  },
-];
 
 function startPaletteDrag(
   event: ReactPointerEvent,
@@ -324,9 +233,12 @@ function everySource(document: BuilderDocument, outputs: (action: string) => rea
 export function ScenarioBuilder({
   scenario,
   mode,
+  onRun,
 }: {
   scenario: ScenarioDetail;
   mode: "interactive" | "regression";
+  /** Switches the page to its Run mode (plan, start, watch). */
+  onRun: () => void;
 }) {
   const library = useActionLibrary(scenario.project);
   const items = library.data?.items ?? [];
@@ -343,6 +255,13 @@ export function ScenarioBuilder({
   const [selected, setSelected] = useState<string | null>(null);
   const [view, setView] = useState<View>("blocks");
   const [drag, setDrag] = useState<DragState | null>(null);
+  const [inserting, setInserting] = useState<{
+    target: InsertTarget;
+    anchor: DOMRect;
+    where: string;
+  } | null>(null);
+  const [menu, setMenu] = useState<"more" | "problems" | null>(null);
+  const { addReference } = useDiscuss();
   const document = draft.document;
 
   // The program, read again whenever the document changes from elsewhere (undo, the graph).
@@ -447,9 +366,19 @@ export function ScenarioBuilder({
     commit(program.main, into(program.kept), into(layout.loose));
   };
 
+  // A click on the palette adds after the selected block (in its list), else at the end.
   const addAtEnd = (item: Item) => {
-    commit([...program.main, item], program.kept, layout.loose);
+    const at = selected ? locate(program.main, selected) : null;
+    const main = at
+      ? insertAt(program.main, at.slot, at.index + 1, [item])
+      : [...program.main, item];
+    commit(main, program.kept, layout.loose);
     setSelected(itemId(item));
+  };
+  const insertHere = (item: Item) => {
+    if (!inserting) return;
+    onDrop([item], inserting.target);
+    setInserting(null);
   };
 
   const editItem = (id: string, next: Item) => {
@@ -496,10 +425,11 @@ export function ScenarioBuilder({
   const inspector = (() => {
     if (!selectedItem) return <ScenarioSettings document={document} onChange={draft.edit} />;
     if (selectedItem.kind === "block" || selectedItem.kind === "repeat") {
+      // The block as it is written (with the `depends_on` its place in the stack gives it).
+      const written = allNodes(serialized.nodes).find((item) => item.id === selectedItem.node.id);
+      const base = written ? { ...selectedItem.node, ...written } : selectedItem.node;
       const node =
-        selectedItem.kind === "repeat"
-          ? { ...selectedItem.node, nodes: nodesOf(selectedItem.body) }
-          : selectedItem.node;
+        selectedItem.kind === "repeat" ? { ...base, nodes: nodesOf(selectedItem.body) } : base;
       return (
         <BlockInspector
           key={node.id}
@@ -627,6 +557,12 @@ export function ScenarioBuilder({
     !Array.isArray(document.inputs)
       ? Object.keys(document.inputs)
       : [];
+  const drafts = new Set(
+    programNodes(program.main)
+      .map((node) => actionFacts(node))
+      .filter((action) => action?.draft === true)
+      .map((action) => action?.ref),
+  ).size;
   const unsaved = layout.loose.reduce(
     (count, stack) => count + programNodes(stack.items).length,
     0,
@@ -635,50 +571,86 @@ export function ScenarioBuilder({
   return (
     <div className="sb-root">
       <div className="sb-toolbar">
+        <span className="sb-title">
+          <b className="ah-mono">{scenario.name}</b>
+          <span className="ah-small ah-muted">
+            {scenario.pack} · rev{" "}
+            {typeof document.revision === "number" ? document.revision : scenario.revision}
+          </span>
+        </span>
         <SegmentedControl
           label="View"
-          value={view}
+          value={view === "graph" ? "blocks" : view}
           onChange={(id) => {
-            setView(id === "graph" || id === "yaml" ? id : "blocks");
+            if (id === "run") onRun();
+            else setView(id === "yaml" ? "yaml" : "blocks");
           }}
           options={[
             { id: "blocks", label: "Blocks", icon: "puzzle" },
-            { id: "graph", label: "Graph", icon: "workflow" },
             { id: "yaml", label: "YAML", icon: "file-text" },
+            { id: "run", label: "Run", icon: "play" },
           ]}
         />
-        <Button
-          size="sm"
-          variant="ghost"
-          icon="undo-2"
-          disabled={!draft.canUndo}
-          onClick={draft.undo}
-        >
-          Undo
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          icon="redo-2"
-          disabled={!draft.canRedo}
-          onClick={draft.redo}
-        >
-          Redo
-        </Button>
-        <span className="sb-check ah-small" role="status">
-          {draft.check === null ? (
-            "Checking…"
-          ) : errors.length > 0 ? (
-            <span style={{ color: "var(--failed)" }}>
-              <Icon name="circle-x" size="sm" /> {errors.length}{" "}
-              {errors.length === 1 ? "problem" : "problems"}
-            </span>
-          ) : (
-            <span>
-              <Icon name="circle-check" size="sm" style={{ color: "var(--done)" }} /> Loads
-              {problems.length > 0 &&
-                ` · ${String(problems.length)} warning${problems.length === 1 ? "" : "s"}`}
-            </span>
+        <span className="sb-menu-anchor">
+          <button
+            type="button"
+            className="sb-check"
+            aria-haspopup="dialog"
+            aria-expanded={menu === "problems"}
+            onClick={() => {
+              setMenu(menu === "problems" ? null : "problems");
+            }}
+          >
+            {draft.check === null ? (
+              <>
+                <Icon name="circle-dashed" size="sm" /> Checking…
+              </>
+            ) : errors.length > 0 ? (
+              <span style={{ color: "var(--failed)" }}>
+                <Icon name="circle-x" size="sm" /> {errors.length}{" "}
+                {errors.length === 1 ? "problem" : "problems"}
+              </span>
+            ) : (
+              <>
+                <Icon name="circle-check" size="sm" style={{ color: "var(--done)" }} /> Loads
+                {drafts > 0 && (
+                  <span className="ah-muted">
+                    {" "}
+                    · {drafts} draft {drafts === 1 ? "action" : "actions"}
+                  </span>
+                )}
+              </>
+            )}
+            <Icon name="chevron-down" size="sm" />
+          </button>
+          {menu === "problems" && (
+            <div className="ah-pop sb-pop" role="dialog" aria-label="Problems">
+              {problems.length === 0 ? (
+                <span className="ah-small ah-muted">The scenario loads. Nothing to fix.</span>
+              ) : (
+                problems.map((problem, index) => (
+                  <button
+                    key={index}
+                    type="button"
+                    className="sb-problem-row"
+                    data-severity={problem.severity}
+                    onClick={() => {
+                      if (problem.node) setSelected(problem.node);
+                      setMenu(null);
+                    }}
+                  >
+                    <Icon
+                      name={problem.severity === "error" ? "circle-x" : "circle-dashed"}
+                      size="sm"
+                    />
+                    <span className="ah-grow">
+                      {problem.node && <b className="ah-mono">{problem.node}: </b>}
+                      {problem.message}
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
           )}
         </span>
         {unsaved > 0 && (
@@ -690,12 +662,15 @@ export function ScenarioBuilder({
         <span className="ah-grow" />
         {draft.dirty && (
           <span className="ah-small ah-muted">
-            <span className="sb-dot" aria-hidden /> Unsaved changes
+            <span className="sb-dot" aria-hidden /> Unsaved
           </span>
         )}
         {draft.saved && !draft.dirty && (
-          <span className="ah-small ah-muted">Saved · revision {draft.saved.revision}</span>
+          <span className="ah-small ah-muted">Saved · rev {draft.saved.revision}</span>
         )}
+        <IconButton icon="undo-2" label="Undo" disabled={!draft.canUndo} onClick={draft.undo} />
+        <IconButton icon="redo-2" label="Redo" disabled={!draft.canRedo} onClick={draft.redo} />
+        <DiscussButton label="Ask Claude" />
         <Button
           variant="primary"
           icon="save"
@@ -705,6 +680,40 @@ export function ScenarioBuilder({
         >
           {draft.saving ? "Saving…" : "Save scenario"}
         </Button>
+        <span className="sb-menu-anchor">
+          <IconButton
+            icon="ellipsis"
+            label="More"
+            onClick={() => {
+              setMenu(menu === "more" ? null : "more");
+            }}
+          />
+          {menu === "more" && (
+            <div className="ah-pop sb-pop sb-pop-right" role="menu" aria-label="More">
+              <MenuItem
+                icon="workflow"
+                selected={view === "graph"}
+                onClick={() => {
+                  setView(view === "graph" ? "blocks" : "graph");
+                  setMenu(null);
+                }}
+              >
+                {view === "graph" ? "Show as blocks" : "Show as graph"}
+              </MenuItem>
+              {draft.check && (
+                <MenuItem
+                  icon="copy"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(draft.check?.yaml ?? "");
+                    setMenu(null);
+                  }}
+                >
+                  Copy the YAML
+                </MenuItem>
+              )}
+            </div>
+          )}
+        </span>
       </div>
       {draft.saveError && (
         <Banner tone="error" boxed>
@@ -771,6 +780,17 @@ export function ScenarioBuilder({
               onEditNode={editNode}
               drag={drag}
               onDrag={setDrag}
+              numbers={stepNumbers(program.main)}
+              onInsert={(target, anchor) => {
+                const list =
+                  target.slot.in === "main" && target.stack === "main" ? program.main : null;
+                const before = list?.[target.index - 1];
+                setInserting({
+                  target,
+                  anchor,
+                  where: before ? `after ${itemId(before)}` : "here",
+                });
+              }}
             />
           )}
           {view === "graph" && (
@@ -813,6 +833,28 @@ export function ScenarioBuilder({
         </div>
         {inspector}
       </div>
+      {inserting && (
+        <InsertMenu
+          anchor={inserting.anchor}
+          where={inserting.where}
+          library={items}
+          pack={scenario.pack}
+          taken={taken}
+          onPick={insertHere}
+          onAskClaude={(described) => {
+            addReference({
+              id: `insert:${inserting.where}`,
+              label: `Add ${inserting.where}`,
+              source: scenario.path ?? null,
+              quote: `In the scenario ${scenario.name}, add a step ${inserting.where}: ${described}. Write it into the scenario file with the actions it needs (new ones as drafts), then tell me what you added.`,
+            });
+            setInserting(null);
+          }}
+          onClose={() => {
+            setInserting(null);
+          }}
+        />
+      )}
     </div>
   );
 }

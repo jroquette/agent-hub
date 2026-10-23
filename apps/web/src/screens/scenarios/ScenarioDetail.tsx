@@ -736,7 +736,8 @@ function RunsList({ scenario }: { scenario: ScenarioDetail }) {
   );
 }
 
-function Header({ scenario }: { scenario: ScenarioDetail }) {
+/** What Discuss talks about on this page: the scenario file and the actions it calls. */
+function useScenarioDiscuss(scenario: ScenarioDetail) {
   const actions = scenario.actions.map((action) => action.path ?? action.ref);
   useDiscussTarget({
     key: `scenario:${scenario.project}:${scenario.name}`,
@@ -761,6 +762,23 @@ function Header({ scenario }: { scenario: ScenarioDetail }) {
       },
     ],
   });
+}
+
+function Crumbs({ scenario }: { scenario: ScenarioDetail }) {
+  return (
+    <Breadcrumbs
+      items={[
+        { label: "Portfolio", href: "/" },
+        { label: scenario.project, href: `/projects/${encodeURIComponent(scenario.project)}` },
+        { label: "Scenarios", href: "/scenarios" },
+        { label: scenario.name, mono: true },
+      ]}
+    />
+  );
+}
+
+function Header({ scenario }: { scenario: ScenarioDetail }) {
+  useScenarioDiscuss(scenario);
   return (
     <>
       <Breadcrumbs
@@ -812,6 +830,17 @@ function DocumentView({ scenario }: { scenario: ScenarioDetail }) {
   );
 }
 
+/** Build mode: the breadcrumbs, then the builder (its own one-row toolbar) to the bottom. */
+function BuildPage({ scenario, children }: { scenario: ScenarioDetail; children: ReactNode }) {
+  useScenarioDiscuss(scenario);
+  return (
+    <div className="ah-stack sb-page">
+      <Crumbs scenario={scenario} />
+      {children}
+    </div>
+  );
+}
+
 function DetailBody({ scenario }: { scenario: ScenarioDetail }) {
   const [params, setParams] = useSearchParams();
   const { rows } = useWaitingRows(scenario.project);
@@ -851,19 +880,16 @@ function DetailBody({ scenario }: { scenario: ScenarioDetail }) {
   );
   if (page === "build") {
     return (
-      <Page>
-        <div className="ah-stack" style={{ gap: 12 }}>
-          <Header scenario={scenario} />
-          <div className="ah-row ah-wrap" style={{ gap: 12 }}>
-            {modeSwitch}
-            <span className="ah-small ah-muted">
-              Build the flow with blocks; switch to Run to plan it in an environment and start it.
-            </span>
-          </div>
-          <WaitingCard rows={mine} named={false} />
-          <ScenarioBuilder scenario={scenario} mode={mode} />
-        </div>
-      </Page>
+      <BuildPage scenario={scenario}>
+        <WaitingCard rows={mine} named={false} />
+        <ScenarioBuilder
+          scenario={scenario}
+          mode={mode}
+          onRun={() => {
+            setParam("mode", "run");
+          }}
+        />
+      </BuildPage>
     );
   }
   return (
