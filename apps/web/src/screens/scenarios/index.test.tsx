@@ -168,7 +168,7 @@ describe("ScenariosScreen (scenarios list)", () => {
     await screen.findByText("No scenarios yet.");
     const buttons = screen.getAllByRole("button", { name: "New scenario" });
     expect(buttons).toHaveLength(2);
-    await user.click(buttons[1] as HTMLElement);
+    await user.click(buttons[1]!);
     expect(empty.router.state.location.pathname).toBe("/scenarios/new");
   });
 

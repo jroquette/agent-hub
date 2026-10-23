@@ -41,6 +41,7 @@ Every screen carries its phase. A screen tagged P3 or P4 is not shown in the sid
 
 /scenarios                          Scenarios                                        P2
     ?q=   (filter, replace)
+├ /scenarios/new                    New scenario (request → Claude in Discuss)       P2 (AGH-521)
 └ /scenarios/:project/:name         Scenario detail                                  P2 (plan, start)
     ?env=   (pre-fills the environment; the plan never runs on load)
   └ /scenarios/:project/:name/runs/:runId   Scenario run                             P2 (answer, findings)
