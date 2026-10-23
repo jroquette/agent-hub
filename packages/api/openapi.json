@@ -5452,6 +5452,176 @@
         ],
         "type": "string"
       },
+      "Kind": {
+        "enum": [
+          "adr",
+          "decision",
+          "doc",
+          "domain",
+          "feature",
+          "inbox",
+          "journal",
+          "learning",
+          "playbook",
+          "system"
+        ],
+        "type": "string"
+      },
+      "KnowledgeResult": {
+        "additionalProperties": false,
+        "description": "One search result: the document and a one-line plain-text snippet of its body.",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/Kind"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "provenance": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provenance"
+          },
+          "snippet": {
+            "title": "Snippet",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "kind",
+          "title",
+          "status",
+          "provenance",
+          "snippet"
+        ],
+        "title": "KnowledgeResult",
+        "type": "object"
+      },
+      "KnowledgeSearch": {
+        "additionalProperties": false,
+        "description": "A search of the project's hub: ``hub search --json``'s object, ``project`` for ``hub``,\nplus a warning per repo that is not checked out.",
+        "properties": {
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeResult"
+            },
+            "title": "Results",
+            "type": "array"
+          },
+          "skipped": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeSkip"
+            },
+            "title": "Skipped",
+            "type": "array"
+          },
+          "sync": {
+            "$ref": "#/components/schemas/KnowledgeSyncCounts"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "project",
+          "query",
+          "results",
+          "sync",
+          "skipped",
+          "warnings"
+        ],
+        "title": "KnowledgeSearch",
+        "type": "object"
+      },
+      "KnowledgeSkip": {
+        "additionalProperties": false,
+        "description": "A listed file the index left out, and why.",
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "reason"
+        ],
+        "title": "KnowledgeSkip",
+        "type": "object"
+      },
+      "KnowledgeSyncCounts": {
+        "additionalProperties": false,
+        "description": "What the sync before the read did: files listed, read, indexed and rows dropped.",
+        "properties": {
+          "dropped": {
+            "minimum": 0.0,
+            "title": "Dropped",
+            "type": "integer"
+          },
+          "indexed": {
+            "minimum": 0.0,
+            "title": "Indexed",
+            "type": "integer"
+          },
+          "listed": {
+            "minimum": 0.0,
+            "title": "Listed",
+            "type": "integer"
+          },
+          "read": {
+            "minimum": 0.0,
+            "title": "Read",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "listed",
+          "read",
+          "indexed",
+          "dropped"
+        ],
+        "title": "KnowledgeSyncCounts",
+        "type": "object"
+      },
       "LayeredEntry": {
         "description": "A blocked word, glob or variable name, and the first layer that lists it.",
         "properties": {
@@ -6884,6 +7054,64 @@
           "reason"
         ],
         "title": "NotRead",
+        "type": "object"
+      },
+      "NoteBacklink": {
+        "additionalProperties": false,
+        "description": "A document holding a link to the note: its hub-relative path, kind and title.",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/Kind"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "kind",
+          "title"
+        ],
+        "title": "NoteBacklink",
+        "type": "object"
+      },
+      "NoteBacklinks": {
+        "additionalProperties": false,
+        "description": "The documents linking to the note at ``path`` (under ``brain/``), by path, at most\n``MAX_BACKLINKS``; ``total`` counts them all.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/NoteBacklink"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project",
+          "path",
+          "items",
+          "total"
+        ],
+        "title": "NoteBacklinks",
         "type": "object"
       },
       "NowItem": {
@@ -18255,7 +18483,7 @@
     },
     "/api/v1/learnings": {
       "get": {
-        "description": "Learnings, newest first, each with its note's summary or why the note is unavailable.",
+        "description": "Learnings, newest first, each with its note's summary or why the note is unavailable;\nwith ``brain_path`` (with or without ``brain/``), only those whose note is that one.",
         "operationId": "list_learnings_api_v1_learnings_get",
         "parameters": [
           {
@@ -18319,6 +18547,24 @@
               "minimum": 1,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "brain_path",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Brain Path"
             }
           }
         ],
@@ -18980,6 +19226,72 @@
         ]
       }
     },
+    "/api/v1/projects/{project}/brain/backlinks": {
+      "get": {
+        "description": "The documents linking to the note at ``path`` under ``brain/``, by path, at most 100,\nwith the full count; the note need not exist.",
+        "operationId": "get_brain_backlinks_api_v1_projects__project__brain_backlinks_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "maxLength": 512,
+              "minLength": 1,
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NoteBacklinks"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Get Brain Backlinks",
+        "tags": [
+          "knowledge"
+        ]
+      }
+    },
     "/api/v1/projects/{project}/brain/note": {
       "get": {
         "description": "One brain note by its path under ``brain/``: frontmatter, markdown body and size.",
@@ -19533,6 +19845,104 @@
         "summary": "Get Environment Discovery",
         "tags": [
           "environment-discoveries"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/knowledge/search": {
+      "get": {
+        "description": "The hub's notes and repo docs holding every word of ``q``, best first, after the index\nis brought up to date with the checkout; ``q``'s words only, never search syntax.",
+        "operationId": "search_project_knowledge_api_v1_projects__project__knowledge_search_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": true,
+            "schema": {
+              "maxLength": 500,
+              "minLength": 1,
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/Kind"
+                  },
+                  "maxItems": 10,
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeSearch"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Search Project Knowledge",
+        "tags": [
+          "knowledge"
         ]
       }
     },

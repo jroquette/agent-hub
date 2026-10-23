@@ -216,6 +216,14 @@ DISCOVERY_PATHS: frozenset[tuple[str, str]] = frozenset(
     )
 )
 
+# The knowledge view (AGH-393): the project's hub searched, and the documents linking to a note.
+KNOWLEDGE_PATHS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("get", f"{API_PREFIX}/projects/{{project}}/knowledge/search"),
+        ("get", f"{API_PREFIX}/projects/{{project}}/brain/backlinks"),
+    }
+)
+
 # Every path the document lists.
 SERVED_PATHS: frozenset[tuple[str, str]] = (
     P2_PATHS
@@ -234,6 +242,7 @@ SERVED_PATHS: frozenset[tuple[str, str]] = (
     | PLATFORM_SYNC_PATHS
     | DOCTOR_FIX_PATHS
     | AC_CHECK_PATHS
+    | KNOWLEDGE_PATHS
     | DISCOVERY_PATHS
     | SCENARIO_PATHS
 )

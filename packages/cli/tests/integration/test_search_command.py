@@ -21,11 +21,11 @@ import pytest
 from typer.testing import CliRunner, Result
 
 from agent_hub.cli.database_path import default_database_path
-from agent_hub.cli.knowledge_checkout import GitKnowledgeCheckout
 from agent_hub.cli.main import app
 from agent_hub.cli.registry_path import default_registry_path
 from agent_hub.core.json_form import dump_json
 from agent_hub.core.testing.builders import a_second_repo, an_event, events_to_jsonl
+from agent_hub.hub_git.knowledge_checkout import GitKnowledgeCheckout
 from agent_hub.storage import knowledge_index
 from agent_hub.storage.hub_registry import JsonHubRegistry
 
@@ -740,7 +740,7 @@ def test_writes_index_to_database_when_db_option_or_variable_given(
     assert collected.exit_code == 0, collected.output
     assert rows_of(database, "SELECT path FROM knowledge_documents") == [("brain/a.md",)]
     assert rows_of(database, "SELECT count(*) FROM events") == [(1,)]
-    assert rows_of(database, "SELECT version_num FROM alembic_version") == [("0009",)]
+    assert rows_of(database, "SELECT version_num FROM alembic_version") == [("0010",)]
 
 
 def test_exits_one_when_database_unusable(

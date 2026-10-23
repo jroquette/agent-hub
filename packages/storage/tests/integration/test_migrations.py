@@ -20,7 +20,7 @@ PHASE_ZERO_INSERT = (
     "VALUES ('demo', 'session-1', 'tool.call', 'claude_code', ?, "
     "'2026-09-27 08:00:00.000000', '{}')"
 )
-HEAD = "0009"
+HEAD = "0010"
 AGENT_SESSION_TABLES = {"agent_sessions", "agent_session_records"}
 ITEM_VERSION_TABLES = {"item_versions"}
 KNOWLEDGE_TABLES = {
@@ -32,6 +32,7 @@ KNOWLEDGE_TABLES = {
     "knowledge_text_docsize",
     "knowledge_text_config",
 }
+LINK_TABLES = {"knowledge_links"}
 FTS5_DECLARATION = "fts5(title, body, tokenize='porter unicode61 remove_diacritics 2')"
 AGENT_SESSION_INDEXES = {
     "ix_agent_sessions_project_claude_session_id": ["project", "claude_session_id"],
@@ -98,6 +99,7 @@ def test_creates_and_drops_events_table_when_upgraded_and_downgraded(tmp_path: P
         *AGENT_SESSION_TABLES,
         *ITEM_VERSION_TABLES,
         *KNOWLEDGE_TABLES,
+        *LINK_TABLES,
     }
     columns, unique_constraints = _events_schema(db_path)
     filtered = {"project", "session", "type", "timestamp", "source", "source_id"}
@@ -545,6 +547,76 @@ def test_keeps_rows_when_upgraded_to_knowledge_index(tmp_path: Path) -> None:
     assert _table_names(db_path).isdisjoint(KNOWLEDGE_TABLES)
     assert {table: _schema(db_path, table) for table in tables} == schema_before
     assert {table: _all_rows(db_path, table) for table in tables} == rows_before
+
+
+KNOWLEDGE_DOCUMENT_INSERT = (
+    "INSERT INTO knowledge_documents (hub, path, kind, title, size, mtime_ns, sha256, "
+    "index_version) VALUES ('/hubs/demo', 'brain/now.md', 'doc', 'Now', 3, 1, ?, 1)"
+)
+
+
+def test_keeps_rows_when_upgraded_to_knowledge_links(tmp_path: Path) -> None:
+    db_path = tmp_path / "agent-hub.db"
+    config = alembic_config(f"sqlite:///{db_path}")
+    upgrade(config, "0009")
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "INSERT INTO events (project, session, type, source, source_id, timestamp, "
+                "payload, event_id) VALUES ('demo', 'session-1', 'tool.call', 'claude_code', "
+                "'evt-1', '2026-09-27 08:00:00.000000', '{}', ?)",
+                (str(uuid.uuid7()),),
+            )
+            connection.exec_driver_sql(ITEM_VERSION_INSERT)
+            connection.exec_driver_sql(KNOWLEDGE_DOCUMENT_INSERT, ("0" * 64,))
+    finally:
+        engine.dispose()
+    tables = ("events", "item_versions", "knowledge_documents")
+    rows = {**ALL_ROWS, "knowledge_documents": "SELECT * FROM knowledge_documents ORDER BY id"}
+
+    def all_rows() -> dict[str, list[tuple[Any, ...]]]:
+        engine = create_engine(f"sqlite:///{db_path}")
+        try:
+            with engine.connect() as connection:
+                return {
+                    table: [tuple(row) for row in connection.exec_driver_sql(rows[table])]
+                    for table in tables
+                }
+        finally:
+            engine.dispose()
+
+    schema_before = {table: _schema(db_path, table) for table in tables}
+    rows_before = all_rows()
+    assert all(rows_before.values())
+
+    upgrade(config, "0010")
+
+    assert _current_revision(db_path) == "0010"
+    assert _table_names(db_path) >= KNOWLEDGE_TABLES | LINK_TABLES
+    assert {table: _schema(db_path, table) for table in tables} == schema_before
+    assert all_rows() == rows_before
+    links = _schema(db_path, "knowledge_links")
+    assert links["columns"] == [
+        ("id", "INTEGER", False),
+        ("hub", "VARCHAR", False),
+        ("source", "VARCHAR", False),
+        ("target", "VARCHAR", False),
+    ]
+    assert links["primary_key"] == ["id"]
+    assert links["foreign_keys"] == []
+    assert links["indexes"] == {"ix_knowledge_links_hub_target": ["hub", "target", "source"]}
+    assert _unique_constraints(db_path, "knowledge_links") == [
+        ("uq_knowledge_links_hub_source_target", ["hub", "source", "target"])
+    ]
+
+    downgrade(config, "0009")
+
+    assert _current_revision(db_path) == "0009"
+    assert _table_names(db_path).isdisjoint(LINK_TABLES)
+    assert _table_names(db_path) >= KNOWLEDGE_TABLES
+    assert {table: _schema(db_path, table) for table in tables} == schema_before
+    assert all_rows() == rows_before
 
 
 # AC-418.1

@@ -14,14 +14,18 @@ synthetic: no real repository, account or token.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
+from agent_hub.core.json_form import dump_json
 from agent_hub.core.testing.brain_change_requests_contract import OpenedPullRequest, OriginCommit
+from agent_hub.core.testing.builders import a_hub_document
 from agent_hub.hub_git.brain_change_requests import GitBrainChangeRequests
 from agent_hub.hub_git.git_runner import GitRunner
 
@@ -312,3 +316,78 @@ def brain_origin(git_world: GitWorld) -> GitBrainOrigin:
 def brain_change_requests(git_world: GitWorld) -> GitBrainChangeRequests:
     """The adapter acting on the world's hub."""
     return git_world.adapter()
+
+
+# The knowledge checkout's hub (AGH-391, moved with its tests from ``cli``, AGH-393): adapted from
+# ``packages/cli/tests/integration/conftest.py``'s ``knowledge_hub`` (a conftest cannot be shared
+# across packages).
+type KnowledgeHubFactory = Callable[..., Path]
+
+
+def _commit_all(root: Path, *, git: str, env: Mapping[str, str]) -> None:
+    """Make ``root`` a git repo whose one commit holds a README, ``AGENTS.md`` and its files."""
+    (root / "README.md").write_bytes(f"# {root.name}\n".encode())
+    (root / "AGENTS.md").write_bytes(f"# {root.name}\n".encode())
+    author = ["-c", "user.name=Jane Doe", "-c", "user.email=jane@example.com"]
+    for args in (
+        ["-c", "init.defaultBranch=main", "init", "-q"],
+        ["add", "-A"],
+        [*author, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"],
+    ):
+        subprocess.run(  # noqa: S603 - absolute git, fixed arguments, a tmp_path folder
+            [git, *args], cwd=root, env=dict(env), check=True, capture_output=True
+        )
+
+
+def _write_files(files: Mapping[str, bytes], *, hub: Path, repos: tuple[str, ...]) -> None:
+    """Each file at its hub-relative path: in its repo beside the hub, else in the hub."""
+    for path, data in files.items():
+        first = path.split("/", 1)[0]
+        target = (hub.parent if first in repos else hub) / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+
+
+@pytest.fixture
+def knowledge_hub(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> KnowledgeHubFactory:
+    """``knowledge_hub(files, *, repos=("demo-api",), commit=True)``: a hub checkout at
+    ``tmp_path / "hub"`` holding a synthetic ``hub.json``, and each of ``repos`` checked out
+    beside it, all synthetic git repos with a committed README and ``AGENTS.md``.
+
+    ``files`` maps a hub-relative path, as the knowledge index names it, to its bytes: a path
+    whose first segment is one of ``repos`` is written in that repo (``demo-api/docs/x.md``),
+    any other in the hub (``brain/x.md``). With ``commit`` the files are committed, else they
+    are left untracked. Git reads the test's own ``HOME`` and config only, and never looks for a
+    repository above ``tmp_path``.
+    """
+    git = shutil.which("git")
+    assert git is not None, "git is needed for a synthetic checkout"
+    home = tmp_path / "checkout-home"
+    home.mkdir()
+    env = {
+        "HOME": str(home),
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CEILING_DIRECTORIES": str(tmp_path),
+    }
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+    def build(
+        files: Mapping[str, bytes], *, repos: tuple[str, ...] = ("demo-api",), commit: bool = True
+    ) -> Path:
+        hub = tmp_path / "hub"
+        hub.mkdir()
+        (hub / "hub.json").write_bytes(dump_json(a_hub_document()))
+        for name in repos:
+            (tmp_path / name).mkdir()
+        if commit:
+            _write_files(files, hub=hub, repos=repos)
+        for name in ("hub", *repos):
+            _commit_all(tmp_path / name, git=git, env=env)
+        if not commit:
+            _write_files(files, hub=hub, repos=repos)
+        return hub
+
+    return build

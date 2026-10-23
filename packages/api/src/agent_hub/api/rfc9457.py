@@ -64,6 +64,7 @@ from agent_hub.core.item_versions.record_and_write import (
 )
 from agent_hub.core.item_versions.unit_content import CorruptVersionError
 from agent_hub.core.item_versions.version_store import ItemVersionSequenceError
+from agent_hub.core.knowledge.sync_knowledge import KnowledgeCheckoutError
 from agent_hub.core.learnings.brain_change_requests import (
     ChangeRequestConflictError,
     ChangeRequestError,
@@ -263,6 +264,25 @@ def _brain_path_problem(error: BrainPathError) -> Problem:
         error.reason,
         {"errors": [{"parameter": "path", "message": error.reason}]},
     )
+
+
+def _knowledge_checkout_problem(error: KnowledgeCheckoutError) -> Problem:
+    # AGH-391's one line (the source and git's last stderr line, or the listing's bound); it
+    # names a folder or a count, never a file's text (AM-5).
+    return Problem(502, "Could not read the hub's files", str(error))
+
+
+def migration_problem(_: Exception) -> Problem:
+    """``MigrationError`` (storage), from the knowledge index's lazy open: 503 with a fixed
+    detail, since the adapter's line names the database file."""
+    return Problem(
+        503, "Database upgrade failed", "The database could not be upgraded to the latest schema."
+    )
+
+
+def fts5_unavailable_problem(error: Exception) -> Problem:
+    """``Fts5UnavailableError`` (storage): 503, the line that says SQLite has no FTS5 (AM-5)."""
+    return Problem(503, "Search unavailable", str(error))
 
 
 def _brain_note_not_found_problem(_: BrainNoteNotFoundError) -> Problem:
@@ -825,6 +845,7 @@ PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
     BrainPathError: _brain_path_problem,
     BrainNoteNotFoundError: _brain_note_not_found_problem,
     BrainNoteTooLargeError: _brain_note_too_large_problem,
+    KnowledgeCheckoutError: _knowledge_checkout_problem,
     SkillFileTooLargeError: _skill_file_too_large_problem,
     RunInputError: _run_input_problem,
     RunConflictError: _run_conflict_problem,

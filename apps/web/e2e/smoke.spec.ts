@@ -210,7 +210,9 @@ test("Knowledge opens a proposal, shows its note and accepts it into a pull requ
     const dialog = page.getByRole("dialog", { name: "Accept this learning?" });
     await expect(dialog.getByText("acme/demo-hub").first()).toBeVisible();
     await dialog.getByRole("button", { name: "Open pull request" }).click();
-    await expect(page.getByText("Pull request opened")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("Pull request opened", { exact: true })).toBeVisible({
+      timeout: 30_000,
+    });
     await expect(
       page.getByRole("link", { name: /github\.com\/acme\/demo-hub\/pull\/1/ }).first(),
     ).toBeVisible();

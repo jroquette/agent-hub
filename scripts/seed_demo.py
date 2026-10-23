@@ -3,10 +3,10 @@
 Against the app at ``--url`` (``make run`` or ``make up``), it:
 
 1. reads the server's database path (``/api/v1/collector/status``);
-2. makes a demo hub (``hub init demo``, tracker team ``AGH``) with a feature folder (spec, plan,
-   a legacy ``eval.md``, ``features.json`` with a ticket plan whose tickets block each other, an
-   ``evals/<delivery>.md`` and a ``reviews/<ticket>.md``) and an inbox note, next to that database
-   (``<database folder>/demo``), and registers it (``POST /api/v1/hubs``);
+2. makes a demo hub (``hub init demo``, tracker team ``AGH``, then ``git init``) with a feature
+   folder (spec, plan, a legacy ``eval.md``, ``features.json`` with a ticket plan whose tickets
+   block each other, an ``evals/<delivery>.md`` and a ``reviews/<ticket>.md``) and an inbox note,
+   next to that database (``<database folder>/demo``), and registers it (``POST /api/v1/hubs``);
 3. posts hook envelopes: a live ``/feature`` session for AGH-7 (its worktree names the issue)
    that runs a Skill, starts an ``Explore`` subagent, recovers from a failed check (a problem
    the agent handled) and has a push denied; an idle session whose failed ``make test`` needs
@@ -116,6 +116,9 @@ class SeedError(Exception):
     """A step failed; the message is the line to print."""
 
 
+GIT_NOT_FOUND = "git init failed: git not found"
+
+
 class Target(Protocol):
     """Where the demo's files are written and its ``hub`` commands run."""
 
@@ -127,6 +130,8 @@ class Target(Protocol):
     def hub(self, arguments: Sequence[str]) -> subprocess.CompletedProcess[str]: ...
 
     def python(self, arguments: Sequence[str], stdin: str) -> subprocess.CompletedProcess[str]: ...
+
+    def git(self, arguments: Sequence[str]) -> subprocess.CompletedProcess[str]: ...
 
 
 def _run(command: list[str], stdin: str | None) -> subprocess.CompletedProcess[str]:
@@ -153,6 +158,12 @@ class LocalTarget:
     def python(self, arguments: Sequence[str], stdin: str) -> subprocess.CompletedProcess[str]:
         return self._runner([sys.executable, *arguments], stdin)
 
+    def git(self, arguments: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        try:
+            return self._runner(["git", *arguments], None)
+        except FileNotFoundError:
+            raise SeedError(GIT_NOT_FOUND) from None
+
 
 class ComposeTarget:
     """``hub`` and files inside the running Compose service, through ``docker compose exec``."""
@@ -175,6 +186,9 @@ class ComposeTarget:
 
     def python(self, arguments: Sequence[str], stdin: str) -> subprocess.CompletedProcess[str]:
         return self._runner([*self._exec, "python", *arguments], stdin)
+
+    def git(self, arguments: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        return self._runner([*self._exec, "git", *arguments], None)
 
 
 def compose_running() -> bool:
@@ -592,6 +606,11 @@ def seed(client: httpx.Client, target: Target, *, db_path: str, now: datetime) -
     _checked_hub(
         target, ["init", DEMO_PROJECT, *HUB_FLAGS, "--dir", str(hub)], tolerate=ALREADY_A_HUB
     )
+    # A git checkout, so the knowledge routes can list its files (AGH-393 O-2); untracked files
+    # are listed, so nothing is committed.
+    initialized = target.git(["init", "-q", str(hub)])
+    if initialized.returncode != 0:
+        raise SeedError(f"git init failed: {initialized.stderr.strip()}")
     for path, text in hub_files(hub).items():
         target.write(path, text)
     base = client.base_url

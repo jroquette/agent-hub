@@ -32,9 +32,8 @@ from agent_hub.core.brain.brain_note import (
 from agent_hub.core.brain.brain_path import (
     MAX_NOTE_BYTES,
     NOTE_SUFFIX,
-    BrainPathError,
-    brain_relative,
     is_personal_folder,
+    readable_note_path,
 )
 from agent_hub.core.brain.frontmatter import split_frontmatter
 from agent_hub.core.doctor.finding import Finding
@@ -312,12 +311,7 @@ class HubFilesReadModels:
         ``BrainNoteTooLargeError``. Bytes are decoded as UTF-8, invalid ones replaced.
         """
         missing = BrainNoteNotFoundError(project=project, path=path)
-        try:
-            relative = str(brain_relative(path))
-        except BrainPathError:
-            if is_personal_folder(path.split("/", 1)[0]):
-                raise missing from None
-            raise
+        relative = readable_note_path(path, project=project)
         found = self._project(project)
         read = self._reader.read_brain_file(found.path, relative, max_bytes=MAX_NOTE_BYTES)
         if isinstance(read, UnreadHubFile):

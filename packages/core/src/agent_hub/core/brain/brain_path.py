@@ -10,6 +10,7 @@ import re
 from pathlib import PurePosixPath
 from typing import Final, Literal
 
+from agent_hub.core.brain.brain_note import BrainNoteNotFoundError
 from agent_hub.core.errors import AgentHubError
 
 MAX_NOTE_BYTES: Final = 262_144
@@ -89,6 +90,18 @@ def brain_relative(path: str) -> PurePosixPath:
     segments = path.split("/")
     _refuse_segments(segments)
     return PurePosixPath(*segments)
+
+
+def readable_note_path(path: str, *, project: str) -> str:
+    """``path`` as the note routes take it: ``brain_relative``'s path as text, checked before any
+    read. A path under ``auto/`` is ``BrainNoteNotFoundError``, as a missing note, so an answer
+    never tells whether it exists (L7); any other refused path is ``BrainPathError``."""
+    try:
+        return str(brain_relative(path))
+    except BrainPathError:
+        if is_personal_folder(path.split("/", 1)[0]):
+            raise BrainNoteNotFoundError(project=project, path=path) from None
+        raise
 
 
 def inbox_note(note_path: str) -> PurePosixPath:

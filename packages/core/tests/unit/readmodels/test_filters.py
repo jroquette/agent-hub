@@ -83,6 +83,23 @@ def test_rejects_approval_kind_when_unknown() -> None:
         ApprovalFilter.model_validate({"kind": "deploy"})
 
 
+@pytest.mark.parametrize("brain_path", ["brain/learnings/web-gates.md", "learnings/web-gates.md"])
+def test_normalizes_brain_path_when_prefix_given_or_not(brain_path: str) -> None:
+    assert LearningFilter(brain_path=brain_path).brain_path == "learnings/web-gates.md"
+    assert LearningFilter().brain_path is None
+
+
+@pytest.mark.parametrize(
+    "brain_path",
+    ["auto/x.md", "brain/auto/x.md", "../x.md", "brain/../x.md", "x.txt", "brain/", "/x.md"],
+)
+def test_refuses_brain_path_when_auto_or_climbing(brain_path: str) -> None:
+    with pytest.raises(ValidationError) as refused:
+        LearningFilter(brain_path=brain_path)
+
+    assert refused.value.errors()[0]["loc"] == ("brain_path",)
+
+
 def test_keeps_scenario_runs_when_kind_scenario() -> None:
     # P-15, AM-7: a scenario run's events carry ``workflow: scenario:<name>``.
     runs = [a_run(id="w-1", workflow="ship"), a_run(id="s-1", workflow="scenario:order-walk")]

@@ -34,6 +34,10 @@ export type LearningDetail = Schemas["LearningDetail"];
 export type LearningActionResult = Schemas["LearningActionResult"];
 export type BrainTree = Schemas["BrainTree"];
 export type BrainNote = Schemas["BrainNote"];
+export type KnowledgeResult = Schemas["KnowledgeResult"];
+export type KnowledgeSearch = Schemas["KnowledgeSearch"];
+export type NoteBacklink = Schemas["NoteBacklink"];
+export type NoteBacklinks = Schemas["NoteBacklinks"];
 export type FeatureRecord = Schemas["FeatureRecord"];
 export type GoldenStep = Schemas["GoldenStep"];
 export type GoldenPath = Schemas["GoldenPath"];
@@ -477,6 +481,48 @@ export function aBrainNote(overrides: Partial<BrainNote> = {}): BrainNote {
     size: 180,
     ...overrides,
   };
+}
+
+/** One knowledge search result: the decision on worktrees of project `demo` by default. */
+export function aKnowledgeResult(overrides: Partial<KnowledgeResult> = {}): KnowledgeResult {
+  return {
+    path: "brain/decisions/0001-worktrees.md",
+    kind: "decision",
+    title: "Worktrees from origin",
+    status: "accepted",
+    provenance: null,
+    snippet: "every task runs in its own worktrees created from origin",
+    ...overrides,
+  };
+}
+
+/** A knowledge search of project `demo` for "worktrees", with no result by default. */
+export function aKnowledgeSearch(overrides: Partial<KnowledgeSearch> = {}): KnowledgeSearch {
+  return {
+    project: "demo",
+    query: "worktrees",
+    results: [],
+    sync: { listed: 0, read: 0, indexed: 0, dropped: 0 },
+    skipped: [],
+    warnings: [],
+    ...overrides,
+  };
+}
+
+/** One source linking to a note: the playbook on cleanup by default. */
+export function aBacklink(overrides: Partial<NoteBacklink> = {}): NoteBacklink {
+  return {
+    path: "brain/playbooks/cleanup.md",
+    kind: "playbook",
+    title: "Cleanup after merge",
+    ...overrides,
+  };
+}
+
+/** The backlinks of `index.md` in project `agent-hub`, none by default. */
+export function aNoteBacklinks(overrides: Partial<NoteBacklinks> = {}): NoteBacklinks {
+  const items = overrides.items ?? [];
+  return { project: "agent-hub", path: "index.md", items, total: items.length, ...overrides };
 }
 
 export function aProjectSummary(overrides: Partial<ProjectSummary> = {}): ProjectSummary {
