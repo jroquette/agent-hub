@@ -200,13 +200,15 @@ class Triage:
         self.dropped = Picked(ids_as_entries(reply.get("dropped")), listing)
         parts = (self.kept, self.unresolved, self.dropped)
         named = {str(finding.get("id")) for part in parts for finding, _ in part.found}
+        unsettled = {str(finding.get("id")) for finding, _ in self.unresolved.found}
         settled = {
             str(finding.get("id"))
             for part in (self.kept, self.dropped)
             for finding, _ in part.found
-        }
+        } - unsettled
         self.accounted = len(named)
-        # Kept or dropped: settled, so marked seen. Unresolved ones come back next run.
+        # Kept or dropped, and not also unresolved: settled, so marked seen. An unresolved one,
+        # even if also named kept or dropped, comes back next run.
         self.settled = [key for key in listing if key in settled]
         self.untriaged = [finding for key, finding in listing.items() if key not in named]
         self.ignored = sum(part.ignored for part in parts)

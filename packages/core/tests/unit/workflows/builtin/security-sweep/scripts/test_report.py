@@ -326,3 +326,16 @@ def test_lists_untriaged_findings_and_flags_mismatch_when_reply_undercounts(inbo
         " next run." in text
     )
     assert "Triage named 1 id that is not in the listing; ignored." in text
+
+
+def test_leaves_an_id_unseen_when_triage_also_names_it_unresolved(inbox: Inbox) -> None:
+    triage = a_triage(
+        {"id": "F1", "attack": "a", "fix": "f"},
+        unresolved=[{"id": "F1", "why": "unsure"}, {"id": "F2", "why": "unsure"}],
+        dropped=["F2", "F3"],
+    )
+
+    code, output, _ = inbox.report(triage)
+
+    # Unresolved wins: F1 and F2 are not settled, so they come back next run.
+    assert (code, output["triaged"]) == (0, ["F3"])
