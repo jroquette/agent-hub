@@ -171,14 +171,15 @@ function useTicketSessions(project: string, row: TicketRow) {
   );
 }
 
-/**
- * What a ticket's card offers next to its readiness: its newest session, one click from its
- * dialogue, and Start while the ticket is free to pick up and no session of it is still open.
- */
 /** Whether a ticket's own plan change waits for the owner: Start is then no view's primary. */
 const changeWaits = (rows: readonly TicketRow[]) =>
   rows.some((row) => row.flow != null && signalKind(row.flow) === "waiting");
 
+/**
+ * A card's session line: the ticket's newest AI session in any state (live, waiting, idle or
+ * ended), one click from its dialogue, with how many earlier ones the panel lists; and Start while
+ * the ticket is free to pick up and no session of it is still open.
+ */
 function CardAction({
   project,
   slug,
@@ -191,7 +192,8 @@ function CardAction({
   rows: readonly TicketRow[];
 }) {
   const sessions = useTicketSessions(project, row);
-  const newest = sessions.data?.items[0];
+  const items = sessions.data?.items ?? [];
+  const newest = items[0];
   const open = newest != null && newest.status !== "ended";
   const start = canStartTicket(row, rows) && !open && (
     <StartTicketButton
@@ -202,11 +204,40 @@ function CardAction({
       quiet={changeWaits(rows)}
     />
   );
-  // An ended session is in the ticket's panel; the card shows one only while it is live.
-  if (!open) return start ? <span className="ah-flow-card-action">{start}</span> : null;
+  const earlier = items.length - 1;
+  let session: ReactNode = null;
+  if (row.id && sessions.isPending) session = <Skeleton width={90} height={18} />;
+  else if (sessions.isError) {
+    session = (
+      <span className="ah-subtle" title={sessions.error.title}>
+        —<span className="ah-sr">sessions not read</span>
+      </span>
+    );
+  } else if (newest) {
+    session = (
+      <>
+        <SessionLink session={newest} context={open ? "Session running" : "Newest session"} />
+        {earlier > 0 && (
+          <span
+            className="ah-small ah-subtle"
+            title={`${String(earlier)} earlier session${earlier === 1 ? "" : "s"}: in the ticket panel`}
+          >
+            +{earlier}
+          </span>
+        )}
+      </>
+    );
+  }
+  if (!session && !start) return null;
   return (
-    <span className="ah-flow-card-action">
-      <SessionLink session={newest} context="Session running" />
+    <span className="ah-flow-card-session">
+      {session && (
+        <span className="ah-flow-card-session-link">
+          <Icon name="square-terminal" size="sm" aria-hidden="true" />
+          {session}
+        </span>
+      )}
+      {start && <span className="ah-flow-card-action">{start}</span>}
     </span>
   );
 }

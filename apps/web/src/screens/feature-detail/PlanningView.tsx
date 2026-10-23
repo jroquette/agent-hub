@@ -634,34 +634,11 @@ const READINESS_ICON: Partial<Record<Readiness, { icon: IconName; color: string 
   in_cycle: { icon: "octagon-x", color: "var(--failed)" },
 };
 
-/** "3/7 ACs" (all passing in `done`), or "4 ACs" when passing is not known. */
-function AcFact({
-  row,
-  acPasses,
-}: {
-  row: TicketRow;
-  acPasses?: Readonly<Record<string, boolean>> | undefined;
-}) {
-  if (row.acs.length === 0) return null;
-  if (!acPasses) return <span>{row.acs.length} ACs</span>;
-  const passing = row.acs.filter((ac) => acPasses[ac]).length;
-  const all = passing === row.acs.length;
-  return (
-    <span
-      className="ah-flow-card-fact"
-      style={all ? { color: "var(--done)" } : undefined}
-      title={`${String(passing)} of ${String(row.acs.length)} ACs passing`}
-    >
-      {all && <Icon name="circle-check" size="sm" />}
-      {passing}/{row.acs.length} ACs
-    </span>
-  );
-}
-
 /**
- * A ticket as a compact card on the flow: its id and Linear status, its title (it opens the
- * ticket's panel), what to do with it now (readiness or signal, and Start), then its facts. The
- * step bar, the AC bar, the assignee and its blockers outside the flow are in the panel.
+ * A ticket as a card on the flow, its rows always in one order so the eye finds each fact in the
+ * same place on every card: its id and Linear status, its title (it opens the ticket's panel), its
+ * step bar, its AI session (or Start), what its readiness or signal adds, its ACs and pull
+ * request, then who has it and what it comes after.
  */
 function FlowCard({
   row,
@@ -757,7 +734,13 @@ function FlowCard({
           <span>{title}</span>
         )}
       </span>
-      {(note || action != null || signal !== null) && (
+      {row.flow && row.readiness !== "canceled" && (
+        <div className="ah-flow-card-steps">
+          <TicketStepBar flow={row.flow} />
+        </div>
+      )}
+      {action != null && action !== false && <div className="ah-flow-card-now">{action}</div>}
+      {(note || signal !== null) && (
         <div className="ah-flow-card-status">
           {replaced && row.flow && <TicketSignal flow={row.flow} />}
           {note && (
@@ -783,18 +766,24 @@ function FlowCard({
               )}
             </span>
           )}
-          {action}
           {signal === "local" && row.flow && <TicketSignal flow={row.flow} />}
         </div>
       )}
       <div className="ah-flow-card-facts">
-        {row.flow && row.readiness !== "canceled" && <span>{ticketStepLine(row.flow)}</span>}
-        <AcFact row={row} acPasses={acPasses} />
+        <AcCount row={row} acPasses={acPasses} />
         <TicketPrLink row={row} />
         {showReviewed && (
           <span className="ah-flow-card-fact" style={{ color: "var(--done)" }}>
             <Icon name="circle-check" size="sm" />
             Reviewed
+          </span>
+        )}
+      </div>
+      <div className="ah-flow-card-facts">
+        {row.assignee && (
+          <span className="ah-flow-card-fact">
+            <Icon name="user" size="sm" />
+            {row.assignee}
           </span>
         )}
         {after.length > 0 && (
@@ -1095,7 +1084,8 @@ function useFillHeight(canvas: RefObject<HTMLElement | null>): number {
     const main = el?.closest<HTMLElement>(".ah-shell-main");
     if (!el || !main) return;
     const measure = () => {
-      const top = el.getBoundingClientRect().top - main.getBoundingClientRect().top + main.scrollTop;
+      const top =
+        el.getBoundingClientRect().top - main.getBoundingClientRect().top + main.scrollTop;
       const card = el.closest<HTMLElement>(".ah-card");
       const below = card
         ? card.getBoundingClientRect().bottom - el.getBoundingClientRect().bottom
