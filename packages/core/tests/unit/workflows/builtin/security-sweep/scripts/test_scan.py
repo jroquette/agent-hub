@@ -511,7 +511,13 @@ def test_runs_each_found_scanner_when_installed(
         ".",
     ]
     assert calls["bandit"]["argv"] == ["-r", ".", "-f", "json", "-q", "-ll", "-ii"]
-    assert calls["npm"]["argv"] == ["audit", "--json", "--package-lock-only"]
+    # The public registry, whatever a repo's .npmrc names: the lockfile goes nowhere else.
+    assert calls["npm"]["argv"] == [
+        "audit",
+        "--json",
+        "--package-lock-only",
+        "--registry=https://registry.npmjs.org/",
+    ]
     # Only the lockfile outside node_modules/, in its own folder of the scanned tree.
     assert Path(calls["npm"]["cwd"]).name == "web"
     for call in calls.values():
