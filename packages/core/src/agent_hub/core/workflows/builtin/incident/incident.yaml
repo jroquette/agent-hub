@@ -5,8 +5,9 @@
 # was confirmed, open when none was.
 #
 # Invariants:
-# - No tracker write (ADR 0030): no issue input, no hub step node; follow-ups are listed in the
-#   postmortem for the owner to file through /triage.
+# - No tracker write (ADR 0030): no issue input, and the one hub step node is config (read-only:
+#   the repos from hub.json, which no script opens); follow-ups are listed in the postmortem for
+#   the owner to file through /triage.
 # - No environment: the pack reads no system. evidence, check and mitigation are effect read,
 #   handoff and note write the hub; a run started with --env <production> is refused by policy.
 # - Nothing is applied: the pack records the chosen mitigation; applying it is the owner's step
@@ -38,12 +39,29 @@ inputs:
 returns: note
 outcome_field: status
 nodes:
+  - id: config
+    type: shell
+    description: The hub.json values this run's scripts need, read by the CLI (read-only).
+    command: [hub, step, config]
+    effect: read
+    mutates_checkout: false
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        default_branch: {type: string}
+        branch_prefix: {type: [string, "null"]}
+        hub: {type: object}
+        repos: {type: array, items: {type: object}}
+      required: [default_branch, branch_prefix, hub, repos]
+
   - id: evidence
     type: script
     description: Git evidence since the window - first-parent commits, tags and changed files of each repo.
+    depends_on: [config]
     runtime: python
     script: evidence.py
-    args: [--since, $INPUTS.since]
+    args: [--since, $INPUTS.since, --config, $config.output]
     stdin: $INPUTS.report
     effect: read
     mutates_checkout: false

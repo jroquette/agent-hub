@@ -3,6 +3,8 @@
 workflow: incident
 inputs: {report: "Checkout fails since Tuesday."}
 stubs:
+  config:
+    output: {default_branch: main, branch_prefix: jdoe/, author_name: Jane Doe, author_email: jane@example.com, ready_label: agent-ready, teams: [DEM], hub: {github: acme/demo-hub, default_branch: main, target: {github: acme/demo-hub, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}, repos: [{dir: demo-api, github: acme/demo-api, default_branch: main, check_fast: make check-fast, check: make check, target: {github: acme/demo-api, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}]}
   evidence:
     output:
       since: 72h
@@ -64,4 +66,4 @@ stubs:
       learnings: []
   note: {output: {status: draft, path: brain/_inbox/incident-YYYY-MM-DD-run00001-postmortem.md}}
 expect: {status: done, outcome: draft}
-reached: [evidence, recall, hypotheses, check, mitigate, mitigation, handoff, postmortem, note]
+reached: [config, evidence, recall, hypotheses, check, mitigate, mitigation, handoff, postmortem, note]

@@ -114,7 +114,7 @@ def test_validates_and_passes_every_fixture_when_incident_tested(
     tested = run_command(demo_workspace.hub, "workflow", "test", "incident")
 
     assert validated.exit_code == 0, validated.output
-    assert validated.stdout == "incident: valid (9 nodes in 9 layers)\n"
+    assert validated.stdout == "incident: valid (10 nodes in 10 layers)\n"
     assert tested.exit_code == 0, tested.output
     for fixture in FIXTURES:
         # The hub's seeded copy shadows the built-in (AGH-227).
@@ -133,9 +133,9 @@ def test_declares_read_only_nodes_and_no_tracker_step_when_document_loaded() -> 
     assert "environment" not in document
     assert document["returns"] == "note"
     assert document["outcome_field"] == "status"
-    assert [node["type"] for node in document["nodes"]].count("shell") == 0
-    for node in document["nodes"]:
-        assert node.get("command", [])[:2] != ["hub", "step"], node["id"]
+    # The one hub step node reads hub.json for the scripts (AGH-480) and writes nothing.
+    shells = [node for node in document["nodes"] if node["type"] == "shell"]
+    assert [node["command"] for node in shells] == [["hub", "step", "config"]]
     for node_id in READ_ONLY:
         assert nodes[node_id].effect == "read", node_id
     for node_id in WRITERS:
@@ -379,7 +379,7 @@ def checkout_state(workspace: Workspace, repo: Path) -> tuple[str, ...]:
     ("pattern", "status"), [("BUG", "draft"), ("NOT_THERE", "open")], ids=["confirmed", "none"]
 )
 def test_writes_handoff_and_postmortem_when_scripts_chain_on_real_git(
-    pattern: str, status: str, demo_workspace: Workspace
+    pattern: str, status: str, demo_workspace: Workspace, run_command: CommandRunner
 ) -> None:
     nodes, outputs = nodes_of("incident"), JsonSchemaOutputs()
     hub, repo = demo_workspace.hub, demo_workspace.ws / "demo-api"
@@ -425,7 +425,12 @@ def test_writes_handoff_and_postmortem_when_scripts_chain_on_real_git(
         ]
     }
 
-    evidence = script("evidence.py", "--since", "72h", cwd=hub, stdin=report)
+    # The workflow's config node: the real hub step config output, as --config takes it.
+    config = run_command(hub, "step", "config")
+    assert config.exit_code == 0, config.output
+    evidence = script(
+        "evidence.py", "--since", "72h", "--config", config.stdout, cwd=hub, stdin=report
+    )
     check = script(
         "check.py", "--repos", json.dumps(evidence["repos"]), cwd=hub, stdin=json.dumps(reply)
     )

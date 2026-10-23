@@ -63,6 +63,8 @@ nodes:
     description: The hub.json values this run's scripts need, read by the CLI (read-only).
     depends_on: [worktree]
     command: [hub, step, config]
+    effect: read
+    mutates_checkout: false
     retry: {max_attempts: 0}
     output_format:
       type: object

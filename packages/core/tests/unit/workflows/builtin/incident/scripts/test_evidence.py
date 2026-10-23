@@ -1,5 +1,6 @@
 """The incident pack's ``evidence.py`` (AGH-483), in process: the git evidence of each repo since
-the window, bounded, with what it leaves out named; bad input exits 2.
+the window, bounded, with what it leaves out named; bad input exits 2. The repos come from
+``hub step config``'s output (``--config``, AGH-480), never from a ``hub.json`` file.
 """
 
 import importlib.util
@@ -71,11 +72,15 @@ def a_repo(root: Path, name: str, *, origin: bool = True) -> Path:
     return repo
 
 
+# Each hub's ``hub step config`` output, as the workflow passes it with ``--config``.
+CONFIGS: dict[Path, str] = {}
+
+
 def a_hub(root: Path, *dirs: str) -> Path:
     hub = root / "hub"
     hub.mkdir()
-    config = {"project": {"default_branch": "main"}, "repos": [{"dir": name} for name in dirs]}
-    (hub / "hub.json").write_text(json.dumps(config), encoding="utf-8")
+    repos = [{"dir": name, "default_branch": "main"} for name in dirs]
+    CONFIGS[hub] = json.dumps({"default_branch": "main", "repos": repos})
     return hub
 
 
@@ -88,7 +93,7 @@ def run(
 ) -> tuple[int, Any, str]:
     monkeypatch.chdir(hub)
     monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(report.encode())))
-    code = load().main(list(argv))
+    code = load().main([*argv, "--config", CONFIGS[hub]])
     captured = capsys.readouterr()
     return code, json.loads(captured.out) if code == 0 else captured.out, captured.err
 
@@ -208,7 +213,7 @@ def test_stays_under_byte_cap_when_history_is_large(
     monkeypatch.chdir(hub)
     monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(REPORT.encode())))
 
-    code = load().main(["--since", "24h"])
+    code = load().main(["--since", "24h", "--config", CONFIGS[hub]])
 
     out = capsys.readouterr().out
     assert code == 0
@@ -238,7 +243,7 @@ def test_stays_under_byte_cap_when_every_repo_has_many_long_tags(
     monkeypatch.chdir(hub)
     monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(REPORT.encode())))
 
-    code = load().main(["--since", "72h"])
+    code = load().main(["--since", "72h", "--config", CONFIGS[hub]])
 
     out = capsys.readouterr().out
     assert code == 0
@@ -273,7 +278,7 @@ def test_exits_two_when_report_exceeds_cap(
     monkeypatch.chdir(hub)
     monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(b"x" * 32769)))
 
-    code = load().main(["--since", "72h"])
+    code = load().main(["--since", "72h", "--config", CONFIGS[hub]])
 
     captured = capsys.readouterr()
     assert code == 2
@@ -305,27 +310,53 @@ def test_exits_two_when_report_is_blank(
 
 @pytest.mark.parametrize(
     "content",
-    [None, "{not json", "[]", '{"repos": {}}', '{"repos": [1]}', " " * (1024 * 1024 + 1)],
-    ids=["missing", "not-json", "not-object", "repos-not-list", "repo-not-object", "too-big"],
+    ["{not json", "[]", '{"repos": {}}', '{"repos": [1]}', "{" + " " * (1024 * 1024)],
+    ids=["not-json", "not-object", "repos-not-list", "repo-not-object", "too-big"],
 )
-def test_exits_two_when_hub_json_is_unreadable(
-    content: str | None,
+def test_exits_two_when_config_is_unreadable(
+    content: str,
     *,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     hub = a_hub(tmp_path)
-    if content is None:
-        (hub / "hub.json").unlink()
-    else:
-        (hub / "hub.json").write_text(content, encoding="utf-8")
     monkeypatch.chdir(hub)
     monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(REPORT.encode())))
 
-    code = load().main(["--since", "72h"])
+    code = load().main(["--since", "72h", "--config", content])
 
     captured = capsys.readouterr()
     assert code == 2
     assert captured.out == ""
-    assert "cannot read hub.json" in captured.err
+    assert "cannot read the config" in captured.err
+
+
+def test_reads_no_hub_json_when_config_given(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    a_repo(tmp_path, "api")
+    hub = a_hub(tmp_path)
+    # A hub.json naming a repo the config does not: only the config is read.
+    (hub / "hub.json").write_text(json.dumps({"repos": [{"dir": "api"}]}), encoding="utf-8")
+
+    code, output, _ = run(monkeypatch, capsys, hub, "--since", "72h")
+
+    assert code == 0
+    assert output["repos"] == []
+    assert output["unreadable"] == []
+
+
+def test_reads_each_repo_default_branch_when_config_gives_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    a_repo(tmp_path, "api")
+    hub = a_hub(tmp_path, "api")
+    CONFIGS[hub] = json.dumps(
+        {"default_branch": "main", "repos": [{"dir": "api", "default_branch": "trunk"}]}
+    )
+
+    code, output, _ = run(monkeypatch, capsys, hub, "--since", "72h")
+
+    assert code == 0
+    assert output["unreadable"] == [{"repo": "api", "reason": "no origin/trunk (fetch it first)"}]
