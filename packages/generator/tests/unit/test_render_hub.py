@@ -1017,6 +1017,17 @@ def test_parses_as_python39_when_rendered(demo_render: dict[str, RenderedFile]) 
     }
 
 
+def test_names_no_datetime_utc_alias_when_rendered(demo_render: dict[str, RenderedFile]) -> None:
+    # datetime.UTC is 3.11+: a rendered script that names it fails to import on 3.9 (AGH-480).
+    for path, module in rendered_python(demo_render).items():
+        for node in ast.walk(module):
+            if isinstance(node, ast.ImportFrom) and node.module == "datetime":
+                assert "UTC" not in {alias.name for alias in node.names}, path
+            if isinstance(node, ast.Attribute) and node.attr == "UTC":
+                value = node.value
+                assert not (isinstance(value, ast.Name) and value.id == "datetime"), path
+
+
 def test_imports_stdlib_or_siblings_when_rendered(demo_render: dict[str, RenderedFile]) -> None:
     parsed = rendered_python(demo_render)
     siblings: dict[str, set[str]] = {}

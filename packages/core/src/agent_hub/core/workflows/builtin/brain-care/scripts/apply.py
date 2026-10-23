@@ -33,6 +33,9 @@ and unreadable notes, and the notes the grouping ignored or left out (``groups.p
 commit that leaves ``brain/``, exits 1.
 """
 
+# The hub runs pack scripts with uv, but they still import on the hooks' Python 3.9 floor.
+from __future__ import annotations
+
 import argparse
 import datetime
 import json

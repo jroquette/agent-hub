@@ -22,6 +22,9 @@ entries that are not failures); ``path`` is blank when nothing was written. Bad 
 with ``report.py: <reason>`` on stderr.
 """
 
+# The hub runs pack scripts with uv, but they still import on the hooks' Python 3.9 floor.
+from __future__ import annotations
+
 import datetime
 import json
 import os
@@ -285,7 +288,8 @@ def inputs(given: dict[str, str], stdin: str) -> tuple[dict[str, object], dict[s
 
 
 def today(given: dict[str, str]) -> str:
-    day = given.get("--today") or datetime.datetime.now(datetime.UTC).date().isoformat()
+    now = datetime.datetime.now(datetime.timezone.utc)  # noqa: UP017 - 3.9 has no datetime.UTC
+    day = given.get("--today") or now.date().isoformat()
     if not DAY.fullmatch(day):
         raise BadInputError(f"--today is not a date: {day!r}")
     return day

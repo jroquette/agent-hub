@@ -31,8 +31,11 @@ import re
 import subprocess
 import sys
 import unicodedata
-from datetime import UTC, date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
+
+# Not datetime.UTC: the hub's copy also imports on Python 3.9.
+UTC = timezone.utc  # noqa: UP017
 
 MAX_REFS = 20_000
 GIT_TIMEOUT = 30

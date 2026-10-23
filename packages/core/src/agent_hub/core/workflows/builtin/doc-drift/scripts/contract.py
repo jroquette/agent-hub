@@ -30,15 +30,21 @@ readable, a repo not in the config or not cloned, an unknown commit, no parent, 
 ``origin/<default>``) exits 2; a git failure exits 1. Both say why on stderr.
 """
 
+# The hub runs pack scripts with uv, but they still import on the hooks' Python 3.9 floor.
+from __future__ import annotations
+
 import argparse
 import json
 import re
 import subprocess
 import sys
 from collections.abc import Callable, Iterable, Mapping
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import NamedTuple
+
+# Not datetime.UTC: the hub's copy also imports on Python 3.9.
+UTC = timezone.utc  # noqa: UP017
 
 PROG = "contract.py"
 

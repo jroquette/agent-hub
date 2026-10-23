@@ -15,10 +15,16 @@ owner's gate text (the numbered changes with their evidence, then the dropped on
 is not JSON, or not of that shape, exits 2.
 """
 
+# The hub runs pack scripts with uv, but they still import on the hooks' Python 3.9 floor.
+from __future__ import annotations
+
 import argparse
 import json
 import sys
-from typing import TypeGuard
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # typing.TypeGuard is 3.10+: the hub's copy also imports on Python 3.9.
+    from typing import TypeGuard
 
 Change = dict[str, object]
 Metrics = dict[str, object]

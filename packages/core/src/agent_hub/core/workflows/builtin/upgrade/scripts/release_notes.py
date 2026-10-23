@@ -25,6 +25,9 @@ is data (``found`` false and the reason, such as GitHub's unauthenticated rate l
 failure: exit 0. A bad argument exits 2 and reads nothing.
 """
 
+# The hub runs pack scripts with uv, but they still import on the hooks' Python 3.9 floor.
+from __future__ import annotations
+
 import argparse
 import http.client
 import json
