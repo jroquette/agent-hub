@@ -21,7 +21,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.hub_config.model import HubConfig
-from agent_hub.core.hub_config.schedules import EventKind, EventStart, Schedule
+from agent_hub.core.hub_config.schedules import MAX_STARTS, EventKind, EventStart, Schedule
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.schedules.cron import parse_cron
 from agent_hub.core.workflows.launch import (
@@ -35,8 +35,12 @@ from agent_hub.core.workflows.launch import (
 EVENT_PAGE: Final = 20
 # The ids kept per source: more than a page, so an id leaves the page before it leaves the ledger.
 MAX_SEEN: Final = 100
-MAX_LEDGER_SLOTS: Final = 32
-MAX_LEDGER_SOURCES: Final = 32
+# The ledger holds what hub.json may declare, never less (one entry per schedule or source).
+MAX_LEDGER_SLOTS: Final = MAX_STARTS
+MAX_LEDGER_SOURCES: Final = MAX_STARTS
+# Feeds whose items leave the page (a PR closes, a red run is re-run green): an id counts only
+# when it is above the highest one recorded, as PR numbers and Actions run ids only grow.
+MARKED_KINDS: Final = frozenset({"pr_opened", "ci_red"})
 
 
 @dataclass(frozen=True)
@@ -67,7 +71,8 @@ class EventSource(Protocol):
 
 
 class StartState(BaseModel):
-    """A hub's ledger: the last slot started per workflow and the event ids seen per source."""
+    """A hub's ledger: the last slot started per workflow, the commit shas seen per ``merge``
+    source, and the highest id recorded per ``pr_opened`` and ``ci_red`` source."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -78,6 +83,9 @@ class StartState(BaseModel):
     seen: Annotated[
         dict[str, Annotated[tuple[str, ...], Field(max_length=MAX_SEEN)]],
         Field(max_length=MAX_LEDGER_SOURCES),
+    ] = Field(default_factory=dict)
+    marks: Annotated[
+        dict[str, Annotated[int, Field(ge=0)]], Field(max_length=MAX_LEDGER_SOURCES)
     ] = Field(default_factory=dict)
 
 
@@ -226,7 +234,7 @@ class StartScheduledRuns:
         declared = tuple(source_key(event) for event in hub.config.events)
         try:
             new = self._ledger.update(
-                hub.hub_path, partial(_record_seen, polled=polled, declared=declared)
+                hub.hub_path, partial(_record_events, polled=polled, declared=declared)
             )
         except StartLedgerError as error:
             report.fail(hub.project, None, str(error))
@@ -289,6 +297,10 @@ class StartScheduledRuns:
         except (AgentHubError, ValueError) as error:
             report.fail(hub.project, workflow, str(error))
             return
+        except Exception as error:  # noqa: BLE001 -- one start's failure never stops the next
+            # An OSError's text can name local paths: only its kind is reported.
+            report.fail(hub.project, workflow, f"the run could not start ({type(error).__name__})")
+            return
         report.started.append(
             StartedRun(
                 project=hub.project, workflow=workflow, run_id=accepted.run_id, trigger=trigger
@@ -313,23 +325,44 @@ def _record_slots(
     return state.model_copy(update={"slots": slots}), tuple(due)
 
 
-def _record_seen(
+def _record_events(
     state: StartState,
     *,
     polled: Sequence[tuple[EventStart, tuple[EventRef, ...]]],
     declared: tuple[str, ...],
 ) -> tuple[StartState, tuple[tuple[EventStart, EventRef], ...]]:
     # A source no longer declared is dropped; one whose poll failed keeps what it had. A
-    # source seen for the first time records a baseline and starts nothing.
+    # source polled for the first time records a baseline and starts nothing.
     seen = {key: ids for key, ids in state.seen.items() if key in declared}
+    marks = {key: mark for key, mark in state.marks.items() if key in declared}
     new: list[tuple[EventStart, EventRef]] = []
     for event, refs in polled:
         key = source_key(event)
-        known = seen.get(key)
-        if known is None:
-            seen[key] = tuple(ref.id for ref in refs)[:MAX_SEEN]
-            continue
-        fresh = [ref for ref in refs if ref.id not in known]
-        new.extend((event, ref) for ref in reversed(fresh))
-        seen[key] = (*(ref.id for ref in fresh), *known)[:MAX_SEEN]
-    return state.model_copy(update={"seen": seen}), tuple(new)
+        if event.on in MARKED_KINDS:
+            marks[key], fresh = _above_mark(marks.get(key), refs)
+        else:
+            seen[key], fresh = _newest_unseen(seen.get(key), refs)
+        new.extend((event, ref) for ref in fresh)
+    return state.model_copy(update={"seen": seen, "marks": marks}), tuple(new)
+
+
+def _above_mark(mark: int | None, refs: Sequence[EventRef]) -> tuple[int, list[EventRef]]:
+    """The new mark and the events above the old one, oldest first (none at the baseline)."""
+    numbered = sorted(
+        ((int(ref.id), ref) for ref in refs if ref.id.isdecimal()), key=lambda pair: pair[0]
+    )
+    top = max((number for number, _ in numbered), default=0)
+    if mark is None:
+        return top, []
+    return max(mark, top), [ref for number, ref in numbered if number > mark]
+
+
+def _newest_unseen(
+    known: tuple[str, ...] | None, refs: Sequence[EventRef]
+) -> tuple[tuple[str, ...], list[EventRef]]:
+    """The ids to keep and the run to start: one merge starts one run, on its newest new
+    commit, while every new commit is recorded (none at the baseline)."""
+    if known is None:
+        return tuple(ref.id for ref in refs)[:MAX_SEEN], []
+    fresh = [ref for ref in refs if ref.id not in known]
+    return (*(ref.id for ref in fresh), *known)[:MAX_SEEN], fresh[:1]
