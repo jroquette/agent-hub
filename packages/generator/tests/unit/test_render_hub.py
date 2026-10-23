@@ -235,6 +235,23 @@ DESIGN_PATHS = (
     "workflows/post-merge-verify/scripts/report.py",
     "workflows/post-merge-verify/scripts/selection.py",
     "workflows/post-merge-verify/scripts/verify.py",
+    "workflows/release/fixtures/release-check-red.yaml",
+    "workflows/release/fixtures/release-declined.yaml",
+    "workflows/release/fixtures/release-minor.yaml",
+    "workflows/release/fixtures/release-nothing.yaml",
+    "workflows/release/fixtures/release-pin-declined.yaml",
+    "workflows/release/fixtures/release-pin.yaml",
+    "workflows/release/fixtures/release-tag-missing.yaml",
+    "workflows/release/prompts/notes.md",
+    "workflows/release/release.yaml",
+    "workflows/release/scripts/bump.py",
+    "workflows/release/scripts/compose.py",
+    "workflows/release/scripts/exact_check.py",
+    "workflows/release/scripts/hub_branch.py",
+    "workflows/release/scripts/pin.py",
+    "workflows/release/scripts/report.py",
+    "workflows/release/scripts/since.py",
+    "workflows/release/scripts/tagged.py",
     "workflows/retro/fixtures/retro-all-dropped.yaml",
     "workflows/retro/fixtures/retro-keep-none.yaml",
     "workflows/retro/fixtures/retro-no-runs.yaml",
@@ -978,6 +995,8 @@ def test_parses_as_python39_when_rendered(demo_render: dict[str, RenderedFile]) 
         "workflows/doc-drift/scripts",
         # The post-merge-verify pack's scripts (AGH-490), run by uv as the sdlc pack's are.
         "workflows/post-merge-verify/scripts",
+        # The release pack's helpers (AGH-494), as the sdlc pack's.
+        "workflows/release/scripts",
         # The review-incoming pack's helpers (AGH-493), as the sdlc pack's, parse as 3.9.
         "workflows/review-incoming/scripts",
         # The sdlc pack's helpers (AGH-229), run by uv on its Python, also parse as 3.9.

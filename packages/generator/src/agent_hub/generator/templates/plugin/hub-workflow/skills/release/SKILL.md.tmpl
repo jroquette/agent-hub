@@ -11,6 +11,18 @@ Paths below are relative to the hub (the directory with `hub.json`). The platfor
 Each step carries its type: `script` runs commands with no judgement, `gate` waits for the user's answer, `human` is done by the user, `agent` needs your judgement.
 This skill never creates, moves, deletes or pushes a tag itself: the platform repo's release workflow creates it after the gate; a wrong tag is never moved, and the fix is a new patch release.
 
+## Run
+
+The built-in `release` workflow runs steps 1-4, 6 and 7's pin; you resolve its inputs, dispatch the tag (step 5) and comment on the tracker (step 7).
+- Resolve the platform repo (above), then find or create the release's tracker issue.
+- From the hub: `./hub workflow run release --input issue=<issue> --input repo=<repo dir> --input version=<argument, or empty> --live`, output redirected to a file and `$?` checked (without `--live` it only prints what would run).
+- Report its last line (`run <run>: paused at <gate>` or `run <run>: done, outcome <outcome>`) and the `report` step's `output` in `.agent-runs/workflows/<run>/records.jsonl`.
+- The gates are the owner's, never yours: `go` (the release PR) and `pin_go` (the hub pin PR) with `./hub workflow approve <run>` or `reject <run>`.
+- After `go`, the owner merges the release PR with a merge commit, not squash: the tag goes on the `bump` step's `sha`, the PR's head.
+- Then resolve one absolute path from `echo "${TMPDIR:-/tmp}"` plus `/release-notes.md`, write the `compose` step's `output.notes` there with the Write tool (replacing an earlier file), check `test -s <notes file>`, and do step 5 (dispatch and watch) and step 6 below with that `sha`.
+- Then the owner answers `./hub workflow respond <run> --choice tagged` (or `--choice stop`); after the run, step 7's tracker comments.
+- If `./hub workflow run` is not available or `./hub workflow list` has no `release` (an older pin), follow the steps below by hand.
+
 1. `script` **Changes**: fetch the platform repo's default branch and tags; list the PRs merged since the last `v*` tag (number, title, author, tracker issue), their titles shaped `type(scope): subject`.
    Propose the bump with its reason, naming the PRs that decide it: `!` or `BREAKING CHANGE` → major, any feat → minor, fix → patch, else patch. An argument overrides the proposal; it never goes backwards. No PR merged since the tag: say so and stop.
 2. `gate` **Version and commit**: print the PR list, the proposed version and the target commit, the merge commit on the default branch, by full SHA. Stop here until the user confirms both; a changed answer re-runs this gate.
