@@ -4,7 +4,8 @@
 # ///
 """Write the owner's inbox decisions into the run's hub worktree and commit them, as JSON.
 
-``apply.py --worktree PATH --base SHA [--today YYYY-MM-DD] [--unreadable JSON]`` reads the
+``apply.py --worktree PATH --base SHA [--today YYYY-MM-DD] [--unreadable JSON] [--ignored JSON]
+[--unproposed JSON]`` reads the
 decisions ``groups.py record`` kept (``[{"group", "decision", "note", "approver"}]``) on stdin
 and, in the worktree ``hub_branch.py`` made:
 
@@ -15,16 +16,21 @@ and, in the worktree ``hub_branch.py`` made:
   after the first note without its date), then deletes the notes. A target outside
   ``brain/learnings/`` (``brain/decisions/`` is never edited), or an external note in a group of
   several, is skipped;
-- ``apply`` of a ``route`` or ``check`` sets the note's ``status`` and ``routed_to`` in place: a
-  follow-up for the owner (a hub PR cannot change a repo or the tracker; ADR 0030).
+- ``apply`` of a ``route`` or ``check`` sets the note's ``status`` (``routed`` or ``check``) and
+  ``routed_to`` in place: a follow-up for the owner (a hub PR cannot change a repo or the
+  tracker; ADR 0030).
 
-A note the base commit lacks is skipped ("push it first"), as is a path that is not an inbox
-note. The changes are committed as the checkout's git identity, hooks off, and the commit must
-change only ``brain/`` paths. Prints ``{"changes", "deleted", "written", "edited", "skipped":
-[{"path", "reason"}], "summary"}``; ``summary`` (at most 8,000 characters) is the PR body's:
-each decision with its approver and note, the follow-ups, the skipped and unreadable notes.
-Input that is not a list of decisions exits 2; a git failure, or a commit that leaves
-``brain/``, exits 1.
+Everything is planned from the base commit, never from the worktree's files, so a run resumed after
+a failure plans the same changes: a worktree whose HEAD is already this script's commit on the base
+is reported as it is (no second commit); one left half-written is reset to the base first; any
+other HEAD past the base is refused. A note the base commit lacks is skipped ("push it first"), as
+is a path that is not an inbox note. The changes are committed as the checkout's git identity,
+hooks off, and the commit must change only ``brain/`` paths. Prints ``{"changes", "deleted",
+"written", "edited", "skipped": [{"path", "reason"}], "summary"}``; ``summary`` (at most 8,000
+characters) is the PR body's: each decision with its approver and note, the follow-ups, the skipped
+and unreadable notes, and the notes the grouping ignored or left out (``groups.py plan``'s
+``ignored`` and ``unproposed``). Input that is not a list of decisions exits 2; a git failure, or a
+commit that leaves ``brain/``, exits 1.
 """
 
 import argparse
@@ -34,6 +40,7 @@ import posixpath
 import re
 import subprocess
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import NamedTuple
 
@@ -100,18 +107,28 @@ def _title(body: str, fallback: str) -> str:
 
 
 class _Tree:
-    """The worktree as the planned changes leave it."""
+    """The files as the planned changes leave them: read from the base commit when ``base`` is
+    given (so a second run plans what the first did), else from the folder."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, base: str | None = None) -> None:
         self.root = root
+        self.base = base
         self.state: dict[str, str | None] = {}
 
     def read(self, path: str) -> str | None:
         if path not in self.state:
-            file = self.root / path
-            is_file = file.is_file() and not file.is_symlink()
-            self.state[path] = file.read_text(encoding="utf-8") if is_file else None
+            self.state[path] = self._original(path)
         return self.state[path]
+
+    def _original(self, path: str) -> str | None:
+        if self.base is not None:
+            try:
+                return _git(self.root, "cat-file", "blob", f"{self.base}:{path}")
+            except GitFailedError:
+                return None
+        file = self.root / path
+        is_file = file.is_file() and not file.is_symlink()
+        return file.read_text(encoding="utf-8") if is_file else None
 
     def put(self, path: str, text: str | None) -> None:
         self.state[path] = text
@@ -185,7 +202,8 @@ def _routed(group: dict[str, object], notes: list[str], tree: _Tree) -> list[Cha
     changes = []
     for note in notes:
         head, body = _split(tree.read(note) or "")
-        fields = {"status": str(group.get("action")), "routed_to": str(group.get("target"))}
+        status = "routed" if group.get("action") == "route" else "check"
+        fields = {"status": status, "routed_to": str(group.get("target"))}
         text = _joined(_with_fields(head, fields), body)
         tree.put(note, text)
         changes.append(Change("edit", note, text))
@@ -207,10 +225,14 @@ def _promote(
 
 
 def planned_changes(
-    decisions: list[dict[str, object]], *, root: Path, today: datetime.date
+    decisions: list[dict[str, object]],
+    *,
+    root: Path,
+    today: datetime.date,
+    base: str | None = None,
 ) -> Planned:
-    """The files the decisions change, in order, and what they skip."""
-    tree = _Tree(root)
+    """The files the decisions change, in order, and what they skip; from ``base`` when given."""
+    tree = _Tree(root, base=base)
     changes: list[Change] = []
     skipped: list[dict[str, str]] = []
     for decision in decisions:
@@ -260,8 +282,23 @@ def _listed(items: list[dict[str, str]]) -> list[str]:
     return [f"- {item['path']}: {item['reason']}" for item in items]
 
 
+def _undecided(ignored: Sequence[dict[str, object]], unproposed: Sequence[str]) -> list[str]:
+    """The notes the grouping ignored or left out: they stay in the inbox for the next run."""
+    lines = []
+    for item in ignored:
+        notes = item.get("notes")
+        for note in notes if isinstance(notes, list) else []:
+            lines.append(f"- {note}: {item.get('reason')}")
+    return lines + [f"- {note}: in no group" for note in unproposed]
+
+
 def summary_of(
-    decisions: list[dict[str, object]], planned: Planned, *, unreadable: list[dict[str, str]]
+    decisions: list[dict[str, object]],
+    planned: Planned,
+    *,
+    unreadable: list[dict[str, str]],
+    ignored: Sequence[dict[str, object]] = (),
+    unproposed: Sequence[str] = (),
 ) -> str:
     """The PR body's summary: the decisions, the follow-ups, what was skipped or unreadable."""
     lines = ["Weekly inbox review (brain-care inbox run).", "", "Decisions:"]
@@ -276,6 +313,7 @@ def summary_of(
         ("Follow-ups for the owner (not done by this PR):", followups),
         ("Skipped:", _listed(planned.skipped)),
         ("Unreadable notes (left in the inbox):", _listed(unreadable)),
+        ("Not decided this run (left in the inbox):", _undecided(ignored, unproposed)),
     )
     for heading, items in sections:
         if items:
@@ -300,6 +338,11 @@ def commit(root: Path, *, base: str) -> None:
     """Commit the brain changes; refuse a branch whose diff leaves ``brain/``."""
     _git(root, "add", "-A", "--", "brain")
     _git(root, "commit", "-q", "-m", COMMIT_SUBJECT)
+    check_branch(root, base=base)
+
+
+def check_branch(root: Path, *, base: str) -> None:
+    """Refuse a branch whose diff from ``base`` leaves ``brain/``."""
     changed = _git(root, "diff", "--name-only", f"{base}..HEAD").splitlines()
     outside = [path for path in changed if not path.startswith("brain/")]
     if outside:
@@ -316,15 +359,31 @@ def _decisions(text: str) -> list[dict[str, object]]:
     return found
 
 
-def _unreadable(text: str) -> list[dict[str, str]]:
+def _listed_json(text: str, name: str) -> list[object]:
     try:
         found = json.loads(text) if text.strip() else []
     except ValueError:
-        raise BadInputError("--unreadable is not JSON") from None
+        raise BadInputError(f"{name} is not JSON") from None
     if not isinstance(found, list):
-        raise BadInputError("--unreadable is not a list")
-    items = [item for item in found if isinstance(item, dict)]
+        raise BadInputError(f"{name} is not a list")
+    return found
+
+
+def _unreadable(text: str) -> list[dict[str, str]]:
+    items = [item for item in _listed_json(text, "--unreadable") if isinstance(item, dict)]
     return [{"path": str(i.get("path")), "reason": str(i.get("reason"))} for i in items]
+
+
+def _committed(root: Path, *, base: str) -> bool:
+    """Whether HEAD is this script's one commit on ``base``; a different HEAD is refused."""
+    head = _git(root, "rev-parse", "HEAD").strip()
+    if head == base:
+        return False
+    parent = _git(root, "rev-parse", "HEAD^").strip()
+    subject = _git(root, "log", "-1", "--format=%s").strip()
+    if parent != base or subject != COMMIT_SUBJECT:
+        raise GitFailedError("HEAD is past the base with a commit this script did not make")
+    return True
 
 
 def apply(given: argparse.Namespace, stdin: str) -> dict[str, object]:
@@ -334,10 +393,17 @@ def apply(given: argparse.Namespace, stdin: str) -> dict[str, object]:
     except ValueError:
         raise BadInputError("--today is not a YYYY-MM-DD date") from None
     root = Path(given.worktree)
-    planned = planned_changes(decisions, root=root, today=today)
-    if planned.changes:
+    base = _git(root, "rev-parse", "--verify", f"{given.base}^{{commit}}").strip()
+    planned = planned_changes(decisions, root=root, today=today, base=base)
+    if _committed(root, base=base):
+        # A resumed run: the first one committed; report that commit, never make a second.
+        check_branch(root, base=base)
+    elif planned.changes:
+        # Whatever a failed run left in the worktree goes: the plan starts from the base.
+        _git(root, "reset", "-q", "--hard", base)
+        _git(root, "clean", "-fdq", "--", "brain")
         write_changes(root, planned.changes)
-        commit(root, base=given.base)
+        commit(root, base=base)
 
     def paths(kind: str) -> list[str]:
         return list(dict.fromkeys(c.path for c in planned.changes if c.kind == kind))
@@ -348,7 +414,13 @@ def apply(given: argparse.Namespace, stdin: str) -> dict[str, object]:
         "written": paths("write"),
         "edited": paths("edit"),
         "skipped": planned.skipped,
-        "summary": summary_of(decisions, planned, unreadable=unreadable),
+        "summary": summary_of(
+            decisions,
+            planned,
+            unreadable=unreadable,
+            ignored=[i for i in _listed_json(given.ignored, "--ignored") if isinstance(i, dict)],
+            unproposed=[str(i) for i in _listed_json(given.unproposed, "--unproposed")],
+        ),
     }
 
 
@@ -358,6 +430,8 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--base", required=True)
     parser.add_argument("--today", default="")
     parser.add_argument("--unreadable", default="")
+    parser.add_argument("--ignored", default="")
+    parser.add_argument("--unproposed", default="")
     given = parser.parse_args(argv)
     try:
         found = apply(given, sys.stdin.read())
