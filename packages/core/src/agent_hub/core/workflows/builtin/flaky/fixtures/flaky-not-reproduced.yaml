@@ -1,0 +1,25 @@
+# AC-3: every run of every mode passes: classify is skipped, report writes the pass counts as
+# not reproduced, and the run ends done, not_reproduced.
+workflow: flaky
+inputs: {repo: demo-api, test: "tests/test_x.py::test_y", runs: 20}
+stubs:
+  config:
+    output: {default_branch: main, branch_prefix: jdoe/, author_name: null, author_email: null, ready_label: agent-ready, teams: [DEM], hub: {github: acme/demo-hub, default_branch: main, target: {github: acme/demo-hub, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}, repos: [{dir: demo-api, github: acme/demo-api, default_branch: main, check_fast: make check-fast, check: make check, target: {github: acme/demo-api, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}]}
+  repeat:
+    output:
+      test: "tests/test_x.py::test_y"
+      repo: demo-api
+      repo_path: /ws/demo-api
+      sha: 0a1b2c3d4e5f60718293a4b5c6d7e8f901234567
+      runner: [uv, run, --locked, python]
+      runs: 20
+      budget_spent: false
+      reproduced: false
+      modes:
+        - {mode: alone, status: ran, note: "the test alone", passed: 20, failed: 0, errors: 0, timed_out: 0, missing: 0, not_run: 0, tails: []}
+        - {mode: suite, status: ran, note: "tests/test_x.py in its default order", passed: 20, failed: 0, errors: 0, timed_out: 0, missing: 0, not_run: 0, tails: []}
+        - {mode: shuffled, status: ran, note: "tests/test_x.py shuffled by pytest-randomly, seeds 1001-1020", passed: 20, failed: 0, errors: 0, timed_out: 0, missing: 0, not_run: 0, tails: []}
+        - {mode: parallel, status: ran, note: "the folder tests under pytest-xdist -n auto", passed: 20, failed: 0, errors: 0, timed_out: 0, missing: 0, not_run: 0, tails: []}
+  report: {output: {outcome: not_reproduced, path: "brain/_inbox/flaky-<slug>.md"}}
+expect: {status: done, outcome: not_reproduced}
+reached: [config, repeat, report]

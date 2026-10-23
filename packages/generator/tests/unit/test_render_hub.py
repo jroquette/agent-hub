@@ -204,6 +204,11 @@ DESIGN_PATHS = (
     "workflows/doc-drift/scripts/doc_fix.py",
     "workflows/doc-drift/scripts/mentions.py",
     # AGH-449: the flaky pack.
+    "workflows/flaky/fixtures/flaky-mode-unavailable.yaml",
+    "workflows/flaky/fixtures/flaky-not-reproduced.yaml",
+    "workflows/flaky/fixtures/flaky-order.yaml",
+    "workflows/flaky/fixtures/flaky-parallel-only.yaml",
+    "workflows/flaky/flaky.yaml",
     "workflows/flaky/prompts/classify.md",
     "workflows/flaky/scripts/repeat.py",
     "workflows/flaky/scripts/report.py",

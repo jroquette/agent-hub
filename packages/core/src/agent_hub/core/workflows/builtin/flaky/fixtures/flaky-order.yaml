@@ -1,0 +1,27 @@
+# AC-1: the test passes alone and fails in its file's order: classify names an order dependence,
+# report writes the note, and the run ends done, reproduced.
+workflow: flaky
+inputs: {repo: demo-api, test: "tests/test_x.py::test_y", runs: 20}
+stubs:
+  config:
+    output: {default_branch: main, branch_prefix: jdoe/, author_name: null, author_email: null, ready_label: agent-ready, teams: [DEM], hub: {github: acme/demo-hub, default_branch: main, target: {github: acme/demo-hub, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}, repos: [{dir: demo-api, github: acme/demo-api, default_branch: main, check_fast: make check-fast, check: make check, target: {github: acme/demo-api, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}]}
+  repeat:
+    output:
+      test: "tests/test_x.py::test_y"
+      repo: demo-api
+      repo_path: /ws/demo-api
+      sha: 0a1b2c3d4e5f60718293a4b5c6d7e8f901234567
+      runner: [uv, run, --locked, python]
+      runs: 20
+      budget_spent: false
+      reproduced: true
+      modes:
+        - {mode: alone, status: ran, note: "the test alone", passed: 20, failed: 0, errors: 0, timed_out: 0, missing: 0, not_run: 0, tails: []}
+        - {mode: suite, status: ran, note: "tests/test_x.py in its default order", passed: 14, failed: 6, errors: 0, timed_out: 0, missing: 0, not_run: 0, tails: ["run 2: E   assert not [1]"]}
+        - {mode: shuffled, status: ran, note: "tests/test_x.py shuffled by pytest-randomly, seeds 1001-1020", passed: 11, failed: 9, errors: 0, timed_out: 0, missing: 0, not_run: 0, tails: ["run 1, seed 1001: E   assert not [1]"]}
+        - {mode: parallel, status: ran, note: "the folder tests under pytest-xdist -n auto", passed: 20, failed: 0, errors: 0, timed_out: 0, missing: 0, not_run: 0, tails: []}
+  classify:
+    output: {cause: order_dependence, shared: process, confidence: high, evidence: "Alone passes 20 of 20; in its file it fails 6 of 20 after test_a fills STATE.", next_step: Clear STATE in a fixture.}
+  report: {output: {outcome: reproduced, path: "brain/_inbox/flaky-<slug>.md"}}
+expect: {status: done, outcome: reproduced}
+reached: [config, repeat, classify, report]

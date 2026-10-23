@@ -1,0 +1,145 @@
+# A flaky test, run many times in four modes to tell why it fails only sometimes. repeat makes a
+# throwaway detached git worktree of the repo at origin/<default branch> (as last fetched: fetch
+# first) in TMPDIR, runs the test there through the runner the worktree names (uv run --locked
+# when it holds uv.lock, else .venv/bin/python, else python3), round after round: alone, its
+# file in default order (suite), its file shuffled (pytest-randomly or pytest-random-order, a seed
+# per round) and its folder under pytest-xdist -n auto (parallel), then removes the worktree. A
+# mode whose plugin is missing is skipped and said so. Each run has a 10-minute timeout and the
+# whole repeat step a 5h30m budget, under the node's 6h. classify, only when a run failed, reads
+# the counts, the tails and the code at that commit (read-only, no test run) and names the likely
+# cause. report appends a section per run to brain/_inbox/flaky-<test slug>.md, a not-reproduced
+# run too (its pass counts are the evidence).
+# Invariants: read-only on code (the throwaway worktree is the repo's only change, and it is
+# removed); no retry (a retry would hide the flake, so every executable node has retry
+# max_attempts 0); no tracker write (ADR 0030: no issue input, and the one hub step node is
+# config, read-only: the repos from hub.json, which no script opens). No approval: nothing leaves
+# the machine.
+version: 1
+name: flaky
+description: A flaky test run many times alone, in suite order, shuffled and in parallel; the likely cause to the inbox.
+revision: 1
+inputs:
+  repo:
+    required: true
+    description: The repo the test lives in, its dir in hub.json.
+  test:
+    required: true
+    description: The test's pytest node id from the repo root, e.g. tests/test_x.py::test_y[case].
+  runs:
+    type: integer
+    default: 20
+    description: The runs per mode, 1-200.
+returns: report
+outcome_field: outcome
+nodes:
+  - id: config
+    type: shell
+    description: The hub.json values this run's scripts need, read by the CLI (read-only).
+    command: [hub, step, config]
+    effect: read
+    mutates_checkout: false
+    retry: {max_attempts: 0}
+    timeout: 2m
+    output_format:
+      type: object
+      properties:
+        default_branch: {type: string}
+        branch_prefix: {type: [string, "null"]}
+        hub: {type: object}
+        repos: {type: array, items: {type: object}}
+      required: [default_branch, branch_prefix, hub, repos]
+
+  - id: repeat
+    type: script
+    description: The test run in every mode, round after round, in a throwaway worktree.
+    depends_on: [config]
+    runtime: python
+    script: repeat.py
+    args: [--repo, $INPUTS.repo, --test, $INPUTS.test, --runs, $INPUTS.runs, --config, $config.output]
+    retry: {max_attempts: 0}
+    timeout: 6h
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [test, repo, repo_path, sha, runner, runs, budget_spent, reproduced, modes]
+      properties:
+        test: {type: string, maxLength: 512}
+        repo: {type: string}
+        repo_path: {type: string, minLength: 1}
+        sha: {type: string, pattern: "^([0-9a-f]{40}|[0-9a-f]{64})$"}
+        runner:
+          type: array
+          maxItems: 8
+          items: {type: string}
+        runs: {type: integer, minimum: 1, maximum: 200}
+        budget_spent: {type: boolean}
+        reproduced: {type: boolean}
+        modes:
+          type: array
+          maxItems: 4
+          items:
+            type: object
+            additionalProperties: false
+            required: [mode, status, note, passed, failed, errors, timed_out, missing, not_run, tails]
+            properties:
+              mode: {type: string, enum: [alone, suite, shuffled, parallel]}
+              status: {type: string, enum: [ran, unavailable]}
+              note: {type: string, maxLength: 200}
+              passed: {type: integer, minimum: 0}
+              failed: {type: integer, minimum: 0}
+              errors: {type: integer, minimum: 0}
+              timed_out: {type: integer, minimum: 0}
+              missing: {type: integer, minimum: 0}
+              not_run: {type: integer, minimum: 0}
+              tails:
+                type: array
+                maxItems: 3
+                items: {type: string, maxLength: 500}
+
+  - id: classify
+    type: agent
+    description: Read-only - the likely cause from the counts, the tails and the code at the commit.
+    depends_on: [repeat]
+    when: "$repeat.output.reproduced == true"
+    context: fresh
+    prompt_file: classify.md
+    model: medium
+    limits: {max_turns: 30}
+    cwd: $repeat.output.repo_path
+    mutates_checkout: false
+    with:
+      test: $repeat.output.test
+      sha: $repeat.output.sha
+      modes: $repeat.output.modes
+    retry: {max_attempts: 0}
+    timeout: 30m
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [cause, shared, confidence, evidence, next_step]
+      properties:
+        cause: {type: string, enum: [order_dependence, timing, shared_state, external, unknown]}
+        shared: {type: string, enum: [file, env, process, git, none]}
+        confidence: {type: string, enum: [low, medium, high]}
+        # Caps that keep the whole reply, every character four bytes, under one argument's
+        # 128 KiB: the report step reads it as an argument.
+        evidence: {type: string, maxLength: 600, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+        next_step: {type: string, maxLength: 300, pattern: "^[^\\x00-\\x1f\\x7f-\\x9f]*$"}
+
+  - id: report
+    type: script
+    description: The run's section appended to the test's note in the hub's inbox.
+    depends_on: [repeat, classify]
+    trigger_rule: none_failed_min_one_success
+    runtime: python
+    script: report.py
+    stdin: $repeat.output
+    args: [--classification, $classify.output]
+    retry: {max_attempts: 0}
+    timeout: 5m
+    output_format:
+      type: object
+      required: [outcome, path]
+      properties:
+        outcome: {type: string, enum: [reproduced, not_reproduced]}
+        path: {type: string}

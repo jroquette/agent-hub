@@ -15,6 +15,7 @@ this table, and a new hub's `README.md` ends with the same one. A flow's scripts
 | `context` (`brain-care` pack) | The monthly context audit - measure the always-loaded text, the owner picks the cuts, one hub PR. | `./hub workflow run context` | The owner picks the cuts (a note keeps some), or skips this month. | `/context-audit` |
 | `inbox` (`brain-care` pack) | The weekly inbox review - group duplicate notes, the owner decides each group, one hub PR. | `/learn` | The owner decides the group; an external note needs his explicit apply. | own prompts |
 | `doc-drift` (`doc-drift` pack) | Doc lines a contract change made wrong, fixed in a docs-only PR the owner approves first. | `./hub workflow run doc-drift` | The owner approves the proposed doc lines, or rejects them (no PR). | `/plain-language` |
+| `flaky` (`flaky` pack) | A flaky test run many times alone, in suite order, shuffled and in parallel; the likely cause to the inbox. | `./hub workflow run flaky` | none | own prompts |
 | `incident` (`incident` pack) | An incident - git evidence, ranked hypotheses with read-only checks, a gated mitigation, a hand-off draft and a blameless postmortem draft. | `/incident` | The owner records a mitigation of a confirmed hypothesis, or their own, or none. Nothing is applied. | `/recall`, `/learn` |
 | `issue-to-pr` (`issue-to-pr` pack) | One tracker issue to a PR, as hub run takes it. | `./hub run <issue>` | none | own prompts |
 | `post-merge-verify` (`post-merge-verify` pack) | The merged tickets' AC verifications, run again on the default branch; failures to the inbox. | `./hub workflow run post-merge-verify` | none | own prompts |
@@ -108,3 +109,14 @@ renamed in one command group while another group keeps the same name is not seen
 leaves a worktree at `<repo>/.claude/worktrees/doc-drift-<run id>` on the branch `<branch_prefix>doc-drift-<run id>`
 (a resumed run reuses both); once its PR is merged or closed, or it committed nothing, remove them in the repo with
 `git worktree remove .claude/worktrees/doc-drift-<run id>` and `git branch -D <branch_prefix>doc-drift-<run id>`.
+
+**Flaky test.** The built-in `flaky` workflow runs one pytest test many times to tell why it fails only sometimes.
+Fetch the repo, then run
+`./hub workflow run flaky --input repo=<dir> --input "test=<node id>" --input runs=20 --live`, the node id from the
+repo root (`tests/test_x.py::test_y[case]`). Each round runs it alone, in its file's order, shuffled (with
+pytest-randomly or pytest-random-order, one seed per round) and with its folder under pytest-xdist `-n auto`; a mode
+whose plugin the repo lacks is skipped and named. The runs happen in a throwaway worktree at `origin/<default
+branch>`, through `uv run --locked` when the repo holds `uv.lock`, each within 10 minutes and all within 5h30m. When a
+run fails, a read-only agent names the likely cause (order dependence, timing, shared state, external); either way the
+counts go to `brain/_inbox/flaky-<test slug>.md`, one note per test, one section per run. It changes no code and
+writes no tracker.
