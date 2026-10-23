@@ -10,7 +10,16 @@ import {
   anAgentSession,
   renderWithApi,
 } from "../../testing/builders";
-import { RAIL_KEY, SessionRail, railGroups, railName, railTagsOf } from "./SessionRail";
+import {
+  RAIL_KEY,
+  RAIL_MIN,
+  RAIL_WIDTH_KEY,
+  SessionRail,
+  railGroups,
+  railMax,
+  railName,
+  railTagsOf,
+} from "./SessionRail";
 
 const at = (minutes: number) => new Date(Date.UTC(2026, 9, 20, 12, minutes)).toISOString();
 const sessions = [
@@ -83,6 +92,15 @@ describe("railTagsOf", () => {
   });
 });
 
+describe("railMax", () => {
+  it("keeps the chat its room beside a widened rail, never below the rail's minimum", () => {
+    expect(railMax(0)).toBe(560);
+    expect(railMax(1600)).toBe(560);
+    expect(railMax(900)).toBe(420);
+    expect(railMax(500)).toBe(RAIL_MIN);
+  });
+});
+
 describe("SessionRail", () => {
   const routes = {
     "/api/v1/agent-sessions": aPage(sessions),
@@ -128,5 +146,21 @@ describe("SessionRail", () => {
     await userEvent.keyboard("{Escape}");
     expect(filter).toHaveValue("");
     expect(screen.getByRole("link", { name: /Old spike/ })).toBeInTheDocument();
+  });
+
+  it("resizes from its right edge with the arrows, kept in this browser; Home resets it", async () => {
+    renderWithApi(<SessionRail current="a" />, { routes });
+    const handle = await screen.findByRole("separator", { name: "Resize the sessions list" });
+    expect(handle).toHaveAttribute("aria-valuenow", "260");
+
+    handle.focus();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(window.localStorage.getItem(RAIL_WIDTH_KEY)).toBe("300");
+    expect(
+      screen.getByRole("navigation", { name: "Sessions" }).style.getPropertyValue("--as-rail-w"),
+    ).toBe("300px");
+
+    await userEvent.keyboard("{Home}");
+    expect(window.localStorage.getItem(RAIL_WIDTH_KEY)).toBeNull();
   });
 });
