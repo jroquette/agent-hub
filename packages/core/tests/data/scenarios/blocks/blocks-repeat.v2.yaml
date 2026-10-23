@@ -1,0 +1,28 @@
+version: 2
+kind: scenario
+name: blocks-repeat
+revision: 1
+description: 'Sample of the tree format: repeat'
+inputs:
+  webshop_order_id:
+    required: true
+  personal_name:
+    required: true
+  aws_account_id:
+    required: true
+stages:
+- name: Poll cover
+  steps:
+  - repeat:
+      max: 5
+      until: $poll.output.cover_status == 'ACTIVATED'
+      steps:
+      - do: queue-send
+        with:
+          message: poller
+          order_id: $CTX.order_id
+      - wait_until: order-state
+        id: poll
+        until: $self.output.activation_job_id != ''
+        every: 15s
+        timeout: 10m

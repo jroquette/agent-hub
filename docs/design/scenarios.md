@@ -29,6 +29,58 @@ does not list them, and the init report does not count them.
 - A process workflow may declare `environment: <name>` (`--env` overrides it): `shell`, `script` take `effect` (default
   `write`), `until_bash` is a `read`, an `action` needs one. Ids ending `__ask` or `__investigation`, `self`, are reserved.
 
+### Tree format (version 2)
+
+A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blocks-and-run-control.md)):
+`version: 2` and `stages:` in place of `nodes:` (a version-2 document with `nodes`, `depends_on` or `trigger_rule` fails
+the load; version 1 loads as before, with doctor's `scenarios.graph_format` warning).
+
+- A stage is `name` (unique, case and blanks folded), optional `description`, and `steps`. Position is order: a block
+  runs after the one before it, a stage after the stage before it.
+- A step is one of `do: <action>` (an `action` node), `wait_until: <action>` with `until`, `every`, `timeout` (an
+  `expect` node), `you: <message>` with optional `decisions`, `capture_response` (an `approval`), `wait:` with
+  `duration`, `until` or `attention` (a `wait`) and `include: <scenario>` with `with` (an `include`). Common optional
+  keys: `id`, `description`, `with`, `capture`, `retry`, `timeout` (on `do`).
+- A container is `repeat: {max, until, steps}` (a `loop_group`; none inside another), `if: <cond>` with `then` and
+  optional `else`, or `together: [[…], […]]` (two or more paths; the next block waits for every path).
+- Conditions use the `when:` grammar. An else is the complement of its If's condition (each operator's opposite, `&&`
+  and `||` swapped, expanded to or-of-ands); more than 8 atoms, or more than 64 terms after expansion, fails the load.
+- A block without `id` gets `<stage slug>-<n>`, nested `<stage slug>-<n>-<m>`; an `id` follows the node id rules.
+- Translation: core turns the tree into nodes at load, before includes are expanded: a block's entry nodes depend on
+  the previous block's exit nodes; an If puts its condition (or the complement) on each branch's first node and the
+  block after it takes `trigger_rule: none_failed_min_one_success`; a Together's paths start on the previous block and
+  the next block depends on each path's last. It also keeps a **block map** (address such as `2.3` or `2.3.then.1` →
+  node ids, entry nodes, key path). A problem on a generated node is reported on the tree's key path.
+- One canonical YAML form, written by `generator`'s scenario writer, shared by hub web's Save and `hub scenario
+  migrate`. Save writes nothing when the canonical bytes equal the file's, and keeps `revision` then.
+- `hub scenario migrate [NAME…] [--check]` writes a graph scenario as a tree (one stage named after the scenario, each
+  id kept as `id:` where it differs from the derived one) when the graph is series-parallel with only `all_success`
+  joins, `when` branches and the joins an If makes; otherwise nothing is written and each node it cannot map is named
+  with why (exit 1). The new file translates to the same nodes, edges and conditions.
+
+### Debugging
+
+A scenario run may pause before a block: by a **breakpoint**, or by **Step** ([ADR
+0049](../adr/0049-scenario-blocks-and-run-control.md)). It is not a gate and Approvals does not list it.
+
+- Breakpoints are block addresses of the run's pinned tree, kept in the run folder (`breakpoints.json`, written whole),
+  set by `hub scenario run --break ADDR…`, `hub scenario break RUN ADDR… [--off]` or hub web, read before each node:
+  one set while the run runs takes effect at the next block. They are never in the document.
+- Before a block means before its first node and before its `<step>__ask` gate; for a stage, before its first block;
+  a Repeat, before the group (a body block's breakpoint pauses in every iteration); an If, before its condition is
+  read; a Together, before any path. The pause answers no gate.
+- `hub scenario step RUN` runs exactly the next leaf block (Do, Wait until, You, Wait, Include) in declaration order and
+  pauses before the one after it, entering containers; the run stays in step mode until `hub scenario continue RUN`,
+  which runs to the next breakpoint or the end. A gate met meanwhile pauses as before; once answered, a stepping run
+  pauses before the next block. Both are resumes, recorded with who sent them.
+- With a breakpoint or step mode on, a layer holding a block to pause at runs one node at a time in declaration
+  order; without either, the engine runs as before.
+- A paused run shows its inputs, every capture, and each finished block's rendered inputs, status and last output
+  (a Wait until's last poll and its count), from its record.
+- Breakpoints, Step, Continue and a start with breakpoints are refused, recording nothing, on a `production: true`
+  environment; runs without them keep the policy above there.
+- Nothing is rewound: no captured value is edited, no finished block re-run or skipped.
+
 ### Actions and the script contract
 
 An action declares `version`, `name` (its file stem), `description`, `effect` (`read`, `write`, `destroy`), `runtime`
@@ -134,7 +186,8 @@ web makes it once: a named issue or a running create refuses both; only a warned
 Metadata only ([ADR 0019](../adr/0019-metadata-only-events-and-redaction.md)), each with a `payload_keys` row:
 `action.start`/`action.end` (`action`, `content_hash`, `environment`, `service`, `effect`, `origin`, `decision`,
 `approver`, `status`, `failure_kind`), `policy.decision` (`action` or node, `environment`, `effect`, `origin`,
-`decision`, `reason_kind`), `expect.poll` (`poll`, `held`), `context.capture` (`name`), `finding` (`finding_id`,
+`decision`, `reason_kind`), `debug.pause` (`node`, `block`, `reason`), `debug.command` (`command`, `approver`),
+`debug.breakpoints` (`count`), `expect.poll` (`poll`, `held`), `context.capture` (`name`), `finding` (`finding_id`,
 `step`), `workaround.start`/`workaround.end` (`workaround_id`, `option`, `steps`, `status`); `gate.request` gains
 `reason`. Args, outputs, captures, findings, chat stay in the run record. Bounds: `expect` `every` ≥ 5 s, `timeout` ≤ 24
 h, ≤ 1000 polls (retries, resumes too); action stdout ≤ 512 KiB; plan mode ≤ 60 s; ≤ 64 `--input` values of ≤ 64 KiB; a
@@ -162,6 +215,8 @@ proposal ≤ 256 KiB, 20 findings, 5 options of ≤ 10 steps; ≤ 10 proposals p
 
 ## Decisions
 
+- [ADR 0049](../adr/0049-scenario-blocks-and-run-control.md): the tree format translated at load, the run-control
+  port, breakpoints as run data, debugging off production only.
 - [ADR 0041](../adr/0041-scenarios-actions-and-enforced-access.md): actions and scenarios on the engine, policy in
   core, env-file credentials, read-only investigation, no built-in action; partially supersedes ADR 0038 on `access`.
 
