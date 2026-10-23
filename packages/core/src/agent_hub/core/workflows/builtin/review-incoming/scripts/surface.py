@@ -5,9 +5,10 @@
 """Decide whether a PR's diff touches a risky surface; print the answer as one JSON object.
 
 ``surface.py --path <clone> --base <sha> --head <sha>`` reads ``git diff -U0 <base> <head>`` in
-the clone (hooks, external diffs and text conversions off) into a temporary file, at most
-``READ_CAP`` bytes. The security lens runs when this says ``risky``: a script decides it, never
-an agent. The six categories are those of the hub's security-reviewer (input handling, auth,
+the clone (hooks, external diffs, text conversions and rename detection off) into a temporary
+file, at most ``READ_CAP`` bytes, and the changed paths from ``git diff --name-only``, so a
+binary, renamed or mode-only file meets the path rules too. The security lens runs when this
+says ``risky``: a script decides it, never an agent. The six categories are those of the hub's security-reviewer (input handling, auth,
 secrets, subprocesses, file paths, parsing). A changed path matches the path rules; an added line
 (never a removed one) matches the line rules. ``---`` and ``+++`` are file headers only between a
 ``diff --git`` line and the file's first hunk, so an added line that starts with ``++`` is read
@@ -126,23 +127,14 @@ class Finder:
                 self.hit(category, path, line=number, rule=match.group(0))
 
 
-def classify(diff_text: str, *, cut: bool) -> dict[str, object]:
-    """What ``diff_text`` (``git diff -U0``) touches; ``cut`` when it is not the whole diff."""
-    finder, path, previous, number, header = Finder(), "", "", 0, False
-    for line in diff_text.splitlines():
-        if line.startswith("diff --git "):
-            # A content line always starts with "+", "-", " " or "\\": this is a new file.
-            header, path, previous = True, "", ""
-        elif header and line.startswith("--- "):
-            previous = line[4:].strip()
-        elif header and line.startswith("+++ "):
-            path = path_of(line, previous)
-            finder.path(path)
-        elif match := HUNK.match(line):
-            header, number = False, int(match.group(1))
-        elif not header and line.startswith("+") and path:
-            finder.added(path, number, line[1:])
-            number += 1
+def classify(diff_text: str, *, cut: bool, paths: list[str] | None = None) -> dict[str, object]:
+    """What ``diff_text`` (``git diff -U0``) touches; ``cut`` when it is not the whole diff.
+    ``paths`` (``git diff --name-only``) are the changed files the path rules read: a binary,
+    renamed or mode-only file has no ``+++`` line. Without them, the ``+++`` lines are read."""
+    finder = Finder()
+    for name in paths or []:
+        finder.path(name)
+    read_lines(finder, diff_text, headers=paths is None)
     categories = [category for category in CATEGORIES if category in finder.categories]
     reasons = [f"the diff is over {READ_CAP} bytes: read as risky"] if cut else []
     if finder.unread:
@@ -157,6 +149,26 @@ def classify(diff_text: str, *, cut: bool) -> dict[str, object]:
     }
 
 
+def read_lines(finder: Finder, diff_text: str, *, headers: bool) -> None:
+    """The added lines through the line rules; with ``headers``, the ``+++`` paths too."""
+    path, previous, number, header = "", "", 0, False
+    for line in diff_text.splitlines():
+        if line.startswith("diff --git "):
+            # A content line always starts with "+", "-", " " or "\\": this is a new file.
+            header, path, previous = True, "", ""
+        elif header and line.startswith("--- "):
+            previous = line[4:].strip()
+        elif header and line.startswith("+++ "):
+            path = path_of(line, previous)
+            if headers:
+                finder.path(path)
+        elif match := HUNK.match(line):
+            header, number = False, int(match.group(1))
+        elif not header and line.startswith("+") and path:
+            finder.added(path, number, line[1:])
+            number += 1
+
+
 def closed(reason: str) -> dict[str, object]:
     return {
         "risky": True,
@@ -168,22 +180,35 @@ def closed(reason: str) -> dict[str, object]:
     }
 
 
-def surface(path: Path, base: str, head: str) -> dict[str, object]:
+def git_diff(path: Path, *args: str) -> tuple[bytes, bool] | str:
+    """``git diff <args>`` in the clone, renames off: its first ``READ_CAP`` bytes and whether
+    it was cut, or git's error."""
     command = [*GIT, "-C", str(path), "diff", "--no-color", "--no-ext-diff", "--no-textconv"]
     with tempfile.TemporaryFile() as output:
         done = subprocess.run(  # noqa: S603 - a git read with fixed arguments, hooks off
-            [*command, "-U0", base, head],
+            [*command, "--no-renames", *args],
             stdout=output,
             stderr=subprocess.PIPE,
             stdin=subprocess.DEVNULL,
             check=False,
         )
         if done.returncode != 0:
-            return closed("git cannot diff: " + done.stderr.decode(errors="replace").strip())
+            return "git cannot diff: " + done.stderr.decode(errors="replace").strip()
         output.seek(0)
         data = output.read(READ_CAP + 1)
-    cut = len(data) > READ_CAP
-    return classify(data[:READ_CAP].decode("utf-8", errors="replace"), cut=cut)
+    return data[:READ_CAP], len(data) > READ_CAP
+
+
+def surface(path: Path, base: str, head: str) -> dict[str, object]:
+    names = git_diff(path, "--name-only", "-z", base, head)
+    patch = git_diff(path, "-U0", base, head)
+    if isinstance(names, str):
+        return closed(names)
+    if isinstance(patch, str):
+        return closed(patch)
+    paths = [name for name in names[0].decode("utf-8", errors="replace").split("\0") if name]
+    text = patch[0].decode("utf-8", errors="replace")
+    return classify(text, cut=names[1] or patch[1], paths=paths)
 
 
 def main(argv: list[str]) -> int:
