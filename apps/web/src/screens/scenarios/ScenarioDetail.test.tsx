@@ -36,7 +36,8 @@ const routes: ApiRoutes = {
   "/api/v1/workflow-runs": aPage([]),
 };
 
-function renderDetail(extra: ApiRoutes = {}, path = PATH) {
+// The page opens on the builder (Build); these tests read its Run mode.
+function renderDetail(extra: ApiRoutes = {}, path = `${PATH}?mode=run`) {
   return renderWithApi(<ScenarioDetailScreen />, {
     routes: { ...routes, ...extra },
     path,
@@ -59,7 +60,7 @@ afterEach(() => {
 
 describe("ScenarioDetailScreen (scenarios detail)", () => {
   it("scenarios detail plans for a chosen environment (deny; needs acceptance with the commit line)", async () => {
-    const { requests } = renderDetail({ [PLAN]: denied }, `${PATH}?env=personal`);
+    const { requests } = renderDetail({ [PLAN]: denied }, `${PATH}?mode=run&env=personal`);
 
     await screen.findByRole("heading", { name: "order-lifecycle" });
     // The plan never runs on load, even with ?env=.
