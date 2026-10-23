@@ -256,7 +256,7 @@ export function VariablesPanel({
           <span className="ah-mono sb-var-name">{name}</span>
           <span className="sb-var-value ah-mono">
             {value === null ? (
-              <span className="ah-subtle">required</span>
+              <span className="ah-subtle">asked each run</span>
             ) : (
               <PathText path={value} max={22} />
             )}
@@ -285,8 +285,13 @@ export function VariablesPanel({
 
       <section className="sb-vars" aria-labelledby="vars-asked">
         <header className="sb-vars-head">
-          <h3 id="vars-asked">Asked when the scenario run starts</h3>
-          <IconButton icon="pencil" size="sm" label="Edit the run inputs" onClick={onEditInputs} />
+          <h3 id="vars-asked">Set in the scenario</h3>
+          <IconButton
+            icon="pencil"
+            size="sm"
+            label="Edit the scenario's values"
+            onClick={onEditInputs}
+          />
         </header>
         {asked.length === 0 ? (
           <span className="ah-small ah-subtle">Nothing: the scenario asks for no value.</span>
