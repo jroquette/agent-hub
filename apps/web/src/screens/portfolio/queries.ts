@@ -1,4 +1,4 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 
 import type { components } from "../../api/schema";
@@ -47,5 +47,10 @@ export function useActivity(project: string | null, limit: number) {
 
 /** The hub skills and agents with their runs, never used in `days` first (AGH-482). */
 export function useSkillUsage(project: string | null, days: UsageDays) {
-  return useApi("/api/v1/skill-usage", { query: { project, days } });
+  // A window change keeps the shown table until the new report arrives: no flash, no jump.
+  return useApi(
+    "/api/v1/skill-usage",
+    { query: { project, days } },
+    { placeholderData: keepPreviousData },
+  );
 }

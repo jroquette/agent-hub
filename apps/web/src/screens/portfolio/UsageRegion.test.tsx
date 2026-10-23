@@ -163,13 +163,52 @@ describe("UsageRegion", () => {
     });
 
     it("shows the empty copy when the hub has no skills or agents", async () => {
-      renderWithApi(<UsageRegion project={null} single={false} />, {
+      renderWithApi(<UsageRegion project="demo" single />, {
         routes: { [USAGE]: aUsageReport({ items: [] }) },
       });
 
       expect(
         await screen.findByText("No skills or agents in this hub's .claude folder."),
       ).toBeInTheDocument();
+    });
+
+    it("names every hub in the empty copy when no project is in scope", async () => {
+      renderWithApi(<UsageRegion project={null} single={false} />, {
+        routes: { [USAGE]: aUsageReport({ items: [] }) },
+      });
+
+      expect(
+        await screen.findByText("No skills or agents in the hubs' .claude folders."),
+      ).toBeInTheDocument();
+    });
+
+    it("says the list may be incomplete when the truncated report is empty", async () => {
+      renderWithApi(<UsageRegion project="demo" single />, {
+        routes: { [USAGE]: aUsageReport({ items: [], truncated: true }) },
+      });
+
+      await screen.findByText("No skills or agents in this hub's .claude folder.");
+      expect(
+        screen.getByText("Some items were not read; the list may be incomplete."),
+      ).toBeInTheDocument();
+    });
+
+    it("keeps the table while another window loads", async () => {
+      const user = userEvent.setup();
+      renderWithApi(<UsageRegion project="demo" single />, {
+        routes: {
+          [USAGE]: (request: Request) =>
+            new URL(request.url).searchParams.get("days") === "7" ? "pending" : aUsageReport(),
+        },
+      });
+      await screen.findByText("/refactor");
+
+      await user.click(
+        within(screen.getByRole("group", { name: "Usage window" })).getByText("7 d"),
+      );
+
+      expect(screen.getByText("/refactor")).toBeInTheDocument();
+      expect(region()).toHaveAttribute("aria-busy", "true");
     });
 
     it("keeps the problem in its region with Try again", async () => {
