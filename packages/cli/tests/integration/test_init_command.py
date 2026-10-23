@@ -8,7 +8,10 @@ import signal
 import socket
 import stat
 import subprocess
+import threading
+import time
 from collections.abc import Callable, Collection, Iterator, Sequence
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any
@@ -26,6 +29,7 @@ from agent_hub.core.hub_files.rendered_hub import RenderedHub
 from agent_hub.core.hub_files.tree_snapshot import TreeSnapshot, is_leftover_name
 from agent_hub.core.json_form import dump_json
 from agent_hub.core.testing.builders import an_environments_document
+from agent_hub.generator import errors as generator_errors
 from agent_hub.generator.errors import GeneratorError
 from agent_hub.generator.hub_tree import read_hub_tree
 from agent_hub.generator.render_hub import render_hub
@@ -1547,3 +1551,84 @@ def test_plans_example_when_scenario_seed_init_hub_declares_environment(
         "draft: no",
         "plan: GET http://localhost:8000/",
     ]
+
+
+def test_writes_no_lock_when_scenario_seed_write_fails(
+    monkeypatch: pytest.MonkeyPatch, target: Path, *, demo_flags: list[str]
+) -> None:
+    # The examples are written after the hub's files and before hub.lock (AGH-365 review Q4).
+    def failing_write_absent(*_args: object, **_kwargs: object) -> None:
+        raise generator_errors.FileWriteError(path=EXAMPLE_ACTION, cause="Input/output error")
+
+    monkeypatch.setattr(generator, "write_absent", failing_write_absent)
+
+    result = run_init([*demo_flags, "--dir", str(target)])
+
+    assert result.exit_code == 1
+    assert result.stderr.splitlines() == [f"{EXAMPLE_ACTION}: Input/output error"]
+    assert not (target / "hub.lock").exists()
+    assert (target / "hub.json").is_file()
+    assert all((target / file.path).is_file() for file in flags_render().files)
+
+
+# The service refuses connections for this long, then answers 200 to every path.
+LATE_SERVICE_SECONDS = 3
+
+
+class OkHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:  # noqa: N802 - http.server's method name
+        self.send_response(200)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def log_message(self, *_args: Any) -> None:
+        pass
+
+
+def test_polls_until_up_when_scenario_seed_service_starts_late(
+    target: Path, *, demo_flags: list[str]
+) -> None:
+    # The example's expect keeps polling while the service refuses connections (review Q2).
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), OkHandler, bind_and_activate=False)
+    httpd.server_bind()
+    port = httpd.server_address[1]
+    assert run_init([*demo_flags, "--dir", str(target)]).exit_code == 0
+    document = json.loads((target / "hub.json").read_bytes())
+    document["environments"] = {"local": {"access": "write"}}
+    document["repos"][0]["services"] = {
+        "api": {"kind": "api", "endpoints": {"local": {"url": f"http://localhost:{port}"}}}
+    }
+    (target / "hub.json").write_bytes(dump_json(document))
+    commit_hub(target)
+
+    def serve_later() -> None:
+        time.sleep(LATE_SERVICE_SECONDS)
+        httpd.server_activate()
+        httpd.serve_forever()
+
+    threading.Thread(target=serve_later, daemon=True).start()
+    try:
+        result = run_scenario_cli(
+            target,
+            "scenario",
+            "run",
+            "demo-service-up",
+            "--env",
+            "local",
+            "--input",
+            "service=api",
+            "--mode",
+            "regression",
+        )
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+    assert result.exit_code == 0, result.output
+    assert "[service-up] ok" in result.stdout
+    assert "[read-root] ok" in result.stdout
+    records = "".join(
+        path.read_text(encoding="utf-8") for path in target.glob(".agent-runs/**/records.jsonl")
+    )
+    polls = [json.loads(line) for line in records.splitlines() if '"poll"' in line]
+    assert len({line.get("poll") for line in polls}) >= 2, records
