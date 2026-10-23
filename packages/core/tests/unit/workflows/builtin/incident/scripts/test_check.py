@@ -309,23 +309,54 @@ def test_reports_timeout_when_check_exceeds_limit(
 ) -> None:
     _, head = a_repo(tmp_path, {"x": b"x\n"})
     check = load()
-    # A check that outlives its limit, its process group with it: the allowed argv is run as a
-    # slow one, so the limit and the kill are what is tested, not git's speed.
-    monkeypatch.setattr(check, "command", lambda _: ["sh", "-c", "sleep 30 & sleep 30"])
+    pid_file = tmp_path / "background.pid"
+    # A check that outlives its limit and leaves a background child in its process group: the
+    # allowed argv is run as this one, so the limit and the group's kill are what is tested.
+    slow = ["sh", "-c", f"sleep 30 & echo $! > {pid_file}; wait"]
+    monkeypatch.setattr(check, "command", lambda _: slow)
     monkeypatch.chdir(tmp_path / "hub")
     stdin = json.dumps({"hypotheses": [a_hypothesis(1, ["git", "log"])]}).encode()
     monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(stdin)))
-    started = time.monotonic()
 
-    code = check.main(["--repos", json.dumps([{"dir": "api", "head": head}]), "--timeout", "0.2"])
+    code = check.main(["--repos", json.dumps([{"dir": "api", "head": head}]), "--timeout", "1"])
 
     output = json.loads(capsys.readouterr().out)
     assert code == 0
-    assert time.monotonic() - started < 10
     result = by_id(output)["H1"]
     assert result["status"] == "timeout"
     assert result["exit_code"] is None
     assert output["confirmed"] == 0
+    background = int(pid_file.read_text(encoding="utf-8"))
+    # The whole group was killed: the background sleep is gone, not left running.
+    for _ in range(50):
+        try:
+            os.kill(background, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.1)
+    else:
+        pytest.fail(f"the check's background process {background} outlived its timeout")
+
+
+def test_prunes_the_repo_when_making_its_worktree_is_stopped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo, head = a_repo(tmp_path, {"x": b"x\n"})
+    check = load()
+    # Making the worktree gets no time: git is stopped, maybe after it registered the worktree.
+    monkeypatch.setattr(check, "WORKTREE_TIMEOUT", 0.000001)
+    before = repo_state(repo)
+    monkeypatch.chdir(tmp_path / "hub")
+    stdin = json.dumps({"hypotheses": [a_hypothesis(1, ["test", "-f", "x"])]}).encode()
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(stdin)))
+
+    code = check.main(["--repos", json.dumps([{"dir": "api", "head": head}])])
+
+    output = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert output["results"][0]["status"] == "error"
+    assert repo_state(repo) == before
+    assert git(repo, "worktree", "prune", "--dry-run", "-v") == ""
 
 
 def test_refuses_remaining_checks_when_budget_is_spent(
