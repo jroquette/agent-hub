@@ -702,7 +702,7 @@ make targets, flags, config keys, skills, workflows, paths, tables and columns, 
 them, a read-only judge's corrected lines, the owner's approval, and a docs-only PR in the repo; ADR lines are reported,
 never edited; nothing writes the tracker; fetch the repo first: `doc-drift` reads `origin/<default branch>` as last
 fetched),
-`review-incoming` (11 nodes, started by
+`review-incoming` (12 nodes, started by
 `/review`: someone else's PR through the spec, quality and security lenses, the repo's check at the head (never for a
 fork) and one draft you edit; `/review` reads the PR and posts the draft only after you approve it) and
 `release` (`release`: the release PR, then the hub pin PR, each behind its own approval). A hub's own file

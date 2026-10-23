@@ -325,13 +325,6 @@ def rendered_modules(config: HubConfig) -> Iterator[tuple[str, str]]:
             yield file.path, file.content.decode("utf-8")
 
 
-# AGH-483 (its plan reads the repos from hub.json): the incident pack's evidence script, run by
-# `hub workflow run` only after the CLI validated hub.json with ``HubConfig``, and not a hook (a
-# file it cannot read exits 2 and fails the run, never a hook). Every other module still reads
-# hub.json only through the reader. Each one, with its number of reads.
-PACK_HUB_JSON_READERS = {"workflows/incident/scripts/evidence.py": 1}
-
-
 def test_opens_hub_json_only_in_reader_when_sources_read(demo_config: HubConfig) -> None:
     modules = dict(rendered_modules(demo_config))
 
@@ -342,7 +335,7 @@ def test_opens_hub_json_only_in_reader_when_sources_read(demo_config: HubConfig)
     assert hub_json_reads('open(os.path.join(d, "hub.json"))\n') == [1]
     assert READER in modules
     assert len(modules) > 1
-    assert {path: len(lines) for path, lines in readers.items()} == PACK_HUB_JSON_READERS
+    assert readers == {}
 
 
 def test_reads_named_file_when_hub_config_names_other_json(
