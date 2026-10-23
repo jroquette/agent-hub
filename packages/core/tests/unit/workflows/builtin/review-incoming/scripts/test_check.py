@@ -162,3 +162,16 @@ def test_stays_under_output_cap_when_check_prints_megabytes(run: Any) -> None:
     assert len(result["tail"]) <= 4000
     assert result["tail"].endswith("\U0001d11e")
     assert len(json.dumps(result).encode()) < 65536
+
+
+def test_kills_a_background_process_when_a_passing_check_leaves_one(
+    run: Any, tmp_path: Path
+) -> None:
+    marker = tmp_path / "survived"
+
+    code, result, _ = run(f"(sleep 1; touch {marker}) & exit 0")
+
+    assert code == 0
+    assert result["status"] == "passed"
+    time.sleep(1.5)
+    assert not marker.exists()
