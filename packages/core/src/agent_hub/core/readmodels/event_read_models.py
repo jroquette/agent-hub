@@ -39,6 +39,7 @@ from agent_hub.core.events.event import EventType
 from agent_hub.core.events.event_query import MAX_QUERY_LIMIT, EventQuery
 from agent_hub.core.events.event_reader import EventReader
 from agent_hub.core.events.stored_event import StoredEvent
+from agent_hub.core.features.feature_view import FeatureCost
 from agent_hub.core.learnings.fold_learning import fold_learnings
 from agent_hub.core.learnings.learning import Learning, LearningStatus
 from agent_hub.core.projects.project_views import (
@@ -110,6 +111,8 @@ type SortKey = tuple[CursorKeyPart, ...]
 RECENT = timedelta(days=7)
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 DAYS_IN_PERIOD = 7
+# Where a hub keeps its features; a session that touched a path under it worked on that feature.
+_FEATURES_PATH = "brain/features"
 _SEARCH_ORDER: Mapping[SearchKind, int] = {
     "session": 0,
     "run": 1,
@@ -518,7 +521,10 @@ class FoldedEventReadModels:
         """The sessions about ``issue`` (any case): the issue their first prompt
         (``/feature AGH-305``) names, else their branch or worktree, for the hub's tracker
         teams, else the one their run names."""
-        wanted = issue.casefold()
+        return self._of_issues(sessions, frozenset({issue.casefold()}))
+
+    def _of_issues(self, sessions: Iterable[Session], wanted: frozenset[str]) -> list[Session]:
+        """The sessions about one of the ``wanted`` issues (casefolded), as ``_of_issue``."""
         rules: dict[str, LabelRules | None] = {}
         found: list[Session] = []
         for session in sessions:
@@ -529,7 +535,7 @@ class FoldedEventReadModels:
             link = None if link_of is None else link_of(session.project, session.id)
             label = _with_issue(session, rules[session.project], link).label
             of = (label.issue if label is not None else None) or session.issue
-            if of is not None and of.casefold() == wanted:
+            if of is not None and of.casefold() in wanted:
                 found.append(session)
         return found
 
@@ -625,6 +631,35 @@ class FoldedEventReadModels:
             return cost
         budget = None if run.caps is None else run.caps.budget_usd
         return cost.model_copy(update={"run_total_usd": run.cost_usd, "budget_usd": budget})
+
+    def feature_cost(self, project: str, slug: str, issues: tuple[str, ...]) -> FeatureCost:
+        """What the feature's sessions cost: those of ``project`` that touched
+        ``brain/features/<slug>/`` or worked on one of its ``issues``, and the sessions they
+        started, each counted once."""
+        snapshot = self._snapshot()
+        scoped = [s for s in snapshot.sessions.values() if s.project == project]
+        folder = f"{_FEATURES_PATH}/{slug}/"
+        found = {
+            session.id: session
+            for session in scoped
+            if _file_matches(snapshot.by_session[session.id], folder)
+        }
+        if issues:
+            rest = [session for session in scoped if session.id not in found]
+            wanted = frozenset(issue.casefold() for issue in issues)
+            found |= {session.id: session for session in self._of_issues(rest, wanted)}
+        while children := [
+            session
+            for session in scoped
+            if session.id not in found and session.parent_session_id in found
+        ]:
+            found |= {session.id: session for session in children}
+        priced = [session.cost_usd for session in found.values() if session.cost_usd is not None]
+        return FeatureCost(
+            total_usd=sum(priced, Decimal(0)) if priced else None,
+            sessions=len(found),
+            unpriced=len(found) - len(priced),
+        )
 
     def list_live_sessions(self, scope: Scope) -> Page[LiveTile]:
         """Live session tiles grouped waiting, live, idle, ended recently."""

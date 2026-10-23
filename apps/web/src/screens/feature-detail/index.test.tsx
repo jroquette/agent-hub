@@ -176,15 +176,30 @@ describe("ticketIds", () => {
 });
 
 describe("FeatureDetailScreen", () => {
-  it("AC-425.5 shows the header with verdict and the AC bar, without the ticket ids", async () => {
-    open();
+  it("AC-425.5 shows the header with verdict and cost, without the ticket ids or AC bar", async () => {
+    open({
+      [API]: () => ({
+        ...detail,
+        cost: { total_usd: "12.3456", sessions: 4, unpriced: 1 },
+      }),
+    });
 
     expect(
       await screen.findByRole("heading", { level: 1, name: "layered-memory" }),
     ).toBeInTheDocument();
     expect(screen.getAllByText("SHIP-WITH-OWNER-STEPS").length).toBeGreaterThan(0);
     expect(screen.queryByText("AGH-49")).toBeNull();
-    expect(screen.getByText("11 of 13").parentElement).toHaveTextContent("11 of 13 · 1 owner step");
+    expect(screen.queryByText("11 of 13")).toBeNull();
+    expect(screen.getByText("$12.35").parentElement).toHaveTextContent(
+      "$12.35· 4 sessions, 1 without a price",
+    );
+  });
+
+  it("leaves the cost out while no session worked on the feature", async () => {
+    open({ [API]: () => ({ ...detail, cost: { total_usd: null, sessions: 0, unpriced: 0 } }) });
+
+    await screen.findByRole("heading", { level: 1, name: "layered-memory" });
+    expect(screen.queryByText(/· \d+ sessions?/)).toBeNull();
   });
 
   it("draws the server's golden path with partial, blocked and unknown as text (golden)", async () => {
@@ -192,9 +207,9 @@ describe("FeatureDetailScreen", () => {
 
     const path = await screen.findByRole("list", { name: "Golden path" });
     const steps = within(path).getAllByRole("listitem");
+    // UX design, skipped, is left out: the feature had nothing to do there.
     expect(steps.map((s) => s.dataset.state)).toEqual([
       "done",
-      "skipped",
       "skipped",
       "done",
       "done",
@@ -202,12 +217,13 @@ describe("FeatureDetailScreen", () => {
       "partial",
       "blocked",
     ]);
-    expect(steps[5]).toHaveTextContent("Unknown");
-    expect(steps[5]).toHaveTextContent("Linear not connected");
-    expect(steps[6]).toHaveTextContent("Partial");
-    expect(steps[6]).toHaveTextContent("Ticket evals cover 3 of 13 ACs");
-    expect(steps[7]).toHaveTextContent("Blocked");
-    expect(steps[7]).toHaveTextContent("Build is not done");
+    expect(path).not.toHaveTextContent("UX design");
+    expect(steps[4]).toHaveTextContent("Unknown");
+    expect(steps[4]).toHaveTextContent("Linear not connected");
+    expect(steps[5]).toHaveTextContent("Partial");
+    expect(steps[5]).toHaveTextContent("Ticket evals cover 3 of 13 ACs");
+    expect(steps[6]).toHaveTextContent("Blocked");
+    expect(steps[6]).toHaveTextContent("Build is not done");
   });
 
   it("calls out the owner steps left", async () => {
@@ -1107,7 +1123,7 @@ describe("FeatureDetailScreen", () => {
 
       await waitFor(() => {
         const path = screen.getByRole("list", { name: "Golden path" });
-        expect(within(path).getAllByRole("listitem")[5]).toHaveAttribute("data-state", "done");
+        expect(within(path).getAllByRole("listitem")[4]).toHaveAttribute("data-state", "done");
       });
       expect(asked(requests, API)).toBe(2);
     });
