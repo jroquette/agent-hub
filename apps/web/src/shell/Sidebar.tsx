@@ -105,12 +105,14 @@ interface NavGroup {
 }
 
 /**
- * The sitemap (D20, AGH-201 D3), regrouped by what the developer comes to do: Portfolio on top (the
- * project overview once a project is open or in scope, see `overviewItem`), the
- * agents' Work (Sessions carries the live badge, ADR 0033; Workflow runs shows once a workflow has
- * run; Scenarios always shows), the project's Knowledge as flat items (Brain and Skills follow the project in scope, see
- * `brainLink` and `skillsLink`), and the hub's own Health and Settings in the footer. Metrics,
- * Bench and Tracker queue are not shipped and not shown.
+ * The sitemap (D20, AGH-201 D3), grouped by what the developer comes to do: Portfolio on top (the
+ * project overview once a project is open or in scope, see `overviewItem`); Work, the units of work
+ * to start or follow (Features carries the needs-you badge, then Tickets and Scenarios); Activity,
+ * what the agents are running (Sessions carries the live badge, ADR 0033; Workflow runs shows once
+ * a workflow has run); Knowledge, what the project knows (Brain, and the Learnings that feed it);
+ * Setup, what agents work with (Toolkit and Environments); and the hub's own Health and Settings in
+ * the footer. Brain, Toolkit and Environments follow the project in scope (see `brainLink`,
+ * `skillsLink`, `environmentsLink`). Metrics, Bench and Tracker queue are not shipped and not shown.
  */
 export const NAV: readonly NavGroup[] = [
   {
@@ -118,6 +120,24 @@ export const NAV: readonly NavGroup[] = [
   },
   {
     group: "Work",
+    items: [
+      {
+        id: "features",
+        label: "Features",
+        to: "/features",
+        icon: "list-checks",
+        countKey: "features",
+        countNoun: () => "need you",
+        tone: "waiting",
+      },
+      // Single-ticket work (/fix, /refactor, /upgrade, …), grouped from the sessions by issue.
+      { id: "tickets", label: "Tickets", to: "/tickets", icon: "list-todo" },
+      // Always shown: a place to start work, not a log (AGH-350 AM-17, E-15); no `g` key.
+      { id: "scenarios", label: "Scenarios", to: "/scenarios", icon: "clipboard-list" },
+    ],
+  },
+  {
+    group: "Activity",
     items: [
       // One Sessions entry; it carries the live badge of the retired Live sessions (ADR 0033 D8).
       {
@@ -131,26 +151,12 @@ export const NAV: readonly NavGroup[] = [
       },
       // Hidden until a workflow has run; the workflows themselves are a tab of Toolkit.
       { id: "runs", label: "Workflow runs", to: "/runs", icon: "route", onlyWhenAny: true },
-      // Always shown: a place to start work, not a log (AGH-350 AM-17, E-15); no `g` key.
-      { id: "scenarios", label: "Scenarios", to: "/scenarios", icon: "clipboard-list" },
-      {
-        id: "features",
-        label: "Features",
-        to: "/features",
-        icon: "list-checks",
-        countKey: "features",
-        countNoun: () => "need you",
-        tone: "waiting",
-      },
-      // Single-ticket work (/fix, /refactor, /upgrade, …), grouped from the sessions by issue.
-      { id: "tickets", label: "Tickets", to: "/tickets", icon: "list-todo" },
-      // Where the project's systems run and what agents may do there (ADR 0038).
-      { id: ENVIRONMENTS_ID, label: "Environments", to: ENVIRONMENTS_PICKER, icon: "server" },
     ],
   },
   {
     group: "Knowledge",
     items: [
+      { id: BRAIN_ID, label: "Brain", to: BRAIN_PICKER, icon: "book-open" },
       {
         id: "learnings",
         label: "Learnings",
@@ -160,8 +166,14 @@ export const NAV: readonly NavGroup[] = [
         countNoun: () => "to triage",
         tone: "waiting",
       },
-      { id: BRAIN_ID, label: "Brain", to: BRAIN_PICKER, icon: "book-open" },
+    ],
+  },
+  {
+    group: "Setup",
+    items: [
       { id: SKILLS_ID, label: "Toolkit", to: SKILLS_PICKER, icon: "package" },
+      // Where the project's systems run and what agents may do there (ADR 0038).
+      { id: ENVIRONMENTS_ID, label: "Environments", to: ENVIRONMENTS_PICKER, icon: "server" },
     ],
   },
   {
