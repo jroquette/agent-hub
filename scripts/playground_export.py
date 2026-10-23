@@ -111,6 +111,7 @@ SCREEN_ROUTES: Mapping[str, tuple[Route, ...]] = {
     "sessions-list": (Route("sessions", "/sessions"),),
     "settings": (Route("settings", "/settings/appearance"),),
     "skills": (Route("skills", "/projects/demo/skills"),),
+    "ticket-detail": (Route("ticket", "/tickets", follow="/tickets/"),),
     "tickets": (Route("tickets", "/tickets"),),
     "welcome": (Route("welcome", "/welcome"),),
     "workflows": (Route("workflows", "/workflows"),),
