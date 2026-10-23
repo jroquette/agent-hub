@@ -122,8 +122,11 @@ the hub's `HEAD` (a local commit suffices); else it is a **draft**, listed but n
 are). A run pins each action's `content_hash` (`sha256:` over each file's path, length, bytes) and runs that snapshot.
 
 **Run values.** A scenario input is a value of the run, set once when it starts. An action input a step leaves out of its
-`with` takes the scenario input of the same name, at plan and at run time (`with_run_values`), included steps too; a
-value the step gives always wins, and an input with neither takes the action's default. So a value every step needs (an
+`with` takes the scenario input of the same name, at plan and at run time (`with_run_values`); a value the step gives
+always wins, and an input with neither, or whose run value is empty (an optional input with no default), takes the
+action's default. Included steps take the run's own inputs too: an include's `with` reaches only the `$INPUTS`
+references written in the included steps, so a child step that should take the include's value names it in its
+`with`. So a value every step needs (an
 account, a stack name) is declared once as a scenario input, not repeated as `name: $INPUTS.name` in each step, and one
 run cannot start in one account and end in another. The builder shows such an input as "from the run" and offers to
 drop the repeats.

@@ -100,7 +100,7 @@ class EventReadModels(Protocol):
 
     def feature_cost(self, project: str, slug: str, issues: tuple[str, ...]) -> FeatureCost:
         """What the feature's sessions cost: those that touched its folder or worked on one of
-        its ``issues``, and the sessions they started."""
+        its ``issues``, each counted once."""
         ...
 
     def session_problems(self, session_id: str) -> SessionProblems:

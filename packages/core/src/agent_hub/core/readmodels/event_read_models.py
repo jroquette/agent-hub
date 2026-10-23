@@ -633,9 +633,9 @@ class FoldedEventReadModels:
         return cost.model_copy(update={"run_total_usd": run.cost_usd, "budget_usd": budget})
 
     def feature_cost(self, project: str, slug: str, issues: tuple[str, ...]) -> FeatureCost:
-        """What the feature's sessions cost: those of ``project`` that touched
-        ``brain/features/<slug>/`` or worked on one of its ``issues``, and the sessions they
-        started, each counted once."""
+        """What the feature's sessions cost: those of ``project`` that touched (read or
+        changed) ``brain/features/<slug>/`` or worked on one of its ``issues``, each counted
+        once. A subagent's turns are part of its session's cost."""
         snapshot = self._snapshot()
         scoped = [s for s in snapshot.sessions.values() if s.project == project]
         folder = f"{_FEATURES_PATH}/{slug}/"
@@ -648,12 +648,6 @@ class FoldedEventReadModels:
             rest = [session for session in scoped if session.id not in found]
             wanted = frozenset(issue.casefold() for issue in issues)
             found |= {session.id: session for session in self._of_issues(rest, wanted)}
-        while children := [
-            session
-            for session in scoped
-            if session.id not in found and session.parent_session_id in found
-        ]:
-            found |= {session.id: session for session in children}
         priced = [session.cost_usd for session in found.values() if session.cost_usd is not None]
         return FeatureCost(
             total_usd=sum(priced, Decimal(0)) if priced else None,

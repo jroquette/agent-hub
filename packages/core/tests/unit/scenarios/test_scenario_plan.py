@@ -396,3 +396,68 @@ def test_keeps_step_value_when_step_gives_input_named_like_run_input() -> None:
     )
 
     assert plan.rows[0].args["ref"] == "T-9"
+
+
+def test_keeps_action_defaults_when_run_value_is_none() -> None:
+    # An optional scenario input with no default starts as None: the step gets nothing from it.
+    plan = planned(
+        [{"id": "send-order", "type": "action", "action": "send-order", "with": {"target": "api"}}],
+        inputs={"ref": None},
+    )
+
+    send = plan.rows[0]
+    assert plan.problems == ()
+    assert send.call is not None
+    assert send.call.inputs == {"target": "api", "count": 1}
+
+
+def test_gives_parent_run_value_when_included_step_leaves_input_out() -> None:
+    # The fill reads the run's own inputs, included steps too: the include's ``with`` reaches
+    # only the ``$INPUTS`` references written in the included steps.
+    child = parse_workflow(
+        {
+            "version": 1,
+            "kind": "scenario",
+            "name": "child",
+            "revision": 1,
+            "inputs": {"ref": {"type": "string", "required": True}},
+            "nodes": [
+                {
+                    "id": "send-order",
+                    "type": "action",
+                    "action": "send-order",
+                    "with": {"target": "api"},
+                },
+                {
+                    "id": "check-order",
+                    "type": "action",
+                    "action": "get-order",
+                    "depends_on": ["send-order"],
+                    "with": {"target": "api", "ref": "$INPUTS.ref"},
+                },
+            ],
+        }
+    )
+    parent = parse_workflow(
+        {
+            "version": 1,
+            "kind": "scenario",
+            "name": "order-walk",
+            "revision": 1,
+            "inputs": {"ref": {"type": "string", "required": True}},
+            "nodes": [{"id": "inc", "type": "include", "include": "child", "with": {"ref": "T-9"}}],
+        }
+    )
+
+    plan = plan_scenario(
+        plan_workflow(parent, includes=lambda name: child if name == "child" else None),
+        pack="demo",
+        actions=ACTIONS,
+        view=a_view(),
+        environment="local",
+        inputs={"ref": "T-1"},
+    )
+
+    by_step = {row.step: row.args.get("ref") for row in plan.rows}
+    assert plan.problems == ()
+    assert by_step == {"inc__send-order": "T-1", "inc__check-order": "T-9"}

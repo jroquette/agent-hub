@@ -492,7 +492,10 @@ class ScenarioCatalog:
         # the new file's hash (the builder's save checks that hash).
         data = _read_bytes(file, DOCUMENT_TEXT_BYTES)
         text, cut = _text_of(data, DOCUMENT_TEXT_BYTES)
-        refs = dict.fromkeys(step.action for step in steps if step.action is not None)
+        # Every action the scenario calls, a Repeat's body included.
+        refs = dict.fromkeys(
+            action for node in plan.all_nodes() if (action := _action_of(node)) is not None
+        )
         found = discover_actions(Path(hub)) if refs else None
         return ScenarioDetail(
             **summary.model_dump(),

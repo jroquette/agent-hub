@@ -2789,3 +2789,25 @@ def test_warns_not_recorded_when_findings_issue_record_fails(
         " do not create it again"
     ) in text
     assert len(tracker_calls(hub)) == 1
+
+
+def test_names_environment_when_its_value_does_not_fit_the_input(hub: Path, marker: Path) -> None:
+    write_scenario(
+        hub,
+        SCENARIO.replace(
+            "  ref: {type: string, required: true}",
+            "  ref: {type: string, required: true}\n  minutes: {type: integer}",
+        ),
+    )
+    git(hub, "commit", "-q", "-am", "an integer input")
+    local = {"environments": {"local": {"values": {"minutes": "soon"}}}}
+    (hub / "hub.local.json").write_text(json.dumps(local) + "\n")
+
+    planned = run_hub(
+        hub, marker, "scenario", "plan", "order-walk", "--env", "local", "--input", "ref=T-1"
+    )
+
+    assert planned.exit_code == 2
+    # The value comes from the environment, not from --input.
+    assert "--env" in plain(planned.output)
+    assert "--input" not in plain(planned.output)

@@ -306,9 +306,10 @@ acceptance criteria rows, the records and every eval, it carries:
   verdict line, an `evals/` record reads "Verdict: <verdict>, from the <delivery> eval". A ticket-scoped eval never
   sets them.
 - `cost` (AGH-521): what the feature's sessions cost so far, estimated from their transcripts: the sessions of the
-  project that touched `brain/features/<slug>/` or worked on one of its `issues`, and the sessions they started,
-  each counted once. `total_usd` adds up the priced ones (`null` when none is), `sessions` counts them all and
-  `unpriced` those without a price. It is `null` when the events are not read.
+  project that touched `brain/features/<slug>/` (read or changed a file there) or worked on one of its `issues`,
+  each counted once (a subagent's turns are part of its session). `total_usd` adds up the priced ones (`null` when
+  none is), `sessions` counts them all and `unpriced` those without a price; with no session found, `total_usd` is
+  `null` and both counts are 0.
 - `phase` and `golden_path` (here, in the list and on the tickets route): the steps are the feature's own, `spec`,
   `ux_design`, `research`, `plan`, `tickets`, `build`, `acceptance`, `shipped`, and a step's `state` is one of
   `done`, `current`, `partial`, `pending`, `skipped`, `blocked`, `unknown` or `unrecorded` (Acceptance with no

@@ -581,6 +581,10 @@ def _inputs(
     }
     try:
         filled = with_environment_values(plan, typed, view=view, environment=environment)
+    except RunInputError as error:
+        # A value from hub.json or hub.local.json, not from --input.
+        raise typer.BadParameter(str(error), param_hint="--env") from None
+    try:
         return start_inputs(plan, filled)
     except (RunInputError, WorkflowEngineError) as error:
         raise typer.BadParameter(str(error), param_hint="--input") from None

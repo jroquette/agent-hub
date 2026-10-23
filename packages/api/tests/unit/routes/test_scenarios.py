@@ -2165,3 +2165,55 @@ def test_reads_no_proposal_when_its_path_is_a_fifo(scenarios: Any) -> None:
     shown = scenarios.client.get("/api/v1/scenarios/demo/order-walk/proposal")
 
     assert shown.status_code == 404
+
+
+LOOP_WALK = """\
+version: 1
+kind: scenario
+name: loop-walk
+revision: 1
+description: Release the hold until the order reads done
+inputs:
+  ref: {type: string, required: true}
+nodes:
+  - id: retry-release
+    type: loop_group
+    max_iterations: 3
+    until_when: "$check.output.status == 'DONE'"
+    nodes:
+      - id: release
+        type: action
+        action: release-hold
+        with: {target: api, ref: $INPUTS.ref}
+      - id: check
+        type: action
+        action: get-order
+        depends_on: [release]
+        with: {target: api, ref: $INPUTS.ref}
+"""
+
+
+def test_lists_repeat_body_actions_when_scenarios_detail_read(scenarios: Any) -> None:
+    (scenarios.hub / "scenarios" / "demo" / "loop-walk.yaml").write_text(LOOP_WALK)
+
+    detail = scenarios.client.get("/api/v1/scenarios/demo/loop-walk")
+
+    assert detail.status_code == 200, detail.text
+    assert [action["ref"] for action in detail.json()["actions"]] == ["release-hold", "get-order"]
+
+
+def test_keeps_text_values_when_scenarios_detail_document_read(scenarios: Any) -> None:
+    # The strict loader keeps a date-like description and on, 012 and 1:30 as text.
+    path = scenarios.hub / "scenarios" / "demo" / "order-walk.yaml"
+    path.write_text(
+        WALK.replace(
+            "description: One demo order from send to hold", "description: 2026-10-23"
+        ).replace("with: {target: api, ref: $INPUTS.ref}", "with: {target: api, ref: 012}", 1)
+    )
+
+    detail = scenarios.client.get("/api/v1/scenarios/demo/order-walk")
+
+    assert detail.status_code == 200, detail.text
+    document = detail.json()["document"]
+    assert document["description"] == "2026-10-23"
+    assert document["nodes"][0]["with"]["ref"] == "012"
