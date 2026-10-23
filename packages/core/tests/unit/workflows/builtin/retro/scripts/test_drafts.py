@@ -76,9 +76,11 @@ def run_drafts(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> tuple[int, dict[str, Any], str]:
+    # The script node runs in the hub: the draft goes under the current folder.
+    monkeypatch.chdir(hub)
     monkeypatch.setattr(sys, "stdin", io.StringIO(stdin))
     given = {"--nothing": "false", "--count": "3", "--decision": "keep", "--note": ""}
-    given |= {"--summary": SUMMARY, "--today": TODAY, "--root": str(hub)} | flags
+    given |= {"--summary": SUMMARY, "--today": TODAY} | flags
     code = load().main([part for flag, value in given.items() for part in (flag, value)])
     captured = capsys.readouterr()
     return code, (json.loads(captured.out) if captured.out else {}), captured.err
@@ -245,3 +247,10 @@ def test_exits_two_when_input_malformed(
     assert found == {}
     assert err.startswith("drafts.py: ")
     assert inbox(hub) == ["note.md"]
+
+
+def test_refuses_root_option_when_given(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit) as raised:
+        load().main(["--root", str(tmp_path), "--nothing", "true"])
+
+    assert raised.value.code == 2
