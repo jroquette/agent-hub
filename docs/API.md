@@ -378,7 +378,7 @@ the app refetches the route; the cache still applies (`as_of` shows its age). `G
 | `POST /{id}/messages` | `{text, screenshots?}` (text 1 byte to `--message-max-bytes`, 1 MiB UTF-8 by default; 1 to 10 screenshots) → 202 `{seq}`; accepted while a turn runs |
 | `POST /{id}/interrupt` | `{}` → 202; the turn's `result` follows on the stream |
 | `POST /{id}/permissions/{request_id}` | `{decision: allow \| deny \| always, message?, answers?, suggestion?, mode?}` → 200 |
-| `POST /{id}/settings` | `{mode?, model?}` (at least one) → 200 |
+| `POST /{id}/settings` | `{mode?, model?}` (at least one) → 200; a mode change of a session held to a tool policy (an investigation session) is 409 `mode-locked` and changes nothing |
 | `POST /{id}/close` | `{}` → 200; idempotent |
 | `GET /cloud` · `POST /cloud` | cloud sessions recorded here, newest first (at most 50) · `{project, workdir_id, task}`: always 501 `cloud-unavailable` with the terminal command as `guidance` (`claude --cloud` needs a terminal; no process is run) |
 | `POST /cloud/{cloud_id}/messages` | `{text}`: 501 `cloud-unavailable` with `guidance` (no start is ever recorded, so a follow-up has nothing to reach; the `claude -p --cloud` path stays behind `cloud_followup`) |
@@ -481,7 +481,8 @@ text or a value the browser sent):
 | `file-too-large` | 413 | a message's file over 5,242,880 bytes decoded (`limit`, `size`) |
 | `invalid-file` | 422 | a message's file that is not strict base64 of a PDF or of UTF-8 text (`errors[]` points at `/files/{index}/data`) |
 | `unavailable` | 503 | no `claude` on `PATH` or no `sessions` extra (`reason`), on every write |
-| `restriction-unavailable` | 409 | a message to an ended session that cannot be reopened safely (E-13): a scenario investigation session whose tool policy cannot be rebuilt from its run, or any session while the hub's scenario runs (or a link file in them) cannot be read to tell whether it is one (`detail` says which) |
+| `restriction-unavailable` | 409 | a message to an ended session that cannot be reopened safely (E-13): a scenario investigation session whose tool policy cannot be rebuilt from its run, any session while the hub's scenario runs (or a link file in them) cannot be read to tell whether it is one, or any session whose project no registered hub names (for example, the project was unregistered between two registry reads) (`detail` says which) |
+| `mode-locked` | 409 | a permission-mode change of a session held to a tool policy (a scenario investigation session, E-15): its mode stays `default`, so the writes and `./hub` commands its policy allows keep asking; a model change still applies. Such a session reads `restricted: true` (the member is absent for other sessions) |
 | `cloud-unavailable` · `cloud-failed` · `cloud-timeout` | 501 · 502 · 504 | link-out guidance (`guidance`) · the step that failed (`step`) · the 60 s deadline (`seconds`) |
 
 ## Skills
@@ -657,6 +658,14 @@ A paused engine run's `approval` or attention `wait` is an open `human_gate` app
 The decision is a strict write that needs the launch cookie, like the run commands; with `AGENT_HUB_IN_CONTAINER=1`
 it answers 404 `urn:agent-hub:problem:run-control-off`.
 
+`GET /api/v1/approvals` names an open gate's kind when its run's own record does (`gate_kind`: `policy` for a policy
+ask, `investigation` for a scenario run's investigation; each run's record read once per request, never through a
+link), never from the gate's id (E-10); an authored gate, another kind or a record that cannot be read has no
+`gate_kind` member. `GET /api/v1/workflow-runs/{run_id}` adds `environment` when the run's own start record names one
+(`{name, access, production}`, the access and production flag from the hub's effective config as read now, both
+`null` when it cannot be read or no longer declares it); hub web's best-effort banner reads it. Without one the member
+is absent.
+
 ## Scenarios
 
 The hubs' scenarios and their scenario runs ([design](design/scenarios.md), AGH-350 plan T12, AC-350.21, .22, .23,
@@ -668,12 +677,14 @@ child, as for the [run commands](#workflow-run-commands) (`python -I -m agent_hu
 folder, the server's environment minus `LINEAR_API_KEY`); no problem quotes its output.
 
 - `GET /api/v1/scenarios[?project=…]` → `ScenarioCatalogView`: `items` (each `project`, `name`, `pack`, `description`,
-  `revision`, `node_count`, `inputs` and `last_run`: `{run_id, status, started_at, ended_at}` of its newest scenario
-  run, or `null`), by project then name, and `problems` (as [Workflows](#workflows)' list: a file of `scenarios/`
+  `revision`, `node_count`, `inputs` and `last_run`: `{run_id, status, started_at, ended_at, environment, mode}` of
+  its newest scenario run, or `null`; `environment` and `mode` come from the run's start record, `null` when it cannot
+  be read), by project then name, and `problems` (as [Workflows](#workflows)' list: a file of `scenarios/`
   that does not load or plan). Read from the files on each request through the generator's discovery.
 - `GET /api/v1/scenarios/{project}/{name}` → `ScenarioDetail`: the summary, `steps` in declaration order (`id`,
-  `type`, `action` for an `action` or `expect` step, `depends_on`, `description`) and `runs`, its scenario runs,
-  newest first (at most 50). An unknown project is a 404 (entity `project`); an unknown scenario, or one listed as a
+  `type`, `action` for an `action` or `expect` step, `depends_on`, `description`), `runs`, its scenario runs,
+  newest first (at most 50, each as `last_run`), and `environments`, the project's declared environments to plan in
+  (`name`, `access`, `production`, from `hub.json` tightened by `hub.local.json`; empty when either cannot be read). An unknown project is a 404 (entity `project`); an unknown scenario, or one listed as a
   problem, a 404 (entity `scenario`, id `<project>/<name>`).
 - `POST /api/v1/scenarios/{project}/{name}/plan` with `{environment, inputs?}` → 200 `ScenarioPlanView`: what `hub
   scenario plan NAME --env ENV --json` prints (`scenario`, `environment`, `access` (`null` when undeclared),
@@ -698,9 +709,12 @@ folder, the server's environment minus `LINEAR_API_KEY`); no problem quotes its 
   `.agent-runs/workflows/<run_id>/records.jsonl` (never through a link, at most 8 MiB, a torn last line dropped):
   `scenario`, `pack`, `environment`, `mode`, `status` (the end's, `null` while it has none), `open_investigation`
   and `paused_step` (the investigation waiting for an answer), `timeline` (each line's `event`, `node`, `attempt`,
-  `status`, `at`), `polls` (an expect's polls: `held`, never the output), `captures` (`name`, `value`),
-  `decisions` (every gate's answer: `choice`, `text`, `approver`, `where`), `findings`, `investigations`,
-  `workarounds` and `proposal`: the latest investigation's latest proposal, each option with its `steps`, its
+  `status`, `at`, and an investigation read's (`agent_action`) `action` and `effect`), `polls` (an expect's polls:
+  `held`, never the output), `captures` (`name`, `value`), `decisions` (every gate's answer: `choice`, `text`,
+  `approver`, `where`), `actions` (each action call's policy facts: `node`, `attempt`, `poll`, `action`, `effect`,
+  `origin`, `decision`, `reason_kind`, `content_hash`, `approver`, `status`, `failure_kind`, `at`; never its inputs
+  or output), `findings`, `investigations` (each with `agent_session_id`, the session its
+  `investigation-<n>.session` link names, read never through a link, else `null`), `workarounds` and `proposal`: the latest investigation's latest proposal, each option with its `steps`, its
   `plan` as shown, `needs_acceptance`, `accept_commands` (one per drafted action that is still a draft),
   `pickable` and `refusal`, judged now as an answer would be (only while its investigation waits; `the
   investigation is answered` after). A run no registered hub holds, or one that is not a scenario run, is a 404.
@@ -720,7 +734,7 @@ folder, the server's environment minus `LINEAR_API_KEY`); no problem quotes its 
   cannot be written stops the session it would have named.
 - The chat is the agent-session routes' (`POST /api/v1/agent-sessions/{agent_session_id}/messages`, AM-9). A message
   that reopens an ended investigation session (after a restart, for example) rebuilds its tool policy and prompt from
-  the link and the run's record, or is refused (409 `agent-session-restriction-unavailable`).
+  the link and the run's record, or is refused (409 `agent-session-restriction-unavailable`). Its permission mode cannot change (409 `agent-session-mode-locked`).
 - `POST /api/v1/scenario-runs/{run_id}/answer` with `{choice, option?}` (`pick` with an option id `o<n>`, `retry` or
   `stop`; an option without a pick, or a pick without one, is 422) → 202 `InvestigationAnswered` (`run_id`,
   `project`, `investigation`, `step`, `choice`, `option`) and `Location: /api/v1/scenario-runs/{run_id}`. The

@@ -37,6 +37,7 @@ from agent_hub.core.agent_sessions.errors import (
     PermissionAnsweredError,
     ScreenshotTooLargeError,
     SessionBusyError,
+    SessionModeLockedError,
     SessionRestrictionError,
     SessionsOffError,
     SessionsUnavailableError,
@@ -606,6 +607,15 @@ def _session_restriction_problem(error: SessionRestrictionError) -> Problem:
     )
 
 
+def _session_mode_locked_problem(_: SessionModeLockedError) -> Problem:
+    return _agent_session_problem(
+        409,
+        "mode-locked",
+        "Agent session mode is fixed",
+        detail="This session is held to a tool policy; its permission mode cannot change.",
+    )
+
+
 def _log_full_problem(_: LogFullError) -> Problem:
     return _agent_session_problem(
         409,
@@ -784,6 +794,7 @@ AGENT_SESSION_PROBLEMS: Mapping[type[Exception], ProblemFactory] = {
     HubLocalInvalidError: _hub_local_invalid_problem,
     HubRegistryUnreadableError: _hub_registry_unreadable_problem,
     SessionRestrictionError: _session_restriction_problem,
+    SessionModeLockedError: _session_mode_locked_problem,
     PermissionAnsweredError: _permission_answered_problem,
     UnknownPermissionError: _unknown_permission_problem,
     InvalidDecisionError: _invalid_decision_problem,

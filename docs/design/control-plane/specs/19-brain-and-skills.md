@@ -266,6 +266,8 @@ keyboard. axe reports no serious or critical violation in the panel, Compare or 
 - **AC-382.8** Given the sidebar, when it shows, then it has no Workflows item.
 - **AC-382.9** Given no workflow has run, when the sidebar shows, then Workflow runs is hidden; once a workflow run
   exists, Workflow runs shows and links to `/runs`.
+  A workflow run here is a run of kind `workflow` (`GET /workflow-runs?kind=workflow&limit=1`): a hub with only
+  scenario runs does not show Workflow runs (AGH-364).
 
 **Toolkit catalog (commit 3d459347)**
 

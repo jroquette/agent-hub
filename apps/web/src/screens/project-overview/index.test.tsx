@@ -656,4 +656,50 @@ describe("ProjectOverviewScreen", () => {
     await screen.findByText("control-plane");
     expect(await seriousViolations(container)).toEqual([]);
   });
+  it("calls a scenario run 'Scenario run …' in Work in flight and links its page", async () => {
+    renderProject({
+      "/api/v1/workflow-runs": aPage([
+        aRun({
+          id: "3f2a91c0",
+          project: "agent-hub",
+          workflow: "scenario:order-lifecycle",
+          kind: "scenario",
+          issue: null,
+          stage: "PICKED",
+          ended_at: null,
+          started_at: recent,
+        }),
+      ]),
+    });
+
+    const work = await screen.findByRole("region", { name: "Tickets the agents are working on" });
+    const link = await within(work).findByRole("link", { name: /Scenario run 3f2a91c0/ });
+    expect(link).toHaveAttribute("href", "/scenarios/agent-hub/order-lifecycle/runs/3f2a91c0");
+    expect(link).toHaveTextContent("order-lifecycle");
+    expect(within(work).queryByText(/^Run 3f2a91c0/)).toBeNull();
+  });
+  it("gives a scenario run in Work in flight its own status, with no stages or pull request", async () => {
+    renderProject({
+      "/api/v1/workflow-runs": aPage([
+        aRun({
+          id: "3f2a91c0",
+          project: "agent-hub",
+          workflow: "scenario:order-lifecycle",
+          kind: "scenario",
+          issue: null,
+          stage: "REPORTED",
+          status: "done",
+          started_at: recent,
+          ended_at: recent,
+          pr_url: null,
+        }),
+      ]),
+    });
+
+    const work = await screen.findByRole("region", { name: "Tickets the agents are working on" });
+    const link = await within(work).findByRole("link", { name: /Scenario run 3f2a91c0/ });
+    expect(link).toHaveTextContent("Done");
+    expect(link).not.toHaveTextContent(/pull request/i);
+    expect(link.querySelector(".po-steps")).toBeNull();
+  });
 });

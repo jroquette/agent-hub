@@ -220,6 +220,22 @@ class SessionRestrictionError(AgentHubError):
         super().__init__(reason)
 
 
+class RestrictionUnreadableError(SessionRestrictionError):
+    """Whether a session is held to a restriction could not be told: its project's runs could
+    not be read, or no registered hub names its project. A reopen is refused (fail closed,
+    E-13), and a read of the session caches nothing (review round 4, Q1, Q2; round 5, Q2)."""
+
+
+class SessionModeLockedError(AgentHubError):
+    """A permission-mode change asked of a session held to a ``SessionRestriction`` (an
+    investigation session, E-13, E-15): its mode stays as started, so the calls its policy
+    allows keep asking (409)."""
+
+    def __init__(self, agent_session_id: str) -> None:
+        self.agent_session_id = agent_session_id
+        super().__init__(f"agent session {agent_session_id}: its permission mode is fixed")
+
+
 class HubRegistryUnreadableError(HubLocalInvalidError):
     """The hub registry cannot be read, so which hub (and credentials) a project has is
     unknown: no driven session starts (409, E-8)."""

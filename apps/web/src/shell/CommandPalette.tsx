@@ -106,7 +106,23 @@ export function CommandPalette({ onClose, initialQuery = "", project }: CommandP
           href: hit.href,
         })),
     }));
-    return [...found, { title: "Screens", items: screens }].filter((g) => g.items.length > 0);
+    // A scenario run is never called "run" alone (glossary): it gets its own group and words.
+    const split = found.flatMap((group) => {
+      if (group.title !== "Workflow runs") return [group];
+      const scenario = group.items.filter((item) => item.href.startsWith("/scenarios/"));
+      return [
+        { ...group, items: group.items.filter((item) => !scenario.includes(item)) },
+        {
+          title: "Scenario runs",
+          items: scenario.map((item) => ({
+            ...item,
+            icon: "clipboard-list" as const,
+            label: `Scenario run ${item.label}`,
+          })),
+        },
+      ];
+    });
+    return [...split, { title: "Screens", items: screens }].filter((g) => g.items.length > 0);
   }, [query, term, search.data]);
 
   const flat = groups.flatMap((g) => g.items);

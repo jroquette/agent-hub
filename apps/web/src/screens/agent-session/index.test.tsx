@@ -1806,6 +1806,12 @@ describe("AgentSessionScreen (session-name)", () => {
       "/features/agent-hub/control-plane",
     );
   });
+  it("hides the mode switch of a session held to a tool policy (scenario investigation)", async () => {
+    renderChat(routes({ [SESSION]: anAgentSession({ status: "idle", restricted: true }) }));
+
+    expect(await screen.findByRole("combobox", { name: "Model" })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Mode" })).toBeNull();
+  });
 });
 
 describe("AgentSessionScreen (the header as a toolbar and a heading, AGH-422)", () => {

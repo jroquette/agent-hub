@@ -584,6 +584,8 @@ function AgentSessionChat({ agentSessionId }: { agentSessionId: string }) {
             inputRef={setComposer}
             disabledReason={cloud ? "A cloud session is driven from claude.ai." : null}
             resumable={canResume}
+            // Held to a tool policy (an investigation): its mode cannot change (E-15).
+            modeLocked={session.restricted === true}
           />
         </div>
       </footer>

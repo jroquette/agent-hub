@@ -108,7 +108,7 @@ interface NavGroup {
  * The sitemap (D20, AGH-201 D3), regrouped by what the developer comes to do: Portfolio on top (the
  * project overview once a project is open or in scope, see `overviewItem`), the
  * agents' Work (Sessions carries the live badge, ADR 0033; Workflow runs shows once a workflow has
- * run), the project's Knowledge as flat items (Brain and Skills follow the project in scope, see
+ * run; Scenarios always shows), the project's Knowledge as flat items (Brain and Skills follow the project in scope, see
  * `brainLink` and `skillsLink`), and the hub's own Health and Settings in the footer. Metrics,
  * Bench and Tracker queue are not shipped and not shown.
  */
@@ -131,6 +131,8 @@ export const NAV: readonly NavGroup[] = [
       },
       // Hidden until a workflow has run; the workflows themselves are a tab of Toolkit.
       { id: "runs", label: "Workflow runs", to: "/runs", icon: "route", onlyWhenAny: true },
+      // Always shown: a place to start work, not a log (AGH-350 AM-17, E-15); no `g` key.
+      { id: "scenarios", label: "Scenarios", to: "/scenarios", icon: "clipboard-list" },
       {
         id: "features",
         label: "Features",
