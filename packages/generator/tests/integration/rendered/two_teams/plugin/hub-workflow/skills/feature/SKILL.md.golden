@@ -1,6 +1,6 @@
 ---
 name: feature
-description: Golden path from idea to merged, verified change across the hub's repos. Chooses the ceremony by process size (spike, bounded, architectural) and chains research, plan, TDD implementation and review.
+description: Golden path from idea to merged, verified change across the hub's repos. Chooses the ceremony by process size (spike, bounded, architectural; a spike runs the spike workflow) and chains research, plan, TDD implementation and review.
 disable-model-invocation: true
 argument-hint: "<idea or tracker issue id>"
 ---
