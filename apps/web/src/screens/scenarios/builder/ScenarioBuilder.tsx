@@ -1,41 +1,197 @@
 import "./builder.css";
+import "./blocks.css";
 
-import { useState } from "react";
+import { useState, type PointerEvent as ReactPointerEvent } from "react";
 
-import { Banner, Button, CopyButton, Icon, SegmentedControl } from "../../../components";
+import {
+  Banner,
+  Button,
+  CopyButton,
+  Icon,
+  SegmentedControl,
+  type IconName,
+} from "../../../components";
+import { readStored, writeStored } from "../../../lib/storage";
 import { useDiscuss } from "../../../shell/discuss";
 import { EffectBadge } from "../parts";
 import type { ScenarioAction, ScenarioDetail } from "../queries";
-import { ADD_CHOICES, FlowCanvas, kindLook, type AddChoice } from "./FlowCanvas";
-import { BlockInspector, ScenarioSettings } from "./Inspector";
+import { BlockCanvas, type DragState, type DropTarget, type Stack } from "./BlockCanvas";
+import { FlowCanvas, kindLook, type AddChoice } from "./FlowCanvas";
+import { BlockInspector, ConditionBuilder, ScenarioSettings } from "./Inspector";
 import {
-  allNodes,
   insertAfter,
   insertBranch,
-  moveBlock,
   newBlock,
-  removeBlock,
   toDocument,
   updateBlock,
+  valueSources,
+  without,
   type BlockKind,
   type BuilderDocument,
   type BuilderNode,
 } from "./model";
+import {
+  findItem,
+  freshKey,
+  insertAt,
+  itemId,
+  nodesOf,
+  programNodes,
+  programOf,
+  replaceItem,
+  takeFrom,
+  type Item,
+} from "./program";
 import { useActionLibrary, useScenarioDraft, type LibraryAction } from "./useScenarioDraft";
 
-/* The scenario builder (Build mode of the scenario page): a palette of blocks and of the hub's
- * actions, the flow canvas, and the inspector of the selected block (or the scenario's settings).
- * Every edit is checked by the server a moment later (the YAML Save would write, whether it
- * loads, each problem on its block); Save writes the file only when it loads. */
+/* The scenario builder (Build mode of the scenario page). Its main view is the block canvas
+ * (Scratch-like stacks and C-blocks you drag and snap); Graph shows the same flow as connected
+ * nodes, and YAML the file Save writes. The program is a reading of the document: every snap
+ * rewrites the scenario's `nodes`, which the server checks a moment later. */
+
+type View = "blocks" | "graph" | "yaml";
+
+interface PaletteEntry {
+  key: string;
+  label: string;
+  hint: string;
+  icon: IconName;
+  tint: string;
+  make: (taken: BuilderDocument) => Item;
+}
+
+function blockItem(document: BuilderDocument, kind: BlockKind, action?: string): Item {
+  const node = newBlock(document, kind, action);
+  if (kind === "loop_group") return { kind: "repeat", node: without(node, "nodes"), body: [] };
+  return { kind: "block", node };
+}
+
+const CATEGORIES: readonly { title: string; entries: readonly PaletteEntry[] }[] = [
+  {
+    title: "Do",
+    entries: [
+      {
+        key: "action",
+        label: "run an action",
+        hint: "A script, once",
+        icon: "circle-play",
+        tint: kindLook("action").tint,
+        make: (d) => blockItem(d, "action"),
+      },
+      {
+        key: "include",
+        label: "run a scenario",
+        hint: "Reuse another one",
+        icon: "layers",
+        tint: kindLook("include").tint,
+        make: (d) => blockItem(d, "include"),
+      },
+    ],
+  },
+  {
+    title: "Check",
+    entries: [
+      {
+        key: "expect",
+        label: "wait until …",
+        hint: "Read until a state holds",
+        icon: "timer",
+        tint: kindLook("expect").tint,
+        make: (d) => blockItem(d, "expect"),
+      },
+      {
+        key: "wait",
+        label: "wait 30s",
+        hint: "A set time",
+        icon: "hourglass",
+        tint: kindLook("wait").tint,
+        make: (d) => blockItem(d, "wait"),
+      },
+    ],
+  },
+  {
+    title: "Control",
+    entries: [
+      {
+        key: "repeat",
+        label: "repeat until …",
+        hint: "Rounds until done",
+        icon: "refresh-cw",
+        tint: kindLook("loop_group").tint,
+        make: (d) => blockItem(d, "loop_group"),
+      },
+      {
+        key: "if",
+        label: "if … else",
+        hint: "Take one path",
+        icon: "split",
+        tint: "var(--ev-decision)",
+        make: () => ({ kind: "if", key: freshKey("if"), condition: "", then: [], otherwise: [] }),
+      },
+      {
+        key: "parallel",
+        label: "at the same time",
+        hint: "Paths side by side",
+        icon: "git-branch",
+        tint: "var(--ev-reasoning)",
+        make: () => ({ kind: "parallel", key: freshKey("together"), lanes: [[], []] }),
+      },
+    ],
+  },
+  {
+    title: "You",
+    entries: [
+      {
+        key: "approval",
+        label: "ask me to …",
+        hint: "A step by hand",
+        icon: "stamp",
+        tint: kindLook("approval").tint,
+        make: (d) => blockItem(d, "approval"),
+      },
+    ],
+  },
+];
+
+function startPaletteDrag(
+  event: ReactPointerEvent,
+  make: () => Item,
+  onDrag: (drag: DragState) => void,
+  onClick: () => void,
+) {
+  if (event.button !== 0) return;
+  const start = { x: event.clientX, y: event.clientY };
+  const move = (moved: PointerEvent) => {
+    if (Math.hypot(moved.clientX - start.x, moved.clientY - start.y) < 4) return;
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    onDrag({
+      items: [make()],
+      grab: { x: 24, y: 16 },
+      client: { x: moved.clientX, y: moved.clientY },
+      target: null,
+    });
+  };
+  const up = () => {
+    window.removeEventListener("pointermove", move);
+    onClick();
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up, { once: true });
+}
 
 function Palette({
   library,
-  onAddKind,
-  onAddAction,
+  pack,
+  taken,
+  onDrag,
+  onAdd,
 }: {
   library: readonly LibraryAction[];
-  onAddKind: (kind: BlockKind) => void;
-  onAddAction: (item: LibraryAction, asCheck: boolean) => void;
+  pack: string;
+  taken: BuilderDocument;
+  onDrag: (drag: DragState) => void;
+  onAdd: (item: Item) => void;
 }) {
   const [query, setQuery] = useState("");
   const shown = library.filter((item) =>
@@ -43,9 +199,50 @@ function Palette({
       .toLowerCase()
       .includes(query.toLowerCase()),
   );
-  const packs = [...new Set(shown.map((item) => item.action.pack ?? ""))];
+  const refOf = (item: LibraryAction) =>
+    item.action.pack === pack ? item.action.name : item.action.ref;
   return (
     <aside className="sb-palette" aria-label="Blocks">
+      <span className="ah-small ah-muted">
+        Drag a block onto the canvas, or click to add it at the end.
+      </span>
+      {CATEGORIES.map((category) => (
+        <div key={category.title} className="ah-stack" style={{ gap: 4 }}>
+          <span className="ah-overline">{category.title}</span>
+          {category.entries.map((entry) => (
+            <button
+              key={entry.key}
+              type="button"
+              className="bk-palette-block"
+              style={{ ["--kind" as string]: entry.tint }}
+              onPointerDown={(event) => {
+                startPaletteDrag(
+                  event,
+                  () => entry.make(taken),
+                  onDrag,
+                  () => {
+                    onAdd(entry.make(taken));
+                  },
+                );
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onAdd(entry.make(taken));
+                }
+              }}
+              aria-label={`Add block: ${entry.label}`}
+            >
+              <Icon name={entry.icon} size="sm" />
+              <span className="ah-stack" style={{ gap: 0 }}>
+                <b>{entry.label}</b>
+                <span className="bk-palette-hint">{entry.hint}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      ))}
+      <span className="ah-overline">Actions in this hub</span>
       <input
         className="ah-input"
         aria-label="Find an action"
@@ -55,85 +252,72 @@ function Palette({
           setQuery(event.target.value);
         }}
       />
-      <span className="ah-overline">Steps</span>
-      {ADD_CHOICES.filter((choice) => choice.kind !== "branch" && choice.kind !== "parallel").map(
-        (choice) => (
-          <button
-            key={choice.kind}
-            type="button"
-            className="sb-palette-kind"
-            style={{ ["--kind" as string]: kindLook(choice.kind).tint }}
-            onClick={() => {
-              onAddKind(choice.kind as BlockKind);
-            }}
-          >
-            <span className="sb-kind" aria-hidden>
-              <Icon name={choice.icon} size="sm" />
-            </span>
-            <span className="ah-stack" style={{ gap: 0 }}>
-              <b>{choice.label}</b>
-              <span className="ah-small ah-muted">{KIND_HINT[choice.kind]}</span>
-            </span>
-          </button>
-        ),
-      )}
-      <span className="ah-overline">Actions in this hub</span>
       {library.length === 0 && (
         <span className="ah-small ah-subtle">
-          No actions yet. An action is a script in actions/&lt;pack&gt;/ with a declared effect.
+          No actions yet: an action is a script in actions/&lt;pack&gt;/.
         </span>
       )}
-      {packs.map((pack) => (
-        <div key={pack} className="ah-stack" style={{ gap: 2 }}>
-          <span className="ah-small ah-muted">{pack}</span>
-          {shown
-            .filter((item) => item.action.pack === pack)
-            .map((item) => (
-              <div
-                key={item.action.ref}
-                className="sb-palette-action"
-                title={item.action.description ?? ""}
-              >
-                <button
-                  type="button"
-                  onClick={() => {
-                    onAddAction(item, false);
-                  }}
-                  aria-label={`Add ${item.action.name} as a script block`}
-                >
-                  <Icon name="circle-play" size="sm" />
-                  <span className="ah-mono">{item.action.name}</span>
-                </button>
-                <EffectBadge effect={item.action.effect} />
-                {item.action.effect === "read" && (
-                  <button
-                    type="button"
-                    className="sb-icon-btn"
-                    title="Add as a check (polls until a state holds)"
-                    aria-label={`Add ${item.action.name} as a check block`}
-                    onClick={() => {
-                      onAddAction(item, true);
-                    }}
-                  >
-                    <Icon name="timer" size="sm" />
-                  </button>
-                )}
-              </div>
-            ))}
-        </div>
-      ))}
+      {shown.map((item) => {
+        const asCheck = item.action.effect === "read";
+        return (
+          <button
+            key={item.action.ref}
+            type="button"
+            className="bk-palette-action"
+            style={{ ["--kind" as string]: kindLook("action").tint }}
+            title={`${item.action.description ?? ""}${asCheck ? "\nShift: add as a check" : ""}`}
+            aria-label={`Add action ${item.action.name}`}
+            onPointerDown={(event) => {
+              const check = asCheck && event.shiftKey;
+              const make = () => blockItem(taken, check ? "expect" : "action", refOf(item));
+              startPaletteDrag(event, make, onDrag, () => {
+                onAdd(make());
+              });
+            }}
+          >
+            <Icon name="circle-play" size="sm" />
+            <span className="ah-mono">{item.action.name}</span>
+            <span className="ah-grow" />
+            <EffectBadge effect={item.action.effect} />
+          </button>
+        );
+      })}
     </aside>
   );
 }
 
-const KIND_HINT: Readonly<Record<string, string>> = {
-  action: "Runs an action once.",
-  expect: "Reads until a state holds.",
-  approval: "You do it by hand, then go on.",
-  wait: "Waits for a set time.",
-  loop_group: "Rounds until done.",
-  include: "Reuses a scenario.",
-};
+interface Layout {
+  main: { x: number; y: number };
+  loose: Stack[];
+}
+
+function layoutKey(project: string, name: string): string {
+  return `ah.builder.layout.${project}/${name}`;
+}
+
+function readLayout(project: string, name: string): Layout {
+  try {
+    const value = JSON.parse(
+      readStored(layoutKey(project, name)) ?? "null",
+    ) as Partial<Layout> | null;
+    return {
+      main: value?.main ?? { x: 80, y: 40 },
+      loose: Array.isArray(value?.loose) ? value.loose.filter((stack) => !stack.kept) : [],
+    };
+  } catch {
+    return { main: { x: 80, y: 40 }, loose: [] };
+  }
+}
+
+/** Every value a condition may compare anywhere in the flow. */
+function everySource(document: BuilderDocument, outputs: (action: string) => readonly string[]) {
+  const ids = document.nodes.map((node) => node.id);
+  const probe = {
+    ...document,
+    nodes: [...document.nodes, { id: "__probe__", type: "action", depends_on: ids }],
+  };
+  return valueSources(probe, "__probe__", outputs);
+}
 
 export function ScenarioBuilder({
   scenario,
@@ -153,44 +337,296 @@ export function ScenarioBuilder({
   });
   const { setOpen } = useDiscuss();
   const [selected, setSelected] = useState<string | null>(null);
-  const [view, setView] = useState<"canvas" | "yaml">("canvas");
+  const [view, setView] = useState<View>("blocks");
+  const [drag, setDrag] = useState<DragState | null>(null);
   const document = draft.document;
-  const node = selected
-    ? (allNodes(document.nodes).find((item) => item.id === selected) ?? null)
-    : null;
+
+  // The program, read again whenever the document changes from elsewhere (undo, the graph).
+  const [synced, setSynced] = useState("");
+  const [program, setProgram] = useState<{ main: Item[]; kept: Stack[] }>({ main: [], kept: [] });
+  const [layout, setLayout] = useState<Layout>(() => readLayout(scenario.project, scenario.name));
+  const nodesText = JSON.stringify(document.nodes);
+  if (synced !== nodesText) {
+    const read = programOf(document.nodes);
+    setSynced(nodesText);
+    setProgram({
+      main: read.main,
+      kept:
+        read.loose.length > 0
+          ? [
+              {
+                id: "kept",
+                x: layout.main.x + 560,
+                y: layout.main.y,
+                items: read.loose.map((node) => ({ kind: "block", node })),
+                kept: true,
+              },
+            ]
+          : [],
+    });
+  }
+
+  const saveLayout = (next: Layout) => {
+    setLayout(next);
+    writeStored(layoutKey(scenario.project, scenario.name), JSON.stringify(next));
+  };
+
+  const commit = (main: Item[], kept: Stack[], loose: Stack[]) => {
+    const nodes = [...nodesOf(main), ...kept.flatMap((stack) => programNodes(stack.items))];
+    setProgram({ main, kept });
+    saveLayout({ ...layout, loose: loose.filter((stack) => stack.items.length > 0) });
+    const text = JSON.stringify(nodes);
+    setSynced(text);
+    if (text !== nodesText) draft.edit({ ...document, nodes });
+  };
+
+  const allItems = [
+    ...program.main,
+    ...program.kept.flatMap((s) => s.items),
+    ...layout.loose.flatMap((s) => s.items),
+  ];
+  const taken: BuilderDocument = { ...document, nodes: programNodes(allItems) };
+
+  const findAction = (ref: string) =>
+    items.find(
+      (entry) => entry.action.ref === ref || entry.action.ref === `${scenario.pack}/${ref}`,
+    ) ?? null;
+  const actionFacts = (node: BuilderNode): ScenarioAction | null =>
+    typeof node.action === "string" && node.action !== ""
+      ? (findAction(node.action)?.action ?? null)
+      : null;
+  const outputs = (action: string) =>
+    findAction(action)?.output_fields.map((field) => field.path) ?? [];
   const problems = draft.check?.problems ?? [];
   const errors = problems.filter((problem) => problem.severity === "error");
 
-  const actionFacts = (item: BuilderNode): ScenarioAction | null => {
-    const ref = typeof item.action === "string" ? item.action : "";
-    if (!ref) return null;
-    return (
-      items.find(
-        (entry) => entry.action.ref === ref || entry.action.ref === `${scenario.pack}/${ref}`,
-      )?.action ?? null
+  const onTake = (stack: string, id: string, alone: boolean): Item[] => {
+    if (stack === "main") {
+      const { rest, taken: moved } = takeFrom(program.main, id, alone);
+      setProgram({ ...program, main: rest });
+      return moved;
+    }
+    const inKept = program.kept.some((s) => s.id === stack);
+    const source = inKept ? program.kept : layout.loose;
+    let moved: Item[] = [];
+    const next = source.map((s) => {
+      if (s.id !== stack) return s;
+      const out = takeFrom(s.items, id, alone);
+      moved = out.taken;
+      return { ...s, items: out.rest };
+    });
+    if (inKept) setProgram({ ...program, kept: next });
+    else setLayout({ ...layout, loose: next });
+    return moved;
+  };
+
+  const onDrop = (moved: Item[], target: DropTarget) => {
+    const first = moved[0];
+    if (first) setSelected(itemId(first));
+    if ("free" in target) {
+      commit(program.main, program.kept, [
+        ...layout.loose,
+        { id: freshKey("stack"), x: target.free.x, y: target.free.y, items: moved },
+      ]);
+      return;
+    }
+    if (target.stack === "main") {
+      commit(insertAt(program.main, target.slot, target.index, moved), program.kept, layout.loose);
+      return;
+    }
+    const into = (list: Stack[]) =>
+      list.map((s) =>
+        s.id === target.stack
+          ? { ...s, items: insertAt(s.items, target.slot, target.index, moved) }
+          : s,
+      );
+    commit(program.main, into(program.kept), into(layout.loose));
+  };
+
+  const addAtEnd = (item: Item) => {
+    commit([...program.main, item], program.kept, layout.loose);
+    setSelected(itemId(item));
+  };
+
+  const editItem = (id: string, next: Item) => {
+    commit(
+      replaceItem(program.main, id, next),
+      program.kept.map((s) => ({ ...s, items: replaceItem(s.items, id, next) })),
+      layout.loose.map((s) => ({ ...s, items: replaceItem(s.items, id, next) })),
     );
   };
 
-  const add = (next: BuilderDocument, block: BuilderNode) => {
-    draft.edit(next);
-    setSelected(block.id);
+  const editNode = (node: BuilderNode) => {
+    const current = findItem(allItems, node.id);
+    if (current?.kind === "repeat") editItem(node.id, { ...current, node });
+    else editItem(node.id, { kind: "block", node });
   };
 
-  const onAdd = (choice: AddChoice, after: string | null, group: string | null) => {
+  const removeItem = (id: string) => {
+    const strip = (list: Item[]) => takeFrom(list, id, true).rest;
+    commit(
+      strip(program.main),
+      program.kept.map((s) => ({ ...s, items: strip(s.items) })),
+      layout.loose.map((s) => ({ ...s, items: strip(s.items) })),
+    );
+    setSelected(null);
+  };
+
+  const selectedItem = selected ? findItem(allItems, selected) : null;
+  const serialized: BuilderDocument = {
+    ...document,
+    nodes: [...nodesOf(program.main), ...program.kept.flatMap((s) => programNodes(s.items))],
+  };
+
+  const onGraphAdd = (choice: AddChoice, after: string | null, group: string | null) => {
     if (choice.kind === "branch") {
-      if (after === null) return;
-      const next = insertBranch(document, after, "$CTX.result", ["yes", "no"]);
-      draft.edit(next);
-      setSelected(null);
+      if (after !== null) draft.edit(insertBranch(document, after, "$CTX.result", ["yes", "no"]));
       return;
     }
     if (choice.kind === "parallel") return;
     const block = newBlock(document, choice.kind);
-    add(insertAfter(document, block, after, group), block);
+    draft.edit(insertAfter(document, block, after, group));
+    setSelected(block.id);
   };
 
-  const at = selected && node ? selected : null;
-  const placeAfter = at && node?.type !== "loop_group" ? at : null;
+  const inspector = (() => {
+    if (!selectedItem) return <ScenarioSettings document={document} onChange={draft.edit} />;
+    if (selectedItem.kind === "block" || selectedItem.kind === "repeat") {
+      const node =
+        selectedItem.kind === "repeat"
+          ? { ...selectedItem.node, nodes: nodesOf(selectedItem.body) }
+          : selectedItem.node;
+      return (
+        <BlockInspector
+          key={node.id}
+          document={serialized}
+          node={node}
+          library={items}
+          problems={problems.filter((problem) => problem.node === node.id)}
+          mode={mode}
+          onChange={(next) => {
+            if (next.id !== node.id) {
+              draft.edit(updateBlock(serialized, node.id, next));
+              setSelected(next.id);
+              return;
+            }
+            if (selectedItem.kind === "repeat") {
+              editItem(node.id, { ...selectedItem, node: without(next, "nodes") });
+            } else editItem(node.id, { kind: "block", node: next });
+          }}
+          onDelete={() => {
+            removeItem(node.id);
+          }}
+          onClose={() => {
+            setSelected(null);
+          }}
+        />
+      );
+    }
+    const isIf = selectedItem.kind === "if";
+    return (
+      <section
+        className="sb-inspector"
+        aria-label={isIf ? "Inspector: If" : "Inspector: At the same time"}
+      >
+        <header
+          className="sb-inspector-head"
+          style={{ ["--kind" as string]: isIf ? "var(--ev-decision)" : "var(--ev-reasoning)" }}
+        >
+          <span className="sb-kind" aria-hidden>
+            <Icon name={isIf ? "split" : "git-branch"} size="sm" />
+          </span>
+          <b>{isIf ? "If … else" : "At the same time"}</b>
+          <span className="ah-grow" />
+          <button
+            type="button"
+            className="sb-icon-btn"
+            aria-label="Delete this block and what it holds"
+            onClick={() => {
+              removeItem(selectedItem.key);
+            }}
+          >
+            <Icon name="trash" size="sm" />
+          </button>
+          <button
+            type="button"
+            className="sb-icon-btn"
+            aria-label="Close the inspector"
+            onClick={() => {
+              setSelected(null);
+            }}
+          >
+            <Icon name="x" size="sm" />
+          </button>
+        </header>
+        <div className="sb-inspector-body">
+          {isIf ? (
+            <>
+              <ConditionBuilder
+                label="If"
+                value={selectedItem.condition}
+                fields={everySource(serialized, outputs).map((source) => ({
+                  ref: source.ref,
+                  label: `${source.label} (${source.hint})`,
+                }))}
+                onChange={(condition) => {
+                  editItem(selectedItem.key, { ...selectedItem, condition });
+                }}
+              />
+              <span className="ah-small ah-subtle">
+                The first block of the path runs only when it holds; the else path runs when it does
+                not. The blocks after the If run after the path taken.
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="ah-small">
+                {selectedItem.lanes.length} paths start together; the next block waits for all.
+              </span>
+              <span className="ah-row" style={{ gap: 6 }}>
+                <Button
+                  size="sm"
+                  icon="plus"
+                  onClick={() => {
+                    editItem(selectedItem.key, {
+                      ...selectedItem,
+                      lanes: [...selectedItem.lanes, []],
+                    });
+                  }}
+                >
+                  Add a path
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={selectedItem.lanes.length <= 2}
+                  onClick={() => {
+                    editItem(selectedItem.key, {
+                      ...selectedItem,
+                      lanes: selectedItem.lanes.slice(0, -1),
+                    });
+                  }}
+                >
+                  Remove the last path
+                </Button>
+              </span>
+            </>
+          )}
+        </div>
+      </section>
+    );
+  })();
+
+  const inputs =
+    typeof document.inputs === "object" &&
+    document.inputs !== null &&
+    !Array.isArray(document.inputs)
+      ? Object.keys(document.inputs)
+      : [];
+  const unsaved = layout.loose.reduce(
+    (count, stack) => count + programNodes(stack.items).length,
+    0,
+  );
 
   return (
     <div className="sb-root">
@@ -199,10 +635,11 @@ export function ScenarioBuilder({
           label="View"
           value={view}
           onChange={(id) => {
-            setView(id === "yaml" ? "yaml" : "canvas");
+            setView(id === "graph" || id === "yaml" ? id : "blocks");
           }}
           options={[
-            { id: "canvas", label: "Canvas", icon: "workflow" },
+            { id: "blocks", label: "Blocks", icon: "puzzle" },
+            { id: "graph", label: "Graph", icon: "workflow" },
             { id: "yaml", label: "YAML", icon: "file-text" },
           ]}
         />
@@ -240,6 +677,12 @@ export function ScenarioBuilder({
             </span>
           )}
         </span>
+        {unsaved > 0 && (
+          <span className="ah-small" style={{ color: "var(--waiting)" }}>
+            <Icon name="triangle-alert" size="sm" /> {unsaved} loose{" "}
+            {unsaved === 1 ? "block" : "blocks"} not in the flow
+          </span>
+        )}
         <span className="ah-grow" />
         {draft.dirty && (
           <span className="ah-small ah-muted">
@@ -267,27 +710,42 @@ export function ScenarioBuilder({
       <div className="sb-body">
         <Palette
           library={items}
-          onAddKind={(kind) => {
-            const block = newBlock(document, kind);
-            add(insertAfter(document, block, placeAfter), block);
-          }}
-          onAddAction={(item, asCheck) => {
-            const ref = item.action.pack === scenario.pack ? item.action.name : item.action.ref;
-            const block = newBlock(document, asCheck ? "expect" : "action", ref);
-            add(insertAfter(document, block, placeAfter), block);
-          }}
+          pack={scenario.pack}
+          taken={taken}
+          onDrag={setDrag}
+          onAdd={addAtEnd}
         />
         <div className="sb-stage">
-          {view === "canvas" ? (
+          {view === "blocks" && (
+            <BlockCanvas
+              main={{ id: "main", x: layout.main.x, y: layout.main.y, items: program.main }}
+              loose={[...program.kept, ...layout.loose]}
+              selected={selected}
+              actionOf={actionFacts}
+              problemsOf={(id) => problems.filter((problem) => problem.node === id)}
+              inputs={inputs}
+              onSelect={setSelected}
+              onTake={onTake}
+              onDrop={onDrop}
+              onMoveStack={(_stack, x, y) => {
+                saveLayout({ ...layout, main: { x, y } });
+              }}
+              onEditNode={editNode}
+              drag={drag}
+              onDrag={setDrag}
+            />
+          )}
+          {view === "graph" && (
             <FlowCanvas
               nodes={document.nodes}
               actionOf={actionFacts}
               problemsOf={(id) => problems.filter((problem) => problem.node === id)}
               selected={selected}
               onSelect={setSelected}
-              onAdd={onAdd}
+              onAdd={onGraphAdd}
             />
-          ) : (
+          )}
+          {view === "yaml" && (
             <div className="sb-yaml">
               <div className="ah-row" style={{ gap: 8 }}>
                 <span className="ah-small ah-muted">
@@ -315,32 +773,7 @@ export function ScenarioBuilder({
             </div>
           )}
         </div>
-        {node ? (
-          <BlockInspector
-            key={node.id}
-            document={document}
-            node={node}
-            library={items}
-            problems={problems.filter((problem) => problem.node === node.id)}
-            mode={mode}
-            onChange={(next) => {
-              draft.edit(updateBlock(document, node.id, next));
-              if (next.id !== node.id) setSelected(next.id);
-            }}
-            onDelete={() => {
-              draft.edit(removeBlock(document, node.id));
-              setSelected(null);
-            }}
-            onMove={(by) => {
-              draft.edit(moveBlock(document, node.id, by));
-            }}
-            onClose={() => {
-              setSelected(null);
-            }}
-          />
-        ) : (
-          <ScenarioSettings document={document} onChange={draft.edit} />
-        )}
+        {inspector}
       </div>
     </div>
   );

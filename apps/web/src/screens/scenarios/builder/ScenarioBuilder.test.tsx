@@ -56,6 +56,15 @@ const library = {
   problems: [],
 };
 
+const SAVED = {
+  path: "scenarios/orders/order-lifecycle.yaml",
+  revision: 2,
+  content_hash: "sha256:bbb",
+  yaml: "version: 1\n",
+  changed: true,
+  versioned: true,
+};
+
 function renderBuilder(extra: ApiRoutes = {}) {
   return renderWithApi(<ScenarioDetailScreen />, {
     routes: {
@@ -71,42 +80,51 @@ function renderBuilder(extra: ApiRoutes = {}) {
   });
 }
 
+interface SentNode {
+  id: string;
+  depends_on?: string[];
+  capture_response?: boolean;
+}
+
+async function savedNodes(requests: Request[]): Promise<SentNode[]> {
+  const sent = requests.find((request) => request.method === "PUT");
+  const body = (await sent?.clone().json()) as {
+    base_content_hash: string;
+    document: { nodes: SentNode[] };
+  };
+  expect(body.base_content_hash).toBe("sha256:aaa");
+  return body.document.nodes;
+}
+
 describe("ScenarioBuilder (scenario builder)", () => {
-  it("scenario builder draws the blocks and their words, with a check that loads", async () => {
+  it("scenario builder reads the scenario as blocks that say what they do", async () => {
     renderBuilder();
 
-    const check = await screen.findByRole("button", { name: /^Check order-on-hold/ });
-    expect(check).toHaveTextContent("Waits until status is 'ON_HOLD'");
-    expect(screen.getByRole("button", { name: /^Script fetch-order/ })).toBeInTheDocument();
+    const check = await screen.findByRole("button", { name: "Check order-on-hold" });
+    expect(check).toHaveTextContent("wait until");
+    expect(check).toHaveTextContent("status is ON_HOLD");
+    expect(within(check).getByLabelText("Check every, order-on-hold")).toHaveValue("10s");
+    expect(screen.getByRole("button", { name: "Script fetch-order" })).toHaveTextContent("run");
+    expect(screen.getByText("when the scenario starts")).toBeInTheDocument();
     expect(await screen.findByText("Loads")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save scenario" })).toBeDisabled();
   });
 
-  it("scenario builder adds a manual step after a block, edits it and saves over the file read", async () => {
+  it("scenario builder adds a block from the palette, edits it and saves over the file read", async () => {
     const user = userEvent.setup();
-    const { requests } = renderBuilder({
-      [SAVE]: () => ({
-        path: "scenarios/orders/order-lifecycle.yaml",
-        revision: 2,
-        content_hash: "sha256:bbb",
-        yaml: "version: 1\n",
-        changed: true,
-        versioned: true,
-      }),
-    });
+    const { requests } = renderBuilder({ [SAVE]: () => SAVED });
 
-    await user.click(await screen.findByRole("button", { name: "Add a block after fetch-order" }));
-    await user.click(screen.getByRole("menuitem", { name: "Manual step" }));
+    await user.click(await screen.findByRole("button", { name: "Add block: ask me to …" }));
     const inspector = await screen.findByRole("region", {
       name: "Inspector: Manual step manual-step",
     });
     await user.clear(within(inspector).getByLabelText("What to do"));
     await user.type(within(inspector).getByLabelText("What to do"), "Create the order");
     await user.click(within(inspector).getByLabelText(/Ask me to type a value/));
-    expect(
-      screen.getByRole("button", { name: /^Manual step manual-step: Create the order/ }),
-    ).toHaveTextContent("you type a value");
-    expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+    const block = screen.getByRole("button", { name: "Manual step manual-step" });
+    expect(block).toHaveTextContent("ask me to");
+    expect(block).toHaveTextContent("Create the order");
+    expect(block).toHaveTextContent("and type a value");
 
     const save = screen.getByRole("button", { name: "Save scenario" });
     await waitFor(() => {
@@ -115,16 +133,41 @@ describe("ScenarioBuilder (scenario builder)", () => {
     await user.click(save);
 
     expect(await screen.findByText("Saved · revision 2")).toBeInTheDocument();
-    const sent = requests.find((request) => request.method === "PUT");
-    const body = (await sent?.clone().json()) as {
-      base_content_hash: string;
-      document: { nodes: { id: string; depends_on?: string[]; capture_response?: boolean }[] };
-    };
-    expect(body.base_content_hash).toBe("sha256:aaa");
-    const ids = body.document.nodes.map((node) => node.id);
-    expect(ids).toEqual(["fetch-order", "manual-step", "order-on-hold"]);
-    expect(body.document.nodes[1]?.capture_response).toBe(true);
-    expect(body.document.nodes[2]?.depends_on).toEqual(["manual-step"]);
+    const nodes = await savedNodes(requests);
+    expect(nodes.map((node) => node.id)).toEqual(["fetch-order", "order-on-hold", "manual-step"]);
+    expect(nodes[2]).toMatchObject({ depends_on: ["order-on-hold"], capture_response: true });
+  });
+
+  it("scenario builder edits a field inside a block", async () => {
+    const user = userEvent.setup();
+    const { requests } = renderBuilder({ [SAVE]: () => SAVED });
+
+    const field = await screen.findByLabelText("For up to, order-on-hold");
+    await user.clear(field);
+    await user.type(field, "10m");
+    expect(screen.getByRole("button", { name: "Check order-on-hold" })).toHaveTextContent(
+      "(60 checks)",
+    );
+    const save = screen.getByRole("button", { name: "Save scenario" });
+    await waitFor(() => {
+      expect(save).toBeEnabled();
+    });
+    await user.click(save);
+
+    await screen.findByText("Saved · revision 2");
+    const nodes = await savedNodes(requests);
+    expect(nodes[1]).toMatchObject({ id: "order-on-hold", timeout: "10m" });
+  });
+
+  it("scenario builder wraps blocks in an if when they are clicked in from the palette", async () => {
+    const user = userEvent.setup();
+    renderBuilder();
+
+    await user.click(await screen.findByRole("button", { name: "Add block: if … else" }));
+
+    expect(await screen.findByRole("region", { name: "Inspector: If" })).toBeInTheDocument();
+    expect(screen.getByText("blocks when it holds")).toBeInTheDocument();
+    expect(screen.getByText("blocks otherwise (or nothing)")).toBeInTheDocument();
   });
 
   it("scenario builder pins the server's problems on their block and keeps Save off", async () => {
@@ -146,24 +189,37 @@ describe("ScenarioBuilder (scenario builder)", () => {
     });
 
     expect(await screen.findByText("1 problem")).toBeInTheDocument();
-    const block = screen.getByRole("button", { name: /^Script fetch-order/ });
+    const block = screen.getByRole("button", { name: "Script fetch-order" });
     expect(block).toHaveAttribute("data-invalid", "true");
-    await userEvent.setup().click(block);
+    block.focus();
+    await userEvent.setup().keyboard("{Enter}");
     expect(await screen.findByText("unknown action 'x'", { selector: "li" })).toBeInTheDocument();
   });
 
-  it("scenario builder offers the hub's actions in the palette and adds one as a check", async () => {
+  it("scenario builder offers the hub's actions in the palette, a read one as a check with Shift", async () => {
     const user = userEvent.setup();
     renderBuilder();
 
-    await user.click(
-      await screen.findByRole("button", { name: "Add get-order-by-ref as a check block" }),
-    );
+    await user.keyboard("{Shift>}");
+    await user.click(await screen.findByRole("button", { name: "Add action get-order-by-ref" }));
+    await user.keyboard("{/Shift}");
 
     expect(
       await screen.findByRole("region", { name: "Inspector: Check get-order-by-ref" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Check get-order-by-ref/ })).toBeInTheDocument();
+  });
+
+  it("scenario builder still adds blocks in the graph view", async () => {
+    const user = userEvent.setup();
+    renderBuilder();
+
+    await user.click(await screen.findByRole("button", { name: "Graph" }));
+    await user.click(await screen.findByRole("button", { name: "Add a block after fetch-order" }));
+    await user.click(screen.getByRole("menuitem", { name: "Pause" }));
+
+    expect(
+      await screen.findByRole("region", { name: "Inspector: Pause pause" }),
+    ).toBeInTheDocument();
   });
 
   it("scenario builder shows the generated YAML", async () => {
