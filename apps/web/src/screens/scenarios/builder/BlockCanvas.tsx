@@ -10,7 +10,6 @@ import {
 import { CanvasControls, Icon, useViewportSize, type IconName } from "../../../components";
 import { fitView } from "../../../lib/canvasView";
 import { usePanZoom } from "../../../lib/usePanZoom";
-import { EffectBadge } from "../parts";
 import type { ScenarioAction } from "../queries";
 import { maxChecks } from "../story";
 import { kindLook } from "./FlowCanvas";
@@ -61,11 +60,21 @@ export interface BlockCanvasProps {
   drag: DragState | null;
   onDrag: (next: DragState | null) => void;
   statusOf?: (id: string) => ReactNode;
+  /** The step number of each block (1, 2, 3.1 …), shown in the gutter. */
+  numbers: ReadonlyMap<string, string>;
+  /** A "+" was pressed: insert at this place; `anchor` is the button, for the menu. */
+  onInsert: (target: { stack: string; slot: Slot; index: number }, anchor: DOMRect) => void;
+}
+
+export interface InsertTarget {
+  stack: string;
+  slot: Slot;
+  index: number;
 }
 
 const DRAG_PX = 4;
 /** Fit never zooms past this: blocks stay at a readable size, not a poster. */
-const FIT_MAX = 1.35;
+const FIT_MAX = 1.2;
 /** How near a gap the dragged blocks snap into it, in screen pixels. */
 const SNAP_PX = 48;
 
@@ -158,20 +167,25 @@ function BlockWords({
   );
   const chips = (
     <>
-      {values(node)
-        .slice(0, 3)
-        .map(([key, value]) => {
-          const words = refInWords(shown(value));
-          return (
-            <span key={key} className="bk-chip" title={`${key} = ${shown(value)}`}>
-              {key} {words.ref && <Icon name="bookmark" size="sm" />}
+      {values(node).map(([key, value]) => {
+        const words = refInWords(shown(value));
+        return (
+          <span key={key} className="bk-pair" title={`${key} = ${shown(value)}`}>
+            <span className="bk-label">{key.replace(/_/g, " ")}</span>
+            <Pill>
+              {words.ref && <Icon name="bookmark" size="sm" />}
               {words.text}
-            </span>
-          );
-        })}
+            </Pill>
+          </span>
+        );
+      })}
       {kept.map((name) => (
-        <span key={name} className="bk-chip bk-chip-kept">
-          keep {name}
+        <span key={name} className="bk-pair">
+          <span className="bk-label">keep as</span>
+          <span className="bk-pill bk-pill-kept">
+            <Icon name="bookmark" size="sm" />
+            {name}
+          </span>
         </span>
       ))}
     </>
@@ -193,9 +207,11 @@ function BlockWords({
         <>
           <span>wait until</span>
           <Condition value={text(node.until_when)} placeholder="a state holds" />
-          <span>reading</span>
+          <span className="bk-sep">·</span>
+          <span className="bk-label">reading</span>
           {actionPill}
-          <span>every</span>
+          <span className="bk-sep">·</span>
+          <span className="bk-label">every</span>
           <Field
             value={every}
             label={`Check every, ${node.id}`}
@@ -204,7 +220,7 @@ function BlockWords({
               set("every", value);
             }}
           />
-          <span>for up to</span>
+          <span className="bk-label">up to</span>
           <Field
             value={timeout}
             label={`For up to, ${node.id}`}
@@ -222,10 +238,10 @@ function BlockWords({
       return (
         <>
           <span>ask me to</span>
-          <Pill title={text(node.message)}>
+          <span className="bk-pill bk-pill-text" title={text(node.message)}>
             {firstLine(text(node.message)) ?? "do something by hand"}
-          </Pill>
-          {node.capture_response === true && <span className="bk-quiet">and type a value</span>}
+          </span>
+          {node.capture_response === true && <span className="bk-label">and keep what I type</span>}
         </>
       );
     case "wait":
@@ -245,7 +261,7 @@ function BlockWords({
     case "include":
       return (
         <>
-          <span>run scenario</span>
+          <span>run the scenario</span>
           <Pill empty={text(node.include) === ""}>{text(node.include) || "choose one"}</Pill>
         </>
       );
@@ -271,16 +287,48 @@ function isTarget(target: DropTarget | null, stack: string, slot: Slot, index: n
   );
 }
 
-function Gap({ ctx, slot, index, empty }: { ctx: Ctx; slot: Slot; index: number; empty?: string }) {
+function Gap({
+  ctx,
+  slot,
+  index,
+  empty,
+  where,
+}: {
+  ctx: Ctx;
+  slot: Slot;
+  index: number;
+  empty?: string;
+  where: string;
+}) {
   const active = isTarget(ctx.target, ctx.stack, slot, index);
+  const plus = !ctx.dragging && ctx.stack !== "ghost" && (
+    <button
+      type="button"
+      className="bk-plus"
+      aria-label={`Add a block ${where}`}
+      title={`Add a block ${where}`}
+      data-no-pan=""
+      onPointerDown={(event) => {
+        event.stopPropagation();
+      }}
+      onClick={(event) => {
+        ctx.props.onInsert(
+          { stack: ctx.stack, slot, index },
+          event.currentTarget.getBoundingClientRect(),
+        );
+      }}
+    >
+      <Icon name="plus" size="sm" />
+      {empty && <span>{empty}</span>}
+    </button>
+  );
   return (
     <div
       className={empty ? "bk-mouth-empty" : "bk-gap"}
       data-drop={JSON.stringify({ stack: ctx.stack, slot, index })}
       data-active={active || undefined}
-      aria-hidden
     >
-      {empty && <span>{ctx.dragging ? "drop here" : empty}</span>}
+      {empty && ctx.dragging ? <span>drop here</span> : plus}
     </div>
   );
 }
@@ -296,40 +344,86 @@ function List({
   slot: Slot;
   empty: string;
 }) {
-  if (items.length === 0) return <Gap ctx={ctx} slot={slot} index={0} empty={empty} />;
+  if (items.length === 0) {
+    return <Gap ctx={ctx} slot={slot} index={0} empty={empty} where={empty} />;
+  }
   return (
     <div className="bk-list">
-      <Gap ctx={ctx} slot={slot} index={0} />
+      <Gap
+        ctx={ctx}
+        slot={slot}
+        index={0}
+        where={`before ${items[0] ? itemId(items[0]) : "the first block"}`}
+      />
       {items.map((item, index) => (
         <div key={itemId(item)} className="bk-entry">
           <ItemView ctx={ctx} item={item} />
-          <Gap ctx={ctx} slot={slot} index={index + 1} />
+          <Gap ctx={ctx} slot={slot} index={index + 1} where={`after ${itemId(item)}`} />
         </div>
       ))}
     </div>
   );
 }
 
+const EFFECT_MARK: Readonly<Record<string, { icon: IconName; words: string }>> = {
+  read: { icon: "file-text", words: "Reads only" },
+  write: { icon: "file-pen", words: "Changes data" },
+  destroy: { icon: "triangle-alert", words: "Deletes or replaces data" },
+};
+
+/** The block's marks at its right edge: effect, draft, problems, warnings, then a run's status. */
 function Badges({ ctx, node }: { ctx: Ctx; node: BuilderNode }) {
   const action = ctx.props.actionOf(node);
-  const errors = ctx.props.problemsOf(node.id).filter((problem) => problem.severity === "error");
+  const problems = ctx.props.problemsOf(node.id);
+  const errors = problems.filter((problem) => problem.severity === "error");
+  const warnings = problems.filter(
+    (problem) => problem.severity !== "error" && !/draft/i.test(problem.message),
+  );
+  const effect = action?.effect ? EFFECT_MARK[action.effect] : undefined;
   return (
-    <span className="bk-badges">
-      <span className="bk-id">{node.id}</span>
-      {action?.effect && <EffectBadge effect={action.effect} />}
+    <span className="bk-marks">
+      {effect && (
+        <span className="bk-mark" title={effect.words} aria-label={effect.words}>
+          <Icon name={effect.icon} size="sm" />
+        </span>
+      )}
       {action?.draft && (
-        <span className="ah-badge ah-badge-quiet" title="Draft: needs acceptance">
-          <Icon name="pencil" />
+        <span
+          className="bk-mark"
+          title="Draft action: commit it in the hub before the scenario can run"
+          aria-label="Draft action"
+        >
+          <Icon name="circle-dashed" size="sm" />
+        </span>
+      )}
+      {warnings.length > 0 && (
+        <span
+          className="bk-mark bk-mark-warn"
+          title={warnings.map((problem) => problem.message).join("\n")}
+        >
+          <Icon name="triangle-alert" size="sm" />
         </span>
       )}
       {errors.length > 0 && (
-        <span className="bk-errors" title={errors.map((problem) => problem.message).join("\n")}>
+        <span
+          className="bk-mark bk-errors"
+          title={errors.map((problem) => problem.message).join("\n")}
+        >
           <Icon name="circle-x" size="sm" /> {errors.length}
         </span>
       )}
       {ctx.props.statusOf?.(node.id)}
     </span>
   );
+}
+
+function Num({ ctx, id }: { ctx: Ctx; id: string }) {
+  const n = ctx.props.numbers.get(id);
+  return n ? (
+    <span className="bk-num" aria-hidden>
+      {n}
+    </span>
+  ) : null;
 }
 
 function blockProps(ctx: Ctx, id: string, kind: string, label: string) {
@@ -374,11 +468,17 @@ function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
         className="bk-block"
         {...blockProps(ctx, node.id, node.type, `${look.label} ${node.id}`)}
       >
+        <Num ctx={ctx} id={node.id} />
         <span className="bk-icon" aria-hidden>
           <Icon name={look.icon} size="sm" />
         </span>
-        <span className="bk-words">
-          <BlockWords node={node} onEditNode={ctx.props.onEditNode} />
+        <span className="bk-body">
+          {typeof node.description === "string" && node.description !== "" && (
+            <span className="bk-caption">{node.description}</span>
+          )}
+          <span className="bk-words">
+            <BlockWords node={node} onEditNode={ctx.props.onEditNode} />
+          </span>
         </span>
         <Badges ctx={ctx} node={node} />
       </div>
@@ -389,6 +489,7 @@ function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
     return (
       <div className="bk-c" {...blockProps(ctx, node.id, "loop_group", `Repeat ${node.id}`)}>
         <ControlHead icon="refresh-cw">
+          <Num ctx={ctx} id={node.id} />
           <span>repeat until</span>
           <Condition value={text(node.until_when)} placeholder="a state holds" />
           <span>· at most</span>
@@ -411,10 +512,10 @@ function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
             ctx={ctx}
             items={item.body}
             slot={{ in: "body", owner: node.id }}
-            empty="blocks each round runs"
+            empty="put the blocks that repeat here"
           />
         </div>
-        <div className="bk-c-foot" />
+        <div className="bk-c-foot">then go on</div>
       </div>
     );
   }
@@ -422,6 +523,7 @@ function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
     return (
       <div className="bk-c" {...blockProps(ctx, item.key, "branch", "If")}>
         <ControlHead icon="split">
+          <Num ctx={ctx} id={item.key} />
           <span>if</span>
           <Condition value={item.condition} placeholder="a condition" />
         </ControlHead>
@@ -430,7 +532,7 @@ function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
             ctx={ctx}
             items={item.then}
             slot={{ in: "then", owner: item.key }}
-            empty="blocks when it holds"
+            empty="what happens when it holds"
           />
         </div>
         <div className="bk-c-mid">else</div>
@@ -439,16 +541,17 @@ function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
             ctx={ctx}
             items={item.otherwise}
             slot={{ in: "otherwise", owner: item.key }}
-            empty="blocks otherwise (or nothing)"
+            empty="otherwise (or nothing: skip to the next block)"
           />
         </div>
-        <div className="bk-c-foot" />
+        <div className="bk-c-foot">then go on after the path taken</div>
       </div>
     );
   }
   return (
     <div className="bk-c" {...blockProps(ctx, item.key, "parallel", "At the same time")}>
       <ControlHead icon="git-branch">
+        <Num ctx={ctx} id={item.key} />
         <span>at the same time</span>
       </ControlHead>
       <div className="bk-lanes">
@@ -463,8 +566,7 @@ function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
           </div>
         ))}
       </div>
-      <div className="bk-c-mid">then continue when every path finished</div>
-      <div className="bk-c-foot" />
+      <div className="bk-c-foot">then go on when every path finished</div>
     </div>
   );
 }

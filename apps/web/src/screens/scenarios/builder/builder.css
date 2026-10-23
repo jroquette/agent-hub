@@ -32,7 +32,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
-  height: calc(100vh - 230px);
+  height: calc(100vh - 150px);
   min-height: 520px;
   overflow: hidden;
 }
@@ -537,4 +537,75 @@
   padding-top: 6px;
   padding-bottom: 6px;
   resize: vertical;
+}
+
+/* v2: one toolbar row, the builder to the bottom of the page. */
+.sb-page {
+  padding: var(--space-3) var(--space-6) var(--space-4);
+  gap: var(--space-2);
+}
+.sb-title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-right: var(--space-2);
+  font-size: 18px;
+}
+.sb-menu-anchor {
+  position: relative;
+  display: inline-flex;
+}
+button.sb-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+button.sb-check:hover {
+  background: var(--surface-hover);
+}
+.sb-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  min-width: 360px;
+  max-width: 520px;
+  max-height: 420px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+}
+.sb-pop-right {
+  left: auto;
+  right: 0;
+  min-width: 220px;
+}
+.sb-problem-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text);
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+}
+.sb-problem-row:hover {
+  background: var(--surface-hover);
+}
+.sb-problem-row[data-severity="error"] svg {
+  color: var(--failed);
 }
