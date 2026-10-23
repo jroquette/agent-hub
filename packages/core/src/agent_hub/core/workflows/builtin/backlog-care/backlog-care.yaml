@@ -2,8 +2,9 @@
 # stale issues, likely duplicates, dependency cycles), draft the oldest issues not yet ready
 # (/triage steps 2 and 3, at most 10 a run), then one approval per issue: never several issues in
 # one gate. The tracker is read by /triage --backlog before the run and handed over as
-# issues_file (a JSON file; read.py bounds it); no node reads or writes the tracker, and no child
-# gets a tracker key. Approved decisions are applied by /triage after the run, from the report's
+# issues_file (a JSON file; read.py bounds it, with the ready label and repos from hub step
+# config: no script opens hub.json); no node reads or writes the tracker, and no child gets a
+# tracker key. Approved decisions are applied by /triage after the run, from the report's
 # apply list, one issue at a time (ADR 0030); a skipped issue is left as it was.
 # Suggested: every Monday after brain-care's inbox, as /triage --backlog (a schedule cannot
 # supply issues_file, so a scheduled start is refused). Drafts per run: the pick node's --drafts.
@@ -23,12 +24,29 @@ inputs:
 returns: report
 outcome_field: outcome
 nodes:
+  - id: config
+    type: shell
+    description: The hub.json values this run's scripts need, read by the CLI (read-only).
+    command: [hub, step, config]
+    effect: read
+    mutates_checkout: false
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        default_branch: {type: string}
+        branch_prefix: {type: [string, "null"]}
+        hub: {type: object}
+        repos: {type: array, items: {type: object}}
+      required: [default_branch, branch_prefix, hub, repos]
+
   - id: read
     type: script
     description: Load the issues file, bounded and cleaned; the oldest issues up to the limit.
+    depends_on: [config]
     runtime: python
     script: read.py
-    args: [--file, $INPUTS.issues_file, --limit, $INPUTS.limit]
+    args: [--file, $INPUTS.issues_file, --limit, $INPUTS.limit, --config, $config.output]
     retry: {max_attempts: 0}
     output_format:
       type: object

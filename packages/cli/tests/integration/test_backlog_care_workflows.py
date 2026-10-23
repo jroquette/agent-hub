@@ -76,7 +76,7 @@ def test_validates_backlog_care_when_pack_loaded(
     validated = run_command(demo_workspace.hub, "workflow", "validate", "backlog-care")
 
     assert validated.exit_code == 0, validated.output
-    assert validated.stdout == "backlog-care: valid (7 nodes in 7 layers)\n"
+    assert validated.stdout == "backlog-care: valid (8 nodes in 8 layers)\n"
 
 
 def test_writes_no_tracker_when_backlog_care_loaded() -> None:
@@ -86,8 +86,10 @@ def test_writes_no_tracker_when_backlog_care_loaded() -> None:
         (PACK / "prompts" / node.prompt_file) for node in nodes.values() if node.type == "agent"
     ]
 
-    assert "shell" not in kinds.values()
-    assert set(kinds.values()) == {"script", "agent", "loop_group", "approval"}
+    # The one shell node is hub step config: it reads hub.json for read.py (AGH-480), no tracker.
+    shells = [node.command for node in nodes.values() if node.type == "shell"]
+    assert shells == [("hub", "step", "config")]
+    assert set(kinds.values()) == {"shell", "script", "agent", "loop_group", "approval"}
     for node_id, node in nodes.items():
         if node.type == "script":
             assert (PACK / "scripts" / node.script).is_file(), node_id
@@ -153,7 +155,6 @@ def test_finds_four_findings_when_mixed_file_read_then_checked(tmp_path: Path) -
     stubs = fixture("backlog-mixed")["stubs"]
     hub = tmp_path / "hub"
     hub.mkdir()
-    (hub / "hub.json").write_text(json.dumps({"repos": [{"dir": "api"}]}), encoding="utf-8")
     (tmp_path / "api").mkdir()
     subprocess.run(["git", "init", "-q", str(tmp_path / "api")], check=True)  # noqa: S603, S607 - git from PATH, a temp repo
     issues_file = tmp_path / "backlog-care.json"
@@ -162,7 +163,13 @@ def test_finds_four_findings_when_mixed_file_read_then_checked(tmp_path: Path) -
     document |= {"open_total": len(issues), "issues": issues}
     issues_file.write_text(json.dumps(document), encoding="utf-8")
 
-    read = script("read.py", "--file", str(issues_file), "--limit", "50", cwd=hub)
+    # The config node's output, as hub step config prints it for this hub.
+    config = json.dumps(
+        {"ready_label": stubs["read"]["output"]["ready_label"], "repos": [{"dir": "api"}]}
+    )
+    read = script(
+        "read.py", "--file", str(issues_file), "--limit", "50", "--config", config, cwd=hub
+    )
     found = script("hygiene.py", "--today", "1999-10-26", cwd=hub, stdin=json.dumps(read))
 
     expected = stubs["hygiene"]["output"]
