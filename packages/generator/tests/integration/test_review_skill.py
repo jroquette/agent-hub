@@ -242,3 +242,11 @@ def test_keeps_a_prose_fallback_when_workflow_unavailable() -> None:
     assert "do steps 3-5 by hand" in fallback
     for reviewer in ("`spec-reviewer`", "`quality-reviewer`", "`security-reviewer`"):
         assert reviewer in fallback, reviewer
+
+
+def test_stops_when_the_pr_json_cannot_be_written_by_redirect_when_rendered() -> None:
+    read = _flat(_step(1))
+
+    assert "write its exact output with the Write tool" not in _flat(_body())
+    assert "If the sandbox refuses the redirect, stop and say why" in read
+    assert "never passes through text you type" in read
