@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sys
+import threading
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -50,7 +51,7 @@ from agent_hub.core.learnings.learning_ports import LearningHub
 from agent_hub.core.learnings.read_learnings import HUB_NOT_REGISTERED, UnavailableHub
 from agent_hub.core.projects.project_views import ProjectActivity
 from agent_hub.core.readmodels.filters import Scope
-from agent_hub.core.schedules.scheduled_starts import StartScheduledRuns
+from agent_hub.core.schedules.scheduled_starts import StartReport, StartScheduledRuns
 from agent_hub.core.sessions.session_label import LabelRules
 from agent_hub.core.skills.skill_view import SkillUsage
 from agent_hub.core.testing.brain_fakes import FakeBrainOrigin, InMemoryBrainChangeRequests
@@ -639,16 +640,34 @@ def test_wires_skill_usage_when_app_built() -> None:
     assert models.settings().db_path == "/data/agent-hub.db"
 
 
+class CountingStarts:
+    """Wraps the built ``StartScheduledRuns``, counting the ticks the lifecycle runs."""
+
+    def __init__(self, starts: StartScheduledRuns) -> None:
+        self.starts = starts
+        self.ticked = threading.Event()
+        self.ticks = 0
+
+    def start_due_slots(self, now: datetime) -> StartReport:
+        self.ticks += 1
+        report = self.starts.start_due_slots(now)
+        self.ticked.set()
+        return report
+
+    def poll_events(self) -> StartReport:
+        return self.starts.poll_events()
+
+
 def test_wires_scheduler_when_sessions_on_and_none_when_off(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    built: list[Any] = []
+    built: list[CountingStarts] = []
     real = composition.ScheduledStartsRuntime
 
-    def record(starts: Any, **options: Any) -> Any:
-        runtime = real(starts, **options)
-        built.append((starts, runtime))
-        return runtime
+    def record(starts: StartScheduledRuns, **options: Any) -> Any:
+        counting = CountingStarts(starts)
+        built.append(counting)
+        return real(counting, **options)
 
     monkeypatch.setattr(composition, "ScheduledStartsRuntime", record)
     events = ScriptedEventSource()
@@ -663,9 +682,9 @@ def test_wires_scheduler_when_sessions_on_and_none_when_off(
         event_source=events,
     )
     with TestClient(app):
-        pass
+        [counting] = built
+        # The app's lifecycle runs the scheduler: one tick at start.
+        assert counting.ticked.wait(timeout=10)
 
-    [(starts, _)] = built
-    assert isinstance(starts, StartScheduledRuns)
-    # No hub is registered: the tick at start read nothing and polled nothing.
-    assert events.queries == []
+    assert isinstance(counting.starts, StartScheduledRuns)
+    assert counting.ticks == 1
