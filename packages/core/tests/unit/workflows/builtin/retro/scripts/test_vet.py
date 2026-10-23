@@ -174,3 +174,35 @@ def test_prints_vetted_changes_when_stdin_holds_agent_output(
 
     assert code == 0
     assert json.loads(capsys.readouterr().out)["count"] == 1
+
+
+def a_long_change(n: int) -> dict[str, Any]:
+    """A change at its output format's maximums: 8 refs, 5 links and every text at its cap."""
+    keys = [f"workflow.w{n}.k{m}.".ljust(120, "x") for m in range(8)]
+    return {
+        "title": f"Change {n} ".ljust(120, "t"),
+        "kind": "workflow",
+        "change": "c" * 1500,
+        "metrics": [{"key": key, "value": m} for m, key in enumerate(keys)],
+        "links": [f"https://example.com/{n}/{m}/".ljust(306, "l") for m in range(5)],
+        "expected_effect": "e" * 600,
+        "how_to_tell": "h" * 400,
+    }
+
+
+def test_shows_every_change_and_the_dropped_ones_when_changes_are_at_their_caps() -> None:
+    changes = [a_long_change(n) for n in range(1, 7)]
+    step_one = {ref["key"]: ref["value"] for change in changes for ref in change["metrics"]}
+
+    found = load().vet(changes, step_one)
+
+    message = found["message"]
+    assert found["count"] == 5
+    assert len(message) <= 16000
+    for change in changes[:5]:
+        assert f"{changes.index(change) + 1}. {change['title']} (workflow)" in message
+        for ref in change["metrics"]:
+            assert f"   - {ref['key']} = {ref['value']}" in message
+    assert "(cut)" in message
+    assert message.endswith(f"Dropped (1):\n- {changes[5]['title']}: over the five-change cap")
+    assert found["kept"][0]["change"] == "c" * 1500
