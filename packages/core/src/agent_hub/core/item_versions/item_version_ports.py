@@ -170,3 +170,8 @@ class ItemVersionWrites(Protocol):
         """Land the draft on ``target`` (None: a new item), record a ``publish`` version naming
         the draft, then remove the draft."""
         ...
+
+    def write_file(self, hub_path: str, unit: ItemUnit, content: bytes) -> ItemWriteResult:
+        """Make the file unit ``unit`` hold ``content`` (the scenario builder's save), through
+        the shared write step, and record a ``publish`` version of it."""
+        ...

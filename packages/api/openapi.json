@@ -414,7 +414,7 @@
         "description": "An action input as its document declares it.",
         "properties": {
           "default": {
-            "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue"
+            "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue-Output"
           },
           "description": {
             "anyOf": [
@@ -446,6 +446,31 @@
           "required"
         ],
         "title": "ActionInputSpec",
+        "type": "object"
+      },
+      "ActionLibrary": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LibraryAction"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "problems": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Problems",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "problems"
+        ],
+        "title": "ActionLibrary",
         "type": "object"
       },
       "ActivityItem": {
@@ -1467,6 +1492,62 @@
         "title": "BrainTree",
         "type": "object"
       },
+      "BuilderProblem": {
+        "additionalProperties": false,
+        "description": "A reason the document does not load (``error``) or will not plan (``warning``), on the\nnode it names (``node`` None for the document).",
+        "properties": {
+          "key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key"
+          },
+          "line": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Line"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "node": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node"
+          },
+          "severity": {
+            "default": "error",
+            "title": "Severity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node",
+          "key",
+          "line",
+          "message"
+        ],
+        "title": "BuilderProblem",
+        "type": "object"
+      },
       "BundledFile": {
         "additionalProperties": false,
         "description": "A file of a skill folder other than ``SKILL.md`` (S7): ``path`` is relative to the skill\nfolder, ``id`` server-issued; ``link`` when it is a link (never read), ``too_large`` when over\nthe per-file cap.",
@@ -1577,7 +1658,7 @@
             "type": "string"
           },
           "value": {
-            "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue"
+            "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue-Output"
           }
         },
         "required": [
@@ -4598,7 +4679,7 @@
           },
           "hook": {
             "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue-Input"
+              "$ref": "#/components/schemas/pydantic__types__JsonValue"
             },
             "title": "Hook",
             "type": "object"
@@ -5526,7 +5607,6 @@
         "title": "ItemWriteResult",
         "type": "object"
       },
-      "JsonValue-Input": {},
       "KeySource": {
         "enum": [
           "environment",
@@ -6339,6 +6419,36 @@
         "title": "LearningTarget",
         "type": "object"
       },
+      "LibraryAction": {
+        "additionalProperties": false,
+        "description": "An action of the hub as the palette lists it.",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/ScenarioActionView"
+          },
+          "output_fields": {
+            "items": {
+              "$ref": "#/components/schemas/OutputField"
+            },
+            "title": "Output Fields",
+            "type": "array"
+          },
+          "used_by": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Used By",
+            "type": "array"
+          }
+        },
+        "required": [
+          "action",
+          "output_fields",
+          "used_by"
+        ],
+        "title": "LibraryAction",
+        "type": "object"
+      },
       "LinearAccountView": {
         "description": "The key's user and workspace.",
         "properties": {
@@ -7118,6 +7228,30 @@
         ],
         "type": "string"
       },
+      "NodeLines": {
+        "additionalProperties": false,
+        "properties": {
+          "first_line": {
+            "title": "First Line",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_line": {
+            "title": "Last Line",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "first_line",
+          "last_line"
+        ],
+        "title": "NodeLines",
+        "type": "object"
+      },
       "NotRead": {
         "additionalProperties": false,
         "description": "A file Claude could not read, and why.",
@@ -7324,7 +7458,7 @@
           "plan": {
             "items": {
               "additionalProperties": {
-                "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue"
+                "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue-Output"
               },
               "type": "object"
             },
@@ -7345,7 +7479,7 @@
           "steps": {
             "items": {
               "additionalProperties": {
-                "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue"
+                "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue-Output"
               },
               "type": "object"
             },
@@ -7394,6 +7528,32 @@
         ],
         "title": "Outcome",
         "type": "string"
+      },
+      "OutputField": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Type"
+          }
+        },
+        "required": [
+          "path",
+          "type"
+        ],
+        "title": "OutputField",
+        "type": "object"
       },
       "OwnerSignOffBody": {
         "additionalProperties": false,
@@ -10674,6 +10834,80 @@
         "title": "RunStep",
         "type": "object"
       },
+      "SaveRequest": {
+        "additionalProperties": false,
+        "description": "A save: the pack, the document and the content hash of the file the builder last read\n(None for a new scenario).",
+        "properties": {
+          "base_content_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Content Hash"
+          },
+          "document": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue-Input"
+            },
+            "title": "Document",
+            "type": "object"
+          },
+          "pack": {
+            "pattern": "^[a-z][a-z0-9-]{0,63}$",
+            "title": "Pack",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pack",
+          "document"
+        ],
+        "title": "SaveRequest",
+        "type": "object"
+      },
+      "SaveResult": {
+        "additionalProperties": false,
+        "properties": {
+          "changed": {
+            "title": "Changed",
+            "type": "boolean"
+          },
+          "content_hash": {
+            "title": "Content Hash",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "versioned": {
+            "title": "Versioned",
+            "type": "boolean"
+          },
+          "yaml": {
+            "title": "Yaml",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "revision",
+          "content_hash",
+          "yaml",
+          "changed",
+          "versioned"
+        ],
+        "title": "SaveResult",
+        "type": "object"
+      },
       "ScenarioActionView": {
         "additionalProperties": false,
         "description": "An action the scenario's steps call (``ref`` as a step writes it), as the hub's files\nhold it now: its facts, whether it is committed (``draft`` else, with the line that\naccepts it), and the text of its document and script (each cut at ``ACTION_TEXT_BYTES``);\n``problem`` says why it does not resolve, the other facts then empty.",
@@ -10741,7 +10975,7 @@
           },
           "output_format": {
             "additionalProperties": {
-              "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue"
+              "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue-Output"
             },
             "title": "Output Format",
             "type": "object"
@@ -10878,6 +11112,17 @@
             "title": "Actions",
             "type": "array"
           },
+          "content_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Hash"
+          },
           "description": {
             "anyOf": [
               {
@@ -10888,6 +11133,20 @@
               }
             ],
             "title": "Description"
+          },
+          "document": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue-Output"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document"
           },
           "document_text": {
             "anyOf": [
@@ -11583,7 +11842,7 @@
           },
           "with": {
             "additionalProperties": {
-              "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue"
+              "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue-Output"
             },
             "title": "With",
             "type": "object"
@@ -14902,12 +15161,13 @@
         "type": "object"
       },
       "UnitKind": {
-        "description": "What a unit is: a skill's folder, an agent's file, a hook file or a hub workflow file.",
+        "description": "What a unit is: a skill's folder, an agent's file, a hook file, a hub workflow file or a\nscenario file (the scenario builder's saves).",
         "enum": [
           "skill",
           "agent",
           "hook",
-          "workflow"
+          "workflow",
+          "scenario"
         ],
         "title": "UnitKind",
         "type": "string"
@@ -15061,6 +15321,65 @@
       "UtcTimestamp": {
         "format": "date-time",
         "type": "string"
+      },
+      "ValidateRequest": {
+        "additionalProperties": false,
+        "description": "A scenario document to check: its pack and the document as the builder holds it.",
+        "properties": {
+          "document": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue-Input"
+            },
+            "title": "Document",
+            "type": "object"
+          },
+          "pack": {
+            "pattern": "^[a-z][a-z0-9-]{0,63}$",
+            "title": "Pack",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pack",
+          "document"
+        ],
+        "title": "ValidateRequest",
+        "type": "object"
+      },
+      "ValidateResult": {
+        "additionalProperties": false,
+        "properties": {
+          "loads": {
+            "title": "Loads",
+            "type": "boolean"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/NodeLines"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "problems": {
+            "items": {
+              "$ref": "#/components/schemas/BuilderProblem"
+            },
+            "title": "Problems",
+            "type": "array"
+          },
+          "yaml": {
+            "title": "Yaml",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loads",
+          "yaml",
+          "problems",
+          "nodes"
+        ],
+        "title": "ValidateResult",
+        "type": "object"
       },
       "ValidationProblem": {
         "additionalProperties": false,
@@ -15375,7 +15694,7 @@
           },
           "document": {
             "additionalProperties": {
-              "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue"
+              "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue-Output"
             },
             "title": "Document",
             "type": "object"
@@ -16035,17 +16354,48 @@
         "title": "WorkflowSummary",
         "type": "object"
       },
-      "agent_hub__core__json_form__JsonValue": {
+      "agent_hub__core__json_form__JsonValue-Input": {
         "anyOf": [
           {
             "additionalProperties": {
-              "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue"
+              "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue-Input"
             },
             "type": "object"
           },
           {
             "items": {
-              "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue"
+              "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue-Input"
+            },
+            "type": "array"
+          },
+          {
+            "type": "string"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "agent_hub__core__json_form__JsonValue-Output": {
+        "anyOf": [
+          {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue-Output"
+            },
+            "type": "object"
+          },
+          {
+            "items": {
+              "$ref": "#/components/schemas/agent_hub__core__json_form__JsonValue-Output"
             },
             "type": "array"
           },
@@ -19619,6 +19969,61 @@
         ]
       }
     },
+    "/api/v1/projects/{project}/actions": {
+      "get": {
+        "description": "The hub's actions (the builder's palette), with output fields and their scenarios.",
+        "operationId": "list_actions_api_v1_projects__project__actions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionLibrary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "List Actions",
+        "tags": [
+          "scenarios"
+        ]
+      }
+    },
     "/api/v1/projects/{project}/brain": {
       "get": {
         "description": "The ``.md`` notes of the project's hub brain (``auto/`` excluded).",
@@ -20501,6 +20906,71 @@
         "summary": "List Project Repos",
         "tags": [
           "projects"
+        ]
+      }
+    },
+    "/api/v1/projects/{project}/scenarios/validate": {
+      "post": {
+        "description": "The scenario builder's check: the document as the YAML Save would write, whether it\nloads, and each problem on its node. Writes nothing.",
+        "operationId": "validate_scenario_api_v1_projects__project__scenarios_validate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ValidateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidateResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Validate Scenario",
+        "tags": [
+          "scenarios"
         ]
       }
     },
@@ -21671,6 +22141,80 @@
           }
         },
         "summary": "Get Scenario",
+        "tags": [
+          "scenarios"
+        ]
+      },
+      "put": {
+        "description": "Write the scenario file from the builder's document (a strict write that needs the\nlaunch cookie): only a document that loads, over the file the builder last read\n(409 ``stale_document`` else), recorded as a version; no git command runs.",
+        "operationId": "save_scenario_api_v1_scenarios__project___name__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Project",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SaveResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "4XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A client error, as an RFC 9457 problem"
+          },
+          "5XX": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "A server error, as an RFC 9457 problem"
+          }
+        },
+        "summary": "Save Scenario",
         "tags": [
           "scenarios"
         ]

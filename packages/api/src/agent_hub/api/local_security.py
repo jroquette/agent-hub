@@ -51,11 +51,13 @@ RUN_WRITES = re.compile(
 )
 # The item writes (AGH-295, S7, D13) write into a hub's working tree: strict too, and they need
 # the launch's cookie (``session_access``, which answers 409 ``hub_read_only`` in the container).
-# Restore of a Toolkit item's or a hub workflow's version, and the Studio's Publish of a draft.
+# Restore of a Toolkit item's or a hub workflow's version, the Studio's Publish of a draft, and
+# the scenario builder's save (a PUT of ``/scenarios/{project}/{name}``; its GET is a read).
 ITEM_WRITES = re.compile(
     rf"^{re.escape(API_PREFIX)}/((projects/[^/]+/skills/[^/]+/[^/]+/[^/]+"
     r"|workflows/[^/]+/[^/]+)/versions/[^/]+/restore"
-    r"|projects/[^/]+/skills/drafts/[^/]+/publish)$"
+    r"|projects/[^/]+/skills/drafts/[^/]+/publish"
+    r"|scenarios/[^/]+/[^/]+)$"
 )
 STRICT_WRITES = re.compile(
     rf"^{re.escape(API_PREFIX)}/learnings/[^/]+/(accept|reject)$|{RUN_WRITES.pattern}"

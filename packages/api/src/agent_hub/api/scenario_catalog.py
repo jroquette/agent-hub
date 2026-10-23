@@ -33,6 +33,7 @@ that accepts it, AM-5) and whether it can be picked now (core's ``option_refusal
 
 import contextlib
 import dataclasses
+import hashlib
 import json
 import os
 import threading
@@ -42,6 +43,7 @@ from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Final, Literal, Protocol, Self
 
+import yaml
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -262,6 +264,8 @@ class ScenarioDetail(ScenarioSummary):
     path: str | None = None
     document_text: str | None = None
     actions: tuple[ScenarioActionView, ...] = ()
+    document: dict[str, JsonValue] | None = None
+    content_hash: str | None = None
 
 
 class ScenarioCatalogView(ViewModel):
@@ -477,6 +481,7 @@ class ScenarioCatalog:
         runs = tuple(_run_ref(run, hub) for run in page.items)
         summary = _summary(project, plan, pack=pack, last=runs[0] if runs else None)
         steps = tuple(_step_view(node) for node in plan.document.nodes)
+        text = _read_text(file, DOCUMENT_TEXT_BYTES)[0]
         refs = dict.fromkeys(step.action for step in steps if step.action is not None)
         found = discover_actions(Path(hub)) if refs else None
         return ScenarioDetail(
@@ -485,8 +490,10 @@ class ScenarioCatalog:
             runs=runs,
             environments=self._environments(hub, project),
             path=_hub_relative(file, hub),
-            document_text=_read_text(file, DOCUMENT_TEXT_BYTES)[0],
-            actions=tuple(_action_view(ref, pack, found) for ref in refs if found is not None),
+            document_text=text,
+            document=_document_of(text),
+            content_hash=None if text is None else _hash_text(file),
+            actions=tuple(action_view(ref, pack, found) for ref in refs if found is not None),
         )
 
     def _environments(self, hub: str, project: str) -> tuple[ScenarioEnvironment, ...]:
@@ -690,7 +697,7 @@ def _step_view(node: object) -> ScenarioStepView:
     )
 
 
-def _action_view(ref: str, pack: str, found: ActionDiscovery) -> ScenarioActionView:
+def action_view(ref: str, pack: str, found: ActionDiscovery) -> ScenarioActionView:
     """The action ``ref`` (as a step of ``pack`` writes it), or why it does not resolve."""
     try:
         entry = resolve_action(found.actions, ref, pack=pack)
@@ -726,6 +733,27 @@ def _action_view(ref: str, pack: str, found: ActionDiscovery) -> ScenarioActionV
         script_text=script,
         script_truncated=truncated,
     )
+
+
+def _document_of(text: str | None) -> dict[str, JsonValue] | None:
+    """The scenario file as the builder edits it: its mapping, keys as written."""
+    if text is None:
+        return None
+    try:
+        value = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _hash_text(path: Path) -> str | None:
+    """``sha256:`` of the file's bytes, never through a link; None when unreadable."""
+    try:
+        descriptor = os.open(path, _READ_FILE)
+    except OSError:
+        return None
+    with os.fdopen(descriptor, "rb") as file:
+        return f"sha256:{hashlib.sha256(file.read()).hexdigest()}"
 
 
 def _hub_relative(path: Path, hub: str) -> str:
