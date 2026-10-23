@@ -132,6 +132,9 @@ import-linter enforces the rule with the contracts in `.importlinter` (`root_pac
 - `only claude_sessions imports the Claude Agent SDK` (forbidden): no other package, `api`, `cli` and `mcp_server`
   included, imports `claude_agent_sdk`. `allow_indirect_imports = True`: `api` reaches the SDK through `claude_sessions`, which
   is the point; a direct import still breaks it.
+- `cli imports only knowledge_checkout of hub_git` (forbidden): a `cli` module may import
+  `agent_hub.hub_git.knowledge_checkout` and no other `hub_git` module (rule 3). `allow_indirect_imports = True`:
+  `mcp_command` reaches the rest of `hub_git` through `mcp_server`; a direct import still breaks it.
 - `cli never imports claude_sessions` (forbidden), also with `allow_indirect_imports = True`: `web_command` reaches
   the adapter only through `api`'s composition; a direct import from any `cli` module breaks it.
 - `core` must also not import `agent_hub.api`, `fastapi`, `starlette`, `uvicorn` or `yaml` (PyYAML lives in `generator`).
