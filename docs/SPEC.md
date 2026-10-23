@@ -205,7 +205,8 @@ prints the hub-relative `path` it wrote, follows no link and never commits; a re
 their rules are in [feature-records.md](design/feature-records.md).
 
 `hub step config` prints the `hub.json` values the built-in packs' scripts need, read through the CLI's own loader with
-the developer's `hub.local.json` first (AGH-480): the project's `default_branch`, the `branch_prefix`, the author, the
+the developer's `hub.local.json` first (AGH-480): the project's `default_branch`, the `branch_prefix` (null when no
+source gives one; `--branch` then exits 2), the author, the
 `ready_label` and team keys, the hub's and each repo's GitHub name, effective default branch and gates, and a `target`
 skeleton (titles not configured) that `hub step commits|pr` read back; `--branch NAME --slug SLUG` (or `--run-slug`,
 the run's id) adds `branch` (`<prefix><name lower>-<slug>`) and `branch_name`. No token, no tracker key, at most 64
