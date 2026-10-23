@@ -9,9 +9,10 @@ The last tag is the highest ``vX.Y.Z`` tag reachable from ``HEAD``; the PRs are 
 commits after it: a GitHub merge commit (``Merge pull request #N from …``) gives its number and
 its body's first line as the title, or the branch tip's subject when the body is empty; any other
 commit gives its subject (``… (#N)`` gives the number). A merge whose merged side is already
-in the tag (the tagged release PR's own merge commit: the tag is on that PR's head) is no PR. The bump is ``/release``'s rule: ``!`` or
-``BREAKING CHANGE`` → major, any ``feat`` → minor, ``fix`` → patch, else patch; no commit since
-the tag is ``none``. A given version must be ``X.Y.Z`` (ASCII digits) and greater than the tag.
+in the tag (the tagged release PR's own merge commit: the tag is on that PR's head) is no PR.
+The bump is ``/release``'s rule: ``!`` or ``BREAKING CHANGE`` → major, any ``feat`` → minor,
+``fix`` → patch, else patch; no commit since the tag is ``none``. A given version must be
+``X.Y.Z`` (ASCII digits) and greater than the tag.
 
 Prints ``{"last_tag", "previous", "version", "bump", "reason", "count", "prs", "text",
 "omitted"}``: ``prs`` holds ``{number, title, type, breaking, sha}`` per commit, oldest first;
