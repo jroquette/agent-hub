@@ -291,7 +291,7 @@ describe("StartTicket", () => {
       },
     );
 
-    const link = await card().findByRole("link", { name: /^Newest session: Waiting, started / });
+    const link = await card().findByRole("link", { name: /^Session running: Waiting, started / });
     expect(link).toHaveAttribute("href", "/sessions/sess-2");
     expect(card().queryByRole("button", { name: "Start AGH-2" })).toBe(null);
   });

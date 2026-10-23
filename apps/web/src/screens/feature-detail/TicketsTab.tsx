@@ -1,4 +1,12 @@
-import { useEffect, useId, useRef, useState, type MutableRefObject, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type MutableRefObject,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 
 import type { components } from "../../api/schema";
@@ -13,6 +21,7 @@ import {
 } from "../../components";
 import { goSequencePending, typingIn } from "../../shell/goSequence";
 import { useApi, type ApiProblem } from "../../lib/api";
+import { useModalFocus } from "../../lib/modalFocus";
 import { fmtClock, fmtDateTime, fmtMoney } from "../../lib/format";
 import { usePreferences } from "../../lib/preferences";
 import { badgeOf } from "../sessions-list/badge";
@@ -200,13 +209,29 @@ export function useTicketSessions(project: string, row: TicketRow) {
 }
 
 /**
- * What a ticket's card offers next to its readiness: its newest session, one click from its
- * dialogue, and Start while the ticket is free to pick up and no session of it is still open.
+ * The keyboard of the flow's full window, a modal layer: focus moves to Exit on open and back to
+ * what opened it on close, Tab stays inside, Escape closes the ticket panel first, then exits.
  */
+function FullWindowKeys({
+  layout,
+  onEscape,
+}: {
+  layout: RefObject<HTMLElement | null>;
+  onEscape: () => void;
+}) {
+  useModalFocus(layout, { locked: false, onEscape, initial: "[data-flow-expand]" });
+  return null;
+}
+
 /** Whether a ticket's own plan change waits for the owner: Start is then no view's primary. */
 const changeWaits = (rows: readonly TicketRow[]) =>
   rows.some((row) => row.flow != null && signalKind(row.flow) === "waiting");
 
+/**
+ * A card's session line: the ticket's newest AI session in any state (live, waiting, idle or
+ * ended), one click from its dialogue, with how many earlier ones the panel lists; and Start while
+ * the ticket is free to pick up and no session of it is still open.
+ */
 function CardAction({
   project,
   slug,
@@ -219,7 +244,8 @@ function CardAction({
   rows: readonly TicketRow[];
 }) {
   const sessions = useTicketSessions(project, row);
-  const newest = sessions.data?.items[0];
+  const items = sessions.data?.items ?? [];
+  const newest = items[0];
   const open = newest != null && newest.status !== "ended";
   const start = canStartTicket(row, rows) && !open && (
     <StartTicketButton
@@ -230,15 +256,40 @@ function CardAction({
       quiet={changeWaits(rows)}
     />
   );
-  if (!newest) return start ? <span className="ah-flow-card-action">{start}</span> : null;
-  return (
-    <span className="ah-flow-card-action">
-      <span className="ah-flow-card-fact">
-        <Icon name="square-terminal" size="sm" />
-        Session
+  const earlier = items.length - 1;
+  let session: ReactNode = null;
+  if (row.id && sessions.isPending) session = <Skeleton width={90} height={18} />;
+  else if (sessions.isError) {
+    session = (
+      <span className="ah-subtle" title={sessions.error.title}>
+        —<span className="ah-sr">sessions not read</span>
       </span>
-      <SessionLink session={newest} context="Newest session" />
-      {start}
+    );
+  } else if (newest) {
+    session = (
+      <>
+        <SessionLink session={newest} context={open ? "Session running" : "Newest session"} />
+        {earlier > 0 && (
+          <span
+            className="ah-small ah-subtle"
+            title={`${String(earlier)} earlier session${earlier === 1 ? "" : "s"}: in the ticket panel`}
+          >
+            +{earlier}
+          </span>
+        )}
+      </>
+    );
+  }
+  if (!session && !start) return null;
+  return (
+    <span className="ah-flow-card-session">
+      {session && (
+        <span className="ah-flow-card-session-link">
+          <Icon name="square-terminal" size="sm" aria-hidden="true" />
+          {session}
+        </span>
+      )}
+      {start && <span className="ah-flow-card-action">{start}</span>}
     </span>
   );
 }
@@ -854,9 +905,23 @@ export function TicketsTab({
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const root = useRef<HTMLDivElement>(null);
+  const layout = useRef<HTMLDivElement>(null);
   // The view is kept in `?tickets=`: `table`, else Flow, the default, with no parameter.
   const view = params.get("tickets") === "table" ? "table" : "flow";
   const ticket = params.get("ticket");
+  // Full window is kept in `?flow=full`, so a reload keeps it; it is the flow's only.
+  const full = view === "flow" && params.get("flow") === "full";
+  const setFull = (on: boolean) => {
+    setParams(
+      (current) => {
+        const search = new URLSearchParams(current);
+        if (on) search.set("flow", "full");
+        else search.delete("flow");
+        return search;
+      },
+      { replace: true },
+    );
+  };
   const setView = (next: string) => {
     setParams(
       (current) => {
@@ -871,15 +936,22 @@ export function TicketsTab({
   // `v` toggles the views while focus is in the tab and not in a text field; focus stays on the
   // same ticket (card title <-> row), else goes to the toggle.
   const refocus = useRef<string | null | undefined>(undefined);
-  const latest = useRef({ view, setView });
+  const latest = useRef({ view, setView, full, setFull });
   useEffect(() => {
-    latest.current = { view, setView };
+    latest.current = { view, setView, full, setFull };
   });
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "v" || event.defaultPrevented) return;
+      if ((event.key !== "v" && event.key !== "f") || event.defaultPrevented) return;
       if (event.ctrlKey || event.metaKey || event.altKey || typingIn(event.target)) return;
       if (!(event.target instanceof HTMLElement) || !root.current?.contains(event.target)) return;
+      if (event.key === "f") {
+        // `f` expands the flow to the full window, or brings it back.
+        if (!root.current.querySelector("[data-flow-expand]")) return;
+        event.preventDefault();
+        latest.current.setFull(!latest.current.full);
+        return;
+      }
       if (!root.current.querySelector(".ah-seg")) return;
       event.preventDefault();
       refocus.current =
@@ -944,12 +1016,35 @@ export function TicketsTab({
   const cardAction: TicketAction = (row) => (
     <CardAction project={project} slug={slug} row={row} rows={data.tickets} />
   );
+  // Linear answered: the view switch and the quiet source line share one row; a warning about
+  // the source stays a banner of its own, above the switch.
+  const quiet = data.source !== "plan" && !data.stale;
+  const viewSwitch = (
+    <SegmentedControl
+      label="Show the tickets as"
+      options={[
+        { id: "flow", label: "Flow" },
+        { id: "table", label: "Table" },
+      ]}
+      value={view}
+      onChange={setView}
+    />
+  );
   const shown = ticket
     ? data.tickets.find((r) => r.id === ticket || r.key === ticket || r.ref === ticket)
     : undefined;
   return (
     <div ref={root} className="ah-stack" style={{ gap: 12 }}>
-      <TicketNotice tickets={data} onRefresh={onRefresh} refreshing={refreshing} />
+      {quiet && data.tickets.length > 0 ? (
+        <TicketNotice
+          tickets={data}
+          onRefresh={onRefresh}
+          refreshing={refreshing}
+          lead={<span style={{ marginRight: 8 }}>{viewSwitch}</span>}
+        />
+      ) : (
+        <TicketNotice tickets={data} onRefresh={onRefresh} refreshing={refreshing} />
+      )}
       {data.tickets.length === 0 ? (
         <div className="ah-card">
           <EmptyState icon="list-todo" title="No tickets for this feature yet.">
@@ -959,16 +1054,27 @@ export function TicketsTab({
         </div>
       ) : (
         <>
-          <SegmentedControl
-            label="Show the tickets as"
-            options={[
-              { id: "flow", label: "Flow" },
-              { id: "table", label: "Table" },
-            ]}
-            value={view}
-            onChange={setView}
-          />
-          <div className="ah-ticket-layout">
+          {!quiet && <div className="ah-row">{viewSwitch}</div>}
+          <div
+            ref={layout}
+            className="ah-ticket-layout"
+            data-expanded={full || undefined}
+            {...(full && {
+              role: "dialog",
+              "aria-modal": true,
+              "aria-label": "Ticket flow, full window",
+              tabIndex: -1,
+            })}
+          >
+            {full && (
+              <FullWindowKeys
+                layout={layout}
+                onEscape={() => {
+                  if (ticket) closeTicket(shown?.ref);
+                  else setFull(false);
+                }}
+              />
+            )}
             <div className="ah-ticket-main">
               {view === "flow" ? (
                 <PlanningView
@@ -977,6 +1083,9 @@ export function TicketsTab({
                   acPasses={acPasses}
                   ticketAction={cardAction}
                   onOpenTicket={remember}
+                  chosen={shown?.ref ?? null}
+                  expanded={full}
+                  onExpand={setFull}
                 />
               ) : (
                 <TicketsTable
