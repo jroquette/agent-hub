@@ -253,14 +253,17 @@ week's run metrics, at most five changes each backed by those numbers, then issu
 the paths it changed, `run` each verification once in a throwaway worktree at the commit, `explain` a failure from the
 merges since its last pass, read-only, and `report` it to `brain/_inbox/verify-<date>.md`; a verification with a
 machine path is listed as "cannot run after merge"; fetch first:
-`./hub workflow run post-merge-verify --input repo=<dir> --input sha=<sha> --live`) and
+`./hub workflow run post-merge-verify --input repo=<dir> --input sha=<sha> --live`),
 `brain-care` (`inbox`: the weekly inbox review, one owner gate per group of notes, then one hub PR; `context`: the monthly
-always-loaded context audit, a trim only after the owner's approval). A hub's own file overrides a built-in of the same
-name.
+always-loaded context audit, a trim only after the owner's approval) and
+`spike` (`spike`: recall, research, 2 or 3 options, the owner's pick, a premortem of the pick, then
+`brain/features/<slug>/research.md` and an ADR draft for `/adr`, within a timebox of 2h of agent time by default; it
+changes no code). A hub's own file overrides a built-in of the same name.
 
 ```bash
 ./hub workflow list                          # the workflows that load; problems as <file>:<line>: <key>: <message>
 ./hub workflow run deliver --input issue=DEM-7 --input repo=api --input issue_text="..."  # dry: what would run
+./hub workflow run spike --input question="..." --input slug=brief-cache --live  # a spike; answer its pick with respond
 ./hub workflow run deliver --input issue=DEM-7 --input repo=api --input issue_text="..." --live
 ./hub workflow run --resume <run>            # continue a failed or paused run; --abandon ends it
 ./hub workflow approve <run>                 # or reject / respond: decide a paused gate; the run resumes

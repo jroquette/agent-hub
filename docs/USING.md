@@ -290,7 +290,8 @@ checkout: each opens a pull request in the hub repo (branch `<branch_prefix>lear
 authored as the hub's author), and nothing changes until the user merges it. That needs, on the machine running
 `hub web`, a writable hub checkout whose `origin` is the hub's GitHub repo, `git`, and `gh` signed in to GitHub (the
 PR is opened as that `gh` account). Under Docker the hubs are mounted read-only, so both actions are disabled with
-"Hub is read-only here"; run `./hub web` locally to decide learnings. Workflows: [README](../README.md#-workflows).
+"Hub is read-only here"; run `./hub web` locally to decide learnings. Workflows: [README](../README.md#-workflows);
+`/feature` sends a spike to the `spike` workflow.
 
 **The weekly retro.** `/retro` runs the built-in `retro` workflow (`./hub workflow run retro --input since=7 --live`):
 the week's run metrics, at most five changes each backed by those numbers, and, for the ones you keep at its gate,

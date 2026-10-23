@@ -1427,6 +1427,7 @@ def test_imports_every_rendered_module_when_run_on_each_python(
         "workflows/post-merge-verify/scripts",
         "workflows/retro/scripts",
         "workflows/sdlc/scripts",
+        "workflows/spike/scripts",
     }
 
 

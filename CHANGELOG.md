@@ -57,6 +57,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   hub PR with only `brain/` changes), and `context`, the monthly always-loaded context audit (a script names the files
   past `/context-audit`'s limits; a trim, in a hub PR, only after the owner's approval). `/learn promote` starts `inbox`.
   Neither writes the tracker.
+- The built-in `spike` pack (AGH-492): `/feature` runs a spike as the `spike` workflow (recall, research, 2 or 3
+  options, the owner's pick or a request for more, a premortem of the pick), which writes
+  `brain/features/<slug>/research.md` and an unnumbered ADR draft for `/adr`, changes no code, and ends done, marked
+  incomplete, when its timebox of agent time (`--input timebox=2h` by default) runs out.
 
 ### Changed
 
