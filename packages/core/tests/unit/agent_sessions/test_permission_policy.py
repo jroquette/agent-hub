@@ -9,6 +9,9 @@ from agent_hub.core.agent_sessions.errors import InvalidDecisionError
 from agent_hub.core.agent_sessions.limits import SessionLimits
 from agent_hub.core.agent_sessions.permission_policy import (
     CLOSED_MESSAGE,
+    DENIED_MESSAGE,
+    KEPT_PLANNING_MESSAGE,
+    SKIPPED_MESSAGE,
     TIMEOUT_MESSAGE,
     closed_answer,
     deadline,
@@ -41,6 +44,26 @@ def test_denies_with_message_when_decision_deny() -> None:
     )
 
     assert answer == Deny(message="not now")
+
+
+@pytest.mark.parametrize(
+    ("request_kind", "expected"),
+    [
+        ("ask_user_question", SKIPPED_MESSAGE),
+        ("plan_approval", KEPT_PLANNING_MESSAGE),
+        ("tool", DENIED_MESSAGE),
+    ],
+)
+@pytest.mark.parametrize("message", [None, "", "   "])
+def test_denies_with_default_message_when_owner_wrote_none(
+    request_kind: str, expected: str, message: str | None
+) -> None:
+    answer = validate(
+        a_permission_request(request_kind=request_kind),
+        PermissionDecision(decision="deny", message=message),
+    )
+
+    assert answer == Deny(message=expected)
 
 
 def test_allows_suggestion_when_destination_local_settings() -> None:

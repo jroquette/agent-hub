@@ -7,7 +7,9 @@ request itself and builds what the driver receives:
 - ``allow``: allow once; ``answers`` only for an ``AskUserQuestion`` (they go into the
   updated input, beside its questions), ``mode`` only for a plan approval (the use case
   changes the mode after the allow, E6).
-- ``deny``: deny with the owner's message.
+- ``deny``: deny with the owner's message, or a default one for the request's kind when the
+  owner wrote none: Claude's API refuses an error tool result with no content, and once one is
+  in the transcript every later turn of the session fails.
 - ``always``: allow with exactly the suggestion at that index, passed through verbatim, and
   only when it is offered (A11): an ``addRules`` rule with behaviour ``allow`` whose destination
   is ``localSettings``. A ``setMode`` (``bypassPermissions``), ``addDirectories`` (``/``) or any
@@ -42,6 +44,9 @@ ALWAYS_TYPE: Final = "addRules"
 ALWAYS_BEHAVIOR: Final = "allow"
 TIMEOUT_MESSAGE: Final = "No answer came from hub web before the permission timeout."
 CLOSED_MESSAGE: Final = "The hub web session was closed or interrupted."
+SKIPPED_MESSAGE: Final = "The user skipped the question without answering it."
+KEPT_PLANNING_MESSAGE: Final = "The user did not approve the plan and wants to keep planning."
+DENIED_MESSAGE: Final = "The user denied this tool use."
 
 
 def validate(request: PermissionRequest, decision: PermissionDecision) -> DriverAnswer:
@@ -55,7 +60,7 @@ def validate(request: PermissionRequest, decision: PermissionDecision) -> Driver
         raise InvalidDecisionError(msg)
     match decision.decision:
         case "deny":
-            return Deny(message=decision.message or "")
+            return Deny(message=_deny_message(request, decision.message))
         case "always":
             return Allow(updated_permissions=(_suggestion(request, decision.suggestion),))
         case "allow":
@@ -63,6 +68,18 @@ def validate(request: PermissionRequest, decision: PermissionDecision) -> Driver
                 return Allow()
             answers: dict[str, JsonValue] = dict(decision.answers)
             return Allow(updated_input=request.input | {"answers": answers})
+
+
+def _deny_message(request: PermissionRequest, message: str | None) -> str:
+    if message is not None and message.strip():
+        return message
+    match request.request_kind:
+        case "ask_user_question":
+            return SKIPPED_MESSAGE
+        case "plan_approval":
+            return KEPT_PLANNING_MESSAGE
+        case _:
+            return DENIED_MESSAGE
 
 
 def is_offered(suggestion: PermissionSuggestion) -> bool:
