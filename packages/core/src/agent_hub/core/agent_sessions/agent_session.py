@@ -154,6 +154,9 @@ class AgentSession(ViewModel):
     review_targets: tuple[ReviewTarget, ...] = Field(default=(), max_length=MAX_REVIEW_TARGETS)
     open_permission: OpenPermission | None = None
     observed_session_id: str | None = None
+    # Held to a ``SessionRestriction`` (an investigation session, E-15): its permission mode
+    # cannot change. ``True`` or left out of the JSON, so other sessions read as before.
+    restricted: bool | None = Field(default=None, exclude_if=lambda value: value is None)
     tool_access: ToolAccess = Field(default="all", exclude=True)
 
     def with_fields(self, fields: Mapping[str, object]) -> AgentSession:

@@ -78,6 +78,8 @@ export interface ComposerProps {
   focusOnOpen?: boolean | undefined;
   /** Why nothing can be sent (log full, control off…); the session's end is detected on its own. */
   disabledReason?: string | null | undefined;
+  /** The session's permission mode is fixed (a scenario investigation, E-15): no mode switch. */
+  modeLocked?: boolean | undefined;
   /** An ended session a message resumes in place (Claude still holds its conversation). */
   resumable?: boolean | undefined;
   /** Images may be pasted, dropped or picked into the message (up to `MAX_MESSAGE_IMAGES`). */
@@ -119,6 +121,7 @@ export function Composer({
   focusOnOpen = false,
   resumable = false,
   acceptsImages = false,
+  modeLocked = false,
   acceptsFiles = false,
   accessory,
 }: ComposerProps) {
@@ -353,35 +356,37 @@ export function Composer({
       />
       <div className="as-composer-bar">
         <div className="as-composer-settings">
-          <label htmlFor={modeId} className="as-pill" data-mode={mode} title="Permission mode">
-            <Icon name="shield" size="sm" />
-            <span className="ah-sr">Mode</span>
-            <select
-              id={modeId}
-              className="as-pill-select"
-              value={mode}
-              disabled={ended}
-              onChange={(event) => {
-                const next = modes.find((m) => m === event.target.value);
-                if (next) run(() => onSettings({ mode: next }), "change the mode");
-              }}
-            >
-              {modes.map((m) => (
-                <option key={m} value={m}>
-                  {modeLabel(m)}
-                </option>
-              ))}
-              {unofferedMode && (
-                <option value={unofferedMode} disabled>
-                  {modeLabel(unofferedMode)}
-                </option>
-              )}
-            </select>
-            <span className="as-pill-value" aria-hidden="true">
-              {modeLabel(mode)}
-            </span>
-            <Icon name="chevron-down" size="sm" className="as-pill-caret" />
-          </label>
+          {!modeLocked && (
+            <label htmlFor={modeId} className="as-pill" data-mode={mode} title="Permission mode">
+              <Icon name="shield" size="sm" />
+              <span className="ah-sr">Mode</span>
+              <select
+                id={modeId}
+                className="as-pill-select"
+                value={mode}
+                disabled={ended}
+                onChange={(event) => {
+                  const next = modes.find((m) => m === event.target.value);
+                  if (next) run(() => onSettings({ mode: next }), "change the mode");
+                }}
+              >
+                {modes.map((m) => (
+                  <option key={m} value={m}>
+                    {modeLabel(m)}
+                  </option>
+                ))}
+                {unofferedMode && (
+                  <option value={unofferedMode} disabled>
+                    {modeLabel(unofferedMode)}
+                  </option>
+                )}
+              </select>
+              <span className="as-pill-value" aria-hidden="true">
+                {modeLabel(mode)}
+              </span>
+              <Icon name="chevron-down" size="sm" className="as-pill-caret" />
+            </label>
+          )}
           <label htmlFor={modelId} className="as-pill" title="Model">
             <Icon name="cpu" size="sm" />
             <span className="ah-sr">Model</span>

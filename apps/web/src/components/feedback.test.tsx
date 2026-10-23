@@ -126,6 +126,12 @@ describe("Banner and Toast", () => {
     expect(onUndo).toHaveBeenCalled();
     expect(screen.getByRole("status")).toHaveClass("ah-toast-error");
   });
+  it("a quiet Toast has no live role when another region announces it", () => {
+    render(<Toast live={false}>Answer recorded: option o2 picked.</Toast>);
+
+    expect(screen.getByText("Answer recorded: option o2 picked.")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
 });
 
 describe("ConfirmDialog", () => {

@@ -1,4 +1,4 @@
-import { useParams, useSearchParams } from "react-router";
+import { Navigate, useParams, useSearchParams } from "react-router";
 import type { ReactNode } from "react";
 
 import {
@@ -26,6 +26,7 @@ import { usePreferences } from "../../lib/preferences";
 import { useShell } from "../../shell/AppShell";
 import { Breadcrumbs } from "../../shell/Breadcrumbs";
 import { StaleStamp } from "../portfolio/StaleStamp";
+import { scenarioOfLabel, scenarioRunHref } from "../scenarios/queries";
 import {
   budgetOf,
   durationSeconds,
@@ -143,6 +144,36 @@ function RunFacts({ run }: { run: WorkflowRun }) {
         </Fact>
       </dl>
     </aside>
+  );
+}
+
+/** The run's own environment (its start record, E-15) and what is enforced there: not
+ * dismissible, a lasting property of the run (spec 13, AGH-350 Goal 7). */
+function BestEffortBanner({
+  environment,
+}: {
+  environment: NonNullable<WorkflowRun["environment"]>;
+}) {
+  const { name, access, production } = environment;
+  const guarded = production === true || access === "read";
+  const line3 =
+    access === null
+      ? null
+      : guarded
+        ? `For agent steps, the guard only asks when a command names a ${name} endpoint.`
+        : `Agent steps in ${name} are not checked: the guard checks endpoints only in read-only and production environments.`;
+  return (
+    <Banner tone="info" boxed live={false}>
+      <span className="ah-stack" style={{ gap: 2 }}>
+        <b style={{ fontWeight: 600 }}>
+          Agent steps are checked on a best-effort basis; deterministic steps are enforced.
+        </b>
+        <span className="ah-small">
+          Commands, scripts and actions in {name} follow its access policy before they run.
+        </span>
+        {line3 && <span className="ah-small">{line3}</span>}
+      </span>
+    </Banner>
   );
 }
 
@@ -549,6 +580,14 @@ function Header({ run, now }: { run: WorkflowRun; now: number }) {
       >
         <IdChip id={run.id} kind="run" />
         <span className="ah-mono">{run.workflow}</span>
+        {run.environment && (
+          <span>
+            <span className="ah-subtle">Environment </span>
+            <span className="ah-mono" style={{ color: "var(--text)" }}>
+              {run.environment.name}
+            </span>
+          </span>
+        )}
         <span>
           <span className="ah-subtle">repo </span>
           <span className="ah-mono" style={{ color: "var(--text)" }}>
@@ -651,6 +690,7 @@ function RunBody({ run }: { run: WorkflowRun }) {
     <div style={{ position: "relative", minHeight: "100%" }}>
       <Header run={run} now={now} />
       <div style={{ padding: "16px 32px 40px" }} className="ah-stack">
+        {run.environment && <BestEffortBanner environment={run.environment} />}
         {run.stage === "FAILED" && <FailureBanner run={run} onTab={setTab} />}
         {run.mode === "dry_run" && (
           <Banner tone="info" boxed>
@@ -779,6 +819,11 @@ export function RunDetailScreen() {
         />
       </div>
     );
+  }
+  // A scenario run lives on its own page (AGH-350 E-15): Back skips this hop.
+  const scenario = run.data.kind === "scenario" ? scenarioOfLabel(run.data.workflow) : null;
+  if (scenario !== null) {
+    return <Navigate to={scenarioRunHref(run.data.project, scenario, run.data.id)} replace />;
   }
   return <RunBody run={run.data} />;
 }

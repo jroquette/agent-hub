@@ -2,7 +2,8 @@ import type { IconName } from "../../components";
 
 /* The workflow step types in plain words: what the catalog, the detail and the legend say. */
 
-export type StepKind = "agent" | "command" | "approval" | "wait" | "repeat" | "include" | "stop";
+export type StepKind =
+  "agent" | "command" | "action" | "expect" | "approval" | "wait" | "repeat" | "include" | "stop";
 
 interface KindInfo {
   icon: IconName;
@@ -24,6 +25,18 @@ export const STEP_KINDS: Readonly<Record<StepKind, KindInfo>> = {
     one: "command",
     many: "commands",
     hint: "A program or script, such as the tests or git: it passes when it exits 0.",
+  },
+  action: {
+    icon: "circle-play",
+    one: "action",
+    many: "actions",
+    hint: "A script of the hub with a declared effect (read, write or destroy), run in the scenario's environment.",
+  },
+  expect: {
+    icon: "timer",
+    one: "expect",
+    many: "expects",
+    hint: "Reads the system every few seconds until the expected state holds, or its timeout ends the wait.",
   },
   approval: {
     icon: "stamp",
@@ -62,6 +75,8 @@ const KIND_OF: Readonly<Record<string, StepKind>> = {
   loop: "agent",
   shell: "command",
   script: "command",
+  action: "action",
+  expect: "expect",
   approval: "approval",
   wait: "wait",
   loop_group: "repeat",
