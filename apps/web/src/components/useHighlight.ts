@@ -64,6 +64,21 @@ export function useHighlightLines(
   return useMemo(() => (module ? module.highlightLines(text, lang) : null), [module, text, lang]);
 }
 
+/** Each of `texts` highlighted on its own, as one list per line; null means plain. A grammar
+ * state (an open string or comment) never carries from one text into the next. */
+export function useHighlightBlocks(
+  texts: readonly string[],
+  lang: string,
+  enabled: boolean,
+): ReactNode[][][] | null {
+  const module = useHighlighter(enabled);
+  return useMemo(() => {
+    if (!module) return null;
+    const blocks = texts.map((text) => module.highlightLines(text, lang));
+    return blocks.every((block) => block !== null) ? blocks : null;
+  }, [module, texts, lang]);
+}
+
 /** File extensions whose name is not already a grammar name or alias of the highlighter. */
 const LANGUAGE_BY_EXTENSION: Record<string, string> = {
   mjs: "javascript",
