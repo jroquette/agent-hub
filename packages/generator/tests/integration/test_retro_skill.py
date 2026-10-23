@@ -210,3 +210,15 @@ def test_follows_the_steps_by_hand_when_workflow_missing(retro_text: str) -> Non
 
     assert FALLBACK in block
     assert not re.search(r"^\d+\.", block, re.MULTILINE)
+
+
+# AGH-480: the owner sees what a gate asks before answering it.
+GATE_RECORDS = "`.agent-runs/workflows/<run>/records.jsonl`"
+GATE_MESSAGE = f'the `message` of the last `"event": "gate"` line of {GATE_RECORDS}'
+
+
+def test_shows_the_gate_message_before_the_owner_answers_when_hub_rendered(retro_text: str) -> None:
+    block = " ".join(before_steps(retro_text).split())
+
+    assert GATE_MESSAGE in block
+    assert block.index(GATE_MESSAGE) < block.index("./hub workflow respond <run> --choice keep")

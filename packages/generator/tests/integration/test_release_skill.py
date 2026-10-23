@@ -270,3 +270,17 @@ def test_names_hand_fallback_when_release_rendered(release_text: str) -> None:
 
     assert "`./hub workflow list` has no `release`" in section
     assert "follow the steps below by hand" in section
+
+
+# AGH-480: the owner sees what a gate asks before answering it.
+GATE_RECORDS = "`.agent-runs/workflows/<run>/records.jsonl`"
+GATE_MESSAGE = f'the `message` of the last `"event": "gate"` line of {GATE_RECORDS}'
+
+
+def test_shows_the_gate_message_before_the_owner_answers_when_release_rendered(
+    release_text: str,
+) -> None:
+    section = " ".join(run_section(release_text).split())
+
+    assert GATE_MESSAGE in section
+    assert section.index(GATE_MESSAGE) < section.index("./hub workflow approve <run>")

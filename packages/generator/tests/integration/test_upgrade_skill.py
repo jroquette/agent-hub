@@ -239,3 +239,15 @@ def test_follows_workflow_rules_when_skill_rendered(skill: str) -> None:
         if "`uv " in line:
             assert "e.g." in line or "or the equivalent" in line, line
     assert "@@" not in skill
+
+
+# AGH-480: the owner sees what a gate asks before answering it.
+GATE_RECORDS = "`.agent-runs/workflows/<run>/records.jsonl`"
+GATE_MESSAGE = f'the `message` of the last `"event": "gate"` line of {GATE_RECORDS}'
+
+
+def test_shows_the_gate_message_before_the_owner_answers_when_skill_rendered(skill: str) -> None:
+    report = " ".join(_step(skill, "Report").split())
+
+    assert GATE_MESSAGE in report
+    assert report.index(GATE_MESSAGE) < report.index("`./hub workflow approve <run>`")

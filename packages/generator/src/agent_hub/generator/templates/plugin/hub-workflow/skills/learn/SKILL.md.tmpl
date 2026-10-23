@@ -77,7 +77,8 @@ gate, and only then opens one hub PR with the approved changes.
    file (without `--live` it only prints what would run). A non-zero exit code means the run failed: say so.
 2. Report the last line: `run <run>: paused at <gate>` (a group waits for the owner) or `run <run>: done, outcome
    <outcome>` (`pr_opened`, or why no PR opened); its reason says how to remove the run's worktree.
-3. Each group is the owner's to decide, never yourself: show him the gate's message and tell him to answer with
+3. Each group is the owner's to decide, never yourself: show him the `message` of the last `"event": "gate"` line
+   of `.agent-runs/workflows/<run>/records.jsonl` (the group and its proposed action), then tell him to answer with
    `./hub workflow respond <run> --choice apply|drop|keep --text "<note>"`. An external note (provenance not `agent`,
    `agent-from-code` or `human`) is always its own decision. Nothing lands until he merges the hub PR the run opens.
 
