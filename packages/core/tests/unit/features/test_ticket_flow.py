@@ -1,5 +1,5 @@
-"""A ticket's own flow (two-level-flows AC-1.8, AC-1.9, AC-1.13, AC-2.5, AC-2.8, AC-2.14): its
-seven steps from records."""
+"""A ticket's own flow (two-level-flows AC-1.8, AC-1.9, AC-1.13, AC-2.5, AC-2.8, AC-2.14, AC-3.1,
+AC-3.3): its seven steps from records."""
 
 import json
 from random import Random
@@ -16,10 +16,11 @@ from agent_hub.core.features.ticket_flow import TicketEvidence, ticket_evidence,
 from agent_hub.core.features.ticket_records import (
     NO_REQUESTS,
     ChangeRequests,
+    OutcomeFile,
     TicketFiles,
     change_requests,
 )
-from agent_hub.core.features.ticket_view import TicketFlow, TicketRow
+from agent_hub.core.features.ticket_view import TicketEdge, TicketFlow, TicketRow
 from agent_hub.core.testing.read_model_builders import a_ticket_row, an_eval_record
 from agent_hub.core.tracker.tracker_reader import IssueState
 
@@ -79,6 +80,8 @@ def _flow(
     tickets_skipped: int = 0,
     requests: ChangeRequests = NO_REQUESTS,
     plan_version: int | None = None,
+    outcomes: tuple[OutcomeFile, ...] = (),
+    rows: tuple[TicketRow, ...] = (),
 ) -> TicketFlow:
     flow = ticket_flow(
         _row() if row is None else row,
@@ -91,6 +94,8 @@ def _flow(
             tickets_skipped=tickets_skipped,
             requests=requests,
             plan_version=plan_version,
+            outcomes=outcomes,
+            rows=rows,
         ),
     )
     assert flow is not None
@@ -242,10 +247,12 @@ def test_gives_no_flow_when_ticket_is_an_epic() -> None:
 
 _NAMES = ("DEM-8", "T2", "DEM-9")
 _VERDICTS: tuple[Verdict, ...] = ("SHIP", "SHIP-WITH-OWNER-STEPS", "NO-SHIP")
+# Before and after the drawn preflight's run, and one an outcome's reader refuses.
+_MERGED_AT = ("2026-10-21T08:00:00Z", "2026-10-22T08:00:00Z", "later")
 
 
 @st.composite
-def _evidence(draw: st.DrawFn) -> tuple[TicketRow, TicketEvidence]:
+def _evidence(draw: st.DrawFn) -> tuple[TicketRow, TicketEvidence, tuple[OutcomeFile, ...]]:
     state = draw(st.sampled_from((None, _DONE, _STARTED, _TODO)))
     reviews = tuple(
         _review(
@@ -282,6 +289,10 @@ def _evidence(draw: st.DrawFn) -> tuple[TicketRow, TicketEvidence]:
     decision = draw(st.sampled_from((None, "approved", "declined")))
     asking = draw(st.sampled_from(_NAMES))
     requests = draw(st.sampled_from((NO_REQUESTS, _requests((1, f"{asking} -> DEM-8", decision)))))
+    outcomes = tuple(
+        _outcome(name, merged_at=draw(st.sampled_from(_MERGED_AT)))
+        for name in draw(st.lists(st.sampled_from(("DEM-7", *_NAMES)), max_size=2, unique=True))
+    )
     evidence = ticket_evidence(
         rounds=rounds,
         reviews=reviews,
@@ -290,17 +301,18 @@ def _evidence(draw: st.DrawFn) -> tuple[TicketRow, TicketEvidence]:
         tickets=tickets,
         requests=requests,
         plan_version=draw(st.sampled_from((None, 2, 3))),
+        outcomes=outcomes,
     )
-    return _row(state=None if unread else state), evidence
+    return _row(state=None if unread else state), evidence, outcomes
 
 
 # AC-1.9: no generated flow has a "Not reached" step before a step with evidence.
 @settings(max_examples=200, deadline=None)
 @given(drawn=_evidence())
 def test_finds_no_pending_before_evidence_when_records_generated_property(
-    drawn: tuple[TicketRow, TicketEvidence],
+    drawn: tuple[TicketRow, TicketEvidence, tuple[OutcomeFile, ...]],
 ) -> None:
-    flow = ticket_flow(*drawn)
+    flow = ticket_flow(*drawn[:2])
     assert flow is not None
 
     states = [step.state for step in flow.steps]
@@ -314,15 +326,17 @@ def test_finds_no_pending_before_evidence_when_records_generated_property(
 @settings(max_examples=100, deadline=None)
 @given(drawn=_evidence(), pick=st.randoms(use_true_random=False))
 def test_same_flow_when_read_order_shuffled_property(
-    drawn: tuple[TicketRow, TicketEvidence], pick: Random
+    drawn: tuple[TicketRow, TicketEvidence, tuple[OutcomeFile, ...]], pick: Random
 ) -> None:
-    row, evidence = drawn
+    row, evidence, outcomes = drawn
     reviews = list(evidence.reviews)
     evals = list(dict.fromkeys(e for named in evidence.evals.values() for e in named))
     pick.shuffle(reviews)
     pick.shuffle(evals)
     files = list(evidence.files.values())
     pick.shuffle(files)
+    recorded = list(outcomes)
+    pick.shuffle(recorded)
     shuffled = ticket_evidence(
         rounds=evidence.rounds,
         reviews=tuple(reviews),
@@ -331,6 +345,7 @@ def test_same_flow_when_read_order_shuffled_property(
         tickets=tuple(files),
         requests=evidence.requests,
         plan_version=evidence.approved,
+        outcomes=tuple(recorded),
     )
 
     assert ticket_flow(row, evidence) == ticket_flow(row, shuffled)
@@ -602,3 +617,195 @@ def test_marks_implement_done_when_ticket_plan_and_review_round_exist() -> None:
     flow = _flow(rounds=frozenset({"DEM-8"}), tickets=(_files(plan=True),))
 
     assert _step(flow, "implement") == ("done", None)
+
+
+def _outcome(
+    name: str = "DEM-8", merged_at: str = "2026-10-22T08:00:00Z", **fields: str
+) -> OutcomeFile:
+    values = {
+        "type": "ticket-outcome",
+        "ticket": name,
+        "merged_at": merged_at,
+        "pr": "demo-api#4",
+        "dependents": "[DEM-9]",
+    } | fields
+    front = "".join(f"{key}: {value}\n" for key, value in values.items())
+    return OutcomeFile(name=name, read=f"---\n{front}---\n# Outcome\n".encode())
+
+
+# AC-3.1, D-5: an outcome makes the ticket merged, Linear's state aside.
+@pytest.mark.parametrize("state", [_STARTED, _DONE, None])
+def test_reads_outcome_recorded_when_ticket_outcome_exists(state: IssueState | None) -> None:
+    unread = None if state is not None else LINEAR_NOT_CONNECTED
+
+    flow = _flow(_row(state=state), outcomes=(_outcome("dem-8"),), unread=unread)
+
+    assert _step(flow, "merged") == ("done", "Outcome recorded")
+    assert _step(flow, "context") == ("unrecorded", None)
+    assert flow.current == "merged"
+
+
+def test_finds_the_outcome_when_its_folder_names_the_plan_key() -> None:
+    flow = _flow(outcomes=(_outcome("T2"),))
+
+    assert _step(flow, "merged") == ("done", "Outcome recorded")
+
+
+# NFR Robustness: a malformed outcome turns only its own step unknown.
+def test_marks_only_merged_unknown_when_outcome_malformed() -> None:
+    flow = _flow(
+        _row(state=_STARTED),
+        reviews=(_review(),),
+        outcomes=(_outcome(merged_at="yesterday"),),
+    )
+
+    state, meta = _step(flow, "merged")
+    assert state == "unknown"
+    assert meta == (
+        "outcome.md could not be read (merged_at needs a time with an offset). Fix it in a hub PR."
+    )
+    assert _step(flow, "review") == ("done", None)
+
+
+# AC-3.3: a blocker merged after the ticket's latest preflight makes it stale.
+def test_marks_preflight_stale_when_blocker_outcome_newer_than_latest_run() -> None:
+    flow = _flow(
+        tickets=(_files(brief=True, preflight=_preflight()),),
+        outcomes=(_outcome("DEM-7", merged_at="2026-10-21T10:00:00+00:00"),),
+    )
+
+    assert _step(flow, "preflight") == ("stale", "DEM-7 merged: re-run preflight")
+    assert flow.signal == "DEM-7 merged: re-run preflight"
+
+
+def test_finds_the_blocker_outcome_when_its_folder_names_the_blocker_key() -> None:
+    blocker = _row(ref="DEM-7", key="T1", id="DEM-7", blocked_by=(), state=_DONE)
+
+    flow = _flow(
+        tickets=(_files(preflight=_preflight()),),
+        outcomes=(_outcome("t1", merged_at="2026-10-21T10:00:00Z", ticket="T1"),),
+        rows=(blocker, _row()),
+    )
+
+    assert _step(flow, "preflight") == ("stale", "DEM-7 merged: re-run preflight")
+
+
+@pytest.mark.parametrize(
+    ("merged_at", "state"),
+    [
+        # The latest preflight ran after the merge: it is the newer entry.
+        ("2026-10-21T09:00:00Z", "done"),
+        ("2026-10-21T09:30:00Z", "done"),
+        ("2026-10-21T09:30:01Z", "stale"),
+    ],
+)
+def test_marks_preflight_stale_only_when_outcome_newer_than_latest_run(
+    merged_at: str, state: str
+) -> None:
+    flow = _flow(
+        tickets=(_files(preflight=_preflight({"drift": "none"})),),
+        outcomes=(_outcome("DEM-7", merged_at=merged_at),),
+    )
+
+    assert _step(flow, "preflight")[0] == state
+
+
+def test_keeps_preflight_done_when_merged_ticket_blocker_merged_later() -> None:
+    flow = _flow(
+        tickets=(_files(preflight=_preflight()),),
+        outcomes=(_outcome("DEM-8"), _outcome("DEM-7", merged_at="2026-10-22T09:00:00Z")),
+    )
+
+    assert _step(flow, "preflight") == ("done", None)
+
+
+def test_ignores_an_outcome_when_its_ticket_does_not_block_this_one() -> None:
+    flow = _flow(
+        tickets=(_files(preflight=_preflight()),),
+        outcomes=(_outcome("DEM-9", merged_at="2026-10-22T09:00:00Z"),),
+    )
+
+    assert _step(flow, "preflight") == ("done", None)
+
+
+def test_ignores_a_malformed_blocker_outcome_when_preflight_read() -> None:
+    flow = _flow(
+        tickets=(_files(preflight=_preflight()),),
+        outcomes=(_outcome("DEM-7", merged_at="soon"),),
+    )
+
+    assert _step(flow, "preflight") == ("done", None)
+
+
+# AGH-473 review Q2: a blocker merged at 10:00Z (07:00-03:00) is after a run at 09:30Z.
+@pytest.mark.parametrize(
+    ("merged_at", "state"),
+    [("2026-10-21T07:00:00-03:00", "stale"), ("2026-10-21T06:00:00-03:00", "done")],
+)
+def test_compares_instants_when_outcome_and_run_have_different_offsets(
+    merged_at: str, state: str
+) -> None:
+    flow = _flow(
+        tickets=(_files(preflight=_preflight()),),
+        outcomes=(_outcome("DEM-7", merged_at=merged_at),),
+    )
+
+    assert _step(flow, "preflight")[0] == state
+
+
+# AGH-473 review Q3: a newer approved plan is named before a merged blocker.
+def test_names_the_approved_plan_when_a_blocker_also_merged_since() -> None:
+    flow = _flow(
+        tickets=(_files(preflight=_preflight()),),
+        outcomes=(_outcome("DEM-7", merged_at="2026-10-22T09:00:00Z"),),
+        plan_version=4,
+    )
+
+    assert _step(flow, "preflight") == ("stale", "Plan v4 approved: re-run preflight")
+
+
+# AGH-473 review Q4: of two blockers merged since, the first in blocked_by (refs in natural
+# order, as the ticket board gives them) is named.
+def test_names_the_first_blocker_in_blocked_by_order_when_two_merged_since() -> None:
+    row = _row(
+        blocked_by=(
+            TicketEdge(ref="DEM-7", source="plan"),
+            TicketEdge(ref="DEM-10", source="plan"),
+        )
+    )
+
+    flow = _flow(
+        row,
+        tickets=(_files(preflight=_preflight()),),
+        outcomes=(
+            _outcome("DEM-10", merged_at="2026-10-22T07:00:00Z"),
+            _outcome("DEM-7", merged_at="2026-10-22T09:00:00Z"),
+        ),
+    )
+
+    assert _step(flow, "preflight") == ("stale", "DEM-7 merged: re-run preflight")
+
+
+# AGH-473 review Q5: the ticket's own malformed outcome does not make it merged.
+def test_keeps_the_blocker_stale_when_the_tickets_own_outcome_is_malformed() -> None:
+    flow = _flow(
+        _row(state=_STARTED),
+        tickets=(_files(preflight=_preflight()),),
+        outcomes=(
+            _outcome("DEM-8", merged_at="later"),
+            _outcome("DEM-7", merged_at="2026-10-22T09:00:00Z"),
+        ),
+    )
+
+    assert _step(flow, "preflight") == ("stale", "DEM-7 merged: re-run preflight")
+    assert _step(flow, "merged")[0] == "unknown"
+
+
+# AGH-473 review Q6, D-5: Done in Linear is merged, and a malformed outcome still says why.
+def test_marks_merged_done_with_the_problem_when_linear_completed_and_outcome_malformed() -> None:
+    flow = _flow(_row(state=_DONE), outcomes=(_outcome(merged_at="later"),))
+
+    assert _step(flow, "merged") == (
+        "done",
+        "outcome.md could not be read (merged_at needs a time with an offset). Fix it in a hub PR.",
+    )

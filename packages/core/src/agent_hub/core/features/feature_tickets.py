@@ -100,6 +100,8 @@ def feature_tickets(
         tickets_skipped=folder.ticket_folders_skipped,
         requests=parts.requests,
         plan_version=None if (plan := plan_view(folder)) is None else plan.version,
+        outcomes=folder.outcomes,
+        rows=parts.board.rows,
     )
     return FeatureTickets(
         project=project,

@@ -703,6 +703,18 @@
     "workflows/sdlc/fixtures/implement-superseded-then-discoveries.yaml": {
       "ownership": "seeded"
     },
+    "workflows/sdlc/fixtures/preflight-already-read.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/fixtures/preflight-drift-none.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/fixtures/preflight-drift-plan.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/fixtures/preflight-plan-declined-still-plan.yaml": {
+      "ownership": "seeded"
+    },
     "workflows/sdlc/fixtures/review-fail.yaml": {
       "ownership": "seeded"
     },
@@ -713,6 +725,12 @@
       "ownership": "seeded"
     },
     "workflows/sdlc/implement.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/preflight-check.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/preflight.yaml": {
       "ownership": "seeded"
     },
     "workflows/sdlc/prompts/implement.md": {
@@ -752,6 +770,9 @@
       "ownership": "seeded"
     },
     "workflows/sdlc/scripts/pass_outcome.py": {
+      "ownership": "seeded"
+    },
+    "workflows/sdlc/scripts/preflight_result.py": {
       "ownership": "seeded"
     },
     "workflows/sdlc/scripts/verdict.py": {

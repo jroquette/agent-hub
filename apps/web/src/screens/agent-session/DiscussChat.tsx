@@ -35,6 +35,11 @@ export interface DiscussChatProps {
   prepareMessage?: ((text: string) => string) | undefined;
   /** The message was accepted: the Discuss panel drops the references it carried. */
   onSent?: (() => void) | undefined;
+  /** Keeps the session's permission mode fixed: no mode switch (a scenario investigation, whose
+   * allowed writes and `./hub` commands must keep asking, E-13, E-15). */
+  lockMode?: boolean | undefined;
+  /** False keeps focus where the page put it (a reopened scenario investigation). */
+  focusComposer?: boolean | undefined;
   /** Where the session's status and cost show, when the caller has a header for them. */
   metaSlot?: HTMLElement | null | undefined;
   /** Shown inside the composer, above the message (the references it will carry). */
@@ -62,6 +67,8 @@ export function DiscussChatView({
   transcript,
   prepareMessage,
   onSent,
+  lockMode = false,
+  focusComposer = true,
   metaSlot,
   composerAccessory,
 }: DiscussChatViewProps) {
@@ -179,8 +186,9 @@ export function DiscussChatView({
             maxBytes={DEFAULT_MESSAGE_MAX_BYTES}
             commands={slashOptions}
             draftId={agentSessionId}
-            focusOnOpen={pending.length === 0}
+            focusOnOpen={focusComposer && pending.length === 0}
             resumable={resumable(session, endReason)}
+            modeLocked={lockMode || session.restricted === true}
             acceptsImages
             acceptsFiles
             accessory={composerAccessory}

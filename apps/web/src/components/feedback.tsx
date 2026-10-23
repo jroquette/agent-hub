@@ -192,10 +192,16 @@ export interface ToastProps {
   tone?: "ok" | "error";
   action?: ReactNode;
   onUndo?: (() => void) | undefined;
+  /** False when a live region elsewhere already announces it: no status role. */
+  live?: boolean | undefined;
 }
-export function Toast({ children, tone = "ok", action, onUndo }: ToastProps) {
+export function Toast({ children, tone = "ok", action, onUndo, live = true }: ToastProps) {
   return (
-    <div className={cx("ah-toast", `ah-toast-${tone}`)} role="status" aria-live="polite">
+    <div
+      className={cx("ah-toast", `ah-toast-${tone}`)}
+      role={live ? "status" : undefined}
+      aria-live={live ? "polite" : undefined}
+    >
       <Icon name={tone === "ok" ? "circle-check" : "circle-alert"} />
       <span className="ah-grow">{children}</span>
       {onUndo && (
