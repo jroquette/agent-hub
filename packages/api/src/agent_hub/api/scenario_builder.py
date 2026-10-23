@@ -365,7 +365,7 @@ def _output_fields(schema: Mapping[str, JsonValue], prefix: str = "") -> list[Ou
         return []
     out: list[OutputField] = []
     for key, value in properties.items():
-        path = f"{prefix}{key}"
+        path = prefix + key
         kind = value.get("type") if isinstance(value, dict) else None
         out.append(OutputField(path=path, type=kind if isinstance(kind, str) else None))
         if isinstance(value, dict) and not prefix:

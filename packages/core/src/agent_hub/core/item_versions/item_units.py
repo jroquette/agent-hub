@@ -136,8 +136,8 @@ def unit_parts(unit_path: str, kind: UnitKind) -> tuple[str, ...]:
     folder ``.claude/skills/<n>`` or ``plugin/<p>/skills/<n>``, an agent file ``.claude/agents/
     <n>.md`` or ``plugin/<p>/agents/<n>.md``, a hook file (``.claude/settings.json``,
     ``.claude/settings.project.json``, ``plugin/<p>/hooks/hooks.json``), a workflow file
-    ``workflows/<pack>/<n>.yaml`` or ``.json``, a scenario file ``scenarios/<pack>/<n>.yaml``. Never ``settings.local.json``; never touches the
-    disk."""
+    ``workflows/<pack>/<n>.yaml`` or ``.json``, a scenario file ``scenarios/<pack>/<n>.yaml``.
+    Never ``settings.local.json``; never touches the disk."""
     if kind is UnitKind.WORKFLOW:
         return _workflow_parts(unit_path)
     if kind is UnitKind.SCENARIO:
