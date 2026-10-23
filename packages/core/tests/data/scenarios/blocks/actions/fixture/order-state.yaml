@@ -1,0 +1,25 @@
+version: 1
+name: order-state
+description: Read one order's state on the stack
+effect: read
+runtime: python
+script: scripts/fixture_action.py
+timeout: 1m
+inputs:
+  shop_order_id: {type: string, required: true}
+  personal_name: {type: string, required: true, description: "The developer's stack, from the environment"}
+  aws_account_id: {type: string, required: true, description: "The stack's account, from the environment"}
+output_format:
+  type: object
+  properties:
+    order_id: {type: string}
+    order_status: {type: string}
+    review_status: {type: string}
+    payment_status: {type: string}
+    open_tasks: {type: integer}
+    invoice_status: {type: string}
+    invoice_number: {type: string}
+    invoice_update_job_id: {type: string}
+    approval_job_id: {type: string}
+    payment_job_id: {type: string}
+    paid: {type: boolean}

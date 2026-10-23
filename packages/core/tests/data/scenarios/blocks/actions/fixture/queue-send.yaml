@@ -1,0 +1,20 @@
+version: 1
+name: queue-send
+description: Send one message to the stack's work queue
+effect: write
+runtime: python
+script: scripts/fixture_action.py
+timeout: 1m
+inputs:
+  message: {type: string, required: true}
+  order_id: {type: string, default: ""}
+  shop_id: {type: string, default: ""}
+  channel_id: {type: string, default: ""}
+  lookback_minutes: {type: integer, default: 0}
+  personal_name: {type: string, required: true, description: "The developer's stack, from the environment"}
+  aws_account_id: {type: string, required: true, description: "The stack's account, from the environment"}
+output_format:
+  type: object
+  required: [ok]
+  properties:
+    ok: {type: boolean}

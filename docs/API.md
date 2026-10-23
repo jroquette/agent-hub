@@ -840,6 +840,28 @@ folder, the server's environment minus `LINEAR_API_KEY`); no problem quotes its 
   never over an existing note (409 `workflow-run-note-exists`) nor through a link (409 `workflow-run-link-in-path`).
   `finding_id` matches `^f[0-9]{1,6}$` (else 400); an unknown finding is a 404 (entity `finding`).
 
+Debugging and migration (AGH-507, [ADR 0049](adr/0049-scenario-blocks-and-run-control.md), [design](design/scenarios.md)
+§ Debugging): each command runs the CLI as a child and waits for it, as a gate decision does.
+
+- `PUT /api/v1/scenario-runs/{run_id}/breakpoints` with `{blocks: [<address>…]}` (at most 512 addresses of the run's
+  pinned tree, e.g. `2.3`, `2.3.then.1`) → 200 `Breakpoints` (`run_id`, `blocks`): replaces the run's breakpoints
+  through `hub scenario break`; one set while the run runs takes effect at its next block. An address the pinned tree
+  does not hold is 422 naming it.
+- `POST /api/v1/scenario-runs/{run_id}/step` and `…/continue` → 202 `RunAccepted` (`action` `step` or `continue`): the
+  run must be in a debug pause (409 `workflow-run-not-debug-paused`, for example at a gate, which keeps its own paths);
+  `hub scenario step|continue` records the command with the approver and resumes the run in a detached child.
+- `POST /api/v1/scenarios/{project}/{name}/runs` also takes `breakpoints` (as above, addresses of the tree it pins).
+- On an environment with `production: true`, each of these is 409 `workflow-run-debug-production` and nothing is
+  recorded; a start without breakpoints is unchanged.
+- `ScenarioRunDetail` adds `debug` (`null` unless the run is in a debug pause: `block`, `node`, `reason` `breakpoint` or
+  `step`), `breakpoints`, `stepping`, `inputs` (the run's effective inputs) and, per finished block, `blocks` (`address`,
+  `node`, `status`, `with` as rendered, `output`, and for a Wait until `polls` and `last_poll`), from the record (values
+  as it holds them, credential values already redacted). `ScenarioDetail` adds `version` and, for version 2, `blocks`
+  (`address`, `kind`, `label`, `entry_nodes`).
+- `POST /api/v1/scenarios/{project}/{name}/migrate` with `{check?}` → 200 `ScenarioMigration` (`path`, `written`,
+  `yaml` (the tree, canonical), `problems` (`node`, `message`)): what `hub scenario migrate NAME [--check]` does; with
+  problems nothing is written (200, `written: false`). A version-2 scenario is 409 `scenario-already-tree`.
+
 Problems:
 
 | Status | Type or code | When |
@@ -852,6 +874,8 @@ Problems:
 | 409 | `workflow-run-not-paused` | not a scenario run, or not paused at an open, unanswered investigation |
 | 409 | `workflow-run-pick-refused` | a pick of no option of the latest proposal, of one holding a `deny` or a draft action, or of one whose plan changed since it was shown |
 | 409 | `workflow-run-in-use` · `-refused` | the run's child still runs · `hub workflow decide` refused the answer |
+| 409 | `workflow-run-not-debug-paused` · `-debug-production` · `scenario-already-tree` | Step or Continue outside a debug pause · a debug command or a start with breakpoints on a production environment · migrate of a version-2 scenario |
+| 422 | `workflow-run-unknown-block` | a breakpoint address the run's pinned tree does not hold |
 | 409 | `workflow-run-issue-exists` · `-tracker-not-connected` · `-note-exists` · `-link-in-path` · `-finding-unusable` | a finding's issue or note cannot be made (see above) |
 | 409 | `workflow-run-link-in-path` | the link file `investigation-<n>.session` is a symbolic link |
 | 409 | `workflow-run-workspace-root` | a read root (the hub or a declared repo) is `/`, the home folder or one of its ancestors, where reads would reach the developer's own credentials |
