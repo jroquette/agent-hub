@@ -91,11 +91,10 @@ def test_splits_external_note_into_own_group_when_agent_merged_it(
 
     assert found["count"] == 2
     first, second = found["groups"]
-    assert (first["notes"], first["external"], first["text"]) == (
-        PAIR,
-        False,
-        "Key the cache by the lockfile hash.",
-    )
+    # The merged text may hold the external note's content: it goes, and apply uses the notes'
+    # own bodies.
+    assert (first["notes"], first["external"], first["text"]) == (PAIR, False, "")
+    assert "merged with an external note" in first["reason"]
     # Alone, and without the merged text: the owner reads the note itself.
     assert (second["notes"], second["external"], second["text"]) == ([EXTERNAL], True, "")
     assert "its own approval" in second["reason"]
@@ -275,3 +274,36 @@ def test_reads_note_when_it_starts_with_a_dash(
     found = record("apply", [], monkeypatch=monkeypatch, capsys=capsys, note=note)
 
     assert (found["decisions"][0]["note"], found["decisions"][0]["decision"]) == (note, "apply")
+
+
+def test_keeps_merged_text_when_no_external_note_split(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    found = plan([a_group(PAIR)], monkeypatch, capsys)
+
+    assert found["groups"][0]["text"] == "Key the cache by the lockfile hash."
+    assert found["groups"][0]["reason"] == "The same lesson twice."
+
+
+def test_names_undecided_notes_in_first_gate_when_plan_ignored_some(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    unknown = "brain/_inbox/2026-10-02-not-read.md"
+    planned = plan([a_group([*PAIR, unknown])], monkeypatch, capsys)
+    first = next_group(planned, "", monkeypatch=monkeypatch, capsys=capsys)
+    planned_two = plan([a_group(PAIR), a_group([EXTERNAL], action="drop")], monkeypatch, capsys)
+    second = next_group(planned_two, "0", monkeypatch=monkeypatch, capsys=capsys)
+
+    assert f"{unknown}: not read by this run" in first["message"]
+    assert f"{EXTERNAL}: in no group" in first["message"]
+    assert "in no group" not in second["message"]
+
+
+def test_names_every_trusted_provenance_when_external_warned(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    planned = plan([a_group([EXTERNAL], action="drop")], monkeypatch, capsys)
+
+    message = next_group(planned, "", monkeypatch=monkeypatch, capsys=capsys)["message"]
+
+    assert "not agent, agent-from-code or human" in message

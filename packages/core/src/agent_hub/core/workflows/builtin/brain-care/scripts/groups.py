@@ -9,13 +9,16 @@ Three subcommands, each printing one JSON object:
 - ``groups.py plan --paths JSON --external JSON`` reads the ``group`` agent's reply on stdin
   (``{"groups": [{"notes", "action", "target", "reason", "text"}]}``) and checks it against what
   ``read_inbox.py`` read: a path not read, or already in an earlier group, is ``ignored``; a
-  ``promote`` whose target is not under ``brain/learnings/`` is ``ignored`` whole; an external
-  note is always split into a group of its own, whatever the agent proposed, so it gets its own
-  approval. Prints ``{"count", "groups": [{"id", "notes", "external", "action", "target",
-  "reason", "text"}], "ignored": [{"notes", "reason"}], "unproposed": [paths no group holds]}``.
+  ``promote`` whose target is not under ``brain/learnings/`` is ``ignored`` whole; an external note
+  (provenance not ``agent``, ``agent-from-code`` or ``human``) is always split into a group of its
+  own, whatever the agent proposed, so it gets its own approval, and the group it left loses its
+  merged text (which may hold the external note's content). Prints ``{"count", "groups": [{"id",
+  "notes", "external", "action", "target", "reason", "text"}], "ignored": [{"notes", "reason"}],
+  "unproposed": [paths no group holds]}``.
 - ``groups.py next --after INDEX`` reads ``plan``'s output on stdin and prints the group after
   ``INDEX`` (the first when blank) for the loop's gate: ``{"index", "last", "group",
-  "message"}``. An index past the last group exits 2.
+  "message"}``; the first gate's message also lists the notes no gate shows (``ignored``,
+  ``unproposed``). An index past the last group exits 2.
 - ``groups.py record --group JSON --decision apply|drop|keep --note TEXT --approver NAME`` reads
   the decisions so far on stdin (blank at first) and prints them with this one added:
   ``{"decisions": [{"group", "decision", "note", "approver"}], "acted"}`` (``acted`` counts the
@@ -36,9 +39,14 @@ MAX_NOTE_CHARS = 2000
 NOT_READ = "not read by this run"
 TAKEN = "already in an earlier group"
 OUTSIDE = "a promote target outside brain/learnings/"
+MERGED = (
+    " (its merged text is dropped: it was merged with an external note, now split out; apply"
+    " uses the notes' own bodies)"
+)
 SPLIT = " (an external note, split from its group: it needs its own approval)"
 EXTERNAL_WARNING = (
-    "This note is external (its provenance is not agent or human): it needs your explicit"
+    "This note is external (its provenance is not agent, agent-from-code or human): it needs"
+    " your explicit"
     " approval. Apply it only once you have checked its source."
 )
 CHOICES = (
@@ -132,7 +140,10 @@ def plan(
         inside = [note for note in kept if note not in external]
         alone = [note for note in kept if note in external]
         if inside:
-            groups.append(_group(proposed, inside, split=False))
+            group = _group(proposed, inside, split=False)
+            if alone:
+                group |= {"reason": f"{group['reason']}{MERGED}", "text": ""}
+            groups.append(group)
         for note in alone:
             group = _group(proposed, [note], split=len(kept) > 1)
             groups.append(group | {"external": True})
@@ -162,6 +173,21 @@ def message(group: dict[str, object], *, count: int) -> str:
     return "\n".join(lines)
 
 
+def undecided(planned: dict[str, object]) -> str:
+    """The notes no gate shows (ignored, or in no group): they stay in the inbox."""
+    lines = []
+    ignored = planned.get("ignored")
+    for item in ignored if isinstance(ignored, list) else []:
+        notes = item.get("notes") if isinstance(item, dict) else None
+        reason = item.get("reason") if isinstance(item, dict) else ""
+        lines += [f"- {note}: {reason}" for note in (notes if isinstance(notes, list) else [])]
+    unproposed = planned.get("unproposed")
+    lines += [f"- {n}: in no group" for n in (unproposed if isinstance(unproposed, list) else [])]
+    if not lines:
+        return ""
+    return "\n".join(["Not decided this run (they stay in the inbox):", *lines])
+
+
 def next_group(planned: object, *, after: str) -> dict[str, object]:
     groups = _objects(planned.get("groups") if isinstance(planned, dict) else None, "the plan")
     try:
@@ -171,11 +197,13 @@ def next_group(planned: object, *, after: str) -> dict[str, object]:
     if not 0 <= index < len(groups):
         raise BadInputError(f"no group after {after or 'the start'}")
     group = groups[index]
+    shown = message(group, count=len(groups))
+    left = undecided(planned) if index == 0 and isinstance(planned, dict) else ""
     return {
         "index": index,
         "last": index == len(groups) - 1,
         "group": group,
-        "message": message(group, count=len(groups)),
+        "message": f"{shown}\n\n{left}" if left else shown,
     }
 
 
