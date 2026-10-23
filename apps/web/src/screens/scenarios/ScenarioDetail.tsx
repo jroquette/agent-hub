@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router";
+import { useParams, useSearchParams } from "react-router";
 
 import {
   AppLink,
@@ -23,6 +23,7 @@ import { StaleStamp } from "../portfolio/StaleStamp";
 import { InputField, parsed, type InputSpec } from "../runs-list/StartRun";
 import { ActionPanel, FileText } from "./ActionPanel";
 import { SCENARIO_BRIEF } from "./brief";
+import { useLatestRun } from "./LiveRun";
 import { Page, ScenarioRunBadge, shortId, useWaitingRows, WaitingCard } from "./parts";
 import {
   scenarioRunHref,
@@ -250,7 +251,6 @@ function PlanCard({
   onCurrentPlan: (plan: ScenarioPlan | null) => void;
 }) {
   const [params, setParams] = useSearchParams();
-  const navigate = useNavigate();
   const environment = params.get("env") ?? "";
   const specs = scenario.inputs.map(specOf);
   const [values, setValues] = useState<Record<string, string | boolean>>(() =>
@@ -285,12 +285,12 @@ function PlanCard({
     (start.error?.status === 404 && start.error.type === RUN_CONTROL_OFF);
   const locked = plan.error?.status === 401 || start.error?.status === 401;
 
-  useEffect(() => {
-    if (startedId === null) return;
-    if ((polled.data?.runs ?? []).some((run) => run.run_id === startedId)) {
-      void navigate(scenarioRunHref(scenario.project, scenario.name, startedId));
-    }
-  }, [polled.data, startedId, navigate, scenario.project, scenario.name]);
+  // Listed: the page stays, its banner and step cards follow the scenario run live (state
+  // adjusted while rendering, not in an effect).
+  if (startedId !== null && (polled.data?.runs ?? []).some((run) => run.run_id === startedId)) {
+    setConfirming(false);
+    setStartedId(null);
+  }
 
   const setEnvironment = (next: string) => {
     setParams(
@@ -818,6 +818,7 @@ function DetailBody({ scenario }: { scenario: ScenarioDetail }) {
   const [mode, setMode] = useState<ScenarioMode>("interactive");
   const [plan, setPlan] = useState<ScenarioPlan | null>(null);
   const opener = useRef<HTMLElement | null>(null);
+  const latest = useLatestRun(scenario, mine);
   const view: DetailView = params.get("view") === "document" ? "document" : "steps";
   const actionRef = params.get("action");
   const actions = scenario.actions;
@@ -855,8 +856,10 @@ function DetailBody({ scenario }: { scenario: ScenarioDetail }) {
               <span className="ah-grow" />
               <span className="ah-small ah-muted">{shapeLine(scenario)}</span>
             </div>
+            {latest.banner}
             {view === "steps" ? (
               <Storyline
+                statusOf={latest.statusOf}
                 name={scenario.name}
                 steps={scenario.steps}
                 actions={actions}

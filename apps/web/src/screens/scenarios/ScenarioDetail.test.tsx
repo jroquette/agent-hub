@@ -7,7 +7,10 @@ import {
   aDraftRow,
   aPage,
   aProblem,
+  aRun,
   aScenarioDetail,
+  aScenarioRunDetail,
+  FakeEventSource,
   aScenarioPlan,
   aScenarioPlanRow,
   aScenarioRunRef,
@@ -99,7 +102,7 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
     expect(screen.getByRole("button", { name: "Start scenario run" })).toBeDisabled();
   });
 
-  it("scenarios detail starts a scenario run after its confirm and opens it once listed", async () => {
+  it("scenarios detail starts a scenario run after its confirm and stays to follow it once listed", async () => {
     let started = false;
     const { requests, router } = renderDetail({
       [PLAN]: aScenarioPlan({
@@ -128,12 +131,15 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
     expect(within(dialog).getByRole("button", { name: "Back to plan" })).toHaveFocus();
     await user.click(within(dialog).getByRole("button", { name: "Start scenario run" }));
 
-    await waitFor(
-      () => {
-        expect(router.state.location.pathname).toBe(`${PATH}/runs/${SCENARIO_RUN}`);
-      },
-      { timeout: 5000 },
-    );
+    // Once listed, the dialog closes and the page stays: its scenario runs list it.
+    const runs = screen.getByRole("region", { name: "Scenario runs" });
+    expect(
+      await within(runs).findByRole("link", { name: SCENARIO_RUN }, { timeout: 5000 }),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+    expect(router.state.location.pathname).toBe(PATH);
     const start = requests.find(
       (request) => request.method === "POST" && request.url.endsWith("/runs"),
     );
@@ -506,6 +512,54 @@ describe("ScenarioDetailScreen (scenarios detail)", () => {
     expect(screen.getByLabelText("external_ref (required)")).toHaveAccessibleDescription(
       /external_ref must be a ref\./,
     );
+  });
+
+  it("scenarios detail follows a running scenario run: banner with cancel and each step's status", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    const step = (key: string, status: "ok" | "running") => ({
+      attempt: 1,
+      ended_at: status === "ok" ? "2026-10-23T10:01:00Z" : null,
+      key,
+      max_attempts: 1,
+      reason: null,
+      session_ids: [],
+      started_at: "2026-10-23T10:00:00Z",
+      status,
+    });
+    renderDetail({
+      [DETAIL]: aScenarioDetail({ runs: [aScenarioRunRef({ status: "running" })] }),
+      [`/api/v1/workflow-runs/${SCENARIO_RUN}`]: aRun({
+        id: SCENARIO_RUN,
+        kind: "scenario",
+        workflow: "scenario:order-lifecycle",
+        content_hash: "sha256:5f0c2e1d",
+        revision: 1,
+        status: "running",
+        steps: [step("fetch-order", "ok"), step("order-on-hold", "running")],
+      }),
+      [`/api/v1/scenario-runs/${SCENARIO_RUN}`]: aScenarioRunDetail({
+        polls: [1, 2, 3].map((poll) => ({
+          node: "order-on-hold",
+          attempt: 1,
+          poll,
+          held: false,
+          at: null,
+        })),
+      }),
+    });
+
+    expect(await screen.findByText(/is running in personal/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Open scenario run/ })).toHaveAttribute(
+      "href",
+      `${PATH}/runs/${SCENARIO_RUN}`,
+    );
+    expect(screen.getByRole("button", { name: /Cancel scenario run/ })).toBeInTheDocument();
+    const fetch = screen.getByRole("article", { name: "Step 1: fetch-order" });
+    expect(within(fetch).getByText("Done")).toBeInTheDocument();
+    const held = screen.getByRole("article", { name: "Step 2: order-on-hold" });
+    expect(await within(held).findByText(/Running · check 3/)).toBeInTheDocument();
+    const render = screen.getByRole("article", { name: "Step 3: render-pdf" });
+    expect(within(render).getByText("Not started")).toBeInTheDocument();
   });
 
   it("scenarios detail puts the run panel beside the steps", async () => {
