@@ -32,6 +32,10 @@ MAX_PROJECT_CHARS: Final = 200
 MAX_TITLE_CHARS: Final = 200
 MAX_DECISION_MESSAGE: Final = 2048
 MAX_ANSWERS: Final = 16
+# An answer's key is the question's own text, written by Claude, so it may be long; the value is
+# the labels picked (joined) or the user's own words. The request body's byte cap still bounds both.
+MAX_ANSWER_KEY_CHARS: Final = 8192
+MAX_ANSWER_VALUE_CHARS: Final = 8192
 MAX_CLOUD_TASK_CHARS: Final = 65536
 # The Sessions list's glimpse of a session: the last prompt and reply, and the files changed.
 MAX_SNIPPET_CHARS: Final = 280
@@ -327,8 +331,8 @@ class SendMessage(ViewModel):
     )
 
 
-AnswerKey = Annotated[str, StringConstraints(min_length=1, max_length=200)]
-AnswerValue = Annotated[str, StringConstraints(max_length=1024)]
+AnswerKey = Annotated[str, StringConstraints(min_length=1, max_length=MAX_ANSWER_KEY_CHARS)]
+AnswerValue = Annotated[str, StringConstraints(max_length=MAX_ANSWER_VALUE_CHARS)]
 
 
 class PermissionDecision(ViewModel):
