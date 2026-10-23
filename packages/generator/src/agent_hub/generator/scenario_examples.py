@@ -47,15 +47,17 @@ It reads one JSON object on stdin:
  "endpoint": {"target": {"url": ..., "resource": ...}}}
 In plan mode it changes nothing and prints {"summary": "<one line>"}; in run mode it prints
 one JSON value that matches the action's output_format: the HTTP status, a redirect's own, or 0
-when the service cannot be reached.
+when the service refuses, resets or times out (any other error fails the action).
 """
 
-import http.client
 import json
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+
+# Not up yet: the expect polls again. Any other error is the endpoint's or the path's: it fails.
+UNREACHABLE = (ConnectionRefusedError, ConnectionResetError, ConnectionAbortedError, TimeoutError)
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -66,12 +68,18 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 call = json.load(sys.stdin)
-base = str(call["endpoint"]["target"]["url"]).rstrip("/")
+endpoint = urllib.parse.urlsplit(str(call["endpoint"]["target"]["url"]))
 path = str(call["inputs"]["path"])
-url = base + path
-# The path may only add a path to the endpoint: anything that changes its host is refused.
-if not path.startswith("/") or urllib.parse.urlsplit(url)[:2] != urllib.parse.urlsplit(base)[:2]:
-    sys.exit(f"demo-get-status: path must start with / and stay on the endpoint: {path!r}")
+# A path starting with / follows the endpoint's host, so it can never change it; printable
+# ASCII alone, so no space, control character or line break reaches the request.
+if not path.startswith("/") or not all("!" <= char <= "~" for char in path):
+    sys.exit(
+        "demo-get-status: path must start with / and hold only printable ASCII"
+        f" without spaces: {path!r}"
+    )
+# The endpoint's user and password, if any, are never sent or printed.
+host = endpoint.netloc.rpartition("@")[2]
+url = urllib.parse.urlunsplit((endpoint.scheme, host, endpoint.path.rstrip("/") + path, "", ""))
 if call["mode"] == "plan":
     print(json.dumps({"summary": f"GET {url}"}))
     sys.exit(0)
@@ -81,8 +89,10 @@ try:
         status = response.status
 except urllib.error.HTTPError as error:
     status = error.code
-except (urllib.error.URLError, http.client.HTTPException, OSError):
-    # Not up yet (refused, timed out, reset): 0, so an expect keeps polling.
+except Exception as error:
+    reason = getattr(error, "reason", error)
+    if not isinstance(error, UNREACHABLE) and not isinstance(reason, UNREACHABLE):
+        sys.exit(f"demo-get-status: GET {url}: {reason}")
     status = 0
 print(json.dumps({"status": status}))
 '''
