@@ -248,13 +248,15 @@ A workflow is data: a YAML (or JSON) file in the hub's `workflows/<pack>/` folde
 ([format](docs/design/workflow-schema.md), [ADR 0032](docs/adr/0032-workflow-engine.md)). `hub init` and `hub sync`
 seed the built-in packs once: `issue-to-pr` (what `hub run` runs) and `sdlc` (`deliver`: implement, validate and
 review in a loop until green, then the PR; `review`: a spec lens and a quality lens side by side, then one verdict), `retro` (the
-week's run metrics, at most five changes each backed by those numbers, then issue drafts for the ones the owner keeps) and
+week's run metrics, at most five changes each backed by those numbers, then issue drafts for the ones the owner keeps),
 `post-merge-verify` (after a merge, or weekly with a blank `sha`: `select` the passing ACs of the merged tickets and of
 the paths it changed, `run` each verification once in a throwaway worktree at the commit, `explain` a failure from the
 merges since its last pass, read-only, and `report` it to `brain/_inbox/verify-<date>.md`; a verification with a
 machine path is listed as "cannot run after merge"; fetch first:
-`./hub workflow run post-merge-verify --input repo=<dir> --input sha=<sha> --live`). A hub's own file
-overrides a built-in of the same name.
+`./hub workflow run post-merge-verify --input repo=<dir> --input sha=<sha> --live`) and
+`brain-care` (`inbox`: the weekly inbox review, one owner gate per group of notes, then one hub PR; `context`: the monthly
+always-loaded context audit, a trim only after the owner's approval). A hub's own file overrides a built-in of the same
+name.
 
 ```bash
 ./hub workflow list                          # the workflows that load; problems as <file>:<line>: <key>: <message>
@@ -348,8 +350,9 @@ The size decides the ceremony:
    and sends back only the ones it accepts.
 8. **Verify and finish.** `evaluator` re-runs every check and writes `eval.md`; it must say `SHIP`. The pull request is
    opened on a `project.branch_prefix` branch, authored by you.
-9. **Compound.** You go through the agents' learning proposals in `brain/_inbox/` and decide where each lands;
-   `/handoff` if the work spans sessions.
+9. **Compound.** You go through the agents' learning proposals in `brain/_inbox/` and decide where each lands
+   (`/learn promote` runs the weekly `inbox` review: one gate per group, then one hub PR); `/handoff` if the work spans
+   sessions.
 
 </details>
 
@@ -379,7 +382,7 @@ The size decides the ceremony:
 | `/research <question or issue>` | Documents how the code works today, with `path:line` references and no critique; writes `research.md` | Before planning, or for a question that spans many files |
 | `/create-plan <issue or slug>` | Turns a spec and its research into `plan.md`: small tasks, contracts first, each with a verification command; waits for your approval before any code | When a spec is ready and needs a plan |
 | `/recall <topic>` | Answers "what do we know about X, why was Y decided" from the brain, ADRs and past session transcripts, with sources | Before deciding something again |
-| `/learn [personal] <one sentence>` | Proposes one verified, non-obvious learning to `brain/_inbox/`; you decide whether and where it lands. With `personal`, writes your own preference or machine detail to `brain/auto/workspace/` (gitignored, never committed) | When the next session should know something |
+| `/learn [personal\|promote] <one sentence>` | Proposes one verified, non-obvious learning to `brain/_inbox/`; you decide whether and where it lands. With `personal`, writes your own preference or machine detail to `brain/auto/workspace/` (gitignored, never committed). With `promote`, starts the `inbox` workflow: you decide each group of inbox notes at its gate, then merge one hub PR | When the next session should know something |
 | `/triage <issue \| --backlog \| --hygiene> [--limit N]` | Brings a tracker issue to Definition of Ready (ACs, size, repos, dependencies, a verification command), then labels it ready or `needs-human`; `--backlog` takes the unlabeled open issues one by one, `--hygiene` reports orphan, stale and duplicate issues (at most 50 read per run, or `--limit N`) | Before an issue goes to `/fix`, `/feature` or `hub run` |
 | `/deliver <PR or issue>` | Drives an open PR to merged: conflicts, red CI and review threads, the gates before each push, the default branch's CI after the merge, then the tracker | After the PR is open |
 | `/review <PR>` | Reviews someone else's PR against its ticket, the ADRs and the brain; posts only what you approve | For a teammate's PR or one `hub run` opened |

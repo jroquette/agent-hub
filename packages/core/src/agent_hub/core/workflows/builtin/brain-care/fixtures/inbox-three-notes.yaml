@@ -1,0 +1,51 @@
+# AC-1: three notes, one duplicate pair and one external note. The agent proposes two groups and
+# the external note opens a gate of its own: two gates, both applied, then one hub PR.
+workflow: inbox
+stubs:
+  read:
+    output:
+      count: 3
+      notes:
+        - {path: brain/_inbox/YYYY-MM-DD-cache-key.md, title: Cache key, age_days: 21, provenance: agent, external: false, excerpt: Key the cache by the lockfile hash.}
+        - {path: brain/_inbox/YYYY-MM-DD-cache-key-again.md, title: Cache key again, age_days: 14, provenance: agent-from-code, external: false, excerpt: The cache key must include the lockfile.}
+        - {path: brain/_inbox/YYYY-MM-DD-blog-tip.md, title: Blog tip, age_days: 13, provenance: agent-from-external, external: true, excerpt: A tip read on a blog.}
+      paths: [brain/_inbox/YYYY-MM-DD-cache-key.md, brain/_inbox/YYYY-MM-DD-cache-key-again.md, brain/_inbox/YYYY-MM-DD-blog-tip.md]
+      external: [brain/_inbox/YYYY-MM-DD-blog-tip.md]
+      unreadable: []
+      omitted: 0
+  group:
+    output:
+      groups:
+        - {notes: [brain/_inbox/YYYY-MM-DD-cache-key.md, brain/_inbox/YYYY-MM-DD-cache-key-again.md], action: promote, target: brain/learnings/, reason: The same lesson twice., text: Key the cache by the lockfile hash.}
+        - {notes: [brain/_inbox/YYYY-MM-DD-blog-tip.md], action: check, target: agent-hub/AGENTS.md, reason: An outside tip to verify., text: ""}
+  plan:
+    output:
+      count: 2
+      groups:
+        - {id: 1, notes: [brain/_inbox/YYYY-MM-DD-cache-key.md, brain/_inbox/YYYY-MM-DD-cache-key-again.md], external: false, action: promote, target: brain/learnings/, reason: The same lesson twice., text: Key the cache by the lockfile hash.}
+        - {id: 2, notes: [brain/_inbox/YYYY-MM-DD-blog-tip.md], external: true, action: check, target: agent-hub/AGENTS.md, reason: An outside tip to verify., text: ""}
+      ignored: []
+      unproposed: []
+  decide__next:
+    - output: {index: 0, last: false, group: {id: 1, notes: [brain/_inbox/YYYY-MM-DD-cache-key.md, brain/_inbox/YYYY-MM-DD-cache-key-again.md], external: false, action: promote, target: brain/learnings/}, message: "Group 1 of 2: promote -> brain/learnings/."}
+    - output: {index: 1, last: true, group: {id: 2, notes: [brain/_inbox/YYYY-MM-DD-blog-tip.md], external: true, action: check, target: agent-hub/AGENTS.md}, message: "Group 2 of 2: check -> agent-hub/AGENTS.md. It needs your explicit approval."}
+  decide__gate:
+    - {decision: apply, text: "", approver: Dana Owner}
+    - {decision: apply, text: Checked the source., approver: Dana Owner}
+  decide__record:
+    - output: {decisions: [{group: {id: 1}, decision: apply, note: "", approver: Dana Owner}], acted: 1}
+    - output: {decisions: [{group: {id: 1}, decision: apply, note: "", approver: Dana Owner}, {group: {id: 2}, decision: apply, note: Checked the source., approver: Dana Owner}], acted: 2}
+  branch:
+    output:
+      path: /ws/hub/.claude/worktrees/brain-care-inbox-0a1b2c3d
+      branch: jdoe/brain-care-inbox-0a1b2c3d
+      base: 0a1b2c3d4e5f
+      target: {path: /ws/hub/.claude/worktrees/brain-care-inbox-0a1b2c3d, branch: jdoe/brain-care-inbox-0a1b2c3d, base: 0a1b2c3d4e5f}
+  apply:
+    output: {changes: 4, deleted: [brain/_inbox/YYYY-MM-DD-cache-key.md, brain/_inbox/YYYY-MM-DD-cache-key-again.md], written: [brain/learnings/], edited: [brain/_inbox/YYYY-MM-DD-blog-tip.md], skipped: [], summary: Weekly inbox review.}
+  pr:
+    output: {url: "https://github.com/acme/demo-hub/pull/7", found: false, summary: Weekly inbox review., title_unmatched: null}
+  outcome:
+    output: {outcome: pr_opened, reason: "opened https://github.com/acme/demo-hub/pull/7; after the merge, run: git worktree remove /ws/hub/.claude/worktrees/brain-care-inbox-0a1b2c3d && git branch -D jdoe/brain-care-inbox-0a1b2c3d"}
+expect: {status: done, outcome: pr_opened}
+reached: [read, group, plan, decide, decide__next, decide__gate, decide__record, branch, apply, pr, outcome]
