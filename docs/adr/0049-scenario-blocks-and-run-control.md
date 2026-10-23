@@ -39,7 +39,9 @@ Chosen option: 1.
   its condition, computed at translation (bounded: 8 atoms, 64 terms). Each block has an address (`2.3`, `2.3.then.1`,
   `2.3.p2.1`); ids are optional, and a block without one gets `<stage slug>--<its address in the stage>`
   (`payment--3-then-1`), which no other derived id can equal; an explicit id equal to another block's fails the load.
-  An If with no else exits through its branch and the block before it, so a false condition skips only the branch.
+  An If with no else exits through its branch and the block before it in the same step list, so a false condition
+  skips only the branch; such an If cannot open a step list. A branch's condition is put on every entry node of its
+  first block, distributed over any condition already there.
   `version: 1` scenarios load exactly as before.
 - **Translation at load.** `parse_workflow` translates a version-2 document to a version-1 `WorkflowDocument` plus a
   **block map** (block address → its node ids, its entry and exit nodes, its tree key path); an included version-2
