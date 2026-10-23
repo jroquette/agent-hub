@@ -643,4 +643,86 @@ describe("RunDetailScreen", () => {
     await screen.findByRole("region", { name: "Failure" });
     expect(await seriousViolations(container)).toEqual([]);
   });
+  describe("environment (AGH-350 E-15)", () => {
+    const BEST_EFFORT =
+      "Agent steps are checked on a best-effort basis; deterministic steps are enforced.";
+
+    it("shows the best-effort sentence when the run has an environment", async () => {
+      renderRun({
+        ...failedRun,
+        environment: { name: "staging", access: "read", production: false },
+      });
+
+      const banner = await screen.findByText(BEST_EFFORT);
+      const box = banner.closest(".ah-banner");
+      expect(box).toHaveTextContent(
+        "Commands, scripts and actions in staging follow its access policy before they run.",
+      );
+      expect(box).toHaveTextContent(
+        "For agent steps, the guard only asks when a command names a staging endpoint.",
+      );
+      expect(box).not.toHaveAttribute("role");
+      expect(screen.getByText("Environment")).toBeInTheDocument();
+      expect(screen.getByText("staging", { selector: ".ah-mono" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Dismiss" })).toBeNull();
+    });
+
+    it("says agent steps are not checked when the run's environment allows writes", async () => {
+      renderRun({
+        ...failedRun,
+        environment: { name: "personal", access: "write", production: false },
+      });
+
+      const banner = (await screen.findByText(BEST_EFFORT)).closest(".ah-banner");
+      expect(banner).toHaveTextContent(
+        "Agent steps in personal are not checked: the guard checks endpoints only in read-only and production environments.",
+      );
+    });
+
+    it("keeps lines 1 and 2 when the environment's access is unknown", async () => {
+      renderRun({ ...failedRun, environment: { name: "gone", access: null, production: null } });
+
+      const banner = (await screen.findByText(BEST_EFFORT)).closest(".ah-banner");
+      expect(banner).toHaveTextContent(
+        "Commands, scripts and actions in gone follow its access policy",
+      );
+      expect(banner).not.toHaveTextContent("For agent steps");
+    });
+
+    it("shows no best-effort sentence when the run has no environment", async () => {
+      renderRun(failedRun);
+
+      await screen.findByRole("region", { name: "Failure" });
+      expect(screen.queryByText(BEST_EFFORT)).toBeNull();
+    });
+
+    it("redirects a scenario run to its scenario run page, replacing the history entry", async () => {
+      const scenarioRun = anEngineRun({
+        id: "3f2a91c0",
+        project: "demo",
+        workflow: "scenario:order-lifecycle",
+        kind: "scenario",
+      });
+      const { router } = renderRun(scenarioRun, "3f2a91c0");
+
+      await waitFor(() => {
+        expect(router.state.location.pathname).toBe(
+          "/scenarios/demo/order-lifecycle/runs/3f2a91c0",
+        );
+      });
+      expect(router.state.historyAction).toBe("REPLACE");
+    });
+  });
+  it("keeps a workflow run whose label starts with scenario: on Run detail", async () => {
+    const run = anEngineRun({
+      id: "3f2a91c2",
+      project: "demo",
+      workflow: "scenario:order-lifecycle",
+      kind: "workflow",
+    });
+    const { router } = renderRun(run, "3f2a91c2");
+
+    expect(await screen.findAllByText("scenario:order-lifecycle")).not.toHaveLength(0);
+    expect(router.state.location.pathname).toBe("/runs/3f2a91c2");
+  });
 });

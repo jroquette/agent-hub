@@ -7,6 +7,7 @@ import signal
 import socket
 import subprocess
 import sys
+import textwrap
 import tomllib
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
@@ -30,6 +31,24 @@ DEFAULT_TIMEOUT_SECONDS = 120
 INSTALL_TIMEOUT_SECONDS = 300
 # The extra that adds session control to ``hub web`` (the Claude Agent SDK, ADR 0031).
 SESSIONS_EXTRA = "sessions"
+RELEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
+# `git rev-parse --local-env-vars`: each would point git at another repository than its cwd's.
+GIT_LOCAL_VARIABLES = frozenset(
+    {
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_IMPLICIT_WORK_TREE",
+        "GIT_GRAFT_FILE",
+        "GIT_INDEX_FILE",
+        "GIT_NO_REPLACE_OBJECTS",
+        "GIT_REPLACE_REF_BASE",
+        "GIT_PREFIX",
+        "GIT_SHALLOW_FILE",
+        "GIT_COMMON_DIR",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -68,6 +87,33 @@ def run() -> Callable[..., subprocess.CompletedProcess[str]]:
         )
 
     return _run
+
+
+def isolated_git_env() -> dict[str, str]:
+    """The environment without the user's git config (tag signing, url rewrites), and without a
+    caller's ``GIT_DIR``-style or ``GIT_CONFIG_*`` variables (a hook or ``git -c`` parent)."""
+    kept = {
+        name: value
+        for name, value in os.environ.items()
+        if not (name in GIT_LOCAL_VARIABLES or name.startswith("GIT_CONFIG"))
+    }
+    return {**kept, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+
+
+def workflow_step_script(step_name: str) -> str:
+    """The ``run: |`` block of the step whose line is ``step_name`` in release.yml, dedented."""
+    lines = RELEASE_WORKFLOW.read_text(encoding="utf-8").splitlines()
+    start = next(index for index, line in enumerate(lines) if line.strip() == step_name)
+    run_index = next(
+        index for index in range(start, len(lines)) if lines[index].strip() == "run: |"
+    )
+    run_indent = len(lines[run_index]) - len(lines[run_index].lstrip())
+    block: list[str] = []
+    for line in lines[run_index + 1 :]:
+        if line.strip() and len(line) - len(line.lstrip()) <= run_indent:
+            break
+        block.append(line)
+    return textwrap.dedent("\n".join(block))
 
 
 @pytest.fixture(scope="session")

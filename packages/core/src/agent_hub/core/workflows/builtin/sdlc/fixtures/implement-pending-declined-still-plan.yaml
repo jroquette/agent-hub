@@ -13,7 +13,7 @@ stubs:
   pending:
     output: {request: 1, decision: declined, input: declined_change, note: Keep T2 on the current handler.,
       summary: Route T2 through routes.py., superseded: ''}
-  pass-1__preflight:
+  pass-1__check__preflight:
     output:
       drift: plan
       local_notes: []
@@ -22,8 +22,10 @@ stubs:
       proposal: Route T2 through routes.py.
       affected: T3
       summary: T2 goes through routes.py
-  pass-1__record:
+  pass-1__check__record:
     output: {runs: 2}
+  pass-1__check__result:
+    output: {status: blocked, superseded: ''}
   pass-1__outcome:
     output: {status: blocked, question: 'plan drift remains after the owner''s decision on the plan change:
         the next /implement opens a new change request', verdict: '', next_input: '', next_text: '', superseded: '',
@@ -50,4 +52,4 @@ stubs:
       hub_files: [change-requests/1.decision.md, change-requests/1.md, tickets/DEM-1/brief.md, tickets/DEM-1/preflight.json]
       superseded: ''
 expect: {status: done, outcome: blocked}
-reached: [context, pending, pass-1__preflight, pass-1__record, pass-1__outcome, last, report, delivery]
+reached: [context, pending, pass-1__check__preflight, pass-1__check__record, pass-1__check__result, pass-1__outcome, last, report, delivery]

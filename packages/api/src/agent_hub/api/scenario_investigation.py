@@ -46,7 +46,11 @@ from agent_hub.core.agent_sessions.agent_session import (
     EndReason,
 )
 from agent_hub.core.agent_sessions.control import AgentSessionCommands, SessionRestriction
-from agent_hub.core.agent_sessions.errors import HubLocalInvalidError, SessionRestrictionError
+from agent_hub.core.agent_sessions.errors import (
+    HubLocalInvalidError,
+    RestrictionUnreadableError,
+    SessionRestrictionError,
+)
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
@@ -145,7 +149,7 @@ class InvestigationRestrictions:
                 "the hub's scenario runs cannot be read to tell whether this session is held"
                 " to a scenario run's tool policy"
             )
-            raise SessionRestrictionError(session.id, reason) from error
+            raise RestrictionUnreadableError(session.id, reason) from error
         if found is None:
             return None
         hub, folder, number = found
@@ -164,11 +168,18 @@ class InvestigationRestrictions:
             raise SessionRestrictionError(session.id, reason) from error
 
     def _linked(self, session: AgentSession) -> tuple[str, Path, int] | None:
-        """The hub, run folder and investigation number of the link naming ``session``. Only
+        """The hub, run folder and investigation number of the link naming ``session``, None once
+        its project's runs are scanned (``RestrictionUnreadableError`` when no registered hub
+        names the project). Only
         folders holding an ``investigation-<n>.session`` are read; a folder or a link that
         vanishes while read is skipped; any other read error (an unreadable link included) raises
         ``OSError``, so the caller refuses rather than reopen unrestricted."""
-        for project, hub in self._credentials.project_hubs():
+        hubs = self._credentials.project_hubs()
+        if all(project != session.project for project, _hub in hubs):
+            # The registry cannot be read, or names no hub of the project: unknown, not "none".
+            reason = "no registered hub names the session's project"
+            raise RestrictionUnreadableError(session.id, reason)
+        for project, hub in hubs:
             runs = Path(hub) / RUN_FOLDERS
             if project != session.project or not runs.is_dir() or runs.is_symlink():
                 continue
@@ -325,6 +336,15 @@ def _claim(link: Path, run_id: str) -> str | None:
             raise
         reason = "the investigation's session file is a link"
         raise RunConflictError(code="link_in_path", reason=reason, run_id=run_id) from None
+
+
+def linked_session(folder: Path, number: int) -> str | None:
+    """The session ``investigation-<number>.session`` in a run folder names, never through a
+    link; None when there is none or it cannot be read (a read for hub web's screens)."""
+    try:
+        return _read_link(folder / f"investigation-{number}.session")
+    except OSError:
+        return None
 
 
 def _read_link(link: Path) -> str | None:

@@ -22,6 +22,56 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   decision (pull request) → note. `GET /learnings` takes `brain_path`. The database gains migration 0010 (the
   `knowledge_links` table), and the index's version becomes 2, so each hub's index is rebuilt once by its first
   search, reindex or note read after the upgrade. Nothing measures a note's effect.
+
+## [0.21.0] - 2026-10-23
+
+### Added
+
+- Scenarios in `hub web` (AGH-364): a **Scenarios** entry under Work, after Workflow runs, opens the list of the
+  hub's scenarios (`/scenarios`, filter with `?q=`). A scenario's page shows its plan and starts a run, the
+  environment pre-filled from `?env=` (the plan never runs on load). A scenario run has its own page
+  (`/scenarios/<project>/<name>/runs/<run>`) with its timeline, the investigation's answer options and its
+  findings; `/runs/<run>` for a scenario run redirects there, and search lists scenario runs. Workflow runs shows only
+  once a run of kind `workflow` exists. An investigation session keeps its read-only permission mode, and its chat
+  shows no mode switch.
+
+- `hub.json` → `repos[].ui_paths` (AGH-474): optional globs of a repo's screen paths, matched from the repo root
+  (`**` spans folders); absent means the repo has no UI. The new `hub doctor` rule `repos.ui_paths` warns about each
+  glob that matches no file of the repo's checkout. A hub can set the key only once its pin carries this release.
+  The rule reads the repo checkouts even when no repo sets `ui_paths`: a hub that turned off `brain.leak`,
+  `links.dead` and `repos.agents` now gets the missing or unlistable checkout findings under `repos.ui_paths`.
+- Review outputs accept `reviewer` `ux` and `overengineering`, saved as `reviews/<ticket>/ux-r<N>.json` and
+  `overengineering-r<N>.json` (AGH-474). Existing review files stay valid. The lenses that write them come later.
+- A merged ticket's outcome (two-level-flows S3, AGH-473): `hub step outcome --feature --ticket --pr --built --changes
+  --interfaces [--merged-at]` writes `tickets/<ticket>/outcome.md` once (frontmatter `merged_at`, `pr`, `dependents`;
+  what was built, what changed against the plan, the final interfaces), never committing; a second run writes
+  nothing. In `hub web` the ticket's Merged step reads "Outcome recorded" and Build counts the ticket merged when
+  Linear has it Done or its outcome exists, on the Features list, the detail and the Tickets tab alike (Build is done
+  without Linear once every ticket has an outcome). A dependent whose latest preflight predates a blocker's outcome
+  reads Preflight "stale" with "<blocker> merged: re-run preflight" until a newer preflight runs. A malformed outcome
+  (16 KiB at most) turns only its Merged step unknown.
+- A built-in `preflight` workflow (`sdlc` pack, AGH-473): a dependent ticket's read-only preflight after a blocker
+  merged (`hub workflow run preflight --input feature=… --input ticket=… --input blocker=…`, which `/merge` will
+  start). It changes no checkout and makes no branch, commit or PR; on plan drift it opens a change request and waits
+  for you, as `/implement` does. `hub step preflight-due` says first whether the dependent still has to read the
+  outcome, so running it again for the same merge adds no second preflight.
+
+### Changed
+
+- `ticket-pass` now includes the preflight from the new built-in `preflight-check` workflow (AGH-473), so its
+  preflight steps are recorded as `<pass>__check__<step>` (`pass-1__check__preflight`, `pass-1__check__gate`…). A
+  hub's own fixtures or scripts that name `pass-1__preflight` and the like need the new names.
+
+## [0.20.1] - 2026-10-22
+
+### Added
+
+- `release.yml` creates the release tag when dispatched (AGH-455, ADR 0047): `gh workflow run release.yml -f version=X.Y.Z
+  -f sha=<full sha> -f notes=…` checks the version, that the commit is on `main` and declares that version, and that
+  the tag is new, then pushes the annotated tag with the notes as its message, and runs the release checks on it. The
+  tag is created only on a dispatch from `main` (any other ref fails the run), and the run is named
+  `release vX.Y.Z at <sha>`. A tag pushed by hand is still checked. The `/release` skill opens the version PR itself, dispatches the workflow and
+  watches its run; a platform repo without such a workflow still gets the commands printed for the owner.
 - An environment's page in `hub web` offers "Find services with Claude" (AGH-418): pick the repos and environments,
   and a read-only Claude session starts on the click; its progress shows the cost, the conversation and Stop. The
   review lists each proposed environment and service with the file and line it came from and its status (new,
@@ -1045,7 +1095,9 @@ Includes 0.3.0, which was never tagged.
 - The `hub.json` config model and schema, the generator templates, `hub init` and `hub sync`.
 - The release check on `v*` tags.
 
-[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/jroquette/agent-hub/compare/v0.20.1...v0.21.0
+[0.20.1]: https://github.com/jroquette/agent-hub/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/jroquette/agent-hub/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/jroquette/agent-hub/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/jroquette/agent-hub/compare/v0.17.0...v0.18.0

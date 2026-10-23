@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
 import {
+  AppLink,
   Button,
   DataTable,
   EmptyState,
@@ -38,7 +39,13 @@ import {
   stageLabel,
 } from "./model";
 import { StartRun } from "./StartRun";
-import { useRuns, type RunFilters, type Stage, type WorkflowRun } from "./queries";
+import {
+  useHasScenarioRuns,
+  useRuns,
+  type RunFilters,
+  type Stage,
+  type WorkflowRun,
+} from "./queries";
 
 const PAGE = 50;
 const STAGE_IDS: readonly Stage[] = [
@@ -403,6 +410,7 @@ export function RunsListScreen() {
   const running = items.length - reported - failed;
   const mid = median(finishedCosts(items));
   const neverAny = runs.isSuccess && items.length === 0 && !filtered;
+  const scenarioRuns = useHasScenarioRuns(scope);
 
   let content: ReactNode;
   if (runs.isError) {
@@ -425,6 +433,12 @@ export function RunsListScreen() {
           Runs appear when the executor picks an issue labelled agent-ready. Start one from the
           terminal (proposed CLI):
         </EmptyState>
+        {scenarioRuns && (
+          <p className="ah-small ah-muted" style={{ margin: "0 16px 16px", textAlign: "center" }}>
+            Scenario runs are listed in Scenarios.{" "}
+            <AppLink href="/scenarios">Open Scenarios</AppLink>
+          </p>
+        )}
       </div>
     );
   } else {

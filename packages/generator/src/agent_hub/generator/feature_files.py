@@ -27,22 +27,25 @@ feature, as the tickets view reads it) looks for them, so the listing leaves it 
 ``change-requests/`` is read as ``evals/`` is, at most ``MAX_CHANGE_REQUEST_FILES`` heads of
 ``CHANGE_REQUEST_HEAD_BYTES`` (requests and their decisions; ``change_requests_skipped`` counts the
 rest), by the listing too: the golden path's Plan signal and ``waiting_on_owner`` need them.
-Only ``read_feature_folder(..., tickets=True)`` (the tickets route) opens ``tickets/``: its first
-folders by name (not hidden, UTF-8 names, never a link), at most ``MAX_TICKET_FOLDERS`` and no
-more than a full ``preflight.json`` (``MAX_PREFLIGHT_BYTES`` + 1) each can add before the call
-reaches ``READ_BUDGET_BYTES``; ``ticket_folders_skipped`` counts the rest. In each,
+Every read opens ``tickets/`` for its tickets' outcomes, which Build counts (two-level-flows
+D-5): in its first ``MAX_TICKET_FOLDERS`` folders by name (not hidden, UTF-8 names, never a link),
+``outcome.md`` is read whole up to ``MAX_OUTCOME_BYTES`` (else a one-line problem), nothing else.
+Only ``read_feature_folder(..., tickets=True)`` (the tickets route) reads the other ticket records:
+in the same first folders by name, no more than a full ``preflight.json``
+(``MAX_PREFLIGHT_BYTES`` + 1) each can add before the call reaches ``READ_BUDGET_BYTES`` (the
+outcomes already read counted); ``ticket_folders_skipped`` counts the rest. In each,
 ``preflight.json`` is read whole up to ``MAX_PREFLIGHT_BYTES`` (else a one-line problem), and
 ``brief.md`` and ``plan.md`` are only checked as regular files.
 
 One listing reads at most about ``READ_BUDGET_BYTES``: a folder is read only while the bytes read
-so far are under it, so the total goes over by one folder at most (15,572,994 bytes, about
-14.9 MiB: ``features.json`` 1 MiB + 1, ``plan.md`` 256 KiB + 1, two 64 KiB heads, 200 eval heads
-of 16 KiB, 500 review heads of 8 KiB, 50 UX design heads of 4 KiB and 400 change request heads of
-16 KiB); each folder past it is listed with ``OVER_BUDGET`` as its record problem and files
-unread. ``read_feature_folder`` reads the one folder a slug names, as the listing would (at most
-those 15,572,994 bytes), plus which of its ``reviews/`` ticket folders hold a review round; with
-``tickets`` the call stays within ``READ_BUDGET_BYTES`` (32 MiB) in all, which leaves room for at
-least 274 full ``preflight.json`` in the worst case.
+so far are under it, so the total goes over by one folder at most (23,765,494 bytes, about
+22.7 MiB: ``features.json`` 1 MiB + 1, ``plan.md`` 256 KiB + 1, two 64 KiB heads, 200 eval heads
+of 16 KiB, 500 review heads of 8 KiB, 50 UX design heads of 4 KiB, 400 change request heads of
+16 KiB and 500 outcomes of 16 KiB + 1); each folder past it is listed with ``OVER_BUDGET`` as its
+record problem and files unread. ``read_feature_folder`` reads the one folder a slug names, as the
+listing would (at most those 23,765,494 bytes), plus which of its ``reviews/`` ticket folders hold
+a review round; with ``tickets`` the call stays within ``READ_BUDGET_BYTES`` (32 MiB) in all,
+which leaves room for at least 149 full ``preflight.json`` in the worst case.
 """
 
 import contextlib
@@ -86,12 +89,15 @@ from agent_hub.core.features.ticket_records import (
     CHANGE_REQUEST_HEAD_BYTES,
     CHANGE_REQUESTS_FOLDER,
     MAX_CHANGE_REQUEST_FILES,
+    MAX_OUTCOME_BYTES,
     MAX_PREFLIGHT_BYTES,
     MAX_TICKET_FOLDERS,
+    OUTCOME_FILE,
     PREFLIGHT_FILE,
     TICKET_BRIEF,
     TICKET_PLAN,
     TICKETS_FOLDER,
+    OutcomeFile,
     TicketFiles,
 )
 from agent_hub.core.regular_files import read_regular
@@ -217,7 +223,7 @@ def _read_folder(
             meter=meter,
         )
         rounds = _round_tickets(folder) if one else ()
-        ticket_folders, tickets_skipped = _tickets(folder, meter) if tickets else ((), 0)
+        ticket_folders, outcomes, tickets_skipped = _tickets(folder, meter, full=tickets)
     finally:
         os.close(folder)
     record, plan = reads[RECORD], reads[PLAN]
@@ -240,6 +246,7 @@ def _read_folder(
         ticket_folders_skipped=tickets_skipped,
         change_requests=requests,
         change_requests_skipped=requests_skipped,
+        outcomes=outcomes,
     )
 
 
@@ -271,27 +278,50 @@ def _ux_heads(folder: int, meter: _Meter) -> tuple[tuple[RecordHead, ...], int]:
     return heads, skipped
 
 
-def _tickets(parent: int, meter: _Meter) -> tuple[tuple[TicketFiles, ...], int]:
-    """The records of ``tickets/``'s first folders by name, and how many others were left out: at
-    most ``MAX_TICKET_FOLDERS``, and no more than a full ``preflight.json`` each can add while the
-    call stays within ``READ_BUDGET_BYTES``."""
+def _tickets(
+    parent: int, meter: _Meter, *, full: bool
+) -> tuple[tuple[TicketFiles, ...], tuple[OutcomeFile, ...], int]:
+    """The outcomes of ``tickets/``'s first ``MAX_TICKET_FOLDERS`` folders by name; with ``full``
+    also their other records, of no more folders than a full ``preflight.json`` each can add
+    while the call stays within ``READ_BUDGET_BYTES``, and how many folders were left out."""
     try:
         tickets = os.open(TICKETS_FOLDER, _FOLDER_FLAGS, dir_fd=parent)
     except OSError:
-        return (), 0
+        return (), (), 0
     listed = [0]
-    room = max((READ_BUDGET_BYTES - meter.read) // (MAX_PREFLIGHT_BYTES + 1), 0)
     try:
         with os.scandir(tickets) as entries:
             found = _counted(_ticket_folders(entries), listed)
-            names = heapq.nsmallest(min(MAX_TICKET_FOLDERS, room), found)
-            for _ in found:  # nsmallest(0, …) reads nothing: count the folders left out too
+            names = heapq.nsmallest(MAX_TICKET_FOLDERS, found)
+            for _ in found:  # count the folders left out too
                 pass
-        return tuple(_ticket_files(tickets, name, meter) for name in names), listed[0] - len(names)
+        outcomes = tuple(
+            outcome for name in names if (outcome := _outcome(tickets, name, meter)) is not None
+        )
+        if not full:
+            return (), outcomes, 0
+        room = max((READ_BUDGET_BYTES - meter.read) // (MAX_PREFLIGHT_BYTES + 1), 0)
+        kept = names[:room]
+        files = tuple(_ticket_files(tickets, name, meter) for name in kept)
+        return files, outcomes, listed[0] - len(kept)
     except OSError:
-        return (), 0
+        return (), (), 0
     finally:
         os.close(tickets)
+
+
+def _outcome(tickets: int, name: str, meter: _Meter) -> OutcomeFile | None:
+    """``tickets/<name>/outcome.md`` whole up to its cap, its problem, or None when absent."""
+    try:
+        folder = os.open(name, _FOLDER_FLAGS, dir_fd=tickets)
+    except OSError:
+        return None
+    try:
+        read = read_regular(folder, OUTCOME_FILE, limit=MAX_OUTCOME_BYTES + 1)
+        read = _capped(meter.add(read), MAX_OUTCOME_BYTES)
+    finally:
+        os.close(folder)
+    return None if read is None else OutcomeFile(name=name, read=read)
 
 
 def _counted(names: Iterable[str], counted: list[int]) -> Iterator[str]:

@@ -37,6 +37,14 @@ Every screen carries its phase. A screen tagged P3 or P4 is not shown in the sid
     ?project=&repo=&stage=&outcome=&failure_stage=&mode=live|dry-run
 └ /runs/:runId                      Run detail                                       P2 · P4 retry
     ?step=:stepKey&attempt=:n&panel=gates|tracker|caps|pr
+    a scenario run's id redirects (replace) to its scenario run page (AGH-364)
+
+/scenarios                          Scenarios                                        P2
+    ?q=   (filter, replace)
+└ /scenarios/:project/:name         Scenario detail                                  P2 (plan, start)
+    ?env=   (pre-fills the environment; the plan never runs on load)
+  └ /scenarios/:project/:name/runs/:runId   Scenario run                             P2 (answer, findings)
+    ?option=&event=   (replace)
 
 /knowledge                          Knowledge (redirects to /knowledge/brain)        P3
 ├ /knowledge/brain                  Brain: project picker (AGH-270, AGH-427)         P2
@@ -144,6 +152,9 @@ otherwise, this list wins:
   Environments, `server`, which follows them too: AC-417.2); and Health and Settings pinned to the footer,
   next to Shortcuts. There is no Approvals and no Live sessions entry. The command palette lists the same screens,
   Learnings with its `g k` hint.
+- **AGH-364** Work gains **Scenarios** (`clipboard-list`) right after Workflow runs: Sessions, Workflow runs,
+  Scenarios, Features. It is always shown, has no badge and no `g` key. Workflow runs shows once a run of kind
+  `workflow` exists (AC-382.9): scenario runs alone do not show it. See [23-scenarios.md](23-scenarios.md).
 - **AC-273.21** There is no Approvals screen: `/approvals` is an unknown route (404), `g a` goes nowhere (and still
   never answers a focused permission card), and the shortcut sheet lists no Approvals. A Needs you item, an
   activity row and a search hit for an approval link where it is answered: `/runs/<run>` for a workflow gate, else
@@ -219,6 +230,7 @@ Result groups, in this fixed order (empty groups hidden):
 | Issues | `AGH-48`, `LOK-311`, title words | `AGH-48` Layered memory · Run reported · PR #69 merged | the run of the issue, or the feature if no run |
 | Sessions | agent id, issue, repo | hub-workflow:quality-reviewer · AGH-48 · 2026-10-09 14:02 | `/sessions/:id` |
 | Workflow runs | run id, issue | Run 01923f1e · AGH-79 Guard bypass · failed at verifying | `/runs/:id` |
+| Scenario runs | scenario run id | Scenario run 3f2a91c0 · demo | `/scenarios/:project/:name/runs/:id` |
 | Files | repo-relative paths touched by any session | `packages/core/.../brain_memory_rule.py` · touched in 4 sessions | `/sessions?file=…` |
 | Agents | `plugin:name` | `hub-workflow:evaluator` · 12 sessions this week | `/sessions?agent=…` |
 | Brain notes (as built AGH-393) | the knowledge index (title and text) of the project in scope, or of the project route's project; none with All projects | Worktrees from origin · `brain/decisions/0001-worktrees.md` | `/projects/:project/brain/<path>` |

@@ -3,7 +3,8 @@
 ``GET /approvals/{id}/gate`` shows what answers an open workflow gate; ``POST
 /approvals/{id}/decision`` is a strict write that needs the launch's cookie (checked before
 routing): one call to core's ``DecideWorkflowGate``, which records the answer through the CLI
-and resumes the run.
+and resumes the run. ``GET /approvals`` names each open engine-run gate's kind (``gate_kind``,
+``policy`` or ``investigation``) from its run's record when the workflow gates are wired.
 """
 
 from typing import Annotated, Literal
@@ -13,6 +14,7 @@ from fastapi import APIRouter, Path, Response
 from agent_hub.api.dependencies import (
     EventReadModelsDep,
     GateDecisionsDep,
+    OptionalWorkflowGatesDep,
     WorkflowGatesDep,
     parse_filter,
 )
@@ -40,6 +42,7 @@ router = APIRouter(tags=["approvals"], responses=PROBLEM_RESPONSES)
 @router.get("/approvals")
 def list_approvals(
     models: EventReadModelsDep,
+    gates: OptionalWorkflowGatesDep,
     *,
     project: ProjectParam = None,
     kind: ApprovalKind | None = None,
@@ -47,11 +50,15 @@ def list_approvals(
     cursor: CursorParam = None,
     limit: LimitParam = DEFAULT_LIMIT,
 ) -> Page[Approval]:
-    """Approvals, oldest first."""
+    """Approvals, oldest first; an engine run's open gate names its kind (``gate_kind``) when
+    its run's record does."""
     approval_filter = parse_filter(
         ApprovalFilter, project=project, kind=kind, status=status, cursor=cursor, limit=limit
     )
-    return models.list_approvals(approval_filter)
+    page = models.list_approvals(approval_filter)
+    if gates is None:
+        return page
+    return page.model_copy(update={"items": tuple(gates.with_gate_kinds(page.items))})
 
 
 ApprovalIdPath = Annotated[str, Path(min_length=1, max_length=MAX_QUERY_TEXT)]

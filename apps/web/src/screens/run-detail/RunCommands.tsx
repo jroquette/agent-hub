@@ -11,44 +11,50 @@ import type { WorkflowRun } from "../runs-list/queries";
  * confirmation. The server decides what a run allows; its answer and events tell the rest. */
 
 type RunAccepted = components["schemas"]["RunAccepted"];
-type Action = "cancel" | "resume" | "abandon";
+export type Action = "cancel" | "resume" | "abandon";
 
-const COMMAND: Record<
-  Action,
-  {
-    label: string;
-    icon: IconName;
-    variant: "default" | "danger";
-    heading: string;
-    text: string;
-    done: string;
+interface CommandLook {
+  label: string;
+  icon: IconName;
+  variant: "default" | "danger";
+  heading: string;
+  text: string;
+  done: string;
+}
+
+/** Each command's words for `noun` ("run", or "scenario run": the glossary never says "run" alone
+ * for one). */
+function commandLook(action: Action, noun: string): CommandLook {
+  switch (action) {
+    case "cancel":
+      return {
+        label: "Cancel",
+        icon: "square",
+        variant: "danger",
+        heading: `Cancel this ${noun}?`,
+        text: `Stops the ${noun}'s child with SIGINT (SIGKILL after 10 s if it does not stop), then ends the ${noun} cancelled. Only a ${noun} hub web started can be cancelled here.`,
+        done: `Cancel sent. The ${noun} ends cancelled once its child stops.`,
+      };
+    case "resume":
+      return {
+        label: "Resume",
+        icon: "rotate-ccw",
+        variant: "default",
+        heading: `Resume this ${noun}?`,
+        text: `Continues the ${noun} in a new child on this machine, reusing what completed. A gate still waiting pauses it again.`,
+        done: `Resume sent. The ${noun} resumes; its events update this page.`,
+      };
+    case "abandon":
+      return {
+        label: "Abandon",
+        icon: "x",
+        variant: "danger",
+        heading: `Abandon this ${noun}?`,
+        text: `Ends the ${noun} cancelled without running anything more. It cannot be resumed afterwards.`,
+        done: `The ${noun} is abandoned: it ended cancelled.`,
+      };
   }
-> = {
-  cancel: {
-    label: "Cancel",
-    icon: "square",
-    variant: "danger",
-    heading: "Cancel this run?",
-    text: "Stops the run's child with SIGINT (SIGKILL after 10 s if it does not stop), then ends the run cancelled. Only a run hub web started can be cancelled here.",
-    done: "Cancel sent. The run ends cancelled once its child stops.",
-  },
-  resume: {
-    label: "Resume",
-    icon: "rotate-ccw",
-    variant: "default",
-    heading: "Resume this run?",
-    text: "Continues the run in a new child on this machine, reusing what completed. A gate still waiting pauses it again.",
-    done: "Resume sent. The run resumes; its events update this page.",
-  },
-  abandon: {
-    label: "Abandon",
-    icon: "x",
-    variant: "danger",
-    heading: "Abandon this run?",
-    text: "Ends the run cancelled without running anything more. It cannot be resumed afterwards.",
-    done: "The run is abandoned: it ended cancelled.",
-  },
-};
+}
 
 /** What the run allows from the web: an engine run that has not ended done or cancelled. */
 export function runActions(run: WorkflowRun): Action[] {
@@ -83,18 +89,20 @@ function useRunCommand(runId: string) {
 
 function ConfirmDialog({
   action,
+  noun,
   pending,
   error,
   onConfirm,
   onClose,
 }: {
   action: Action;
+  noun: string;
   pending: boolean;
   error: ApiProblem | null;
   onConfirm: () => void;
   onClose: () => void;
 }) {
-  const look = COMMAND[action];
+  const look = commandLook(action, noun);
   const dialog = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const textId = useId();
@@ -135,17 +143,19 @@ function ConfirmDialog({
                 padding: "8px 12px",
               }}
             >
-              <b style={{ fontWeight: 600 }}>Could not {action} the run</b>
+              <b style={{ fontWeight: 600 }}>
+                Could not {action} the {noun}
+              </b>
               <span className="ah-small">{error.detail ?? error.title}</span>
             </div>
           )}
         </div>
         <div className="ah-dialog-foot">
           <Button disabled={pending} onClick={onClose}>
-            Keep run
+            {`Keep ${noun}`}
           </Button>
           <Button variant={look.variant} disabled={pending} onClick={onConfirm}>
-            {`${look.label} run`}
+            {`${look.label} ${noun}`}
           </Button>
         </div>
       </div>
@@ -153,11 +163,24 @@ function ConfirmDialog({
   );
 }
 
-/** Run detail's Cancel, Resume and Abandon buttons, for what the run allows. */
-export function RunCommands({ run }: { run: WorkflowRun }) {
+/** Run detail's Cancel, Resume and Abandon buttons, for what the run allows. `noun` names the run
+ * ("scenario run" on a scenario run's page, whose buttons then name it too); `only` keeps those
+ * commands alone (a scenario run offers Cancel only, E-15). */
+export function RunCommands({
+  run,
+  noun = "run",
+  only,
+}: {
+  run: WorkflowRun;
+  noun?: string;
+  only?: readonly Action[];
+}) {
   const command = useRunCommand(run.id);
   const [asking, setAsking] = useState<Action | null>(null);
-  const actions = runActions(run);
+  const actions = runActions(run).filter((action) => only === undefined || only.includes(action));
+  // A run's buttons say the verb alone; another noun is named on the button too.
+  const buttonLabel = (action: Action) =>
+    noun === "run" ? commandLook(action, noun).label : `${commandLook(action, noun).label} ${noun}`;
   if (actions.length === 0 && !command.isSuccess) return null;
   return (
     <>
@@ -166,27 +189,28 @@ export function RunCommands({ run }: { run: WorkflowRun }) {
           {actions.map((action) => (
             <Button
               key={action}
-              variant={COMMAND[action].variant}
-              icon={COMMAND[action].icon}
+              variant={commandLook(action, noun).variant}
+              icon={commandLook(action, noun).icon}
               disabled={command.isPending}
               onClick={() => {
                 command.reset();
                 setAsking(action);
               }}
             >
-              {COMMAND[action].label}
+              {buttonLabel(action)}
             </Button>
           ))}
         </div>
       )}
       {command.isSuccess && (
         <span role="status" className="ah-small">
-          {COMMAND[command.variables].done}
+          {commandLook(command.variables, noun).done}
         </span>
       )}
       {asking && (
         <ConfirmDialog
           action={asking}
+          noun={noun}
           pending={command.isPending}
           error={command.isError ? command.error : null}
           onConfirm={() => {

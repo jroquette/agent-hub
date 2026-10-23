@@ -16,6 +16,7 @@ from agent_hub.api.agent_session_runtime import HubCredentials
 from agent_hub.api.run_launcher import ScenarioLaunch
 from agent_hub.api.scenario_catalog import ScenarioCatalog, ScenarioCommands
 from agent_hub.api.scenario_investigation import InvestigationRestrictions, ScenarioInvestigations
+from agent_hub.core.agent_sessions import errors as session_errors
 from agent_hub.core.agent_sessions.agent_session import AgentSessionStatus, EndReason
 from agent_hub.core.agent_sessions.driver import PastSession, StartSpec
 from agent_hub.core.agent_sessions.errors import SessionsUnavailableError
@@ -1432,3 +1433,380 @@ def test_leaves_retryable_marker_when_scenarios_tracker_raises_other_error(
     retaken = retake_issue(folder, unfinished)
     assert isinstance(retaken, HeldFindingIssue)
     retaken.release()
+
+
+# The read fields the Scenarios screens need (AGH-350 E-15, plan T13): all read-only.
+LINKED_SESSION = "0192f00d-0000-7000-8000-000000000001"
+
+
+def test_lists_environments_and_run_facts_when_scenarios_detail_read(scenarios: Any) -> None:
+    scenarios.events.runs.append(
+        read_model_builders.a_run(
+            id=WALK_RUN, workflow="scenario:order-walk", status="running", issue=None
+        )
+    )
+    scenarios.events.runs.append(
+        read_model_builders.a_run(id="walk-0", workflow="scenario:order-walk", issue=None)
+    )
+    write_records(scenarios.hub, a_paused_walk(scenarios.hub))
+
+    detail = scenarios.client.get("/api/v1/scenarios/demo/order-walk").json()
+    (item,) = scenarios.client.get("/api/v1/scenarios").json()["items"]
+
+    assert detail["environments"] == [
+        {"name": "local", "access": "write", "production": False},
+        {"name": "staging", "access": "ask", "production": False},
+        {"name": "live", "access": "read", "production": True},
+    ]
+    shown = [(run["run_id"], run["environment"], run["mode"]) for run in detail["runs"]]
+    # A run whose record cannot be read names neither.
+    assert shown == [(WALK_RUN, "live", "interactive"), ("walk-0", None, None)]
+    assert (item["last_run"]["environment"], item["last_run"]["mode"]) == ("live", "interactive")
+
+
+def test_lists_no_environments_when_scenarios_local_file_invalid(scenarios: Any) -> None:
+    fake = scenarios.reader.hubs[str(scenarios.hub)]
+    fake.local = LocalConfig.model_validate({"environments": {"staging": {"access": "write"}}})
+
+    detail = scenarios.client.get("/api/v1/scenarios/demo/order-walk")
+
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["environments"] == []
+
+
+def test_names_session_reads_and_action_facts_when_scenarios_run_read(scenarios: Any) -> None:
+    hub = scenarios.hub
+    records = a_paused_walk(hub)
+    records.insert(
+        3,
+        {"event": "action", "node": "order-held", "attempt": 1, "poll": 1}
+        | {"action": "demo/get-order", "environment": "live", "effect": "read"}
+        | {"origin": "author", "decision": "allow", "content_hash": "sha256:" + "1" * 64}
+        | {"reason_kind": "table", "inputs": {"ref": "T-1"}, "status": "ok", "failure_kind": None},
+    )
+    records.append(
+        {"event": "agent_action", "gate": WALK_GATE, "number": 1, "item": "", "status": "ok"}
+        | {"action": "demo/get-order", "effect": "read", "origin": "agent", "decision": "allow"}
+        | {"output": {"status": "OPEN"}}
+    )
+    write_records(hub, records)
+    link = hub / WALK_RECORDS.parent / "investigation-1.session"
+    link.write_text(f"{LINKED_SESSION}\n", encoding="ascii")
+
+    body = scenarios.client.get(f"/api/v1/scenario-runs/{WALK_RUN}").json()
+
+    (investigation,) = body["investigations"]
+    assert investigation["agent_session_id"] == LINKED_SESSION
+    read = body["timeline"][-1]
+    assert (read["event"], read["action"], read["effect"]) == (
+        "agent_action",
+        "demo/get-order",
+        "read",
+    )
+    (call,) = body["actions"]
+    assert (call["node"], call["action"], call["effect"], call["decision"]) == (
+        "order-held",
+        "demo/get-order",
+        "read",
+        "allow",
+    )
+    assert (call["origin"], call["poll"], call["status"]) == ("author", 1, "ok")
+    assert "T-1" not in json.dumps(body["actions"])
+
+
+def test_names_no_session_when_scenarios_investigation_link_missing_or_link(
+    scenarios: Any, tmp_path: Path
+) -> None:
+    write_records(scenarios.hub, a_paused_walk(scenarios.hub))
+    unlinked = scenarios.client.get(f"/api/v1/scenario-runs/{WALK_RUN}").json()
+    target = tmp_path / "elsewhere.session"
+    target.write_text(f"{LINKED_SESSION}\n", encoding="ascii")
+    (scenarios.hub / WALK_RECORDS.parent / "investigation-1.session").symlink_to(target)
+
+    through_link = scenarios.client.get(f"/api/v1/scenario-runs/{WALK_RUN}").json()
+
+    assert unlinked["investigations"][0]["agent_session_id"] is None
+    # Never read through a link.
+    assert through_link["investigations"][0]["agent_session_id"] is None
+
+
+def test_shows_run_environment_and_access_when_workflow_run_environment_recorded(
+    scenarios: Any,
+) -> None:
+    events = scenarios.events
+    events.runs.append(read_model_builders.a_run(id="flow-1", workflow="sync", issue=None))
+    events.runs.append(read_model_builders.a_run(id="flow-2", workflow="sync", issue=None))
+    events.runs.append(read_model_builders.a_run(id="flow-3", workflow="sync", issue=None))
+    for run, environment in (("flow-1", "live"), ("flow-3", "gone")):
+        folder = scenarios.hub / ".agent-runs" / "workflows" / run
+        folder.mkdir(parents=True)
+        start = {"event": "start", "run": run, "workflow": "sync", "environment": environment}
+        (folder / "records.jsonl").write_text(json.dumps(start) + "\n", encoding="utf-8")
+
+    declared = scenarios.client.get("/api/v1/workflow-runs/flow-1")
+    without = scenarios.client.get("/api/v1/workflow-runs/flow-2")
+    undeclared = scenarios.client.get("/api/v1/workflow-runs/flow-3")
+
+    assert declared.status_code == 200, declared.text
+    assert declared.json()["environment"] == {"name": "live", "access": "read", "production": True}
+    # No record, or a record without an environment: the run reads as before.
+    assert "environment" not in without.json()
+    assert undeclared.json()["environment"] == {"name": "gone", "access": None, "production": None}
+
+
+def test_refuses_mode_change_when_investigation_session_settings_posted(
+    wired: Any, investigation: Any
+) -> None:
+    """An investigation session keeps mode ``default``: allowed writes keep asking (E-13, E-15)."""
+    rig, _hub = investigation(a_record())
+    started = wired.client.post(ROUTE, json={}, headers=_origin(wired)).json()
+    session = f"/api/v1/agent-sessions/{started['agent_session_id']}"
+
+    mode = wired.client.post(
+        f"{session}/settings", json={"mode": "acceptEdits"}, headers=_origin(wired)
+    )
+    model = wired.client.post(
+        f"{session}/settings", json={"model": "sonnet"}, headers=_origin(wired)
+    )
+    shown = wired.client.get(session)
+
+    assert mode.status_code == 409, mode.text
+    assert mode.headers["content-type"] == "application/problem+json"
+    assert mode.json()["type"] == "urn:agent-hub:problem:agent-session-mode-locked"
+    assert model.status_code == 200, model.text
+    assert shown.json()["restricted"] is True
+    assert shown.json()["mode"] == "default"
+    assert not [call for call in rig.driver.calls if call.method == "set_mode"]
+
+
+def test_keeps_restricted_in_every_view_when_investigation_session_commanded(
+    wired: Any, investigation: Any
+) -> None:
+    """Each view of a restricted session says so, not only its read (review Q2)."""
+    _rig, _hub = investigation(a_record())
+    started = wired.client.post(ROUTE, json={}, headers=_origin(wired)).json()
+    session = f"/api/v1/agent-sessions/{started['agent_session_id']}"
+
+    model = wired.client.post(
+        f"{session}/settings", json={"model": "sonnet"}, headers=_origin(wired)
+    )
+    listed = wired.client.get("/api/v1/agent-sessions")
+    closed = wired.client.post(f"{session}/close", json={}, headers=_origin(wired))
+
+    assert model.status_code == 200, model.text
+    assert model.json()["restricted"] is True
+    (item,) = [row for row in listed.json()["items"] if row["id"] == started["agent_session_id"]]
+    assert item["restricted"] is True
+    assert closed.status_code == 200, closed.text
+    assert closed.json()["restricted"] is True
+
+
+def test_refuses_mode_change_when_investigation_session_reopened_after_restart(
+    wired: Any, investigation: Any
+) -> None:
+    """A restart forgets the restriction; the reopen rebuilds it, and the mode stays fixed
+    (review Q5, E-13)."""
+    session_id, fresh, _hub = _start_and_restart(wired, investigation)
+
+    reopened = _message(wired, session_id)
+    mode = wired.client.post(
+        f"/api/v1/agent-sessions/{session_id}/settings",
+        json={"mode": "acceptEdits"},
+        headers=_origin(wired),
+    )
+
+    assert reopened.status_code == 202, reopened.text
+    assert mode.status_code == 409, mode.text
+    assert mode.json()["type"] == "urn:agent-hub:problem:agent-session-mode-locked"
+    assert not [call for call in fresh.driver.calls if call.method == "set_mode"]
+
+
+def test_marks_restricted_before_reopen_when_investigation_session_read_after_restart(
+    wired: Any, investigation: Any
+) -> None:
+    """After a restart, an ended investigation session reads restricted before any reopen,
+    so its page offers no mode switch (review round 3, Q7)."""
+    session_id, fresh, _hub = _start_and_restart(wired, investigation)
+
+    shown = wired.client.get(f"/api/v1/agent-sessions/{session_id}")
+    again = wired.client.get(f"/api/v1/agent-sessions/{session_id}")
+
+    assert shown.status_code == 200, shown.text
+    assert shown.json()["status"] == "ended"
+    assert shown.json()["restricted"] is True
+    assert again.json()["restricted"] is True
+    assert _starts(fresh) == []
+
+
+# What a read learns of a forgotten session's restriction (review round 4, Q1 to Q3).
+
+
+class CountingRestrictions:
+    """``restriction_of`` with its calls counted per session; ``fail`` raises before the
+    real read, once each."""
+
+    def __init__(self, restrictions: InvestigationRestrictions) -> None:
+        self.restrictions = restrictions
+        self.calls: dict[str, int] = {}
+        self.fail: list[Exception] = []
+
+    def restriction_of(self, session: Any) -> Any:
+        self.calls[session.id] = self.calls.get(session.id, 0) + 1
+        if self.fail:
+            raise self.fail.pop(0)
+        return self.restrictions.restriction_of(session)
+
+
+def _counted(wired: Any, tmp_path: Path) -> tuple[Rig, CountingRestrictions]:
+    hub = a_hub(tmp_path, a_record())
+    registry, reader = a_reader(hub)
+    credentials = HubCredentials(registry=registry, reader=reader, running_version=RUNNING)
+    counting = CountingRestrictions(InvestigationRestrictions(credentials))
+    rig = build_rig(hidden_environment=credentials.names, restriction_of=counting.restriction_of)
+    wired.wire(agent_sessions=rig.control)
+    return rig, counting
+
+
+def _plain_session(wired: Any) -> str:
+    created = wired.client.post(
+        "/api/v1/agent-sessions",
+        json={"project": "demo", "workdir_id": WORKDIR_ID},
+        headers=_origin(wired),
+    )
+    assert created.status_code == 201, created.text
+    return str(created.json()["id"])
+
+
+def test_asks_restriction_once_when_plain_session_read_twice(wired: Any, tmp_path: Path) -> None:
+    _rig, counting = _counted(wired, tmp_path)
+    session_id = _plain_session(wired)
+
+    first = wired.client.get(f"/api/v1/agent-sessions/{session_id}")
+    second = wired.client.get(f"/api/v1/agent-sessions/{session_id}")
+
+    assert "restricted" not in first.json()
+    assert "restricted" not in second.json()
+    assert counting.calls[session_id] == 1
+
+
+def test_keeps_plain_session_unmarked_when_restriction_read_fails_once(
+    wired: Any, tmp_path: Path
+) -> None:
+    """A transient read error marks nothing and is asked again (review round 4, Q1)."""
+    _rig, counting = _counted(wired, tmp_path)
+    session_id = _plain_session(wired)
+    counting.fail.append(
+        session_errors.RestrictionUnreadableError(session_id, "the runs cannot be read")
+    )
+
+    first = wired.client.get(f"/api/v1/agent-sessions/{session_id}")
+    second = wired.client.get(f"/api/v1/agent-sessions/{session_id}")
+    third = wired.client.get(f"/api/v1/agent-sessions/{session_id}")
+
+    assert ["restricted" in reply.json() for reply in (first, second, third)] == [False] * 3
+    assert counting.calls[session_id] == 2
+
+
+def test_asks_unbuilt_restriction_once_when_session_read_twice(wired: Any, tmp_path: Path) -> None:
+    """A link that cannot be rebuilt marks the session and is not asked again (Q1)."""
+    _rig, counting = _counted(wired, tmp_path)
+    session_id = _plain_session(wired)
+    counting.fail.append(session_errors.SessionRestrictionError(session_id, "cannot be rebuilt"))
+
+    first = wired.client.get(f"/api/v1/agent-sessions/{session_id}")
+    second = wired.client.get(f"/api/v1/agent-sessions/{session_id}")
+
+    assert (first.json()["restricted"], second.json()["restricted"]) == (True, True)
+    assert counting.calls[session_id] == 1
+
+
+def test_marks_restricted_without_reopen_when_investigation_link_cannot_be_rebuilt(
+    wired: Any, investigation: Any
+) -> None:
+    first, hub = investigation(a_record())
+    session_id = wired.client.post(ROUTE, json={}, headers=_origin(wired)).json()[
+        "agent_session_id"
+    ]
+    driver, store = _restart(first, session_id)
+    records = hub / ".agent-runs" / "workflows" / RUN / "records.jsonl"
+    records.write_text("not one JSON object\n{}\n", encoding="utf-8")
+    fresh, _hub = investigation(a_record(), driver=driver, store=store, hub=hub)
+
+    shown = wired.client.get(f"/api/v1/agent-sessions/{session_id}")
+
+    assert shown.status_code == 200, shown.text
+    assert shown.json()["restricted"] is True
+    assert _starts(fresh) == []
+
+
+def test_tells_unread_hub_apart_when_restriction_of_project_unregistered(tmp_path: Path) -> None:
+    """``restriction_of`` answers None only after scanning the project's runs; a project no
+    registered hub names is unknown, not "none" (review round 4, Q2)."""
+    hub = a_hub(tmp_path, a_record())
+    registry, reader = a_reader(hub)
+    restrictions = InvestigationRestrictions(
+        HubCredentials(registry=registry, reader=reader, running_version=RUNNING)
+    )
+    plain = read_model_builders.an_agent_session(id=UNKNOWN_SESSION, project="demo")
+    elsewhere = read_model_builders.an_agent_session(id=UNKNOWN_SESSION, project="nowhere")
+
+    assert restrictions.restriction_of(plain) is None
+    with pytest.raises(session_errors.RestrictionUnreadableError) as raised:
+        restrictions.restriction_of(elsewhere)
+    assert raised.value.agent_session_id == UNKNOWN_SESSION
+
+
+def test_clears_unbuilt_mark_when_unlinked_session_reopened_free(
+    wired: Any, investigation: Any
+) -> None:
+    """A forgotten session marked by a link that cannot be rebuilt, whose link then goes,
+    reopens free and no longer reads restricted (review round 5, Q3)."""
+    session_id, fresh, hub = _start_and_restart(wired, investigation)
+    folder = hub / ".agent-runs" / "workflows" / RUN
+    records = folder / "records.jsonl"
+    kept = records.read_text(encoding="utf-8")
+    records.write_text("not one JSON object\n{}\n", encoding="utf-8")
+    marked = wired.client.get(f"/api/v1/agent-sessions/{session_id}")
+    (folder / "investigation-1.session").unlink()
+    records.write_text(kept, encoding="utf-8")
+
+    sent = _message(wired, session_id)
+    shown = wired.client.get(f"/api/v1/agent-sessions/{session_id}")
+
+    assert marked.json()["restricted"] is True
+    assert sent.status_code == 202, sent.text
+    (spec,) = _starts(fresh)
+    assert spec.tool_policy is None
+    assert "restricted" not in shown.json()
+
+
+def test_refuses_reopen_when_project_hub_unregistered_between_reads(
+    wired: Any, investigation: Any, tmp_path: Path
+) -> None:
+    """The registry changes between the reopen's listing and the restriction's read: no hub
+    names the project any more, so whether the session is held cannot be told and the reopen
+    is refused, never resumed without its tool policy (fail closed, review round 5, Q2)."""
+    first, hub = investigation(a_record())
+    session_id = wired.client.post(ROUTE, json={}, headers=_origin(wired)).json()[
+        "agent_session_id"
+    ]
+    driver, store = _restart(first, session_id)
+    registry, reader = a_reader(hub)
+    credentials = HubCredentials(registry=registry, reader=reader, running_version=RUNNING)
+    unregistered = HubCredentials(
+        registry=InMemoryHubRegistry(), reader=reader, running_version=RUNNING
+    )
+    fresh = build_rig(
+        hidden_environment=credentials.names,
+        restriction_of=InvestigationRestrictions(unregistered).restriction_of,
+        driver=driver,
+        store=store,
+    )
+    wired.wire(agent_sessions=fresh.control)
+
+    sent = _message(wired, session_id)
+
+    assert sent.status_code == 409, sent.text
+    assert sent.json()["type"] == "urn:agent-hub:problem:agent-session-restriction-unavailable"
+    assert _starts(fresh) == []
+    assert fresh.store.get(session_id).status == AgentSessionStatus.ENDED

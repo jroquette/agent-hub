@@ -1,0 +1,33 @@
+/* The plan tables of a scenario (spec 23): fixed columns that wrap, so Step and Policy stay
+ * in view at 1280; a draft's commit line takes a full-width row under its step. */
+.ah-table.sc-plan {
+  table-layout: fixed;
+}
+.ah-table.sc-plan td {
+  white-space: normal;
+  /* Break a separator-less token rather than overflow; BreakId's <wbr> breaks come first. */
+  overflow-wrap: break-word;
+  vertical-align: top;
+  padding-top: var(--space-2);
+  padding-bottom: var(--space-2);
+}
+.ah-table.sc-plan tbody tr {
+  cursor: default;
+}
+.ah-table.sc-plan tr.sc-plan-extra td {
+  padding-top: 0;
+}
+.ah-table.sc-plan tr.sc-plan-main:has(+ .sc-plan-extra) td {
+  border-bottom: 0;
+}
+/* The answer bar stays above the tables' sticky heads while the options scroll. */
+.sc-answer-bar {
+  position: sticky;
+  bottom: 0;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-2);
+}
+.sc-plan .ah-code pre {
+  overflow-wrap: anywhere;
+}

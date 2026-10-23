@@ -2,13 +2,21 @@
 
 Start, cancel, resume and abandon are strict writes that need the launch's cookie (checked
 before routing); each is one call to core's ``StartWorkflowRun`` or ``ControlWorkflowRun``.
+One run's read adds the ``environment`` its own start record names, with its access, for the
+best-effort banner (AGH-350 E-15), when the scenario reads are wired.
 """
 
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Path, Query, Response
 
-from agent_hub.api.dependencies import EventReadModelsDep, RunControlDep, RunStartsDep, parse_filter
+from agent_hub.api.dependencies import (
+    EventReadModelsDep,
+    OptionalScenarioReadsDep,
+    RunControlDep,
+    RunStartsDep,
+    parse_filter,
+)
 from agent_hub.api.openapi_paths import API_PREFIX
 from agent_hub.api.schemas import (
     DEFAULT_LIMIT,
@@ -72,9 +80,12 @@ def list_runs(  # noqa: PLR0913 -- one keyword per documented filter of the endp
 def get_run(
     run_id: Annotated[str, Path(min_length=1, max_length=MAX_QUERY_TEXT)],
     models: EventReadModelsDep,
+    reads: OptionalScenarioReadsDep,
 ) -> WorkflowRun:
-    """One workflow run with its steps."""
-    return models.get_run(run_id)
+    """One workflow run with its steps, and the environment its record names (when any)."""
+    run = models.get_run(run_id)
+    environment = None if reads is None else reads.run_environment(run.project, run.id)
+    return run if environment is None else run.model_copy(update={"environment": environment})
 
 
 @router.post("/workflow-runs", status_code=202)

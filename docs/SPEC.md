@@ -54,7 +54,7 @@ The model has nine entities. All of them already exist implicitly in Loki Trader
 
 A CLI creates and maintains hubs from a project configuration file. Everything that is Loki-specific today becomes a parameter or an optional module. The Phase 1 design (config contract, generation and sync, hooks, commands, releases, `hub doctor`) is indexed in [design/README.md](design/README.md).
 
-The hub's logic lives in the `hub` CLI, versioned and tested in this repo; the generated hub holds files, `hub.json` and thin shims. A shim runs the CLI release pinned in `hub.json` (a semver git tag of this repo, no PyPI) through `uvx`, so no global install is needed and each hub on a machine can pin its own version. Hooks are the exception: they stay Python 3.9 stdlib scripts that read `hub.json` through the stdlib reader rendered with them, never need the CLI (SessionStart tries the pinned `hub brief` and falls back to a mini brief), and fail open.
+The hub's logic lives in the `hub` CLI, versioned and tested in this repo; the generated hub holds files, `hub.json` and thin shims. A shim runs the CLI release pinned in `hub.json` (a semver git tag of this repo, no PyPI; the annotated tag is created by this repo's `release.yml` when the `/release` skill dispatches it after the owner's gate, [ADR 0013](adr/0013-release-by-git-tags.md), [ADR 0047](adr/0047-release-tag-by-workflow-dispatch.md)) through `uvx`, so no global install is needed and each hub on a machine can pin its own version. Hooks are the exception: they stay Python 3.9 stdlib scripts that read `hub.json` through the stdlib reader rendered with them, never need the CLI (SessionStart tries the pinned `hub brief` and falls back to a mini brief), and fail open.
 
 The generator renders a hub in memory as a `RenderedHub`: its files (`RenderedFile`) and its symlinks (`RenderedLink`, one per base or project plugin agent and skill under `.claude/agents/` and `.claude/skills/`), contract types in `agent_hub.core.hub_files`. Besides the base rules (with a short rule for text that people read) and the brain skeleton, it ships the managed base plugin `plugin/hub-workflow/` (agents, skills such as `plain-language`, hooks and their reader), the managed `.claude/settings.json` that runs those hooks, the seeded project plugin `plugin/<project>/` with its guard extension stub, and the transcript mining, recall and retro metrics scripts.
 
@@ -942,7 +942,7 @@ The MVP goes up to Phase 2: generate hubs from Loki and see the agents' sessions
 | 3 · Knowledge and decisions | Provenance in the brain, inbox triage in the UI (accept and reject moved to Phase 2 by AGH-201; snooze stays here), extracted decisions, learning metrics | One learning traced from the session to the rule |
 | 4 · Workflows as data and actions | Generic executor reading the workflow ([ADR 0032](adr/0032-workflow-engine.md)), gates approved from the UI, adapters for other agents | — |
 
-Status (2026-10-22, latest release v0.20.0; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
+Status (2026-10-23, latest release v0.21.0; per-release changes in [CHANGELOG.md](../CHANGELOG.md)): Phase 0 done.
 Phase 1 in progress: `init`, `sync` (`--adopt`), `doctor`, `worktree`, `brief`, `agent`, `next`, `run` and `bench`
 shipped in v0.8.0, and `setup`, `start` and `ship` in v0.9.0. Phase 2's first slice is shipped too: the control plane
 `hub web` (AGH-200) in v0.9.0 and its clarity pass (AGH-201: session labels, problems, learning accept and reject
@@ -962,7 +962,10 @@ AGH-403), scenarios with `hub scenario` and `hub action` (AGH-355 to AGH-360), t
 (AGH-298) and new review skills and agents (AGH-411 to AGH-414), and v0.20.0 the ticket flow (AGH-321 slice 2:
 `/implement` runs the built-in `implement` workflow, plan change requests decided in `hub web`), `hub search` and
 `hub mcp` over the hub's knowledge (ADR 0044), the read-only investigation session (AGH-361) and scenario findings
-and routes (AGH-362, AGH-363); other agents' adapters stay in Phase 4. The Phase 1 gate (Loki hub recreated) is open;
+and routes (AGH-362, AGH-363), and v0.20.1 the third playground delivery (AGH-415) and the release tag created by
+the dispatched release workflow (ADR 0047), and v0.21.0 the Scenarios screens (AGH-364), the merged ticket's
+outcome and the dependents' preflight (AGH-473) and `repos[].ui_paths` with the `ux` and `overengineering` review
+outputs (AGH-474); other agents' adapters stay in Phase 4. The Phase 1 gate (Loki hub recreated) is open;
 pilot: AGH-54.
 
 The order follows dogfooding: the first generated hub is the platform's own, and the second replaces `loki-trader-hub`. Editable workflows come later because they depend on observation already showing where the current flow gets stuck.

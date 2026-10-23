@@ -127,7 +127,9 @@
     "reviewer": {
       "enum": [
         "spec",
-        "quality"
+        "quality",
+        "ux",
+        "overengineering"
       ],
       "title": "Reviewer",
       "type": "string"

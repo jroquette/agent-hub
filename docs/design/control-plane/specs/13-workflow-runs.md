@@ -109,6 +109,13 @@ Regions: page header (title, `SegmentedControl` period, KPI line, P4 primary but
 
 ---
 
+### Workflow runs only (AGH-364)
+
+- The list asks `GET /workflow-runs?kind=workflow` (facet counts too): scenario runs are listed in Scenarios
+  ([23-scenarios.md](23-scenarios.md)). When the list is empty and the project has scenario runs
+  (`kind=scenario&limit=1`), the empty state adds "Scenario runs are listed in Scenarios." with the link "Open
+  Scenarios".
+
 ## Screen 2: Run detail
 
 **Route:** `/runs/{run_id}` (params: `step=<step>:<attempt>` selects a step; `tab=sessions|gates|tracker|caps|pr`; `event=<event_id>` for a deep-linked failing moment is resolved by the session route) · **Breadcrumbs:** `agent-hub › Workflow runs › Run AGH-79 (01923f1e)` · **Answers:** "Where did this run stop, why, and what do I do about it?"
@@ -334,3 +341,16 @@ The diagnosis comment is agent-written: it carries `DerivedLabel` "Written by th
 - **1280×800:** sidebar collapsed (`sidebar-collapsed` 56 px); Run facts column moves into the Caps tab; pipeline labels shorten to stage name + duration; Gantt fits 1 h by default with horizontal scroll.
 - **Runs list at 1280:** columns Workflow and Mode hidden by default (column chooser restores them); the filter rail collapses to a "Filters (2)" button that opens a `Popover`.
 - **Mobile:** not a glance screen. A run linked from a phone shows a reduced read-only card: title, outcome, failure banner, pipeline as a vertical list. No Gantt.
+
+### Environment and the best-effort banner (AGH-364)
+
+- **Header fact.** "Environment staging" after the workflow, when the run's own start record names an environment
+  (`WorkflowRun.environment` on `GET /workflow-runs/{run_id}`: `name`, `access`, `production`).
+- **Banner.** Under the header, before the failure banner, an info `Banner` (boxed, not dismissible, not a live
+  region): "Agent steps are checked on a best-effort basis; deterministic steps are enforced." Then "Commands,
+  scripts and actions in staging follow its access policy before they run." Then, for an environment with access
+  `read` or `production`: "For agent steps, the guard only asks when a command names a staging endpoint."; for access
+  `ask` or `write`: "Agent steps in staging are not checked: the guard checks endpoints only in read-only and
+  production environments."; when the access cannot be read, only the first two lines.
+- **Scenario run redirect.** A run of kind `scenario` (`workflow` = `scenario:<name>`) opened at `/runs/:runId`
+  redirects (`replace`) to `/scenarios/<project>/<name>/runs/<runId>`.

@@ -87,9 +87,9 @@ entries until the first regular file named as the review check names a round (`<
 
 ### `tickets/<ticket>/` and `change-requests/`
 
-The ticket flow's records (two-level-flows S2), written by the `implement` workflow's nodes, never by the app, with
-one exception: hub web creates a request's `<n>.decision.md` when its run is gone (AC-2.14, D-10;
-[API.md](../API.md) "Plan change requests").
+The ticket flow's records (two-level-flows S2, S3), written by the `implement` and `preflight` workflows' nodes and
+by `/merge` (`hub step outcome`), never by the app, with one exception: hub web creates a request's
+`<n>.decision.md` when its run is gone (AC-2.14, D-10; [API.md](../API.md) "Plan change requests").
 `<ticket>` is the ticket's plan key or tracker id, matched in any case.
 
 - `tickets/<ticket>/brief.md` (the context brief) and `tickets/<ticket>/plan.md` (the ticket plan) are checked
@@ -118,6 +118,13 @@ one exception: hub web creates a request's `<n>.decision.md` when its run is gon
   opened none, A24), `run_id` the workflow run's id. Every key is required and unknown keys are
   refused. Read whole up to 64 KiB (`MAX_PREFLIGHT_BYTES`); over it, malformed, or naming another ticket than its
   folder (ASCII case ignored), it is the Preflight step's problem.
+- `tickets/<ticket>/outcome.md`: the merged ticket's outcome (S3, AC-3.1), created once by `hub step outcome` after
+  the merge and never edited. Frontmatter `type: ticket-outcome`, `ticket` (its folder's ticket, ASCII case
+  ignored), `merged_at` (an ISO 8601 date and time with an offset), `pr` (`<repo>#<n>` or a GitHub pull request URL)
+  and `dependents` (ticket keys or ids: the tickets whose `blocked_by` names it), then `## What was built`,
+  `## What changed against the plan` and `## Final interfaces`. Read whole up to 16 KiB (`MAX_OUTCOME_BYTES`); over
+  it, a link, or a frontmatter that does not hold those fields, it is the Merged step's problem only, and it counts
+  for nothing in Build.
 - `change-requests/<n>.md` (`n` 1 to 999999): a plan change request, written once with frontmatter `type:
   change-request`, `ticket` (the asking ticket), `status: open`, `plan_from`, `plan_to` (whole numbers), `affected`
   (ticket keys or ids), `opened_at`, `run_id`, then its evidence and proposal; never edited afterwards (a `status`
@@ -128,10 +135,11 @@ one exception: hub web creates a request's `<n>.decision.md` when its run is gon
   it: `open` without one, else its `decision`. A decision that cannot be read leaves the request `open` (it is not
   known to be decided) with the decision's problem on the asking ticket's Preflight.
 
-Only the tickets route opens `tickets/` (the detail, the list and the owner sign-off never do): its first folders by
-name (not hidden, UTF-8 names, no link followed), at most 500 and no more than a full `preflight.json` (64 KiB + 1)
-each can add before the read reaches 32 MiB; a ticket whose folder was left out reads Context and Preflight
-`unknown`. `change-requests/` is read by the Features list and the detail too (the golden path's Plan signal and
+Every read of a feature (the list, the detail, the tickets route) opens `tickets/` for the outcomes Build counts:
+of its first 500 folders by name (not hidden, UTF-8 names, no link followed), each `outcome.md` only. Only the
+tickets route reads the other ticket records (the detail, the list and the owner sign-off never do): of those
+folders, no more than a full `preflight.json` (64 KiB + 1) each can add before the read reaches 32 MiB, the outcomes
+counted first; a ticket whose folder was left out reads Context and Preflight `unknown`. `change-requests/` is read by the Features list and the detail too (the golden path's Plan signal and
 `waiting_on_owner` need it): its first 400 `.md` files by name (200 requests and their decisions), heads of 16 KiB;
 more than that is a record problem on Plan's signal. A file that cannot be read or parsed reads "<file> could not be
 read (…). Fix it in a hub PR." on the step it feeds.
@@ -147,15 +155,17 @@ under the feature's lock `.agent-runs/locks/<slug>.lock` (never committed); a ru
 | Command | Writes | Refuses |
 |---|---|---|
 | `ticket-brief --feature --ticket` | the next `## Brief v<n>` of `brief.md` (temp file, then rename); prints `path`, `version`, `hub` (the hub's path), `repo` (the ticket's repo in `features.json`, the one the run changes) and `commit`: `origin/<default branch>`'s commit in that repo's checkout as last fetched, read once (no fetch), which the preflight reads and its run records | a ticket `features.json` does not plan, a ticket whose repo `hub.json` lacks, a base that cannot be read, no `plan.md`, a `brief.md` that is not this ticket's brief |
-| `preflight --feature --ticket --findings JSON --commit SHA --input KIND [--input-text] [--request N] [--declined-request N]` | `preflight.json` with one run appended, built from the preflight agent's findings (`drift`, `local_notes`, `blockers_read`): `ran_at` now, `run_id` from `AGENT_HUB_RUN_ID` (a workflow's steps get it), `commit` the one given (`ticket-brief`'s, the commit the agent read), `plan_version` the plan's (A22); `input` `none`, `discovery`, `declined_change`, or a gate's `approve` (`none`, its text dropped) or `decline` (`declined_change`), the text on one line of at most 1,000 characters (a plain check may carry a note: an approval another amendment superseded, A23); `change_request` the request named, for `plan` drift only (a declined change's first check with none named: `--declined-request`, the one `pending-decision` found). A re-check given `approve` and an approved request the plan moved past records a plain check with the superseded note and no change request (A23, A24). Earlier runs are copied as parsed JSON, so each stays equal in canonical form; the file is new or replaced whole (temp file, then rename) | findings that are not a JSON object, a run `PreflightRun` refuses (cross-field rules included: no run id, `plan` drift without a request), a record there that is malformed or names another ticket, a result over 64 KiB |
+| `preflight --feature --ticket --findings JSON --commit SHA --input KIND [--input-text] [--request N] [--declined-request N] [--read BLOCKER]` | `preflight.json` with one run appended, built from the preflight agent's findings (`drift`, `local_notes`, `blockers_read`; `--read` adds that blocker to `blockers_read` unless its key or id is listed, as the `preflight` workflow's first run does, AC-3.3): `ran_at` now, `run_id` from `AGENT_HUB_RUN_ID` (a workflow's steps get it), `commit` the one given (`ticket-brief`'s, the commit the agent read), `plan_version` the plan's (A22); `input` `none`, `discovery`, `declined_change`, or a gate's `approve` (`none`, its text dropped) or `decline` (`declined_change`), the text on one line of at most 1,000 characters (a plain check may carry a note: an approval another amendment superseded, A23); `change_request` the request named, for `plan` drift only (a declined change's first check with none named: `--declined-request`, the one `pending-decision` found). A re-check given `approve` and an approved request the plan moved past records a plain check with the superseded note and no change request (A23, A24). Earlier runs are copied as parsed JSON, so each stays equal in canonical form; the file is new or replaced whole (temp file, then rename) | findings that are not a JSON object, a run `PreflightRun` refuses (cross-field rules included: no run id, `plan` drift without a request), a record there that is malformed or names another ticket, a result over 64 KiB |
 | `change-request --feature --ticket --evidence --proposal [--affected TICKETS] [--findings JSON --commit SHA]` | `change-requests/<n>.md`, `n` the next free number, `status: open`, `plan_from` the plan's current version, `plan_to` the next, `run_id` from `AGENT_HUB_RUN_ID`, `affected` the comma-separated tickets; created exclusively. With the preflight's findings, the run that will name the request is checked first, so a run `preflight` would refuse opens no request that no run names | a field its reader could not read (no run id included), an empty evidence or proposal, a text over 256 KiB (what `decide` and `amend-plan` read), findings whose run would be refused |
 | `decide --feature --request N --decision approved\|declined --by WHO [--note]` | `change-requests/<n>.decision.md`, `decided_by` the gate's approver, `decided_at` now, `note` on one line (cut at 1,000 characters; the whole note is the body); created exclusively | a decision other than exactly `approved` or `declined`, a text over 256 KiB, a second decision, an approver that names no person (empty or `unknown`, A5), an approval whose approver `amend-plan` could not write (a `(` or `)`), a decline without a note, no request `n` |
 | `amend-plan --feature --request N --summary` | one entry `- A<k> (<decided_at date>, <decided_by>): <summary> ([change request n](change-requests/n.md))` at the end of `plan.md`, after a new `## Amendments` heading when the last section is another; every earlier byte kept; a re-run once the plan holds the request's entry writes nothing and answers `already amended as A<k>`; a plan whose version is no longer the request's `plan_from` (another amendment came first) writes nothing and answers `moved`: `change request <n> approved but superseded by plan v<k>: not applied` (A23) | a request not decided `approved`, an entry that would not read as `A<k>`, a lock another run holds |
+| `outcome --feature --ticket --pr PR [--merged-at TIME] --built --changes --interfaces` | `tickets/<ticket>/outcome.md` (S3, AC-3.1), `merged_at` the time given (now when none is), `dependents` the tickets whose `blocked_by` names it, by id once they have one; created exclusively. Prints `path`, `written`, `merged_at` and `dependents`; a second run, a run for a ticket whose outcome an earlier merge recorded, or one that another run beat to the file, writes nothing and prints `written: false` with the recorded `merged_at` (empty when its reader refuses it) | a ticket `features.json` does not plan, a `pr` that names no pull request, a `merged_at` without a time and an offset, an empty section, a result over 16 KiB, an `outcome.md` or folder that is a link |
+| `preflight-due --feature --ticket --blocker` | nothing: prints `{due, reason, input}`, whether dependent `ticket` still has to read the merged `blocker`'s outcome (AC-3.3): not when the ticket's own outcome is recorded ("<ticket> is merged"), nor when a preflight run at or after the outcome's `merged_at` lists the blocker (key or id, any case) in `blockers_read` ("<ticket> already read <blocker>'s outcome (preflight run at …)"); `input` is the automatic preflight's, `none` | a blocker the ticket's `blocked_by` does not name, a blocker with no `outcome.md` or one its reader refuses (over 16 KiB included), a `preflight.json` the readers could not read |
 | `pending-decision --feature --ticket` | nothing: prints `{request, decision, input, note, summary, superseded}`, the decision on the request the ticket's last preflight run opened (`drift: plan`, its `input` not `declined_change`), or else on this ticket's newest decided request that no run names, opened after its last run (its run failed before the preflight run was written); else `request: null` and empty texts. An approval the plan moved past (A23) has an empty `decision` (nothing to amend) and its `note` and `superseded` say so; `input` is `declined_change` for a decline, else `none`; `summary` is the proposal's first line | a record the readers could not read |
 
-The `implement` workflow (built-in `sdlc` pack, with its `ticket-pass`; A1, A2, A22, A23) runs them in this
-order: `ticket-brief`; `pending-decision`, then `amend-plan` for a decision approved while no run waited (AC-2.14);
-then each pass: the preflight agent (fresh, `mutates_checkout: false`, in the ticket repo's main checkout, reading
+The `implement` workflow (built-in `sdlc` pack, with its `ticket-pass`, which includes `preflight-check`; A1, A2,
+A22, A23) runs them in this order: `ticket-brief`; `pending-decision`, then `amend-plan` for a decision approved while
+no run waited (AC-2.14); then each pass: the preflight agent (fresh, `mutates_checkout: false`, in the ticket repo's main checkout, reading
 main at `ticket-brief`'s commit with git: no checkout, no branch), `change-request` on `plan` drift, `preflight`, the
 gate (`approve`, `decline` with its note, `capture_response`), `decide` (`--by` the gate's `approver`) and `amend-plan`
 or the note, a re-preflight appended the same way; only then, once a preflight passed, the worktree and its branch
@@ -180,6 +190,15 @@ the checkout's `git status`, HEAD and branch around it (not the upstream lines a
 `brain/features/`, which other runs of the feature write meanwhile. Limit: a Bash rule the user's or the project's
 settings allow stays allowed, and the comparison is then the only check.
 
+The built-in `preflight` workflow is a dependent ticket's automatic preflight after a blocker merged (S3, AC-3.2,
+AC-3.3), which `/merge` starts for each dependent once `hub step outcome` recorded the blocker's outcome (inputs
+`feature`, `ticket`, `blocker`). It runs `preflight-due` first and, when the ticket is due, `ticket-brief` (its next
+brief lists the outcome) and the same `preflight-check` each `implement` pass includes: the read-only agent, the run
+appended with the blocker in `blockers_read` whatever the agent lists, and on `plan` drift the change request and the owner's gate, as AC-2.6 (the run pauses; a decision resumes
+it as in `implement`). Its outcome is the check's `status`, `passed` (drift `none` or `local`) or `blocked`. It makes
+no worktree, branch, commit or PR, and a second run for the same merge writes nothing: the dependent's preflight run
+since the merge already lists the blocker in `blockers_read`.
+
 ### `summaries/<record>.md`
 
 The human summary of `spec.md`, `research.md` or `plan.md`, written by the hub's `/summarize` skill each time the
@@ -203,9 +222,10 @@ out) against the models of `output_models.py`, exported as `review.v1.json` and 
 `preflight.v1.json` for the ticket record above, `preflight_problems`). Every key
 is required, unknown keys are refused, text is one line and non-empty.
 
-- Review, schema `agent-hub/review/1`: `reviewer` (`spec`, `quality`), `ticket`, `task`, `round`, `commit`,
-  `verdict` (`PASS`, `FAIL`), `findings` (`severity` `blocking` or `minor`). The file name gives `reviewer` and `round`
-  (`N` 1 to 9999); `ticket` is the folder's name, ASCII case ignored; `FAIL` iff a finding is blocking; ids unique.
+- Review, schema `agent-hub/review/1`: `reviewer` (`spec`, `quality`, `ux`, `overengineering`), `ticket`, `task`,
+  `round`, `commit`, `verdict` (`PASS`, `FAIL`), `findings` (`severity` `blocking` or `minor`). The file name gives
+  `reviewer` and `round` (`N` 1 to 9999); `ticket` is the folder's name, ASCII case ignored; `FAIL` iff a finding is
+  blocking; ids unique.
 - Eval, schema `agent-hub/eval/1`, beside `evals/<delivery>.md`: `delivery`, `verdict`, `commit`, `tickets`, `acs`
   (`"all"`, ids, or `[]` for the tickets' ACs), `results` and `gates` (`status` with `exit_code`), `red_on_parent`,
   `owner_steps`. `SHIP` needs `results` and `gates`, all `pass`; `SHIP-WITH-OWNER-STEPS` an owner step; `pass` exits 0,
@@ -215,10 +235,10 @@ is required, unknown keys are refused, text is one line and non-empty.
 - Bounds, applied by core to the bytes it is given: `MAX_OUTPUT_BYTES` per output, each list's `MAX_*`, the sibling's
   first `EVAL_HEAD_BYTES`, `MAX_RECORD_BYTES` for the record; echoed values are cut to `ECHO_LIMIT`.
 
-The feature list reads at most about 32 MiB of records per call (it may go over by one folder, at most 15,572,994
-bytes, about 14.9 MiB, with the change request heads); folders past that are listed unread with a record problem.
-The detail reads only its own folder (at most those 14.9 MiB); the tickets route reads its folder and `tickets/`
-within 32 MiB in all, which in the worst case still leaves room for 274 full `preflight.json`. A malformed record counts for
+The feature list reads at most about 32 MiB of records per call (it may go over by one folder, at most 23,765,494
+bytes, about 22.7 MiB, with the change request heads and 500 outcomes); folders past that are listed unread with a
+record problem. The detail reads only its own folder (at most those 22.7 MiB); the tickets route reads its folder and
+`tickets/` within 32 MiB in all, which in the worst case still leaves room for 149 full `preflight.json`. A malformed record counts for
 nothing and carries its problem.
 
 ### Golden path
@@ -236,7 +256,7 @@ ticket's implement, review and eval belong to the ticket, not to the golden path
 | UX design | every `ux-*.md` says `status: approved` ("2 designs · 1 draft" otherwise); none while a later record exists is `skipped`, "No screen change recorded" |
 | Research, Plan | its file exists (one missing while a later record exists is `skipped`); Plan's meta is the plan's version ("v3 · 2 amendments"); while a plan change request is open, its `signal` reads "v4 waits for you" (the first open request's `plan_to`), else a change request's record problem |
 | Tickets | every planned ticket has a tracker id ("15 of 17 created") |
-| Build | every ticket is merged, Done in Linear (state type `completed`) ("1 of 3 merged · 1 in progress"; "· 2 paused for a plan change" counts the tickets not merged that an open request names as its origin or affected); with no ticket to build (Tickets done by `issues.md` alone, or only epics) it is never done, "No tickets planned" |
+| Build | every ticket is merged: Done in Linear (state type `completed`) or its `outcome.md` recorded (D-5) ("1 of 3 merged · 1 in progress", a ticket merged by its outcome no longer counted in progress; "· 2 paused for a plan change" counts the tickets not merged that an open request names as its origin or affected); with no ticket to build (Tickets done by `issues.md` alone, or only epics) it is never done, "No tickets planned" |
 | Acceptance | the acceptance eval is SHIP, or SHIP-WITH-OWNER-STEPS whose owner steps are signed off: each AC it leaves as an owner step has a later SHIP with `provenance: owner` (ticket evals never sign one off) |
 | Shipped | Build and Acceptance are done |
 
@@ -277,7 +297,7 @@ Each feature (list and detail) carries `waiting_on_owner`, the owner decision it
 open requests' origin tickets) while a plan change request is open, else `owner_signoff` while the acceptance eval
 waits on a sign-off the app can record, or `owner_signoff_manual` while it lists no AC (A17); none otherwise. Without a Linear snapshot, ticket states are
 unknown: Build and Shipped are `unknown` with "Linear not connected" (or "Linear not loaded yet" when a key is set but
-the cache is cold). Canceled (and duplicate) tickets and withdrawn ACs are left out of every count; a ticket with
+the cache is cold), unless every ticket's outcome is recorded: Build is then done. Canceled (and duplicate) tickets and withdrawn ACs are left out of every count; a ticket with
 children (an epic) counts under Tickets only.
 
 ### Ticket flow
@@ -289,12 +309,12 @@ for nothing.
 | Step | Evidence |
 |---|---|
 | Context | `done` when `tickets/<ticket>/brief.md` exists |
-| Preflight | `waiting`, "Waiting for you", while a change request the ticket asked is open (even with no `preflight.json`: a lost run); else by the latest run of `preflight.json`: `stale`, "Plan v4 approved: re-run preflight", when the ticket is not merged and the run checked an older plan version than the newest approved (the plan's version, or an approved request's `plan_to`); `done` on drift `none`, or `local` with the meta "Local drift · 2 notes"; `blocked`, "Plan drift", on drift `plan` otherwise; `unknown` with the problem when `preflight.json` or the ticket's request cannot be read |
+| Preflight | `waiting`, "Waiting for you", while a change request the ticket asked is open (even with no `preflight.json`: a lost run); else by the latest run of `preflight.json`: `stale`, "Plan v4 approved: re-run preflight", when the ticket is not merged and the run checked an older plan version than the newest approved (the plan's version, or an approved request's `plan_to`); else `stale`, "DEM-7 merged: re-run preflight", when the ticket is not merged and a blocker's outcome has a `merged_at` after the run's `ran_at` (as instants), until a newer run exists (AC-3.3); the first such blocker in the row's `blocked_by` (refs in natural order) is named; `done` on drift `none`, or `local` with the meta "Local drift · 2 notes"; `blocked`, "Plan drift", on drift `plan` otherwise; `unknown` with the problem when `preflight.json` or the ticket's request cannot be read |
 | Implement | `done` when a review round of the ticket exists (`reviews/<ticket>/<reviewer>-r<N>.json`); `current`, "Ticket plan written", when only `tickets/<ticket>/plan.md` exists |
 | Review | `done` when a review record of the ticket is `approved`; `current`, "Changes requested", while its records only request changes |
 | Eval | the latest eval whose `tickets` name the ticket (the order of "Decisions" below, conservative when unordered): SHIP or SHIP-WITH-OWNER-STEPS `done`, NO-SHIP `blocked`; the meta is the verdict |
 | PR | `done` when its review record's `pr` or an eval naming it lists a pull request (`<repo>#<n>` or a GitHub pull request URL; `#pending` is none) |
-| Merged | `done` when Linear has the ticket `completed`, the rule Build counts by; `unknown` with Build's meta when Linear was not read |
+| Merged | `done`, "Outcome recorded", when `tickets/<ticket>/outcome.md` is recorded (D-5); else `done` when Linear has the ticket `completed`, the rule Build counts by (an outcome that cannot be read is then its meta); `unknown` with the problem when the outcome cannot be read and Linear has it open, or with Build's meta when Linear was not read |
 
 A step with no evidence reads `unrecorded` ("Not recorded") when a later step has some, else `pending` ("Not
 reached"): a ticket Done in Linear with no review record reads Context, Preflight and Review "Not recorded" and Merged

@@ -250,6 +250,165 @@
         ],
         "type": "string"
       },
+      "ActionCallEntry": {
+        "additionalProperties": false,
+        "description": "An action call's policy facts, from its record line: never its inputs or output.",
+        "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
+          "approver": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approver"
+          },
+          "at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "At"
+          },
+          "attempt": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attempt"
+          },
+          "content_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Hash"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision"
+          },
+          "effect": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effect"
+          },
+          "failure_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Kind"
+          },
+          "node": {
+            "title": "Node",
+            "type": "string"
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Origin"
+          },
+          "poll": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Poll"
+          },
+          "reason_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason Kind"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "required": [
+          "node",
+          "attempt",
+          "poll",
+          "action",
+          "effect",
+          "origin",
+          "decision",
+          "reason_kind",
+          "content_hash",
+          "approver",
+          "status",
+          "failure_kind",
+          "at"
+        ],
+        "title": "ActionCallEntry",
+        "type": "object"
+      },
       "ActivityItem": {
         "additionalProperties": false,
         "description": "A notable event in the activity feed.",
@@ -780,6 +939,17 @@
             "title": "Project",
             "type": "string"
           },
+          "restricted": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restricted"
+          },
           "review_targets": {
             "default": [],
             "items": {
@@ -973,6 +1143,16 @@
           "gate_id": {
             "title": "Gate Id",
             "type": "string"
+          },
+          "gate_kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GateKindName"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "how_to_decide": {
             "anyOf": [
@@ -4065,6 +4245,13 @@
         ],
         "type": "string"
       },
+      "GateKindName": {
+        "enum": [
+          "policy",
+          "investigation"
+        ],
+        "type": "string"
+      },
       "GoldenPath": {
         "additionalProperties": false,
         "description": "The feature's steps in their fixed order; ``phase`` is the first step neither done nor\nskipped (``shipped`` when all are).",
@@ -4842,7 +5029,19 @@
       },
       "InvestigationEntry": {
         "additionalProperties": false,
+        "description": "An investigation; ``agent_session_id`` is the session its link file names, if any.",
         "properties": {
+          "agent_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Session Id"
+          },
           "approver": {
             "anyOf": [
               {
@@ -10127,6 +10326,45 @@
         ],
         "type": "string"
       },
+      "RunEnvironment": {
+        "additionalProperties": false,
+        "description": "The environment a run's own start record names (AGH-350 E-15, the best-effort banner),\nwith its access and production flag in the hub's effective config as read now; both are\n``None`` when that config cannot be read or no longer declares it.",
+        "properties": {
+          "access": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Access"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "production": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Production"
+          }
+        },
+        "required": [
+          "name",
+          "access",
+          "production"
+        ],
+        "title": "RunEnvironment",
+        "type": "object"
+      },
       "RunFailure": {
         "additionalProperties": false,
         "description": "Where and why a run failed, and the event to open (\"Open failing moment\").",
@@ -10382,7 +10620,7 @@
       },
       "ScenarioDetail": {
         "additionalProperties": false,
-        "description": "A scenario's steps and its scenario runs, newest first.",
+        "description": "A scenario's steps, its scenario runs, newest first, and the environments it can be\nplanned in (empty when ``hub.local.json`` or ``hub.json`` cannot be read).",
         "properties": {
           "description": {
             "anyOf": [
@@ -10394,6 +10632,14 @@
               }
             ],
             "title": "Description"
+          },
+          "environments": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ScenarioEnvironment"
+            },
+            "title": "Environments",
+            "type": "array"
           },
           "inputs": {
             "default": [],
@@ -10459,6 +10705,31 @@
           "runs"
         ],
         "title": "ScenarioDetail",
+        "type": "object"
+      },
+      "ScenarioEnvironment": {
+        "additionalProperties": false,
+        "description": "An environment the project's hub declares, as the effective config reads now.",
+        "properties": {
+          "access": {
+            "title": "Access",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "production": {
+            "title": "Production",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "access",
+          "production"
+        ],
+        "title": "ScenarioEnvironment",
         "type": "object"
       },
       "ScenarioMode": {
@@ -10686,6 +10957,14 @@
         "additionalProperties": false,
         "description": "A scenario run as its record holds it. ``status`` is its end's, ``None`` while it has\nnone; ``open_investigation`` is the number of the investigation waiting for an answer.",
         "properties": {
+          "actions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ActionCallEntry"
+            },
+            "title": "Actions",
+            "type": "array"
+          },
           "captures": {
             "items": {
               "$ref": "#/components/schemas/CaptureEntry"
@@ -10855,7 +11134,7 @@
       },
       "ScenarioRunRef": {
         "additionalProperties": false,
-        "description": "A scenario run as the folded events show it.",
+        "description": "A scenario run as the folded events show it, with the environment and mode its start\nrecord names (``None`` when the record cannot be read).",
         "properties": {
           "ended_at": {
             "anyOf": [
@@ -10866,6 +11145,28 @@
                 "type": "null"
               }
             ]
+          },
+          "environment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Environment"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode"
           },
           "run_id": {
             "title": "Run Id",
@@ -13756,7 +14057,19 @@
       },
       "TimelineEntry": {
         "additionalProperties": false,
+        "description": "A line of the run's timeline; an investigation read (``agent_action``) names its action\nand effect.",
         "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
           "at": {
             "anyOf": [
               {
@@ -13778,6 +14091,17 @@
               }
             ],
             "title": "Attempt"
+          },
+          "effect": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effect"
           },
           "event": {
             "title": "Event",
@@ -14950,6 +15274,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/ApiTimestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "environment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunEnvironment"
               },
               {
                 "type": "null"
@@ -16737,7 +17071,7 @@
     },
     "/api/v1/approvals": {
       "get": {
-        "description": "Approvals, oldest first.",
+        "description": "Approvals, oldest first; an engine run's open gate names its kind (``gate_kind``) when\nits run's record does.",
         "operationId": "list_approvals_api_v1_approvals_get",
         "parameters": [
           {
@@ -22428,7 +22762,7 @@
     },
     "/api/v1/workflow-runs/{run_id}": {
       "get": {
-        "description": "One workflow run with its steps.",
+        "description": "One workflow run with its steps, and the environment its record names (when any).",
         "operationId": "get_run_api_v1_workflow_runs__run_id__get",
         "parameters": [
           {
