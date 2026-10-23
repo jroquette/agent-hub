@@ -5,13 +5,16 @@ import { describe, expect, it } from "vitest";
 import {
   TestProviders,
   aFeature,
+  aFeatureTickets,
+  aGoldenPath,
+  aGoldenStep,
   aLiveTile,
   aPage,
   aSessionLabel,
   stubApi,
   testQueryClient,
 } from "../../testing/builders";
-import { useFeaturesNeedingYou } from "./queries";
+import { useFeatures, useFeaturesNeedingYou, useWarmTickets } from "./queries";
 
 function wrapper({ children }: { children: ReactNode }) {
   return <TestProviders client={testQueryClient()}>{children}</TestProviders>;
@@ -50,5 +53,70 @@ describe("useFeaturesNeedingYou", () => {
     await waitFor(() => {
       expect(result.current).toBe(1);
     });
+  });
+});
+
+describe("useWarmTickets", () => {
+  const missingLinear = aGoldenPath({
+    phase: "build",
+    steps: [aGoldenStep({ state: "unknown", reason: "Ticket states from Linear not loaded" })],
+  });
+  const shipped = aGoldenPath({
+    phase: "shipped",
+    steps: [aGoldenStep({ name: "shipped", state: "done", reason: null })],
+  });
+
+  it("reads the tickets of a feature missing Linear's status, then rereads the list", async () => {
+    let listReads = 0;
+    const requests = stubApi({
+      "/api/v1/features": () => {
+        listReads += 1;
+        const path = listReads === 1 ? missingLinear : shipped;
+        return aPage([
+          aFeature({ slug: "done-one", issues: ["AGH-1"], golden_path: path, phase: path.phase }),
+          aFeature({ slug: "no-tickets", issues: [], golden_path: missingLinear }),
+        ]);
+      },
+      "/api/v1/features/agent-hub/done-one/tickets": aFeatureTickets({ slug: "done-one" }),
+    });
+
+    const { result } = renderHook(
+      () => {
+        const features = useFeatures(null);
+        useWarmTickets(features.data?.items);
+        return features.data?.items[0]?.phase;
+      },
+      { wrapper },
+    );
+
+    await waitFor(() => {
+      expect(result.current).toBe("shipped");
+    });
+    const paths = requests.map((r) => new URL(r.url).pathname);
+    expect(paths.filter((p) => p.endsWith("/tickets"))).toEqual([
+      "/api/v1/features/agent-hub/done-one/tickets",
+    ]);
+  });
+
+  it("reads no tickets when every feature already has Linear's status", async () => {
+    const requests = stubApi({
+      "/api/v1/features": aPage([
+        aFeature({ slug: "warm", issues: ["AGH-1"], golden_path: shipped }),
+      ]),
+    });
+
+    const { result } = renderHook(
+      () => {
+        const features = useFeatures(null);
+        useWarmTickets(features.data?.items);
+        return features.isSuccess;
+      },
+      { wrapper },
+    );
+
+    await waitFor(() => {
+      expect(result.current).toBe(true);
+    });
+    expect(requests.some((r) => r.url.includes("/tickets"))).toBe(false);
   });
 });

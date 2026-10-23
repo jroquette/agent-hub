@@ -1,9 +1,9 @@
-import { useQueries } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef } from "react";
 
 import type { TicketInfo, TicketLookup } from "../../components";
 import { apiGet, apiKey, useApi } from "../../lib/api";
-import { issueId, reasonOf, sessionWaitOf } from "./groups";
+import { issueId, missesLinear, reasonOf, sessionWaitOf } from "./groups";
 
 /** How often the open Features list rereads the records (local files, Linear cached server-side). */
 export const FEATURES_REFRESH_MS = 30_000;
@@ -15,6 +15,41 @@ export function useFeatures(project: string | null) {
     { query: { project } },
     { refetchInterval: FEATURES_REFRESH_MS },
   );
+}
+
+/** How often the list asks again for the tickets of a feature still missing Linear's status. */
+export const WARM_TICKETS_MS = 60_000;
+
+type FeatureRow = NonNullable<ReturnType<typeof useFeatures>["data"]>["items"][number];
+
+/**
+ * Warms the server's Linear snapshot of each listed feature whose golden path misses it, through
+ * the tickets route (the only one that reads Linear, cached and single-flight server-side), and
+ * rereads the list once one comes back from Linear. Without it a shipped feature sits in Build
+ * until someone opens it, since the list itself only reads that cache.
+ */
+export function useWarmTickets(features: readonly FeatureRow[] | undefined) {
+  const client = useQueryClient();
+  const cold = (features ?? []).filter((f) => f.issues.length > 0 && missesLinear([f]));
+  const reads = useQueries({
+    queries: cold.map((f) => ({
+      queryKey: ticketsKey(f.project, f.slug),
+      queryFn: () => apiGet(TICKETS, ticketsParams(f.project, f.slug)),
+      staleTime: WARM_TICKETS_MS,
+      refetchInterval: WARM_TICKETS_MS,
+      retry: false,
+    })),
+  });
+  const fromLinear = reads
+    .filter((read) => read.data?.source === "linear")
+    .map((read) => read.dataUpdatedAt)
+    .join(",");
+  const seen = useRef("");
+  useEffect(() => {
+    if (fromLinear === "" || fromLinear === seen.current) return;
+    seen.current = fromLinear;
+    void client.invalidateQueries({ queryKey: apiKey("/api/v1/features") });
+  }, [client, fromLinear]);
 }
 
 /**
