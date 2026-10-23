@@ -13,8 +13,10 @@ import pytest
 # The suite the repo holds. In ``tests/test_x.py``: ``test_y`` reads the list ``test_a`` fills (an
 # order dependence), ``test_p`` fails only under pytest-xdist, ``test_ok`` always passes. Each other
 # file sits in a folder of its own, so the parallel mode of ``tests`` never runs it: ``test_slow``
-# outlasts a short run timeout, ``test_loud`` fails with a large output, ``test_zz_gone`` ends the
-# process before the summary is written.
+# outlasts a short run timeout (its child's pid goes to ``$FLAKY_PID_FILE``), ``test_zz_sleep``
+# makes only its file's run outlast it, ``test_loud`` fails with a large output, ``test_zz_gone``
+# ends the process before the summary is written, ``test_live`` is skipped, ``test_broken`` and
+# ``test_fixed`` are expected to fail.
 SUITE = {
     "tests/test_x.py": """\
 import os
@@ -38,11 +40,50 @@ def test_ok():
     assert True
 """,
     "slow/test_slow.py": """\
+import os
+import subprocess
+import sys
 import time
 
 
 def test_slow():
+    # A child of the run that outlives it unless the whole process group is killed.
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+    with open(os.environ.get("FLAKY_PID_FILE", os.devnull), "a") as pids:
+        pids.write(f"{child.pid}\\n")
     time.sleep(30)
+""",
+    "slowfile/test_slowfile.py": """\
+import time
+
+
+def test_fast():
+    assert True
+
+
+def test_zz_sleep():
+    time.sleep(30)
+""",
+    "skip/test_skip.py": """\
+import pytest
+
+
+@pytest.mark.skip(reason="needs a live service")
+def test_live():
+    assert False
+""",
+    "xfail/test_xfail.py": """\
+import pytest
+
+
+@pytest.mark.xfail(reason="known broken")
+def test_broken():
+    assert False
+
+
+@pytest.mark.xfail(reason="known broken")
+def test_fixed():
+    assert True
 """,
     "loud/test_loud.py": """\
 def test_loud():

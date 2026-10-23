@@ -6,6 +6,7 @@ import importlib.util
 import json
 import shutil
 import sys
+import time
 from importlib.resources import files
 from pathlib import Path
 from types import ModuleType
@@ -295,9 +296,10 @@ def test_removes_worktree_when_run_ends(
     assert worktree_folders(temp) == []
 
 
-def test_prunes_stale_entry_when_starting(repeat: Repeat, workspace: Workspace) -> None:
+def test_prunes_entry_of_removed_folder_when_starting(repeat: Repeat, workspace: Workspace) -> None:
     before = workspace.state()
-    # A run killed before its cleanup leaves a worktree entry whose folder is gone.
+    # A killed run leaves its folder and its entry; once the folder is removed (by hand or by the
+    # temporary folder's cleanup), the next run's prune drops the entry.
     lost = workspace.repo.parent / "flaky-lost"
     workspace.git("worktree", "add", "--detach", "--quiet", str(lost), "HEAD")
     shutil.rmtree(lost)
@@ -402,7 +404,10 @@ def test_counts_missing_when_summary_has_no_line(repeat: Repeat) -> None:
     assert code == 0, err
     assert counts(found, "alone") == ran(passed=1)
     assert counts(found, "suite") == ran(missing=1)
-    assert found["reproduced"] is True
+    # The file's run lost the line, not the test: inconclusive, never a reproduction.
+    assert found["reproduced"] is False
+    assert "inconclusive" in mode(found, "suite")["note"]
+    assert "inconclusive" not in mode(found, "alone")["note"]
 
 
 def test_caps_tails_when_output_is_large(repeat: Repeat) -> None:
@@ -512,3 +517,85 @@ def test_drops_script_venv_when_running(monkeypatch: pytest.MonkeyPatch) -> None
 
     assert "VIRTUAL_ENV" not in env
     assert env["PATH"] == "/usr/bin"
+
+
+def test_rejects_test_when_it_is_skipped_here(repeat: Repeat, workspace: Workspace) -> None:
+    repeat.plugins(NO_PLUGINS)
+    before = workspace.state()
+
+    code, _, err = repeat("skip/test_skip.py::test_live", runs="3")
+
+    assert code == 2
+    assert "repeat.py: " in err
+    assert "the test is skipped here" in err
+    # The first alone run shows it; nothing more runs.
+    assert len(repeat.calls) == 1
+    assert workspace.state() == before
+
+
+@pytest.mark.parametrize(
+    "test", ["xfail/test_xfail.py::test_broken", "xfail/test_xfail.py::test_fixed"]
+)
+def test_counts_skipped_when_target_is_xfail(repeat: Repeat, test: str) -> None:
+    repeat.plugins({"xdist": True, "pytest_randomly": False, "random_order": False})
+
+    code, found, err = repeat(test)
+
+    assert code == 0, err
+    for name in ("alone", "suite", "parallel"):
+        assert counts(found, name) == ran(), name
+        assert mode(found, name)["skipped"] == 1, name
+        assert mode(found, name)["tails"] == []
+    assert found["reproduced"] is False
+
+
+def test_keeps_not_reproduced_when_only_file_run_times_out(repeat: Repeat) -> None:
+    repeat.plugins(NO_PLUGINS)
+
+    code, found, err = repeat("slowfile/test_slowfile.py::test_fast", "--run-timeout", "5")
+
+    assert code == 0, err
+    assert counts(found, "alone") == ran(passed=1)
+    assert counts(found, "suite") == ran(timed_out=1)
+    assert found["reproduced"] is False
+    assert mode(found, "suite")["note"].endswith(
+        "the file run timed out or printed no line for the test: inconclusive"
+    )
+
+
+def test_reproduces_when_alone_run_times_out(repeat: Repeat) -> None:
+    repeat.plugins(NO_PLUGINS)
+
+    code, found, err = repeat("slow/test_slow.py::test_slow", "--run-timeout", "1")
+
+    assert code == 0, err
+    assert counts(found, "alone") == ran(timed_out=1)
+    assert found["reproduced"] is True
+
+
+def alive(pid: int) -> bool:
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    # A zombie is dead: only its parent has not read its status yet.
+    return stat.rsplit(")", 1)[1].split()[0] != "Z"
+
+
+def test_kills_run_children_when_run_times_out(
+    repeat: Repeat, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    pids = tmp_path / "pids"
+    monkeypatch.setenv("FLAKY_PID_FILE", str(pids))
+    repeat.plugins(NO_PLUGINS)
+
+    code, found, err = repeat("slow/test_slow.py::test_slow", "--run-timeout", "8")
+
+    assert code == 0, err
+    assert counts(found, "alone") == ran(timed_out=1)
+    started = [int(item) for item in pids.read_text(encoding="utf-8").split()]
+    assert started
+    deadline = time.monotonic() + 10
+    while any(alive(pid) for pid in started) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert not any(alive(pid) for pid in started)

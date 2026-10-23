@@ -326,3 +326,41 @@ def test_rejects_options_when_wrong(
 
     assert code == 2
     assert reason in report.capsys.readouterr().err
+
+
+def test_rejects_run_when_run_id_is_empty(report: Report) -> None:
+    code, _, err = report(a_run(), CLASSIFIED, run_id="")
+
+    assert code == 2
+    assert "AGENT_HUB_RUN_ID is not set" in err
+    assert not (report.hub / "brain").exists()
+
+
+def test_calls_file_results_inconclusive_when_they_time_out_or_miss(report: Report) -> None:
+    modes = [
+        a_mode("alone", passed=20),
+        a_mode("suite", passed=17, timed_out=2, missing=1),
+        a_mode("parallel", passed=20, skipped=0),
+    ]
+
+    code, found, err = report(a_run(reproduced=False, modes=modes), "")
+
+    assert code == 0, err
+    text = report.note(found)
+    assert (
+        "Outcome: not reproduced: no run of the test failed (alone 20 of 20, suite 17 of 20" in text
+    )
+    assert (
+        "Inconclusive: suite 3 of 20 (the file or folder run timed out or printed no line for"
+        " the test, not the test's own result)." in text
+    )
+
+
+def test_lists_skipped_results_when_target_is_xfail(report: Report) -> None:
+    modes = [a_mode("alone", skipped=20), a_mode("suite", skipped=20)]
+
+    code, found, err = report(a_run(reproduced=False, modes=modes), "")
+
+    assert code == 0, err
+    text = report.note(found)
+    assert "Skipped results (xfail, xpass or skip): alone 20, suite 20." in text
