@@ -11,7 +11,8 @@
 # Invariants: docs only, never code; an ADR file (whatever its status) is never edited - an
 # accepted ADR is reported as superseded wording, any other ADR as wording to change by hand; the
 # branch, the commit, the push and the PR all come after the approval; nothing reads or writes the
-# tracker (ADR 0030: no issue input, hub step only for commits and pr).
+# tracker (ADR 0030: no issue input, hub step only for config, read-only, and commits and pr).
+# No script opens hub.json: config and branch_config (hub step config) read it for them.
 #
 # Monthly mode (sha blank): the month's net contract diff, from the last first-parent commit of
 # origin/<default> 30 days ago to origin/<default>, through the same rules. Known gap: a command
@@ -39,12 +40,29 @@ inputs:
 returns: plan
 outcome_field: verdict
 nodes:
+  - id: config
+    type: shell
+    description: The hub.json values this run's scripts need, read by the CLI (read-only).
+    command: [hub, step, config]
+    effect: read
+    mutates_checkout: false
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        default_branch: {type: string}
+        branch_prefix: {type: [string, "null"]}
+        hub: {type: object}
+        repos: {type: array, items: {type: object}}
+      required: [default_branch, branch_prefix, hub, repos]
+
   - id: contract
     type: script
     description: The contract names the change removed that nothing still declares.
+    depends_on: [config]
     runtime: python
     script: contract.py
-    args: [--repo, $INPUTS.repo, --sha, $INPUTS.sha]
+    args: [--repo, $INPUTS.repo, --sha, $INPUTS.sha, --config, $config.output]
     mutates_checkout: false
     timeout: 5m
     retry: {max_attempts: 0}
@@ -255,14 +273,34 @@ nodes:
     message: $plan.output.message
     capture_response: true
 
+  - id: branch_config
+    type: shell
+    description: The run's branch (the developer's prefix) and the repo's target from hub.json, read by the CLI (read-only).
+    depends_on: [approve]
+    when: "$approve.output.decision == 'approve'"
+    command: [hub, step, config, --branch, doc-drift, --run-slug]
+    effect: read
+    mutates_checkout: false
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        default_branch: {type: string}
+        branch_prefix: {type: [string, "null"]}
+        hub: {type: object}
+        repos: {type: array, items: {type: object}}
+        branch_name: {type: string}
+        branch: {type: string}
+      required: [default_branch, branch_prefix, hub, repos, branch_name, branch]
+
   - id: branch
     type: script
     description: Make the run's worktree and branch in the repo, at the base the judge read.
-    depends_on: [approve]
+    depends_on: [approve, branch_config]
     when: "$approve.output.decision == 'approve'"
     runtime: python
     script: branch.py
-    args: [--repo, $INPUTS.repo, --base, $contract.output.base]
+    args: [--repo, $INPUTS.repo, --base, $contract.output.base, --config, $branch_config.output]
     timeout: 5m
     retry: {max_attempts: 0}
     output_format:

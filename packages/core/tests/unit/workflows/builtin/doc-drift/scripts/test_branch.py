@@ -1,5 +1,7 @@
 """The doc-drift pack's ``branch.py`` (AGH-491), in process: the repo worktree a run commits its
-approved doc lines in, and the target ``hub step commits|pr`` read."""
+approved doc lines in, and the target ``hub step commits|pr`` read. The branch, its name and the
+target's repo facts come from ``hub step config --branch doc-drift --run-slug`` (``--config``,
+AGH-480); the script opens no ``hub.json``."""
 
 import importlib.util
 import json
@@ -35,9 +37,28 @@ def load() -> ModuleType:
 
 
 branch = load()
-PROJECT = {"default_branch": "trunk", "branch_prefix": "jdoe/"}
-REPO = {"dir": "demo-api", "github": "acme/demo-api"}
 RUN = "0a1b2c3d"
+UNTITLED = {
+    "branch": "",
+    "commit_title": "",
+    "pr_title": "",
+    "titles_configured": False,
+    "pr_title_explicit": False,
+}
+TARGET = {"github": "acme/demo-api", "default_branch": "trunk", "conventions": UNTITLED}
+REPO = {"dir": "demo-api", "github": "acme/demo-api", "default_branch": "trunk", "target": TARGET}
+
+
+def a_config(repo: dict[str, Any] | None = None, **top: Any) -> str:
+    """What ``hub step config --branch doc-drift --run-slug`` prints for the run."""
+    value = {
+        "default_branch": "trunk",
+        "branch_prefix": "jdoe/",
+        "repos": [REPO if repo is None else repo],
+        "branch_name": f"doc-drift-{RUN}",
+        "branch": f"jdoe/doc-drift-{RUN}",
+    }
+    return json.dumps(value | top)
 
 
 @pytest.fixture(autouse=True)
@@ -59,13 +80,9 @@ def git(folder: Path, *args: str) -> str:
     return done.stdout.strip()
 
 
-def a_hub(
-    tmp_path: Path, project: dict[str, Any] | None = None, repo: dict[str, Any] | None = None
-) -> Path:
+def a_hub(tmp_path: Path) -> Path:
     hub = tmp_path / "hub"
     hub.mkdir()
-    config = {"project": PROJECT if project is None else project, "repos": [repo or REPO]}
-    (hub / "hub.json").write_text(json.dumps(config))
     return hub
 
 
@@ -81,23 +98,17 @@ def a_repo(tmp_path: Path) -> str:
     return git(repo, "rev-parse", "HEAD")
 
 
-def run(hub: Path, monkeypatch: pytest.MonkeyPatch, *argv: str) -> int:
+def run(hub: Path, monkeypatch: pytest.MonkeyPatch, *argv: str, config: str = "") -> int:
     monkeypatch.chdir(hub)
-    code: int = branch.main(list(argv))
+    code: int = branch.main([*argv, "--config", config or a_config()])
     return code
 
 
-def test_builds_repo_target_when_config_complete(tmp_path: Path) -> None:
+def test_builds_repo_target_from_the_config_skeleton_when_config_complete(tmp_path: Path) -> None:
     repo = tmp_path / "demo-api"
+    config = branch.read_config(a_config(), "demo-api")
 
-    found = branch.target_for(
-        repo=repo,
-        run_id=RUN,
-        prefix="jdoe/",
-        default_branch="trunk",
-        github="acme/demo-api",
-        base="f" * 40,
-    )
+    found = branch.target_for(repo=repo, run_id=RUN, config=config, base="f" * 40)
 
     path = str(repo / ".claude/worktrees/doc-drift-0a1b2c3d")
     assert found == {
@@ -114,52 +125,59 @@ def test_builds_repo_target_when_config_complete(tmp_path: Path) -> None:
                 "doc-drift run 0a1b2c3d: docs-only diff check passed;"
                 " every line approved at the gate"
             ),
-            "conventions": {
-                "branch": "",
-                "commit_title": "",
-                "pr_title": "",
-                "titles_configured": False,
-                "pr_title_explicit": False,
-            },
+            "conventions": UNTITLED,
         },
     }
 
 
-def test_prefers_local_prefix_when_hub_local_json_sets_one(tmp_path: Path) -> None:
+def test_takes_the_branch_the_config_prints_when_config_read() -> None:
+    # hub step config resolved the prefix (hub.local.json first): the script takes it as is.
+    config = branch.read_config(a_config(branch=f"ana/doc-drift-{RUN}"), "demo-api")
+
+    assert config.branch == f"ana/doc-drift-{RUN}"
+    assert config.name == f"doc-drift-{RUN}"
+
+
+def test_reads_repo_branch_from_its_target_when_config_read() -> None:
+    target = TARGET | {"default_branch": "main"}
+
+    config = branch.read_config(a_config(REPO | {"target": target}), "demo-api")
+
+    assert config.default_branch == "main"
+
+
+def test_reads_no_hub_json_when_config_given(tmp_path: Path) -> None:
     hub = a_hub(tmp_path)
-    (hub / "hub.local.json").write_text(json.dumps({"project": {"branch_prefix": "ana/"}}))
+    (hub / "hub.json").write_text(json.dumps({"repos": []}))
 
-    assert branch.read_config(hub, "demo-api").prefix == "ana/"
-
-
-def test_reads_repo_branch_when_repo_sets_its_own(tmp_path: Path) -> None:
-    hub = a_hub(tmp_path, repo=REPO | {"default_branch": "main"})
-
-    assert branch.read_config(hub, "demo-api").default_branch == "main"
+    assert branch.read_config(a_config(), "demo-api").target["github"] == "acme/demo-api"
 
 
 @pytest.mark.parametrize(
-    ("project", "repo"),
+    "config",
     [
-        ({"default_branch": "trunk"}, REPO),
-        (PROJECT | {"branch_prefix": ""}, REPO),
-        (PROJECT | {"branch_prefix": "claude/"}, REPO),
-        (PROJECT, REPO | {"github": "demo-api"}),
-        (PROJECT, REPO | {"dir": "other"}),
+        "not json",
+        a_config(REPO | {"dir": "other"}),
+        a_config(REPO | {"target": TARGET | {"github": "demo-api"}}),
+        a_config(REPO | {"target": "x"}),
+        a_config(branch=""),
+        a_config(branch=f"claude/doc-drift-{RUN}"),
+        a_config(branch_name="../up"),
+        json.dumps({"repos": [REPO]}),
     ],
+    ids=["text", "no-repo", "github", "target", "no-branch", "claude", "name", "no-branch-keys"],
 )
-def test_exits_two_when_branch_prefix_missing(
+def test_exits_two_when_config_is_unusable(
+    config: str,
+    *,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
-    *,
-    project: dict[str, Any],
-    repo: dict[str, Any],
 ) -> None:
-    hub = a_hub(tmp_path, project, repo)
+    hub = a_hub(tmp_path)
 
-    assert run(hub, monkeypatch, "--repo", "demo-api", "--base", "f" * 40) == 2
-    assert capsys.readouterr().err.startswith("branch.py: hub.json: ")
+    assert run(hub, monkeypatch, "--repo", "demo-api", "--base", "f" * 40, config=config) == 2
+    assert capsys.readouterr().err.startswith("branch.py: the config: ")
 
 
 @pytest.mark.parametrize("run_id", ["", "Not/A-Run"])
@@ -175,10 +193,11 @@ def test_exits_two_when_run_id_missing(
 def test_refuses_branch_when_it_equals_default_branch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    project = {"branch_prefix": "x/", "default_branch": f"x/doc-drift-{RUN}"}
-    hub = a_hub(tmp_path, project)
+    hub = a_hub(tmp_path)
+    target = TARGET | {"default_branch": f"x/doc-drift-{RUN}"}
+    config = a_config(REPO | {"target": target}, branch=f"x/doc-drift-{RUN}")
 
-    assert run(hub, monkeypatch, "--repo", "demo-api", "--base", "f" * 40) == 2
+    assert run(hub, monkeypatch, "--repo", "demo-api", "--base", "f" * 40, config=config) == 2
     assert "the default branch" in capsys.readouterr().err
 
 

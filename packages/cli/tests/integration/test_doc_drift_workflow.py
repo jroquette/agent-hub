@@ -50,7 +50,7 @@ def test_validates_and_passes_every_fixture_when_doc_drift_tested(
     tested = run_command(demo_workspace.hub, "workflow", "test", "doc-drift")
 
     assert validated.exit_code == 0, validated.output
-    assert validated.stdout == "doc-drift: valid (9 nodes in 9 layers)\n"
+    assert validated.stdout == "doc-drift: valid (11 nodes in 11 layers)\n"
     assert tested.exit_code == 0, tested.output
     for fixture in FIXTURES:
         # The hub's seeded copy shadows the built-in (AGH-227).
@@ -70,11 +70,17 @@ def test_declares_read_only_judge_and_no_tracker_step_when_document_loaded() -> 
     assert (judge.retry.max_attempts, judge.timeout) == (0, "30m")
     for name in ("contract", "mentions", "plan"):
         assert nodes[name].mutates_checkout is False, name
+    # config and branch_config read hub.json for the scripts (AGH-480) and write nothing.
     assert [list(command[:3]) for command in shells] == [
+        ["hub", "step", "config"],
+        ["hub", "step", "config"],
         ["hub", "step", "commits"],
         ["hub", "step", "pr"],
     ]
-    assert list(shells[1][3:5]) == ["--issue", "doc-drift"]
+    assert list(shells[1][3:]) == ["--branch", "doc-drift", "--run-slug"]
+    assert list(shells[3][3:5]) == ["--issue", "doc-drift"]
+    for name in ("config", "branch_config"):
+        assert nodes[name].mutates_checkout is False, name
     assert (document.returns, document.outcome_field) == ("plan", "verdict")
     assert nodes["approve"].capture_response is True
     assert document.name != "issue-to-pr"
@@ -298,7 +304,15 @@ def test_opens_doc_only_commit_and_reports_adr_when_merge_renames_command(
         "GIT_COMMITTER_EMAIL": "jo@example.com",
     }
 
-    contract = chain_script("contract.py", "--repo", "demo-api", "--sha", sha, cwd=hub)
+    # The workflow's config nodes: the real hub step config output, as --config takes it.
+    config = run_command(hub, "step", "config")
+    branch_config = run_command(
+        hub, "step", "config", "--branch", "doc-drift", "--run-slug", env={"AGENT_HUB_RUN_ID": "r1"}
+    )
+    assert (config.exit_code, branch_config.exit_code) == (0, 0), branch_config.output
+    contract = chain_script(
+        "contract.py", "--repo", "demo-api", "--sha", sha, "--config", config.stdout, cwd=hub
+    )
     found = chain_script("mentions.py", cwd=hub, stdin=json.dumps(contract))
     judge: Any = {
         "fixes": [
@@ -322,7 +336,15 @@ def test_opens_doc_only_commit_and_reports_adr_when_merge_renames_command(
     plan_args += ["--patch-truncated", "false", "--mentions-truncated", "0"]
     plan = chain_script("doc_fix.py", *plan_args, cwd=hub, stdin=json.dumps(judge))
     branch = chain_script(
-        "branch.py", "--repo", "demo-api", "--base", contract["base"], cwd=hub, env=env
+        "branch.py",
+        "--repo",
+        "demo-api",
+        "--base",
+        contract["base"],
+        "--config",
+        branch_config.stdout,
+        cwd=hub,
+        env=env,
     )
     apply_args = ["apply", "--worktree", branch["path"], "--base", branch["base"]]
     apply_args += ["--label", contract["label"], "--subject-prefix", "docs(repo): ", "--note", ""]
@@ -344,12 +366,18 @@ def test_opens_doc_only_commit_and_reports_adr_when_merge_renames_command(
     assert demo_workspace.git(repo, "status", "--porcelain") == status
 
 
-def test_ends_clean_when_merge_touches_no_contract(demo_workspace: Workspace) -> None:
+def test_ends_clean_when_merge_touches_no_contract(
+    demo_workspace: Workspace, run_command: CommandRunner
+) -> None:
     hub = demo_workspace.hub
     body = {"src/demo/cli.py": CLI.format(name="old-cmd").replace("pass", "return None")}
     sha = merged(demo_workspace, DOCS, body)
+    config = run_command(hub, "step", "config")
+    assert config.exit_code == 0, config.output
 
-    contract = chain_script("contract.py", "--repo", "demo-api", "--sha", sha, cwd=hub)
+    contract = chain_script(
+        "contract.py", "--repo", "demo-api", "--sha", sha, "--config", config.stdout, cwd=hub
+    )
     plan_args = ["plan", "--repo-path", contract["repo_path"], "--base", contract["base"]]
     plan_args += ["--names", json.dumps(contract["names"]), "--adr", "", "--notes", ""]
     plan_args += ["--names-truncated", "0", "--patch-truncated", "false"]

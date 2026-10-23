@@ -285,11 +285,6 @@ def a_workspace(tmp_path: Path, base: dict[str, str], change: dict[str, str]) ->
     """A hub next to ``demo-api``, whose trunk merges a branch that writes ``change``."""
     hub = tmp_path / "hub"
     hub.mkdir()
-    config = {
-        "project": {"default_branch": "trunk", "branch_prefix": "jdoe/"},
-        "repos": [{"dir": "demo-api", "github": "acme/demo-api"}],
-    }
-    (hub / "hub.json").write_text(json.dumps(config), encoding="utf-8")
     repo = tmp_path / "demo-api"
     repo.mkdir()
     git(repo, "init", "-q", "-b", "trunk")
@@ -306,11 +301,24 @@ def a_workspace(tmp_path: Path, base: dict[str, str], change: dict[str, str]) ->
     return hub, git(repo, "rev-parse", "HEAD")
 
 
+# What hub step config prints for the workspace's hub, as the workflow passes it with --config.
+CONFIG = json.dumps(
+    {
+        "default_branch": "trunk",
+        "repos": [{"dir": "demo-api", "github": "acme/demo-api", "default_branch": "trunk"}],
+    }
+)
+
+
 def run(
-    hub: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], *argv: str
+    hub: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    *argv: str,
+    config: str = CONFIG,
 ) -> tuple[int, dict[str, object], str]:
     monkeypatch.chdir(hub)
-    code = contract.main(list(argv))
+    code = contract.main([*argv, "--config", config])
     out, err = capsys.readouterr()
     return code, (json.loads(out) if code == 0 else {}), err
 
@@ -417,12 +425,12 @@ def test_exits_two_when_sha_is_unknown(
 @pytest.mark.parametrize(
     ("argv", "reason"),
     [
-        (["--repo", "demo-web", "--sha", ""], "hub.json: no repo demo-web in repos"),
-        (["--repo", "../x", "--sha", ""], "hub.json: no repo ../x in repos"),
+        (["--repo", "demo-web", "--sha", ""], "the config: no repo demo-web in repos"),
+        (["--repo", "../x", "--sha", ""], "the config: no repo ../x in repos"),
         (["--repo", "demo-api", "--sha", "not a sha"], "--sha is not a commit id"),
     ],
 )
-def test_exits_two_when_repo_is_not_in_hub_json(
+def test_exits_two_when_repo_is_not_in_the_config(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -436,6 +444,37 @@ def test_exits_two_when_repo_is_not_in_hub_json(
 
     assert code == 2
     assert err == f"contract.py: {reason}\n"
+
+
+@pytest.mark.parametrize("config", ["not json", "[]", '{"repos": 1}'])
+def test_exits_two_when_config_is_unreadable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    config: str,
+) -> None:
+    hub, _ = a_workspace(tmp_path, BASE, RENAMED)
+
+    code, _, err = run(hub, monkeypatch, capsys, "--repo", "demo-api", "--sha", "", config=config)
+
+    assert code == 2
+    assert err.startswith("contract.py: the config: ")
+
+
+def test_reads_the_repo_branch_from_the_config_when_hub_json_differs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    hub, _ = a_workspace(tmp_path, BASE, RENAMED)
+    (hub / "hub.json").write_text(json.dumps({"repos": []}), encoding="utf-8")
+    config = json.dumps(
+        {"default_branch": "trunk", "repos": [{"dir": "demo-api", "default_branch": "gone"}]}
+    )
+
+    code, _, err = run(hub, monkeypatch, capsys, "--repo", "demo-api", "--sha", "", config=config)
+
+    assert code == 2
+    assert err == "contract.py: no origin/gone in demo-api; fetch it first\n"
 
 
 def test_exits_two_when_origin_branch_was_never_fetched(
