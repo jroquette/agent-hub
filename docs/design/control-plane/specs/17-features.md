@@ -613,6 +613,34 @@ otherwise, this list wins.
   across with the open step's evidence in a card under them (vertical in a panel under 400 px); ACs, dependencies
   and sessions are listed as rows with their state in words.
 
+**Ticket flow canvas (delivery 10)**
+
+- **AC-521.10.5 Flow on the canvas.** Given the Tickets tab's flow, then the groups are columns of compact cards on the
+  shared canvas (`components/Canvas`), so no group is cut off; readiness reads as an icon and words, not a coloured
+  border; the ticket whose panel is open lights its whole chain and fades the rest; Held back and Done draw no edges;
+  the legend sits in the canvas; the minimap colours tickets by readiness.
+- **AC-521.10.6 One Tab stop.** Given the flow, then it is one Tab stop whose arrow keys follow the edges; only the
+  current card's links and buttons are in the tab order; a focused title lights its edges, hover fades the rest, and
+  each title says what its ticket holds back.
+- **AC-521.10.7 Cards.** Given a card, then it shows, in this order, its id and Linear status, its title, its step bar,
+  its newest AI session in any state as a link (with how many earlier ones the panel lists) or Start, its readiness
+  or signal, the AC meter and the PR, then the assignee and what it comes after; cards are 288 px wide and far zoom
+  keeps the id, the title and the session's badge.
+- **AC-521.10.8 Lines.** Given the edges, then they leave and land at the card's id row; a blocker's lines share one
+  trunk in the gutter and branch off with a dot; a line that skips a group runs in a channel under the groups it
+  passes, never behind a card; verticals keep 12 px apart; cards sit under their blockers; paths are outlines (no
+  fill); settled lines go faint, a done blocker's line is solid green, a blocker link lights its one line, and far
+  zoom keeps strokes at screen width.
+- **AC-521.10.9 Room for the flow.** Given the flow, then the canvas fills the room left below it (at least 420 px,
+  most of the window), opens fitted and centred clear of the legend and the zoom toolbar, and refits as the cards
+  settle until the user pans or zooms. Above it, the view switch and the Linear source line share one row, the flow's
+  header is one line (its intro opens How to read), the outside-blocker banner lists only blockers not done, and the
+  epic is a one-line strip whose explanation is a keyboard-reachable tooltip.
+- **AC-521.10.10 Full window.** Given the zoom toolbar's expand button or the key `f`, then the flow and its ticket
+  panel show as a modal layer over the app, kept in `?flow=full` so a reload keeps it; focus moves to Exit, Tab stays
+  inside (skipping controls taken out of the tab order), Escape closes the ticket panel first and then exits, and
+  focus returns to what opened it.
+
 ## Screen 1: Features list
 
 **Route:** `/features` · **Answers:** "Which features are moving through the golden path, and how close is each to done?"

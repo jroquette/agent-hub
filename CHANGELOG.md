@@ -41,6 +41,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   keeps Acceptance not reached while Build is in progress, and the ticket panel is laid out around its current step:
   the steps across, the open step's evidence under them, one callout for what waits, and ACs, dependencies and
   sessions as rows (AGH-521).
+- A workflow opens as a pan and zoom graph, top to bottom in topological order, with rounds as frames, a docked step
+  panel, zoom, fit and a minimap; run detail uses the same canvas. The feature's ticket flow moves onto that canvas:
+  cards with the AI session, step bar, ACs and assignee, one trunk per blocker, one Tab stop with arrow keys along the
+  edges, and a full window view (`f`) (AGH-521).
 
 ### Fixed
 

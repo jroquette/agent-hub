@@ -488,6 +488,8 @@ the chat's own keys are in [agent-sessions.md](../../agent-sessions.md#chat-beha
 | `j` / `k`, `↓` / `↑` | Move between the table's ticket rows (the table body is one tab stop; epic rows are skipped) |
 | `Enter` / `o` | Open the focused row's ticket panel (`?ticket=<id>`) |
 | `Esc` | Close the ticket panel; focus returns to what opened it |
+| `f` | Show the ticket flow full window (`?flow=full`) or leave it; in it, `Esc` closes the ticket panel first, then exits (AGH-521) |
+| `←` `→` `↑` `↓` | On the flow canvas (one tab stop), move along the edges between ticket cards (AGH-521) |
 
 ### Learnings triage (P3)
 
