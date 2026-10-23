@@ -23,6 +23,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   name a ticket. A hub gets it with `hub sync` after it bumps `platform.version` (AGH-521).
 - The sidebar has two groups: Work (Features, Tickets, Scenarios, Sessions, Workflow runs, Environments) and Knowledge
   (Brain, Learnings, Toolkit) (AGH-521).
+- The sessions rail beside the chat resizes from its right edge (drag or arrow keys, kept in this browser, Home resets
+  it), and the chat column stays still while it does (AGH-521).
 
 ### Fixed
 
