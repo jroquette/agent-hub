@@ -290,15 +290,15 @@ describe("TicketsTab", () => {
     expect(screen.getByRole("heading", { name: "Ticket flow" })).toBeInTheDocument();
   });
 
-  it("shows each ticket's step line on its card and its step bar on its row (views)", async () => {
+  it("shows each ticket's step bar on its card and on its row (views)", async () => {
     const data = aFeatureTickets();
     const flowing = data.tickets.map((t) => ({ ...t, flow: aTicketFlow() }));
     show({ ...data, tickets: flowing }, { path: "/" });
 
-    // The card says the step in words; its bar is in the ticket's panel and the table.
-    const card = screen.getByRole("listitem", { name: /^AGH-202 · / });
-    expect(within(card).queryByRole("img", { name: /^Ticket steps/ })).toBeNull();
-    expect(card).toHaveTextContent("Review · 4/7");
+    const card = screen.getByRole("listitem", { name: /^AGH-202 · .*Review · 4\/7/ });
+    expect(
+      within(card).getByRole("img", { name: /^Ticket steps: Review\. Context: not recorded; / }),
+    ).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Table" }));
 
@@ -523,6 +523,29 @@ describe("TicketsTab", () => {
     expect(
       asked.some((q) => q.get("issue") === "AGH-201" && q.get("project") === "agent-hub"),
     ).toBe(true);
+  });
+
+  it("shows each card's newest session in any state, linked, with the earlier count (flow)", async () => {
+    show(aFeatureTickets(), {
+      path: "/",
+      routes: {
+        "/api/v1/sessions": (request: Request) =>
+          new URL(request.url).searchParams.get("issue") === "AGH-201"
+            ? aPage([
+                aSession({ id: "sess-2", status: "ended", outcome: "done" }),
+                aSession({ id: "sess-1", status: "ended", outcome: "done" }),
+              ])
+            : aPage([]),
+      },
+    });
+
+    const card = screen.getByRole("listitem", { name: /^AGH-201 · / });
+    const link = await within(card).findByRole("link", { name: /^Newest session: Done/ });
+    expect(link).toHaveAttribute("href", "/sessions/sess-2");
+    expect(within(card).getByText("+1")).toHaveAttribute(
+      "title",
+      "1 earlier session: in the ticket panel",
+    );
   });
 
   it("shows a skeleton while loading (states)", () => {

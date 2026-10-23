@@ -184,7 +184,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  width: 256px;
+  width: 288px;
 }
 .ah-flow-col-head {
   display: flex;
@@ -324,6 +324,33 @@
 .ah-flow-card-status > .ah-flow-card-action:only-child {
   margin-left: 0;
 }
+/* The card's AI session: the newest one in any state, with how many earlier, and Start. */
+.ah-flow-card-now {
+  min-height: var(--control-sm);
+  display: flex;
+  align-items: center;
+}
+.ah-flow-card-now:empty {
+  display: none;
+}
+.ah-flow-card-session {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  min-width: 0;
+}
+.ah-flow-card-session-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-subtle);
+}
+.ah-flow-card-steps {
+  font-size: 12px;
+}
 .ah-flow-card-facts {
   display: flex;
   flex-wrap: wrap;
@@ -353,9 +380,12 @@
   font-weight: 500;
   color: var(--accent);
 }
-/* Far zoom: id, status and title only. */
+/* Far zoom: id, status, title and the session's badge only. */
 .ah-flow[data-zoom="far"] .ah-flow-card-status,
-.ah-flow[data-zoom="far"] .ah-flow-card-facts {
+.ah-flow[data-zoom="far"] .ah-flow-card-facts,
+.ah-flow[data-zoom="far"] .ah-flow-card-steps,
+.ah-flow[data-zoom="far"] .ah-flow-card-session .ah-ticket-session .ah-small,
+.ah-flow[data-zoom="far"] .ah-flow-card-action {
   display: none;
 }
 
