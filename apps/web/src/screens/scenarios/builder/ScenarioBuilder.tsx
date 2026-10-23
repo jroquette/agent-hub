@@ -462,31 +462,9 @@ export function ScenarioBuilder({
       return globalThis.document.querySelector<HTMLElement>('.st-tree [aria-selected="true"]');
     },
   };
-  // How many steps take each scenario input as the run's value (left out, or only repeated).
-  const runValueUsage: Record<string, number> = {};
-  const runNames = new Set(
-    typeof document.inputs === "object" &&
-      document.inputs !== null &&
-      !Array.isArray(document.inputs)
-      ? Object.keys(document.inputs)
-      : [],
-  );
-  for (const node of allNodes(document.nodes)) {
-    const facts = actionFacts(node);
-    if (!facts) continue;
-    const given =
-      typeof node.with === "object" && node.with !== null && !Array.isArray(node.with)
-        ? node.with
-        : {};
-    for (const input of facts.inputs) {
-      const value = given[input.name];
-      if (runNames.has(input.name) && (value === undefined || value === `$INPUTS.${input.name}`))
-        runValueUsage[input.name] = (runValueUsage[input.name] ?? 0) + 1;
-    }
-  }
   const hatButton: RefObject<HTMLElement | null> = {
     get current() {
-      return globalThis.document.querySelector<HTMLElement>(".bk-hat");
+      return globalThis.document.querySelector<HTMLElement>('[data-row="__start__"]');
     },
   };
   const inspector = (() => {
@@ -496,7 +474,6 @@ export function ScenarioBuilder({
           document={document}
           onChange={draft.edit}
           openerRef={hatButton}
-          usage={runValueUsage}
           onClose={() => {
             setSettings(false);
           }}
@@ -906,6 +883,30 @@ export function ScenarioBuilder({
         setSelected(null);
         setSettings(true);
       }}
+      stepCount={everyNode.length}
+      onKeepAll={
+        environmentInfo
+          ? async (names) => {
+              for (const name of names) {
+                const spec = declaredInputs.find(([key]) => key === name)?.[1];
+                const fallback =
+                  typeof spec === "object" && spec !== null && !Array.isArray(spec)
+                    ? spec.default
+                    : undefined;
+                if (fallback === undefined) continue;
+                await saveValue.mutateAsync({
+                  environment,
+                  name,
+                  value: typeof fallback === "string" ? fallback : JSON.stringify(fallback),
+                });
+              }
+              if (repeats.dropped > 0) draft.edit(repeats.document);
+              setToast(
+                `Kept ${names.join(", ")} in ${environment}${repeats.dropped > 0 ? ` and removed ${String(repeats.dropped)} repeats` : ""}.`,
+              );
+            }
+          : null
+      }
       onRemoveRepeats={() => {
         draft.edit(repeats.document);
         setToast(`Removed ${String(repeats.dropped)} repeats.`);
@@ -1107,16 +1108,19 @@ export function ScenarioBuilder({
           onClick={draft.undo}
         />
         <IconButton icon="redo-2" label="Redo" disabled={!draft.canRedo} onClick={draft.redo} />
-        <Button
-          size="sm"
-          icon="message-square"
-          onClick={() => {
-            setDescribing(true);
-          }}
-        >
-          Describe with Claude
-        </Button>
-        <DiscussButton label="Chat" />
+        <span className="sb-compact">
+          <Button
+            size="sm"
+            icon="message-square"
+            title="Describe with Claude"
+            onClick={() => {
+              setDescribing(true);
+            }}
+          >
+            Describe with Claude
+          </Button>
+          <DiscussButton label="Chat" />
+        </span>
         <Button
           variant="primary"
           icon="save"
@@ -1206,7 +1210,7 @@ export function ScenarioBuilder({
               <span className="ah-small ah-muted">
                 Nothing gives these a value in {environment}. Nothing is changed by a plan.
               </span>
-              {missingToPlan.map((name) => (
+              {asksAtStart.map((name) => (
                 <label key={name} className="ah-stack ah-small" style={{ gap: 4 }}>
                   {name}
                   <input
@@ -1252,13 +1256,6 @@ export function ScenarioBuilder({
           </span>
         )}
         <span className="ah-grow" />
-        {environmentInfo && (
-          <span className="ah-small ah-muted">
-            {Object.keys(environmentValues ?? {}).length > 0
-              ? `${String(Object.keys(environmentValues ?? {}).length)} values from ${environment} fill the steps`
-              : `${environment} has no values yet: add them in Variables`}
-          </span>
-        )}
       </div>
       {draft.saveError && (
         <Banner tone="error" boxed>
@@ -1643,6 +1640,14 @@ export function ScenarioBuilder({
           }}
           onClose={() => {
             setInserting(null);
+          }}
+          onNewAction={() => {
+            setInserting(null);
+            setNewAction({ node: null, readOnly: false });
+          }}
+          onAskAction={() => {
+            setInserting(null);
+            setAskingAction({ step: null, readOnly: false });
           }}
         />
       )}

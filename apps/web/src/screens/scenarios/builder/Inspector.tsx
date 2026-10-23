@@ -31,7 +31,6 @@ import {
   text,
   valueSources,
   without,
-  withoutRunRepeats,
   type BuilderDocument,
   type BuilderNode,
   type ConditionRow,
@@ -765,7 +764,10 @@ export function BlockInspector({
         (problem.key === key || problem.key?.endsWith(`.${key}`) === true),
     )?.message;
   const errors = problems.filter((problem) => problem.severity === "error");
-  const warnings = problems.filter((problem) => problem.severity !== "error");
+  // A draft action is said once, in the toolbar ("N draft actions"), not in every step.
+  const warnings = problems.filter(
+    (problem) => problem.severity !== "error" && !problem.message.includes(" is a draft"),
+  );
   const stops = callsAction ? stopLines(asStep(node), action, mode, null) : [];
   const conditionSet = typeof node.when === "string" && node.when !== "";
   const environmentValues = environment?.values ?? null;
@@ -959,7 +961,7 @@ export function BlockInspector({
                       </span>
                     </>
                   )}
-                  {actionTools && <div className="sb-action-tools">{actionTools}</div>}
+                  {actionTools && !action && <div className="sb-action-tools">{actionTools}</div>}
                 </div>
               )}
             </Field>
@@ -1387,13 +1389,10 @@ export function ScenarioSettings({
   onChange,
   onClose,
   openerRef,
-  usage = {},
 }: {
   document: BuilderDocument;
   onChange: (next: BuilderDocument) => void;
   onClose: () => void;
-  /** How many steps take each input as the run's value. */
-  usage?: Readonly<Record<string, number>>;
   /** What opened it (the start of the board): focus goes back to it on close. */
   openerRef: RefObject<HTMLElement | null>;
 }) {
@@ -1422,23 +1421,23 @@ export function ScenarioSettings({
       onClose={onClose}
       openerRef={openerRef}
     >
-      <Section title="Description">
-        <Field label="Description" optional help="When to use this scenario, in one sentence.">
-          {(id) => (
-            <textarea
-              id={id}
-              className="ah-input sb-textarea"
-              rows={3}
-              value={typeof document.description === "string" ? document.description : ""}
-              onChange={(event) => {
-                onChange({ ...document, description: event.target.value });
-              }}
-            />
-          )}
-        </Field>
-      </Section>
-      <RunValues document={document} usage={usage} onChange={onChange} />
-      <Section title="Inputs" help="What you give the scenario when you run it.">
+      <Field label="Description" optional help="When to use this scenario, in one sentence.">
+        {(id) => (
+          <textarea
+            id={id}
+            className="ah-input sb-textarea"
+            rows={3}
+            value={typeof document.description === "string" ? document.description : ""}
+            onChange={(event) => {
+              onChange({ ...document, description: event.target.value });
+            }}
+          />
+        )}
+      </Field>
+      <Section
+        title="Asked when the scenario run starts"
+        help="The values a scenario run is given. A value the environment holds under the same name is used instead of asking; the default is the last resort."
+      >
         {Object.entries(inputs).map(([name, spec]) => {
           const item = record(spec);
           return (
@@ -1517,61 +1516,6 @@ export function ScenarioSettings({
         />
       </Section>
     </FormShell>
-  );
-}
-
-/** The run's values: each scenario input reaches every step whose action has an input of its
- * name, so a run cannot start with one account and end with another; repeating it in a step's
- * `with` is not needed. */
-function RunValues({
-  document,
-  usage,
-  onChange,
-}: {
-  document: BuilderDocument;
-  usage: Readonly<Record<string, number>>;
-  onChange: (next: BuilderDocument) => void;
-}) {
-  const names = Object.keys(record(document.inputs));
-  const { document: clean, dropped } = withoutRunRepeats(document);
-  if (names.length === 0) return null;
-  return (
-    <Section
-      title="Run values"
-      help="Each input is a value of the run, set once when it starts. A step whose action has an input of the same name gets it, unless the step sets its own: one run cannot start in one account and end in another."
-    >
-      <ul className="sb-run-values">
-        {names.map((name) => (
-          <li key={name}>
-            <ValueToken value={`$INPUTS.${name}`} />
-            <span className="ah-small ah-muted">
-              {usage[name]
-                ? `${String(usage[name])} ${usage[name] === 1 ? "step" : "steps"} take it`
-                : "no step takes it by name"}
-            </span>
-          </li>
-        ))}
-      </ul>
-      {dropped > 0 && (
-        <Banner
-          tone="info"
-          live={false}
-          action={
-            <Button
-              size="sm"
-              onClick={() => {
-                onChange(clean);
-              }}
-            >
-              Remove the repeats
-            </Button>
-          }
-        >
-          {dropped} {dropped === 1 ? "value repeats" : "values repeat"} a run value in a step (as{" "}
-          <span className="ah-mono">name: $INPUTS.name</span>). The steps get them anyway.
-        </Banner>
-      )}
-    </Section>
   );
 }
 

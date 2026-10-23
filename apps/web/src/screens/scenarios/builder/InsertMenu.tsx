@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
-import { Icon } from "../../../components";
+import { Button, Icon } from "../../../components";
 import { blockItem, CATEGORIES } from "./palette";
 import type { BuilderDocument } from "./model";
 import type { Item } from "./program";
@@ -15,6 +15,8 @@ interface Row {
   key: string;
   label: string;
   hint: string;
+  /** A second line (an action's description). */
+  about?: string;
   group: string;
   make: (asCheck: boolean) => Item | null;
   icon: Parameters<typeof Icon>[0]["name"];
@@ -31,6 +33,8 @@ export function InsertMenu({
   onPick,
   onAskClaude,
   onClose,
+  onNewAction,
+  onAskAction,
 }: {
   anchor: DOMRect;
   where: string;
@@ -40,6 +44,8 @@ export function InsertMenu({
   onPick: (item: Item) => void;
   onAskClaude: (text: string) => void;
   onClose: () => void;
+  onNewAction: () => void;
+  onAskAction: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
@@ -52,7 +58,8 @@ export function InsertMenu({
     ...library.map((item): Row => ({
       key: `action:${item.action.ref}`,
       label: item.action.pack === pack ? item.action.name : item.action.ref,
-      hint: `${item.action.effect === "read" ? "Reads only" : item.action.effect === "write" ? "Changes data" : (item.action.effect ?? "")}${item.action.draft ? " · draft" : ""} · ${item.action.description ?? ""}`,
+      hint: `${item.action.effect === "read" ? "Reads only" : item.action.effect === "write" ? "Changes data" : (item.action.effect ?? "")}${item.action.draft ? " · draft" : ""}`,
+      about: item.action.description ?? "",
       group: "Actions in this hub",
       icon: "circle-play",
       make: (asCheck) =>
@@ -75,7 +82,9 @@ export function InsertMenu({
   ];
   const needle = query.trim().toLowerCase();
   const shown = needle
-    ? rows.filter((row) => `${row.label} ${row.hint}`.toLowerCase().includes(needle))
+    ? rows.filter((row) =>
+        `${row.label} ${row.hint} ${row.about ?? ""}`.toLowerCase().includes(needle),
+      )
     : rows;
   const describe = query.trim();
   const total = shown.length + (describe ? 1 : 0);
@@ -125,12 +134,21 @@ export function InsertMenu({
           placeholder="Find an action or a step type, or describe the step"
           value={query}
           onKeyDown={onKey}
+          role="combobox"
+          aria-expanded
+          aria-controls="insert-options"
+          aria-activedescendant={total > 0 ? `insert-option-${String(active)}` : undefined}
           onChange={(event) => {
             setQuery(event.target.value);
             setActive(0);
           }}
         />
-        <div className="bk-menu-list" role="listbox" aria-label="Actions and step types">
+        <div
+          className="bk-menu-list"
+          id="insert-options"
+          role="listbox"
+          aria-label="Actions and step types"
+        >
           {shown.map((row, index) => {
             const head = row.group !== lastGroup ? row.group : null;
             lastGroup = row.group;
@@ -140,8 +158,9 @@ export function InsertMenu({
                 <button
                   type="button"
                   role="option"
+                  id={`insert-option-${String(index)}`}
                   aria-selected={index === active}
-                  className="bk-menu-row"
+                  className={row.about ? "bk-menu-row bk-menu-row-2" : "bk-menu-row"}
                   onPointerEnter={() => {
                     setActive(index);
                   }}
@@ -152,6 +171,7 @@ export function InsertMenu({
                   <Icon name={row.icon} size="sm" />
                   <span className="bk-menu-label">{row.label}</span>
                   <span className="bk-menu-hint">{row.hint}</span>
+                  {row.about && <span className="bk-menu-about">{row.about}</span>}
                 </button>
               </div>
             );
@@ -162,6 +182,7 @@ export function InsertMenu({
               <button
                 type="button"
                 role="option"
+                id={`insert-option-${String(shown.length)}`}
                 aria-selected={active === shown.length}
                 className="bk-menu-row bk-menu-ai"
                 onPointerEnter={() => {
@@ -182,7 +203,15 @@ export function InsertMenu({
           )}
         </div>
         <div className="bk-menu-foot">
-          ↑↓ to move · Enter adds · Shift+Enter adds a read-only action as Wait until · Esc closes
+          <span className="ah-row" style={{ gap: 6 }}>
+            <Button size="sm" icon="plus" onClick={onNewAction}>
+              New action
+            </Button>
+            <Button size="sm" variant="ghost" icon="message-square" onClick={onAskAction}>
+              Ask Claude to write one
+            </Button>
+          </span>
+          <span>↑↓ move · Enter adds · Shift+Enter adds a read-only action as Wait until</span>
         </div>
       </div>
     </>

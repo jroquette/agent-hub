@@ -29,6 +29,10 @@ export interface VariablesPanelProps {
   onSelect: (name: string | null) => void;
   onEditInputs: () => void;
   onRemoveRepeats: () => void;
+  /** Moves these run inputs' defaults into the environment at once, then drops the repeats. */
+  onKeepAll: ((names: readonly string[]) => Promise<void>) | null;
+  /** How many steps the scenario has (a value most of them use belongs to the environment). */
+  stepCount: number;
   /** Saves an environment value (null removes it); resolves when written. */
   onSaveValue: ((name: string, value: string | null) => Promise<void>) | null;
   onOpenEnvironments: () => void;
@@ -176,6 +180,8 @@ export function VariablesPanel({
   onSelect,
   onEditInputs,
   onRemoveRepeats,
+  onKeepAll,
+  stepCount,
   onSaveValue,
   onOpenEnvironments,
   onOpenStep,
@@ -198,6 +204,20 @@ export function VariablesPanel({
   const envUsed = envNames.filter((name) => declared.has(name) || (usage.get(name) ?? 0) > 0);
   const envOther = envNames.filter((name) => !envUsed.includes(name));
   const [showOther, setShowOther] = useState(false);
+  const [keeping, setKeeping] = useState(false);
+  const [keepError, setKeepError] = useState<string | null>(null);
+  // Run inputs with a default that most steps use: an account, a name.
+  const shared =
+    environmentValues === null
+      ? []
+      : asked
+          .filter(
+            ([name, spec]) =>
+              record(spec).default !== undefined &&
+              stepCount > 0 &&
+              (usage.get(name) ?? 0) * 2 >= stepCount,
+          )
+          .map(([name]) => name);
 
   const editorView =
     editing && onSaveValue && environment ? (
@@ -281,7 +301,7 @@ export function VariablesPanel({
                 return row(
                   name,
                   fallback,
-                  [description, used(usage.get(name))].filter(Boolean).join(" · "),
+                  [used(usage.get(name)), description].filter(Boolean).join(" · "),
                   () => undefined,
                   // A value many steps share (an account, a name) belongs to the environment.
                   environment &&
@@ -303,7 +323,38 @@ export function VariablesPanel({
               })}
           </ul>
         )}
-        {repeats > 0 && (
+        {shared.length > 0 && onKeepAll && environment && (
+          <div className="sb-var-tip sb-var-tip-accent">
+            <span>
+              <b className="ah-mono">{shared.join(", ")}</b> {shared.length === 1 ? "is" : "are"}{" "}
+              used by most steps: a fact of the environment, not of this scenario. Keep{" "}
+              {shared.length === 1 ? "it" : "them"} in {environment}
+              {repeats > 0 ? " and drop the repeats" : ""}?
+            </span>
+            <Button
+              size="sm"
+              variant="primary"
+              disabled={keeping}
+              onClick={() => {
+                setKeeping(true);
+                setKeepError(null);
+                onKeepAll(shared)
+                  .catch((reason: unknown) => {
+                    setKeepError(
+                      reason instanceof Error ? reason.message : "Could not save the values.",
+                    );
+                  })
+                  .finally(() => {
+                    setKeeping(false);
+                  });
+              }}
+            >
+              {keeping ? "Saving…" : `Keep in ${environment}`}
+            </Button>
+            {keepError && <span style={{ color: "var(--failed)" }}>{keepError}</span>}
+          </div>
+        )}
+        {repeats > 0 && shared.length === 0 && (
           <div className="sb-var-tip">
             <span>
               {repeats} {repeats === 1 ? "value repeats" : "values repeat"} a run value in a step (
