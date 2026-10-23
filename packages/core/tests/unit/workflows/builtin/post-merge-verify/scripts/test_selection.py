@@ -57,7 +57,7 @@ def select(
     *argv: str,
 ) -> tuple[int, Any, str]:
     monkeypatch.chdir(workspace.hub)
-    code = load().main(["--repo", "demo-api", *argv])
+    code = load().main(["--repo", "demo-api", "--config", workspace.config, *argv])
     captured = capsys.readouterr()
     return code, json.loads(captured.out) if code == 0 else None, captured.err
 
@@ -135,12 +135,12 @@ def test_exits_two_when_sha_has_no_parent(
     assert "no parent" in err
 
 
-def test_exits_two_when_repo_is_not_in_hub_json(
+def test_exits_two_when_repo_is_not_in_the_config(
     workspace: Workspace, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.chdir(workspace.hub)
 
-    code = load().main(["--repo", "other", "--sha", ""])
+    code = load().main(["--repo", "other", "--config", workspace.config, "--sha", ""])
 
     assert code == 2
     assert "other" in capsys.readouterr().err
@@ -387,12 +387,35 @@ def test_reads_no_record_when_hub_has_no_features_folder(
     assert found["unreadable"] == []
 
 
-def test_exits_two_when_hub_json_is_unreadable(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize("config", ["not json", "[]", '{"repos": 1}'])
+def test_exits_two_when_config_is_unreadable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], config: str
 ) -> None:
     monkeypatch.chdir(tmp_path)
 
-    code = load().main(["--repo", "demo-api"])
+    code = load().main(["--repo", "demo-api", "--config", config])
 
     assert code == 2
-    assert "hub.json" in capsys.readouterr().err
+    assert "the config" in capsys.readouterr().err
+
+
+def test_exits_two_when_config_is_missing(
+    workspace: Workspace, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(workspace.hub)
+
+    code = load().main(["--repo", "demo-api", "--sha", ""])
+
+    assert code == 2
+    assert "usage" in capsys.readouterr().err
+
+
+def test_reads_no_hub_json_when_config_given(
+    workspace: Workspace, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (workspace.hub / "hub.json").write_text(json.dumps({"repos": []}), encoding="utf-8")
+
+    code, found, _ = select(workspace, monkeypatch, capsys, "--sha", "", "--ref", "main")
+
+    assert code == 0
+    assert found["repo_path"] == str(workspace.repo.resolve())

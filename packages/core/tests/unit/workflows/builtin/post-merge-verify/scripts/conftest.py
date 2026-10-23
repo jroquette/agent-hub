@@ -33,10 +33,12 @@ def git(folder: Path, *args: str) -> str:
 
 @dataclass(frozen=True)
 class Workspace:
-    """A hub (``hub``, holding ``hub.json`` and ``brain/features/``) and its repo ``demo-api``."""
+    """A hub (``hub``, holding ``brain/features/``) and its repo ``demo-api``; ``config`` is what
+    ``hub step config`` prints for it, as the workflow passes it with ``--config``."""
 
     hub: Path
     repo: Path
+    config: str
 
     def git(self, *args: str) -> str:
         return git(self.repo, *args)
@@ -75,10 +77,9 @@ def workspace(tmp_path: Path) -> Workspace:
     hub = tmp_path / "hub"
     (hub / "brain/features").mkdir(parents=True)
     config = {"repos": [{"dir": "demo-api", "check_fast": "true", "check": "true"}]}
-    (hub / "hub.json").write_text(json.dumps(config), encoding="utf-8")
     repo = tmp_path / "demo-api"
     repo.mkdir()
     git(repo, "init", "-q", "-b", "main")
-    found = Workspace(hub=hub, repo=repo)
+    found = Workspace(hub=hub, repo=repo, config=json.dumps(config))
     found.commit("chore: start", README="demo\n")
     return found

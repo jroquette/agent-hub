@@ -9,8 +9,9 @@
 # pass (read-only, no command run) and names the likely culprit, or flaky. report appends the
 # entries to brain/_inbox/verify-YYYY-MM-DD.md, or writes nothing when all is green.
 # Invariants: read-only on code; one run per command, no retry (a retry would hide a failure, so
-# every executable node has retry max_attempts 0); no tracker write (ADR 0030: no issue input, no
-# hub step node). Suggested hub.json entries (one schedule per workflow there):
+# every executable node has retry max_attempts 0); no tracker write (ADR 0030: no issue input, and
+# the one hub step node is config, read-only: the repos from hub.json, which no script opens).
+# Suggested hub.json entries (one schedule per workflow there):
 #   "events": [{"workflow": "post-merge-verify", "on": "merge", "repo": "<dir>",
 #               "inputs": {"repo": "<dir>"}}]
 #   "schedules": [{"workflow": "post-merge-verify", "cron": "0 6 * * 0",
@@ -32,12 +33,29 @@ inputs:
 returns: report
 outcome_field: verdict
 nodes:
+  - id: config
+    type: shell
+    description: The hub.json values this run's scripts need, read by the CLI (read-only).
+    command: [hub, step, config]
+    effect: read
+    mutates_checkout: false
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        default_branch: {type: string}
+        branch_prefix: {type: [string, "null"]}
+        hub: {type: object}
+        repos: {type: array, items: {type: object}}
+      required: [default_branch, branch_prefix, hub, repos]
+
   - id: select
     type: script
     description: The ACs to verify - the merge's tickets and changed paths, or every passing one.
+    depends_on: [config]
     runtime: python
     script: selection.py
-    args: [--repo, $INPUTS.repo, --sha, $INPUTS.sha, --ref, $INPUTS.ref]
+    args: [--repo, $INPUTS.repo, --config, $config.output, --sha, $INPUTS.sha, --ref, $INPUTS.ref]
     mutates_checkout: false
     retry: {max_attempts: 0}
     timeout: 5m
