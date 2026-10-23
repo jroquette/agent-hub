@@ -548,6 +548,25 @@ describe("TicketsTab", () => {
     );
   });
 
+  it("expands the flow to a full window and Escape brings it back (flow)", async () => {
+    show(aFeatureTickets(), { path: "/" });
+
+    const expand = screen.getByRole("button", { name: "Expand the flow (f)" });
+    await userEvent.click(expand);
+
+    const dialog = screen.getByRole("dialog", { name: "Ticket flow, full window" });
+    const exit = within(dialog).getByRole("button", { name: "Exit full window (f)" });
+    expect(exit).toHaveFocus();
+    expect(within(dialog).getByRole("button", { name: /^Exit full window$/ })).toBeInTheDocument();
+
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Ticket flow, full window" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Expand the flow (f)" })).toHaveFocus();
+
+    await userEvent.keyboard("f");
+    expect(screen.getByRole("dialog", { name: "Ticket flow, full window" })).toBeInTheDocument();
+  });
+
   it("shows a skeleton while loading (states)", () => {
     const { container } = show(undefined);
 
