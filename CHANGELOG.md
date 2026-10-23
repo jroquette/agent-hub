@@ -49,6 +49,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   - `hub init` writes an example: the read action `actions/demo/demo-get-status.yaml` with its script and the scenario
     `scenarios/demo/demo-service-up.yaml`, each only where absent (AGH-365). They are your files: `hub sync` never
     adds them to an existing hub and `hub.lock` does not list them.
+
+## [0.22.0] - 2026-10-23
+
+### Added
+
 - `hub web`'s knowledge view (AGH-393): search a project's notes and repo docs from its Brain screen and from ⌘K's
   "Brain notes" group, over the `hub search` index, synced on each search
   (`GET /projects/{project}/knowledge/search`); "Linked from" under each note lists the notes and repo docs that link
@@ -1131,7 +1136,8 @@ Includes 0.3.0, which was never tagged.
 - The `hub.json` config model and schema, the generator templates, `hub init` and `hub sync`.
 - The release check on `v*` tags.
 
-[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/jroquette/agent-hub/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/jroquette/agent-hub/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/jroquette/agent-hub/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/jroquette/agent-hub/compare/v0.19.0...v0.20.0
