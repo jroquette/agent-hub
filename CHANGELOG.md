@@ -11,6 +11,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ## [Unreleased]
 
+### Changed
+
+- `/feature` step 0 asks, in the brief's Outcome, for the line "How we will know after merge that it solved the
+  problem" with a signal anyone can check (a command `post-merge-verify` can run, a `/retro` number by a date, or no
+  new bug of a kind for N weeks). `/triage` drafts it, and the Definition of Ready lists it. `./hub run` still checks
+  the headings only. A hub gets it with `hub sync` after it bumps `platform.version` (AGH-451).
+
 ## [0.23.0] - 2026-10-23
 
 ### Added
