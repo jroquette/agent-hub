@@ -323,3 +323,50 @@ def test_exits_two_when_argument_malformed(
     monkeypatch.chdir(a_repo(tmp_path))
 
     assert load().main(given) == 2
+
+
+def test_restores_checkout_when_regenerate_fails_then_reruns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = a_repo(tmp_path)
+    before = git(repo, "rev-parse", "HEAD")
+    monkeypatch.chdir(repo)
+
+    assert load().main(args("sh -c 'touch stray.txt; exit 3'")) == 1
+    capsys.readouterr()
+    assert git(repo, "rev-parse", "HEAD") == before
+    assert git(repo, "status", "--porcelain", "--untracked-files=all") == ""
+    assert (repo / "README.md").read_text() == README
+    # The next run of the issue starts from the same clean checkout.
+    assert load().main(args()) == 0
+    assert json.loads(capsys.readouterr().out)["version"] == "0.21.0"
+
+
+def test_restores_checkout_when_release_check_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = a_repo(tmp_path)
+    (repo / "scripts/check_release.py").write_text("import sys\nsys.exit('lockstep: differ')\n")
+    git(repo, "commit", "-qam", "a failing release check")
+    before = git(repo, "rev-parse", "HEAD")
+    monkeypatch.chdir(repo)
+
+    assert load().main(args()) == 1
+    assert "lockstep: differ" in capsys.readouterr().err
+    assert git(repo, "rev-parse", "HEAD") == before
+    assert git(repo, "status", "--porcelain", "--untracked-files=all") == ""
+
+
+def test_reuses_release_commit_when_run_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = a_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    assert load().main(args()) == 0
+    first = json.loads(capsys.readouterr().out)
+
+    assert load().main(args()) == 0
+    again = json.loads(capsys.readouterr().out)
+
+    assert again == first
+    assert git(repo, "rev-list", "--count", "HEAD") == "2"
