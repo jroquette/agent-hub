@@ -114,7 +114,7 @@ function renderSources(extra: ApiRoutes = {}) {
           name: "personal",
           access: "write",
           production: false,
-          values: { aws_account_id: "905418434942", region_hint: "eu" },
+          values: { aws_account_id: "123456789012", region_hint: "eu" },
         },
         { name: "qa", access: "read", production: false, values: {} },
       ],
@@ -912,7 +912,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(sourceOf("queue")).toHaveTextContent("this step");
     expect(sourceOf("queue")).toHaveTextContent("webshop-events");
     expect(sourceOf("aws_account_id")).toHaveTextContent("personal");
-    expect(sourceOf("aws_account_id")).toHaveTextContent("905418434942");
+    expect(sourceOf("aws_account_id")).toHaveTextContent("123456789012");
     expect(sourceOf("external_ref")).toHaveTextContent("scenario run");
     expect(sourceOf("external_ref")).toHaveTextContent("asked at start");
     expect(sourceOf("aws_region")).toHaveTextContent("default");
@@ -931,7 +931,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     await user.click(screen.getByRole("tab", { name: "Variables" }));
     const fromEnv = screen.getByRole("region", { name: "From personal" });
     expect(fromEnv).toHaveTextContent("aws_account_id");
-    expect(fromEnv).toHaveTextContent("905418434942");
+    expect(fromEnv).toHaveTextContent("123456789012");
     // A value this scenario does not use folds away.
     expect(fromEnv).not.toHaveTextContent("region_hint");
     expect(screen.getByRole("region", { name: "Set in the scenario" })).not.toHaveTextContent(
