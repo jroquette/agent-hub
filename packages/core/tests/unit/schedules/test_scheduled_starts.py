@@ -48,6 +48,7 @@ class Plans:
             "retro": a_workflow("retro", days={"type": "integer"}),
             "verify": a_workflow("verify", sha={"type": "string"}, label={"type": "string"}),
             "notes": a_workflow("notes", label={"type": "string"}),
+            "triage": a_workflow("triage", pr={"type": "integer"}, ci_run={"type": "integer"}),
         }
 
     def workflow_plan(self, project: str, name: str) -> tuple[str, WorkflowPlan]:
@@ -198,9 +199,9 @@ def test_starts_none_twice_when_scheduler_sees_an_event_again() -> None:
     first = world.scheduler().poll_events()
     again = world.scheduler().poll_events()
 
-    # Oldest first, each once, across a restart.
-    assert [request.inputs["sha"] for request, _, _ in world.start.calls] == [SHA_B, SHA_C]
-    assert (len(first.started), again.started) == (2, ())
+    # One merge, one run, on its newest commit; each commit is recorded, across a restart.
+    assert [request.inputs["sha"] for request, _, _ in world.start.calls] == [SHA_C]
+    assert (len(first.started), again.started) == (1, ())
     assert world.ledger.states[HUB].seen["verify merge demo-api"] == (SHA_C, SHA_B, SHA_A)
 
 
@@ -231,3 +232,162 @@ def test_passes_only_declared_event_inputs_when_scheduler_starts_an_event_run() 
 
     # notes declares no sha: the event offers it, the run does not get it.
     assert world.start.inputs() == [{"label": "x"}]
+
+
+ON_PULL = {"workflow": "notes", "on": "pr_opened", "repo": "demo-api"}
+ON_RED = {"workflow": "triage", "on": "ci_red", "repo": "demo-api"}
+RED_KEY = "triage ci_red demo-api"
+PULLS = EventQuery("pr_opened", "acme/demo-api", "main")
+RED_RUNS = EventQuery("ci_red", "acme/demo-api", "main")
+PULL_KEY = "notes pr_opened demo-api"
+
+
+def pull(number: int) -> EventRef:
+    return EventRef(id=str(number), data={"pr": number, "sha": SHA_A})
+
+
+def test_starts_each_new_pull_request_oldest_first_when_scheduler_polls_pulls() -> None:
+    world = World(events=[{**ON_PULL, "workflow": "triage"}])
+    world.events.answers[PULLS] = (pull(7),)
+    world.scheduler().poll_events()
+    world.events.answers[PULLS] = (pull(9), pull(8), pull(7))
+
+    first = world.scheduler().poll_events()
+    again = world.scheduler().poll_events()
+
+    assert world.start.inputs() == [{"pr": 8}, {"pr": 9}]
+    assert (len(first.started), again.started) == (2, ())
+    assert world.ledger.states[HUB].marks == {"triage pr_opened demo-api": 9}
+
+
+def test_starts_nothing_when_an_older_unseen_pull_request_enters_the_schedule_page() -> None:
+    world = World(events=[ON_PULL])
+    world.events.answers[PULLS] = tuple(pull(number) for number in range(40, 20, -1))
+    world.scheduler().poll_events()
+    # PR 40 closed: PR 20, older than every recorded one, enters the page.
+    world.events.answers[PULLS] = tuple(pull(number) for number in range(39, 19, -1))
+
+    report = world.scheduler().poll_events()
+
+    assert (report.started, world.start.calls) == ((), [])
+
+
+def test_starts_nothing_when_a_known_pull_request_outlives_the_schedule_seen_window() -> None:
+    world = World(events=[ON_PULL])
+    world.events.answers[PULLS] = (pull(1),)
+    world.scheduler().poll_events()
+    # More than MAX_SEEN newer PRs came and went; PR 1 is still open and on the page.
+    for newest in range(2, 2 + 150):
+        world.events.answers[PULLS] = (pull(newest), pull(1))
+        world.scheduler().poll_events()
+    world.events.answers[PULLS] = (pull(1),)
+
+    assert world.scheduler().poll_events().started == ()
+    # One run per newer PR, none for PR 1, which the baseline recorded.
+    assert len(world.start.calls) == 150
+
+
+def red(run: int) -> EventRef:
+    return EventRef(str(run), {"ci_run": run, "sha": SHA_B})
+
+
+def test_starts_one_run_per_failed_run_above_the_floor_when_scheduler_polls_red_runs() -> None:
+    world = World(events=[ON_RED])
+    world.events.answers[RED_RUNS] = (EventRef("500", {"ci_run": 500, "sha": SHA_A}),)
+    world.scheduler().poll_events()
+    world.events.answers[RED_RUNS] = (
+        EventRef("502", {"ci_run": 502, "sha": SHA_B}),
+        EventRef("501", {"ci_run": 501, "sha": SHA_B}),
+        EventRef("400", {"ci_run": 400, "sha": SHA_C}),
+    )
+
+    report = world.scheduler().poll_events()
+
+    # One run per failed Actions run, oldest first, never one below the baseline's floor.
+    assert len(report.started) == 2
+    assert world.start.inputs() == [{"ci_run": 501}, {"ci_run": 502}]
+    state = world.ledger.states[HUB]
+    assert (state.marks, state.seen) == ({RED_KEY: 500}, {RED_KEY: ("502", "501", "500")})
+
+
+def test_starts_a_red_run_that_failed_after_a_newer_one_when_scheduler_polls_red_runs() -> None:
+    world = World(events=[ON_RED])
+    world.events.answers[RED_RUNS] = (red(99),)
+    world.scheduler().poll_events()
+    # lint (101) fails first; tests (100), created before it, fails later.
+    world.events.answers[RED_RUNS] = (red(101),)
+    world.scheduler().poll_events()
+    world.events.answers[RED_RUNS] = (red(101), red(100))
+
+    world.scheduler().poll_events()
+
+    assert world.start.inputs() == [{"ci_run": 101}, {"ci_run": 100}]
+
+
+def test_raises_the_floor_when_red_run_ids_leave_the_schedule_seen_window() -> None:
+    world = World(events=[ON_RED])
+    world.events.answers[RED_RUNS] = (red(1),)
+    world.scheduler().poll_events()
+    for run in range(2, 2 + 150):
+        world.events.answers[RED_RUNS] = (red(run), red(1))
+        world.scheduler().poll_events()
+
+    state = world.ledger.states[HUB]
+    assert len(state.seen[RED_KEY]) == 100
+    assert state.marks[RED_KEY] == 51
+    assert len(world.start.calls) == 150
+
+
+def test_drops_stale_pull_request_seen_ids_when_scheduler_writes_the_ledger() -> None:
+    world = World(events=[ON_PULL])
+    world.ledger.states[HUB] = StartState(seen={PULL_KEY: ("7",)}, marks={PULL_KEY: 7})
+    world.events.answers[PULLS] = (pull(8), pull(7))
+
+    world.scheduler().poll_events()
+
+    assert world.ledger.states[HUB] == StartState(marks={PULL_KEY: 8})
+
+
+def test_reports_failure_and_starts_the_next_when_a_schedule_start_raises() -> None:
+    world = World(schedules=[WEEKLY, {"workflow": "notes", "cron": "0 9 * * 1"}])
+    world.start.refused["retro"] = OSError("hub: no such file")
+
+    report = world.scheduler().start_due_slots(at("2026-10-26T09:05"))
+
+    assert [run.workflow for run in report.started] == ["notes"]
+    assert [(f.workflow, f.reason) for f in report.failures] == [
+        ("retro", "the run could not start (OSError)")
+    ]
+
+
+def test_keeps_failed_source_while_another_updates_when_scheduler_polls_two_sources() -> None:
+    world = World(events=[ON_MERGE, ON_PULL])
+    world.events.answers[MERGES] = (merge(SHA_A),)
+    world.events.answers[PULLS] = (pull(7),)
+    world.scheduler().poll_events()
+    world.events.answers[MERGES] = EventPollError("gh timed out")
+    world.events.answers[PULLS] = (pull(8), pull(7))
+
+    report = world.scheduler().poll_events()
+
+    assert [run.workflow for run in report.started] == ["notes"]
+    state = world.ledger.states[HUB]
+    assert state.seen == {"verify merge demo-api": (SHA_A,)}
+    assert state.marks == {PULL_KEY: 8}
+
+
+def test_drops_undeclared_entries_when_schedule_and_event_are_removed() -> None:
+    world = World(schedules=[WEEKLY], events=[ON_MERGE, ON_PULL])
+    world.events.answers[MERGES] = (merge(SHA_A),)
+    world.events.answers[PULLS] = (pull(7),)
+    world.scheduler().start_due_slots(at("2026-10-26T09:05"))
+    world.scheduler().poll_events()
+    trimmed = World(schedules=[{"workflow": "notes", "cron": "0 9 * * 1"}], events=[ON_PULL])
+    trimmed.ledger, trimmed.events = world.ledger, world.events
+
+    trimmed.scheduler().start_due_slots(at("2026-10-26T09:06"))
+    trimmed.scheduler().poll_events()
+
+    state = world.ledger.states[HUB]
+    assert set(state.slots) == {"notes"}
+    assert (state.seen, state.marks) == ({}, {PULL_KEY: 7})
