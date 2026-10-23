@@ -1,7 +1,13 @@
 import "./builder.css";
 import "./blocks.css";
 
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type RefObject,
+} from "react";
 
 import {
   Banner,
@@ -24,7 +30,6 @@ import {
   type InsertTarget,
   type Stack,
 } from "./BlockCanvas";
-import { BlockFacts } from "./BlockFacts";
 import { InsertMenu } from "./InsertMenu";
 import { createActionMessage, describeMessage, type DescribeScope } from "./claude";
 import {
@@ -530,19 +535,17 @@ export function ScenarioBuilder({
   const stepButtons = (id: string) => (
     <>
       <Button
-        size="sm"
         variant="ghost"
-        icon="message-square"
+        icon="trash"
         onClick={() => {
-          ask(
-            `About the step \`${id}\` of the scenario \`${scenario.name}\` (the file \`${scenario.path ?? ""}\`): explain in a few lines what it does, what it runs and where it can stop. Change nothing.`,
-          );
+          removeItem(id);
+          setToast(`Deleted step ${id}.`);
         }}
       >
-        Ask Claude
+        Delete step
       </Button>
+      <span className="ah-grow" />
       <Button
-        size="sm"
         variant="ghost"
         icon="copy"
         onClick={() => {
@@ -557,22 +560,28 @@ export function ScenarioBuilder({
           setSelected(itemId(copy));
         }}
       >
-        Duplicate
+        Duplicate step
       </Button>
       <Button
-        size="sm"
         variant="ghost"
-        icon="trash"
+        icon="message-square"
         onClick={() => {
-          removeItem(id);
-          setToast(`Deleted ${id}.`);
+          ask(
+            `About the step \`${id}\` of the scenario \`${scenario.name}\` (the file \`${scenario.path ?? ""}\`): explain in a few lines what it does, what it runs and where it can stop. Change nothing.`,
+          );
         }}
       >
-        Delete step
+        Ask Claude about it
       </Button>
     </>
   );
 
+  // The selected card, read when the form closes: focus goes back to it.
+  const selectedCard: RefObject<HTMLElement | null> = {
+    get current() {
+      return globalThis.document.querySelector<HTMLElement>('.bk-world [aria-selected="true"]');
+    },
+  };
   const inspector = (() => {
     if (!selectedItem) {
       return settings ? (
@@ -599,14 +608,13 @@ export function ScenarioBuilder({
           library={items}
           problems={problems.filter((problem) => problem.node === node.id)}
           mode={mode}
-          summary={
-            <BlockFacts
-              node={node}
-              action={actionFacts(node)}
-              row={planRows.get(node.id) ?? null}
-              environment={preview?.environment ?? null}
-            />
-          }
+          number={stepNumbers(program.main).get(node.id)}
+          openerRef={selectedCard}
+          onOpenAction={setActionPanel}
+          plan={(() => {
+            const row = planRows.get(node.id);
+            return row && preview?.environment ? { row, environment: preview.environment } : null;
+          })()}
           actionTools={
             <>
               <Button
@@ -642,9 +650,6 @@ export function ScenarioBuilder({
             } else editItem(node.id, { kind: "block", node: next });
           }}
           footer={stepButtons(node.id)}
-          onDelete={() => {
-            removeItem(node.id);
-          }}
           onClose={() => {
             setSelected(null);
           }}
@@ -659,7 +664,7 @@ export function ScenarioBuilder({
       >
         <header
           className="sb-inspector-head"
-          style={{ ["--kind" as string]: isIf ? "var(--ev-decision)" : "var(--ev-reasoning)" }}
+          style={{ ["--kind" as string]: "var(--kind-control)" }}
         >
           <span className="sb-kind" aria-hidden>
             <Icon name={isIf ? "split" : "git-branch"} size="sm" />

@@ -354,7 +354,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const form = screen.getByRole("region", { name: "Inspector: Script fetch-order" });
     await user.selectOptions(within(form).getByLabelText("Action"), "orders/get-order-by-ref");
     expect(fetch).toHaveTextContent("get-order-by-ref· Python");
-    await user.type(within(form).getByLabelText("Value of external_ref"), "T-1");
+    await user.type(within(form).getByLabelText("external_ref"), "T-1");
     expect(fetch).toHaveTextContent("external_refT-1");
 
     const save = screen.getByRole("button", { name: "Save scenario" });
@@ -536,12 +536,13 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(
       within(form).getByTitle("actions/orders/scripts/get_order_by_ref.py"),
     ).toBeInTheDocument();
-    expect(form).toHaveTextContent("Only reads: changes nothing");
+    expect(form).toHaveTextContent("Reads only");
     expect(form).toHaveTextContent("Givesstatus");
-    await user.click(within(form).getByRole("button", { name: "show script" }));
-    expect(within(form).getByLabelText("Script of get-order-by-ref")).toHaveTextContent(
-      "print('{}')",
-    );
+    // The action's own panel has its script.
+    await user.click(within(form).getByRole("button", { name: "Open action get-order-by-ref" }));
+    expect(
+      await screen.findByRole("complementary", { name: "Action get-order-by-ref" }),
+    ).toHaveTextContent("print('{}')");
   });
 
   it("scenario builder previews in an environment what each block would do there", async () => {
