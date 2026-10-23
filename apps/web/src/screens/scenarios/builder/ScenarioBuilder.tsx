@@ -231,6 +231,12 @@ export function ScenarioBuilder({
       { replace: true },
     );
   };
+  // Where values come from, in the chosen environment.
+  const environmentInfo = scenario.environments.find((item) => item.name === environment) ?? null;
+  const environmentValues: Record<string, string> | null = environmentInfo
+    ? (environmentInfo.values ?? {})
+    : null;
+  const [stepTab, setStepTab] = useState<"settings" | "script">("settings");
   const [planValues, setPlanValues] = useState<Record<string, string>>({});
   const [planAfterSave, setPlanAfterSave] = useState<Record<string, string> | null>(null);
   const [leftTab, setLeftTab] = useState<"variables" | "actions">("variables");
@@ -514,7 +520,11 @@ export function ScenarioBuilder({
           number={stepNumbers(program.main).get(node.id)}
           libraryError={library.isError}
           openerRef={selectedCard}
-          onOpenAction={setActionPanel}
+          tab={stepTab}
+          onTab={setStepTab}
+          environment={
+            environmentInfo ? { name: environmentInfo.name, values: environmentValues } : null
+          }
           plan={(() => {
             const row = planRows.get(node.id);
             return row && preview?.environment ? { row, environment: preview.environment } : null;
@@ -810,11 +820,6 @@ export function ScenarioBuilder({
       .map((action) => action?.ref),
   ).size;
 
-  // Where values come from, in the chosen environment.
-  const environmentInfo = scenario.environments.find((item) => item.name === environment) ?? null;
-  const environmentValues: Record<string, string> | null = environmentInfo
-    ? (environmentInfo.values ?? {})
-    : null;
   const declaredInputs = Object.entries(
     typeof document.inputs === "object" &&
       document.inputs !== null &&

@@ -130,6 +130,12 @@ describe("scenario builder model", () => {
     expect(groups).toHaveLength(2);
     expect(formatCondition(groups ?? [])).toBe(text);
     expect(conditionWords(text)).toBe("status is ON_HOLD and cover is PENDING or code is above 2");
+  });
+
+  it("reads a comparison with an empty text as set or empty", () => {
+    expect(conditionWords("$self.output.job_id != '' && $self.output.note == ''")).toBe(
+      "job_id is set and note is empty",
+    );
     expect(parseCondition("len($x) > 2")).toBeNull();
   });
 });
