@@ -5,11 +5,14 @@ The hub is ``AGENT_HUB_ROOT`` or the cwd; ``hub.local.json`` is read from the id
 object with ``--json`` (names and references only: the files hold no credential value).
 
 ``add``, ``set``, ``remove`` and ``service add|remove`` change ``hub.json``, or with ``--local``
-``hub.local.json`` (created when absent): core's ``environment_edits`` makes the change, the
-result is checked as a read checks it (each file, then the rules across both) before
-``env_files`` writes it over the bytes read. A write to ``hub.json`` ends with the sync hint; a
-production environment added or set gets its production line. Exit 0 on success, 1 on an
-invalid file or a refused change, 2 on a usage error (docs/design/environments.md § ``hub env``).
+``hub.local.json`` (created when absent); ``--value NAME=VALUE`` and ``--unset-value NAME`` set
+and remove an environment's values, which fill scenario inputs (with ``--local`` on a
+``hub.json`` environment, the developer's own, which win per key): core's
+``environment_edits`` makes the change, the result is checked as a read checks it (each file,
+then the rules across both) before ``env_files`` writes it over the bytes read. A write to
+``hub.json`` ends with the sync hint; a production environment added or set gets its production
+line. Exit 0 on success, 1 on an invalid file or a refused change, 2 on a usage error
+(docs/design/environments.md § ``hub env``).
 """
 
 import os
@@ -98,6 +101,15 @@ EnvFile = Annotated[
         " read it.",
     ),
 ]
+Values = Annotated[
+    list[str] | None,
+    typer.Option(
+        "--value",
+        metavar="NAME=VALUE",
+        help="A value that fills the scenario input NAME in this environment (never a secret);"
+        " repeatable.",
+    ),
+]
 Repo = Annotated[str, typer.Argument(metavar="REPO", help="The repo's dir in hub.json.")]
 Service = Annotated[str, typer.Argument(metavar="SERVICE", help="The service's name.")]
 
@@ -166,6 +178,7 @@ def add_command(
         typer.Option("--credential-env", help="A variable name holding a credential; repeatable."),
     ] = None,
     env_file: EnvFile = None,
+    values: Values = None,
     local: Local = False,
 ) -> None:
     """Declare a new environment."""
@@ -174,15 +187,14 @@ def add_command(
         entry["production"] = True
     if description is not None:
         entry["description"] = description
-    credentials: Document = {}
-    if aws_profile is not None:
-        credentials["aws_profile"] = aws_profile
-    if credential_env:
-        credentials["env"] = list(credential_env)
-    if env_file is not None:
-        credentials["env_file"] = env_file
+    credentials = _new_credentials(
+        aws_profile=aws_profile, credential_env=credential_env or [], env_file=env_file
+    )
     if credentials:
         entry["credentials"] = credentials
+    given_values = _value_pairs(values or [])
+    if given_values:
+        entry["values"] = dict(given_values)
 
     def edit(document: Document, files: _Files) -> Document | EditRefusal:
         other = files.config.environments if local else files.local.environments
@@ -212,9 +224,15 @@ def set_command(
     ] = None,
     description: Description = None,
     env_file: EnvFile = None,
+    values: Values = None,
+    unset_values: Annotated[
+        list[str] | None,
+        typer.Option("--unset-value", metavar="NAME", help="Remove a value; repeatable."),
+    ] = None,
     local: Local = False,
 ) -> None:
-    """Change an environment; with --local on a hub.json one, only a stricter access."""
+    """Change an environment; with --local on a hub.json one, only a stricter access and the
+    developer's values, which win per key over the team's."""
     changes: dict[str, JsonValue | None] = {}
     if access is not None:
         changes["access"] = access
@@ -225,10 +243,12 @@ def set_command(
     credentials: dict[str, JsonValue | None] = {}
     if env_file is not None:
         credentials["env_file"] = env_file
-    if not changes and not credentials:
+    value_changes: dict[str, JsonValue | None] = dict(_value_pairs(values or []))
+    value_changes.update(dict.fromkeys(unset_values or []))
+    if not changes and not credentials and not value_changes:
         context.fail(
-            "nothing to change: give --access, --production/--no-production, --description"
-            " or --env-file"
+            "nothing to change: give --access, --production/--no-production, --description,"
+            " --env-file, --value or --unset-value"
         )
 
     def edit(document: Document, files: _Files) -> Document | EditRefusal:
@@ -239,6 +259,7 @@ def set_command(
             file=_file(is_local=local),
             may_create=local and name in files.config.environments,
             credentials=credentials,
+            values=value_changes,
         )
 
     _write(edit, is_local=local, action=f"updated environment {name}", environment=name)
@@ -338,6 +359,31 @@ def service_remove_command(
         else f"endpoint {repo} {service} {environment}"
     )
     _write(edit, is_local=local, action=f"removed {removed}", environment=None)
+
+
+def _new_credentials(
+    *, aws_profile: str | None, credential_env: list[str], env_file: str | None
+) -> Document:
+    """A new environment's credentials: names and a path, never a value."""
+    credentials: Document = {}
+    if aws_profile is not None:
+        credentials["aws_profile"] = aws_profile
+    if credential_env:
+        credentials["env"] = list(credential_env)
+    if env_file is not None:
+        credentials["env_file"] = env_file
+    return credentials
+
+
+def _value_pairs(given: list[str]) -> dict[str, str]:
+    """``NAME=VALUE`` pairs; else exit 2. The file check refuses a bad name or value."""
+    pairs: dict[str, str] = {}
+    for item in given:
+        key, sep, text = item.partition("=")
+        if not sep or not key or not text:
+            raise typer.BadParameter("give NAME=VALUE", param_hint="--value")
+        pairs[key] = text
+    return pairs
 
 
 def _file(*, is_local: bool) -> str:

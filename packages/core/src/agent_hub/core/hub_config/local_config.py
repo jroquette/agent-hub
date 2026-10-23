@@ -2,11 +2,13 @@
 
 The file is per developer and never committed. It holds ``project.branch_prefix``,
 ``project.author_name``, ``project.author_email`` and ``tracker.transport``; the developer's
-``environments``, their endpoints on ``hub.json``'s repos (``repos: [{dir, services}]``) and
-more blocked entries (``guard.blocked_words``, ``blocked_words_files``, ``blocked_words_env``).
-Each value is checked with the same rule as in ``hub.json``; any other ``hub.json`` key is
-refused with a message that says so (docs/design/developer-identity.md). The rules across both
-files (new names only, ``access`` only tightened) are ``effective_environments.py``'s.
+``environments`` (on a committed one, a stricter ``access`` and their own ``values``), their
+endpoints on ``hub.json``'s repos (``repos: [{dir, services}]``) and more blocked entries
+(``guard.blocked_words``, ``blocked_words_files``, ``blocked_words_env``). Each value is checked
+with the same rule as in ``hub.json``; any other ``hub.json`` key is refused with a message that
+says so (docs/design/developer-identity.md). The rules across both files (new names only,
+``access`` only tightened, ``values`` per key over the team's) are
+``effective_environments.py``'s.
 """
 
 import json
@@ -24,10 +26,12 @@ from agent_hub.core.hub_config.environments import (
     MAX_BLOCKED_ENV,
     MAX_BLOCKED_GLOBS,
     MAX_BLOCKED_WORDS,
+    VALUES_DESCRIPTION,
     Access,
     BlockedWord,
     Credentials,
     EnvironmentName,
+    EnvironmentValues,
     EnvVarPattern,
     NoSecretText,
     Services,
@@ -95,7 +99,8 @@ class LocalTracker(ConfigObject):
 
 
 class LocalEnvironment(ConfigObject):
-    """A developer's own environment, or (``access`` alone) a stricter access on a committed one.
+    """A developer's own environment, or on a committed one a stricter ``access`` and the
+    developer's ``values``, which win per key over the team's.
 
     Every key is optional here: what each case needs is checked across the two files.
     """
@@ -104,6 +109,7 @@ class LocalEnvironment(ConfigObject):
     production: StrictBool | None = absent_by_default()
     description: NoSecretText | None = absent_by_default()
     credentials: Credentials | None = absent_by_default()
+    values: EnvironmentValues = Field(default_factory=dict, description=VALUES_DESCRIPTION)
 
 
 LocalEnvironments = Annotated[

@@ -14,7 +14,8 @@ All optional and additive under `schema_version: 1`; a hub without them behaves,
 
 | Key | Shape |
 |---|---|
-| `environments.<name>` | `access` (required: `read`, `write` or `ask`), `production` (bool, `false`), `description` (≤ 80, rendered as plain text), `credentials` |
+| `environments.<name>` | `access` (required: `read`, `write` or `ask`), `production` (bool, `false`), `description` (≤ 80, rendered as plain text), `credentials`, `values` |
+| `…values` | ≤ 32 entries keyed by a scenario input name (`^[a-z][a-z0-9_]{0,63}$`), each a text of 1 to 200 characters with no control, line-break or bidi character and never a secret's shape; `_` keys are comments. They fill a scenario's inputs of the same name (§ Values) |
 | `…credentials` | `aws_profile` (`^[A-Za-z0-9_.-]{1,64}$`), `env` (≤ 10 names `^[A-Z_][A-Z0-9_]{0,63}$`) and `env_file` (a dotenv path relative to the workspace, ≤ 200, no `..`, no leading `/` or `~`, its values read only by actions, its names listed by hub web: [scenarios.md](scenarios.md)): names and paths, never values |
 | `repos[].services.<name>` | `kind` (`^[a-z0-9]+(-[a-z0-9]+)*$`, ≤ 32, informational), `description`, `endpoints` |
 | `…endpoints.<env>` | `url` or `resource` (one required), `note`, `credentials`; `<env>` must be declared |
@@ -46,11 +47,27 @@ the key and kind, never the value). No behaviour comes from a name: `production:
 
 `hub.local.json` adds the developer's own rules on top of the team's, never looser ones: new environments (never a
 `hub.json` name) and their endpoints on `hub.json`'s repos (`repos: [{dir, services}]`; a committed service only gains
-`endpoints`, on local environments); on a committed name, `access` alone and only stricter (`write` → `ask` → `read`;
-else `hub.local.json: environments.<name>.access: may only tighten hub.json's <a>`); and the three blocked lists, which
+`endpoints`, on local environments); on a committed name, only `access`, and only stricter (`write` → `ask` → `read`;
+else `hub.local.json: environments.<name>.access: may only tighten hub.json's <a>`), and `values`, which win per key
+over the team's (any other key: `may only tighten its access or set values`); and the three blocked lists, which
 add to the team's. Every other `guard` key stays set only in `hub.json`. The effective view is the union, committed
 entries first. An environment's **source** is the file its effective `access` comes from (`hub.local.json` when it
 tightens); the brief, `hub env list`, doctor and setup show it.
+
+### Values
+
+An environment's `values` are facts of the place, not of a scenario: the developer's account id, a user name, a
+region. A scenario planned or started in environment E (`hub scenario plan|run --env E`, and hub web's plan and start)
+fills each declared input it is not given with E's value of the same name, typed as the input declares (`integer`,
+`number`, `boolean` as `true`/`false`; a value that does not read as the type refuses the plan or start, naming the
+input and environment). The order is: **given input > environment value > declared default**. A value for a name the
+scenario does not declare is ignored; the run record keeps the effective inputs. The effective values of a committed
+environment are `hub.json`'s, then `hub.local.json`'s per key. Values are never secrets: a secret-shaped one is
+refused like any string here, and credentials stay in `credentials.env_file`.
+
+```json
+{"environments": {"local": {"values": {"personal_name": "jane-personal", "aws_account_id": "123456789012"}}}}
+```
 
 ### What agents see
 
@@ -116,8 +133,9 @@ tightens); the brief, `hub env list`, doctor and setup show it.
 
 ### `hub env`
 
-`list`, `show NAME` (both `--json`), `add NAME --access A [--production] [--description T] [--aws-profile P]
-[--credential-env VAR]…`, `set`, `remove`, `service add REPO SERVICE --env NAME (--url U | --resource R)`, `service
+`list`, `show NAME` (both `--json`, which hold `values`), `add NAME --access A [--production] [--description T]
+[--aws-profile P] [--credential-env VAR]… [--value NAME=VALUE]…`, `set` (also `--value NAME=VALUE`… and
+`--unset-value NAME`…; with `--local` on a committed name, an entry emptied of its values is dropped), `remove`, `service add REPO SERVICE --env NAME (--url U | --resource R)`, `service
 remove`; `--local` writes `hub.local.json` (created mode 0644, as by `hub setup`), else `hub.json`. None prompts. A
 write validates the result (invalid: exit 1, file unchanged), keeps every key and their order in indent 2 (another
 indent is normalised once, and the output says so), refuses (exit 1) a file changed since it was read, a symlinked
@@ -129,7 +147,9 @@ environment; a committed write prints `run ./hub sync to update AGENTS.md`. The 
 ### From hub web
 
 The Environments screens (AGH-417) read and make the same edits as `hub env` through `GET /projects/{project}/config` (its
-`environments`) and `POST /projects/{project}/config/environments` (AGH-416). The edit is checked as a read checks
+`environments`, each with its effective `values`) and `POST /projects/{project}/config/environments` (AGH-416):
+`add_environment` takes `values` (name → text, an empty text left out) and `set_environment` takes `values` (name →
+text sets it, an empty text removes it, a name left out stays), in the `team` or `local` scope. The edit is checked as a read checks
 both files (each file, then the rules across them) before anything is written, refuses a file changed since it was
 read or a symlinked one, replaces the file through a temporary one, and is never committed: a `hub.json` change waits
 for the owner's hub PR and `./hub sync` ([ADR 0040](../adr/0040-hub-web-keeps-local-settings-writes-hub-files-and-runs-checks.md),

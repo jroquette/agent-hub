@@ -14,7 +14,8 @@ that accepts it, AM-5) and whether it can be picked now (core's ``option_refusal
 ``ScenarioCommands`` writes, each through the CLI as a child (the API never imports cli):
 
 - ``plan`` waits for ``hub scenario plan --json`` (its plan-mode summaries, AM-8), after the
-  inputs are checked against the scenario's;
+  inputs are checked against the scenario's (a declared input the body leaves out takes the
+  environment's value of that name, core's ``with_environment_values``, as in ``start``);
 - ``start`` plans in process (core's ``plan_scenario``) and refuses a plan with a problem or a
   ``deny`` (409 naming the denied steps), creating no run, then starts ``hub scenario run``;
 - ``answer`` answers the open investigation: a ``pick`` is checked first (core's
@@ -81,6 +82,7 @@ from agent_hub.core.runs.workflow_run import (
 )
 from agent_hub.core.scenarios.access_policy import PolicyDecision, deny_reason
 from agent_hub.core.scenarios.action_catalog import ActionEntry, ActionRefError, resolve_action
+from agent_hub.core.scenarios.environment_values import with_environment_values
 from agent_hub.core.scenarios.findings import (
     FindingIssueError,
     FindingsError,
@@ -171,11 +173,14 @@ class ScenarioRunRef(ViewModel):
 
 
 class ScenarioEnvironment(ViewModel):
-    """An environment the project's hub declares, as the effective config reads now."""
+    """An environment the project's hub declares, as the effective config reads now, with the
+    values that fill a scenario's inputs of the same name there (hub.local.json's over
+    hub.json's, per key)."""
 
     name: str
     access: str
     production: bool
+    values: dict[str, str] = Field(default_factory=dict)
 
 
 class ScenarioSummary(ViewModel):
@@ -503,7 +508,12 @@ class ScenarioCatalog:
         except HubLocalInvalidError, EntityNotFoundError:
             return ()
         return tuple(
-            ScenarioEnvironment(name=item.name, access=item.access, production=item.production)
+            ScenarioEnvironment(
+                name=item.name,
+                access=item.access,
+                production=item.production,
+                values=dict(item.values),
+            )
             for item in view.environments
         )
 
@@ -1075,10 +1085,14 @@ class ScenarioCommands:
     def plan(self, project: str, name: str, request: ScenarioPlanRequest) -> ScenarioPlanView:
         """The scenario planned in the asked environment, with its plan-mode summaries."""
         hub, plan, _pack = self._catalog.scenario(project, name)
-        launch_inputs(plan, request.inputs)
         # As the CLI's plan, which exits on it: a local file that cannot be read or conflicts
         # with hub.json refuses before any child runs.
-        self._catalog.credentials.environments_of(hub, project)
+        view = self._catalog.credentials.environments_of(hub, project)
+        # The child fills the environment's values itself: only the given inputs go to it.
+        given = with_environment_values(
+            plan, request.inputs, view=view, environment=request.environment
+        )
+        launch_inputs(plan, given)
         texts = {key: argv_text(value) for key, value in request.inputs.items()}
         code, printed = self._launcher.plan_scenario(
             hub, name, environment=request.environment, inputs=texts
@@ -1097,8 +1111,11 @@ class ScenarioCommands:
         """Start a scenario run once its plan holds no problem and no ``deny``."""
         run_id = self._mint()
         hub, plan, pack = self._catalog.scenario(project, name)
-        inputs = launch_inputs(plan, request.inputs)
         view = self._catalog.credentials.environments_of(hub, project)
+        given = with_environment_values(
+            plan, request.inputs, view=view, environment=request.environment
+        )
+        inputs = launch_inputs(plan, given)
         planned = plan_scenario(
             plan,
             pack=pack,

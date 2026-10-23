@@ -187,7 +187,7 @@ def list_lines(view: EffectiveEnvironments) -> tuple[str, ...]:
 
 
 def show_lines(view: EffectiveEnvironments, name: str) -> tuple[str, ...] | None:
-    """The environment ``name``: its heading, description, credential names and endpoints;
+    """The environment ``name``: its heading, description, credential names, values and endpoints;
     ``None`` when neither file declares it."""
     environment = _find(view, name)
     if environment is None:
@@ -196,6 +196,9 @@ def show_lines(view: EffectiveEnvironments, name: str) -> tuple[str, ...] | None
     if environment.description:
         lines.append(f"  description: {environment.description}")
     lines.extend(f"  {line}" for line in _credential_lines(environment.credentials))
+    if environment.values:
+        shown = ", ".join(f"{key}={value}" for key, value in environment.values.items())
+        lines.append(f"  values: {shown}")
     endpoints = [
         f"    {repo} {service}: {_endpoint_text(endpoint)}"
         for repo, service, endpoint in _endpoints_in(view, name)
@@ -286,6 +289,7 @@ def _environment_object(environment: SourcedEnvironment) -> dict[str, JsonValue]
         "source": environment.source,
         "description": environment.description,
         "credentials": _credentials_object(environment.credentials),
+        "values": dict(environment.values),
     }
 
 

@@ -383,6 +383,24 @@
         "credentials": {
           "$ref": "#/$defs/Credentials",
           "description": "Names of the credentials to use; never a value."
+        },
+        "values": {
+          "additionalProperties": {
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[^\\x00-\\x1f\\x7f-\\x9f\\u061c\\u200e\\u200f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]+$",
+            "type": "string"
+          },
+          "description": "Values that fill a scenario's inputs of the same name when it runs here, before the input's default: at most 32, each at most 200 characters; never a secret.",
+          "maxProperties": 32,
+          "patternProperties": {
+            "^_": {}
+          },
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          },
+          "title": "Values",
+          "type": "object"
         }
       },
       "required": [

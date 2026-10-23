@@ -272,8 +272,8 @@ today), and the CLI's model and the hooks' stdlib reader accept it in the same c
 | Developer identity: `project.author_name`, `author_email`, `branch_prefix` | Become optional. Effective value: the gitignored `hub.local.json`, else `hub.json`, else the hub repo's `git config user.name`/`user.email`; the prefix, when no file sets it, is the effective email's local part plus `/` (ADR 0016) | Set per developer, by `hub setup` in `hub.local.json`; `hub worktree`, `hub run` and `hub start` refuse without a prefix | AGH-65 |
 
 `hub.local.json` may hold only those identity keys, `tracker.transport`, the developer's own `environments` and their
-endpoints on `hub.json`'s repos (`repos: [{dir, services}]`), a stricter `access` on a committed environment (`write` →
-`ask` → `read`) and the three `guard.blocked_words*` lists; any other key is an error, and nothing in it can relax a
+endpoints on `hub.json`'s repos (`repos: [{dir, services}]`), a stricter `access` and their own `values` on a committed
+environment (`write` → `ask` → `read`; values win per key) and the three `guard.blocked_words*` lists; any other key is an error, and nothing in it can relax a
 guard: it adds blocked words, never removes them, and only tightens access. Commits are authored by the developer running the session, and cloud setup writes `HUB_AUTHOR_NAME`/`HUB_AUTHOR_EMAIL`
 repo-local, never global, only when `hub.json` holds no author.
 
@@ -424,6 +424,10 @@ instruction" for actions and for the deterministic nodes of a workflow that decl
   values of 4 characters or more are redacted from the action's output (shorter ones cannot be told apart from
   ordinary output), and no value appears in an event, record or plan. Declared credential names are
   removed from every agent session, and the guard denies agents any read of a declared env file.
+- **Environment values:** an environment may declare `values` (at most 32 input names, `[a-z][a-z0-9_]*`, to short
+  texts that are never secrets), in `hub.json` or, per key over the team's, in `hub.local.json`. A scenario planned or
+  started there fills each declared input it is not given with the value of that name, typed as the input declares,
+  before the input's default: given input > environment value > default ([design/scenarios.md](design/scenarios.md)).
 - **Modes:** `hub scenario run --mode regression` starts no agent and fails on the first divergence; `interactive`
   (the default) pauses, and hub web starts one read-only investigation session that may read the hub, run read
   actions, write draft actions and propose findings and workaround options, each with its plan. The developer picks
