@@ -843,8 +843,9 @@ folder, the server's environment minus `LINEAR_API_KEY`); no problem quotes its 
   `finding_id` matches `^f[0-9]{1,6}$` (else 400); an unknown finding is a 404 (entity `finding`).
 
 Debugging and migration (AGH-507, [ADR 0049](adr/0049-scenario-blocks-and-run-control.md), [design](design/scenarios.md)
-§ Debugging): each command runs the CLI as a child and waits for it, as a gate decision does; all of them are run
-writes (`RUN_WRITES`, migrate an item write, `ITEM_WRITES`: [Local security](#local-security)).
+§ Debugging): each write runs the CLI as a child and waits for it, as a gate decision does; the writes are run
+writes (`RUN_WRITES`; migrate is an item write, `ITEM_WRITES`) and the values read needs the same cookie
+([Local security](#local-security)).
 
 - `PUT /api/v1/scenario-runs/{run_id}/breakpoints` with `{blocks: [<address>…]}` (at most 512 addresses of the run's
   pinned tree, as [design](design/scenarios.md) § Tree format writes them) → 200 `Breakpoints` (`run_id`, `blocks`):
@@ -867,7 +868,7 @@ writes (`RUN_WRITES`, migrate an item write, `ITEM_WRITES`: [Local security](#lo
   `output`, and for a Wait until `polls` and `last_poll`), from the record (values as it holds them, credential values
   already redacted). It needs the launch cookie, as the agent-session routes do, so no other local process reads it;
   the run must be paused (409 `workflow-run-not-paused`) and its environment not production (409
-  `workflow-run-debug-production`).
+  `workflow-run-debug-production`). In the container, where no cookie exists, it is 404 `run-control-off`.
 - `POST /api/v1/scenarios/{project}/{name}/migrate` with `{check?}` → 200 `ScenarioMigration` (`path`, `written`,
   `yaml` (the tree, canonical), `problems` (`node`, `message`)): what `hub scenario migrate NAME [--check]` does; with
   problems nothing is written (200, `written: false`). A version-2 scenario is 409 `scenario-already-tree`; in the
@@ -878,7 +879,7 @@ Problems:
 | Status | Type or code | When |
 | --- | --- | --- |
 | 400 | "Invalid request parameter" | `run_id` does not match `^[a-z0-9][a-z0-9-]{0,31}$`, or `finding_id` does not match `^f[0-9]{1,6}$` |
-| 401 · 403 · 415 | as in [Local security](#local-security) | a `POST` without the launch cookie · a foreign `Origin` or fetch site · a body that is not JSON |
+| 401 · 403 · 415 | as in [Local security](#local-security) | a `POST` or `PUT`, or the values `GET`, without the launch cookie · a foreign `Origin` or fetch site · a body that is not JSON |
 | 404 | `about:blank` | no registered hub holds the run (or its record), the run is not a scenario run, an unknown project, scenario or finding, or the hub has no workdir |
 | 404 | `urn:agent-hub:problem:run-control-off` | a `POST` or `PUT` in the container (`AGENT_HUB_IN_CONTAINER=1`) |
 | 409 | `workflow-run-undeclared-environment` · `-denied` (`steps`) · `-plan-problem` | a start whose plan may not start; no run is created |

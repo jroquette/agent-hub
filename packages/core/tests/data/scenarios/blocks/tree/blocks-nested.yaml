@@ -1,0 +1,49 @@
+version: 2
+kind: scenario
+name: blocks-nested
+revision: 1
+description: 'Sample of the tree format: nested'
+inputs:
+  shop_order_id:
+    required: true
+  personal_name:
+    required: true
+  aws_account_id:
+    required: true
+stages:
+- name: Route order
+  steps:
+  - wait_until: order-state
+    until: $self.output.order_status != ''
+    every: 15s
+    timeout: 10m
+    capture:
+      order_id: $self.output.order_id
+      order_status: $self.output.order_status
+      review_status: $self.output.review_status
+  - if: $CTX.order_status == 'ON_HOLD'
+    then:
+    - if: $CTX.review_status == 'PENDING' || $CTX.review_status == 'REVIEWED'
+      then:
+      - do: order-tasks-resolve
+        with:
+          order_id: $CTX.order_id
+      else:
+      - you: 'The review is neither pending nor done: check it by hand, then approve.'
+    - do: order-set-carrier
+      with:
+        order_id: $CTX.order_id
+    - if: $CTX.review_status == 'REVIEWED'
+      then:
+      - do: shipments-regenerate
+        with:
+          order_id: $CTX.order_id
+    else:
+    - do: queue-send
+      with:
+        message: demo.process-order
+        order_id: $CTX.order_id
+  - do: queue-send
+    with:
+      message: demo.poll
+      order_id: $CTX.order_id
