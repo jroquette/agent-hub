@@ -107,11 +107,11 @@ interface NavGroup {
 /**
  * The sitemap (D20, AGH-201 D3), grouped by what the developer comes to do: Portfolio on top (the
  * project overview once a project is open or in scope, see `overviewItem`); Work, the units of work
- * to start or follow (Features carries the needs-you badge, then Tickets and Scenarios); Activity,
+ * to start or follow (Features carries the needs-you badge, then Tickets, Scenarios and the
+ * Environments the work runs in, ADR 0038); Activity,
  * what the agents are running (Sessions carries the live badge, ADR 0033; Workflow runs shows once
- * a workflow has run); Knowledge, what the project knows (Brain, and the Learnings that feed it);
- * Setup, what agents work with (Toolkit and Environments); and the hub's own Health and Settings in
- * the footer. Brain, Toolkit and Environments follow the project in scope (see `brainLink`,
+ * a workflow has run); Knowledge, what the project knows (Brain, the Learnings that feed it, and the
+ * Toolkit of skills and workflows); and the hub's own Health and Settings in the footer. Brain, Toolkit and Environments follow the project in scope (see `brainLink`,
  * `skillsLink`, `environmentsLink`). Metrics, Bench and Tracker queue are not shipped and not shown.
  */
 export const NAV: readonly NavGroup[] = [
@@ -134,6 +134,8 @@ export const NAV: readonly NavGroup[] = [
       { id: "tickets", label: "Tickets", to: "/tickets", icon: "list-todo" },
       // Always shown: a place to start work, not a log (AGH-350 AM-17, E-15); no `g` key.
       { id: "scenarios", label: "Scenarios", to: "/scenarios", icon: "clipboard-list" },
+      // Where the project's systems run and what agents may do there (ADR 0038).
+      { id: ENVIRONMENTS_ID, label: "Environments", to: ENVIRONMENTS_PICKER, icon: "server" },
     ],
   },
   {
@@ -166,14 +168,7 @@ export const NAV: readonly NavGroup[] = [
         countNoun: () => "to triage",
         tone: "waiting",
       },
-    ],
-  },
-  {
-    group: "Setup",
-    items: [
       { id: SKILLS_ID, label: "Toolkit", to: SKILLS_PICKER, icon: "package" },
-      // Where the project's systems run and what agents may do there (ADR 0038).
-      { id: ENVIRONMENTS_ID, label: "Environments", to: ENVIRONMENTS_PICKER, icon: "server" },
     ],
   },
   {

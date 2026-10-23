@@ -85,7 +85,7 @@ describe("Sidebar", () => {
     expect(brain).toHaveAttribute("aria-current", "page");
   });
 
-  it("shows Toolkit first under Setup for the project in scope (nav, AC-164.13)", () => {
+  it("shows Toolkit right after Learnings for the project in scope (nav, AC-164.13)", () => {
     renderSidebar("/sessions?scope=agent-hub");
 
     const nav = screen.getByRole("navigation", { name: "Main" });
@@ -210,7 +210,7 @@ describe("Sidebar", () => {
     expect(onShortcuts).toHaveBeenCalledOnce();
   });
 
-  it("groups the destinations into Work, Activity, Knowledge, Setup and the Hub footer", () => {
+  it("groups the destinations into Work, Activity, Knowledge and the Hub footer", () => {
     renderSidebar();
 
     const nav = screen.getByRole("navigation", { name: "Main" });
@@ -222,12 +222,12 @@ describe("Sidebar", () => {
       "Features",
       "Tickets",
       "Scenarios",
+      "Environments",
       "Sessions",
       "Workflow runs",
       "Brain",
       "Learnings",
       "Toolkit",
-      "Environments",
       "Health",
       "Hub config",
       "Settings",
@@ -236,7 +236,7 @@ describe("Sidebar", () => {
       "href",
       "/scenarios",
     );
-    for (const group of ["Work", "Activity", "Knowledge", "Setup"]) {
+    for (const group of ["Work", "Activity", "Knowledge"]) {
       expect(within(nav).getByText(group)).toBeInTheDocument();
     }
     expect(within(nav).queryByText("Live sessions")).not.toBeInTheDocument();
