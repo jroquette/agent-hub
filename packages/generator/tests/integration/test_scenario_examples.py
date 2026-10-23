@@ -12,6 +12,7 @@ from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlunsplit
 
 import pytest
 
@@ -195,7 +196,8 @@ def test_exits_with_reason_when_error_is_not_unreachable(
 def test_never_prints_userinfo_when_endpoint_holds_it(
     tmp_path: Path, server: Served, *, mode: str
 ) -> None:
-    url = f"http://u:secret@localhost:{server.port}"
+    # Built from parts: the host is localhost, behind a user and password.
+    url = urlunsplit(("http", f"u:secret@localhost:{server.port}", "", "", ""))
 
     completed = run_script(tmp_path, mode=mode, url=url, path="/health")
 
