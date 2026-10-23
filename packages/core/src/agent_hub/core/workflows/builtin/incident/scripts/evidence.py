@@ -4,9 +4,10 @@
 # ///
 """Print the git evidence of an incident window as one JSON object, read-only.
 
-``evidence.py --since <72h|3d>`` with the report on stdin, run in the hub (the cwd holds
-``hub.json``). The report is only checked here: not blank, at most ``MAX_REPORT`` bytes. For each
-repo of ``hub.json`` (``../<dir>``), the ref is ``origin/<default branch>`` as last fetched (this
+``evidence.py --since <72h|3d> --config <json>`` with the report on stdin, run in the hub.
+``--config`` is what ``hub step config`` printed (this script opens no ``hub.json``). The report
+is only checked here: not blank, at most ``MAX_REPORT`` bytes. For each repo of the config
+(``../<dir>``), the ref is ``origin/<its default branch>`` as last fetched (this
 script never fetches): its first-parent commits since the window (merge and squash commits alike),
 the files each one changed against its first parent, and the tags created since then.
 
@@ -19,7 +20,7 @@ go until the JSON fits ``MAX_BYTES`` (``trimmed: true``). A repo that cannot be 
 ``unreadable`` entry, and the others go on. ``left_out`` names what the evidence does not hold
 (failing checks on main, logs).
 
-Exit 0 with the JSON; exit 2 on bad input (the report, ``--since``, an unreadable ``hub.json``).
+Exit 0 with the JSON; exit 2 on bad input (the report, ``--since``, an unreadable config).
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ from pathlib import Path
 from typing import Any
 
 MAX_REPORT = 32768
-MAX_HUB_JSON = 1024 * 1024
+MAX_CONFIG = 1024 * 1024
 MAX_REPOS = 20
 MAX_COMMITS = 100
 MAX_PATHS = 50
@@ -105,19 +106,17 @@ def window(since: str) -> timedelta:
     return timedelta(hours=hours)
 
 
-def read_hub() -> dict[str, Any]:
-    path = Path("hub.json")
+def read_config(text: str) -> dict[str, Any]:
+    """``hub step config``'s output: an object with a ``repos`` list of objects."""
+    if len(text.encode()) > MAX_CONFIG:
+        raise BadInputError(f"cannot read the config: over {MAX_CONFIG} bytes")
     try:
-        if not path.is_file() or path.is_symlink():
-            raise BadInputError("cannot read hub.json: not a regular file")
-        if path.stat().st_size > MAX_HUB_JSON:
-            raise BadInputError(f"cannot read hub.json: over {MAX_HUB_JSON} bytes")
-        config = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
-        raise BadInputError(f"cannot read hub.json: {error}") from None
+        config = json.loads(text)
+    except ValueError as error:
+        raise BadInputError(f"cannot read the config: {error}") from None
     repos = config.get("repos") if isinstance(config, dict) else None
     if not isinstance(repos, list) or not all(isinstance(repo, dict) for repo in repos):
-        raise BadInputError("cannot read hub.json: no 'repos' list of objects")
+        raise BadInputError("cannot read the config: no 'repos' list of objects")
     read: dict[str, Any] = config
     return read
 
@@ -180,7 +179,7 @@ def tags(repo: Path, since: datetime) -> list[dict[str, str]]:
 def read_repo(entry: dict[str, Any], default_branch: str, since: datetime) -> dict[str, Any]:
     name = entry.get("dir")
     if not isinstance(name, str) or not DIR.fullmatch(name) or len(name) > 64:
-        raise UnreadableError("not a repo dir of hub.json")
+        raise UnreadableError("not a repo dir of the config")
     repo = Path("..") / name
     if not repo.is_dir():
         raise UnreadableError(f"not a folder: ../{name}")
@@ -264,8 +263,7 @@ def oldest_holder(result: dict[str, Any]) -> dict[str, Any] | None:
 
 def evidence(config: dict[str, Any], since: str, delta: timedelta) -> dict[str, Any]:
     start = datetime.now(UTC) - delta
-    project = config.get("project")
-    default_branch = (project if isinstance(project, dict) else {}).get("default_branch") or "main"
+    default_branch = config.get("default_branch") or "main"
     repos: list[dict[str, Any]] = []
     unreadable: list[dict[str, str]] = []
     for number, entry in enumerate(config["repos"]):
@@ -292,11 +290,12 @@ def evidence(config: dict[str, Any], since: str, delta: timedelta) -> dict[str, 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="evidence.py")
     parser.add_argument("--since", required=True)
+    parser.add_argument("--config", required=True, help="What hub step config printed.")
     args = parser.parse_args(argv)
     try:
         delta = window(args.since)
         read_report()
-        config = read_hub()
+        config = read_config(args.config)
     except BadInputError as error:
         print(f"evidence.py: {error}", file=sys.stderr)
         return 2
