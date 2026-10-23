@@ -36,6 +36,11 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - The Features list says each feature's stage in words (step name and "step N of 8"), its criteria as "N of M", what
   comes next in plain words, its label beside every title, and the features a live session is working on now at the
   top of In progress; it warms the Linear snapshot so a feature whose tickets are done leaves In progress (AGH-521).
+- The feature page's header shows what the feature's sessions cost so far (`cost` on `GET
+  /api/v1/features/{project}/{slug}`) instead of the AC bar, its golden path leaves out a skipped UX design step and
+  keeps Acceptance not reached while Build is in progress, and the ticket panel is laid out around its current step:
+  the steps across, the open step's evidence under them, one callout for what waits, and ACs, dependencies and
+  sessions as rows (AGH-521).
 
 ### Fixed
 

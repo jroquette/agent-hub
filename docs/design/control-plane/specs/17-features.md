@@ -597,6 +597,22 @@ otherwise, this list wins.
   after the session warnings in In progress, and the summary line counts "N working now". Nothing shows while the
   collector is offline.
 
+**Feature page header and the ticket panel (delivery 9)**
+
+- **AC-521.9.1 Cleaner golden path.** Given the feature page's golden path, then a skipped UX design step is left out,
+  no line runs past the last step, and Acceptance stays "not reached" (pending) while Build is in progress, even when
+  ticket evals already cover some ACs.
+- **AC-521.9.2 Cost in the header.** Given a feature whose sessions are priced, then the header drops the AC bar and
+  shows what the feature's sessions cost so far (`FeatureDetail.cost`, API.md "Feature detail"), with how many
+  sessions it counts and how many are unpriced.
+- **AC-521.9.3 Shared parts for the panel.** `GoldenPathStepper` can run across with the open step's detail once below
+  it; `AcList` gains a rows layout, `SessionLink` a row variant, `TicketSessions` a shown count, and `ReadinessText`
+  can lead with its icon. Their existing callers keep their markup.
+- **AC-521.9.4 Ticket panel around its current step.** Given a ticket's panel, then its head shows the id over the full
+  title and one facts row; whatever waits on the owner or holds the ticket sits in one callout; the seven steps run
+  across with the open step's evidence in a card under them (vertical in a panel under 400 px); ACs, dependencies
+  and sessions are listed as rows with their state in words.
+
 ## Screen 1: Features list
 
 **Route:** `/features` · **Answers:** "Which features are moving through the golden path, and how close is each to done?"

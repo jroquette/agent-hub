@@ -263,8 +263,8 @@ ticket's implement, review and eval belong to the ticket, not to the golden path
 States: the first step that does not hold is `current` (or `unknown` when its evidence cannot be read, `unrecorded`,
 "Not recorded", when it is Acceptance with no whole-feature eval: its meta says how many ACs the ticket evals cover,
 "Ticket evals cover 6 of 23 ACs"). After it, a step whose own condition holds is `blocked` with a `reason` naming that
-earlier step; one with evidence for part of the feature (created or merged tickets, ticket evals covering some ACs, a
-design written) is `partial`; one that cannot be read is `unknown`; the rest are `pending`. A SHIP-WITH-OWNER-STEPS
+earlier step; one with evidence for part of the feature (created or merged tickets, a design written) is `partial`
+(Acceptance stays `pending` while ticket evals cover some ACs: they belong to Build, AGH-521); one that cannot be read is `unknown`; the rest are `pending`. A SHIP-WITH-OWNER-STEPS
 acceptance eval not signed off is `waiting` ("Waiting for you", when it is the gate) with the meta "Sign off n ACs"
 ("1 AC" for one; spec amendment A18). The step folds the wait's typed state (`OwnerWaitState`), never its words.
 One rule decides which ACs wait (`feature_evals.owner_wait`), for the step and the sign-off alike: the acceptance eval is whole-feature, so every
