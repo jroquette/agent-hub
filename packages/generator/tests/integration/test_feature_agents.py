@@ -505,7 +505,8 @@ def test_records_adrs_on_both_paths_when_feature_step_three_rendered_with_implem
 
 
 # AGH-451: the brief's Outcome says how we will know after the merge that it solved the problem,
-# with a signal someone can check later; step 0 asks for it before sizing. brief.py does not parse it.
+# with a signal someone can check later; step 0 asks for it before sizing (brief.py does not parse
+# it).
 POST_MERGE_LINE = "How we will know after merge that it solved the problem"
 ASKS_BEFORE_SIZING = "ask for one (one question) before sizing"
 
