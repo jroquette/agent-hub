@@ -283,11 +283,16 @@ PR is opened as that `gh` account). Under Docker the hubs are mounted read-only,
 `/learn promote`) reads `brain/_inbox/` (at most 50 notes, oldest first), lets a read-only agent group duplicates and
 propose one action per group (promote into `brain/learnings/`, route to a repo, check, drop), then asks you about each
 group at its own gate (`./hub workflow respond <run> --choice apply|drop|keep --text "<note>"`); a note whose provenance
-is not `agent` or `human` is always a group of its own. `context` measures the hub's always-loaded text as
-`/context-audit` does, names the files past its limits, and trims only after you choose `trim` at its gate. Only after
+is not `agent`, `agent-from-code` or `human` is always a group of its own, and the first gate lists the notes no
+gate shows. `context` measures the hub's always-loaded text as
+`/context-audit` does, names the files past its limits, and trims only after you choose `trim` at its gate (a trim
+that touches a file `hub.lock` marks managed is refused). Only after
 the gates does a run add a hub worktree on `<branch_prefix>brain-care-<workflow>-<run id>` (from the local
 `origin/<default branch>`, so fetch first; a note not on it is skipped and named in the PR body) and open one hub PR
-that you merge; neither writes the tracker. Suggested schedules, for `hub.json` → `schedules` (AGH-481): `inbox` every
+that you merge; neither writes the tracker. Each run ends with an outcome (`pr_opened`, or why no PR opened, such
+as `no_pr`, `kept` or `declined`). A run that made a worktree leaves it and its branch in the hub: remove them after
+the merge, or at once when no PR opened, with `git worktree remove .claude/worktrees/brain-care-<workflow>-<run id>`
+then `git branch -D <branch_prefix>brain-care-<workflow>-<run id>` (the outcome's reason prints both). Suggested schedules, for `hub.json` → `schedules` (AGH-481): `inbox` every
 Monday, `context` on day 1 of each month. The first live run on a hub is the end-to-end check of `hub step pr` there
 (the push and `gh` on the hub's own repo): tests cover the steps up to the commits only.
 
