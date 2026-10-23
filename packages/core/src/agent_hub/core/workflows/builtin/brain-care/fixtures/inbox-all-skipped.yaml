@@ -1,0 +1,50 @@
+# The owner applies a group, but its note is not on origin's default branch yet: apply skips it,
+# no PR opens, and the run says so (outcome no_pr) with the worktree's cleanup.
+workflow: inbox
+stubs:
+  branch_config:
+    output: {default_branch: main, branch_prefix: jdoe/, author_name: null, author_email: null, ready_label: agent-ready, teams: [DEM], hub: {github: acme/demo-hub, default_branch: main, target: {github: acme/demo-hub, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}, repos: [{dir: demo-api, github: acme/demo-api, default_branch: main, check_fast: make check-fast, check: make check, target: {github: acme/demo-api, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}], branch_name: brain-care-inbox-0a1b2c3d, branch: jdoe/brain-care-inbox-0a1b2c3d}
+  read:
+    output:
+      count: 2
+      notes:
+        - {path: brain/_inbox/YYYY-MM-DD-stale.md, title: Stale, age_days: 21, provenance: agent, external: false, excerpt: No longer true.}
+        - {path: brain/_inbox/YYYY-MM-DD-known.md, title: Known, age_days: 20, provenance: agent, external: false, excerpt: Already in AGENTS.md.}
+      paths: [brain/_inbox/YYYY-MM-DD-stale.md, brain/_inbox/YYYY-MM-DD-known.md]
+      external: []
+      unreadable: []
+      omitted: 0
+  group:
+    output:
+      groups:
+        - {notes: [brain/_inbox/YYYY-MM-DD-stale.md], action: promote, target: brain/learnings/, reason: Worth keeping., text: ""}
+        - {notes: [brain/_inbox/YYYY-MM-DD-known.md], action: drop, target: "", reason: Already in AGENTS.md., text: ""}
+  plan:
+    output:
+      count: 2
+      groups:
+        - {id: 1, notes: [brain/_inbox/YYYY-MM-DD-stale.md], external: false, action: promote, target: brain/learnings/, reason: Worth keeping., text: ""}
+        - {id: 2, notes: [brain/_inbox/YYYY-MM-DD-known.md], external: false, action: drop, target: "", reason: Already in AGENTS.md., text: ""}
+      ignored: []
+      unproposed: []
+  decide__next:
+    - output: {index: 0, last: false, group: {id: 1}, message: "Group 1 of 2: promote -> brain/learnings/."}
+    - output: {index: 1, last: true, group: {id: 2}, message: "Group 2 of 2: drop."}
+  decide__gate:
+    - {decision: apply, text: "", approver: Dana Owner}
+    - {decision: keep, text: "", approver: Dana Owner}
+  decide__record:
+    - output: {decisions: [{group: {id: 1}, decision: apply, note: "", approver: Dana Owner}], acted: 1}
+    - output: {decisions: [{group: {id: 1}, decision: apply, note: "", approver: Dana Owner}, {group: {id: 2}, decision: keep, note: "", approver: Dana Owner}], acted: 1}
+  branch:
+    output:
+      path: /ws/hub/.claude/worktrees/brain-care-inbox-0a1b2c3d
+      branch: jdoe/brain-care-inbox-0a1b2c3d
+      base: 0a1b2c3d4e5f
+      target: {path: /ws/hub/.claude/worktrees/brain-care-inbox-0a1b2c3d, branch: jdoe/brain-care-inbox-0a1b2c3d, base: 0a1b2c3d4e5f}
+  apply:
+    output: {changes: 0, deleted: [], written: [], edited: [], skipped: [{path: brain/_inbox/YYYY-MM-DD-stale.md, reason: "not in the base commit: push it to the default branch first"}], summary: Weekly inbox review.}
+  outcome:
+    output: {outcome: no_pr, reason: "every approved change was skipped (see the apply step's skipped list); remove the worktree: git worktree remove /ws/hub/.claude/worktrees/brain-care-inbox-0a1b2c3d && git branch -D jdoe/brain-care-inbox-0a1b2c3d"}
+expect: {status: done, outcome: no_pr}
+reached: [branch_config, read, group, plan, decide, decide__next, decide__gate, decide__record, branch, apply, outcome]

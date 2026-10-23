@@ -16,6 +16,7 @@ License: Apache-2.0.
 ## Use agent-hub
 
 - [Using agent-hub for another project](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/USING.md): `docs/USING.md`
+- [Flows](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/FLOWS.md): `docs/FLOWS.md`
 - [agent-hub README: Quick Start, daily workflow, recipes and configuration](https://raw.githubusercontent.com/jroquette/agent-hub/main/README.md): `README.md`
 - [Project config: `hub.json`](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/project-config.md): `docs/design/project-config.md`
 - [Developer identity: `hub.local.json`, then `hub.json`, then git config](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/design/developer-identity.md): `docs/design/developer-identity.md`
@@ -91,3 +92,4 @@ License: Apache-2.0.
 - [0045. PR titles are checked before the PR is opened, not in CI](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0045-pr-titles-checked-before-the-pr-not-in-ci.md): `docs/adr/0045-pr-titles-checked-before-the-pr-not-in-ci.md`
 - [0046. Read-only discovery sessions: Claude proposes environments and services](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0046-read-only-discovery-sessions.md): `docs/adr/0046-read-only-discovery-sessions.md`
 - [0047. The release tag is created by a dispatched workflow](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0047-release-tag-by-workflow-dispatch.md): `docs/adr/0047-release-tag-by-workflow-dispatch.md`
+- [0048. Scheduled and event starts run inside hub web](https://raw.githubusercontent.com/jroquette/agent-hub/main/docs/adr/0048-scheduled-and-event-starts-in-hub-web.md): `docs/adr/0048-scheduled-and-event-starts-in-hub-web.md`

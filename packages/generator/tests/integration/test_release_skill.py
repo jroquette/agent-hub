@@ -15,8 +15,11 @@ from agent_hub.core.doctor.instruction_rules import DEFAULT_MAX_LINES
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.testing.builders import a_conventions_document
 from agent_hub.generator.render_hub import render_hub
+from agent_hub.generator.workflow_discovery import BUILTIN_WORKFLOWS
+from agent_hub.generator.workflow_yaml import load_workflow_bytes
 
 RELEASE_SKILL = "plugin/hub-workflow/skills/release/SKILL.md"
+WORKFLOW = BUILTIN_WORKFLOWS / "release" / "release.yaml"
 NESTED_LIMIT = DEFAULT_MAX_LINES["*/*"]
 STEP = re.compile(r"^(\d+)\. `(agent|script|gate|human)` \*\*([^*]+)\*\*", re.MULTILINE)
 STEP_TYPES = [
@@ -213,3 +216,71 @@ def test_names_no_project_value_when_release_skill_rendered(demo_config: HubConf
     named = sorted(value for value in values if value and value in text)
 
     assert named == []
+
+
+def run_section(text: str) -> str:
+    """The ``## Run`` section: from its heading to step 1."""
+    start = text.index("## Run")
+    return text[start : text.index("\n1. `", start)]
+
+
+def run_line(text: str) -> str:
+    [line] = [line for line in text.splitlines() if "`./hub workflow run release" in line]
+    return line
+
+
+def test_starts_release_workflow_with_its_inputs_when_release_rendered(release_text: str) -> None:
+    line = run_line(release_text)
+    command = line[line.index("`./hub workflow run release") :]
+    command = command[: command.index("`", 1) + 1]
+    inputs = load_workflow_bytes(WORKFLOW.read_bytes(), source=str(WORKFLOW)).document["inputs"]
+
+    assert command.endswith(" --live`"), command
+    for name in inputs:
+        assert f"--input {name}=" in command, name
+    assert release_text.index("## Run") < release_text.index("1. `script` **Changes**")
+    assert "`$?`" in line
+
+
+def test_leaves_gates_to_owner_when_release_rendered(release_text: str) -> None:
+    section = " ".join(run_section(release_text).split())
+
+    for phrase in (
+        "./hub workflow approve <run>",
+        "./hub workflow respond <run> --choice tagged",
+        "never yours",
+        "merge commit",
+        "not squash",
+        ".agent-runs/workflows/<run>/records.jsonl",
+    ):
+        assert phrase in section, phrase
+
+
+def test_passes_notes_through_a_file_when_release_rendered(release_text: str) -> None:
+    section = " ".join(run_section(release_text).split())
+
+    assert '`echo "${TMPDIR:-/tmp}"`' in section
+    assert "with the Write tool" in section
+    assert "`test -s <notes file>`" in section
+    assert section.index("`test -s <notes file>`") < section.index("do step 5 (dispatch and watch)")
+
+
+def test_names_hand_fallback_when_release_rendered(release_text: str) -> None:
+    section = " ".join(run_section(release_text).split())
+
+    assert "`./hub workflow list` has no `release`" in section
+    assert "follow the steps below by hand" in section
+
+
+# AGH-480: the owner sees what a gate asks before answering it.
+GATE_RECORDS = "`.agent-runs/workflows/<run>/records.jsonl`"
+GATE_MESSAGE = f'the `message` of the last `"event": "gate"` line of {GATE_RECORDS}'
+
+
+def test_shows_the_gate_message_before_the_owner_answers_when_release_rendered(
+    release_text: str,
+) -> None:
+    section = " ".join(run_section(release_text).split())
+
+    assert GATE_MESSAGE in section
+    assert section.index(GATE_MESSAGE) < section.index("./hub workflow approve <run>")

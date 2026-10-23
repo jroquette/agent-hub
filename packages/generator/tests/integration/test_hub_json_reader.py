@@ -84,6 +84,9 @@ IGNORED_PATHS: tuple[tuple[str | int, ...], ...] = (
     ("tracker", "states"),
     ("tracker", "blocked_label"),
     ("models",),
+    # hub web's scheduled and event starts (AGH-481): no hook reads them.
+    ("schedules",),
+    ("events",),
 )
 
 # Read leniently by the hooks; absent is ``None`` in both; agreement is the shared cases'
@@ -1421,7 +1424,19 @@ def test_imports_every_rendered_module_when_run_on_each_python(
         "plugin/demo/hooks",
         "plugin/hub-workflow/hooks",
         "scripts",
+        "workflows/backlog-care/scripts",
+        "workflows/brain-care/scripts",
+        "workflows/doc-drift/scripts",
+        # The incident pack's helpers (AGH-483), likewise.
+        "workflows/incident/scripts",
+        "workflows/post-merge-verify/scripts",
+        "workflows/release/scripts",
+        "workflows/retro/scripts",
+        "workflows/review-incoming/scripts",
         "workflows/sdlc/scripts",
+        "workflows/security-sweep/scripts",
+        "workflows/spike/scripts",
+        "workflows/upgrade/scripts",
     }
 
 

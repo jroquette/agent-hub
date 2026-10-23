@@ -38,6 +38,7 @@ License: Apache-2.0."""
 # (section, [paths]) in the order llms.txt lists them; USER_DOCS also go into llms-full.txt.
 USER_DOCS = (
     "docs/USING.md",
+    "docs/FLOWS.md",
     "README.md",
     "docs/design/project-config.md",
     "docs/design/developer-identity.md",

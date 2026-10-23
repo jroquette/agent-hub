@@ -1,0 +1,28 @@
+# A major bump the owner rejects at size: the run is cancelled before the full check and the
+# push; the branch keeps its commits for the owner to split.
+workflow: upgrade
+inputs: {issue: DEM-1, repo: demo-api, package: httpx, to: "1.0.0"}
+stubs:
+  config:
+    output: {default_branch: main, branch_prefix: jdoe/, author_name: null, author_email: null, ready_label: agent-ready, teams: [DEM], hub: {github: acme/demo-hub, default_branch: main, target: {github: acme/demo-hub, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}, repos: [{dir: demo-api, github: acme/demo-api, default_branch: main, check_fast: make check-fast, check: make check, target: {github: acme/demo-api, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}]}
+  worktree:
+    output:
+      path: /ws/demo-api/.claude/worktrees/dem-1
+      branch: jdoe/dem-1
+      base: origin/trunk
+      hub: /ws/hub
+      hub_name: hub
+      check: make check
+      prompt: {guard: has, gate_step: Run the fast gate., commit_shape: Conventional Commits}
+      target: {path: /ws/demo-api/.claude/worktrees/dem-1, branch: jdoe/dem-1, base: origin/trunk}
+  gate: {output: {check_fast: make check-fast, source: check_fast, reason: ""}}
+  bump: {output: {manager: uv, dir: ., from: "0.28.1", to: "1.0.0", major: true, files: [pyproject.toml, uv.lock], commit: 0a1b2c3d4e5f60718293a4b5c6d7e8f901234567}}
+  notes: {output: {found: true, sources: ["https://github.com/encode/httpx/releases/tag/1.0.0"], text: "Changes the client.", truncated: false, reason: ""}}
+  changelog: {output: {breaking: [{change: Client.get drops the verify argument., path: src/api.py, line: 12, action: Pass verify through the transport.}], summary: One breaking change hits the repo.}}
+  check: {output: {passed: false, exit_code: 2, round: 1, tail: "FAILED tests/test_api.py::test_get\n"}}
+  adapt__fix: {output: {status: done, summary: Adapts the client calls., question: ""}}
+  adapt__recheck: {output: {passed: true, exit_code: 0, round: 1, tail: "ok\n"}}
+  strength: {output: {touched: 3, files: [src/api.py, src/client.py, tests/test_api.py], lockfiles_edited: [], lockfile_edit: false, ran: false, tool: "", reason: no mutation tool found in the repo, mutants: 0, killed: 0, inconclusive: 0, survived: [], more_survived: 0}}
+  size: {decision: reject, approver: Jo}
+expect: {status: cancelled}
+reached: [config, worktree, gate, bump, notes, changelog, check, adapt, adapt__fix, adapt__recheck, strength, size]

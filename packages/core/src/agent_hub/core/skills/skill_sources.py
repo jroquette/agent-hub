@@ -148,6 +148,9 @@ class FoldedCatalog:
 
     catalog: SkillCatalog
     details: Mapping[str, SkillDetail] = field(default_factory=dict)
+    # Some entry was skipped or some file not read: a notice other than the empty hub's or the
+    # unread hub.lock's (AGH-482).
+    left_unread: bool = False
     files: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
 
 

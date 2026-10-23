@@ -1,0 +1,282 @@
+# The weekly backlog pass: read the open issues, report hygiene findings (orphans,
+# stale issues, likely duplicates, dependency cycles), draft the oldest issues not yet ready
+# (/triage steps 2 and 3, at most 10 a run), then one approval per issue: never several issues in
+# one gate. The tracker is read by /triage --backlog before the run and handed over as
+# issues_file (a JSON file; read.py bounds it, with the ready label and repos from hub step
+# config: no script opens hub.json); no node reads or writes the tracker, and no child gets a
+# tracker key. Approved decisions are applied by /triage after the run, from the report's
+# apply list, one issue at a time (ADR 0030); a skipped issue is left as it was.
+# Suggested: every Monday after brain-care's inbox, as /triage --backlog (a schedule cannot
+# supply issues_file, so a scheduled start is refused). Drafts per run: the pick node's --drafts.
+version: 1
+name: backlog-care
+description: The weekly backlog pass - hygiene findings and drafts for the oldest unready issues, one approval per issue.
+revision: 1
+inputs:
+  issues_file:
+    type: string
+    required: true
+    description: Absolute path of the JSON file /triage --backlog wrote with the open issues it read.
+  limit:
+    type: integer
+    default: 50
+    description: How many open issues to read, oldest first (1-100); the report says how many were left unread.
+returns: report
+outcome_field: outcome
+nodes:
+  - id: config
+    type: shell
+    description: The hub.json values this run's scripts need, read by the CLI (read-only).
+    command: [hub, step, config]
+    effect: read
+    mutates_checkout: false
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        default_branch: {type: string}
+        branch_prefix: {type: [string, "null"]}
+        hub: {type: object}
+        repos: {type: array, items: {type: object}}
+      required: [default_branch, branch_prefix, hub, repos]
+
+  - id: read
+    type: script
+    description: Load the issues file, bounded and cleaned; the oldest issues up to the limit.
+    depends_on: [config]
+    runtime: python
+    script: read.py
+    args: [--file, $INPUTS.issues_file, --limit, $INPUTS.limit, --config, $config.output]
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        ready_label: {type: string}
+        repos: {type: array, items: {type: string}}
+        read: {type: integer, minimum: 0}
+        open: {type: integer, minimum: 0}
+        unread: {type: integer, minimum: 0}
+        unread_line: {type: string}
+        descriptions_dropped: {type: integer, minimum: 0}
+        skipped:
+          type: array
+          items:
+            type: object
+            properties:
+              index: {type: integer, minimum: 0}
+              reason: {type: string}
+            required: [index, reason]
+        issues: {type: array, maxItems: 100, items: {type: object}}
+      required: [ready_label, repos, read, open, unread, unread_line, descriptions_dropped, skipped, issues]
+
+  - id: hygiene
+    type: script
+    description: Orphan, stale, duplicate and cyclic issues among those read, each with its evidence.
+    depends_on: [read]
+    runtime: python
+    script: hygiene.py
+    args: [--stale-days, "14"]
+    stdin: $read.output
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        orphans: {type: array, items: {type: object, required: [id, state, evidence]}}
+        stale: {type: array, items: {type: object, required: [id, updated_at, days, evidence]}}
+        duplicates: {type: array, items: {type: object, required: [ids, title, evidence]}}
+        cycles: {type: array, items: {type: object, required: [ids, evidence]}}
+        unreadable: {type: array, items: {type: object, required: [repo, reason]}}
+        summary: {type: string, maxLength: 16000}
+      required: [orphans, stale, duplicates, cycles, unreadable, summary]
+
+  - id: pick
+    type: script
+    description: The oldest issues with neither the ready label nor needs-human, as fenced data.
+    depends_on: [hygiene]
+    runtime: python
+    script: drafts.py
+    args: [pick, --drafts, "10", --duplicates, $hygiene.output.duplicates]
+    stdin: $read.output
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        count: {type: integer, minimum: 0, maximum: 10}
+        ids: {type: array, items: {type: string}}
+        read_ids: {type: array, items: {type: string}}
+        waiting: {type: array, items: {type: string}}
+        text: {type: string, maxLength: 49152}
+      required: [count, ids, read_ids, waiting, text]
+
+  - id: draft
+    type: agent
+    description: Size and draft each picked issue as /triage steps 2 and 3 do, read-only.
+    depends_on: [pick]
+    when: "$pick.output.count > 0"
+    context: fresh
+    prompt_file: draft.md
+    mutates_checkout: false
+    timeout: 60m
+    retry: {max_attempts: 0}
+    limits: {max_turns: 80, max_cost_usd: 6.0}
+    with:
+      issues: $pick.output.text
+    output_format:
+      type: object
+      additionalProperties: false
+      required: [drafts]
+      properties:
+        drafts:
+          type: array
+          maxItems: 10
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, action, superseded_by, context, acceptance_criteria, size, repos, blocked_by, blocks, verification, open_questions, guarded]
+            properties:
+              id: {type: string, pattern: "^[A-Z][A-Z0-9]{0,9}-[1-9][0-9]{0,8}$"}
+              action: {type: string, enum: [draft, supersede]}
+              superseded_by: {type: string, maxLength: 20}
+              context: {type: string, maxLength: 4000}
+              acceptance_criteria: {type: array, maxItems: 10, items: {type: string, maxLength: 500}}
+              size: {type: string, enum: [fix, bounded, spike, architectural]}
+              repos: {type: array, maxItems: 20, items: {type: string, maxLength: 100}}
+              blocked_by:
+                type: array
+                maxItems: 25
+                items: {type: string, pattern: "^[A-Z][A-Z0-9]{0,9}-[1-9][0-9]{0,8}$"}
+              blocks:
+                type: array
+                maxItems: 25
+                items: {type: string, pattern: "^[A-Z][A-Z0-9]{0,9}-[1-9][0-9]{0,8}$"}
+              verification: {type: string, maxLength: 500}
+              open_questions: {type: array, maxItems: 10, items: {type: string, maxLength: 500}}
+              guarded: {type: boolean}
+
+  - id: plan
+    type: script
+    description: Keep each picked issue's draft once, compute its label, and write its gate message.
+    depends_on: [draft]
+    runtime: python
+    script: drafts.py
+    args: [plan, --picked, $pick.output.ids, --read, $pick.output.read_ids]
+    stdin: $draft.output
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        count: {type: integer, minimum: 0, maximum: 10}
+        items:
+          type: array
+          maxItems: 10
+          items:
+            type: object
+            properties:
+              index: {type: integer, minimum: 0}
+              id: {type: string}
+              action: {type: string, enum: [draft, supersede]}
+              label: {type: string, enum: [ready, needs-human, close]}
+              superseded_by: {type: string}
+              draft: {type: object}
+              message: {type: string, maxLength: 20000}
+            required: [index, id, action, label, superseded_by, draft, message]
+        ignored: {type: array, items: {type: object, required: [id, reason]}}
+        undrafted: {type: array, items: {type: string}}
+      required: [count, items, ignored, undrafted]
+
+  - id: decide
+    type: loop_group
+    description: One gate per drafted issue, in turn - the owner applies or skips each one alone.
+    depends_on: [plan]
+    when: "$plan.output.count > 0"
+    max_iterations: 50
+    until_when: "$next.output.last == true"
+    nodes:
+      - id: next
+        type: script
+        description: The next planned issue, one per iteration.
+        runtime: python
+        script: gates.py
+        args: [next, --after, $LOOP_PREV.next.output.index]
+        stdin: $plan.output
+        retry: {max_attempts: 0}
+        output_format:
+          type: object
+          properties:
+            index: {type: integer, minimum: 0}
+            last: {type: boolean}
+            item: {type: object}
+            message: {type: string, maxLength: 20000}
+          required: [index, last, item, message]
+
+      - id: gate
+        type: approval
+        description: The owner applies this issue's draft and label, or skips the issue.
+        depends_on: [next]
+        message: $next.output.message
+        decisions:
+          - {id: apply, label: "Apply this draft"}
+          - {id: skip, label: "Skip, leave the issue as it is"}
+        capture_response: true
+
+      - id: record
+        type: script
+        description: Record this issue's decision beside the earlier ones; nothing is written to the tracker.
+        depends_on: [gate]
+        runtime: python
+        script: gates.py
+        args: [record, --item, $next.output.item, --decision, $gate.output.decision, --note, $gate.output.text, --approver, $gate.output.approver]
+        stdin: $LOOP_PREV.record.output.decisions
+        retry: {max_attempts: 0}
+        output_format:
+          type: object
+          properties:
+            decisions:
+              type: array
+              maxItems: 50
+              items:
+                type: object
+                properties:
+                  id: {type: string}
+                  decision: {type: string, enum: [apply, skip]}
+                required: [id, decision]
+            applied: {type: integer, minimum: 0}
+          required: [decisions, applied]
+
+  - id: report
+    type: script
+    description: The report and the approved decisions /triage applies after the run, and only those.
+    depends_on: [hygiene, pick, decide]
+    trigger_rule: none_failed_min_one_success
+    runtime: python
+    script: report.py
+    args:
+      - --summary
+      - $hygiene.output.summary
+      - --unread-line
+      - $read.output.unread_line
+      - --waiting
+      - $pick.output.waiting
+      - --ignored
+      - $plan.output.ignored
+      - --undrafted
+      - $plan.output.undrafted
+      - --skipped-entries
+      - $read.output.skipped
+      - --descriptions-dropped
+      - $read.output.descriptions_dropped
+    # Empty when no gate ran (decide skipped): report_only.
+    stdin: $decide.output.record.decisions
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        outcome: {type: string, enum: [apply, report_only]}
+        summary: {type: string, maxLength: 24000}
+        apply:
+          type: array
+          items:
+            type: object
+            required: [id, action, label, superseded_by, draft, note, approver]
+        skipped: {type: array, items: {type: object, required: [id, note, approver]}}
+      required: [outcome, summary, apply, skipped]

@@ -1,0 +1,37 @@
+# No scanner installed and no guard in the hub: no finding, triage is skipped, and the run ends
+# done with a note naming each missing scanner.
+workflow: security-sweep
+stubs:
+  config:
+    output: {default_branch: main, branch_prefix: jdoe/, author_name: null, author_email: null, ready_label: agent-ready, teams: [DEM], hub: {github: acme/demo-hub, default_branch: main, target: {github: acme/demo-hub, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}, repos: [{dir: demo-api, github: acme/demo-api, default_branch: main, check_fast: make check-fast, check: make check, target: {github: acme/demo-api, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}]}
+  scan:
+    output:
+      repos:
+        - repo: demo-api
+          ref: origin/trunk
+          head: 0a1b2c3d4e5f60718293a4b5c6d7e8f901234567
+          date: "YYYY-MM-DDT10:00:00+00:00"
+          status: scanned
+          note: ""
+          scanners:
+            - {name: semgrep, status: missing, note: not installed, count: 0}
+            - {name: bandit, status: missing, note: not installed, count: 0}
+            - {name: pip-audit, status: missing, note: not installed, count: 0}
+            - {name: npm, status: missing, note: not installed, count: 0}
+            - {name: guard, status: missing, note: no plugin/hub-workflow/hooks/guard.py in the hub, count: 0}
+      findings: []
+      more: 0
+      trimmed: false
+  new:
+    output: {findings: [], listed: 0, counts: {new: 0, seen: 0, more: 0}, ran: [], current: [], store_problem: ""}
+  report:
+    output:
+      path: brain/_inbox/security-YYYY-MM-DD.md
+      kept: 0
+      secrets: 0
+      missing: ["demo-api: semgrep", "demo-api: bandit", "demo-api: pip-audit", "demo-api: npm", "demo-api: guard"]
+      triaged: []
+      status: clean
+  mark: {output: {status: clean, marked: 0, store_size: 0}}
+expect: {status: done, outcome: clean}
+reached: [config, scan, new, report, mark]

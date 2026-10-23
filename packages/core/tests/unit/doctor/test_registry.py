@@ -29,6 +29,7 @@ RELEASED_IDS = (
     "repos.ui_paths",
     "environments.production",
     "environments.env_file",
+    "workflows.starts",
     "brain.memory",
     "sandbox.workflow",
     "workflows.valid",
@@ -65,6 +66,7 @@ DESIGN_SEVERITIES = {
     "workflows.valid": Severity.ERROR,
     "environments.production": Severity.WARNING,
     "environments.env_file": Severity.WARNING,
+    "workflows.starts": Severity.ERROR,
     "items.leftovers": Severity.WARNING,
 }
 

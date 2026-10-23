@@ -1,8 +1,8 @@
 ---
 name: learn
-description: Record one verified, non-obvious learning. A team or repo learning becomes a proposal in brain/_inbox/ for human review; with personal first, a preference or machine detail goes to your own gitignored memory in brain/auto/workspace/. Never edits rules or notes directly.
+description: Record one verified, non-obvious learning. A team or repo learning becomes a proposal in brain/_inbox/ for human review; with personal first, a preference or machine detail goes to your own gitignored memory in brain/auto/workspace/; with promote, starts the weekly inbox review (the inbox workflow). Never edits rules or notes directly.
 disable-model-invocation: true
-argument-hint: "[personal] <the learning in one sentence>"
+argument-hint: "[personal|promote] <the learning in one sentence>"
 ---
 
 # /learn
@@ -66,3 +66,21 @@ provenance: user-stated   # observed if you saw it in this session
 Never write `brain/_inbox/` or a tracked file for this target. Sessions started with `./agent` (`hub agent`) load
 `MEMORY.md`; cloud sessions and a plain `claude` do not. In a cloud session or a plain `claude`, tell the user before
 writing that this memory will not load (and in cloud, will not survive the container).
+
+## promote
+
+Only when the arguments start with `promote`. It reviews the inbox instead of recording a learning: the built-in
+`inbox` workflow (brain-care pack) groups the notes in `brain/_inbox/`, asks the owner about each group at its own
+gate, and only then opens one hub PR with the approved changes.
+
+1. From the hub, run `./hub workflow run inbox --live` with its output redirected to a file, and check `$?`; read the
+   file (without `--live` it only prints what would run). A non-zero exit code means the run failed: say so.
+2. Report the last line: `run <run>: paused at <gate>` (a group waits for the owner) or `run <run>: done, outcome
+   <outcome>` (`pr_opened`, or why no PR opened); its reason says how to remove the run's worktree.
+3. Each group is the owner's to decide, never yourself: show him the `message` of the last `"event": "gate"` line
+   of `.agent-runs/workflows/<run>/records.jsonl` (the group and its proposed action), then tell him to answer with
+   `./hub workflow respond <run> --choice apply|drop|keep --text "<note>"`. An external note (provenance not `agent`,
+   `agent-from-code` or `human`) is always its own decision. Nothing lands until he merges the hub PR the run opens.
+
+If `./hub workflow list` has no `inbox` workflow (an older platform pin), say so and review `brain/_inbox/` by hand
+with the owner.

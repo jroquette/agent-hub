@@ -247,13 +247,48 @@ A workflow is data: a YAML (or JSON) file in the hub's `workflows/<pack>/` folde
 `script`, `loop`, `loop_group`, `include`, `approval`, `wait`, `halt`) depend on each other and run in layers
 ([format](docs/design/workflow-schema.md), [ADR 0032](docs/adr/0032-workflow-engine.md)). `hub init` and `hub sync`
 seed the built-in packs once: `issue-to-pr` (what `hub run` runs) and `sdlc` (`deliver`: implement, validate and
-review in a loop until green, then the PR; `review`: a spec lens and a quality lens side by side, then one verdict). A hub's own file
+review in a loop until green, then the PR; `review`: a spec lens and a quality lens side by side, then one verdict), `retro` (the
+week's run metrics, at most five changes each backed by those numbers, then issue drafts for the ones the owner keeps),
+`post-merge-verify` (after a merge, or weekly with a blank `sha`: `select` the passing ACs of the merged tickets and of
+the paths it changed, `run` each verification once in a throwaway worktree at the commit, `explain` a failure from the
+merges since its last pass, read-only, and `report` it to `brain/_inbox/verify-<date>.md`; a verification with a
+machine path is listed as "cannot run after merge"; fetch first:
+`./hub workflow run post-merge-verify --input repo=<dir> --input sha=<sha> --live`),
+`brain-care` (`inbox`: the weekly inbox review, one owner gate per group of notes, then one hub PR; `context`: the monthly
+always-loaded context audit, a trim only after the owner's approval),
+`spike` (`spike`: recall, research, 2 or 3 options, the owner's pick, a premortem of the pick, then
+`brain/features/<slug>/research.md` and an ADR draft for `/adr`, within a timebox of 2h of agent time by default; it
+changes no code),
+`incident` (git evidence, a recall of past incidents, at most 5 ranked hypotheses each with a read-only check, the
+checks in a throwaway worktree, a mitigation gate, then a hand-off draft for `/fix` and a blameless postmortem draft in
+`brain/_inbox/`; it writes no tracker and applies nothing; `/incident` starts it with
+`./hub workflow run incident --input report=â€¦ --live`),
+`upgrade` (one uv or npm package from its changelog to a PR: the bump made with the repo's own tooling, the changelog
+read, the fast check, up to three adapt rounds, test strength on the adapted lines, the `size` approval for a risky
+bump, the full check, then the PR behind the `publish` approval; `/upgrade` starts it),
+`security-sweep` (the installed scanners on every repo as of `origin/<branch>`, read-only, then one security-reviewer
+triage of the new findings; the kept ones go to `brain/_inbox/security-YYYY-MM-DD.md` for `/triage`, no secret value
+and no tracker write; suggested weekly in `hub.json` `schedules`: `{"workflow": "security-sweep", "cron": "0 6 * * 1"}`),
+`backlog-care` (what `/triage --backlog` runs: hygiene findings on the issues it read, then a draft for each of the
+oldest unready issues, one approval per issue; `/triage` applies the approved ones after the run),
+`doc-drift` (after a merge, or monthly with `sha` blank: the contract names the change removed, such as commands,
+make targets, flags, config keys, skills, workflows, paths, tables and columns, then the doc lines that still name
+them, a read-only judge's corrected lines, the owner's approval, and a docs-only PR in the repo; ADR lines are reported,
+never edited; nothing writes the tracker; fetch the repo first: `doc-drift` reads `origin/<default branch>` as last
+fetched),
+`review-incoming` (12 nodes, started by
+`/review`: someone else's PR through the spec, quality and security lenses, the repo's check at the head (never for a
+fork) and one draft you edit; `/review` reads the PR and posts the draft only after you approve it) and
+`release` (`release`: the release PR, then the hub pin PR, each behind its own approval). A hub's own file
 overrides a built-in of the same name.
 
 ```bash
 ./hub workflow list                          # the workflows that load; problems as <file>:<line>: <key>: <message>
 ./hub workflow run deliver --input issue=DEM-7 --input repo=api --input issue_text="..."  # dry: what would run
+./hub workflow run spike --input question="..." --input slug=brief-cache --live  # a spike; answer its pick with respond
+./hub workflow run upgrade --input issue=DEM-8 --input repo=api --input package=httpx --input to=0.29.0 --live
 ./hub workflow run deliver --input issue=DEM-7 --input repo=api --input issue_text="..." --live
+./hub workflow run doc-drift --input repo=api --input sha=<merge sha> --live  # sha blank: the last month
 ./hub workflow run --resume <run>            # continue a failed or paused run; --abandon ends it
 ./hub workflow approve <run>                 # or reject / respond: decide a paused gate; the run resumes
 ./hub workflow test                          # every pack's fixtures, in memory (the hub's make check runs it)
@@ -263,6 +298,8 @@ In `hub web`, the Workflows screen shows each workflow's graph; Workflow runs â€
 built from its `inputs:`; Run detail shows the run's graph with each node's state, decides a waiting gate, and
 cancels, resumes or abandons the run. Portfolio's Needs you lists every gate waiting for a person. The format and
 the engine's rules: [workflow-schema.md](docs/design/workflow-schema.md), [workflow-engine-rules.md](docs/design/workflow-engine-rules.md).
+
+Which flow to use, how each starts and what you decide in it: [docs/FLOWS.md](docs/FLOWS.md).
 
 ### Scenarios
 
@@ -361,8 +398,9 @@ The size decides the ceremony:
    and sends back only the ones it accepts.
 8. **Verify and finish.** `evaluator` re-runs every check and writes `eval.md`; it must say `SHIP`. The pull request is
    opened on a `project.branch_prefix` branch, authored by you.
-9. **Compound.** You go through the agents' learning proposals in `brain/_inbox/` and decide where each lands;
-   `/handoff` if the work spans sessions.
+9. **Compound.** You go through the agents' learning proposals in `brain/_inbox/` and decide where each lands
+   (`/learn promote` runs the weekly `inbox` review: one gate per group, then one hub PR); `/handoff` if the work spans
+   sessions.
 
 </details>
 
@@ -392,17 +430,17 @@ The size decides the ceremony:
 | `/research <question or issue>` | Documents how the code works today, with `path:line` references and no critique; writes `research.md` | Before planning, or for a question that spans many files |
 | `/create-plan <issue or slug>` | Turns a spec and its research into `plan.md`: small tasks, contracts first, each with a verification command; waits for your approval before any code | When a spec is ready and needs a plan |
 | `/recall <topic>` | Answers "what do we know about X, why was Y decided" from the brain, ADRs and past session transcripts, with sources | Before deciding something again |
-| `/learn [personal] <one sentence>` | Proposes one verified, non-obvious learning to `brain/_inbox/`; you decide whether and where it lands. With `personal`, writes your own preference or machine detail to `brain/auto/workspace/` (gitignored, never committed) | When the next session should know something |
-| `/triage <issue \| --backlog \| --hygiene> [--limit N]` | Brings a tracker issue to Definition of Ready (ACs, size, repos, dependencies, a verification command), then labels it ready or `needs-human`; `--backlog` takes the unlabeled open issues one by one, `--hygiene` reports orphan, stale and duplicate issues (at most 50 read per run, or `--limit N`) | Before an issue goes to `/fix`, `/feature` or `hub run` |
+| `/learn [personal\|promote] <one sentence>` | Proposes one verified, non-obvious learning to `brain/_inbox/`; you decide whether and where it lands. With `personal`, writes your own preference or machine detail to `brain/auto/workspace/` (gitignored, never committed). With `promote`, starts the `inbox` workflow: you decide each group of inbox notes at its gate, then merge one hub PR | When the next session should know something |
+| `/triage <issue \| --backlog \| --hygiene> [--limit N]` | Brings a tracker issue to Definition of Ready (ACs, size, repos, dependencies, a verification command), then labels it ready or `needs-human`; `--backlog` runs the `backlog-care` workflow on the open issues it reads (hygiene findings and drafts, one approval per issue, then it applies only the approved ones; weekly, on Mondays), `--hygiene` reports orphan, stale and duplicate issues (at most 50 read per run, or `--limit N`) | Before an issue goes to `/fix`, `/feature` or `hub run` |
 | `/deliver <PR or issue>` | Drives an open PR to merged: conflicts, red CI and review threads, the gates before each push, the default branch's CI after the merge, then the tracker | After the PR is open |
-| `/review <PR>` | Reviews someone else's PR against its ticket, the ADRs and the brain; posts only what you approve | For a teammate's PR or one `hub run` opened |
-| `/release [version]` | Cuts a platform release: merged PRs, the bump, the check on the exact commit, notes with what `hub sync` rewrites, then the hub's pin bump | When `main` holds what the next version ships |
-| `/incident <symptom or issue>` | Investigates a problem with no known reproduction: evidence, ranked hypotheses, a gated mitigation, then `/fix` and a postmortem | When `/fix` cannot start because nothing reproduces yet |
+| `/review <PR>` | Reviews someone else's PR against its ticket, the ADRs and the brain through the `review-incoming` workflow; posts only what you approve | For a teammate's PR or one `hub run` opened |
+| `/release [version]` | Cuts a platform release: runs the `release` workflow (merged PRs, the bump, the check on the exact commit, notes with what `hub sync` rewrites), dispatches the tag, then the hub's pin bump | When `main` holds what the next version ships |
+| `/incident <symptom or issue>` | Starts the `incident` workflow for a problem with no known reproduction: evidence, ranked hypotheses with read-only checks, a gated mitigation, then `/fix` and a postmortem | When `/fix` cannot start because nothing reproduces yet |
 | `/refactor <issue>` | Makes a behaviour-preserving change: characterization tests first, then batched PRs that each pass `check` alone | When a refactor is too big for `/fix` and needs no spec |
-| `/upgrade [package or tool]` | Bumps a dependency, toolchain or plugin pin after reading its changelog, adapting to breaking changes | For dependency and toolchain bumps |
+| `/upgrade [package or tool]` | Starts the `upgrade` workflow for a uv or npm package (bump, changelog, adapt, checks, PR behind an approval); a toolchain, plugin pin, Docker digest or Action goes by hand | For dependency and toolchain bumps |
 | `/adr <question or issue>` | Records an architectural decision: options and trade-offs, your pick, a new ADR that supersedes and never edits | For a decision outside a `/feature` |
 | `/onboard [propose \| apply]` | Reads each repo read-only and proposes `hub.json` values, gates and `AGENTS.project.md` with `path:line` evidence; applies them only after your approval (`propose` only writes the proposal, for a headless run) | The first session in a new hub, or after adding a repo |
-| `/retro [period]` | Turns the period's run metrics into at most five evidence-backed changes to the workflows, filed as issues | Weekly, or after a rough stretch |
+| `/retro [period]` | Turns the period's run metrics into at most five evidence-backed changes to the workflows, drafted for /triage | Weekly, or after a rough stretch |
 | `/overengineering-review [PR \| branch \| path]` | Reads a diff or module for abstractions, options, layers and tests with no real consumer today, proving each with a search and naming the smaller shape; edits and posts nothing | Before a PR, after a feature's tasks, or when code feels heavier than the problem |
 | `/premortem <decision>` | Assumes a decision already failed, names the specific causes, ranks them in words and gives the top three an early-warning sign and the cheapest experiment that could prove the choice wrong; edits nothing | Before accepting an ADR or a plan's key choice |
 | `/context-audit [repo]` | Estimates the always-loaded context (memory files and their imports, skill and agent descriptions), flags what is past known limits or said twice, and ranks the cuts by tokens saved; edits nothing | When sessions feel crowded, after adding skills or rules |

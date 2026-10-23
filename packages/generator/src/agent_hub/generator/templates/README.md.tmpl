@@ -67,3 +67,10 @@ Then, from the hub directory, run `./agent` and type `/kickoff`: its first line 
 - The hub's hooks and settings load only when the session starts in the hub directory: not in an app repo, not in
   the folder above the hub or a hub subfolder, not in a cloud session with the app repos attached. `/kickoff`
   probes the guard (`.claude/guard_probe.p12`) and says so loudly when it is off.@@{join_cloud}
+
+## Pick a flow
+
+Each flow is a built-in workflow. The table says when to use it, how it starts, what you decide in it, and
+which hub skills and agents it reuses.
+
+@@{flow_catalog}

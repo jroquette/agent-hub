@@ -36,6 +36,7 @@ from agent_hub.core.doctor.repo_ui_paths_rule import REPOS_UI_PATHS
 from agent_hub.core.doctor.sandbox_rule import SANDBOX_WORKFLOW
 from agent_hub.core.doctor.settings_rules import SETTINGS_WEAKENING
 from agent_hub.core.doctor.text_rules import ATTRIBUTION_AI, SECRETS_CONFIG
+from agent_hub.core.doctor.workflow_starts_rule import WORKFLOWS_STARTS
 from agent_hub.core.doctor.workflows_rule import WORKFLOWS_VALID
 
 REGISTRY: Final[tuple[Rule, ...]] = (
@@ -64,6 +65,7 @@ REGISTRY: Final[tuple[Rule, ...]] = (
     REPOS_UI_PATHS,
     ENVIRONMENTS_PRODUCTION,
     ENVIRONMENTS_ENV_FILE,
+    WORKFLOWS_STARTS,
     BRAIN_MEMORY,
     SANDBOX_WORKFLOW,
     WORKFLOWS_VALID,

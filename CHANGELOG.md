@@ -13,6 +13,87 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- `hub web` starts workflows by itself (AGH-481, ADR 0048, proposed): `hub.json` declares `schedules` (a workflow, a
+  5-field cron read in UTC, inputs and an optional environment) and `events` (a workflow started on a repo's `merge`,
+  `ci_red` or `pr_opened`, polled through `gh` every 5 minutes, the first poll a baseline). Each slot and each event
+  starts at most once, kept in `<hub>/.agent-runs/schedules/state.json`; a slot missed while `hub web` was down runs
+  once when it comes back. Such a run records `trigger` in its start record. `hub workflow schedule list` prints each
+  schedule's next start, and the `hub doctor` rule `workflows.starts` reports an entry that names an unknown workflow
+  or `issue-to-pr`.
+- The built-in `retro` workflow pack: the week's run metrics (per workflow from the run records, plus the retro
+  metrics, `hub skill-usage` and the transcript counts), at most five changes from an agent that a script keeps only
+  when they cite those numbers exactly, the owner's pick, and issue drafts in `brain/_inbox/retro-<date>.md` for
+  `/triage`; no node writes the tracker. `/retro` starts it when the pinned CLI has it. Left out for now: per-workflow
+  cost (AGH-303) and the event store's per-workflow numbers (AGH-450) (AGH-488).
+- `hub skill-usage [--days 7|30|90]` prints the hub's own skills and agents (its `.claude/skills` and `.claude/agents`)
+  with their runs over 7, 30 and 90 days and their last use, never-used first, as a Markdown table read from the
+  local event store (AGH-482). `/retro` gathers it when the pinned CLI has it; `GET /api/v1/skill-usage` serves the
+  same report.
+- The Portfolio shows the hub's skills and agents with their runs over 7, 30 or 90 days (a switch, 30 days by
+  default), never-used first, with the last use; the first 10 rows, then "Show all" (AGH-482).
+- The built-in `post-merge-verify` pack (AGH-490) runs the merged tickets' AC verifications again on the default
+  branch: `./hub workflow run post-merge-verify --input repo=<dir> --input sha=<merge sha> --live` (a blank `sha`
+  verifies every passing AC at `ref`, default `origin/main`; fetch first). Each verification runs once, in a throwaway
+  worktree at the commit with `WT` set to it; one with a machine path is listed as "cannot run after merge", never as a
+  failure. A read-only agent names the merge likely behind each failure, and the report goes to
+  `brain/_inbox/verify-<date>.md` (nothing when all pass); no tracker write. To run it on each merge and every Sunday,
+  add to `hub.json` `"events": [{"workflow": "post-merge-verify", "on": "merge", "repo": "<dir>", "inputs": {"repo":
+  "<dir>"}}]` and `"schedules": [{"workflow": "post-merge-verify", "cron": "0 6 * * 0", "inputs": {"repo": "<dir>"}}]`.
+- The built-in `brain-care` pack (AGH-487), seeded by `hub sync`: `inbox`, the weekly inbox review (a read-only agent
+  groups `brain/_inbox/` notes, the owner decides each group at its own gate, an external note always alone, then one
+  hub PR with only `brain/` changes), and `context`, the monthly always-loaded context audit (a script names the files
+  past `/context-audit`'s limits; a trim, in a hub PR, only after the owner's approval). `/learn promote` starts `inbox`.
+  Neither writes the tracker.
+- The built-in `spike` pack (AGH-492): `/feature` runs a spike as the `spike` workflow (recall, research, 2 or 3
+  options, the owner's pick or a request for more, a premortem of the pick), which writes
+  `brain/features/<slug>/research.md` and an unnumbered ADR draft for `/adr`, changes no code, and ends done, marked
+  incomplete, when its timebox of agent time (`--input timebox=2h` by default) runs out.
+- The built-in `incident` pack, started by `/incident` (AGH-483): git evidence since a window (first-parent commits,
+  tags and changed files of each repo as last fetched; failing checks on main and logs are left out, so the owner pastes
+  excerpts into the report), a recall of past incidents, at most 5 ranked hypotheses each with a read-only check, run
+  as an argv on an allow-list in a throwaway worktree with an environment built from nothing, a mitigation gate, then a
+  hand-off draft for `/fix` (or `/change`) and a blameless postmortem draft (`draft`, or `open` when nothing was
+  confirmed) in `brain/_inbox/`. The pack applies nothing and writes no tracker.
+- The built-in `upgrade` workflow pack (AGH-484): one uv or npm package from its changelog to a PR. The bump is made
+  with the repo's own tooling (`uv add`/`uv lock --upgrade-package`, `npm install --ignore-scripts`), never by
+  editing a lockfile; the upstream release notes are read without a token; a read-only agent lists where each
+  breaking change hits the repo; the repo's `check_fast` (read from `hub.json`) runs, then up to three adapt rounds;
+  test strength runs on the adapted lines; a major bump, no changelog or more than five touched files asks the
+  `size` approval; the full check runs, and the push waits on the `publish` approval. Three red rounds end the run
+  `blocked` with the failing check named. Existing hubs get the pack on `./hub sync`.
+- The `security-sweep` built-in pack (AGH-486): weekly read-only scanners on every repo, a security-reviewer triage
+  of the new findings, and a note in `brain/_inbox/` for `/triage`, with no secret value and no tracker write.
+- The built-in `backlog-care` pack and `/triage --backlog` (AGH-489): the skill reads the open issues (at most 50, or
+  `--limit N`, oldest first) into one JSON file and runs `backlog-care` on it. The run reports orphan, stale,
+  duplicate and cyclic issues with their evidence and how many open issues were left unread, drafts at most 10 issues
+  with neither the ready label nor `needs-human`, and opens one approval per issue (apply or skip). No node reads or
+  writes the tracker: `/triage` applies the approved drafts after the run, one issue at a time, and leaves skipped
+  ones as they were. A schedule cannot start it (it needs the file the skill writes): run `/triage --backlog` weekly.
+- The built-in `doc-drift` workflow pack (AGH-491): after a merge (or monthly), it lists the contract names the change
+  removed, finds the doc lines that still name them, has a read-only judge propose each corrected line, and after the
+  owner's approval opens a docs-only PR in the repo. ADR lines are reported, never edited; nothing writes the tracker.
+- The built-in `review-incoming` workflow pack (AGH-493): someone else's PR through the spec, quality and security
+  lenses (the security lens when a script finds the diff touches input handling, auth, secrets, subprocesses, file
+  paths or parsing), the repo's `check` at the head in a throwaway worktree (never for a fork), then one draft in
+  `.agent-runs/review-incoming/<run>.md` that you edit and answer with `./hub workflow respond <run> --choice
+  comment|request-changes|approve|reject`. The run never posts: it writes the payload `/review` posts. A new pack
+  folder: `./hub sync` seeds it into an existing hub.
+- A built-in `release` workflow pack (AGH-494): `/release` runs it to list the PRs merged since the last tag,
+  propose the version, make the release commit, compute what `hub sync` rewrites, write the notes and run the check on
+  that exact commit; the release PR opens after the owner's approval. Once the platform repo's release workflow has
+  tagged the release commit (the PR's head: merge it with a merge commit), a second approval opens the hub PR that
+  raises `platform.version` and runs `./hub sync`. A red check ends the run blocked; no node creates a tag or writes
+  the tracker.
+- A flow table (AGH-495): which built-in flow to use, how it starts, the gates you decide and the hub skills and
+  agents it reuses, generated from each built-in workflow's description and its pack. A new hub's `README.md` ends
+  with it, and the new `docs/FLOWS.md` holds the same table with each flow's details; an existing hub can copy it from there (`hub sync`
+  does not rewrite the README). `/kickoff` and `/triage` now route work to the flows by name.
+
+- `hub step config [--branch NAME --slug SLUG|--run-slug]` prints, as one JSON object, the `hub.json` values the
+  built-in packs' scripts need (the project's branch, the developer's branch prefix with `hub.local.json` first, the
+  author, the ready label and team keys, each repo's GitHub name, default branch and gates, and target skeletons for
+  `hub step commits|pr`), read-only and without any token (AGH-480). Every pack's scripts now take these values from a
+  `config` node instead of opening `hub.json` or `hub.local.json`.
 - Scenarios and actions (AGH-350, [ADR 0041](docs/adr/0041-scenarios-actions-and-enforced-access.md), proposed;
   [scenarios.md](docs/design/scenarios.md)). The CLI parts shipped in 0.19.0 and 0.20.0 without an entry here, and the screens in
   0.21.0 (below); this entry covers the whole feature. A hub without `scenarios/`, `actions/` and `environments` renders, syncs and runs
@@ -49,6 +130,15 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   - `hub init` writes an example: the read action `actions/demo/demo-get-status.yaml` with its script and the scenario
     `scenarios/demo/demo-service-up.yaml`, each only where absent (AGH-365). They are your files: `hub sync` never
     adds them to an existing hub and `hub.lock` does not list them.
+
+### Changed
+
+- `/upgrade` starts the `upgrade` workflow (`./hub workflow run upgrade … --live`) for a uv or npm package, one run
+  per package; a toolchain, plugin pin, Docker digest, GitHub Action or lock-maintenance bump follows its steps by
+  hand, as before.
+- `/review` reads the PR into files, fetches its head to `refs/agent-hub/review/<n>` (never a branch) and starts
+  `review-incoming`; it posts only when the run ended with an outcome, after the payload's sha256 matches the run's
+  record, and deletes the ref once the run ended (AGH-493).
 
 ## [0.22.0] - 2026-10-23
 

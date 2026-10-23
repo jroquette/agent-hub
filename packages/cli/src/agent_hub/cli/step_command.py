@@ -1,8 +1,9 @@
 """``hub step worktree|verdict|commits|pr|report``: ``hub run``'s stages as commands; and
 ``hub step ticket-brief|preflight|change-request|decide|amend-plan``, the ticket records an
 ``implement`` run writes into the hub (``step_records``), ``pending-decision``, the owner's
-decision a new run follows, ``outcome``, a merged ticket's outcome (written once), and
-``preflight-due``, whether a dependent still has to read a blocker's outcome.
+decision a new run follows, ``outcome``, a merged ticket's outcome (written once),
+``preflight-due``, whether a dependent still has to read a blocker's outcome, and ``config``, the
+``hub.json`` values a pack script needs (read-only; the scripts never open ``hub.json``).
 
 The issue-to-pr workflow (ADR 0032) runs them as ``hub step`` nodes. Each prints one JSON object
 on stdout, the ``output_format`` its node declares, and exits 0; a failure is one
@@ -56,9 +57,15 @@ from typer._click.exceptions import ClickException
 
 from agent_hub.cli import step_records
 from agent_hub.cli.command_exits import fail
-from agent_hub.cli.effective_config import effective_with_prefix_or_fail
+from agent_hub.cli.effective_config import (
+    EffectiveConfig,
+    branch_prefix_or_lines,
+    effective_or_problems,
+    effective_with_prefix_or_fail,
+    git_identity_reader,
+)
 from agent_hub.cli.errors import ChildTimedOutError, PrStepError, WorktreeError
-from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit
+from agent_hub.cli.hub_config_reader import FILE_LABEL, load_hub_config_or_exit, local_lines
 from agent_hub.cli.hub_root import hub_checkout, hub_root_or_exit
 from agent_hub.cli.pr_steps import (
     PrTarget,
@@ -87,7 +94,13 @@ from agent_hub.cli.run_steps import (
 from agent_hub.cli.ship_steps import ship_child, step_timeouts
 from agent_hub.cli.worktree_steps import check_branches, create_worktree, worktree_task
 from agent_hub.core.features.ticket_writes import PreflightFacts, TicketRecordError
-from agent_hub.core.hub_config.conventions import EffectiveConventions
+from agent_hub.core.hub_config.conventions import DEFAULT_BRANCH, EffectiveConventions
+from agent_hub.core.hub_config.effective_identity import (
+    IdentityKey,
+    IdentityValues,
+    resolve_identity,
+)
+from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.json_form import JsonValue
 from agent_hub.core.runner.run_record import RunOutcome, Stage
 from agent_hub.core.runner.run_texts import commit_summary, pr_body
@@ -99,6 +112,7 @@ from agent_hub.core.runner.verdict import (
     session_outcome,
 )
 from agent_hub.core.workflows.failures import NodeFailedError, kind_for_exit
+from agent_hub.core.workspace.branch_pattern import render_branch
 
 COMMAND: Final = "step"
 NO_COMMIT: Final = "no commit on the branch (the session reported done or gave no verdict)"
@@ -112,6 +126,16 @@ STOPPED: Final = "the implementing session stopped: "
 # A discovery (a broken plan assumption, implement's loop back to preflight) is one line.
 MAX_DISCOVERY_CHARS: Final = 1000
 FENCE_RUN: Final = re.compile("`{3,}")
+# ``config``: a branch name's first part (an issue or a pack's stem), its slug, a run's id, and
+# the most the printed object may hold.
+BRANCH_STEM: Final = re.compile("[A-Za-z0-9][A-Za-z0-9-]{0,63}")
+BRANCH_SLUG: Final = re.compile("[a-z0-9][a-z0-9.-]{0,63}")
+RUN_ID: Final = re.compile("[a-z0-9][a-z0-9-]{0,63}")
+MAX_CONFIG_BYTES: Final = 64 * 1024
+# A pack's own branch has no issue convention: titles not configured, the PR title the subject.
+UNTITLED: Final = EffectiveConventions(
+    branch="", commit_title="", pr_title="", titles_configured=False, pr_title_explicit=False
+)
 COMMIT: Final = re.compile("[0-9a-f]{7,40}")
 
 step_app = typer.Typer(name=COMMAND, no_args_is_help=True, help="Run one stage of hub run.")
@@ -617,6 +641,121 @@ def preflight_due(
     )
 
 
+@step_app.command("config")
+def config(
+    context: typer.Context,
+    *,
+    branch: Annotated[
+        str,
+        typer.Option(
+            "--branch", metavar="NAME", help="Also print <prefix><name lower>-<slug> as branch."
+        ),
+    ] = "",
+    slug: Annotated[str, typer.Option("--slug", metavar="SLUG", help="The branch's slug.")] = "",
+    run_slug: Annotated[
+        bool, typer.Option("--run-slug", help="The slug is the run's id (AGENT_HUB_RUN_ID).")
+    ] = False,
+) -> None:
+    """Print the hub.json values a pack script needs, read as hub run reads them; write nothing."""
+    branch_slug = _branch_slug(branch, slug=slug, run_slug=run_slug)
+    hub = _hub()
+    hub_config = load_hub_config_or_exit(hub / FILE_LABEL)
+    prefix: str | None
+    if branch:
+        effective, prefix = effective_with_prefix_or_fail(context, hub_config, home=hub)
+    else:
+        # Without --branch, a hub with no prefix still prints the rest (branch_prefix null).
+        loaded = effective_or_problems(hub_config, home=hub)
+        if not isinstance(loaded, EffectiveConfig):
+            context.fail("\n".join(local_lines(loaded)))
+        effective, found = loaded, branch_prefix_or_lines(loaded)
+        prefix = found if isinstance(found, str) else None
+    value = _config_value(effective.config, prefix=prefix, author=_author(effective, hub))
+    if branch and prefix is not None:
+        value["branch_name"] = render_branch(
+            DEFAULT_BRANCH, prefix="", issue_id=branch, slug=branch_slug
+        )
+        value["branch"] = render_branch(
+            DEFAULT_BRANCH, prefix=prefix, issue_id=branch, slug=branch_slug
+        )
+    if len(json.dumps(value, sort_keys=True).encode()) > MAX_CONFIG_BYTES:
+        _fail("config", f"the config is larger than {MAX_CONFIG_BYTES // 1024} KiB")
+    _print(value)
+
+
+def _branch_slug(branch: str, *, slug: str, run_slug: bool) -> str:
+    """``config``'s branch options checked: the slug (the run's id with ``--run-slug``)."""
+    run_id = os.environ.get("AGENT_HUB_RUN_ID", "") if run_slug else ""
+    if (slug or run_slug) and not branch:
+        raise typer.BadParameter("--slug and --run-slug need --branch", param_hint="--branch")
+    if branch and not BRANCH_STEM.fullmatch(branch):
+        raise typer.BadParameter("use letters, digits and dashes", param_hint="--branch")
+    if branch and slug and run_slug:
+        raise typer.BadParameter("give --slug or --run-slug, not both", param_hint="--slug")
+    if branch and not slug and not run_slug:
+        raise typer.BadParameter("give --slug or --run-slug", param_hint="--slug")
+    if slug and not BRANCH_SLUG.fullmatch(slug):
+        raise typer.BadParameter(
+            "use lowercase letters, digits, dots and dashes", param_hint="--slug"
+        )
+    if run_slug and not RUN_ID.fullmatch(run_id):
+        raise typer.BadParameter("AGENT_HUB_RUN_ID is not a run id", param_hint="--run-slug")
+    return slug or run_id
+
+
+def _author(effective: EffectiveConfig, hub: Path) -> tuple[str | None, str | None]:
+    """The developer's author name and email (``hub.local.json``, then hub.json, then git)."""
+    read_git, _problem = git_identity_reader(hub)
+    resolved = resolve_identity(
+        local=IdentityValues.of(effective.local.project),
+        hub=IdentityValues.of(effective.config.project),
+        keys=(IdentityKey.AUTHOR_NAME, IdentityKey.AUTHOR_EMAIL),
+        read_git=read_git,
+    )
+    name, email = (
+        resolved.values[key] for key in (IdentityKey.AUTHOR_NAME, IdentityKey.AUTHOR_EMAIL)
+    )
+    return (None if name is None else name.value, None if email is None else email.value)
+
+
+def _config_value(
+    hub_config: HubConfig, *, prefix: str | None, author: tuple[str | None, str | None]
+) -> dict[str, JsonValue]:
+    """``config``'s object: the project's and each repo's facts, and their target skeletons."""
+    project = hub_config.project
+    repos: list[JsonValue] = []
+    for repo in hub_config.repos:
+        default = hub_config.default_branch_for(repo.dir)
+        repos.append(
+            {
+                "dir": repo.dir,
+                "github": repo.github,
+                "default_branch": default,
+                "check_fast": repo.check_fast,
+                "check": repo.check,
+                "target": _target_facts(default_branch=default, github=repo.github, names=UNTITLED),
+            }
+        )
+    # The hub repo's own branch: the hub is no repo of hub.json.
+    hub_default = project.default_branch
+    return {
+        "default_branch": hub_default,
+        "branch_prefix": prefix,
+        "author_name": author[0],
+        "author_email": author[1],
+        "ready_label": hub_config.tracker.ready_label,
+        "teams": list(hub_config.tracker.team_keys),
+        "hub": {
+            "github": project.hub_repo,
+            "default_branch": hub_default,
+            "target": _target_facts(
+                default_branch=hub_default, github=project.hub_repo, names=UNTITLED
+            ),
+        },
+        "repos": repos,
+    }
+
+
 def _hub() -> Path:
     root = hub_root_or_exit(os.environ, command=COMMAND)
     return hub_checkout(root, command=COMMAND, environ=without(os.environ, CHILD_HIDDEN))
@@ -647,20 +786,31 @@ class StepTarget:
 
 
 def _target_value(children: RunChildren, path: Path, *, base: str) -> dict[str, JsonValue]:
-    conventions = children.conventions
+    facts = _target_facts(
+        default_branch=children.default_branch, github=children.github, names=children.conventions
+    )
     return {
         "path": str(path),
         "branch": children.branch,
         "base": base,
-        "default_branch": children.default_branch,
-        "github": children.github,
         "gate": children.gate,
+        **facts,
+    }
+
+
+def _target_facts(
+    *, default_branch: str, github: str, names: EffectiveConventions
+) -> dict[str, JsonValue]:
+    """A target's repo facts, as ``--target`` reads them back (``config`` prints them too)."""
+    return {
+        "default_branch": default_branch,
+        "github": github,
         "conventions": {
-            "branch": conventions.branch,
-            "commit_title": conventions.commit_title,
-            "pr_title": conventions.pr_title,
-            "titles_configured": conventions.titles_configured,
-            "pr_title_explicit": conventions.pr_title_explicit,
+            "branch": names.branch,
+            "commit_title": names.commit_title,
+            "pr_title": names.pr_title,
+            "titles_configured": names.titles_configured,
+            "pr_title_explicit": names.pr_title_explicit,
         },
     }
 

@@ -1,6 +1,6 @@
 ---
 name: retro
-description: Turn the period's run metrics into at most five evidence-backed changes to the workflows, filed as tracker issues.
+description: Turn the period's run metrics, through the retro workflow, into at most five evidence-backed changes to the workflows, as issue drafts for /triage.
 disable-model-invocation: true
 argument-hint: "[period]"
 ---
@@ -11,8 +11,16 @@ Paths below are relative to the hub (the directory with `hub.json`); repos are i
 Each step carries its type: `script` runs commands and reads files, with no judgement; `agent` reads and reasons; `gate` waits for the user's decision.
 Metrics stay local and aggregated: by step, gate, repo, ticket size or run, never by person. No ranking or comparison of individual developers; leave author names out of what you quote.
 
+**With the workflow.** When `./hub workflow list` shows `retro`, the built-in workflow does the gathering, the proposals, the evidence check and the user's pick, and files nothing: run `./hub workflow run retro --input since=<n> --live` from the hub, with its output redirected to a file and `$?` checked (`<n>` is the period in days: `14d` gives 14, `since <date>` the days since that date; no period gives 7, more than 90 gives 90).
+The command's last line is `run <run>: paused at pick` or `run <run>: done, outcome <outcome>`; the rest is in `.agent-runs/workflows/<run>/records.jsonl`, whose `step_end` lines hold each step's `output` (`metrics`: the summary, the sources read and missing; `vet`: the numbered changes and the dropped ones; `drafts`: the outcome and the file).
+- `paused at pick`: show the user the `message` of the last `"event": "gate"` line of `.agent-runs/workflows/<run>/records.jsonl` (the numbered changes with their evidence). The user answers it, never yourself: `./hub workflow respond <run> --choice keep --text "1,3"` (the numbers to keep, or `all`) or `./hub workflow respond <run> --choice none`; the run then resumes on its own.
+- `drafted`: the kept changes are issue drafts in `brain/_inbox/retro-<date>.md` (the `drafts` output's `path`); the user files the ones worth doing in the tracker, then runs `/triage` on them, and deletes the file once they are filed.
+- `none kept` or `nothing to change`: report it with the run's summary; nothing is drafted.
+
+Fallback: if `./hub workflow run` or the `retro` workflow is not available, follow the steps below by hand.
+
 1. `script` **Gather** the period's data, each source on its own, its output redirected to a file and `$?` checked:
-   first the number of proposals in `brain/_inbox/` (before `make mine`, which writes its report there), then `make mine DAYS=<n>` (transcript failures), `make retro DAYS=<n>` (PRs, cycle time, runs, CI, memory), `./hub stats` when the pinned CLI has it, `.agent-runs/*.jsonl` (outcome, failure stage, cost), the `brain/journal/` entries of the period,
+   first the number of proposals in `brain/_inbox/` (before `make mine`, which writes its report there), then `make mine DAYS=<n>` (transcript failures), `make retro DAYS=<n>` (PRs, cycle time, runs, CI, memory), `./hub stats` when the pinned CLI has it, `./hub skill-usage` when the pinned CLI has it (the hub's skills and agents with their runs over 7, 30 and 90 days, never-used first; its table goes into the retro section as it is), `.agent-runs/*.jsonl` (outcome, failure stage, cost), the `brain/journal/` entries of the period,
    and the merged PRs of each repo in `hub.json` → `repos` with their review rounds: `gh pr list --repo <github> --state merged --search 'merged:>=<start date>' --limit 500 --json number,url,mergedAt,reviews` (`<github>` from that repo's entry). A list as long as the limit is cut off: report that repo's PRs as **partial**.
    A source that is absent, empty or fails is **missing**: list it with the reason (command not there, no file, non-zero exit) and go on with the rest. Every source missing: say so and stop.
 2. `agent` **Find where the flow gets stuck**: the steps with the most blocks or reruns, the gates that wait longest, review findings that repeat across PRs, `agent-failed` causes, cost outliers per ticket size.

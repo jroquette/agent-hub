@@ -635,6 +635,8 @@ PROJECT_BRANCH_READERS = {
     "cli/src/agent_hub/cli/mcp_command.py": 1,
     # the hub checkout's branch in the brief
     "cli/src/agent_hub/cli/brief_command.py": 1,
+    # the hub repo's branch hub step config prints for the packs' scripts (the hub target's base)
+    "cli/src/agent_hub/cli/step_command.py": 1,
     # project_default_branch for ci.yml, and the project branch in AGENTS.md's mentions
     "generator/src/agent_hub/generator/placeholders.py": 2,
     # the project's branch in the managed settings' push denies (the guard's protected set)
@@ -1901,6 +1903,46 @@ def test_names_first_name_when_environment_name_repeated_ignoring_case() -> None
     assert [(problem.path, problem.message) for problem in problems] == [
         ("environments.LIVE", 'environment name "LIVE" is already used by "live", ignoring case')
     ]
+
+
+def test_reports_unknown_environment_when_schedule_names_an_undeclared_one() -> None:
+    document = an_environments_document()
+    document["schedules"] = [{"workflow": "retro", "cron": "0 9 * * 1", "environment": "qa"}]
+
+    assert error_types(document) == [(("schedules", 0, "environment"), "unknown_environment")]
+
+
+def test_reports_duplicate_when_two_schedules_name_one_workflow() -> None:
+    document = a_hub_document()
+    document["schedules"] = [
+        {"workflow": "retro", "cron": "0 9 * * 1"},
+        {"workflow": "retro", "cron": "0 9 * * 5"},
+    ]
+
+    assert error_types(document) == [(("schedules", 1, "workflow"), "duplicate_schedule")]
+
+
+def test_reports_unknown_repo_when_event_schedule_names_no_repo_dir() -> None:
+    document = a_hub_document()
+    document["events"] = [
+        {"workflow": "verify", "on": "merge", "repo": "demo-web"},
+        {"workflow": "verify", "on": "merge", "repo": "demo-api"},
+        {"workflow": "verify", "on": "merge", "repo": "demo-api"},
+    ]
+
+    assert error_types(document) == [
+        (("events", 0, "repo"), "unknown_repo"),
+        (("events", 2, "workflow"), "duplicate_event"),
+    ]
+
+
+def test_reports_event_input_when_event_schedule_sets_sha() -> None:
+    document = a_hub_document()
+    document["events"] = [
+        {"workflow": "verify", "on": "merge", "repo": "demo-api", "inputs": {"sha": "abc"}}
+    ]
+
+    assert error_types(document) == [(("events", 0, "inputs", "sha"), "event_input")]
 
 
 def test_leaves_ui_paths_absent_when_repo_omits_key() -> None:

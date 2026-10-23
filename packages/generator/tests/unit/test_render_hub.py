@@ -53,6 +53,7 @@ from agent_hub.generator.placeholders import (
 )
 from agent_hub.generator.registry import REGISTRY, TemplateEntry, TemplateSource
 from agent_hub.generator.render_hub import project_json_siblings, render_entries, render_hub
+from agent_hub.generator.workflow_discovery import discover_workflows
 
 # AC-3.13: the D5 path set of docs/design/hub-generator.md, in code-point order; AC-4.1 adds
 # AGH-19's rendered set (spec "The rendered set", for project `demo`).
@@ -156,6 +157,65 @@ DESIGN_PATHS = (
     "scripts/mine_transcripts.py",
     "scripts/recall_transcripts.py",
     "scripts/retro_metrics.py",
+    # AGH-489: the built-in backlog-care pack, seeded.
+    "workflows/backlog-care/backlog-care.yaml",
+    "workflows/backlog-care/fixtures/backlog-approve-and-skip.yaml",
+    "workflows/backlog-care/fixtures/backlog-mixed.yaml",
+    "workflows/backlog-care/fixtures/backlog-over-limit.yaml",
+    "workflows/backlog-care/fixtures/backlog-paused.yaml",
+    "workflows/backlog-care/fixtures/backlog-read-failed.yaml",
+    "workflows/backlog-care/prompts/draft.md",
+    "workflows/backlog-care/scripts/drafts.py",
+    "workflows/backlog-care/scripts/gates.py",
+    "workflows/backlog-care/scripts/hygiene.py",
+    "workflows/backlog-care/scripts/read.py",
+    "workflows/backlog-care/scripts/report.py",
+    # AGH-487: the built-in brain-care pack, seeded.
+    "workflows/brain-care/context.yaml",
+    "workflows/brain-care/fixtures/context-declined.yaml",
+    "workflows/brain-care/fixtures/context-no-commit.yaml",
+    "workflows/brain-care/fixtures/context-over-budget.yaml",
+    "workflows/brain-care/fixtures/context-trimmed.yaml",
+    "workflows/brain-care/fixtures/inbox-all-drop.yaml",
+    "workflows/brain-care/fixtures/inbox-all-skipped.yaml",
+    "workflows/brain-care/fixtures/inbox-empty.yaml",
+    "workflows/brain-care/fixtures/inbox-external-pending.yaml",
+    "workflows/brain-care/fixtures/inbox-three-notes.yaml",
+    "workflows/brain-care/inbox.yaml",
+    "workflows/brain-care/prompts/context-report.md",
+    "workflows/brain-care/prompts/context-trim.md",
+    "workflows/brain-care/prompts/group.md",
+    "workflows/brain-care/scripts/apply.py",
+    "workflows/brain-care/scripts/check_managed.py",
+    "workflows/brain-care/scripts/groups.py",
+    "workflows/brain-care/scripts/hub_branch.py",
+    "workflows/brain-care/scripts/inventory.py",
+    "workflows/brain-care/scripts/outcome.py",
+    "workflows/brain-care/scripts/read_inbox.py",
+    # AGH-491: the built-in doc-drift pack, seeded.
+    "workflows/doc-drift/doc-drift.yaml",
+    "workflows/doc-drift/fixtures/drift-adr-only.yaml",
+    "workflows/doc-drift/fixtures/drift-declined.yaml",
+    "workflows/doc-drift/fixtures/drift-none.yaml",
+    "workflows/doc-drift/fixtures/drift-renamed-command.yaml",
+    "workflows/doc-drift/prompts/judge.md",
+    "workflows/doc-drift/scripts/branch.py",
+    "workflows/doc-drift/scripts/contract.py",
+    "workflows/doc-drift/scripts/doc_fix.py",
+    "workflows/doc-drift/scripts/mentions.py",
+    # AGH-483: the built-in incident pack, seeded.
+    "workflows/incident/fixtures/incident-awaiting-mitigation.yaml",
+    "workflows/incident/fixtures/incident-confirmed.yaml",
+    "workflows/incident/fixtures/incident-mitigation-declined.yaml",
+    "workflows/incident/fixtures/incident-none-confirmed.yaml",
+    "workflows/incident/incident.yaml",
+    "workflows/incident/prompts/hypotheses.md",
+    "workflows/incident/prompts/postmortem.md",
+    "workflows/incident/prompts/recall.md",
+    "workflows/incident/scripts/check.py",
+    "workflows/incident/scripts/evidence.py",
+    "workflows/incident/scripts/inbox.py",
+    "workflows/incident/scripts/mitigation.py",
     # AGH-227: the built-in issue-to-pr pack, seeded.
     "workflows/issue-to-pr/fixtures/blocked.yaml",
     "workflows/issue-to-pr/fixtures/dirty.yaml",
@@ -167,6 +227,56 @@ DESIGN_PATHS = (
     "workflows/issue-to-pr/fixtures/pr-failure.yaml",
     "workflows/issue-to-pr/issue-to-pr.yaml",
     "workflows/issue-to-pr/prompts/implement.md",
+    "workflows/post-merge-verify/fixtures/verify-all-green.yaml",
+    "workflows/post-merge-verify/fixtures/verify-cannot-run.yaml",
+    "workflows/post-merge-verify/fixtures/verify-explain-failed.yaml",
+    "workflows/post-merge-verify/fixtures/verify-regression.yaml",
+    "workflows/post-merge-verify/post-merge-verify.yaml",
+    "workflows/post-merge-verify/prompts/explain.md",
+    "workflows/post-merge-verify/scripts/report.py",
+    "workflows/post-merge-verify/scripts/selection.py",
+    "workflows/post-merge-verify/scripts/verify.py",
+    "workflows/release/fixtures/release-check-red.yaml",
+    "workflows/release/fixtures/release-declined.yaml",
+    "workflows/release/fixtures/release-minor.yaml",
+    "workflows/release/fixtures/release-nothing.yaml",
+    "workflows/release/fixtures/release-pin-declined.yaml",
+    "workflows/release/fixtures/release-pin.yaml",
+    "workflows/release/fixtures/release-tag-missing.yaml",
+    "workflows/release/prompts/notes.md",
+    "workflows/release/release.yaml",
+    "workflows/release/scripts/bump.py",
+    "workflows/release/scripts/compose.py",
+    "workflows/release/scripts/exact_check.py",
+    "workflows/release/scripts/hub_branch.py",
+    "workflows/release/scripts/pin.py",
+    "workflows/release/scripts/report.py",
+    "workflows/release/scripts/since.py",
+    "workflows/release/scripts/tagged.py",
+    "workflows/retro/fixtures/retro-all-dropped.yaml",
+    "workflows/retro/fixtures/retro-keep-none.yaml",
+    "workflows/retro/fixtures/retro-no-runs.yaml",
+    "workflows/retro/fixtures/retro-pending.yaml",
+    "workflows/retro/fixtures/retro-week.yaml",
+    "workflows/retro/prompts/changes.md",
+    "workflows/retro/retro.yaml",
+    "workflows/retro/scripts/drafts.py",
+    "workflows/retro/scripts/metrics.py",
+    "workflows/retro/scripts/vet.py",
+    "workflows/review-incoming/fixtures/incoming-clean-approved.yaml",
+    "workflows/review-incoming/fixtures/incoming-clean.yaml",
+    "workflows/review-incoming/fixtures/incoming-lens-failed.yaml",
+    "workflows/review-incoming/fixtures/incoming-rejected.yaml",
+    "workflows/review-incoming/fixtures/incoming-security.yaml",
+    "workflows/review-incoming/prompts/draft.md",
+    "workflows/review-incoming/prompts/quality-lens.md",
+    "workflows/review-incoming/prompts/security-lens.md",
+    "workflows/review-incoming/prompts/spec-lens.md",
+    "workflows/review-incoming/review-incoming.yaml",
+    "workflows/review-incoming/scripts/check.py",
+    "workflows/review-incoming/scripts/fetch.py",
+    "workflows/review-incoming/scripts/review.py",
+    "workflows/review-incoming/scripts/surface.py",
     "workflows/sdlc/deliver.yaml",
     "workflows/sdlc/fixtures/deliver-blocked.yaml",
     "workflows/sdlc/fixtures/deliver-check-error.yaml",
@@ -223,6 +333,41 @@ DESIGN_PATHS = (
     "workflows/sdlc/scripts/preflight_result.py",
     "workflows/sdlc/scripts/verdict.py",
     "workflows/sdlc/ticket-pass.yaml",
+    "workflows/security-sweep/fixtures/sweep-findings.yaml",
+    "workflows/security-sweep/fixtures/sweep-no-scanners.yaml",
+    "workflows/security-sweep/fixtures/sweep-nothing-new.yaml",
+    "workflows/security-sweep/fixtures/sweep-triage-failed.yaml",
+    "workflows/security-sweep/prompts/triage.md",
+    "workflows/security-sweep/scripts/report.py",
+    "workflows/security-sweep/scripts/scan.py",
+    "workflows/security-sweep/scripts/unseen.py",
+    "workflows/security-sweep/security-sweep.yaml",
+    "workflows/spike/fixtures/spike-more-paused.yaml",
+    "workflows/spike/fixtures/spike-more.yaml",
+    "workflows/spike/fixtures/spike-no-pick.yaml",
+    "workflows/spike/fixtures/spike-pick.yaml",
+    "workflows/spike/fixtures/spike-timebox.yaml",
+    "workflows/spike/prompts/options.md",
+    "workflows/spike/prompts/premortem.md",
+    "workflows/spike/prompts/recall.md",
+    "workflows/spike/prompts/research.md",
+    "workflows/spike/scripts/budget.py",
+    "workflows/spike/scripts/draft.py",
+    "workflows/spike/spike.yaml",
+    "workflows/upgrade/fixtures/upgrade-adapt-exhausted.yaml",
+    "workflows/upgrade/fixtures/upgrade-lockfile-edited.yaml",
+    "workflows/upgrade/fixtures/upgrade-major-breaking.yaml",
+    "workflows/upgrade/fixtures/upgrade-patch-green.yaml",
+    "workflows/upgrade/fixtures/upgrade-split.yaml",
+    "workflows/upgrade/prompts/adapt.md",
+    "workflows/upgrade/prompts/changelog.md",
+    "workflows/upgrade/scripts/bump.py",
+    "workflows/upgrade/scripts/check.py",
+    "workflows/upgrade/scripts/fast_gate.py",
+    "workflows/upgrade/scripts/outcome.py",
+    "workflows/upgrade/scripts/release_notes.py",
+    "workflows/upgrade/scripts/strength.py",
+    "workflows/upgrade/upgrade.yaml",
 )
 # AGH-19 spec "The rendered set": the base plugin's agents, by file stem, and its skills, by
 # folder name.
@@ -785,6 +930,8 @@ def test_defines_check_returning_none_when_stub_parsed(
 READER_PATH = "plugin/hub-workflow/hooks/stdlib_reader.py"
 READER_MODULE = "hub_stdlib_reader"
 EXTENSION_RUNNER = "plugin/hub-workflow/hooks/project_guard_runner.py"
+SWEEP_SCAN = "workflows/security-sweep/scripts/scan.py"
+GUARD_HOOK = "plugin/hub-workflow/hooks/guard.py"
 # `sys.stdlib_module_names` is the running 3.14's: these stdlib modules came after 3.9 (What's New
 # in Python 3.11 and 3.14), so a rendered file that imports one fails on the system python3.
 POST_39_STDLIB = frozenset(
@@ -843,9 +990,42 @@ def test_parses_as_python39_when_rendered(demo_render: dict[str, RenderedFile]) 
         "plugin/demo/hooks",
         "plugin/hub-workflow/hooks",
         "scripts",
+        # The brain-care pack's helpers (AGH-487), as the sdlc pack's.
+        "workflows/brain-care/scripts",
+        # The doc-drift pack's scripts (AGH-491), run by uv on its Python, also parse as 3.9.
+        "workflows/doc-drift/scripts",
+        # The post-merge-verify pack's scripts (AGH-490), run by uv as the sdlc pack's are.
+        "workflows/post-merge-verify/scripts",
+        # The release pack's helpers (AGH-494), as the sdlc pack's.
+        "workflows/release/scripts",
+        # The review-incoming pack's helpers (AGH-493), as the sdlc pack's, parse as 3.9.
+        "workflows/review-incoming/scripts",
         # The sdlc pack's helpers (AGH-229), run by uv on its Python, also parse as 3.9.
         "workflows/sdlc/scripts",
+        # And the backlog-care pack's (AGH-489).
+        "workflows/backlog-care/scripts",
+        # The incident pack's helpers (AGH-483), likewise.
+        "workflows/incident/scripts",
+        # The retro pack's scripts (AGH-488), likewise.
+        "workflows/retro/scripts",
+        # The security-sweep pack's scripts (AGH-486), likewise.
+        "workflows/security-sweep/scripts",
+        # The spike pack's helpers (AGH-492), likewise.
+        "workflows/spike/scripts",
+        # The upgrade pack's (AGH-484), likewise.
+        "workflows/upgrade/scripts",
     }
+
+
+def test_names_no_datetime_utc_alias_when_rendered(demo_render: dict[str, RenderedFile]) -> None:
+    # datetime.UTC is 3.11+: a rendered script that names it fails to import on 3.9 (AGH-480).
+    for path, module in rendered_python(demo_render).items():
+        for node in ast.walk(module):
+            if isinstance(node, ast.ImportFrom) and node.module == "datetime":
+                assert "UTC" not in {alias.name for alias in node.names}, path
+            if isinstance(node, ast.Attribute) and node.attr == "UTC":
+                value = node.value
+                assert not (isinstance(value, ast.Name) and value.id == "datetime"), path
 
 
 def test_imports_stdlib_or_siblings_when_rendered(demo_render: dict[str, RenderedFile]) -> None:
@@ -866,6 +1046,12 @@ def test_imports_stdlib_or_siblings_when_rendered(demo_render: dict[str, Rendere
             assert not newer, f"{path} imports {name}, added after 3.9"
         for call in by_path_loads(module):
             if path == EXTENSION_RUNNER:
+                continue
+            if path == SWEEP_SCAN:
+                # AGH-486, closed: the security sweep loads the hub's own guard, by its fixed
+                # path, to apply the guard's secret-file rule (no copy of its patterns).
+                assert ast.literal_eval(call.args[0]) == "hub_guard", path
+                assert f'GUARD = "{GUARD_HOOK}"' in demo_render[path].content.decode(), path
                 continue
             assert folder == "scripts", f"{path} loads a module by path"
             [name, location] = call.args
@@ -1646,6 +1832,67 @@ def test_routes_work_to_shipped_skills_when_entry_skill_rendered(
     assert named <= set(BASE_SKILLS), named
 
 
+# AGH-495 (AC-2): `/kickoff` routes work by flow, each named "the `<flow>` flow" with the skill
+# that starts it. A name is a built-in on disk or a pack still in review.
+FLOW_ROUTES = (
+    ("implement", "implement"),
+    ("incident", "incident"),
+    ("upgrade", "upgrade"),
+    ("feature", "spike"),
+    ("learn", "inbox"),
+)
+# Packs still in review (AGH-480); a name may stay once its pack lands.
+FLOWS_IN_FLIGHT = frozenset({"incident", "upgrade", "spike", "inbox"})
+FLOW_NAME = re.compile(r"the `([a-z][a-z0-9-]*)` flow")
+STARTS_WORKFLOW = re.compile(r"\./hub workflow run ([a-z][a-z0-9-]*)")
+
+
+def flow_names(text: str) -> set[str]:
+    return set(FLOW_NAME.findall(text))
+
+
+def kickoff_step_five(text: str) -> list[str]:
+    """Step 5 of ``/kickoff``: its ``5. `` line up to the ``Never start editing`` line."""
+    lines = text.splitlines()
+    start = next(index for index, line in enumerate(lines) if line.startswith("5. "))
+    end = next(index for index, line in enumerate(lines) if line.startswith("Never start editing"))
+    return lines[start:end]
+
+
+def test_routes_by_flow_when_kickoff_rendered(
+    demo_render: dict[str, RenderedFile], tmp_path: Path
+) -> None:
+    step = kickoff_step_five(skill_text(demo_render, "kickoff"))
+    block = "\n".join(step)
+    builtins = {workflow.name for workflow in discover_workflows(tmp_path).workflows}
+
+    for skill, flow in FLOW_ROUTES:
+        assert f"the `{flow}` flow" in block, flow
+        assert f"`/{skill}`" in block, skill
+    assert "(or /change" in step[0], step[0]
+    assert flow_names(block) <= FLOWS_IN_FLIGHT | builtins, flow_names(block)
+
+
+# AGH-495: a skill that starts a pack says so in its description (the line a session reads to
+# pick it), naming the workflow it runs.
+def test_names_its_workflow_when_skill_starts_a_pack_rendered(
+    demo_render: dict[str, RenderedFile],
+) -> None:
+    starters = 0
+    for path, file in demo_render.items():
+        if not (path.startswith("plugin/hub-workflow/skills/") and path.endswith("/SKILL.md")):
+            continue
+        text = file.content.decode("utf-8")
+        description = " ".join(
+            line for line in frontmatter_lines(text) if line.startswith("description:")
+        )
+        for workflow in set(STARTS_WORKFLOW.findall(text)):
+            starters += 1
+            assert re.search(rf"\b{re.escape(workflow)}\b", description), (path, workflow)
+            assert re.search(r"\bworkflow\b", description), path
+    assert starters
+
+
 # AGH-108 (AC-2.15c): step 1 of `/kickoff` and `/feature` sends a hub with no project rules yet, or
 # with a repo the project rules do not name, to `/onboard` first.
 ONBOARD_ROUTE_PHRASES = ("`/onboard`", "no project rules yet", "`AGENTS.project.md`", "new repo")
@@ -2213,7 +2460,7 @@ def test_writes_personal_memory_when_learn_skill_rendered(
     text = skill_text(demo_render, "learn")
     fields = dict(line.split(": ", 1) for line in frontmatter_lines(text))
 
-    assert fields["argument-hint"] == '"[personal] <the learning in one sentence>"'
+    assert fields["argument-hint"] == '"[personal|promote] <the learning in one sentence>"'
     assert "personal" in fields["description"]
     assert "brain/auto/workspace/" in fields["description"]
     assert "Writes a proposal to brain/_inbox/ for human review" not in fields["description"]
@@ -4427,6 +4674,8 @@ RUN_TIME_BRAIN_PATHS = {
     "brain/_inbox/runs/": "Makefile",
     # Written by `/onboard propose` (AGH-108).
     "brain/_inbox/onboard-proposal.md": "plugin/hub-workflow/skills/onboard/SKILL.md",
+    # Written by the retro pack's step 4, one issue-draft file per retro (AGH-488).
+    "brain/_inbox/retro-": "workflows/retro/scripts/drafts.py",
 }
 
 
@@ -4692,7 +4941,7 @@ def test_names_app_repo_agents_once_when_readme_rendered(demo_config: HubConfig)
     assert lines[heading - 4] == "Repos, checked out next to this hub: demo-api."
 
 
-# AGH-51: the README's last section, for a teammate joining the hub.
+# AGH-51: the README's last hand-written section, for a teammate joining the hub.
 JOIN_HEADING = "## Join this hub"
 URL_WITH_CREDENTIAL = re.compile(r"https://[^\s/]*@")
 
@@ -4732,7 +4981,10 @@ def test_keeps_join_section_within_60_lines_when_readme_rendered() -> None:
 
     section = join_section(readme)
 
-    assert readme.endswith(section)
+    # AGH-495: only the generated Pick a flow table follows it, the README's last section.
+    rest = readme.split(section, 1)[1]
+    assert rest.startswith("## Pick a flow\n")
+    assert "\n## " not in rest.removeprefix("## Pick a flow\n")
     assert len(section.splitlines()) <= 60
 
 
@@ -5024,6 +5276,8 @@ ADAPTER_MODULES = frozenset(
         "env_file_reader.py",
         # A scenario finding's issue marker, shared by the CLI and hub web (AGH-363).
         "finding_issues.py",
+        # Reads the built-in packs and the skill templates, package data (AGH-495).
+        "flow_catalog.py",
     }
 )
 RENDERING_MODULES = frozenset(

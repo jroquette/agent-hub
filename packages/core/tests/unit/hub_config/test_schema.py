@@ -7,6 +7,7 @@ from agent_hub.core.hub_config.doctor_rules import MAX_LINES_KEY_LENGTH, MAX_LIN
 from agent_hub.core.hub_config.environments import MAX_NAME_CHARS
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.platform_repository import PLATFORM_REPOSITORY_PATTERN
+from agent_hub.core.hub_config.schedules import MAX_START_INPUTS
 from agent_hub.core.hub_config.schema import export_schema_text, read_shipped_schema
 
 COMMENT_KEYS = {"^_": {}}
@@ -111,6 +112,28 @@ ENVIRONMENT_MAPS = {
 }
 
 
+# The run inputs of ``schedules`` and ``events`` (project-config.md), by schema path.
+START_INPUT_MAPS = (
+    "$.$defs.Schedule.properties.inputs",
+    "$.$defs.EventStart.properties.inputs",
+)
+
+
+def test_describes_schedule_inputs_when_schema_exported() -> None:
+    schema = read_shipped_schema()
+
+    assert schema["properties"]["schedules"]["items"] == {"$ref": "#/$defs/Schedule"}
+    assert schema["properties"]["events"]["items"] == {"$ref": "#/$defs/EventStart"}
+    for path in START_INPUT_MAPS:
+        _, _, definition, _, _ = path.split(".")
+        inputs = schema["$defs"][definition]["properties"]["inputs"]
+        assert inputs["propertyNames"] == {"pattern": "^[a-z][a-z0-9_]{0,63}$"}, path
+        assert inputs["maxProperties"] == MAX_START_INPUTS, path
+        assert inputs["patternProperties"] == COMMENT_KEYS, path
+        types = [branch["type"] for branch in inputs["additionalProperties"]["anyOf"]]
+        assert types == ["boolean", "number", "string"], path
+
+
 def test_forbids_extra_keys_when_object_has_fixed_keys() -> None:
     schema = read_shipped_schema()
     maps: list[tuple[str, dict[str, Any]]] = []
@@ -125,6 +148,9 @@ def test_forbids_extra_keys_when_object_has_fixed_keys() -> None:
     # AGH-281: the name-keyed maps of docs/design/environments.md, pinned by
     # test_describes_environment_maps_when_schema_exported.
     maps = [(path, node) for path, node in maps if path not in ENVIRONMENT_MAPS]
+    # AGH-481: the run inputs of schedules and events, pinned by
+    # test_describes_schedule_inputs_when_schema_exported.
+    maps = [(path, node) for path, node in maps if path not in START_INPUT_MAPS]
     [(path, max_lines)] = maps
     assert path.endswith(".InstructionsSizeSettings.properties.max_lines")
     # E30: the model's bounds, pinned by number in test_doctor_rules.py.

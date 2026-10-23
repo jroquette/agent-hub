@@ -19,7 +19,7 @@ cap) or JSON, then a frozen Pydantic model that forbids unknown keys. A load err
 |---|---|---|
 | `version` | `1` | format version; the engine refuses one it does not know |
 | `kind` | `workflow` (default) or `scenario` | a scenario holds only `action`, `expect`, `approval`, `wait`, `loop_group`, `include` ([scenarios.md](scenarios.md)) |
-| `name`, `description` | kebab-case file stem; optional string | unique among the workflows discovered; one line for people |
+| `name`, `description` | kebab-case file stem; optional string | unique among the workflows discovered; one line for people, whose first sentence says when to use the flow: the "Use when" column of the flow catalog (`flow_catalog.py`) and the first line of hub web's Workflows card; a built-in's must hold at least four words |
 | `revision` | integer ≥ 1 | bumped by the author on each change |
 | `inputs` | map `^[a-z][a-z0-9_]*$` → `{type, required, default, description}` | `type`: `string` (default), `integer`, `number`, `boolean`; `required` excludes `default` |
 | `returns` | node id, optional | the node whose output is the workflow's (and an include's) output |
@@ -57,6 +57,8 @@ Every node has `id`, `type` and optional `description`, `depends_on`, `trigger_r
   (`command[0:2]` is `[hub, step]`) runs the engine's own hub with `child_env`, refuses `env`
   and a referenced `cwd`, and narrows per call (`push_env` only for fetch, push, gh). Tracker writes (ADR 0030) are the
   parent's; `hub run --live`'s (`issue-to-pr`) runs `hub step` in process: per-call tokens and timeouts, no `timeout`.
+  A pack script gets `hub.json` values from a `config` node (`[hub, step, config]`, read-only, its output passed as an
+  argument), never by opening `hub.json` or `hub.local.json`.
 - `loop`: `max_iterations` (1–50) and at least one channel: `until` (text the final line equals), `until_field` (a
   `required` boolean of its `output_format`), `until_bash` (argv; exit 0 is done). `fresh_context: false` (default)
   resumes the previous iteration's session. The output is the last iteration's; past the cap it fails `max_iterations`.

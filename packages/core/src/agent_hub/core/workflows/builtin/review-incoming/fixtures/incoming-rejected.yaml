@@ -1,0 +1,42 @@
+# AC-3: the owner rejects the draft at the gate: final never runs, the run ends done with no
+# outcome, so /review posts nothing.
+workflow: review-incoming
+inputs: {repo: demo-api, pr: "7", ref: refs/agent-hub/review/7, pr_file: /tmp/pr.json, ci_file: /tmp/ci.json, spec_file: /tmp/spec.txt}
+stubs:
+  config:
+    output: {default_branch: main, branch_prefix: jdoe/, author_name: null, author_email: null, ready_label: agent-ready, teams: [DEM], hub: {github: acme/demo-hub, default_branch: main, target: {github: acme/demo-hub, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}, repos: [{dir: demo-api, github: acme/demo-api, default_branch: main, check_fast: make check-fast, check: make check, target: {github: acme/demo-api, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}]}
+  fetch:
+    output:
+      number: 7
+      url: https://github.com/example/demo-api/pull/7
+      title: Adds the run endpoint
+      body: Runs a job on request. Closes DEM-7.
+      body_cut: false
+      author: someone
+      fork: false
+      head_sha: 1f2e3d4c5b6a79881f2e3d4c5b6a79881f2e3d4c
+      head_ref: feature/run
+      base_ref: main
+      merge_base: 0a1b2c3d4e5f60710a1b2c3d4e5f60710a1b2c3d
+      path: /ws/demo-api
+      hub: /ws/hub
+      check: make check
+      files: [{status: M, path: app/run.py}, {status: M, path: tests/test_run.py}]
+      more_files: false
+      ci: {state: success, runs: [{name: test, status: completed, conclusion: success}], more: false}
+      issues: [DEM-7]
+      spec: "AC-1 Given a job, then the endpoint runs it."
+  check: {output: {status: passed, exit_code: 0, tail: "ok\n", reason: "", command: make check}}
+  spec:
+    output: {reviewer: spec, commit: 1f2e3d4c5b6a79881f2e3d4c5b6a79881f2e3d4c, verdict: PASS, findings: [], coverage: [{ac: AC-1, status: covered, test: "tests/test_run.py::test_runs_the_job"}]}
+  quality:
+    output: {reviewer: quality, commit: 1f2e3d4c5b6a79881f2e3d4c5b6a79881f2e3d4c, verdict: PASS, findings: [], coverage: []}
+  surface: {output: {risky: false, categories: [], hits: [], files: 2, truncated: false, reason: ""}}
+  findings:
+    output: {findings: [], coverage: [{ac: AC-1, status: covered, test: "tests/test_run.py::test_runs_the_job"}], verdicts: {spec: PASS, quality: PASS, security: not run}, omitted: 0}
+  draft: {output: {summary: The change does what DEM-7 asks and its test covers it., comments: []}}
+  compose:
+    output: {path: .agent-runs/review-incoming/run-1.md, blocking: 0, minor: 0, inline: 0, suggested: comment, preview: "# Summary\nThe change does what DEM-7 asks and its test covers it.\n"}
+  gate: {decision: reject, approver: Jo}
+expect: {status: done}
+reached: [config, fetch, check, surface, spec, quality, findings, draft, compose, gate]

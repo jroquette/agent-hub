@@ -43,6 +43,12 @@ from agent_hub.core.hub_config.platform_repository import (
     PLATFORM_REPOSITORY_PATTERN,
     is_platform_repository,
 )
+from agent_hub.core.hub_config.schedules import (
+    EVENT_INPUT_NAMES,
+    MAX_STARTS,
+    EventStart,
+    Schedule,
+)
 from agent_hub.core.hub_config.text_shapes import FREE_TEXT_PATTERN, SAFE_SEGMENT
 from agent_hub.core.hub_config.ui_paths import UiPaths
 
@@ -546,6 +552,18 @@ class HubConfig(ConfigObject):
         description="The environments agents may reach, keyed by name, and what they may do"
         " there (docs/design/environments.md).",
     )
+    schedules: tuple[Schedule, ...] = Field(
+        default=(),
+        max_length=MAX_STARTS,
+        description="Workflows hub web starts at the slots of a cron, in UTC; one per workflow"
+        " (ADR 0048).",
+    )
+    events: tuple[EventStart, ...] = Field(
+        default=(),
+        max_length=MAX_STARTS,
+        description="Workflows hub web starts on a repo's GitHub event, polled through gh"
+        " (ADR 0048).",
+    )
 
     def default_branch_for(self, repo_dir: str) -> str:
         """The effective default branch of the repo at ``repo_dir``: its own, else the project's.
@@ -584,8 +602,9 @@ class HubConfig(ConfigObject):
 
     def cross_field_problems(self) -> list[InitErrorDetails]:
         """Unique repo dirs, known guard roots and contract-sync repos, rules of chosen modules,
-        an explicit ``pr_title`` that its repo's ``commit_title`` cannot fill, and environment
-        names unique ignoring case with every endpoint on a declared one."""
+        an explicit ``pr_title`` that its repo's ``commit_title`` cannot fill, environment
+        names unique ignoring case with every endpoint on a declared one, and schedules and
+        events that name declared environments and repos, once each."""
         return [
             *self._duplicate_repo_dirs(),
             *self._unknown_guard_roots(),
@@ -593,11 +612,71 @@ class HubConfig(ConfigObject):
             *self._rules_of_unselected_modules(),
             *self._unfillable_pr_titles(),
             *self._environment_problems(),
+            *self._start_problems(),
         ]
 
     def _environment_problems(self) -> Iterator[InitErrorDetails]:
         yield from self._duplicate_environment_names()
         yield from self._undeclared_endpoint_environments()
+
+    def _start_problems(self) -> Iterator[InitErrorDetails]:
+        yield from self._schedule_problems()
+        yield from self._event_problems()
+
+    def _schedule_problems(self) -> Iterator[InitErrorDetails]:
+        # One ledger entry per workflow (ADR 0048), so one schedule per workflow.
+        seen: dict[str, int] = {}
+        for index, schedule in enumerate(self.schedules):
+            name = schedule.environment
+            if name is not None and name not in self.environments:
+                yield _start_error(
+                    "unknown_environment",
+                    "environment {name} is not in environments",
+                    {"name": json.dumps(name)},
+                    loc=("schedules", index, "environment"),
+                    value=name,
+                )
+            if schedule.workflow in seen:
+                yield _start_error(
+                    "duplicate_schedule",
+                    "workflow {workflow} already has a schedule, schedules[{first}]",
+                    {"workflow": json.dumps(schedule.workflow), "first": seen[schedule.workflow]},
+                    loc=("schedules", index, "workflow"),
+                    value=schedule.workflow,
+                )
+            seen.setdefault(schedule.workflow, index)
+
+    def _event_problems(self) -> Iterator[InitErrorDetails]:
+        dirs = {repo.dir for repo in self.repos}
+        seen: dict[tuple[str, str, str], int] = {}
+        for index, event in enumerate(self.events):
+            if event.repo not in dirs:
+                yield _start_error(
+                    "unknown_repo",
+                    "repo dir {dir} is not in repos",
+                    {"dir": json.dumps(event.repo)},
+                    loc=("events", index, "repo"),
+                    value=event.repo,
+                )
+            key = (event.workflow, event.on, event.repo)
+            if key in seen:
+                yield _start_error(
+                    "duplicate_event",
+                    "events[{first}] already starts this workflow on this event",
+                    {"first": seen[key]},
+                    loc=("events", index, "workflow"),
+                    value=event.workflow,
+                )
+            seen.setdefault(key, index)
+            for name in event.inputs:
+                if name in EVENT_INPUT_NAMES:
+                    yield _start_error(
+                        "event_input",
+                        "{name} comes from the event; leave it out of inputs",
+                        {"name": name},
+                        loc=("events", index, "inputs", name),
+                        value=event.inputs[name],
+                    )
 
     def _duplicate_environment_names(self) -> Iterator[InitErrorDetails]:
         # Ignoring case, as repo dirs: ``live`` and ``Live`` would read as one environment.
@@ -743,3 +822,14 @@ class HubConfig(ConfigObject):
                     loc=("doctor", "rules", rule_id),
                     input=settings,
                 )
+
+
+def _start_error(
+    kind: str,
+    template: str,
+    context: dict[str, str | int],
+    *,
+    loc: tuple[str | int, ...],
+    value: object,
+) -> InitErrorDetails:
+    return InitErrorDetails(type=PydanticCustomError(kind, template, context), loc=loc, input=value)
