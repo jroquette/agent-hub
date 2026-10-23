@@ -24,7 +24,7 @@ const SHAPE = (items: readonly Item[]): unknown =>
     return { together: item.lanes.map(SHAPE) };
   });
 
-const tipple = nodes([
+const demo = nodes([
   { id: "create-order", type: "approval", capture_response: true },
   { id: "fetch", type: "action", action: "send", depends_on: ["create-order"] },
   {
@@ -74,7 +74,7 @@ const tipple = nodes([
 
 describe("scenario block program", () => {
   it("reads a chain, an if / else, its join and a repeat as nested blocks", () => {
-    const program = programOf(tipple);
+    const program = programOf(demo);
 
     expect(program.loose).toEqual([]);
     expect(SHAPE(program.main)).toEqual([
@@ -88,7 +88,7 @@ describe("scenario block program", () => {
   });
 
   it("writes the same nodes back (a reading, not a second format)", () => {
-    expect(nodesOf(programOf(tipple).main)).toEqual(tipple);
+    expect(nodesOf(programOf(demo).main)).toEqual(demo);
   });
 
   it("reads siblings without complementary conditions as paths at the same time", () => {
@@ -136,7 +136,7 @@ describe("scenario block program", () => {
   });
 
   it("drags a block with the blocks under it into another path", () => {
-    const program = programOf(tipple);
+    const program = programOf(demo);
     const { rest, taken } = takeFrom(program.main, "reprocess");
 
     const moved = insertAt(rest, { in: "otherwise", owner: itemKey(rest) }, 0, taken);

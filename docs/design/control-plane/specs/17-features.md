@@ -911,7 +911,7 @@ Describe what to build and attach what Claude should see.
 What do you want to build?                                              ┌ Options ────────── All optional ┐
 ╭──────────────────────────────────────────────────────────────────╮    │ Start from an issue             │
 │ [img] [▤ client-brief.pdf 1.2 MB ⨯]              (only with any) │    │ [ None                        ] │
-│ Describe the feature: who it is for, what they should be able    │    │ Like TIP-1600. Claude reads its │
+│ Describe the feature: who it is for, what they should be able    │    │ Like DEMO-1600. Claude reads its │
 │ to do, and why.                                  (placeholder)   │    │ brief first.                    │
 │                                                                  │    │ Slug                            │
 │ [+ Attach]  Paste or drop images, PDFs and text files            │    │ [ Claude picks one            ] │
@@ -951,7 +951,7 @@ note hides, below 480 px the key hint; below 560 px of `.ft-new` the project pil
 | Brief label / placeholder | "What do you want to build?" / "Describe the feature: who it is for, what they should be able to do, and why." · with images "Say what to build, and what Claude should see in the image." · with files "Say what to build, and what Claude should take from the file." |
 | Toolbar | "Attach" (title "Attach images, PDFs or text files up to 5 MB (or paste or drop them in the box)") · "Paste or drop images, PDFs and text files" · `Ctrl` / `⌘` `Enter` · "Start with Claude", pending "Starting…" |
 | Status line | ready "Opens the Discuss panel. Claude asks before writing any file." · pending "Starting the conversation in the hub folder…" · not ready, the first that holds: the unavailable reason's title ("Session control is locked in this browser.") · "Wait for the files to be read." · "Add a sentence on what to build with the attachments." · "Write at least a sentence, or give an issue." · "Fix the issue id in Options." · "Fix the slug in Options." · the hub folder check ("Looking for the hub folder…") |
-| Options | "Options" / "All optional" · "Start from an issue", placeholder "None", hint "Like TIP-1600. Claude reads its brief first.", error "An issue id, like TIP-1600." · "Slug", placeholder "Claude picks one", hint "Like orders-csv-export.", errors "Lowercase letters, digits and dashes, starting with a letter." / "A feature with this slug already exists." · "Size": "Let Claude ask", "Spike", "Bounded", "Architectural", with the chosen one's hint |
+| Options | "Options" / "All optional" · "Start from an issue", placeholder "None", hint "Like DEMO-1600. Claude reads its brief first.", error "An issue id, like DEMO-1600." · "Slug", placeholder "Claude picks one", hint "Like orders-csv-export.", errors "Lowercase letters, digits and dashes, starting with a letter." / "A feature with this slug already exists." · "Size": "Let Claude ask", "Spike", "Bounded", "Architectural", with the chosen one's hint |
 | Sent card | "Sent to Claude" · the brief and its attachments · "Issue: … · Slug: … · Size: …" · "Claude is working on the brief with you in the panel." with "Open the panel" and "Open the full chat" · once found "`<slug>` has its record." and "Open `<slug>`" · "Start another feature" |
 
 ### States

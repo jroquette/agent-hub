@@ -30,7 +30,7 @@ function points(d: string | undefined): [number, number][] {
   return [start, ...corners, end].filter((p): p is [number, number] => p !== null);
 }
 
-// The TIP-1576 example: 1579 holds back five tickets; 1578 → 1580 skips group 2.
+// The DEMO-1576 example: 1579 holds back five tickets; 1578 → 1580 skips group 2.
 const columns = [
   ["1577", "1578"],
   ["1579", "1584"],

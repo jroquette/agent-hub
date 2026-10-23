@@ -492,8 +492,8 @@ function BriefForm({
                   setIssueInput(event.target.value);
                 }}
               />
-              <FieldHint id={ids.issueHint} error={badIssue ? "An issue id, like TIP-1600." : null}>
-                Like TIP-1600. Claude reads its brief first.
+              <FieldHint id={ids.issueHint} error={badIssue ? "An issue id, like DEMO-1600." : null}>
+                Like DEMO-1600. Claude reads its brief first.
               </FieldHint>
             </div>
             <div className="ft-new-field">
