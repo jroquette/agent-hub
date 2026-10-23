@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+
 import type { components } from "../../api/schema";
 import { Banner, Button } from "../../components";
 import { useNow } from "../../lib/clock";
@@ -12,6 +14,8 @@ export interface TicketNoticeProps {
   /** Refetches the tickets route (E11: the server cache still applies, `as_of` shows its age). */
   onRefresh: () => void;
   refreshing?: boolean | undefined;
+  /** Leads the quiet source line (the view switch), so the two share one row. */
+  lead?: ReactNode;
 }
 
 function AsOf({ value }: { value: string }) {
@@ -46,14 +50,15 @@ function RefreshButton({ onRefresh, refreshing }: Omit<TicketNoticeProps, "ticke
 /**
  * Where the ticket data comes from (AC-136.31): a warning notice with the server's text, the
  * tracker problem and `as_of` when it is the plan or a stale snapshot; a quiet source line when
- * Linear answered. Both carry Refresh.
+ * Linear answered. Both carry Refresh; the source line can lead with the view switch.
  */
-export function TicketNotice({ tickets, onRefresh, refreshing }: TicketNoticeProps) {
+export function TicketNotice({ tickets, onRefresh, refreshing, lead }: TicketNoticeProps) {
   const refresh = <RefreshButton onRefresh={onRefresh} refreshing={refreshing} />;
   const fromPlan = tickets.source === "plan";
   if (!fromPlan && !tickets.stale) {
     return (
-      <div className="ah-row ah-small ah-muted" style={{ gap: 8 }}>
+      <div className="ah-row ah-wrap ah-small ah-muted" style={{ gap: 8 }}>
+        {lead}
         <span
           className="ah-live-dot"
           data-busy={refreshing ? true : undefined}

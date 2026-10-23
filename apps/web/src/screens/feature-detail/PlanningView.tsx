@@ -16,6 +16,7 @@ import {
   Icon,
   StatusBadge,
   StepBar,
+  Tooltip,
   type IconName,
   type Status,
   useViewportSize,
@@ -810,8 +811,9 @@ function childProgress(epic: TicketRow, rows: readonly TicketRow[]) {
 }
 
 /**
- * The feature's epic, above the flow: the parent ticket that groups the work. It is never picked
- * up itself, so it is no step of the flow; it shows how far its children are instead.
+ * The feature's epic as one strip above the flow: the parent ticket that groups the work. It is
+ * never picked up itself, so it is no step of the flow; it shows how far its children are instead.
+ * What an epic is lives in its tag's tooltip, reachable by keyboard.
  */
 function EpicCard({
   epic,
@@ -822,6 +824,7 @@ function EpicCard({
   rows: readonly TicketRow[];
   acPasses?: Readonly<Record<string, boolean>> | undefined;
 }) {
+  const tipId = useId();
   const { total, done, working, rest } = childProgress(epic, rows);
   const children = rows.filter((r) => epic.children.includes(r.ref));
   const acs = children.flatMap((r) => r.acs);
@@ -834,23 +837,25 @@ function EpicCard({
       data-readiness={epic.readiness}
       aria-label={`Epic ${epic.ref}${epic.title ? ` · ${epic.title}` : ""}`}
     >
-      <div className="ah-row ah-wrap" style={{ gap: 8 }}>
-        <span className="ah-flow-epic-tag" title={READINESS_HELP.epic}>
+      <Tooltip id={tipId} label={`${READINESS_HELP.epic} It tracks the tickets below.`}>
+        {/* Focusable only so the tooltip that says what an epic is reaches the keyboard. */}
+        {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex */}
+        <span className="ah-flow-epic-tag" tabIndex={0} aria-describedby={tipId}>
           <Icon name="layers" size="sm" />
           Epic
         </span>
-        {epic.id ? (
-          <LinearLink id={epic.id} url={epic.url} />
-        ) : (
-          <span className="ah-mono ah-small" title="Not created in Linear yet">
-            {epic.key ?? epic.ref}
-          </span>
-        )}
-        <StateBadge row={epic} />
-        <span className="ah-flow-epic-title" title={epic.title ?? undefined}>
-          {epic.title ? splitTitle(epic.title).text : epic.ref}
+      </Tooltip>
+      {epic.id ? (
+        <LinearLink id={epic.id} url={epic.url} />
+      ) : (
+        <span className="ah-mono ah-small" title="Not created in Linear yet">
+          {epic.key ?? epic.ref}
         </span>
-      </div>
+      )}
+      <StateBadge row={epic} />
+      <span className="ah-flow-epic-title" title={epic.title ?? undefined}>
+        {epic.title ? splitTitle(epic.title).text : epic.ref}
+      </span>
       <div
         className="ah-flow-track"
         role="progressbar"
@@ -876,7 +881,6 @@ function EpicCard({
             {passing}/{acs.length} ACs passing
           </span>
         )}
-        <span>Tracks the tickets below; it is done when they all are.</span>
       </div>
     </section>
   );
@@ -1334,7 +1338,8 @@ function FlowGraph({
     transform: `translate(${String(view.x)}px, ${String(view.y)}px) scale(${String(view.k)})`,
     "--k": String(view.k),
   };
-  const tone = (e: FlowEdge) => (e.early ? "early" : e.critical ? "critical" : "plain");
+  const tone = (e: FlowEdge) =>
+    e.early ? "early" : e.critical ? "critical" : e.settled ? "settled" : "plain";
   return (
     // The flow's keys (arrows, zoom) bubble here from its cards' links and buttons; hover and a
     // press on a card's background are pointer extras (the title link is the keyboard's way in).
@@ -1396,7 +1401,7 @@ function FlowGraph({
             width={Math.max(1, size.width)}
             height={Math.max(1, size.height)}
           >
-            <ArrowMarkers id={arrowId} tones={["plain", "critical", "early", "hot"]} />
+            <ArrowMarkers id={arrowId} tones={["plain", "settled", "critical", "early", "hot"]} />
             {edges.map((e) => {
               const key = `${e.from}→${e.to}`;
               const hot = hotEdges.has(key);
@@ -1530,7 +1535,7 @@ function FlowGraph({
 }
 
 /** How to read the flow, folded at the canvas's top right so it stays one click away. */
-function FlowLegend({ showCritical }: { showCritical: boolean }) {
+function FlowLegend({ showCritical, epic }: { showCritical: boolean; epic: boolean }) {
   const lines: [Readiness, string][] = [
     ["can_start", "Can start: not started, blockers done"],
     ["in_progress", "In progress: started in Linear"],
@@ -1544,6 +1549,11 @@ function FlowLegend({ showCritical }: { showCritical: boolean }) {
         How to read
       </summary>
       <div className="ah-flow-legend-body" aria-label="Legend">
+        <span className="ah-flow-legend-intro">
+          Groups run left to right; tickets in one group can run in parallel. Each line goes from a
+          blocker to the ticket it holds back. Choose a ticket to see its whole chain.
+          {epic && " The epic only tracks them, so it is in no group."}
+        </span>
         {lines.map(([r, text]) => {
           const look = READINESS_ICON[r];
           return (
@@ -1575,7 +1585,7 @@ function FlowLegend({ showCritical }: { showCritical: boolean }) {
         </span>
         <span>
           <span className="ah-flow-line" data-settled="true" aria-hidden="true" />
-          Faded: its blocker is done
+          Green: its blocker is done
         </span>
         <span>
           <span className="ah-flow-line" data-critical="true" aria-hidden="true" />
@@ -1629,22 +1639,15 @@ export function PlanningView({
   const columns = flowColumns(tickets, planning);
   const epics = planning.epics.flatMap((ref) => byRef.get(ref) ?? []);
   const work = tickets.filter((t) => !planning.epics.includes(t.ref));
+  // A done blocker outside holds nothing back: its card says "After X" and the banner stays quiet.
+  const holding = external.filter((b) => !b.done);
   return (
     <section className="ah-card ah-pad ah-stack" style={{ gap: 16 }} aria-labelledby="planning-h">
       <div className="ah-flow-header">
-        <div className="ah-stack" style={{ gap: 4, flex: "1 1 420px", minWidth: 0 }}>
-          <h2 id="planning-h" className="ah-h3" style={{ margin: 0 }}>
-            Ticket flow
-          </h2>
-          <span className="ah-small ah-subtle">
-            Groups run left to right; tickets in one group can run in parallel. Each line goes from
-            a blocker to the ticket it holds back. Choose a ticket to see its whole chain.
-            {epics.length > 0 && " The epic only tracks them, so it is in no group."}
-          </span>
-        </div>
-        <div className="ah-row" style={{ gap: 8, alignItems: "flex-start" }}>
-          <ReadinessSummary tickets={work} />
-        </div>
+        <h2 id="planning-h" className="ah-h3" style={{ margin: 0 }}>
+          Ticket flow
+        </h2>
+        <ReadinessSummary tickets={work} />
       </div>
       {planning.cycles.length > 0 && (
         <Banner tone="error" icon="octagon-x">
@@ -1661,11 +1664,11 @@ export function PlanningView({
           plan or in Linear.
         </Banner>
       )}
-      {external.length > 0 && (
+      {holding.length > 0 && (
         <Banner tone="warning" icon="triangle-alert">
           <b style={{ fontWeight: 500 }}>Blocked from outside this feature:</b>
           <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
-            {external.map((b) => (
+            {holding.map((b) => (
               <li key={b.id}>
                 <LinearLink id={b.id} url={b.url} />
                 {b.title && ` · ${b.title}`} ·{" "}
@@ -1701,7 +1704,7 @@ export function PlanningView({
           ticketAction={ticketAction}
           onOpenTicket={onOpenTicket}
           chosen={chosen}
-          legend={<FlowLegend showCritical={critical.size > 0} />}
+          legend={<FlowLegend showCritical={critical.size > 0} epic={epics.length > 0} />}
         />
       )}
     </section>
