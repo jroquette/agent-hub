@@ -2,8 +2,8 @@ version: 1
 name: order-set-fedex
 description: Set the order's carrier to FedEx
 effect: write
-runtime: python
-script: scripts/fixture_action.py
+runtime: sh
+script: scripts/fixture_action.sh
 timeout: 1m
 inputs:
   order_id: {type: string, required: true}
