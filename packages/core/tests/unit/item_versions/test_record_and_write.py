@@ -22,7 +22,7 @@ from agent_hub.core.item_versions.hub_item_writer import (
     ItemWriteRefusedError,
     rollback_failed,
 )
-from agent_hub.core.item_versions.item_units import ItemUnit
+from agent_hub.core.item_versions.item_units import ItemUnit, unit_parts
 from agent_hub.core.item_versions.item_version import (
     ItemVersion,
     NewItemVersion,
@@ -42,7 +42,7 @@ from agent_hub.core.item_versions.record_and_write import (
 from agent_hub.core.item_versions.unit_content import UnitContent, UnitFile
 from agent_hub.core.item_versions.unit_hash import file_hash
 from agent_hub.core.item_versions.version_store import ItemVersionSequenceError
-from agent_hub.core.skills.skill_sources import MAX_SKILL_FILE_BYTES
+from agent_hub.core.skills.skill_sources import MAX_SKILL_FILE_BYTES, SkillPathError
 from agent_hub.core.testing.hub_fakes import FakeHub, FakeHubFileReader
 from agent_hub.core.testing.item_version_fakes import FakeHubItemWriter, InMemoryItemVersionStore
 from agent_hub.core.testing.skill_trees import FIXTURE_PLATFORM_VERSION
@@ -152,6 +152,33 @@ def test_records_external_first_when_disk_differs() -> None:
     # The hand edit has no author (D11), and it stays restorable (AC-295.20).
     assert edited.author is None
     assert rig.store.get(PROJECT, AGENT, edited.id) is not None
+
+
+SCENARIO: Final = "scenarios/demo/walk.yaml"
+
+
+def test_writes_and_records_scenario_file_when_builder_saves() -> None:
+    rig = _Rig({SCENARIO: b"version: 1\n"})
+    unit = ItemUnit(project=PROJECT, unit_path=SCENARIO, kind=UnitKind.SCENARIO)
+
+    result = rig.step.write(
+        HUB, unit, _file("walk.yaml", b"version: 2\n"), origin=VersionOrigin.PUBLISH
+    )
+
+    assert rig.hub.skill_files[SCENARIO] == b"version: 2\n"
+    assert rig.origins(SCENARIO) == [
+        (VersionOrigin.EXTERNAL, file_hash(b"version: 1\n")),
+        (VersionOrigin.PUBLISH, file_hash(b"version: 2\n")),
+    ]
+    assert (result.changed, result.versioned) == (True, True)
+
+
+def test_refuses_scenario_unit_when_outside_scenarios_folder() -> None:
+    with pytest.raises(SkillPathError):
+        unit_parts("workflows/demo/walk.yaml", UnitKind.SCENARIO)
+    with pytest.raises(SkillPathError):
+        unit_parts("scenarios/walk.yaml", UnitKind.SCENARIO)
+    assert unit_parts(SCENARIO, UnitKind.SCENARIO) == ("scenarios", "demo", "walk.yaml")
 
 
 def test_writes_nothing_when_content_equal() -> None:

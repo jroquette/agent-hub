@@ -203,6 +203,15 @@ SCENARIO_PATHS: frozenset[tuple[str, str]] = frozenset(
         ("post", "/scenario-runs/{run_id}/answer"),
         ("post", "/scenario-runs/{run_id}/findings/{finding_id}/issue"),
         ("post", "/scenario-runs/{run_id}/findings/{finding_id}/inbox"),
+        # The scenario builder: a document's check, the hub's actions, and the save (a strict
+        # write that needs the launch cookie).
+        ("post", "/projects/{project}/scenarios/validate"),
+        ("get", "/projects/{project}/actions"),
+        ("put", "/scenarios/{project}/{name}"),
+        ("get", "/scenarios/{project}/{name}/proposal"),
+        ("post", "/scenarios/{project}/{name}/proposal/dismiss"),
+        ("post", "/projects/{project}/actions"),
+        ("put", "/projects/{project}/actions/{pack}/{name}"),
     )
 )
 

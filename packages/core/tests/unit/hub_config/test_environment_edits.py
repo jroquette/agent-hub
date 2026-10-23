@@ -79,6 +79,52 @@ def test_creates_entry_when_set_may_create() -> None:
     assert edited["environments"]["staging"] == {"access": "read"}
 
 
+def test_sets_and_removes_values_when_value_changes_given() -> None:
+    document = _w()
+    document["environments"]["staging"]["values"] = {"region": "eu-west-1", "user_name": "ci"}
+
+    edited = set_environment(
+        document,
+        "staging",
+        {},
+        file="hub.json",
+        may_create=False,
+        values={"user_name": None, "account_id": "123"},
+    )
+
+    assert isinstance(edited, dict)
+    assert edited["environments"]["staging"]["values"] == {
+        "region": "eu-west-1",
+        "account_id": "123",
+    }
+    emptied = set_environment(
+        edited,
+        "staging",
+        {},
+        file="hub.json",
+        may_create=False,
+        values={"region": None, "account_id": None},
+    )
+    assert isinstance(emptied, dict)
+    assert "values" not in emptied["environments"]["staging"]
+
+
+def test_drops_created_entry_when_its_values_removed_again() -> None:
+    local = a_local_environments_document()
+    before = copy.deepcopy(local)
+
+    added = set_environment(
+        local, "staging", {}, file="hub.local.json", may_create=True, values={"user_name": "jane"}
+    )
+    assert isinstance(added, dict)
+    assert added["environments"]["staging"] == {"values": {"user_name": "jane"}}
+    removed = set_environment(
+        added, "staging", {}, file="hub.local.json", may_create=True, values={"user_name": None}
+    )
+
+    assert removed == before
+
+
 def test_refuses_set_when_environment_undeclared() -> None:
     assert set_environment(_w(), "qa", {"access": "ask"}, file="hub.json", may_create=False) == (
         EditRefusal("no environment qa in hub.json")

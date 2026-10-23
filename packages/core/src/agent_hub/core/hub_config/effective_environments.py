@@ -4,16 +4,16 @@
 Neither model alone sees both files, so these rules live here: ``hub.local.json`` adds new
 environments (never a ``hub.json`` name, names unique ignoring case across both files), adds
 endpoints on local environments to ``hub.json``'s repos and services, and on a committed name
-holds only ``access``, stricter than the team's (``write`` → ``ask`` → ``read``). Nothing in it
-loosens or removes what ``hub.json`` declares. The CLI reports the problems at the local file's
-paths.
+holds only ``access``, stricter than the team's (``write`` → ``ask`` → ``read``), and ``values``,
+which win per key over the team's. Nothing in it loosens or removes what ``hub.json`` declares.
+The CLI reports the problems at the local file's paths.
 """
 
 import json
 from collections.abc import Iterable, Iterator, Mapping
 from typing import Final
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from agent_hub.core.hub_config.environment_edits import shown_name
 from agent_hub.core.hub_config.environments import Access, Credentials, Endpoint, Service
@@ -44,6 +44,8 @@ class SourcedEnvironment(BaseModel):
     # hub.json's access for a committed environment (differs from ``access`` when tightened);
     # ``None`` for the developer's own.
     team_access: Access | None = None
+    # The values that fill scenario inputs here: hub.json's, then hub.local.json's per key.
+    values: dict[str, str] = Field(default_factory=dict)
 
 
 class SourcedEndpoint(BaseModel):
@@ -168,6 +170,7 @@ def _environments(config: HubConfig, local: LocalConfig) -> tuple[SourcedEnviron
                 credentials=environment.credentials,
                 source=source,
                 team_access=environment.access,
+                values=environment.values | (tightened.values if tightened is not None else {}),
             )
         )
     folded = {name.lower() for name in config.environments}
@@ -179,6 +182,7 @@ def _environments(config: HubConfig, local: LocalConfig) -> tuple[SourcedEnviron
             description=environment.description,
             credentials=environment.credentials,
             source=LOCAL_FILE,
+            values=environment.values,
         )
         for name, environment in local.environments.items()
         if name.lower() not in folded and environment.access is not None
@@ -282,10 +286,13 @@ def _tightening_problems(
     loc: Location, committed: Access, environment: LocalEnvironment
 ) -> Iterator[tuple[Location, str]]:
     name = loc[-1]
-    for key in sorted(environment.model_fields_set - {"access"}):
-        yield (*loc, key), f"hub.json declares {name}; hub.local.json may only tighten its access"
+    for key in sorted(environment.model_fields_set - {"access", "values"}):
+        yield (
+            (*loc, key),
+            f"hub.json declares {name}; hub.local.json may only tighten its access or set values",
+        )
     access = environment.access
-    # An entry with no key tightens nothing; one with other keys is refused for them above.
+    # An entry with no key changes nothing; one with other keys is refused for them above.
     is_empty = not environment.model_fields_set
     if (access is None and is_empty) or (
         access is not None and STRICTNESS[access] <= STRICTNESS[committed]

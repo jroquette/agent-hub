@@ -1011,6 +1011,52 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/api/v1/projects/{project}/actions": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * List Actions
+     * @description The hub's actions (the builder's palette), with output fields and their scenarios.
+     */
+    get: operations["list_actions_api_v1_projects__project__actions_get"];
+    put?: never;
+    /**
+     * Post Action
+     * @description Writes a new action (its document and its script) into the hub as a draft: a strict
+     *     write that needs the launch cookie; it runs nothing and commits nothing.
+     */
+    post: operations["post_action_api_v1_projects__project__actions_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/projects/{project}/actions/{pack}/{name}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /**
+     * Put Action
+     * @description Rewrites an action of the hub (its document and its script): a strict write; the
+     *     action is a draft until it is committed again.
+     */
+    put: operations["put_action_api_v1_projects__project__actions__pack___name__put"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/v1/projects/{project}/brain": {
     parameters: {
       query?: never;
@@ -1259,6 +1305,27 @@ export interface paths {
     get: operations["list_project_repos_api_v1_projects__project__repos_get"];
     put?: never;
     post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/projects/{project}/scenarios/validate": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Validate Scenario
+     * @description The scenario builder's check: the document as the YAML Save would write, whether it
+     *     loads, and each problem on its node. Writes nothing.
+     */
+    post: operations["validate_scenario_api_v1_projects__project__scenarios_validate_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -1543,7 +1610,13 @@ export interface paths {
      * @description One scenario: its steps and its scenario runs, newest first.
      */
     get: operations["get_scenario_api_v1_scenarios__project___name__get"];
-    put?: never;
+    /**
+     * Save Scenario
+     * @description Write the scenario file from the builder's document (a strict write that needs the
+     *     launch cookie): only a document that loads, over the file the builder last read
+     *     (409 ``stale_document`` else), recorded as a version; no git command runs.
+     */
+    put: operations["save_scenario_api_v1_scenarios__project___name__put"];
     post?: never;
     delete?: never;
     options?: never;
@@ -1566,6 +1639,47 @@ export interface paths {
      *     but the scripts' plan mode, with no credential and only when a step's args are known.
      */
     post: operations["plan_scenario_api_v1_scenarios__project___name__plan_post"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/scenarios/{project}/{name}/proposal": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Get Proposal
+     * @description Claude's proposal for the scenario (a file in the hub's ignored ``.agent-runs/``),
+     *     checked as Save would check it; 404 when there is none.
+     */
+    get: operations["get_proposal_api_v1_scenarios__project___name__proposal_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/v1/scenarios/{project}/{name}/proposal/dismiss": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Delete Proposal
+     * @description Removes Claude's proposal once the owner accepted it into the draft or rejected it.
+     */
+    post: operations["delete_proposal_api_v1_scenarios__project___name__proposal_dismiss_post"];
     delete?: never;
     options?: never;
     head?: never;
@@ -2197,12 +2311,30 @@ export interface components {
       /** Status */
       status: string | null;
     };
+    /** ActionInputDraft */
+    ActionInputDraft: {
+      /** Description */
+      description?: string | null;
+      /** Name */
+      name: string;
+      /**
+       * Required
+       * @default false
+       */
+      required: boolean;
+      /**
+       * Type
+       * @default string
+       * @enum {string}
+       */
+      type: "string" | "integer" | "number" | "boolean" | "service";
+    };
     /**
      * ActionInputSpec
      * @description An action input as its document declares it.
      */
     ActionInputSpec: {
-      default?: components["schemas"]["agent_hub__core__json_form__JsonValue"];
+      default?: components["schemas"]["agent_hub__core__json_form__JsonValue-Output"];
       /** Description */
       description?: string | null;
       /** Name */
@@ -2211,6 +2343,13 @@ export interface components {
       required: boolean;
       /** Type */
       type: string;
+    };
+    /** ActionLibrary */
+    ActionLibrary: {
+      /** Items */
+      items: components["schemas"]["LibraryAction"][];
+      /** Problems */
+      problems: string[];
     };
     /**
      * ActivityItem
@@ -2309,6 +2448,10 @@ export interface components {
        */
       production: boolean;
       scope: components["schemas"]["Scope"];
+      /** Values */
+      values?: {
+        [key: string]: string;
+      };
     };
     /**
      * AddService
@@ -2575,6 +2718,26 @@ export interface components {
       truncated: boolean;
     };
     /**
+     * BuilderProblem
+     * @description A reason the document does not load (``error``) or will not plan (``warning``), on the
+     *     node it names (``node`` None for the document).
+     */
+    BuilderProblem: {
+      /** Key */
+      key: string | null;
+      /** Line */
+      line: number | null;
+      /** Message */
+      message: string;
+      /** Node */
+      node: string | null;
+      /**
+       * Severity
+       * @default error
+       */
+      severity: string;
+    };
+    /**
      * BundledFile
      * @description A file of a skill folder other than ``SKILL.md`` (S7): ``path`` is relative to the skill
      *     folder, ``id`` server-issued; ``link`` when it is a link (never read), ``too_large`` when over
@@ -2627,7 +2790,7 @@ export interface components {
       name: string;
       /** Node */
       node: string;
-      value: components["schemas"]["agent_hub__core__json_form__JsonValue"];
+      value: components["schemas"]["agent_hub__core__json_form__JsonValue-Output"];
     };
     /**
      * CatalogItem
@@ -3770,7 +3933,7 @@ export interface components {
       decision?: components["schemas"]["HookDecision"] | null;
       /** Hook */
       hook: {
-        [key: string]: components["schemas"]["JsonValue-Input"];
+        [key: string]: components["schemas"]["pydantic__types__JsonValue"];
       };
       /** Project */
       project: string;
@@ -4079,7 +4242,6 @@ export interface components {
       /** Versioned */
       versioned: boolean;
     };
-    "JsonValue-Input": unknown;
     /** @enum {string} */
     KeySource: "environment" | "settings";
     /** @enum {string} */
@@ -4332,6 +4494,17 @@ export interface components {
       kind: ("team" | "repo" | "personal") | null;
       /** Path */
       path: string | null;
+    };
+    /**
+     * LibraryAction
+     * @description An action of the hub as the palette lists it.
+     */
+    LibraryAction: {
+      action: components["schemas"]["ScenarioActionView"];
+      /** Output Fields */
+      output_fields: components["schemas"]["OutputField"][];
+      /** Used By */
+      used_by: string[];
     };
     /**
      * LinearAccountView
@@ -4609,6 +4782,49 @@ export interface components {
     /** @enum {string} */
     NeedsYouKind: "approval" | "failed" | "waiting" | "blocked" | "doctor" | "learning";
     /**
+     * NewAction
+     * @description A new action from the builder: its facts and its script's text.
+     */
+    NewAction: {
+      /** Description */
+      description: string;
+      /**
+       * Effect
+       * @enum {string}
+       */
+      effect: "read" | "write" | "destroy";
+      /** Inputs */
+      inputs?: components["schemas"]["ActionInputDraft"][];
+      /** Name */
+      name: string;
+      /** Outputs */
+      outputs?: components["schemas"]["OutputFieldDraft"][];
+      /** Pack */
+      pack: string;
+      /**
+       * Runtime
+       * @default python
+       * @enum {string}
+       */
+      runtime: "python" | "sh";
+      /** Script Text */
+      script_text: string;
+      /**
+       * Timeout
+       * @default 5m
+       */
+      timeout: string;
+    };
+    /** NodeLines */
+    NodeLines: {
+      /** First Line */
+      first_line: number;
+      /** Id */
+      id: string;
+      /** Last Line */
+      last_line: number;
+    };
+    /**
      * NotRead
      * @description A file Claude could not read, and why.
      */
@@ -4701,13 +4917,13 @@ export interface components {
       pickable: boolean;
       /** Plan */
       plan: {
-        [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue"];
+        [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue-Output"];
       }[];
       /** Refusal */
       refusal: string | null;
       /** Steps */
       steps: {
-        [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue"];
+        [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue-Output"];
       }[];
       /** Summary */
       summary: string;
@@ -4726,6 +4942,24 @@ export interface components {
      * @enum {string}
      */
     Outcome: "done" | "stopped" | "blocked" | "error";
+    /** OutputField */
+    OutputField: {
+      /** Path */
+      path: string;
+      /** Type */
+      type: string | null;
+    };
+    /** OutputFieldDraft */
+    OutputFieldDraft: {
+      /** Name */
+      name: string;
+      /**
+       * Type
+       * @default string
+       * @enum {string}
+       */
+      type: "string" | "integer" | "number" | "boolean" | "object" | "array";
+    };
     /**
      * OwnerSignOffBody
      * @description ``POST .../owner-signoff``: the eval to settle (or the ACs the owner checked by hand), the
@@ -5298,6 +5532,22 @@ export interface components {
       options: components["schemas"]["OptionEntry"][];
       /** Proposal */
       proposal: number;
+    };
+    /**
+     * ProposalView
+     * @description Claude's proposal for the scenario: the document it wrote, checked as Save would check
+     *     it (never written to the scenario file until the owner accepts it and saves).
+     */
+    ProposalView: {
+      check: components["schemas"]["ValidateResult"] | null;
+      /** Document */
+      document: {
+        [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue-Output"];
+      } | null;
+      /** Path */
+      path: string;
+      /** Problem */
+      problem?: string | null;
     };
     /** @enum {string} */
     ProposedAccess: "read" | "ask" | "write";
@@ -5905,6 +6155,36 @@ export interface components {
       status: components["schemas"]["StepStatus"];
     };
     /**
+     * SaveRequest
+     * @description A save: the pack, the document and the content hash of the file the builder last read
+     *     (None for a new scenario).
+     */
+    SaveRequest: {
+      /** Base Content Hash */
+      base_content_hash?: string | null;
+      /** Document */
+      document: {
+        [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue-Input"];
+      };
+      /** Pack */
+      pack: string;
+    };
+    /** SaveResult */
+    SaveResult: {
+      /** Changed */
+      changed: boolean;
+      /** Content Hash */
+      content_hash: string;
+      /** Path */
+      path: string;
+      /** Revision */
+      revision: number;
+      /** Versioned */
+      versioned: boolean;
+      /** Yaml */
+      yaml: string;
+    };
+    /**
      * ScenarioActionView
      * @description An action the scenario's steps call (``ref`` as a step writes it), as the hub's files
      *     hold it now: its facts, whether it is committed (``draft`` else, with the line that
@@ -5934,7 +6214,7 @@ export interface components {
       name: string;
       /** Output Format */
       output_format?: {
-        [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue"];
+        [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue-Output"];
       };
       /** Pack */
       pack?: string | null;
@@ -5980,8 +6260,14 @@ export interface components {
        * @default []
        */
       actions: components["schemas"]["ScenarioActionView"][];
+      /** Content Hash */
+      content_hash?: string | null;
       /** Description */
       description: string | null;
+      /** Document */
+      document?: {
+        [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue-Output"];
+      } | null;
       /** Document Text */
       document_text?: string | null;
       /**
@@ -6014,7 +6300,9 @@ export interface components {
     };
     /**
      * ScenarioEnvironment
-     * @description An environment the project's hub declares, as the effective config reads now.
+     * @description An environment the project's hub declares, as the effective config reads now, with the
+     *     values that fill a scenario's inputs of the same name there (hub.local.json's over
+     *     hub.json's, per key).
      */
     ScenarioEnvironment: {
       /** Access */
@@ -6023,6 +6311,10 @@ export interface components {
       name: string;
       /** Production */
       production: boolean;
+      /** Values */
+      values?: {
+        [key: string]: string;
+      };
     };
     /** @enum {string} */
     ScenarioMode: "interactive" | "regression";
@@ -6202,7 +6494,7 @@ export interface components {
       until_when?: string | null;
       /** With */
       with?: {
-        [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue"];
+        [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue-Output"];
       };
     };
     /**
@@ -6580,6 +6872,9 @@ export interface components {
     /**
      * SetEnvironment
      * @description A change to an environment: a field left out stays; an empty text removes the key.
+     *
+     *     On a ``hub.json`` environment, the ``local`` scope may change only ``access`` (stricter)
+     *     and ``values`` (the developer's, which win per key over the team's).
      */
     SetEnvironment: {
       access?: components["schemas"]["Access"] | null;
@@ -6601,6 +6896,10 @@ export interface components {
       /** Production */
       production?: boolean | null;
       scope: components["schemas"]["Scope"];
+      /** Values */
+      values?: {
+        [key: string]: string;
+      } | null;
     };
     /**
      * SetService
@@ -6894,6 +7193,10 @@ export interface components {
       source: string;
       /** Team Access */
       team_access?: ("read" | "write" | "ask") | null;
+      /** Values */
+      values?: {
+        [key: string]: string;
+      };
     };
     /**
      * SourcedService
@@ -7404,10 +7707,11 @@ export interface components {
     };
     /**
      * UnitKind
-     * @description What a unit is: a skill's folder, an agent's file, a hook file or a hub workflow file.
+     * @description What a unit is: a skill's folder, an agent's file, a hook file, a hub workflow file, a
+     *     scenario file, or an action's document or script (the scenario builder's saves).
      * @enum {string}
      */
-    UnitKind: "skill" | "agent" | "hook" | "workflow";
+    UnitKind: "skill" | "agent" | "hook" | "workflow" | "scenario" | "action";
     /**
      * UnitState
      * @description What the last read found in a unit: stored (or equal to its last version), or why not.
@@ -7470,6 +7774,29 @@ export interface components {
     };
     /** Format: date-time */
     UtcTimestamp: string;
+    /**
+     * ValidateRequest
+     * @description A scenario document to check: its pack and the document as the builder holds it.
+     */
+    ValidateRequest: {
+      /** Document */
+      document: {
+        [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue-Input"];
+      };
+      /** Pack */
+      pack: string;
+    };
+    /** ValidateResult */
+    ValidateResult: {
+      /** Loads */
+      loads: boolean;
+      /** Nodes */
+      nodes: components["schemas"]["NodeLines"][];
+      /** Problems */
+      problems: components["schemas"]["BuilderProblem"][];
+      /** Yaml */
+      yaml: string;
+    };
     /**
      * ValidationProblem
      * @description One problem of a hub's ``hub.json``, located by a JSON pointer.
@@ -7603,7 +7930,7 @@ export interface components {
       description: string | null;
       /** Document */
       document: {
-        [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue"];
+        [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue-Output"];
       };
       /** Environment */
       environment?: string | null;
@@ -7825,11 +8152,20 @@ export interface components {
        */
       steps: components["schemas"]["WorkflowStepView"][];
     };
-    agent_hub__core__json_form__JsonValue:
+    "agent_hub__core__json_form__JsonValue-Input":
       | {
-          [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue"];
+          [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue-Input"];
         }
-      | components["schemas"]["agent_hub__core__json_form__JsonValue"][]
+      | components["schemas"]["agent_hub__core__json_form__JsonValue-Input"][]
+      | string
+      | number
+      | boolean
+      | null;
+    "agent_hub__core__json_form__JsonValue-Output":
+      | {
+          [key: string]: components["schemas"]["agent_hub__core__json_form__JsonValue-Output"];
+        }
+      | components["schemas"]["agent_hub__core__json_form__JsonValue-Output"][]
       | string
       | number
       | boolean
@@ -10118,6 +10454,136 @@ export interface operations {
       };
     };
   };
+  list_actions_api_v1_projects__project__actions_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ActionLibrary"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  post_action_api_v1_projects__project__actions_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["NewAction"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ScenarioActionView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  put_action_api_v1_projects__project__actions__pack___name__put: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        pack: string;
+        name: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["NewAction"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ScenarioActionView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
   get_brain_tree_api_v1_projects__project__brain_get: {
     parameters: {
       query?: never;
@@ -10678,6 +11144,50 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["Page_RepoView_"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  validate_scenario_api_v1_projects__project__scenarios_validate_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["ValidateRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ValidateResult"];
         };
       };
       /** @description A client error, as an RFC 9457 problem */
@@ -11409,6 +11919,51 @@ export interface operations {
       };
     };
   };
+  save_scenario_api_v1_scenarios__project___name__put: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        name: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["SaveRequest"];
+      };
+    };
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SaveResult"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
   plan_scenario_api_v1_scenarios__project___name__plan_post: {
     parameters: {
       query?: never;
@@ -11433,6 +11988,86 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["ScenarioPlanView"];
         };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  get_proposal_api_v1_scenarios__project___name__proposal_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        name: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProposalView"];
+        };
+      };
+      /** @description A client error, as an RFC 9457 problem */
+      "4XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+      /** @description A server error, as an RFC 9457 problem */
+      "5XX": {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["ProblemDetails"];
+        };
+      };
+    };
+  };
+  delete_proposal_api_v1_scenarios__project___name__proposal_dismiss_post: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        project: string;
+        name: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       /** @description A client error, as an RFC 9457 problem */
       "4XX": {

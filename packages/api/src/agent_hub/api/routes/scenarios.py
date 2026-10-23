@@ -16,11 +16,25 @@ from typing import Annotated
 from fastapi import APIRouter, Path, Response
 
 from agent_hub.api.dependencies import (
+    ItemVersionWritesDep,
     ScenarioCommandsDep,
     ScenarioInvestigationsDep,
     ScenarioReadsDep,
 )
 from agent_hub.api.openapi_paths import AGENT_SESSIONS, API_PREFIX
+from agent_hub.api.scenario_builder import (
+    ActionLibrary,
+    NewAction,
+    ProposalView,
+    SaveRequest,
+    SaveResult,
+    ScenarioBuilder,
+    ValidateRequest,
+    ValidateResult,
+    create_action,
+    drop_proposal,
+    read_proposal,
+)
 from agent_hub.api.scenario_catalog import (
     FINDING_ID_TEXT,
     FindingIssue,
@@ -28,6 +42,7 @@ from agent_hub.api.scenario_catalog import (
     FindingNote,
     InvestigationAnswer,
     InvestigationAnswered,
+    ScenarioActionView,
     ScenarioCatalogView,
     ScenarioDetail,
     ScenarioPlanRequest,
@@ -58,6 +73,79 @@ def list_scenarios(reads: ScenarioReadsDep, *, project: ProjectParam = None) -> 
 def get_scenario(project: NamePath, name: NamePath, reads: ScenarioReadsDep) -> ScenarioDetail:
     """One scenario: its steps and its scenario runs, newest first."""
     return reads.get_scenario(project, name)
+
+
+@router.post("/projects/{project}/scenarios/validate")
+def validate_scenario(
+    project: NamePath, *, body: ValidateRequest, reads: ScenarioReadsDep
+) -> ValidateResult:
+    """The scenario builder's check: the document as the YAML Save would write, whether it
+    loads, and each problem on its node. Writes nothing."""
+    return ScenarioBuilder(reads).validate(project, body)
+
+
+@router.get("/projects/{project}/actions")
+def list_actions(project: NamePath, reads: ScenarioReadsDep) -> ActionLibrary:
+    """The hub's actions (the builder's palette), with output fields and their scenarios."""
+    return ScenarioBuilder(reads).library(project)
+
+
+@router.put("/scenarios/{project}/{name}")
+def save_scenario(
+    project: NamePath,
+    name: NamePath,
+    *,
+    body: SaveRequest,
+    reads: ScenarioReadsDep,
+    writes: ItemVersionWritesDep,
+) -> SaveResult:
+    """Write the scenario file from the builder's document (a strict write that needs the
+    launch cookie): only a document that loads, over the file the builder last read
+    (409 ``stale_document`` else), recorded as a version; no git command runs."""
+    return ScenarioBuilder(reads).save(project, name, request=body, writes=writes)
+
+
+@router.get("/scenarios/{project}/{name}/proposal")
+def get_proposal(project: NamePath, name: NamePath, reads: ScenarioReadsDep) -> ProposalView:
+    """Claude's proposal for the scenario (a file in the hub's ignored ``.agent-runs/``),
+    checked as Save would check it; 404 when there is none."""
+    return read_proposal(ScenarioBuilder(reads), project, name)
+
+
+@router.post("/scenarios/{project}/{name}/proposal/dismiss", status_code=204)
+def delete_proposal(project: NamePath, name: NamePath, reads: ScenarioReadsDep) -> Response:
+    """Removes Claude's proposal once the owner accepted it into the draft or rejected it."""
+    drop_proposal(ScenarioBuilder(reads), project, name)
+    return Response(status_code=204)
+
+
+@router.post("/projects/{project}/actions", status_code=201)
+def post_action(
+    project: NamePath,
+    *,
+    body: NewAction,
+    reads: ScenarioReadsDep,
+    writes: ItemVersionWritesDep,
+) -> ScenarioActionView:
+    """Writes a new action (its document and its script) into the hub as a draft: a strict
+    write that needs the launch cookie; it runs nothing and commits nothing."""
+    return create_action(ScenarioBuilder(reads), project, body, writes=writes)
+
+
+@router.put("/projects/{project}/actions/{pack}/{name}")
+def put_action(
+    project: NamePath,
+    pack: NamePath,
+    name: NamePath,
+    *,
+    body: NewAction,
+    reads: ScenarioReadsDep,
+    writes: ItemVersionWritesDep,
+) -> ScenarioActionView:
+    """Rewrites an action of the hub (its document and its script): a strict write; the
+    action is a draft until it is committed again."""
+    action = body.model_copy(update={"pack": pack, "name": name})
+    return create_action(ScenarioBuilder(reads), project, action, writes=writes, replace=True)
 
 
 @router.post("/scenarios/{project}/{name}/plan")

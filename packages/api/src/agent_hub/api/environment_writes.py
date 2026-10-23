@@ -1,12 +1,14 @@
 """``POST /projects/{project}/config/environments``: the Hub config screen's environment edits.
 
 The screen does what ``hub env`` does (docs/design/environments.md § ``hub env``): add, change,
-rename or remove an environment, add, change, rename or remove a service and its endpoints, in
-the team's ``hub.json`` or in this developer's ``hub.local.json``. Core's ``environment_edits``
-makes the change and the result is checked as a read checks it (each file, then the rules across
-both) before anything is written, so the screen cannot save a file every command would refuse. A
-file changed since it was read is refused, never overwritten. Neither file is committed (ADR
-0040): a ``hub.json`` change waits for the owner's hub pull request and ``./hub sync``.
+rename or remove an environment (its ``values``, which fill scenario inputs, included), add,
+change, rename or remove a service and its endpoints, in the team's ``hub.json`` or in this
+developer's ``hub.local.json``, where values on a ``hub.json`` environment win per key.
+Core's ``environment_edits`` makes the change and the result is checked as a read checks it
+(each file, then the rules across both) before anything is written, so the screen cannot save a
+file every command would refuse. A file changed since it was read is refused, never
+overwritten. Neither file is committed (ADR 0040): a ``hub.json`` change waits for the owner's
+hub pull request and ``./hub sync``.
 
 A ``batch`` makes its edits in order on both documents in memory, each in its own scope's file,
 then checks the results once and writes both files or neither; a refused edit is named by its
@@ -48,6 +50,7 @@ from agent_hub.core.hub_config.environment_edits import (
     set_service,
     shown_name,
 )
+from agent_hub.core.hub_config.environments import MAX_VALUES
 from agent_hub.core.hub_config.local_config import (
     LOCAL_FILE,
     LOCAL_FILE_MAX_BYTES,
@@ -91,10 +94,16 @@ class AddEnvironment(_Edit):
     aws_profile: Text | None = None
     credential_env: tuple[Name, ...] = Field(default=(), max_length=_MAX_NAMES)
     env_file: Text | None = None
+    # Scenario input values by input name; an empty text is left out.
+    values: dict[Name, Text] = Field(default_factory=dict, max_length=MAX_VALUES)
 
 
 class SetEnvironment(_Edit):
-    """A change to an environment: a field left out stays; an empty text removes the key."""
+    """A change to an environment: a field left out stays; an empty text removes the key.
+
+    On a ``hub.json`` environment, the ``local`` scope may change only ``access`` (stricter)
+    and ``values`` (the developer's, which win per key over the team's).
+    """
 
     op: Literal["set_environment"]
     name: Name
@@ -105,6 +114,8 @@ class SetEnvironment(_Edit):
     aws_profile: Text | None = None
     # Replaces ``credentials.env``; an empty list removes it.
     credential_env: tuple[Name, ...] | None = Field(default=None, max_length=_MAX_NAMES)
+    # Sets each value named; an empty text removes that value. A value not named stays.
+    values: dict[Name, Text] | None = Field(default=None, max_length=MAX_VALUES)
 
 
 class RenameEnvironment(_Edit):
@@ -415,6 +426,9 @@ def _add_environment(
     credentials = _credentials(edit)
     if credentials:
         entry["credentials"] = credentials
+    values: Document = {key: text.strip() for key, text in edit.values.items() if text.strip()}
+    if values:
+        entry["values"] = values
     other = environment_names(documents.other(is_local=is_local))
     return add_environment(
         documents.get(is_local=is_local),
@@ -459,8 +473,12 @@ def _set_environment(
     tightens = is_local and edit.name in environment_names(documents.hub)
     if tightens and (set(changes) - {"access"} or credentials):
         return EditRefusal(
-            f"{HUB_FILE} declares {shown_name(edit.name)}; {LOCAL_FILE} may only tighten its access"
+            f"{HUB_FILE} declares {shown_name(edit.name)};"
+            f" {LOCAL_FILE} may only tighten its access or set values"
         )
+    values: dict[str, JsonValue | None] = {
+        key: text.strip() or None for key, text in (edit.values or {}).items()
+    }
     return set_environment(
         documents.get(is_local=is_local),
         edit.name,
@@ -468,6 +486,7 @@ def _set_environment(
         file=file,
         may_create=tightens,
         credentials=credentials,
+        values=values,
     )
 
 

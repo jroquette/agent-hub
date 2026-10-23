@@ -29,6 +29,7 @@ from agent_hub.core.hub_config.local_config import LocalConfig
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.problems import ConfigProblem
 from agent_hub.core.hubs.hub_registry import HubRegistryError
+from agent_hub.core.item_versions.item_version_ports import ItemWriteResult
 from agent_hub.core.readmodels.filters import RunFilter
 from agent_hub.core.readmodels.read_ports import EntityNotFoundError
 from agent_hub.core.scenarios import investigation as proposals
@@ -922,6 +923,36 @@ def test_returns_plan_rows_when_scenarios_plan_asked(scenarios: Any) -> None:
     assert len(scenarios.launcher.calls) == 2
 
 
+def test_fills_required_input_from_environment_value_when_body_leaves_it_out(
+    scenarios: Any,
+) -> None:
+    # hub.local.json sets a value on hub.json's local: the developer's, never a secret.
+    fake = scenarios.reader.hubs[str(scenarios.hub)]
+    fake.local = LocalConfig.model_validate({"environments": {"local": {"values": {"ref": "T-7"}}}})
+    scenarios.launcher.plan_output = (0, a_plan_output(draft=False))
+
+    detail = scenarios.client.get("/api/v1/scenarios/demo/order-walk").json()
+    planned = _post(scenarios, "/scenarios/demo/order-walk/plan", {"environment": "local"})
+    started = _post(scenarios, "/scenarios/demo/order-walk/runs", {"environment": "local"})
+    elsewhere = _post(scenarios, "/scenarios/demo/order-walk/runs", {"environment": "staging"})
+
+    assert detail["environments"][0] == {
+        "name": "local",
+        "access": "write",
+        "production": False,
+        "values": {"ref": "T-7"},
+    }
+    assert planned.status_code == 200, planned.text
+    assert started.status_code == 202, started.text
+    # The child is given only the body's inputs: it fills the environment's values itself.
+    assert scenarios.launcher.calls[0] == ("plan", ("order-walk", "local", {}))
+    (kind, spec) = scenarios.launcher.calls[1]
+    assert (kind, spec.environment, spec.inputs) == ("start", "local", {})
+    # staging has no value for the required input: refused before any child runs.
+    assert elsewhere.status_code == 422, elsewhere.text
+    assert len(scenarios.launcher.calls) == 2
+
+
 def test_returns_409_conflict_with_steps_when_scenarios_start_denied(scenarios: Any) -> None:
     path = "/scenarios/demo/order-walk/runs"
 
@@ -1454,9 +1485,9 @@ def test_lists_environments_and_run_facts_when_scenarios_detail_read(scenarios: 
     (item,) = scenarios.client.get("/api/v1/scenarios").json()["items"]
 
     assert detail["environments"] == [
-        {"name": "local", "access": "write", "production": False},
-        {"name": "staging", "access": "ask", "production": False},
-        {"name": "live", "access": "read", "production": True},
+        {"name": "local", "access": "write", "production": False, "values": {}},
+        {"name": "staging", "access": "ask", "production": False, "values": {}},
+        {"name": "live", "access": "read", "production": True, "values": {}},
     ]
     shown = [(run["run_id"], run["environment"], run["mode"]) for run in detail["runs"]]
     # A run whose record cannot be read names neither.
@@ -1846,3 +1877,193 @@ def test_refuses_reopen_when_project_hub_unregistered_between_reads(
     assert sent.json()["type"] == "urn:agent-hub:problem:agent-session-restriction-unavailable"
     assert _starts(fresh) == []
     assert fresh.store.get(session_id).status == AgentSessionStatus.ENDED
+
+
+# The scenario builder: validate, the action library and save.
+
+
+class _DiskWrites:
+    """``ItemVersionWrites.write_file`` over the tmp hub: writes the file, records nothing."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def write_file(self, hub_path: str, unit: Any, content: bytes) -> Any:
+        self.calls.append(unit.unit_path)
+        target = Path(hub_path) / unit.unit_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        changed = not target.exists() or target.read_bytes() != content
+        target.write_bytes(content)
+        return ItemWriteResult(changed=changed, versioned=True, reason=None, version=None)
+
+
+def _walk_document(scenarios: Any) -> dict[str, Any]:
+    detail = scenarios.client.get("/api/v1/scenarios/demo/order-walk").json()
+    document: dict[str, Any] = detail["document"]
+    return document
+
+
+def test_places_problems_on_nodes_when_builder_validates(scenarios: Any) -> None:
+    document = _walk_document(scenarios)
+    document["nodes"].append({"id": "lost", "type": "action", "action": "no-such"})
+    document["nodes"].append(
+        {"id": "early", "type": "action", "action": "send-order", "with": {"ref": "$CTX.nope"}}
+    )
+
+    checked = _post(
+        scenarios, "/projects/demo/scenarios/validate", {"pack": "demo", "document": document}
+    )
+
+    assert checked.status_code == 200, checked.text
+    body = checked.json()
+    assert body["loads"] is False
+    assert body["yaml"].startswith("version: 1\nkind: scenario\nname: order-walk\n")
+    by_node = {problem["node"]: problem["message"] for problem in body["problems"]}
+    assert "unknown action 'no-such'" in by_node["lost"]
+    assert "early" in by_node
+    assert [node["id"] for node in body["nodes"]] == ["send-order", "order-held", "lost", "early"]
+
+
+def test_loads_when_builder_validates_scenario_unchanged(scenarios: Any) -> None:
+    document = _walk_document(scenarios)
+
+    body = _post(
+        scenarios, "/projects/demo/scenarios/validate", {"pack": "demo", "document": document}
+    ).json()
+
+    assert (body["loads"], body["problems"]) == (True, [])
+
+
+def test_lists_actions_with_output_fields_and_users_when_library_read(scenarios: Any) -> None:
+    library = scenarios.client.get("/api/v1/projects/demo/actions")
+
+    assert library.status_code == 200, library.text
+    items = {item["action"]["ref"]: item for item in library.json()["items"]}
+    assert list(items) == ["demo/get-order", "demo/release-hold", "demo/send-order"]
+    get_order = items["demo/get-order"]
+    assert [field["path"] for field in get_order["output_fields"]] == ["order", "status"]
+    assert get_order["used_by"] == ["order-walk"]
+    assert items["demo/release-hold"]["used_by"] == []
+
+
+def test_writes_next_revision_when_builder_saves(scenarios: Any) -> None:
+    writes = _DiskWrites()
+    scenarios.wire(item_version_writes=writes)
+    detail = scenarios.client.get("/api/v1/scenarios/demo/order-walk").json()
+    document = detail["document"]
+    document["description"] = "Edited in the builder"
+
+    saved = scenarios.client.put(
+        "/api/v1/scenarios/demo/order-walk",
+        json={"pack": "demo", "document": document, "base_content_hash": detail["content_hash"]},
+        headers=_origin(scenarios),
+    )
+
+    assert saved.status_code == 200, saved.text
+    assert (saved.json()["revision"], saved.json()["path"]) == (2, "scenarios/demo/order-walk.yaml")
+    assert writes.calls == ["scenarios/demo/order-walk.yaml"]
+    reread = scenarios.client.get("/api/v1/scenarios/demo/order-walk").json()
+    assert (reread["description"], reread["revision"]) == ("Edited in the builder", 2)
+
+
+def test_refuses_stale_invalid_and_taken_when_builder_saves(scenarios: Any) -> None:
+    writes = _DiskWrites()
+    scenarios.wire(item_version_writes=writes)
+    document = _walk_document(scenarios)
+
+    def put(name: str, body: dict[str, Any]) -> Any:
+        return scenarios.client.put(
+            f"/api/v1/scenarios/demo/{name}", json=body, headers=_origin(scenarios)
+        )
+
+    stale = put(
+        "order-walk", {"pack": "demo", "document": document, "base_content_hash": "sha256:old"}
+    )
+    broken = dict(document, nodes=[{"id": "x", "type": "action", "action": "no-such"}])
+    invalid = put("fresh", {"pack": "demo", "document": broken})
+    taken = put("order-walk", {"pack": "other", "document": document})
+
+    assert (stale.status_code, stale.json()["code"]) == (409, "stale_document")
+    assert (invalid.status_code, invalid.json()["code"]) == (409, "document_invalid")
+    assert (taken.status_code, taken.json()["code"]) == (409, "name_taken")
+    assert writes.calls == []
+
+
+def test_reads_checks_and_drops_claudes_proposal_when_builder_reviews(scenarios: Any) -> None:
+    route = "/api/v1/scenarios/demo/order-walk/proposal"
+    missing = scenarios.client.get(route)
+    proposal = (
+        scenarios.hub / ".agent-runs" / "proposals" / "scenarios" / "demo" / "order-walk.yaml"
+    )
+    proposal.parent.mkdir(parents=True)
+    proposal.write_text(WALK.replace("One demo order from send to hold", "Proposed by Claude"))
+
+    shown = scenarios.client.get(route)
+    dropped = _post(scenarios, "/scenarios/demo/order-walk/proposal/dismiss", {})
+
+    assert missing.status_code == 404
+    assert shown.status_code == 200, shown.text
+    body = shown.json()
+    assert body["path"] == ".agent-runs/proposals/scenarios/demo/order-walk.yaml"
+    assert body["document"]["description"] == "Proposed by Claude"
+    assert body["check"]["loads"] is True
+    assert dropped.status_code == 204
+    assert not proposal.exists()
+
+
+NEW_ACTION = {
+    "pack": "demo",
+    "name": "render-invoice-pdf",
+    "description": "Render the invoice PDF and upload it",
+    "effect": "write",
+    "runtime": "python",
+    "inputs": [{"name": "invoice_no", "type": "string", "required": True}],
+    "outputs": [{"name": "pdf_key", "type": "string"}],
+    "script_text": "import json, sys\nprint(json.dumps({'summary': 'render'}))\n",
+}
+
+
+def test_writes_draft_action_when_builder_creates_one(scenarios: Any) -> None:
+    writes = _DiskWrites()
+    scenarios.wire(item_version_writes=writes)
+
+    created = _post(scenarios, "/projects/demo/actions", NEW_ACTION)
+    again = _post(scenarios, "/projects/demo/actions", NEW_ACTION)
+    bad = _post(
+        scenarios,
+        "/projects/demo/actions",
+        dict(NEW_ACTION, name="bad-schema", outputs=[{"name": "x", "type": "nope"}]),
+    )
+
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert (body["name"], body["effect"], body["draft"]) == ("render-invoice-pdf", "write", True)
+    assert body["script"] == "actions/demo/scripts/render_invoice_pdf.py"
+    assert [item["name"] for item in body["inputs"]] == ["invoice_no"]
+    assert writes.calls == [
+        "actions/demo/scripts/render_invoice_pdf.py",
+        "actions/demo/render-invoice-pdf.yaml",
+    ]
+    assert (again.status_code, again.json()["code"]) == (409, "name_taken")
+    assert bad.status_code == 422
+
+
+def test_rewrites_action_when_builder_edits_one(scenarios: Any) -> None:
+    writes = _DiskWrites()
+    scenarios.wire(item_version_writes=writes)
+    body = dict(
+        NEW_ACTION, name="get-order", runtime="sh", effect="read", description="Read it again"
+    )
+
+    edited = scenarios.client.put(
+        "/api/v1/projects/demo/actions/demo/get-order", json=body, headers=_origin(scenarios)
+    )
+    missing = scenarios.client.put(
+        "/api/v1/projects/demo/actions/demo/nope", json=body, headers=_origin(scenarios)
+    )
+
+    assert edited.status_code == 200, edited.text
+    assert (edited.json()["description"], edited.json()["draft"]) == ("Read it again", True)
+    # The script keeps its file (same runtime), so a scenario that calls it keeps working.
+    assert writes.calls == ["actions/demo/scripts/get-order.sh", "actions/demo/get-order.yaml"]
+    assert (missing.status_code, missing.json()["code"]) == (409, "unknown_action")

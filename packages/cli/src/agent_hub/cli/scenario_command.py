@@ -16,6 +16,8 @@ file never read), called only when every arg is known (else ``runs with values k
 time``) and never for a draft. It writes nothing: no run-mode process, agent, event or run. Each
 problem (an undeclared environment, an action or endpoint that cannot be resolved, a path an
 action's output lacks, two unordered gates) is a stderr line; a problem or a ``deny`` exits 1.
+A declared input no ``--input`` gives takes ENV's value of that name (``values`` in ``hub.json``
+or ``hub.local.json``), before its default; the same holds for ``run``.
 
 ``--json`` prints one object with the same data, its keys stable: ``scenario``, ``environment``,
 ``access`` (``null`` when undeclared), ``production``, ``denied``, ``problems`` (lines) and
@@ -107,11 +109,15 @@ from agent_hub.cli.workflow_runs import (
     run_lock,
 )
 from agent_hub.core.errors import TrackerError
-from agent_hub.core.hub_config.effective_environments import effective_environments
+from agent_hub.core.hub_config.effective_environments import (
+    EffectiveEnvironments,
+    effective_environments,
+)
 from agent_hub.core.json_form import JsonValue, dump_json
 from agent_hub.core.scenarios.access_policy import DRAFT_REASON, PolicyDecision, deny_reason
 from agent_hub.core.scenarios.action_catalog import resolve_action
 from agent_hub.core.scenarios.credentials import CredentialNames
+from agent_hub.core.scenarios.environment_values import with_environment_values
 from agent_hub.core.scenarios.findings import (
     FindingsError,
     IssueDraft,
@@ -130,6 +136,7 @@ from agent_hub.core.scenarios.scenario_plan import PlanRow, ScenarioPlan, plan_s
 from agent_hub.core.tracker.tracker_client import Issue, TrackerClient
 from agent_hub.core.workflows.catalog import WorkflowCatalog, check_workflows
 from agent_hub.core.workflows.engine import WorkflowEngineError, start_inputs
+from agent_hub.core.workflows.launch import RunInputError
 from agent_hub.core.workflows.plan import WorkflowPlan
 from agent_hub.generator.action_discovery import ActionDiscovery, discover_actions
 from agent_hub.generator.finding_issues import (
@@ -199,7 +206,7 @@ def plan_command(
         actions=found.actions,
         view=view,
         environment=environment,
-        inputs=_inputs(plan, texts),
+        inputs=_inputs(plan, texts, view=view, environment=environment),
     )
     hidden = CredentialNames.of(view)
     summaries = [_summary(row, found, hidden) for row in planned.rows]
@@ -259,7 +266,7 @@ def run_command(
     found = discover_actions(hub)
     effective = load_effective_config_or_exit(hub)
     view = effective_environments(effective.config, effective.local)
-    inputs = _inputs(plan, texts)
+    inputs = _inputs(plan, texts, view=view, environment=environment)
     planned = plan_scenario(
         plan,
         pack=scenario.pack,
@@ -558,16 +565,24 @@ def _scenario(hub: Path, name: str, *, prefix: str) -> tuple[WorkflowPlan, Disco
     return catalog.plans[0], source.found[name]
 
 
-def _inputs(plan: WorkflowPlan, texts: dict[str, str]) -> dict[str, JsonValue]:
-    """The scenario's inputs typed as declared, defaults filled; else exit 2."""
+def _inputs(
+    plan: WorkflowPlan,
+    texts: dict[str, str],
+    *,
+    view: EffectiveEnvironments,
+    environment: str,
+) -> dict[str, JsonValue]:
+    """The scenario's inputs typed as declared, then the environment's values, then the
+    defaults (core's ``with_environment_values``); else exit 2."""
     declared = plan.document.inputs
     typed = {
         key: typed_input(text, declared[key].type if key in declared else "string", key)
         for key, text in texts.items()
     }
     try:
-        return start_inputs(plan, typed)
-    except WorkflowEngineError as error:
+        filled = with_environment_values(plan, typed, view=view, environment=environment)
+        return start_inputs(plan, filled)
+    except (RunInputError, WorkflowEngineError) as error:
         raise typer.BadParameter(str(error), param_hint="--input") from None
 
 

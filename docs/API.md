@@ -756,6 +756,30 @@ folder, the server's environment minus `LINEAR_API_KEY`); no problem quotes its 
   `description`, `effect`, `runtime`, `script`, `timeout`, `inputs` (`name`, `type`, `required`, `default`,
   `description`), `output_format`, `draft` with its `accept_command`, `document_text`, `script_text` (cut with
   `script_truncated`) and `problem` when the action does not load.
+- The scenario builder (AGH-521, hub web's editor of a scenario; `SCENARIO_PATHS` lists its seven paths):
+  - `POST /api/v1/projects/{project}/scenarios/validate` with `{pack, document}` → 200 `ValidateResult`: `loads`,
+    `yaml` (the canonical YAML Save would write), `problems` (`error` or `warning`, each on its `node` or the
+    document) and `nodes` (each top-level node's first and last line in `yaml`). It writes nothing.
+  - `GET /api/v1/projects/{project}/actions` → 200 `ActionLibrary`: the hub's actions, by pack then name, each with
+    its `output_fields` (the paths a reference may read, two levels) and `used_by` (the scenarios that call it), and
+    the `problems` of action files that do not load.
+  - `PUT /api/v1/scenarios/{project}/{name}` with `{pack, document, base_content_hash}` → 200 `SaveResult` (`path`,
+    `revision`, `content_hash`, `yaml`, `changed`, `versioned`): writes `scenarios/<pack>/<name>.yaml` through the
+    item write step (recorded as a version, never through a link, no git command), only when the document loads (409
+    `document_invalid` else) and only over the file the builder last read (409 `stale_document`; `null` for a new
+    scenario, 409 `name_taken` when another pack holds the name). The server sets `revision` (the file's plus one);
+    a document whose canonical bytes equal the file's writes nothing (`changed: false`).
+  - `GET /api/v1/scenarios/{project}/{name}/proposal` → 200 `ProposalView`: the document Claude wrote for the scenario
+    under the hub's ignored `.agent-runs/`, checked as Save would check it; 404 when there is none. `POST
+    …/proposal/dismiss` → 204 removes it once the owner accepted it into the draft or rejected it (never through a
+    link).
+  - `POST /api/v1/projects/{project}/actions` with `NewAction` (`pack`, `name`, `description`, `effect`, `runtime`
+    `python` or `sh`, `timeout`, `inputs`, `outputs`, `script_text`) → 201 `ScenarioActionView`: writes the action's
+    document and its script as a draft (409 `name_taken`, `document_invalid`); it runs and commits nothing. `PUT
+    /api/v1/projects/{project}/actions/{pack}/{name}` rewrites an action of the hub the same way (409
+    `unknown_action`); the action is a draft until it is committed again.
+  - The save, the dismiss and the two action writes are item writes (`ITEM_WRITES`): strict Origin rules and the
+    launch cookie, and 409 `hub_read_only` in the container ([Local security](#local-security)).
 - `POST /api/v1/scenarios/{project}/{name}/plan` with `{environment, inputs?}` → 200 `ScenarioPlanView`: what `hub
   scenario plan NAME --env ENV --json` prints (`scenario`, `environment`, `access` (`null` when undeclared),
   `production`, `denied`, `problems` and `rows`, each `step`, `type`, `action`, `effect`, `args` (a value known only
@@ -912,8 +936,8 @@ index rows, which a foreign page can trigger but whose answer it cannot read ([K
 The agent-session routes add a cookie and stricter Origin rules ([Agent sessions](#agent-sessions)), and the workflow
 run writes (`RUN_WRITES`: start, cancel, resume and abandon a run, a gate's decision, an AC's check run, a
 change request's decision, and the scenario writes: a plan, a start, an investigation's session and answer, a
-finding's issue and inbox note, a run's breakpoints, Step and Continue), the restores, the Publish and a scenario's
-migrate (`ITEM_WRITES`) need that cookie too, as does the read of a scenario run's values ([Workflow run commands](#workflow-run-commands), [Skills](#skills),
+finding's issue and inbox note, a run's breakpoints, Step and Continue), the restores, the Publish, the scenario builder's save, proposal dismiss and action writes (AGH-521), and a
+scenario's migrate (proposed, AGH-507) (`ITEM_WRITES`) need that cookie too, as does the read of a scenario run's values ([Workflow run commands](#workflow-run-commands), [Skills](#skills),
 [Workflows](#workflows)); every other route is unchanged and needs no cookie. In the container (`AGENT_HUB_IN_CONTAINER=1`, where no token is
 minted and the hubs are mounted read-only) a restore, a publish or a migrate answers 409 `hub_read_only` before the
 cookie is checked.

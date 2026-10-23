@@ -642,6 +642,44 @@ def test_passes_endpoint_when_service_input_resolved(hub: Path, marker: Path) ->
     assert {event.payload["service"][0] for event in started} == {"demo-api/api"}
 
 
+def test_gives_run_value_when_step_leaves_input_out(hub: Path, marker: Path) -> None:
+    # send-order names no ref: its action's ref takes the run's ref, the same in every step.
+    write_scenario(
+        hub, SCENARIO.replace("with: {target: api, ref: $INPUTS.ref}", "with: {target: api}", 1)
+    )
+    git(hub, "commit", "-q", "-am", "send-order takes the run's ref")
+
+    result = run_scenario(hub, marker, "local")
+
+    assert result.exit_code == 0, result.output
+    calls = [json.loads(line) for line in marker.read_text().splitlines()]
+    assert calls[0]["inputs"] == {"target": "api", "ref": "T-1", "count": 1}
+
+
+def test_takes_environment_value_when_no_input_given(hub: Path, marker: Path) -> None:
+    # The developer's value on hub.json's local fills the required ref; --input still wins.
+    local = {"environments": {"local": {"values": {"ref": "T-9"}}}}
+    (hub / "hub.local.json").write_text(json.dumps(local) + "\n")
+
+    planned = run_hub(hub, marker, "scenario", "plan", "order-walk", "--env", "local", "--json")
+    asked = run_hub(
+        hub, marker, "scenario", "plan", "order-walk", "--env", "local", "--input", "ref=T-2"
+    )
+    ran = run_hub(hub, marker, "scenario", "run", "order-walk", "--env", "local", "--run-id", RUN)
+    missing = run_hub(hub, marker, "scenario", "plan", "order-walk", "--env", "staging")
+
+    assert planned.exit_code == 0, planned.output
+    rows = json.loads(planned.stdout)["rows"]
+    assert rows[0]["args"]["ref"] == "T-9"
+    assert asked.exit_code == 0, asked.output
+    assert "T-2" in asked.stdout
+    assert ran.exit_code == 0, ran.output
+    inputs = next(line for line in records(hub) if line["event"] == "inputs")
+    assert inputs["inputs"] == {"ref": "T-9"}
+    assert missing.exit_code == 2
+    assert 'the input "ref" is required' in plain(missing.output)
+
+
 def test_resumes_scenario_when_policy_gate_approved(hub: Path, marker: Path) -> None:
     paused = run_scenario(hub, marker, "staging")
 

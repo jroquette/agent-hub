@@ -14,7 +14,8 @@ that accepts it, AM-5) and whether it can be picked now (core's ``option_refusal
 ``ScenarioCommands`` writes, each through the CLI as a child (the API never imports cli):
 
 - ``plan`` waits for ``hub scenario plan --json`` (its plan-mode summaries, AM-8), after the
-  inputs are checked against the scenario's;
+  inputs are checked against the scenario's (a declared input the body leaves out takes the
+  environment's value of that name, core's ``with_environment_values``, as in ``start``);
 - ``start`` plans in process (core's ``plan_scenario``) and refuses a plan with a problem or a
   ``deny`` (409 naming the denied steps), creating no run, then starts ``hub scenario run``;
 - ``answer`` answers the open investigation: a ``pick`` is checked first (core's
@@ -33,6 +34,7 @@ that accepts it, AM-5) and whether it can be picked now (core's ``option_refusal
 
 import contextlib
 import dataclasses
+import hashlib
 import json
 import os
 import threading
@@ -42,6 +44,7 @@ from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Final, Literal, Protocol, Self
 
+import yaml
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -79,6 +82,7 @@ from agent_hub.core.runs.workflow_run import (
 )
 from agent_hub.core.scenarios.access_policy import PolicyDecision, deny_reason
 from agent_hub.core.scenarios.action_catalog import ActionEntry, ActionRefError, resolve_action
+from agent_hub.core.scenarios.environment_values import with_environment_values
 from agent_hub.core.scenarios.findings import (
     FindingIssueError,
     FindingsError,
@@ -169,11 +173,14 @@ class ScenarioRunRef(ViewModel):
 
 
 class ScenarioEnvironment(ViewModel):
-    """An environment the project's hub declares, as the effective config reads now."""
+    """An environment the project's hub declares, as the effective config reads now, with the
+    values that fill a scenario's inputs of the same name there (hub.local.json's over
+    hub.json's, per key)."""
 
     name: str
     access: str
     production: bool
+    values: dict[str, str] = Field(default_factory=dict)
 
 
 class ScenarioSummary(ViewModel):
@@ -262,6 +269,8 @@ class ScenarioDetail(ScenarioSummary):
     path: str | None = None
     document_text: str | None = None
     actions: tuple[ScenarioActionView, ...] = ()
+    document: dict[str, JsonValue] | None = None
+    content_hash: str | None = None
 
 
 class ScenarioCatalogView(ViewModel):
@@ -477,6 +486,7 @@ class ScenarioCatalog:
         runs = tuple(_run_ref(run, hub) for run in page.items)
         summary = _summary(project, plan, pack=pack, last=runs[0] if runs else None)
         steps = tuple(_step_view(node) for node in plan.document.nodes)
+        text = read_text_bounded(file, DOCUMENT_TEXT_BYTES)[0]
         refs = dict.fromkeys(step.action for step in steps if step.action is not None)
         found = discover_actions(Path(hub)) if refs else None
         return ScenarioDetail(
@@ -485,8 +495,10 @@ class ScenarioCatalog:
             runs=runs,
             environments=self._environments(hub, project),
             path=_hub_relative(file, hub),
-            document_text=_read_text(file, DOCUMENT_TEXT_BYTES)[0],
-            actions=tuple(_action_view(ref, pack, found) for ref in refs if found is not None),
+            document_text=text,
+            document=_document_of(text),
+            content_hash=None if text is None else _hash_text(file),
+            actions=tuple(action_view(ref, pack, found) for ref in refs if found is not None),
         )
 
     def _environments(self, hub: str, project: str) -> tuple[ScenarioEnvironment, ...]:
@@ -496,7 +508,12 @@ class ScenarioCatalog:
         except HubLocalInvalidError, EntityNotFoundError:
             return ()
         return tuple(
-            ScenarioEnvironment(name=item.name, access=item.access, production=item.production)
+            ScenarioEnvironment(
+                name=item.name,
+                access=item.access,
+                production=item.production,
+                values=dict(item.values),
+            )
             for item in view.environments
         )
 
@@ -690,7 +707,7 @@ def _step_view(node: object) -> ScenarioStepView:
     )
 
 
-def _action_view(ref: str, pack: str, found: ActionDiscovery) -> ScenarioActionView:
+def action_view(ref: str, pack: str, found: ActionDiscovery) -> ScenarioActionView:
     """The action ``ref`` (as a step of ``pack`` writes it), or why it does not resolve."""
     try:
         entry = resolve_action(found.actions, ref, pack=pack)
@@ -728,6 +745,27 @@ def _action_view(ref: str, pack: str, found: ActionDiscovery) -> ScenarioActionV
     )
 
 
+def _document_of(text: str | None) -> dict[str, JsonValue] | None:
+    """The scenario file as the builder edits it: its mapping, keys as written."""
+    if text is None:
+        return None
+    try:
+        value = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _hash_text(path: Path) -> str | None:
+    """``sha256:`` of the file's bytes, never through a link; None when unreadable."""
+    try:
+        descriptor = os.open(path, _READ_FILE)
+    except OSError:
+        return None
+    with os.fdopen(descriptor, "rb") as file:
+        return f"sha256:{hashlib.sha256(file.read()).hexdigest()}"
+
+
 def _hub_relative(path: Path, hub: str) -> str:
     try:
         return path.relative_to(hub).as_posix()
@@ -742,7 +780,7 @@ def _text_of(data: bytes | None, limit: int) -> tuple[str | None, bool]:
     return data[:limit].decode(errors="replace"), len(data) > limit
 
 
-def _read_text(path: Path, limit: int) -> tuple[str | None, bool]:
+def read_text_bounded(path: Path, limit: int) -> tuple[str | None, bool]:
     """A file's text read up to ``limit`` bytes, never through a link; None if unreadable."""
     try:
         descriptor = os.open(path, _READ_FILE)
@@ -1047,10 +1085,14 @@ class ScenarioCommands:
     def plan(self, project: str, name: str, request: ScenarioPlanRequest) -> ScenarioPlanView:
         """The scenario planned in the asked environment, with its plan-mode summaries."""
         hub, plan, _pack = self._catalog.scenario(project, name)
-        launch_inputs(plan, request.inputs)
         # As the CLI's plan, which exits on it: a local file that cannot be read or conflicts
         # with hub.json refuses before any child runs.
-        self._catalog.credentials.environments_of(hub, project)
+        view = self._catalog.credentials.environments_of(hub, project)
+        # The child fills the environment's values itself: only the given inputs go to it.
+        given = with_environment_values(
+            plan, request.inputs, view=view, environment=request.environment
+        )
+        launch_inputs(plan, given)
         texts = {key: argv_text(value) for key, value in request.inputs.items()}
         code, printed = self._launcher.plan_scenario(
             hub, name, environment=request.environment, inputs=texts
@@ -1069,8 +1111,11 @@ class ScenarioCommands:
         """Start a scenario run once its plan holds no problem and no ``deny``."""
         run_id = self._mint()
         hub, plan, pack = self._catalog.scenario(project, name)
-        inputs = launch_inputs(plan, request.inputs)
         view = self._catalog.credentials.environments_of(hub, project)
+        given = with_environment_values(
+            plan, request.inputs, view=view, environment=request.environment
+        )
+        inputs = launch_inputs(plan, given)
         planned = plan_scenario(
             plan,
             pack=pack,

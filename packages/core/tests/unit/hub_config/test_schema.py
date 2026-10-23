@@ -4,7 +4,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from agent_hub.core.hub_config.doctor_rules import MAX_LINES_KEY_LENGTH, MAX_LINES_KEYS
-from agent_hub.core.hub_config.environments import MAX_NAME_CHARS
+from agent_hub.core.hub_config.environments import MAX_NAME_CHARS, MAX_VALUE_CHARS, MAX_VALUES
 from agent_hub.core.hub_config.model import HubConfig
 from agent_hub.core.hub_config.platform_repository import PLATFORM_REPOSITORY_PATTERN
 from agent_hub.core.hub_config.schedules import MAX_START_INPUTS
@@ -134,6 +134,21 @@ def test_describes_schedule_inputs_when_schema_exported() -> None:
         assert types == ["boolean", "number", "string"], path
 
 
+# An environment's values, which fill scenario inputs (environments.md § Values).
+VALUES_MAP = "$.$defs.Environment.properties.values"
+
+
+def test_describes_environment_values_when_schema_exported() -> None:
+    values = read_shipped_schema()["$defs"]["Environment"]["properties"]["values"]
+
+    assert values["propertyNames"] == {"pattern": "^[a-z][a-z0-9_]{0,63}$"}
+    assert values["maxProperties"] == MAX_VALUES
+    assert values["patternProperties"] == COMMENT_KEYS
+    assert values["additionalProperties"]["type"] == "string"
+    assert values["additionalProperties"]["minLength"] == 1
+    assert values["additionalProperties"]["maxLength"] == MAX_VALUE_CHARS
+
+
 def test_forbids_extra_keys_when_object_has_fixed_keys() -> None:
     schema = read_shipped_schema()
     maps: list[tuple[str, dict[str, Any]]] = []
@@ -151,6 +166,8 @@ def test_forbids_extra_keys_when_object_has_fixed_keys() -> None:
     # AGH-481: the run inputs of schedules and events, pinned by
     # test_describes_schedule_inputs_when_schema_exported.
     maps = [(path, node) for path, node in maps if path not in START_INPUT_MAPS]
+    # Pinned by test_describes_environment_values_when_schema_exported.
+    maps = [(path, node) for path, node in maps if path != VALUES_MAP]
     [(path, max_lines)] = maps
     assert path.endswith(".InstructionsSizeSettings.properties.max_lines")
     # E30: the model's bounds, pinned by number in test_doctor_rules.py.
