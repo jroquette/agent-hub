@@ -113,10 +113,7 @@ It exits 0, and its first line starts `created ` and counts the files and links 
 When the user gives you a `hub.json` for a new hub, pass `--config <path to hub.json>` instead of the project name and
 the value flags. When the project already has a hub (on another machine, or on GitHub), do not init: see § When init
 refuses. Init writes only what is needed to start: project rules, gates and onboarding come later, from `/onboard`
-(§ Open a session and run /onboard). It also writes an example action and scenario (`actions/demo/demo-get-status.yaml`
-with its script, and `scenarios/demo/demo-service-up.yaml`; [scenarios.md](design/scenarios.md)). They are the
-project's files: `hub.lock` does not list them, `hub sync` never adds them back, and the user may keep, change or
-delete them. They plan only once the project declares an environment and a service with an endpoint in it.
+(§ Open a session and run /onboard). Its examples in `actions/demo/` and `scenarios/demo/` are the project's files.
 
 ## When init refuses
 
