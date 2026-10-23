@@ -204,7 +204,9 @@ DESIGN_PATHS = (
     "workflows/doc-drift/scripts/doc_fix.py",
     "workflows/doc-drift/scripts/mentions.py",
     # AGH-449: the flaky pack.
+    "workflows/flaky/prompts/classify.md",
     "workflows/flaky/scripts/repeat.py",
+    "workflows/flaky/scripts/report.py",
     # AGH-483: the built-in incident pack, seeded.
     "workflows/incident/fixtures/incident-awaiting-mitigation.yaml",
     "workflows/incident/fixtures/incident-confirmed.yaml",
@@ -4680,6 +4682,8 @@ RUN_TIME_BRAIN_PATHS = {
     "brain/_inbox/onboard-proposal.md": "plugin/hub-workflow/skills/onboard/SKILL.md",
     # Written by the retro pack's step 4, one issue-draft file per retro (AGH-488).
     "brain/_inbox/retro-": "workflows/retro/scripts/drafts.py",
+    # Written by the flaky pack's report step, one note per test (AGH-449).
+    "brain/_inbox/flaky-": "workflows/flaky/scripts/report.py",
 }
 
 
