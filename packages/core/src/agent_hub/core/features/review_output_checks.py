@@ -14,7 +14,10 @@ from agent_hub.core.features.scope_rules import RERUN_PATTERN
 from agent_hub.core.hub_config.problems import ROOT_PATH
 
 _JSON_SUFFIX: Final = ".json"
-_FILE_FORM: Final = "spec-r<N>.json or quality-r<N>.json (N from 1 to 9999, no leading zero)"
+_FILE_FORM: Final = (
+    "spec-r<N>.json, quality-r<N>.json, ux-r<N>.json or overengineering-r<N>.json"
+    " (N from 1 to 9999, no leading zero)"
+)
 _REVIEWER: Final = field_adapter(ReviewOutput, "reviewer")
 _ROUND: Final = field_adapter(ReviewOutput, "round")
 _TICKET: Final = field_adapter(ReviewOutput, "ticket")

@@ -107,7 +107,7 @@ class ReviewOutput(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     schema_id: Literal["agent-hub/review/1"] = Field(alias="schema")
-    reviewer: Literal["spec", "quality"]
+    reviewer: Literal["spec", "quality", "ux", "overengineering"]
     ticket: TicketKey
     task: TaskId
     round: ReviewRound

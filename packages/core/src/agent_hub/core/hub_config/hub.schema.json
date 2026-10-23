@@ -274,6 +274,9 @@
         "config.identity": {
           "$ref": "#/$defs/IdentityRuleSettings"
         },
+        "repos.ui_paths": {
+          "$ref": "#/$defs/RuleSettings"
+        },
         "environments.production": {
           "$ref": "#/$defs/RuleSettings"
         },
@@ -777,6 +780,17 @@
           },
           "title": "Services",
           "type": "object"
+        },
+        "ui_paths": {
+          "description": "Globs of the repo's screen paths, from the repo root (** spans folders; no [ or ], at most 3 * per segment): a review round whose diff touches one runs the UX lens. Absent: the repo has no UI.",
+          "items": {
+            "maxLength": 200,
+            "pattern": "^[!-.0-~][!-~]*$",
+            "type": "string"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "type": "array"
         }
       },
       "required": [
