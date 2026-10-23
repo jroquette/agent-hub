@@ -32,6 +32,8 @@ characters, and the picked option (``{}`` without one). Empty values are steps t
 2 on a bad input (the reason on stderr).
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import re

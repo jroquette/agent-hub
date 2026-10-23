@@ -21,6 +21,8 @@ give exactly three causes. It prints ``{"result": "complete" | "incomplete", "re
 brain/features), 1 when a file cannot be written (the reason on stderr).
 """
 
+from __future__ import annotations
+
 import argparse
 import datetime
 import json
@@ -417,7 +419,9 @@ def main(argv: Sequence[str]) -> int:
     if steps["premortem"] is not None:
         premortem_s = max(0.0, min(now - float(state.get("at", now)), PREMORTEM_CAP_S))
     spent_m = int(state.get("spent_s", 0) + premortem_s) // 60
-    today = datetime.datetime.fromtimestamp(now, tz=datetime.UTC).date().isoformat()
+    # datetime.UTC is 3.11+: the seeded copy must import on 3.9.
+    utc = datetime.timezone.utc  # noqa: UP017
+    today = datetime.datetime.fromtimestamp(now, tz=utc).date().isoformat()
     run = RUN_ID.sub("", os.environ.get("AGENT_HUB_RUN_ID", "")) or "run"
     research = render_research(
         given.question, given_steps, found, run=run, today=today, spent_m=spent_m
