@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from agent_hub.generator.flow_catalog import builtin_flows, flow_table
-from scripts.build_flow_catalog import END, START, FLOWS_DOC, catalog_block, main
+from scripts.build_flow_catalog import END, FLOWS_DOC, START, catalog_block, main
 
 BEFORE = "# Guide\n\nIntro.\n\n## Pick a flow\n\nWhich flow.\n\n"
 AFTER = "\n\n## Later\n\nMore.\n"
