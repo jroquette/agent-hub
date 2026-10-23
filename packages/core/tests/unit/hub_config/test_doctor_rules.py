@@ -39,6 +39,7 @@ RULE_TABLE_IDS = [
     "config.stop_gate",
     "environments.production",
     "environments.env_file",
+    "workflows.starts",
     "brain.memory",
     "sandbox.workflow",
     "workflows.valid",

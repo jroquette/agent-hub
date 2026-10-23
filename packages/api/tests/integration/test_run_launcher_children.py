@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -125,6 +126,20 @@ def test_starts_live_cli_with_argv_and_scoped_env_when_run_launched(
     assert gone(hub / ".agent-runs" / "web" / "run-1.pid")
     log = hub / ".agent-runs" / "web" / "run-1.log"
     assert stat.S_IMODE(log.stat().st_mode) == 0o600
+
+
+def test_passes_schedule_trigger_and_env_when_scheduled_run_launched(
+    hub: Path, tmp_path: Path, make_launcher: Callable[..., ProcessRunLauncher]
+) -> None:
+    scheduled = replace(spec(hub, issue="DEM-7"), trigger="schedule", environment="staging")
+
+    make_launcher().start(scheduled)
+
+    [call] = calls(tmp_path, 1)
+    assert call["argv"] == [
+        "workflow", "run", "fix", "--run-id", "run-1", "--live",
+        "--input", "issue=DEM-7", "--env", "staging", "--trigger", "schedule",
+    ]  # fmt: skip
 
 
 def test_passes_absolute_database_when_path_given_relative(

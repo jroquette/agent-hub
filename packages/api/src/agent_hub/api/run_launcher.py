@@ -172,6 +172,10 @@ class ProcessRunLauncher:
         argv.append("--live")
         for name, value in spec.inputs.items():
             argv += ["--input", f"{name}={argv_text(value)}"]
+        if spec.environment is not None:
+            argv += ["--env", spec.environment]
+        if spec.trigger is not None:
+            argv += ["--trigger", spec.trigger]
         self._detach(spec.hub_path, spec.run_id, argv, issue=spec.issue)
 
     def start_scenario(self, spec: ScenarioLaunch) -> None:

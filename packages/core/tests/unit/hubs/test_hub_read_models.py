@@ -206,6 +206,15 @@ def test_lists_project_hubs_when_valid_hubs_registered() -> None:
     assert list(models.project_hubs()) == [("demo", DEMO)]
 
 
+def test_yields_each_project_config_once_when_scheduled_hubs_read() -> None:
+    models, reader, _ = read_models({DEMO: a_demo_hub(), OTHER: a_demo_hub()}, DEMO, OTHER)
+
+    [hub] = list(models.scheduled_hubs())
+
+    assert (hub.project, hub.hub_path, hub.config.project.name) == ("demo", DEMO, "demo")
+    assert reader.snapshots == {}
+
+
 # AGH-429 (AC-429.5): hub paths never run the doctor.
 def test_lists_project_hubs_without_running_doctor_when_lock_matches_pin() -> None:
     hub = a_demo_hub()
