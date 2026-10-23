@@ -1429,6 +1429,7 @@ def test_imports_every_rendered_module_when_run_on_each_python(
         # The incident pack's helpers (AGH-483), likewise.
         "workflows/incident/scripts",
         "workflows/post-merge-verify/scripts",
+        "workflows/release/scripts",
         "workflows/retro/scripts",
         "workflows/review-incoming/scripts",
         "workflows/sdlc/scripts",

@@ -243,6 +243,9 @@ To review someone else's PR, type `/review <PR>` in a session. It reads the PR w
 file and answer `./hub workflow respond <run> --choice comment|request-changes|approve` (or `--choice reject`), and only
 then does `/review` post it. The repo's check runs at the PR's head in a throwaway worktree, never for a fork.
 
+The platform's own releases come from `/release`, which runs the built-in `release` workflow: the owner approves
+the release PR, merges it with a merge commit, and approves the hub PR that raises `platform.version`.
+
 ### Run the control plane
 
 The control plane (`hub web`) shows the hub's sessions, runs, approvals and health; old `/live` links open the Sessions

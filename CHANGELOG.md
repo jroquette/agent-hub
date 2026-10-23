@@ -91,6 +91,12 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `.agent-runs/review-incoming/<run>.md` that you edit and answer with `./hub workflow respond <run> --choice
   comment|request-changes|approve|reject`. The run never posts: it writes the payload `/review` posts. A new pack
   folder: `./hub sync` seeds it into an existing hub.
+- A built-in `release` workflow pack (AGH-494): `/release` runs it to list the PRs merged since the last tag,
+  propose the version, make the release commit, compute what `hub sync` rewrites, write the notes and run the check on
+  that exact commit; the release PR opens after the owner's approval. Once the platform repo's release workflow has
+  tagged the release commit (the PR's head: merge it with a merge commit), a second approval opens the hub PR that
+  raises `platform.version` and runs `./hub sync`. A red check ends the run blocked; no node creates a tag or writes
+  the tracker.
 
 ### Changed
 

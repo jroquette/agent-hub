@@ -516,7 +516,7 @@
     "plugin/hub-workflow/skills/release/SKILL.md": {
       "executable": false,
       "ownership": "managed",
-      "sha256": "4347ca13b837f9e96de22b03460be8c7e7badf821c859dc8b1c9e24cc6aaa538"
+      "sha256": "f0cfac0307e669a599e47df312c970c4153bb3ea7795ca26995624fd4faf7651"
     },
     "plugin/hub-workflow/skills/research/SKILL.md": {
       "executable": false,
@@ -803,6 +803,57 @@
       "ownership": "seeded"
     },
     "workflows/post-merge-verify/scripts/verify.py": {
+      "ownership": "seeded"
+    },
+    "workflows/release/fixtures/release-check-red.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/release/fixtures/release-declined.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/release/fixtures/release-minor.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/release/fixtures/release-nothing.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/release/fixtures/release-pin-declined.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/release/fixtures/release-pin.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/release/fixtures/release-tag-missing.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/release/prompts/notes.md": {
+      "ownership": "seeded"
+    },
+    "workflows/release/release.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/release/scripts/bump.py": {
+      "ownership": "seeded"
+    },
+    "workflows/release/scripts/compose.py": {
+      "ownership": "seeded"
+    },
+    "workflows/release/scripts/exact_check.py": {
+      "ownership": "seeded"
+    },
+    "workflows/release/scripts/hub_branch.py": {
+      "ownership": "seeded"
+    },
+    "workflows/release/scripts/pin.py": {
+      "ownership": "seeded"
+    },
+    "workflows/release/scripts/report.py": {
+      "ownership": "seeded"
+    },
+    "workflows/release/scripts/since.py": {
+      "ownership": "seeded"
+    },
+    "workflows/release/scripts/tagged.py": {
       "ownership": "seeded"
     },
     "workflows/retro/fixtures/retro-all-dropped.yaml": {

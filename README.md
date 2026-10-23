@@ -275,10 +275,11 @@ oldest unready issues, one approval per issue; `/triage` applies the approved on
 make targets, flags, config keys, skills, workflows, paths, tables and columns, then the doc lines that still name
 them, a read-only judge's corrected lines, the owner's approval, and a docs-only PR in the repo; ADR lines are reported,
 never edited; nothing writes the tracker; fetch the repo first: `doc-drift` reads `origin/<default branch>` as last
-fetched) and
+fetched),
 `review-incoming` (11 nodes, started by
 `/review`: someone else's PR through the spec, quality and security lenses, the repo's check at the head (never for a
-fork) and one draft you edit; `/review` reads the PR and posts the draft only after you approve it). A hub's own file
+fork) and one draft you edit; `/review` reads the PR and posts the draft only after you approve it) and
+`release` (`release`: the release PR, then the hub pin PR, each behind its own approval). A hub's own file
 overrides a built-in of the same name.
 
 ```bash
@@ -412,7 +413,7 @@ The size decides the ceremony:
 | `/triage <issue \| --backlog \| --hygiene> [--limit N]` | Brings a tracker issue to Definition of Ready (ACs, size, repos, dependencies, a verification command), then labels it ready or `needs-human`; `--backlog` runs the `backlog-care` workflow on the open issues it reads (hygiene findings and drafts, one approval per issue, then it applies only the approved ones; weekly, on Mondays), `--hygiene` reports orphan, stale and duplicate issues (at most 50 read per run, or `--limit N`) | Before an issue goes to `/fix`, `/feature` or `hub run` |
 | `/deliver <PR or issue>` | Drives an open PR to merged: conflicts, red CI and review threads, the gates before each push, the default branch's CI after the merge, then the tracker | After the PR is open |
 | `/review <PR>` | Reviews someone else's PR against its ticket, the ADRs and the brain through the `review-incoming` workflow; posts only what you approve | For a teammate's PR or one `hub run` opened |
-| `/release [version]` | Cuts a platform release: merged PRs, the bump, the check on the exact commit, notes with what `hub sync` rewrites, then the hub's pin bump | When `main` holds what the next version ships |
+| `/release [version]` | Cuts a platform release: runs the `release` workflow (merged PRs, the bump, the check on the exact commit, notes with what `hub sync` rewrites), dispatches the tag, then the hub's pin bump | When `main` holds what the next version ships |
 | `/incident <symptom or issue>` | Starts the `incident` workflow for a problem with no known reproduction: evidence, ranked hypotheses with read-only checks, a gated mitigation, then `/fix` and a postmortem | When `/fix` cannot start because nothing reproduces yet |
 | `/refactor <issue>` | Makes a behaviour-preserving change: characterization tests first, then batched PRs that each pass `check` alone | When a refactor is too big for `/fix` and needs no spec |
 | `/upgrade [package or tool]` | Starts the `upgrade` workflow for a uv or npm package (bump, changelog, adapt, checks, PR behind an approval); a toolchain, plugin pin, Docker digest or Action goes by hand | For dependency and toolchain bumps |

@@ -191,6 +191,12 @@ Releases UI or with a plain `git tag`: both make a lightweight tag, which `relea
 The hub's `/release` skill runs the whole release. The owner does three things: confirm the version and the SHA at its
 gate, merge the version PR, and merge the hub pin PR. The agent does the rest:
 
+With a pin that has the built-in `release` workflow (`packages/core/src/agent_hub/core/workflows/builtin/release/`),
+`/release` runs it: the workflow does steps 1-3 and 6 below, the release commit is the version PR's head and the tag
+goes on it, so the owner merges that PR with a merge commit (not squash), and the check runs on that commit once. The
+skill dispatches the tag (step 4) and the workflow verifies it (step 5) before the pin PR, each PR behind its own
+approval. Without it, the skill follows the steps by hand:
+
 1. **The version PR.** It sets `version` in `packages/cli/pyproject.toml` and `packages/agent-hub/pyproject.toml` to
    `X.Y.Z`, runs `uv lock` and commits `uv.lock`. `make lockstep` (in `make check-fast`) fails while the two versions
    differ; the other packages keep their versions. The same PR renames `CHANGELOG.md`'s `[Unreleased]` section to
