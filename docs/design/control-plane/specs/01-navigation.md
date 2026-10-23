@@ -47,7 +47,9 @@ Every screen carries its phase. A screen tagged P3 or P4 is not shown in the sid
     ?option=&event=   (replace)
 
 /knowledge                          Knowledge (redirects to /knowledge/brain)        P3
-├ /knowledge/brain?project=&path=   Brain browser                                    P3
+├ /knowledge/brain                  Brain: project picker (AGH-270, AGH-427)         P2
+│ └ /projects/:project/brain/<path>  Brain: tree, search and note (AGH-201, AGH-393)  P2
+│     ?q=  the search (replace, not push); the note path pushes and keeps ?q=
 ├ /knowledge/skills                 Skills: project picker (AGH-164)                 P2
 │ └ /projects/:project/skills       Skills catalog                                   P2
 │     ?q=&kind=&origin=&mode=&diag=1   (comma lists; replace, not push)
@@ -56,7 +58,8 @@ Every screen carries its phase. A screen tagged P3 or P4 is not shown in the sid
 │   ?status=proposed|accepted|rejected|snoozed&target=team|repo|personal&learning=:id
 │   As built (AGH-272, specs/18-learnings.md): ?status=accepted|rejected (absent = proposed; push)
 │   &learning=:id&q=&project=&readiness=ready|blocked&claude=…&provenance=… (comma lists)
-│ └ /knowledge/learnings/:id/trace  Provenance trace                                 P3
+│ └ /knowledge/learnings/:id/trace  Provenance trace: not built; the trail from session to note is in
+│                                   the learning detail (AGH-393, specs/18-learnings.md)
 ├ /knowledge/decisions?project=&repo=&topic=&decision=:id  Decisions log            P3
 └ /knowledge/context?project=&repo=&agent=  Context inspector                        P3
 
@@ -230,7 +233,7 @@ Result groups, in this fixed order (empty groups hidden):
 | Scenario runs | scenario run id | Scenario run 3f2a91c0 · demo | `/scenarios/:project/:name/runs/:id` |
 | Files | repo-relative paths touched by any session | `packages/core/.../brain_memory_rule.py` · touched in 4 sessions | `/sessions?file=…` |
 | Agents | `plugin:name` | `hub-workflow:evaluator` · 12 sessions this week | `/sessions?agent=…` |
-| Brain notes | title and path under `brain/` (P3; before P3 they open the hub file link) | `brain/learnings/gotchas/testing.md` | `/knowledge/brain?path=…` |
+| Brain notes (as built AGH-393) | the knowledge index (title and text) of the project in scope, or of the project route's project; none with All projects | Worktrees from origin · `brain/decisions/0001-worktrees.md` | `/projects/:project/brain/<path>` |
 | Screens and actions | sidebar items, settings sections, "Toggle theme", "Switch to UTC" | Sessions `g s` (only Sessions: no Live sessions entry) | route or action |
 
 Ranking (within a group, then the groups above are ordered as listed but an exact match always wins the first row):
@@ -239,6 +242,19 @@ Ranking (within a group, then the groups above are ordered as listed but an exac
 3. Token match in title/path, scored by fuzzy distance: 0.3–0.7.
 4. Boost +0.15 when the item is in the current scope; +0.1 when live; +0.1 when opened in the last 7 days (local history `ah.palette.recent`, max 50 entries, per browser only).
 5. Ties: most recent activity first.
+
+**Brain notes, as built (AGH-393).** With a project in scope, or on a `/projects/:project/…` route, the palette also
+calls `GET /projects/{project}/knowledge/search?q=&limit=8` for the trimmed input when it holds a letter or a digit,
+with the same 120 ms debounce; only its `brain/` results are listed (repo docs are not opened in the app), in the
+index's rank order, as the group last before Screens (the built palette has no Agents group). The group header reads
+"Brain notes · <project>" (its accessible name stays "Brain notes"); a row is the `file-text` icon, the title, and the
+path in mono (`PathText`, middle-truncated to 56 characters), named "<title>, <path>". While the request is pending a
+one-row skeleton holds the group's place after 300 ms; the other groups never wait for it, and "No match" shows only
+once both searches answered. The highlight is kept by item, not by position, so a group arriving late never moves it
+(nor `aria-activedescendant`). A failed request hides the group and the foot says "Brain notes not searched: <problem
+title>." (polite `role="status"`). With All projects in scope, off a project route, no request is sent, the placeholder leaves out "notes"
+("Search sessions, runs, issues, files, agents, screens…") and the foot says "Brain notes are searched when a project
+is in scope." Test: `shell/CommandPalette.test.tsx` "brain notes: …" (AC-393.4).
 
 Empty input shows "Recent" (last 8 opened entities) and "Screens". No-result copy: "No match for "brain_memry". Try an issue key like AGH-48, an 8-character id, or a file name." Data: `GET /search?q=&scope=` (debounced 120 ms; results under 1 s or a `Skeleton` row after 300 ms). Keyboard: `↑`/`↓` move, `Enter` opens, `⌘Enter`/`Ctrl Enter` opens in a new tab, `Tab` cycles groups, `Esc` closes.
 
@@ -366,8 +382,8 @@ Every entity, tab, filter and selected item is addressable. The URL is the sourc
 | Raw event | `/sessions/:id?tab=raw&event=:eventId` | |
 | Run step | `/runs/:id?step=verify&attempt=2` | |
 | Approval | `/runs/:runId` (a workflow gate, Open gates) or `/sessions/:id` (any other) | the Approvals inbox is retired (AGH-273) |
-| Learning | `/knowledge/learnings?learning=:id`, trace `/knowledge/learnings/:id/trace` | |
-| Brain note | `/knowledge/brain?project=agent-hub&path=brain/now.md` | |
+| Learning | `/knowledge/learnings?learning=:id` | the trace `/knowledge/learnings/:id/trace` is not built: the trail from session to note is in the learning detail (AGH-393) |
+| Brain note | `/projects/agent-hub/brain/now.md` (with `?q=` when a search is open) | as built (AGH-201, AGH-393); `?q=` is written with `replace` |
 | Skills catalog | `/projects/agent-hub/skills?q=plan&kind=skill&mode=user-only` | search and facets in the query, updated with `replace` (a departure from the push rule below: typing must not fill the history); unknown values ignored |
 | Skill detail | `/projects/agent-hub/skills/skill/hub-workflow/feature` | `kind/source/name`; `source` is the folder (`claude` for `.claude/`, `settings` / `settings-project` for hooks) |
 | Feature AC | `/features/agent-hub/layered-memory?ac=AC-48.21` | |
@@ -392,7 +408,7 @@ Shortcuts are listed in the `ShortcutSheet` (`?`). Two-key sequences start with 
 |---|---|---|
 | `⌘K` / `Ctrl K` | Command palette | Works in inputs too |
 | `?` | Shortcut sheet | `Shift /` on US layouts |
-| `/` | Focus the page's search or filter field | On Session detail: search in session |
+| `/` | Focus the page's search or filter field | On Session detail: search in session. On Brain: search notes and repo docs (AGH-393) |
 | `Esc` | Close the topmost layer: palette → dialog → popover → side panel → clear selection | Never navigates |
 | `g p` | Portfolio | |
 | `g l` | Sessions, grid view (`/sessions?view=grid`; alias kept from the retired Live sessions) | |

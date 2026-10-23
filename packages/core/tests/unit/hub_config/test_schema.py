@@ -360,3 +360,20 @@ def test_describes_environment_maps_when_schema_exported() -> None:
             "maxLength": MAX_NAME_CHARS,
             "pattern": "^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
         }, path
+
+
+def test_exports_optional_ui_paths_when_schema_exported() -> None:
+    repo = read_shipped_schema()["$defs"]["Repo"]
+    ui_paths = repo["properties"]["ui_paths"]
+
+    assert "ui_paths" not in repo["required"]
+    assert ui_paths["type"] == "array"
+    assert ui_paths["minItems"] == 1
+    assert ui_paths["maxItems"] == 50
+    assert "default" not in ui_paths
+    assert "anyOf" not in ui_paths
+    item = ui_paths["items"]
+    assert item["maxLength"] == 200
+    assert re.search(item["pattern"], "apps/web/**")
+    assert not re.search(item["pattern"], "/apps/web/**")
+    assert not re.search(item["pattern"], "")

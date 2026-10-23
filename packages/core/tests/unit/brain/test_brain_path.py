@@ -2,6 +2,7 @@ from pathlib import PurePosixPath
 
 import pytest
 
+from agent_hub.core.brain.brain_note import BrainNoteNotFoundError
 from agent_hub.core.brain.brain_path import (
     MAX_NOTE_BYTES,
     MAX_PATH_CHARS,
@@ -12,6 +13,7 @@ from agent_hub.core.brain.brain_path import (
     branch_slug,
     inbox_note,
     learning_branch,
+    readable_note_path,
 )
 
 TRAVERSALS = [
@@ -168,3 +170,23 @@ def test_names_branch_when_learning_accepted() -> None:
     )
 
     assert branch == "roquettejh/learning-accept-testing-x"
+
+
+@pytest.mark.parametrize(
+    ("path", "error"),
+    [
+        ("auto/x.md", BrainNoteNotFoundError),
+        ("Auto/workspace/me.md", BrainNoteNotFoundError),
+        ("auto/x.txt", BrainNoteNotFoundError),
+        ("../x.md", BrainPathError),
+        ("x.txt", BrainPathError),
+        ("/abs.md", BrainPathError),
+    ],
+)
+def test_hides_auto_as_missing_note_when_note_path_checked(
+    path: str, error: type[Exception]
+) -> None:
+    with pytest.raises(error):
+        readable_note_path(path, project="demo")
+
+    assert readable_note_path("decisions/0001-x.md", project="demo") == "decisions/0001-x.md"

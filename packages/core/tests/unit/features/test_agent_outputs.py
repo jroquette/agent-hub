@@ -315,8 +315,10 @@ def test_reports_mismatch_when_review_file_name_differs(
         (a_review_document(), "spec-r1.json", "agh-7"),
         (a_review_document(ticket="agh-7"), "spec-r1.json", "AGH-7"),
         (a_review_document(reviewer="quality", round=9999), "quality-r9999.json", "AGH-7"),
+        (a_review_document(reviewer="ux", round=2), "ux-r2.json", "AGH-7"),
+        (a_review_document(reviewer="overengineering"), "overengineering-r1.json", "AGH-7"),
     ],
-    ids=["lower-case folder", "lower-case ticket", "quality round 9999"],
+    ids=["lower-case folder", "lower-case ticket", "quality round 9999", "ux", "overengineering"],
 )
 def test_accepts_folder_case_when_review_file_name_matches(
     document: dict[str, object], file_name: str, folder_name: str
@@ -329,6 +331,8 @@ def test_accepts_folder_case_when_review_file_name_matches(
     [
         ("spec.json", "spec.json"),
         ("spec-r0.json", "spec-r0.json"),
+        ("ux-r0.json", "ux-r0.json"),
+        ("overengineering-r0.json", "overengineering-r0.json"),
         ("style-r1.json", "style-r1.json"),
         ("spec-r01.json", "spec-r01.json"),
         ("spec-r1.md", "spec-r1.md"),
@@ -339,6 +343,8 @@ def test_accepts_folder_case_when_review_file_name_matches(
     ids=[
         "no round",
         "round 0",
+        "ux round 0",
+        "overengineering round 0",
         "unknown reviewer",
         "leading zero",
         "not json",
@@ -353,8 +359,8 @@ def test_reports_root_when_review_file_name_unknown(file_name: str, echo: str) -
     )
 
     message = (
-        f"the file name {echo} is not spec-r<N>.json or quality-r<N>.json"
-        " (N from 1 to 9999, no leading zero)"
+        f"the file name {echo} is not spec-r<N>.json, quality-r<N>.json, ux-r<N>.json or"
+        " overengineering-r<N>.json (N from 1 to 9999, no leading zero)"
     )
     assert problems == (OutputProblem("$", message),)
 

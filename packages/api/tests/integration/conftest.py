@@ -7,23 +7,29 @@ bare repository: a test-only global git config rewrites the GitHub url to it (``
 and a fake ``gh`` (a stdlib script on ``PATH``) records each pull request it is asked to open,
 as ``packages/hub_git/tests/conftest.py`` does. Nothing reaches the network; every name, url and
 token is synthetic.
+
+``knowledge_world`` registers a git checkout ``demo-hub`` with its repo ``demo-api`` beside it,
+for the knowledge routes (AGH-393); ``offline`` fails every non-loopback ``socket.connect``.
 """
 
 import asyncio
 import json
 import os
 import re
+import socket
+import sqlite3
 import subprocess
 import sys
 import threading
 import time
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping
+from contextlib import closing
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from importlib.metadata import version
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from fastapi.testclient import TestClient
@@ -969,3 +975,141 @@ def open_agent_session_app(api_settings: ApiSettings, web_dist: Path) -> Iterato
 def agent_session_app(open_agent_session_app: SessionAppOpener) -> SessionApp:
     """The agent-session routes over the real ``AgentSessionControl`` (default rig)."""
     return open_agent_session_app()
+
+
+# AGH-393: the knowledge routes on a real hub checkout and the web's database. Adapted from the
+# cli's ``knowledge_hub`` (a conftest cannot be shared across packages).
+KNOWLEDGE_HUB = "demo-hub"
+_TEST_AUTHOR = ("-c", "user.name=Jane Doe", "-c", "user.email=jane@example.com")
+
+
+@dataclass
+class KnowledgeWorld:
+    """The composed app over the registered ``demo-hub`` checkout, its repos beside it, and the
+    environment the app's git runs with (``environ``, which a test may change between calls)."""
+
+    app: Composed
+    hub: Path
+    environ: dict[str, str]
+    # The app's own ``Origin``, which its writes (registering or forgetting a hub) need.
+    origin: ClassVar[str] = COMPOSED_URL
+
+    def search(self, q: str, **params: Any) -> Any:
+        return self.app.client.get(
+            "/api/v1/projects/demo/knowledge/search", params={"q": q} | params
+        )
+
+    def backlinks(self, path: str, **headers: str) -> Any:
+        return self.app.client.get(
+            "/api/v1/projects/demo/brain/backlinks", params={"path": path}, headers=headers
+        )
+
+    def write(self, path: str, data: bytes) -> Path:
+        """Write ``data`` at ``path`` as the index names it (``<dir>/docs/…`` in that repo)."""
+        first = path.split("/", 1)[0]
+        in_repo = (self.hub.parent / first / ".git").exists()
+        target = (self.hub.parent if in_repo else self.hub) / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        return target
+
+    def put(self, files: Mapping[str, bytes]) -> None:
+        """``write`` each of ``files``."""
+        for path, data in files.items():
+            self.write(path, data)
+
+    def git(self, *args: str, cwd: Path | None = None) -> str:
+        """Run git in ``cwd`` (default: the hub) as the test's author; its stdout."""
+        done = subprocess.run(  # noqa: S603 - the test's own git, an argv list
+            ["git", *_TEST_AUTHOR, "-c", "commit.gpgsign=false", *args],  # noqa: S607
+            cwd=cwd or self.hub,
+            env=self.environ,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert done.returncode == 0, f"git {' '.join(args)} failed: {done.stderr}"
+        return done.stdout
+
+    def hub_search(self, *words: str) -> Any:
+        """``hub search <words> --json`` on this hub and the app's database, in process."""
+        env = {"AGENT_HUB_ROOT": str(self.hub), "AGENT_HUB_DB": str(self.app.settings.db_path)}
+        result = CliRunner().invoke(hub_cli, ["search", *words, "--json"], env=env)
+        assert result.exit_code == 0, result.output
+        return json.loads(result.stdout)
+
+    def rows(self, statement: str) -> list[tuple[Any, ...]]:
+        """The rows ``statement`` reads from the app's database (a write is committed)."""
+        with closing(sqlite3.connect(self.app.settings.db_path)) as connection, connection:
+            return connection.execute(statement).fetchall()
+
+
+type KnowledgeWorldFactory = Callable[..., KnowledgeWorld]
+
+
+@pytest.fixture
+def knowledge_world(
+    tmp_path: Path,
+    open_composed: Callable[..., Composed],
+    *,
+    isolated_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> KnowledgeWorldFactory:
+    """``knowledge_world(files, *, commit=True, change=None)``: a git checkout ``demo-hub``
+    whose ``hub.json`` (``change`` may edit it) names the project ``demo`` and its repos, with
+    the repo ``demo-api`` checked out beside it, registered in the composed app.
+
+    ``files`` maps a path as the index names it to its bytes: under ``demo-api/`` for the repo,
+    else in the hub. With ``commit`` they are committed, else left untracked. Git
+    reads the test's own ``HOME`` only and never looks above ``tmp_path``.
+    """
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+    def build(
+        files: Mapping[str, bytes],
+        *,
+        commit: bool = True,
+        change: Callable[[dict[str, Any]], None] | None = None,
+    ) -> KnowledgeWorld:
+        hub = tmp_path / KNOWLEDGE_HUB
+        hub.mkdir()
+        document = a_hub_document()
+        del document["modules"]
+        document["platform"]["version"] = RUNNING_VERSION
+        if change is not None:
+            change(document)
+        (hub / "hub.json").write_bytes(dump_json(document))
+        environ = dict(os.environ)
+        world = KnowledgeWorld(app=open_composed(environ=environ), hub=hub, environ=environ)
+        roots = (hub, tmp_path / "demo-api")
+        for root in roots:
+            root.mkdir(exist_ok=True)
+            (root / "README.md").write_bytes(f"# {root.name}\n".encode())
+            world.git("init", "--quiet", "--initial-branch=main", cwd=root)
+        world.put(files if commit else {})
+        for root in roots:
+            world.git("add", "-A", cwd=root)
+            world.git("commit", "--quiet", "-m", "init", cwd=root)
+        world.put({} if commit else files)
+        registered = world.app.client.post(
+            "/api/v1/hubs", json={"path": str(hub)}, headers={"Origin": world.origin}
+        )
+        assert registered.status_code == 201, registered.text
+        return world
+
+    return build
+
+
+@pytest.fixture
+def offline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every ``socket.connect`` to a non-loopback address fails (the AC-393.6 test seam)."""
+    real_connect = socket.socket.connect
+
+    def connect(self: socket.socket, address: Any) -> None:
+        if isinstance(address, tuple) and address[0] not in {"127.0.0.1", "::1", "localhost"}:
+            msg = f"no network in this test: {address[0]}"
+            raise OSError(msg)
+        real_connect(self, address)
+
+    monkeypatch.setattr(socket.socket, "connect", connect)

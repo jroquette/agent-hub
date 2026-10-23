@@ -31,10 +31,10 @@ from agent_hub.cli.hub_config_reader import (
 )
 from agent_hub.cli.hub_root import hub_checkout, hub_root_or_exit
 from agent_hub.cli.init_report import shown_text
-from agent_hub.cli.knowledge_checkout import GitKnowledgeCheckout
 from agent_hub.cli.registry_path import default_registry_path
 from agent_hub.core.hubs.hub_document import read_hub_document
 from agent_hub.core.hubs.hub_registry import HubRegistryError
+from agent_hub.hub_git.knowledge_checkout import GitKnowledgeCheckout
 from agent_hub.storage.errors import StorageError
 from agent_hub.storage.hub_registry import JsonHubRegistry
 from agent_hub.storage.knowledge_index import SqliteKnowledgeIndex, open_knowledge_index

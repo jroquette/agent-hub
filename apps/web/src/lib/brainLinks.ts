@@ -6,9 +6,20 @@
 import { safeHref } from "./safeHref";
 
 export const OUTSIDE_BRAIN = "outside the brain";
+/** Where the knowledge index's brain notes live; any other indexed path is a repo's doc. */
+export const BRAIN_PREFIX = "brain/";
 const NOT_A_LINK = "Link not shown: only http(s) links and brain notes are opened";
 const NOT_A_NOTE = "Link not shown: only Markdown notes of the brain open in the app";
 const NO_PLACE = "Link not shown: this note's place in the brain is unknown";
+
+/**
+ * Why a `brain/` path the note route refuses (`isServedNote`) is listed but not opened (AM-8): the
+ * Brain's knowledge rows and the learning trail's Note step say it in their tooltip.
+ */
+export const UNSERVED_NOTE_REASON =
+  "The app does not open notes at this path (not a .md file, a hidden name, under auto/, too long or deep, or with an empty part or characters the app does not serve)";
+/** The words a row or step that is not opened adds, the same for repo docs and refused notes. */
+export const NOT_OPENED_HERE = "not opened here";
 
 /** The server's note bounds (S8): longer or deeper paths are never served, so never linked. */
 const MAX_PATH_CHARS = 512;
@@ -28,6 +39,33 @@ export function brainRoute(project: string, path: string, anchor: string | null 
   const segments = path.split("/").map(encodeURIComponent).join("/");
   const hash = anchor ? `#${encodeURIComponent(anchor)}` : "";
   return `/projects/${encodeURIComponent(project)}/brain/${segments}${hash}`;
+}
+
+/**
+ * `route` with the Brain search's query kept as `?q=` before any `#anchor` (AGH-393: every link
+ * inside the Brain keeps the search open); unchanged without a query.
+ */
+export function withBrainQuery(route: string, query: string | null): string {
+  if (!query) return route;
+  const search = `?${new URLSearchParams({ q: query }).toString()}`;
+  const hash = route.indexOf("#");
+  return hash < 0 ? route + search : route.slice(0, hash) + search + route.slice(hash);
+}
+
+/**
+ * Whether the note route serves `path` (under `brain/`, without the prefix): at most 16 segments
+ * and 512 characters, `.md`, not under `auto/`, no empty or hidden segment (AM-8).
+ */
+export function isServedNote(path: string): boolean {
+  const segments = path.split("/");
+  return (
+    segments.length <= MAX_SEGMENTS &&
+    path.length <= MAX_PATH_CHARS &&
+    path.endsWith(".md") &&
+    !CONTROL_OR_BACKSLASH.test(path) &&
+    segments[0]?.toLowerCase() !== "auto" &&
+    !segments.some((segment) => segment === "" || segment.startsWith("."))
+  );
 }
 
 /** A GitHub-style heading slug: lower case, letters, digits, `-` and `_`, spaces as `-`. */
@@ -137,14 +175,7 @@ export function resolveBrainLink(
     }
   }
   const full = resolved.join("/");
-  if (
-    resolved.length === 0 ||
-    resolved.length > MAX_SEGMENTS ||
-    full.length > MAX_PATH_CHARS ||
-    !full.endsWith(".md") ||
-    resolved[0]?.toLowerCase() === "auto" ||
-    resolved.some((segment) => segment.startsWith("."))
-  ) {
+  if (resolved.length === 0 || !isServedNote(full)) {
     return { kind: "text", title: NOT_A_NOTE };
   }
   const fragment = anchor === "" ? null : anchor;
