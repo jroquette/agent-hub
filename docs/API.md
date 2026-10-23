@@ -45,7 +45,7 @@ the first routes were written ([ADR 0017](adr/0017-api-second-composition-root.m
   the nine AGH-350 added (`SCENARIO_PATHS`): `GET /scenarios`, `GET /scenarios/{project}/{name}`, `POST
   /scenarios/{project}/{name}/plan|runs`, `GET /scenario-runs/{run_id}` and `POST
   /scenario-runs/{run_id}/investigation|answer|findings/{finding_id}/issue|findings/{finding_id}/inbox`
-  ([Scenarios](#scenarios)), the five AGH-507 adds: `PUT /scenario-runs/{run_id}/breakpoints`, `POST
+  ([Scenarios](#scenarios)), the five AGH-507 will add (proposed, not built): `PUT /scenario-runs/{run_id}/breakpoints`, `POST
   /scenario-runs/{run_id}/step|continue`, `GET /scenario-runs/{run_id}/values` and `POST
   /scenarios/{project}/{name}/migrate`, and the two AGH-393 added (`KNOWLEDGE_PATHS`, both GET):
   `/projects/{project}/knowledge/search` and `/projects/{project}/brain/backlinks` ([Knowledge](#knowledge)). A test
@@ -843,7 +843,7 @@ folder, the server's environment minus `LINEAR_API_KEY`); no problem quotes its 
   `finding_id` matches `^f[0-9]{1,6}$` (else 400); an unknown finding is a 404 (entity `finding`).
 
 Debugging and migration (AGH-507, [ADR 0049](adr/0049-scenario-blocks-and-run-control.md), [design](design/scenarios.md)
-§ Debugging): each write runs the CLI as a child and waits for it, as a gate decision does; the writes are run
+§ Debugging; proposed, not built yet, so `SCENARIO_PATHS` does not list them): each write runs the CLI as a child and waits for it, as a gate decision does; the writes are run
 writes (`RUN_WRITES`; migrate is an item write, `ITEM_WRITES`) and the values read needs the same cookie
 ([Local security](#local-security)).
 

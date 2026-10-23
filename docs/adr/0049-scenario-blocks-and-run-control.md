@@ -103,6 +103,27 @@ Chosen option: 1.
 - Bad: an Include is one block: nothing inside the scenario it includes takes a breakpoint.
 - Neutral: a debug pause is not a gate; Approvals does not list it.
 
+## Delivery notes (AGH-521)
+
+This ADR stays proposed: nothing below the contract is built yet. The scenario builder that shipped with AGH-521 is
+the one the owner validated in the playground, and where it differs from the decision above, the validated behavior
+wins for what the screen shows:
+
+- **Format.** The builder reads and writes `version: 1` graph scenarios. Its step list shows the graph as ordered
+  steps with groups (Repeat, If, At the same time) and a Start row, which is the shape `version: 2` will store; there
+  is no translator, no block map and no `hub scenario migrate` yet, and a graph that does not read as a list still
+  opens in the builder (not read-only, as Migration above says).
+- **Canonical writer.** Save goes through the API's builder (`api/scenario_builder.py`), not a `generator` writer;
+  an unchanged document still writes nothing.
+- **Blocks tab.** The block language is a palette of ready blocks (Do, Check, Control, You, and one Run block per hub
+  action) dragged or added into the step list, not a separate block canvas.
+- **Run values and environment values.** An action input a step leaves out takes the scenario run's input of the same
+  name, and a run input the start does not give takes the environment's non-secret value of that name before its
+  declared default (`hub env` sets them). The decision above does not cover them; they live beside it in
+  [design/scenarios.md](../design/scenarios.md) and [design/environments.md](../design/environments.md).
+- **Debugger.** Breakpoints, Step, Continue, the values read and their routes are not built: the API paths in
+  [API.md](../API.md) marked AGH-507 are the contract for them.
+
 ## More Information
 
 - Contract: [design/scenarios.md](../design/scenarios.md) § Tree format and § Debugging;
