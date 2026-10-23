@@ -176,3 +176,16 @@ def test_exits_two_when_nothing_can_be_recorded(
 
     assert code == 2
     assert "no confirmed mitigation" in err
+
+
+@pytest.mark.parametrize("text", ["-x: turn the flag off", "--", "--approver"])
+def test_records_owner_text_when_it_starts_with_a_dash(
+    text: str, *, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(HYPOTHESES).encode())))
+
+    code = load().main(["--check", json.dumps(CHECK), "--text", text, "--approver", "-Jo"])
+
+    output = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert (output["summary"], output["source"], output["approver"]) == (text, "owner", "-Jo")

@@ -84,12 +84,30 @@ def choose(hypotheses: list[dict[str, Any]], confirmed: set[str], text: str) -> 
     return from_hypothesis(ranked[0])
 
 
+OPTIONS = ("--check", "--text", "--approver")
+
+
+def joined(argv: list[str]) -> list[str]:
+    """``argv`` with each option's value attached (``--text=<value>``): the owner's text may
+    start with ``-``, which argparse would read as an option."""
+    out: list[str] = []
+    index = 0
+    while index < len(argv):
+        if argv[index] in OPTIONS and index + 1 < len(argv):
+            out.append(f"{argv[index]}={argv[index + 1]}")
+            index += 2
+        else:
+            out.append(argv[index])
+            index += 1
+    return out
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="mitigation.py")
     parser.add_argument("--check", required=True)
     parser.add_argument("--text", default="")
     parser.add_argument("--approver", default="")
-    args = parser.parse_args(argv)
+    args = parser.parse_args(joined(argv))
     try:
         hypotheses, confirmed = read(sys.stdin.read(), args.check)
         chosen = choose(hypotheses, confirmed, args.text)
