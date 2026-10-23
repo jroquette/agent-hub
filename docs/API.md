@@ -45,7 +45,9 @@ the first routes were written ([ADR 0017](adr/0017-api-second-composition-root.m
   the nine AGH-350 added (`SCENARIO_PATHS`): `GET /scenarios`, `GET /scenarios/{project}/{name}`, `POST
   /scenarios/{project}/{name}/plan|runs`, `GET /scenario-runs/{run_id}` and `POST
   /scenario-runs/{run_id}/investigation|answer|findings/{finding_id}/issue|findings/{finding_id}/inbox`
-  ([Scenarios](#scenarios)). A test fails on any other path.
+  ([Scenarios](#scenarios)), and the two AGH-393 added (`KNOWLEDGE_PATHS`, both GET):
+  `/projects/{project}/knowledge/search` and `/projects/{project}/brain/backlinks` ([Knowledge](#knowledge)). A test
+  fails on any other path.
 - A field kept only for compatibility is marked `deprecated` in the document and stays until `/api/v2`: a session's
   and a live tile's `agent` (read `label` and `actors`) and a learning's `target` (read `note_path`).
 
@@ -86,6 +88,10 @@ Errors are RFC 9457 Problem Details, with media type `application/problem+json`:
 - The brain routes: a path the brain rules refuse (`..`, absolute, too long, too deep, not `.md`) → 400 "Invalid brain
   path" with `errors[]` naming `path`; a missing note, a link, a path under `auto/` or a file that is not regular →
   one 404 "Brain note not found" (existence is not revealed); a note over 256 KiB → 413 "Brain note too large".
+- The knowledge routes ([Knowledge](#knowledge)): a `q` with no word → 400 naming `q`; a backlinks `path` → the brain
+  routes' 400 and 404 above; the hub's checkout that cannot be listed → 502 "Could not read the hub's files"; SQLite
+  without FTS5 → 503 "Search unavailable"; the index's database that cannot be upgraded → 503 "Database upgrade
+  failed". `GET /learnings`'s `brain_path` outside the brain → 400 naming it.
 - The learning decisions ([Learning decisions](#learning-decisions)): every refusal is a 409 whose extension members
   `code` and `reason` say why, nothing pushed or stored. `code` is `learning_conflict` (already decided, with
   `pr_url` when its PR is known; another action running for the hub; no reason to reject; a target the brain rules
@@ -191,7 +197,8 @@ the same operation behaves the same from every entry point ([ARCHITECTURE.md](AR
   since AGH-201 the two learning decisions, since AGH-165 the agent-session commands, since AGH-297 the restore
   of an item's version, the first route that writes into a hub's working tree, and since AGH-298 the Studio's Publish
   of a draft (see Skills). Since AGH-296 the
-  Toolkit and Workflows `GET`s also record item versions in agent-hub's database (never in the hub, see Skills).
+  Toolkit and Workflows `GET`s also record item versions in agent-hub's database (never in the hub, see Skills), and
+  since AGH-393 the knowledge `GET`s sync the knowledge index's derived rows first (see Knowledge).
 
 ## Sessions
 
@@ -229,6 +236,49 @@ They are actions, not resources, a deliberate exception to "resources are nouns"
   frontmatter in the same commit. The commit is
   authored as the hub's author (ADR 0016) with no trailer.
 - A decision is idempotent by the learning's state: a second call answers 409 with the PR already open.
+
+## Knowledge
+
+Two `GET` routes (`KNOWLEDGE_PATHS`, AGH-393) read a project's hub through the knowledge index that `hub search` and
+`hub mcp` use ([ADR 0044](adr/0044-team-memory-git-source-local-index-and-hub-mcp.md)). Each first syncs the index
+with the checkout of the project's registered hub (`git ls-files` of its `brain/` and of each repo's `docs/`; only new
+or changed files are read), then answers. The rows are keyed by the registered hub's path, so a hub registered at its
+main checkout shares its rows with `hub search`. Neither route writes the hub or a repo.
+
+- `GET /api/v1/projects/{project}/knowledge/search?q=&kind=&limit=` → `KnowledgeSearch`: `project`, `query`,
+  `results` (each `path`, `kind`, `title`, `status`, `provenance`, a one-line plain-text `snippet`), `sync` (`listed`,
+  `read`, `indexed`, `dropped`), `skipped` (`path`, `reason`) and `warnings`, one per repo that is not checked out
+  (`<dir>: not checked out; its docs are not searched`). `q` is 1 to 500 characters and only its runs of letters and
+  digits are searched, all required, never as FTS5 syntax; `kind` repeats, at most 10, each one of the index's kinds;
+  `limit` is 1 to 50, default 50. Results come best first, as `hub search` prints them; none is `results: []`.
+- `GET /api/v1/projects/{project}/brain/backlinks?path=` → `NoteBacklinks`: `project`, `path`, `items` (each
+  indexed document holding a Markdown link to `brain/<path>`: `path`, `kind`, `title`), sorted by path, at most 100,
+  and `total`, the full count. `path` is checked exactly as `GET …/brain/note` checks it, before anything is read. The
+  note need not exist: a dead link still lists its sources. Only links into `brain/` are stored, so the answer has no
+  `warnings`.
+
+`GET /api/v1/learnings` takes `brain_path` (AGH-393): a note under `brain/`, with or without the `brain/` prefix, at
+most 512 characters. It keeps the learnings whose note is that one, in either stored form, in the list's own order
+(newest proposal first) and pages; a path the note route refuses (under `auto/`, `..`, not `.md`) answers 400 naming
+`brain_path`.
+
+Problems: a `q` with no letter or digit (`!!!`, `(`) → 400 naming `q` with the reason `the query has no words`; a `q`,
+`kind` or `limit` out of its bounds → 400 naming the parameter; the query is never echoed. A backlinks `path` the
+brain rules refuse → 400 "Invalid brain path"; one under `auto/` → 404 "Brain note not found", as the note route
+answers. An unknown project → 404. The checkout cannot be listed (no `git` on the server's `PATH`, a `git` step that
+fails, or a listing over its bounds: 20,000 Markdown files, 64 MiB, 30 s per source) → 502 "Could not read the hub's
+files", whose `detail` is `hub search`'s one line without its `hub search:` prefix (e.g. `git is not on PATH; install
+git`); the web client does not retry it. SQLite without FTS5 → 503 "Search unavailable" with its line. The index's
+database cannot be upgraded when the index is first opened (`MigrationError`) → 503 "Database upgrade failed" with
+the fixed detail "The database could not be upgraded to the latest schema."; a busy or unreadable database keeps the
+app's 503s ("Collector database busy", "Collector database unavailable"). The index is opened by the first knowledge
+request, not at start, so the app starts on a Python without FTS5 and a failed open is tried again by the next request.
+A build without the knowledge reads wired answers 501.
+
+These routes keep the read rule of every `GET` ([Local security](#local-security)): a foreign `Origin` is served and
+no CORS header is sent, so a foreign page can make the server run a sync but never read the answer. The sync is the
+only write: it writes rows derived from the checkout, the same rows `hub search` writes, never the query, the kinds or
+the path; with nothing changed on disk it writes nothing, so it cannot change what any route answers.
 
 ## Feature detail
 
@@ -811,6 +861,8 @@ record problems are `urn:agent-hub:problem:scenario-run-record-too-large` and `-
 `[::1]:<port>` (403, against DNS rebinding) and a `POST` or `DELETE` whose `Origin` is not its own (403); it sends no
 CORS headers, `Cache-Control: no-store` on `/api`, and a CSP that limits scripts, styles, fonts and connections to
 `'self'`. The web app requests no other host; Linear is read by the server only ([Feature tickets](#feature-tickets)).
+A `GET` with a foreign `Origin` is served, the knowledge `GET`s included: their only write is the sync of derived
+index rows, which a foreign page can trigger but whose answer it cannot read ([Knowledge](#knowledge), AGH-393 AM-2).
 The agent-session routes add a cookie and stricter Origin rules ([Agent sessions](#agent-sessions)), and the workflow
 run writes (`RUN_WRITES`: start, cancel, resume and abandon a run, a gate's decision, an AC's check run, a
 change request's decision, and the scenario writes: a plan, a start, an investigation's session and answer, a

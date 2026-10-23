@@ -1,7 +1,8 @@
 """The `.importlinter` contracts enforce the dependency rule (ADR 0001, ADR 0008): cli is the
 composition root, nothing imports it, api and mcp_server sit below it and import no cli, cli
-reaches api only from its web command and mcp_server only from its mcp command, only mcp_server
-imports the MCP SDK, and the adapters stay independent of each other.
+reaches api only from its web command and mcp_server only from its mcp command, of hub_git cli
+imports only knowledge_checkout, only mcp_server imports the MCP SDK, and the adapters stay
+independent of each other.
 
 The tests run the real lint-imports with the repo's contracts, renamed onto a scratch root
 package in tmp_path, so a scratch import never touches the real packages."""
@@ -36,6 +37,7 @@ SDK_CONFINED = "only claude_sessions imports the Claude Agent SDK"
 CLI_NO_CLAUDE_SESSIONS = "cli never imports claude_sessions"
 MCP_THROUGH_COMMAND = "cli reaches mcp_server only through mcp_command"
 MCP_CONFINED = "only mcp_server imports the MCP SDK"
+HUB_GIT_CHECKOUT_ONLY = "cli imports only knowledge_checkout of hub_git"
 # Third-party modules, so the scratch source imports them as they are (not under the scratch root).
 SDK = "claude_agent_sdk"
 MCP = "mcp"
@@ -46,7 +48,8 @@ LINT_IMPORTS = str(Path(sys.executable).parent / "lint-imports")
 def _write_scratch_root(tmp_path: Path, *, importer: str, imported: str) -> None:
     """The scratch root package: every package empty but one module, which imports another.
 
-    ``importer`` is a package (``cli``) or one of its modules (``cli.web_command``).
+    ``importer`` is a package (``cli``) or one of its modules (``cli.web_command``); so is
+    ``imported`` (``hub_git.knowledge_checkout``), whose module is written empty.
     """
     root = tmp_path / SCRATCH_ROOT
     root.mkdir()
@@ -54,6 +57,9 @@ def _write_scratch_root(tmp_path: Path, *, importer: str, imported: str) -> None
     for name in PACKAGES:
         (root / name).mkdir()
         (root / name / "__init__.py").write_text("")
+    imported_package, _, imported_module = imported.partition(".")
+    if imported_module and imported not in EXTERNAL:
+        (root / imported_package / f"{imported_module}.py").write_text("")
     package, _, module = importer.partition(".")
     source = root / package / (f"{module}.py" if module else "__init__.py")
     target = imported if imported in EXTERNAL else f"{SCRATCH_ROOT}.{imported}"
@@ -148,6 +154,35 @@ def test_keeps_every_contract_when_cli_wires_adapter(
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert f"{COMPOSITION_ROOT} KEPT" in result.stdout, result.stdout
+
+
+@pytest.mark.parametrize("importer", ["cli.knowledge_hub", "cli.mcp_command"])
+def test_keeps_every_contract_when_cli_imports_hub_git_knowledge_checkout(
+    lint_imports: Callable[[str, str], CompletedProcess[str]], importer: str
+) -> None:
+    result = lint_imports(importer, "hub_git.knowledge_checkout")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"{HUB_GIT_CHECKOUT_ONLY} KEPT" in result.stdout, result.stdout
+    assert f"{COMPOSITION_ROOT} KEPT" in result.stdout, result.stdout
+
+
+@pytest.mark.parametrize(
+    ("importer", "imported"),
+    [
+        ("cli", "hub_git"),
+        ("cli.knowledge_hub", "hub_git"),
+        ("cli.run_command", "hub_git.brain_change_requests"),
+    ],
+)
+def test_breaks_hub_git_contract_when_cli_imports_other_than_knowledge_checkout(
+    lint_imports: Callable[[str, str], CompletedProcess[str]], importer: str, imported: str
+) -> None:
+    result = lint_imports(importer, imported)
+
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert f"{HUB_GIT_CHECKOUT_ONLY} BROKEN" in result.stdout, result.stdout
+    assert f"{SCRATCH_ROOT}.{importer} -> {SCRATCH_ROOT}.{imported}" in result.stdout
 
 
 @pytest.mark.parametrize("importer", ["cli", "cli.run_command"])

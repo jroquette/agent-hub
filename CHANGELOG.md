@@ -13,6 +13,35 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- `hub web`'s knowledge view (AGH-393): search a project's notes and repo docs from its Brain screen and from ⌘K's
+  "Brain notes" group, over the `hub search` index, synced on each search
+  (`GET /projects/{project}/knowledge/search`); "Linked from" under each note lists the notes and repo docs that link
+  to it (`GET /projects/{project}/brain/backlinks`; the index now stores each document's links into `brain/`, read
+  with the doctor's `links.dead` scan); "Where this note came from" shows its provenance, sources, the accepted
+  learnings that put it there and their sessions; and the learning detail shows the trail session → proposal →
+  decision (pull request) → note. `GET /learnings` takes `brain_path`. The database gains migration 0010 (the
+  `knowledge_links` table), and the index's version becomes 2, so each hub's index is rebuilt once by its first
+  search, reindex or note read after the upgrade. Nothing measures a note's effect.
+
+## [0.21.0] - 2026-10-23
+
+### Added
+
+- Scenarios in `hub web` (AGH-364): a **Scenarios** entry under Work, after Workflow runs, opens the list of the
+  hub's scenarios (`/scenarios`, filter with `?q=`). A scenario's page shows its plan and starts a run, the
+  environment pre-filled from `?env=` (the plan never runs on load). A scenario run has its own page
+  (`/scenarios/<project>/<name>/runs/<run>`) with its timeline, the investigation's answer options and its
+  findings; `/runs/<run>` for a scenario run redirects there, and search lists scenario runs. Workflow runs shows only
+  once a run of kind `workflow` exists. An investigation session keeps its read-only permission mode, and its chat
+  shows no mode switch.
+
+- `hub.json` → `repos[].ui_paths` (AGH-474): optional globs of a repo's screen paths, matched from the repo root
+  (`**` spans folders); absent means the repo has no UI. The new `hub doctor` rule `repos.ui_paths` warns about each
+  glob that matches no file of the repo's checkout. A hub can set the key only once its pin carries this release.
+  The rule reads the repo checkouts even when no repo sets `ui_paths`: a hub that turned off `brain.leak`,
+  `links.dead` and `repos.agents` now gets the missing or unlistable checkout findings under `repos.ui_paths`.
+- Review outputs accept `reviewer` `ux` and `overengineering`, saved as `reviews/<ticket>/ux-r<N>.json` and
+  `overengineering-r<N>.json` (AGH-474). Existing review files stay valid. The lenses that write them come later.
 - A merged ticket's outcome (two-level-flows S3, AGH-473): `hub step outcome --feature --ticket --pr --built --changes
   --interfaces [--merged-at]` writes `tickets/<ticket>/outcome.md` once (frontmatter `merged_at`, `pr`, `dependents`;
   what was built, what changed against the plan, the final interfaces), never committing; a second run writes
@@ -1153,7 +1182,8 @@ Includes 0.3.0, which was never tagged.
 - The `hub.json` config model and schema, the generator templates, `hub init` and `hub sync`.
 - The release check on `v*` tags.
 
-[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.20.1...HEAD
+[Unreleased]: https://github.com/jroquette/agent-hub/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/jroquette/agent-hub/compare/v0.20.1...v0.21.0
 [0.20.1]: https://github.com/jroquette/agent-hub/compare/v0.20.0...v0.20.1
 [0.20.0]: https://github.com/jroquette/agent-hub/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/jroquette/agent-hub/compare/v0.18.0...v0.19.0

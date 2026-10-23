@@ -79,6 +79,23 @@ forbidden_modules =
 # api reaches the SDK only through claude_sessions (composition's guarded import): indirect imports pass.
 allow_indirect_imports = True
 
+# Of hub_git, cli wires only the knowledge checkout (GitKnowledgeCheckout, for hub search, hub brain reindex and
+# hub mcp; AGH-393 AM-9): the learning decisions' pull requests stay api's and mcp_server's.
+[importlinter:contract:cli-hub-git-knowledge-checkout]
+name = cli imports only knowledge_checkout of hub_git
+type = forbidden
+source_modules =
+    agent_hub.cli
+forbidden_modules =
+    agent_hub.hub_git
+ignore_imports =
+    agent_hub.cli.** -> agent_hub.hub_git.knowledge_checkout
+# A cli that stops wiring the checkout leaves the line unmatched, and that is fine.
+unmatched_ignore_imports_alerting = none
+# mcp_command reaches the rest of hub_git through mcp_server, and knowledge_checkout its own helpers: indirect
+# imports pass; a direct import of any other hub_git module still breaks it.
+allow_indirect_imports = True
+
 # Driving sessions belongs to hub web (api); every cli module stays free of the session adapter.
 [importlinter:contract:cli-no-claude-sessions]
 name = cli never imports claude_sessions

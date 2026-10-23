@@ -8,17 +8,23 @@ caller's location variables, with no optional lock, no fsmonitor hook, a ceiling
 parent (it never takes an enclosing repo for the source's), a timeout, and its output bounded
 (AM-1). A repo folder that does not exist is not checked out: it is left out of the listing,
 and ``not_checked_out`` names it for the caller's warning.
+
+It lives in ``hub_git`` so ``cli`` (``hub search``, ``hub mcp``) and ``api`` share one walk
+(AGH-393 Q-1). Git runs through its own small child runner, not ``GitRunner``: an error names
+git's last stderr line, which ``GitRunner`` does not keep.
 """
 
 import errno
 import os
+import signal
 import stat
+import subprocess
+import tempfile
 from collections.abc import Iterator, Mapping, Sequence
+from contextlib import suppress
 from pathlib import Path
-from typing import Final, NamedTuple, Self
+from typing import IO, Final, NamedTuple, Self
 
-from agent_hub.cli.child_process import git_env, run_child
-from agent_hub.cli.errors import ChildTimedOutError
 from agent_hub.core.brain.brain_path import BRAIN_FOLDER
 from agent_hub.core.hub_config.problems import one_line
 from agent_hub.core.knowledge import document_rules
@@ -33,12 +39,15 @@ from agent_hub.core.knowledge.document_rules import (
 from agent_hub.core.knowledge.knowledge_index import Fingerprint
 from agent_hub.core.knowledge.sync_knowledge import KnowledgeCheckoutError
 from agent_hub.core.knowledge.sync_plan import ListedFile
-from agent_hub.generator.regular_files import NOT_REGULAR as READER_NOT_REGULAR
-from agent_hub.generator.regular_files import read_regular
+from agent_hub.core.regular_files import NOT_REGULAR as READER_NOT_REGULAR
+from agent_hub.core.regular_files import read_regular
+from agent_hub.hub_git.git_runner import GIT_LOCATION_VARIABLES
 
 GIT_TIMEOUT_SECONDS: Final = 30.0
 # Of git's last stderr line, an error shows at most this many characters.
 MAX_GIT_MESSAGE_CHARS: Final = 200
+# Of git's stderr, only the end is read back: the last line is all an error shows.
+_STDERR_TAIL_BYTES: Final = 4096
 _DOCS_FOLDER: Final = "docs"
 _LIST_ARGUMENTS: Final = ("ls-files", "-z", "--cached", "--others", "--exclude-standard", "--")
 _CEILING_VARIABLE: Final = "GIT_CEILING_DIRECTORIES"
@@ -145,19 +154,19 @@ class GitKnowledgeCheckout:
 
     def _list(self, source: _Source) -> bytes:
         limit = document_rules.MAX_LISTING_BYTES
-        env = git_env(self._environ, optional_locks=False)
+        env = _git_env(self._environ)
         env[_CEILING_VARIABLE] = str(source.cwd.parent)
         try:
-            result = run_child(
+            result = _list_child(
                 [self._git, "-c", "core.fsmonitor=false", *_LIST_ARGUMENTS, source.folder],
                 cwd=source.cwd,
                 env=env,
                 timeout=GIT_TIMEOUT_SECONDS,
-                own_session=True,
-                output_limit=limit + 1,
+                limit=limit,
             )
-        except ChildTimedOutError as error:
-            raise KnowledgeCheckoutError(f"{source.label}: {error}") from error
+        except subprocess.TimeoutExpired as error:
+            msg = f"{source.label}: {self._git} timed out after {GIT_TIMEOUT_SECONDS:g} s"
+            raise KnowledgeCheckoutError(msg) from error
         except OSError as error:
             msg = f"{source.label}: git could not run: {error.strerror or error}"
             raise KnowledgeCheckoutError(msg) from error
@@ -200,6 +209,56 @@ class GitKnowledgeCheckout:
                     found = _listed_file(chain, entry, path)
                     if found is not None:
                         yield found
+
+
+class _ChildResult(NamedTuple):
+    """What a finished git left: its exit code, the start of stdout and the end of stderr."""
+
+    returncode: int
+    stdout: bytes
+    stderr: bytes
+
+
+def _git_env(environ: Mapping[str, str]) -> dict[str, str]:
+    """The caller's environment without git's location variables, so the cwd names the repo,
+    and with no optional lock, so a listing never contends with the user's own git."""
+    env = {name: value for name, value in environ.items() if name not in GIT_LOCATION_VARIABLES}
+    env["GIT_OPTIONAL_LOCKS"] = "0"
+    return env
+
+
+def _list_child(
+    argv: Sequence[str], *, cwd: Path, env: Mapping[str, str], timeout: float, limit: int
+) -> _ChildResult:
+    """Run ``argv`` (never a shell) in its own session with an empty stdin, both streams to
+    temporary files; at most ``limit + 1`` bytes of stdout and the last few KiB of stderr are
+    read back. Past ``timeout`` the whole process group is killed and ``TimeoutExpired`` raised;
+    ``OSError`` when git cannot start."""
+    with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+        with subprocess.Popen(  # noqa: S603 - an argv list, never a shell; the caller's git
+            list(argv),
+            cwd=cwd,
+            env=dict(env),
+            stdin=subprocess.DEVNULL,
+            stdout=stdout,
+            stderr=stderr,
+            start_new_session=True,
+        ) as child:
+            try:
+                child.wait(timeout=timeout)
+            except BaseException:
+                # A timeout or an interruption: git and anything it started go with it.
+                with suppress(ProcessLookupError):
+                    os.killpg(child.pid, signal.SIGKILL)
+                raise
+        stdout.seek(0)
+        return _ChildResult(child.returncode, stdout.read(limit + 1), _tail(stderr))
+
+
+def _tail(file: IO[bytes]) -> bytes:
+    size = file.seek(0, os.SEEK_END)
+    file.seek(max(0, size - _STDERR_TAIL_BYTES))
+    return file.read()
 
 
 def _is_utf8(entry: bytes) -> bool:

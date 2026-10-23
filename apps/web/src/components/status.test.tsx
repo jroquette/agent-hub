@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { seriousViolations } from "../testing/axe";
@@ -10,6 +10,7 @@ import {
   ExternalLabel,
   MiniStageBar,
   ProvenanceBadge,
+  ProvenanceLineage,
   StageChip,
   StagePipeline,
   StatusBadge,
@@ -170,6 +171,70 @@ describe("trust labels", () => {
         <AsOfStamp time="14:02" />
       </div>,
     );
+
+    expect(await seriousViolations(container)).toEqual([]);
+  });
+});
+
+describe("ProvenanceLineage", () => {
+  function trail() {
+    return render(
+      <ProvenanceLineage
+        label="Trail from session to note"
+        steps={[
+          {
+            id: "session",
+            icon: "square-terminal",
+            name: "Session",
+            children: <a href="/s">Session s1</a>,
+          },
+          { id: "proposal", icon: "lightbulb", name: "Proposal", children: "brain/_inbox/x.md" },
+          { id: "decision", icon: "split", name: "Decision", children: "Not decided yet" },
+        ]}
+      />,
+    );
+  }
+
+  it("ProvenanceLineage renders its steps in order as a named list", () => {
+    const { container } = trail();
+
+    const list = screen.getByRole("list", { name: "Trail from session to note" });
+    expect(list.tagName).toBe("OL");
+    expect(list).toHaveAttribute("role", "list");
+    expect(list).not.toHaveAttribute("data-orientation");
+    expect(list).toHaveClass("ah-lineage");
+    const [first, ...rest] = within(list).getAllByRole("listitem");
+    const steps = [first, ...rest];
+    expect(steps.map((step) => step?.textContent)).toEqual([
+      "SessionSession s1",
+      "Proposalbrain/_inbox/x.md",
+      "DecisionNot decided yet",
+    ]);
+    const link = within(list).getByRole("link", { name: "Session s1" });
+    expect(first).toContainElement(link);
+    expect(container.querySelector("[data-pending]")).toBeNull();
+    expect(container.querySelector(".ah-badge")).toBeNull();
+  });
+
+  it("ProvenanceLineage keeps step names visible and icons decorative", () => {
+    trail();
+
+    const steps = screen.getAllByRole("listitem");
+    expect(steps).toHaveLength(3);
+    for (const [step, name] of steps.map(
+      (s, i) => [s, ["Session", "Proposal", "Decision"][i] ?? ""] as const,
+    )) {
+      const label = within(step).getByText(name);
+      expect(label).toBeVisible();
+      expect(label).not.toHaveClass("ah-sr");
+      expect(step.firstElementChild).toContainElement(label);
+      const icon = step.querySelector("svg");
+      expect(icon).toHaveAttribute("aria-hidden", "true");
+    }
+  });
+
+  it("ProvenanceLineage has no serious a11y violations (a11y)", async () => {
+    const { container } = trail();
 
     expect(await seriousViolations(container)).toEqual([]);
   });

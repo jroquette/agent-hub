@@ -38,6 +38,7 @@ BENCH_TASKS_RULE: Final = "bench.tasks"
 CONFIG_IDENTITY_RULE: Final = "config.identity"
 REPOS_AGENTS_RULE: Final = "repos.agents"
 CONFIG_STOP_GATE_RULE: Final = "config.stop_gate"
+REPOS_UI_PATHS_RULE: Final = "repos.ui_paths"
 BRAIN_MEMORY_RULE: Final = "brain.memory"
 SANDBOX_WORKFLOW_RULE: Final = "sandbox.workflow"
 WORKFLOWS_VALID_RULE: Final = "workflows.valid"
@@ -69,6 +70,7 @@ RULE_IDS: Final = (
     CONFIG_IDENTITY_RULE,
     REPOS_AGENTS_RULE,
     CONFIG_STOP_GATE_RULE,
+    REPOS_UI_PATHS_RULE,
     # Before the last four, whose places their tests pin.
     ENVIRONMENTS_PRODUCTION_RULE,
     ENVIRONMENTS_ENV_FILE_RULE,
@@ -200,6 +202,7 @@ class DoctorRules(ConfigObject):
     features_tracker: RuleSettings | None = absent_by_default(alias="features.tracker")
     bench_tasks: RuleSettings | None = absent_by_default(alias="bench.tasks")
     config_identity: IdentityRuleSettings | None = absent_by_default(alias="config.identity")
+    repos_ui_paths: RuleSettings | None = absent_by_default(alias="repos.ui_paths")
     # Before the last six fields, whose order the schema's tests pin.
     environments_production: RuleSettings | None = absent_by_default(
         alias="environments.production"

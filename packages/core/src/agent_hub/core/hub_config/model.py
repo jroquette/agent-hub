@@ -50,6 +50,7 @@ from agent_hub.core.hub_config.schedules import (
     Schedule,
 )
 from agent_hub.core.hub_config.text_shapes import FREE_TEXT_PATTERN, SAFE_SEGMENT
+from agent_hub.core.hub_config.ui_paths import UiPaths
 
 HUB_ROOT = "@hub"
 JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
@@ -380,6 +381,11 @@ class Repo(ConfigObject):
         default_factory=dict,
         description="The services the repo runs, keyed by name, with their endpoints"
         " (docs/design/environments.md).",
+    )
+    ui_paths: UiPaths | None = absent_by_default(
+        description="Globs of the repo's screen paths, from the repo root (** spans folders; no"
+        " [ or ], at most 3 * per segment): a review round whose diff touches one runs the UX"
+        " lens. Absent: the repo has no UI."
     )
 
 

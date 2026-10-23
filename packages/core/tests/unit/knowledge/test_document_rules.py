@@ -21,12 +21,15 @@ from agent_hub.core.knowledge.document_rules import (
 from agent_hub.core.knowledge.knowledge_index import (
     INDEX_VERSION,
     KINDS,
+    MAX_BACKLINKS,
     Fingerprint,
     IndexedDocument,
     Kind,
     SkippedFile,
 )
 from agent_hub.core.knowledge.search_query import MAX_RESULTS, MAX_SNIPPET_CHARS
+from agent_hub.core.knowledge.sync_knowledge import sync_knowledge
+from agent_hub.core.testing.knowledge_fakes import FakeKnowledgeCheckout, InMemoryKnowledgeIndex
 
 
 def test_states_bounds_when_constants_read() -> None:
@@ -34,7 +37,7 @@ def test_states_bounds_when_constants_read() -> None:
     assert MAX_META_CHARS == 200
     assert MAX_LISTED_FILES == 20_000
     assert MAX_LISTING_BYTES == 64 * 1024 * 1024
-    assert INDEX_VERSION == 1
+    assert INDEX_VERSION == 2
     assert MAX_RESULTS == 50
     assert MAX_SNIPPET_CHARS == 160
     assert len(KINDS) == 10
@@ -233,6 +236,51 @@ def test_skips_file_when_larger_than_limit() -> None:
     assert skipped == SkippedFile(
         path="brain/big.md", fingerprint=_fingerprint(over), reason=TOO_LARGE
     )
+
+
+def test_keeps_links_when_hub_folder_given() -> None:
+    data = b"# Cleanup\n\nSee [now](../now.md) and [the guide](https://example.com/guide.md).\n"
+    path = "brain/playbooks/cleanup.md"
+
+    linked = document_from(path, data, _fingerprint(data), hub_folder="demo-hub")
+    unlinked = document_from(path, data, _fingerprint(data))
+
+    assert isinstance(linked, IndexedDocument)
+    assert linked.links == ("brain/now.md",)
+    assert isinstance(unlinked, IndexedDocument)
+    assert unlinked.links == ()
+
+
+def test_keeps_no_links_when_file_skipped() -> None:
+    link = b"[now](../now.md)\n"
+    leak = link + f"Use {_token()} to push.\n".encode()
+    big = link + b"x" * MAX_DOCUMENT_BYTES
+
+    skipped = [
+        document_from(path, data, _fingerprint(data), hub_folder="demo-hub")
+        for path, data in (("brain/_inbox/leak.md", leak), ("brain/_inbox/big.md", big))
+    ]
+
+    assert skipped == [
+        SkippedFile(path="brain/_inbox/leak.md", fingerprint=_fingerprint(leak), reason=RULE_MATCH),
+        SkippedFile(path="brain/_inbox/big.md", fingerprint=_fingerprint(big), reason=TOO_LARGE),
+    ]
+    # Where links could leak: files that linked before are skipped by the next sync.
+    hub, paths = "/w/demo-hub", ("brain/_inbox/big.md", "brain/_inbox/leak.md")
+    index, checkout = InMemoryKnowledgeIndex(), FakeKnowledgeCheckout()
+    for path in paths:
+        checkout.write(path, link)
+    sync_knowledge(index, checkout, hub)
+    linked = [item.path for item in index.backlinks(hub, "brain/now.md", limit=MAX_BACKLINKS).items]
+    checkout.write("brain/_inbox/leak.md", leak)
+    checkout.write("brain/_inbox/big.md", big)
+
+    report = sync_knowledge(index, checkout, hub)
+
+    assert linked == list(paths)
+    assert [file.reason for file in report.skipped] == [TOO_LARGE, RULE_MATCH]
+    backlinks = index.backlinks(hub, "brain/now.md", limit=MAX_BACKLINKS)
+    assert (backlinks.items, backlinks.total) == ((), 0)
 
 
 def test_reads_title_in_linear_time_when_heading_holds_long_space_run() -> None:
