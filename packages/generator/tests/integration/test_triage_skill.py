@@ -114,6 +114,23 @@ def test_states_draft_fields_before_any_write_when_issue_drafted(text: str) -> N
     assert text.index(NO_WRITE_BEFORE_GATE) < text.index("**Update**")
 
 
+# AGH-451: the draft checks the brief's post-merge signal, as /feature step 0 defines it.
+POST_MERGE_LINE = "How we will know after merge that it solved the problem"
+
+
+@DOCUMENTS
+def test_drafts_the_post_merge_signal_when_issue_drafted(
+    document: Callable[[], dict[str, Any]],
+) -> None:
+    text = triage_text(document)
+    draft = " ".join(text[text.index("**Draft**") : text.index("**Approve**")].split())
+
+    assert POST_MERGE_LINE in draft
+    assert "**Outcome**" in draft
+    assert "`/feature` step 0" in draft
+    assert "draft one if the issue has none" in draft
+
+
 def test_takes_ready_label_from_hub_json_when_draft_approved(text: str) -> None:
     update = text[text.index("**Update**") : text.index("**Hygiene**")]
 
