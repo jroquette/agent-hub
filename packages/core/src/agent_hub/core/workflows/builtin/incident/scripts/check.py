@@ -265,11 +265,12 @@ class Sandbox:
         return self.made[repo]
 
     def close(self) -> None:
-        """Remove every worktree made, then prune each repo tried: an add that was stopped may
-        have registered its worktree before its folder went with the temporary one."""
-        for repo, path in self.made.items():
-            if path is not None:
-                self.git(repo, "worktree", "remove", "--force", str(path))
+        """Remove the worktree of each repo tried, made or not: an add that was stopped may have
+        registered it, still locked; then prune once its folder went with the temporary one."""
+        for repo in self.made:
+            path = str(self.root / repo)
+            self.git(repo, "worktree", "unlock", path)
+            self.git(repo, "worktree", "remove", "--force", "--force", path)
         shutil.rmtree(self.root, ignore_errors=True)
         for repo in self.made:
             self.git(repo, "worktree", "prune")
