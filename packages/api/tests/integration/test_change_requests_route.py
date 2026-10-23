@@ -106,7 +106,7 @@ def test_detail_reads_no_approvals_when_no_request_open(wired: Any) -> None:
 
     wired.client.get("/api/v1/features/demo/demo-feature")
 
-    assert wired.events.calls == []
+    assert [name for name, _ in wired.events.calls] == ["feature_cost"]
 
 
 # two-level-flows A7: the ticket panel's records, with the same gate resolution.

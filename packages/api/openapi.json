@@ -3338,9 +3338,42 @@
         ],
         "type": "string"
       },
+      "FeatureCost": {
+        "additionalProperties": false,
+        "description": "What building the feature cost so far, estimated from its sessions' transcripts: the\nsessions that touched its folder or worked on one of its tickets, and the sessions they\nstarted. ``total_usd`` adds up the priced ones (None when none is); ``unpriced`` counts the\nrest.",
+        "properties": {
+          "sessions": {
+            "minimum": 0.0,
+            "title": "Sessions",
+            "type": "integer"
+          },
+          "total_usd": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unpriced": {
+            "minimum": 0.0,
+            "title": "Unpriced",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_usd",
+          "sessions",
+          "unpriced"
+        ],
+        "title": "FeatureCost",
+        "type": "object"
+      },
       "FeatureDetail": {
         "additionalProperties": false,
-        "description": "A feature with its acceptance criteria rows, its records (D3) and every eval; ``plan``\n(None without ``plan.md``) and ``acceptance_eval`` (None before one exists), whose verdict is\nthe header's ``verdict``; ``change_requests`` by number.",
+        "description": "A feature with its acceptance criteria rows, its records (D3) and every eval; ``plan``\n(None without ``plan.md``) and ``acceptance_eval`` (None before one exists), whose verdict is\nthe header's ``verdict``; ``change_requests`` by number; ``cost`` what its sessions cost\n(None when the events are not read).",
         "properties": {
           "ac_rows": {
             "default": [],
@@ -3377,6 +3410,16 @@
             },
             "title": "Change Requests",
             "type": "array"
+          },
+          "cost": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FeatureCost"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "derived": {
             "default": true,
@@ -17845,7 +17888,7 @@
     },
     "/api/v1/features/{project}/{slug}": {
       "get": {
-        "description": "One feature with its acceptance criteria; each open change request carries the open gate\nof its run that answers it (``approval_id``), and whether its run is gone, so hub web\ndecides it (``decidable_here``).",
+        "description": "One feature with its acceptance criteria; each open change request carries the open gate\nof its run that answers it (``approval_id``), and whether its run is gone, so hub web\ndecides it (``decidable_here``); ``cost`` adds up what its sessions cost.",
         "operationId": "get_feature_api_v1_features__project___slug__get",
         "parameters": [
           {

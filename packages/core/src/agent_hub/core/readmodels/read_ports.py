@@ -12,7 +12,7 @@ from agent_hub.core.approvals.approval import Approval
 from agent_hub.core.brain.brain_note import BrainNote, BrainTree
 from agent_hub.core.errors import AgentHubError
 from agent_hub.core.events.event import EventType
-from agent_hub.core.features.feature_view import FeatureDetail, FeatureView
+from agent_hub.core.features.feature_view import FeatureCost, FeatureDetail, FeatureView
 from agent_hub.core.features.ticket_view import FeatureTickets, TicketRecords
 from agent_hub.core.hub_config.config_view import HubConfigView
 from agent_hub.core.hubs.finding_view import FindingView
@@ -96,6 +96,11 @@ class EventReadModels(Protocol):
 
     def session_cost(self, session_id: str) -> SessionCost:
         """The session's estimated cost per turn and in total."""
+        ...
+
+    def feature_cost(self, project: str, slug: str, issues: tuple[str, ...]) -> FeatureCost:
+        """What the feature's sessions cost: those that touched its folder or worked on one of
+        its ``issues``, and the sessions they started."""
         ...
 
     def session_problems(self, session_id: str) -> SessionProblems:

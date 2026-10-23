@@ -614,7 +614,7 @@ export interface paths {
      * Get Feature
      * @description One feature with its acceptance criteria; each open change request carries the open gate
      *     of its run that answers it (``approval_id``), and whether its run is gone, so hub web
-     *     decides it (``decidable_here``).
+     *     decides it (``decidable_here``); ``cost`` adds up what its sessions cost.
      */
     get: operations["get_feature_api_v1_features__project___slug__get"];
     put?: never;
@@ -3321,10 +3321,25 @@ export interface components {
       | "cancelled"
       | "fatal";
     /**
+     * FeatureCost
+     * @description What building the feature cost so far, estimated from its sessions' transcripts: the
+     *     sessions that touched its folder or worked on one of its tickets, and the sessions they
+     *     started. ``total_usd`` adds up the priced ones (None when none is); ``unpriced`` counts the
+     *     rest.
+     */
+    FeatureCost: {
+      /** Sessions */
+      sessions: number;
+      total_usd: components["schemas"]["Money"] | null;
+      /** Unpriced */
+      unpriced: number;
+    };
+    /**
      * FeatureDetail
      * @description A feature with its acceptance criteria rows, its records (D3) and every eval; ``plan``
      *     (None without ``plan.md``) and ``acceptance_eval`` (None before one exists), whose verdict is
-     *     the header's ``verdict``; ``change_requests`` by number.
+     *     the header's ``verdict``; ``change_requests`` by number; ``cost`` what its sessions cost
+     *     (None when the events are not read).
      */
     FeatureDetail: {
       /**
@@ -3339,6 +3354,7 @@ export interface components {
        * @default []
        */
       change_requests: components["schemas"]["ChangeRequestView"][];
+      cost?: components["schemas"]["FeatureCost"] | null;
       /**
        * Derived
        * @default true

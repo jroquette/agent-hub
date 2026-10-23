@@ -2473,6 +2473,13 @@ pre {
 .ah-golden-step[data-state="done"]::before {
   background: var(--done);
 }
+/* The last step ends the path: no line runs past it, and it takes only its own width. */
+.ah-golden:not([data-orientation="vertical"]) .ah-golden-step:last-child {
+  flex: 0 0 auto;
+}
+.ah-golden:not([data-orientation="vertical"]) .ah-golden-step:last-child::before {
+  display: none;
+}
 .ah-golden-dot {
   position: absolute;
   top: 0;

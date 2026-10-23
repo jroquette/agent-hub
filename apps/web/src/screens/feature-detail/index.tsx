@@ -10,6 +10,7 @@ import {
   EmptyState,
   GoldenPathStepper,
   Icon,
+  Money,
   ProblemError,
   SegmentedControl,
   Skeleton,
@@ -28,7 +29,7 @@ import {
 } from "../../shell/discuss";
 import { FeatureLabel } from "../features/FeatureChip";
 import { FeatureNameField, RenameButton, useFeatureNames } from "../features/names";
-import { AcBar, PHASES, VERDICT_STATUS } from "../features/parts";
+import { PHASES, VERDICT_STATUS } from "../features/parts";
 import { ApproveRecord, sessionName } from "./ApproveRecord";
 import { QuestionsLink } from "./QuestionsBlock";
 import { NoteView } from "../brain/NoteView";
@@ -356,6 +357,26 @@ function FeatureSessionChip({ session }: { session: AgentSession }) {
       >
         {name}
       </Button>
+    </span>
+  );
+}
+
+/** What building the feature cost so far: its sessions' estimated total, the unpriced ones said. */
+function FeatureCostChip({ cost }: { cost: components["schemas"]["FeatureCost"] }) {
+  const sessions = `${String(cost.sessions)} session${cost.sessions === 1 ? "" : "s"}`;
+  const unpriced = cost.unpriced ? `, ${String(cost.unpriced)} without a price` : "";
+  return (
+    <span
+      className="ah-row ah-muted"
+      style={{ gap: 4 }}
+      title={`Estimated from the transcripts of the ${sessions} that worked on this feature${unpriced}`}
+    >
+      <Icon name="coins" size="sm" />
+      {cost.total_usd ? <Money value={cost.total_usd} /> : "—"}
+      <span className="ah-subtle">
+        · {sessions}
+        {unpriced}
+      </span>
     </span>
   );
 }
@@ -787,9 +808,7 @@ export function FeatureDetailScreen() {
         </div>
         <div className="ah-row ah-wrap ah-small" style={{ gap: 14 }}>
           {owner && <FeatureSessionChip session={owner} />}
-          {detail.acs && (
-            <AcBar acs={detail.acs} width={180} ownerIds={owners.map((ac) => ac.id)} />
-          )}
+          {detail.cost && detail.cost.sessions > 0 && <FeatureCostChip cost={detail.cost} />}
         </div>
       </div>
       <section
@@ -802,12 +821,15 @@ export function FeatureDetailScreen() {
           <DerivedLabel how="Each step is derived from the record files, the tickets' status in Linear when it was read, and the review and eval records; Shipped needs GitHub, not connected in this version. Hover a step for its details." />
         </div>
         <GoldenPathStepper
-          steps={detail.golden_path.steps.map((step) =>
-            // A future-dated wait reads as its prompt does, in the page's time zone (AGH-330 Q4).
-            step.name === "acceptance" && wait?.state === "future"
-              ? { ...step, meta: signableLine(wait, tz) }
-              : step,
-          )}
+          steps={detail.golden_path.steps
+            // A feature with no screen change has nothing to do in UX design: the step is left out.
+            .filter((step) => !(step.name === "ux_design" && step.state === "skipped"))
+            .map((step) =>
+              // A future-dated wait reads as its prompt does, in the page's time zone (AGH-330 Q4).
+              step.name === "acceptance" && wait?.state === "future"
+                ? { ...step, meta: signableLine(wait, tz) }
+                : step,
+            )}
           onSelect={(step) => {
             // Acceptance opens its own eval, where its prompt is (A15).
             if (step === "acceptance" && detail.acceptance_eval) {

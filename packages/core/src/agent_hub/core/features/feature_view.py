@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import Field
 
-from agent_hub.core.readmodels.view_types import DerivedView, ViewModel
+from agent_hub.core.readmodels.view_types import DerivedView, Money, ViewModel
 
 type FeaturePhase = Literal[
     "spec", "ux_design", "research", "plan", "tickets", "build", "acceptance", "shipped"
@@ -237,10 +237,22 @@ class ChangeRequestView(ViewModel):
     body_cut: bool = False
 
 
+class FeatureCost(ViewModel):
+    """What building the feature cost so far, estimated from its sessions' transcripts: the
+    sessions that touched its folder or worked on one of its tickets, and the sessions they
+    started. ``total_usd`` adds up the priced ones (None when none is); ``unpriced`` counts the
+    rest."""
+
+    total_usd: Money | None
+    sessions: int = Field(ge=0)
+    unpriced: int = Field(ge=0)
+
+
 class FeatureDetail(FeatureView):
     """A feature with its acceptance criteria rows, its records (D3) and every eval; ``plan``
     (None without ``plan.md``) and ``acceptance_eval`` (None before one exists), whose verdict is
-    the header's ``verdict``; ``change_requests`` by number."""
+    the header's ``verdict``; ``change_requests`` by number; ``cost`` what its sessions cost
+    (None when the events are not read)."""
 
     ac_rows: tuple[AcRow, ...] = ()
     records: tuple[FeatureRecord, ...] = ()
@@ -248,3 +260,4 @@ class FeatureDetail(FeatureView):
     plan: PlanView | None = None
     acceptance_eval: AcceptanceEval | None = None
     change_requests: tuple[ChangeRequestView, ...] = ()
+    cost: FeatureCost | None = None

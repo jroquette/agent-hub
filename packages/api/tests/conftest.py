@@ -25,7 +25,7 @@ from agent_hub.core.brain.brain_note import BrainNote, BrainTree
 from agent_hub.core.events.event import Event, EventType
 from agent_hub.core.events.event_query import EventPage, EventQuery
 from agent_hub.core.events.stored_event import StoredEvent
-from agent_hub.core.features.feature_view import FeatureDetail, FeatureView
+from agent_hub.core.features.feature_view import FeatureCost, FeatureDetail, FeatureView
 from agent_hub.core.features.ticket_view import FeatureTickets, TicketRecords
 from agent_hub.core.hub_config.config_view import HubConfigView
 from agent_hub.core.hubs.finding_view import FindingView
@@ -142,6 +142,7 @@ class FakeEventReadModels:
     summaries: dict[str, SessionSummary] = field(default_factory=dict)
     files: dict[str, list[SessionFileChange]] = field(default_factory=dict)
     costs: dict[str, SessionCost] = field(default_factory=dict)
+    feature_costs: dict[str, FeatureCost] = field(default_factory=dict)
     problems: dict[str, SessionProblems] = field(default_factory=dict)
     needs: list[NeedsYouItem] = field(default_factory=list)
     activity_items: list[ActivityItem] = field(default_factory=list)
@@ -186,6 +187,10 @@ class FakeEventReadModels:
     def session_cost(self, session_id: str) -> SessionCost:
         self._call("session_cost", session_id)
         return _found(self.costs, "session", session_id)
+
+    def feature_cost(self, project: str, slug: str, issues: tuple[str, ...]) -> FeatureCost:
+        self._call("feature_cost", (project, slug, issues))
+        return self.feature_costs.get(slug, FeatureCost(total_usd=None, sessions=0, unpriced=0))
 
     def session_problems(self, session_id: str) -> SessionProblems:
         self._call("session_problems", session_id)
