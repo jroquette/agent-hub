@@ -1020,3 +1020,23 @@ textarea.sb-script {
 .ah-side-panel[data-layout="inline"] .ah-side-panel-foot {
   flex-wrap: wrap;
 }
+
+/* Scenario settings: one card per input */
+.sb-input-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.sb-input-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.sb-required {
+  gap: 6px;
+  align-self: end;
+  min-height: 32px;
+}

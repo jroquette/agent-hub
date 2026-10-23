@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   aPage,
+  aProblem,
   aScenarioAction,
   aScenarioDetail,
   aScenarioPlan,
@@ -294,6 +295,46 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(
       JSON.parse(window.localStorage.getItem("ah.builder.layout.demo/order-lifecycle") ?? "{}"),
     ).toMatchObject({ loose: [] });
+  });
+
+  it("scenario builder says so when the hub's actions cannot be read", async () => {
+    const user = userEvent.setup();
+    renderBuilder({
+      "/api/v1/projects/demo/actions": aProblem({ status: 500, title: "Boom" }),
+    });
+
+    const fetch = await screen.findByRole("treeitem", { name: "Script fetch-order" });
+    await waitFor(() => {
+      expect(fetch).toHaveTextContent("Action details could not be read.");
+    });
+    expect(fetch).not.toHaveTextContent("is not an action of this hub");
+    await user.click(fetch);
+    expect(screen.getByRole("region", { name: "Inspector: Script fetch-order" })).toHaveTextContent(
+      "The hub's actions could not be read",
+    );
+  });
+
+  it("scenario builder marks a preview made before the last change", async () => {
+    const user = userEvent.setup();
+    renderBuilder({
+      [`POST ${DETAIL}/plan`]: aScenarioPlan({
+        rows: [aScenarioPlanRow({ step: "fetch-order", plan: "Would send one message" })],
+      }),
+    });
+
+    await user.click(await screen.findByRole("button", { name: "Preview in…" }));
+    const form = screen.getByRole("form", { name: "Preview in an environment" });
+    await user.type(within(form).getByRole("textbox", { name: /external_ref/ }), "T-1");
+    await user.click(within(form).getByRole("button", { name: "Preview" }));
+    const fetch = screen.getByRole("treeitem", { name: "Script fetch-order" });
+    await waitFor(() => {
+      expect(fetch).toHaveTextContent("In personal: Would send one message");
+    });
+
+    await user.click(screen.getByRole("button", { name: "Add block: wait 30s" }));
+    expect(fetch).toHaveTextContent(
+      "In personal (before your last change): Would send one message",
+    );
   });
 
   it("scenario builder inserts a block between two others from the + menu", async () => {
