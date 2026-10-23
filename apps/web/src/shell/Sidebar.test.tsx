@@ -210,7 +210,7 @@ describe("Sidebar", () => {
     expect(onShortcuts).toHaveBeenCalledOnce();
   });
 
-  it("groups the destinations into Work, Activity, Knowledge and the Hub footer", () => {
+  it("groups the destinations into Work, Knowledge and the Hub footer", () => {
     renderSidebar();
 
     const nav = screen.getByRole("navigation", { name: "Main" });
@@ -222,9 +222,9 @@ describe("Sidebar", () => {
       "Features",
       "Tickets",
       "Scenarios",
-      "Environments",
       "Sessions",
       "Workflow runs",
+      "Environments",
       "Brain",
       "Learnings",
       "Toolkit",
@@ -236,7 +236,7 @@ describe("Sidebar", () => {
       "href",
       "/scenarios",
     );
-    for (const group of ["Work", "Activity", "Knowledge"]) {
+    for (const group of ["Work", "Knowledge"]) {
       expect(within(nav).getByText(group)).toBeInTheDocument();
     }
     expect(within(nav).queryByText("Live sessions")).not.toBeInTheDocument();
