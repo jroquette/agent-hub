@@ -4981,8 +4981,10 @@ def test_keeps_join_section_within_60_lines_when_readme_rendered() -> None:
 
     section = join_section(readme)
 
-    # AGH-495: only the generated Pick a flow table follows it.
-    assert readme.split(section, 1)[1].startswith("## Pick a flow\n")
+    # AGH-495: only the generated Pick a flow table follows it, the README's last section.
+    rest = readme.split(section, 1)[1]
+    assert rest.startswith("## Pick a flow\n")
+    assert "\n## " not in rest.removeprefix("## Pick a flow\n")
     assert len(section.splitlines()) <= 60
 
 
