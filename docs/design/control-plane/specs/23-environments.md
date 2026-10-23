@@ -31,7 +31,7 @@ find-services part of v3 is section 7 (AGH-418).
 ## 1 · Environments `/projects/:project/environments`
 
 ```
-Portfolio › tipple › Environments
+Portfolio › demo-shop › Environments
 Environments                                    [Ask Claude about environments] [+ Add environment]
 Where this project's systems run, what agents may do in each, and how to reach each repo's services there.
 Environments 3
@@ -61,15 +61,15 @@ Environments 3
 ## 2 · Environment page `/projects/:project/environment/:name`
 
 ```
-Portfolio › tipple › Environments › staging
+Portfolio › demo-shop › Environments › staging
 staging [⛨ Production] [👥 Team]                          [Ask Claude about staging] [Remove environment]
 ┌ main (minmax 0,1fr) ───────────────────────────────────┐ 24 ┌ rail 320 ───────────────────────┐
 │ What agents may do                          [Change]   │    │ What your agents read  (Preview) │
 │ Secrets for scripted actions                [Change]   │    │ Every session reads this: …      │
 │ Description                                 [Change]   │    │ ◇ Agents ask before writing      │
 │ Services in staging 3                  [+ Add service] │    │ ▣ 3 services with an address     │
-│ 📖 Tipple_API                                          │    │ ▸ Show the services as the brief │
-│ api · API or backend   https://api.stg.tipple.ie  ⧉ ›  │    │   lists them                     │
+│ 📖 Demo_API                                            │    │ ▸ Show the services as the brief │
+│ api · API or backend   https://stg.example.com    ⧉ ›  │    │   lists them                     │
 │ ▸ 2 services not in staging yet                        │    │ Agents never see secret values … │
 └────────────────────────────────────────────────────────┘    └──────────────────────────────────┘
 ```
@@ -217,7 +217,7 @@ primary with the reason.
 
 Access, production and "Removed on save" are icon + words, never colour alone; each choice list is a `fieldset`
 with a visually hidden legend; rows that open are keyboard reachable (Enter); copy and remove buttons name their
-target ("Copy the address of Tipple_API › api in staging", "Remove the staging address"); every screen passes the
+target ("Copy the address of Demo_API › api in staging", "Remove the staging address"); every screen passes the
 axe check (`npm test -- -t a11y`).
 
 ## Departures from the UX designs

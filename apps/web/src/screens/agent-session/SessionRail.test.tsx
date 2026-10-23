@@ -46,8 +46,8 @@ describe("railGroups", () => {
 
   it("AC-422.19 filters by name, project, folder or tag, and drops empty groups", () => {
     expect(railGroups(sessions, "GUARD").map((g) => g.id)).toEqual(["needs"]);
-    const tagged = () => ({ ticket: "TIP-1576", feature: "allianz", name: null });
-    expect(railGroups(sessions, "tip-1576", tagged)).toHaveLength(3);
+    const tagged = () => ({ ticket: "DEMO-1576", feature: "demo-fraud-check", name: null });
+    expect(railGroups(sessions, "demo-1576", tagged)).toHaveLength(3);
   });
 
   it("AC-422.20 names a session by its title, else its last prompt on one line", () => {
@@ -57,23 +57,23 @@ describe("railGroups", () => {
 
   it("AC-422.20 names a session on a ticket by its ticket, as the chat's header does", () => {
     const titled = anAgentSession({ title: "Campos buyer_ip_address" });
-    const tags = { ticket: "TIP-1577", feature: "allianz", name: "TIP-1577: Add the client" };
-    expect(railName(titled, tags)).toBe("TIP-1577: Add the client");
+    const tags = { ticket: "DEMO-1577", feature: "demo-fraud-check", name: "DEMO-1577: Add the client" };
+    expect(railName(titled, tags)).toBe("DEMO-1577: Add the client");
   });
 });
 
 describe("railTagsOf", () => {
   it("AC-422.20 tags a session with its observed twin's ticket and the feature that plans it", () => {
-    const twin = aSession({ id: "obs-1", label: aSessionLabel({ issue: "TIP-1576" }) });
+    const twin = aSession({ id: "obs-1", label: aSessionLabel({ issue: "DEMO-1576" }) });
     const lookup = new Map([
-      ["TIP-1576", { project: "tipple", slug: "allianz", title: "Add the fraud-check client" }],
+      ["DEMO-1576", { project: "demo-shop", slug: "demo-fraud-check", title: "Add the fraud-check client" }],
     ]);
     const tagsOf = railTagsOf([twin], lookup);
 
     expect(tagsOf(anAgentSession({ observed_session_id: "obs-1" }))).toEqual({
-      ticket: "TIP-1576",
-      feature: "allianz",
-      name: "TIP-1576: Add the fraud-check client",
+      ticket: "DEMO-1576",
+      feature: "demo-fraud-check",
+      name: "DEMO-1576: Add the fraud-check client",
     });
     expect(tagsOf(anAgentSession({ observed_session_id: null }))).toEqual({
       ticket: null,
