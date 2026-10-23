@@ -430,7 +430,7 @@ describe("FitText", () => {
   const url = "https://admin-api.personal-demo.staging.example.com";
 
   it("AC-417.1 keeps the whole text, its tail in a part that never shrinks, and a native title", () => {
-    const { container } = render(<FitText text={url} tail={13} />);
+    const { container } = render(<FitText text={url} tail={11} />);
 
     expect(container.textContent).toBe(url);
     expect(container.querySelector(".ah-fit-tail")?.textContent).toBe("example.com");
@@ -449,7 +449,7 @@ describe("FitText", () => {
         disconnect = vi.fn();
       },
     );
-    const { container } = render(<FitText text={url} tail={13} tooltip />);
+    const { container } = render(<FitText text={url} tail={11} tooltip />);
     expect(screen.queryByRole("tooltip")).toBeNull();
     expect(screen.queryByTitle(url)).toBeNull();
 

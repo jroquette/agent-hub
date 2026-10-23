@@ -247,7 +247,7 @@ describe("NewFeatureScreen", () => {
   it("shows the project as a pill on the title row and keeps each project's brief (AC-420.2)", async () => {
     const user = userEvent.setup();
     renderNew({
-      "/api/v1/projects": aPage([aProjectSummary(), aProjectSummary({ name: "demo" })]),
+      "/api/v1/projects": aPage([aProjectSummary(), aProjectSummary({ name: "demo-shop" })]),
     });
 
     expect(
@@ -260,10 +260,10 @@ describe("NewFeatureScreen", () => {
     await user.type(screen.getByLabelText("What do you want to build?"), IDEA);
     await user.type(screen.getByLabelText("Slug"), "orders");
 
-    await user.selectOptions(project, "demo");
+    await user.selectOptions(project, "demo-shop");
     expect(screen.getByLabelText("What do you want to build?")).toHaveValue("");
     expect(screen.getByLabelText("Slug")).toHaveValue("");
-    expect(project.closest(".as-pill")).toHaveTextContent("demo");
+    expect(project.closest(".as-pill")).toHaveTextContent("demo-shop");
 
     await user.selectOptions(project, "agent-hub");
     expect(screen.getByLabelText("What do you want to build?")).toHaveValue(IDEA);

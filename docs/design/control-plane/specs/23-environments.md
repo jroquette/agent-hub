@@ -68,8 +68,8 @@ staging [⛨ Production] [👥 Team]                          [Ask Claude about 
 │ Secrets for scripted actions                [Change]   │    │ Every session reads this: …      │
 │ Description                                 [Change]   │    │ ◇ Agents ask before writing      │
 │ Services in staging 3                  [+ Add service] │    │ ▣ 3 services with an address     │
-│ 📖 Demo_API                                          │    │ ▸ Show the services as the brief │
-│ api · API or backend   https://api.stg.example.com  ⧉ ›  │    │   lists them                     │
+│ 📖 Demo_API                                            │    │ ▸ Show the services as the brief │
+│ api · API or backend https://api.stg.example.com  ⧉ ›  │    │   lists them                     │
 │ ▸ 2 services not in staging yet                        │    │ Agents never see secret values … │
 └────────────────────────────────────────────────────────┘    └──────────────────────────────────┘
 ```
