@@ -52,7 +52,8 @@ type EvalRecord = components["schemas"]["EvalRecord"];
 /** Whether each AC passes, by id. */
 type AcPasses = Readonly<Record<string, boolean>>;
 
-const EDGE_TITLE: Record<EdgeSource, string> = {
+/** Where a blocker edge comes from, as its tooltip says it. */
+export const EDGE_TITLE: Record<EdgeSource, string> = {
   plan: "From the plan only",
   linear: "From Linear only",
   both: "In the plan and in Linear",
@@ -125,10 +126,13 @@ const SESSIONS_SHOWN = 2;
 export function SessionLink({
   session,
   context,
+  variant = "chip",
 }: {
   session: Session;
   /** What the link is to the reader ("Newest session"), leading its accessible name. */
   context?: string | undefined;
+  /** A chip (badge and start), or a row with the label's title, turns and cost (the panel). */
+  variant?: "chip" | "row" | undefined;
 }) {
   const { tz } = usePreferences();
   const [status, label] = badgeOf(session);
@@ -143,6 +147,30 @@ export function SessionLink({
     `${String(session.turns)} turn${session.turns === 1 ? "" : "s"}`,
     session.cost_usd != null ? fmtMoney(session.cost_usd) : null,
   ].filter(Boolean);
+  if (variant === "row") {
+    return (
+      <Link
+        className="ah-ticket-session"
+        data-variant="row"
+        to={rowHref(session)}
+        title={`Open the session: ${facts.join(" · ")}`}
+      >
+        <StatusBadge status={status} label={label} quiet />
+        {session.label?.title && (
+          <span className="ah-small ah-ticket-session-title">{session.label.title}</span>
+        )}
+        <span className="ah-small ah-ticket-session-facts">
+          {[
+            `started ${day}, ${fmtClock(session.started_at, tz)}`,
+            `${String(session.turns)} turn${session.turns === 1 ? "" : "s"}`,
+            session.cost_usd != null ? fmtMoney(session.cost_usd) : null,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        </span>
+      </Link>
+    );
+  }
   return (
     <Link
       className="ah-ticket-session"
@@ -163,7 +191,7 @@ export function SessionLink({
 }
 
 /** The sessions whose branch, worktree, run or first prompt names the ticket, newest first. */
-function useTicketSessions(project: string, row: TicketRow) {
+export function useTicketSessions(project: string, row: TicketRow) {
   return useApi(
     "/api/v1/sessions",
     { query: { project, issue: row.id ?? "", limit: 20 } },
@@ -215,9 +243,26 @@ function CardAction({
   );
 }
 
-/** The sessions whose branch or run names this ticket, newest first, each one click from its dialogue. */
-export function TicketSessions({ row, project }: { row: TicketRow; project: string }) {
+/**
+ * The sessions whose branch or run names this ticket, newest first, each one click from its
+ * dialogue: chips in the table, `shown` of them before the rest fold away; rows in the panel,
+ * where every state says itself in words.
+ */
+export function TicketSessions({
+  row,
+  project,
+  variant = "chip",
+  shown = SESSIONS_SHOWN,
+}: {
+  row: TicketRow;
+  project: string;
+  variant?: "chip" | "row" | undefined;
+  shown?: number | undefined;
+}) {
   const sessions = useTicketSessions(project, row);
+  if (variant === "row") {
+    return <SessionRows row={row} sessions={sessions} shown={shown} />;
+  }
   if (!row.id) return <span className="ah-subtle">—</span>;
   if (sessions.isPending) return <Skeleton width={90} height={18} />;
   if (sessions.isError) {
@@ -242,23 +287,85 @@ export function TicketSessions({ row, project }: { row: TicketRow; project: stri
       ))}
     </span>
   );
-  if (items.length <= SESSIONS_SHOWN) return links(items);
+  if (items.length <= shown) return links(items);
   const more = sessions.data.next_cursor ? "+" : "";
   return (
     <span className="ah-stack" style={{ gap: 4 }}>
-      {links(items.slice(0, SESSIONS_SHOWN))}
+      {links(items.slice(0, shown))}
       <details>
         <summary className="ah-small" style={{ cursor: "pointer", whiteSpace: "nowrap" }}>
-          {items.length - SESSIONS_SHOWN}
+          {items.length - shown}
           {more} more
         </summary>
-        <div style={{ paddingTop: 4 }}>{links(items.slice(SESSIONS_SHOWN))}</div>
+        <div style={{ paddingTop: 4 }}>{links(items.slice(shown))}</div>
       </details>
     </span>
   );
 }
 
-function Assignee({ row }: { row: TicketRow }) {
+/** The panel's session rows, with each empty, loading and failed state in words. */
+function SessionRows({
+  row,
+  sessions,
+  shown,
+}: {
+  row: TicketRow;
+  sessions: ReturnType<typeof useTicketSessions>;
+  shown: number;
+}) {
+  if (!row.id) {
+    return (
+      <span className="ah-small ah-subtle">No sessions until the ticket is created in Linear.</span>
+    );
+  }
+  if (sessions.isPending) {
+    return (
+      <span className="ah-stack" style={{ gap: 4 }}>
+        {[0, 1, 2].map((n) => (
+          <Skeleton key={n} width="100%" height={24} />
+        ))}
+      </span>
+    );
+  }
+  if (sessions.isError) {
+    return (
+      <span className="ah-small ah-subtle" title={sessions.error.title}>
+        Sessions could not be read.
+      </span>
+    );
+  }
+  const items = sessions.data.items;
+  if (items.length === 0) {
+    return <span className="ah-small ah-subtle">No session's branch or run names {row.id}.</span>;
+  }
+  const list = (part: readonly Session[]) => (
+    <ul className="ah-ticket-panel-rows">
+      {part.map((session) => (
+        <li key={session.id}>
+          <SessionLink session={session} variant="row" />
+        </li>
+      ))}
+    </ul>
+  );
+  const rest = items.length - shown;
+  return (
+    <div className="ah-stack" style={{ gap: 4 }}>
+      {list(items.slice(0, shown))}
+      {rest > 0 && (
+        <details className="ah-ticket-panel-more">
+          <summary className="ah-small">
+            Show {rest}
+            {sessions.data.next_cursor ? "+" : ""} more session{rest === 1 ? "" : "s"}
+          </summary>
+          {list(items.slice(shown))}
+        </details>
+      )}
+    </div>
+  );
+}
+
+/** Who has the ticket in Linear: "Unassigned", or a dash when Linear was not read. */
+export function Assignee({ row }: { row: TicketRow }) {
   if (row.assignee) return <>{row.assignee}</>;
   if (!row.state) {
     return (
@@ -296,17 +403,17 @@ function AcLink({
   id,
   row,
   passes,
+  plain = false,
 }: {
   id: string;
   row?: AcRow | undefined;
   passes?: boolean | undefined;
+  /** The id alone: its row already says whether it passes. */
+  plain?: boolean;
 }) {
   const tipId = useId();
-  const pass = row
-    ? PASS[passOf(row)]
-    : passes === undefined
-      ? null
-      : PASS[passes ? "yes" : "none"];
+  const state = plain ? null : acPass(row, passes);
+  const pass = state ? PASS[state] : null;
   const summary = row ? (gwtParts(row.description)?.then ?? row.description) : null;
   return (
     <Tooltip id={tipId} label={summary && <span className="ah-ticket-ac-tip">{summary}</span>}>
@@ -324,19 +431,43 @@ function AcLink({
   );
 }
 
+type Pass = keyof typeof PASS;
+
+/** Whether an AC passes, from its row, else from the passing map; null when unknown. */
+function acPass(row: AcRow | undefined, passes: boolean | undefined): Pass | null {
+  if (row) return passOf(row);
+  return passes === undefined ? null : passes ? "yes" : "none";
+}
+
+/** The open work first: not passing, then owner steps, then passing (unknown keeps its place). */
+const PASS_ORDER: Record<Pass, number> = { none: 0, owner: 1, yes: 2 };
+const passRank = (state: Pass | null) => (state ? PASS_ORDER[state] : 0);
+
+/** How many ACs the panel lists before the rest fold away. */
+const ACS_SHOWN = 6;
+
 /**
  * How many of a list of ACs pass, the same meter as a ticket's card; the ids fold under it. The
- * Tickets table shows a ticket's ACs with it, the Eval table an eval's.
+ * Tickets table shows a ticket's ACs with it, the Eval table an eval's. As `rows` (the ticket
+ * panel), every AC is a row with its pass state in words, its id and what must be true, the
+ * open work first and past `shown` the rest folded.
  */
 export function AcList({
   ids,
   acPasses,
   acRows,
+  layout = "fold",
+  shown = ACS_SHOWN,
 }: {
   ids: readonly string[];
   acPasses?: AcPasses | undefined;
   acRows?: ReadonlyMap<string, AcRow> | undefined;
+  layout?: "fold" | "rows" | undefined;
+  shown?: number | undefined;
 }) {
+  if (layout === "rows") {
+    return <AcRows ids={ids} acPasses={acPasses} acRows={acRows} shown={shown} />;
+  }
   if (ids.length === 0) return <span className="ah-subtle">—</span>;
   return (
     <details className="ah-ticket-acs">
@@ -351,6 +482,64 @@ export function AcList({
         ))}
       </ul>
     </details>
+  );
+}
+
+function AcRows({
+  ids,
+  acPasses,
+  acRows,
+  shown,
+}: {
+  ids: readonly string[];
+  acPasses?: AcPasses | undefined;
+  acRows?: ReadonlyMap<string, AcRow> | undefined;
+  shown: number;
+}) {
+  if (ids.length === 0) {
+    return <span className="ah-small ah-subtle">No AC names this ticket.</span>;
+  }
+  const entries = ids
+    .map((id) => {
+      const row = acRows?.get(id);
+      const state = acPass(row, acPasses?.[id]);
+      const text = row ? (gwtParts(row.description)?.then ?? row.description) : null;
+      return { id, row, state, pass: state ? PASS[state] : null, text };
+    })
+    .sort((left, right) => passRank(left.state) - passRank(right.state));
+  const list = (part: typeof entries) => (
+    <ul className="ah-ticket-panel-rows">
+      {part.map(({ id, row, pass, text }) => (
+        <li key={id} className="ah-ticket-ac-row" data-pass={pass ? undefined : "unknown"}>
+          {pass && (
+            <span className="ah-ticket-ac-pass" title={pass.title}>
+              <Icon name={pass.icon} size="sm" style={{ color: `var(--${pass.tone})` }} />
+              <span className="ah-caption">{pass.label}</span>
+            </span>
+          )}
+          <AcLink id={id} row={row} passes={acPasses?.[id]} plain />
+          {text && (
+            <span className="ah-small ah-ticket-panel-clamp" title={text}>
+              {text}
+            </span>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+  const rest = entries.length - shown;
+  return (
+    <div className="ah-stack" style={{ gap: 4 }}>
+      {list(entries.slice(0, rest > 0 ? shown : entries.length))}
+      {rest > 0 && (
+        <details className="ah-ticket-panel-more">
+          <summary className="ah-small">
+            Show {rest} more AC{rest === 1 ? "" : "s"}
+          </summary>
+          {list(entries.slice(shown))}
+        </details>
+      )}
+    </div>
   );
 }
 

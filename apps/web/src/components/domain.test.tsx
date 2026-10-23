@@ -685,6 +685,76 @@ describe("GoldenPathStepper", () => {
     expect(onSelect).toHaveBeenCalledWith("context");
   });
 
+  it("draws the steps across with the open step's detail once below, in a region each button controls", async () => {
+    const onSelect = vi.fn();
+    const { container, rerender } = render(
+      <GoldenPathStepper
+        steps={[
+          { name: "implement", state: "done", meta: null },
+          { name: "review", state: "current", meta: "Changes requested" },
+          { name: "eval", state: "pending", meta: null },
+        ]}
+        labels={{ implement: "Implement", review: "Review", eval: "Eval" }}
+        label="Ticket steps"
+        open="review"
+        orientation="horizontal"
+        detailPlacement="below"
+        detail={(step) => `Details of ${step.name}`}
+        onSelect={onSelect}
+        selectLabel={(step) => `${step}, show details`}
+      />,
+    );
+
+    const list = screen.getByRole("list", { name: "Ticket steps" });
+    expect(list).toHaveAttribute("data-orientation", "horizontal");
+    expect(list).toHaveAttribute("data-detail", "below");
+    // Each step is its dot and its name: no state or meta line, and the detail is not inside.
+    expect(list.querySelectorAll(".ah-golden-meta")).toHaveLength(0);
+    expect(list).not.toHaveTextContent("Details of review");
+    const region = list.nextElementSibling;
+    expect(region).toHaveTextContent("Details of review");
+    const buttons = within(list).getAllByRole("button");
+    expect(buttons).toHaveLength(3);
+    for (const button of buttons) {
+      expect(button).toHaveAttribute("aria-controls", region?.id);
+    }
+    expect(screen.getByRole("button", { name: "review, show details" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "eval, show details" }));
+    expect(onSelect).toHaveBeenCalledWith("eval");
+    expect(await seriousViolations(container)).toEqual([]);
+
+    // None open: the region stays (the buttons still name it), empty.
+    rerender(
+      <GoldenPathStepper
+        steps={[{ name: "review", state: "current", meta: null }]}
+        labels={{ review: "Review" }}
+        open={null}
+        orientation="horizontal"
+        detailPlacement="below"
+        detail={(step) => `Details of ${step.name}`}
+        onSelect={onSelect}
+      />,
+    );
+    const empty = screen.getByRole("list").nextElementSibling;
+    expect(empty).toBeEmptyDOMElement();
+    expect(screen.getByRole("button")).toHaveAttribute("aria-controls", empty?.id);
+  });
+
+  it("keeps the feature header's markup: no orientation, no detail region, no aria-controls", () => {
+    render(<GoldenPathStepper steps={ownerCase.steps} onSelect={() => undefined} />);
+
+    const list = screen.getByRole("list");
+    expect(list).not.toHaveAttribute("data-orientation");
+    expect(list).not.toHaveAttribute("data-detail");
+    expect(list.nextElementSibling).toBeNull();
+    for (const button of within(list).getAllByRole("button")) {
+      expect(button).not.toHaveAttribute("aria-controls");
+    }
+  });
+
   it("has no serious axe violation (golden a11y)", async () => {
     const { container } = render(<GoldenPathStepper steps={ownerCase.steps} />);
 

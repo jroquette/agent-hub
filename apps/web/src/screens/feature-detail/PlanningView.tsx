@@ -42,7 +42,7 @@ export function stackedOn(row: TicketRow, rows: readonly TicketRow[]): InReview 
 }
 
 /** The badge tone of a Linear state type; the badge text is always the state's own name. */
-const STATE_STATUS: Record<IssueStateType, Status> = {
+export const STATE_STATUS: Record<IssueStateType, Status> = {
   triage: "queued",
   backlog: "queued",
   unstarted: "queued",
@@ -86,19 +86,33 @@ export const READINESS_HELP: Record<Readiness, string> = {
   unknown: "Linear was not read, so its status is unknown.",
 };
 
-/** A ticket's readiness in words: what to do with it now. */
+/** A ticket's readiness in words: what to do with it now; `withIcon`, its icon before them. */
 export function ReadinessText({
-  row,
-  rows,
-  external,
-  brief = false,
-}: {
+  withIcon = false,
+  ...props
+}: ReadinessProps & {
+  /** The readiness icon the flow card shows, in the colour of the words. */
+  withIcon?: boolean;
+}) {
+  const look = withIcon ? readinessIcon(props.row, props.rows) : undefined;
+  if (!look) return <ReadinessWords {...props} />;
+  return (
+    <span className="ah-readiness-line">
+      <Icon name={look.icon} size="sm" style={{ color: look.color }} />
+      <ReadinessWords {...props} />
+    </span>
+  );
+}
+
+interface ReadinessProps {
   row: TicketRow;
   rows: readonly TicketRow[];
   external: readonly ExternalBlocker[];
   /** Beside the Linear status badge (the card): leave out the words the badge already says. */
   brief?: boolean;
-}) {
+}
+
+function ReadinessWords({ row, rows, external, brief = false }: ReadinessProps) {
   const refs = (list: readonly string[]) => <RefList refs={list} rows={rows} external={external} />;
   const help = READINESS_HELP[row.readiness];
   switch (row.readiness) {
@@ -606,6 +620,31 @@ export function TicketStepBar({ flow }: { flow: TicketFlow }) {
       note={current?.meta ?? (current?.state === "blocked" ? GOLDEN_STATE_TEXT.blocked : null)}
     />
   );
+}
+
+/** The icon before a card's readiness words, in the colour the words use (no coloured borders). */
+export const READINESS_ICON: Partial<Record<Readiness, { icon: IconName; color: string }>> = {
+  can_start: { icon: "circle-play", color: "var(--done)" },
+  in_progress: { icon: "circle-dot", color: "var(--live)" },
+  waiting: { icon: "hourglass", color: "var(--waiting)" },
+  in_cycle: { icon: "octagon-x", color: "var(--failed)" },
+};
+
+/**
+ * The icon before a ticket's readiness words: a reviewed ticket's double check, a branch when it
+ * can start on its blocker's, else its readiness's own; none for the states its badge says.
+ */
+export function readinessIcon(
+  row: TicketRow,
+  rows: readonly TicketRow[],
+): { icon: IconName; color: string } | undefined {
+  if (row.readiness === "in_progress" && row.reviewed === true) {
+    return { icon: "check-check", color: "var(--done)" };
+  }
+  if (row.readiness === "waiting" && stackedOn(row, rows)) {
+    return { icon: "git-branch", color: "var(--text-muted)" };
+  }
+  return READINESS_ICON[row.readiness];
 }
 
 function FlowCard({
