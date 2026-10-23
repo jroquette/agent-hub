@@ -18,6 +18,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   new bug of a kind for N weeks). `/triage` drafts it, and the Definition of Ready lists it. `./hub run` still checks
   the headings only. A hub gets it with `hub sync` after it bumps `platform.version` (AGH-451).
 
+### Fixed
+
+- An AskUserQuestion question or answer longer than 200 characters can be answered from hub web: the key and the
+  answer take up to 8192 characters and the Other field up to 4096 (AGH-521).
+- Skipping a question, or denying a tool use without a message, no longer breaks the session: the deny carries a
+  default message for the request's kind, since Claude's API refuses an empty error tool result (AGH-521).
+
 ## [0.23.0] - 2026-10-23
 
 ### Added
