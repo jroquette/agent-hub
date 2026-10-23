@@ -342,3 +342,38 @@ def test_exits_two_when_apply_argument_malformed(
     monkeypatch.chdir(hub)
 
     assert load().main(argv) == 2
+
+
+def test_restores_hub_worktree_when_sync_not_up_to_date(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    hub = a_hub(tmp_path)
+    worktree = a_hub_worktree(hub)
+    cli = a_fake_hub(tmp_path, check="would update Makefile", check_exit=4)
+
+    assert apply(hub, worktree, monkeypatch, cli=cli) == 1
+    capsys.readouterr()
+
+    assert git(worktree, "status", "--porcelain", "--untracked-files=all") == ""
+    assert (worktree / "Makefile").read_text() == "old\n"
+    assert json.loads((worktree / "hub.json").read_text())["platform"]["version"] == "0.20.1"
+    # The next run starts from the same clean worktree.
+    good = a_fake_hub(tmp_path, check="up to date", check_exit=0, sync="updated Makefile")
+    assert apply(hub, worktree, monkeypatch, cli=good) == 0
+
+
+def test_reuses_pin_commit_when_apply_runs_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    hub = a_hub(tmp_path)
+    worktree = a_hub_worktree(hub)
+    cli = a_fake_hub(tmp_path, check="up to date", check_exit=0, sync="updated Makefile")
+    assert apply(hub, worktree, monkeypatch, cli=cli) == 0
+    first = json.loads(capsys.readouterr().out)
+
+    assert apply(hub, worktree, monkeypatch, cli=cli) == 0
+    again = json.loads(capsys.readouterr().out)
+
+    assert again == first
+    assert [run["argv"] for run in seen(tmp_path)] == [["sync"], ["sync", "--check"]]
+    assert git(worktree, "rev-list", "--count", "origin/trunk..HEAD") == "1"
