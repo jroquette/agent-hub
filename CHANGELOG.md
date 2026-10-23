@@ -34,6 +34,8 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   answer take up to 8192 characters and the Other field up to 4096 (AGH-521).
 - Skipping a question, or denying a tool use without a message, no longer breaks the session: the deny carries a
   default message for the request's kind, since Claude's API refuses an empty error tool result (AGH-521).
+- The review's diff colours each hunk on its own, so a string or comment left open in one hunk no longer colours the
+  next (AGH-521).
 
 ## [0.23.0] - 2026-10-23
 
