@@ -488,6 +488,13 @@ describe("ScenarioBuilder (scenario builder)", () => {
     renderBuilder();
 
     const check = await screen.findByRole("button", { name: "Check order-on-hold" });
+    // A block that is not selected says it in one line; selected, it shows every fact.
+    await waitFor(() => {
+      expect(check).toHaveTextContent("get_order_by_ref.py");
+    });
+    expect(check).not.toHaveTextContent("Python");
+    check.focus();
+    await user.keyboard("{Enter}");
     await waitFor(() => {
       expect(check).toHaveTextContent("Python");
     });
@@ -497,7 +504,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(check).toHaveTextContent("Only reads: changes nothing");
     expect(check).toHaveTextContent("Givesstatus");
     const fetch = screen.getByRole("button", { name: "Script fetch-order" });
-    expect(fetch).toHaveTextContent("Changes data");
+    expect(fetch).toHaveTextContent("changes data");
     await user.click(within(check).getByRole("button", { name: "show script" }));
     expect(within(check).getByLabelText("Script of get-order-by-ref")).toHaveTextContent(
       "print('{}')",
@@ -524,6 +531,11 @@ describe("ScenarioBuilder (scenario builder)", () => {
     await user.click(within(form).getByRole("button", { name: "Preview" }));
 
     const fetch = screen.getByRole("button", { name: "Script fetch-order" });
+    await waitFor(() => {
+      expect(fetch).toHaveTextContent("Would send one message");
+    });
+    fetch.focus();
+    await user.keyboard("{Enter}");
     await waitFor(() => {
       expect(fetch).toHaveTextContent("In personal");
     });
