@@ -1781,6 +1781,6 @@ def test_exits_two_when_schedule_trigger_is_unknown(
     result = sample.run(*args)
 
     assert result.exit_code == 2, result.output
-    assert "--trigger" in result.stderr
+    assert "--trigger" in unstyle(result.stderr)
     assert sample.fakes.calls("claude") == []
     assert not (sample.hub / ".agent-runs").exists()
