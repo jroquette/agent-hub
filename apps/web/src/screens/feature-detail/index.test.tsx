@@ -184,7 +184,7 @@ describe("FeatureDetailScreen", () => {
     ).toBeInTheDocument();
     expect(screen.getAllByText("SHIP-WITH-OWNER-STEPS").length).toBeGreaterThan(0);
     expect(screen.queryByText("AGH-49")).toBeNull();
-    expect(screen.getByText("11/13").parentElement).toHaveTextContent("11/13 · 1 owner step");
+    expect(screen.getByText("11 of 13").parentElement).toHaveTextContent("11 of 13 · 1 owner step");
   });
 
   it("draws the server's golden path with partial, blocked and unknown as text (golden)", async () => {

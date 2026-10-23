@@ -335,12 +335,14 @@ describe("FeaturesScreen", () => {
 
     await screen.findByRole("link", { name: "layered-memory" });
     const row = rowOf("layered-memory");
-    expect(within(row).getByText("21/21").parentElement).toHaveTextContent("21/21 · 1 owner step");
+    expect(within(row).getByText("21 of 21").parentElement).toHaveTextContent(
+      "21 of 21 · 1 owner step",
+    );
     const owner = row.querySelector('[data-segment="owner"]');
     expect(owner).toHaveAttribute("data-hatched", "true");
     expect(
       within(row).getByRole("img", {
-        name: "20 passing by command · 1 owner step · 0 not passing yet",
+        name: "20 pass their check · 1 owner step (checked by you) · 0 not passing yet",
       }),
     ).toBeInTheDocument();
     expect(row).toHaveTextContent("evaluator says ship after your steps");
@@ -453,7 +455,7 @@ describe("FeaturesScreen", () => {
 
     await screen.findByRole("link", { name: "broken-record" });
     const row = rowOf("broken-record");
-    expect(within(row).queryByRole("img", { name: /passing by command/ })).not.toBeInTheDocument();
+    expect(within(row).queryByRole("img", { name: /pass their check/ })).not.toBeInTheDocument();
     expect(within(row).getByText("tradeSentinel")).toBeInTheDocument();
     expect(within(row).getByText("loki-trader")).toBeInTheDocument();
   });

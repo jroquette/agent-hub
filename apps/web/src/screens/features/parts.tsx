@@ -47,8 +47,8 @@ export function AcBar({
 }) {
   const rest = Math.max(0, acs.total - acs.passing - acs.owner_steps);
   const owner = acs.owner_steps;
-  const tip = `${String(acs.passing)} passing by command · ${String(owner)} owner step${owner === 1 ? "" : "s"}${
-    ownerIds?.length ? ` (${ownerIds.join(", ")}, recorded passes:false)` : ""
+  const tip = `${String(acs.passing)} pass their check · ${String(owner)} owner step${owner === 1 ? "" : "s"} (checked by you)${
+    ownerIds?.length ? `: ${ownerIds.join(", ")}` : ""
   } · ${String(rest)} not passing yet`;
   const segment = (n: number, kind: string, background: string) =>
     n ? (
@@ -84,7 +84,7 @@ export function AcBar({
         </span>
         <span className="ah-small">
           <b className="ah-num">
-            {acs.passing + owner}/{acs.total}
+            {acs.passing + owner} of {acs.total}
           </b>
           {owner > 0 && (
             <span className="ah-subtle">
