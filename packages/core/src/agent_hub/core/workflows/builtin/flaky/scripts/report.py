@@ -7,21 +7,23 @@
 ``report.py --classification <JSON> [--today <YYYY-MM-DD>]``, run in the hub, reads
 ``repeat.py``'s JSON on stdin; ``--classification`` is the classify step's reply (blank when it was
 skipped), ``--today`` stands in for today's UTC date in tests, and the run's id comes from
-``AGENT_HUB_RUN_ID``.
+``AGENT_HUB_RUN_ID`` (unset or blank exits 2: the section heading names the run).
 
 The note is ``brain/_inbox/flaky-<slug>.md``, one per test: ``<slug>`` is the test id lowercased,
 each run of other characters than ``a-z`` and ``0-9`` made one ``-``, cut to 80 characters, then
 ``-`` and the first 8 hex digits of the id's SHA-256. Each run appends one ``## Run <id> at
 <sha7>`` section (the front matter is written once): the test, repo, commit, runner and runs, a
-table of counts per mode with the skipped modes named, the outcome, the cause, shared state,
-confidence and evidence classify gave, a next step (classify's, else a fixed one per cause) and
-the failing runs' output tails, in fences longer than any backtick run inside them, with control
-characters dropped. A section already in the note is not written again, so a rerun of the same run
-leaves the file as it was. A note, ``brain`` or ``brain/_inbox`` that is a link, or a note over
-256 KiB, exits 1.
+table of counts per mode with the skipped modes named, the outcome (a file or folder run that
+timed out or printed no line for the test is named inconclusive, and xfail or xpass results
+skipped), the cause, shared state, confidence and evidence classify gave, a next step
+(classify's, else a fixed one per cause) and the failing runs' output tails, in fences longer than
+any backtick run inside them, with control characters dropped. A section already in the note is
+not written again, so a rerun of the same run leaves the file as it was. A note, ``brain`` or
+``brain/_inbox`` that is a link, or a note over 256 KiB, exits 1.
 
-Output: ``{"outcome", "path"}``: ``outcome`` is ``reproduced`` (a run failed, erred, timed out
-or lost its result) or ``not_reproduced``. Bad input exits 2 with ``report.py: <reason>`` on stderr.
+Output: ``{"outcome", "path"}``: ``outcome`` is ``reproduced`` (the test failed or erred in a
+run, or timed out alone) or ``not_reproduced``. Bad input exits 2 with ``report.py: <reason>`` on
+stderr.
 """
 
 # The hub runs pack scripts with uv, but they still import on the hooks' Python 3.9 floor.
@@ -41,7 +43,9 @@ INBOX = ("brain", "_inbox")
 MAX_INPUT_BYTES = 64 * 1024
 MAX_NOTE_BYTES = 256 * 1024
 SLUG_CHARS = 80
-COUNTS = ("passed", "failed", "errors", "timed_out", "missing", "not_run")
+COUNTS = ("passed", "failed", "errors", "timed_out", "missing", "skipped", "not_run")
+# The table's columns; skipped results get a line of their own.
+TABLE = ("passed", "failed", "errors", "timed_out", "missing", "not_run")
 HEADERS = ("Passed", "Failed", "Errors", "Timed out", "Missing", "Not run")
 NOT_ALNUM = re.compile(r"[^a-z0-9]+")
 SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
@@ -127,7 +131,7 @@ def table(modes: list[dict[str, object]]) -> list[str]:
     ]
     for mode in modes:
         status = "ran" if mode.get("status") == "ran" else "skipped"
-        counts = " | ".join(str(number(mode.get(key))) for key in COUNTS)
+        counts = " | ".join(str(number(mode.get(key))) for key in TABLE)
         found.append(f"| {cell(mode.get('mode'))} | {status} | {counts} |")
     found.append("")
     for mode in modes:
@@ -138,6 +142,35 @@ def table(modes: list[dict[str, object]]) -> list[str]:
     return [*found, ""]
 
 
+def ran_count(mode: dict[str, object]) -> int:
+    return sum(number(mode.get(key)) for key in COUNTS[:-1])
+
+
+def inconclusive_lines(modes: list[dict[str, object]]) -> list[str]:
+    """The file and folder runs that timed out or lost the test's line, and the skipped results."""
+    found: list[str] = []
+    unsure = [
+        f"{line(mode.get('mode'))} {number(mode.get('timed_out')) + number(mode.get('missing'))}"
+        f" of {ran_count(mode)}"
+        for mode in modes
+        if mode.get("mode") != "alone"
+        and number(mode.get("timed_out")) + number(mode.get("missing"))
+    ]
+    if unsure:
+        found.append(
+            f"Inconclusive: {', '.join(unsure)} (the file or folder run timed out or printed no"
+            " line for the test, not the test's own result)."
+        )
+    skipped = [
+        f"{line(mode.get('mode'))} {number(mode.get('skipped'))}"
+        for mode in modes
+        if number(mode.get("skipped"))
+    ]
+    if skipped:
+        found.append(f"Skipped results (xfail, xpass or skip): {', '.join(skipped)}.")
+    return found
+
+
 def outcome_lines(run: dict[str, object], modes: list[dict[str, object]]) -> list[str]:
     found: list[str] = []
     if run.get("reproduced") is True:
@@ -145,11 +178,13 @@ def outcome_lines(run: dict[str, object], modes: list[dict[str, object]]) -> lis
     else:
         ran = [mode for mode in modes if mode.get("status") == "ran"]
         each = ", ".join(
-            f"{line(mode.get('mode'))} {number(mode.get('passed'))} of"
-            f" {sum(number(mode.get(key)) for key in COUNTS[:-1])}"
+            f"{line(mode.get('mode'))} {number(mode.get('passed'))} of {ran_count(mode)}"
             for mode in ran
         )
-        found.append(f"Outcome: not reproduced: every run passed ({each}).")
+        clean = all(number(mode.get("passed")) == ran_count(mode) for mode in ran)
+        what = "every run passed" if clean else "no run of the test failed"
+        found.append(f"Outcome: not reproduced: {what} ({each}).")
+    found.extend(inconclusive_lines(modes))
     if run.get("budget_spent") is True:
         left = sum(number(mode.get("not_run")) for mode in modes)
         found.append(f"The run's budget was spent: {left} runs not run.")
@@ -196,7 +231,7 @@ def render(run: dict[str, object], classification: dict[str, object], run_id: st
     modes = modes_of(run)
     runner = run.get("runner")
     sha = str(run["sha"])
-    head = f"## Run {line(run_id) or 'unknown'} at {sha[:7]}"
+    head = f"## Run {line(run_id)} at {sha[:7]}"
     parts = [
         head,
         "",
@@ -303,10 +338,14 @@ def main(argv: list[str]) -> int:
         day = today(given)
         classification = read_classification(given["--classification"])
         run = read_run(sys.stdin.read(MAX_INPUT_BYTES + 1))
+        run_id = os.environ.get("AGENT_HUB_RUN_ID", "")
+        if not line(run_id).strip():
+            # The section heading names the run: without it, a rerun guard cannot tell runs apart.
+            raise BadInputError("AGENT_HUB_RUN_ID is not set: the run's section needs its id")
     except BadInputError as error:
         print(f"report.py: {error}", file=sys.stderr)
         return 2
-    section = render(run, classification, os.environ.get("AGENT_HUB_RUN_ID", ""))
+    section = render(run, classification, run_id)
     try:
         path = inbox() / f"flaky-{slug(str(run['test']))}.md"
         write(path, section=section, day=day)

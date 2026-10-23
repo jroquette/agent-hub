@@ -38,7 +38,7 @@ def load() -> ModuleType:
 
 
 def a_mode(name: str, status: str = "ran", **counts: Any) -> dict[str, Any]:
-    keys = ("passed", "failed", "errors", "timed_out", "missing", "not_run")
+    keys = ("passed", "failed", "errors", "timed_out", "missing", "skipped", "not_run")
     found = {key: counts.get(key, 0) for key in keys}
     note = counts.get("note", f"how {name} ran")
     return {"mode": name, "status": status, "note": note, **found, "tails": counts.get("tails", [])}
@@ -364,3 +364,4 @@ def test_lists_skipped_results_when_target_is_xfail(report: Report) -> None:
     assert code == 0, err
     text = report.note(found)
     assert "Skipped results (xfail, xpass or skip): alone 20, suite 20." in text
+    assert "| alone | ran | 0 | 0 | 0 | 0 | 0 | 0 |\n" in text

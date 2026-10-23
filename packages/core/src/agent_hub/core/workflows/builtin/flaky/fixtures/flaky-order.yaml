@@ -16,10 +16,10 @@ stubs:
       budget_spent: false
       reproduced: true
       modes:
-        - {mode: alone, status: ran, note: "the test alone", passed: 20, failed: 0, errors: 0, timed_out: 0, missing: 0, not_run: 0, tails: []}
-        - {mode: suite, status: ran, note: "tests/test_x.py in its default order", passed: 14, failed: 6, errors: 0, timed_out: 0, missing: 0, not_run: 0, tails: ["run 2: E   assert not [1]"]}
-        - {mode: shuffled, status: ran, note: "tests/test_x.py shuffled by pytest-randomly, seeds 1001-1020", passed: 11, failed: 9, errors: 0, timed_out: 0, missing: 0, not_run: 0, tails: ["run 1, seed 1001: E   assert not [1]"]}
-        - {mode: parallel, status: ran, note: "the folder tests under pytest-xdist -n auto", passed: 20, failed: 0, errors: 0, timed_out: 0, missing: 0, not_run: 0, tails: []}
+        - {mode: alone, status: ran, note: "the test alone", passed: 20, failed: 0, errors: 0, timed_out: 0, missing: 0, skipped: 0, not_run: 0, tails: []}
+        - {mode: suite, status: ran, note: "tests/test_x.py in its default order", passed: 14, failed: 6, errors: 0, timed_out: 0, missing: 0, skipped: 0, not_run: 0, tails: ["run 2: E   assert not [1]"]}
+        - {mode: shuffled, status: ran, note: "tests/test_x.py shuffled by pytest-randomly, seeds 1001-1020", passed: 11, failed: 9, errors: 0, timed_out: 0, missing: 0, skipped: 0, not_run: 0, tails: ["run 1, seed 1001: E   assert not [1]"]}
+        - {mode: parallel, status: ran, note: "the folder tests under pytest-xdist -n auto", passed: 20, failed: 0, errors: 0, timed_out: 0, missing: 0, skipped: 0, not_run: 0, tails: []}
   classify:
     output: {cause: order_dependence, shared: process, confidence: high, evidence: "Alone passes 20 of 20; in its file it fails 6 of 20 after test_a fills STATE.", next_step: Clear STATE in a fixture.}
   report: {output: {outcome: reproduced, path: "brain/_inbox/flaky-<slug>.md"}}

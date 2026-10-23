@@ -440,8 +440,9 @@ Fetch the repo, then run
 repo root (`tests/test_x.py::test_y[case]`). Each round runs it alone, in its file's order, shuffled (with
 pytest-randomly or pytest-random-order, one seed per round) and with its folder under pytest-xdist `-n auto`; a mode
 whose plugin the repo lacks is skipped and named. The runs happen in a throwaway worktree at `origin/<default
-branch>`, through `uv run --locked` when the repo holds `uv.lock`, each within 10 minutes and all within 5h30m. When a
-run fails, a read-only agent names the likely cause (order dependence, timing, shared state, external); either way the
+branch>`, through `uv run --locked` when the repo holds `uv.lock`, each within 10 minutes and all within 5h30m. Only
+the test's own failures count (and a timeout alone): a file or folder run that times out or prints no line for the
+test is inconclusive, and a skipped test stops the run (exit 2). When the test fails, a read-only agent names the likely cause (order dependence, timing, shared state, external); either way the
 counts go to `brain/_inbox/flaky-<test slug>.md`, one note per test, one section per run. It changes no code and
 writes no tracker.
 

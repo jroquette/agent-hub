@@ -17,17 +17,27 @@ worktree: ``uv run --locked [--all-packages] python`` when it holds ``uv.lock``,
 Each of ``--runs`` rounds runs every available mode once: ``alone`` (the node id), ``suite`` (its
 file, default order), ``shuffled`` (its file under pytest-randomly or pytest-random-order, seed
 ``1000 + round``) and ``parallel`` (its folder under pytest-xdist ``-n auto``). A mode whose plugin
-the runner's Python lacks is ``unavailable`` and never run. ``alone`` reads the test's result from
-the exit code, the others from its own ``-rA`` summary line (no line: ``missing``). A run still
-going after ``--run-timeout`` (default 600 s) is killed with its process group; once ``--budget``
-(default 5 h 30 min, under the node's timeout) is spent, the rest are ``not_run``.
+the runner's Python lacks is ``unavailable`` and never run. Each run's result is the test's own
+``-rA`` summary line (``XFAIL`` and ``XPASS``: ``skipped``); with no line, ``alone`` reads the exit
+code (a skip on its first run exits 2: the test is skipped here), the others count ``missing``.
+A run still going after ``--run-timeout`` (default 600 s) is killed with its process group; once
+``--budget`` (default 5 h 30 min, under the node's timeout) is spent, the rest are ``not_run``.
 
 Output: ``{"test", "repo", "repo_path", "sha", "runner", "runs", "budget_spent", "reproduced",
 "modes": [{"mode", "status", "note", "passed", "failed", "errors", "timed_out", "missing",
-"not_run", "tails"}]}``: ``reproduced`` is true when a run failed, erred, timed out or lost its
-result; ``tails`` holds at most 3 output tails of such runs, each at most 500 characters. Bad input
-(a test id pytest could misread, one that names no file or collects other than one test) exits 2;
-a base that cannot be checked out or a runner that cannot start exits 1. Both say why on stderr.
+"skipped", "not_run", "tails"}]}``: ``reproduced`` is true when the test failed or erred in a run,
+or timed out alone. In the file and folder modes a timeout or a missing line is the whole run's,
+so it is inconclusive: counted, said in the mode's note, never a reproduction. ``tails`` holds at
+most 3 output tails of failing, erring, timed-out or missing runs, each at most 500 characters.
+Bad input (a test id pytest could misread, one that names no file, collects other than one test
+or is skipped here) exits 2; a base that cannot be checked out or a runner that cannot start
+exits 1. Both say why on stderr.
+
+Limits: a run killed by the engine (a node timeout, a cancel) cannot remove its worktree: its
+temporary folder and entry stay until removed by hand or by the temporary folder's cleanup, and
+the next run's ``git worktree prune`` then drops the entry. Each pytest run starts a session of
+its own (so its whole process group can be killed at ``--run-timeout``), which puts it outside the
+group the engine kills: a run going when this script is killed goes on until it ends by itself.
 """
 
 # The hub runs pack scripts with uv, but they still import on the hooks' Python 3.9 floor.
@@ -69,8 +79,12 @@ MAX_TAILS = 3
 NOTE_CHARS = 200
 SEED_BASE = 1000
 MODES = ("alone", "suite", "shuffled", "parallel")
-COUNTS = ("passed", "failed", "errors", "timed_out", "missing", "not_run")
-REPRODUCED = ("failed", "errors", "timed_out", "missing")
+COUNTS = ("passed", "failed", "errors", "timed_out", "missing", "skipped", "not_run")
+# The results that are the test's own: in the file and folder modes a timeout or a lost line
+# belongs to the whole run, so it is inconclusive, never a reproduction.
+REPRODUCED = {"alone": ("failed", "errors", "timed_out")}
+FILE_REPRODUCED = ("failed", "errors")
+INCONCLUSIVE = ("timed_out", "missing")
 PLUGINS = ("xdist", "pytest_randomly", "random_order")
 PYTEST = ("-m", "pytest", "-p", "no:cacheprovider", "--color=no")
 COMMON = (*PYTEST, "-rA", "-q")
@@ -88,7 +102,16 @@ BRANCH = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./-]*")
 # Every control character but the newline and the tab, for an output's tail.
 CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 LINE_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
-SUMMARY = (("ERROR", "errors"), ("FAILED", "failed"), ("PASSED", "passed"))
+# The test's own ``-rA`` lines, the first found winning; an expected failure (``XFAIL``) or an
+# unexpected pass (``XPASS``) is a skip, never a reproduction. ``SKIPPED`` lines name no test.
+SUMMARY = (
+    ("ERROR", "errors"),
+    ("FAILED", "failed"),
+    ("PASSED", "passed"),
+    ("XFAIL", "skipped"),
+    ("XPASS", "skipped"),
+)
+SKIPPED_LINE = "SKIPPED ["
 
 CHECKS: tuple[tuple[Callable[[str], bool], str], ...] = (
     (lambda test: len(test) > MAX_TEST_CHARS, f"is over {MAX_TEST_CHARS} characters"),
@@ -133,13 +156,21 @@ class Mode:
 
     def record(self, result: str, tail: str, label: str) -> None:
         self.counts[result] += 1
-        if result != "passed" and len(self.tails) < MAX_TAILS:
+        if result not in {"passed", "skipped"} and len(self.tails) < MAX_TAILS:
             head = f"{label}: "
             self.tails.append(head + tail[-(TAIL_CHARS - len(head)) :])
 
+    def reproduced(self) -> bool:
+        return any(self.counts[key] for key in REPRODUCED.get(self.name, FILE_REPRODUCED))
+
     def output(self) -> dict[str, object]:
         found: dict[str, object] = {"mode": self.name, "status": self.status}
-        found["note"] = self.note[:NOTE_CHARS]
+        note = self.note
+        if self.name != "alone" and any(self.counts[key] for key in INCONCLUSIVE):
+            what = "folder" if self.name == "parallel" else "file"
+            suffix = f"; the {what} run timed out or printed no line for the test: inconclusive"
+            note = note[: NOTE_CHARS - len(suffix)] + suffix
+        found["note"] = note[:NOTE_CHARS]
         return {**found, **self.counts, "tails": self.tails}
 
 
@@ -239,7 +270,9 @@ def base(repo: Path, branch: str) -> str:
 @contextlib.contextmanager
 def worktree(repo: Path, sha: str) -> Iterator[Path]:
     """A detached worktree of ``repo`` at ``sha`` in a new temporary folder, removed afterwards."""
-    # A run killed before its cleanup (a node timeout) leaves an entry behind.
+    # A run killed before its cleanup (a node timeout) leaves its folder and entry behind; prune
+    # drops an entry once its folder is gone. Other flaky-* folders are never removed here: a
+    # concurrent run on the same repo may be using one.
     git(repo, "worktree", "prune")
     folder = Path(tempfile.mkdtemp(prefix="flaky-"))
     path = folder / "checkout"
@@ -344,15 +377,26 @@ def summary_result(output: IO[bytes], test: str) -> str:
     return "missing"
 
 
+def alone_result(output: IO[bytes], code: int, test: str) -> str:
+    """The alone run's result: its summary line, else ``skip`` when pytest skipped it (exit 0
+    and a ``SKIPPED`` line), else the exit code's."""
+    found = summary_result(output, test)
+    if found != "missing":
+        return found
+    if code == 0 and any(text.startswith(SKIPPED_LINE) for text in lines_of(output)):
+        return "skip"
+    return {0: "passed", 1: "failed"}.get(code, "errors")
+
+
 def run_once(argv: list[str], *, cwd: Path, timeout: float, test: str) -> tuple[str, str]:
     """One run's result for ``test`` and its output's tail; an argv ending in ``test`` (the
-    alone mode) is read from the exit code."""
+    alone mode) falls back on the exit code."""
     with tempfile.TemporaryFile() as output:
         code = execute(argv, cwd=cwd, timeout=timeout, output=output)
         if code is None:
             result = "timed_out"
         elif argv[-1] == test:
-            result = {0: "passed", 1: "failed"}.get(code, "errors")
+            result = alone_result(output, code, test)
         else:
             result = summary_result(output, test)
         return result, tail_of(output)
@@ -448,11 +492,22 @@ def run_all(
                 continue
             argv = [*python, *COMMON, *mode_argv(mode.name, plugins, test=req.test, seed=seed)]
             result, tail = run_once(argv, cwd=path, timeout=req.run_timeout, test=req.test)
+            if result == "skip":
+                result = skipped_here(tail, test=req.test, first=index == 0)
             label = (
                 f"run {index + 1}, seed {seed}" if mode.name == "shuffled" else f"run {index + 1}"
             )
             mode.record(result, tail, label)
     return spent
+
+
+def skipped_here(tail: str, *, test: str, first: bool) -> str:
+    """``skipped`` for a later skip; a skip on the first alone run stops the run."""
+    if not first:
+        return "skipped"
+    reason = [text for text in tail.splitlines() if text.startswith(SKIPPED_LINE)][-1:]
+    detail = f": {reason[0][:200]}" if reason else ""
+    raise BadInputError(f"{test[:80]!r}: the test is skipped here{detail}")
 
 
 def measure(req: Request, *, repo: Path, sha: str, start: float) -> dict[str, object]:
@@ -471,7 +526,7 @@ def measure(req: Request, *, repo: Path, sha: str, start: float) -> dict[str, ob
         "runner": python,
         "runs": req.runs,
         "budget_spent": spent,
-        "reproduced": any(mode.counts[key] for mode in modes for key in REPRODUCED),
+        "reproduced": any(mode.reproduced() for mode in modes),
         "modes": [mode.output() for mode in modes],
     }
 

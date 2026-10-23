@@ -16,10 +16,10 @@ stubs:
       budget_spent: false
       reproduced: true
       modes:
-        - {mode: alone, status: ran, note: "the test alone", passed: 20, failed: 0, errors: 0, timed_out: 0, missing: 0, not_run: 0, tails: []}
-        - {mode: suite, status: ran, note: "tests/test_x.py in its default order", passed: 20, failed: 0, errors: 0, timed_out: 0, missing: 0, not_run: 0, tails: []}
-        - {mode: shuffled, status: unavailable, note: "skipped: neither pytest-randomly nor pytest-random-order is installed", passed: 0, failed: 0, errors: 0, timed_out: 0, missing: 0, not_run: 0, tails: []}
-        - {mode: parallel, status: ran, note: "the folder tests under pytest-xdist -n auto", passed: 17, failed: 3, errors: 0, timed_out: 0, missing: 0, not_run: 0, tails: ["run 4: E   TimeoutError: the server did not start in 2 s"]}
+        - {mode: alone, status: ran, note: "the test alone", passed: 20, failed: 0, errors: 0, timed_out: 0, missing: 0, skipped: 0, not_run: 0, tails: []}
+        - {mode: suite, status: ran, note: "tests/test_x.py in its default order", passed: 20, failed: 0, errors: 0, timed_out: 0, missing: 0, skipped: 0, not_run: 0, tails: []}
+        - {mode: shuffled, status: unavailable, note: "skipped: neither pytest-randomly nor pytest-random-order is installed", passed: 0, failed: 0, errors: 0, timed_out: 0, missing: 0, skipped: 0, not_run: 0, tails: []}
+        - {mode: parallel, status: ran, note: "the folder tests under pytest-xdist -n auto", passed: 17, failed: 3, errors: 0, timed_out: 0, missing: 0, skipped: 0, not_run: 0, tails: ["run 4: E   TimeoutError: the server did not start in 2 s"]}
   classify:
     output: {cause: timing, shared: none, confidence: medium, evidence: "Fails 3 of 20 only under parallel; the test waits 2 s for a server.", next_step: ""}
   report: {output: {outcome: reproduced, path: "brain/_inbox/flaky-<slug>.md"}}

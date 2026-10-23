@@ -16,10 +16,10 @@ stubs:
       budget_spent: false
       reproduced: true
       modes:
-        - {mode: alone, status: ran, note: "the test alone", passed: 20, failed: 0, errors: 0, timed_out: 0, missing: 0, not_run: 0, tails: []}
-        - {mode: suite, status: ran, note: "tests/test_x.py in its default order", passed: 18, failed: 2, errors: 0, timed_out: 0, missing: 0, not_run: 0, tails: ["run 7: E   FileExistsError: out.txt"]}
-        - {mode: shuffled, status: unavailable, note: "skipped: neither pytest-randomly nor pytest-random-order is installed", passed: 0, failed: 0, errors: 0, timed_out: 0, missing: 0, not_run: 0, tails: []}
-        - {mode: parallel, status: unavailable, note: "skipped: pytest-xdist is not installed", passed: 0, failed: 0, errors: 0, timed_out: 0, missing: 0, not_run: 0, tails: []}
+        - {mode: alone, status: ran, note: "the test alone", passed: 20, failed: 0, errors: 0, timed_out: 0, missing: 0, skipped: 0, not_run: 0, tails: []}
+        - {mode: suite, status: ran, note: "tests/test_x.py in its default order", passed: 18, failed: 2, errors: 0, timed_out: 0, missing: 0, skipped: 0, not_run: 0, tails: ["run 7: E   FileExistsError: out.txt"]}
+        - {mode: shuffled, status: unavailable, note: "skipped: neither pytest-randomly nor pytest-random-order is installed", passed: 0, failed: 0, errors: 0, timed_out: 0, missing: 0, skipped: 0, not_run: 0, tails: []}
+        - {mode: parallel, status: unavailable, note: "skipped: pytest-xdist is not installed", passed: 0, failed: 0, errors: 0, timed_out: 0, missing: 0, skipped: 0, not_run: 0, tails: []}
   classify:
     output: {cause: shared_state, shared: file, confidence: medium, evidence: "Fails 2 of 20 in its file; test_a writes out.txt in the working folder and never removes it.", next_step: Write out.txt under tmp_path.}
   report: {output: {outcome: reproduced, path: "brain/_inbox/flaky-<slug>.md"}}

@@ -5,12 +5,14 @@
 # file in default order (suite), its file shuffled (pytest-randomly or pytest-random-order, a seed
 # per round) and its folder under pytest-xdist -n auto (parallel), then removes the worktree. A
 # mode whose plugin is missing is skipped and said so. Each run has a 10-minute timeout and the
-# whole repeat step a 5h30m budget, under the node's 6h. classify, only when a run failed, reads
+# whole repeat step a 5h30m budget, under the node's 6h. Only the test's own failures count (and
+# a timeout alone); a file or folder run that times out or loses the test's line is inconclusive,
+# and an xfail or xpass is a skip. classify, only when the test failed, reads
 # the counts, the tails and the code at that commit (read-only, no test run) and names the likely
 # cause. report appends a section per run to brain/_inbox/flaky-<test slug>.md, a not-reproduced
 # run too (its pass counts are the evidence).
 # Invariants: read-only on code (the throwaway worktree is the repo's only change, and it is
-# removed); no retry (a retry would hide the flake, so every executable node has retry
+# removed; after the engine kills the step its temp folder stays until removed by hand); no retry (a retry would hide the flake, so every executable node has retry
 # max_attempts 0); no tracker write (ADR 0030: no issue input, and the one hub step node is
 # config, read-only: the repos from hub.json, which no script opens). No approval: nothing leaves
 # the machine.
@@ -80,7 +82,7 @@ nodes:
           items:
             type: object
             additionalProperties: false
-            required: [mode, status, note, passed, failed, errors, timed_out, missing, not_run, tails]
+            required: [mode, status, note, passed, failed, errors, timed_out, missing, skipped, not_run, tails]
             properties:
               mode: {type: string, enum: [alone, suite, shuffled, parallel]}
               status: {type: string, enum: [ran, unavailable]}
@@ -90,6 +92,7 @@ nodes:
               errors: {type: integer, minimum: 0}
               timed_out: {type: integer, minimum: 0}
               missing: {type: integer, minimum: 0}
+              skipped: {type: integer, minimum: 0}
               not_run: {type: integer, minimum: 0}
               tails:
                 type: array

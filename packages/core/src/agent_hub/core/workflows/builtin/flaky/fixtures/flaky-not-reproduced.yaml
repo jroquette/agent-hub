@@ -16,10 +16,10 @@ stubs:
       budget_spent: false
       reproduced: false
       modes:
-        - {mode: alone, status: ran, note: "the test alone", passed: 20, failed: 0, errors: 0, timed_out: 0, missing: 0, not_run: 0, tails: []}
-        - {mode: suite, status: ran, note: "tests/test_x.py in its default order", passed: 20, failed: 0, errors: 0, timed_out: 0, missing: 0, not_run: 0, tails: []}
-        - {mode: shuffled, status: ran, note: "tests/test_x.py shuffled by pytest-randomly, seeds 1001-1020", passed: 20, failed: 0, errors: 0, timed_out: 0, missing: 0, not_run: 0, tails: []}
-        - {mode: parallel, status: ran, note: "the folder tests under pytest-xdist -n auto", passed: 20, failed: 0, errors: 0, timed_out: 0, missing: 0, not_run: 0, tails: []}
+        - {mode: alone, status: ran, note: "the test alone", passed: 20, failed: 0, errors: 0, timed_out: 0, missing: 0, skipped: 0, not_run: 0, tails: []}
+        - {mode: suite, status: ran, note: "tests/test_x.py in its default order", passed: 20, failed: 0, errors: 0, timed_out: 0, missing: 0, skipped: 0, not_run: 0, tails: []}
+        - {mode: shuffled, status: ran, note: "tests/test_x.py shuffled by pytest-randomly, seeds 1001-1020", passed: 20, failed: 0, errors: 0, timed_out: 0, missing: 0, skipped: 0, not_run: 0, tails: []}
+        - {mode: parallel, status: ran, note: "the folder tests under pytest-xdist -n auto", passed: 20, failed: 0, errors: 0, timed_out: 0, missing: 0, skipped: 0, not_run: 0, tails: []}
   report: {output: {outcome: not_reproduced, path: "brain/_inbox/flaky-<slug>.md"}}
 expect: {status: done, outcome: not_reproduced}
 reached: [config, repeat, report]
