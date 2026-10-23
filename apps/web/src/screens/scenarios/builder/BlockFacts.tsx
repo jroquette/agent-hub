@@ -45,68 +45,18 @@ const DECISION: Readonly<Record<string, { icon: IconName; words: string; tone: s
   deny: { icon: "octagon-x", words: "denied", tone: "var(--failed)" },
 };
 
-/** The facts in one quiet line: the script it runs, the services it calls, its effect. */
-function FactsLine({
-  node,
-  action,
-  row,
-}: {
-  node: BuilderNode;
-  action: ScenarioAction | null;
-  row: ScenarioPlanRow | null;
-}) {
-  if ((node.type !== "action" && node.type !== "expect") || !action) return null;
-  const given = record(node.with);
-  const services = action.inputs
-    .filter((input) => input.type === "service")
-    .map((input) => {
-      const value = given[input.name];
-      return value === undefined ? null : refInWords(shown(value)).text;
-    })
-    .filter((value): value is string => value !== null);
-  const effect = action.effect ? EFFECT[action.effect] : undefined;
-  const script = (action.script ?? "").split("/").at(-1) ?? "";
-  return (
-    <span className="bk-line">
-      <span title={action.script ?? undefined}>
-        <Icon name="terminal" size="sm" /> {script}
-      </span>
-      {services.map((service) => (
-        <span key={service}>
-          <Icon name="globe" size="sm" /> {service}
-        </span>
-      ))}
-      {effect && (
-        <span>
-          <Icon name={effect.icon} size="sm" />{" "}
-          {action.effect === "read"
-            ? "reads"
-            : action.effect === "write"
-              ? "changes data"
-              : "deletes"}
-        </span>
-      )}
-      {row && <span className="bk-line-plan">{row.plan}</span>}
-    </span>
-  );
-}
-
 export function BlockFacts({
   node,
   action,
   row,
   environment,
-  compact = false,
 }: {
   node: BuilderNode;
   action: ScenarioAction | null;
   row: ScenarioPlanRow | null;
   environment: string | null;
-  /** One line (what it runs, calls and changes); the full facts when the block is selected. */
-  compact?: boolean;
 }) {
   const [script, setScript] = useState(false);
-  if (compact) return <FactsLine node={node} action={action} row={row} />;
   if (node.type === "approval") {
     return (
       <dl className="bk-facts">

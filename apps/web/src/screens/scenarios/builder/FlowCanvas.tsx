@@ -69,7 +69,12 @@ export const KIND_LOOK: Readonly<
     tint: "var(--kind-control)",
     soft: "var(--kind-control-soft)",
   },
-  approval: { label: "Manual step", icon: "hand", tint: "var(--surface)", soft: "var(--text)" },
+  approval: {
+    label: "Manual step",
+    icon: "hand",
+    tint: "var(--waiting)",
+    soft: "var(--waiting-soft)",
+  },
 };
 
 export function kindLook(type: string) {

@@ -11,15 +11,15 @@ import { CanvasControls, Icon, useViewportSize } from "../../../components";
 import { fitView } from "../../../lib/canvasView";
 import { usePanZoom } from "../../../lib/usePanZoom";
 import type { ScenarioAction, ScenarioPlanRow } from "../queries";
-import { BlockFacts, EFFECT } from "./BlockFacts";
-import { maxChecks } from "../story";
+import { EFFECT } from "./BlockFacts";
 import { kindLook } from "./FlowCanvas";
 import { conditionWords, refInWords, shown, text, type BuilderNode, type Json } from "./model";
 import { itemId, type Item, type Slot } from "./program";
 import type { BuilderProblem } from "./useScenarioDraft";
 
-/* The block canvas: the scenario as Scratch-like stacks on a free canvas. A block snapped under
- * another runs after it; C-blocks hold blocks (Repeat, If / else, At the same time). Dragging a
+/* The block canvas: the scenario as step cards joined by arrows on a free canvas. A card under
+ * another runs after it; Repeat, If / else and At the same time hold cards in lanes. A card is
+ * read here and edited in the side form. Dragging a
  * block takes the blocks under it along and drops them into any gap or mouth; dropped on the empty
  * canvas they become a loose stack (not part of the flow until snapped back). The canvas pans and
  * zooms; where the stacks sit is the only thing kept outside the file (in this browser). */
@@ -56,7 +56,6 @@ export interface BlockCanvasProps {
   onTake: (stack: string, id: string, alone: boolean) => Item[];
   onDrop: (items: Item[], target: DropTarget) => void;
   onMoveStack: (stack: string, x: number, y: number) => void;
-  onEditNode: (node: BuilderNode) => void;
   /** The drag in progress (from a block or from the palette), owned by the builder. */
   drag: DragState | null;
   onDrag: (next: DragState | null) => void;
@@ -65,28 +64,15 @@ export interface BlockCanvasProps {
   numbers: ReadonlyMap<string, string>;
   /** A "+" was pressed: insert at this place; `anchor` is the button, for the menu. */
   onInsert: (target: { stack: string; slot: Slot; index: number }, anchor: DOMRect) => void;
-  /** A slot was clicked: open its popover. */
-  onSlot: (request: SlotRequest) => void;
   /** Reviewing Claude's proposal: the ids of its new or changed blocks (read-only canvas). */
   suggested?: ReadonlySet<string> | undefined;
   /** A preview in an environment: the plan's row of a step, and the environment's name. */
   planOf?: ((id: string) => ScenarioPlanRow | null) | undefined;
   planEnvironment?: string | null | undefined;
-  /** Every step shows its slots and facts (the Detailed density), not only the selected one. */
-  detailed?: boolean | undefined;
-  /** The buttons in the selected step's footer (More settings, Ask Claude, Duplicate, Delete). */
+  /** The buttons in the selected step's footer (Ask Claude, Duplicate, Delete). */
   stepActions?: ((id: string) => ReactNode) | undefined;
   /** The hat ("when the scenario starts") was clicked: open the scenario's inputs. */
   onHat?: (() => void) | undefined;
-}
-
-/** A slot of a block clicked to fill it: which block (or C-block), which key, where. */
-export interface SlotRequest {
-  id: string;
-  kind: "action" | "value" | "condition" | "text" | "include";
-  /** The key it edits: `action`, `with.<input>`, `until_when`, `message`, `include`, `if`. */
-  key: string;
-  anchor: DOMRect;
 }
 
 export interface InsertTarget {
@@ -102,97 +88,6 @@ const FIT_MAX = 1.2;
 const FIT_MIN = 0.8;
 /** How near a gap the dragged blocks snap into it, in screen pixels. */
 const SNAP_PX = 48;
-
-function Field({
-  value,
-  label,
-  width = 56,
-  onChange,
-}: {
-  value: string;
-  label: string;
-  width?: number;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <input
-      className="bk-field"
-      aria-label={label}
-      value={value}
-      style={{ width }}
-      onPointerDown={(event) => {
-        event.stopPropagation();
-      }}
-      onChange={(event) => {
-        onChange(event.target.value);
-      }}
-    />
-  );
-}
-
-function Pill({
-  children,
-  title,
-  empty,
-  label,
-  onOpen,
-  className = "bk-pill",
-}: {
-  children: ReactNode;
-  title?: string | undefined;
-  empty?: boolean;
-  /** The slot's name, for its accessible name ("action: demo-get-status, change"). */
-  label?: string;
-  onOpen?: ((anchor: DOMRect) => void) | undefined;
-  className?: string;
-}) {
-  if (!onOpen) {
-    return (
-      <span className={className} data-empty={empty === true ? true : undefined} title={title}>
-        {children}
-      </span>
-    );
-  }
-  return (
-    <button
-      type="button"
-      className={`${className} bk-slot`}
-      data-empty={empty === true ? true : undefined}
-      data-no-pan=""
-      title={title ?? "Click to change"}
-      aria-label={label ? `${label}: ${empty ? "choose" : "change"}` : undefined}
-      onPointerDown={(event) => {
-        event.stopPropagation();
-      }}
-      onClick={(event) => {
-        event.stopPropagation();
-        onOpen(event.currentTarget.getBoundingClientRect());
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-function Condition({
-  value,
-  placeholder,
-  onOpen,
-}: {
-  value: string;
-  placeholder: string;
-  onOpen?: (anchor: DOMRect) => void;
-}) {
-  return value.trim() === "" ? (
-    <Pill empty label="condition" onOpen={onOpen}>
-      {placeholder}
-    </Pill>
-  ) : (
-    <Pill title={value} label="condition" onOpen={onOpen}>
-      {conditionWords(value)}
-    </Pill>
-  );
-}
 
 /** `$CTX.x` and `$INPUTS.x` in a text drawn as `⬩ x`. */
 function refsInText(value: string): string {
@@ -246,187 +141,92 @@ export function summarize(value: Json): string | null {
   return text.length > 64 ? `${text.slice(0, 63)}…}` : text;
 }
 
-/** The words of a block: verb first, slots to click; compact hides pass-throughs and timing. */
-function BlockWords({
-  node,
-  facts,
-  expanded,
-  onEditNode,
-  onSlot,
-}: {
-  node: BuilderNode;
-  facts: ScenarioAction | null;
-  expanded: boolean;
-  onEditNode: (node: BuilderNode) => void;
-  onSlot: (request: SlotRequest) => void;
-}) {
-  const set = (key: string, value: Json) => {
-    onEditNode({ ...node, [key]: value });
-  };
-  const open =
-    (kind: SlotRequest["kind"], key: string) =>
-    (anchor: DOMRect): void => {
-      onSlot({ id: node.id, kind, key, anchor });
-    };
-  const action = text(node.action);
-  const actionPill = (
-    <Pill empty={action === ""} label="action" onOpen={open("action", "action")}>
-      {action === "" ? "choose an action" : action}
-    </Pill>
-  );
-  const given = new Set(values(node).map(([key]) => key));
-  const missing = (facts?.inputs ?? []).filter((input) => input.required && !given.has(input.name));
-  const shownValues = values(node).filter(([key, value]) => expanded || !passThrough(key, value));
-  const hidden = values(node).length - shownValues.length;
-  const kept = Object.keys(
-    typeof node.capture === "object" && node.capture !== null && !Array.isArray(node.capture)
-      ? node.capture
-      : {},
-  );
-  const chips = (
-    <>
-      {shownValues.map(([key, value]) => {
-        const words = refInWords(shown(value));
-        const short = expanded ? null : summarize(value);
-        return (
-          <span key={key} className="bk-pair">
-            <span className="bk-label">{key.replace(/_/g, " ")}</span>
-            <Pill
-              title={`${key} = ${shown(value)} · click to change`}
-              label={key}
-              onOpen={open("value", `with.${key}`)}
-              className={short ? "bk-pill bk-pill-json" : "bk-pill"}
-            >
-              {short ?? (
-                <>
-                  {words.ref && <span className="bk-ref">⬩</span>}
-                  {words.text}
-                </>
-              )}
-            </Pill>
-          </span>
-        );
-      })}
-      {missing.map((input) => (
-        <span key={input.name} className="bk-pair">
-          <span className="bk-label">{input.name.replace(/_/g, " ")}</span>
-          <Pill empty label={input.name} onOpen={open("value", `with.${input.name}`)}>
-            {input.description ?? "a value"}
-          </Pill>
-        </span>
-      ))}
-      {kept.map((name) => (
-        <span key={name} className="bk-pair">
-          <span className="bk-label">keep</span>
-          <span className="bk-pill bk-pill-kept">
-            <span className="bk-ref">⬩</span>
-            {name}
-          </span>
-        </span>
-      ))}
-      {hidden > 0 && (
-        <span className="bk-hidden" title="Values passed straight from the scenario's inputs">
-          +{hidden} from inputs
-        </span>
-      )}
-    </>
-  );
+/** What a step does, as a title a person reads: its name, else a sentence from its fields. */
+export function stepTitle(node: BuilderNode): string {
+  if (typeof node.description === "string" && node.description.trim() !== "") {
+    return node.description;
+  }
+  const condition = text(node.until_when);
   switch (node.type) {
     case "action":
-      return (
-        <>
-          <span className="bk-verb">run</span>
-          {actionPill}
-          {chips}
-        </>
-      );
-    case "expect": {
-      const every = text(node.every);
-      const timeout = text(node.timeout);
-      const checks = every && timeout ? maxChecks(every, timeout) : null;
-      return (
-        <>
-          <span className="bk-verb">wait until</span>
-          <Condition
-            value={text(node.until_when)}
-            placeholder="a state holds"
-            onOpen={open("condition", "until_when")}
-          />
-          <span className="bk-label">reading</span>
-          {actionPill}
-          {expanded && (
-            <>
-              <span className="bk-label">every</span>
-              <Field
-                value={every}
-                label={`Check every, ${node.id}`}
-                width={48}
-                onChange={(value) => {
-                  set("every", value);
-                }}
-              />
-              <span className="bk-label">up to</span>
-              <Field
-                value={timeout}
-                label={`For up to, ${node.id}`}
-                width={48}
-                onChange={(value) => {
-                  set("timeout", value);
-                }}
-              />
-              {checks !== null && <span className="bk-quiet">({checks} checks)</span>}
-            </>
-          )}
-          {chips}
-        </>
-      );
-    }
+      return text(node.action) ? `Run ${text(node.action)}` : "Choose what to run";
+    case "expect":
+      return condition ? `Wait until ${conditionWords(condition)}` : "Wait until a state holds";
     case "approval":
-      return (
-        <>
-          <span className="bk-verb">ask me to</span>
-          <Pill
-            className="bk-pill bk-pill-text"
-            title={text(node.message)}
-            label="what to do"
-            empty={firstLine(text(node.message)) === null}
-            onOpen={open("text", "message")}
-          >
-            {refsInText(firstLine(text(node.message)) ?? "do something by hand")}
-          </Pill>
-          {node.capture_response === true && <span className="bk-label">and keep what I type</span>}
-        </>
-      );
+      return refsInText(firstLine(text(node.message)) ?? "Do something by hand");
     case "wait":
-      return (
-        <>
-          <span className="bk-verb">wait</span>
-          <Field
-            value={text(node.duration)}
-            label={`Wait for, ${node.id}`}
-            width={52}
-            onChange={(value) => {
-              set("duration", value);
-            }}
-          />
-        </>
-      );
+      return `Pause ${text(node.duration) || "for a while"}`;
     case "include":
-      return (
-        <>
-          <span className="bk-verb">run the scenario</span>
-          <Pill
-            empty={text(node.include) === ""}
-            label="scenario"
-            onOpen={open("include", "include")}
-          >
-            {text(node.include) || "choose one"}
-          </Pill>
-        </>
-      );
+      return `Run the scenario ${text(node.include) || "…"}`;
+    case "loop_group":
+      return condition ? `Repeat until ${conditionWords(condition)}` : "Repeat";
     default:
-      return <span>{node.type}</span>;
+      return node.type;
   }
+}
+
+/** The facts under a step's title, as short label · value chips (pass-throughs counted, not shown). */
+export function stepChips(node: BuilderNode): { key: string; label: string; value: string }[] {
+  const named = typeof node.description === "string" && node.description.trim() !== "";
+  const chips: { key: string; label: string; value: string }[] = [];
+  const action = text(node.action);
+  const condition = text(node.until_when);
+  if (node.type === "action" && named && action) {
+    chips.push({ key: "action", label: "runs", value: action });
+  }
+  if (node.type === "expect") {
+    if (named && condition) {
+      chips.push({ key: "until", label: "until", value: conditionWords(condition) });
+    }
+    if (action) chips.push({ key: "action", label: "reads", value: action });
+    if (text(node.every)) chips.push({ key: "every", label: "every", value: text(node.every) });
+    if (text(node.timeout))
+      chips.push({ key: "timeout", label: "up to", value: text(node.timeout) });
+  }
+  if (node.type === "approval") {
+    const message = firstLine(text(node.message));
+    if (named && message) chips.push({ key: "message", label: "", value: refsInText(message) });
+    const answers = (Array.isArray(node.decisions) ? node.decisions : [])
+      .map((decision) =>
+        typeof decision === "object" && decision !== null && !Array.isArray(decision)
+          ? text(decision.label) || text(decision.id)
+          : "",
+      )
+      .filter((label) => label !== "");
+    if (answers.length > 0) {
+      chips.push({ key: "answers", label: "answers", value: answers.join(" · ") });
+    }
+    if (node.capture_response === true) {
+      chips.push({ key: "capture", label: "", value: "asks for a value" });
+    }
+  }
+  if (node.type === "wait" && named && text(node.duration)) {
+    chips.push({ key: "duration", label: "for", value: text(node.duration) });
+  }
+  if (node.type === "loop_group" && text(node.max_iterations)) {
+    chips.push({ key: "rounds", label: "at most", value: `${text(node.max_iterations)} rounds` });
+  }
+  const given = values(node);
+  for (const [key, value] of given) {
+    if (passThrough(key, value)) continue;
+    const words = refInWords(shown(value));
+    chips.push({
+      key: `with.${key}`,
+      label: key.replace(/_/g, " "),
+      value: summarize(value) ?? `${words.ref ? "⬩ " : ""}${words.text}`,
+    });
+  }
+  const passed = given.filter(([key, value]) => passThrough(key, value)).length;
+  if (passed > 0) {
+    chips.push({ key: "inputs", label: "", value: `+${String(passed)} from inputs` });
+  }
+  const kept = node.capture;
+  if (typeof kept === "object" && kept !== null && !Array.isArray(kept)) {
+    for (const name of Object.keys(kept)) {
+      chips.push({ key: `keep.${name}`, label: "keeps", value: `⬩ ${name}` });
+    }
+  }
+  return chips;
 }
 
 interface Ctx {
@@ -446,19 +246,21 @@ function isTarget(target: DropTarget | null, stack: string, slot: Slot, index: n
   );
 }
 
-/** The gap between two steps: a drop zone, and a "+" that sits on the spine. */
+/** The link between two steps: an arrow down, a drop zone, and a "+" on it. */
 function Gap({
   ctx,
   slot,
   index,
   empty,
   where,
+  first = false,
 }: {
   ctx: Ctx;
   slot: Slot;
   index: number;
   empty?: string;
   where: string;
+  first?: boolean;
 }) {
   const active = isTarget(ctx.target, ctx.stack, slot, index);
   const plus = !ctx.dragging && ctx.stack !== "ghost" && (
@@ -485,6 +287,7 @@ function Gap({
   return (
     <div
       className={empty ? "bk-mouth-empty" : "bk-gap"}
+      data-first={first || undefined}
       data-drop={JSON.stringify({ stack: ctx.stack, slot, index })}
       data-active={active || undefined}
     >
@@ -517,6 +320,7 @@ function List({
         ctx={ctx}
         slot={slot}
         index={0}
+        first
         where={`before ${items[0] ? itemId(items[0]) : "the first step"}`}
       />
       {items.map((item, index) => (
@@ -529,7 +333,7 @@ function List({
   );
 }
 
-/** The marks at a row's right edge: effect, services, gives-up time, draft, problems. */
+/** The marks at a card's top right: services, gives-up time, effect, draft, problems. */
 function Marks({ ctx, node }: { ctx: Ctx; node: BuilderNode }) {
   const action = ctx.props.actionOf(node);
   const problems = ctx.props.problemsOf(node.id);
@@ -547,7 +351,6 @@ function Marks({ ctx, node }: { ctx: Ctx; node: BuilderNode }) {
     .map((input) => given[input.name])
     .filter((value): value is Json => value !== undefined)
     .map((value) => refInWords(shown(value)).text);
-  const timeout = text(node.timeout);
   return (
     <span className="bk-marks">
       {services.map((service) => (
@@ -555,16 +358,13 @@ function Marks({ ctx, node }: { ctx: Ctx; node: BuilderNode }) {
           <Icon name="globe" size="sm" /> {service}
         </span>
       ))}
-      {(node.type === "expect" || node.type === "loop_group") && timeout && (
+      {effect && (
         <span
           className="bk-mark"
-          title={`Checks every ${text(node.every) || "…"}, gives up after ${timeout}`}
+          data-effect={action?.effect}
+          title={effect.words}
+          aria-label={effect.words}
         >
-          <Icon name="timer" size="sm" /> {timeout}
-        </span>
-      )}
-      {effect && (
-        <span className="bk-mark" title={effect.words} aria-label={effect.words}>
           <Icon name={effect.icon} size="sm" />
         </span>
       )}
@@ -598,25 +398,7 @@ function Marks({ ctx, node }: { ctx: Ctx; node: BuilderNode }) {
   );
 }
 
-/** The step's number, a round badge on the spine. */
-function Badge({ ctx, id }: { ctx: Ctx; id: string }) {
-  const n = ctx.props.numbers.get(id);
-  if (!n) return null;
-  return (
-    <span
-      className="bk-badge"
-      data-selected={ctx.props.selected === id || undefined}
-      data-invalid={
-        ctx.props.problemsOf(id).some((problem) => problem.severity === "error") || undefined
-      }
-      aria-hidden
-    >
-      {n}
-    </span>
-  );
-}
-
-function rowProps(ctx: Ctx, id: string, kind: string, label: string) {
+function cardProps(ctx: Ctx, id: string, kind: string, label: string) {
   const look = kindLook(kind);
   return {
     "data-no-pan": "",
@@ -642,18 +424,67 @@ function rowProps(ctx: Ctx, id: string, kind: string, label: string) {
   };
 }
 
-function Tile({ kind }: { kind: string }) {
+/** The card's top line: the kind's tile and name, the step number, the marks. */
+function CardHead({
+  ctx,
+  id,
+  kind,
+  node,
+}: {
+  ctx: Ctx;
+  id: string;
+  kind: string;
+  node?: BuilderNode;
+}) {
   const look = kindLook(kind);
+  const n = ctx.props.numbers.get(id);
   return (
-    <span className="bk-icon" aria-hidden>
-      <Icon name={look.icon} size="sm" />
-    </span>
+    <div className="bk-card-head">
+      <span className="bk-icon" aria-hidden>
+        <Icon name={look.icon} size="sm" />
+      </span>
+      <span className="bk-kind">{look.label}</span>
+      {n && <span className="bk-num">Step {n}</span>}
+      <span className="ah-grow" />
+      {node && <Marks ctx={ctx} node={node} />}
+    </div>
   );
 }
 
-/** The footer of the selected step: its id and what you can do with it. */
-function Footer({ ctx, node }: { ctx: Ctx; node: BuilderNode }) {
-  const problems = ctx.props.problemsOf(node.id);
+function Chips({ node }: { node: BuilderNode }) {
+  const chips = stepChips(node);
+  if (chips.length === 0) return null;
+  return (
+    <div className="bk-chips">
+      {chips.map((chip) => (
+        <span key={chip.key} className="bk-chip" title={`${chip.label} ${chip.value}`.trim()}>
+          {chip.label && <span className="bk-chip-label">{chip.label}</span>}
+          {chip.value}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** What the preview in an environment says the step would do there. */
+function PlanLine({ ctx, id }: { ctx: Ctx; id: string }) {
+  const row = ctx.props.planOf?.(id) ?? null;
+  if (!row) return null;
+  return (
+    <div className="bk-plan-line" data-decision={row.decision}>
+      <Icon name="scan-eye" size="sm" />
+      <span>
+        {ctx.props.planEnvironment ? `In ${ctx.props.planEnvironment}: ` : ""}
+        {row.plan}
+      </span>
+    </div>
+  );
+}
+
+/** The selected card's footer: its id, its problems and what you can do with it. */
+function Footer({ ctx, id }: { ctx: Ctx; id: string }) {
+  if (ctx.props.selected !== id || ctx.stack === "ghost") return null;
+  const problems = ctx.props.problemsOf(id);
   return (
     <>
       {problems.length > 0 && (
@@ -665,13 +496,7 @@ function Footer({ ctx, node }: { ctx: Ctx; node: BuilderNode }) {
           ))}
         </ul>
       )}
-      <div className="bk-footer">
-        <span className="bk-id" title="The step's id in the file">
-          {node.id}
-        </span>
-        <span className="ah-grow" />
-        {ctx.props.stepActions?.(node.id)}
-      </div>
+      <div className="bk-footer">{ctx.props.stepActions?.(id)}</div>
     </>
   );
 }
@@ -680,44 +505,13 @@ function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
   if (item.kind === "block") {
     const node = item.node;
     const look = kindLook(node.type);
-    const expanded = ctx.props.selected === node.id || ctx.props.detailed === true;
-    const selected = ctx.props.selected === node.id;
     return (
-      <div
-        className="bk-row"
-        data-expanded={expanded || undefined}
-        {...rowProps(ctx, node.id, node.type, `${look.label} ${node.id}`)}
-      >
-        <Badge ctx={ctx} id={node.id} />
-        <div className="bk-row-main">
-          <Tile kind={node.type} />
-          <span className="bk-body">
-            {typeof node.description === "string" && node.description !== "" && (
-              <span className="bk-name">{node.description}</span>
-            )}
-            <span className="bk-words">
-              <BlockWords
-                node={node}
-                facts={ctx.props.actionOf(node)}
-                expanded={expanded}
-                onEditNode={ctx.props.onEditNode}
-                onSlot={ctx.props.onSlot}
-              />
-            </span>
-          </span>
-          <Marks ctx={ctx} node={node} />
-        </div>
-        {expanded && (
-          <div className="bk-more">
-            <BlockFacts
-              node={node}
-              action={ctx.props.actionOf(node)}
-              row={ctx.props.planOf?.(node.id) ?? null}
-              environment={ctx.props.planEnvironment ?? null}
-            />
-            {selected && <Footer ctx={ctx} node={node} />}
-          </div>
-        )}
+      <div className="bk-card" {...cardProps(ctx, node.id, node.type, `${look.label} ${node.id}`)}>
+        <CardHead ctx={ctx} id={node.id} kind={node.type} node={node} />
+        <div className="bk-title">{stepTitle(node)}</div>
+        <Chips node={node} />
+        <PlanLine ctx={ctx} id={node.id} />
+        <Footer ctx={ctx} id={node.id} />
       </div>
     );
   }
@@ -726,38 +520,13 @@ function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
     return (
       <div className="bk-group" data-kind="repeat">
         <div
-          className="bk-row bk-head"
-          {...rowProps(ctx, node.id, "loop_group", `Repeat ${node.id}`)}
+          className="bk-card bk-head"
+          {...cardProps(ctx, node.id, "loop_group", `Repeat ${node.id}`)}
         >
-          <Badge ctx={ctx} id={node.id} />
-          <div className="bk-row-main">
-            <Tile kind="loop_group" />
-            <span className="bk-words">
-              <span className="bk-verb">repeat until</span>
-              <Condition
-                value={text(node.until_when)}
-                placeholder="a state holds"
-                onOpen={(anchor) => {
-                  ctx.props.onSlot({ id: node.id, kind: "condition", key: "until_when", anchor });
-                }}
-              />
-              <span className="bk-label">at most</span>
-              <Field
-                value={text(node.max_iterations, "1")}
-                label={`Rounds, ${node.id}`}
-                width={40}
-                onChange={(value) => {
-                  ctx.props.onEditNode({
-                    ...node,
-                    max_iterations: /^\d+$/.test(value) ? Number(value) : value,
-                  });
-                }}
-              />
-              <span className="bk-label">rounds</span>
-            </span>
-            <Marks ctx={ctx} node={node} />
-          </div>
-          {ctx.props.selected === node.id && <Footer ctx={ctx} node={node} />}
+          <CardHead ctx={ctx} id={node.id} kind="loop_group" node={node} />
+          <div className="bk-title">{stepTitle(node)}</div>
+          <Chips node={node} />
+          <Footer ctx={ctx} id={node.id} />
         </div>
         <div className="bk-lane bk-loop">
           <List
@@ -767,7 +536,7 @@ function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
             empty="put the steps that repeat here"
           />
           <span className="bk-foot">
-            <Icon name="refresh-cw" size="sm" /> then go on
+            <Icon name="refresh-cw" size="sm" /> back to the top until it holds
           </span>
         </div>
       </div>
@@ -776,25 +545,16 @@ function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
   if (item.kind === "if") {
     return (
       <div className="bk-group" data-kind="if">
-        <div className="bk-row bk-head" {...rowProps(ctx, item.key, "branch", "If")}>
-          <Badge ctx={ctx} id={item.key} />
-          <div className="bk-row-main">
-            <Tile kind="branch" />
-            <span className="bk-words">
-              <span className="bk-verb">if</span>
-              <Condition
-                value={item.condition}
-                placeholder="a condition"
-                onOpen={(anchor) => {
-                  ctx.props.onSlot({ id: itemId(item), kind: "condition", key: "if", anchor });
-                }}
-              />
-            </span>
+        <div className="bk-card bk-head" {...cardProps(ctx, item.key, "branch", "If")}>
+          <CardHead ctx={ctx} id={item.key} kind="branch" />
+          <div className="bk-title">
+            {item.condition ? `If ${conditionWords(item.condition)}` : "If a condition holds"}
           </div>
+          <Footer ctx={ctx} id={item.key} />
         </div>
         <div className="bk-lanes">
           <div className="bk-lane">
-            <span className="bk-lane-label">if it holds</span>
+            <span className="bk-lane-label">yes</span>
             <List
               ctx={ctx}
               items={item.then}
@@ -803,7 +563,7 @@ function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
             />
           </div>
           <div className="bk-lane">
-            <span className="bk-lane-label">else</span>
+            <span className="bk-lane-label">no</span>
             <List
               ctx={ctx}
               items={item.otherwise}
@@ -812,20 +572,18 @@ function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
             />
           </div>
         </div>
-        <span className="bk-foot">then go on after the path taken</span>
       </div>
     );
   }
   return (
     <div className="bk-group" data-kind="parallel">
-      <div className="bk-row bk-head" {...rowProps(ctx, item.key, "parallel", "At the same time")}>
-        <Badge ctx={ctx} id={item.key} />
-        <div className="bk-row-main">
-          <Tile kind="parallel" />
-          <span className="bk-words">
-            <span className="bk-verb">at the same time</span>
-          </span>
-        </div>
+      <div
+        className="bk-card bk-head"
+        {...cardProps(ctx, item.key, "parallel", "At the same time")}
+      >
+        <CardHead ctx={ctx} id={item.key} kind="parallel" />
+        <div className="bk-title">Run {item.lanes.length} paths at the same time</div>
+        <Footer ctx={ctx} id={item.key} />
       </div>
       <div className="bk-lanes">
         {item.lanes.map((lane, index) => (
@@ -840,7 +598,6 @@ function ItemView({ ctx, item }: { ctx: Ctx; item: Item }) {
           </div>
         ))}
       </div>
-      <span className="bk-foot">then go on when every path finished</span>
     </div>
   );
 }
@@ -881,8 +638,8 @@ function StackView({
       />
       {hat && (
         <div className="bk-cap">
-          <span className="bk-cap-dot" aria-hidden />
-          End of the scenario
+          <Icon name="circle-check" size="sm" />
+          End
           {steps !== undefined ? ` · ${String(steps)} ${steps === 1 ? "step" : "steps"}` : ""}
         </div>
       )}
@@ -938,6 +695,45 @@ export function BlockCanvas(props: BlockCanvasProps) {
     fitted.current = true;
     fit(false);
   }, [fit, size.width]);
+
+  // The selected card stays in view: the side form narrows the canvas when it opens.
+  const latest = useRef(pz.view);
+  useEffect(() => {
+    latest.current = pz.view;
+  });
+  useEffect(() => {
+    const frame = viewport.current;
+    const world = frame?.querySelector<HTMLElement>(".bk-world");
+    const card = world?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!frame || !world || !card) return;
+    // Where the card sits in the world (steady while the view animates), then on screen once
+    // the view reaches its target.
+    const view = latest.current;
+    const k = view.k;
+    const box = card.getBoundingClientRect();
+    const origin = world.getBoundingClientRect();
+    const at = {
+      x: (box.left - origin.left) / k,
+      y: (box.top - origin.top) / k,
+      width: box.width / k,
+      height: box.height / k,
+    };
+    const width = frame.clientWidth;
+    const height = frame.clientHeight;
+    const left = view.x + at.x * view.k;
+    const top = view.y + at.y * view.k;
+    const right = left + at.width * view.k;
+    const bottom = top + at.height * view.k;
+    const dx = left < 24 || right > width - 24 ? width / 2 - (left + right) / 2 : 0;
+    const dy =
+      top < 24
+        ? 48 - top
+        : bottom > height - 24 && bottom - top < height - 96
+          ? height - 48 - bottom
+          : 0;
+    if (dx === 0 && dy === 0) return;
+    setView({ k: view.k, x: view.x + dx, y: view.y + dy }, true);
+  }, [props.selected, size.width, setView]);
 
   const toWorld = (clientX: number, clientY: number) => {
     const rect = viewport.current?.getBoundingClientRect();
@@ -1057,7 +853,7 @@ export function BlockCanvas(props: BlockCanvasProps) {
         <Icon name="flag" size="sm" />
       </span>
       <span>
-        <b>when the scenario starts</b>
+        <b>When the scenario starts</b>
         <span className="bk-quiet">{inputsText}</span>
       </span>
     </button>

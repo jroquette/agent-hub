@@ -1,6 +1,6 @@
-/* The block canvas (scenario builder v3): the flow as one column of calm, one-line steps on a
- * spine, each with a round step badge; the kind's colour only on its icon tile (D-builder-3,
- * the kind-* tokens); the selected step expands in place; C-blocks frame their lanes. */
+/* The block canvas (scenario builder v4): the flow as a column of step cards joined by arrows,
+ * Zapier-like. A card says what the step does in a title, its facts in chips below, and its kind
+ * as a coloured tile (the kind-* tokens); the side form edits it. Lanes sit side by side. */
 
 .bk-viewport {
   position: relative;
@@ -9,6 +9,7 @@
   overflow: hidden;
   cursor: grab;
   touch-action: none;
+  --card-w: 420px;
 }
 .bk-viewport[data-dragging] {
   cursor: grabbing;
@@ -21,11 +22,13 @@
 }
 .bk-stack {
   position: absolute;
-  width: 880px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: var(--card-w);
 }
 .bk-stack[data-loose] {
   opacity: 0.85;
-  width: 640px;
 }
 .bk-loose-note {
   display: inline-flex;
@@ -36,135 +39,172 @@
   color: var(--waiting);
 }
 
-/* The hat and the end cap */
+/* Start and end: round pills on the line */
 .bk-hat {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 10px;
-  width: 100%;
-  min-height: 40px;
-  padding: 6px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  max-width: var(--card-w);
+  padding: 8px 16px 8px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
   background: var(--surface);
   color: var(--text);
   text-align: left;
   font-size: 14px;
   cursor: pointer;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgb(0 0 0 / 12%));
 }
 .bk-hat:hover {
-  background: var(--surface-hover);
+  border-color: var(--accent);
 }
 .bk-hat b {
   font-weight: 600;
 }
+.bk-hat .bk-icon {
+  border-radius: var(--radius-full);
+}
 .bk-cap {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 4px 0 0 4px;
-  font-size: 12px;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface);
+  font-size: 13px;
   color: var(--text-muted);
 }
-.bk-cap-dot {
-  width: 24px;
-  height: 12px;
-  border-radius: 0 0 12px 12px;
-  border: 2px solid var(--border-control);
-  border-top: 0;
-}
 
-/* The spine: a line in the gutter; each step's badge sits on it */
+/* The list: cards in a column, an arrow between each */
 .bk-list {
-  position: relative;
   display: flex;
   flex-direction: column;
-  padding-left: 44px;
-}
-.bk-list::before {
-  content: "";
-  position: absolute;
-  left: 15px;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: var(--border-control);
-  border-radius: 1px;
+  align-items: center;
 }
 .bk-entry {
   display: flex;
   flex-direction: column;
+  align-items: center;
 }
 
-/* A step: one row, a neutral card */
-.bk-row {
+/* A step: a card */
+.bk-card {
   position: relative;
   display: flex;
   flex-direction: column;
+  gap: 6px;
+  width: var(--card-w);
+  padding: 12px 14px;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
   color: var(--text);
   cursor: pointer;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgb(0 0 0 / 12%));
   transition:
-    background var(--dur-fast, 120ms) ease,
-    box-shadow var(--dur-fast, 120ms) ease;
+    border-color var(--dur-fast, 120ms) ease,
+    box-shadow var(--dur-fast, 120ms) ease,
+    transform var(--dur-fast, 120ms) ease;
 }
-.bk-row:hover {
-  background: var(--surface-hover);
+.bk-card::before {
+  /* the kind's colour as a thin bar at the left edge */
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--kind, var(--border-strong));
 }
-.bk-row:focus-visible {
+.bk-card:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md, 0 4px 12px rgb(0 0 0 / 18%));
+}
+.bk-card:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
-.bk-row[data-selected] {
-  box-shadow: 0 0 0 2px var(--accent);
+.bk-card[data-selected] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
+  transform: none;
   cursor: default;
 }
-.bk-row[data-selected]:hover {
-  background: var(--surface);
-}
-.bk-row[data-invalid] {
+.bk-card[data-invalid] {
   border-color: var(--failed);
 }
-.bk-row-main {
+.bk-card-head {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 36px;
-  padding: 5px 10px;
+  gap: 8px;
+  min-height: 24px;
 }
-.bk-row[data-expanded] .bk-row-main {
-  align-items: flex-start;
-  padding-top: 8px;
+.bk-kind {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--kind, var(--text-muted));
 }
-.bk-badge {
-  position: absolute;
-  left: -40px;
-  top: 6px;
-  display: grid;
-  place-items: center;
-  min-width: 24px;
-  height: 24px;
-  padding: 0 4px;
-  border-radius: var(--radius-full);
-  border: 1px solid var(--border-control);
-  background: var(--surface);
-  color: var(--text-muted);
-  font-family: var(--font-mono, monospace);
-  font-size: 11px;
+.bk-num {
+  font-size: 12px;
+  color: var(--text-subtle);
   font-variant-numeric: tabular-nums;
 }
-.bk-badge[data-selected] {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
+.bk-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 21px;
+  overflow-wrap: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
-.bk-badge[data-invalid] {
-  border: 2px solid var(--failed);
+.bk-card[data-selected] .bk-title {
+  -webkit-line-clamp: unset;
+}
+.bk-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 52px;
+  overflow: hidden;
+}
+.bk-card[data-selected] .bk-chips {
+  max-height: none;
+}
+.bk-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  max-width: 100%;
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  background: var(--surface-sunken);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 20px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bk-chip-label {
+  color: var(--text-muted);
+}
+.bk-plan-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  font-size: 12px;
+  color: var(--text);
 }
 
-/* The kind's colour lives here only: a 24 px tile */
+/* The kind's tile */
 .bk-icon {
   display: inline-grid;
   place-items: center;
@@ -179,122 +219,15 @@
   background: var(--surface-sunken);
   color: var(--text-muted);
 }
-.bk-body {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  flex: 1;
-  min-width: 0;
-}
-.bk-name {
-  font-weight: 600;
-  font-size: 13px;
-}
-.bk-words {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 6px;
-  font-size: 14px;
-  line-height: 20px;
-}
-.bk-row:not([data-expanded]) .bk-words {
-  flex-wrap: nowrap;
-  overflow: hidden;
-  white-space: nowrap;
-  mask-image: linear-gradient(to right, #000 92%, transparent);
-}
-.bk-verb {
-  font-weight: 600;
-  white-space: nowrap;
-}
-.bk-label,
 .bk-quiet {
   color: var(--text-muted);
-  white-space: nowrap;
-}
-.bk-pair {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  white-space: nowrap;
-}
-.bk-ref {
-  color: var(--text-subtle);
-  margin-right: 2px;
-}
-.bk-hidden {
-  font-size: 12px;
-  color: var(--text-subtle);
-  white-space: nowrap;
 }
 
-/* Slots */
-.bk-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  max-width: 320px;
-  height: 24px;
-  padding: 0 8px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border);
-  background: var(--surface-sunken);
-  color: var(--text);
-  font: inherit;
-  font-size: 13px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.bk-pill-json {
-  font-family: var(--font-mono, monospace);
-  font-size: 12px;
-}
-.bk-pill-text {
-  max-width: 560px;
-}
-.bk-row[data-expanded] .bk-pill-text {
-  white-space: normal;
-  height: auto;
-  padding: 2px 8px;
-}
-.bk-pill[data-empty] {
-  border-style: dashed;
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-  background: transparent;
-}
-.bk-slot {
-  cursor: pointer;
-  transition:
-    border-color var(--dur-fast, 120ms) ease,
-    box-shadow var(--dur-fast, 120ms) ease;
-}
-.bk-slot:hover,
-.bk-slot:focus-visible {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
-  outline: none;
-}
-.bk-field {
-  height: 24px;
-  padding: 0 6px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-control);
-  background: var(--surface-sunken);
-  color: var(--text);
-  font-family: var(--font-mono, monospace);
-  font-size: 12px;
-  text-align: center;
-  cursor: text;
-}
-
-/* Marks at the right edge */
+/* Marks at the top right */
 .bk-marks {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex: none;
   color: var(--text-muted);
   font-size: 12px;
@@ -305,6 +238,12 @@
   gap: 3px;
   white-space: nowrap;
 }
+.bk-mark[data-effect="write"] {
+  color: var(--waiting);
+}
+.bk-mark[data-effect="destroy"] {
+  color: var(--failed);
+}
 .bk-mark-warn {
   color: var(--waiting);
 }
@@ -312,55 +251,90 @@
   color: var(--failed);
 }
 
-/* The expanded step */
-.bk-more {
-  padding: 0 12px 10px 44px;
-}
+/* The selected card's footer */
 .bk-footer {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 10px;
+  gap: 4px;
+  margin-top: 4px;
   padding-top: 8px;
   border-top: 1px solid var(--border);
 }
-.bk-id {
-  font-family: var(--font-mono, monospace);
-  font-size: 12px;
-  color: var(--text-muted);
+.bk-problems {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+.bk-problems li {
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  background: var(--failed-soft);
+  color: var(--failed);
+}
+.bk-problems li[data-severity="warning"] {
+  background: var(--waiting-soft);
+  color: var(--waiting);
 }
 
-/* Gaps: a drop zone, and the "+" on the spine */
+/* The arrow between two cards: a line, a head, and a "+" on it */
 .bk-gap {
   position: relative;
-  height: 8px;
-  transition: height var(--dur-fast, 120ms) ease;
+  display: grid;
+  place-items: center;
+  width: 120px;
+  height: 44px;
 }
-.bk-stack:not([data-loose]) .bk-gap:hover,
-.bk-gap:focus-within {
-  height: 18px;
+.bk-gap::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 6px;
+  width: 2px;
+  transform: translateX(-50%);
+  background: var(--border-control);
+}
+.bk-gap::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top: 7px solid var(--border-control);
+  border-bottom: 0;
+}
+.bk-gap[data-first] {
+  height: 36px;
 }
 .bk-gap .bk-plus {
-  position: absolute;
-  left: -40px;
-  top: 50%;
-  transform: translateY(-50%) scale(0.8);
-  opacity: 0;
-  z-index: 2;
+  position: relative;
+  z-index: 1;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: var(--radius-full);
+  opacity: 0.7;
 }
 .bk-gap:hover .bk-plus,
-.bk-gap .bk-plus:focus-visible,
-.bk-entry:has(> .bk-row[data-selected]) > .bk-gap .bk-plus {
+.bk-gap .bk-plus:focus-visible {
   opacity: 1;
-  transform: translateY(-50%) scale(1);
-}
-.bk-viewport[data-dragging] .bk-gap {
-  height: 14px;
+  transform: scale(1.12);
 }
 .bk-gap[data-active] {
-  height: 38px !important;
-  border: 1px dashed var(--border-control);
+  width: var(--card-w);
+  height: 64px;
+}
+.bk-gap[data-active]::before,
+.bk-gap[data-active]::after {
+  display: none;
+}
+.bk-gap[data-active] {
+  border: 2px dashed var(--accent);
   border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
@@ -371,10 +345,10 @@
   gap: 6px;
   min-width: 24px;
   height: 24px;
-  padding: 0 4px;
+  padding: 0 6px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  background: var(--surface-overlay, var(--surface));
+  background: var(--surface);
   color: var(--text-muted);
   font-size: 12px;
   cursor: pointer;
@@ -389,69 +363,73 @@
 }
 .bk-mouth-empty {
   display: flex;
-  min-height: 34px;
+  width: calc(var(--card-w) - 40px);
+  min-height: 44px;
+  margin: 8px 0;
 }
 .bk-mouth-empty .bk-plus {
   width: 100%;
-  height: 34px;
+  height: 44px;
   border-style: dashed;
   border-color: var(--border-control);
-  justify-content: flex-start;
-  padding: 0 10px;
+  border-radius: var(--radius-lg);
+  background: transparent;
 }
 .bk-mouth-empty[data-active] {
-  border: 1px dashed var(--accent);
+  border: 2px dashed var(--accent);
   border-radius: var(--radius-lg);
 }
 
-/* C-blocks: a head row, then framed lanes on the canvas */
+/* Repeat, If, At the same time: a head card, then lanes side by side */
 .bk-group {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  align-items: center;
 }
 .bk-lanes {
   display: flex;
-  gap: 12px;
+  align-items: flex-start;
+  gap: 24px;
+  margin-top: 12px;
+  padding-top: 16px;
+  border-top: 2px solid var(--border-control);
 }
 .bk-lane {
   position: relative;
-  flex: 1;
-  min-width: 0;
-  padding: 8px 10px 8px 6px;
-  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 12px 12px;
+  border: 1px dashed var(--border-control);
   border-radius: var(--radius-lg);
 }
 .bk-loop {
-  border-color: color-mix(in srgb, var(--kind-control) 45%, var(--border));
-  border-style: dashed;
+  margin-top: 12px;
+  border-color: color-mix(in srgb, var(--kind-control) 55%, var(--border));
 }
 .bk-lane-label {
-  display: block;
-  margin: 0 0 4px 4px;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-subtle);
+  margin-top: 6px;
+  padding: 1px 10px;
+  border-radius: var(--radius-full);
+  background: var(--kind-control-soft);
+  color: var(--kind-control);
+  font-size: 12px;
+  font-weight: 600;
 }
 .bk-foot {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-left: 4px;
   font-size: 12px;
-  color: var(--text-muted);
-}
-.bk-loop .bk-foot {
   color: var(--kind-control);
 }
 
 /* Suggested by Claude: dashed accent outline and a tag */
-.bk-row[data-suggested] {
+.bk-card[data-suggested] {
   outline: 2px dashed var(--accent);
   outline-offset: 3px;
 }
-.bk-row[data-suggested]::after {
+.bk-card[data-suggested]::after {
   content: "Suggested";
   position: absolute;
   top: -9px;
@@ -465,18 +443,18 @@
   line-height: 16px;
 }
 
-/* The dragged steps follow the pointer */
+/* The dragged cards follow the pointer */
 .bk-ghost {
   position: fixed;
   z-index: 50;
   pointer-events: none;
   transform-origin: 0 0;
-  width: 640px;
-  filter: drop-shadow(0 10px 18px rgb(0 0 0 / 28%));
+  --card-w: 420px;
+  filter: drop-shadow(0 12px 20px rgb(0 0 0 / 30%));
   opacity: 0.94;
 }
 
-/* The facts (BlockFacts) inside an expanded step */
+/* The facts (BlockFacts), at the top of the side form */
 .bk-facts {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
@@ -545,9 +523,6 @@
   white-space: pre;
   cursor: text;
 }
-.bk-line {
-  display: none;
-}
 
 /* Palette (left rail): neutral tiles, the kind's colour on the icon */
 .bk-palette-block {
@@ -603,7 +578,7 @@
   white-space: nowrap;
 }
 
-/* Insert menu and slot popovers */
+/* Insert menu */
 .bk-menu-scrim {
   position: fixed;
   inset: 0;
@@ -626,9 +601,6 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-}
-.bk-slot-pop .bk-menu-list {
-  max-height: 260px;
 }
 .bk-menu-group {
   margin: 6px 4px 2px;
@@ -678,37 +650,10 @@
   border-top: 1px solid var(--border);
   padding-top: 6px;
 }
-.bk-textarea {
-  height: auto;
-  min-height: 72px;
-  padding: 6px 8px;
-}
 
 @media (prefers-reduced-motion: reduce) {
-  .bk-row,
-  .bk-gap,
-  .bk-plus,
-  .bk-slot {
+  .bk-card,
+  .bk-plus {
     transition: none;
   }
-}
-
-/* The selected step's problems, in its own words, above its footer. */
-.bk-problems {
-  margin: 10px 0 0;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: 4px;
-  font-size: 13px;
-}
-.bk-problems li {
-  padding: 6px 10px;
-  border-radius: var(--radius-md, 6px);
-  background: var(--failed-soft);
-  color: var(--failed);
-}
-.bk-problems li[data-severity="warning"] {
-  background: var(--waiting-soft);
-  color: var(--waiting);
 }
