@@ -379,7 +379,7 @@ def checkout_state(workspace: Workspace, repo: Path) -> tuple[str, ...]:
     ("pattern", "status"), [("BUG", "draft"), ("NOT_THERE", "open")], ids=["confirmed", "none"]
 )
 def test_writes_handoff_and_postmortem_when_scripts_chain_on_real_git(
-    pattern: str, status: str, demo_workspace: Workspace, run_command: CommandRunner
+    pattern: str, status: str, *, demo_workspace: Workspace, run_command: CommandRunner
 ) -> None:
     nodes, outputs = nodes_of("incident"), JsonSchemaOutputs()
     hub, repo = demo_workspace.hub, demo_workspace.ws / "demo-api"

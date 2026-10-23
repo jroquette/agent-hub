@@ -389,7 +389,11 @@ def test_reads_no_record_when_hub_has_no_features_folder(
 
 @pytest.mark.parametrize("config", ["not json", "[]", '{"repos": 1}'])
 def test_exits_two_when_config_is_unreadable(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], config: str
+    config: str,
+    *,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.chdir(tmp_path)
 
