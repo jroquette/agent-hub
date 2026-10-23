@@ -49,21 +49,11 @@ export function InsertMenu({
   }, []);
 
   const rows: Row[] = [
-    ...CATEGORIES.flatMap((category) =>
-      category.entries.map((entry): Row => ({
-        key: `block:${entry.key}`,
-        label: entry.label,
-        hint: entry.hint,
-        group: "Blocks",
-        icon: entry.icon,
-        make: () => entry.make(taken),
-      })),
-    ),
     ...library.map((item): Row => ({
       key: `action:${item.action.ref}`,
       label: item.action.pack === pack ? item.action.name : item.action.ref,
-      hint: `${item.action.effect ?? ""}${item.action.draft ? " · draft" : ""} · ${item.action.description ?? ""}`,
-      group: item.action.pack === pack ? `Actions in ${pack}` : "Other actions",
+      hint: `${item.action.effect === "read" ? "Reads only" : item.action.effect === "write" ? "Changes data" : (item.action.effect ?? "")}${item.action.draft ? " · draft" : ""} · ${item.action.description ?? ""}`,
+      group: "Actions in this hub",
       icon: "circle-play",
       make: (asCheck) =>
         blockItem(
@@ -72,6 +62,16 @@ export function InsertMenu({
           item.action.pack === pack ? item.action.name : item.action.ref,
         ),
     })),
+    ...CATEGORIES.flatMap((category) =>
+      category.entries.map((entry): Row => ({
+        key: `block:${entry.key}`,
+        label: entry.label,
+        hint: entry.hint,
+        group: "Step types",
+        icon: entry.icon,
+        make: () => entry.make(taken),
+      })),
+    ),
   ];
   const needle = query.trim().toLowerCase();
   const shown = needle
@@ -114,15 +114,15 @@ export function InsertMenu({
       <div
         className="ah-pop bk-menu"
         role="dialog"
-        aria-label={`Add a block ${where}`}
+        aria-label={where}
         style={{ left, top, width: MENU_WIDTH }}
       >
-        <div className="bk-menu-head">Add a block {where}</div>
+        <div className="bk-menu-head">{where}</div>
         <input
           ref={field}
           className="ah-input"
-          aria-label="Find a block or action, or describe the step"
-          placeholder="Find a block or action, or describe the step"
+          aria-label="Find an action or a step type, or describe the step"
+          placeholder="Find an action or a step type, or describe the step"
           value={query}
           onKeyDown={onKey}
           onChange={(event) => {
@@ -130,7 +130,7 @@ export function InsertMenu({
             setActive(0);
           }}
         />
-        <div className="bk-menu-list" role="listbox" aria-label="Blocks and actions">
+        <div className="bk-menu-list" role="listbox" aria-label="Actions and step types">
           {shown.map((row, index) => {
             const head = row.group !== lastGroup ? row.group : null;
             lastGroup = row.group;
@@ -182,7 +182,7 @@ export function InsertMenu({
           )}
         </div>
         <div className="bk-menu-foot">
-          ↑↓ to move · Enter adds · Shift+Enter adds a reading action as “wait until” · Esc closes
+          ↑↓ to move · Enter adds · Shift+Enter adds a read-only action as Wait until · Esc closes
         </div>
       </div>
     </>

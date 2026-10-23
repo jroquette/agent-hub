@@ -27,7 +27,7 @@ export const CATEGORIES: readonly { title: string; entries: readonly PaletteEntr
     entries: [
       {
         key: "action",
-        label: "run an action",
+        label: "Run an action",
         hint: "A script, once",
         icon: "circle-play",
         tint: kindLook("action").tint,
@@ -35,7 +35,7 @@ export const CATEGORIES: readonly { title: string; entries: readonly PaletteEntr
       },
       {
         key: "include",
-        label: "run a scenario",
+        label: "Run a scenario",
         hint: "Reuse another one",
         icon: "layers",
         tint: kindLook("include").tint,
@@ -48,7 +48,7 @@ export const CATEGORIES: readonly { title: string; entries: readonly PaletteEntr
     entries: [
       {
         key: "expect",
-        label: "wait until …",
+        label: "Wait until",
         hint: "Read until a state holds",
         icon: "timer",
         tint: kindLook("expect").tint,
@@ -56,7 +56,7 @@ export const CATEGORIES: readonly { title: string; entries: readonly PaletteEntr
       },
       {
         key: "wait",
-        label: "wait 30s",
+        label: "Pause",
         hint: "A set time",
         icon: "hourglass",
         tint: kindLook("wait").tint,
@@ -69,7 +69,7 @@ export const CATEGORIES: readonly { title: string; entries: readonly PaletteEntr
     entries: [
       {
         key: "repeat",
-        label: "repeat until …",
+        label: "Repeat",
         hint: "Rounds until done",
         icon: "refresh-cw",
         tint: kindLook("loop_group").tint,
@@ -77,7 +77,7 @@ export const CATEGORIES: readonly { title: string; entries: readonly PaletteEntr
       },
       {
         key: "if",
-        label: "if … else",
+        label: "If",
         hint: "Take one path",
         icon: "split",
         tint: kindLook("branch").tint,
@@ -85,7 +85,7 @@ export const CATEGORIES: readonly { title: string; entries: readonly PaletteEntr
       },
       {
         key: "parallel",
-        label: "at the same time",
+        label: "At the same time",
         hint: "Paths side by side",
         icon: "git-branch",
         tint: kindLook("parallel").tint,
@@ -98,8 +98,8 @@ export const CATEGORIES: readonly { title: string; entries: readonly PaletteEntr
     entries: [
       {
         key: "approval",
-        label: "ask me to …",
-        hint: "A step by hand",
+        label: "Ask me",
+        hint: "A step you do by hand",
         icon: "stamp",
         tint: kindLook("approval").tint,
         make: (d) => blockItem(d, "approval"),

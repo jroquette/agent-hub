@@ -513,10 +513,13 @@ export function conditionWords(text: string): string {
   return groups
     .map((group) =>
       group
-        .map(
-          (row) =>
-            `${refInWords(row.field).text} ${OPERATORS.find((item) => item.op === row.op)?.words ?? row.op} ${row.value}`,
-        )
+        .map((row) => {
+          const field = refInWords(row.field).text;
+          // An empty value reads as set / empty, not "is not" with nothing after it.
+          if (row.value === "" && row.op === "!=") return `${field} is set`;
+          if (row.value === "" && row.op === "==") return `${field} is empty`;
+          return `${field} ${OPERATORS.find((item) => item.op === row.op)?.words ?? row.op} ${row.value}`;
+        })
         .join(" and "),
     )
     .join(" or ");

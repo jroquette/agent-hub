@@ -497,3 +497,80 @@
   font-size: 12px;
   color: var(--text-muted);
 }
+
+/* ---------- The step editor (v6): Settings | Script ---------- */
+.sb-form-tabs {
+  position: sticky;
+  top: calc(var(--space-4) * -1);
+  z-index: 2;
+  margin: calc(var(--space-4) * -1) calc(var(--space-4) * -1) 0;
+  padding: 0 var(--space-4);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.sb-comes-from {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-muted);
+}
+.sb-comes-from b {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  color: var(--text);
+}
+.sb-comes-from .ah-icon {
+  vertical-align: -3px;
+}
+.sb-comes-from-set {
+  align-self: flex-start;
+  width: auto;
+  height: 28px;
+  font-size: 12px;
+  margin-top: 2px;
+}
+.sb-script {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+.sb-script-desc {
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+}
+.sb-script-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.sb-script-gives {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 13px;
+}
+.sb-script-value {
+  display: inline-block;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+.sb-script .sc-file pre {
+  max-height: 420px;
+  min-height: 240px;
+  overflow: auto;
+}
+.sb-script-dialog .sc-file pre {
+  max-height: 70vh;
+}

@@ -3,20 +3,21 @@ import { useId, useState, type ReactNode, type RefObject } from "react";
 import {
   Banner,
   Button,
-  CopyButton,
   Icon,
   IconButton,
   PathText,
   SidePanel,
+  Tabs,
   type IconName,
 } from "../../../components";
-import { DraftLine, EffectBadge } from "../parts";
+import { EffectBadge } from "../parts";
 import type { ScenarioPlanRow } from "../queries";
-import { maxChecks, pace, stopLines } from "../story";
+import { maxChecks, stopLines } from "../story";
 import { TokenText, ValueToken, cardTitle, tokenOf } from "./CardParts";
 import { JsonField } from "./JsonField";
 import { looksLikeJson } from "./looseJson";
 import { ValuePicker } from "./ValuePicker";
+import { StepScript, resolveInputs, type ResolvedInput } from "./StepScript";
 import { asStep, kindLook } from "./FlowCanvas";
 import {
   OPERATORS,
@@ -690,10 +691,12 @@ export function BlockInspector({
   onChange,
   onClose,
   openerRef,
-  onOpenAction,
   plan,
   actionTools,
   footer,
+  tab,
+  onTab,
+  environment,
 }: {
   document: BuilderDocument;
   node: BuilderNode;
@@ -708,21 +711,26 @@ export function BlockInspector({
   onClose: () => void;
   /** The card that opened the form: focus goes back to it on close. */
   openerRef: RefObject<HTMLElement | null>;
-  /** "Open action …": the action's own panel. */
-  onOpenAction: (ref: string) => void;
   /** A preview in an environment: what the step would do there. */
   plan: { row: ScenarioPlanRow; environment: string } | null;
   /** Under the action field: make a new action, or ask Claude to write one. */
   actionTools?: ReactNode;
   /** The form's foot: what can be done with the step (delete, duplicate, ask Claude). */
   footer?: ReactNode;
+  /** Settings (what the step sets) or Script (what it runs, with what). */
+  tab: "settings" | "script";
+  onTab: (tab: "settings" | "script") => void;
+  /** The environment the page is read in, and its values (null when unknown). */
+  environment: { name: string; values: Readonly<Record<string, string>> | null } | null;
 }) {
   const look = kindLook(node.type);
+  const [overridden, setOverridden] = useState<string[]>([]);
   const [id, setId] = useState(node.id);
   const [shownFor, setShownFor] = useState(node.id);
   if (shownFor !== node.id) {
     setShownFor(node.id);
     setId(node.id);
+    setOverridden([]);
   }
   const set = (key: string, value: Json | undefined) => {
     const next: Record_ =
@@ -758,9 +766,21 @@ export function BlockInspector({
     )?.message;
   const errors = problems.filter((problem) => problem.severity === "error");
   const warnings = problems.filter((problem) => problem.severity !== "error");
-  const gives = Object.keys(record(action?.output_format?.properties as Json | undefined));
   const stops = callsAction ? stopLines(asStep(node), action, mode, null) : [];
   const conditionSet = typeof node.when === "string" && node.when !== "";
+  const environmentValues = environment?.values ?? null;
+  const resolved = action ? resolveInputs(node, action, document, environmentValues) : [];
+  // Inputs the step sets itself, or that nothing else feeds, show as fields; the rest come from
+  // elsewhere and fold into one box, unless the person chose to set one for this step.
+  const asField = (input: ResolvedInput) =>
+    input.from === "step" || input.from === "missing" || overridden.includes(input.name);
+  const inherited = resolved.filter((input) => !asField(input));
+  const byEnvironment = inherited.filter((input) => input.from === "environment");
+  const byRun = inherited.filter((input) => input.from === "run");
+  const byDefault = inherited.filter((input) => input.from === "default");
+  const names = (list: readonly ResolvedInput[]) => list.map((input) => input.name).join(", ");
+  const verb = (list: readonly ResolvedInput[]) => (list.length === 1 ? "comes" : "come");
+  const showScript = tab === "script" && callsAction && action !== null;
   return (
     <FormShell
       icon={look.icon}
@@ -774,10 +794,21 @@ export function BlockInspector({
       openerRef={openerRef}
       footer={footer}
     >
-      <div className="sb-form-id">
-        <span className="ah-mono ah-small ah-muted">{node.id}</span>
-        <CopyButton text={node.id} label={`Copy the id ${node.id}`} compact />
-      </div>
+      {callsAction && action && (
+        <div className="sb-form-tabs">
+          <Tabs
+            label="Step editor"
+            value={showScript ? "script" : "settings"}
+            onChange={(next) => {
+              onTab(next === "script" ? "script" : "settings");
+            }}
+            tabs={[
+              { id: "settings", label: "Settings", icon: "sliders-horizontal" },
+              { id: "script", label: "Script", icon: "file-text" },
+            ]}
+          />
+        </div>
+      )}
       {libraryError && (
         <Banner tone="error" live={false}>
           The hub&apos;s actions could not be read, so this step&apos;s inputs are unknown. Reload
@@ -791,492 +822,561 @@ export function BlockInspector({
           ))}
         </Banner>
       )}
-      {warnings.length > 0 && (
+      {warnings.length > 0 && !showScript && (
         <Banner tone="warning" live={false}>
           {warnings.map((problem, index) => (
             <div key={index}>{problem.message}</div>
           ))}
         </Banner>
       )}
-
-      <Section title="Name">
-        <Field
-          label="Step name"
-          optional
-          help="Shown on the card. Without one, the card shows what the action does."
-        >
-          {(fieldId) => (
-            <input
-              id={fieldId}
-              className="ah-input"
-              value={typeof node.description === "string" ? node.description : ""}
-              placeholder={cardTitle({ ...node, description: "" }, action)}
-              onChange={(event) => {
-                set("description", event.target.value);
-              }}
-            />
-          )}
-        </Field>
-      </Section>
-
-      {callsAction && (
-        <Section title={node.type === "expect" ? "What it reads" : "What it runs"}>
-          <Field
-            label={node.type === "expect" ? "Reads with" : "Action"}
-            help={
-              node.type === "expect" ? "Only actions that only read can check a state." : undefined
-            }
-            error={problemOf("action")}
-          >
-            {(fieldId) => (
-              <select
-                id={fieldId}
-                className="ah-input"
-                value={ref}
-                onChange={(event) => {
-                  set("action", event.target.value);
-                }}
-              >
-                <option value="">Choose an action</option>
-                {ref !== "" && !entry && <option value={ref}>{ref} (not in this hub)</option>}
-                {library
-                  .filter((item) => node.type !== "expect" || item.action.effect === "read")
-                  .map((item) => (
-                    <option
-                      key={item.action.ref}
-                      value={item.action.name === ref ? ref : item.action.ref}
-                    >
-                      {item.action.ref} · {item.action.effect ?? "effect not declared"}
-                      {item.action.draft ? " · draft" : ""}
-                    </option>
-                  ))}
-              </select>
-            )}
-          </Field>
-          {action && (
-            <div className="sb-action-well">
-              {action.description && <p className="ah-small">{action.description}</p>}
-              <dl className="sc-values">
-                <div className="sc-value">
-                  <dt>Runs</dt>
-                  <dd>
-                    {action.runtime === "python" ? "Python" : "Shell"} ·{" "}
-                    <span className="ah-mono">
-                      <PathText path={action.script ?? ""} max={40} dimDir />
-                    </span>
-                  </dd>
-                </div>
-                <div className="sc-value">
-                  <dt>Effect</dt>
-                  <dd>
-                    <EffectBadge effect={action.effect} words />
-                  </dd>
-                </div>
-                <div className="sc-value">
-                  <dt>Gives</dt>
-                  <dd>{gives.length > 0 ? gives.join(", ") : "No output declared"}</dd>
-                </div>
-                {action.timeout && (
-                  <div className="sc-value">
-                    <dt>Timeout</dt>
-                    <dd>{pace(action.timeout)}</dd>
-                  </div>
-                )}
-                {plan && (
-                  <div className="sc-value">
-                    <dt>In {plan.environment}</dt>
-                    <dd>
-                      {DECISION_WORDS[plan.row.decision] ?? plan.row.decision}
-                      {plan.row.reason ? ` (${plan.row.reason})` : ""}: {plan.row.plan}
-                    </dd>
-                  </div>
-                )}
-              </dl>
-              {action.draft && (
-                <DraftLine
-                  commands={action.accept_command ? [action.accept_command] : []}
-                  action={action.name}
-                  then="plan again"
-                />
-              )}
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  onOpenAction(action.ref);
-                }}
-              >
-                Open action {action.name}
-              </Button>
-            </div>
-          )}
-          {actionTools && <div className="sb-action-tools">{actionTools}</div>}
-        </Section>
-      )}
-
-      {node.type === "expect" && (
+      {showScript ? (
+        <StepScript
+          node={node}
+          number={number}
+          action={action}
+          document={document}
+          environment={environment?.name ?? null}
+          environmentValues={environmentValues}
+        />
+      ) : (
         <>
-          <Section title="Done when">
-            <ConditionBuilder
-              label="Done when"
-              value={typeof node.until_when === "string" ? node.until_when : ""}
-              fields={selfFields}
-              onChange={(value) => {
-                set("until_when", value === "" ? "" : value);
-              }}
-            />
-          </Section>
-          <Section title="Timing">
-            <div className="ah-env-grid">
-              <Field label="Check every" help="At least 5 s." error={problemOf("every")}>
-                {(fieldId) => (
-                  <input
-                    id={fieldId}
-                    className="ah-input ah-mono"
-                    value={text(node.every, "")}
-                    onChange={(event) => {
-                      set("every", event.target.value);
-                    }}
-                  />
-                )}
-              </Field>
-              <Field label="For up to" help="At most 24 h." error={problemOf("timeout")}>
-                {(fieldId) => (
-                  <input
-                    id={fieldId}
-                    className="ah-input ah-mono"
-                    value={text(node.timeout, "")}
-                    onChange={(event) => {
-                      set("timeout", event.target.value);
-                    }}
-                  />
-                )}
-              </Field>
-            </div>
-            {typeof node.every === "string" &&
-              typeof node.timeout === "string" &&
-              maxChecks(node.every, node.timeout) !== null && (
-                <span className="ah-small ah-muted">
-                  At most {maxChecks(node.every, node.timeout)} checks.
-                </span>
-              )}
-          </Section>
-        </>
-      )}
-
-      {callsAction && action && action.inputs.length > 0 && (
-        <Section title="Inputs" help={`What this step gives ${action.name}.`}>
-          {action.inputs.map((input) => {
-            const current = given[input.name];
-            return (
-              <ValueField
-                key={input.name}
-                name={input.name}
-                runValue={runInputs.includes(input.name)}
-                required={input.required}
-                description={input.description ?? null}
-                fallback={input.default as Json | undefined}
-                type={input.type}
-                value={
-                  current === undefined
-                    ? ""
-                    : typeof current === "string"
-                      ? current
-                      : JSON.stringify(current)
-                }
-                sources={sources}
-                onChange={(value) => {
-                  const next =
-                    value === ""
-                      ? without(given, input.name)
-                      : {
-                          ...given,
-                          [input.name]:
-                            input.type === "integer" && /^-?\d+$/.test(value)
-                              ? Number(value)
-                              : value,
-                        };
-                  set("with", Object.keys(next).length > 0 ? next : undefined);
-                }}
-              />
-            );
-          })}
-        </Section>
-      )}
-
-      {node.type === "approval" && (
-        <>
-          <Section title="What you do">
-            <Field
-              label="What to do"
-              help="What the person does by hand before answering. Scenario inputs and kept values can go in the text."
-            >
-              {(fieldId) => (
-                <textarea
-                  id={fieldId}
-                  className="ah-input sb-textarea"
-                  rows={5}
-                  value={text(node.message, "")}
-                  onChange={(event) => {
-                    set("message", event.target.value);
+          {node.type === "expect" && (
+            <>
+              <Section title="Until">
+                <ConditionBuilder
+                  label="Done when"
+                  value={typeof node.until_when === "string" ? node.until_when : ""}
+                  fields={selfFields}
+                  onChange={(value) => {
+                    set("until_when", value === "" ? "" : value);
                   }}
                 />
-              )}
-            </Field>
-            <label className="ah-row ah-small" style={{ gap: 6 }}>
-              <input
-                type="checkbox"
-                checked={node.capture_response === true}
-                onChange={(event) => {
-                  set("capture_response", event.target.checked ? true : undefined);
-                }}
-              />
-              Ask me to type a value (an id, a reference); later steps can use it.
-            </label>
-          </Section>
-          <Section title="Answers">
-            {(Array.isArray(node.decisions) ? node.decisions : []).map((decision, index) => {
-              const item = record(decision);
-              const list = Array.isArray(node.decisions) ? [...node.decisions] : [];
-              return (
-                <div key={index} className="sb-answer">
-                  <Field label="Label" help={<span className="ah-mono">{text(item.id, "")}</span>}>
+              </Section>
+              <Section title="Timing">
+                <div className="ah-env-grid">
+                  <Field label="Check every" help="At least 5 s." error={problemOf("every")}>
                     {(fieldId) => (
                       <input
                         id={fieldId}
-                        className="ah-input"
-                        value={text(item.label, "")}
+                        className="ah-input ah-mono"
+                        value={text(node.every, "")}
                         onChange={(event) => {
-                          list[index] = { ...item, label: event.target.value };
-                          set("decisions", list);
+                          set("every", event.target.value);
                         }}
                       />
                     )}
                   </Field>
-                  <IconButton
-                    icon="x"
-                    size="sm"
-                    label={`Remove answer ${text(item.label, text(item.id, ""))}`}
-                    onClick={() => {
-                      set(
-                        "decisions",
-                        list.filter((_, at) => at !== index),
-                      );
-                    }}
-                  />
+                  <Field label="Give up after" help="At most 24 h." error={problemOf("timeout")}>
+                    {(fieldId) => (
+                      <input
+                        id={fieldId}
+                        className="ah-input ah-mono"
+                        value={text(node.timeout, "")}
+                        onChange={(event) => {
+                          set("timeout", event.target.value);
+                        }}
+                      />
+                    )}
+                  </Field>
                 </div>
-              );
-            })}
-            <Button
-              variant="ghost"
-              size="sm"
-              icon="plus"
-              onClick={() => {
-                const list = Array.isArray(node.decisions) ? [...node.decisions] : [];
-                list.push({ id: `answer-${String(list.length + 1)}`, label: "New answer" });
-                set("decisions", list);
-              }}
-            >
-              Add an answer
-            </Button>
-          </Section>
-        </>
-      )}
+                {typeof node.every === "string" &&
+                  typeof node.timeout === "string" &&
+                  maxChecks(node.every, node.timeout) !== null && (
+                    <span className="ah-small ah-muted">
+                      Checks at most {maxChecks(node.every, node.timeout)} times.
+                    </span>
+                  )}
+              </Section>
+            </>
+          )}
 
-      {node.type === "wait" && (
-        <Section title="Pause">
-          <Field
-            label="Pause for"
-            help="A duration: 30s, 5m, 1h; at most 7 days."
-            error={problemOf("duration")}
-          >
-            {(fieldId) => (
-              <input
-                id={fieldId}
-                className="ah-input ah-mono"
-                value={text(node.duration, "")}
-                onChange={(event) => {
-                  set("duration", event.target.value);
-                }}
-              />
-            )}
-          </Field>
-        </Section>
-      )}
-
-      {node.type === "loop_group" && (
-        <Section title="Repeat">
-          <ConditionBuilder
-            label="Repeat until"
-            value={typeof node.until_when === "string" ? node.until_when : ""}
-            fields={(Array.isArray(node.nodes) ? (node.nodes as BuilderNode[]) : []).flatMap(
-              (inner) =>
-                outputs(text(inner.action, "")).map((path) => ({
-                  ref: `$${inner.id}.output.${path}`,
-                  label: `${inner.id} · ${path}`,
-                })),
-            )}
-            onChange={(value) => {
-              set("until_when", value);
-            }}
-          />
-          <Field label="At most (rounds)">
+          <Field label="Name" optional help="Shows in the list instead of what the action does.">
             {(fieldId) => (
               <input
                 id={fieldId}
                 className="ah-input"
-                type="number"
-                min={1}
-                max={50}
-                value={Number(text(node.max_iterations, "1"))}
+                value={typeof node.description === "string" ? node.description : ""}
+                placeholder={cardTitle({ ...node, description: "" }, action)}
                 onChange={(event) => {
-                  set("max_iterations", Number(event.target.value));
+                  set("description", event.target.value);
                 }}
               />
             )}
           </Field>
-        </Section>
-      )}
 
-      {node.type === "include" && (
-        <Section title="Scenario">
-          <Field label="Scenario" help="Another scenario of this pack; its steps run here.">
-            {(fieldId) => (
-              <input
-                id={fieldId}
-                className="ah-input ah-mono"
-                value={text(node.include, "")}
-                onChange={(event) => {
-                  set("include", event.target.value);
-                }}
-              />
-            )}
-          </Field>
-        </Section>
-      )}
-
-      {callsAction && (
-        <Section
-          title="Keep for later"
-          help="Keep a field of the output so later steps can use it."
-        >
-          {Object.entries(capture).map(([name, from]) => (
-            <div key={name} className="sb-kept-row">
-              <ValueToken value={`$CTX.${name}`} />
-              <span className="ah-small ah-muted">
-                ← {shown(from).replace(/^\$self\.output\.?/, "") || "output"}
-              </span>
-              <span className="ah-grow" />
-              <IconButton
-                icon="x"
-                size="sm"
-                label={`Stop keeping ${name}`}
-                onClick={() => {
-                  const next = without(capture, name);
-                  set("capture", Object.keys(next).length > 0 ? next : undefined);
-                }}
-              />
-            </div>
-          ))}
-          {entry && entry.output_fields.length > 0 && (
-            <select
-              className="ah-input"
-              aria-label="Keep a field of the output"
-              value=""
-              onChange={(event) => {
-                const path = event.target.value;
-                if (!path) return;
-                const name = path.replace(/[^a-z0-9_]/gi, "_").toLowerCase();
-                set("capture", { ...capture, [name]: `$self.output.${path}` });
-              }}
+          {callsAction && (
+            <Field
+              label="Action"
+              help={
+                node.type === "expect"
+                  ? "Wait until steps run an action that only reads."
+                  : undefined
+              }
+              error={problemOf("action")}
             >
-              <option value="">Keep a field</option>
-              {entry.output_fields.map((field) => (
-                <option key={field.path} value={field.path}>
-                  {field.path}
-                  {field.type ? ` (${field.type})` : ""}
-                </option>
-              ))}
-            </select>
-          )}
-        </Section>
-      )}
-
-      <div className="sb-more">
-        <Disclosure
-          label={
-            conditionSet
-              ? `More: only if ${conditionWords(text(node.when))}`
-              : "More: only if, order and id"
-          }
-        >
-          <ConditionBuilder
-            label="Only if"
-            value={typeof node.when === "string" ? node.when : ""}
-            fields={whenFields}
-            onChange={(value) => {
-              set("when", value);
-            }}
-          />
-          <Field label="Runs after" help="Set by where it sits on the canvas.">
-            {() => (
-              <span className="ah-mono ah-small">{dependsOn(node).join(", ") || "the start"}</span>
-            )}
-          </Field>
-          {dependsOn(node).length > 1 && (
-            <Field label="Runs when">
               {(fieldId) => (
-                <select
-                  id={fieldId}
-                  className="ah-input"
-                  value={text(node.trigger_rule, "all_success")}
-                  onChange={(event) => {
-                    set(
-                      "trigger_rule",
-                      event.target.value === "all_success" ? undefined : event.target.value,
-                    );
+                <div className="ah-stack" style={{ gap: 6 }}>
+                  <select
+                    id={fieldId}
+                    className="ah-input"
+                    value={ref}
+                    onChange={(event) => {
+                      set("action", event.target.value);
+                    }}
+                  >
+                    <option value="">Choose an action</option>
+                    {ref !== "" && !entry && <option value={ref}>{ref} (not in this hub)</option>}
+                    {library
+                      .filter((item) => node.type !== "expect" || item.action.effect === "read")
+                      .map((item) => (
+                        <option
+                          key={item.action.ref}
+                          value={item.action.name === ref ? ref : item.action.ref}
+                        >
+                          {item.action.name} · {item.action.effect ?? "effect not declared"}
+                          {item.action.draft ? " · draft" : ""}
+                        </option>
+                      ))}
+                  </select>
+                  {action && (
+                    <>
+                      {action.description && <span className="ah-small">{action.description}</span>}
+                      <span className="sb-script-facts">
+                        <EffectBadge effect={action.effect} words />
+                        <span>{action.runtime === "python" ? "Python" : "Shell"}</span>
+                        <span className="ah-mono">
+                          <PathText path={action.script ?? ""} max={32} dimDir />
+                        </span>
+                        <button
+                          type="button"
+                          className="sb-link"
+                          onClick={() => {
+                            onTab("script");
+                          }}
+                        >
+                          View script ›
+                        </button>
+                      </span>
+                    </>
+                  )}
+                  {actionTools && <div className="sb-action-tools">{actionTools}</div>}
+                </div>
+              )}
+            </Field>
+          )}
+
+          {callsAction && action && action.inputs.length > 0 && (
+            <Section title="Values for this step">
+              {resolved.filter(asField).length === 0 && (
+                <span className="ah-small ah-muted">
+                  This step sets no value of its own: every input comes from elsewhere.
+                </span>
+              )}
+              {action.inputs
+                .filter((input) => {
+                  const found = resolved.find((item) => item.name === input.name);
+                  return found !== undefined && asField(found);
+                })
+                .map((input) => {
+                  const current = given[input.name];
+                  const found = resolved.find((item) => item.name === input.name);
+                  const back = overridden.includes(input.name) && found?.from !== "missing";
+                  return (
+                    <div key={input.name} className="ah-stack" style={{ gap: 2 }}>
+                      <ValueField
+                        name={input.name}
+                        required={input.required}
+                        description={
+                          found?.from === "missing"
+                            ? `Needed: nothing gives it a value. ${input.description ?? ""}`
+                            : (input.description ?? null)
+                        }
+                        fallback={input.default as Json | undefined}
+                        type={input.type}
+                        value={
+                          current === undefined
+                            ? ""
+                            : typeof current === "string"
+                              ? current
+                              : JSON.stringify(current)
+                        }
+                        sources={sources}
+                        onChange={(value) => {
+                          const next =
+                            value === ""
+                              ? without(given, input.name)
+                              : {
+                                  ...given,
+                                  [input.name]:
+                                    input.type === "integer" && /^-?\d+$/.test(value)
+                                      ? Number(value)
+                                      : value,
+                                };
+                          set("with", Object.keys(next).length > 0 ? next : undefined);
+                        }}
+                      />
+                      {back && (
+                        <button
+                          type="button"
+                          className="sb-link ah-small"
+                          style={{ alignSelf: "flex-start" }}
+                          onClick={() => {
+                            setOverridden(overridden.filter((name) => name !== input.name));
+                            set(
+                              "with",
+                              (() => {
+                                const next = without(given, input.name);
+                                return Object.keys(next).length > 0 ? next : undefined;
+                              })(),
+                            );
+                          }}
+                        >
+                          Use the value from{" "}
+                          {runInputs.includes(input.name)
+                            ? environmentValues && input.name in environmentValues
+                              ? environment?.name
+                              : "the scenario run"
+                            : "the default"}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              {inherited.length > 0 && (
+                <div className="sb-comes-from" role="note">
+                  {byEnvironment.length > 0 && (
+                    <span>
+                      <Icon name="server" size="sm" /> <b>{names(byEnvironment)}</b>{" "}
+                      {verb(byEnvironment)} from {environment?.name}.
+                    </span>
+                  )}
+                  {byRun.length > 0 && (
+                    <span>
+                      <Icon name="flag" size="sm" /> <b>{names(byRun)}</b> {verb(byRun)} from the
+                      scenario run
+                      {byRun.some((input) => input.value === null) ? " (asked at start)" : ""}.
+                    </span>
+                  )}
+                  {byDefault.length > 0 && (
+                    <span>
+                      <Icon name="circle-dashed" size="sm" /> <b>{names(byDefault)}</b>{" "}
+                      {byDefault.length === 1 ? "uses its default" : "use their defaults"}
+                      {byDefault.length === 1 && byDefault[0]?.value
+                        ? `, ${byDefault[0].value}`
+                        : ""}
+                      .
+                    </span>
+                  )}
+                  <select
+                    className="ah-input sb-comes-from-set"
+                    aria-label="Set one for this step"
+                    value=""
+                    onChange={(event) => {
+                      const name = event.target.value;
+                      if (name) setOverridden([...overridden, name]);
+                    }}
+                  >
+                    <option value="">Set one for this step…</option>
+                    {inherited.map((input) => (
+                      <option key={input.name} value={input.name}>
+                        {input.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </Section>
+          )}
+
+          {plan && (
+            <Section title={`In ${plan.environment}`}>
+              <span className="ah-small">
+                {DECISION_WORDS[plan.row.decision] ?? plan.row.decision}
+                {plan.row.reason ? ` (${plan.row.reason})` : ""}: {plan.row.plan}
+              </span>
+            </Section>
+          )}
+
+          {node.type === "approval" && (
+            <>
+              <Section title="What you do">
+                <Field
+                  label="What to do"
+                  help="What the person does by hand before answering. Scenario inputs and kept values can go in the text."
+                >
+                  {(fieldId) => (
+                    <textarea
+                      id={fieldId}
+                      className="ah-input sb-textarea"
+                      rows={5}
+                      value={text(node.message, "")}
+                      onChange={(event) => {
+                        set("message", event.target.value);
+                      }}
+                    />
+                  )}
+                </Field>
+                <label className="ah-row ah-small" style={{ gap: 6 }}>
+                  <input
+                    type="checkbox"
+                    checked={node.capture_response === true}
+                    onChange={(event) => {
+                      set("capture_response", event.target.checked ? true : undefined);
+                    }}
+                  />
+                  Ask me to type a value (an id, a reference); later steps can use it.
+                </label>
+              </Section>
+              <Section title="Answers">
+                {(Array.isArray(node.decisions) ? node.decisions : []).map((decision, index) => {
+                  const item = record(decision);
+                  const list = Array.isArray(node.decisions) ? [...node.decisions] : [];
+                  return (
+                    <div key={index} className="sb-answer">
+                      <Field
+                        label="Label"
+                        help={<span className="ah-mono">{text(item.id, "")}</span>}
+                      >
+                        {(fieldId) => (
+                          <input
+                            id={fieldId}
+                            className="ah-input"
+                            value={text(item.label, "")}
+                            onChange={(event) => {
+                              list[index] = { ...item, label: event.target.value };
+                              set("decisions", list);
+                            }}
+                          />
+                        )}
+                      </Field>
+                      <IconButton
+                        icon="x"
+                        size="sm"
+                        label={`Remove answer ${text(item.label, text(item.id, ""))}`}
+                        onClick={() => {
+                          set(
+                            "decisions",
+                            list.filter((_, at) => at !== index),
+                          );
+                        }}
+                      />
+                    </div>
+                  );
+                })}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon="plus"
+                  onClick={() => {
+                    const list = Array.isArray(node.decisions) ? [...node.decisions] : [];
+                    list.push({ id: `answer-${String(list.length + 1)}`, label: "New answer" });
+                    set("decisions", list);
                   }}
                 >
-                  {TRIGGER_WORDS.map(([rule, words]) => (
-                    <option key={rule} value={rule}>
-                      {words}
+                  Add an answer
+                </Button>
+              </Section>
+            </>
+          )}
+
+          {node.type === "wait" && (
+            <Section title="Pause">
+              <Field
+                label="Pause for"
+                help="A duration: 30s, 5m, 1h; at most 7 days."
+                error={problemOf("duration")}
+              >
+                {(fieldId) => (
+                  <input
+                    id={fieldId}
+                    className="ah-input ah-mono"
+                    value={text(node.duration, "")}
+                    onChange={(event) => {
+                      set("duration", event.target.value);
+                    }}
+                  />
+                )}
+              </Field>
+            </Section>
+          )}
+
+          {node.type === "loop_group" && (
+            <Section title="Repeat">
+              <ConditionBuilder
+                label="Repeat until"
+                value={typeof node.until_when === "string" ? node.until_when : ""}
+                fields={(Array.isArray(node.nodes) ? (node.nodes as BuilderNode[]) : []).flatMap(
+                  (inner) =>
+                    outputs(text(inner.action, "")).map((path) => ({
+                      ref: `$${inner.id}.output.${path}`,
+                      label: `${inner.id} · ${path}`,
+                    })),
+                )}
+                onChange={(value) => {
+                  set("until_when", value);
+                }}
+              />
+              <Field label="At most (rounds)">
+                {(fieldId) => (
+                  <input
+                    id={fieldId}
+                    className="ah-input"
+                    type="number"
+                    min={1}
+                    max={50}
+                    value={Number(text(node.max_iterations, "1"))}
+                    onChange={(event) => {
+                      set("max_iterations", Number(event.target.value));
+                    }}
+                  />
+                )}
+              </Field>
+            </Section>
+          )}
+
+          {node.type === "include" && (
+            <Section title="Scenario">
+              <Field label="Scenario" help="Another scenario of this pack; its steps run here.">
+                {(fieldId) => (
+                  <input
+                    id={fieldId}
+                    className="ah-input ah-mono"
+                    value={text(node.include, "")}
+                    onChange={(event) => {
+                      set("include", event.target.value);
+                    }}
+                  />
+                )}
+              </Field>
+            </Section>
+          )}
+
+          {callsAction && (
+            <Section
+              title="Keep for later"
+              help="Keep a field of the output so later steps can use it."
+            >
+              {Object.entries(capture).map(([name, from]) => (
+                <div key={name} className="sb-kept-row">
+                  <ValueToken value={`$CTX.${name}`} />
+                  <span className="ah-small ah-muted">
+                    ← {shown(from).replace(/^\$self\.output\.?/, "") || "output"}
+                  </span>
+                  <span className="ah-grow" />
+                  <IconButton
+                    icon="x"
+                    size="sm"
+                    label={`Stop keeping ${name}`}
+                    onClick={() => {
+                      const next = without(capture, name);
+                      set("capture", Object.keys(next).length > 0 ? next : undefined);
+                    }}
+                  />
+                </div>
+              ))}
+              {entry && entry.output_fields.length > 0 && (
+                <select
+                  className="ah-input"
+                  aria-label="Keep a field of the output"
+                  value=""
+                  onChange={(event) => {
+                    const path = event.target.value;
+                    if (!path) return;
+                    const name = path.replace(/[^a-z0-9_]/gi, "_").toLowerCase();
+                    set("capture", { ...capture, [name]: `$self.output.${path}` });
+                  }}
+                >
+                  <option value="">Keep a field</option>
+                  {entry.output_fields.map((field) => (
+                    <option key={field.path} value={field.path}>
+                      {field.path}
+                      {field.type ? ` (${field.type})` : ""}
                     </option>
                   ))}
                 </select>
               )}
-            </Field>
+            </Section>
           )}
-          <Field label="Id" help="Unique, kebab-case. Renaming updates what waits for it.">
-            {(fieldId) => (
-              <input
-                id={fieldId}
-                className="ah-input ah-mono"
-                value={id}
-                onChange={(event) => {
-                  setId(event.target.value);
-                }}
-                onBlur={() => {
-                  if (id !== node.id && /^[a-z][a-z0-9-]*$/.test(id)) onChange({ ...node, id });
-                  else setId(node.id);
+
+          <div className="sb-more">
+            <Disclosure
+              label={
+                conditionSet
+                  ? `More: only if ${conditionWords(text(node.when))}`
+                  : "More: only if, order and id"
+              }
+            >
+              <ConditionBuilder
+                label="Only if"
+                value={typeof node.when === "string" ? node.when : ""}
+                fields={whenFields}
+                onChange={(value) => {
+                  set("when", value);
                 }}
               />
+              <Field label="Runs after" help="Set by where it sits on the canvas.">
+                {() => (
+                  <span className="ah-mono ah-small">
+                    {dependsOn(node).join(", ") || "the start"}
+                  </span>
+                )}
+              </Field>
+              {dependsOn(node).length > 1 && (
+                <Field label="Runs when">
+                  {(fieldId) => (
+                    <select
+                      id={fieldId}
+                      className="ah-input"
+                      value={text(node.trigger_rule, "all_success")}
+                      onChange={(event) => {
+                        set(
+                          "trigger_rule",
+                          event.target.value === "all_success" ? undefined : event.target.value,
+                        );
+                      }}
+                    >
+                      {TRIGGER_WORDS.map(([rule, words]) => (
+                        <option key={rule} value={rule}>
+                          {words}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </Field>
+              )}
+              <Field label="Id" help="Unique, kebab-case. Renaming updates what waits for it.">
+                {(fieldId) => (
+                  <input
+                    id={fieldId}
+                    className="ah-input ah-mono"
+                    value={id}
+                    onChange={(event) => {
+                      setId(event.target.value);
+                    }}
+                    onBlur={() => {
+                      if (id !== node.id && /^[a-z][a-z0-9-]*$/.test(id)) onChange({ ...node, id });
+                      else setId(node.id);
+                    }}
+                  />
+                )}
+              </Field>
+            </Disclosure>
+            {stops.length > 0 && (
+              <Disclosure
+                label={`Where it can stop: ${String(stops.length)} ${stops.length === 1 ? "way" : "ways"}`}
+              >
+                <ul className="sb-stops">
+                  {stops.map((line) => (
+                    <li key={line.key}>
+                      <Icon name={line.icon} size="sm" /> {line.text}
+                    </li>
+                  ))}
+                </ul>
+              </Disclosure>
             )}
-          </Field>
-        </Disclosure>
-        {stops.length > 0 && (
-          <Disclosure
-            label={`Where it can stop: ${String(stops.length)} ${stops.length === 1 ? "way" : "ways"}`}
-          >
-            <ul className="sb-stops">
-              {stops.map((line) => (
-                <li key={line.key}>
-                  <Icon name={line.icon} size="sm" /> {line.text}
-                </li>
-              ))}
-            </ul>
-          </Disclosure>
-        )}
-      </div>
+          </div>
+        </>
+      )}
     </FormShell>
   );
 }

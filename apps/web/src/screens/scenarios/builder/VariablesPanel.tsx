@@ -199,6 +199,22 @@ export function VariablesPanel({
   const envOther = envNames.filter((name) => !envUsed.includes(name));
   const [showOther, setShowOther] = useState(false);
 
+  const editorView =
+    editing && onSaveValue && environment ? (
+      <ValueEditor
+        key={editing.name || "new"}
+        name={editing.name}
+        initial={editing.value}
+        environment={environment}
+        isNew={editing.isNew}
+        keep={editing.keep === true}
+        onSave={onSaveValue}
+        onClose={() => {
+          setEditing(null);
+        }}
+      />
+    ) : null;
+
   const row = (
     name: string,
     value: string | null,
@@ -229,6 +245,7 @@ export function VariablesPanel({
         <span className="sb-var-note">{note}</span>
       </button>
       {extra}
+      {editing && !editing.isNew && editing.name === name && editorView}
     </li>
   );
 
@@ -266,6 +283,22 @@ export function VariablesPanel({
                   fallback,
                   [description, used(usage.get(name))].filter(Boolean).join(" · "),
                   () => undefined,
+                  // A value many steps share (an account, a name) belongs to the environment.
+                  environment &&
+                    onSaveValue &&
+                    environmentValues !== null &&
+                    fallback !== null &&
+                    (usage.get(name) ?? 0) >= 3 ? (
+                    <button
+                      type="button"
+                      className="sb-link sb-var-keep"
+                      onClick={() => {
+                        setEditing({ name, value: fallback, isNew: false, keep: true });
+                      }}
+                    >
+                      <Icon name="corner-down-right" size="sm" /> Keep in {environment}
+                    </button>
+                  ) : undefined,
                 );
               })}
           </ul>
@@ -345,20 +378,7 @@ export function VariablesPanel({
                   : `${String(envOther.length)} more ${envOther.length === 1 ? "value" : "values"} this scenario does not use`}
               </Button>
             )}
-            {editing && onSaveValue && (
-              <ValueEditor
-                key={editing.name || "new"}
-                name={editing.name}
-                initial={editing.value}
-                environment={environment}
-                isNew={editing.isNew}
-                keep={editing.keep === true}
-                onSave={onSaveValue}
-                onClose={() => {
-                  setEditing(null);
-                }}
-              />
-            )}
+            {editing?.isNew && editorView}
             <span className="ah-small ah-subtle">
               <Icon name="lock" size="sm" /> Plain text, never secrets.{" "}
               <button type="button" className="sb-link" onClick={onOpenEnvironments}>

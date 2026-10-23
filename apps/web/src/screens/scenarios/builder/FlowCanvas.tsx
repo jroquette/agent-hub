@@ -28,19 +28,19 @@ export const KIND_LOOK: Readonly<
   Record<string, { label: string; icon: IconName; tint: string; soft: string }>
 > = {
   action: {
-    label: "Script",
+    label: "Run an action",
     icon: "circle-play",
     tint: "var(--kind-do)",
     soft: "var(--kind-do-soft)",
   },
   include: {
-    label: "Sub-flow",
+    label: "Run a scenario",
     icon: "layers",
     tint: "var(--kind-do)",
     soft: "var(--kind-do-soft)",
   },
   expect: {
-    label: "Check",
+    label: "Wait until",
     icon: "timer",
     tint: "var(--kind-check)",
     soft: "var(--kind-check-soft)",
@@ -70,10 +70,10 @@ export const KIND_LOOK: Readonly<
     soft: "var(--kind-control-soft)",
   },
   approval: {
-    label: "Manual step",
-    icon: "hand",
-    tint: "var(--waiting)",
-    soft: "var(--waiting-soft)",
+    label: "Ask me",
+    icon: "stamp",
+    tint: "var(--kind-control)",
+    soft: "var(--kind-control-soft)",
   },
 };
 
