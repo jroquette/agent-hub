@@ -1,6 +1,6 @@
-# A weekly security sweep: the scanners that are installed run on each repo of hub.json
-# as of origin/<default branch> (no fetch: the report names the commit scanned), in a detached
-# worktree under TMPDIR that is removed after; the findings not seen before go to one triage
+# A weekly security sweep: the scanners that are installed run on each repo of hub.json (read by
+# hub step config: no script opens hub.json) as of origin/<default branch> (no fetch: the report
+# names the commit scanned), in a detached worktree under TMPDIR that is removed after; the findings not seen before go to one triage
 # session that follows the hub's security-reviewer agent; the ones it keeps go to a note in
 # brain/_inbox/ for /triage. The findings are marked seen only after the report is written, and
 # only those triage settled (kept or dropped), so an unresolved finding, a failed or partial
@@ -43,12 +43,29 @@ inputs:
 returns: mark
 outcome_field: status
 nodes:
+  - id: config
+    type: shell
+    description: The hub.json values this run's scripts need, read by the CLI (read-only).
+    command: [hub, step, config]
+    effect: read
+    mutates_checkout: false
+    retry: {max_attempts: 0}
+    output_format:
+      type: object
+      properties:
+        default_branch: {type: string}
+        branch_prefix: {type: [string, "null"]}
+        hub: {type: object}
+        repos: {type: array, items: {type: object}}
+      required: [default_branch, branch_prefix, hub, repos]
+
   - id: scan
     type: script
     description: Run the installed scanners on each repo as of origin/<branch>, in a TMPDIR worktree; structured fields only.
+    depends_on: [config]
     runtime: python
     script: scan.py
-    args: [--repo, $INPUTS.repo]
+    args: [--config, $config.output, --repo, $INPUTS.repo]
     effect: read
     mutates_checkout: false
     timeout: 45m

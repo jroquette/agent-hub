@@ -49,7 +49,7 @@ def test_validates_and_passes_every_fixture_when_security_sweep_tested(
     tested = run_command(demo_workspace.hub, "workflow", "test", NAME)
 
     assert validated.exit_code == 0, validated.output
-    assert validated.stdout == "security-sweep: valid (5 nodes in 5 layers)\n"
+    assert validated.stdout == "security-sweep: valid (6 nodes in 6 layers)\n"
     assert tested.exit_code == 0, tested.output
     for fixture in FIXTURES:
         # The hub's seeded copy shadows the built-in (AGH-227).
@@ -65,9 +65,16 @@ def test_declares_read_only_nodes_and_no_tracker_step_when_document_loaded() -> 
     assert set(loaded.inputs) == {"repo"}
     assert loaded.inputs["repo"].default == ""
     assert loaded.environment is None
-    assert [node.type for node in loaded.nodes] == ["script", "script", "agent", "script", "script"]
+    types = ["shell", "script", "script", "agent", "script", "script"]
+    assert [node.type for node in loaded.nodes] == types
+    # The one hub step node reads hub.json for scan.py (AGH-480) and writes nothing.
+    steps = [
+        node.command for node in loaded.nodes if getattr(node, "command", ())[:2] == ("hub", "step")
+    ]
+    assert steps == [("hub", "step", "config")]
+    assert nodes["config"].mutates_checkout is False
+    assert nodes["scan"].args[:2] == ("--config", "$config.output")
     for node in loaded.nodes:
-        assert getattr(node, "command", ())[:2] != ("hub", "step")
         assert node.retry is not None
         assert node.retry.max_attempts == 0
     for node_id in ("scan", "new"):
@@ -266,7 +273,22 @@ class Chain:
         self.env = {"PATH": str(bin_dir), "TMPDIR": str(temp), "HOME": str(tmp_path)}
         self.temp = temp
 
+    def config(self) -> str:
+        """The workflow's config node: what the real hub step config prints in the hub."""
+        done = subprocess.run(  # noqa: S603 - this venv's hub, fixed arguments, a tmp hub
+            [str(Path(sys.executable).parent / "hub"), "step", "config"],
+            cwd=self.hub,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        assert done.returncode == 0, done.stderr
+        return done.stdout
+
     def run(self, name: str, *args: str, stdin: str = "") -> Any:
+        if name == "scan.py":
+            args = ("--config", self.config(), *args)
         done = script(name, *args, cwd=self.hub, env=self.env, stdin=stdin)
         assert done.returncode == 0, done.stderr
         assert VALUE not in done.stdout

@@ -1,6 +1,8 @@
 # A first run: three new findings, triage keeps F2, the note lists it and the three are marked seen.
 workflow: security-sweep
 stubs:
+  config:
+    output: {default_branch: main, branch_prefix: jdoe/, author_name: Jane Doe, author_email: jane@example.com, ready_label: agent-ready, teams: [DEM], hub: {github: acme/demo-hub, default_branch: main, target: {github: acme/demo-hub, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}, repos: [{dir: demo-api, github: acme/demo-api, default_branch: main, check_fast: make check-fast, check: make check, target: {github: acme/demo-api, default_branch: main, conventions: {branch: "", commit_title: "", pr_title: "", titles_configured: false, pr_title_explicit: false}}}]}
   scan:
     output:
       repos:
@@ -41,4 +43,4 @@ stubs:
   report: {output: {path: brain/_inbox/security-YYYY-MM-DD.md, kept: 1, secrets: 0, missing: [], triaged: [F1, F2, F3], status: findings}}
   mark: {output: {status: findings, marked: 3, store_size: 3}}
 expect: {status: done, outcome: findings}
-reached: [scan, new, triage, report, mark]
+reached: [config, scan, new, triage, report, mark]
