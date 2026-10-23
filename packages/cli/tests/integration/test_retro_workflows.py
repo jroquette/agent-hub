@@ -160,6 +160,8 @@ def load_script(name: str) -> ModuleType:
     spec = importlib.util.spec_from_file_location(f"retro_{name}", PACK / "scripts" / f"{name}.py")
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    # Registered before it runs: its dataclasses look their module up (string annotations).
+    sys.modules[spec.name] = module
     writes, sys.dont_write_bytecode = sys.dont_write_bytecode, True
     try:
         spec.loader.exec_module(module)
