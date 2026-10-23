@@ -567,6 +567,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     });
 
     const fetch = await screen.findByRole("treeitem", { name: FETCH });
+    await user.click(screen.getByRole("tab", { name: "Variables" }));
     // A repeat is not a value of the step's own: the row does not list it.
     expect(fetch).not.toHaveTextContent("external_ref");
     const asked = screen.getByRole("region", { name: "Set in the scenario" });
@@ -815,6 +816,58 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(screen.queryByRole("region", { name: "Start the scenario" })).not.toBeInTheDocument();
   });
 
+  it("scenario builder's Blocks tab adds a block after the selected step, by click or Enter", async () => {
+    const user = userEvent.setup();
+    renderBuilder();
+
+    await user.click(await screen.findByRole("treeitem", { name: FETCH }));
+    const blocks = screen.getByRole("complementary", { name: "Blocks, variables and actions" });
+    expect(within(blocks).getByRole("tab", { name: "Blocks" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    // The step types, and the hub's actions as ready blocks (a read one can also wait).
+    expect(within(blocks).getByRole("region", { name: "Control" })).toHaveTextContent("Repeat");
+    expect(
+      within(blocks).getByRole("button", { name: "Add Run send-queue-message after step 1" }),
+    ).toBeInTheDocument();
+    expect(
+      within(blocks).getByRole("button", {
+        name: "Add Wait until, with get-order-by-ref after step 1",
+      }),
+    ).toBeInTheDocument();
+
+    await user.click(within(blocks).getByRole("button", { name: "Add Pause after step 1" }));
+    expect(await screen.findByRole("treeitem", { name: /^Step 2, Pause/ })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("treeitem", { name: CHECK })).toHaveAccessibleName(/^Step 3/);
+
+    within(blocks)
+      .getByRole("button", { name: /^Add Ask me after step 2/ })
+      .focus();
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("treeitem", { name: /^Step 3, Ask me/ })).toBeInTheDocument();
+  });
+
+  it("scenario builder takes blocks into an empty scenario", async () => {
+    const user = userEvent.setup();
+    renderBuilder({
+      [DETAIL]: aScenarioDetail({
+        document: { ...document, nodes: [] },
+        content_hash: "sha256:aaa",
+      }),
+    });
+
+    // The list (its Start row) shows even with no step, so a block has somewhere to land.
+    expect(await screen.findByRole("treeitem", { name: /Starts in/ })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add Run an action at the end" }));
+    expect(
+      await screen.findByRole("treeitem", { name: /^Step 1, Run an action/ }),
+    ).toBeInTheDocument();
+  });
+
   it("scenario builder's Settings tab folds the values that come from elsewhere into one box", async () => {
     const user = userEvent.setup();
     renderSources();
@@ -875,6 +928,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const { requests } = renderSources({ [ENV_EDIT]: { environments: [] } });
 
     await screen.findByRole("treeitem", { name: FETCH });
+    await user.click(screen.getByRole("tab", { name: "Variables" }));
     const fromEnv = screen.getByRole("region", { name: "From personal" });
     expect(fromEnv).toHaveTextContent("aws_account_id");
     expect(fromEnv).toHaveTextContent("123456789012");
@@ -933,6 +987,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     });
 
     await screen.findByRole("treeitem", { name: FETCH });
+    await user.click(screen.getByRole("tab", { name: "Variables" }));
     const asked = screen.getByRole("region", { name: "Set in the scenario" });
     expect(asked).toHaveTextContent("personal_name is used by most steps");
     await user.click(within(asked).getByRole("button", { name: "Keep in personal" }));

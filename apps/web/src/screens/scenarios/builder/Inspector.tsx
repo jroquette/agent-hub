@@ -892,7 +892,7 @@ export function BlockInspector({
             </>
           )}
 
-          <Field label="Name" optional help="Shows in the list instead of what the action does.">
+          <Field label="Name" optional help="Shows in the list instead of what the step does.">
             {(fieldId) => (
               <input
                 id={fieldId}
