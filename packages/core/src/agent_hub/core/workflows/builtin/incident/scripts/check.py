@@ -9,7 +9,8 @@ on stdin, run in the hub. The hypotheses run in rank order; each check runs, fro
 detached worktree of its repo (``../<dir>``) at the evidence's ``head``, made under one
 ``tempfile.mkdtemp()`` when first needed and removed at the end, so the owner's checkouts are
 never the cwd and stay as they were. Each check gets ``--timeout`` seconds (60; its process
-group is killed after), and all of them ``--budget`` seconds (300; the rest are refused). Its
+group is killed after), and all of them, the worktrees' making included, ``--budget`` seconds
+(300; the rest are refused). Its
 output goes to a temporary file, of which only the last ``TAIL_BYTES`` are read.
 
 Output: ``{results: [{id, rank, repo, status, exit_code, reason, tail}], confirmed, mitigations,
@@ -236,7 +237,7 @@ class Sandbox:
     def env(self) -> dict[str, str]:
         return child_env(os.environ.get("PATH") or DEFAULT_PATH, str(self.root))
 
-    def git(self, repo: str, *args: str) -> bool:
+    def git(self, repo: str, *args: str, timeout: float = WORKTREE_TIMEOUT) -> bool:
         """``git <args>`` in the owner's checkout of ``repo``, hooks off; whether it passed."""
         try:
             done = subprocess.run(  # noqa: S603 - git from PATH, fixed worktree subcommands
@@ -245,7 +246,7 @@ class Sandbox:
                 env=self.env(),
                 stdin=subprocess.DEVNULL,
                 capture_output=True,
-                timeout=WORKTREE_TIMEOUT,
+                timeout=timeout,
                 check=False,
             )
         except GIT_ERRORS:
@@ -256,18 +257,22 @@ class Sandbox:
         """The worktree of ``repo`` at its evidence head, or ``None`` when it cannot be made."""
         if repo not in self.made:
             path = self.root / repo
-            added = self.git(
-                repo, "worktree", "add", "--quiet", "--detach", str(path), self.heads[repo]
-            )
+            # Within the checks' budget: making a worktree is part of checking.
+            limit = min(WORKTREE_TIMEOUT, self.deadline - time.monotonic())
+            add = ("worktree", "add", "--quiet", "--detach", str(path), self.heads[repo])
+            added = limit > 0 and self.git(repo, *add, timeout=limit)
             self.made[repo] = path if added else None
         return self.made[repo]
 
     def close(self) -> None:
+        """Remove every worktree made, then prune each repo tried: an add that was stopped may
+        have registered its worktree before its folder went with the temporary one."""
         for repo, path in self.made.items():
             if path is not None:
                 self.git(repo, "worktree", "remove", "--force", str(path))
-                self.git(repo, "worktree", "prune")
         shutil.rmtree(self.root, ignore_errors=True)
+        for repo in self.made:
+            self.git(repo, "worktree", "prune")
 
 
 def tail_of(output: IO[bytes]) -> str:
