@@ -2,8 +2,8 @@ version: 1
 name: order-state
 description: Read one order's state on the stack
 effect: read
-runtime: python
-script: scripts/fixture_action.py
+runtime: sh
+script: scripts/fixture_action.sh
 timeout: 1m
 inputs:
   shop_order_id: {type: string, required: true}

@@ -2,8 +2,8 @@ version: 1
 name: queue-send
 description: Send one message to the stack's work queue
 effect: write
-runtime: python
-script: scripts/fixture_action.py
+runtime: sh
+script: scripts/fixture_action.sh
 timeout: 1m
 inputs:
   message: {type: string, required: true}
