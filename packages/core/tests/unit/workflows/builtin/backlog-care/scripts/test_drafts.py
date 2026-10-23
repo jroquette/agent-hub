@@ -430,3 +430,19 @@ def test_leaves_no_fence_or_marker_when_markers_hide_one(
     assert "```" not in text
     assert text.count("<<<<<") == 1
     assert text.count(">>>>>") == 1
+
+
+def test_ignores_supersede_cycle_when_three_issues_close_each_other(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    drafts = [
+        a_draft("DEM-3", action="supersede", superseded_by="DEM-4"),
+        a_draft("DEM-4", action="supersede", superseded_by="DEM-5"),
+        a_draft("DEM-5", action="supersede", superseded_by="DEM-3"),
+    ]
+
+    found = plan(capsys, monkeypatch, drafts, picked=["DEM-3", "DEM-4", "DEM-5"])
+
+    assert [item["id"] for item in found["items"]] == ["DEM-3", "DEM-4"]
+    assert found["ignored"] == [{"id": "DEM-5", "reason": "supersede cycle"}]
+    assert found["undrafted"] == ["DEM-5"]
