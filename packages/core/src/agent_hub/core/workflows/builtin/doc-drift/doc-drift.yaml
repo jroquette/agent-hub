@@ -18,6 +18,10 @@
 # renamed in one Typer group while another group keeps the same name is not seen as gone.
 #
 # Fetch the repo first: the scripts get no token and read origin/<default> as last fetched.
+# Each approved run leaves a worktree at <repo>/.claude/worktrees/doc-drift-<run id> on the branch
+# <branch_prefix>doc-drift-<run id>; a resumed run reuses both, and its commit. Once the PR is merged
+# or closed (or the run committed nothing), remove them from the repo's checkout:
+#   git worktree remove .claude/worktrees/doc-drift-<run id> && git branch -D <branch_prefix>doc-drift-<run id>
 # Suggested hub.json entries:
 #   "events": [{"workflow": "doc-drift", "on": "merge", "repo": "<dir>", "inputs": {"repo": "<dir>"}}]
 #   "schedules": [{"workflow": "doc-drift", "cron": "0 6 1 * *", "inputs": {"repo": "<dir>"}}]

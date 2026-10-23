@@ -304,7 +304,10 @@ them at its gate, opens a docs-only PR in the repo (ADRs are reported, never edi
 for the last month. To run it on every merge and once a month, add to `hub.json`:
 `"events": [{"workflow": "doc-drift", "on": "merge", "repo": "<dir>", "inputs": {"repo": "<dir>"}}]` and
 `"schedules": [{"workflow": "doc-drift", "cron": "0 6 1 * *", "inputs": {"repo": "<dir>"}}]`. Known limit: a command
-renamed in one command group while another group keeps the same name is not seen as gone.
+renamed in one command group while another group keeps the same name is not seen as gone. Each approved run
+leaves a worktree at `<repo>/.claude/worktrees/doc-drift-<run id>` on the branch `<branch_prefix>doc-drift-<run id>`
+(a resumed run reuses both); once its PR is merged or closed, or it committed nothing, remove them in the repo with
+`git worktree remove .claude/worktrees/doc-drift-<run id>` and `git branch -D <branch_prefix>doc-drift-<run id>`.
 
 **Sessions from the app.** On the Sessions screen, New session starts the user's own `claude` (on `PATH`, logged in)
 in the hub, a repo or one of their worktrees, with the hub's CLAUDE.md, hooks (the guard still applies), skills and
