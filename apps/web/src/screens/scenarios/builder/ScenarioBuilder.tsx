@@ -2,7 +2,13 @@ import "./builder.css";
 import "./blocks.css";
 import "./steps.css";
 
-import { useEffect, useRef, useState, type RefObject } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type RefObject,
+} from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
 import {
@@ -27,7 +33,8 @@ import {
   type ScenarioAction,
   type ScenarioDetail,
 } from "../queries";
-import { StepList, type InsertTarget } from "./StepList";
+import { BlocksTab, type BlockLook } from "./BlocksTab";
+import { StepList, nearestGap, scrollNear, type InsertTarget } from "./StepList";
 import { VariablesPanel, type KeptValue } from "./VariablesPanel";
 import { InsertMenu } from "./InsertMenu";
 import { createActionMessage, describeMessage, type DescribeScope } from "./claude";
@@ -239,7 +246,15 @@ export function ScenarioBuilder({
   const [stepTab, setStepTab] = useState<"settings" | "script">("settings");
   const [planValues, setPlanValues] = useState<Record<string, string>>({});
   const [planAfterSave, setPlanAfterSave] = useState<Record<string, string> | null>(null);
-  const [leftTab, setLeftTab] = useState<"variables" | "actions">("variables");
+  const [leftTab, setLeftTab] = useState<"blocks" | "variables" | "actions">("blocks");
+  // A block dragged from the Blocks tab: how it looks, where the pointer is, where it would land.
+  const [paletteDrag, setPaletteDrag] = useState<{
+    look: BlockLook;
+    x: number;
+    y: number;
+    target: InsertTarget | null;
+  } | null>(null);
+  const listScroll = useRef<HTMLDivElement>(null);
   const [rowMenu, setRowMenu] = useState<{ id: string; anchor: DOMRect } | null>(null);
   const [announce, setAnnounce] = useState("");
   const [variable, setVariable] = useState<string | null>(null);
@@ -933,6 +948,39 @@ export function ScenarioBuilder({
     />
   );
 
+  // A press on a block of the Blocks tab: a drag drops it into the gap nearest the pointer
+  // (a line shows where); a press that does not move adds it after the selected step.
+  const pressBlock = (event: ReactPointerEvent, make: () => Item, look: BlockLook) => {
+    if (event.button !== 0 || reviewProgram) return;
+    event.preventDefault();
+    const origin = { x: event.clientX, y: event.clientY };
+    let moved = false;
+    let target: InsertTarget | null = null;
+    const inList = (x: number) => {
+      const box = listScroll.current?.getBoundingClientRect();
+      return box !== undefined && x >= box.left && x <= box.right;
+    };
+    const move = (moving: PointerEvent) => {
+      if (!moved && Math.hypot(moving.clientX - origin.x, moving.clientY - origin.y) < 4) return;
+      moved = true;
+      target = inList(moving.clientX) ? nearestGap(listScroll.current, moving.clientY) : null;
+      if (target) scrollNear(listScroll.current, moving.clientY);
+      setPaletteDrag({ look, x: moving.clientX, y: moving.clientY, target });
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      setPaletteDrag(null);
+      if (!moved) addAtEnd(make());
+      else if (target) {
+        placeAt([make()], target);
+        setSettings(false);
+      }
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+
   // The row menu (right click, Shift F10, or a click on the handle): move, duplicate, delete.
   const rowMenuAt = rowMenu ? locate(program.main, rowMenu.id) : null;
   const rowMenuLength = rowMenuAt ? (listAt(program.main, rowMenuAt.slot)?.length ?? 0) : 0;
@@ -1364,19 +1412,35 @@ export function ScenarioBuilder({
         data-panel={(reviewPanel ?? inspector) ? "open" : undefined}
         ref={bodyRef}
       >
-        <aside className="sb-left" aria-label="Variables and actions">
+        <aside className="sb-left" aria-label="Blocks, variables and actions">
           <Tabs
             label="Left column"
             value={leftTab}
             onChange={(id) => {
-              setLeftTab(id === "actions" ? "actions" : "variables");
+              setLeftTab(
+                id === "actions" ? "actions" : id === "variables" ? "variables" : "blocks",
+              );
             }}
             tabs={[
-              { id: "variables", label: "Variables", icon: "braces" },
-              { id: "actions", label: "Actions", icon: "circle-play", count: items.length },
+              { id: "blocks", label: "Blocks" },
+              { id: "variables", label: "Variables" },
+              { id: "actions", label: "Actions", count: items.length },
             ]}
           />
-          {leftTab === "variables" ? (
+          {leftTab === "blocks" ? (
+            <BlocksTab
+              library={items}
+              pack={scenario.pack}
+              taken={taken}
+              where={
+                selected && locate(program.main, selected)
+                  ? `after step ${numbersNow.get(selected) ?? selected}`
+                  : "at the end"
+              }
+              onAdd={addAtEnd}
+              onPress={pressBlock}
+            />
+          ) : leftTab === "variables" ? (
             variablesPanel
           ) : (
             <ActionsTab
@@ -1397,22 +1461,23 @@ export function ScenarioBuilder({
           )}
         </aside>
         <div className="sb-stage">
-          {view === "blocks" &&
-            program.main.length === 0 &&
-            program.kept.length === 0 &&
-            !reviewProgram && (
-              <StartCard
-                onDescribe={() => {
-                  setDescribing(true);
-                }}
-                onTemplate={(items_) => {
-                  commit(items_);
-                }}
-                taken={taken}
-              />
-            )}
-          {view === "blocks" && (program.main.length > 0 || reviewProgram) && (
+          {view === "blocks" && (
             <StepList
+              scrollRef={listScroll}
+              externalTarget={paletteDrag?.target ?? null}
+              empty={
+                program.kept.length === 0 && !reviewProgram ? (
+                  <StartCard
+                    onDescribe={() => {
+                      setDescribing(true);
+                    }}
+                    onTemplate={(items_) => {
+                      commit(items_);
+                    }}
+                    taken={taken}
+                  />
+                ) : null
+              }
               scenarioName={scenario.name}
               items={reviewProgram ?? program.main}
               numbers={stepNumbers(reviewProgram ?? program.main)}
@@ -1455,8 +1520,9 @@ export function ScenarioBuilder({
                 help ? (
                   <div className="sb-hint" role="note">
                     <span>
-                      Steps run top to bottom, each after the one above. Drag the handle or press
-                      Alt ↑ / Alt ↓ to move one; the + between two steps adds one there.
+                      Drag a block from the left into the list, or click one to add it after the
+                      selected step. Steps run top to bottom; drag a step&apos;s handle or press Alt
+                      ↑ / Alt ↓ to move it.
                     </span>
                     <Button
                       size="sm"
@@ -1622,6 +1688,24 @@ export function ScenarioBuilder({
         </div>
       )}
       {rowMenuView}
+      {paletteDrag && (
+        <div
+          className="sb-pal-ghost"
+          aria-hidden
+          data-over={paletteDrag.target ? "list" : undefined}
+          style={{
+            left: paletteDrag.x + 12,
+            top: paletteDrag.y + 8,
+            ["--tile" as string]: paletteDrag.look.tint,
+            ["--tile-soft" as string]: paletteDrag.look.soft,
+          }}
+        >
+          <span className="sb-pal-tile">
+            <Icon name={paletteDrag.look.icon} size="sm" />
+          </span>
+          {paletteDrag.look.label}
+        </div>
+      )}
       <span className="ah-sr" role="status" aria-live="polite">
         {announce}
       </span>

@@ -1,6 +1,13 @@
 import "./steps.css";
 
-import { useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
+import {
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
 
 import { Button, Icon, IconButton } from "../../../components";
 import { EffectBadge } from "../parts";
@@ -49,6 +56,12 @@ export interface StepListProps {
   loose: readonly BuilderNode[];
   onOpenYaml: () => void;
   footer?: ReactNode;
+  /** Shown under the list while it holds no step (start from a shape, describe it). */
+  empty?: ReactNode;
+  /** A block dragged from the palette: the gap it would land in. */
+  externalTarget?: InsertTarget | null;
+  /** The list's scrolling element, for a drag from the palette. */
+  scrollRef?: RefObject<HTMLDivElement>;
 }
 
 function record(value: Json | undefined): Record<string, Json> {
@@ -65,6 +78,34 @@ const KIND_NAME: Readonly<Record<string, string>> = {
   if: "If",
   parallel: "At the same time",
 };
+
+/** The gap of the list nearest the pointer's height (null when none is within 80 px); `skip`
+ * leaves out the gaps inside the step being moved. Shared by a move and a drag from the palette. */
+export function nearestGap(
+  root: HTMLElement | null,
+  y: number,
+  skip?: string,
+): InsertTarget | null {
+  const gaps = root?.querySelectorAll<HTMLElement>("[data-gap]") ?? [];
+  let best: { at: InsertTarget; distance: number } | null = null;
+  for (const gap of gaps) {
+    if (skip && gap.closest(`[data-item="${CSS.escape(skip)}"]`)) continue;
+    const box = gap.getBoundingClientRect();
+    const distance = Math.abs(box.top + box.height / 2 - y);
+    if (!best || distance < best.distance) {
+      best = { at: JSON.parse(gap.dataset.gap ?? "null") as InsertTarget, distance };
+    }
+  }
+  return best && best.distance < 80 ? best.at : null;
+}
+
+/** Scrolls the list while a drag nears its top or bottom edge. */
+export function scrollNear(root: HTMLElement | null, y: number): void {
+  const box = root?.getBoundingClientRect();
+  if (!box || !root) return;
+  if (y < box.top + 40) root.scrollBy(0, -12);
+  else if (y > box.bottom - 40) root.scrollBy(0, 12);
+}
 
 export function kindName(type: string): string {
   return KIND_NAME[type] ?? type;
@@ -252,8 +293,12 @@ export function StepList(props: StepListProps) {
     loose,
     onOpenYaml,
     footer,
+    empty,
+    externalTarget = null,
+    scrollRef,
   } = props;
-  const listRef = useRef<HTMLDivElement>(null);
+  const ownRef = useRef<HTMLDivElement>(null);
+  const listRef = scrollRef ?? ownRef;
   const [focused, setFocused] = useState<string | null>(null);
   const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set());
   const [dragging, setDragging] = useState<{ id: string; target: InsertTarget | null } | null>(
@@ -341,29 +386,13 @@ export function StepList(props: StepListProps) {
     const origin = { x: event.clientX, y: event.clientY };
     let moved = false;
     let target: InsertTarget | null = null;
-    const nearest = (y: number): InsertTarget | null => {
-      const gaps = listRef.current?.querySelectorAll<HTMLElement>("[data-gap]") ?? [];
-      let best: { at: InsertTarget; distance: number } | null = null;
-      for (const gap of gaps) {
-        if (gap.closest(`[data-item="${CSS.escape(id)}"]`)) continue;
-        const box = gap.getBoundingClientRect();
-        const distance = Math.abs(box.top + box.height / 2 - y);
-        if (!best || distance < best.distance) {
-          best = { at: JSON.parse(gap.dataset.gap ?? "null") as InsertTarget, distance };
-        }
-      }
-      return best && best.distance < 80 ? best.at : null;
-    };
+    const nearest = (y: number): InsertTarget | null => nearestGap(listRef.current, y, id);
     const move = (moving: globalThis.PointerEvent) => {
       if (!moved && Math.hypot(moving.clientX - origin.x, moving.clientY - origin.y) < 4) return;
       moved = true;
       target = nearest(moving.clientY);
       setDragging({ id, target });
-      const box = listRef.current?.getBoundingClientRect();
-      if (box && listRef.current) {
-        if (moving.clientY < box.top + 40) listRef.current.scrollBy(0, -12);
-        else if (moving.clientY > box.bottom - 40) listRef.current.scrollBy(0, 12);
-      }
+      scrollNear(listRef.current, moving.clientY);
     };
     const up = () => {
       window.removeEventListener("pointermove", move);
@@ -388,9 +417,13 @@ export function StepList(props: StepListProps) {
       <div
         className="st-gap"
         data-gap={JSON.stringify(at)}
-        data-drop={dragging && sameTarget(dragging.target, at) ? "on" : undefined}
+        data-drop={
+          (dragging && sameTarget(dragging.target, at)) || sameTarget(externalTarget, at)
+            ? "on"
+            : undefined
+        }
       >
-        {!readOnly && !dragging && (
+        {!readOnly && !dragging && !externalTarget && (
           <button
             type="button"
             className="st-gap-add"
@@ -703,6 +736,7 @@ export function StepList(props: StepListProps) {
           </div>
           {list(items, { in: "main" }, 1)}
         </div>
+        {items.length === 0 && empty}
         {!readOnly && (
           <div className="st-end">
             <Button
