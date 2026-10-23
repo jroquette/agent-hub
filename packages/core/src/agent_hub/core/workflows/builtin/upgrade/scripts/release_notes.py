@@ -11,7 +11,8 @@ agent cannot reach the network, so this script reads, with no token and over htt
    ``registry.npmjs.org/<name>/<to>``), for the GitHub repository it names;
 2. that repository's GitHub releases (``api.github.com``, up to 3 pages of 100), keeping each
    final release ``v`` with ``from < v <= to`` (a tag's ``v``, ``<name>@`` or ``<name>-``
-   prefix dropped; pre-releases and drafts skipped), newest first;
+   prefix dropped; pre-releases and drafts skipped) whose body holds notes (not blank, not only
+   "see the changelog"), newest first;
 3. else a changelog file at ``raw.githubusercontent.com/<owner>/<repo>/HEAD/<file>``, sliced from
    the first heading naming a version in that range down to the first naming ``from`` or older.
 
@@ -44,6 +45,11 @@ GITHUB = re.compile(
 VERSION_TOKEN = re.compile(r"(?<![0-9A-Za-z.])v?([0-9]+(?:\.[0-9]+){1,3})(?![0-9.]|[A-Za-z])")
 UNDERLINE = re.compile(r"([=\-~^*+#])\1{2,}\s*")
 FENCE_RUN = re.compile("`{3,}")
+# A release body that only points elsewhere ("See CHANGELOG.md") holds no notes.
+POINTER = re.compile(
+    r"(see|refer to|check)\b.*\b(changelog|changes|history|release notes|news)\b", re.I | re.S
+)
+MAX_POINTER_CHARS = 300
 CONTROL = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 ALLOWED_HOSTS = frozenset(
     {"pypi.org", "registry.npmjs.org", "api.github.com", "raw.githubusercontent.com"}
@@ -244,6 +250,12 @@ def slice_changelog(text: str, old: str, new: str) -> str | None:
     return "\n".join(lines[start:end]).rstrip() + "\n"
 
 
+def has_notes(body: str) -> bool:
+    """Whether a release body says something: not blank, not only a pointer to a changelog."""
+    text = body.strip()
+    return bool(text) and not (len(text) <= MAX_POINTER_CHARS and POINTER.match(text))
+
+
 class Notes:
     """What the reads found so far: the notes, their sources and why some failed."""
 
@@ -251,6 +263,7 @@ class Notes:
         self.sections: list[str] = []
         self.sources: list[str] = []
         self.reasons: list[str] = []
+        self.silent_releases = 0
 
 
 def read_releases(
@@ -274,13 +287,24 @@ def read_releases(
             return
         if not isinstance(releases, list):
             return
-        for tag, body in pick_releases(releases, old=args.old, new=args.new, package=args.package):
-            notes.sections.append(f"## {tag}\n\n{body.strip()}\n")
-            quoted = urllib.parse.quote(tag, safe="@")
-            notes.sources.append(f"https://github.com/{owner}/{name}/releases/tag/{quoted}")
+        add_releases(releases, repo, args=args, notes=notes)
         older = [r for r in releases if isinstance(r, dict) and _is_old(r, args)]
         if len(releases) < PAGE_SIZE or older:
             return
+
+
+def add_releases(
+    releases: list[object], repo: tuple[str, str], *, args: argparse.Namespace, notes: Notes
+) -> None:
+    """Add each in-range release that holds notes; count the ones that say nothing."""
+    owner, name = repo
+    for tag, body in pick_releases(releases, old=args.old, new=args.new, package=args.package):
+        if not has_notes(body):
+            notes.silent_releases += 1
+            continue
+        notes.sections.append(f"## {tag}\n\n{body.strip()}\n")
+        quoted = urllib.parse.quote(tag, safe="@")
+        notes.sources.append(f"https://github.com/{owner}/{name}/releases/tag/{quoted}")
 
 
 def _is_old(release: dict[str, object], args: argparse.Namespace) -> bool:
@@ -329,7 +353,12 @@ def collect(args: argparse.Namespace) -> Notes:
     try:
         read_releases(reader, repo, args=args, notes=notes)
         if not notes.sections and not notes.reasons:
-            notes.reasons.append(f"no GitHub release names a version from {args.old} to {args.new}")
+            span = f"from {args.old} to {args.new}"
+            notes.reasons.append(
+                f"the GitHub releases {span} hold no notes"
+                if notes.silent_releases
+                else f"no GitHub release names a version {span}"
+            )
         if not notes.sections:
             read_changelog(reader, repo, args=args, notes=notes)
     except BudgetSpentError:
