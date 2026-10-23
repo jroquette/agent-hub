@@ -1837,3 +1837,41 @@ def test_prints_no_production_line_when_environment_named_production_unflagged(
     assert (first.exit_code, first.stderr) == (0, ""), first.output
     assert first.stdout.splitlines() == ["updated AGENTS.md", "updated hub.lock"]
     assert (again.exit_code, again.stdout, again.stderr) == (0, "up to date\n", "")
+
+
+# AGH-365 (AC-350.31, AM-6): the example action and scenario are hub init's alone. Sync neither
+# lists them in hub.lock nor adds them to a hub that lacks them.
+EXAMPLES = (
+    "actions/demo/demo-get-status.yaml",
+    "actions/demo/scripts/demo_get_status.py",
+    "scenarios/demo/demo-service-up.yaml",
+)
+
+
+def test_adds_nothing_when_scenario_seed_sync_existing_hub(
+    demo_hub: Path, run_sync: SyncRunner, *, tree_digest: TreeDigest
+) -> None:
+    assert all((demo_hub / path).is_file() for path in EXAMPLES)
+    lock = (demo_hub / "hub.lock").read_bytes()
+    seeded = tree_digest(demo_hub)
+
+    kept = run_sync(demo_hub)
+
+    assert (kept.exit_code, kept.stdout, kept.stderr) == (0, "up to date\n", "")
+    assert tree_digest(demo_hub) == seeded
+    assert (demo_hub / "hub.lock").read_bytes() == lock
+    assert not [p for p in json.loads(lock)["files"] if p.startswith(("actions/", "scenarios/"))]
+
+    # A hub made before the examples existed, or one that deleted them.
+    shutil.rmtree(demo_hub / "actions")
+    shutil.rmtree(demo_hub / "scenarios")
+    before = tree_digest(demo_hub)
+
+    synced = run_sync(demo_hub)
+    checked = run_sync(demo_hub, "--check")
+
+    for result in (synced, checked):
+        assert (result.exit_code, result.stdout, result.stderr) == (0, "up to date\n", "")
+    assert not (demo_hub / "actions").exists()
+    assert not (demo_hub / "scenarios").exists()
+    assert tree_digest(demo_hub) == before

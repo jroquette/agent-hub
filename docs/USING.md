@@ -94,7 +94,7 @@ It exits 0, and its first line starts `created ` and counts the files and links 
 When the user gives you a `hub.json` for a new hub, pass `--config <path to hub.json>` instead of the project name and
 the value flags. When the project already has a hub (on another machine, or on GitHub), do not init: see § When init
 refuses. Init writes only what is needed to start: project rules, gates and onboarding come later, from `/onboard`
-(§ Open a session and run /onboard).
+(§ Open a session and run /onboard). Its examples in `actions/demo/` and `scenarios/demo/` are the project's files.
 
 ## When init refuses
 
