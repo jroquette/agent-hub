@@ -122,6 +122,8 @@ def failure_block(failure: dict[str, object], suspect: dict[str, object] | None,
 def suspect_lines(suspect: dict[str, object] | None) -> list[str]:
     if suspect is None:
         return ["Suspect: none named (explain did not run).", ""]
+    if not suspect:
+        return ["Suspect: none found (explain named no merge for this AC).", ""]
     kind = line(suspect.get("kind"))
     merge = line(suspect.get("merge"))[:7]
     found = [
@@ -177,7 +179,9 @@ def failed_lines(
         if isinstance(failure, dict):
             detailed += 1
             key = (str(failure.get("feature")), str(failure.get("ac")))
-            found.extend([failure_block(failure, suspects.get(key) if explain else None, sha7), ""])
+            # None: explain did not run; {}: it ran and named no suspect for this AC.
+            suspect = suspects.get(key, {}) if explain else None
+            found.extend([failure_block(failure, suspect, sha7), ""])
     if broken > detailed:
         # The run names the rest while its output has room; the count holds them all.
         names = ", ".join(line(item) for item in more) if isinstance(more, list) else ""
@@ -291,6 +295,9 @@ def write(day: str, markdown: str) -> Path:
     path = INBOX / f"verify-{day}.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
+        # A resumed run's report step may run again: its section is written once.
+        if markdown.splitlines()[0] in path.read_text(encoding="utf-8").splitlines():
+            return path
         with path.open("a", encoding="utf-8") as report:
             report.write("\n" + markdown)
         return path

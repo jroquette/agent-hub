@@ -329,3 +329,33 @@ def test_exits_two_when_stdin_is_not_a_run(
 
     assert code == 2
     assert "stdin" in capsys.readouterr().err
+
+
+def test_says_no_suspect_found_when_explain_ran_without_naming_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    other = a_suspect() | {"ac": "AC-7.2"}
+
+    code, _ = report(
+        tmp_path,
+        monkeypatch=monkeypatch,
+        capsys=capsys,
+        run=a_run(a_failure()),
+        explain={"suspects": [other]},
+    )
+
+    assert code == 0
+    text = (tmp_path / INBOX).read_text(encoding="utf-8")
+    assert "Suspect: none found (explain named no merge for this AC)." in text
+    assert "explain did not run" not in text
+
+
+def test_appends_section_once_when_report_reruns_on_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    first = report(tmp_path, monkeypatch=monkeypatch, capsys=capsys, run=a_run(a_failure()))
+    again = report(tmp_path, monkeypatch=monkeypatch, capsys=capsys, run=a_run(a_failure()))
+
+    assert first == again
+    text = (tmp_path / INBOX).read_text(encoding="utf-8")
+    assert text.count("## Run run-1 at 0a1b2c3 (merge)") == 1

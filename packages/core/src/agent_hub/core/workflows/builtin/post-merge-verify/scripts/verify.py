@@ -187,7 +187,6 @@ def read_selection(stream: IO[str]) -> tuple[str, Path, list[object]]:
     ):
         raise BadInputError("stdin is not a selection: sha, repo_path and selected are needed")
     return data["sha"], Path(data["repo_path"]), data["selected"]
-    return data
 
 
 def find_ac(feature: str, ac_id: str) -> dict[str, object] | str:
@@ -225,6 +224,8 @@ def git(repo: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
 @contextlib.contextmanager
 def worktree(repo: Path, sha: str) -> Iterator[Path]:
     """A detached worktree of ``repo`` at ``sha`` in a new temporary folder, removed afterwards."""
+    # A run killed before its cleanup (a node timeout, a resume) leaves an entry behind.
+    git(repo, "worktree", "prune")
     folder = Path(tempfile.mkdtemp(prefix="post-merge-verify-"))
     path = folder / "checkout"
     try:
