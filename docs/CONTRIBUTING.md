@@ -93,6 +93,7 @@ An issue can be labeled `agent-ready` (or picked up) when:
 - the repos it changes are named and the affected packages are tagged with area labels;
 - its dependencies are linked (blocked-by / related issues);
 - it has a verification command that runs from the repo root after the merge and proves the ACs;
+- its Outcome says how we will know after the merge that it solved the problem, with a signal anyone can check (`/feature` step 0);
 - it has no open question.
 
 `/triage <issue>` drafts these sections, and after the owner's approval writes them and sets `agent-ready`, or
