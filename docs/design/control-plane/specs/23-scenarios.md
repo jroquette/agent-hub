@@ -155,6 +155,53 @@ wins.
   says it is running in its environment, links to the scenario run and offers Cancel (the run page's own command),
   and each step's card shows its status in that run as it moves (Done, "Running · check 3", Not started).
 
+### Scenario builder (AGH-521)
+
+The scenario page's builder, as the owner validated it in the playground (its v6 and the two commits after it); the
+v1 to v5 layouts (a free block canvas, Scratch-like snapping blocks, sentence blocks, step cards with arrows) were
+rejected and are not built. Its relation to ADR 0049's tree format is in that ADR's delivery notes: the builder edits
+`version: 1` files through the builder API ([API.md](../../../API.md#scenarios)).
+
+- **AC-521.13.1 Step list.** Given a scenario, then the builder reads it top to bottom as numbered steps, two lines per
+  step, that say what each does; groups (Repeat, If paths, At the same time lanes) are indented; a Start row says where
+  the scenario starts and what it asks for; a `+` in each gap inserts a step there; a step moves by its handle, Alt
+  arrows or its row menu (rewiring what waits for what), Delete removes it with an Undo toast; rows say their effect
+  and status to screen readers. What the list cannot show stays as loose steps; Graph and YAML are views beside it.
+- **AC-521.13.2 Left column.** Given the builder, then its left column has a Blocks tab (the default), a Variables tab
+  listing every value by where it comes from (set in the scenario, the chosen environment's values, kept values) and
+  an Actions tab with the hub's actions, which previews an action, adds it, and makes or edits actions. Below 1440 px
+  the column gives way while a step is open; below 1600 px Describe and Chat show their icon only.
+- **AC-521.13.3 Environment in view.** Given the environment bar under the toolbar, then the chosen environment is kept
+  in `?env=`, its values fill the Variables tab and the Start row asks for nothing it gives, and plans run there; a
+  plan made before the last change says so.
+- **AC-521.13.4 Step editor.** Given a step opened, then its editor has Settings and Script tabs. Settings shows only
+  the values the step sets; inputs that come from the environment, the run or a default fold into one box with "Set
+  one for this step". Script says what the action does, where each input gets its value in the chosen environment,
+  what it gives back and the script's source. A new action can be written from the editor and used at once.
+- **AC-521.13.5 A scenario's values.** Given the Start editor, then each value reads as name, value and what it is: a
+  value left empty is asked each time the scenario runs, a value set is its default (typed as the input declares); the
+  Variables tab and the editor call these "Set in the scenario". An action input a step leaves out shows as the run's
+  value ("+ N from the run" on the step), and repeats of a run value can be dropped in one click.
+- **AC-521.13.6 Shared values in the environment.** Given a value most steps share (an account id, a stack name), then
+  one click moves it into the chosen environment's values (a `hub env` write) and drops its repeats; the Variables tab
+  saves an environment value.
+- **AC-521.13.7 JSON values.** Given a JSON input (a message body), then it is edited as Fields (one row per key: a
+  literal, or a value from earlier as a token) or as JSON (indented, checked as you type; an invalid text never reaches
+  the file), and a bare reference (`"minutes":$INPUTS.minutes`) round-trips unchanged. "Use a value from earlier"
+  opens a menu grouped by source, shared by the value field and the JSON rows, and inserts at the cursor.
+- **AC-521.13.8 Blocks tab.** Given the Blocks tab, then it lists the step types (Do, Check, Control, You) and the hub's
+  actions as ready blocks (Run <action>, and Wait until for a read-only one); a block dragged into the list shows a
+  line at the gap it lands in (inside a Repeat, an If path or a lane too), and a click or Enter adds it after the
+  selected step. An empty scenario still shows its Start row, so the first block has somewhere to land, and can start
+  from a shape.
+- **AC-521.13.9 Describe to Claude.** Given Describe with Claude, then the owner describes the scenario (or a part of
+  it) in words and Claude writes a proposal, which the builder shows as suggested steps to review and accept into the
+  draft, or reject; the proposal is dismissed either way. A condition typed in words becomes condition rows, naming
+  what it cannot match and guessing nothing.
+- **AC-521.13.10 Save and unsaved work.** Given changes, then the server's check pins each problem on its step and keeps
+  Save off while the document does not load; Save writes over the file the builder read; unsaved work is kept in this
+  browser across a reload and dropped, with a notice, when the file changed outside.
+
 ## Screen 3: Scenario run (`/scenarios/:project/:name/runs/:runId`)
 
 **Answers:** "Where did this scenario run get to, why did it stop, and what do I decide now?"

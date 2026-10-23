@@ -19,6 +19,16 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - A New scenario button on the Scenarios list and in its empty state opens `/scenarios/new`, a guided form (what to
   check, environment, pack, name) that hands Claude the request and the scenario format in the Discuss panel, then
   watches the catalog for the new scenario, as New workflow does (AGH-521).
+- The scenario page has a builder: a numbered step list with a Blocks tab to build by hand, Variables and Actions
+  tabs, the environment in view, and a step editor with Settings and Script tabs; values read as name, value and what
+  it is, shared values move into the environment, JSON values are edited as fields or JSON, Claude can propose steps
+  to review, and unsaved work is kept. Its API validates, saves as a recorded version, reads Claude's proposal and
+  writes draft actions (AGH-521).
+- Scenario run values and environment values: an action input a step leaves out takes the scenario run's input of that
+  name, and a run input not given takes the environment's non-secret value of that name (`values` in `hub.json` or
+  `hub.local.json`, set with `hub env add|set --value NAME=VALUE` and `--unset-value`) before its default (AGH-521).
+- ADR 0049 (proposed): scenarios as ordered stages of blocks (`version: 2`) translated to the graph at load, and a
+  debugger as engine run control, with its reference fixtures; not built yet (AGH-508, AGH-521).
 
 ### Changed
 
