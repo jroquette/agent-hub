@@ -281,7 +281,9 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog=PROG)
     for name in ("--version", "--previous", "--last-tag", "--issue", "--regenerate"):
         parser.add_argument(name, required=True)
-    parser.add_argument("--today", default=datetime.datetime.now(datetime.UTC).date().isoformat())
+    # Not the 3.11+ UTC alias ruff prefers: hubs import their pack scripts on 3.9 too.
+    utc = datetime.timezone.utc  # noqa: UP017
+    parser.add_argument("--today", default=datetime.datetime.now(utc).date().isoformat())
     given = parser.parse_args(argv)
     try:
         found = release(Path.cwd().resolve(), given)
