@@ -47,7 +47,7 @@ describe("useDiffSyntax", () => {
     const lines = diffLines(
       [
         "@@ -1,2 +1,2 @@",
-        ' def f():',
+        " def f():",
         '+    """Opens a docstring the hunk never closes.',
         "@@ -40,1 +40,1 @@",
         "+return value",
