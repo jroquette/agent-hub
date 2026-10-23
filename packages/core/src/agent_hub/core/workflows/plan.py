@@ -126,14 +126,19 @@ def plan_workflow(
     document: WorkflowDocument, *, includes: IncludeResolver | None = None
 ) -> WorkflowPlan:
     """The plan of ``document``, its includes expanded through ``includes`` (``includes.py``);
-    raises ``WorkflowLoadError`` naming every problem found, on the document's own nodes."""
-    expansion = expand_includes(document, includes)
+    raises ``WorkflowLoadError`` naming every problem found, on the document's own nodes (a
+    translated tree's on its key paths: ``WorkflowDocument.located``)."""
+    try:
+        expansion = expand_includes(document, includes)
+    except WorkflowLoadError as error:
+        raise WorkflowLoadError(document.located(error.problems)) from None
     if kinds := [expansion.locate(p) for p in kind_problems(expansion.document)]:
-        raise WorkflowLoadError(kinds)
+        raise WorkflowLoadError(document.located(kinds))
     try:
         plan = _plan(expansion.document)
     except WorkflowLoadError as error:
-        raise WorkflowLoadError([expansion.locate(p) for p in error.problems]) from None
+        found = [expansion.locate(p) for p in error.problems]
+        raise WorkflowLoadError(document.located(found)) from None
     scopes = dict(expansion.scopes)
     for group in plan.document.nodes:
         if isinstance(group, LoopGroupNode):
