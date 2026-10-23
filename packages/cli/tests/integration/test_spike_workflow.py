@@ -162,6 +162,12 @@ def test_runs_options_once_more_with_the_note_when_owner_asks_for_more() -> None
         "",
         "Add an option without a cache.",
     ]
+    # The owner's thinking time is not agent time: round 2 reads the minutes settle left.
+    assert [call.context.with_values["round_minutes_left"] for call in options] == ["", "60"]
+    assert (
+        "(empty on the first round): 60 minutes. Use the second"
+        in (prompts_of(more)["choose__options"])
+    )
     ran = [call.node.id for call in more]
     assert ran.index("premortem") > max(i for i, n in enumerate(ran) if n == "choose__settle")
     waited = [call.node.id for call in paused]
