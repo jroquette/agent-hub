@@ -12,6 +12,15 @@ const NOT_A_LINK = "Link not shown: only http(s) links and brain notes are opene
 const NOT_A_NOTE = "Link not shown: only Markdown notes of the brain open in the app";
 const NO_PLACE = "Link not shown: this note's place in the brain is unknown";
 
+/**
+ * Why a `brain/` path the note route refuses (`isServedNote`) is listed but not opened (AM-8): the
+ * Brain's knowledge rows and the learning trail's Note step say it in their tooltip.
+ */
+export const UNSERVED_NOTE_REASON =
+  "The app does not open notes at this path (not a .md file, a hidden name, under auto/, or too long or deep)";
+/** The words a row or step that is not opened adds, the same for repo docs and refused notes. */
+export const NOT_OPENED_HERE = "not opened here";
+
 /** The server's note bounds (S8): longer or deeper paths are never served, so never linked. */
 const MAX_PATH_CHARS = 512;
 const MAX_SEGMENTS = 16;

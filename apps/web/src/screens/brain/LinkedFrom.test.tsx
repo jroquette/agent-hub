@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -159,9 +161,22 @@ describe("BrainScreen Linked from", () => {
     expect(within(section).getByText("Hidden note")).toBeInTheDocument();
     expect(within(section).queryByRole("link")).not.toBeInTheDocument();
     expect(within(section).getByTitle("brain/.hidden/x.md")).toBeInTheDocument();
+    // The reason in the tooltip, and the same words as a repo doc on the kind line (K5, H9).
     expect(within(section).getByRole("tooltip")).toHaveTextContent(
-      "This note is not opened in the app",
+      "The app does not open notes at this path (not a .md file, a hidden name, under auto/, or too long or deep)",
     );
+    const row = within(section).getByText("Hidden note").closest("li");
+    expect(row?.querySelector(".ah-know-kind")).toHaveTextContent(/^playbook · not opened here$/);
+    expect(row).toHaveAccessibleDescription(/^The app does not open notes at this path/);
+  });
+
+  it("linked from: lights up only the rows that open a note on hover", () => {
+    // Read as a file: Vitest runs from apps/web and jsdom applies no stylesheet.
+    const css = readFileSync("src/screens/brain/Brain.css", "utf8");
+    const hovers = [...css.matchAll(/^([^{}\n]*\.ah-know-row[^{}\n]*:hover)\s*\{/gm)].map(
+      (match) => match[1],
+    );
+    expect(hovers).toEqual([":where(a).ah-know-row:hover"]);
   });
 
   it("linked from: shows skeletons, then says the first read can take a few seconds", async () => {

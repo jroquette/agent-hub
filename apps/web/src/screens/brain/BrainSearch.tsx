@@ -150,6 +150,7 @@ function PathMatches({
         <Button
           size="sm"
           variant="ghost"
+          aria-expanded={all}
           onClick={() => {
             setAll(!all);
           }}

@@ -106,7 +106,9 @@
   line-height: 18px;
   color: var(--text-muted);
 }
-.ah-know-row:hover {
+/* Only a row that opens a note lights up: a text row (repo doc, refused note) stays still.
+   `:where` keeps the old specificity, so the open note's row keeps its background on hover. */
+:where(a).ah-know-row:hover {
   background: var(--surface-hover);
   text-decoration: none;
 }
