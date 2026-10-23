@@ -3,7 +3,7 @@ name: order-state
 description: Read one order's state on the stack
 effect: read
 runtime: sh
-script: scripts/fixture_action.sh
+script: scripts/fixture_read.sh
 timeout: 1m
 inputs:
   webshop_order_id: {type: string, required: true}
