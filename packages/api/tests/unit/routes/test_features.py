@@ -1,5 +1,6 @@
 import json
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -8,7 +9,7 @@ import pytest
 from agent_hub.api.owner_signoff_files import HubEvalWriter, ProjectHubPaths
 from agent_hub.api.rfc9457 import owner_signoff_problem
 from agent_hub.core.features.feature_status import FeatureFolder
-from agent_hub.core.features.feature_view import AcRow, FeatureDetail
+from agent_hub.core.features.feature_view import AcRow, FeatureCost, FeatureDetail
 from agent_hub.core.features.owner_signoff import OwnerSignOffError, SignOffOwnerSteps
 from agent_hub.core.projects.project_views import ProjectDetail, TrackerView
 from agent_hub.core.readmodels.filters import Scope
@@ -44,6 +45,18 @@ def test_maps_detail_when_feature_requested(wired: Any) -> None:
     response = wired.client.get("/api/v1/features/demo/demo-feature")
 
     assert response.json()["ac_rows"][0]["id"] == "AC-1"
+
+
+def test_adds_feature_cost_when_feature_requested(wired: Any) -> None:
+    wired.hubs.features.append(_detail())
+    wired.events.feature_costs["demo-feature"] = FeatureCost(
+        total_usd=Decimal("3.5"), sessions=2, unpriced=0
+    )
+
+    response = wired.client.get("/api/v1/features/demo/demo-feature")
+
+    assert response.json()["cost"] == {"total_usd": "3.5000", "sessions": 2, "unpriced": 0}
+    assert ("feature_cost", ("demo", "demo-feature", _detail().issues)) in wired.events.calls
 
 
 # two-level-flows AC-1.4, AC-1.6 (AGH-323): the detail carries the plan version and acceptance eval.

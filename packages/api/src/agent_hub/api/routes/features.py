@@ -56,10 +56,11 @@ def get_feature(
 ) -> FeatureDetail:
     """One feature with its acceptance criteria; each open change request carries the open gate
     of its run that answers it (``approval_id``), and whether its run is gone, so hub web
-    decides it (``decidable_here``)."""
+    decides it (``decidable_here``); ``cost`` adds up what its sessions cost."""
     detail = models.get_feature(project, slug)
     requests = _with_runs(project, detail.change_requests, events=events, decisions=decisions)
-    return detail.model_copy(update={"change_requests": requests})
+    cost = events.feature_cost(project, slug, detail.issues)
+    return detail.model_copy(update={"change_requests": requests, "cost": cost})
 
 
 @router.get("/features/{project}/{slug}/tickets")

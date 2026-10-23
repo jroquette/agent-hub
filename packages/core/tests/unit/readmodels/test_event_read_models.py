@@ -1233,3 +1233,50 @@ def test_lists_learnings_of_note_when_brain_path_given() -> None:
         assert found.total_estimate == 2
     nothing = service.list_learnings(LearningFilter(brain_path="learnings/none.md"))
     assert nothing.items == ()
+
+
+def _feature_store() -> InMemoryEventStore:
+    store = InMemoryEventStore()
+    store.append(
+        [
+            *a_session_events(
+                "s-spec", tools=(("Write", {"path": "/work/hub/brain/features/login/spec.md"}),)
+            ),
+            *usage_events("s-spec", turns=((1000, 100, 0, 0),)),
+            *a_session_events("s-ticket", git_branch="jdoe/dem-7-login"),
+            *usage_events("s-ticket", turns=((1000, 100, 0, 0),)),
+            *a_session_events("s-unpriced", git_branch="jdoe/dem-8-logout"),
+            *a_session_events(
+                "s-elsewhere",
+                tools=(("Write", {"path": "/work/hub/brain/features/other/spec.md"}),),
+            ),
+            *usage_events("s-elsewhere", turns=((1000, 100, 0, 0),)),
+            *a_session_events(
+                "s-other-project",
+                project="other",
+                tools=(("Write", {"path": "/work/hub/brain/features/login/spec.md"}),),
+            ),
+            *usage_events("s-other-project", project="other", turns=((1000, 100, 0, 0),)),
+        ]
+    )
+    return store
+
+
+def test_adds_up_feature_cost_when_sessions_touch_folder_or_tickets() -> None:
+    rules = {"demo": LabelRules(teams=("DEM",), branch_prefix="jdoe/")}
+    service = FoldedEventReadModels(_feature_store(), now=Clock(NOW), label_rules_of=rules.get)
+    one = service.get_session("s-spec").cost_usd
+    assert one is not None
+
+    cost = service.feature_cost("demo", "login", ("dem-7", "DEM-8"))
+
+    assert (cost.sessions, cost.unpriced) == (3, 1)
+    assert cost.total_usd == one * 2
+
+
+def test_leaves_feature_cost_empty_when_no_session_worked_on_it() -> None:
+    service = FoldedEventReadModels(_feature_store(), now=Clock(NOW))
+
+    cost = service.feature_cost("demo", "nothing", ())
+
+    assert (cost.total_usd, cost.sessions, cost.unpriced) == (None, 0, 0)
