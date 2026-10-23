@@ -232,6 +232,25 @@ describe("ScenarioBuilder (scenario builder)", () => {
     );
   });
 
+  it("scenario builder's Start editor sets a value, or leaves it empty to ask each run", async () => {
+    const user = userEvent.setup();
+    renderBuilder();
+
+    const start = await screen.findByRole("treeitem", { name: /Starts in personal/ });
+    await user.click(start);
+    const settings = screen.getByRole("region", { name: "Scenario settings" });
+    // No type or required to pick: a name, its value and what it is.
+    expect(within(settings).queryByLabelText("Type")).not.toBeInTheDocument();
+    expect(within(settings).queryByLabelText("Required")).not.toBeInTheDocument();
+    const value = within(settings).getByLabelText("external_ref");
+    expect(value).toHaveAttribute("placeholder", "Asked each time the scenario runs");
+
+    await user.type(value, "T-1");
+    expect(start).toHaveTextContent("Asks for nothing");
+    await user.clear(value);
+    expect(start).toHaveTextContent("Asks for external_ref");
+  });
+
   it("scenario builder's Start row asks for nothing the environment gives", async () => {
     renderBuilder({
       [DETAIL]: aScenarioDetail({
@@ -550,7 +569,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     const fetch = await screen.findByRole("treeitem", { name: FETCH });
     // A repeat is not a value of the step's own: the row does not list it.
     expect(fetch).not.toHaveTextContent("external_ref");
-    const asked = screen.getByRole("region", { name: "Asked when the scenario run starts" });
+    const asked = screen.getByRole("region", { name: "Set in the scenario" });
     await waitFor(() => {
       expect(asked).toHaveTextContent("used by 2 steps");
     });
@@ -861,9 +880,9 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(fromEnv).toHaveTextContent("905418434942");
     // A value this scenario does not use folds away.
     expect(fromEnv).not.toHaveTextContent("region_hint");
-    expect(
-      screen.getByRole("region", { name: "Asked when the scenario run starts" }),
-    ).not.toHaveTextContent("aws_account_id");
+    expect(screen.getByRole("region", { name: "Set in the scenario" })).not.toHaveTextContent(
+      "aws_account_id",
+    );
 
     await user.click(within(fromEnv).getByRole("button", { name: /aws_account_id/ }));
     const editor = within(fromEnv).getByRole("form", { name: "Value aws_account_id in personal" });
@@ -914,7 +933,7 @@ describe("ScenarioBuilder (scenario builder)", () => {
     });
 
     await screen.findByRole("treeitem", { name: FETCH });
-    const asked = screen.getByRole("region", { name: "Asked when the scenario run starts" });
+    const asked = screen.getByRole("region", { name: "Set in the scenario" });
     expect(asked).toHaveTextContent("personal_name is used by most steps");
     await user.click(within(asked).getByRole("button", { name: "Keep in personal" }));
 

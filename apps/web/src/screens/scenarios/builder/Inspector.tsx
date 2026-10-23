@@ -1435,80 +1435,78 @@ export function ScenarioSettings({
         )}
       </Field>
       <Section
-        title="Asked when the scenario run starts"
-        help="The values a scenario run is given. A value the environment holds under the same name is used instead of asking; the default is the last resort."
+        title="Set in the scenario"
+        help="Leave a value empty to be asked for it each time the scenario runs. An environment value with the same name wins over the one here."
       >
-        {Object.entries(inputs).map(([name, spec]) => {
-          const item = record(spec);
-          return (
-            <div key={name} className="sb-input-card">
-              <div className="sb-input-card-head">
-                <span className="ah-mono">{name}</span>
-                <span className="ah-grow" />
-                <IconButton
-                  icon="x"
-                  size="sm"
-                  label={`Remove input ${name}`}
-                  onClick={() => {
-                    setInputs(without(inputs, name));
+        <ul className="sb-inputs">
+          {Object.entries(inputs).map(([name, spec]) => {
+            const item = record(spec);
+            const type = text(item.type, "string");
+            const fallback = item.default === undefined ? "" : shown(item.default);
+            // A value set here is the default; none means the run asks for it (required).
+            const setValue = (value: string) => {
+              let next: Record_ = without(without(item, "default"), "required");
+              if (value === "") next = { ...next, required: true };
+              else if ((type === "integer" || type === "number") && /^-?\d+(\.\d+)?$/.test(value))
+                next = { ...next, default: Number(value) };
+              else next = { ...next, default: value };
+              setInputs({ ...inputs, [name]: next });
+            };
+            return (
+              <li key={name} className="sb-input">
+                <span className="sb-input-head">
+                  <label className="ah-mono sb-input-name" htmlFor={`input-${name}`}>
+                    {name}
+                  </label>
+                  <IconButton
+                    icon="trash"
+                    size="sm"
+                    label={`Remove ${name}`}
+                    onClick={() => {
+                      setInputs(without(inputs, name));
+                    }}
+                  />
+                </span>
+                {type === "boolean" ? (
+                  <label className="ah-row ah-small" style={{ gap: 6 }}>
+                    <input
+                      id={`input-${name}`}
+                      type="checkbox"
+                      checked={item.default === true}
+                      onChange={(event) => {
+                        setInputs({
+                          ...inputs,
+                          [name]: { ...without(item, "required"), default: event.target.checked },
+                        });
+                      }}
+                    />
+                    On by default
+                  </label>
+                ) : (
+                  <input
+                    id={`input-${name}`}
+                    className="ah-input ah-mono"
+                    value={fallback}
+                    placeholder="Asked each time the scenario runs"
+                    inputMode={type === "integer" || type === "number" ? "numeric" : undefined}
+                    onChange={(event) => {
+                      setValue(event.target.value);
+                    }}
+                  />
+                )}
+                <input
+                  className="sb-input-about"
+                  aria-label={`What ${name} is`}
+                  placeholder="What it is (optional)"
+                  value={text(item.description, "")}
+                  onChange={(event) => {
+                    setInput(name, "description", event.target.value);
                   }}
                 />
-              </div>
-              <div className="ah-env-grid">
-                <Field label="Type">
-                  {(id) => (
-                    <select
-                      id={id}
-                      className="ah-input"
-                      value={text(item.type, "string")}
-                      onChange={(event) => {
-                        setInput(name, "type", event.target.value);
-                      }}
-                    >
-                      {["string", "integer", "number", "boolean"].map((type) => (
-                        <option key={type}>{type}</option>
-                      ))}
-                    </select>
-                  )}
-                </Field>
-                <label className="ah-row ah-small sb-required">
-                  <input
-                    type="checkbox"
-                    checked={item.required === true}
-                    onChange={(event) => {
-                      setInput(name, "required", event.target.checked ? true : undefined);
-                    }}
-                  />
-                  Required
-                </label>
-              </div>
-              <Field label="Default" optional>
-                {(id) => (
-                  <input
-                    id={id}
-                    className="ah-input ah-mono"
-                    value={item.default === undefined ? "" : shown(item.default)}
-                    onChange={(event) => {
-                      setInput(name, "default", event.target.value);
-                    }}
-                  />
-                )}
-              </Field>
-              <Field label="Description" optional>
-                {(id) => (
-                  <input
-                    id={id}
-                    className="ah-input"
-                    value={text(item.description, "")}
-                    onChange={(event) => {
-                      setInput(name, "description", event.target.value);
-                    }}
-                  />
-                )}
-              </Field>
-            </div>
-          );
-        })}
+              </li>
+            );
+          })}
+        </ul>
         <NewInput
           onAdd={(name) => {
             setInputs({ ...inputs, [name]: { type: "string", required: true } });
@@ -1620,15 +1618,15 @@ function NewInput({ onAdd }: { onAdd: (name: string) => void }) {
     >
       <input
         className="ah-input ah-mono"
-        aria-label="New input name"
-        placeholder="new_input"
+        aria-label="Name of a new value"
+        placeholder="new_value_name"
         value={name}
         onChange={(event) => {
           setName(event.target.value);
         }}
       />
       <Button size="sm" type="submit" icon="plus" disabled={!ok}>
-        Add input
+        Add value
       </Button>
     </form>
   );
