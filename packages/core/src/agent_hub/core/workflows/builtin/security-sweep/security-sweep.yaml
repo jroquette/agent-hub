@@ -3,8 +3,8 @@
 # worktree under TMPDIR that is removed after; the findings not seen before go to one triage
 # session that follows the hub's security-reviewer agent; the ones it keeps go to a note in
 # brain/_inbox/ for /triage. The findings are marked seen only after the report is written, and
-# only those triage named (kept, unresolved or dropped), so a failed or partial triage, or a
-# failed report, brings the rest back next run.
+# only those triage settled (kept or dropped), so an unresolved finding, a failed or partial
+# triage, or a failed report brings the rest back next run.
 #
 # Invariants: read-only on code (no node edits a repo; the agent is read-only); no tracker write
 # (ADR 0030: the note says to file an issue per accepted finding, then run /triage <issue>); no
@@ -213,7 +213,7 @@ nodes:
             properties:
               id: {type: string, pattern: "^F[1-9][0-9]{0,2}$"}
               why: {type: string, maxLength: 300}
-        # Every listed id is named once, in kept, unresolved or dropped: mark marks only those.
+        # Every listed id is named once, in kept, unresolved or dropped; mark marks kept and dropped.
         dropped:
           type: array
           maxItems: 100
@@ -256,7 +256,7 @@ nodes:
 
   - id: mark
     type: script
-    description: Mark the listed findings triage named seen in the hub's store, now that the report exists.
+    description: Mark the listed findings triage kept or dropped seen in the hub's store, now that the report exists.
     depends_on: [report]
     runtime: python
     script: unseen.py

@@ -14,9 +14,9 @@ rest are counted in ``more`` and stay unseen. It writes nothing.
 ``unseen.py mark --status <findings|clean> --triaged <JSON list of ids>`` reads that output on
 stdin, after the report, and updates the store: a ``(repo, scanner)`` that ran this time keeps
 only the entries it still reports (a fixed finding that comes back is new again), one that did
-not run keeps its entries, and the listed findings whose id triage named (kept, unresolved or
-dropped, as the report read them) are added with today's date; a listed finding triage did not
-name stays unseen and comes back next run. Past ``MAX_ENTRIES``, the oldest entries go. The
+not run keeps its entries, and the listed findings triage settled (kept or dropped, the ids
+the report passes) are added with today's date; a listed finding left unresolved or not named
+stays unseen and comes back next run. Past ``MAX_ENTRIES``, the oldest entries go. The
 store is written to a temporary file, then renamed over. It prints ``{"status", "marked",
 "store_size"}``.
 
@@ -222,7 +222,7 @@ def strings(items: list[object], pattern: re.Pattern[str]) -> list[str]:
 
 
 def triaged_prints(selected: dict[str, object], triaged: set[str]) -> list[str]:
-    """The fingerprints of the listed findings whose id triage named."""
+    """The fingerprints of the listed findings whose id triage settled (kept or dropped)."""
     listed = [as_dict(item) for item in a_list(selected, "findings", MAX_LISTED)]
     named = [item for item in listed if item.get("id") in triaged]
     return strings([item.get("fingerprint") for item in named], FINGERPRINT)
@@ -290,7 +290,9 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="unseen.py", description=__doc__.split("\n")[0])
     parser.add_argument("command", choices=("select", "mark"))
     parser.add_argument("--status", default="", help="the report's status, for mark")
-    parser.add_argument("--triaged", default=None, help="the ids triage named (JSON), for mark")
+    parser.add_argument(
+        "--triaged", default=None, help="the ids triage kept or dropped (JSON), for mark"
+    )
     parser.add_argument("--store", default=STORE, help=argparse.SUPPRESS)
     parser.add_argument("--today", default="", help=argparse.SUPPRESS)
     arguments = parser.parse_args(argv)

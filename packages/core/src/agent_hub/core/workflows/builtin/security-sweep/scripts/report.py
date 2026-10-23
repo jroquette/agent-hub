@@ -17,7 +17,8 @@ text is one quoted line (control characters dropped, backticks replaced, ``MAX_T
 A secret finding is its rule and path with a fixed text: the agent's text for it is never written.
 
 Output: ``{"path", "kept", "secrets", "missing": ["<repo>: <scanner>"], "triaged": [<id>],
-"status"}``: ``triaged`` the listed ids triage named, the only ones ``mark`` marks seen;
+"status"}``: ``triaged`` the listed ids triage settled (kept or dropped), the only ones ``mark``
+marks seen (an unresolved one comes back next run);
 ``status`` ``findings`` when triage kept one, else ``clean``. Bad input exits 2 and writes nothing.
 ``--today`` is for tests.
 """
@@ -176,7 +177,7 @@ def kept_lines(picked: Picked) -> list[str]:
 def unresolved_lines(picked: Picked) -> list[str]:
     if not picked.found:
         return []
-    lines = ["## Unresolved", ""]
+    lines = ["## Unresolved", "", "Not settled: these stay unseen and come back next run.", ""]
     for finding, entry in picked.found:
         why = "not settled by triage" if finding.get("secret") is True else entry.get("why")
         lines += [f"- {where(finding)}", f"  > {one_line(why, 300)}"]
@@ -199,7 +200,14 @@ class Triage:
         self.dropped = Picked(ids_as_entries(reply.get("dropped")), listing)
         parts = (self.kept, self.unresolved, self.dropped)
         named = {str(finding.get("id")) for part in parts for finding, _ in part.found}
-        self.triaged = [key for key in listing if key in named]
+        settled = {
+            str(finding.get("id"))
+            for part in (self.kept, self.dropped)
+            for finding, _ in part.found
+        }
+        self.accounted = len(named)
+        # Kept or dropped: settled, so marked seen. Unresolved ones come back next run.
+        self.settled = [key for key in listing if key in settled]
         self.untriaged = [finding for key, finding in listing.items() if key not in named]
         self.ignored = sum(part.ignored for part in parts)
 
@@ -221,9 +229,9 @@ def count_lines(counts: Item, triage: Triage) -> list[str]:
     )
     lines = ["## Counts", "", f"- {seen}"]
     if triage.untriaged:
-        listed = len(triage.triaged) + len(triage.untriaged)
+        listed = triage.accounted + len(triage.untriaged)
         lines.append(
-            f"- Triage accounted for {len(triage.triaged)} of {listed} listed findings; the"
+            f"- Triage accounted for {triage.accounted} of {listed} listed findings; the"
             f" other {len(triage.untriaged)} stay unseen and come back next run."
         )
     if triage.ignored:
@@ -268,7 +276,7 @@ def render(findings: list[Item], reply: Item, **given: object) -> tuple[str, str
         "kept": len(kept),
         "secrets": secrets,
         "missing": missing(repos),
-        "triaged": triage.triaged,
+        "triaged": triage.settled,
     }
     return status, "\n".join(lines) + "\n", fields
 
