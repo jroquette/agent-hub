@@ -277,6 +277,10 @@ make targets, flags, config keys, skills, workflows, paths, tables and columns, 
 them, a read-only judge's corrected lines, the owner's approval, and a docs-only PR in the repo; ADR lines are reported,
 never edited; nothing writes the tracker; fetch the repo first: `doc-drift` reads `origin/<default branch>` as last
 fetched),
+`flaky` (one pytest test run many times alone, in its file's order, shuffled and with its folder under pytest-xdist,
+in a throwaway worktree at `origin/<default branch>`; a read-only agent names the likely cause when a run fails, and
+the counts go to `brain/_inbox/flaky-<test slug>.md`; fetch first:
+`./hub workflow run flaky --input repo=<dir> --input "test=<node id>" --live`),
 `review-incoming` (12 nodes, started by
 `/review`: someone else's PR through the spec, quality and security lenses, the repo's check at the head (never for a
 fork) and one draft you edit; `/review` reads the PR and posts the draft only after you approve it) and

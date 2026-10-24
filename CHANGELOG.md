@@ -13,6 +13,13 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 
 ### Added
 
+- The built-in `flaky` pack (AGH-449) runs one pytest test many times to tell why it fails only sometimes:
+  `./hub workflow run flaky --input repo=<dir> --input test=<node id> --live` (`runs`, default 20, is the runs per
+  mode; fetch first). Each round runs it alone, in its file's order, shuffled (pytest-randomly or
+  pytest-random-order) and with its folder under pytest-xdist `-n auto`, in a throwaway worktree at
+  `origin/<default branch>`; a mode whose plugin is missing is skipped and named. When a run fails, a read-only agent
+  names the likely cause, and the counts, the cause and the failure tails go to `brain/_inbox/flaky-<test slug>.md`,
+  one note per test; no code change and no tracker write.
 - A ticket page, `/tickets/<project>/<issue>`, shows the commits, files and pull requests a ticket's sessions changed,
   each session with what it did, and for a feature's ticket the feature's records; the Tickets list now also keeps a
   feature's tickets, tagged Feature (AGH-521).
