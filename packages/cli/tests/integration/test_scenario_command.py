@@ -2926,14 +2926,18 @@ def test_keeps_the_plan_and_fixtures_when_migrate_rewrites_a_graph_scenario(
 
 def test_writes_nothing_when_migrate_runs_with_check(hub: Path, marker: Path) -> None:
     walk = hub / "scenarios" / "demo" / "order-walk.yaml"
+    one = SCENARIO.split("  - id: order-held")[0].replace("name: order-walk", "name: one-walk")
+    write_scenario(hub, one)
 
-    result = migrate(hub, marker, "order-walk", "--check")
+    result = migrate(hub, marker, "order-walk", "one-walk", "--check")
 
     assert (result.exit_code, plain(result.stderr)) == (0, ""), result.output
     assert plain(result.stdout).splitlines() == [
-        "would migrate " + WRITTEN.format(name="order-walk", count=3)
+        "would migrate " + WRITTEN.format(name="order-walk", count=3),
+        "would migrate scenarios/demo/one-walk.yaml to blocks (version 2): stage one-walk, 1 block",
     ]
     assert walk.read_text() == SCENARIO
+    assert (hub / "scenarios" / "demo" / "one-walk.yaml").read_text() == one
 
 
 @pytest.mark.parametrize("check", [False, True], ids=["write", "check"])
@@ -2974,6 +2978,72 @@ def test_refuses_and_writes_nothing_when_migrate_names_a_tree_or_an_unknown_scen
     ]
     assert tree.read_bytes() == written
     assert (hub / "scenarios" / "demo" / "order-walk.yaml").read_text() == SCENARIO
+
+
+def test_refuses_with_its_own_problems_when_migrate_names_a_scenario_that_does_not_plan(
+    hub: Path, marker: Path
+) -> None:
+    lost = SCENARIO.replace("name: order-walk", "name: lost-walk").replace(
+        "depends_on: [order-held]", "depends_on: [no-such-node]"
+    )
+    path = write_scenario(hub, lost)
+
+    result = migrate(hub, marker, "lost-walk", "order-walk")
+
+    assert result.exit_code == 1, result.output
+    assert plain(result.stderr).splitlines() == [
+        "hub scenario migrate: scenarios/demo/lost-walk.yaml:24: nodes[2].depends_on[0]: no node"
+        ' has the id "no-such-node"',
+        NOTHING_WRITTEN.format(count="1 scenario"),
+    ]
+    assert path.read_text() == lost
+    assert (hub / "scenarios" / "demo" / "order-walk.yaml").read_text() == SCENARIO
+
+
+@pytest.mark.parametrize("check", [False, True], ids=["write", "check"])
+def test_refuses_and_writes_nothing_when_migrate_would_write_a_tree_the_loader_refuses(
+    hub: Path, marker: Path, *, check: bool
+) -> None:
+    # Compact JSON text is YAML: a list of 30,000 items is 60 KiB here, and over the loader's
+    # 256 KiB once written one item a line in the canonical block style.
+    send = {"id": "send", "type": "action", "action": "send-order", "with": {"target": "api"}}
+    send["with"] |= {"ref": "T-1", "count": 1, "items": [0] * 30_000}
+    graph = {"version": 1, "kind": "scenario", "name": "big-walk", "revision": 1, "nodes": [send]}
+    big = hub / "scenarios" / "demo" / "big-walk.yaml"
+    big.write_text(json.dumps(graph, separators=(",", ":")))
+    written = big.read_bytes()
+
+    result = migrate(hub, marker, *(["--check"] if check else []))
+
+    assert result.exit_code == 1, result.output
+    assert plain(result.stdout) == ""
+    assert plain(result.stderr).splitlines() == [
+        "hub scenario migrate: scenarios/demo/big-walk.yaml: as blocks it would not load: the"
+        " file is over 262144 bytes",
+        NOTHING_WRITTEN.format(count="1 scenario"),
+    ]
+    assert big.read_bytes() == written
+    assert (hub / "scenarios" / "demo" / "order-walk.yaml").read_text() == SCENARIO
+
+
+@pytest.mark.parametrize("check", [False, True], ids=["write", "check"])
+def test_refuses_and_writes_nothing_when_migrate_finds_a_path_the_writer_refuses(
+    hub: Path, marker: Path, *, check: bool
+) -> None:
+    # Discovery reads a pack folder whose name holds a backslash; the hub item writer does not.
+    walk = write_scenario(
+        hub, SCENARIO.replace("name: order-walk", "name: back-walk"), pack="de\\mo"
+    )
+
+    result = migrate(hub, marker, "back-walk", *(["--check"] if check else []))
+
+    assert result.exit_code == 1, result.output
+    assert plain(result.stderr).splitlines() == [
+        "hub scenario migrate: scenarios/de\\mo/back-walk.yaml: its path holds a backslash or a"
+        " control character: migrate writes no such path",
+        NOTHING_WRITTEN.format(count="1 scenario"),
+    ]
+    assert walk.read_text() == SCENARIO.replace("name: order-walk", "name: back-walk")
 
 
 def test_refuses_and_writes_nothing_when_migrate_names_a_json_or_linked_file(

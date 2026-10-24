@@ -6,8 +6,11 @@ scenario named (every version-1 scenario when none is), the canonical text of it
 ``migrate_graph``, generator's ``render_document``), or why it cannot be migrated: no scenario
 of that name (with the problems of a file of that name, if any), a file that does not load or
 plan (its problems), one already at version 2, a JSON file (migrate rewrites
-``scenarios/<pack>/<name>.yaml`` only), a file that is a link, or each node a tree cannot hold.
-A folder's problem (a linked ``scenarios/`` or pack folder) refuses a run with no names, which
+``scenarios/<pack>/<name>.yaml`` only), a file that is a link, a path the hub item writer does
+not write (a backslash or a control character in it), each node a tree cannot hold, or a tree
+whose canonical text would not load again (past the loader's 256 KiB: block-style YAML is
+larger than a compact version-1 file), as the builder's Save checks before it writes. A
+folder's problem (a linked ``scenarios/`` or pack folder) refuses a run with no names, which
 cannot read every scenario.
 
 ``write_migration`` writes one file through the generator's hub item writer: a temporary file
@@ -23,7 +26,11 @@ from typing import Final
 from agent_hub.cli.init_report import shown_path
 from agent_hub.cli.workflow_command import problem_line
 from agent_hub.cli.workflow_runs import WorkflowRunError
-from agent_hub.core.item_versions.hub_item_writer import HubItemWriteError, ItemWriteRefusedError
+from agent_hub.core.item_versions.hub_item_writer import (
+    HubItemWriteError,
+    ItemWriteRefusedError,
+    checked_unit_parts,
+)
 from agent_hub.core.item_versions.item_version import UnitKind
 from agent_hub.core.item_versions.unit_content import UnitContent, UnitFile
 from agent_hub.core.scenarios.tree_migrate import (
@@ -39,10 +46,13 @@ from agent_hub.generator.hub_item_writer import FileSystemHubItemWriter
 from agent_hub.generator.scenario_discovery import HUB_SCENARIOS, DiscoveredScenarioSource
 from agent_hub.generator.scenario_yaml import render_document
 from agent_hub.generator.workflow_discovery import WORKFLOW_SUFFIXES, DiscoveredWorkflow
-from agent_hub.generator.workflow_yaml import JSON_SUFFIX
+from agent_hub.generator.workflow_yaml import JSON_SUFFIX, WorkflowFileError, load_workflow_bytes
 
 GRAPH_VERSION: Final = 1
 _LINKED: Final = "it is a link: migrate writes the file in place, never through a link"
+_UNWRITABLE: Final = (
+    "its path holds a backslash or a control character: migrate writes no such path"
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -126,16 +136,8 @@ def _migrated(
     def refused(*reasons: str) -> Refused:
         return Refused(name=found.name, lines=tuple(f"{shown}: {reason}" for reason in reasons))
 
-    if is_tree(found.document):
-        return refused(ALREADY_A_TREE)
-    if found.path.suffix == JSON_SUFFIX:
-        target = shown_path(f"{found.name}.yaml")
-        return refused(
-            f"it is a JSON file: migrate rewrites a .yaml file in place; rename it to {target}"
-            " first"
-        )
-    if found.path.is_symlink():
-        return refused(_LINKED)
+    if (reason := _not_in_place(found, file)) is not None:
+        return refused(reason)
     if not loads:
         return Refused(name=found.name, lines=tuple(map(problem_line, on_file)))
     try:
@@ -144,11 +146,33 @@ def _migrated(
         return refused(*map(str, error.problems))
     except WorkflowLoadError as error:
         return refused(str(error))
+    text = render_document(tree)
+    try:
+        load_workflow_bytes(text.encode(), source=file)
+    except WorkflowFileError as error:
+        return refused(f"as blocks it would not load: {error.reason}")
     stage = stage_name(found.name)
     blocks = sum(1 for block in block_map(tree).blocks if block.kind != "stage")
-    return Migrated(
-        file=file, name=found.name, stage=stage, blocks=blocks, text=render_document(tree)
-    )
+    return Migrated(file=file, name=found.name, stage=stage, blocks=blocks, text=text)
+
+
+def _not_in_place(found: DiscoveredWorkflow, file: str) -> str | None:
+    """Why migrate does not rewrite ``found``'s file in place, or ``None``."""
+    if is_tree(found.document):
+        return ALREADY_A_TREE
+    if found.path.suffix == JSON_SUFFIX:
+        target = shown_path(f"{found.name}.yaml")
+        return (
+            f"it is a JSON file: migrate rewrites a .yaml file in place; rename it to {target}"
+            " first"
+        )
+    if found.path.is_symlink():
+        return _LINKED
+    try:
+        checked_unit_parts(file, UnitKind.SCENARIO)
+    except ValueError:
+        return _UNWRITABLE
+    return None
 
 
 def _of_a_file(problem: LoadProblem) -> bool:

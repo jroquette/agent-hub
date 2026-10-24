@@ -138,9 +138,10 @@ And `hub scenario migrate [NAME…] [--check]`: core's `tree_migrate` reads a `v
 rules run the other way and gives the tree that translates back to the same nodes, edges and conditions (one stage
 named after the scenario, ids kept where they differ from the derived ones, its revision kept), or names each node it
 cannot map and why; the CLI writes each file in place with `generator`'s canonical writer, never through a link, and
-writes nothing at all when any scenario asked cannot be migrated ([design/scenarios.md](../design/scenarios.md)
-§ Tree format, AGH-515). A tree has no `returns` or `outcome_field`, so a graph that sets them is not migrated; it
-does not split the conditions of nested Ifs joined on one node either.
+writes nothing at all when any scenario asked cannot be migrated, each checked (its text loaded again) before the
+first write ([design/scenarios.md](../design/scenarios.md) § Tree format, AGH-515). A tree has no `returns` or
+`outcome_field`, so a graph that sets them is not migrated; it does not split the conditions of nested Ifs joined on
+one node either.
 The scenario builder that shipped with AGH-521 is the one the owner validated in the playground, and where it differs
 from the decision above, the validated behavior wins for what the screen shows:
 

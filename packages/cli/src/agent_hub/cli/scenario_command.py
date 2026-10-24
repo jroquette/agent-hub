@@ -459,9 +459,10 @@ def migrate_command(names: MigrateNames = None, *, check: Check = False) -> None
             except WorkflowRunError as error:
                 fail(f"{_MIGRATE_PREFIX}: {error}")
         verb = "would migrate" if check else "migrated"
+        blocks = "1 block" if item.blocks == 1 else f"{item.blocks} blocks"
         typer.echo(
             f"{verb} {shown_path(item.file)} to blocks (version 2): stage"
-            f" {shown_text(item.stage)}, {item.blocks} blocks"
+            f" {shown_text(item.stage)}, {blocks}"
         )
 
 

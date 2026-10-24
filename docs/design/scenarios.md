@@ -117,11 +117,19 @@ A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blo
   `fresh_context`; `returns` or `outcome_field`; a graph that is not series-parallel; a `when` no If gives (on a node
   that opens a list, two that are no condition and its complement, the conditions of nested Ifs joined on one node,
   which it does not split); and a tree that would pass a cap of the format. Graph reading stops at the first block
-  whose shape breaks; every node's own keys are checked. The tree is translated back before anything is written and
-  must give the same nodes, edges and conditions. Any scenario it cannot migrate (an unknown name, a file that does
-  not load or plan, a `version: 2` file, a JSON file, a file that is a link) means nothing is written for any of them;
-  it writes through a temporary file and a rename, never through a link, and runs no git command. `--check` writes
-  nothing and prints what it would write. hub web's builder is to offer Migrate for a graph scenario (not built yet).
+  whose shape breaks, and at the first If, Together or Repeat that would nest past 3 deep (named on its node, nothing
+  inside it read, so the work stays bounded whatever the graph holds); every node's own keys are checked. The tree is
+  translated back before anything is written and must give the same nodes, edges and conditions; their declaration
+  order may change (it becomes the blocks' order), and with it the order a run starts and records parallel nodes in.
+  Its canonical text must load again, as Save checks: block-style YAML can be past the loader's 256 KiB where the
+  compact `version: 1` file was not. Any scenario it cannot migrate (an unknown name, a file that does not load or
+  plan, a `version: 2` file, a JSON file, a file that is a link, a path with a backslash or a control character the
+  hub item writer does not write, a text that would not load) means nothing is written for any of them: every
+  scenario asked is checked before the first write. It writes through a temporary file and a rename, never through a
+  link, and runs no git command; a write that still fails part way (an I/O error, a file that became a link) stops
+  there, and the files printed as migrated before it are the ones written. `--check` writes nothing and prints what it
+  would migrate (a line per file: its stage and block count). hub web's builder is to offer Migrate for a graph
+  scenario (not built yet).
 
 ### Debugging
 
