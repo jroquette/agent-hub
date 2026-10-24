@@ -685,3 +685,41 @@ def test_runs_only_the_next_node_when_a_step_follows_a_stale_skip_of_an_earlier_
     assert [report.reason for report in stops] == ["a", "x", "s"]
     assert run.ran[1:] == [[], ["a"], ["x"]]
     assert stops[2].state.pause is not None and stops[2].state.pause.node == "s"
+
+
+def test_pauses_before_the_stale_skip_when_a_debug_resume_runs_its_owed_ancestor_again() -> None:
+    # The pass that pauses before the failed ``x`` owes ``x`` a rerun but never reaches the skip
+    # below it; the resume completes ``x``, which makes that skip of ``s`` stale, so it is asked
+    # again, as the gate's resume with no pause before ``x`` asks it.
+    gate = {"id": "ok", "type": "approval", "message": "Ship?", "depends_on": ["s"]}
+    plan = a_plan(
+        shell("a"),
+        shell("x", "a"),
+        shell("s", "x"),
+        gate | {"trigger_rule": "all_done"},
+        shell("after", "ok"),
+    )
+
+    def a_run() -> Passes:
+        run = Passes(plan, ScriptedRunner({"x": [NodeFailedError("exec_failed", "exit 1"), "x2"]}))
+        assert run.next(None).reason == "ok"
+        assert run.reports[0].state.nodes["s"].state == "skipped"
+        run.answers[("ok", 1)] = APPROVE
+        return run
+
+    straight, paused = a_run(), a_run()
+    plain_control = Breakpoints({"s": "1.3"})
+    plain_stop = straight.next(plain_control)
+    plain = straight.to_end(plain_control)
+    control = Breakpoints({"x": "1.2", "s": "1.3"})
+    before_x = paused.next(control)
+    before_s = paused.next(control)
+    last = paused.to_end(control)
+
+    assert plain_stop.state.pause == DebugPause("s", "1.3", "breakpoint")
+    assert before_x.state.pause == DebugPause("x", "1.2", "breakpoint")
+    assert before_x.state.rerun == frozenset({"x"})
+    assert (before_s.status, before_s.reason) == ("paused", "s")
+    assert before_s.state.pause == DebugPause("s", "1.3", "breakpoint")
+    assert paused.ran[1:] == [[], ["x"], ["s", "after"]]
+    assert (last.status, end_of(paused, last)) == ("done", end_of(straight, plain))
