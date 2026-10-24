@@ -15,6 +15,7 @@ import pytest
 from agent_hub.api import scenario_investigation
 from agent_hub.api.agent_session_runtime import HubCredentials
 from agent_hub.api.run_launcher import ScenarioLaunch
+from agent_hub.api.scenario_builder import render_document
 from agent_hub.api.scenario_catalog import ScenarioCatalog, ScenarioCommands
 from agent_hub.api.scenario_investigation import InvestigationRestrictions, ScenarioInvestigations
 from agent_hub.core.agent_sessions import errors as session_errors
@@ -48,6 +49,7 @@ from agent_hub.core.workflows.gates import GateAnswer
 from agent_hub.generator.action_discovery import discover_actions
 from agent_hub.generator.finding_issues import HeldIssue as HeldFindingIssue
 from agent_hub.generator.finding_issues import IssueMarked, marked_issue, retake_issue
+from agent_hub.generator.workflow_yaml import load_workflow_bytes
 
 RUNNING = "0.9.0"
 RUN = "walk-1"
@@ -2217,3 +2219,74 @@ def test_keeps_text_values_when_scenarios_detail_document_read(scenarios: Any) -
     document = detail.json()["document"]
     assert document["description"] == "2026-10-23"
     assert document["nodes"][0]["with"]["ref"] == "012"
+
+
+def test_keeps_number_like_text_as_text_when_builder_renders() -> None:
+    document = {"version": 1, "kind": "scenario", "name": "n", "description": "1e5", "x": "true"}
+
+    loaded = load_workflow_bytes(render_document(document).encode(), source="n.yaml").document
+
+    assert (loaded["description"], loaded["x"]) == ("1e5", "true")
+
+
+def test_refuses_unchanged_save_when_document_no_longer_loads(scenarios: Any) -> None:
+    writes = _DiskWrites()
+    scenarios.wire(item_version_writes=writes)
+    detail = scenarios.client.get("/api/v1/scenarios/demo/order-walk").json()
+    body = {
+        "pack": "demo",
+        "document": detail["document"],
+        "base_content_hash": detail["content_hash"],
+    }
+    scenarios.client.put("/api/v1/scenarios/demo/order-walk", json=body, headers=_origin(scenarios))
+    reread = scenarios.client.get("/api/v1/scenarios/demo/order-walk").json()
+    (scenarios.hub / "actions" / "demo" / "get-order.yaml").unlink()
+
+    again = scenarios.client.put(
+        "/api/v1/scenarios/demo/order-walk",
+        json={
+            "pack": "demo",
+            "document": reread["document"],
+            "base_content_hash": reread["content_hash"],
+        },
+        headers=_origin(scenarios),
+    )
+
+    assert (again.status_code, again.json()["code"]) == (409, "document_invalid")
+
+
+def test_refuses_action_write_when_script_named_another_way_or_runtime_moves_onto_a_file(
+    scenarios: Any,
+) -> None:
+    writes = _DiskWrites()
+    scenarios.wire(item_version_writes=writes)
+    pack = scenarios.hub / "actions" / "demo"
+    other = (pack / "send-order.yaml").read_text().replace("send-order.sh", "./get-order.sh")
+    (pack / "send-order.yaml").write_text(other)
+    (pack / "scripts" / "release_hold.py").write_text("print('hand-written')\n")
+    shared = dict(NEW_ACTION, name="get-order", runtime="sh", effect="read")
+    moved = dict(NEW_ACTION, name="release-hold", runtime="python", effect="write")
+
+    edited = scenarios.client.put(
+        "/api/v1/projects/demo/actions/demo/get-order", json=shared, headers=_origin(scenarios)
+    )
+    rewritten = scenarios.client.put(
+        "/api/v1/projects/demo/actions/demo/release-hold", json=moved, headers=_origin(scenarios)
+    )
+
+    assert (edited.status_code, edited.json()["code"]) == (409, "script_shared")
+    assert (rewritten.status_code, rewritten.json()["code"]) == (409, "name_taken")
+    assert writes.calls == []
+
+
+def test_refuses_proposal_when_over_the_size_bound(scenarios: Any) -> None:
+    proposal = (
+        scenarios.hub / ".agent-runs" / "proposals" / "scenarios" / "demo" / "order-walk.yaml"
+    )
+    proposal.parent.mkdir(parents=True)
+    proposal.write_text(WALK + "# " + "x" * (256 << 10) + "\n")
+
+    body = scenarios.client.get("/api/v1/scenarios/demo/order-walk/proposal").json()
+
+    assert body["document"] is None
+    assert body["problem"] == "the proposal is over 256 KiB"

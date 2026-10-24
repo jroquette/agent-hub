@@ -15,6 +15,8 @@
 
 import contextlib
 import hashlib
+import json
+import posixpath
 import re
 from collections.abc import Mapping
 from pathlib import Path
@@ -145,7 +147,26 @@ def render_document(document: Mapping[str, JsonValue]) -> str:
         ordered["nodes"] = [_ordered_node(node) for node in nodes]
     elif nodes is not None:
         ordered["nodes"] = nodes
-    return yaml.safe_dump(ordered, sort_keys=False, allow_unicode=True, width=100)
+    return yaml.dump(
+        ordered, Dumper=_CanonicalDumper, sort_keys=False, allow_unicode=True, width=100
+    )
+
+
+class _CanonicalDumper(yaml.SafeDumper):
+    """``SafeDumper`` that also quotes a text the strict loader would read as a JSON number,
+    boolean or null (``1e5``), so the file reads back as written."""
+
+
+def _represent_text(dumper: yaml.SafeDumper, text: str) -> yaml.ScalarNode:
+    try:
+        quote = not isinstance(json.loads(text), str)
+    except ValueError:
+        quote = False
+    style = "'" if quote else None
+    return dumper.represent_scalar("tag:yaml.org,2002:str", text, style=style)
+
+
+_CanonicalDumper.add_representer(str, _represent_text)
 
 
 def _ordered_node(node: JsonValue) -> JsonValue:
@@ -232,8 +253,12 @@ class ScenarioBuilder:
         document["name"] = name
         document["kind"] = "scenario"
         current = _revision(on_disk)
+        checked = _validate(hub, request.pack, document, found=discover_actions(hub))
+        if not checked.loads:
+            first = next(problem for problem in checked.problems if problem.severity == "error")
+            raise RunConflictError(code="document_invalid", reason=first.message)
         if on_disk is not None:
-            # An unchanged document writes nothing and keeps the file's revision.
+            # An unchanged document that loads writes nothing and keeps the file's revision.
             kept = render_document({**document, "revision": current})
             if kept.encode() == on_disk:
                 return SaveResult(
@@ -502,9 +527,16 @@ def read_proposal(builder: ScenarioBuilder, project: str, name: str) -> Proposal
     )
     hub = Path(hub_text)
     relative = proposal_path(plan_pack, name)
-    text, _ = _read_text_no_link(hub / relative)
+    text, cut = _read_text_no_link(hub / relative)
     if text is None:
         raise EntityNotFoundError(entity="proposal", entity_id=f"{project}/{name}")
+    if cut:
+        return ProposalView(
+            path=relative.as_posix(),
+            document=None,
+            check=None,
+            problem="the proposal is over 256 KiB",
+        )
     # The strict loader: no anchors, aliases or tags (an alias bomb never expands), JSON
     # scalars only, a mapping at the top.
     try:
@@ -571,14 +603,15 @@ def create_action(
         for entry in found.actions
         if entry.pack == action.pack
         and entry.document.name != action.name
-        and entry.document.script == script
+        and posixpath.normpath(entry.document.script) == posixpath.normpath(script)
     )
     if shared:
         raise RunConflictError(
             code="script_shared",
             reason=f"actions/{action.pack}/{script} is also run by: {', '.join(shared)}",
         )
-    if existing is None and (hub / "actions" / action.pack / script).exists():
+    moved = existing is None or script != existing.document.script
+    if moved and (hub / "actions" / action.pack / script).exists():
         raise RunConflictError(
             code="name_taken", reason=f"actions/{action.pack}/{script} already exists"
         )

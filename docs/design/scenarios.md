@@ -224,10 +224,10 @@ web makes it once: a named issue or a running create refuses both; only a warned
 Metadata only ([ADR 0019](../adr/0019-metadata-only-events-and-redaction.md)), each with a `payload_keys` row:
 `action.start`/`action.end` (`action`, `content_hash`, `environment`, `service`, `effect`, `origin`, `decision`,
 `approver`, `status`, `failure_kind`), `policy.decision` (`action` or node, `environment`, `effect`, `origin`,
-`decision`, `reason_kind`), (proposed, AGH-507) `debug.pause` (`node`, `block`, `reason`), `debug.command` (`command`, `approver`),
-`debug.breakpoints` (`count`), `expect.poll` (`poll`, `held`), `context.capture` (`name`), `finding` (`finding_id`,
+`decision`, `reason_kind`), `expect.poll` (`poll`, `held`), `context.capture` (`name`), `finding` (`finding_id`,
 `step`), `workaround.start`/`workaround.end` (`workaround_id`, `option`, `steps`, `status`); `gate.request` gains
-`reason`. Args, outputs, captures, findings, chat stay in the run record. Bounds: `expect` `every` ≥ 5 s, `timeout` ≤ 24
+`reason`. Proposed with AGH-507, not built: `debug.pause` (`node`, `block`, `reason`), `debug.command` (`command`,
+`approver`), `debug.breakpoints` (`count`). Args, outputs, captures, findings, chat stay in the run record. Bounds: `expect` `every` ≥ 5 s, `timeout` ≤ 24
 h, ≤ 1000 polls (retries, resumes too); action stdout ≤ 512 KiB; plan mode ≤ 60 s; ≤ 64 `--input` values of ≤ 64 KiB; a
 proposal ≤ 256 KiB, 20 findings, 5 options of ≤ 10 steps; ≤ 10 proposals per investigation; API record reads ≤ 8 MiB.
 

@@ -3501,9 +3501,8 @@ export interface components {
     /**
      * FeatureCost
      * @description What building the feature cost so far, estimated from its sessions' transcripts: the
-     *     sessions that touched its folder or worked on one of its tickets, and the sessions they
-     *     started. ``total_usd`` adds up the priced ones (None when none is); ``unpriced`` counts the
-     *     rest.
+     *     sessions that touched its folder or worked on one of its tickets. ``total_usd`` adds up the
+     *     priced ones (None when none is); ``unpriced`` counts the rest.
      */
     FeatureCost: {
       /** Sessions */

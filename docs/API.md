@@ -908,7 +908,7 @@ Problems:
 | Status | Type or code | When |
 | --- | --- | --- |
 | 400 | "Invalid request parameter" | `run_id` does not match `^[a-z0-9][a-z0-9-]{0,31}$`, or `finding_id` does not match `^f[0-9]{1,6}$` |
-| 401 · 403 · 415 | as in [Local security](#local-security) | a `POST` or `PUT`, or the values `GET`, without the launch cookie · a foreign `Origin` or fetch site · a body that is not JSON |
+| 401 · 403 · 415 | as in [Local security](#local-security) | a `POST` or `PUT` (but `POST …/scenarios/validate`), or the proposed values `GET`, without the launch cookie · a foreign `Origin` or fetch site · a body that is not JSON |
 | 404 | `about:blank` | no registered hub holds the run (or its record), the run is not a scenario run, an unknown project, scenario or finding, or the hub has no workdir |
 | 404 | `urn:agent-hub:problem:run-control-off` | a run write in the container (`AGENT_HUB_IN_CONTAINER=1`); the builder's save, dismiss and action writes answer 409 `hub_read_only` there instead, and its `POST …/scenarios/validate` needs no cookie |
 | 409 | `workflow-run-undeclared-environment` · `-denied` (`steps`) · `-plan-problem` | a start whose plan may not start; no run is created |

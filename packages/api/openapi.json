@@ -809,14 +809,12 @@
             "$ref": "#/components/schemas/Scope"
           },
           "values": {
-            "additionalProperties": {
-              "maxLength": 200,
-              "type": "string"
-            },
             "maxProperties": 32,
-            "propertyNames": {
-              "maxLength": 200,
-              "minLength": 1
+            "patternProperties": {
+              "^[a-z][a-z0-9_]{0,63}$": {
+                "maxLength": 200,
+                "type": "string"
+              }
             },
             "title": "Values",
             "type": "object"
@@ -3517,7 +3515,7 @@
       },
       "FeatureCost": {
         "additionalProperties": false,
-        "description": "What building the feature cost so far, estimated from its sessions' transcripts: the\nsessions that touched its folder or worked on one of its tickets, and the sessions they\nstarted. ``total_usd`` adds up the priced ones (None when none is); ``unpriced`` counts the\nrest.",
+        "description": "What building the feature cost so far, estimated from its sessions' transcripts: the\nsessions that touched its folder or worked on one of its tickets. ``total_usd`` adds up the\npriced ones (None when none is); ``unpriced`` counts the rest.",
         "properties": {
           "sessions": {
             "minimum": 0.0,
@@ -13251,14 +13249,12 @@
           "values": {
             "anyOf": [
               {
-                "additionalProperties": {
-                  "maxLength": 200,
-                  "type": "string"
-                },
                 "maxProperties": 32,
-                "propertyNames": {
-                  "maxLength": 200,
-                  "minLength": 1
+                "patternProperties": {
+                  "^[a-z][a-z0-9_]{0,63}$": {
+                    "maxLength": 200,
+                    "type": "string"
+                  }
                 },
                 "type": "object"
               },
