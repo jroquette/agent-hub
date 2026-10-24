@@ -53,12 +53,12 @@ Chosen option: 1.
 - **One canonical form.** The builder's canonical YAML writer moves from `api` to `generator`, extended to the tree, so
   `hub scenario migrate` and hub web's Save write the same bytes. Saving an unchanged document writes nothing.
 - **Run control.** `EnginePorts` gains an optional run-control port. Before visiting a node (after resume reuse,
-  before `trigger_rule` and `when:`), the engine asks it whether to pause; a yes ends the pass as a gate pause does
+  before `trigger_rule` and `when:`), the engine asks it whether to pause; a yes stops the pass as a gate pause does
   (the report is `paused`, with reason `breakpoint` or `step` and the block address; a pause inside a `loop_group`
   body holds its iteration as a body gate does). With a breakpoint or step mode on, a layer that holds a node to pause at runs
   its nodes one at a time in declaration order, so "before this block" is exact. The resume is today's resume, except
-  that it goes on where the paused pass stopped (nothing that pass ended runs again: a failure is kept; what it had
-  not reached runs as that pass would have run it, a node stale in it included); Step and Continue
+  that it goes on with the paused pass as if the process had never stopped (the run state keeps that pass: nothing
+  it handled runs again, and the rest runs as it would have), so a pause never changes what a run does; Step and Continue
   are recorded commands read by the port. Without the port, or with no breakpoint and no step, the engine behaves as
   before.
 - **Breakpoints are run data.** Block addresses of the run's pinned tree, kept in the run folder, written whole by

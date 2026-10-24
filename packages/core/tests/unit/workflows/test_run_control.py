@@ -2,6 +2,7 @@
 (AC-507.9, .10, .11, .14; docs/design/workflow-engine-rules.md § Run control)."""
 
 import json
+import random
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -27,7 +28,7 @@ from agent_hub.core.testing.workflow_fakes import (
 from agent_hub.core.workflows.document import parse_workflow
 from agent_hub.core.workflows.engine import EnginePorts, run_workflow
 from agent_hub.core.workflows.failures import NodeFailedError
-from agent_hub.core.workflows.gates import GateAnswer, OpenGate
+from agent_hub.core.workflows.gates import GateAnswer, GateAnswers, OpenGate
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
 from agent_hub.core.workflows.ports import NodeCall, NodeReply
 from agent_hub.core.workflows.run_control import DebugPause, DebugReason, PauseReason, RunControl
@@ -130,11 +131,13 @@ class Passes:
         *,
         inputs: Mapping[str, JsonValue] | None = None,
         answers: Mapping[tuple[str, int], GateAnswer] | None = None,
+        gates: GateAnswers | None = None,
     ) -> None:
         self.plan, self.inputs = plan, dict(inputs or {})
         self.runner = runner or ScriptedRunner()
         self.recorder, self.trace, self.clock = ListRecorder(), ListTrace(), FakeClock()
         self.answers = dict(answers or {})
+        self.gates = gates
         self.reports: list[RunReport] = []
         self.ran: list[list[str]] = []
 
@@ -146,7 +149,7 @@ class Passes:
             self.clock,
             KeysOutputs(),
             lambda: 0.5,
-            gates=AnswerBook(self.answers),
+            gates=self.gates or AnswerBook(self.answers),
             trace=self.trace,
             control=control,
         )
@@ -436,22 +439,32 @@ def test_steps_into_every_iteration_when_a_stepped_run_reaches_a_group() -> None
     ]
 
 
-def test_lets_the_gate_pause_win_when_a_gate_opens_in_the_pass_that_stops_before_a_node() -> None:
+def test_pauses_before_the_node_and_ends_the_pass_on_the_gate_when_both_stop_one_pass() -> None:
+    # The pass that opened the gate goes on after Continue and pauses on that gate once the layer
+    # ends, as it does with no breakpoint; the answer is taken up by the resume after.
     gate = {"id": "ok", "type": "approval", "message": "Ship?", "depends_on": ["a"]}
     plan = a_plan(shell("a"), gate, shell("side", "a"), shell("after", "ok", "side"))
     run = Passes(plan)
     control = Breakpoints({"side": "1.3"})
 
-    gated = run.next(control)
+    stopped = run.next(control)
     started = run.started()
     run.answers[("ok", 1)] = APPROVE
-    stopped = run.next(control)
+    gated = run.next(control)
     last = run.next(control)
 
-    assert (gated.reason, gated.state.gates, gated.state.pause) == ("ok", {"ok": OpenGate(1)}, None)
+    assert (stopped.reason, stopped.state.pause) == (
+        "side",
+        DebugPause("side", "1.3", "breakpoint"),
+    )
+    assert stopped.state.gates == {"ok": OpenGate(1)}
+    assert stopped.state.paused_pass is not None
+    assert stopped.state.paused_pass.gate == "ok"
     assert started == ["a", "ok"]
-    assert stopped.state.pause == DebugPause("side", "1.3", "breakpoint")
-    assert (last.status, run.ran[2]) == ("done", ["side", "after"])
+    assert (gated.reason, gated.state.gates, gated.state.pause) == ("ok", {"ok": OpenGate(1)}, None)
+    assert run.ran[1] == ["side"]
+    assert (last.status, run.ran[2]) == ("done", ["after"])
+    assert [request.node for request in run.recorder.gates] == ["ok"]
 
 
 def test_keeps_the_failure_and_runs_nothing_again_when_a_pause_after_it_is_continued() -> None:
@@ -472,6 +485,49 @@ def test_keeps_the_failure_and_runs_nothing_again_when_a_pause_after_it_is_conti
         ("b", "failed")
     ]
     assert last.state.nodes["b"] == NodeResult("failed")
+
+
+def test_goes_on_with_the_paused_pass_when_the_resume_has_no_breakpoint_left() -> None:
+    plan = a_plan(shell("a"), shell("b", "a"), shell("c", "b", trigger_rule="all_done"))
+    run = Passes(plan, ScriptedRunner({"b": [NodeFailedError("exec_failed", "exit 1"), "b2"]}))
+
+    paused = run.next(Breakpoints({"c": "1.3"}))
+    last = run.next(None)
+
+    assert paused.state.paused_pass is not None
+    assert (paused.state.paused_pass.layer, set(paused.state.paused_pass.ends)) == (2, {"a", "b"})
+    assert (last.status, last.reason, last.state.pause) == ("failed", "b", None)
+    assert last.state.paused_pass is None
+    assert run.ran == [["a", "b"], ["c"]]
+    assert last.state.attempts == {"a": 1, "b": 1, "c": 1}
+
+
+def test_holds_the_iteration_with_its_open_gate_when_a_body_node_pauses_beside_it() -> None:
+    body = [
+        shell("w"),
+        {"id": "ok", "type": "approval", "message": "Go?", "depends_on": ["w"]},
+        shell("y", "w"),
+    ]
+    group = {"id": "g", "type": "loop_group", "max_iterations": 1, "nodes": body}
+    plan = a_plan(group | {"until_when": "$y.output == ''"}, shell("after", "g"))
+    run = Passes(plan)
+    control = Breakpoints({"g__y": "1.1.3"})
+
+    stopped = run.next(control)
+    run.answers[("g__ok", 1)] = APPROVE
+    gated = run.next(control)
+    last = run.next(control)
+
+    assert (stopped.reason, stopped.state.gates) == ("g__y", {"g__ok": OpenGate(1)})
+    assert list(stopped.state.groups["g"].current) == ["g__w"]
+    assert (gated.reason, gated.state.pause, list(gated.state.groups["g"].current)) == (
+        "g__ok",
+        None,
+        ["g__w", "g__y"],
+    )
+    assert run.ran == [["g__w"], ["g__y"], ["after"]]
+    assert [request.node for request in run.recorder.gates] == ["g__ok"]
+    assert last.status == "done"
 
 
 def test_runs_an_always_run_node_once_when_a_pause_after_it_is_continued() -> None:
@@ -599,7 +655,8 @@ def test_runs_the_stale_child_again_when_a_gate_resume_changes_its_ancestor_and_
 
     assert straight.ran[1] == ["a", "b", "after"]
     assert stopped.state.pause == DebugPause("b", "1.2", "breakpoint")
-    assert "b" in stopped.state.rerun
+    assert stopped.state.paused_pass is not None
+    assert "b" in stopped.state.paused_pass.stale
     assert paused.ran[1:] == [["a"], ["b", "after"]]
     assert last.state.nodes["b"] == plain.state.nodes["b"] != straight.reports[0].state.nodes["b"]
     assert end_of(paused, last) == end_of(straight, plain)
@@ -668,7 +725,8 @@ def test_pauses_before_the_stale_skip_when_a_resume_after_the_gate_reaches_its_b
     last = run.to_end(control)
 
     assert before_x.state.pause == DebugPause("x", "1.2", "breakpoint")
-    assert "s" in before_x.state.rerun
+    assert before_x.state.paused_pass is not None
+    assert "s" in before_x.state.paused_pass.stale
     assert run.ran[1:3] == [["a"], ["x"]]
     assert (before_s.status, before_s.state.pause) == (
         "paused",
@@ -687,8 +745,8 @@ def test_runs_only_the_next_node_when_a_step_follows_a_stale_skip_of_an_earlier_
     assert stops[2].state.pause is not None and stops[2].state.pause.node == "s"
 
 
-def test_pauses_before_the_stale_skip_when_a_debug_resume_runs_its_owed_ancestor_again() -> None:
-    # The pass that pauses before the failed ``x`` owes ``x`` a rerun but never reaches the skip
+def test_pauses_before_the_stale_skip_when_a_debug_resume_runs_its_failed_ancestor_again() -> None:
+    # The pass that pauses before the failed ``x`` has not run it again, nor reached the skip
     # below it; the resume completes ``x``, which makes that skip of ``s`` stale, so it is asked
     # again, as the gate's resume with no pause before ``x`` asks it.
     gate = {"id": "ok", "type": "approval", "message": "Ship?", "depends_on": ["s"]}
@@ -718,8 +776,174 @@ def test_pauses_before_the_stale_skip_when_a_debug_resume_runs_its_owed_ancestor
 
     assert plain_stop.state.pause == DebugPause("s", "1.3", "breakpoint")
     assert before_x.state.pause == DebugPause("x", "1.2", "breakpoint")
-    assert before_x.state.rerun == frozenset({"x"})
+    assert before_x.state.paused_pass is not None
+    assert set(before_x.state.paused_pass.ends) == {"a"}
     assert (before_s.status, before_s.reason) == ("paused", "s")
     assert before_s.state.pause == DebugPause("s", "1.3", "breakpoint")
     assert paused.ran[1:] == [[], ["x"], ["s", "after"]]
     assert (last.status, end_of(paused, last)) == ("done", end_of(straight, plain))
+
+
+@dataclass
+class LateAnswers:
+    """``GateAnswers`` that approve each gate attempt the second time it is asked: the first ask
+    pauses the run on it, the resume after takes the answer."""
+
+    asked: dict[tuple[str, int], int] = field(default_factory=dict)
+
+    def answer(self, node: str, attempt: int) -> GateAnswer | None:
+        key = (node, attempt)
+        self.asked[key] = self.asked.get(key, 0) + 1
+        return APPROVE if self.asked[key] > 1 else None
+
+
+FAILED = NodeFailedError("exec_failed", "exit 1")
+OUTPUTS: tuple[Scripted, ...] = ('{"v": "x"}', '{"v": "y"}', FAILED)
+RULES = ("all_success", "all_done", "none_failed_min_one_success", "one_success")
+
+
+@dataclass(frozen=True)
+class Graph:
+    """A generated document's nodes and each action's replies, attempt after attempt."""
+
+    nodes: tuple[dict[str, object], ...]
+    replies: Mapping[str, tuple[Scripted, ...]]
+
+    def plan(self) -> WorkflowPlan:
+        return a_plan(*self.nodes)
+
+
+class GraphMaker:
+    """Draws a small random graph from ``seed``: chains and fork-joins of actions under every
+    trigger rule, some with a ``when:`` or a capture, and ``always_run`` shells, failing on some
+    attempts; at times one approval, and one ``loop_group`` (its body holding the approval, at
+    times)."""
+
+    def __init__(self, seed: int) -> None:
+        self.rng = random.Random(seed)  # noqa: S311 - seeded test graphs, not cryptography
+        self.count = self.rng.randint(3, 7)
+        self.gate = self.rng.randrange(self.count) if self.rng.random() < 0.5 else None
+        group = self.rng.randrange(self.count) if self.rng.random() < 0.5 else None
+        self.group = None if group == self.gate else group
+        self.body_gate = self.group is not None and self.gate is None and self.rng.random() < 0.5
+        self.nodes: list[dict[str, object]] = []
+        self.replies: dict[str, tuple[Scripted, ...]] = {}
+        self.shells: set[str] = set()
+
+    def graph(self) -> Graph:
+        for index in range(self.count):
+            self.nodes.append(self.node(index))
+        return Graph(tuple(self.nodes), self.replies)
+
+    def node(self, index: int) -> dict[str, object]:
+        node = {"id": f"n{index}"} | self.edges(index)
+        if index == self.gate:
+            return node | {"type": "approval", "message": "Ship?"}
+        if index == self.group:
+            return node | self.loop_group(f"n{index}")
+        if self.rng.random() < 0.2:
+            # Only an agent, shell, script or loop node takes ``always_run``; a shell's failure
+            # is retried by default.
+            self.replies[f"n{index}"] = tuple(self.rng.choice(("x", "y", FAILED)) for _ in range(3))
+            self.shells.add(f"n{index}")
+            return node | {"type": "shell", "command": ["true"], "always_run": True}
+        node |= {"type": "action", "action": "fixture/read"}
+        if self.rng.random() < 0.4:
+            node["capture"] = {f"c{index}": "$self.output.v"}
+        self.scripted(f"n{index}", 2)
+        return node
+
+    def edges(self, index: int) -> dict[str, object]:
+        earlier = [str(node["id"]) for node in self.nodes]
+        depends_on = self.rng.sample(earlier, k=min(len(earlier), self.rng.choice((0, 1, 1, 2))))
+        # A group beside an open gate holds its iteration, or not, by thread timing (the gate's
+        # resume reruns what it ended), so the approval and the group are always ordered.
+        gate, group = self.gate, self.group
+        if gate is not None and group is not None and index == max(gate, group):
+            depends_on = sorted({*depends_on, f"n{min(gate, group)}"})
+        edges: dict[str, object] = {"depends_on": depends_on}
+        if not depends_on:
+            return edges
+        edges["trigger_rule"] = self.rng.choice(RULES)
+        readable = [dep for dep in depends_on if dep in self.replies]
+        if readable and self.rng.random() < 0.3:
+            read = self.rng.choice(readable)
+            path = "" if read in self.shells else ".v"
+            edges["when"] = f"${read}.output{path} == 'x'"
+        return edges
+
+    def loop_group(self, group_id: str) -> dict[str, object]:
+        body: list[dict[str, object]] = [
+            {"id": "w", "type": "action", "action": "fixture/read"},
+            {"id": "x", "type": "action", "action": "fixture/read", "depends_on": ["w"]},
+        ]
+        if self.body_gate:
+            # Before ``x``, or beside it (then a pause before ``x`` follows the gate's opening).
+            after = self.rng.choice(([], ["w"]))
+            body.insert(1, {"id": "ok", "type": "approval", "message": "Go?", "depends_on": after})
+            body[2]["depends_on"] = self.rng.choice((["w", "ok"], ["w"]))
+        self.scripted(f"{group_id}__w", 3)
+        self.scripted(f"{group_id}__x", 3)
+        group = {"type": "loop_group", "max_iterations": 2, "nodes": body}
+        return group | {"until_when": "$x.output.v == 'x'"}
+
+    def scripted(self, node_id: str, most: int) -> None:
+        count = self.rng.randint(1, most)
+        self.replies[node_id] = tuple(self.rng.choice(OUTPUTS) for _ in range(count))
+
+
+def graph_run(graph: Graph) -> Passes:
+    return Passes(graph.plan(), ScriptedRunner(dict(graph.replies)), gates=LateAnswers())
+
+
+def recorded(run: Passes, report: RunReport) -> tuple[object, ...]:
+    """What a run ends with, apart from the order concurrent nodes record in."""
+    ends = sorted(
+        (
+            e.node,
+            e.attempt,
+            e.status,
+            e.skip_cause or "",
+            e.origin or "",
+            e.failure_kind or "",
+            repr(e.output),
+        )
+        for e in run.recorder.ends
+    )
+    starts = sorted((start.node, start.attempt) for start in run.recorder.starts)
+    gates = sorted((request.node, request.attempt) for request in run.recorder.gates)
+    captures = sorted((c.node, c.attempt, c.name, repr(c.value)) for c in run.trace.captures)
+    state = report.state
+    return (
+        report.status,
+        report.outcome,
+        report.reason,
+        dict(state.nodes),
+        dict(state.attempts),
+        captures,
+        ends,
+        starts,
+        gates,
+        sorted(run.runner.ran()),
+        [(end.status, end.outcome, end.reason) for end in run.recorder.run_ends],
+    )
+
+
+@pytest.mark.parametrize("seed", range(400))
+def test_ends_the_same_when_any_graph_runs_straight_paused_before_every_node_or_stepped(
+    seed: int,
+) -> None:
+    # AC-507.14: a debug pause changes when a run stops, never what it does; its resume goes on
+    # with the pass it interrupted.
+    graph = GraphMaker(seed).graph()
+    every_node = {node.id: node.id for node in graph.plan().all_nodes()}
+    rng = random.Random(seed)  # noqa: S311 - seeded test breakpoints, not cryptography
+    some = {node: f"b{rng.randrange(3)}" for node in every_node if rng.random() < 0.4}
+    straight, every, stepped, broken = (graph_run(graph) for _ in range(4))
+
+    plain = straight.to_end(None)
+
+    expected = recorded(straight, plain)
+    assert recorded(every, every.to_end(Breakpoints(every_node))) == expected
+    assert recorded(stepped, stepped.to_end(Stepping())) == expected
+    assert recorded(broken, broken.to_end(Breakpoints(some))) == expected

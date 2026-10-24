@@ -109,7 +109,9 @@ A scenario run may pause before a block: by a **breakpoint**, or by **Step** ([A
   `hub scenario continue RUN`, which runs to the next breakpoint or the end. A gate met meanwhile pauses as before;
   once answered, a stepping run pauses before the next block. Both are resumes, recorded with who sent them.
 - With a breakpoint or step mode on, a layer holding a block to pause at runs one node at a time in declaration
-  order; without either, the engine runs as before.
+  order; without either, the engine runs as before. A pause changes when a run stops, never what it does: Step and
+  Continue go on with the pass the pause stopped, so a block that failed is not run again
+  ([workflow-engine-rules.md](workflow-engine-rules.md) § Run control).
 - While a run is paused, hub web may read its inputs (the effective ones, environment values included) and each
   finished block's rendered inputs, status and last output (a Wait until's last poll and its count), from its record,
   through a route that needs the launch cookie; never for a run on a `production: true` environment.

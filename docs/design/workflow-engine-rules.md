@@ -79,42 +79,32 @@ A debug pause stops a run before a node by a breakpoint or by Step ([ADR
 0049](../adr/0049-scenario-blocks-and-run-control.md), [scenarios.md](scenarios.md) § Debugging). The engine knows
 only nodes: the run-control port maps blocks to the nodes they enter by, and decides which ones Step pauses before.
 
-- Without the port, or while it is not debugging (no breakpoint, no step mode), the engine asks nothing more. The
-  resume rules below follow the run state's pause, not whether the port is debugging: a resume from a debug pause
-  goes on where its pass stopped even once every breakpoint is cleared.
-- When a layer starts (a group body's layer in each iteration), the port is asked, once per node, about each node
-  this pass may run. It is never asked about a node the run reached in an earlier pass that this pass does not run
-  again:
-  - an end this pass reuses or keeps;
-  - a skip that is not stale in this pass (on a resume from a debug pause, also not in the run state's `rerun`);
-  - a held group, or a gate a resume takes up.
-
-  A body node's ends count in their iteration. A failure a resume reruns is asked again. So is a stale or
-  `always_run` node that runs again, and a stale skip that is evaluated again, so answering a gate never passes a
-  breakpoint. A breakpoint set while a layer runs takes effect from the next layer. Resume reuse comes first, then
-  run control, then `trigger_rule` and `when:`.
+- Without the port, or while it is not debugging (no breakpoint, no step mode), the engine asks nothing more. A resume
+  from a debug pause goes on with its pass (below) even once every breakpoint is cleared.
+- When a layer starts (a group body's layer in each iteration), the port is asked, once per node, about each node the
+  pass is about to visit. It is not asked about a node whose end or open state from an earlier pass this pass takes
+  as is: a reused node (`prior_success`), a skip that is not stale (it skips again, the same way), a gate or a held
+  group it takes up. A breakpoint set while a layer runs takes effect from the next layer. Resume reuse comes first,
+  then run control, then `trigger_rule` and `when:`.
 - A layer holding a node to pause at runs one node at a time in declaration order and stops before the first such
-  node: the nodes of that layer before it run, it and the nodes after it do not start, and no later layer starts.
-  A group whose body pauses ends its own visit there, but the other nodes of the outer layer still run in that pass,
-  as with a body gate. Nothing is recorded and no gate opens; the report is `paused`, its `reason` that node, and the
-  run state holds the pause (node, block, `breakpoint` or `step`). A pause in a group body holds its iteration as a
-  body gate does. When two concurrent groups' bodies both pause, which pause the report names (and how far the
-  other body got) depends on thread timing; the run's results do not.
-- The resume takes up the pause: the first visit of the node it stopped before runs, and so does the first visit of
-  each node the port names the same block for (an If's or a Together's other entry nodes).
-- The resume goes on where that pass stopped. What completed is reused, an `always_run` node too. What failed keeps
-  its failure and runs nothing again; nothing more is recorded for it. A node that pass skipped is evaluated again,
-  to the same skip, and is not asked again.
-- What the paused pass had not reached stays as an earlier pass left it. A gate open there stays open, and its
-  resume takes up any answer it has. An end that pass would have run again is kept in the run state's `rerun`: a
-  failure, an `always_run` node, or a completed or skipped node stale in that pass (below a node that changed or is
-  stale there, through the layers it never reached). On the resume, each one runs again, or is evaluated again, and
-  is asked again.
-- What a rerun changes is found on the resume itself: a node below an owed node that ran again and changed is stale
-  in the resume's pass, so it runs again, or a skip is evaluated again, and it is asked again, even when it is not
-  in `rerun`.
-- A gate that opens in the pass wins: the report is the gate's, with no debug pause, and the nodes the pass stopped
-  before are asked again on its resume.
+  node: the nodes of that layer before it run, it and the nodes after it do not start, and no later layer starts. A
+  group whose body pauses holds its iteration there, as with a body gate, and the other nodes of the outer layer still
+  run. Nothing is recorded for the node; the report is `paused`, its `reason` that node, and the run state holds the
+  pause (node, block, `breakpoint` or `step`) and the pass it stopped: the layer, the pass's ends, the results those
+  nodes had before it, its changed and stale nodes, and the gate it opened that is still open.
+- The resume goes on with that pass, as if the process had never stopped. It restores the pass and visits the rest of
+  the stopped layer, then the layers after it; nothing the pass already handled is visited again, so a failure is not
+  run again and a stale node runs as that pass would have run it. The first visit of the node it stopped before runs,
+  and so does the first visit of each node the port names the same block for (an If's or a Together's other entry
+  nodes).
+- A gate that opened in the stopped pass stays open: the report is the debug pause, the gate is in the run state, and
+  its answer is not read again in that pass. Once the stopped layer ends, the pass pauses on the gate, as it does with
+  no breakpoint, and the resume after it takes up the answer. What an earlier pass left open that the stopped pass
+  had not reached (a gate, a held group) stays in the run state for the pass that reaches it.
+- So a pause changes when a run stops, never what it does: with the same inputs and stub results, a run with no
+  pause, one paused before every node and one stepped node by node end with the same status, outcome, node results,
+  captures and recorded step attempts. When a group runs beside an open gate, whether it holds its iteration depends
+  on thread timing, with or without a pause.
 
 ## Invariants
 

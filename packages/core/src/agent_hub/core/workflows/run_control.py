@@ -5,8 +5,9 @@ before a node by a breakpoint or by Step, which is not a gate.
 block the node enters (an address the engine never reads) and why. The engine asks it when a
 layer starts (a ``loop_group`` body's included), and only while ``debugging()``: a layer holding
 a node to pause at runs one node at a time in declaration order and stops before that node, so
-nothing of it starts. No gate opens and nothing is recorded; the report is ``paused`` with the
-node as ``reason`` and its ``DebugPause`` in ``RunState.pause``. Mapping a block to the nodes it
+nothing of it starts and nothing is recorded for it. The report is ``paused`` with the node as
+``reason``, its ``DebugPause`` in ``RunState.pause`` and the stopped pass in
+``RunState.paused_pass``, which the resume goes on with. Mapping a block to the nodes it
 enters by (a ``<step>__ask`` gate in front of a gated step among them), and knowing which blocks
 are leaves for Step, are the port's: the engine knows only nodes.
 """
