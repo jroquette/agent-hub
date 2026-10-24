@@ -15,6 +15,7 @@ from agent_hub.core.workflows.failures import FailureKind
 from agent_hub.core.workflows.gates import OpenGate
 from agent_hub.core.workflows.nodes import Node
 from agent_hub.core.workflows.ports import ReportStatus, RunStatus, SkipCause
+from agent_hub.core.workflows.run_control import DebugPause
 from agent_hub.core.workflows.substitution import NodeResult, NodeState
 
 _FAILED = NodeResult("failed")
@@ -43,10 +44,28 @@ class HeldGroup:
 
 
 @dataclass(frozen=True)
+class PausedPass:
+    """The pass a debug pause interrupted, as its resume goes on with it: the layer it stopped in
+    (an index of the plan's layers), the ends it gave (kind, cause and origin kept), the results
+    those nodes had before it (``before``: ``RunState.nodes`` holds the pass's own), its changed
+    and stale nodes, and the gate it opened that is still open (its ``OpenGate`` in
+    ``RunState.gates``): the pass still pauses on that gate once the layer ends."""
+
+    layer: int
+    ends: Mapping[str, NodeEnd] = field(default_factory=dict)
+    before: Mapping[str, NodeResult] = field(default_factory=dict)
+    changed: frozenset[str] = frozenset()
+    stale: frozenset[str] = frozenset()
+    gate: str | None = None
+
+
+@dataclass(frozen=True)
 class RunState:
     """What a run leaves for its resume: each node's result, its attempts, agent sessions and
-    the gates it paused on, with the groups paused around one, and each expect node's polls
-    (its budget spans the run's resumes)."""
+    the gates it paused on, with the groups paused around one, and each expect node's polls (its
+    budget spans the run's resumes). After a debug pause, also that pause (``pause``) and the
+    pass it interrupted (``paused_pass``), which the resume goes on with; then ``gates`` and
+    ``groups`` also hold what an earlier pass left open that this one had not reached."""
 
     nodes: Mapping[str, NodeResult] = field(default_factory=dict)
     attempts: Mapping[str, int] = field(default_factory=dict)
@@ -54,12 +73,14 @@ class RunState:
     gates: Mapping[str, OpenGate] = field(default_factory=dict)
     groups: Mapping[str, HeldGroup] = field(default_factory=dict)
     polls: Mapping[str, int] = field(default_factory=dict)
+    pause: DebugPause | None = None
+    paused_pass: PausedPass | None = None
 
 
 @dataclass(frozen=True)
 class RunReport:
     """The run's end, or its pause: ``status`` apart from the authored ``outcome``; ``reason``
-    is a node id (the failed, halting or gate node)."""
+    is a node id (the failed, halting or gate node, or the node a debug pause stopped before)."""
 
     status: ReportStatus
     outcome: JsonValue

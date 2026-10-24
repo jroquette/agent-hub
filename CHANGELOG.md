@@ -38,7 +38,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
 - ADR 0049 (proposed): scenarios as ordered stages of blocks (`version: 2`) translated to the graph at load, and a
   debugger as engine run control, with its reference fixtures (AGH-508, AGH-521). Built so far: core loads a
   `version: 2` scenario and translates its stages and blocks to the node graph, each load or plan problem on the
-  tree's key path (AGH-509); the rest is not built yet.
+  tree's key path (AGH-509); the engine takes a run-control port that pauses a run before a node, and the resume goes
+  on with the pass the pause stopped, so a pause never changes what the run does (AGH-510); the rest is not built
+  yet.
 
 ### Changed
 

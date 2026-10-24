@@ -53,15 +53,17 @@ Chosen option: 1.
 - **One canonical form.** The builder's canonical YAML writer moves from `api` to `generator`, extended to the tree, so
   `hub scenario migrate` and hub web's Save write the same bytes. Saving an unchanged document writes nothing.
 - **Run control.** `EnginePorts` gains an optional run-control port. Before visiting a node (after resume reuse,
-  before `trigger_rule` and `when:`), the engine asks it whether to pause; a yes ends the pass as a gate pause does
+  before `trigger_rule` and `when:`), the engine asks it whether to pause; a yes stops the pass as a gate pause does
   (the report is `paused`, with reason `breakpoint` or `step` and the block address; a pause inside a `loop_group`
   body holds its iteration as a body gate does). With a breakpoint or step mode on, a layer that holds a node to pause at runs
-  its nodes one at a time in declaration order, so "before this block" is exact. The resume is today's resume; Step and Continue are
-  recorded commands read by the port. Without the port, or with no breakpoint and no step, the engine behaves as
+  its nodes one at a time in declaration order, so "before this block" is exact. The resume is today's resume, except
+  that it goes on with the paused pass as if the process had never stopped (the run state keeps that pass: nothing
+  it handled runs again, and the rest runs as it would have), so a pause never changes what a run does; Step and Continue
+  are recorded commands read by the port. Without the port, or with no breakpoint and no step, the engine behaves as
   before.
 - **Breakpoints are run data.** Block addresses of the run's pinned tree, kept in the run folder, written whole by
-  the CLI (hub web runs it as it runs gate decisions), read before each node. They are never in the document, so they
-  change neither the plan nor the `content_hash`.
+  the CLI (hub web runs it as it runs gate decisions), read as each layer of nodes starts. They are never in the
+  document, so they change neither the plan nor the `content_hash`.
 - **What the debugger never does.** It answers no gate (a breakpoint on a gated step pauses before its `<step>__ask`,
   and the ask still opens after Continue or Step), edits no value, re-runs or skips no block, and rewinds nothing.
 - **Production.** Breakpoints, Step, Continue and a start with breakpoints are refused when the run's environment is
@@ -106,8 +108,10 @@ Chosen option: 1.
 
 ## Delivery notes (AGH-521)
 
-This ADR stays proposed. Of the decision above, only the translation at load is built: `parse_workflow` reads a
+This ADR stays proposed. Of the decision above, the translation at load is built: `parse_workflow` reads a
 `version: 2` scenario into the node graph, with its block map and its problems on the tree's key paths (AGH-509).
+So is the engine's run-control port: `EnginePorts.control` pauses a run before a node, and the resume goes on with the
+pass it stopped ([design/workflow-engine-rules.md](../design/workflow-engine-rules.md) § Run control, AGH-510).
 The scenario builder that shipped with AGH-521 is the one the owner validated in the playground, and where it differs
 from the decision above, the validated behavior wins for what the screen shows:
 
@@ -125,8 +129,9 @@ from the decision above, the validated behavior wins for what the screen shows:
   name, and a run input the start does not give takes the environment's non-secret value of that name before its
   declared default (`hub env` sets them). The decision above does not cover them; they live beside it in
   [design/scenarios.md](../design/scenarios.md) and [design/environments.md](../design/environments.md).
-- **Debugger.** Breakpoints, Step, Continue, the values read and their routes are not built: the API paths in
-  [API.md](../API.md) marked AGH-507 are the contract for them.
+- **Debugger.** Only the engine's run-control port is built. Nothing sets a breakpoint or sends Step or Continue
+  yet: `breakpoints.json`, the CLI commands, the debug record lines, the values read and their routes are not built,
+  and the API paths in [API.md](../API.md) marked AGH-507 are the contract for them.
 
 ## More Information
 

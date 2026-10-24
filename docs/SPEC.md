@@ -441,16 +441,16 @@ instruction" for actions and for the deterministic nodes of a workflow that decl
   scenario `demo-service-up` that uses it, each file only where absent. They are the project's files: `hub sync`
   never adds them and `hub.lock` does not list them, so a hub without `scenarios/`, `actions/` and `environments`
   renders and syncs as before.
-- **Blocks and debugging** ([ADR 0049](adr/0049-scenario-blocks-and-run-control.md), AGH-507, proposed; built so
-  far: core loads a `version: 2` file and translates it at load; the builder AGH-521 shipped edits `version: 1` files,
-  see the ADR's delivery notes): a scenario may be
-  written as `version: 2`, named stages of ordered blocks (Do, Wait until, You, Wait, Include; Repeat, If/else, At the
-  same time), which core translates to the node graph at load, so the policy, gates and records are unchanged; hub
-  web's builder edits that file block for block, and Save of an unchanged file writes nothing. A scenario run may pause
-  at breakpoints (block addresses kept with the run, never in the file), run one block at a time (Step) or to the next
-  breakpoint (Continue), and show its inputs, captures and each finished block's inputs and output while paused. A
-  pause never answers an ask, edits a value or rewinds; debugging is refused on a production environment. `hub
-  scenario migrate` converts graph scenarios; `hub doctor` warns on the graph format until it is removed.
+- **Blocks and debugging** ([ADR 0049](adr/0049-scenario-blocks-and-run-control.md), AGH-507, proposed; built so far:
+  core loads a `version: 2` file and translates it at load, and the engine can pause a run before a node through a
+  run-control port; the builder AGH-521 shipped edits `version: 1` files, see the ADR's delivery notes): a scenario
+  may be written as `version: 2`, named stages of ordered blocks (Do, Wait until, You, Wait, Include; Repeat, If/else,
+  At the same time), which core translates to the node graph at load, so the policy, gates and records are unchanged;
+  hub web's builder edits that file block for block, and Save of an unchanged file writes nothing. A scenario run may
+  pause at breakpoints (block addresses kept with the run, never in the file), run one block at a time (Step) or to
+  the next breakpoint (Continue), and show its inputs, captures and each finished block's inputs and output while
+  paused. A pause never answers an ask, edits a value or rewinds; debugging is refused on a production environment.
+  `hub scenario migrate` converts graph scenarios; `hub doctor` warns on the graph format until it is removed.
 - **In `hub web`** (Scenarios, in the sidebar's Work group after Tickets): the list with each scenario's last
   scenario run, a scenario's steps and its plan for a chosen environment, and a scenario run's page with its timeline
   and, while paused, the investigation chat, the options with their plans and the pick; a policy ask is answered on

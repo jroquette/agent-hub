@@ -73,6 +73,39 @@ together. The format is the schema's contract; the reasons are in [ADR 0032](../
   iteration open (the resume goes on in it, with the body nodes it ended and `$LOOP_PREV`); two suspendable nodes (a
   gate, or a group whose body holds one) with no order between them are a load error. After Ctrl-C no gate opens.
 
+### Run control
+
+A debug pause stops a run before a node by a breakpoint or by Step ([ADR
+0049](../adr/0049-scenario-blocks-and-run-control.md), [scenarios.md](scenarios.md) § Debugging). The engine knows
+only nodes: the run-control port maps blocks to the nodes they enter by, and decides which ones Step pauses before.
+
+- Without the port, or while it is not debugging (no breakpoint, no step mode), the engine asks nothing more. A resume
+  from a debug pause goes on with its pass (below) even once every breakpoint is cleared.
+- When a layer starts (a group body's layer in each iteration), the port is asked, once per node, about each node the
+  pass is about to visit. It is not asked about a node whose end or open state from an earlier pass this pass takes
+  as is: a reused node (`prior_success`), a skip that is not stale (it skips again, the same way), a gate or a held
+  group it takes up. A breakpoint set while a layer runs takes effect from the next layer. Resume reuse comes first,
+  then run control, then `trigger_rule` and `when:`.
+- A layer holding a node to pause at runs one node at a time in declaration order and stops before the first such
+  node: the nodes of that layer before it run, it and the nodes after it do not start, and no later layer starts. A
+  group whose body pauses holds its iteration there, as with a body gate, and the other nodes of the outer layer still
+  run. Nothing is recorded for the node; the report is `paused`, its `reason` that node, and the run state holds the
+  pause (node, block, `breakpoint` or `step`) and the pass it stopped: the layer, the pass's ends, the results those
+  nodes had before it, its changed and stale nodes, and the gate it opened that is still open.
+- The resume goes on with that pass, as if the process had never stopped. It restores the pass and visits the rest of
+  the stopped layer, then the layers after it; nothing the pass already handled is visited again, so a failure is not
+  run again and a stale node runs as that pass would have run it. The first visit of the node it stopped before runs,
+  and so does the first visit of each node the port names the same block for (an If's or a Together's other entry
+  nodes).
+- A gate that opened in the stopped pass stays open: the report is the debug pause, the gate is in the run state, and
+  its answer is not read again in that pass. Once the stopped layer ends, the pass pauses on the gate, as it does with
+  no breakpoint, and the resume after it takes up the answer. What an earlier pass left open that the stopped pass
+  had not reached (a gate, a held group) stays in the run state for the pass that reaches it.
+- So a pause changes when a run stops, never what it does: with the same inputs and stub results, a run with no
+  pause, one paused before every node and one stepped node by node end with the same status, outcome, node results,
+  captures and recorded step attempts. When a group runs beside an open gate, whether it holds its iteration depends
+  on thread timing, with or without a pause.
+
 ## Invariants
 
 - Expansion is deterministic and bounded: the same documents give the same expanded graph.

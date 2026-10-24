@@ -97,19 +97,22 @@ A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blo
 
 ### Debugging
 
-**Proposed, not built yet** ([ADR 0049](../adr/0049-scenario-blocks-and-run-control.md), AGH-507): this section is
-the contract for a later change. Today's builder reads and writes `version: 1` files and Save goes through the API
+**Partly built** ([ADR 0049](../adr/0049-scenario-blocks-and-run-control.md), AGH-507): the engine pauses a run
+before a node through its run-control port, and the resume goes on with the pass it stopped
+([workflow-engine-rules.md](workflow-engine-rules.md) § Run control). Proposed, not built yet: the rest of this
+section (`breakpoints.json`, the `hub scenario` debug commands, the record lines, the values read, the production
+refusal and hub web's debugger). Today's builder reads and writes `version: 1` files and Save goes through the API
 (see the ADR's delivery notes).
 
 A scenario run may pause before a block: by a **breakpoint**, or by **Step** ([ADR
 0049](../adr/0049-scenario-blocks-and-run-control.md)). It is not a gate and Approvals does not list it.
 
 - Breakpoints are block addresses of the run's pinned tree, kept in the run folder: `breakpoints.json`, written whole
-  (a temporary file, then a rename), at most 64 KiB and 512 addresses, read before each node, never through a link; a
-  file that cannot be read or parsed counts as no breakpoint and adds a record line. They are set by `hub scenario
-  run --break ADDR…`, `hub scenario break RUN ADDR… [--off]` (adds or removes), `hub scenario break RUN --set
-  [ADDR…]` (replaces the set; none clears it) or hub web. One set while the run runs takes effect at its next block.
-  They are never in the document.
+  (a temporary file, then a rename), at most 64 KiB and 512 addresses, read as each layer of nodes starts, never
+  through a link; a file that cannot be read or parsed counts as no breakpoint and adds a record line. They are set by
+  `hub scenario run --break ADDR…`, `hub scenario break RUN ADDR… [--off]` (adds or removes), `hub scenario break RUN
+  --set [ADDR…]` (replaces the set; none clears it) or hub web. One set while the run runs takes effect from the next
+  layer of nodes (so not between the paths of a Together that already started). They are never in the document.
 - Before a block means before its first node and before its `<step>__ask` gate; for a stage, before its first block;
   a Repeat, before the group (a body block's breakpoint pauses in every iteration); an If, before its condition is
   read; a Together, before any path. An Include is one block: nothing inside the scenario it includes takes a
@@ -119,7 +122,9 @@ A scenario run may pause before a block: by a **breakpoint**, or by **Step** ([A
   `hub scenario continue RUN`, which runs to the next breakpoint or the end. A gate met meanwhile pauses as before;
   once answered, a stepping run pauses before the next block. Both are resumes, recorded with who sent them.
 - With a breakpoint or step mode on, a layer holding a block to pause at runs one node at a time in declaration
-  order; without either, the engine runs as before.
+  order; without either, the engine runs as before. A pause changes when a run stops, never what it does: Step and
+  Continue go on with the pass the pause stopped, so a block that failed is not run again
+  ([workflow-engine-rules.md](workflow-engine-rules.md) § Run control).
 - While a run is paused, hub web may read its inputs (the effective ones, environment values included) and each
   finished block's rendered inputs, status and last output (a Wait until's last poll and its count), from its record,
   through a route that needs the launch cookie; never for a run on a `production: true` environment.
