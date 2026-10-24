@@ -1,4 +1,5 @@
-"""``hub scenario list|plan`` (AC-350.8, .13, .17, .18, .28, .42; docs/design/scenarios.md).
+"""``hub scenario list|plan|run|migrate`` (AC-350.8, .13, .17, .18, .28, .42; AC-507.20, .21;
+docs/design/scenarios.md).
 
 Each test builds a workspace under ``tmp_path``: a hub (``hub.json`` with the environments of
 ``an_environments_document``) holding the ``demo`` action pack and the ``orders`` scenario pack,
@@ -24,12 +25,19 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 from typer.testing import CliRunner, Result
 
 from agent_hub.cli.main import app
 from agent_hub.cli.workflow_runs import snapshot_hash
 from agent_hub.core.events.event import Event
 from agent_hub.core.testing.builders import an_environments_document
+from agent_hub.core.testing.workflow_fakes import KeysOutputs
+from agent_hub.core.workflows.document import WorkflowDocument, parse_workflow
+from agent_hub.core.workflows.fixtures import parse_fixture, run_fixture
+from agent_hub.core.workflows.plan import plan_workflow
+from agent_hub.generator.scenario_examples import EXAMPLE_FILES
+from agent_hub.generator.workflow_yaml import load_workflow_bytes
 from agent_hub.storage.event_store import open_event_store
 
 SCRIPT = """\
@@ -2811,3 +2819,194 @@ def test_names_environment_when_its_value_does_not_fit_the_input(hub: Path, mark
     # The value comes from the environment, not from --input.
     assert "--env" in plain(planned.output)
     assert "--input" not in plain(planned.output)
+
+
+# ``hub scenario migrate`` (AC-507.20, .21): a graph scenario (version 1) written again in place
+# as blocks (version 2), in canonical form, or nothing written with each node it cannot map named.
+BLOCKS = Path(__file__).resolve().parents[3] / "core/tests/data/scenarios/blocks"
+# The example scenario hub init seeded in the graph format, before it seeded blocks.
+GRAPH_SEED = (
+    Path(__file__).resolve().parents[3] / "generator/tests/data/scenarios/demo-service-up.v1.yaml"
+)
+WRITTEN = "scenarios/demo/{name}.yaml to blocks (version 2): stage {name}, {count} blocks"
+NOTHING_WRITTEN = "hub scenario migrate: {count} cannot be written as blocks; nothing was written"
+ONE_SUCCESS = SCENARIO.replace("name: order-walk", "name: either-walk") + (
+    "  - id: either\n"
+    "    type: action\n"
+    "    depends_on: [check-order]\n"
+    "    trigger_rule: one_success\n"
+    "    action: get-order\n"
+    "    with: {target: api, ref: $INPUTS.ref}\n"
+)
+WALK_FIXTURE = {
+    "workflow": "order-walk",
+    "inputs": {"ref": "T-1"},
+    "stubs": {
+        "send-order": {"output": {"order": "o-1"}},
+        "order-held": {"output": {"order": "o-1", "status": "ON_HOLD"}},
+        "check-order": {"output": {"order": "o-1"}},
+    },
+    "expect": {"status": "done"},
+    "reached": ["send-order", "order-held", "check-order"],
+}
+SEED_FIXTURE = {
+    "workflow": "demo-service-up",
+    "inputs": {"service": "api"},
+    "stubs": {"service-up": {"output": {"status": 200}}, "read-root": {"output": {"status": 200}}},
+    "expect": {"status": "done"},
+    "reached": ["service-up", "read-root"],
+}
+
+
+def migrate(hub: Path, marker: Path, *args: str) -> Result:
+    return run_hub(hub, marker, "scenario", "migrate", *args)
+
+
+def scenario_document(data: bytes, source: str) -> WorkflowDocument:
+    return parse_workflow(load_workflow_bytes(data, source=source).document)
+
+
+def fixture_problems(document: WorkflowDocument, fixture: dict[str, Any]) -> tuple[str, ...]:
+    result = run_fixture(plan_workflow(document), parse_fixture(fixture), outputs=KeysOutputs())
+    return (*result.problems, *result.warnings)
+
+
+def test_writes_the_canonical_tree_when_migrate_rewrites_the_reference_graph(
+    hub: Path, marker: Path
+) -> None:
+    path = hub / "scenarios" / "demo" / "demo-order-roundtrip.yaml"
+    # A JSON text is YAML: the reference graph, as a version-1 scenario file.
+    path.write_text((BLOCKS / "graph" / "demo-order-roundtrip.json").read_text())
+
+    result = migrate(hub, marker, "demo-order-roundtrip")
+
+    assert (result.exit_code, plain(result.stderr)) == (0, ""), result.output
+    assert plain(result.stdout).splitlines() == [
+        "migrated " + WRITTEN.format(name="demo-order-roundtrip", count=22)
+    ]
+    assert path.read_bytes() == (BLOCKS / "migrated" / "demo-order-roundtrip.yaml").read_bytes()
+    assert not path.is_symlink()
+    # A scenario not named stays in the graph format.
+    assert (hub / "scenarios" / "demo" / "order-walk.yaml").read_text() == SCENARIO
+
+
+def test_keeps_the_plan_and_fixtures_when_migrate_rewrites_a_graph_scenario(
+    hub: Path, marker: Path
+) -> None:
+    seed = hub / "scenarios" / "demo" / "demo-service-up.yaml"
+    shutil.copyfile(GRAPH_SEED, seed)
+    walk = hub / "scenarios" / "demo" / "order-walk.yaml"
+    graphs = {path: path.read_bytes() for path in (seed, walk)}
+    planned = plan_hub(hub, marker, "local", "--json")
+
+    result = migrate(hub, marker)
+    again = migrate(hub, marker)
+
+    assert (result.exit_code, plain(result.stderr)) == (0, ""), result.output
+    assert plain(result.stdout).splitlines() == [
+        "migrated " + WRITTEN.format(name="demo-service-up", count=2),
+        "migrated " + WRITTEN.format(name="order-walk", count=3),
+    ]
+    assert (again.exit_code, plain(again.stdout)) == (
+        0,
+        "no scenario in the graph format (version 1)\n",
+    ), again.output
+    replanned = plan_hub(hub, marker, "local", "--json")
+    assert (planned.exit_code, replanned.exit_code) == (0, 0), replanned.output
+    assert json.loads(plain(replanned.stdout)) == json.loads(plain(planned.stdout))
+    seeded = next(file for file in EXAMPLE_FILES if file.path.endswith("demo-service-up.yaml"))
+    assert yaml.safe_load(seed.read_bytes()) == yaml.safe_load(seeded.content)
+    for path, fixture in ((seed, SEED_FIXTURE), (walk, WALK_FIXTURE)):
+        old = scenario_document(graphs[path], path.name)
+        new = scenario_document(path.read_bytes(), path.name)
+        assert yaml.safe_load(path.read_bytes())["version"] == 2
+        assert new.nodes == old.nodes
+        assert fixture_problems(old, fixture) == fixture_problems(new, fixture) == ()
+
+
+def test_writes_nothing_when_migrate_runs_with_check(hub: Path, marker: Path) -> None:
+    walk = hub / "scenarios" / "demo" / "order-walk.yaml"
+
+    result = migrate(hub, marker, "order-walk", "--check")
+
+    assert (result.exit_code, plain(result.stderr)) == (0, ""), result.output
+    assert plain(result.stdout).splitlines() == [
+        "would migrate " + WRITTEN.format(name="order-walk", count=3)
+    ]
+    assert walk.read_text() == SCENARIO
+
+
+@pytest.mark.parametrize("check", [False, True], ids=["write", "check"])
+def test_writes_nothing_and_names_the_node_when_migrate_cannot_map_one(
+    hub: Path, marker: Path, *, check: bool
+) -> None:
+    either = write_scenario(hub, ONE_SUCCESS)
+
+    result = migrate(hub, marker, *(["--check"] if check else []))
+
+    assert result.exit_code == 1, result.output
+    assert plain(result.stdout) == ""
+    assert plain(result.stderr).splitlines() == [
+        'hub scenario migrate: scenarios/demo/either-walk.yaml: node "either": has trigger_rule'
+        " one_success: a tree joins with all_success, or with none_failed_min_one_success after"
+        " an If; no block gives one_success",
+        NOTHING_WRITTEN.format(count="1 scenario"),
+    ]
+    assert either.read_text() == ONE_SUCCESS
+    assert (hub / "scenarios" / "demo" / "order-walk.yaml").read_text() == SCENARIO
+
+
+def test_refuses_and_writes_nothing_when_migrate_names_a_tree_or_an_unknown_scenario(
+    hub: Path, marker: Path
+) -> None:
+    tree = hub / "scenarios" / "demo" / "blocks-if-else.yaml"
+    shutil.copyfile(BLOCKS / "tree" / "blocks-if-else.yaml", tree)
+    written = tree.read_bytes()
+
+    result = migrate(hub, marker, "blocks-if-else", "no-such-walk", "order-walk")
+
+    assert result.exit_code == 1, result.output
+    assert plain(result.stderr).splitlines() == [
+        "hub scenario migrate: scenarios/demo/blocks-if-else.yaml: version: it is already"
+        " written as blocks (version 2)",
+        "hub scenario migrate: no scenario named no-such-walk in scenarios/",
+        NOTHING_WRITTEN.format(count="2 scenarios"),
+    ]
+    assert tree.read_bytes() == written
+    assert (hub / "scenarios" / "demo" / "order-walk.yaml").read_text() == SCENARIO
+
+
+def test_refuses_and_writes_nothing_when_migrate_names_a_json_or_linked_file(
+    hub: Path, marker: Path, tmp_path: Path
+) -> None:
+    folder = hub / "scenarios" / "demo"
+    as_json = folder / "json-walk.json"
+    send = {"id": "send", "type": "action", "action": "send-order", "with": {"target": "api"}}
+    graph = {"version": 1, "kind": "scenario", "name": "json-walk", "revision": 1, "nodes": [send]}
+    as_json.write_text(json.dumps(graph))
+    outside = tmp_path / "linked-walk.yaml"
+    outside.write_text(SCENARIO.replace("name: order-walk", "name: linked-walk"))
+    (folder / "linked-walk.yaml").symlink_to(outside)
+    # A link whose file stays in the pack is read, so only migrate refuses it.
+    inside = folder / "drafts" / "inside-walk.yaml"
+    inside.parent.mkdir()
+    inside.write_text(SCENARIO.replace("name: order-walk", "name: inside-walk"))
+    (folder / "inside-walk.yaml").symlink_to(Path("drafts") / "inside-walk.yaml")
+    kept = {path: path.read_bytes() for path in (as_json, outside, inside)}
+
+    result = migrate(hub, marker, "json-walk", "linked-walk", "inside-walk")
+
+    assert result.exit_code == 1, result.output
+    assert plain(result.stderr).splitlines() == [
+        "hub scenario migrate: scenarios/demo/json-walk.json: it is a JSON file: migrate"
+        " rewrites a .yaml file in place; rename it to json-walk.yaml first",
+        "hub scenario migrate: scenarios/demo/linked-walk.yaml: $: a link that leaves its pack;"
+        " it is not read",
+        "hub scenario migrate: no scenario named linked-walk in scenarios/",
+        "hub scenario migrate: scenarios/demo/inside-walk.yaml: it is a link: migrate writes the"
+        " file in place, never through a link",
+        NOTHING_WRITTEN.format(count="3 scenarios"),
+    ]
+    assert {path: path.read_bytes() for path in kept} == kept
+    assert (folder / "linked-walk.yaml").is_symlink()
+    assert (folder / "inside-walk.yaml").is_symlink()

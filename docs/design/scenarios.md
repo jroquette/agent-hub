@@ -36,11 +36,12 @@ adds them, `hub.lock` does not list them, and the init report does not count the
 scenario and translates it to the node graph at load, with its block map and its problems on the tree's key paths
 (the format, bounds, addresses, ids and translation below), and `generator`'s canonical YAML writer, which the API's
 builder routes use: validate and Save take a `version: 2` document as well as a `version: 1` one, and Save of an
-unchanged document writes nothing. Built too: doctor's `scenarios.graph_format` warning, and `hub init` seeds its
-example as `version: 2`. Proposed, not built yet: `hub scenario migrate`, which that warning's fix names, and a
-builder screen that edits `version: 2`. Hub web's builder reads and writes `version: 1` files only, so a `version: 2`
-file, the seeded example among them, opens in Build read-only (the steps core translates it to, and its file) and is
-edited as text or with Claude until the builder reads `version: 2` (see the ADR's delivery notes).
+unchanged document writes nothing. Built too: doctor's `scenarios.graph_format` warning, `hub init` seeds its
+example as `version: 2`, and `hub scenario migrate`, which that warning's fix names (core's `tree_migrate`).
+Proposed, not built yet: a builder screen that edits `version: 2`, and its Migrate action. Hub web's builder reads
+and writes `version: 1` files only, so a `version: 2` file, the seeded example among them, opens in Build read-only
+(the steps core translates it to, and its file) and is edited as text or with Claude until the builder reads
+`version: 2` (see the ADR's delivery notes).
 
 A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blocks-and-run-control.md)):
 `version: 2` and `stages:` in place of `nodes:`, with `kind: scenario` (a version-2 document without it fails at
@@ -101,11 +102,26 @@ A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blo
   `name`, `revision`, `description`, `environment`, the other keys, `nodes` last, and a node's `id`, `type`,
   `description`, `depends_on`, `when`, `trigger_rule` first. Save writes nothing, and keeps `revision`, when the
   canonical bytes with the file's own `revision` equal the file's.
-- `hub scenario migrate [NAME…] [--check]` writes a graph scenario as a tree (one stage named after the scenario, each
-  id kept as `id:` where it differs from the derived one) when the graph is series-parallel with only `all_success`
-  joins, `when` branches and the joins an If makes; otherwise nothing is written and each node it cannot map is named
-  with why (exit 1). The new file translates to the same nodes, edges and conditions. hub web's builder opens a graph
-  scenario read-only, with a Migrate action.
+- A tree has no `returns` or `outcome_field`: an include reads an included tree's output from its single last node.
+- `hub scenario migrate [NAME…] [--check]` writes each graph scenario named (every `version: 1` one when none is) again
+  in place as a tree, `scenarios/<pack>/<name>.yaml` in canonical form: one stage named after the scenario
+  (`scenario <name>` when the name starts with a digit, as a slug starts with a letter), each id kept as `id:` where it
+  differs from the derived one, the header and its `revision` kept (comments are not: use `description`). It reads the
+  graph by the translation's rules run the other way, one step list at a time: a list's next block starts at the
+  nodes that depend on none of the list's nodes still to read; one such node is a step (a `loop_group` a Repeat, its
+  body read the same way), or, with a `when`, an If with no else; several, each with a `when`, a condition and its
+  exact complement, are an If with an else; otherwise they start a Together (a path holding a condition and one its
+  complement becomes an If inside it). Each node must depend on exactly the exit nodes of the block before it and take
+  `none_failed_min_one_success` exactly after an If (or a Together a path of which ends with one). It refuses, writing
+  nothing and naming each node and why (exit 1): another `trigger_rule`; a `loop_group` with `until_bash` or
+  `fresh_context`; `returns` or `outcome_field`; a graph that is not series-parallel; a `when` no If gives (on a node
+  that opens a list, two that are no condition and its complement, the conditions of nested Ifs joined on one node,
+  which it does not split); and a tree that would pass a cap of the format. Graph reading stops at the first block
+  whose shape breaks; every node's own keys are checked. The tree is translated back before anything is written and
+  must give the same nodes, edges and conditions. Any scenario it cannot migrate (an unknown name, a file that does
+  not load or plan, a `version: 2` file, a JSON file, a file that is a link) means nothing is written for any of them;
+  it writes through a temporary file and a rename, never through a link, and runs no git command. `--check` writes
+  nothing and prints what it would write. hub web's builder is to offer Migrate for a graph scenario (not built yet).
 
 ### Debugging
 

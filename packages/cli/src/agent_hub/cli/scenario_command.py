@@ -1,6 +1,7 @@
-"""``hub scenario list|plan|run|break|step|continue|propose|findings``: the hub's scenarios,
-listed, planned, run and debugged, and their scenario runs' findings (docs/design/scenarios.md
-§ Contract, § Debugging, § Plan and modes, § Investigation; ADR 0041, ADR 0049).
+"""``hub scenario list|plan|run|break|step|continue|migrate|propose|findings``: the hub's
+scenarios, listed, planned, run, debugged and written as blocks, and their scenario runs'
+findings (docs/design/scenarios.md § Contract, § Tree format, § Debugging, § Plan and modes,
+§ Investigation; ADR 0041, ADR 0049).
 
 ``list`` prints one line per scenario that loads, ``<name>  <pack>  <nodes> nodes
 [<description>]``; each problem is one stderr line, ``<file>[:<line>]: <key>: <message>``, and
@@ -46,6 +47,16 @@ them (none clears them), printing the set written (``run <id>: breakpoints 2, 3.
 ``run <id>: paused before <address> (breakpoint|step)`` and exits 0. Each is refused, exit 1 and
 nothing recorded, on a ``production: true`` environment (clearing excepted), for a version-1
 scenario, which has no addresses, and for an address its tree does not hold.
+
+``migrate [NAME]... [--check]`` writes each graph-format scenario named (``version: 1``; every
+one when none is named) again in place as blocks (``version: 2``, ``scenario_migrate``): one
+stage named after the scenario, each id kept where it differs from the one its address derives,
+in canonical form, the revision kept; it prints ``migrated <file> to blocks (version 2): stage
+<name>, <n> blocks`` per file, or ``no scenario in the graph format (version 1)``. When anything
+cannot be migrated (no such scenario, a file that does not load, one already at version 2, a
+JSON file, a link, a node a tree cannot hold) it writes nothing: one stderr line per problem,
+naming the file and the node, then ``... cannot be written as blocks; nothing was written``,
+exit 1. ``--check`` writes nothing and prints ``would migrate ...`` instead.
 
 ``propose --run RUN`` records an investigation's findings and options, the fixed schema as JSON
 on stdin (at most 256 KiB, bounds and secret-shape redaction in core's ``investigation``), for
@@ -110,6 +121,7 @@ from agent_hub.cli.scenario_debug import (
     send_command,
 )
 from agent_hub.cli.scenario_investigation import Planned, option_lines, record_proposal
+from agent_hub.cli.scenario_migrate import MigrationPlan, plan_migration, write_migration
 from agent_hub.cli.scenario_runs import (
     INTERACTIVE,
     MODES,
@@ -182,6 +194,8 @@ _RUN_PREFIX: Final = "hub scenario run"
 _PROPOSE_PREFIX: Final = "hub scenario propose"
 _FINDINGS_PREFIX: Final = "hub scenario findings"
 _BREAK_PREFIX: Final = "hub scenario break"
+_MIGRATE_PREFIX: Final = "hub scenario migrate"
+NO_GRAPH_SCENARIO: Final = "no scenario in the graph format (version 1)"
 NO_TERMINAL: Final = (
     "no terminal: the issue was not created; run this command on a terminal to create it"
 )
@@ -417,6 +431,47 @@ def _run_id(run: str) -> None:
     if not RUN_ID_PATTERN.fullmatch(run):
         hint = "use 1 to 32 of a-z 0-9 -, starting with a letter or digit"
         raise typer.BadParameter(hint, param_hint="RUN")
+
+
+MigrateNames = Annotated[
+    list[str] | None,
+    typer.Argument(
+        metavar="[NAME]...", help="The scenarios (every graph-format one when none is given)."
+    ),
+]
+Check = Annotated[bool, typer.Option("--check", help="Write nothing; say what would be written.")]
+
+
+@scenario_app.command("migrate")
+def migrate_command(names: MigrateNames = None, *, check: Check = False) -> None:
+    """Write graph-format scenarios (version 1) again in place as blocks (version 2)."""
+    hub = action_hub()
+    plan = plan_migration(hub, names or [])
+    if plan.refused:
+        _refuse_migration(plan)
+    if not plan.migrated:
+        typer.echo(NO_GRAPH_SCENARIO)
+        return
+    for item in plan.migrated:
+        if not check:
+            try:
+                write_migration(hub, item)
+            except WorkflowRunError as error:
+                fail(f"{_MIGRATE_PREFIX}: {error}")
+        verb = "would migrate" if check else "migrated"
+        typer.echo(
+            f"{verb} {shown_path(item.file)} to blocks (version 2): stage"
+            f" {shown_text(item.stage)}, {item.blocks} blocks"
+        )
+
+
+def _refuse_migration(plan: MigrationPlan) -> NoReturn:
+    """Exit 1, naming each problem; nothing was written."""
+    count = sum(1 for refused in plan.refused if refused.name is not None)
+    noun = "scenario" if count == 1 else "scenarios"
+    end = f"{count} {noun} cannot be written as blocks; " if count else ""
+    lines = [f"{_MIGRATE_PREFIX}: {line}" for refused in plan.refused for line in refused.lines]
+    fail(*lines, f"{_MIGRATE_PREFIX}: {end}nothing was written")
 
 
 ProposeRun = Annotated[

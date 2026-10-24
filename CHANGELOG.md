@@ -48,7 +48,9 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   `hub scenario migrate`, and `hub init` seeds `demo-service-up` as `version: 2`, so a fresh hub has no such warning;
   since the builder edits only `version: 1`, hub web's Build view shows a `version: 2` file, that example among
   them, read-only (the steps it runs, and its file) instead of an empty step list it could not save (AGH-513); the
-  rest is not built yet.
+  CLI's debugger, `hub scenario run --break`, `break`, `step` and `continue`, refused on production (AGH-514);
+  `hub scenario migrate [NAME…] [--check]` writes graph scenarios again in place as blocks, or writes nothing and
+  names each node it cannot map and why (AGH-515); the rest is not built yet.
 
 ### Changed
 
