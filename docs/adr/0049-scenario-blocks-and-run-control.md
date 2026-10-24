@@ -93,7 +93,8 @@ Chosen option: 1.
 
 - Good: one file entry is one block; the builder edits the file without a graph reading and without loose blocks.
 - Good: everything after translation is today's engine, so policy, gates, investigation, events and fixtures are
-  untouched, and the seeded and existing scenarios keep running as version 1.
+  untouched, and existing scenarios keep running as version 1; `hub init` seeds its example as version 2 (delivery
+  notes, AGH-513).
 - Good: a person can stop before any block, step, continue and see the values, with the ask, the pin and determinism
   intact; a pause changes when a run stops, never its path or results.
 - Bad: two scenario formats live side by side until the graph one is removed; doctor and migrate carry the window.
