@@ -14,9 +14,10 @@ All optional and project-owned; a hub without `scenarios/`, `actions/` and `envi
 `scenarios/<pack>/<name>.yaml` with `kind: scenario` (each root refuses the other kind). Both load as workflows do
 (strict YAML, 256 KiB, unknown keys refused, errors name file, line and key), ≤ 200 files per root. `hub init` writes
 one example, each file only where absent: the read action `actions/demo/demo-get-status.yaml` (a Python script that
-GETs one path of a `service` input's endpoint; plan mode prints the URL) and the scenario `demo-service-up` (an `expect`
-until `/health` answers 200, then one `action`). They are the project's files: `hub sync` never adds them, `hub.lock`
-does not list them, and the init report does not count them.
+GETs one path of a `service` input's endpoint; plan mode prints the URL) and the scenario `demo-service-up`, written
+as blocks (`version: 2`: one stage, a Wait until `/health` answers 200, then one Do, with the ids `service-up` and
+`read-root`), so a fresh hub has no `scenarios.graph_format` warning. They are the project's files: `hub sync` never
+adds them, `hub.lock` does not list them, and the init report does not count them.
 
 ### Kind and node keys
 
@@ -35,8 +36,9 @@ does not list them, and the init report does not count them.
 scenario and translates it to the node graph at load, with its block map and its problems on the tree's key paths
 (the format, bounds, addresses, ids and translation below), and `generator`'s canonical YAML writer, which the API's
 builder routes use: validate and Save take a `version: 2` document as well as a `version: 1` one, and Save of an
-unchanged document writes nothing. Proposed, not built yet: doctor's `scenarios.graph_format` warning and `hub
-scenario migrate`; hub web's builder screen reads and writes `version: 1` files (see the ADR's delivery notes).
+unchanged document writes nothing. Built too: doctor's `scenarios.graph_format` warning, and `hub init` seeds its
+example as `version: 2`. Proposed, not built yet: `hub scenario migrate`, which that warning's fix names; hub web's
+builder screen reads and writes `version: 1` files (see the ADR's delivery notes).
 
 A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blocks-and-run-control.md)):
 `version: 2` and `stages:` in place of `nodes:`, with `kind: scenario` (a version-2 document without it fails at

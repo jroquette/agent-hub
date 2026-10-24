@@ -438,14 +438,16 @@ instruction" for actions and for the deterministic nodes of a workflow that decl
   view say so. Scenario runs are local only in v1, and a scenario run is a WorkflowRun that is always called a
   scenario run.
 - **Seed:** `hub init` writes one example, the read action `demo-get-status` (with its Python script) and the
-  scenario `demo-service-up` that uses it, each file only where absent. They are the project's files: `hub sync`
+  scenario `demo-service-up` that uses it (written as blocks, `version: 2`, so a fresh hub has no
+  `scenarios.graph_format` warning), each file only where absent. They are the project's files: `hub sync`
   never adds them and `hub.lock` does not list them, so a hub without `scenarios/`, `actions/` and `environments`
   renders and syncs as before.
 - **Blocks and debugging** ([ADR 0049](adr/0049-scenario-blocks-and-run-control.md), AGH-507, proposed; built so far:
   core loads a `version: 2` file and translates it at load, the engine can pause a run before a node through a
   run-control port, core folds a run's debug record lines and the values a paused run shows, and `generator`'s
   canonical writer gives the API's builder validate and Save for a `version: 2` document, writing nothing for an
-  unchanged one; the builder screen AGH-521 shipped edits `version: 1` files, see the ADR's delivery notes): a scenario
+  unchanged one, and `hub doctor` warns on each graph-format scenario, with `hub init` seeding its example as
+  `version: 2`; the builder screen AGH-521 shipped edits `version: 1` files, see the ADR's delivery notes): a scenario
   may be written as `version: 2`, named stages of ordered blocks (Do, Wait until, You, Wait, Include; Repeat, If/else,
   At the same time), which core translates to the node graph at load, so the policy, gates and records are unchanged;
   hub web's builder edits that file block for block, and Save of an unchanged file writes nothing. A scenario run may

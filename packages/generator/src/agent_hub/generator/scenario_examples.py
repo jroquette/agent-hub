@@ -101,26 +101,25 @@ _SCENARIO: Final = """\
 # An example scenario, written by hub init (docs/design/scenarios.md): change it or delete it.
 # Declare an environment and a service with an endpoint in it (hub env add), commit, then:
 #   ./hub scenario plan demo-service-up --env <environment> --input service=<service>
-version: 1
+version: 2
 kind: scenario
 name: demo-service-up
 revision: 1
 description: Wait until a service answers its health check, then read its root path
 inputs:
   service: {type: string, required: true}
-nodes:
-  - id: service-up
-    type: expect
-    action: demo-get-status
-    with: {target: $INPUTS.service}
-    every: 10s
-    timeout: 2m
-    until_when: "$self.output.status == 200"
-  - id: read-root
-    type: action
-    depends_on: [service-up]
-    action: demo-get-status
-    with: {target: $INPUTS.service, path: /}
+stages:
+  - name: demo-service-up
+    steps:
+      - wait_until: demo-get-status
+        id: service-up
+        with: {target: $INPUTS.service}
+        until: "$self.output.status == 200"
+        every: 10s
+        timeout: 2m
+      - do: demo-get-status
+        id: read-root
+        with: {target: $INPUTS.service, path: /}
 """
 
 EXAMPLE_FILES: Final = (

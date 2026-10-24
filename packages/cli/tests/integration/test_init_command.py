@@ -1476,6 +1476,11 @@ def test_writes_nothing_into_pack_when_target_holds_custom_pack(
 EXAMPLE_ACTION = "actions/demo/demo-get-status.yaml"
 EXAMPLE_SCRIPT = "actions/demo/scripts/demo_get_status.py"
 EXAMPLE_SCENARIO = "scenarios/demo/demo-service-up.yaml"
+# The example scenario as init wrote it in the graph format (version 1), before it seeded blocks:
+# planted in its place, it plans and runs as the seed does (AC-507.19, spec AM-12).
+GRAPH_SCENARIO = (
+    Path(__file__).resolve().parents[3] / "generator/tests/data/scenarios/demo-service-up.v1.yaml"
+)
 
 
 def test_writes_examples_when_scenario_seed_init(target: Path, *, demo_flags: list[str]) -> None:
@@ -1512,12 +1517,15 @@ def commit_hub(root: Path) -> None:
         subprocess.run([found, *identity, *args], cwd=root, check=True, capture_output=True)  # noqa: S603 - absolute git, fixed arguments
 
 
+@pytest.mark.parametrize("graph", [False, True], ids=["tree-seed", "graph-format"])
 def test_plans_example_when_scenario_seed_init_hub_declares_environment(
-    target: Path, *, demo_flags: list[str]
+    target: Path, *, demo_flags: list[str], graph: bool
 ) -> None:
     # The seeded example loads and plans with the real engine once the project declares an
     # environment and a service: plan mode runs the example script and reads no network.
     assert run_init([*demo_flags, "--dir", str(target)]).exit_code == 0
+    if graph:
+        shutil.copyfile(GRAPH_SCENARIO, target / EXAMPLE_SCENARIO)
     document = json.loads((target / "hub.json").read_bytes())
     declared = an_environments_document()
     document["environments"] = declared["environments"]
@@ -1590,8 +1598,9 @@ class FirstDropHandler(BaseHTTPRequestHandler):
         pass
 
 
+@pytest.mark.parametrize("graph", [False, True], ids=["tree-seed", "graph-format"])
 def test_polls_until_up_when_scenario_seed_service_starts_late(
-    target: Path, *, demo_flags: list[str]
+    target: Path, *, demo_flags: list[str], graph: bool
 ) -> None:
     # The example's expect keeps polling while the service is not up (review Q2): the first
     # poll's connection is reset, the next one gets 200. No clock decides it (review Q10).
@@ -1599,6 +1608,8 @@ def test_polls_until_up_when_scenario_seed_service_starts_late(
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), FirstDropHandler)
     port = httpd.server_address[1]
     assert run_init([*demo_flags, "--dir", str(target)]).exit_code == 0
+    if graph:
+        shutil.copyfile(GRAPH_SCENARIO, target / EXAMPLE_SCENARIO)
     document = json.loads((target / "hub.json").read_bytes())
     document["environments"] = {"local": {"access": "write"}}
     document["repos"][0]["services"] = {

@@ -45,6 +45,7 @@ WORKFLOWS_VALID_RULE: Final = "workflows.valid"
 ENVIRONMENTS_PRODUCTION_RULE: Final = "environments.production"
 ENVIRONMENTS_ENV_FILE_RULE: Final = "environments.env_file"
 WORKFLOWS_STARTS_RULE: Final = "workflows.starts"
+SCENARIOS_GRAPH_FORMAT_RULE: Final = "scenarios.graph_format"
 ITEM_LEFTOVERS_RULE: Final = "items.leftovers"
 
 RULE_IDS: Final = (
@@ -75,6 +76,7 @@ RULE_IDS: Final = (
     ENVIRONMENTS_PRODUCTION_RULE,
     ENVIRONMENTS_ENV_FILE_RULE,
     WORKFLOWS_STARTS_RULE,
+    SCENARIOS_GRAPH_FORMAT_RULE,
     BRAIN_MEMORY_RULE,
     SANDBOX_WORKFLOW_RULE,
     WORKFLOWS_VALID_RULE,
@@ -209,6 +211,7 @@ class DoctorRules(ConfigObject):
     )
     environments_env_file: RuleSettings | None = absent_by_default(alias="environments.env_file")
     workflows_starts: RuleSettings | None = absent_by_default(alias="workflows.starts")
+    scenarios_graph_format: RuleSettings | None = absent_by_default(alias="scenarios.graph_format")
     repos_agents: RuleSettings | None = absent_by_default(alias="repos.agents")
     config_stop_gate: StopGateRuleSettings | None = absent_by_default(alias="config.stop_gate")
     brain_memory: RuleSettings | None = absent_by_default(alias="brain.memory")

@@ -138,7 +138,9 @@ class DoctorSnapshot:
     reads them; else ``None``. ``item_folders`` then holds the folders to watch for them: the
     ones scanned, plus ``plugin`` and each ``plugin/<p>``, where an item folder can be made.
     ``env_files`` holds each declared env file as found when a selected rule reads them; else
-    ``None``.
+    ``None``. ``scenarios`` is the hub's scenarios (``scenarios/<pack>/``), as ``hub scenario``
+    reads them, when a selected rule reads them; else ``None``. ``scenario_folders`` then lists
+    the pack folders, so the control plane's cache sees a scenario added, removed or rewritten.
     """
 
     config: HubConfig | ConfigFailure
@@ -156,6 +158,9 @@ class DoctorSnapshot:
     item_leftovers: tuple[str, ...] | None = None
     item_folders: tuple[str, ...] = ()
     env_files: tuple[EnvFileFacts, ...] | None = None
+    scenarios: WorkflowSource | None = None
+    # The folders directly under ``scenarios/`` (``scenarios/<pack>``), read with ``scenarios``.
+    scenario_folders: tuple[str, ...] = ()
 
     @property
     def hub_config(self) -> HubConfig:

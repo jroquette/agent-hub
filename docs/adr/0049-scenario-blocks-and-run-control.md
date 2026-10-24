@@ -121,6 +121,10 @@ graph as before, in the canonical key order ([design/scenarios.md](../design/sce
 canonical tree file reads back to its own bytes; the API's builder validate and Save use it and take a `version: 2`
 document (its action references checked through its translated blocks, its callers listed in the action library),
 and Save of an unchanged document writes nothing and keeps its revision (AGH-512).
+And doctor's warning: `scenarios.graph_format` warns on each `version: 1` scenario of the hub, at its `version` line,
+with `hub scenario migrate` as its fix, a command not built yet ([design/hub-doctor.md](../design/hub-doctor.md));
+`hub init` seeds `demo-service-up` as `version: 2`, so a fresh hub has no such warning, and its `version: 1` text
+stays as a test fixture (AGH-513).
 The scenario builder that shipped with AGH-521 is the one the owner validated in the playground, and where it differs
 from the decision above, the validated behavior wins for what the screen shows:
 

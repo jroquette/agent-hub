@@ -55,6 +55,8 @@ class Read(StrEnum):
     ITEM_FOLDERS = "item_folders"
     # Each declared env file: whether it exists, which checkout holds it, whether git ignores it.
     ENV_FILES = "env_files"
+    # The hub's scenarios, through core's ``WorkflowSource`` over ``scenarios/<pack>/``.
+    SCENARIOS = "scenarios"
 
 
 # The reads the hub listing serves: the listing itself, and the file sets that come from it.

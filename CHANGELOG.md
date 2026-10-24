@@ -43,8 +43,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   debug pause (with the pass it stopped, read back for the resume), breakpoints and Step or Continue commands, and
   the values a paused run shows, apart from the run view, with the `debug.*` event types (AGH-511); `generator`'s
   canonical scenario writer writes a tree file back to its own bytes, the builder's API validates and saves a
-  `version: 2` document with it, and a save of an unchanged one writes nothing and keeps its revision (AGH-512); the
-  rest is not built yet.
+  `version: 2` document with it, and a save of an unchanged one writes nothing and keeps its revision (AGH-512);
+  the `hub doctor` rule `scenarios.graph_format` warns on each graph-format (`version: 1`) scenario, its fix naming
+  `hub scenario migrate`, and `hub init` seeds `demo-service-up` as `version: 2`, so a fresh hub has no such warning
+  (AGH-513); the rest is not built yet.
 
 ### Changed
 
