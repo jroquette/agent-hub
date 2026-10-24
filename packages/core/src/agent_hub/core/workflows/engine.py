@@ -335,20 +335,36 @@ class _Run:
                 gates = {g: open_ for g, open_ in self.prior.gates.items() if g not in self.taken}
                 left = self.prior.groups.items()
                 groups |= {g: held for g, held in left if g not in groups and g not in self.ends}
-                rerun = frozenset(
-                    n.id
-                    for n in self.plan.document.nodes
-                    if n.id not in self.ends
-                    and (before := self.prior.nodes.get(n.id)) is not None
-                    and before.state != "skipped"
-                    and not self._kept(n, before)
-                )
+                rerun = self._owed()
         else:
             return None
         nodes = {**self.prior.nodes, **self.results}
         polls = dict(self.polls)
         state = RunState(nodes, self.attempts, self.sessions, gates, groups, polls, debug, rerun)
         return RunReport("paused", None, node, state)
+
+    def _owed(self) -> frozenset[str]:
+        """The ends from before that this pass stopped before reaching and would have run again:
+        one its rule does not keep, or one stale in it (below a changed or stale node, through
+        the layers it never reached)."""
+        nodes = {node.id: node for node in self.plan.document.nodes}
+        below = self.changed | self.stale
+        owed: set[str] = set()
+        for layer in self.plan.layers:
+            for node in (nodes[node_id] for node_id in layer):
+                if any(d in below for d in node.depends_on):
+                    below.add(node.id)
+                before = self.prior.nodes.get(node.id)
+                if (
+                    node.id in self.ends
+                    or before is None
+                    or before.state == "skipped"
+                    or isinstance(node, HaltNode | IncludeNode)
+                ):
+                    continue
+                if node.id in below or not self._kept(node, before):
+                    owed.add(node.id)
+        return frozenset(owed)
 
     def _stops(self, nodes: Sequence[Node]) -> dict[str, PauseReason]:
         """The nodes of a layer run control pauses before, with why: none unless it is
@@ -379,6 +395,7 @@ class _Run:
         before = self.prior.nodes.get(node.id)
         if before is None or node.id in self.owner:
             return False
+        # ``stale`` is read without the lock: it changes only between layers, on this thread.
         if self._reusable(node):
             return True
         unchanged = node.id not in self.stale or self.prior.pause is not None
@@ -457,12 +474,13 @@ class _Run:
     def _kept(self, node: Node, before: NodeResult) -> bool:
         """Whether this pass keeps ``node``'s end from before while its ancestry is unchanged:
         one that completed and is not ``always_run``. On a resume from a debug pause, one that
-        completed or failed before, unless the paused pass owed it a rerun (``RunState.rerun``):
-        that pass goes on where it stopped, so a pause never changes what runs."""
+        completed or failed before, unless the paused pass owed it a rerun (``RunState.rerun``,
+        a stale completed end included): that pass goes on where it stopped, so a pause never
+        changes what runs."""
         if node.id in self.owner or isinstance(node, HaltNode | IncludeNode):
             return False
-        if self.prior.pause is not None and node.id not in self.prior.rerun:
-            return before.state != "skipped"
+        if self.prior.pause is not None:
+            return before.state != "skipped" and node.id not in self.prior.rerun
         return before.state == "completed" and not getattr(node, "always_run", False)
 
     def _reuse(self, node: Node) -> None:

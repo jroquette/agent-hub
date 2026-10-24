@@ -100,7 +100,9 @@ only nodes: the run-control port maps blocks to the nodes they enter by, and dec
   completed is reused (an `always_run` node too), what failed keeps its failure and runs nothing again (nothing more
   is recorded for it), and a skipped node is evaluated again, to the same skip. What the paused pass had not reached
   stays as an earlier pass left it: a gate open there stays open (its resume takes up any answer it has), and an end
-  that pass would have run again (a failure or an `always_run` node, kept in the run state's `rerun`) runs again.
+  that pass would have run again (a failure, an `always_run` node, or a completed node stale in that pass: below a
+  node that changed or is stale there, through the layers it never reached; kept in the run state's `rerun`) runs
+  again.
 - A gate that opens in the pass wins: the report is the gate's, with no debug pause, and the nodes the pass stopped
   before are asked again on its resume.
 

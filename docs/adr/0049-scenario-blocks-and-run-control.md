@@ -58,7 +58,7 @@ Chosen option: 1.
   body holds its iteration as a body gate does). With a breakpoint or step mode on, a layer that holds a node to pause at runs
   its nodes one at a time in declaration order, so "before this block" is exact. The resume is today's resume, except
   that it goes on where the paused pass stopped (nothing that pass ended runs again: a failure is kept; what it had
-  not reached runs as that pass would have run it); Step and Continue
+  not reached runs as that pass would have run it, a node stale in it included); Step and Continue
   are recorded commands read by the port. Without the port, or with no breakpoint and no step, the engine behaves as
   before.
 - **Breakpoints are run data.** Block addresses of the run's pinned tree, kept in the run folder, written whole by

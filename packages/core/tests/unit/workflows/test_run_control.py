@@ -577,3 +577,59 @@ def test_asks_again_about_an_always_run_node_when_a_gate_resume_runs_it_again() 
     assert (gated.reason, run.ran[0]) == ("ok", ["a", "b"])
     assert rerun.state.pause == DebugPause("b", "1.2", "breakpoint")
     assert (last.status, run.ran[2]) == ("done", ["b", "after"])
+
+
+def test_runs_the_stale_child_again_when_a_gate_resume_changes_its_ancestor_and_it_pauses() -> None:
+    # The gate's resume reruns the always_run ancestor, whose output changes: its completed child
+    # is stale, so the resume from the pause before it runs it again, as an unpaused one does.
+    gate = {"id": "ok", "type": "approval", "message": "Ship?", "depends_on": ["b"]}
+    plan = a_plan(shell("a", always_run=True), shell("b", "a"), gate, shell("after", "ok"))
+
+    def a_run() -> Passes:
+        return Passes(plan, ScriptedRunner({"a": ["one", "two"], "b": ["b1", "b2"]}))
+
+    straight, paused = a_run(), a_run()
+    for run in (straight, paused):
+        assert run.next(None).reason == "ok"
+        run.answers[("ok", 1)] = APPROVE
+    plain = straight.to_end(None)
+    control = Breakpoints({"b": "1.2"})
+    stopped = paused.next(control)
+    last = paused.to_end(control)
+
+    assert straight.ran[1] == ["a", "b", "after"]
+    assert stopped.state.pause == DebugPause("b", "1.2", "breakpoint")
+    assert "b" in stopped.state.rerun
+    assert paused.ran[1:] == [["a"], ["b", "after"]]
+    assert last.state.nodes["b"] == plain.state.nodes["b"] != straight.reports[0].state.nodes["b"]
+    assert end_of(paused, last) == end_of(straight, plain)
+
+
+def test_runs_the_stale_child_again_when_a_gate_resume_completes_a_failed_ancestor() -> None:
+    gate = {"id": "ok", "type": "approval", "message": "Ship?", "depends_on": ["c"]}
+    plan = a_plan(
+        shell("a"),
+        shell("b", "a"),
+        shell("c", "b", trigger_rule="all_done"),
+        gate,
+        shell("after", "ok"),
+    )
+
+    def a_run() -> Passes:
+        failed = NodeFailedError("exec_failed", "exit 1")
+        return Passes(plan, ScriptedRunner({"b": [failed, "b2"], "c": ["c1", "c2"]}))
+
+    straight, paused = a_run(), a_run()
+    for run in (straight, paused):
+        assert run.next(None).reason == "ok"
+        run.answers[("ok", 1)] = APPROVE
+    plain = straight.to_end(None)
+    control = Breakpoints({"c": "1.3"})
+    stopped = paused.next(control)
+    last = paused.to_end(control)
+
+    assert straight.ran[1] == ["b", "c", "after"]
+    assert stopped.state.pause == DebugPause("c", "1.3", "breakpoint")
+    assert paused.ran[1:] == [["b"], ["c", "after"]]
+    assert last.state.nodes["c"] == NodeResult("completed", "c2")
+    assert end_of(paused, last) == end_of(straight, plain)
