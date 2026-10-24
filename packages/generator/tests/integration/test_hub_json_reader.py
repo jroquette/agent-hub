@@ -1427,6 +1427,7 @@ def test_imports_every_rendered_module_when_run_on_each_python(
         "workflows/backlog-care/scripts",
         "workflows/brain-care/scripts",
         "workflows/doc-drift/scripts",
+        "workflows/flaky/scripts",
         # The incident pack's helpers (AGH-483), likewise.
         "workflows/incident/scripts",
         "workflows/post-merge-verify/scripts",

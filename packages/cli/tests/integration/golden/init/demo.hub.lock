@@ -712,6 +712,30 @@
     "workflows/doc-drift/scripts/mentions.py": {
       "ownership": "seeded"
     },
+    "workflows/flaky/fixtures/flaky-mode-unavailable.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/flaky/fixtures/flaky-not-reproduced.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/flaky/fixtures/flaky-order.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/flaky/fixtures/flaky-parallel-only.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/flaky/flaky.yaml": {
+      "ownership": "seeded"
+    },
+    "workflows/flaky/prompts/classify.md": {
+      "ownership": "seeded"
+    },
+    "workflows/flaky/scripts/repeat.py": {
+      "ownership": "seeded"
+    },
+    "workflows/flaky/scripts/report.py": {
+      "ownership": "seeded"
+    },
     "workflows/incident/fixtures/incident-awaiting-mitigation.yaml": {
       "ownership": "seeded"
     },
