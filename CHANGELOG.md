@@ -50,7 +50,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   them, read-only (the steps it runs, and its file) instead of an empty step list it could not save (AGH-513); the
   CLI's debugger, `hub scenario run --break`, `break`, `step` and `continue`, refused on production (AGH-514);
   `hub scenario migrate [NAME…] [--check]` writes graph scenarios again in place as blocks, or writes nothing and
-  names each node it cannot map and why (AGH-515); the rest is not built yet.
+  names each node it cannot map and why (AGH-515); hub web's API runs that debugger and migrate: routes for
+  breakpoints, Step and Continue (the CLI's commands as children), breakpoints at a start, the debug pause in the run
+  view, a paused run's values behind the launch cookie, and a migrate route that writes through Save's write step
+  (AGH-516); the rest is not built yet.
 
 ### Changed
 

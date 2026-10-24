@@ -886,8 +886,9 @@ reads as an option of the CLI, which gets them after `--` (or as `--break=ADDR`)
   pinned tree, as [design](design/scenarios.md) § Tree format writes them) → 200 `Breakpoints` (`run_id`, `blocks`, in
   the pinned tree's declaration order, each once): replaces the run's breakpoints through `hub scenario break RUN --set
   -- ADDR…`, waited for (at most 60 s); one set while the run runs takes effect at its next layer of nodes, so the
-  run's child may be running. An address the pinned tree (the run snapshot's document) does not hold, any address of a
-  version-1 run's included, is 422 `workflow-run-unknown-block` naming it (`block`); a run that ended `done` or
+  run's child may be running. An address the pinned tree (the run snapshot's document, not the scenario file as it
+  reads now) does not hold, any address of a version-1 run included, is 422 `workflow-run-unknown-block` naming it
+  (`block`); a run that ended `done` or
   `cancelled` is 409 `workflow-run-ended`. An empty list clears them, also on production. The CLI refusing after these
   checks (another command changing the run's breakpoints, a version-1 run asked to clear) is 409
   `workflow-run-refused`; one that cannot start or finish in time, 502 `workflow-run-launch-failed`.
@@ -911,7 +912,8 @@ reads as an option of the CLI, which gets them after `--` (or as `--break=ADDR`)
   `blocks` (`address`, `kind`, `label`, `entry_nodes`) in declaration order.
 - `GET /api/v1/scenario-runs/{run_id}/values` → 200 `ScenarioRunValues`: `run_id`, `inputs` (the run's effective
   inputs, environment values included) and `blocks`, one per finished node in the order they first ended (`address`
-  of the block that holds it, `null` in a version-1 run; `node`, `attempt`, `status`, `with` as rendered, `output`,
+  of the block that holds it: a gate's is its step's, an included node's its include's, `null` in a version-1 run;
+  `node`, `attempt`, `status`, `with` as rendered, `output`,
   and for a Wait until `polls` and `last_poll`), from the record (values as it holds them, credential values already
   redacted). It needs the launch cookie and this server's pages (a foreign `Origin` or a `same-site` fetch is 403), as
   the agent-session routes do, so no other local process reads it; the run must be paused, its last pass ended on a
@@ -923,10 +925,12 @@ reads as an option of the CLI, which gets them after `--` (or as `--break=ADDR`)
   and `problems` (`node`, `message`)): what `hub scenario migrate NAME [--check]` does, in the server: core's
   `migrate_graph` over the bytes it read once, `generator`'s canonical writer, the text loaded back and translated
   again, then the item write step Save uses (recorded as a version, never through a link, no git command). With
-  problems (a node a tree cannot hold, a JSON file, a path the writer does not write) nothing is written (200,
-  `written: false`); with `check` nothing is either. When `base_content_hash` is sent, the file must still hold it
-  (409 `stale_document`), so a builder Save between a check and the write is never overwritten. A version-2 scenario
-  is 409 `scenario_already_tree`; in the container it is 409 `hub_read_only`.
+  problems (a node a tree cannot hold, a JSON file, a link, a path the writer does not write) nothing is written
+  (200, `written: false`, `node` `null` for the file's own); with `check` nothing is either. When `base_content_hash`
+  is sent, the file must still hold it (409 `stale_document`), so a builder Save between a check and the write is never
+  overwritten: the bytes are read first (never through a link), so a JSON file or a path the writer does not write is
+  checked too and, unchanged, answers its problem; a link is never read, so its problem is the answer whatever hash is
+  sent. A version-2 scenario is 409 `scenario_already_tree`; in the container it is 409 `hub_read_only`.
 
 Problems:
 

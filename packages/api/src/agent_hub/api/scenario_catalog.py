@@ -142,6 +142,7 @@ from agent_hub.core.workflows.launch import (
     launch_inputs,
     new_run_id,
 )
+from agent_hub.core.workflows.nodes import RESERVED_SUFFIXES
 from agent_hub.core.workflows.plan import WorkflowPlan
 from agent_hub.core.workflows.substitution import echo
 from agent_hub.core.workflows.workflow_reads import WorkflowInputView, WorkflowProblemView
@@ -732,7 +733,7 @@ class ScenarioCatalog:
         if self.on_production(run.hub, run.project, environment):
             raise RunConflictError(
                 code="debug_production",
-                reason=production_reason(environment, what),
+                reason=_production_reason(environment, what),
                 run_id=run.folder.name,
             )
 
@@ -747,7 +748,7 @@ class ScenarioCatalog:
             reason = "the run is not paused: its values are shown only while it is paused"
             raise RunConflictError(code="not_paused", reason=reason, run_id=run_id)
         values = fold_values(run.records)
-        tree = pinned_tree(run.folder)
+        tree = _pinned_tree(run.folder)
         return ScenarioRunValues(
             run_id=run_id,
             inputs=dict(values.inputs),
@@ -1015,7 +1016,7 @@ def _debug_entry(view: ScenarioRunView) -> DebugPauseEntry | None:
     )
 
 
-def production_reason(environment: str, what: str) -> str:
+def _production_reason(environment: str, what: str) -> str:
     """Why ``what`` is refused on ``environment``, a production one (the CLI's words)."""
     return f"{environment} is a production environment: {what} is refused there ({OFF_PRODUCTION})"
 
@@ -1035,7 +1036,7 @@ def _paused(records: Sequence[Mapping[str, JsonValue]], view: ScenarioRunView) -
     return pending is not None and pending.choice is None
 
 
-def pinned_tree(folder: Path) -> BlockMap | None:
+def _pinned_tree(folder: Path) -> BlockMap | None:
     """The block map of the tree a scenario run pins (its snapshot's document, read up to
     ``SNAPSHOT_BYTES``, never through a link); ``None`` for a graph run, or one whose snapshot
     cannot be read or translated."""
@@ -1057,7 +1058,7 @@ def pinned_tree(folder: Path) -> BlockMap | None:
         return None
 
 
-def ordered_blocks(
+def _ordered_blocks(
     tree: BlockMap | None, given: Sequence[str], *, whose: str, run_id: str | None = None
 ) -> tuple[str, ...]:
     """``given`` in the tree's declaration order, each once; 422 ``unknown_block`` naming the
@@ -1075,9 +1076,13 @@ def ordered_blocks(
 
 
 def _address_of(tree: BlockMap | None, node: str) -> str | None:
-    """The address of the block that holds ``node`` (a gate or an included node is its
-    block's), or ``None``."""
-    located = None if tree is None else tree.located(node)
+    """The address of the block that holds ``node``, or ``None``: a gate (``<step>__ask``,
+    ``<step>__investigation``) is its step's block, a Repeat body step's gate included, and an
+    included node is its include's."""
+    if tree is None:
+        return None
+    gate = next((suffix for suffix in RESERVED_SUFFIXES if node.endswith(suffix)), "")
+    located = tree.located(node.removesuffix(gate))
     return None if located is None else located[0]
 
 
@@ -1392,11 +1397,11 @@ class ScenarioCommands:
         breakpoints: tuple[str, ...] = ()
         if request.breakpoints:
             if self._catalog.on_production(hub, project, request.environment):
-                what = "a start with breakpoints"
-                reason = f"{production_reason(request.environment, what)}; no scenario run"
-                raise RunConflictError(code="debug_production", reason=f"{reason} was created")
+                refused = _production_reason(request.environment, "a start with breakpoints")
+                reason = f"{refused}; no scenario run was created"
+                raise RunConflictError(code="debug_production", reason=reason)
             whose = f"the scenario {echo(name)}"
-            breakpoints = ordered_blocks(blocks, request.breakpoints, whose=whose)
+            breakpoints = _ordered_blocks(blocks, request.breakpoints, whose=whose)
         inputs = _filled(plan, request, view=view)
         planned = plan_scenario(
             plan,
@@ -1470,8 +1475,8 @@ class ScenarioCommands:
                 reason = f"the run already ended {status}"
                 raise RunConflictError(code="ended", reason=reason, run_id=run_id)
             whose = f"the run {run_id}'s pinned tree"
-            tree = pinned_tree(run.folder)
-            blocks = ordered_blocks(tree, request.blocks, whose=whose, run_id=run_id)
+            tree = _pinned_tree(run.folder)
+            blocks = _ordered_blocks(tree, request.blocks, whose=whose, run_id=run_id)
             if blocks:
                 self._catalog.refuse_on_production(run, what="setting breakpoints")
             self._launcher.set_breakpoints(run.hub, run_id, blocks)

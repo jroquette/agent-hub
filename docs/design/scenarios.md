@@ -137,7 +137,8 @@ A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blo
   there, and the files printed as migrated before it are the ones written. `--check` writes nothing and prints what it
   would migrate (a line per file: its stage and block count). The API's `POST /scenarios/{project}/{name}/migrate`
   does the same for one scenario in the server (the item write step Save uses; with `check` it writes nothing, and
-  the file must still hold the `base_content_hash` it is sent), returning the tree's text and each problem on its node;
+  the file must still hold the `base_content_hash` it is sent, checked against the bytes it read, a JSON file's
+  included; a link is never read, so its refusal is the answer), returning the tree's text and each problem on its node;
   hub web's builder is to offer it as Migrate for a graph scenario (not built yet).
 
 ### Debugging
@@ -225,7 +226,9 @@ A scenario run may pause before a block: by a **breakpoint**, or by **Step** ([A
 - The values to inspect are read from lines the record already holds: the `inputs` line, and for each node with an
   end its last `step_end` (`status`, `output`; a `prior_success` reuse keeps the end it reused), the `inputs` of its
   last `action` line, and for an expect its polls (its `action_start` lines with a `poll`, as the engine counts them)
-  and the last `expect.poll` line's `output`.
+  and the last `expect.poll` line's `output`. Each node shows under the address of the pinned tree's block that holds
+  it: a gate (`<step>__ask`, `<step>__investigation`) under its step's, a Repeat body step's gate included, and an
+  included node under its include's.
 
 ### Actions and the script contract
 

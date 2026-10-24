@@ -19,9 +19,10 @@
   loaded back and translated again): one stage named after the scenario, its revision kept. It
   migrates the bytes it read, only over the content the builder last read when it sends
   ``base_content_hash`` (``stale_document`` else), through the same write step as Save; with
-  ``check`` it writes nothing. A node a tree cannot hold, a JSON file or a path the item writer
-  does not write is a problem, and nothing is written; a ``version: 2`` scenario is 409
-  ``scenario_already_tree``.
+  ``check`` it writes nothing. A node a tree cannot hold, a JSON file, a link or a path the item
+  writer does not write is a problem, and nothing is written; the hash is checked against the
+  bytes read for a refused file too, but a link is never read, so its refusal is the answer
+  whatever hash is sent. A ``version: 2`` scenario is 409 ``scenario_already_tree``.
 """
 
 import contextlib
@@ -294,17 +295,23 @@ class ScenarioBuilder:
             reason = f"{name} is already written as blocks (version 2)"
             raise RunConflictError(code="scenario_already_tree", reason=reason)
         unit_path = found.path.relative_to(hub).as_posix()
-        refused = _not_in_place(found.path, unit_path)
-        # One read: the bytes hashed are the bytes migrated.
-        data = None if refused is not None else _read_no_link(found.path)
+        # One read, never through a link, before migrate decides whether it may rewrite the
+        # file: the bytes hashed are the bytes migrated, and a file it refuses (a JSON file, a
+        # path the writer refuses) is checked against the hash its scenario read gave as well.
+        data = _read_no_link(found.path)
         disk_hash = None if data is None else content_hash(data)
-        if request.base_content_hash is not None and request.base_content_hash != disk_hash:
+        refused = _not_in_place(found.path, unit_path)
+        # A link is never read, so no hash can match it: its refusal is the answer.
+        compared = data is not None or refused is None
+        if compared and request.base_content_hash not in (None, disk_hash):
             reason = "the scenario file changed since the builder read it"
             raise RunConflictError(code="stale_document", reason=reason)
         text: str | None = None
         problems: list[tuple[str | None, str]] = []
-        if data is None:
-            problems.append((None, refused or "the scenario file cannot be read"))
+        if refused is not None:
+            problems.append((None, refused))
+        elif data is None:
+            problems.append((None, "the scenario file cannot be read"))
         else:
             text, problems = _migrated(data, unit_path)
         if text is None or problems:

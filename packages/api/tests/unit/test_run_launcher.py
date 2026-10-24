@@ -430,9 +430,20 @@ def test_leaves_no_temporary_file_when_launch_succeeds_or_fails(tmp_path: Path) 
 ECHO_ARGV = "import json, sys\nprint(json.dumps(sys.argv[1:]))\nsys.exit(1)\n"
 
 
+def _argv_recorder(written: Path) -> str:
+    """A child's program that writes its argv to ``written`` whole: to a temporary name first,
+    then renamed, so a reader that sees the file never reads it half written."""
+    partial = written.with_name(f"{written.name}.partial")
+    return (
+        "import json, os, pathlib, sys\n"
+        f"pathlib.Path({str(partial)!r}).write_text(json.dumps(sys.argv[1:]))\n"
+        f"os.replace({str(partial)!r}, {str(written)!r})\n"
+    )
+
+
 def test_runs_scenario_commands_when_scenario_planned_or_started(tmp_path: Path) -> None:
     written = tmp_path / "argv.json"
-    record = f"import json, sys\nopen({str(written)!r}, 'w').write(json.dumps(sys.argv[1:]))\n"
+    record = _argv_recorder(written)
     planner = ProcessRunLauncher(
         db_path=tmp_path / "db", environ={}, program=[sys.executable, "-c", ECHO_ARGV]
     )
@@ -454,15 +465,13 @@ def test_runs_scenario_commands_when_scenario_planned_or_started(tmp_path: Path)
             inputs={"ref": "T-1", "count": 2},
         )
     )
-    deadline = time.monotonic() + 10
-    while not written.exists() and time.monotonic() < deadline:
-        time.sleep(0.05)
+    started = _argv_of(written)
 
     assert code == 1
     assert json.loads(printed) == [
         *("scenario", "plan", "order-walk", "--env", "local", "--json", "--input", "ref=T-1")
     ]
-    assert json.loads(written.read_text()) == [
+    assert started == [
         *("scenario", "run", "order-walk", "--env", "staging", "--mode", "regression"),
         *("--run-id", "walk-1", "--input", "ref=T-1", "--input", "count=2"),
     ]
@@ -481,7 +490,7 @@ def test_runs_debug_commands_when_breakpoints_set_or_run_stepped(tmp_path: Path)
     # is read as an option; Step and Continue resume detached; a start passes each breakpoint
     # as one ``--break=ADDR`` argument.
     written = tmp_path / "argv.json"
-    record = f"import json, sys\nopen({str(written)!r}, 'w').write(json.dumps(sys.argv[1:]))\n"
+    record = _argv_recorder(written)
 
     def recording(exit_code: int) -> ProcessRunLauncher:
         program = [sys.executable, "-c", f"{record}sys.exit({exit_code})\n"]
@@ -524,6 +533,11 @@ def test_runs_debug_commands_when_breakpoints_set_or_run_stepped(tmp_path: Path)
 def test_pins_plan_bounds_when_launcher_built() -> None:
     assert run_launcher.PLAN_TIMEOUT_SECONDS == 300
     assert run_launcher.MAX_PLAN_BYTES == 4 * 1024 * 1024
+
+
+def test_pins_break_timeout_when_launcher_built() -> None:
+    # docs/API.md: a breakpoints set waits for ``hub scenario break`` at most 60 s.
+    assert run_launcher.BREAK_TIMEOUT_SECONDS == 60
 
 
 def _gone(pid: int) -> bool:

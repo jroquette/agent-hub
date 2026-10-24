@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from agent_hub.api import scenario_investigation
+from agent_hub.api import scenario_catalog, scenario_investigation
 from agent_hub.api.agent_session_runtime import HubCredentials
 from agent_hub.api.run_launcher import ScenarioLaunch
 from agent_hub.api.scenario_catalog import ScenarioCatalog, ScenarioCommands
@@ -2586,6 +2586,36 @@ def test_sets_breakpoints_through_the_cli_when_blocks_of_the_pinned_tree_put(
     ]
 
 
+def test_checks_breakpoints_against_the_pinned_tree_when_the_scenario_file_changed(
+    scenarios: Any,
+) -> None:
+    a_debug_run(scenarios.hub)
+    # The file now drops the stage Check (2, 2.1) and adds a third block to Send (1.3).
+    edited = DEBUG_TREE.split("- name: Check\n")[0] + "  - you: Look again.\n"
+    (scenarios.hub / "scenarios" / "demo" / "order-debug.yaml").write_text(edited)
+    route = f"/scenario-runs/{DEBUG_RUN}/breakpoints"
+
+    pinned = _put_json(scenarios, route, {"blocks": ["2.1"]})
+    added = _put_json(scenarios, route, {"blocks": ["1.3"]})
+
+    assert pinned.status_code == 200, pinned.text
+    assert pinned.json()["blocks"] == ["2.1"]
+    assert (added.status_code, added.json()["code"], added.json()["block"]) == (
+        422,
+        "unknown_block",
+        "1.3",
+    )
+    assert scenarios.launcher.calls == [("break", (DEBUG_RUN, ("2.1",)))]
+
+
+def test_pins_debug_bounds_when_the_routes_are_built() -> None:
+    # docs/API.md § Debugging and migration: an address is at most 64 characters, a body at
+    # most 512 of them, and a run's pinned tree is read up to 1 MiB.
+    assert scenario_catalog.MAX_ADDRESS_CHARS == 64
+    assert scenario_catalog.MAX_BREAKPOINTS == 512
+    assert scenario_catalog.SNAPSHOT_BYTES == 1024 * 1024
+
+
 def test_refuses_breakpoints_when_the_run_ended_or_is_a_graph_run(scenarios: Any) -> None:
     a_debug_run(scenarios.hub)
     with (scenarios.hub / DEBUG_FOLDER / "records.jsonl").open("a", encoding="utf-8") as file:
@@ -2685,6 +2715,78 @@ def test_gives_inputs_and_finished_blocks_when_values_read_while_paused(scenario
             | {"with": CALLED, "output": HELD, "polls": 2, "last_poll": HELD},
         ],
     }
+
+
+NESTED_TREE = """\
+version: 2
+kind: scenario
+name: order-debug
+revision: 2
+description: One demo order, included and polled
+inputs:
+  ref:
+    type: string
+    required: true
+stages:
+- name: Send
+  steps:
+  - do: send-order
+    with:
+      target: api
+      ref: $INPUTS.ref
+  - include: order-walk
+    with:
+      ref: $INPUTS.ref
+  - repeat:
+      max: 2
+      until: $poll.output.status == 'ON_HOLD'
+      steps:
+      - wait_until: demo/get-order
+        id: poll
+        with:
+          target: api
+          ref: $INPUTS.ref
+        until: $self.output.status != ''
+        every: 10s
+        timeout: 5m
+"""
+
+
+def test_gives_each_node_its_blocks_address_when_values_read_of_gates_includes_and_repeats(
+    scenarios: Any,
+) -> None:
+    a_debug_run(scenarios.hub)
+    pinned = load_workflow_bytes(NESTED_TREE.encode(), source="order-debug.yaml").document
+    snapshot = scenarios.hub / DEBUG_FOLDER / "snapshot" / "workflow.json"
+    snapshot.write_text(json.dumps(dict(pinned)), encoding="utf-8")
+    # A gate is its step's block, an included node its include's, a Repeat body node
+    # (``<group>__<id>``) its own block's, and a gate on a body node that node's block.
+    nodes = ("send--1__ask", "send--1", "send--2__send-order", "send--2__order-held")
+    nodes += ("send--3__poll__ask", "send--3__poll", "send--3")
+    records = [
+        {"event": "start", "run": DEBUG_RUN, "workflow": "scenario:order-debug"}
+        | {"kind": "scenario", "scenario": "order-debug", "pack": "demo"}
+        | {"environment": "local", "mode": "interactive", "ts": "2026-10-24T10:00:00+00:00"},
+        {"event": "inputs", "inputs": {"ref": "T-1"}},
+        *({"event": "step_end", "node": node, "attempt": 1, "status": "ok"} for node in nodes),
+        {"event": "held", "groups": {}},
+    ]
+    path = scenarios.hub / DEBUG_FOLDER / "records.jsonl"
+    path.write_text("".join(json.dumps(line) + "\n" for line in records), encoding="utf-8")
+
+    values = scenarios.client.get(f"/api/v1/scenario-runs/{DEBUG_RUN}/values")
+
+    assert values.status_code == 200, values.text
+    shown = [(block["node"], block["address"]) for block in values.json()["blocks"]]
+    assert shown == [
+        ("send--1__ask", "1.1"),
+        ("send--1", "1.1"),
+        ("send--2__send-order", "1.2"),
+        ("send--2__order-held", "1.2"),
+        ("send--3__poll__ask", "1.3.1"),
+        ("send--3__poll", "1.3.1"),
+        ("send--3", "1.3"),
+    ]
 
 
 def test_refuses_values_when_the_run_is_not_paused(scenarios: Any) -> None:
@@ -2836,4 +2938,79 @@ def test_writes_nothing_when_migrate_is_stale_already_a_tree_or_cannot_map_a_nod
     assert "after" in nodes
     assert any("trigger_rule" in problem["message"] for problem in body["problems"])
     assert either.read_text(encoding="utf-8") == EITHER_WALK
+    assert writes.calls == []
+
+
+def _graph_named(name: str) -> dict[str, Any]:
+    walk = WALK.replace("name: order-walk", f"name: {name}")
+    return dict(load_workflow_bytes(walk.encode(), source=f"{name}.yaml").document)
+
+
+def test_gives_the_refusal_when_migrate_is_asked_with_the_hash_read_of_a_json_file(
+    scenarios: Any,
+) -> None:
+    writes = _DiskWrites()
+    scenarios.wire(item_version_writes=writes)
+    path = scenarios.hub / "scenarios" / "demo" / "walk-json.json"
+    path.write_text(json.dumps(_graph_named("walk-json")), encoding="utf-8")
+    detail = scenarios.client.get("/api/v1/scenarios/demo/walk-json").json()
+    route = "/scenarios/demo/walk-json/migrate"
+    read = {"base_content_hash": detail["content_hash"]}
+
+    checked = _post(scenarios, route, {"check": True} | read)
+    written = _post(scenarios, route, read)
+    stale = _post(scenarios, route, {"check": True, "base_content_hash": "sha256:0"})
+
+    assert detail["content_hash"] is not None
+    for refused in (checked, written):
+        assert refused.status_code == 200, refused.text
+        body = refused.json()
+        assert (body["written"], body["yaml"], body["content_hash"]) == (
+            False,
+            None,
+            detail["content_hash"],
+        )
+        assert body["problems"] == [
+            {"node": None, "message": "it is a JSON file: migrate rewrites a .yaml file in place"}
+        ]
+    # The JSON file's bytes are still read, so a file that changed is stale all the same.
+    assert (stale.status_code, stale.json()["code"]) == (409, "stale_document")
+    assert writes.calls == []
+
+
+def test_gives_the_refusal_when_migrate_is_asked_of_a_link_or_a_path_the_writer_refuses(
+    scenarios: Any,
+) -> None:
+    writes = _DiskWrites()
+    scenarios.wire(item_version_writes=writes)
+    pack = scenarios.hub / "scenarios" / "demo"
+    (pack / "kept").mkdir()
+    target = pack / "kept" / "walk-link.yaml"
+    target.write_text(WALK.replace("name: order-walk", "name: walk-link"), encoding="utf-8")
+    (pack / "walk-link.yaml").symlink_to(Path("kept", "walk-link.yaml"))
+    slashed = scenarios.hub / "scenarios" / "de\\mo" / "walk-slash.yaml"
+    slashed.parent.mkdir()
+    slashed.write_text(WALK.replace("name: order-walk", "name: walk-slash"), encoding="utf-8")
+    slash_hash = scenarios.client.get("/api/v1/scenarios/demo/walk-slash").json()["content_hash"]
+    a_hash = {"base_content_hash": "sha256:0"}
+
+    link = _post(scenarios, "/scenarios/demo/walk-link/migrate", {})
+    link_hashed = _post(scenarios, "/scenarios/demo/walk-link/migrate", a_hash)
+    slash = _post(
+        scenarios, "/scenarios/demo/walk-slash/migrate", {"base_content_hash": slash_hash}
+    )
+
+    # A link is never read, so no hash can match it: its refusal is the answer.
+    for refused in (link, link_hashed):
+        assert refused.status_code == 200, refused.text
+        assert (refused.json()["written"], refused.json()["content_hash"]) == (False, None)
+        (problem,) = refused.json()["problems"]
+        assert problem["node"] is None
+        assert problem["message"].startswith("it is a link")
+    assert slash.status_code == 200, slash.text
+    assert slash.json()["content_hash"] == slash_hash
+    (problem,) = slash.json()["problems"]
+    assert problem["node"] is None
+    assert "backslash" in problem["message"]
+    assert target.read_text(encoding="utf-8").startswith("version: 1\n")
     assert writes.calls == []
