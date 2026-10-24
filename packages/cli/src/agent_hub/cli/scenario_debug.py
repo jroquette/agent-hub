@@ -159,7 +159,7 @@ class FileRunControl:
         self._taken = frozenset(() if resumed is None else self._blocks_of.get(resumed.node, ()))
 
     def debugging(self) -> bool:
-        found, reason = read_breakpoints(self._folder, self._known)
+        found, reason = _read_breakpoints(self._folder, self._known)
         with self._lock:
             self._breakpoints = found
             fresh = reason is not None and reason not in self._noted
@@ -212,7 +212,7 @@ def run_control(
     return FileRunControl(folder, blocks, stepping=stepping, resumed=resumed, note=note)
 
 
-def pinned_tree(folder: Path) -> BlockMap:
+def _pinned_tree(folder: Path) -> BlockMap:
     """The block map of the run's pinned tree (its snapshot's document); refused for a run of
     a version-1 scenario."""
     try:
@@ -243,7 +243,7 @@ def addresses_in(
     return ordered
 
 
-def read_breakpoints(folder: Path, known: frozenset[str]) -> tuple[frozenset[str], str | None]:
+def _read_breakpoints(folder: Path, known: frozenset[str]) -> tuple[frozenset[str], str | None]:
     """The addresses ``breakpoints.json`` holds, and why it counts as none when it cannot be
     read, is not the expected JSON or names an address not in ``known``; a missing file is no
     breakpoint and no reason."""
@@ -280,7 +280,8 @@ def _read_file(path: Path) -> bytes | None:
 def _addresses(data: bytes) -> list[str] | None:
     try:
         parsed = json.loads(data)
-    except ValueError:
+    except ValueError, RecursionError:
+        # A nesting too deep is a parse failure: the byte cap does not bound it.
         return None
     addresses = parsed.get("addresses") if isinstance(parsed, dict) else None
     if not isinstance(addresses, list) or len(addresses) > MAX_BREAKPOINTS:
@@ -346,7 +347,7 @@ def change_breakpoints(
     with _changing(folder):
         header, tree = _debuggable(folder, run)
         named = addresses_in(tree, given, whose=f"the run {run}'s pinned tree")
-        current, _ = read_breakpoints(folder, frozenset(block.address for block in tree.blocks))
+        current, _ = _read_breakpoints(folder, frozenset(block.address for block in tree.blocks))
         kept = {"add": current | set(named), "off": current - set(named), "set": set(named)}
         written = addresses_in(tree, sorted(kept[change]))
         if written:
@@ -411,7 +412,7 @@ def send_command(hub: Path, run: str, command: DebugCommand) -> int:
             debug_resume(records)
         except RunRecordError as error:
             raise WorkflowRunError(f"cannot resume the run {run}: {error}") from None
-        approver = debug_approver(command)
+        approver = _debug_approver(command)
         line: Record = {"event": DEBUG_COMMAND, "command": command, "approver": approver}
         append_record(folder, line | {"node": pause.node, "number": pause.number})
         events = _events(hub, folder, header)
@@ -424,7 +425,7 @@ def send_command(hub: Path, run: str, command: DebugCommand) -> int:
         return continue_run(hub, folder)
 
 
-def debug_approver(command: str) -> str:
+def _debug_approver(command: str) -> str:
     """The account sending ``command``; refused when none is known (no fallback), as a gate
     decision's approver is."""
     try:
@@ -444,7 +445,7 @@ def _debuggable(folder: Path, run: str) -> tuple[Mapping[str, JsonValue], BlockM
     header = records[0] if records else {}
     if header.get("kind") != "scenario":
         raise WorkflowRunError(f"{run} is not a scenario run")
-    tree = pinned_tree(folder)
+    tree = _pinned_tree(folder)
     ended_check(folder)
     return header, tree
 

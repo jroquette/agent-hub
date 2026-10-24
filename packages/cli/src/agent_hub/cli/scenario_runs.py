@@ -35,7 +35,9 @@ default) a divergence pauses it at an investigation gate instead (``scenario_inv
 at most ``MAX_INVESTIGATIONS`` times; the resume first acts on the gate's answer (``stop``,
 ``pick`` with its workaround, ``retry``), and refuses while the gate has none. A resume whose
 record holds a divergence and no investigation after it (a crash came between) opens that
-investigation instead of running the step again.
+investigation instead of running the step again. A resume from a debug pause is not that: it goes
+on with the pass the pause stopped, and when that pass ends failed its first failed step is
+investigated, as in a run with no pause.
 """
 
 import json
@@ -130,6 +132,7 @@ from agent_hub.core.scenarios.scenario_plan import ScenarioPlan
 from agent_hub.core.workflows.document import WorkflowDocument, WorkflowLoadError, parse_workflow
 from agent_hub.core.workflows.engine import EnginePorts, run_workflow
 from agent_hub.core.workflows.events import WorkflowEvents
+from agent_hub.core.workflows.failures import FailureKind
 from agent_hub.core.workflows.includes import IncludeResolver
 from agent_hub.core.workflows.plan import WorkflowPlan, plan_workflow
 from agent_hub.core.workflows.ports import (
@@ -341,7 +344,9 @@ def execute(
         if (code := answer(given, answered)) is not None:
             return code
         records = read_records(folder)
-    elif base is not None and header.get("mode") == INTERACTIVE:
+    elif base is not None and debug is None and header.get("mode") == INTERACTIVE:
+        # A resume from a debug pause goes on with the pass it stopped: that pass's failed
+        # steps owe nothing yet, they are investigated once it ends, as without the pause.
         if (owed_by := owed_investigation(base, records)) is not None:
             # A crash came between a divergence and its investigation: it opens now.
             return _owed_divergence(
@@ -374,7 +379,12 @@ def execute(
     )
     held = None
     if header.get("mode") == INTERACTIVE:
-        held = HeldEnd(recorder=recorder, plan=plan, opened=investigations(records))
+        held = HeldEnd(
+            recorder=recorder,
+            plan=plan,
+            opened=investigations(records),
+            failed=_stopped_failures(records, debug),
+        )
     control = run_control(
         folder,
         content,
@@ -413,6 +423,28 @@ def _prior(records: list[dict[str, JsonValue]], owed: Owed, debug: DebugResume |
     """The state a resume starts from: the records', with the pass a debug pause stopped."""
     prior = resumed_prior(records, owed.reopen)
     return prior if debug is None else debug.applied_to(prior)
+
+
+def _stopped_failures(
+    records: list[dict[str, JsonValue]], debug: DebugResume | None
+) -> dict[str, tuple[int, FailureKind | None]]:
+    """Each node the pass a debug pause stopped had failed: its last failed attempt as recorded
+    and its kind, which ``HeldEnd`` needs when that pass ends ``failed`` in this process."""
+    if debug is None:
+        return {}
+    attempts = {
+        node: attempt
+        for record in records
+        if record.get("event") == "step_end"
+        and record.get("status") == "failed"
+        and isinstance(node := record.get("node"), str)
+        and isinstance(attempt := record.get("attempt"), int)
+    }
+    return {
+        node: (attempts[node], end.failure_kind)
+        for node, end in debug.paused_pass.ends.items()
+        if end.result.state == "failed" and node in attempts
+    }
 
 
 def _noted(log: ActionLog, line: dict[str, JsonValue]) -> None:

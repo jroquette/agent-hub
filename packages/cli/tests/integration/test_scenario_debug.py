@@ -16,7 +16,7 @@ import os
 import re
 import shutil
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -27,7 +27,7 @@ from typer.testing import CliRunner, Result
 
 from agent_hub.cli import scenario_debug
 from agent_hub.cli.main import app
-from agent_hub.cli.workflow_runs import WorkflowRunError, snapshot_hash
+from agent_hub.cli.workflow_runs import WorkflowRunError, run_lock, snapshot_hash
 from agent_hub.core.events.event import Event
 from agent_hub.core.testing.builders import an_environments_document
 from agent_hub.storage.event_store import open_event_store
@@ -96,9 +96,15 @@ class DebugHub:
         }
         return CliRunner().invoke(app, list(args), env=environ, input="")
 
-    def start(self, *extra: str, name: str = REFERENCE, environment: str = "local") -> Result:
+    def start(
+        self,
+        *extra: str,
+        name: str = REFERENCE,
+        environment: str = "local",
+        mode: str = "regression",
+    ) -> Result:
         args = ["scenario", "run", name, "--env", environment, "--input", f"shop_order_id={ORDER}"]
-        return self.run(*args, "--mode", "regression", "--run-id", RUN, *extra)
+        return self.run(*args, "--mode", mode, "--run-id", RUN, *extra)
 
     def order(self, state: str) -> None:
         self.state.write_text(json.dumps(STATES[state]) + "\n")
@@ -523,6 +529,76 @@ def test_steps_the_paths_layer_by_layer_when_a_together_holds_two_blocks_per_pat
     ]
 
 
+DIVERGING = """\
+version: 2
+kind: scenario
+name: diverging-path
+revision: 1
+inputs:
+  shop_order_id: {required: true}
+  personal_name: {required: true}
+  aws_account_id: {required: true}
+stages:
+- name: Fix
+  steps:
+  - wait_until: order-state
+    until: $self.output.order_id != ''
+    every: 15s
+    timeout: 10m
+    capture:
+      order_id: $self.output.order_id
+  - together:
+    - - do: order-state
+    - - do: queue-send
+        with: {message: demo.second-path, order_id: $CTX.order_id}
+  - do: queue-send
+    with: {message: demo.process-order, order_id: $CTX.order_id}
+"""
+
+
+def test_runs_the_next_path_and_investigates_at_the_pass_end_when_a_stepped_block_diverges(
+    debug_hub: DebugHub,
+) -> None:
+    (debug_hub.hub / "scenarios" / "fixture" / "diverging-path.yaml").write_text(DIVERGING)
+    git(debug_hub.hub, "add", "-A")
+    git(debug_hub.hub, "commit", "-q", "-m", "a together whose first path diverges")
+    debug_hub.order("sample")
+    started = debug_hub.start("--break", "1.2", name="diverging-path", mode="interactive")
+    # The read's output now breaks its output contract: the stepped block diverges.
+    debug_hub.state.write_text(json.dumps({"order_id": "o-1", "open_tasks": "two"}) + "\n")
+
+    diverged = debug_hub.run("scenario", "step", RUN)
+    stepped = debug_hub.run("scenario", "step", RUN)
+    continued = debug_hub.run("scenario", "continue", RUN)
+
+    assert last_line(started) == f"run {RUN}: paused before 1.2 (breakpoint)", started.output
+    assert last_line(diverged) == f"run {RUN}: paused before 1.2.p2.1 (step)", diverged.output
+    assert last_line(stepped) == f"run {RUN}: paused before 1.3 (step)", stepped.output
+    assert continued.exit_code == 0, continued.output
+    assert last_line(continued).startswith(f"run {RUN}: paused at fix--2-p1-1 (investigation)"), (
+        continued.output
+    )
+    lines = debug_hub.records()
+    assert passes(lines) == [["fix--1"], ["fix--2-p1-1"], ["fix--2-p2-1"], []]
+    statuses = {line["node"]: line["status"] for line in lines if line["event"] == "step_end"}
+    assert statuses == {
+        "fix--1": "ok",
+        "fix--2-p1-1": "failed",
+        "fix--2-p2-1": "ok",
+        "fix--3": "skipped",
+    }
+    [investigation] = [line for line in lines if line["event"] == "investigation"]
+    assert {
+        key: investigation[key] for key in ("step", "number", "step_attempt", "failure_kind")
+    } == {"step": "fix--2-p1-1", "number": 1, "step_attempt": 1, "failure_kind": "output_contract"}
+    assert [line for line in lines if line["event"] == "end"] == []
+    assert [line["command"] for line in lines if line["event"] == "debug.command"] == [
+        "step",
+        "step",
+        "continue",
+    ]
+
+
 def test_pauses_once_before_a_together_when_continued_from_a_step_into_it(
     debug_hub: DebugHub,
 ) -> None:
@@ -775,6 +851,8 @@ def test_adds_removes_and_replaces_breakpoints_when_break_runs(debug_hub: DebugH
 # Each bad breakpoints file, and a word of the reason it counts as none.
 BAD_FILES = {
     "junk": "is not an object",
+    "deep": "is not an object",
+    "many": "at most 512 addresses",
     "link": "cannot be read",
     "unknown": 'names "9.9"',
     "large": "regular file",
@@ -782,18 +860,18 @@ BAD_FILES = {
 }
 
 
-@pytest.mark.parametrize("kind", sorted(BAD_FILES))
-def test_counts_no_breakpoint_and_records_why_when_the_breakpoints_file_is_bad(
-    debug_hub: DebugHub, tmp_path: Path, kind: str
-) -> None:
-    debug_hub.order("sample")
-    started = debug_hub.start("--break", "1.2", name="blocks-together")
-    marked = debug_hub.folder / "breakpoints.json"
+def spoil(marked: Path, kind: str, elsewhere: Path) -> None:
+    """Replace the breakpoints file ``marked`` with a bad one of ``kind`` (a link to
+    ``elsewhere`` for ``link``)."""
     marked.unlink()
     if kind == "junk":
         marked.write_text("{not json")
+    elif kind == "deep":
+        # Well under the size cap, nested past what the JSON parser descends.
+        marked.write_text("[" * 60_000)
+    elif kind == "many":
+        marked.write_text(json.dumps({"addresses": ["1.3"] * 513}))
     elif kind == "link":
-        elsewhere = tmp_path / "elsewhere.json"
         elsewhere.write_text(json.dumps({"addresses": ["1.3"]}))
         marked.symlink_to(elsewhere)
     elif kind == "unknown":
@@ -802,6 +880,15 @@ def test_counts_no_breakpoint_and_records_why_when_the_breakpoints_file_is_bad(
         marked.write_text(json.dumps({"addresses": ["1.3"], "pad": "x" * (64 << 10)}))
     else:
         os.mkfifo(marked)
+
+
+@pytest.mark.parametrize("kind", sorted(BAD_FILES))
+def test_counts_no_breakpoint_and_records_why_when_the_breakpoints_file_is_bad(
+    debug_hub: DebugHub, tmp_path: Path, kind: str
+) -> None:
+    debug_hub.order("sample")
+    started = debug_hub.start("--break", "1.2", name="blocks-together")
+    spoil(debug_hub.folder / "breakpoints.json", kind, tmp_path / "elsewhere.json")
 
     continued = debug_hub.run("scenario", "continue", RUN)
 
@@ -812,6 +899,75 @@ def test_counts_no_breakpoint_and_records_why_when_the_breakpoints_file_is_bad(
     assert len(unreadable) == 1
     assert BAD_FILES[kind] in unreadable[0]["reason"]
     assert [line for line in lines if line["event"] == "debug.pause"][1:] == []
+
+
+@pytest.mark.parametrize("kind", sorted(BAD_FILES))
+def test_clears_the_breakpoints_when_break_sets_none_over_a_bad_breakpoints_file(
+    debug_hub: DebugHub, tmp_path: Path, kind: str
+) -> None:
+    debug_hub.order("sample")
+    debug_hub.start("--break", "1.2", name="blocks-together")
+    marked = debug_hub.folder / "breakpoints.json"
+    spoil(marked, kind, tmp_path / "elsewhere.json")
+
+    cleared = debug_hub.run("scenario", "break", RUN, "--set")
+
+    assert (cleared.exit_code, last_line(cleared)) == (0, f"run {RUN}: no breakpoints"), (
+        cleared.output
+    )
+    assert not marked.is_symlink()
+    assert json.loads(marked.read_text()) == {"addresses": []}
+    marks = [
+        line["addresses"] for line in debug_hub.records() if line["event"] == "debug.breakpoints"
+    ]
+    assert marks == [["1.2"], []]
+
+
+def test_writes_the_breakpoints_beside_the_run_when_another_process_holds_it(
+    debug_hub: DebugHub,
+) -> None:
+    debug_hub.order("fetched")
+    debug_hub.start("--break", "2.1")
+
+    with run_lock(debug_hub.folder):
+        added = debug_hub.run("scenario", "break", RUN, "3.3")
+
+    assert (added.exit_code, last_line(added)) == (0, f"run {RUN}: breakpoints 2.1, 3.3"), (
+        added.output
+    )
+    assert json.loads((debug_hub.folder / "breakpoints.json").read_text()) == {
+        "addresses": ["2.1", "3.3"]
+    }
+    marks = [
+        line["addresses"] for line in debug_hub.records() if line["event"] == "debug.breakpoints"
+    ]
+    assert marks == [["2.1"], ["2.1", "3.3"]]
+    counted = [event for event in debug_hub.stored() if event.type == "debug.breakpoints"]
+    assert [event.payload["count"] for event in counted] == [1, 2]
+
+
+def no_account() -> str:
+    raise OSError("no account name")
+
+
+@pytest.mark.parametrize("account", [no_account, lambda: "unknown"], ids=["none", "unknown"])
+def test_refuses_the_command_and_records_nothing_when_no_account_is_known(
+    debug_hub: DebugHub, monkeypatch: pytest.MonkeyPatch, account: Callable[[], str]
+) -> None:
+    debug_hub.order("fetched")
+    started = debug_hub.start("--break", "2.1")
+    record = (debug_hub.folder / "records.jsonl").read_bytes()
+    stored = debug_hub.stored()
+    monkeypatch.setattr(getpass, "getuser", account)
+
+    refused = [debug_hub.run("scenario", command, RUN) for command in ("step", "continue")]
+
+    assert last_line(started) == f"run {RUN}: paused before 2.1 (breakpoint)", started.output
+    for result in refused:
+        assert result.exit_code == 1, result.output
+        assert "names no person" in plain(result.output)
+    assert (debug_hub.folder / "records.jsonl").read_bytes() == record
+    assert debug_hub.stored() == stored
 
 
 # A version-1 run has no addresses; Step and Continue only in a debug pause.
