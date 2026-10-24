@@ -5300,6 +5300,8 @@ RENDERING_MODULES = frozenset(
         "scenario_discovery.py",
         # Pure: the examples' bytes and a filter of a tree snapshot; file_adapter writes them.
         "scenario_examples.py",
+        # Pure: a scenario document to its canonical YAML text; the api writes it.
+        "scenario_yaml.py",
     }
 )
 
