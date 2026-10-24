@@ -45,8 +45,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   canonical scenario writer writes a tree file back to its own bytes, the builder's API validates and saves a
   `version: 2` document with it, and a save of an unchanged one writes nothing and keeps its revision (AGH-512);
   the `hub doctor` rule `scenarios.graph_format` warns on each graph-format (`version: 1`) scenario, its fix naming
-  `hub scenario migrate`, and `hub init` seeds `demo-service-up` as `version: 2`, so a fresh hub has no such warning
-  (AGH-513); the rest is not built yet.
+  `hub scenario migrate`, and `hub init` seeds `demo-service-up` as `version: 2`, so a fresh hub has no such warning;
+  since the builder edits only `version: 1`, hub web's Build view shows a `version: 2` file, that example among
+  them, read-only (the steps it runs, and its file) instead of an empty step list it could not save (AGH-513); the
+  rest is not built yet.
 
 ### Changed
 

@@ -163,7 +163,9 @@ wins.
 The scenario page's builder, as the owner validated it in the playground (its v6 and the two commits after it); the
 v1 to v5 layouts (a free block canvas, Scratch-like snapping blocks, sentence blocks, step cards with arrows) were
 rejected and are not built. Its relation to ADR 0049's tree format is in that ADR's delivery notes: the builder edits
-`version: 1` files through the builder API ([API.md](../../../API.md#scenarios)).
+`version: 1` files through the builder API ([API.md](../../../API.md#scenarios)). A file written as blocks
+(`version: 2`, the `hub init` example among them) does not open in the builder yet: Build shows its name, a note that
+the builder cannot edit it yet, the steps it runs (the storyline of the Run mode) or its file, and a Run button.
 
 - **AC-521.13.1 Step list.** Given a scenario, then the builder reads it top to bottom as numbered steps, two lines per
   step, that say what each does; groups (Repeat, If paths, At the same time lanes) are indented; a Start row says where

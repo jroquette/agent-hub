@@ -125,16 +125,20 @@ and Save of an unchanged document writes nothing and keeps its revision (AGH-512
 And doctor's warning: `scenarios.graph_format` warns on each `version: 1` scenario of the hub, at its `version` line,
 with `hub scenario migrate` as its fix, a command not built yet ([design/hub-doctor.md](../design/hub-doctor.md));
 `hub init` seeds `demo-service-up` as `version: 2`, so a fresh hub has no such warning, and its `version: 1` text
-stays as a test fixture (AGH-513).
+stays as a test fixture (AGH-513). Until the builder screen reads `version: 2`, that seed does not open in it: Build
+shows a `version: 2` file read-only (Format below).
 The scenario builder that shipped with AGH-521 is the one the owner validated in the playground, and where it differs
 from the decision above, the validated behavior wins for what the screen shows:
 
 - **Format.** The builder reads and writes `version: 1` graph scenarios. Its step list shows the graph as ordered
   steps with groups (Repeat, If, At the same time) and a Start row, which is the shape `version: 2` stores; core
   translates a `version: 2` file at load, with its block map, and the API's validate and Save take one, but the
-  builder screen does not read one yet, and there is no `hub scenario migrate` yet. A graph that is not nested paths
-  still opens and can be edited (not read-only, as Migration above says): what the list cannot show stays as loose
-  steps under it, and a Graph view and the YAML are a tab away.
+  builder screen does not read one yet, and there is no `hub scenario migrate` yet. A `version: 2` file, the
+  `demo-service-up` example `hub init` seeds among them, opens in Build read-only: the steps core translates it to
+  and its file, with a note that the builder cannot edit it yet, and a Run button; it is edited as text or with
+  Claude. Read as a graph, it would open as an empty step list that no edit could save. A graph that is not nested
+  paths still opens and can be edited (not read-only, as Migration above says): what the list cannot show stays as
+  loose steps under it, and a Graph view and the YAML are a tab away.
 - **Canonical writer.** The builder shipped with its writer in the API's builder (`api/scenario_builder.py`); since
   AGH-512 Save still goes through the API, but writes with `generator`'s scenario writer
   (`generator/scenario_yaml.py`), as decided, and an unchanged document writes nothing.

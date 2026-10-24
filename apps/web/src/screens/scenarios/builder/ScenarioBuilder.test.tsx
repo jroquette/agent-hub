@@ -2,6 +2,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { seriousViolations } from "../../../testing/axe";
 import {
   aPage,
   aProblem,
@@ -36,6 +37,31 @@ const document = {
       every: "10s",
       timeout: "5m",
       until_when: "$self.output.status == 'ON_HOLD'",
+    },
+  ],
+};
+
+// The same scenario written as blocks (version 2), with the steps core translates it to.
+const blocks = {
+  version: 2,
+  kind: "scenario",
+  name: "order-lifecycle",
+  revision: 1,
+  inputs: { external_ref: { type: "string", required: true } },
+  stages: [
+    {
+      name: "order",
+      steps: [
+        { do: "send-queue-message", id: "fetch-order" },
+        {
+          wait_until: "get-order-by-ref",
+          id: "order-on-hold",
+          every: "10s",
+          timeout: "5m",
+          until: "$self.output.status == 'ON_HOLD'",
+        },
+        { do: "render-invoice-pdf", id: "render-pdf" },
+      ],
     },
   ],
 };
@@ -215,6 +241,39 @@ describe("ScenarioBuilder (scenario builder)", () => {
     expect(check).toHaveTextContent("Reads only");
     expect(await screen.findByText("Loads")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save scenario" })).toBeDisabled();
+  });
+
+  it("scenario builder opens a scenario written as blocks read-only, with the steps it runs", async () => {
+    const user = userEvent.setup();
+    const { router } = renderBuilder({
+      [DETAIL]: aScenarioDetail({ document: blocks, content_hash: "sha256:aaa" }),
+    });
+
+    expect(
+      await screen.findByText(/written as blocks \(version 2\), which the builder cannot edit yet/),
+    ).toBeInTheDocument();
+    // Its steps as core translates the file, not an empty graph the builder could never save.
+    const story = screen.getByRole("list", { name: "Steps of order-lifecycle" });
+    expect(within(story).getByRole("article", { name: "Step 1: fetch-order" })).toBeInTheDocument();
+    expect(within(story).getByRole("article", { name: "Step 3: render-pdf" })).toBeInTheDocument();
+    expect(screen.queryByRole("tree")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save scenario" })).not.toBeInTheDocument();
+    // The file itself is a click away, and Run opens the page's Run mode.
+    await user.click(screen.getByRole("button", { name: "Document" }));
+    expect(screen.getByRole("region", { name: "Document" })).toHaveTextContent(
+      "scenarios/orders/order-lifecycle.yaml",
+    );
+    await user.click(screen.getByRole("button", { name: "Run" }));
+    expect(router.state.location.search).toContain("mode=run");
+  });
+
+  it("scenario builder has no serious a11y violation on a scenario written as blocks (a11y)", async () => {
+    const { container } = renderBuilder({
+      [DETAIL]: aScenarioDetail({ document: blocks, content_hash: "sha256:aaa" }),
+    });
+    await screen.findByRole("list", { name: "Steps of order-lifecycle" });
+
+    expect(await seriousViolations(container)).toEqual([]);
   });
 
   it("scenario builder's Start row says where the scenario starts and what it asks for", async () => {

@@ -23,6 +23,7 @@ import { DiscussButton, useDiscuss, useDiscussTarget } from "../../shell/discuss
 import { StaleStamp } from "../portfolio/StaleStamp";
 import { InputField, parsed, type InputSpec } from "../runs-list/StartRun";
 import { ActionPanel, FileText } from "./ActionPanel";
+import { isBlocksDocument } from "./builder/model";
 import { ScenarioBuilder } from "./builder/ScenarioBuilder";
 import { useLatestRun } from "./LiveRun";
 import { SCENARIO_BRIEF } from "./brief";
@@ -831,6 +832,61 @@ function DocumentView({ scenario }: { scenario: ScenarioDetail }) {
   );
 }
 
+/** Build mode for a scenario written as blocks (`version: 2`), which the builder does not read
+ * yet: the steps the file runs (core's translation) and the file, read-only, never the file read
+ * as an empty graph that no edit could save. */
+function BlocksReadOnly({
+  scenario,
+  view,
+  onView,
+  steps,
+  onRun,
+}: {
+  scenario: ScenarioDetail;
+  view: DetailView;
+  onView: (view: DetailView) => void;
+  /** The storyline of the steps, as the Run mode shows it. */
+  steps: ReactNode;
+  onRun: () => void;
+}) {
+  return (
+    <div className="ah-stack" style={{ gap: 12 }}>
+      <div className="ah-row ah-wrap" style={{ gap: 12 }}>
+        <h1 className="ah-h1 ah-mono">{scenario.name}</h1>
+        <span className="ah-small ah-muted">
+          pack {scenario.pack} · revision {scenario.revision}
+        </span>
+        <span className="ah-grow" />
+        <DiscussButton />
+        <Button icon="play" onClick={onRun}>
+          Run
+        </Button>
+      </div>
+      <Banner tone="info" icon="lock">
+        This scenario is written as blocks (version 2), which the builder cannot edit yet: it edits
+        graph scenarios (version 1). Here are the steps it runs and its file, read-only. Edit the
+        file, or ask Claude, and this page updates.
+      </Banner>
+      <div className="ah-row ah-wrap" style={{ gap: 12 }}>
+        <SegmentedControl
+          label="View"
+          value={view}
+          onChange={(id) => {
+            onView(id === "document" ? "document" : "steps");
+          }}
+          options={[
+            { id: "steps", label: "Steps", icon: "list-checks" },
+            { id: "document", label: "Document", icon: "file-text" },
+          ]}
+        />
+        <span className="ah-grow" />
+        <span className="ah-small ah-muted">{shapeLine(scenario)}</span>
+      </div>
+      {view === "steps" ? steps : <DocumentView scenario={scenario} />}
+    </div>
+  );
+}
+
 /** Build mode: the breadcrumbs, then the builder (its own one-row toolbar) to the bottom. */
 function BuildPage({ scenario, children }: { scenario: ScenarioDetail; children: ReactNode }) {
   useScenarioDiscuss(scenario);
@@ -879,6 +935,53 @@ function DetailBody({ scenario }: { scenario: ScenarioDetail }) {
       ]}
     />
   );
+  const storyline = (
+    <Storyline
+      statusOf={latest.statusOf}
+      name={scenario.name}
+      steps={scenario.steps}
+      actions={actions}
+      mode={mode}
+      plan={plan}
+      onOpenAction={(ref) => {
+        opener.current = document.activeElement as HTMLElement | null;
+        setParam("action", ref);
+      }}
+    />
+  );
+  const actionPanel = openAction && (
+    <ActionPanel
+      action={openAction}
+      steps={scenario.steps}
+      openerRef={opener}
+      onClose={() => {
+        setParam("action", null);
+      }}
+      onShowStep={(id) => {
+        setParam("action", null);
+        document.getElementById(`step-${id}`)?.scrollIntoView({ block: "start" });
+      }}
+    />
+  );
+  if (page === "build" && isBlocksDocument(scenario.document)) {
+    return (
+      <BuildPage scenario={scenario}>
+        <WaitingCard rows={mine} named={false} />
+        <BlocksReadOnly
+          scenario={scenario}
+          view={view}
+          onView={(next) => {
+            setParam("view", next === "document" ? "document" : null);
+          }}
+          steps={storyline}
+          onRun={() => {
+            setParam("mode", "run");
+          }}
+        />
+        {actionPanel}
+      </BuildPage>
+    );
+  }
   if (page === "build") {
     return (
       <BuildPage scenario={scenario}>
@@ -919,22 +1022,7 @@ function DetailBody({ scenario }: { scenario: ScenarioDetail }) {
               <span className="ah-small ah-muted">{shapeLine(scenario)}</span>
             </div>
             {latest.banner}
-            {view === "steps" ? (
-              <Storyline
-                statusOf={latest.statusOf}
-                name={scenario.name}
-                steps={scenario.steps}
-                actions={actions}
-                mode={mode}
-                plan={plan}
-                onOpenAction={(ref) => {
-                  opener.current = document.activeElement as HTMLElement | null;
-                  setParam("action", ref);
-                }}
-              />
-            ) : (
-              <DocumentView scenario={scenario} />
-            )}
+            {view === "steps" ? storyline : <DocumentView scenario={scenario} />}
           </div>
           <aside
             className="sc-run-panel ah-stack"
@@ -951,20 +1039,7 @@ function DetailBody({ scenario }: { scenario: ScenarioDetail }) {
           </aside>
         </div>
       </div>
-      {openAction && (
-        <ActionPanel
-          action={openAction}
-          steps={scenario.steps}
-          openerRef={opener}
-          onClose={() => {
-            setParam("action", null);
-          }}
-          onShowStep={(id) => {
-            setParam("action", null);
-            document.getElementById(`step-${id}`)?.scrollIntoView({ block: "start" });
-          }}
-        />
-      )}
+      {actionPanel}
     </Page>
   );
 }

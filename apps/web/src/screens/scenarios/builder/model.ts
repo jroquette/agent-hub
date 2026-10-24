@@ -23,6 +23,12 @@ export function toDocument(value: unknown): BuilderDocument {
   return { ...record, nodes };
 }
 
+/** Whether a scenario file's mapping is written as blocks (`version: 2`, stages of blocks):
+ * this builder edits the graph format (`version: 1`, `nodes`) only, so it does not read one. */
+export function isBlocksDocument(value: unknown): boolean {
+  return isRecord(value) && value.version === 2;
+}
+
 function isNode(value: unknown): value is BuilderNode {
   return isRecord(value) && typeof value.id === "string" && typeof value.type === "string";
 }

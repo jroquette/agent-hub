@@ -439,9 +439,10 @@ instruction" for actions and for the deterministic nodes of a workflow that decl
   scenario run.
 - **Seed:** `hub init` writes one example, the read action `demo-get-status` (with its Python script) and the
   scenario `demo-service-up` that uses it (written as blocks, `version: 2`, so a fresh hub has no
-  `scenarios.graph_format` warning), each file only where absent. They are the project's files: `hub sync`
-  never adds them and `hub.lock` does not list them, so a hub without `scenarios/`, `actions/` and `environments`
-  renders and syncs as before.
+  `scenarios.graph_format` warning; until hub web's builder reads `version: 2`, its Build view shows the example
+  read-only, its steps and file, and the file is edited as text or with Claude), each file only where absent. They
+  are the project's files: `hub sync` never adds them and `hub.lock` does not list them, so a hub without
+  `scenarios/`, `actions/` and `environments` renders and syncs as before.
 - **Blocks and debugging** ([ADR 0049](adr/0049-scenario-blocks-and-run-control.md), AGH-507, proposed; built so far:
   core loads a `version: 2` file and translates it at load, the engine can pause a run before a node through a
   run-control port, core folds a run's debug record lines and the values a paused run shows, and `generator`'s

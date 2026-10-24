@@ -37,8 +37,10 @@ scenario and translates it to the node graph at load, with its block map and its
 (the format, bounds, addresses, ids and translation below), and `generator`'s canonical YAML writer, which the API's
 builder routes use: validate and Save take a `version: 2` document as well as a `version: 1` one, and Save of an
 unchanged document writes nothing. Built too: doctor's `scenarios.graph_format` warning, and `hub init` seeds its
-example as `version: 2`. Proposed, not built yet: `hub scenario migrate`, which that warning's fix names; hub web's
-builder screen reads and writes `version: 1` files (see the ADR's delivery notes).
+example as `version: 2`. Proposed, not built yet: `hub scenario migrate`, which that warning's fix names, and a
+builder screen that edits `version: 2`. Hub web's builder reads and writes `version: 1` files only, so a `version: 2`
+file, the seeded example among them, opens in Build read-only (the steps core translates it to, and its file) and is
+edited as text or with Claude until the builder reads `version: 2` (see the ADR's delivery notes).
 
 A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blocks-and-run-control.md)):
 `version: 2` and `stages:` in place of `nodes:`, with `kind: scenario` (a version-2 document without it fails at
