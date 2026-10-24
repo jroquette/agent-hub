@@ -363,17 +363,17 @@ def _decide(
 ) -> int:
     hub = _decision_hub(run_id)
     try:
-        folder = _existing_run(hub, run_id)
+        folder = existing_run(hub, run_id)
         with run_lock(folder):
             drop_torn_tail(folder)
-            records = _ended_check(folder)
+            records = ended_check(folder)
             book = RecordedGates(folder, records)
             gate, text = _gate_of(book, node, text)
             answer = GateAnswer(choice, text)
             # An investigation's answer is checked first: a refused pick records nothing.
             check_answer(hub, records, gate=gate, answer=answer)
             _record_decision(command, hub, book=book, gate=gate, answer=answer, where="cli")
-            return _continue(hub, folder)
+            return continue_run(hub, folder)
     except (WorkflowRunError, WorkflowEngineError, GateDecisionError) as error:
         fail(f"hub workflow {command}: {error}")
 
@@ -397,10 +397,10 @@ def decide(
     hub = _decision_hub(run_id)
     try:
         text = _stdin_text() if text_stdin else None
-        folder = _existing_run(hub, run_id)
+        folder = existing_run(hub, run_id)
         with run_lock(folder):
             drop_torn_tail(folder)
-            records = _ended_check(folder)
+            records = ended_check(folder)
             book = RecordedGates(folder, records)
             gate = book.open_gate(gate_id)
             if gate is None:
@@ -812,14 +812,16 @@ def _begin(
 
 
 def _resume(hub: Path, run_id: str) -> int:
-    folder = _existing_run(hub, run_id)
+    folder = existing_run(hub, run_id)
     with run_lock(folder):
         drop_torn_tail(folder)
-        return _continue(hub, folder)
+        return continue_run(hub, folder)
 
 
-def _continue(hub: Path, folder: Path) -> int:
-    records = _ended_check(folder)
+def continue_run(hub: Path, folder: Path) -> int:
+    """Resume the run in ``folder`` from its snapshot and records (the caller holds its lock and
+    dropped its torn tail); the run's exit code."""
+    records = ended_check(folder)
     header = records[0]
     if snapshot_hash(folder / SNAPSHOT) != header.get("content_hash"):
         raise WorkflowRunError(
@@ -916,10 +918,10 @@ def _pins(header: Mapping[str, JsonValue]) -> bool:
 
 
 def _abandon(hub: Path, run_id: str) -> None:
-    folder = _existing_run(hub, run_id)
+    folder = existing_run(hub, run_id)
     with run_lock(folder):
         drop_torn_tail(folder)
-        records = _ended_check(folder)
+        records = ended_check(folder)
         inputs = next((r["inputs"] for r in records if r.get("event") == "inputs"), {})
         events = _events(
             hub,
@@ -934,14 +936,15 @@ def _abandon(hub: Path, run_id: str) -> None:
     typer.echo(f"run {run_id}: cancelled")
 
 
-def _existing_run(hub: Path, run_id: str) -> Path:
+def existing_run(hub: Path, run_id: str) -> Path:
+    """The folder of run ``run_id``; refused when there is none, or it is a link."""
     folder = run_folder(hub, run_id)
     if not folder.is_dir() or folder.is_symlink():
         raise WorkflowRunError(f"no run {run_id}")
     return folder
 
 
-def _ended_check(folder: Path) -> list[dict[str, JsonValue]]:
+def ended_check(folder: Path) -> list[dict[str, JsonValue]]:
     """The run's records; refused when it already ended done or cancelled."""
     run_id = folder.name
     records = read_records(folder)
