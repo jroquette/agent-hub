@@ -116,16 +116,22 @@ A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blo
   nothing and naming each node and why (exit 1): another `trigger_rule`; a `loop_group` with `until_bash` or
   `fresh_context`; `returns` or `outcome_field`; a graph that is not series-parallel; a `when` no If gives (on a node
   that opens a list, two that are no condition and its complement, the conditions of nested Ifs joined on one node,
-  which it does not split); and a tree that would pass a cap of the format. Graph reading stops at the first block
-  whose shape breaks, and at the first If, Together or Repeat that would nest past 3 deep (named on its node, nothing
-  inside it read, so the work stays bounded whatever the graph holds); every node's own keys are checked. The tree is
-  translated back before anything is written and must give the same nodes, edges and conditions; their declaration
-  order may change (it becomes the blocks' order), and with it the order a run starts and records parallel nodes in.
-  Its canonical text must load again, as Save checks: block-style YAML can be past the loader's 256 KiB where the
-  compact `version: 1` file was not. Any scenario it cannot migrate (an unknown name, a file that does not load or
-  plan, a `version: 2` file, a JSON file, a file that is a link, a path with a backslash or a control character the
-  hub item writer does not write, a text that would not load) means nothing is written for any of them: every
-  scenario asked is checked before the first write. It writes through a temporary file and a rename, never through a
+  which it does not split); and a tree that would pass a cap of the format. Every node's own keys are checked. A graph
+  of more than 512 nodes (a Repeat's steps included) is not read at all; else graph reading stops at the first block
+  whose shape breaks (a node whose edges or `trigger_rule` are not those of its place included), and at the first If,
+  Together or Repeat that would nest past 3 deep (named on its node, nothing inside it read). A block refuses its first
+  10 entry nodes one problem each and the rest in one more (`has the same problem as the node before it, as do <n>
+  more nodes after it`), and a problem names 10 nodes at most (`"a", "b", … and <n> more`), so the work and the output
+  stay bounded whatever the graph holds. The tree is translated back before anything is written and must give the
+  same header, nodes, edges and conditions; their declaration order may change (it becomes the blocks' order), and with
+  it the order a run starts and records parallel nodes in. Its canonical text must load again, as Save checks:
+  block-style YAML can be past the loader's 256 KiB where the compact `version: 1` file was not; and that text, read
+  back and translated, must give the same header and nodes too, so a value the YAML text does not keep (a U+0085 the
+  writer writes raw reads back as a space) is refused on its node or header key. Any scenario it cannot migrate (an
+  unknown name, a file that does not load or plan, a `version: 2` file, a JSON file, a file that is a link, a path
+  with a backslash or a control character the hub item writer does not write, a text that would not load or would
+  read back as another graph) means nothing is written for any of them: every scenario asked is checked before the
+  first write. It writes through a temporary file and a rename, never through a
   link, and runs no git command; a write that still fails part way (an I/O error, a file that became a link) stops
   there, and the files printed as migrated before it are the ones written. `--check` writes nothing and prints what it
   would migrate (a line per file: its stage and block count). hub web's builder is to offer Migrate for a graph

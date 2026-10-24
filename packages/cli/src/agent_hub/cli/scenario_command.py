@@ -53,10 +53,13 @@ one when none is named) again in place as blocks (``version: 2``, ``scenario_mig
 stage named after the scenario, each id kept where it differs from the one its address derives,
 in canonical form, the revision kept; it prints ``migrated <file> to blocks (version 2): stage
 <name>, <n> blocks`` per file, or ``no scenario in the graph format (version 1)``. When anything
-cannot be migrated (no such scenario, a file that does not load, one already at version 2, a
-JSON file, a link, a node a tree cannot hold) it writes nothing: one stderr line per problem,
-naming the file and the node, then ``... cannot be written as blocks; nothing was written``,
-exit 1. ``--check`` writes nothing and prints ``would migrate ...`` instead.
+cannot be migrated (no such scenario, a file that does not load or plan, one already at
+version 2, a JSON file, a link, a path with a backslash or a control character, a node a tree
+cannot hold, a canonical text that would not load again or would read back as another graph) it
+writes nothing: one stderr line per problem, naming the file and the node, then ``... cannot be
+written as blocks; nothing was written``, exit 1; a folder's problem (a linked pack folder)
+refuses a run with no names, ending ``... nothing was written``. ``--check`` writes nothing and
+prints ``would migrate ...`` instead.
 
 ``propose --run RUN`` records an investigation's findings and options, the fixed schema as JSON
 on stdin (at most 256 KiB, bounds and secret-shape redaction in core's ``investigation``), for

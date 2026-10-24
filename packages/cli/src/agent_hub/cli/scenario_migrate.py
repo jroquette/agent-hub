@@ -9,9 +9,11 @@ plan (its problems), one already at version 2, a JSON file (migrate rewrites
 ``scenarios/<pack>/<name>.yaml`` only), a file that is a link, a path the hub item writer does
 not write (a backslash or a control character in it), each node a tree cannot hold, or a tree
 whose canonical text would not load again (past the loader's 256 KiB: block-style YAML is
-larger than a compact version-1 file), as the builder's Save checks before it writes. A
-folder's problem (a linked ``scenarios/`` or pack folder) refuses a run with no names, which
-cannot read every scenario.
+larger than a compact version-1 file), as the builder's Save checks before it writes, or would
+load as another graph (a value the YAML text does not keep, such as a U+0085 the writer writes
+raw and the loader reads as a line break): the text is read back and translated, and must give
+the same nodes and header. A folder's problem (a linked ``scenarios/`` or pack folder) refuses a
+run with no names, which cannot read every scenario.
 
 ``write_migration`` writes one file through the generator's hub item writer: a temporary file
 beside it, then a rename, each folder on the way opened with ``O_NOFOLLOW``, so nothing is
@@ -33,6 +35,7 @@ from agent_hub.core.item_versions.hub_item_writer import (
 )
 from agent_hub.core.item_versions.item_version import UnitKind
 from agent_hub.core.item_versions.unit_content import UnitContent, UnitFile
+from agent_hub.core.json_form import JsonValue
 from agent_hub.core.scenarios.tree_migrate import (
     ALREADY_A_TREE,
     MigrationError,
@@ -140,20 +143,32 @@ def _migrated(
         return refused(reason)
     if not loads:
         return Refused(name=found.name, lines=tuple(map(problem_line, on_file)))
+    written = _Written(file)
     try:
-        tree = migrate_graph(found.document)
+        tree = migrate_graph(found.document, read_back=written.read_back)
     except MigrationError as error:
         return refused(*map(str, error.problems))
     except WorkflowLoadError as error:
         return refused(str(error))
-    text = render_document(tree)
-    try:
-        load_workflow_bytes(text.encode(), source=file)
     except WorkflowFileError as error:
         return refused(f"as blocks it would not load: {error.reason}")
     stage = stage_name(found.name)
     blocks = sum(1 for block in block_map(tree).blocks if block.kind != "stage")
-    return Migrated(file=file, name=found.name, stage=stage, blocks=blocks, text=text)
+    return Migrated(file=file, name=found.name, stage=stage, blocks=blocks, text=written.text)
+
+
+@dataclass
+class _Written:
+    """The canonical text of a tree, kept once written, and the mapping it loads back to."""
+
+    source: str
+    text: str = ""
+
+    def read_back(self, tree: dict[str, JsonValue]) -> object:
+        """The mapping ``tree``'s canonical text loads to (``WorkflowFileError`` when it does
+        not load, as past the loader's 256 KiB)."""
+        self.text = render_document(tree)
+        return load_workflow_bytes(self.text.encode(), source=self.source).document
 
 
 def _not_in_place(found: DiscoveredWorkflow, file: str) -> str | None:

@@ -31,11 +31,13 @@ from typer.testing import CliRunner, Result
 from agent_hub.cli.main import app
 from agent_hub.cli.workflow_runs import snapshot_hash
 from agent_hub.core.events.event import Event
+from agent_hub.core.item_versions.hub_item_writer import HubItemWriteError
 from agent_hub.core.testing.builders import an_environments_document
 from agent_hub.core.testing.workflow_fakes import KeysOutputs
 from agent_hub.core.workflows.document import WorkflowDocument, parse_workflow
 from agent_hub.core.workflows.fixtures import parse_fixture, run_fixture
 from agent_hub.core.workflows.plan import plan_workflow
+from agent_hub.generator.hub_item_writer import FileSystemHubItemWriter
 from agent_hub.generator.scenario_examples import EXAMPLE_FILES
 from agent_hub.generator.workflow_yaml import load_workflow_bytes
 from agent_hub.storage.event_store import open_event_store
@@ -3080,3 +3082,94 @@ def test_refuses_and_writes_nothing_when_migrate_names_a_json_or_linked_file(
     assert {path: path.read_bytes() for path in kept} == kept
     assert (folder / "linked-walk.yaml").is_symlink()
     assert (folder / "inside-walk.yaml").is_symlink()
+
+
+# U+0085 in double quotes: the loader reads it, the canonical writer writes it raw, and a raw
+# U+0085 reads back as a line break folded to a space.
+ODD_WALK = """\
+version: 1
+kind: scenario
+name: odd-walk
+revision: 1
+description: "An odd\\Nwalk"
+nodes:
+  - id: send
+    type: action
+    description: "Send\\Nthe order"
+    action: send-order
+    with: {target: api}
+"""
+
+
+@pytest.mark.parametrize("check", [False, True], ids=["write", "check"])
+def test_refuses_and_writes_nothing_when_migrate_would_write_a_text_that_reads_back_otherwise(
+    hub: Path, marker: Path, *, check: bool
+) -> None:
+    odd = write_scenario(hub, ODD_WALK)
+    written = odd.read_bytes()
+
+    result = migrate(hub, marker, "odd-walk", "order-walk", *(["--check"] if check else []))
+
+    assert result.exit_code == 1, result.output
+    assert plain(result.stdout) == ""
+    assert plain(result.stderr).splitlines() == [
+        "hub scenario migrate: scenarios/demo/odd-walk.yaml: description: as written it would"
+        " read back as another value: the YAML text does not keep it as it is",
+        'hub scenario migrate: scenarios/demo/odd-walk.yaml: node "send": as written it would'
+        " read back as another node: the YAML text does not keep one of its values as it is",
+        NOTHING_WRITTEN.format(count="1 scenario"),
+    ]
+    assert odd.read_bytes() == written
+    assert (hub / "scenarios" / "demo" / "order-walk.yaml").read_text() == SCENARIO
+
+
+def test_refuses_and_writes_nothing_when_migrate_of_every_scenario_finds_a_linked_pack(
+    hub: Path, marker: Path, tmp_path: Path
+) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "far-walk.yaml").write_text(SCENARIO.replace("name: order-walk", "name: far-walk"))
+    (hub / "scenarios" / "far").symlink_to(outside)
+
+    result = migrate(hub, marker)
+
+    assert result.exit_code == 1, result.output
+    assert plain(result.stdout) == ""
+    assert plain(result.stderr).splitlines() == [
+        "hub scenario migrate: scenarios/far: $: a pack folder is a link; it is not read",
+        "hub scenario migrate: nothing was written",
+    ]
+    assert (hub / "scenarios" / "demo" / "order-walk.yaml").read_text() == SCENARIO
+
+
+def test_stops_at_the_file_it_cannot_write_when_a_migrate_write_fails(
+    hub: Path, marker: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_scenario(hub, SCENARIO.replace("name: order-walk", "name: zone-walk"))
+    real = FileSystemHubItemWriter.write_unit
+    calls: list[str] = []
+
+    def write_unit(
+        self: FileSystemHubItemWriter, root: str, unit: str, *args: Any, **kw: Any
+    ) -> Any:
+        calls.append(unit)
+        if len(calls) == 2:  # noqa: PLR2004 -- the second file
+            raise HubItemWriteError("the disk is full")
+        return real(self, root, unit, *args, **kw)
+
+    monkeypatch.setattr(FileSystemHubItemWriter, "write_unit", write_unit)
+
+    result = migrate(hub, marker)
+
+    assert result.exit_code == 1, result.output
+    assert plain(result.stdout).splitlines() == [
+        "migrated " + WRITTEN.format(name="order-walk", count=3)
+    ]
+    assert plain(result.stderr).splitlines() == [
+        "hub scenario migrate: cannot write scenarios/demo/zone-walk.yaml: the disk is full"
+    ]
+    assert calls == ["scenarios/demo/order-walk.yaml", "scenarios/demo/zone-walk.yaml"]
+    walk = hub / "scenarios" / "demo" / "order-walk.yaml"
+    assert yaml.safe_load(walk.read_bytes())["version"] == 2
+    zone = hub / "scenarios" / "demo" / "zone-walk.yaml"
+    assert zone.read_text() == SCENARIO.replace("name: order-walk", "name: zone-walk")
