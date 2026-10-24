@@ -15,7 +15,6 @@ import pytest
 from agent_hub.api import scenario_investigation
 from agent_hub.api.agent_session_runtime import HubCredentials
 from agent_hub.api.run_launcher import ScenarioLaunch
-from agent_hub.api.scenario_builder import render_document
 from agent_hub.api.scenario_catalog import ScenarioCatalog, ScenarioCommands
 from agent_hub.api.scenario_investigation import InvestigationRestrictions, ScenarioInvestigations
 from agent_hub.core.agent_sessions import errors as session_errors
@@ -49,6 +48,7 @@ from agent_hub.core.workflows.gates import GateAnswer
 from agent_hub.generator.action_discovery import discover_actions
 from agent_hub.generator.finding_issues import HeldIssue as HeldFindingIssue
 from agent_hub.generator.finding_issues import IssueMarked, marked_issue, retake_issue
+from agent_hub.generator.scenario_yaml import render_document
 from agent_hub.generator.workflow_yaml import load_workflow_bytes
 
 RUNNING = "0.9.0"
@@ -1990,6 +1990,113 @@ def test_refuses_stale_invalid_and_taken_when_builder_saves(scenarios: Any) -> N
     assert (invalid.status_code, invalid.json()["code"]) == (409, "document_invalid")
     assert (taken.status_code, taken.json()["code"]) == (409, "name_taken")
     assert writes.calls == []
+
+
+TREE = """\
+version: 2
+kind: scenario
+name: order-tree
+revision: 1
+description: One demo order as blocks
+inputs:
+  ref:
+    type: string
+    required: true
+stages:
+- name: Send
+  steps:
+  - do: send-order
+    with:
+      target: api
+      ref: $INPUTS.ref
+  - wait_until: demo/get-order
+    with:
+      target: api
+      ref: $INPUTS.ref
+    until: $self.output.status == 'ON_HOLD'
+    every: 10s
+    timeout: 5m
+"""
+
+
+def _a_tree(scenarios: Any, text: str = TREE) -> Path:
+    path: Path = scenarios.hub / "scenarios" / "demo" / "order-tree.yaml"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def _put(scenarios: Any, name: str, document: dict[str, Any], *, base: str | None) -> Any:
+    return scenarios.client.put(
+        f"/api/v1/scenarios/demo/{name}",
+        json={"pack": "demo", "document": document, "base_content_hash": base},
+        headers=_origin(scenarios),
+    )
+
+
+def test_writes_nothing_when_saved_unchanged(scenarios: Any) -> None:
+    writes = _DiskWrites()
+    scenarios.wire(item_version_writes=writes)
+    path = _a_tree(scenarios)
+    detail = scenarios.client.get("/api/v1/scenarios/demo/order-tree").json()
+
+    saved = _put(scenarios, "order-tree", detail["document"], base=detail["content_hash"])
+
+    assert saved.status_code == 200, saved.text
+    body = saved.json()
+    assert (body["changed"], body["versioned"], body["revision"]) == (False, False, 1)
+    assert body["content_hash"] == detail["content_hash"]
+    assert body["yaml"] == TREE
+    assert writes.calls == []
+    assert path.read_text(encoding="utf-8") == TREE
+
+
+def test_writes_next_revision_when_tree_saved_with_an_edit(scenarios: Any) -> None:
+    writes = _DiskWrites()
+    scenarios.wire(item_version_writes=writes)
+    path = _a_tree(scenarios)
+    detail = scenarios.client.get("/api/v1/scenarios/demo/order-tree").json()
+    document = detail["document"]
+    document["description"] = "Edited in the builder"
+
+    saved = _put(scenarios, "order-tree", document, base=detail["content_hash"])
+
+    assert saved.status_code == 200, saved.text
+    assert (saved.json()["changed"], saved.json()["revision"]) == (True, 2)
+    expected = TREE.replace("revision: 1", "revision: 2").replace(
+        "One demo order as blocks", "Edited in the builder"
+    )
+    assert path.read_text(encoding="utf-8") == expected
+
+
+def test_places_action_problems_on_tree_nodes_when_builder_validates(scenarios: Any) -> None:
+    document = _walk_document(scenarios)
+    _a_tree(scenarios)
+    tree = scenarios.client.get("/api/v1/scenarios/demo/order-tree").json()["document"]
+    tree["stages"][0]["steps"].append({"id": "lost", "do": "no-such"})
+
+    body = _post(
+        scenarios, "/projects/demo/scenarios/validate", {"pack": "demo", "document": tree}
+    ).json()
+    unchanged = _post(
+        scenarios, "/projects/demo/scenarios/validate", {"pack": "demo", "document": document}
+    ).json()
+
+    assert body["loads"] is False
+    assert body["yaml"].startswith("version: 2\nkind: scenario\nname: order-tree\n")
+    by_node = {problem["node"]: problem for problem in body["problems"]}
+    assert "unknown action 'no-such'" in by_node["lost"]["message"]
+    assert by_node["lost"]["key"] == "stages[0].steps[2].do"
+    assert (unchanged["loads"], unchanged["problems"]) == (True, [])
+
+
+def test_lists_tree_scenarios_as_users_when_library_read(scenarios: Any) -> None:
+    _a_tree(scenarios)
+
+    library = scenarios.client.get("/api/v1/projects/demo/actions").json()
+
+    items = {item["action"]["ref"]: item for item in library["items"]}
+    assert items["demo/get-order"]["used_by"] == ["order-tree", "order-walk"]
+    assert items["demo/send-order"]["used_by"] == ["order-tree", "order-walk"]
 
 
 def test_reads_checks_and_drops_claudes_proposal_when_builder_reviews(scenarios: Any) -> None:

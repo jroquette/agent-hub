@@ -33,9 +33,10 @@ does not list them, and the init report does not count them.
 
 **Partly built** ([ADR 0049](../adr/0049-scenario-blocks-and-run-control.md), AGH-507): core loads a `version: 2`
 scenario and translates it to the node graph at load, with its block map and its problems on the tree's key paths
-(the format, bounds, addresses, ids and translation below). Proposed, not built yet: doctor's `scenarios.graph_format`
-warning, the canonical YAML writer and `hub scenario migrate`; today's builder reads and writes `version: 1` files and
-Save goes through the API (see the ADR's delivery notes).
+(the format, bounds, addresses, ids and translation below), and `generator`'s canonical YAML writer, which the API's
+builder routes use: validate and Save take a `version: 2` document as well as a `version: 1` one, and Save of an
+unchanged document writes nothing. Proposed, not built yet: doctor's `scenarios.graph_format` warning and `hub
+scenario migrate`; hub web's builder screen reads and writes `version: 1` files (see the ADR's delivery notes).
 
 A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blocks-and-run-control.md)):
 `version: 2` and `stages:` in place of `nodes:`, with `kind: scenario` (a version-2 document without it fails at
@@ -83,12 +84,16 @@ A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blo
   run's plan, the `<step>__ask` gate in front of a gated step and an include's first nodes), exit nodes and key path.
   A problem on a generated node, at load or by planning, is reported on the tree's key path; one on a joined
   condition, on the `if` of the If whose condition holds the reference it names.
-- **Canonical YAML**, written by `generator`'s scenario writer and shared by hub web's Save and `hub scenario
-  migrate`: `yaml.safe_dump` (no key sorting, Unicode kept, width 100, so a long `until` folds), with keys in this
-  order: `version`, `kind`, `name`, `revision`, `description`, `inputs`, `stages`; a stage's `name`, `description`,
-  `steps`; a step's kind key first, then `id`, `description`, `with`, the kind's own keys (`until`, `every`,
-  `timeout`; `decisions`, `capture_response`; `max`, `until`, `steps`; `then`, `else`), `capture`, `retry`. Save
-  writes nothing, and keeps `revision`, when the canonical bytes equal the file's.
+- **Canonical YAML**, written by `generator`'s scenario writer (`scenario_yaml.render_document`) and shared by hub
+  web's Save and `hub scenario migrate`: PyYAML's safe dumper (no key sorting, Unicode kept, width 100, so a long
+  `until` folds; a text the strict loader would read as a JSON number, boolean or null, such as `1e5`, is put in
+  quotes), with keys in this order: `version`, `kind`, `name`, `revision`, `description`, `inputs`, `stages`; a stage's
+  `name`, `description`, `steps`; a step's kind key first, then `id`, `description`, `with`, the kind's own keys
+  (`until`, `every`, `timeout`; `decisions`, `capture_response`; `max`, `until`, `steps`; `then`, `else`), `capture`,
+  `retry`; any other key after them, in the order given. A `version: 1` graph keeps its order: `version`, `kind`,
+  `name`, `revision`, `description`, `environment`, the other keys, `nodes` last, and a node's `id`, `type`,
+  `description`, `depends_on`, `when`, `trigger_rule` first. Save writes nothing, and keeps `revision`, when the
+  canonical bytes with the file's own `revision` equal the file's.
 - `hub scenario migrate [NAME…] [--check]` writes a graph scenario as a tree (one stage named after the scenario, each
   id kept as `id:` where it differs from the derived one) when the graph is series-parallel with only `all_success`
   joins, `when` branches and the joins an If makes; otherwise nothing is written and each node it cannot map is named

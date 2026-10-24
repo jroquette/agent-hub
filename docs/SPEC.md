@@ -443,8 +443,9 @@ instruction" for actions and for the deterministic nodes of a workflow that decl
   renders and syncs as before.
 - **Blocks and debugging** ([ADR 0049](adr/0049-scenario-blocks-and-run-control.md), AGH-507, proposed; built so far:
   core loads a `version: 2` file and translates it at load, the engine can pause a run before a node through a
-  run-control port, and core folds a run's debug record lines and the values a paused run shows; the builder AGH-521
-  shipped edits `version: 1` files, see the ADR's delivery notes): a scenario
+  run-control port, core folds a run's debug record lines and the values a paused run shows, and `generator`'s
+  canonical writer gives the API's builder validate and Save for a `version: 2` document, writing nothing for an
+  unchanged one; the builder screen AGH-521 shipped edits `version: 1` files, see the ADR's delivery notes): a scenario
   may be written as `version: 2`, named stages of ordered blocks (Do, Wait until, You, Wait, Include; Repeat, If/else,
   At the same time), which core translates to the node graph at load, so the policy, gates and records are unchanged;
   hub web's builder edits that file block for block, and Save of an unchanged file writes nothing. A scenario run may

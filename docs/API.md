@@ -763,17 +763,21 @@ folder, the server's environment minus `LINEAR_API_KEY`); no problem quotes its 
   `script_truncated`) and `problem` when the action does not load.
 - The scenario builder (AGH-521, hub web's editor of a scenario; `SCENARIO_PATHS` lists its seven paths):
   - `POST /api/v1/projects/{project}/scenarios/validate` with `{pack, document}` → 200 `ValidateResult`: `loads`,
-    `yaml` (the canonical YAML Save would write), `problems` (`error` or `warning`, each on its `node` or the
-    document) and `nodes` (each top-level node's first and last line in `yaml`). It writes nothing.
+    `yaml` (the canonical YAML Save would write, `generator`'s scenario writer), `problems` (`error` or `warning`,
+    each on its `node` or the document) and `nodes` (each top-level node's first and last line in `yaml`). It writes
+    nothing. The document is a `version: 1` graph or a `version: 2` tree (AGH-507): a tree's action references are
+    checked through its translated blocks, each problem on the block's first node with the block's key path
+    (`stages[0].steps[2].do`).
   - `GET /api/v1/projects/{project}/actions` → 200 `ActionLibrary`: the hub's actions, by pack then name, each with
-    its `output_fields` (the paths a reference may read, two levels) and `used_by` (the scenarios that call it), and
-    the `problems` of action files that do not load.
+    its `output_fields` (the paths a reference may read, two levels) and `used_by` (the scenarios that call it, a
+    tree's Do and Wait until blocks included), and the `problems` of action files that do not load.
   - `PUT /api/v1/scenarios/{project}/{name}` with `{pack, document, base_content_hash}` → 200 `SaveResult` (`path`,
     `revision`, `content_hash`, `yaml`, `changed`, `versioned`): writes `scenarios/<pack>/<name>.yaml` through the
     item write step (recorded as a version, never through a link, no git command), only when the document loads (409
     `document_invalid` else) and only over the file the builder last read (409 `stale_document`; `null` for a new
     scenario, 409 `name_taken` when another pack holds the name). The server sets `revision` (the file's plus one);
-    a document whose canonical bytes equal the file's writes nothing (`changed: false`).
+    a document whose canonical bytes with the file's own `revision` equal the file's writes nothing and keeps the
+    revision (`changed: false`), a graph or a tree alike.
   - `GET /api/v1/scenarios/{project}/{name}/proposal` → 200 `ProposalView`: the document Claude wrote for the scenario
     under the hub's ignored `.agent-runs/`, checked as Save would check it; 404 when there is none. `POST
     …/proposal/dismiss` → 204 removes it once the owner accepted it into the draft or rejected it (never through a
