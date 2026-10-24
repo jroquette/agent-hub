@@ -99,10 +99,12 @@ A scenario may be written as ordered blocks ([ADR 0049](../adr/0049-scenario-blo
 
 **Partly built** ([ADR 0049](../adr/0049-scenario-blocks-and-run-control.md), AGH-507): the engine pauses a run
 before a node through its run-control port, and the resume goes on with the pass it stopped
-([workflow-engine-rules.md](workflow-engine-rules.md) § Run control). Proposed, not built yet: the rest of this
-section (`breakpoints.json`, the `hub scenario` debug commands, the record lines, the values read, the production
-refusal and hub web's debugger). Today's builder reads and writes `version: 1` files and Save goes through the API
-(see the ADR's delivery notes).
+([workflow-engine-rules.md](workflow-engine-rules.md) § Run control); core's `run_record` folds the record lines
+below (the run view's debug pause, breakpoints and commands, a `debug.pause` line read back for its resume, and the
+values to inspect), and the `debug.*` events exist. Proposed, not built yet: the rest of this section
+(`breakpoints.json`, the `hub scenario` debug commands, which write those lines and emit those events, the route that
+reads the values, the production refusal and hub web's debugger). Today's builder reads and writes `version: 1` files
+and Save goes through the API (see the ADR's delivery notes).
 
 A scenario run may pause before a block: by a **breakpoint**, or by **Step** ([ADR
 0049](../adr/0049-scenario-blocks-and-run-control.md)). It is not a gate and Approvals does not list it.
@@ -132,6 +134,19 @@ A scenario run may pause before a block: by a **breakpoint**, or by **Step** ([A
   is `production: true` in the effective config as read at that moment; clearing breakpoints and cancelling a run
   stay allowed. Runs without breakpoints keep the policy above there.
 - Nothing is rewound: no captured value is edited, no finished block re-run or skipped.
+- Record lines (`records.jsonl`, folded by core's `run_record`): `debug.breakpoints` (`addresses`, the set as written;
+  the latest line holds the run's breakpoints); `debug.pause` (`node`, `block`, `reason` `breakpoint` or `step`,
+  `number` from 1 in the run, then what the resume goes on with: `pass` (`layer`, `ends` and `before` by node with
+  `state`, `output` and an end's `skip_cause`, `origin`, `failure_kind`, `changed`, `stale`, `gate`) and `gates` (each
+  open gate's `attempt` and `due`); held groups stay in the `held` line written beside it); `debug.command` (`command`
+  `step` or `continue`, `approver`, and the `node` and `number` of the pause it resumes). A pause is the run's while no
+  `resume`, `start` or `end` line follows it: then the debugger is why the run is paused, not a gate an earlier pass
+  left open (no investigation is open), and a resume rebuilds the stopped pass from that line, so it goes on exactly
+  as the run would have without leaving the process. A `debug.pause` line that cannot be read refuses the resume.
+- The values to inspect are read from lines the record already holds: the `inputs` line, and for each node with an
+  end its last `step_end` (`status`, `output`; a `prior_success` reuse keeps the end it reused), the `inputs` of its
+  last `action` line, and for an expect its polls (its `action_start` lines with a `poll`, as the engine counts them)
+  and the last `expect.poll` line's `output`.
 
 ### Actions and the script contract
 
@@ -243,8 +258,8 @@ Metadata only ([ADR 0019](../adr/0019-metadata-only-events-and-redaction.md)), e
 `approver`, `status`, `failure_kind`), `policy.decision` (`action` or node, `environment`, `effect`, `origin`,
 `decision`, `reason_kind`), `expect.poll` (`poll`, `held`), `context.capture` (`name`), `finding` (`finding_id`,
 `step`), `workaround.start`/`workaround.end` (`workaround_id`, `option`, `steps`, `status`); `gate.request` gains
-`reason`. Proposed with AGH-507, not built: `debug.pause` (`node`, `block`, `reason`), `debug.command` (`command`,
-`approver`), `debug.breakpoints` (`count`). Args, outputs, captures, findings, chat stay in the run record. Bounds: `expect` `every` ≥ 5 s, `timeout` ≤ 24
+`reason`. With AGH-507, defined with their rows but emitted by nothing until the debug commands are built:
+`debug.pause` (`node`, `block`, `reason`), `debug.command` (`command`, `approver`), `debug.breakpoints` (`count`). Args, outputs, captures, findings, chat stay in the run record. Bounds: `expect` `every` ≥ 5 s, `timeout` ≤ 24
 h, ≤ 1000 polls (retries, resumes too); action stdout ≤ 512 KiB; plan mode ≤ 60 s; ≤ 64 `--input` values of ≤ 64 KiB; a
 proposal ≤ 256 KiB, 20 findings, 5 options of ≤ 10 steps; ≤ 10 proposals per investigation; API record reads ≤ 8 MiB.
 

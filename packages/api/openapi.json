@@ -3360,7 +3360,10 @@
           "policy.decision",
           "finding",
           "workaround.start",
-          "workaround.end"
+          "workaround.end",
+          "debug.pause",
+          "debug.command",
+          "debug.breakpoints"
         ],
         "title": "EventType",
         "type": "string"

@@ -21,6 +21,11 @@ An investigation adds a ``finding`` per finding of a proposal (``finding_id`` an
 ``step``; its title and text stay in the record) and, when an option is picked,
 ``workaround.start`` and ``workaround.end`` (``workaround_id``, ``option`` id, ``steps`` count,
 ``status``), their attempt the investigation's number.
+
+A debugging run adds ``debug.pause`` (``node``, ``block``, ``reason``) and the ``debug.command``
+that resumes it (``command``, ``approver``), both on the paused node with the pause's number in
+the run as attempt, and ``debug.breakpoints`` (``count``) on no step, its attempt the set's
+number (``<run>:run:<n>:debug.breakpoints:``). They hold no value of the run.
 """
 
 from datetime import datetime
@@ -32,6 +37,7 @@ from agent_hub.core.json_form import JsonValue
 from agent_hub.core.scenarios.access_policy import Decision, Effect, Origin, ReasonKind
 from agent_hub.core.scenarios.policy_gates import NodeDecision
 from agent_hub.core.workflows.ports import ContextCapture, ExpectPoll
+from agent_hub.core.workflows.run_control import DebugPause
 
 
 class ActionFacts(BaseModel):
@@ -227,10 +233,31 @@ class ScenarioEvents:
             payload=facts.payload(status),
         )
 
+    def debug_paused(self, pause: DebugPause, *, number: int, at: datetime) -> None:
+        """The run's ``number``-th debug pause."""
+        payload: dict[str, JsonValue] = {
+            "node": pause.node,
+            "block": pause.block,
+            "reason": pause.reason,
+        }
+        self._add(EventType.DEBUG_PAUSE, pause.node, number, item="", at=at, payload=payload)
+
+    def debug_commanded(
+        self, command: str, *, approver: str | None, node: str, number: int, at: datetime
+    ) -> None:
+        """A Step or Continue sent to the ``number``-th pause, before ``node``."""
+        payload: dict[str, JsonValue] = {"command": command, "approver": approver}
+        self._add(EventType.DEBUG_COMMAND, node, number, item="", at=at, payload=payload)
+
+    def breakpoints_set(self, count: int, *, number: int, at: datetime) -> None:
+        """The run's ``number``-th breakpoint set, of ``count`` addresses (0 clears them)."""
+        payload: dict[str, JsonValue] = {"count": count}
+        self._add(EventType.DEBUG_BREAKPOINTS, None, number, item="", at=at, payload=payload)
+
     def _add(
         self,
         kind: EventType,
-        step: str,
+        step: str | None,
         attempt: int,
         *,
         item: str,
@@ -246,7 +273,7 @@ class ScenarioEvents:
                 type=kind,
                 timestamp=at,
                 source=EventSource.EXECUTOR,
-                source_id=f"{origin}:{step}:{attempt}:{kind}:{item}",
+                source_id=f"{origin}:{step or 'run'}:{attempt}:{kind}:{item}",
                 payload={**run, "attempt": attempt, **payload},
                 repo=self.repo,
                 workflow=self.workflow,

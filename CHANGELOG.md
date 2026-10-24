@@ -39,8 +39,10 @@ Entries before 0.11.0 were written afterwards from the merged PR titles.
   debugger as engine run control, with its reference fixtures (AGH-508, AGH-521). Built so far: core loads a
   `version: 2` scenario and translates its stages and blocks to the node graph, each load or plan problem on the
   tree's key path (AGH-509); the engine takes a run-control port that pauses a run before a node, and the resume goes
-  on with the pass the pause stopped, so a pause never changes what the run does (AGH-510); the rest is not built
-  yet.
+  on with the pass the pause stopped, so a pause never changes what the run does (AGH-510); a run's record folds its
+  debug pause (with the pass it stopped, read back for the resume), breakpoints and Step or Continue commands, and
+  the values a paused run shows, apart from the run view, with the `debug.*` event types (AGH-511); the rest is not
+  built yet.
 
 ### Changed
 

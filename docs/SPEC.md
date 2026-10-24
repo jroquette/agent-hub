@@ -442,8 +442,9 @@ instruction" for actions and for the deterministic nodes of a workflow that decl
   never adds them and `hub.lock` does not list them, so a hub without `scenarios/`, `actions/` and `environments`
   renders and syncs as before.
 - **Blocks and debugging** ([ADR 0049](adr/0049-scenario-blocks-and-run-control.md), AGH-507, proposed; built so far:
-  core loads a `version: 2` file and translates it at load, and the engine can pause a run before a node through a
-  run-control port; the builder AGH-521 shipped edits `version: 1` files, see the ADR's delivery notes): a scenario
+  core loads a `version: 2` file and translates it at load, the engine can pause a run before a node through a
+  run-control port, and core folds a run's debug record lines and the values a paused run shows; the builder AGH-521
+  shipped edits `version: 1` files, see the ADR's delivery notes): a scenario
   may be written as `version: 2`, named stages of ordered blocks (Do, Wait until, You, Wait, Include; Repeat, If/else,
   At the same time), which core translates to the node graph at load, so the policy, gates and records are unchanged;
   hub web's builder edits that file block for block, and Save of an unchanged file writes nothing. A scenario run may
@@ -858,7 +859,9 @@ default); `repo`, `agent`, `workflow` and `step` are optional. Unknown fields ar
   summaries), `session.title` ([ADR 0035](adr/0035-session-titles.md)), and a scenario run's `expect.poll`,
   `context.capture`, `action.start`, `action.end`, `policy.decision`, `finding`, `workaround.start` and
   `workaround.end` ([ADR 0041](adr/0041-scenarios-actions-and-enforced-access.md); a standalone `hub action run`
-  emits its `policy.decision` and `action.*` events under the session `action:<uuid>`).
+  emits its `policy.decision` and `action.*` events under the session `action:<uuid>`), and a debugging scenario
+  run's `debug.pause`, `debug.command` and `debug.breakpoints` ([ADR 0049](adr/0049-scenario-blocks-and-run-control.md);
+  nothing emits them until the debug commands are built).
 - `source` is a closed list: `claude_code`, `transcript`, `otel`, `executor`, `github`, `linear` and `control_plane`
   (an action the user took in `hub web`, added by AGH-201: a learning decision). Widening either list later is a
   compatible change.
@@ -935,6 +938,7 @@ before anything is appended, and the data stays on the machine in v1:
 | `policy.decision` | `action` or `node`, `environment`, `effect`, `origin`, `decision`, `reason_kind` |
 | `finding` | `finding_id`, `step` (its title, text and evidence stay in the run's record) |
 | `workaround.start`, `workaround.end` | `workaround_id`, `option` (its id), `steps` (count), `status` |
+| `debug.pause`, `debug.command`, `debug.breakpoints` | `node`, `block`, `reason` (`breakpoint` or `step`); `command` (`step` or `continue`), `approver`; `count` (no value of the run) |
 
 Note, spec, plan and brain text is read from the hub on request and never stored or logged; a learning's summary
 (its note's first paragraph) is computed on read.

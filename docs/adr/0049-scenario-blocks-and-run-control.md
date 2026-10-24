@@ -112,6 +112,10 @@ This ADR stays proposed. Of the decision above, the translation at load is built
 `version: 2` scenario into the node graph, with its block map and its problems on the tree's key paths (AGH-509).
 So is the engine's run-control port: `EnginePorts.control` pauses a run before a node, and the resume goes on with the
 pass it stopped ([design/workflow-engine-rules.md](../design/workflow-engine-rules.md) § Run control, AGH-510).
+And core's fold of the debug record lines: `run_record` folds a run's debug pause, breakpoints and commands, reads a
+`debug.pause` line back so a run rebuilt from its record resumes with the pass it stopped, and folds the values a
+paused run shows; the `debug.*` event types exist ([design/scenarios.md](../design/scenarios.md) § Debugging,
+AGH-511).
 The scenario builder that shipped with AGH-521 is the one the owner validated in the playground, and where it differs
 from the decision above, the validated behavior wins for what the screen shows:
 
@@ -129,9 +133,10 @@ from the decision above, the validated behavior wins for what the screen shows:
   name, and a run input the start does not give takes the environment's non-secret value of that name before its
   declared default (`hub env` sets them). The decision above does not cover them; they live beside it in
   [design/scenarios.md](../design/scenarios.md) and [design/environments.md](../design/environments.md).
-- **Debugger.** Only the engine's run-control port is built. Nothing sets a breakpoint or sends Step or Continue
-  yet: `breakpoints.json`, the CLI commands, the debug record lines, the values read and their routes are not built,
-  and the API paths in [API.md](../API.md) marked AGH-507 are the contract for them.
+- **Debugger.** Only the engine's run-control port and core's fold of the debug record lines and values are built.
+  Nothing sets a breakpoint, sends Step or Continue, or writes a debug line or event yet: `breakpoints.json`, the CLI
+  commands, the values read and their routes are not built, and the API paths in [API.md](../API.md) marked AGH-507
+  are the contract for them.
 
 ## More Information
 
