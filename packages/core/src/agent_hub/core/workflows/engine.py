@@ -346,7 +346,8 @@ class _Run:
     def _owed(self) -> frozenset[str]:
         """The ends from before that this pass stopped before reaching and would have run again:
         one its rule does not keep, or one stale in it (below a changed or stale node, through
-        the layers it never reached)."""
+        the layers it never reached), a skip from an earlier pass included: it is evaluated
+        again, so it is asked again."""
         nodes = {node.id: node for node in self.plan.document.nodes}
         below = self.changed | self.stale
         owed: set[str] = set()
@@ -358,11 +359,11 @@ class _Run:
                 if (
                     node.id in self.ends
                     or before is None
-                    or before.state == "skipped"
                     or isinstance(node, HaltNode | IncludeNode)
                 ):
                     continue
-                if node.id in below or not self._kept(node, before):
+                skipped = before.state == "skipped"
+                if node.id in below or (not skipped and not self._kept(node, before)):
                     owed.add(node.id)
         return frozenset(owed)
 
@@ -387,7 +388,8 @@ class _Run:
         then and is reused or kept, or it was skipped and its ancestry is unchanged (a body
         node's ends count in their iteration, which a held group restores), or it is a held
         group or a gate not yet taken up. A failure or a stale node this resume runs again is
-        not reached: it is asked again."""
+        not reached: it is asked again. On a resume from a debug pause, a skip is reached unless
+        the paused pass owed it (``RunState.rerun``): one that pass ended is not asked again."""
         with self.lock:
             open_gate = node.id in self.prior.gates and node.id not in self.taken
             if open_gate or node.id in self.prior.groups:
@@ -398,7 +400,10 @@ class _Run:
         # ``stale`` is read without the lock: it changes only between layers, on this thread.
         if self._reusable(node):
             return True
-        unchanged = node.id not in self.stale or self.prior.pause is not None
+        if self.prior.pause is not None:
+            unchanged = node.id not in self.prior.rerun
+        else:
+            unchanged = node.id not in self.stale
         return before.state == "skipped" and unchanged
 
     def _takes_up_pause(self, node: Node, stop: PauseReason) -> bool:

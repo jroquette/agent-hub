@@ -84,8 +84,9 @@ only nodes: the run-control port maps blocks to the nodes they enter by, and dec
   goes on where its pass stopped even once every breakpoint is cleared.
 - When a layer starts (a group body's layer in each iteration), the port is asked, once per node, about each node
   this pass may run: never one the run reached in an earlier pass that this pass does not run again (an end reused
-  or kept, a skip whose ancestry is unchanged, a held group, a gate a resume takes up; a body node's ends count in
-  their iteration). A failure a resume reruns, and a stale or `always_run` node that runs again, are asked again, so
+  or kept, a skip whose ancestry is unchanged (on a resume from a debug pause, a skip not in the run state's `rerun`),
+  a held group, a gate a resume takes up; a body node's ends count in their iteration). A failure a resume reruns,
+  and a stale or `always_run` node or a stale skip that runs again, are asked again, so
   answering a gate never passes a breakpoint. So a breakpoint set while a layer runs takes effect from the next
   layer, and resume reuse comes first, then run control, then `trigger_rule` and `when:`.
 - A layer holding a node to pause at runs one node at a time in declaration order and stops before the first such
@@ -98,11 +99,11 @@ only nodes: the run-control port maps blocks to the nodes they enter by, and dec
 - The resume takes up the pause: the first visit of the node it stopped before, and of each node the port names the
   same block for (an If's or a Together's other entry nodes), runs. It goes on where that pass stopped: what
   completed is reused (an `always_run` node too), what failed keeps its failure and runs nothing again (nothing more
-  is recorded for it), and a skipped node is evaluated again, to the same skip. What the paused pass had not reached
-  stays as an earlier pass left it: a gate open there stays open (its resume takes up any answer it has), and an end
-  that pass would have run again (a failure, an `always_run` node, or a completed node stale in that pass: below a
-  node that changed or is stale there, through the layers it never reached; kept in the run state's `rerun`) runs
-  again.
+  is recorded for it), and a node that pass skipped is evaluated again, to the same skip, and is not asked again.
+  What the paused pass had not reached stays as an earlier pass left it: a gate open there stays open (its resume
+  takes up any answer it has), and an end that pass would have run again (a failure, an `always_run` node, or a
+  completed or skipped node stale in that pass: below a node that changed or is stale there, through the layers it
+  never reached; kept in the run state's `rerun`) runs again, or is evaluated again, and is asked again.
 - A gate that opens in the pass wins: the report is the gate's, with no debug pause, and the nodes the pass stopped
   before are asked again on its resume.
 

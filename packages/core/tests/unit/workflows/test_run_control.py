@@ -633,3 +633,55 @@ def test_runs_the_stale_child_again_when_a_gate_resume_completes_a_failed_ancest
     assert paused.ran[1:] == [["b"], ["c", "after"]]
     assert last.state.nodes["c"] == NodeResult("completed", "c2")
     assert end_of(paused, last) == end_of(straight, plain)
+
+
+def stale_skip_run() -> Passes:
+    # ``a`` fails, so the first pass skips ``s`` and opens the gate; the gate's resume completes
+    # ``a``, which makes ``x`` and that skip of ``s`` stale.
+    gate = {
+        "id": "ok",
+        "type": "approval",
+        "message": "Ship?",
+        "depends_on": ["x", "s"],
+        "trigger_rule": "all_done",
+    }
+    plan = a_plan(
+        shell("a"),
+        shell("x", "a", trigger_rule="all_done"),
+        shell("s", "a"),
+        gate,
+        shell("after", "ok"),
+    )
+    run = Passes(plan, ScriptedRunner({"a": [NodeFailedError("exec_failed", "exit 1"), "a2"]}))
+    assert run.next(None).reason == "ok"
+    assert run.reports[0].state.nodes["s"].state == "skipped"
+    run.answers[("ok", 1)] = APPROVE
+    return run
+
+
+def test_pauses_before_the_stale_skip_when_a_resume_after_the_gate_reaches_its_breakpoint() -> None:
+    run = stale_skip_run()
+    control = Breakpoints({"x": "1.2", "s": "1.3"})
+
+    before_x = run.next(control)
+    before_s = run.next(control)
+    last = run.to_end(control)
+
+    assert before_x.state.pause == DebugPause("x", "1.2", "breakpoint")
+    assert "s" in before_x.state.rerun
+    assert run.ran[1:3] == [["a"], ["x"]]
+    assert (before_s.status, before_s.state.pause) == (
+        "paused",
+        DebugPause("s", "1.3", "breakpoint"),
+    )
+    assert (last.status, run.ran[3]) == ("done", ["s", "after"])
+
+
+def test_runs_only_the_next_node_when_a_step_follows_a_stale_skip_of_an_earlier_pass() -> None:
+    run = stale_skip_run()
+
+    stops = [run.next(Stepping()) for _ in range(3)]
+
+    assert [report.reason for report in stops] == ["a", "x", "s"]
+    assert run.ran[1:] == [[], ["a"], ["x"]]
+    assert stops[2].state.pause is not None and stops[2].state.pause.node == "s"

@@ -50,7 +50,7 @@ class RunState:
     budget spans the run's resumes), and the debug pause run control stopped it at (``pause``;
     then no gate of that pass is open, and ``rerun`` holds the nodes ended in an earlier pass that
     the paused pass had not reached and would have run again: a failure or an ``always_run`` node
-    its rule does not keep)."""
+    its rule does not keep, or a completed or skipped end stale in that pass)."""
 
     nodes: Mapping[str, NodeResult] = field(default_factory=dict)
     attempts: Mapping[str, int] = field(default_factory=dict)
