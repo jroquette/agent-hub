@@ -502,26 +502,78 @@ def end_of(run: Passes, report: RunReport) -> tuple[object, ...]:
     ],
     ids=["reference", "reference-failed", "together", "together-failed", "repeat", "nested"],
 )
-def test_ends_with_the_same_results_when_a_run_pauses_before_every_node_or_is_stepped(
+def test_ends_with_the_same_results_when_a_run_pauses_before_every_block_or_is_stepped(
     name: str, failing: str | None
 ) -> None:
     # AC-507.14: pauses change when a run stops, never its path or results.
     straight = tree_run(name, failing)
     every = tree_run(name, failing)
-    every_node = {node.id: node.id for node in every.plan.all_nodes()}
+    # Each block's entry nodes break for it; a node entering nested blocks, for the outermost.
+    every_block: dict[str, str] = {}
+    for address, entries in block_map(tree(name)).run_entries(every.plan).items():
+        for entry in entries:
+            every_block.setdefault(entry, address)
     stepped = tree_run(name, failing)
 
     plain = straight.to_end(None)
-    broken = every.to_end(Breakpoints(every_node))
+    broken = every.to_end(Breakpoints(every_block))
     steps = stepped.to_end(Stepping())
 
     assert plain.status == ("done" if failing is None else "failed")
     assert len(straight.reports) == 1
-    assert len(every.reports) > len(every_node) // 2
-    assert len(stepped.reports) == len(every.reports)
+    assert len(every.reports) > len(set(every_block.values())) // 2
+    assert len(stepped.reports) >= len(every.reports)
     assert {r.state.pause.reason for r in every.reports[:-1] if r.state.pause} == {"breakpoint"}
     assert end_of(every, broken) == end_of(straight, plain)
     assert end_of(stepped, steps) == end_of(straight, plain)
     assert (
         sorted(every.runner.ran()) == sorted(stepped.runner.ran()) == sorted(straight.runner.ran())
     )
+
+
+def test_pauses_before_the_rerun_node_when_a_gate_resume_runs_a_failed_node_again() -> None:
+    # The gate's resume reruns the failure and its stale skipped descendant: each is asked again,
+    # so answering the gate never passes a breakpoint, and the answer waits for the resume.
+    gate = {"id": "ok", "type": "approval", "message": "Ship?", "depends_on": ["c"]}
+    plan = a_plan(
+        shell("a"),
+        shell("b", "a"),
+        shell("c", "b"),
+        gate | {"trigger_rule": "all_done"},
+        shell("after", "ok"),
+    )
+    run = Passes(plan, ScriptedRunner({"b": [NodeFailedError("exec_failed", "exit 1"), ""]}))
+    control = Breakpoints({"c": "1.3"})
+
+    first = run.next(control)
+    gated = run.next(control)
+    run.answers[("ok", 1)] = APPROVE
+    rerun = run.next(control)
+    last = run.next(control)
+
+    assert first.state.pause == DebugPause("c", "1.3", "breakpoint")
+    assert run.ran[:2] == [["a", "b"], []]
+    assert (gated.reason, gated.state.gates, gated.state.pause) == ("ok", {"ok": OpenGate(1)}, None)
+    assert (rerun.status, rerun.reason) == ("paused", "c")
+    assert rerun.state.pause == DebugPause("c", "1.3", "breakpoint")
+    assert run.ran[2] == ["b"]
+    assert rerun.state.gates == {"ok": OpenGate(1)}
+    assert (last.status, run.ran[3]) == ("done", ["c", "after"])
+    assert [request.node for request in run.recorder.gates] == ["ok"]
+    assert run.recorder.end_of("ok").output == {"decision": "approve", "approver": "Ada"}
+
+
+def test_asks_again_about_an_always_run_node_when_a_gate_resume_runs_it_again() -> None:
+    gate = {"id": "ok", "type": "approval", "message": "Ship?", "depends_on": ["a"]}
+    plan = a_plan(shell("a"), shell("b", "a", always_run=True), gate, shell("after", "ok", "b"))
+    run = Passes(plan)
+
+    gated = run.next(Breakpoints({"after": "1.4"}))
+    run.answers[("ok", 1)] = APPROVE
+    control = Breakpoints({"b": "1.2"})
+    rerun = run.next(control)
+    last = run.next(control)
+
+    assert (gated.reason, run.ran[0]) == ("ok", ["a", "b"])
+    assert rerun.state.pause == DebugPause("b", "1.2", "breakpoint")
+    assert (last.status, run.ran[2]) == ("done", ["b", "after"])

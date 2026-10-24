@@ -95,10 +95,10 @@ A scenario run may pause before a block: by a **breakpoint**, or by **Step** ([A
 0049](../adr/0049-scenario-blocks-and-run-control.md)). It is not a gate and Approvals does not list it.
 
 - Breakpoints are block addresses of the run's pinned tree, kept in the run folder: `breakpoints.json`, written whole
-  (a temporary file, then a rename), at most 64 KiB and 512 addresses, read before each node, never through a link; a
+  (a temporary file, then a rename), at most 64 KiB and 512 addresses, read as each layer of nodes starts, never through a link; a
   file that cannot be read or parsed counts as no breakpoint and adds a record line. They are set by `hub scenario
   run --break ADDR…`, `hub scenario break RUN ADDR… [--off]` (adds or removes), `hub scenario break RUN --set
-  [ADDR…]` (replaces the set; none clears it) or hub web. One set while the run runs takes effect at its next block.
+  [ADDR…]` (replaces the set; none clears it) or hub web. One set while the run runs takes effect from the next layer of nodes (so not between the paths of a Together that already started).
   They are never in the document.
 - Before a block means before its first node and before its `<step>__ask` gate; for a stage, before its first block;
   a Repeat, before the group (a body block's breakpoint pauses in every iteration); an If, before its condition is

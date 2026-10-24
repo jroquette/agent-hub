@@ -48,7 +48,9 @@ class RunState:
     """What a run leaves for its resume: each node's result, its attempts, agent sessions and
     the gates it paused on, with the groups paused around one, each expect node's polls (its
     budget spans the run's resumes), and the debug pause run control stopped it at (``pause``;
-    then no gate is open)."""
+    then no gate of that pass is open, and ``rerun`` holds the nodes ended in an earlier pass that
+    the paused pass had not reached and would have run again: a failure or an ``always_run`` node
+    its rule does not keep)."""
 
     nodes: Mapping[str, NodeResult] = field(default_factory=dict)
     attempts: Mapping[str, int] = field(default_factory=dict)
@@ -57,6 +59,7 @@ class RunState:
     groups: Mapping[str, HeldGroup] = field(default_factory=dict)
     polls: Mapping[str, int] = field(default_factory=dict)
     pause: DebugPause | None = None
+    rerun: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)

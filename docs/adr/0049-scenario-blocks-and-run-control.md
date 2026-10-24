@@ -57,11 +57,12 @@ Chosen option: 1.
   (the report is `paused`, with reason `breakpoint` or `step` and the block address; a pause inside a `loop_group`
   body holds its iteration as a body gate does). With a breakpoint or step mode on, a layer that holds a node to pause at runs
   its nodes one at a time in declaration order, so "before this block" is exact. The resume is today's resume, except
-  that it goes on where the paused pass stopped (nothing that ended runs again: a failure is kept); Step and Continue
+  that it goes on where the paused pass stopped (nothing that pass ended runs again: a failure is kept; what it had
+  not reached runs as that pass would have run it); Step and Continue
   are recorded commands read by the port. Without the port, or with no breakpoint and no step, the engine behaves as
   before.
 - **Breakpoints are run data.** Block addresses of the run's pinned tree, kept in the run folder, written whole by
-  the CLI (hub web runs it as it runs gate decisions), read before each node. They are never in the document, so they
+  the CLI (hub web runs it as it runs gate decisions), read as each layer of nodes starts. They are never in the document, so they
   change neither the plan nor the `content_hash`.
 - **What the debugger never does.** It answers no gate (a breakpoint on a gated step pauses before its `<step>__ask`,
   and the ask still opens after Continue or Step), edits no value, re-runs or skips no block, and rewinds nothing.

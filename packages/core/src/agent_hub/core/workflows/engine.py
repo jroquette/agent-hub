@@ -26,15 +26,17 @@ Rejecting an approval with the default decisions ends the run ``cancelled`` like
 unless the workflow reads the decision.
 
 Run control (``run_control.py``, ``EnginePorts.control``) pauses a run before a node no gate
-holds. While it is ``debugging()``, each layer asks it about the nodes the run did not reach in
-an earlier pass (none that ended then, nor a group or gate left open); a layer holding a node to
-pause at runs one node at a time in declaration order and stops before that node, and once the
-layer ends the report is ``paused`` with ``RunState.pause`` and no gate open. A body node's
-pause holds its iteration as a body gate does. The resume takes up the pause: the first visit
-of the node it stopped before, and of any node paused for the same block, runs; and it goes on
-where that pass stopped, reusing what completed (``always_run`` too) and keeping what failed. A
-gate open in the same pass wins: the report is the gate's, and the nodes the pass stopped before
-are asked again on its resume.
+holds. While it is ``debugging()``, each layer asks it about the nodes this pass may run (none
+an earlier pass ended that this one reuses, keeps or skips again, nor a group or gate left
+open; a failure or stale node a resume runs again is asked); a layer holding a node to pause at
+runs one node at a time in declaration order and stops before that node, and once the layer
+ends the report is ``paused`` with ``RunState.pause`` and no gate of the pass open. A body
+node's pause holds its iteration as a body gate does. The resume takes up the pause: the first
+visit of the node it stopped before, and of any node paused for the same block, runs; and it
+goes on where that pass stopped, reusing what completed (``always_run`` too) and keeping what
+failed, while what the pass had not reached stays as an earlier pass left it (a gate open, an
+end owed a rerun: ``RunState.rerun``). A gate open in the same pass wins: the report is the
+gate's, and the nodes the pass stopped before are asked again on its resume.
 
 A ``loop_group`` is one step around its body's: each iteration runs the body's layers (body ids
 as recorded, ``<group>__<id>``, each visit a new attempt), with ``$LOOP_PREV`` reading the
@@ -319,17 +321,33 @@ class _Run:
         wins, and its resume asks run control again), else ``None``: no end is recorded."""
         gates: dict[str, OpenGate] = {}
         debug: DebugPause | None = None
+        groups = dict(self.held)
+        rerun: frozenset[str] = frozenset()
         if self.paused is not None:
             node, gate = self.paused
             gates[node] = gate
         elif self.debug is not None:
             node, debug = self.debug.node, self.debug
+            # What an earlier pass left that this one stopped before reaching stays as it was for
+            # the resume: a gate open (taken up with any answer it has) with the groups around
+            # it, and each end this pass would have run again.
+            with self.lock:
+                gates = {g: open_ for g, open_ in self.prior.gates.items() if g not in self.taken}
+                left = self.prior.groups.items()
+                groups |= {g: held for g, held in left if g not in groups and g not in self.ends}
+                rerun = frozenset(
+                    n.id
+                    for n in self.plan.document.nodes
+                    if n.id not in self.ends
+                    and (before := self.prior.nodes.get(n.id)) is not None
+                    and before.state != "skipped"
+                    and not self._kept(n, before)
+                )
         else:
             return None
         nodes = {**self.prior.nodes, **self.results}
-        state = RunState(
-            nodes, self.attempts, self.sessions, gates, dict(self.held), dict(self.polls), debug
-        )
+        polls = dict(self.polls)
+        state = RunState(nodes, self.attempts, self.sessions, gates, groups, polls, debug, rerun)
         return RunReport("paused", None, node, state)
 
     def _stops(self, nodes: Sequence[Node]) -> dict[str, PauseReason]:
@@ -349,13 +367,22 @@ class _Run:
         return stops
 
     def _reached(self, node: Node) -> bool:
-        """A node the run reached in an earlier pass: it ended then (a body node's ends count in
-        their iteration, which a held group restores), or it is a held group or a gate not yet
-        taken up."""
+        """A node the run reached in an earlier pass and does not run again in this one: it ended
+        then and is reused or kept, or it was skipped and its ancestry is unchanged (a body
+        node's ends count in their iteration, which a held group restores), or it is a held
+        group or a gate not yet taken up. A failure or a stale node this resume runs again is
+        not reached: it is asked again."""
         with self.lock:
-            ended = node.id in self.prior.nodes and node.id not in self.owner
             open_gate = node.id in self.prior.gates and node.id not in self.taken
-            return ended or open_gate or node.id in self.prior.groups
+            if open_gate or node.id in self.prior.groups:
+                return True
+        before = self.prior.nodes.get(node.id)
+        if before is None or node.id in self.owner:
+            return False
+        if self._reusable(node):
+            return True
+        unchanged = node.id not in self.stale or self.prior.pause is not None
+        return before.state == "skipped" and unchanged
 
     def _takes_up_pause(self, node: Node, stop: PauseReason) -> bool:
         """Whether this visit takes up the debug pause the run resumes from: the first visit of
@@ -422,18 +449,21 @@ class _Run:
         return True
 
     def _reusable(self, node: Node) -> bool:
-        """A node that completed before, is not ``always_run``, and has no changed ancestor. On
-        a resume from a debug pause, one that completed or failed before: that pass goes on
-        where it stopped, so a pause never changes what runs."""
+        """A node this pass's rule keeps (``_kept``) that has no changed ancestor."""
         before = self.prior.nodes.get(node.id)
-        if before is None or node.id in self.owner or isinstance(node, HaltNode | IncludeNode):
-            return False
-        if self.prior.pause is not None:
-            kept = before.state != "skipped"
-        else:
-            kept = before.state == "completed" and not getattr(node, "always_run", False)
         # References reach only ancestors (planning), so an unchanged ancestry reads the same.
-        return kept and node.id not in self.stale
+        return before is not None and self._kept(node, before) and node.id not in self.stale
+
+    def _kept(self, node: Node, before: NodeResult) -> bool:
+        """Whether this pass keeps ``node``'s end from before while its ancestry is unchanged:
+        one that completed and is not ``always_run``. On a resume from a debug pause, one that
+        completed or failed before, unless the paused pass owed it a rerun (``RunState.rerun``):
+        that pass goes on where it stopped, so a pause never changes what runs."""
+        if node.id in self.owner or isinstance(node, HaltNode | IncludeNode):
+            return False
+        if self.prior.pause is not None and node.id not in self.prior.rerun:
+            return before.state != "skipped"
+        return before.state == "completed" and not getattr(node, "always_run", False)
 
     def _reuse(self, node: Node) -> None:
         """``node``'s end from before: a completed one reused (``prior_success``), a failure kept

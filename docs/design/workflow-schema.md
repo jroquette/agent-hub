@@ -30,7 +30,8 @@ cap) or JSON, then a frozen Pydantic model that forbids unknown keys. A load err
 ### Nodes
 
 Every node has `id`, `type` and optional `description`, `depends_on`, `trigger_rule` and `when`. Executable nodes
-(`agent`, `shell`, `script`, `loop`) also take `retry`, `always_run` (rerun on resume), `timeout`, `output_format` and
+(`agent`, `shell`, `script`, `loop`) also take `retry`, `always_run` (rerun on resume, except a resume from a debug
+pause: [workflow-engine-rules.md](workflow-engine-rules.md) § Run control), `timeout`, `output_format` and
 `mutates_checkout: false` (a change fails it). Durations: `^[1-9][0-9]*(s|m|h|d)$`. Other keys fail the load.
 
 | `type` | Keys | What happens |
